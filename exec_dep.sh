@@ -4,7 +4,7 @@ set -eu
 # 生产部署脚本：
 # - 从 GitHub Release 下载 prd-admin dist 压缩包
 # - 在稳定的 deploy/web/dist bind 根内离线校验并原子切换 current/previous
-# - 校验 sha256（如果 Release 同时上传了 .sha256 文件）
+# - 固定版本必须从持久 Release 取得 ZIP、清单及 SHA256，验证后消费
 # - 执行 docker-compose up -d（若系统仅有 docker compose，则自动回退）
 #
 # 依赖：curl + unzip（或 busybox unzip），以及 docker-compose
@@ -37,7 +37,8 @@ set -eu
 #   - DIST_URL：直接指定静态 zip 下载地址（完全跳过 Release/Pages 逻辑）
 #   - DIST_SHA256 / DIST_SHA256_URL：DIST_URL 对应的审计哈希或哈希文件；不可变发布必须提供其一
 #   - PRD_AGENT_STATIC_ONLY_COMMIT：仅切换 MAP 静态站的完整 40 位 SHA；必须与 --commit 的运行时 SHA 成对校验
-#   - PAGES_BASE_URL：覆盖 GitHub Pages 根地址（默认优先走 get.miduo.org 代理）
+#   - PRD_AGENT_RELEASE_ASSET_BASE_URL：显式兼容固定 ref 的公开下载目录；默认使用持久 Release asset-ID API
+#   - PAGES_BASE_URL：仅覆盖兼容 latest 的 GitHub Pages 根地址
 #   - PRD_AGENT_PUBLIC_BASE_URL：发布后公网表面验收与网关返回 MAP 的权威根地址，必须显式配置
 #   - PRD_AGENT_API_SERVICE：正式 Compose 中的 API service 名，默认 api
 #   - PRD_AGENT_ASSET_STORAGE_READINESS_INTERNAL_URL：API 容器内强制存储探针地址
@@ -58,6 +59,7 @@ set -eu
 #   - LLMGW_GATE_SERVING_PROBE_SAMPLES：serving probe healthz 连续采样次数，默认跟随 LLMGW_GATE_HEALTH_SAMPLES
 #   - LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS：serving probe 连续采样间隔秒数，默认跟随 LLMGW_GATE_HEALTH_INTERVAL_SECONDS
 #   - LLMGW_SERVING_PROBE_JSON_OUT / LLMGW_SERVING_PROBE_REPORT_MD：保存 post-deploy serving probe 证据
+#   - LLMGW_RELEASE_FEATURES：本次发布启用的模型功能（逗号分隔）；兼容默认 defect-agent，显式 none 表示不交付模型功能；不检查未选 Agent
 #   - LLMGW_GATE_RUN_SMOKE：发布后是否运行 gw-smoke.py（会真调模型）；显式给了探测 key 或业务 smoke key 时默认 1，否则默认 0
 #   - LLMGW_GATE_SMOKE_TIMEOUT_SECONDS：gw-smoke.py 单请求超时，默认 120
 #   - GW_SMOKE_JSON_OUT / GW_SMOKE_REPORT_MD：保存 post-deploy D 层 smoke 证据
@@ -708,6 +710,10 @@ release_started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 release_evidence_id="$(date -u '+%Y%m%dT%H%M%SZ')_${TAG}_$$"
 release_evidence_dir="${PRD_AGENT_RELEASE_EVIDENCE_DIR:-${HOME:-.}/prd-agent-release-evidence}"
 release_evidence_file="$release_evidence_dir/${release_evidence_id}.json"
+# Keep full safe response metadata beside the existing release evidence, outside
+# temporary staging; CDS console summaries may truncate individual log lines.
+export PRD_AGENT_ARTIFACT_AUDIT_PATH="$release_evidence_dir/${release_evidence_id}.artifact-audit.jsonl"
+export PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID="$release_evidence_id"
 public_smoke_json="$tmp_dir/public-surface.json"
 rollback_smoke_json="$tmp_dir/public-surface-rollback.json"
 asset_storage_readiness_json="$tmp_dir/asset-storage-readiness.json"
@@ -1075,27 +1081,46 @@ case "$reuse_static_dist" in
     ;;
   *)
     sha_url=""
+    retained_zip=""
 
     if [ -n "${DIST_URL:-}" ]; then
       asset_url="$DIST_URL"
       sha_url="${DIST_SHA256_URL:-}"
-    else
+      manifest_url="${DIST_MANIFEST_URL:-}"
+    elif [ "$TAG" = "latest" ]; then
       pages_base="${PAGES_BASE_URL:-https://get.miduo.org/https://${OWNER}.github.io/${REPO_NAME}}"
       asset_url="${pages_base%/}/prd-admin-dist-${TAG}.zip"
       sha_url="${pages_base%/}/prd-admin-dist-${TAG}.zip.sha256"
       manifest_url="${pages_base%/}/release-manifest-${TAG}.json"
+    else
+      retained_base="${PRD_AGENT_RELEASE_ASSET_BASE_URL:-}"
+      release_failure_stage="static-retained-artifact"
+      mkdir -p "$release_evidence_dir"
+      if [ -n "$retained_base" ]; then
+        python3 scripts/lib/release-artifacts.py fetch --repo "$REPO" --ref "$TAG" \
+          --base-url "$retained_base" --directory "$tmp_dir/retained" > "$tmp_dir/retained-evidence.json"
+      else
+        PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT=github-api python3 scripts/lib/release-artifacts.py fetch \
+          --repo "$REPO" --ref "$TAG" --directory "$tmp_dir/retained" > "$tmp_dir/retained-evidence.json"
+      fi
+      cat "$tmp_dir/retained-evidence.json"
+      asset_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["urls"][0])' "$tmp_dir/retained-evidence.json")"
+      sha_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["urls"][1])' "$tmp_dir/retained-evidence.json")"
+      manifest_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["urls"][2])' "$tmp_dir/retained-evidence.json")"
+      retained_zip="$tmp_dir/retained/prd-admin-dist-${TAG}.zip"
     fi
 
     if [ -z "$asset_url" ]; then
       echo "ERROR: 未能确定静态站压缩包下载地址。" >&2
-      echo "  - 默认从 GitHub Pages 下载 prd-admin-dist-${TAG}.zip（可用 PAGES_BASE_URL 覆盖）" >&2
+      echo "  - 固定版本必须存在完整的持久 Release；latest 保留 Pages 兼容路径" >&2
       echo "  - 或直接设置 DIST_URL=... 指定 zip 地址" >&2
       exit 1
     fi
 
     if [ -n "$manifest_url" ]; then
       manifest_path="$tmp_dir/release-manifest.json"
-      if curl -fL "$manifest_url" -o "$manifest_path" 2>/dev/null; then
+      if { [ -n "$retained_zip" ] && cp "$tmp_dir/retained/release-manifest-${TAG}.json" "$manifest_path"; } \
+        || curl -fL -H 'Accept: application/octet-stream' "$manifest_url" -o "$manifest_path" 2>/dev/null; then
         echo "Release manifest: $manifest_url"
         grep -E '"commit"|"ref"|"apiImage"|"llmgwImage"|"llmgwServeImage"|"llmgwWebImage"|"webDist"|"webSha256"' "$manifest_path" || true
       fi
@@ -1104,7 +1129,11 @@ case "$reuse_static_dist" in
     zip_path="$tmp_dir/prd-admin-dist.zip"
     release_failure_stage="static-download"
     echo "Downloading: $asset_url"
-    curl -fL "$asset_url" -o "$zip_path"
+    if [ -n "$retained_zip" ]; then
+      cp "$retained_zip" "$zip_path"
+    else
+      curl -fL "$asset_url" -o "$zip_path"
+    fi
 
     sha_path="$tmp_dir/prd-admin-dist.zip.sha256"
     artifact_checksum_verified=0
@@ -1116,6 +1145,9 @@ case "$reuse_static_dist" in
       echo "WARN: latest compatibility release skipped sha256 verification" >&2
     else
       expected="$(printf '%s' "${DIST_SHA256:-}" | tr 'A-F' 'a-f' | xargs || true)"
+      if [ -z "$expected" ] && [ -n "$retained_zip" ]; then
+        expected="$(awk '{print $1}' "$tmp_dir/retained/prd-admin-dist-${TAG}.zip.sha256")"
+      fi
       if [ -z "$expected" ] && [ -n "$sha_url" ]; then
         if curl -fL "$sha_url" -o "$sha_path" 2>/dev/null; then
           expected="$(awk '{print $1}' "$sha_path" | head -n 1 | tr 'A-F' 'a-f')"
@@ -1179,6 +1211,15 @@ case "$reuse_static_dist" in
     mkdir -p "$static_staging_dir"
     unzip -q "$zip_path" -d "$static_staging_dir"
     scripts/validate-static-dist.sh --normalize "$static_staging_dir"
+    case "$static_artifact_tag" in
+      sha-*)
+        staged_static_commit="$(read_static_entry_commit "$static_staging_dir")"
+        if [ "$staged_static_commit" != "${static_artifact_tag#sha-}" ]; then
+          echo "ERROR: static artifact entry assets do not match the immutable static commit" >&2
+          exit 1
+        fi
+        ;;
+    esac
     if [ "$static_only_mode" = "1" ]; then
       staged_static_commit="$(read_static_entry_commit "$static_staging_dir")"
       if [ "$staged_static_commit" != "$static_commit" ]; then
@@ -1464,6 +1505,7 @@ run_llmgw_post_deploy_verification_if_needed() {
   smoke_key="${LLMGW_POST_DEPLOY_SMOKE_KEY:-$gate_key}"
   protocol_canary_key="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY:-$smoke_key}"
   expect_commit="${LLMGW_POST_DEPLOY_EXPECT_COMMIT:-}"
+  release_features="${LLMGW_RELEASE_FEATURES:-defect-agent}"
 
   if [ -z "$gate_base" ]; then
     echo "ERROR: LLM Gateway post-deploy verification missing gate base." >&2
@@ -1492,8 +1534,9 @@ run_llmgw_post_deploy_verification_if_needed() {
     probe_args="$probe_args --expect-commit $expect_commit"
   fi
   echo "LLM Gateway post-deploy serving probe: required (readyz with key + healthz commit stability + no-key auth)"
+  echo "LLM Gateway release feature scope: $release_features (read-only metadata routing; no model calls)"
   # shellcheck disable=SC2086
-  LLMGW_GATE_KEY="$gate_key" python3 scripts/llmgw-serving-probe.py $probe_args
+  LLMGW_GATE_KEY="$gate_key" LLMGW_RELEASE_FEATURES="$release_features" python3 scripts/llmgw-serving-probe.py $probe_args
 
   if [ "${LLMGW_POST_DEPLOY_RUN_SMOKE:-1}" != "0" ]; then
     echo "LLM Gateway post-deploy D-layer smoke: required (healthz/pools/send/stream/client-stream/canary)"

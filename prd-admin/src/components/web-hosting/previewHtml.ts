@@ -95,6 +95,23 @@ export function hasFetchableHtml(site: {
 }
 
 /**
+ * 多文件网站需要真实 URL 和来源：srcDoc 下 location.href 是 about:srcdoc，
+ * 即使注入 base 也无法恢复 URL 构造、查询参数、子页面通信与同源 fetch。
+ * 仅使用服务端文件清单分类，不扫描或改写用户脚本。包装站保持原有专用流程；
+ * 未下发分类的旧服务端沿用原策略，不能拿文件数量猜（生成站包含系统 sidecar）。
+ */
+export function shouldFetchPreviewHtml(site: Parameters<typeof hasFetchableHtml>[0] & {
+  contentShape?: 'self-contained-html' | 'multi-file';
+  pdfFilePaths?: readonly string[];
+  requiresPreviewBridge?: boolean;
+}): boolean {
+  return hasFetchableHtml(site)
+    // PDF 课程的下载桥由内联正文注入；迁移前必须保留受控附件下载能力。
+    && (Boolean(site.wrappedAssetType) || site.requiresPreviewBridge === true
+      || Boolean(site.pdfFilePaths?.length) || site.contentShape !== 'multi-file');
+}
+
+/**
  * 这份 HTML 能不能安全地走 srcDoc 预览。
  *
  * srcDoc 路径刻意不给 allow-same-origin（否则用户上传的任意 HTML 就拿到 MAP 同源能力），
@@ -463,6 +480,15 @@ export const SRCDOC_PREVIEW_SANDBOX = 'allow-scripts allow-popups allow-forms';
 
 /** 直链 iframe 的 sandbox 组合。直链文档来自托管域名，本就与 MAP 不同源，给 same-origin 不会泄漏 MAP 凭据。 */
 export const DIRECT_PREVIEW_SANDBOX = 'allow-scripts allow-same-origin allow-popups allow-forms';
+
+/** 只有真实的跨源 HTTP(S) 托管页才可保留其自身来源；同源部署不能获得后台权限。 */
+export function directPreviewSandbox(siteUrl: string, parentOrigin = typeof location === 'undefined' ? '' : location.origin) {
+  try {
+    const url = new URL(siteUrl, parentOrigin);
+    if (/^https?:$/.test(url.protocol) && url.origin !== new URL(parentOrigin).origin) return DIRECT_PREVIEW_SANDBOX;
+  } catch { /* 无法证明隔离时保留不透明来源 */ }
+  return SRCDOC_PREVIEW_SANDBOX;
+}
 
 /** iframe 这一刻该拿什么当内容源。 */
 export type PreviewSource =

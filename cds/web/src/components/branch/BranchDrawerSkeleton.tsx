@@ -58,7 +58,7 @@ export function BranchDrawerSkeleton({ status }: { /** 父组件经 SSE 透传�
         </div>
 
         {/* 1.5 关系：与 RelationCard 的行式加载态是同一个组件 */}
-        <RelationCardSkeleton variant="row" badge="等分支详情" note="分支详情到了就开始体检，通常 1 秒内完成" />
+        <RelationCardSkeleton variant="row" badge="等分支详情" />
 
         {/* 3. 曲线：CPU 图满宽 + 下面两块并排，与总览出图前用的是同一个骨架 */}
         <div className="flex flex-col gap-3">

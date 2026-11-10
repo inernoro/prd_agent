@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -384,6 +385,7 @@ public class AutomationHub : IAutomationHub
         // 创建执行实例
         var execution = new WorkflowExecution
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             WorkflowId = workflow.Id,
             WorkflowName = workflow.Name,
             TriggerType = WorkflowTriggerTypes.Event,

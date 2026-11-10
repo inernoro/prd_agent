@@ -6,6 +6,8 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.LlmGateway.Asr;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services;
 
@@ -22,13 +24,16 @@ public sealed class DocumentStoreLiveTranscriptionRelay
 
     private readonly IConfiguration _configuration;
     private readonly ILogger<DocumentStoreLiveTranscriptionRelay> _logger;
+    private readonly ITaskExecutionAuthorizer? _taskAuthorizer;
 
     public DocumentStoreLiveTranscriptionRelay(
         IConfiguration configuration,
-        ILogger<DocumentStoreLiveTranscriptionRelay> logger)
+        ILogger<DocumentStoreLiveTranscriptionRelay> logger,
+        ITaskExecutionAuthorizer? taskAuthorizer = null)
     {
         _configuration = configuration;
         _logger = logger;
+        _taskAuthorizer = taskAuthorizer;
     }
 
     public async Task<LiveAsrSessionResult> RelayAsync(WebSocket browser, string userId, string sessionId)
@@ -40,17 +45,14 @@ public sealed class DocumentStoreLiveTranscriptionRelay
         };
 
         using var gateway = new ClientWebSocket();
-        gateway.Options.SetRequestHeader("X-Gateway-Key", _configuration["LlmGwServe:ApiKey"] ?? string.Empty);
-        gateway.Options.SetRequestHeader("X-Gateway-Source", "map");
-        gateway.Options.SetRequestHeader(
-            "X-Gateway-App-Caller",
-            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio);
-        gateway.Options.SetRequestHeader("X-Gateway-User-Id", userId);
-        gateway.Options.SetRequestHeader("X-Request-Id", $"live-asr-{sessionId}");
-
         var latest = new LiveAsrSessionResult { Degraded = true, Error = "实时转写未启动" };
         try
         {
+            // WebSocket 不经过 IHttpClientFactory，用同一 authorizer 核验 HTTP 握手后仅复制获权头。
+            using var handshake = await PrepareHandshakeAsync(baseUrl, _configuration["LlmGwServe:ApiKey"] ?? string.Empty,
+                _taskAuthorizer, userId, sessionId, CancellationToken.None);
+            foreach (var header in handshake.Headers)
+                gateway.Options.SetRequestHeader(header.Key, string.Join(",", header.Value));
             using (var connectDeadline = new CancellationTokenSource(GatewayConnectTimeout))
             {
                 try
@@ -155,6 +157,33 @@ public sealed class DocumentStoreLiveTranscriptionRelay
         }
 
         return latest;
+    }
+
+    internal static async Task<HttpRequestMessage> PrepareHandshakeAsync(string baseUrl, string gatewayKey,
+        ITaskExecutionAuthorizer? taskAuthorizer, string userId, string sessionId, CancellationToken ct)
+    {
+        var handshake = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/gw/v1/asr/live");
+        try
+        {
+            var caller = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio;
+            var context = new GatewayRequestContext
+            {
+                UserId = userId, SessionId = sessionId, RequestId = $"live-asr-{sessionId}",
+                SourceSystem = "map", IngressProtocol = "gw-native", GatewayTransport = GatewayTransports.Http,
+            };
+            handshake.Headers.Add("X-Gateway-Key", gatewayKey);
+            handshake.Headers.Add("X-Gateway-Source", "map");
+            handshake.Headers.Add("X-Gateway-App-Caller", caller);
+            handshake.Headers.Add("X-Gateway-User-Id", userId);
+            handshake.Headers.Add("X-Request-Id", context.RequestId);
+            await AuthorizedGatewayRequest.PrepareAsync(handshake, taskAuthorizer, caller, context, ct);
+            handshake.Headers.Remove("X-Gateway-User-Id");
+            handshake.Headers.TryAddWithoutValidation("X-Gateway-User-Id", context.UserId);
+            if (!string.IsNullOrWhiteSpace(context.RunId))
+                handshake.Headers.TryAddWithoutValidation("X-Gateway-Run-Id", context.RunId);
+            return handshake;
+        }
+        catch { handshake.Dispose(); throw; }
     }
 
     internal static bool CanPersistCompletedTranscript(bool explicitlyFinished, LiveAsrEvent evt)

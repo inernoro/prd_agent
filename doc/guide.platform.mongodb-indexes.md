@@ -25,6 +25,12 @@ OpenDesign 直连 LLMGW 使用的 `llmgw_runtime_grants` 需要三条人工维�
 过期时间 TTL 索引，以及租户与任务联合索引。它们只在网关库生效；首次初始化空网关库时，
 DBA 必须按脚本说明设置 `PRD_GATEWAY_DB=1` 后执行清单。API 和 LLMGW 启动过程都不会创建这些索引。
 
+网关最低消费保护的三条辅助索引也只在网关库由 DBA 按上述清单手工维护：
+`llmgw_consumption_rate_windows.ttl_llmgw_consumption_windows` 清理过期窗口，
+`llmgw_consumption_rate_windows.idx_llmgw_consumption_baseline_scope_window` 加速同范围历史基线查询，
+`llmgw_consumption_alerts.idx_llmgw_consumption_alerts_tenant_status_created` 服务告警列表。
+请求路径不创建或修改索引；计数与告警的确定性 `_id` 及 MongoDB 内建唯一索引继续保证幂等。
+
 网页托管的删除清理新增两项人工维护索引：`hosted_sites` 的
 `idx_hosted_sites_asset_cleanup_due`（只收还欠着待删对象的站点）与 `hosted_site_deletion_tasks` 的
 `idx_hosted_site_deletion_due`。两者都服务于按分钟轮询的清理任务——没有它们，每一轮空扫都是
@@ -41,6 +47,11 @@ DBA 必须按脚本说明设置 `PRD_GATEWAY_DB=1` 后执行清单。API 和 LLM
 不影响正确性。同样只通过 DBA 清单创建。
 
 ## 2. 执行
+
+多上游语音新增 `speech_runs` 的队列、租约、额度补偿和个人历史索引，以及 `speech_presets`
+的个人环境索引，索引名分别以 `idx_speech_runs_`、`idx_speech_presets_` 开头。
+配置与额度账本通过固定主键访问，幂等任务也复用唯一主键，不需要额外唯一索引。
+这些索引只通过 DBA 清单维护，语音 Worker 不会在启动时建索引。
 
 确认目标连接串和数据库名称后，由 DBA 在维护窗口执行：
 

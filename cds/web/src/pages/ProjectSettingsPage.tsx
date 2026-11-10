@@ -1,3 +1,6 @@
+import { ProjectSettingsRefreshContext, useProjectSettingsRefresh, useSettingsReadRequest, type SettingsRead, mergeCleanSettings } from '@/components/project/ProjectSettingsRefresh';
+import { SettingsPageSkeleton } from '@/components/skeletons/SettingsSkeleton';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -470,20 +473,36 @@ function useProject(projectId: string | undefined): {
   state: ProjectState;
   refresh: () => Promise<void>;
   setProject: (project: ProjectSummary) => void;
+  refreshing: boolean;
+  refreshError: string;
 } {
   const [state, setState] = useState<ProjectState>({ status: 'loading' });
+  const request = useRef<AbortController | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
 
   const refresh = useCallback(async () => {
     if (!projectId) {
       setState({ status: 'error', message: '缺少项目 ID' });
       return;
     }
-    setState({ status: 'loading' });
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    setRefreshing(true);
+    setRefreshError('');
+    setState(prev => prev.status === 'ok' && prev.project.id === projectId ? prev : { status: 'loading' });
     try {
-      const project = await apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`);
-      setState({ status: 'ok', project });
+      const project = await apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`, { signal: controller.signal });
+      if (!controller.signal.aborted) setState({ status: 'ok', project });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (!controller.signal.aborted) {
+        const message = messageFromError(err);
+        setRefreshError(message);
+        setState(prev => prev.status === 'ok' && prev.project.id === projectId ? prev : { status: 'error', message });
+      }
+    } finally {
+      if (!controller.signal.aborted) setRefreshing(false);
     }
   }, [projectId]);
 
@@ -511,17 +530,24 @@ function useProject(projectId: string | undefined): {
 
   useEffect(() => {
     void refresh();
+    return () => request.current?.abort();
   }, [refresh]);
 
   return {
-    state,
+    state: state.status === 'ok' && state.project.id !== projectId ? { status: 'loading' } : state,
     refresh,
+    refreshing,
+    refreshError,
     /*
      * 收在这一处，而不是让每个保存回调各自记得补 —— 保存路径有十来条，
      * 「同一份处理抄十遍、改一处忘九处」在这个 PR 里已经栽过好几次。
      * 先带着旧值落地（不闪），再静默取权威值（绑/解绑之后事实变了也能跟上）。
      */
     setProject: (project) => {
+      // 保存结果比保存前发出的 GET 更新；不允许旧快照覆盖刚接受的写入。
+      request.current?.abort();
+      setRefreshing(false);
+      setRefreshError('');
       setState((prev) => ({
         status: 'ok',
         project: preserveRepoSharing(prev.status === 'ok' ? prev.project : null, project),
@@ -533,7 +559,33 @@ function useProject(projectId: string | undefined): {
 
 export function ProjectSettingsPage(): JSX.Element {
   const { projectId } = useParams<{ projectId: string }>();
-  const { state, refresh, setProject } = useProject(projectId);
+  const { state, refresh: refreshProject, setProject, refreshing: refreshingProject, refreshError } = useProject(projectId);
+  const reads = useRef(new Set<SettingsRead>());
+  const registerRead = useCallback((read: SettingsRead) => {
+    reads.current.add(read);
+    return () => { reads.current.delete(read); };
+  }, []);
+  const [refreshingTabs, setRefreshingTabs] = useState(false);
+  const [tabRefreshError, setTabRefreshError] = useState('');
+  const refreshSequence = useRef(0);
+  useEffect(() => {
+    setRefreshingTabs(false); setTabRefreshError('');
+    return () => { refreshSequence.current++; };
+  }, [projectId]);
+  const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current;
+    setRefreshingTabs(true);
+    setTabRefreshError('');
+    try {
+      const results = await Promise.allSettled([refreshProject(), ...Array.from(reads.current, read => read())]);
+      if (sequence !== refreshSequence.current) return;
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (failed) setTabRefreshError(messageFromError(failed.reason));
+    } finally {
+      if (sequence === refreshSequence.current) setRefreshingTabs(false);
+    }
+  }, [refreshProject]);
+  const refreshing = refreshingProject || refreshingTabs;
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
   const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
@@ -584,6 +636,7 @@ export function ProjectSettingsPage(): JSX.Element {
    * Tab list and content surfaces upgrade to surface-raised tokens.
    */
   return (
+    <ProjectSettingsRefreshContext.Provider value={registerRead}>
     <AppShell
       active="projects"
       topbar={
@@ -629,7 +682,8 @@ export function ProjectSettingsPage(): JSX.Element {
                 variant="ghost"
                 size="icon"
                 onClick={() => void refresh()}
-                aria-label="刷新项目设置"
+                disabled={refreshing}
+                aria-label={refreshing ? '正在刷新项目设置' : '刷新项目设置'}
                 title="刷新"
               >
                 <RefreshCw />
@@ -641,10 +695,9 @@ export function ProjectSettingsPage(): JSX.Element {
       }
     >
       <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+        {(refreshError || tabRefreshError) && state.status === 'ok' ? <p role="alert" className="px-6 py-3 text-sm text-destructive">刷新失败：{refreshError || tabRefreshError}；当前显示上次读取的内容。</p> : null}
         {state.status === 'loading' ? (
-          <div className="p-6">
-            <LoadingBlock label="加载项目设置" />
-          </div>
+          <SettingsPageSkeleton label="加载项目设置" />
         ) : null}
         {state.status === 'error' ? (
           <div className="space-y-4 p-6">
@@ -785,6 +838,7 @@ export function ProjectSettingsPage(): JSX.Element {
         ) : null}
       </Workspace>
     </AppShell>
+    </ProjectSettingsRefreshContext.Provider>
   );
 }
 
@@ -904,8 +958,12 @@ function RuntimeDefaultsTab({
   const [aligning, setAligning] = useState(false);
   const [error, setError] = useState('');
 
+  const previousModes = useRef(project.defaultDeployModes || {});
   useEffect(() => {
-    setModes(project.defaultDeployModes || {});
+    const previous = previousModes.current;
+    const next = project.defaultDeployModes || {};
+    setModes(current => mergeCleanSettings(current, previous, next));
+    previousModes.current = next;
   }, [project.defaultDeployModes]);
 
   // 当前下拉选择是否与「已保存」的项目默认有出入。align-deploy-modes 后端按
@@ -942,22 +1000,19 @@ function RuntimeDefaultsTab({
     }
   }
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+  const beginRead = useSettingsReadRequest();
+  const loadProfiles = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setLoading(true);
     setError('');
-    apiRequest<BuildProfilesResponse>(`/api/build-profiles?project=${encodeURIComponent(projectId)}`)
-      .then((res) => {
-        if (!cancelled) setProfiles(res.profiles || []);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(messageFromError(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [projectId]);
+    try {
+      const res = await apiRequest<BuildProfilesResponse>(`/api/build-profiles?project=${encodeURIComponent(projectId)}`, { signal });
+      if (!signal.aborted) setProfiles(res.profiles || []);
+    } catch (err) { if (!signal.aborted) setError(messageFromError(err)); }
+    finally { if (!signal.aborted) setLoading(false); }
+  }, [projectId, beginRead]);
+  useEffect(() => { void loadProfiles(); }, [loadProfiles]);
+  useProjectSettingsRefresh(() => loadProfiles(true));
 
   async function saveDefaults(): Promise<void> {
     setSaving(true);
@@ -1105,8 +1160,12 @@ function ReadinessFloorSection({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const previousSeconds = useRef(initial);
   useEffect(() => {
-    setSeconds(Number(project.deployReadinessFloorSeconds) || 0);
+    const previous = previousSeconds.current;
+    const next = Number(project.deployReadinessFloorSeconds) || 0;
+    setSeconds(current => current === previous ? next : current);
+    previousSeconds.current = next;
   }, [project.deployReadinessFloorSeconds]);
 
   async function save(): Promise<void> {
@@ -1194,10 +1253,13 @@ function AutoLifecycleSection({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const previousPublish = useRef(initialPublish);
   useEffect(() => {
-    const p = Number(project.autoPublishAfterMinutes) || 0;
-    setPublishEnabled(p > 0);
-    setPublishMinutes(p > 0 ? p : 3);
+    const previous = previousPublish.current;
+    const next = Number(project.autoPublishAfterMinutes) || 0;
+    setPublishEnabled(current => current === (previous > 0) ? next > 0 : current);
+    setPublishMinutes(current => current === (previous > 0 ? previous : 3) ? (next > 0 ? next : 3) : current);
+    previousPublish.current = next;
   }, [project.autoPublishAfterMinutes]);
 
   async function save(): Promise<void> {
@@ -1322,15 +1384,25 @@ export function GeneralTab({
     }
   }
 
+  const previousProject = useRef(project);
+  const acceptSavedDraft = useRef(false);
   useEffect(() => {
-    setName(project.name || '');
-    setAliasName(project.aliasName || '');
-    setSlug(project.slug);
-    setDescription(project.description || '');
-    setGitRepoUrl(project.gitRepoUrl || '');
-    setAutoSmokeEnabled(Boolean(project.autoSmokeEnabled));
-    setAgentPrebuiltOnly(Boolean(project.agentPrebuiltOnly));
-    setResourceChipDisplay(normalizeResourceChipDisplay(project.resourceChipDisplay));
+    const previous = previousProject.current;
+    const changedProject = previous.id !== project.id || acceptSavedDraft.current;
+    acceptSavedDraft.current = false;
+    // 刷新同步远端变化，同时保留用户尚未保存的字段；骨架和后台刷新都不能抹掉输入。
+    setName(value => changedProject || value === (previous.name || '') ? project.name || '' : value);
+    setAliasName(value => changedProject || value === (previous.aliasName || '') ? project.aliasName || '' : value);
+    setSlug(value => changedProject || value === previous.slug ? project.slug : value);
+    setDescription(value => changedProject || value === (previous.description || '') ? project.description || '' : value);
+    setGitRepoUrl(value => changedProject || value === (previous.gitRepoUrl || '') ? project.gitRepoUrl || '' : value);
+    setAutoSmokeEnabled(value => changedProject || value === Boolean(previous.autoSmokeEnabled) ? Boolean(project.autoSmokeEnabled) : value);
+    setAgentPrebuiltOnly(value => changedProject || value === Boolean(previous.agentPrebuiltOnly) ? Boolean(project.agentPrebuiltOnly) : value);
+    setResourceChipDisplay(value => {
+      const old = normalizeResourceChipDisplay(previous.resourceChipDisplay);
+      return changedProject || value.icon === old.icon && value.name === old.name && value.port === old.port ? normalizeResourceChipDisplay(project.resourceChipDisplay) : value;
+    });
+    previousProject.current = project;
   }, [project]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -1361,6 +1433,7 @@ export function GeneralTab({
           resourceChipDisplay,
         },
       });
+      acceptSavedDraft.current = true;
       onSaved(result.project);
       onToast('项目设置已保存');
     } catch (err) {
@@ -1646,26 +1719,22 @@ function RecentAutoDeploys({ projectId }: { projectId: string }): JSX.Element | 
   const [items, setItems] = useState<Item[] | null>(null);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await apiRequest<{ items: Item[] }>(
-          `/api/projects/${encodeURIComponent(projectId)}/recent-auto-deploys?limit=5`,
-        );
-        if (cancelled) return;
-        setItems(Array.isArray(r?.items) ? r.items : []);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : String(err));
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [projectId]);
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async () => {
+    const signal = beginRead(); setError('');
+    try {
+      const r = await apiRequest<{ items: Item[] }>(`/api/projects/${encodeURIComponent(projectId)}/recent-auto-deploys?limit=5`, { signal });
+      if (!signal.aborted) setItems(Array.isArray(r?.items) ? r.items : []);
+    } catch (err) {
+      if (!signal.aborted) setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }, [projectId, beginRead]);
+  useEffect(() => { void load(); }, [load]);
+  useProjectSettingsRefresh(load);
 
-  if (error) return null; // 旧 CDS 没这个端点,静默不显示
+  if (error && !items) return null; // 旧 CDS 没这个端点,静默不显示
   if (!items) {
-    return <div className="text-xs text-muted-foreground">正在读取自动部署历史…</div>;
+    return <ContentLoading label="读取自动部署历史" />;
   }
   if (items.length === 0) {
     return (
@@ -1783,15 +1852,22 @@ function GithubProjectTab({
   const [botPushFilterSaving, setBotPushFilterSaving] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
 
-  const loadApp = useCallback(async () => {
-    setAppState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const loadApp = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setAppState({ status: 'loading' });
     try {
-      const app = await apiRequest<GithubAppStatus>('/api/github/app');
+      const app = await apiRequest<GithubAppStatus>('/api/github/app', { signal });
+      if (signal.aborted) return;
       setAppState({ status: 'ok', app });
     } catch (err) {
-      setAppState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setAppState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, []);
+  }, [beginRead]);
+  useProjectSettingsRefresh(() => loadApp(true));
 
   useEffect(() => {
     void loadApp();
@@ -2334,25 +2410,36 @@ function CommentTemplateTab({
   const [saving, setSaving] = useState(false);
   const [previewing, setPreviewing] = useState(false);
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const savedBody = useRef('');
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
       const data = await apiRequest<CommentTemplateResponse>(
-        `/api/comment-template?projectId=${encodeURIComponent(projectId)}`,
+        `/api/comment-template?projectId=${encodeURIComponent(projectId)}`, { signal },
       );
-      setState({
+      if (signal.aborted) return;
+      const previous = savedBody.current;
+      const body = data.body || data.defaultBody || '';
+      savedBody.current = body;
+      setState(current => ({
         status: 'ok',
-        body: data.body || data.defaultBody || '',
+        body: preserve && current.status === 'ok' && current.body !== previous ? current.body : body,
         defaultBody: data.defaultBody || '',
         variables: data.variables || [],
         updatedAt: data.updatedAt || null,
         isDefault: Boolean(data.isDefault),
         preview: '',
-      });
+      }));
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, [projectId]);
+  }, [projectId, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -2392,6 +2479,8 @@ function CommentTemplateTab({
           body: { body: state.body },
         },
       );
+      beginRead.cancel();
+      savedBody.current = result.body || '';
       setState({ ...state, body: result.body || '', updatedAt: result.updatedAt, isDefault: !result.body });
       onToast(result.body ? '评论模板已保存' : '评论模板已恢复默认');
     } catch (err) {
@@ -2503,15 +2592,22 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
   const [purgeTarget, setPurgeTarget] = useState<DisplayCacheDir | null>(null);
   const [purging, setPurging] = useState(false);
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
-      const data = await apiRequest<CacheStatusResponse>('/api/cache/status');
+      const data = await apiRequest<CacheStatusResponse>('/api/cache/status', { signal });
+      if (signal.aborted) return;
       setState({ status: 'ok', data });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, []);
+  }, [beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -2882,15 +2978,22 @@ function BranchStats({ projectId }: { projectId: string }): JSX.Element {
     | { status: 'ok'; branches: BranchSummary[] }
   >({ status: 'loading' });
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
       const data = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`);
+      if (signal.aborted) return;
       setState({ status: 'ok', branches: data.branches || [] });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, [projectId]);
+  }, [projectId, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -2946,17 +3049,24 @@ function ActivityTab({ projectId }: { projectId: string }): JSX.Element {
     | { status: 'ok'; logs: ActivityLogEntry[] }
   >({ status: 'loading' });
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
       const data = await apiRequest<ActivityLogsResponse>(
         `/api/projects/${encodeURIComponent(projectId)}/activity-logs?limit=50`,
       );
+      if (signal.aborted) return;
       setState({ status: 'ok', logs: data.logs || [] });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, [projectId]);
+  }, [projectId, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -3195,6 +3305,8 @@ const activityTypeLabels: Record<string, string> = {
   'ai-release': 'AI 占用结束',
   'branch-deleted': '删除分支',
   'branch-created': '创建分支',
+  'branch-archived': '归档分支',
+  'branch-restored': '恢复归档',
 };
 
 interface ProjectDeliveryResponse {
@@ -3227,16 +3339,27 @@ function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast
   const [specText, setSpecText] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const savedSpec = useRef('');
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
       const data = await apiRequest<ProjectDeliveryResponse>(`/api/projects/${encodeURIComponent(projectId)}/delivery`);
+      if (signal.aborted) return;
       setState({ status: 'ok', data });
-      setSpecText(JSON.stringify(data.managedSpec || { apps: [], capabilities: [] }, null, 2));
+      const previous = savedSpec.current;
+      const next = JSON.stringify(data.managedSpec || { apps: [], capabilities: [] }, null, 2);
+      savedSpec.current = next;
+      setSpecText(current => preserve && current !== previous ? current : next);
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, [projectId]);
+  }, [projectId, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => { void load(); }, [load]);
 
@@ -3423,20 +3546,32 @@ function ProjectComposeTab({
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const savedYaml = useRef('');
+  const [readError, setReadError] = useState('');
+  const beginRefreshRead = useSettingsReadRequest();
+  const refresh = useCallback(async (preserve = false) => {
+    const signal = beginRefreshRead();
+    setReadError('');
     try {
-      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose`), { credentials: 'include' });
+      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose`), { credentials: 'include', signal });
       const body = await res.json();
-      if (!res.ok) { onToast(`加载失败:${body.error || res.status}`); return; }
+      if (signal.aborted) return;
+      if (!res.ok) { setReadError(body.error || String(res.status)); onToast(`加载失败:${body.error || res.status}`); return; }
       setData(body as ProjectComposeResponse);
-      setDraft(body.yaml || '');
-      setDirty(false);
+      const previous = savedYaml.current;
+      const next = body.yaml || '';
+      savedYaml.current = next;
+      setDraft(current => preserve && current !== previous ? current : next);
+      if (!preserve) setDirty(false);
     } catch (err) {
+      if (signal.aborted) return;
+      setReadError((err as Error).message);
       onToast(`加载异常:${(err as Error).message}`);
     }
-  }, [projectId, onToast]);
+  }, [projectId, onToast, beginRefreshRead]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useProjectSettingsRefresh(() => refresh(true));
 
   const onSave = useCallback(async () => {
     if (!draft.trim()) { onToast('配置不能为空'); return; }
@@ -3467,6 +3602,7 @@ function ProjectComposeTab({
     }
   }, [draft, projectId, onToast, refresh]);
 
+  if (!data && readError) return <div className="space-y-3"><ErrorBlock message={readError} /><Button onClick={() => void refresh()}>重试</Button></div>;
   if (!data) return <LoadingBlock label="加载项目配置…" />;
 
   // 按权威分组统计
@@ -3678,36 +3814,44 @@ export function ProjectMigrationTab({
     setSavingStandby(false); setAuditingStandby(false); setSyncingBranches(null);
   }, [projectId]);
 
+  const beginPeersRead = useSettingsReadRequest();
   const loadPeers = useCallback(async () => {
+    const signal = beginPeersRead();
     const reqPid = projectId;
     try {
-      const res = await fetch(apiUrl(`${base}/peers`), { credentials: 'include' });
+      const res = await fetch(apiUrl(`${base}/peers`), { credentials: 'include', signal });
       const body = await res.json();
+      if (signal.aborted) return;
       if (reqPid !== liveProjectId.current) return; // 项目已切换,丢弃旧响应
-      if (!res.ok) { onToast(`加载迁移目标失败:${body.error || res.status}`); setPeers([]); return; }
+      if (!res.ok) { onToast(`加载迁移目标失败:${body.error || res.status}`); setPeers(previous => previous ?? []); return; }
       const list = (body.peers || []) as MigrationPeer[];
       setPeers(list);
       setSelectedPeerId((prev) => prev || (list[0]?.id ?? ''));
     } catch (err) {
+      if (signal.aborted) return;
       if (reqPid !== liveProjectId.current) return;
       onToast(`加载异常:${(err as Error).message}`);
-      setPeers([]); // 失败也要退出 loading,否则一直卡在「加载迁移设置…」(Bugbot「Migration tab infinite loading」)
+      setPeers(previous => previous ?? []); // 失败也要退出 loading,否则一直卡在「加载迁移设置…」(Bugbot「Migration tab infinite loading」)
     }
-  }, [base, onToast, projectId]);
+  }, [base, onToast, projectId, beginPeersRead]);
 
+  const beginPreviewRead = useSettingsReadRequest();
   const loadPreview = useCallback(async () => {
+    const signal = beginPreviewRead();
     const reqPid = projectId;
     try {
-      const res = await fetch(apiUrl(`${base}/config-preview`), { credentials: 'include' });
+      const res = await fetch(apiUrl(`${base}/config-preview`), { credentials: 'include', signal });
       const body = await res.json();
+      if (signal.aborted) return;
       if (reqPid !== liveProjectId.current) return; // 项目已切换,丢弃旧响应(防别项目 cds-compose + env 泄露)
       if (!res.ok) { onToast(`加载配置预览失败:${body.error || res.status}`); return; }
       setPreview(body as ConfigPreview);
     } catch (err) {
+      if (signal.aborted) return;
       if (reqPid !== liveProjectId.current) return;
       onToast(`加载异常:${(err as Error).message}`);
     }
-  }, [base, onToast, projectId]);
+  }, [base, onToast, projectId, beginPreviewRead]);
 
   const loadStandby = useCallback(async () => {
     const reqPid = projectId;
@@ -3732,6 +3876,7 @@ export function ProjectMigrationTab({
   }, [base, onToast, projectId]);
 
   useEffect(() => { void loadPeers(); void loadPreview(); void loadStandby(); }, [loadPeers, loadPreview, loadStandby]);
+  useProjectSettingsRefresh(() => Promise.all([loadPeers(), loadPreview(), loadStandby()]));
 
   useEffect(() => {
     if (!auditingStandby) { setAuditElapsedSeconds(0); return undefined; }
@@ -4310,22 +4455,31 @@ function ProjectStorageTab({
   const [data, setData] = useState<ProjectStorageResponse | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [readError, setReadError] = useState('');
+  const beginRefreshRead = useSettingsReadRequest();
   const refresh = useCallback(async () => {
+    const signal = beginRefreshRead();
+    setReadError('');
     setBusy(true);
     try {
-      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/storage`), { credentials: 'include' });
+      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/storage`), { credentials: 'include', signal });
       const body = await res.json();
-      if (!res.ok) { onToast(`加载失败：${body.error || res.status}`); return; }
+      if (signal.aborted) return;
+      if (!res.ok) { setReadError(body.error || String(res.status)); onToast(`加载失败：${body.error || res.status}`); return; }
       setData(body as ProjectStorageResponse);
     } catch (err) {
+      if (signal.aborted) return;
+      setReadError((err as Error).message);
       onToast(`加载异常：${(err as Error).message}`);
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
-  }, [projectId, onToast]);
+  }, [projectId, onToast, beginRefreshRead]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useProjectSettingsRefresh(refresh);
 
+  if (!data && readError) return <div className="space-y-3"><ErrorBlock message={readError} /><Button onClick={() => void refresh()}>重试</Button></div>;
   if (!data) return <LoadingBlock label="加载存储信息…" />;
 
   const disk = data.diskInfo;
@@ -4457,21 +4611,26 @@ function ProjectInfraTab({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [resyncOpen, setResyncOpen] = useState(false);
 
+  const beginRefreshRead = useSettingsReadRequest();
   const refresh = useCallback(async () => {
+    const signal = beginRefreshRead();
     try {
       setError(null);
       const data = await apiRequest<{ services?: ProjectInfraService[] }>(
-        `/api/infra?project=${encodeURIComponent(projectId)}&live=1`,
+        `/api/infra?project=${encodeURIComponent(projectId)}&live=1`, { signal },
       );
+      if (signal.aborted) return;
       setServices(data.services || []);
     } catch (err) {
+      if (signal.aborted) return;
       const msg = err instanceof ApiError ? err.message : (err as Error).message;
       setError(msg || '加载失败');
-      setServices([]);
+      setServices(previous => previous ?? []);
     }
-  }, [projectId]);
+  }, [projectId, beginRefreshRead]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useProjectSettingsRefresh(refresh);
 
   const doStart = useCallback(async (id: string) => {
     setBusy(id);

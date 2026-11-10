@@ -17,8 +17,13 @@ folders:
     name: 六、技术债务台账
   - prefix: report
     name: 七、报告与周报
+  - prefix: adr
+    name: 八、架构决策
+  - prefix: pdr
+    name: 九、产品决策
 
 docs:
+  plan.web-hosting.related-documents: "网页托管关联文档 · 计划"
   guide.cds.release-scripts: "CDS 项目发布脚本 · 指南"
   # 一、产品规格
   spec.cds.compose-contract: "cds-compose 契约 · SSOT · 规格"
@@ -40,6 +45,7 @@ docs:
   spec.prd: "PRD Agent 产品需求文档 · 规格"
   spec.prd-admin.recording-design-demo-request: "给设计方的画板请求（录音交付页）"
   spec.product-agent.pa: "毒舌秘书（PA Agent）产品规格 · 规格"
+  spec.product-agent.version-claims: "产品管理正式申领与历史追溯 · 规格"
   spec.project-vision: "项目愿景与背景 · 规格"
   spec.report-agent.phase5: "周报 Agent Phase 5 — 用户故事 · 规格"
   spec.report-agent.v2: "周报 Agent v2.0 产品需求 · 规格"
@@ -49,6 +55,7 @@ docs:
   spec.submission-gallery: "作品投稿与画廊展示 · 规格"
 
   # 二、设计文档
+  design.cds.project-status: "CDS 项目检查与通知总览 · 设计"
   design.acceptance.kb: "验收报告知识库 · 设计"
   design.acceptance.knowledge-governance: "MAP 自动化验收知识库治理 · 设计"
   design.acceptance.system: "功能验收体系 · 设计"
@@ -150,7 +157,7 @@ docs:
   design.prd-agent.bookshelf-digest: "公共藏书阁 · 精读稿 · 设计"
   design.prd-agent.bookshelf.exam: "公共藏书阁 · 结业考 · 判定口径"
   design.prd-agent.reprocess-chat-routing: "文档再加工智能体调用路由 · 设计"
-  design.product-agent: "产品管理智能体（product-agent）设计文档 · 设计"
+  design.product-agent: "产品管理智能体：产品结构与承重契约 · 设计"
   design.report-agent.ai-systems: "AI 周报系统市场调研 · 设计"
   design.report-agent: "周报管理 Agent (Report Agent) · 设计"
   design.report-agent.monthly: "周报管理 Agent · 月报 · 设计"
@@ -180,6 +187,7 @@ docs:
   guide.arena: "AI 竞技场使用 · 指南"
   guide.cds.agent.admin: "CDS Agent 管理员 · 指南"
   guide.cds.agent-onboarding-harness: "CDS Agent 上手助手 · 指南"
+  guide.cds.code-review-user-key: "代码审查使用自己的模型 Key · 指南"
   guide.cds.agent.code-review-quickstart: "CDS Agent 代码审查上手指南 · 指南"
   guide.cds.agent.next-agent-testing: "CDS Agent 下一代测试与涌现建议 · 指南"
   guide.cds.agent.runbook: "CDS Agent 运行手册 · 指南"
@@ -200,18 +208,29 @@ docs:
   guide.cds.github-app: "CDS GitHub App 接入与私有仓库部署 · 指南"
   guide.cds.github-webhook-events: "CDS GitHub Webhook 订阅配置指南 · 指南"
   guide.cds.host-migration: "CDS 宿主迁移 Runbook（拉取 / 构建 / 性能检查单） · 指南"
+  guide.cds.loading: "CDS 骨架维护与验收 · 指南"
   guide.cds.managed-delivery: "CDS 自动交付与 Agent 接入 · 指南"
   guide.cds.mongo-migration: "CDS 状态存储迁移到 MongoDB · 指南"
   guide.cds.multi-branch-db: "CDS 多分支数据库隔离指南(Phase 5) · 指南"
   guide.cds.one-click-deploy: "CDS 一键可视化部署 · 指南"
   guide.cds.orm-support: "CDS ORM 接入 · 指南"
   guide.cds.infra-credential-rotation: "CDS 基建凭据轮换 Runbook（操作智能体执行本）"
+  guide.cds.runtime-recovery: "同批运行容器恢复 · 指南"
   guide.cds.tutorial: "从零开始使用 CDS · 指南"
   guide.cds.view-parity: "CDS 列表视图  拓扑视图 功能对齐 · 指南"
   guide.cds.web-entry: "CDS 多 Web 入口配置与验收 · 指南"
   guide.cds.web-migration-runbook: "CDS Web 迁移运行手册 · 指南"
   guide.defect-agent: "缺陷管理 Agent 使用 · 指南"
   guide.infra-sandbox-agent: "基础设施 Sandbox Agent · 指南"
+  guide.doc.pri.adr: "ADR 文档原则：为未来的人留下架构选择的理由 · 指南"
+  guide.doc.pri.debt: "债务文档原则：让已知欠账有边界、有偿还条件 · 指南"
+  guide.doc.pri.design: "设计文档原则：解释当前方案如何成立 · 指南"
+  guide.doc.pri.guide: "指南文档原则：帮助读者完成一件具体的事 · 指南"
+  guide.doc.pri.pdr: "PDR 文档原则：产品的根、承重结构与决策记忆 · 指南"
+  guide.doc.pri.plan: "计划文档原则：把已知目标变成可推进的行动 · 指南"
+  guide.doc.pri.report: "报告文档原则：说明某一时间范围实际发生了什么 · 指南"
+  guide.doc.pri.rule: "规则文档原则：说明当前共同遵守的约束 · 指南"
+  guide.doc.pri.spec: "规格文档原则：说明当前产品必须做到什么 · 指南"
   guide.doc.reading-map: "百科全书导读 —— 人类怎么读这套文档 · 指南"
   guide.list.directory: "MAP 平台文档索引 · 指南"
   guide.literary-agent: "文学创作 Agent 使用 · 指南"
@@ -219,11 +238,13 @@ docs:
   guide.open-platform.open-api: "开放平台 Open API · 指南"
   guide.platform.active-tasks: "活动任务清单 · 指南"
   guide.platform.agent-onboarding: "Agent 开发入门 · 指南"
+  guide.platform.decision-practice: "从真实变更到决策记忆：产品试点与跨项目实操 · 指南"
+  guide.platform.decision-records: "决策治理：项目补足与跨项目推广 · 指南"
   guide.platform.development-guide: "PRD Agent 开发文档 · 指南"
   guide.platform.e2e-tests: "Playwright E2E 测试 · 指南"
   guide.platform.llm-gateway.acceptance-breadcrumbs: "LLM 网关验收面包屑清单 · 指南"
   guide.platform.llm-gateway.incident-recovery: "LLM Gateway 故障止血与恢复 · 指南"
-  guide.platform.mcp-connector: "MAP MCP 连接器接入 · 指南"
+  guide.platform.mcp-connector: "MAP 智能体连接器 · 指南"
   guide.platform.mongodb-indexes: "MongoDB 索引维护 · 指南"
   guide.platform.principles: "PRD Agent 系统原则速查（命名原则索引） · 指南"
   guide.platform.quickstart: "PRD Agent 快速部署 · 指南"
@@ -253,7 +274,7 @@ docs:
   rule.doc.maintenance: "文档维护与收敛 · 规则"
   rule.doc.readability: "文档说人话标准（导读三行 + 只写人类要掌控的层次） · 规则"
   rule.doc.naming: "文档命名规则（doc/） · 规则"
-  rule.doc.templates: "七类文档内容模板 · 规则"
+  rule.doc.templates: "文档内容与决策记录模板 · 规则"
   rule.frontend.default-editable: "默认可编辑原则 · 规则"
   rule.frontend.frontend-component-reuse: "前端组件复用 · 规则"
   rule.frontend.frontend-modal: "前端浮层布局 · 规则"
@@ -275,7 +296,14 @@ docs:
   rule.skill.system: "技能系统规则与创建 · 规则"
   rule.skill.trigger-disambiguation: "技能触发消歧 · 规则"
 
+  plan.platform.mcp-capability-completion: "MCP 接入与能力补齐 · 计划"
+
   # 五、计划
+  plan.platform.background-task-safety.phase0: "平台后台任务与消费最低保护 · 阶段 0 计划"
+  plan.platform.background-task-safety.phase1: "平台任务级准入与统一出口 · 阶段 1 计划"
+  plan.platform.background-task-safety.phase2: "平台业务幂等、执行租约与取消撤销 · 阶段 2 计划"
+  plan.defect-agent.reliability-closure: "缺陷可靠性后续闭环 · 计划"
+  plan.defect-agent.submit-reliability: "缺陷提交与 AI 润色可靠性排查 · 计划"
   plan.doc.readability.rollout: "文档说人话标准推广 · 计划"
   plan.ai-toolbox.text-assist: "AI 百宝箱文本辅助 · 计划"
   plan.cds.agent.official-sdk-migration: "CDS Agent 官方 SDK 商业闭环 · 计划"
@@ -313,6 +341,7 @@ docs:
   plan.platform.llm-gateway.resilience: "LLM Gateway 故障隔离与恢复 · 计划"
   plan.platform.llm-routing.capability-contract: "模型路由能力契约治理 · 状态看板"
   plan.platform.mcp-agent-console: "MCP 智能体接入台 · 计划"
+  plan.platform.mcp.speech: "MCP 多上游语音能力 · 计划"
   plan.product-agent.pa.competitive-improvements: "PA Agent 可执行任务升级 · 计划"
   plan.product-agent.version-workflow: "产品管理智能体版本流程收尾 · 计划"
   plan.report-agent.model-governance: "Report Agent 模型质量治理 · 计划"
@@ -322,6 +351,8 @@ docs:
   plan.visual-agent.optimization-backlog: "视觉创作 优化清单 · 计划"
 
   # 六、技术债务台账
+  debt.platform.background-task-safety: "平台后台任务与消费治理 · 债务台账"
+  debt.defect-agent.submit-reliability: "缺陷提交可靠性 · 债务台账"
   debt.acceptance-center-cds: "CDS 验收中心 · 债务台账"
   debt.acceptance.daily-anchors: "每日验收的锚点契约 · 债务台账"
   debt.acceptance.system: "功能验收体系 · 债务台账"
@@ -345,6 +376,7 @@ docs:
   debt.frontend: "前端 · 债务台账"
   debt.knowledge-base: "知识库 · 债务台账"
   debt.md-to-ppt: "MD 转网页 PPT · 债务台账"
+  debt.marketplace.activity: "海鲜市场时间与热度展示边界 · 债务台账"
   debt.platform.active-tasks: "活动任务清单 · 债务台账"
   debt.platform.agent-rule-scope: "Agent 规则作用域 · 债务台账"
   debt.open-platform.open-api: "开放平台 Open API · 债务台账"
@@ -420,3 +452,11 @@ docs:
   report.gw-test-matrix: "网关测试矩阵全量报告（grandfather 保留） · 报告"
   report.platform.llm-gateway.resilience-acceptance: "LLM Gateway 故障隔离与恢复 · 测试环境验收报告"
   report.web-hosting.ask-dock-handoff: "「向我提问」形变坞 · 交接清单"
+  # 八、架构决策
+  adr.doc.001.document-roles: "ADR-DOC-001 文档原则与决策记录分层 · 架构决策"
+  adr.doc.002.principle-location: "ADR-DOC-002 原则指南遵守统一文档位置与授权边界 · 架构决策"
+  adr.platform.001.llm-boundary: "ADR-PLATFORM-001 大模型调用统一归口 · 架构决策"
+  # 九、产品决策
+  pdr.platform.001.product-foundation: "PDR-PLATFORM-001 知识协作的产品根基与承重契约 · 产品决策"
+  pdr.product-agent.001.rule-evolution: "PDR-PRODUCT-001 重要业务规则保留历史适用依据 · 产品决策"
+  pdr.product-agent.002.version-claim-boundary: "PDR-PRODUCT-002 正式版本申领与后续资料分离 · 产品决策"

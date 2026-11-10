@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * 功能监控的证据区：本次判定 + 历史产物画廊。
  *
@@ -120,7 +121,7 @@ export function FunctionalEvidence({ monitorId }: { monitorId: string }): JSX.El
     return <p className="text-xs text-destructive">观测证据读取失败：{error}</p>;
   }
   if (!observations) {
-    return <p className="text-xs text-muted-foreground">正在读取观测证据…</p>;
+    return <ContentLoading label="读取观测证据" />;
   }
   if (observations.length === 0) {
     // 说清是「还没跑过」而不是「没有这个能力」——两者的下一步完全不同。

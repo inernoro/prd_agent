@@ -856,7 +856,8 @@ describe('主题系统契约', () => {
     const artworkDir = path.join(ADMIN_ROOT, 'src/assets/agent-card-art');
     const lightArtwork = fs.readdirSync(artworkDir).filter((name) => name.endsWith('-light.webp'));
 
-    expect(packageJson.scripts.build).toBe('tsc && vite build');
+    // Vite 统一使用镜像已采用的 4 GB 堆上限，普通 CI 的默认 2 GB 会在转换阶段 OOM。
+    expect(packageJson.scripts.build).toBe('tsc && node --max-old-space-size=4096 node_modules/vite/bin/vite.js build');
     expect(dockerfile).toContain('pnpm run build');
     expect(dockerfile).toContain('COPY --from=builder /app/dist ./dist');
     expect(lightArtwork).toHaveLength(new Set([

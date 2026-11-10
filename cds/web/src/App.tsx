@@ -1,8 +1,10 @@
+import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
+import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
 import { Component, lazy, Suspense, useEffect, type ErrorInfo, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { reportDashboardRenderError } from '@/lib/client-diagnostics';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 // ConsoleLayout 故意走静态 import:外壳(侧栏/命令面板/全局徽章)进入口 chunk,
 // 首次进控制台立即渲染 chrome,只有页面内容走 lazy —— 这是"切页不卡"的另一半。
 import { ConsoleLayout, OwnerConsoleRoute } from '@/components/layout/AppShell';
@@ -27,17 +29,21 @@ const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').the
 const ReleaseCenterPage = lazy(() => import('@/pages/ReleaseCenterPage').then((m) => ({ default: m.ReleaseCenterPage })));
 const ReleaseConsolePage = lazy(() => import('@/pages/ReleaseConsolePage').then((m) => ({ default: m.ReleaseConsolePage })));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
+const CodeReviewsPage = lazy(() => import('@/pages/CodeReviewsPage').then((m) => ({ default: m.CodeReviewsPage })));
+const ProjectStatusPage = lazy(() => import('@/pages/ProjectStatusPage').then((m) => ({ default: m.ProjectStatusPage })));
 const StatusPage = lazy(() => import('@/pages/StatusPage').then((m) => ({ default: m.StatusPage })));
 const TaskSchedulePage = lazy(() => import('@/pages/TaskSchedulePage').then((m) => ({ default: m.TaskSchedulePage })));
 
 /**
- * 路由切换时 Suspense fallback。用品牌 logo + 加载文案,跟 CDS 视觉调性一致。
+ * 独立页面代码尚未到达时，使用共享内容骨架。
  * 2026-05-28 用户反馈:之前是裸 <div>加载中...</div> 一行小字,丑爆。
  */
 function RouteFallback(): JSX.Element {
+  const { pathname } = useLocation();
+  if (loadingSceneForPath(pathname)?.scope === 'standalone') return pageSkeletonForPath(pathname);
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
-      <CdsLogoLoader size="xl" inline={false} label={<span className="text-sm text-muted-foreground">加载中…</span>} />
+      <ContentLoading label="加载页面" variant="panel" className="max-w-5xl p-6" />
     </div>
   );
 }
@@ -279,6 +285,7 @@ export function App(): JSX.Element {
               <Route path="/branch-panel" element={<BranchDetailPage />} />
               <Route path="/branch-panel/:branchId" element={<BranchDetailPage />} />
               <Route path="/branch-relations/:branchId" element={<BranchRelationsPage />} />
+              <Route path="/code-reviews" element={<CodeReviewsPage />} />
               <Route element={<OwnerConsoleRoute />}>
               <Route path="/branch-topology" element={<BranchTopologyPage />} />
               <Route path="/overview" element={<OverviewPage />} />
@@ -286,6 +293,7 @@ export function App(): JSX.Element {
               <Route path="/release-console" element={<ReleaseConsolePage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/status" element={<StatusPage />} />
+              <Route path="/status/:projectId" element={<ProjectStatusPage />} />
               <Route path="/task-schedule" element={<TaskSchedulePage />} />
               <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
               <Route path="/agent-requests/:projectId" element={<AgentRequestsPage />} />

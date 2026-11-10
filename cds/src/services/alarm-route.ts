@@ -1,4 +1,6 @@
 import { identityLabel, type AlarmIdentity } from './alarm-identity.js';
+import { classifyAlert as sharedClassifyAlert, type AlarmEventKind } from '../shared/alarm-classification.js';
+export type { AlarmEventKind } from '../shared/alarm-classification.js';
 /*
  * alarm-route —— 「哪些出问题通知谁」的判定层，纯函数。
  *
@@ -31,7 +33,6 @@ export type AlarmChannelKind = 'bark' | 'webhook' | 'map';
  * 就有 5 条推送打到手机。**合并的那一档里，业务的份额接近于零**——
  * 它名义上叫「恢复」，实际上是「分支预览重建播报」。
  */
-export type AlarmEventKind = 'business-down' | 'business-recovered' | 'infra-down' | 'infra-recovered';
 
 export const ALARM_EVENT_KINDS: ReadonlyArray<AlarmEventKind> = [
   'business-down', 'business-recovered', 'infra-down', 'infra-recovered',
@@ -94,6 +95,21 @@ export interface AlarmLastDelivery {
   kind: 'alert' | 'drill';
   reason?: string;
   status?: number;
+}
+
+/** Persisted selection; an absent default preserves existing subscriptions. */
+export interface MonitorNotificationSettings {
+  defaultChannelIds?: string[];
+  overrides?: Record<string, string[]>;
+  mutedUntil?: Record<string, number>;
+  acknowledgedAt?: Record<string, number>;
+}
+
+export function notificationChannelSelected(settings: MonitorNotificationSettings | undefined, targetId: string | undefined, channelId: string, now = Date.now()): boolean {
+  if (targetId && (settings?.mutedUntil?.[targetId] ?? 0) > now) return false;
+  const selected = targetId && Object.prototype.hasOwnProperty.call(settings?.overrides ?? {}, targetId)
+    ? settings?.overrides?.[targetId] : settings?.defaultChannelIds;
+  return selected === undefined || selected.includes(channelId);
 }
 
 export interface AlarmChannelConfig {
@@ -168,9 +184,7 @@ export interface AlarmEvent {
  * （能用状态就用状态，拿不到状态才退回匹配字符串）。
  */
 export function classifyAlert(type: UptimeAlertEventType, source: ProbeSource): AlarmEventKind {
-  const business = source === 'custom';
-  if (type === 'uptime.target.recovered') return business ? 'business-recovered' : 'infra-recovered';
-  return business ? 'business-down' : 'infra-down';
+  return sharedClassifyAlert(type, source);
 }
 
 /**
@@ -183,9 +197,10 @@ export function classifyAlert(type: UptimeAlertEventType, source: ProbeSource): 
 export function routeAlarm(
   channels: ReadonlyArray<AlarmChannelConfig>,
   event: AlarmEvent,
+  settings?: MonitorNotificationSettings,
 ): AlarmChannelConfig[] {
   return channels.filter((c) => {
-    if (!c.enabled) return false;
+    if (!c.enabled || !notificationChannelSelected(settings, event.targetId, c.id)) return false;
     // 存量订阅里可能还写着旧名字，这里归一化后再比，不要求写方先迁移。
     if (!c.events.some((e) => normalizeEventKind(e) === event.kind)) return false;
     if (c.projects.length > 0 && !c.projects.includes(event.projectId)) return false;

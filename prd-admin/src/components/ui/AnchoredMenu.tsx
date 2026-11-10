@@ -161,6 +161,9 @@ export function AnchoredMenu({
       if (e.key === 'Escape') onClose();
     };
     // 捕获阶段监听滚动，任意祖先滚动都能跟随
+    // 列表切换、标签筛选等会改变菜单尺寸，需重新夹取视口边界。
+    const sizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(reposition) : null;
+    if (menuRef.current) sizeObserver?.observe(menuRef.current);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onResize);
     document.addEventListener('mousedown', onDown);
@@ -171,6 +174,7 @@ export function AnchoredMenu({
     host?.addEventListener('animationend', onResize);
     return () => {
       host?.removeEventListener('animationend', onResize);
+      sizeObserver?.disconnect();
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onResize);
       document.removeEventListener('mousedown', onDown);
@@ -184,7 +188,7 @@ export function AnchoredMenu({
     <div
       ref={menuRef}
       className={`fixed z-[9999] rounded-[10px] py-1 ${className} border border-token-subtle`}
-      style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, minWidth, visibility: pos ? 'visible' : 'hidden', background: 'var(--bg-elevated)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)', ...style }}
+      style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, minWidth: `min(${minWidth}px, calc(100vw - 16px))`, maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100dvh - 16px)', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', visibility: pos ? 'visible' : 'hidden', background: 'var(--overlay-panel-solid)', boxShadow: 'var(--shadow-glass-dropdown)', ...style }}
       // portal 的 React 事件仍按组件树冒泡：挡住 mousedown/click，避免落到下层卡片的
       // onClick（导航）或触发其它点外关闭逻辑
       onMouseDown={(e) => e.stopPropagation()}

@@ -1,7 +1,9 @@
+import type { ProjectInspection } from './shared/project-inspections.js';
 // ── Cloud Development Suite (CDS) — Core Types ──
 
 import type { SealedSecret } from './infra/secret-seal.js';
 import type { BranchOperationRequest } from './services/branch-operation-coordinator.js';
+import type { RemoteDeploymentOwner } from './services/remote-deployment-owner.js';
 
 /** A routing rule that maps incoming requests to a branch */
 export interface RoutingRule {
@@ -39,6 +41,31 @@ export type ServiceRole = 'web' | 'api' | 'worker';
 export const SERVICE_ROLES: readonly ServiceRole[] = ['web', 'api', 'worker'];
 
 /** A build profile defines how to build/run a specific type of project */
+export interface StaticWebConfig {
+  /** Explicit contract: this frontend has no consumers through Docker DNS. */
+  browserOnly?: boolean;
+  /** Public frontend directory inside the verified CI image; the image is never started. */
+  imagePath: string;
+  basePath?: string;
+  runtimeConfig?: boolean;
+  proxyRules?: Array<{ pathPrefix: string; profileId: string }>;
+}
+
+export interface StaticWebRuntime {
+  browserOnly?: boolean;
+  id: string;
+  serviceName: string;
+  projectId: string;
+  branchId: string;
+  profileId: string;
+  image: string;
+  revision: string;
+  rootDirectory: string;
+  basePath: string;
+  runtimeConfig?: boolean;
+  proxyRules?: Array<{ pathPrefix: string; profileId: string }>;
+}
+
 export interface BuildProfile {
   id: string;
   /**
@@ -49,6 +76,8 @@ export interface BuildProfile {
   name: string;
   /** Docker image to use for building/running */
   dockerImage: string;
+  /** A frontend served as files by the shared CDS process, without an application container. */
+  staticWeb?: StaticWebConfig;
   /** Working directory relative to worktree root (derived from volume mount host path) */
   workDir: string;
   /**
@@ -64,6 +93,8 @@ export interface BuildProfile {
    * Example: "dotnet restore && dotnet build && dotnet run --urls http://0.0.0.0:5000"
    */
   command?: string;
+  /** 默认先启动候选；独占数据卷的服务可显式选择先停旧实例，允许本服务短暂不可用。 */
+  updateOrder?: 'start-first' | 'stop-first';
   /**
    * CDS managed 车道的 build/start 分离契约。compose 车道不写此字段，继续使用
    * command 的兼容语义。managed 构建先把源码复制进临时容器，执行 install/build，
@@ -427,6 +458,7 @@ export interface ReadinessProbe {
 
 /** A deploy mode override — alternative command/image/env for a build profile */
 export interface DeployModeOverride {
+  staticWeb?: StaticWebConfig;
   /** Human-readable label shown in dropdown (e.g., "开发模式", "静态部署") */
   label: string;
   /** Override command (replaces profile.command when this mode is active) */
@@ -497,6 +529,9 @@ export interface DeployModeOverride {
  * See the helper `resolveEffectiveProfile()` in services/container.ts.
  */
 export interface BuildProfileOverride {
+  staticWeb?: StaticWebConfig;
+  /** 本分支实际依赖的服务；未设时继承项目依赖，空数组显式清空。 */
+  dependsOn?: string[];
   /** Override Docker image (replaces baseline.dockerImage) */
   dockerImage?: string;
   /** Override run command (replaces baseline.command) */
@@ -566,6 +601,8 @@ export interface CacheMount {
 
 export interface StorageBinding {
   version: 1;
+  /** Fixed server-owned log policy; never a request-supplied path/device/quota. */
+  policy?: 'xxl-task-logs-v1';
   purpose: 'cache' | 'persistent';
   instanceId: string;
   projectId: string;
@@ -921,7 +958,22 @@ export interface PreviewMirrorTag {
   routingIdentity?: { resourceNamespace: string; historicalSlugs: string[] };
 }
 
+export interface CiImageDiagnosis {
+  code: 'not_triggered' | 'workflow_missing' | 'queued' | 'building' | 'startup_failed' | 'cancelled' | 'build_failed' | 'build_timed_out' | 'result_unsynced' | 'unknown';
+  title: string;
+  message: string;
+  targetSha: string;
+  checkedAt: string;
+  actionUrl: string;
+  actionLabel: string;
+}
+
 export interface BranchEntry {
+  /** 逻辑归档仍保留服务、工作区与数据；到期前可恢复。 */
+  archive?: { archivedAt: string; retireAt: string; reason: string; actor: string } | null;
+  /** 整组未就绪的连续观察起点，完全就绪后清空。 */
+  incompleteSince?: string | null;
+  restoredFromArchiveAt?: string;
   /** 父实例镜像来的只读分支（预览实例专用），生产实例永远没有这个字段 */
   mirror?: PreviewMirrorTag;
   id: string;
@@ -959,6 +1011,8 @@ export interface BranchEntry {
   errorMessage?: string;
   /** 最近一次分支部署事实记录。旧分支无该字段时按现有状态降级。 */
   lastDeploymentRunId?: string;
+  /** 远端原操作资格；取消或较新代次后拒绝旧执行器心跳。 */
+  remoteDeployment?: RemoteDeploymentOwner;
   /** 当前运行态对应的不可变部署版本。DeploymentVersion 落地前保持为空。 */
   currentVersionId?: string;
   createdAt: string;
@@ -1147,6 +1201,8 @@ export interface BranchEntry {
    * 非极速版分支不设此字段,行为不变（push 即本机编译）。
    */
   ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  /** 对账原因绑定到目标 SHA；新 push/完成回执时清空，避免旧原因覆盖新状态。 */
+  ciDiagnosis?: CiImageDiagnosis | null;
   /** 极速版正在等待 CI 构建的目标 commit SHA（用于 workflow_run 的 head_sha 匹配）。 */
   ciTargetSha?: string;
   /** 最近一次匹配到的 CI workflow_run 结论（success / failure / cancelled / timed_out …）。 */
@@ -1291,6 +1347,8 @@ export interface BranchEntry {
 /** State of a single service (one build profile instance) within a branch */
 /** 可切换入口的实际运行身份；不保存环境变量或构建日志。 */
 export interface ServiceRuntimeRef {
+  runtimeKind?: 'static';
+  staticWeb?: StaticWebRuntime;
   containerName: string;
   hostPort: number;
   containerId?: string;
@@ -1305,6 +1363,8 @@ export interface ServiceRuntimeRef {
 }
 
 export interface ServiceState {
+  runtimeKind?: 'static';
+  staticWeb?: StaticWebRuntime;
   profileId: string;
   containerName: string;
   /** Host port allocated for this service */
@@ -1426,6 +1486,9 @@ export interface DeploymentVersionProfile {
   profileId: string;
   name: string;
   artifactImage: string;
+  /** 版本创建时的完整CI输入范围；历史重放不得借当前配置缩窄等价证明。 */
+  buildScope?: string[];
+  staticWeb?: StaticWebConfig;
   artifactKind: 'prebuilt-image' | 'managed-image' | 'legacy-runtime';
   reusable: boolean;
   reuseBlockedReason?: string;
@@ -1631,6 +1694,7 @@ export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp' | 'health-json'
  * 不留证据的功能监控，红了以后没人说得清是模型抽风还是判据写错，最后只能被静音。
  */
 export interface MonitorObservation {
+  upstreamCalls?: import('./services/mcp-monitor.js').McpCallEvidence[];
   /** ISO 时间 */
   at: string;
   ok: boolean;
@@ -1659,6 +1723,8 @@ export interface MonitorObservation {
 }
 
 export interface UptimeCustomMonitor {
+  /** Only the MCP import route writes this sealed server-side configuration. */
+  mcp?: import('./services/mcp-monitor.js').McpMonitorConfig;
   id: string;
   /** 展示名；留空时由服务端按地址派生（主机名 / host:port） */
   name: string;
@@ -2215,6 +2281,8 @@ export interface CdsState {
   releasePlans?: Record<string, ReleasePlan>;
   /** 监控中心的自定义探测目标，key 为 UptimeCustomMonitor.id。旧状态可缺省。 */
   uptimeMonitors?: Record<string, UptimeCustomMonitor>;
+  monitorNotifications?: import('./services/alarm-route.js').MonitorNotificationSettings;
+  mcpMonitorAudits?: import('./services/mcp-monitor.js').McpCallEvidence[];
   /**
    * 落库的发布前检查结论，key 为 ReleasePreflightRecord.id。
    * 存量 state.json / mongo global 文档里**没有这个键**，所有读处必须 `?.` 兜底，
@@ -2405,6 +2473,8 @@ export interface CdsState {
    * 标记 rejected。与 pendingImports 平级放顶层,审批盒一次列出所有项目的待批申请。
    */
   accessRequests?: AccessRequest[];
+  /** 批准式设备接入/全失联恢复；凭据交付信封由发起方票据加密。 */
+  identityConnections?: IdentityConnection[];
   /**
    * FU-04 — worktree directory layout version.
    *
@@ -2633,6 +2703,10 @@ export interface CdsState {
    * iframe 渲染（不授予 same-origin），见 routes/reports.ts。
    */
   acceptanceReports?: AcceptanceReportMeta[];
+  /** Durable review task metadata; source snapshots and reports use object storage. */
+  codeReviewTasks?: import('./shared/code-review.js').CodeReviewTask[];
+  /** Independent DeepAudit project reference; never contains service credentials. */
+  codeReviewSettings?: import('./services/code-review-settings.js').CodeReviewSettings;
   /** 验收报告文件夹（项目级分类，见 ReportFolder）。 */
   reportFolders?: ReportFolder[];
   /** WS3 MAP-KBTP peer-sync：本 CDS 实例的稳定 nodeId（首次用时生成）。 */
@@ -2863,6 +2937,8 @@ export interface PeerPairingCode {
  * 存储位置，可选地通过 projectId 关联到某个项目以便过滤）。
  */
 export interface AcceptanceReportMeta {
+  reportType?: 'acceptance' | 'code-review';
+  reviewTaskId?: string;
   /** 稳定 ID（用于对象键 / 本地缓存文件名 `<id>.<ext>` 与路由 `:id`）。 */
   id: string;
   /**
@@ -3394,6 +3470,8 @@ export interface ProjectActivityLog {
     | 'ai-release'     // AI agent 释放
     | 'branch-deleted' // DELETE /branches/:id
     | 'branch-created' // POST /branches
+    | 'branch-archived'
+    | 'branch-restored'
     | 'resource-created'
     | 'resource-deleted'
     | 'resource-restart'
@@ -3907,6 +3985,8 @@ export interface PreviewAddressAudit {
 }
 
 export interface Project {
+  /** 定期实测的执行方回填，不能冒充 CDS 主动探测或已验证的通知送达。 */
+  monitoringInspections?: ProjectInspection[];
   /** Server-owned address index keyed by Git ref; removed with its branch, never an independent reservation. */
   previewAddresses?: Record<string, PreviewAddressOverride>;
   /** Append-only address/verification audit. Never accepted from request bodies. */
@@ -4402,6 +4482,9 @@ export interface Project {
 export interface AgentKey {
   /** Random 8-hex id, used for revocation by keyId. */
   id: string;
+  /** 明确人工核对的历史凭据归属审计，不按名称推断。 */
+  claimedAt?: string;
+  claimedBy?: string;
   /** Human-readable label, e.g. "签发于 2026-04-18 10:32" or user-supplied. */
   label: string;
   /** sha256 hex of the plaintext key (`cdsp_<slug>_<base64url suffix>`). */
@@ -4448,6 +4531,26 @@ export interface AgentKey {
  * 批准时把全权项目 AgentKey 的**明文**临时挂在 issuedKeyPlaintext 上,发起方凭
  * pollToken 轮询取走一次;取走后明文清空、deliveredAt 落时间戳(一次性交付)。
  */
+export interface IdentityConnection {
+  id: string;
+  repository: string;
+  projectHint?: string;
+  agentName: string;
+  pollTokenHash: string;
+  status: 'pending' | 'approved' | 'delivered' | 'rejected';
+  createdAt: string;
+  expiresAt: string;
+  projectId?: string;
+  userId?: string;
+  principalId?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  userCredentialId?: string;
+  projectCredentialId?: string;
+  /** AES-GCM；只有持有pollToken的发起方请求时才能解封。 */
+  envelope?: { iv: string; tag: string; ciphertext: string };
+}
+
 export interface AccessRequest {
   /** Random 12-hex id. */
   id: string;
@@ -4461,12 +4564,16 @@ export interface AccessRequest {
   agentName: string;
   /** 申请理由,用户审批时可见。 */
   purpose: string;
-  /** Agent 申报的建项目目标，仅供审批核对，不改变一次建项目的权限范围。 */
+  /** Agent 申报的建项目目标；新审批按规范化仓库和名称绑定一次建项目权限。 */
   requestedProject?: { name: string; repository?: string };
+  /** 服务端已验证并将审批限制到目标；旧记录缺省不作绑定声明。 */
+  targetBound?: boolean;
   /** 服务端凭 issuedKeyId 关联实际创建结果，不接受客户端自报。 */
   createdProject?: { id: string; name: string; createdAt: string };
   /** Lifecycle: starts 'pending', moves to 'approved' or 'rejected'. */
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled';
+  /** 首次建项目申请的等待截止时间；不依赖 Agent 进程存活。 */
+  expiresAt?: string;
   /** ISO submit time. */
   createdAt: string;
   /** Set when status flips away from 'pending'. */
@@ -4562,6 +4669,8 @@ export interface UserCredential {
   /** `uc_` + 12 hex */
   id: string;
   principalId: string;
+  /** 设备交接只恢复当前项目；缺省保留旧用户凭据行为。 */
+  projectIds?: string[];
   /** sha256(明文 `cdsu_<suffix>`) */
   hash: string;
   label?: string;
@@ -4643,6 +4752,10 @@ export interface GlobalAgentKey {
   access?: AgentKeyAccess;
   /** 一次性 bootstrap 授权：成功创建首个项目后自动吊销。 */
   oneTime?: boolean;
+  /** 页面批准的唯一创建目标；缺省的一次性旧授权不得继续建项目。 */
+  creationTarget?: { name: string; repository: string };
+  /** 一次性创建凭据的硬截止时间；存量非一次性 key 不受影响。 */
+  expiresAt?: string;
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** GitHub login of the signer if github auth mode, else undefined. */

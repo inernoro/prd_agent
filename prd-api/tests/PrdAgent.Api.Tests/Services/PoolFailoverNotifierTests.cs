@@ -1,3 +1,6 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Driver;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.ModelPool;
 using Shouldly;
 using Xunit;
@@ -6,6 +9,59 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class PoolFailoverNotifierTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task QuotaNotification_ShouldPersistAdminSectionOnInsertAndLegacyUpdate(bool legacyUpdate)
+    {
+        await using var testDb = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
+        var notifier = new PoolFailoverNotifier(testDb.Context, NullLogger<PoolFailoverNotifier>.Instance);
+        await notifier.NotifyQuotaExceededAsync("fixture-platform", "fixture-model");
+        var original = await testDb.Context.AdminNotifications.Find(_ => true).SingleAsync();
+        if (legacyUpdate)
+        {
+            await testDb.Context.AdminNotifications.UpdateOneAsync(x => x.Id == original.Id,
+                Builders<AdminNotification>.Update.Unset(x => x.Section));
+            await notifier.NotifyQuotaExceededAsync("fixture-platform", "fixture-model");
+        }
+
+        var stored = await testDb.Context.AdminNotifications.Find(_ => true).SingleAsync();
+        stored.Section.ShouldBe(AdminNotificationSections.Admin);
+        stored.TargetUserId.ShouldBeNull();
+        stored.Id.ShouldBe(original.Id);
+        stored.Key.ShouldBe(original.Key);
+        stored.Source.ShouldBe("llm-gateway-quota");
+        stored.Message.ShouldBe(original.Message);
+        var storedMessage = stored.Message;
+        Assert.NotNull(storedMessage);
+        storedMessage.ShouldContain("fixture-platform");
+        storedMessage.ShouldContain("fixture-model");
+    }
+
+    [Fact]
+    public async Task UserFailureAndRecovery_ShouldKeepPersonalTargetAcrossUpdates()
+    {
+        await using var testDb = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
+        var notifier = new PoolFailoverNotifier(testDb.Context, NullLogger<PoolFailoverNotifier>.Instance);
+        await notifier.NotifyUserFailureAsync("u1", "image", "fixture-pool");
+        var original = await testDb.Context.AdminNotifications.Find(_ => true).SingleAsync();
+        AdminNotificationSourceCatalog.ResolveSection(original.Source, original.Section).ShouldBe(AdminNotificationSections.Personal);
+        original.TargetUserId.ShouldBe("u1");
+        await testDb.Context.AdminNotifications.UpdateOneAsync(x => x.Id == original.Id,
+            Builders<AdminNotification>.Update.Set(x => x.Section, AdminNotificationSections.Personal));
+        await notifier.NotifyUserFailureAsync("u1", "image", "fixture-pool");
+        var updated = await testDb.Context.AdminNotifications.Find(_ => true).SingleAsync();
+        updated.Id.ShouldBe(original.Id);
+        updated.Section.ShouldBe(AdminNotificationSections.Personal);
+        updated.TargetUserId.ShouldBe("u1");
+        updated.Message.ShouldBe(original.Message);
+        await notifier.CloseUserFailureNotificationsAsync("image");
+        var recovery = await testDb.Context.AdminNotifications.Find(x => x.Key == "pool-recovered-user:u1:image").SingleAsync();
+        recovery.TargetUserId.ShouldBe("u1");
+        AdminNotificationSourceCatalog.ResolveSection(recovery.Source, recovery.Section).ShouldBe(AdminNotificationSections.Personal);
+        (await testDb.Context.AdminNotifications.Find(x => x.Id == original.Id).SingleAsync()).Status.ShouldBe("closed");
+    }
+
     [Fact]
     public void QuotaAlert_CdsPreview_IncludesBranchEnvironmentModelAndPlatform()
     {

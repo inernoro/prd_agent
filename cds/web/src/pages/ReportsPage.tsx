@@ -899,7 +899,7 @@ function ReportsHome({
   const pageRows = ledgerRows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
   const hiddenSuperseded = useMemo(() => reports.filter((r) => supersededIds.has(r.id)).length, [reports, supersededIds]);
   const kindTabs = useMemo(() => {
-    const order = ['功能验收', '每日验收', 'PR验收', 'Commit验收', '分支验收', '缺陷复测', '视觉回归', '发布验收', '规范演练', '其他'];
+    const order = ['功能验收', '每日验收', 'PR验收', 'Commit验收', '分支验收', '缺陷复测', '视觉回归', '发布验收', '规范演练', '代码审查报告', '其他'];
     return order.filter((k) => (kindCounts.get(k) ?? 0) > 0).map((k) => ({ kind: k, count: kindCounts.get(k) ?? 0 }));
   }, [kindCounts]);
   const allCount = useMemo(() => Array.from(kindCounts.values()).reduce((a, b) => a + b, 0), [kindCounts]);
@@ -2343,8 +2343,8 @@ function ReportViewer({
 
   return (
     <div className={`flex min-h-0 flex-1 flex-col overflow-hidden border border-[hsl(var(--hairline))] bg-[hsl(var(--background))] ${expanded ? 'fixed inset-0 z-[100] rounded-none' : 'rounded-md'}`}>
-      <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
+      <div className="flex flex-col items-stretch gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 md:flex-row md:items-center md:justify-between">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
           {onBack ? (
             /* 桌面端也必须能回去（2026-09-08 验收发现）：主页改成「结论优先」之后，
                /reports 的默认画面是结论头条而不是列表；这个按钮原来带 lg:hidden，
@@ -2360,13 +2360,13 @@ function ReportViewer({
             </Button>
           ) : null}
           {report.verdict ? <VerdictBadge verdict={report.verdict} /> : null}
-          <span className="truncate text-sm font-medium">{report.title}</span>
+          <span className="min-w-0 flex-1 break-words text-sm font-medium md:truncate" title={report.title}>{report.title}</span>
           <FormatBadge format={report.format} />
-          <span className="inline-flex shrink-0 items-center gap-1 text-[0.6875rem] text-muted-foreground" title={`报告时间：${formatTime(report.createdAt)}`}>
+          <span className="inline-flex basis-full items-center gap-1 text-[0.6875rem] text-muted-foreground md:basis-auto md:shrink-0" title={`报告时间：${formatTime(report.createdAt)}`}>
             <CalendarDays className="h-3.5 w-3.5" />报告时间 {formatTime(report.createdAt)}
           </span>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 md:shrink-0">
           {report.prNumber && report.verdict ? <PushToPrControl report={report} /> : null}
           <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[0.6875rem]" onClick={() => onSync(report)} title="使用 MAP 当前登录账号保存到我的验收知识库">
             <Save />保存到 MAP

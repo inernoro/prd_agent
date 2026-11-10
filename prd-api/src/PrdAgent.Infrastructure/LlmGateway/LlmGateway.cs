@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -30,6 +31,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly ModelPool.IPoolFailoverNotifier? _failoverNotifier;
     private readonly IDoubaoStreamAsrExecutor _doubaoStreamAsr;
     private readonly GatewayProviderConcurrencyCoordinator? _concurrencyCoordinator;
+    private readonly IGatewayInvocationAuthority? _invocationAuthority;
     private readonly string _internalTenantId;
     private readonly string? _openRouterReferer;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
@@ -68,7 +70,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         IDoubaoStreamAsrExecutor? doubaoStreamAsr = null,
         GatewayProviderConcurrencyCoordinator? concurrencyCoordinator = null,
         IConfiguration? configuration = null,
-        ISafeOutboundWebSocketConnector? safeWebSocketConnector = null)
+        ISafeOutboundWebSocketConnector? safeWebSocketConnector = null,
+        IGatewayInvocationAuthority? invocationAuthority = null)
     {
         _modelResolver = modelResolver;
         _httpClientFactory = httpClientFactory;
@@ -77,6 +80,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _contextAccessor = contextAccessor;
         _failoverNotifier = failoverNotifier;
         _concurrencyCoordinator = concurrencyCoordinator;
+        _invocationAuthority = invocationAuthority;
         _internalTenantId = configuration?["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
@@ -482,8 +486,17 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <inheritdoc />
-    public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+    public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+        => SendCoreAsync(request, null, ct);
+
+    public Task<GatewayResponse> SendWithAdmissionAsync(GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayResponse?>> admit, CancellationToken ct = default)
+        => SendCoreAsync(request, admit ?? throw new ArgumentNullException(nameof(admit)), ct);
+
+    private async Task<GatewayResponse> SendCoreAsync(GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayResponse?>>? admit, CancellationToken ct)
     {
+        _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
         {
             return GatewayResponse.Fail(InvalidAppCallerErrorCode, error, 400);
@@ -492,6 +505,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var startedAt = DateTime.UtcNow;
         string? logId = null;
         ModelResolutionResult? resolution = null;
+
+        var reachedProvider = false;
 
         try
         {
@@ -517,7 +532,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 3. 发送请求。候选模型已在 Resolve 阶段一次性算好；发送阶段只消费结果，不再二次 resolve。
             var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
             var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
-            var retryResolutions = GetProviderRetryResolutions(resolution, request);
+            var retryResolutions = admit is null ? GetProviderRetryResolutions(resolution, request) : new List<ModelResolutionResult> { resolution };
             var httpClient = CreateOutboundClient(request.Context?.TenantId);
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
             HttpResponseMessage? response = null;
@@ -607,7 +622,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var endpoint = string.IsNullOrWhiteSpace(activeResolution.OfferingEndpointPath)
                     ? activeAdapter.BuildEndpoint(activeResolution.ApiUrl!, request.ModelType)
                     : BuildOfferingEndpoint(activeResolution.ApiUrl!, activeResolution.OfferingEndpointPath);
-                var httpRequest = activeAdapter.BuildHttpRequest(endpoint, activeResolution.ApiKey, requestBody, request.EnablePromptCache);
+                var httpRequest = activeAdapter.BuildHttpRequest(endpoint, activeResolution.ApiKey, requestBody, request.EnablePromptCache,
+                    IsThinkingEffective(request.IncludeThinking, request.ModelType));
                 ApplyOpenRouterAttribution(httpRequest, activeResolution.ApiUrl, request.AppCallerCode);
 
                 if (logId == null)
@@ -632,13 +648,27 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     attemptIndex + 1,
                     retryResolutions.Count);
 
+                if (admit is not null)
+                {
+                    var cap = ReadPhysicalOutputCap(requestBody);
+                    var denied = await admit(new GatewayPhysicalAdmissionContext(
+                        request.Context?.RequestId ?? string.Empty,
+                        Encoding.UTF8.GetByteCount(await httpRequest.Content!.ReadAsStringAsync(ct)), cap,
+                        activeResolution.LogicalModelPublicId ?? string.Empty,
+                        activeResolution.ActualPlatformName ?? activeResolution.ActualPlatformId ?? string.Empty,
+                        activeResolution.ActualModel ?? string.Empty, activeResolution.OfferingId,
+                        activeResolution.Protocol ?? activeResolution.PlatformType), ct);
+                    if (denied is not null) return denied;
+                }
                 var attemptStartedAt = DateTime.UtcNow;
-                MarkLastSendAttemptReachedProvider(providerAttempts);
                 try
                 {
+                    if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                    MarkLastSendAttemptReachedProvider(providerAttempts);
+                    reachedProvider = true;
                     response = await httpClient.SendAsync(httpRequest, ct);
                 }
-                catch (Exception sendException)
+                catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
                 {
                     var sendAttemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
                     var (sendMessage, sendStatusCode) = ClassifyTransportException(
@@ -769,7 +799,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 _logWriter?.MarkError(logId, msg, code);
             }
-            return GatewayResponse.Fail("GATEWAY_ERROR", msg, code);
+            if (ex is TaskExecutionAdmissionException rejected && !reachedProvider)
+                return new GatewaySendRejectedBeforeSend { Success = false, ErrorCode = rejected.Code, ErrorMessage = msg, StatusCode = code };
+            return GatewayResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code : "GATEWAY_ERROR", msg, code);
         }
     }
 
@@ -778,6 +810,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayRequest request,
         CancellationToken ct = default)
         => StreamCoreAsync(request, null, ct);
+
+    private static int ReadPhysicalOutputCap(JsonObject body)
+        => new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" }
+            .Select(name => body[name] is { } node && TryReadInt(node, out var value) && value > 0 ? value : int.MaxValue)
+            .DefaultIfEmpty(int.MaxValue).Min() is var cap && cap != int.MaxValue ? cap : 0;
 
     /// <inheritdoc />
     public IAsyncEnumerable<GatewayStreamChunk> StreamWithAdmissionAsync(
@@ -791,6 +828,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayStreamChunk?>>? admit,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
+        _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
         {
             yield return GatewayStreamChunk.Fail($"{InvalidAppCallerErrorCode}: {error}");
@@ -841,7 +879,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             HttpResponseMessage? rawResponse = null;
             IGatewayAdapter? adapter = null;
             string? terminalError = null;
+            string? terminalErrorCode = null;
             int? terminalStatusCode = null;
+            var authorizationRejectedBeforeSend = false;
 
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
             {
@@ -851,6 +891,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (adapter == null)
                 {
                     terminalError = $"不支持的平台类型: {resolution.PlatformType}";
+                    terminalErrorCode = "UNSUPPORTED_PLATFORM";
                     terminalStatusCode = 400;
                     if (attemptIndex == 0)
                         CompleteLastSendAttempt(providerAttempts, 400, 0, terminalError);
@@ -879,6 +920,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (TryBuildCapabilityFailure(request, resolution, requestBody, out var capabilityError))
                 {
                     terminalError = capabilityError!.ErrorMessage ?? "模型能力不匹配";
+                    terminalErrorCode = capabilityError.ErrorCode;
                     terminalStatusCode = capabilityError.StatusCode;
                     CompleteLastSendAttempt(providerAttempts, capabilityError.StatusCode, 0, terminalError);
                     if (attemptIndex < retryResolutions.Count - 1)
@@ -893,6 +935,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (!concurrency.Allowed)
                 {
                     terminalError = ProviderAdmissionMessage(concurrency.ErrorCode);
+                    terminalErrorCode = concurrency.ErrorCode;
                     terminalStatusCode = 429;
                     CompleteLastSendAttempt(providerAttempts, 429, 0, terminalError);
                     if (attemptIndex < retryResolutions.Count - 1)
@@ -908,7 +951,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var endpoint = string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath)
                     ? adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType)
                     : BuildOfferingEndpoint(resolution.ApiUrl!, resolution.OfferingEndpointPath);
-                var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
+                var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache,
+                    IsThinkingEffective(request.IncludeThinking, request.ModelType));
                 ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
 
                 if (admit is not null)
@@ -925,7 +969,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             "GATEWAY_RUNTIME_TASK_OUTPUT_CAP_INVALID");
                         yield break;
                     }
-                    var finalBody = requestBody.ToJsonString();
+                    var finalBody = await httpRequest.Content!.ReadAsStringAsync(ct);
                     var admissionError = await admit(
                         new GatewayPhysicalAdmissionContext(
                             request.Context?.RequestId ?? string.Empty,
@@ -934,7 +978,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             resolution.LogicalModelPublicId ?? string.Empty,
                             resolution.ActualPlatformName ?? resolution.ActualPlatformId ?? string.Empty,
                             resolution.ActualModel ?? string.Empty,
-                            resolution.OfferingId),
+                            resolution.OfferingId, resolution.Protocol ?? resolution.PlatformType),
                         ct);
                     if (admissionError is not null)
                     {
@@ -964,9 +1008,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 Exception? sendException = null;
                 var attemptStartedAt = DateTime.UtcNow;
-                MarkLastSendAttemptReachedProvider(providerAttempts);
                 try
                 {
+                    if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                    MarkLastSendAttemptReachedProvider(providerAttempts);
                     rawResponse = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
                 }
                 catch (Exception ex)
@@ -979,12 +1024,21 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     var (sendMsg, sendCode) = ClassifyTransportException(sendException, ct.IsCancellationRequested);
                     terminalError = sendMsg;
+                    terminalErrorCode = (sendException as TaskExecutionAdmissionException)?.Code ?? (sendCode switch
+                    {
+                        499 => "CANCELLED",
+                        504 => "TIMEOUT",
+                        502 => "NETWORK_ERROR",
+                        _ => "GATEWAY_ERROR"
+                    });
                     terminalStatusCode = sendCode;
+                    authorizationRejectedBeforeSend = sendException is TaskExecutionAdmissionException
+                        && providerAttempts.All(attempt => attempt.ReachedProvider == false);
                     _logger.LogWarning(sendException,
                         "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
                         sendCode, resolution.ActualModel);
                     CompleteLastSendAttempt(providerAttempts, sendCode, attemptDurationMs, sendMsg);
-                    if (HasTrackedHealthRoute(resolution))
+                    if (sendException is not TaskExecutionAdmissionException && HasTrackedHealthRoute(resolution))
                         await _modelResolver.RecordFailureAsync(resolution, ct);
                     if (attemptIndex < retryResolutions.Count - 1 && ShouldRetryProviderStatus(sendCode))
                     {
@@ -1009,6 +1063,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var errorBody = await rawResponse.Content.ReadAsStringAsync(ct);
                 var errorMsg = TryExtractErrorMessage(errorBody) ?? $"HTTP {(int)rawResponse.StatusCode}";
                 terminalError = errorMsg;
+                terminalErrorCode = "LLM_ERROR";
                 terminalStatusCode = (int)rawResponse.StatusCode;
                 CompleteLastSendAttempt(providerAttempts, (int)rawResponse.StatusCode, attemptDurationMs, errorMsg);
                 if (HasTrackedHealthRoute(resolution))
@@ -1047,7 +1102,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         resolution.ToGatewayResolution());
                     yield break;
                 }
-                yield return GatewayStreamChunk.Fail(terminalError ?? "流式请求失败");
+                yield return authorizationRejectedBeforeSend
+                    ? new GatewayStreamRejectedBeforeSend
+                    {
+                        Type = GatewayChunkType.Error, Error = terminalError ?? "流式请求失败", ErrorCode = terminalErrorCode,
+                        Resolution = resolution.ToGatewayResolution(),
+                    }
+                    : GatewayStreamChunk.Fail(terminalError ?? "流式请求失败", terminalErrorCode ?? "LLM_ERROR",
+                        resolution.ToGatewayResolution());
                 yield break;
             }
 
@@ -1307,10 +1369,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 await _modelResolver.RecordSuccessAsync(finalResolution, ct);
             }
 
-            // 8. 发送完成块
-            yield return GatewayStreamChunk.Done(finishReason, tokenUsage);
-
-            // 9. 写入日志（完成）
+            // 8. 在完成块之前写入终态、用量及费用证据。兼容入口收到 Done 就会
+            // 结束枚举并 DisposeAsync，不能依赖消费者继续 MoveNext 才完成审计。
             var endedAt = DateTime.UtcNow;
             var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
             var assembledText = textBuilder.ToString();
@@ -1332,15 +1392,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 logId, assembledText, assembledThinking, tokenUsage, durationMs, assembledToolCalls,
                 finishReason, finalResolution, gatewayTransport, ct, providerAttempts,
                 LlmCostEvidence.BuildSafeResponseHeaders(response, "text/event-stream"));
+
+            // 9. 审计已完成，消费者可以在此安全结束枚举。
+            yield return GatewayStreamChunk.Done(finishReason, tokenUsage);
         }
         finally
         {
             if (providerLease is not null)
                 await providerLease.DisposeAsync();
-            // 注意：对于流式响应，正常情况下日志会在行 319 的 FinishStreamLogAsync 中更新
-            // 这里不需要额外处理，因为：
-            // 1. HTTP 失败时，已在行 232 调用 MarkError
-            // 2. 异常情况会被调用方捕获，调用方负责处理日志
         }
     }
 
@@ -1405,6 +1464,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayModelResolution resolution,
         CancellationToken ct = default)
     {
+        _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
+        _invocationAuthority?.AssertRawTarget(request, resolution);
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
             return GatewayRawResponse.Fail(InvalidAppCallerErrorCode, error, 400);
 
@@ -1532,6 +1593,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayUpstreamProfileTestRequest request,
         CancellationToken ct = default)
     {
+        _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
         if (!TryValidateAppCaller(request.AppCallerCode, ModelTypes.Chat, out var error))
             return Task.FromResult(GatewayRawResponse.Fail(InvalidAppCallerErrorCode, error, 400));
 
@@ -1597,6 +1659,15 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     : request.RequestId.Trim(),
                 SessionId = sourceContext?.SessionId,
                 RunId = sourceContext?.RunId,
+                TaskPermitId = sourceContext?.TaskPermitId,
+                TaskLeaseRunId = sourceContext?.TaskLeaseRunId,
+                TaskLeaseOwnerHash = sourceContext?.TaskLeaseOwnerHash,
+                TaskLeaseFence = sourceContext?.TaskLeaseFence,
+                ExecutionOrigin = sourceContext?.ExecutionOrigin,
+                TriggerCredentialId = sourceContext?.TriggerCredentialId,
+                TriggerActorUserId = sourceContext?.TriggerActorUserId,
+                SourceDeployment = sourceContext?.SourceDeployment,
+                SourceTask = sourceContext?.SourceTask,
                 GroupId = sourceContext?.GroupId,
                 UserId = string.IsNullOrWhiteSpace(request.UserId) ? sourceContext?.UserId : request.UserId,
                 ViewRole = sourceContext?.ViewRole,
@@ -1789,7 +1860,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return null;
     }
 
-    private static GatewayRawRequest RebuildCanonicalImageRequest(
+    internal static GatewayRawRequest RebuildCanonicalImageRequest(
         GatewayRawRequest source,
         ModelResolutionResult resolution)
     {
@@ -1908,9 +1979,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
         else
         {
+            // openai 是 wire 协议；火山仍有自己的 generations JSON 图片输入契约。
+            var adapterType = normalizedProtocol == "openai"
+                && (string.Equals(resolution.PlatformType, "volces", StringComparison.OrdinalIgnoreCase)
+                    || LLM.Adapters.ImageGenPlatformAdapterFactory.IsVolcesApi(resolution.ApiUrl))
+                    ? "volces" : normalizedProtocol;
             var adapter = LLM.Adapters.ImageGenPlatformAdapterFactory.GetAdapter(
-                resolution.ApiUrl, resolution.ActualModel, normalizedProtocol);
-            if (images.Count == 0)
+                resolution.ApiUrl, resolution.ActualModel, adapterType);
+            if (images.Count == 0 || adapter.PlatformType == "volces")
             {
                 var built = ImageGenRequestBuilder.BuildStandardGeneration(
                     resolution.ActualModel!,
@@ -1921,6 +1997,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     adapter,
                     applyAdaptiveSizePrompt: false);
                 body = JsonNode.Parse(adapter.SerializeRequest(built.RequestBody))?.AsObject() ?? new JsonObject();
+                // 方舟的参考图是 generations JSON 的 image 字段，不使用 OpenAI 的 edits multipart。
+                if (images.Count == 1) body["image"] = images[0];
+                else if (images.Count > 1)
+                {
+                    var references = new JsonArray();
+                    foreach (var image in images) references.Add(image);
+                    body["image"] = references;
+                }
                 endpointPath = "images/generations";
             }
             else
@@ -2373,6 +2457,39 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private static string EnsureImageDataUri(string value)
         => value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? value : $"data:image/png;base64,{value}";
 
+    private static bool IsSpeechRawRequest(GatewayRawRequest request)
+        => string.Equals(request.ModelType, ModelTypes.Tts, StringComparison.OrdinalIgnoreCase);
+
+    private bool RequiresBoundedRawRead(GatewayRawRequest request, ModelResolutionResult resolution)
+        => IsSpeechRawRequest(request)
+           || resolution.IsExchange && _transformerRegistry.Get(resolution.ExchangeTransformerType) is IRawExchangeResponseTransformer;
+
+    private async Task<byte[]> ReadRawExchangeContentAsync(
+        HttpContent content, GatewayRawRequest request, ModelResolutionResult resolution, CancellationToken ct)
+    {
+        var transformer = resolution.IsExchange
+            ? _transformerRegistry.Get(resolution.ExchangeTransformerType) as IRawExchangeResponseTransformer : null;
+        var limit = transformer?.MaxResponseBytes
+                    ?? (IsSpeechRawRequest(request) ? GatewaySpeechResponseLimits.MaxAudioBytes : 0);
+        if (limit == 0)
+            return await content.ReadAsByteArrayAsync(ct);
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, request.TimeoutSeconds)));
+        await using var input = await content.ReadAsStreamAsync(timeout.Token);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        // 多读一个字节，仅用来证明上游响应超限；转换器会将其判失败并记录截断原因。
+        while (buffer.Length <= limit)
+        {
+            var remaining = (int)Math.Min(chunk.Length, limit + 1L - buffer.Length);
+            var count = await input.ReadAsync(chunk.AsMemory(0, remaining), timeout.Token);
+            if (count == 0) break;
+            buffer.Write(chunk, 0, count);
+        }
+        return buffer.ToArray();
+    }
+
     private static GatewayRawRequest NormalizeImageInputs(GatewayRawRequest source)
     {
         var spec = source.CanonicalImageRequest;
@@ -2676,9 +2793,12 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             HttpResponseMessage response;
             try
             {
-                response = await httpClient.SendAsync(httpRequest, ct);
+                if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                response = await httpClient.SendAsync(httpRequest,
+                    RequiresBoundedRawRead(request, resolution)
+                        ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, ct);
             }
-            catch (Exception sendException)
+            catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
             {
                 var (sendMessage, sendStatusCode) = ClassifyTransportException(
                     sendException,
@@ -2697,7 +2817,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 先无损读出全部字节，再决定按二进制还是文本处理——避免下游把二进制 Content-Type 标错
             // （OpenRouter 视频下载实际回 mp4 却标 application/json）时用 ReadAsString 损坏字节。
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
-            var rawBytes = await response.Content.ReadAsByteArrayAsync(ct);
+            var rawBytes = await ReadRawExchangeContentAsync(response.Content, request, resolution, ct);
             var submitDurationMs = (long)(DateTime.UtcNow - submitStartedAt).TotalMilliseconds;
             var isBinaryResponse = request.ExpectBinaryResponse ||
                                    contentType.StartsWith("audio/") ||
@@ -2824,12 +2944,15 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     retryResolutions.Count);
 
                 submitStartedAt = DateTime.UtcNow;
-                MarkLastSendAttemptReachedProvider(rawProviderAttempts);
                 try
                 {
-                    response = await httpClient.SendAsync(nextBuild.HttpRequest, ct);
+                    if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                    MarkLastSendAttemptReachedProvider(rawProviderAttempts);
+                    response = await httpClient.SendAsync(nextBuild.HttpRequest,
+                        RequiresBoundedRawRead(request, resolution)
+                            ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, ct);
                 }
-                catch (Exception sendException)
+                catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
                 {
                     var (sendMessage, sendStatusCode) = ClassifyTransportException(
                         sendException,
@@ -2844,7 +2967,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     };
                 }
                 contentType = response.Content.Headers.ContentType?.MediaType ?? "";
-                rawBytes = await response.Content.ReadAsByteArrayAsync(ct);
+                rawBytes = await ReadRawExchangeContentAsync(response.Content, request, resolution, ct);
                 submitDurationMs = (long)(DateTime.UtcNow - submitStartedAt).TotalMilliseconds;
                 isBinaryResponse = request.ExpectBinaryResponse ||
                                    contentType.StartsWith("audio/") ||
@@ -2941,6 +3064,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         queryClient.Timeout = TimeSpan.FromSeconds(30);
                         var queryStartedAt = DateTime.UtcNow;
                         HttpResponseMessage queryResp;
+                        if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
                         try
                         {
                             queryResp = await queryClient.SendAsync(queryRequest, ct);
@@ -3049,6 +3173,75 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var endedAt = DateTime.UtcNow;
             var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
+
+            async Task<GatewayRawResponse> FailMediaAsync(string code, string message, string audit)
+            {
+                CompleteLastSendAttempt(rawProviderAttempts, (int)response.StatusCode, submitDurationMs, code, forceFailure: true);
+                if (HasTrackedHealthRoute(resolution))
+                    await RecordRawProviderFailureAsync(resolution, (int)response.StatusCode, audit, request, ct);
+                await FinishRawLogAsync(logId, (int)response.StatusCode, audit, durationMs,
+                    resolution, request, gatewayTransport, ct, rawProviderAttempts,
+                    LlmCostEvidence.BuildSafeResponseHeaders(response, contentType), failureCode: code);
+                return new GatewayRawResponse
+                {
+                    Success = false,
+                    StatusCode = (int)response.StatusCode,
+                    Content = audit,
+                    ErrorCode = code,
+                    ErrorMessage = message,
+                    Resolution = gatewayResolution,
+                    DurationMs = durationMs,
+                    LogId = logId,
+                };
+            }
+
+            // HTTP 200 不等于媒体合成成功。先检查分片终结码、合并音频并生成安全审计，
+            // 再更新健康与日志；不能让 base64 音频或被截断的半段音频进入成功记录。
+            if (isExchange && _transformerRegistry.Get(resolution.ExchangeTransformerType) is IRawExchangeResponseTransformer rawTransformer)
+            {
+                var media = rawTransformer.TransformRawResponse(rawBytes, contentType,
+                    request.RequestBody ?? new JsonObject(), resolution.ExchangeTransformerConfig);
+                responseBody = media.AuditSummary;
+                if (!response.IsSuccessStatusCode || !media.Success)
+                {
+                    return await FailMediaAsync(media.ErrorCode ?? "EXCHANGE_MEDIA_HTTP_FAILED",
+                        media.ErrorMessage ?? "语音上游请求失败，诊断信息已记录。", responseBody);
+                }
+                binaryContent = media.BinaryContent;
+                contentType = media.ContentType ?? contentType;
+                isBinaryResponse = true;
+            }
+            else if (IsSpeechRawRequest(request))
+            {
+                // 原生 OpenAI 风格的音频也有限读：不能先让 HttpClient 全量缓冲，再在业务层拒绝。
+                // 成功审计只保存媒体大小和摘要，不把音频正文写入调用日志。
+                var exceeded = rawBytes.Length > GatewaySpeechResponseLimits.MaxAudioBytes;
+                var audit = new JsonObject
+                {
+                    ["received_bytes"] = rawBytes.Length,
+                    ["original_size_bytes"] = response.Content.Headers.ContentLength,
+                    ["content_type"] = contentType,
+                    ["response_sha256"] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(rawBytes)).ToLowerInvariant(),
+                    ["media_omitted"] = true,
+                    ["truncated"] = exceeded,
+                };
+                if (exceeded)
+                {
+                    audit["truncation_reason"] = "response_byte_limit";
+                    return await FailMediaAsync("TTS_RESPONSE_TOO_LARGE", "语音服务返回内容超过上限，请缩短文本后重试。", audit.ToJsonString());
+                }
+                if (response.IsSuccessStatusCode)
+                {
+                    var hasAudioContentType = contentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase)
+                                              || string.Equals(contentType, "application/octet-stream", StringComparison.OrdinalIgnoreCase);
+                    if (binaryContent is not { Length: > 0 } || !hasAudioContentType)
+                    {
+                        audit["local_error"] = "TTS_RESPONSE_NOT_AUDIO";
+                        return await FailMediaAsync("TTS_RESPONSE_NOT_AUDIO", "语音服务未返回有效音频，诊断信息已记录。", audit.ToJsonString());
+                    }
+                    responseBody = audit.ToJsonString();
+                }
+            }
 
             // 7. 更新健康状态
             if (HasTrackedHealthRoute(resolution))
@@ -3176,7 +3369,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     _logWriter?.MarkError(logId, msg, code);
                 }
             }
-            return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
+            return GatewayRawResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code : "GATEWAY_ERROR", msg, code);
         }
         finally
         {
@@ -3246,6 +3439,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 audioName,
                 audioBytes.Length);
 
+            if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
             MarkLastSendAttemptReachedProvider(providerAttempts);
             var streamResult = await _doubaoStreamAsr.TranscribeAsync(
                 wsUrl,
@@ -3333,7 +3527,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     CancellationToken.None,
                     providerAttempts);
             }
-            return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
+            return GatewayRawResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code : "GATEWAY_ERROR", msg, code);
         }
     }
 
@@ -3545,6 +3739,23 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <inheritdoc />
+    public async Task<GatewayModelResolution> ResolveModelMetadataAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+    {
+        if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
+            return new GatewayModelResolution { Success = false, ErrorMessage = error, ResolutionType = "NotFound" };
+
+        var result = await _modelResolver.ResolveMetadataAsync(
+            appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        return result.ToGatewayResolution();
+    }
+
+    /// <inheritdoc />
     public async Task<GatewayModelResolution> ResolveOfferingAsync(
         string appCallerCode,
         string modelType,
@@ -3634,6 +3845,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         return ex switch
         {
+            TaskExecutionAdmissionException task => (task.Message, task.StatusCode),
             TaskCanceledException => ("上游超时未响应（HttpClient timeout）", 504),
             OperationCanceledException => ("上游超时未响应", 504),
             HttpRequestException http => ($"网络请求失败：{http.Message}", 502),
@@ -3742,6 +3954,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             case "key":
                 httpRequest.Headers.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Key", apiKey);
+                break;
+            case "doubaotts":
+            case "doubao-tts":
+                var ttsParts = apiKey.Split('|', 2);
+                if (ttsParts.Length != 2 || ttsParts.Any(string.IsNullOrWhiteSpace))
+                    throw new ArgumentException("豆包 TTS 双凭据认证需要 AppID|AccessToken；新版单密钥请选择 XApiKey。");
+                httpRequest.Headers.TryAddWithoutValidation("X-Api-App-Id", ttsParts[0]);
+                httpRequest.Headers.TryAddWithoutValidation("X-Api-Access-Key", ttsParts[1]);
                 break;
             case "doubao-asr":
                 // 豆包 ASR 认证：apiKey 格式 "appId|accessToken"
@@ -4495,6 +4715,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     GroupId: request.Context?.GroupId,
                     SessionId: request.Context?.SessionId,
                     UserId: request.Context?.UserId,
+                    TaskPermitId: request.Context?.TaskPermitId,
+                    TaskLeaseRunId: request.Context?.TaskLeaseRunId,
+                    TaskLeaseFence: request.Context?.TaskLeaseFence,
+                    ExecutionOrigin: request.Context?.ExecutionOrigin,
+                    TriggerCredentialId: request.Context?.TriggerCredentialId,
+                    TriggerActorUserId: request.Context?.TriggerActorUserId,
+                    SourceDeployment: request.Context?.SourceDeployment,
+                    SourceTask: request.Context?.SourceTask,
                     ViewRole: request.Context?.ViewRole,
                     DocumentChars: request.Context?.DocumentChars,
                     DocumentHash: request.Context?.DocumentHash,
@@ -4850,6 +5078,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         try
         {
+            var isSpeech = IsSpeechRawRequest(request);
+            if (isSpeech) requestBodyForLog = RedactSpeechRequestForLog(requestBodyForLog);
             var redactedBody = request.IsMultipart
                 ? requestBodyForLog
                 : LlmLogRedactor.RedactJson(requestBodyForLog);
@@ -4872,14 +5102,22 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     },
                     RequestBodyRedacted: redactedBody,
                     RequestBodyHash: LlmLogRedactor.Sha256Hex(redactedBody),
-                    QuestionText: request.Context?.QuestionText,
+                    QuestionText: isSpeech ? null : request.Context?.QuestionText,
                     SystemPromptChars: request.Context?.SystemPromptChars,
                     SystemPromptHash: null,
-                    SystemPromptText: request.Context?.SystemPromptText,
+                    SystemPromptText: isSpeech ? null : request.Context?.SystemPromptText,
                     MessageCount: null,
                     GroupId: request.Context?.GroupId,
                     SessionId: request.Context?.SessionId,
                     UserId: request.Context?.UserId,
+                    TaskPermitId: request.Context?.TaskPermitId,
+                    TaskLeaseRunId: request.Context?.TaskLeaseRunId,
+                    TaskLeaseFence: request.Context?.TaskLeaseFence,
+                    ExecutionOrigin: request.Context?.ExecutionOrigin,
+                    TriggerCredentialId: request.Context?.TriggerCredentialId,
+                    TriggerActorUserId: request.Context?.TriggerActorUserId,
+                    SourceDeployment: request.Context?.SourceDeployment,
+                    SourceTask: request.Context?.SourceTask,
                     ViewRole: request.Context?.ViewRole,
                     DocumentChars: request.Context?.DocumentChars,
                     DocumentHash: request.Context?.DocumentHash,
@@ -4942,6 +5180,37 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
     }
 
+    private static string RedactSpeechRequestForLog(string body)
+    {
+        try
+        {
+            var node = JsonNode.Parse(body);
+            void Visit(JsonNode? current)
+            {
+                if (current is JsonObject obj)
+                {
+                    foreach (var (key, value) in obj.ToList())
+                    {
+                        if (key is "input" or "text" or "ssml" or "instructions" or "context_text" or "context_texts")
+                        {
+                            var text = value?.ToJsonString() ?? "null";
+                            obj[key] = $"[speech text omitted; chars={text.Length}; sha256={LlmLogRedactor.Sha256Hex(text)}]";
+                        }
+                        else Visit(value);
+                    }
+                }
+                else if (current is JsonArray arr)
+                    foreach (var item in arr) Visit(item);
+            }
+            Visit(node);
+            return node?.ToJsonString() ?? "[speech request omitted]";
+        }
+        catch (JsonException)
+        {
+            return $"[unparseable speech request omitted; chars={body.Length}; sha256={LlmLogRedactor.Sha256Hex(body)}]";
+        }
+    }
+
     private static JsonObject RedactAppliedPromptPolicy(JsonObject requestBody, GatewayRequestContext? context)
     {
         if (string.IsNullOrWhiteSpace(context?.PromptPolicyId)) return requestBody;
@@ -4989,13 +5258,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string gatewayTransport,
         CancellationToken ct,
         List<LlmProviderAttempt>? providerAttempts = null,
-        Dictionary<string, string>? responseHeaders = null)
+        Dictionary<string, string>? responseHeaders = null,
+        string? failureCode = null)
     {
         if (_logWriter == null || logId == null) return Task.CompletedTask;
 
         try
         {
-            var status = statusCode >= 200 && statusCode < 300 ? "succeeded" : "failed";
+            var status = failureCode is null && statusCode >= 200 && statusCode < 300 ? "succeeded" : "failed";
             var rawUsage = RawGatewayUsageParser.Parse(responseBody);
             var responseForLog = rawUsage.OutputImages.Count > 0
                 ? RawGatewayUsageParser.RedactImagePayloadsForLog(responseBody)
@@ -5026,7 +5296,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var cost = EstimateCost(
                 resolution,
                 tokenUsage,
-                countCall: statusCode >= 200
+                countCall: failureCode is null && statusCode >= 200
                     && statusCode < 300
                     && GatewayOperations.CountsPricePerCall(operation));
 
@@ -5051,7 +5321,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     Status: status,
                     EndedAt: DateTime.UtcNow,
                     DurationMs: durationMs,
-                    FinishReason: rawUsage.FinishReason,
+                    FinishReason: failureCode ?? rawUsage.FinishReason,
                     EstimatedInputCost: cost.Input,
                     EstimatedOutputCost: cost.Output,
                     EstimatedCacheReadCost: cost.CacheRead,
@@ -5291,7 +5561,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         List<LlmProviderAttempt> attempts,
         int statusCode,
         long durationMs,
-        string? error)
+        string? error,
+        bool forceFailure = false)
     {
         var attempt = attempts.LastOrDefault(x => string.Equals(x.Stage, "send", StringComparison.OrdinalIgnoreCase))
                       ?? attempts.LastOrDefault();
@@ -5302,7 +5573,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         attempt.DurationMs = durationMs;
         attempt.EndedAt = DateTime.UtcNow;
         attempt.Error = string.IsNullOrWhiteSpace(error) ? null : error;
-        attempt.Status = statusCode >= 200 && statusCode < 300 ? "succeeded" : "failed";
+        attempt.Status = !forceFailure && statusCode >= 200 && statusCode < 300 ? "succeeded" : "failed";
         if (!string.IsNullOrWhiteSpace(error))
             attempt.Reason = error;
     }

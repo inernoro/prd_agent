@@ -17,12 +17,13 @@ public static class ProductClaimNotificationQueue
             ProductInitiation t => new ProductInitiation { TCode = t.TCode, AppName = t.AppName, ProjectType = t.ProjectType,
                 VersionType = t.VersionType, NeedUiDesign = t.NeedUiDesign, IsAiPoc = t.IsAiPoc, DemandSource = t.DemandSource,
                 PlanName = t.PlanName, PlannedProjectAt = t.PlannedProjectAt, OwnerName = t.OwnerName },
-            ProductRelease v => new ProductRelease { VCode = v.VCode, ProjectType = v.ProjectType, VersionType = v.VersionType,
-                IsGlobalOpen = v.IsGlobalOpen, DemandSource = v.DemandSource, PlanName = v.PlanName, PlanUrl = v.PlanUrl,
+            ProductRelease v => new ProductRelease { VCode = v.VCode, ProjectType = v.ProjectType, VersionType = v.VersionType, IsTemporaryOptimization = v.IsTemporaryOptimization,
+                IsGlobalOpen = v.IsGlobalOpen, DemandSource = v.DemandSource, TapdLinks = v.TapdLinks, PlanName = v.PlanName, PlanUrl = v.PlanUrl,
                 ProjectMemberNames = v.ProjectMemberNames, PlannedReleaseAt = v.PlannedReleaseAt,
                 PlannedTrainingMinutes = v.PlannedTrainingMinutes, OwnerName = v.OwnerName },
             _ => throw new InvalidOperationException("不支持的申领通知类型"),
         };
-        return new ProductClaimNotification { OwnerId = ownerId ?? string.Empty, Snapshot = JsonSerializer.Serialize(body, body.GetType()) };
+        return new ProductClaimNotification { Status = config.DebugMode ? "debug_pending" : "pending",
+            OwnerId = ownerId ?? string.Empty, Snapshot = JsonSerializer.Serialize(body, body.GetType()) };
     }
 }

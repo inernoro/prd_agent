@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { computeResourceSnapshot, ResourceUsageSampler, countReservedContainers, __setLatestResourceUsageForTests } from '../../src/services/resource-usage-sampler.js';
+import { computeResourceSnapshot, ResourceUsageSampler, countReservedContainers, forgetConfirmedStoppedContainers, __setLatestResourceUsageForTests } from '../../src/services/resource-usage-sampler.js';
 import type { StateService } from '../../src/services/state.js';
 import type { BranchEntry } from '../../src/types.js';
 import type { BuildActivitySummary } from '../../src/services/build-activity-tracker.js';
@@ -22,6 +22,35 @@ const MB = 1024 * 1024;
 afterEach(() => __setLatestResourceUsageForTests(null));
 
 describe('computeResourceSnapshot', () => {
+  it('分支额度只计已知驻留身份，不把基础设施与无关宿主容器算入', async () => {
+    const branches = [branch('p1', [{ status: 'error', containerName: 'resident' }])];
+    branches[0].replicaSets = { db: { members: [{ id: 'r', containerName: 'replica', status: 'error' }] } } as BranchEntry['replicaSets'];
+    const provider = { getRunningContainerNames: vi.fn().mockResolvedValue(new Set(['resident', 'replica', 'infra-proxy', 'other-host'])),
+      getServiceStats: vi.fn().mockResolvedValue(new Map()) };
+    const sampler = new ResourceUsageSampler({ getAllBranches: () => branches } as StateService, provider);
+    await sampler.sampleOnce(); expect(countReservedContainers(branches)).toBe(2);
+    branches.length = 0; provider.getRunningContainerNames.mockRejectedValueOnce(new Error('observation unavailable'));
+    await sampler.sampleOnce(); expect(countReservedContainers(branches)).toBe(2);
+    forgetConfirmedStoppedContainers(['replica']); expect(countReservedContainers(branches)).toBe(1);
+    provider.getRunningContainerNames.mockResolvedValueOnce(new Set(['infra-proxy', 'other-host']));
+    await sampler.sampleOnce(); expect(countReservedContainers(branches)).toBe(0);
+  });
+
+  it('没有已知分支身份时成功盘点其它宿主容器仍为零分支额度', async () => {
+    const provider = { getRunningContainerNames: vi.fn().mockResolvedValue(new Set(['infra-proxy', 'other-host'])),
+      getServiceStats: vi.fn().mockResolvedValue(new Map()) };
+    await new ResourceUsageSampler({ getAllBranches: () => [] } as unknown as StateService, provider).sampleOnce();
+    expect(countReservedContainers([])).toBe(0);
+  });
+
+  it('盘点中容器的台账暂时消失且读取失败时仍保留物理容量', async () => {
+    const branches = [branch('p1', [{ status: 'error', containerName: 'resident' }])];
+    const provider = { getRunningContainerNames: vi.fn().mockResolvedValue(new Set(['resident'])), getServiceStats: vi.fn().mockResolvedValue(new Map()) };
+    const sampler = new ResourceUsageSampler({ getAllBranches: () => branches } as StateService, provider);
+    await sampler.sampleOnce(); expect(countReservedContainers(branches)).toBe(1);
+    branches.length = 0; provider.getRunningContainerNames.mockRejectedValueOnce(new Error('observation unavailable'));
+    await sampler.sampleOnce(); expect(countReservedContainers(branches)).toBe(1);
+  });
   it('sampler queries the actual running inventory for error services, and a failed read retains their reservation', async () => {
     const branches = [branch('p1', [{ status: 'error', containerName: 'alive-error' }, { status: 'stopped', containerName: 'stopped' }])];
     const provider = { getRunningContainerNames: vi.fn().mockResolvedValue(new Set(['alive-error'])),
@@ -99,5 +128,20 @@ describe('computeResourceSnapshot', () => {
     const p1 = snap.projects.find((p) => p.projectId === 'p1')!;
     expect(p1.runningContainers).toBe(1);
     expect(p1.cpuPercent).toBe(0);
+  });
+});
+
+describe('静态站资源归属', () => {
+  it('静态候选与已发布站点不占容器额度，尚未退役的旧容器仍计入', () => {
+    const entry = branch('static-project', [{ status: 'running', containerName: 'static-web' }]);
+    const service = entry.services.svc0;
+    service.runtimeKind = 'static';
+    service.pendingRuntime = { containerName: 'next-static', hostPort: 1234, runtimeKind: 'static' };
+    service.retainedRuntimes = [{ containerName: 'old-nginx', hostPort: 1235, containerId: 'a'.repeat(64) }];
+    expect(countReservedContainers([entry])).toBe(1);
+    const snapshot = computeResourceSnapshot([entry], new Map(), new Map(), Date.now(), 1000, new Set(['old-nginx']));
+    expect(snapshot.totals.runningContainers).toBe(1);
+    service.retainedRuntimes = [];
+    expect(countReservedContainers([entry])).toBe(0);
   });
 });

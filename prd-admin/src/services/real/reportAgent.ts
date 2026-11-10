@@ -1,4 +1,4 @@
-import { apiRequest } from './apiClient';
+import { apiRequest, tryRefreshAdminToken } from './apiClient';
 import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -127,59 +127,9 @@ import type {
   TestWebhookContract,
 } from '../contracts/reportAgent';
 
-type RefreshOkData = { accessToken: string; refreshToken: string; sessionKey: string };
-
 function getApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
   return raw.trim().replace(/\/+$/, '');
-}
-
-function joinUrl(base: string, path: string) {
-  const b = base.replace(/\/+$/, '');
-  const p = path.replace(/^\/+/, '');
-  if (!b) return `/${p}`;
-  return `${b}/${p}`;
-}
-
-function isRefreshOkData(data: unknown): data is RefreshOkData {
-  if (!data || typeof data !== 'object') return false;
-  const obj = data as Record<string, unknown>;
-  return typeof obj.accessToken === 'string'
-    && typeof obj.refreshToken === 'string'
-    && typeof obj.sessionKey === 'string';
-}
-
-async function tryRefreshAdminTokenForUpload(): Promise<boolean> {
-  const authStore = useAuthStore.getState();
-  const token = authStore.token;
-  const refreshToken = authStore.refreshToken;
-  const sessionKey = authStore.sessionKey;
-  const userId = authStore.user?.userId;
-
-  if (!authStore.isAuthenticated || !token || !refreshToken || !sessionKey || !userId) return false;
-
-  const url = joinUrl(getApiBaseUrl(), api.auth.refresh());
-  const body = JSON.stringify({
-    refreshToken,
-    userId,
-    clientType: 'admin',
-    sessionKey,
-  });
-
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-      body,
-    });
-    const text = await res.text();
-    const parsed = text ? JSON.parse(text) as ApiResponse<RefreshOkData> : null;
-    if (!res.ok || !parsed?.success || !isRefreshOkData(parsed.data)) return false;
-    authStore.setTokens(parsed.data.accessToken, parsed.data.refreshToken, parsed.data.sessionKey);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 // ========== Teams ==========
@@ -381,6 +331,17 @@ export const updateWeeklyReportReal: UpdateWeeklyReportContract = async (input) 
  * 首次 401 时刷新 token 重试一次。富文本图/日报图/评论图三个入口共用。
  */
 export const uploadReportImageForm = async (path: string, file: File): Promise<ApiResponse<ReportRichTextImageUploadData>> => {
+  const session = useAuthStore.getState();
+  const epoch = session.authSessionEpoch;
+  const userId = session.user?.userId;
+  const sessionChanged = () => {
+    const latest = useAuthStore.getState();
+    return latest.authSessionEpoch !== epoch || latest.user?.userId !== userId;
+  };
+  const changedResponse = (): ApiResponse<ReportRichTextImageUploadData> => ({
+    success: false, data: null,
+    error: { code: 'AUTH_SESSION_CHANGED', message: '登录会话已变更，请在当前账号下重新操作。' },
+  });
   const buildHeaders = (token: string | null | undefined) => {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -410,11 +371,14 @@ export const uploadReportImageForm = async (path: string, file: File): Promise<A
       headers: buildHeaders(useAuthStore.getState().token),
       body: createFormData(),
     });
+    if (sessionChanged()) return changedResponse();
     const firstParsed = await parseResponse(firstRes);
+    if (sessionChanged()) return changedResponse();
     const firstUnauthorized = firstRes.status === 401 || firstParsed.error?.code === 'UNAUTHORIZED';
     if (!firstUnauthorized) return firstParsed;
 
-    const refreshed = await tryRefreshAdminTokenForUpload();
+    const refreshed = await tryRefreshAdminToken();
+    if (sessionChanged()) return changedResponse();
     if (!refreshed) return firstParsed;
 
     const retryRes = await fetch(url, {
@@ -422,8 +386,11 @@ export const uploadReportImageForm = async (path: string, file: File): Promise<A
       headers: buildHeaders(useAuthStore.getState().token),
       body: createFormData(),
     });
-    return await parseResponse(retryRes);
+    if (sessionChanged()) return changedResponse();
+    const retryParsed = await parseResponse(retryRes);
+    return sessionChanged() ? changedResponse() : retryParsed;
   } catch (error) {
+    if (sessionChanged()) return changedResponse();
     return {
       success: false,
       error: {

@@ -1,3 +1,4 @@
+import { CODE_REVIEW_MCP_TOOLS } from './code-review.js';
 import { releaseCenterHref } from './release-center-links.js';
 import type { AgentRoleId, CdsConnectTarget } from './agent-setup.js';
 
@@ -90,7 +91,7 @@ export interface AgentPageContext extends Omit<AgentMissionDefinition, 'pagePath
 
 export type CdsCapabilityRisk = 'read-only' | 'write' | 'destructive' | 'protocol';
 export type CdsCapabilityAccess = 'public' | 'project' | 'system' | 'human-only' | 'protocol-token';
-export type CdsMcpExposure = 'read-only-candidate' | 'approval-required' | 'not-exposed';
+export type CdsMcpExposure = 'read-only-candidate' | 'approval-required' | 'not-exposed' | 'available';
 
 export interface CdsAgentSkillDefinition {
   id: 'cds' | 'cds-project-scan' | 'cds-deploy-pipeline' | 'cds-release' | 'preview-url';
@@ -110,6 +111,7 @@ export interface CdsAgentCapabilityDefinition {
   preferredSkill: CdsAgentSkillDefinition['id'];
   cliFamily?: string;
   mcpExposure: CdsMcpExposure;
+  mcpTools?: readonly string[];
   note: string;
 }
 
@@ -153,11 +155,15 @@ type CapabilitySeed = readonly [
 ];
 
 const CDS_AGENT_CAPABILITY_SEEDS = [
+  ['identity-connections', '原账号设备接入与恢复', 'identity-connections.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect --recover', '匿名只能提交仓库恢复申请；原账号与原项目由系统所有者核对，历史匿名凭据归属也必须明确人工确认'],
+  ['code-reviews', '代码审查任务与报告上传', 'code-reviews.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'code-review', 'ZIP/GitHub/CDS 项目分支固定快照；list 可附带当前项目分支 ID，submit 三选一且复用项目仓库授权；四个本地 stdio MCP 工具仅限项目任务与报告，复用项目权限，get 可分页读取已保存的问题、覆盖说明和报告链接，不触发分析；settings 仅限无项目作用域的管理员或 bootstrap 配置引擎引用，不暴露 settings MCP 工具；取消可停止任务，报告上传按内容去重，邮件仅在提交者指定时发送'],
+  ['instance-catalog', '主备 CDS 实例目录', 'instance-catalog.ts', 'mixed', 'project', 'read-only', 'direct', 'cds', 'instance', '只读公共地址；实例独立授权，切换不迁移数据库或接管流量'],
   ['access-requests', 'Agent 项目授权申请', 'access-requests.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect', '发起申请可免密，批准和拒绝必须由人类页面完成'],
   ['auth-local', '本地账号与用户管理', 'auth-local.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '密码和用户管理不得经对话或普通 Agent 工具传递'],
   ['user-project-access', '人类账号项目授权', 'user-project-access.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '仅系统所有者通过用户管理页分配和撤销项目访问，不允许普通用户或 Agent 自行提权'],
   ['auth-session', '会话与 GitHub 登录', 'auth.ts', 'system', 'human-only', 'protocol', 'protocol-only', 'cds', '', 'OAuth 回调和浏览器会话不是普通 Agent 工具'],
   ['branches', '分支、构建、资源与数据工作台', 'branches.ts', 'project', 'project', 'write', 'direct', 'cds-deploy-pipeline', 'branch', '写查询、恢复、清空和删除资源必须单独升级为破坏性审批'],
+  ['branch-lifecycle', '分支清理、归档与恢复', 'branch-lifecycle.ts', 'project', 'project', 'destructive', 'guided', 'cds', '', '先读取清理范围并确认停止；仅处理获授权项目，主干及固定分支受保护，归档保留30天，恢复不自动启动容器'],
   ['preview-address', '分支地址、项目 slug 与独立子域', 'preview-address.ts', 'project', 'human-only', 'write', 'guided', 'preview-url', '', '仅已认证且有项目访问权的人类可查看，保存与验证仅系统所有者；唯一性校验、版本锁和审计由服务端执行，Agent 不得伪造会话或修改他人项目'],
   ['bootstrap', '项目初始化与技能分发', 'bootstrap.ts', 'system', 'public', 'read-only', 'direct', 'cds', '', '匿名只读：发引导脚本与代理 MAP 技能包，不签发凭据也不碰项目数据'],
   ['bug-reports', '快捷提 bug 与缺陷转发', 'bug-reports.ts', 'system', 'system', 'write', 'direct', 'cds', '', '缺陷系统凭据只在服务端读取；未配置转发时只做本地留存，不得声称已同步'],
@@ -206,6 +212,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['topology', '服务关系图、拓扑体检与引用切换', 'topology.ts', 'project', 'project', 'write', 'direct', 'cds', 'verify / topology', '体检与读图只读；切换引用（PUT references）会写该服务的分支覆盖并要求重新部署，所以整组按写能力对待；修正 compose 仍回写仓库根再导入'],
   ['alarm-channels', '通知通道：哪些出问题通知谁（Bark / Webhook / MAP）', 'alarm-channels.ts', 'system', 'human-only', 'write', 'guided', 'cds', 'monitor', '通道是系统级的，项目级 Key 一律 403；密钥只写不读（读接口只回名字、末四位与指纹）；「演练」会真的往外发一条通知，不是干跑'],
   ['uptime', '监控中心：存活探测、故障时间线与自定义监控', 'uptime.ts', 'mixed', 'system', 'write', 'direct', 'cds', 'monitor', '探测结果只读，可用率与故障判定以探测器采样为准；自定义监控的增删改与「立即探测」是写操作，项目级 Key 只能改自己项目的目标，不代表可直接重启服务'],
+  ['project-inspections', '项目巡检：逐项实测结果与通知回执', 'project-inspections.ts', 'project', 'project', 'write', 'direct', 'cds', '', '仅回填自己项目的实测事实，不创建新调度，不改变通知通道；不能把回填声明当作独立探测或手机已读证明'],
   ['public-status', '公开状态页：匿名只读面板与项目侧开关', 'public-status.ts', 'project', 'project', 'write', 'guided', 'cds', 'monitor', '读取那条是匿名的（token 自鉴权），载荷由白名单构造，只出业务名与红黄绿；开关是写操作且对外可见——开公开页等于把这几条业务的红绿交给任何拿到链接的人，必须由人确认'],
   ['workspaces', '工作区、成员与邀请', 'workspaces.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '成员角色和邀请变更必须由工作区管理员确认'],
   ['server-control-plane', '健康、观测、AI 配对与系统状态', 'server.ts', 'mixed', 'system', 'write', 'direct', 'cds', 'health / auth / self', '公开探针只读，AI 批准和系统写操作保持人类边界'],
@@ -248,7 +255,8 @@ export const CDS_AGENT_CAPABILITY_DEFINITIONS: readonly CdsAgentCapabilityDefini
     agentUse,
     preferredSkill,
     ...(cliFamily ? { cliFamily } : {}),
-    mcpExposure: deriveMcpExposure(risk, agentUse),
+    mcpExposure: id === 'code-reviews' ? 'available' : deriveMcpExposure(risk, agentUse),
+    ...(id === 'code-reviews' ? { mcpTools: CODE_REVIEW_MCP_TOOLS } : {}),
     note,
   }));
 
@@ -262,8 +270,8 @@ export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, reado
   maintenance: ['server-control-plane', 'cache', 'snapshots', 'storage-mode', 'legacy-cleanup'],
   settings: ['comment-template', 'cds-system-connections', 'cds-system-offsite-backup', 'cds-system-sealed-storage', 'peer-sync', 'remote-hosts'],
   'project-onboarding': ['projects', 'pending-import', 'project-compose'],
-  'code-review': ['project-compose', 'deployment-runs'],
-  branches: ['branches', 'deployment-runs', 'deployment-versions', 'replica-sets', 'infra-credential-rotation'],
+  'code-review': ['code-reviews', 'project-compose', 'deployment-runs'],
+  branches: ['branches', 'branch-lifecycle', 'deployment-runs', 'deployment-versions', 'replica-sets', 'infra-credential-rotation'],
   'build-diagnostics': ['branches', 'deployment-runs'],
   'startup-diagnostics': ['branches', 'deployment-runs', 'docker-network-health'],
   'log-diagnostics': ['branches', 'server-control-plane'],
@@ -276,7 +284,7 @@ export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, reado
   rollback: ['deployment-versions', 'releases', 'snapshots'],
   tasks: ['scheduled-jobs'],
   reports: ['reports'],
-  general: ['branches', 'projects', 'server-control-plane'],
+  general: ['branches', 'projects', 'server-control-plane', 'project-inspections'],
 };
 
 export function getAgentCapabilitiesForMission(

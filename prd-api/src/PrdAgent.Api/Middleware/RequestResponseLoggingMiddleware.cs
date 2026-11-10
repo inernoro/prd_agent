@@ -68,6 +68,7 @@ public class RequestResponseLoggingMiddleware
     private static readonly string[] CredentialBearingPathPrefixes =
     {
         "/api/product/claim-webhook",
+        "/api/product/settings/scheduled-notifications",
         "/api/llm-gateway/sso/ticket",
         // SSO 入站 body 是交换令牌 / 登录后签发的凭据；只由专用出站审计保存脱敏证据。
         "/api/v1/auth/miduo-planet",
@@ -81,6 +82,7 @@ public class RequestResponseLoggingMiddleware
         // 按深度/宽度/长度三维截断，本来就是给人看的那一份。
         "/api/open/",
         "/api/mcp",
+        "/api/mcp-speech",
         // OpenDesign 运行时数据面，同理：`workspace/result` 的请求体是
         // `files[].contentBase64`——刚生成的整页 HTML 与由知识库推导出的正文本身。
         // 它还比上面两条更危险一点：这条路由是 `[AllowAnonymous]`（凭 runId + bearer 票据），
@@ -107,7 +109,7 @@ public class RequestResponseLoggingMiddleware
             || path.EndsWith("/llm/v1/responses", StringComparison.OrdinalIgnoreCase));
 
     private static bool CarriesCredential(string path) =>
-        CredentialBearingPathPrefixes.Any(p =>
+        AskAnswerRating.CarriesReceipt(path) || CredentialBearingPathPrefixes.Any(p =>
         {
             var prefix = p.TrimEnd('/');
             return path.Equals(prefix, StringComparison.OrdinalIgnoreCase)
@@ -172,7 +174,7 @@ public class RequestResponseLoggingMiddleware
         var isEventStream = accept.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/open-platform/", StringComparison.OrdinalIgnoreCase) 
                && path.Contains("/chat/completions", StringComparison.OrdinalIgnoreCase)
-            || IsDesignRuntimeModelProxy(path);
+            || IsDesignRuntimeModelProxy(path) || AskAnswerRating.IsAnswerStreamPath(path);
         var startedAt = DateTime.UtcNow;
 
         // 记录所有 /api/ 开头的请求（包括 /api/v1/、/api/visual-agent、/api/defect-agent 等）

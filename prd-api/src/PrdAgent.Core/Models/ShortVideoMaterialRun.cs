@@ -3,8 +3,12 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 短视频素材解析运行记录。
 /// </summary>
-public class ShortVideoMaterialRun
+public class ShortVideoMaterialRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
@@ -16,6 +20,10 @@ public class ShortVideoMaterialRun
     /// 后台 Worker 只领取属于自己实例（或历史无主 null/空）的 run，避免共享 Mongo 下多容器互抢。
     /// </summary>
     public string? OwnerInstanceId { get; set; }
+
+    /// <summary>本次处理的写回条件；不代替平台任务许可或执行代次，不向客户端暴露。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ProcessingToken { get; set; }
 
     /// <summary>原始短视频链接</summary>
     public string VideoUrl { get; set; } = string.Empty;

@@ -1,3 +1,5 @@
+import { ReleaseConsoleSkeleton, RELEASE_CONSOLE_LAYOUT_CLASS, RELEASE_CONSOLE_LEFT_CLASS, RELEASE_CONSOLE_CENTER_CLASS, RELEASE_CONSOLE_RIGHT_CLASS } from '@/components/skeletons/ReleaseConsoleSkeleton';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /**
  * 发布控制台（三栏版）—— 设计稿 cds/web/demo/release-console-rail.html 的真接口实现。
  *
@@ -212,6 +214,8 @@ const LOG_TONE_CLASS: Record<ReturnType<typeof logLineTone>, string> = {
 export function ReleaseConsolePage(): JSX.Element {
   const [params, setParams] = useSearchParams();
   const [projects, setProjects] = useState<ProjectLite[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [initialSettled, setInitialSettled] = useState(false);
   const [projectId, setProjectId] = useState(params.get('project') || '');
   const [search, setSearch] = useState('');
   const [center, setCenter] = useState<CenterResponse | null>(null);
@@ -241,6 +245,10 @@ export function ReleaseConsolePage(): JSX.Element {
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  useEffect(() => {
+    if (error || projectsLoaded && (!projectId || center)) setInitialSettled(true);
+  }, [error, projectsLoaded, projectId, center]);
+  const initialLoading = !initialSettled && !error;
   const [toast, setToast] = useState('');
   const [following, setFollowing] = useState(true);
   const logRef = useRef<HTMLDivElement>(null);
@@ -252,13 +260,17 @@ export function ReleaseConsolePage(): JSX.Element {
 
   /* ── 载入 ─────────────────────────────────────────────── */
   useEffect(() => {
+    let alive = true;
     apiRequest<{ projects?: ProjectLite[] }>('/api/projects')
       .then((res) => {
+        if (!alive) return;
         const list = res.projects || [];
         setProjects(list);
         setProjectId((current) => current || list[0]?.id || '');
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : String(err)));
+      .catch((err) => { if (alive) setError(err instanceof ApiError ? err.message : String(err)); })
+      .finally(() => { if (alive) setProjectsLoaded(true); });
+    return () => { alive = false; };
   }, []);
 
   /**
@@ -713,13 +725,13 @@ export function ReleaseConsolePage(): JSX.Element {
             列宽照参考稿 288/380，但参考稿是在宽画布上量的（它自己写死 min-width:1228
             并让页面横滚，本仓库不允许——见 cds/.claude/rules/mobile-layout-fallback.md）。
             所以：xl 收成 240/300，wide(1440) 回到 264/340，2xl 才是参考值 288/380。 */}
-        <div
-          className="flex h-full min-h-0 flex-col overflow-y-auto max-xl:gap-4 max-xl:p-4 xl:grid xl:grid-cols-[15rem_minmax(0,1fr)_18.75rem] xl:overflow-hidden wide:grid-cols-[16.5rem_minmax(0,1fr)_21.25rem] 2xl:grid-cols-[18rem_minmax(0,1fr)_23.75rem]"
+        {initialLoading ? <ReleaseConsoleSkeleton /> : <div
+          className={RELEASE_CONSOLE_LAYOUT_CLASS}
         >
           {/* ══ 左栏：项目 + 环境 ══ */}
           {/* 窄屏把顺序翻过来：用户来这一页第一眼要看的是「现在成没成」，
               不是项目列表。桌面三栏不受影响（order 只在 max-lg 生效）。 */}
-          <aside className="cds-surface-raised flex min-h-0 flex-col border-[hsl(var(--hairline))] max-xl:order-2 max-xl:shrink-0 max-xl:rounded-[0.875rem] max-xl:border xl:rounded-none xl:border-r xl:overflow-hidden">
+          <aside className={RELEASE_CONSOLE_LEFT_CLASS}>
             <div className="shrink-0 px-4 pb-2.5 pt-4">
               <div className="mb-2.5 flex items-center justify-between">
                 <SectionLabel>PROJECTS</SectionLabel>
@@ -739,7 +751,7 @@ export function ReleaseConsolePage(): JSX.Element {
             {/* 参考稿：项目列表 flex:1 吃掉中间所有高度，环境块 border-top 钉在底部。
                 之前让列表按内容收高、环境紧随其后，空白就全落在最下面——那才是洞。 */}
             <div className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-3 max-xl:max-h-[38vh]">
-              {filteredProjects.length === 0 ? (
+              {!projectsLoaded && !error ? <ContentLoading label="读取发布项目列表" /> : filteredProjects.length === 0 ? (
                 <p className="p-3 text-xs text-muted-foreground">没有匹配的项目。</p>
               ) : filteredProjects.map((item) => (
                 <button
@@ -777,7 +789,7 @@ export function ReleaseConsolePage(): JSX.Element {
                 <SectionLabel>ENVIRONMENTS</SectionLabel>
                 <span className="cds-ident text-[0.6875rem] text-muted-foreground">{rows.length} 个</span>
               </div>
-              {rows.length === 0 ? (
+              {projectId && !center && !error ? <ContentLoading label="读取发布环境列表" /> : rows.length === 0 ? (
                 <p className="text-xs text-muted-foreground">这个项目还没有发布目标，去发布中心添加环境。</p>
               ) : (
                 <div className="flex max-h-[34vh] flex-col gap-2 overflow-y-auto xl:max-h-[38vh]">
@@ -844,7 +856,7 @@ export function ReleaseConsolePage(): JSX.Element {
           </aside>
 
           {/* ══ 中栏：状态是主角 ══ */}
-          <main className="flex min-h-0 flex-col gap-3.5 max-xl:order-1 max-xl:shrink-0 xl:overflow-hidden xl:px-[1.375rem] xl:py-[1.125rem]">
+          <main className={RELEASE_CONSOLE_CENTER_CLASS}>
             {error ? (
               <div className="flex items-center gap-2 rounded-lg border border-bad/30 bg-bad-soft px-3 py-2 text-sm text-bad">
                 <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -1207,7 +1219,7 @@ export function ReleaseConsolePage(): JSX.Element {
           {/* ══ 右栏：只放「看记录」。配置与 Agent 走全屏浮层 ══ */}
           {/* 348px 的窄栏装不下发布流水线和一整段任务文本 —— 塞进来就是逼人在
               一条窄缝里横向读命令。这两块改成浮层，右栏专心做记录。 */}
-          <aside className="cds-surface-raised flex min-h-0 flex-col border-[hsl(var(--hairline))] max-xl:order-3 max-xl:shrink-0 max-xl:rounded-[0.875rem] max-xl:border xl:rounded-none xl:border-l xl:overflow-hidden">
+          <aside className={RELEASE_CONSOLE_RIGHT_CLASS}>
             {/* 参考稿是一条四格 tab（历史 / 失败 / 高级 / Agent），不是「左两个 tab
                 右两个链接」。后两个在这里打开全屏浮层——348px 的窄栏装不下流水线
                 与整段任务文本，这一条是对参考稿结构问题的有意修正，其余照抄。 */}
@@ -1349,7 +1361,7 @@ export function ReleaseConsolePage(): JSX.Element {
               })()}
             </div>
           </aside>
-        </div>
+        </div>}
 
         {/* ══ 浮层：发布流水线（只读）══ */}
         {sheet === 'pipeline' ? (

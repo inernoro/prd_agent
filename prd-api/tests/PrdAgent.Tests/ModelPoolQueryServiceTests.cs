@@ -105,6 +105,31 @@ public class ModelPoolQueryServiceTests
         Assert.Equal("serving unavailable", error.Message);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetModelPoolsAsync_PreservesRecoveryEligibilityWithoutResolving(bool recoveryAvailable)
+    {
+        var pool = CreatePool("recovery-public-id", priority: 1, isDefault: true);
+        pool.Models.Clear();
+        pool.Models.Add(new PoolModelInfo
+        {
+            ModelId = pool.Code,
+            PlatformId = "logical-model",
+            HealthStatus = "Unavailable",
+            IsRecoveryProbeAvailable = recoveryAvailable,
+        });
+        var gateway = new StubGateway { Pools = [pool] };
+
+        var result = await new ModelPoolQueryService(gateway)
+            .GetModelPoolsAsync(AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, ModelTypes.ImageGen);
+
+        var model = Assert.Single(Assert.Single(result).Models);
+        Assert.Equal(pool.Code, model.ModelId);
+        Assert.Equal("Unavailable", model.HealthStatus);
+        Assert.Equal(recoveryAvailable, model.IsRecoveryProbeAvailable);
+    }
+
     private static AvailableModelPool CreatePool(
         string publicId,
         int priority,

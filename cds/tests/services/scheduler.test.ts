@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -480,4 +480,76 @@ describe('SchedulerService', () => {
       expect(cooled).toContain('a');
     });
   });
+  describe('物理驻留与操作保护承接', () => {
+    it('错误状态冷分支仍占容量，停止失败保留，确认后才释放', async () => {
+      const names = new Set(['resident']);
+      stateService.addBranch(makeBranch('failed', 'error', { heatState: 'cold', services: { api: { profileId: 'api', containerName: 'resident', status: 'error' } } }));
+      scheduler.setRuntimePresenceProvider(() => names);
+      expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
+      scheduler.setCoolFn(async () => { throw new Error('unconfirmed stop'); });
+      await expect(scheduler.markCold('failed')).rejects.toThrow('unconfirmed stop');
+      expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
+      scheduler.setCoolFn(async () => { names.delete('resident'); });
+      await scheduler.markCold('failed');
+      expect(scheduler.getSnapshot().capacityUsage.current).toBe(0);
+    });
+
+    it('在途部署不能被降温，操作解除后仍按原空闲期限收敛', async () => {
+      stateService.addBranch(makeBranch('busy', 'running', { heatState: 'hot', lastAccessedAt: new Date(clock.now() - 1800000).toISOString() }));
+      let active = true; scheduler.setOperationProtection(() => active);
+      await scheduler.tick(); expect(cooled).toEqual([]);
+      active = false; await scheduler.tick(); expect(cooled).toEqual(['busy']);
+    });
+
+    it('touch仅持久化目标分支，不恢复全量状态保存热点', () => {
+      stateService.addBranch(makeBranch('touched'));
+      const save = vi.spyOn(stateService, 'save'); scheduler.touch('touched');
+      expect(save).toHaveBeenCalledWith([{ kind: 'branches', id: 'touched' }]);
+    });
+  });
+
+  it('cold标记但实际驻留的失败分支仍占热池，停止失败后重试', async () => {
+    const b = makeBranch('resident', 'error', { heatState: 'cold', lastAccessedAt: new Date(clock.now() - 1_000_000).toISOString(),
+      services: { api: { profileId: 'api', containerName: 'candidate', hostPort: 10001, status: 'error',
+        servingRuntime: { containerName: 'old-live', hostPort: 10002 } } } });
+    stateService.addBranch(b); const live = new Set(['old-live']); scheduler.setRuntimePresenceProvider(() => live);
+    let attempts = 0;
+    scheduler.setCoolFn(async () => { if (++attempts === 1) throw new Error('executor unavailable'); live.clear(); });
+    expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
+    expect(scheduler.getSnapshot().cold.some(row => row.slug === b.id)).toBe(false);
+    await scheduler.tick(); expect(stateService.getBranch('resident')!.heatState).toBe('hot');
+    expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
+    await scheduler.tick(); expect(attempts).toBe(2); expect(stateService.getBranch('resident')!.heatState).toBe('cold');
+    expect(scheduler.getSnapshot().capacityUsage.current).toBe(0);
+  });
+
+  it('实际驻留和固定分支仍被保护，在途任务结束后才可降温', async () => {
+    const b = makeBranch('busy', 'error', { heatState: 'cold', lastAccessedAt: new Date(clock.now() - 1_000_000).toISOString(),
+      services: { api: { profileId: 'api', containerName: 'live', hostPort: 10001, status: 'error' } } });
+    stateService.addBranch(b); scheduler.setRuntimePresenceProvider(() => new Set(['live']));
+    let busy = true; scheduler.setOperationProtection(id => id === 'busy' && busy);
+    await scheduler.tick(); expect(cooled).toEqual([]);
+    busy = false; await scheduler.tick(); expect(cooled).toEqual(['busy']);
+  });
+
+  it('仅复制集成员仍驻留时不能把cold当作已释放容量', async () => {
+    const b = makeBranch('replica-resident', 'error', { heatState: 'cold',
+      replicaSets: { api: { profileId: 'api', members: [{ id: 'r1', containerName: 'live-replica', status: 'error' }] } } as BranchEntry['replicaSets'] });
+    stateService.addBranch(b); scheduler.setRuntimePresenceProvider(() => new Set(['live-replica']));
+    expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
+    expect(scheduler.getSnapshot().cold).toEqual([]);
+    await scheduler.markCold(b.id); expect(cooled).toEqual([b.id]);
+  });
+
+  it('重启遗留cooling可重试，同进程正在降温不会重复发停止', async () => {
+    const b = makeBranch('stale-cooling', 'stopping', { heatState: 'cooling' });
+    stateService.addBranch(b); scheduler.setRuntimePresenceProvider(() => new Set(['live']));
+    let complete!: () => void; let attempts = 0;
+    scheduler.setCoolFn(async () => { attempts++; await new Promise<void>(resolve => { complete = resolve; }); });
+    const first = scheduler.markCold(b.id); await scheduler.markCold(b.id);
+    expect(attempts).toBe(1); complete(); await first;
+    expect(stateService.getBranch(b.id)!.heatState).toBe('cold');
+  });
+
+
 });

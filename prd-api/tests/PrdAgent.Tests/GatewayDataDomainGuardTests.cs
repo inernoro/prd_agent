@@ -301,7 +301,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("new RegistryAssetStorage(inner, db, providerName, regLogger, \"llmgw_asset_registry\")", program);
         Assert.Contains("GetCollection<PrdAgent.Core.Models.LLMPlatform>(\"llmgw_platforms\")", program);
         Assert.DoesNotContain("AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>()", program);
-        Assert.Contains("AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>()", program);
+        Assert.Contains("AddScoped<PrdAgent.Infrastructure.LlmGateway.ModelResolver>()", program);
+        Assert.Contains("AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, CodeReviewUserKeyResolver>()", program);
     }
 
     [Fact]
@@ -1695,6 +1696,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds: \"\"", cdsCompose);
         Assert.Contains("Deployment__LegacyOwnerCreatedBeforeUtc: \"\"", cdsCompose);
         Assert.Contains("Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}", productionCompose);
+        Assert.Contains("Deployment__SharedScheduledWorkEnabled=${SHARED_SCHEDULED_WORK_ENABLED:-true}", productionCompose);
+        Assert.DoesNotContain("Deployment__SharedScheduledWorkEnabled: \"true\"", cdsCompose);
         Assert.Contains("Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}", productionCompose);
         Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-main}", productionCompose);
         Assert.Contains("Deployment__LegacyOwnerCreatedBeforeUtc=${LEGACY_OWNER_CREATED_BEFORE_UTC:-2026-08-12T19:20:00Z}", productionCompose);
@@ -1936,7 +1939,8 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("LLM Gateway post-deploy probe: not configured", script);
         Assert.Contains("${PRD_AGENT_PUBLIC_LLMGW_SERVING_BASE_PATH:-/llmgw/gw/v1}", script);
         Assert.Contains("$(config_value LLMGW_SERVE_KEY)", script);
-        Assert.Contains("LLMGW_GATE_KEY=\"$gate_key\" python3 scripts/llmgw-serving-probe.py", script);
+        Assert.Contains("release_features=\"${LLMGW_RELEASE_FEATURES:-defect-agent}\"", script);
+        Assert.Contains("LLMGW_GATE_KEY=\"$gate_key\" LLMGW_RELEASE_FEATURES=\"$release_features\" python3 scripts/llmgw-serving-probe.py", script);
         Assert.Contains("wait_for_llmgw_serving_readiness", script);
         Assert.Contains("LLMGW_POST_DEPLOY_VERIFY_NEEDED", script);
         Assert.Contains("LLMGW_POST_DEPLOY_GATE_BASE", script);
@@ -4301,7 +4305,8 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("Channel.CreateBounded", liveEndpoint);
         Assert.DoesNotContain("TranscribeLivePcmAsync", liveEndpoint);
         Assert.DoesNotContain("LiveAsrBatchFallbackService", liveEndpoint);
-        Assert.Contains("AddScoped<LiveAsrSessionOrchestrator>", servingProgram);
+        Assert.Contains("AddScoped(sp => new LiveAsrSessionOrchestrator(", servingProgram);
+        Assert.Contains("GetRequiredService<IGatewayInvocationAuthority>()", servingProgram);
         Assert.True(
             liveEndpoint.IndexOf("AdmitSpecializedRequestAsync", StringComparison.Ordinal)
             < liveEndpoint.IndexOf("AcceptWebSocketAsync", StringComparison.Ordinal),

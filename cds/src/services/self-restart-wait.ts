@@ -82,8 +82,8 @@ export function describeRestartWait(w: RestartWaitState): string {
   const waited = Math.round(w.waitedMs / 1000);
   if (w.phase === 'draining-deploys') {
     const max = Math.round(w.timeoutMs / 1000);
-    return `重启前等待 ${w.pendingRuns.length} 个在途部署落地（已等 ${waited}s，最多 ${max}s；超时会照常重启，这些部署会被收敛为中断）`;
+    return `重启前等待 ${w.pendingRuns.length} 个在途操作结束（已等 ${waited}s，最多 ${max}s；超时将取消更新与重启，其他项目继续运行）`;
   }
-  if (w.phase === 'flushing') return `在途部署已排空，正在把状态落盘（已等 ${waited}s），随后换进程`;
+  if (w.phase === 'flushing') return `在途操作已结束，正在完成更新与状态落盘（已等 ${waited}s），随后换进程`;
   return `正在换进程（已等 ${waited}s），几秒内旧进程退出、新进程接手`;
 }

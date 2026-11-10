@@ -139,6 +139,9 @@ public static class VideoGenRunStatus
     /// <summary>用户已提交，等待 worker 拾取</summary>
     public const string Queued = "Queued";
 
+    /// <summary>带部署归属的新队列；旧 Worker 只领取 Queued，不能抢走新任务。</summary>
+    public const string ScopedQueued = "ScopedQueued";
+
     /// <summary>storyboard 模式：LLM 正在拆分镜</summary>
     public const string Scripting = "Scripting";
 
@@ -194,8 +197,12 @@ public static class SceneItemStatus
 /// <summary>
 /// storyboard 模式下的单个分镜（不含 Remotion 字段，单纯 prompt + OpenRouter 参数）
 /// </summary>
-public class VideoGenScene
+public class VideoGenScene : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>当前镜头生成或改写动作的执行许可；重启只恢复，不从所属长期Run借新权限。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public int Index { get; set; }
 
     /// <summary>分镜标题（可选，给用户看）</summary>
@@ -276,12 +283,29 @@ public class VideoGenSceneVersion
 /// 1. direct: 一段 prompt 调 OpenRouter 一镜直出 → VideoAssetUrl
 /// 2. storyboard: 文章 → LLM 拆分镜 → 用户编辑 → 逐镜 OpenRouter → ffmpeg concat → VideoAssetUrl
 /// </summary>
-public class VideoGenRun
+public class VideoGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string AppKey { get; set; } = "video-agent";
     public string? ProjectId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
     public string Status { get; set; } = VideoGenRunStatus.Queued;
+
+    /// <summary>仅持久化内部队列身份，对外仍沿用 Queued 契约。</summary>
+    [BsonIgnore]
+    [System.Text.Json.Serialization.JsonPropertyName("status")]
+    public string PublicStatus
+    {
+        get => Status == VideoGenRunStatus.ScopedQueued ? VideoGenRunStatus.Queued : Status;
+        set => Status = value;
+    }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? DeploymentSlug { get; set; }
 
     /// <summary>创作模式：direct（一镜直出）/ storyboard（拆分镜）</summary>
     public string Mode { get; set; } = VideoGenMode.Direct;
@@ -321,6 +345,12 @@ public class VideoGenRun
     /// <summary>累计成本（美元）</summary>
     public double? DirectVideoCost { get; set; }
 
+    /// <summary>最近一次从供应商读取的任务状态；本地取消不代表供应商已终止。</summary>
+    public string? DirectVideoUpstreamStatus { get; set; }
+
+    /// <summary>上游已到终态并回读费用的时间；费用未返回时仍保留 null，不视为免费。</summary>
+    public DateTime? DirectVideoReconciledAt { get; set; }
+
     /// <summary>最终视频 URL（COS 公开链接）</summary>
     public string? VideoAssetUrl { get; set; }
 
@@ -356,6 +386,8 @@ public class VideoGenRun
 
     public string OwnerAdminId { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    [BsonDefaultValue(null)]
+    public DateTime? QueueEnteredAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
     public bool CancelRequested { get; set; }

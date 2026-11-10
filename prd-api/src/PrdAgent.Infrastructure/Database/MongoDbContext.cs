@@ -40,7 +40,11 @@ public class MongoDbContext
         BsonClassMapRegistration.Register();
         
         var client = new MongoClient(connectionString);
-        _database = client.GetDatabase(databaseName);
+        var taskCoordinator = new Lazy<PrdAgent.Core.Interfaces.ITaskExecutionCoordinator>(() =>
+            new PrdAgent.Infrastructure.Security.TaskExecutionCoordinator(new LlmGatewayDataContext(
+                string.IsNullOrWhiteSpace(llmRequestLogConnectionString) ? connectionString : llmRequestLogConnectionString,
+                string.IsNullOrWhiteSpace(llmRequestLogDatabaseName) ? databaseName : llmRequestLogDatabaseName)));
+        _database = TaskLifecycleMongoDatabase.Wrap(client.GetDatabase(databaseName), () => taskCoordinator.Value, llmRequestLogTenantId);
         var logClient = string.IsNullOrWhiteSpace(llmRequestLogConnectionString)
                         || string.Equals(llmRequestLogConnectionString, connectionString, StringComparison.Ordinal)
             ? client
@@ -63,6 +67,10 @@ public class MongoDbContext
     }
 
     public IMongoCollection<User> Users => _database.GetCollection<User>("users");
+    public IMongoCollection<SpeechSettings> SpeechSettings => _database.GetCollection<SpeechSettings>("speech_settings");
+    public IMongoCollection<SpeechPreset> SpeechPresets => _database.GetCollection<SpeechPreset>("speech_presets");
+    public IMongoCollection<SpeechRun> SpeechRuns => _database.GetCollection<SpeechRun>("speech_runs");
+    public IMongoCollection<SpeechQuotaLedger> SpeechQuotaLedgers => _database.GetCollection<SpeechQuotaLedger>("speech_quota_ledgers");
     public IMongoCollection<ProductPermissionConfiguration> ProductPermissionConfigurations =>
         _database.GetCollection<ProductPermissionConfiguration>("product_permission_configurations");
     public IMongoCollection<BsonDocument> ConsoleSsoTickets =>
@@ -354,6 +362,7 @@ public class MongoDbContext
     public IMongoCollection<DesktopUpdateCache> DesktopUpdateCaches => _database.GetCollection<DesktopUpdateCache>("desktop_update_caches");
 
     // Web Hosting 网页托管与分享
+    public IMongoCollection<HostedDocumentGroup> HostedDocumentGroups => _database.GetCollection<HostedDocumentGroup>("hosted_document_groups");
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
     public IMongoCollection<HostedSiteDeletionTask> HostedSiteDeletionTasks => _database.GetCollection<HostedSiteDeletionTask>("hosted_site_deletion_tasks");
     public IMongoCollection<HostedSiteRevision> HostedSiteRevisions => _database.GetCollection<HostedSiteRevision>("hosted_site_revisions");
@@ -540,6 +549,7 @@ public class MongoDbContext
     public IMongoCollection<ProductWorkflowDefinition> ProductWorkflowDefinitions => _database.GetCollection<ProductWorkflowDefinition>("product_workflow_definitions");
     public IMongoCollection<VersionUpgradeRequest> VersionUpgradeRequests => _database.GetCollection<VersionUpgradeRequest>("version_upgrade_requests");
     public IMongoCollection<ProductAgentSettings> ProductAgentSettings => _database.GetCollection<ProductAgentSettings>("product_agent_settings");
+    public IMongoCollection<ProductScheduledNotification> ProductScheduledNotifications => _database.GetCollection<ProductScheduledNotification>("product_scheduled_notifications");
 
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");
@@ -1749,6 +1759,15 @@ public class MongoDbContext
         ArenaBattles.Indexes.CreateOne(new CreateIndexModel<ArenaBattle>(
             Builders<ArenaBattle>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_arena_battles_user_created" }));
+
+        // 一份文档只属于一个导航组；唯一多值索引同时防止并发添加到两个组。
+        HostedDocumentGroups.Indexes.CreateOne(new CreateIndexModel<HostedDocumentGroup>(
+            Builders<HostedDocumentGroup>.IndexKeys.Ascending(x => x.SiteIds),
+            new CreateIndexOptions { Unique = true, Name = "ux_hosted_document_groups_member" }));
+
+        HostedSiteComments.Indexes.CreateOne(new CreateIndexModel<HostedSiteComment>(
+            Builders<HostedSiteComment>.IndexKeys.Ascending(x => x.ReferencedSiteIds).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_hosted_comments_references" }));
 
         // ========== Hosted Sites 网页托管索引 ==========
 

@@ -6,6 +6,7 @@ import type {
   DeploymentVersionProfile,
 } from '../types.js';
 import type { StateService } from './state.js';
+import { resolveEffectiveProfile } from './container.js';
 
 export interface CreateDeploymentVersionInput {
   projectId: string;
@@ -96,7 +97,7 @@ export class DeploymentVersionService {
     ).join('; '));
   }
 
-  materializeProfiles(version: DeploymentVersion, currentProfiles: BuildProfile[]): BuildProfile[] {
+  materializeProfiles(version: DeploymentVersion, currentProfiles: BuildProfile[], branch: BranchEntry): BuildProfile[] {
     this.assertReusable(version);
     return version.profiles.map((snapshot) => {
       const current = currentProfiles.find((profile) => profile.id === snapshot.profileId);
@@ -105,8 +106,13 @@ export class DeploymentVersionService {
       }
       return {
         ...current,
+        // 版本不持久化环境明文；运行时仍使用本次受理的分支配置，不能退回项目基线库。
+        // 镜像、命令等产物契约继续由下面的版本快照固定，不重新套用当前部署模式。
+        env: resolveEffectiveProfile(current, branch).env,
         name: snapshot.name,
         dockerImage: snapshot.artifactImage,
+        buildScope: snapshot.buildScope ? [...snapshot.buildScope] : undefined,
+        staticWeb: snapshot.staticWeb ? structuredClone(snapshot.staticWeb) : undefined,
         command: snapshot.runtimeCommand,
         containerPort: snapshot.containerPort,
         containerWorkDir: snapshot.containerWorkDir,
@@ -139,6 +145,8 @@ export class DeploymentVersionService {
       profileId: profile.id,
       name: profile.name,
       artifactImage,
+      buildScope: profile.buildScope ? [...profile.buildScope] : undefined,
+      staticWeb: profile.staticWeb ? structuredClone(profile.staticWeb) : undefined,
       artifactKind: reusable ? (managedArtifact ? 'managed-image' : 'prebuilt-image') : 'legacy-runtime',
       reusable,
       reuseBlockedReason: reusable
@@ -183,6 +191,7 @@ export function computeDeploymentConfigHash(profiles: BuildProfile[], effectiveE
     resources: profile.resources || null,
     managedBuild: profile.managedBuild || null,
     buildScope: profile.buildScope,
+    staticWeb: profile.staticWeb,
     cacheMounts: profile.cacheMounts,
     buildTimeout: profile.buildTimeout,
     role: profile.role,

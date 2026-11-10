@@ -30,6 +30,7 @@ import {
   type MonitorAssertion,
 } from './monitor-assertions.js';
 import type { UptimeSample } from './uptime-metrics.js';
+import { probeMcpMonitor } from './mcp-monitor.js';
 
 /**
  * 探测记录的命名空间前缀。与 release-probe-target 的 `release@` 同理：分支键
@@ -303,6 +304,7 @@ export function normalizeUptimeMonitorInput(
     id: str(input.id) || options.existing?.id || newMonitorId(),
     name: '',
     kind,
+    ...(kind === 'functional' && options.existing?.mcp ? { mcp: options.existing.mcp } : {}),
     enabled: input.enabled === undefined ? (options.existing?.enabled ?? true) : Boolean(input.enabled),
     createdAt: options.existing?.createdAt || new Date(options.now ? options.now() : Date.now()).toISOString(),
     updatedAt: new Date(options.now ? options.now() : Date.now()).toISOString(),
@@ -756,9 +758,10 @@ export function readSampleCount(
  * 「生图接口通、返回的却是 512×512」属于后者，两种都得有人盯。
  */
 async function functionalProbe(
-  monitor: Pick<UptimeCustomMonitor, 'url' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'observeMode' | 'sampleCountPath'>,
+  monitor: Pick<UptimeCustomMonitor, 'url' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'observeMode' | 'sampleCountPath' | 'mcp'>,
   timeoutMs: number,
 ): Promise<CustomProbeOutcome> {
+  if (monitor.mcp) return probeMcpMonitor(monitor.url || '', monitor.mcp, timeoutMs);
   const startedAt = Date.now();
   const method = monitor.requestMethod || 'POST';
   const requestBody = monitor.requestBody ? expandRequestTemplate(monitor.requestBody) : undefined;
@@ -1005,7 +1008,7 @@ export async function probeHealthJsonBatch(monitors: UptimeCustomMonitor[], time
 
 /** 按监控定义发一次探测。timeoutMs 由调用方结算（监控自身 > 全局）。 */
 export async function probeCustomMonitor(
-  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'host' | 'port' | 'observeMode' | 'sampleCountPath'>,
+  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'host' | 'port' | 'observeMode' | 'sampleCountPath' | 'mcp'>,
   timeoutMs: number,
 ): Promise<CustomProbeOutcome> {
   if (monitor.kind === 'tcp') {

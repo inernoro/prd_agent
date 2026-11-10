@@ -10,12 +10,19 @@ public sealed class ProductAnnouncementSyncWorker(IServiceScopeFactory scopes, I
         // CDS预览与生产共享数据，只允许原有共享任务权威执行或接管队列。
         if (!DeploymentAuthority.CanRunSharedScheduledWork(configuration)) return;
         await Task.Yield();
+        var initialized = false;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 using var scope = scopes.CreateScope();
-                await scope.ServiceProvider.GetRequiredService<ProductAnnouncementSyncService>().TickAsync(DateTime.UtcNow, stoppingToken);
+                var service = scope.ServiceProvider.GetRequiredService<ProductAnnouncementSyncService>();
+                if (!initialized)
+                {
+                    await service.InitializeFromSeedFileAsync(AppContext.BaseDirectory, stoppingToken);
+                    initialized = true;
+                }
+                await service.TickAsync(DateTime.UtcNow, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
             catch (Exception ex) { logger.LogError(ex, "公告后台任务暂不可执行，将自动重试"); }

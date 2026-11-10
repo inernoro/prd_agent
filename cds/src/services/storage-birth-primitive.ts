@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { IShellExecutor } from '../types.js';
 import { renderStoragePlan, storageOwnerLabels, stableStorageVolumeName, type DeploymentStoragePlan } from './deployment-storage-plan.js';
 import type { StorageBirth } from './storage-provision.js';
+import { boundedStorageOptions, boundedStorageProvider } from './bounded-storage-provider.js';
 export type StorageProvisionTarget = {
     kind: 'infra';
     projectId: string;
@@ -65,8 +66,12 @@ export async function allocateStorageBirths(o: {
             await store.writeStorageBirthDurably(row, row.seq - 1, fence);
             if (await daemon() !== daemonId)
                 throw reject();
+            const providerShell = {exec:(command:string,options?:{executionLane?:string}) => exec(command,options?.executionLane !== 'observation')} as IShellExecutor;
+            const request = {name:row.name,birthNonce:row.birthNonce,daemonId,binding:row.binding,target:mount.target};
+            const bounded = row.binding.policy ? await boundedStorageProvider(providerShell,'create',request) : undefined;
             const labels = { ...storageOwnerLabels(row.binding), 'cds.storage.birth': row.birthNonce };
-            const made = await exec('docker volume create --driver local ' + Object.entries(labels).map(([k, v]) => '--label ' + quote(k + '=' + v)).join(' ') + ' ' + quote(row.name), true);
+            const options = bounded ? Object.entries(boundedStorageOptions(bounded)).map(([k,v]) => '--opt '+quote(k+'='+v)).join(' ')+' ' : '';
+            const made = await exec('docker volume create --driver local ' + options + Object.entries(labels).map(([k, v]) => '--label ' + quote(k + '=' + v)).join(' ') + ' ' + quote(row.name), true);
             if (made.exitCode !== 0 || made.stdout.trim() !== row.name)
                 throw reject();
             const seen = await exec('docker volume inspect ' + quote(row.name));
@@ -82,11 +87,16 @@ export async function allocateStorageBirths(o: {
             if (!Array.isArray(values) || values.length !== 1)
                 throw reject();
             const v = values[0];
-            if (v.Name !== row.name || v.Driver !== 'local' || (v.Options !== null && (!v.Options || typeof v.Options !== 'object' || Array.isArray(v.Options) || Object.keys(v.Options).length)) || typeof v.Mountpoint !== 'string' || !path.posix.isAbsolute(v.Mountpoint) || path.posix.normalize(v.Mountpoint) !== v.Mountpoint || v.Mountpoint.split('/').includes('.deployment-sources') || !v.Mountpoint.endsWith('/' + row.name + '/_data') || !Number.isFinite(Date.parse(v.CreatedAt)) || Object.entries(labels).some(([k, value]) => !Object.hasOwn(v.Labels || {}, k) || v.Labels[k] !== value))
+            const expectedOptions = bounded ? boundedStorageOptions(bounded) : {};
+            if (v.Name !== row.name || v.Driver !== 'local' || (v.Options !== null && (!v.Options || typeof v.Options !== 'object' || Array.isArray(v.Options))) || (bounded && v.Options === null) || Object.keys(v.Options || {}).length !== Object.keys(expectedOptions).length || Object.entries(expectedOptions).some(([k,value])=>v.Options[k]!==value) || typeof v.Mountpoint !== 'string' || !path.posix.isAbsolute(v.Mountpoint) || path.posix.normalize(v.Mountpoint) !== v.Mountpoint || v.Mountpoint.split('/').includes('.deployment-sources') || !v.Mountpoint.endsWith('/' + row.name + '/_data') || !Number.isFinite(Date.parse(v.CreatedAt)) || Object.entries(labels).some(([k, value]) => !Object.hasOwn(v.Labels || {}, k) || v.Labels[k] !== value))
                 throw reject();
+            if (bounded) {
+                const verified = await boundedStorageProvider(providerShell,'inspect',request);
+                if (Object.entries(bounded).some(([k,value])=>verified[k as keyof typeof verified] !== value)) throw reject();
+            }
             if (await daemon() !== daemonId)
                 throw reject();
-            row = { ...row, seq: row.seq + 1, stage: 'confirmed', updatedAt: new Date().toISOString(), observation: { name: v.Name, mountpoint: v.Mountpoint, createdAt: v.CreatedAt, labels: structuredClone(v.Labels) } };
+            row = { ...row, seq: row.seq + 1, stage: 'confirmed', updatedAt: new Date().toISOString(), observation: { name: v.Name, mountpoint: v.Mountpoint, createdAt: v.CreatedAt, labels: structuredClone(v.Labels), ...(bounded ? {bounded} : {}) } };
             births[births.length - 1] = row;
             await store.writeStorageBirthDurably(row, row.seq - 1, fence);
             fence();

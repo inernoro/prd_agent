@@ -84,7 +84,7 @@ public sealed class BuiltInDesignArtifactProviderDefinitionSource : IDesignArtif
     private static readonly string[] WebPageSources =
         [DesignArtifactSourceSurfaces.WebHosting, DesignArtifactSourceSurfaces.KnowledgeBase];
     private static readonly string[] OpenDesignSources =
-        [DesignArtifactSourceSurfaces.WebHosting, DesignArtifactSourceSurfaces.KnowledgeBase, DesignArtifactSourceSurfaces.HtmlPpt];
+        [DesignArtifactSourceSurfaces.WebHosting, DesignArtifactSourceSurfaces.KnowledgeBase, DesignArtifactSourceSurfaces.HtmlPpt, DesignArtifactSourceSurfaces.Workflow];
 
     public IEnumerable<DesignArtifactProviderDefinition> GetDefinitions()
     {

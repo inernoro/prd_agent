@@ -54,7 +54,7 @@ export function buildHeadline({ clients, today, recentCalls, hasHistory }: Headl
       if (!hasHistory) {
         return {
           verdict: '还没有客户端接进来。',
-          detail: '点这一页顶上那行的「接入新的」：起个名字、复制一段配置粘进 Claude Code 或 Codex，两分钟就能连上。',
+          detail: '点「接入新的」，选择 Codex 或 WorkBuddy，复制完整提示词完成连接和技能安装。',
         };
       }
       return {

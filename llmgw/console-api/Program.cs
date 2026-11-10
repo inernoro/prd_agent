@@ -2731,6 +2731,8 @@ app.MapPost("/gw/members/{id}/invalidate-sessions", async (HttpContext http, str
 }).RequireAuthorization("OrganizationWrite");
 
 // ───────────────────────────── 日志列表（需鉴权）─────────────────────────────
+app.MapGatewayConsumptionAlerts(gatewayDatabase, jsonOptions);
+
 app.MapGet("/gw/logs", async (
     HttpContext http,
     int? page, int? pageSize, string? from, string? to, string? model, string? status,
@@ -14891,6 +14893,7 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
                 { "modelIds", new BsonArray(draft.Models.Select(item => item.ModelId)) },
                 { "targetAuthScheme", draft.TargetAuthScheme },
                 { "transformerType", draft.TransformerType },
+                { "hasResourceId", draft.ResourceId is not null },
                 { "enabled", draft.Enabled },
                 { "hasKey", true },
                 { "authority", "llm_gateway" },
@@ -15036,18 +15039,8 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
         ? fb.Eq("Version", currentVersion)
         : fb.Exists("Version", false);
     var nextVersion = currentVersion + 1;
-    var update = Builders<BsonDocument>.Update
-        .Set("Name", draft.Name)
-        .Set("NameNormalized", draft.NameNormalized)
-        .Set("Models", GatewayConfigurationProvisioning.BuildExchangeModels(
-            draft.Models, TenantAccess.GetRequired(http).Username, DateTime.UtcNow))
-        .Set("TargetUrl", draft.TargetUrl)
-        .Set("TargetAuthScheme", draft.TargetAuthScheme)
-        .Set("TransformerType", draft.TransformerType)
-        .Set("Enabled", draft.Enabled)
-        .Set("Description", ToBsonAuditValue(draft.Description))
-        .Set("UpdatedAt", DateTime.UtcNow)
-        .Set("Version", nextVersion);
+    var update = GatewayConfigurationProvisioning.BuildExchangeUpdate(
+        draft, document, TenantAccess.GetRequired(http).Username, DateTime.UtcNow, nextVersion);
     string requiredAuditId;
     try
     {
@@ -15066,6 +15059,7 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
                 { "targetUrlChanged", !string.Equals(document.AsNullableString("TargetUrl"), draft.TargetUrl, StringComparison.Ordinal) },
                 { "targetAuthScheme", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableString("TargetAuthScheme")) }, { "to", draft.TargetAuthScheme } } },
                 { "transformerType", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableString("TransformerType")) }, { "to", draft.TransformerType } } },
+                { "resourceIdChanged", draft.ResourceId is not null && !string.Equals(GatewayConfigurationProvisioning.ReadExchangeResourceId(document), draft.ResourceId, StringComparison.Ordinal) },
                 { "enabled", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableBool("Enabled")) }, { "to", draft.Enabled } } },
                 { "authority", "llm_gateway" },
             });
@@ -18758,6 +18752,7 @@ static ExchangeItem MapExchange(BsonDocument d)
         TargetUrl = d.GetStringOrEmpty("TargetUrl"),
         TargetAuthScheme = d.AsNullableString("TargetAuthScheme") ?? "Bearer",
         TransformerType = d.AsNullableString("TransformerType") ?? "passthrough",
+        ResourceId = GatewayConfigurationProvisioning.ReadExchangeResourceId(d),
         Enabled = d.AsNullableBool("Enabled") ?? true,
         Description = d.AsNullableString("Description"),
         HasKey = !string.IsNullOrEmpty(d.AsNullableString("TargetApiKeyEncrypted")),
@@ -19957,39 +19952,8 @@ static string ResolveLogCostStatus(BsonDocument d)
 /// 金额证据性质。供应商实际账单永远优先于请求完成时的估算快照；存量日志没有 CostKind 时
 /// 按已有事实回退，绝不把 APIYI 的人工价格表伪装成供应商实际结算。
 /// </summary>
-static string ResolveLogCostKind(BsonDocument d)
-{
-    if (d.AsNullableDecimal("ProviderReportedCost") is not null)
-    {
-        return GatewayCostKindNames.ProviderActual;
-    }
-
-    var stored = d.AsNullableString("CostKind")?.Trim().ToLowerInvariant();
-    if (GatewayCostKindNames.All.Contains(stored, StringComparer.Ordinal))
-    {
-        return stored!;
-    }
-
-    var status = ResolveLogCostStatus(d);
-    if (status == GatewayCostStatusNames.NoUsage) return GatewayCostKindNames.NoUsage;
-    if (status != GatewayCostStatusNames.Priced) return GatewayCostKindNames.Unpriced;
-
-    var provider = string.Join(' ', new[]
-    {
-        d.AsNullableString("Provider"),
-        d.AsNullableString("PlatformId"),
-        d.AsNullableString("PlatformName"),
-    }.Where(value => !string.IsNullOrWhiteSpace(value)));
-    if (provider.Contains("apiyi", StringComparison.OrdinalIgnoreCase)
-        || provider.Equals("openai", StringComparison.OrdinalIgnoreCase))
-    {
-        return GatewayCostKindNames.OfficialBaselineEstimate;
-    }
-
-    return string.Equals(d.AsNullableString("PriceSource")?.Trim(), "upstream", StringComparison.OrdinalIgnoreCase)
-        ? GatewayCostKindNames.ProviderPolicyEstimate
-        : GatewayCostKindNames.OfficialBaselineEstimate;
-}
+static string ResolveLogCostKind(BsonDocument d) =>
+    LegacyLogCostKindPolicy.Resolve(d, ResolveLogCostStatus(d));
 
 /// <summary>
 /// 网关写进日志的成本状态取值。console-api 是独立工程、引用不到网关那份常量，

@@ -178,7 +178,7 @@ public static class DataSyncScope
             new DataSyncCollection("model_lab_model_sets", System.Array.Empty<string>()),
             new DataSyncCollection("model_scheduler_config", System.Array.Empty<string>()),
             // 机器人配置属于本站；连同启停标志整体保留，避免跨站导入意外投递。
-            new DataSyncCollection("product_agent_settings", new[] { "ClaimWebhook" }),
+            new DataSyncCollection("product_agent_settings", new[] { "ClaimWebhook", "ScheduledNotificationDebugWebhook", "ScheduledNotificationGroups" }),
             new DataSyncCollection("reference_image_configs", System.Array.Empty<string>()),
             new DataSyncCollection("routing_rules", System.Array.Empty<string>()),
             new DataSyncCollection("shortcut_templates", System.Array.Empty<string>()),
@@ -316,6 +316,7 @@ public static class DataSyncScope
             new DataSyncCollection("project_route_site_specs", System.Array.Empty<string>()),
             new DataSyncCollection("web_folders", System.Array.Empty<string>()),
             new DataSyncCollection("web_page_groups", System.Array.Empty<string>()),
+            new DataSyncCollection("hosted_document_groups", System.Array.Empty<string>()),
         }),
         new DataSyncGroup("channel", "渠道与邮件", new[]
         {
@@ -371,6 +372,7 @@ public static class DataSyncScope
     public static readonly IReadOnlyDictionary<string, string> Excluded = new Dictionary<string, string>
     {
         ["product_permission_configurations"] = "产品管理权限覆盖快照：绑定本站账号及权限边界，跨实例复制会意外覆盖目标站授权；由目标站MAP管理员单独导入确认",
+        ["product_scheduled_notifications"] = "包含本站加密的企微 Webhook 与任务执行状态，跨实例复制可能重复发送通知",
         ["account_data_transfers"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["active_task_absorb_preferences"] = "个人偏好（吸取建议时上次引用了哪几个知识库）：那几个知识库 Id 在目标站根本不存在，复制过去只会让人对着一堆空引用发愣",
         ["active_task_debts"] = "仓库派生数据：正文来自 doc/debt.*.md，目标站自己跑一次同步脚本就有，不需要搬。而且它的 Key 是业务唯一索引、_id 是随机 GUID —— 两个站各自同步过同一份台账时 Key 相同 _id 不同，同步引擎只按 _id 对账、撞业务唯一索引会中止整轮（见 DataSyncApply.IsIdCollision 的注释），搬它等于让跨实例同步在第一条共享债务上失败。归属与状态本就是各站自己的事实（设计上的 SSOT 划分），复制过去只会制造两本账",
@@ -440,6 +442,10 @@ public static class DataSyncScope
         ["md_to_ppt_runs"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["mcp_call_logs"] = "日志与埋点：智能体经 MCP 调用平台能力的流水，量大且只对源站有意义",
         ["mcp_usage_counters"] = "运行时会话/缓存/派生数据：接入台按日的配额计数，跨实例没有意义，新的一天自然重置",
+        ["speech_settings"] = "当前环境的语音能力配置：绑定本网关模型池、Offering与音色资源，跨实例复制会误用目标站上游与额度策略",
+        ["speech_presets"] = "用户声音预设：绑定源站环境、能力配置版本与上游音色，目标站须先重新映射并校验资源，不能直接同步",
+        ["speech_runs"] = "语音任务与私有音频资产关联：包含源站部署租约、上游执行事实与存储键，跨实例复制无法恢复且可能误认资产归属",
+        ["speech_quota_ledgers"] = "源站运行时额度账本：关联当前环境、用户、能力和任务预占释放状态，不能跨实例复制或覆盖目标站额度",
         ["mentions"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["model_exchanges"] = "日志与埋点：量大且只对源站有意义",
         ["model_lab_experiments"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",

@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -13,6 +14,7 @@ import {
 } from '../src/artifact/public-package.js';
 import { AgentWorkspaceRuntimeError } from '../src/errors.js';
 import { hardenSelfContainedHtml } from '../src/quality/gate.js';
+import { iterateHtmlTags, readHtmlAttribute } from '../src/quality/html.js';
 import { runBrowserWorker } from '../src/quality/browser-worker.js';
 import type { BrowserQualityIssue } from '../src/quality/browser-contract.js';
 import { MAP_DESIGN_WORKSPACE_SCHEMA } from '../src/workspace/transfer.js';
@@ -64,7 +66,150 @@ afterEach(async () => {
   map = undefined;
 });
 
+describe('web delivery authority', () => {
+  it('delivers a safe complete page while copy and browser findings remain observations without paid retries', async () => {
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: { run: async (job) => ({
+        ...passingBrowserResult(job),
+        measurements: passingBrowserResult(job).measurements.map((measurement) => ({
+          ...measurement,
+          issues: [{ issueCode: 'horizontal_overflow' as const, severity: 'hard' as const,
+            ruleVersion: 'browser-hard-gate-v1' as const, viewport: measurement.viewport,
+            actual: { overflow: 20 }, target: 'observation only' }],
+        })),
+      }) },
+    } });
+    const fixtureRoot = process.env.OPENDESIGN_EXISTING_WEB_PACKAGE_PATH;
+    const sourceFiles = fixtureRoot ? fs.readdirSync(fixtureRoot, { recursive: true })
+      .map(String).filter((name) => fs.statSync(path.join(fixtureRoot, name)).isFile())
+      .map((name) => ({ path: `current/${name}`, content: fs.readFileSync(path.join(fixtureRoot, name)),
+        mediaType: name.endsWith('.html') ? 'text/html' : name.endsWith('.json') ? 'application/json' : 'image/png' })) : [];
+    const sourceHtml = fixtureRoot ? fs.readFileSync(path.join(fixtureRoot, 'index.html'), 'utf8')
+      : '<!doctype html><html><body><main><h1>说明网页</h1></main></body></html>';
+    const authoredHtml = [...iterateHtmlTags(sourceHtml)].reverse().reduce((html, tag) =>
+      !tag.isClosing && tag.name.toLowerCase() === 'meta'
+        && readHtmlAttribute(tag.attributes, 'http-equiv')?.toLowerCase() === 'content-security-policy'
+        ? html.slice(0, tag.start) + html.slice(tag.end) : html, sourceHtml)
+      .replace('</main>', '<p>TODO: 999个项目</p><a href="#missing">目录</a><button>说明</button></main>');
+    const pkg = buildPackage(sourceFiles);
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      for (const file of sourceFiles) expect(fs.readFileSync(path.join(workspaceDir, file.path))).toEqual(file.content);
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), authoredHtml);
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+    const view = await runToEnd(pkg);
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(harness.daemon.runBodies).toHaveLength(2);
+    expect(await statusReasons(pkg.runId)).not.toContain('open_design_quality_repairing');
+    expect(map!.commits).toHaveLength(1);
+    const report = map!.commits[0].files.find((file: { path: string }) => file.path === 'assets/visual-quality-report.json');
+    expect(JSON.parse(Buffer.from(report.contentBase64, 'base64').toString('utf8'))).toMatchObject({
+      repairAttempts: 0, finalHardPassed: false,
+    });
+  });
+});
+
+describe('browser observation availability boundary', () => {
+  it('commits safe output without fabricating observations when the screenshot process is unavailable', async () => {
+    harness = await startHarness({ overrides: { browserQualityRunner: { run: async () => {
+      throw new AgentWorkspaceRuntimeError('browser_quality_runtime_unavailable', 'synthetic process unavailable');
+    } } } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>Saved page</main></body></html>');
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+    const view = await runToEnd(pkg);
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(harness.daemon.runBodies).toHaveLength(2);
+    expect(await statusReasons(pkg.runId)).toContain('open_design_browser_quality_unavailable');
+    expect(map!.commits[0].files.some((file: { path: string }) => file.path === 'assets/visual-quality-report.json')).toBe(false);
+  });
+
+  it('does not swallow cancellation while observations are unavailable', async () => {
+    harness = await startHarness({ overrides: { browserQualityRunner: { run: async () => {
+      await harness!.request('POST', '/v1/tasks/map-run-1/cancel', undefined, auth);
+      throw new AgentWorkspaceRuntimeError('browser_quality_runtime_unavailable', 'synthetic process unavailable');
+    } } } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>Saved page</main></body></html>');
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+    const view = await runToEnd(pkg);
+    expect(view.state).toBe('cancelled');
+    expect(map!.commits).toHaveLength(0);
+  });
+
+  it('does not swallow the task deadline while observations are unavailable', async () => {
+    harness = await startHarness({ overrides: { browserQualityRunner: { run: async () => {
+      const afterDeadline = Date.now() + 1_000_000;
+      vi.spyOn(Date, 'now').mockReturnValue(afterDeadline);
+      // 终态写入尚未完成时先允许一次 HTTP 观察，复现 CI 的异步调度。
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      throw new AgentWorkspaceRuntimeError('browser_quality_runtime_unavailable', 'synthetic process unavailable');
+    } } } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>Saved page</main></body></html>');
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+    try {
+      const view = await runToEnd(pkg);
+      expect(view.state).toBe('failed');
+      expect(view.error.code).toBe('open_design_run_timeout');
+      expect(map!.commits).toHaveLength(0);
+    } finally { vi.restoreAllMocks(); }
+  });
+});
+
 describe('presentation source context', () => {
+  it('keeps current saved wording and pages authoritative in both edit and native review instructions', async () => {
+    const fixturePath = process.env.OPENDESIGN_EXISTING_PPT_FIXTURE_PATH;
+    const parentHtml = fixturePath ? fs.readFileSync(fixturePath, 'utf8')
+      : '<!doctype html><html><body><main><section class="slide"><h1>既有内容</h1><p>用户手动保存的结语。</p></section></main></body></html>';
+    // 已发布夹具带运行时CSP。替身模拟上游重新写交付文件，安全元信息仍由原校验重建；冻结基稿不动。
+    const authoredHtml = [...iterateHtmlTags(parentHtml)].reverse().reduce((html, tag) =>
+      !tag.isClosing && tag.name.toLowerCase() === 'meta'
+        && readHtmlAttribute(tag.attributes, 'http-equiv')?.toLowerCase() === 'content-security-policy'
+        ? html.slice(0, tag.start) + html.slice(tag.end) : html, parentHtml);
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: { run: async (job) => passingBrowserResult(job) },
+    } });
+    const pkg = buildPackage([
+      { path: 'current/index.html', content: parentHtml, mediaType: 'text/html' },
+    ], {
+      taskExtras: {
+        instruction: '只换视觉风格，内容与页数保持不变。',
+        presentationContract: {
+          schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: 1,
+          sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'tech-dark',
+          requiredSlideIndexes: [1],
+        },
+      },
+    });
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      expect(fs.readFileSync(path.join(workspaceDir, 'current', 'index.html'), 'utf8')).toBe(parentHtml);
+      // 零模型替身只保留同一真实基稿。MAP 不比较正文、不回填或阻断上游内容。
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), authoredHtml);
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+
+    const view = await runToEnd(pkg);
+
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(harness.daemon.imports[0].skillId).toBe('magazine-web-ppt');
+    expect(harness.daemon.runBodies).toHaveLength(2);
+    for (const instruction of [harness.daemon.runBodies[0].systemPrompt, harness.daemon.runBodies[1].message]) {
+      expect(String(instruction)).toContain('Preserve its exact visible wording, including user-saved edits');
+      expect(String(instruction)).toContain('slide count, order, and slide-to-content assignment');
+      expect(String(instruction)).toContain('A theme or template change is a visual-only edit');
+      expect(String(instruction)).not.toContain('allowing the deck skill to choose the final content structure');
+    }
+    expect(String(harness.daemon.runBodies[0].systemPrompt)).not.toContain('Its grouping and count are reference context only');
+    expect(map!.commits).toHaveLength(1);
+  });
+
   it('passes the frozen source to OpenDesign without imposing a platform source-slot scaffold', async () => {
     harness = await startHarness({ overrides: {
       browserQualityRunner: { run: async (job) => passingBrowserResult(job) },
@@ -86,7 +231,7 @@ describe('presentation source context', () => {
         },
         designDirection: {
           schemaVersion: 'map-design-direction-v1', styleId: 'deck', styleName: '演示稿',
-          styleDescription: '由所选 OpenDesign deck skill 决定', designSystemId: 'minimal', reviewMode: 'strict',
+          styleDescription: '由所选 OpenDesign deck skill 决定', designSystemId: 'editorial', reviewMode: 'strict',
           prompts: {
             generate: '你是资深网页设计师，要把 MAP 知识内容做成一张好看、可信的单页网页。手机 390px 宽度下可读。',
             edit: '你在修改一张已经发布的网页。',
@@ -94,12 +239,20 @@ describe('presentation source context', () => {
           },
           promptFingerprint: 'native-deck-skill',
         },
+        brandPackage: {
+          schemaVersion: 'map-brand-package-v1', version: 1, ref: 'design-system:editorial', source: 'fixture',
+          designSystemId: 'editorial', logo: null, approvedColors: ['#0a0a0b', '#f1efea'], fonts: ['Georgia, serif'],
+          fixedStatements: ['来源可靠'], forbiddenStyles: [], examples: [], tokenContext: {}, fingerprint: 'editorial-fixture',
+        },
       },
     });
     harness.daemon.onRun = ({ workspaceDir, index, body }) => {
       if (index === 1) {
         expect(fs.existsSync(path.join(workspaceDir, 'index.html'))).toBe(false);
         expect(String(body.systemPrompt)).toContain('input context and provenance');
+        expect(body.designSystemId).toBe('editorial');
+        expect(String(body.systemPrompt)).toContain('Georgia, serif');
+        expect(String(body.systemPrompt)).not.toContain('mission-control');
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>OpenDesign 自主成稿</h1><p>TODO 由上游内容能力自行处理</p></main></body></html>');
       }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
@@ -124,6 +277,68 @@ describe('presentation source context', () => {
     expect(map!.commits).toHaveLength(1);
     const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
     expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain('OpenDesign 自主成稿');
+  });
+
+  it('keeps the presentation delivery boundary while upstream cleans its own unused draft', async () => {
+    const currentHtml = '<!doctype html><html><body><main><h1>保留的父稿</h1></main></body></html>';
+    const finalHtml = '<!doctype html><html><head><link rel="stylesheet" href="assets/theme.css"></head><body><main><h1>完成的演示稿</h1></main></body></html>';
+    const css = 'h1 { color: #182230; }';
+    // 两个状态复用同一真实执行链；stub 自行清理，不根据提示词字串模拟模型服从。
+    for (const cleanOwnDraft of [false, true]) {
+      harness = await startHarness();
+      const pkg = buildPackage([{ path: 'current/index.html', content: currentHtml, mediaType: 'text/html' }], {
+        taskExtras: {
+          presentationContract: {
+            schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: 1,
+            sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+            requiredSlideIndexes: [1],
+          },
+        },
+      });
+      let mainPrompt = '';
+      harness.daemon.onRun = ({ workspaceDir, index, body }) => {
+        expect(fs.readFileSync(path.join(workspaceDir, 'current/index.html'), 'utf8')).toBe(currentHtml);
+        if (index === 1) {
+          mainPrompt = String(body.systemPrompt);
+          fs.writeFileSync(path.join(workspaceDir, 'index.html'), finalHtml);
+          fs.mkdirSync(path.join(workspaceDir, 'assets'), { recursive: true });
+          fs.writeFileSync(path.join(workspaceDir, 'assets/theme.css'), css);
+          const ownUnreferencedDraft = path.join(workspaceDir, 'working-copy.html');
+          fs.writeFileSync(ownUnreferencedDraft, '<!doctype html><html><body>本轮自建且未引用的临时稿</body></html>');
+          if (cleanOwnDraft) fs.unlinkSync(ownUnreferencedDraft);
+        }
+        return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+      };
+      const view = await runToEnd(pkg);
+      if (!cleanOwnDraft) {
+        expect(view.state).toBe('failed');
+        expect(view.error).toMatchObject({ code: 'design_output_invalid', details: {
+          stage: 'output_preflight', rejectedPath: 'working-copy.html',
+        } });
+        expect(harness.daemon.runBodies).toHaveLength(1);
+        expect(map!.commits).toHaveLength(0);
+      } else {
+        expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+        expect(harness.daemon.runBodies).toHaveLength(2);
+        expect(map!.commits).toHaveLength(1);
+        const files = map!.commits[0].files;
+        const entry = files.find((file: { path: string }) => file.path === 'index.html');
+        const asset = files.find((file: { path: string }) => file.path === 'assets/theme.css');
+        const deliveredHtml = Buffer.from(entry.contentBase64, 'base64').toString('utf8');
+        expect(deliveredHtml).toContain('<body><main><h1>完成的演示稿</h1></main></body>');
+        expect(deliveredHtml).toContain('<link rel="stylesheet" href="assets/theme.css">');
+        expect(deliveredHtml).toContain('Content-Security-Policy');
+        expect(Buffer.from(asset.contentBase64, 'base64').toString('utf8')).toBe(css);
+        expect(files.some((file: { path: string }) => file.path === 'working-copy.html')).toBe(false);
+        expect(mainPrompt).toContain('first confirm that the requested changes are saved in the final index.html');
+        expect(mainPrompt).toContain('only temporary or version drafts that you created in this operation');
+        expect(mainPrompt).toContain('Never delete frozen inputs, referenced files, system-managed files, or files whose origin is unknown');
+      }
+      await harness.close();
+      await map!.close();
+      harness = undefined;
+      map = undefined;
+    }
   });
 
   it('rejects a mismatched frozen source-plan hash before opening an OpenDesign session', async () => {
@@ -633,10 +848,14 @@ async function runToEnd(
   map = await startFakeMap(pkg);
   const submitted = await harness!.request('POST', '/v1/tasks', mutate(taskRequest(map, pkg)), auth);
   expect(submitted.status, JSON.stringify(submitted.body)).toBe(202);
-  return waitFor(async () => {
+  // 截止代表会前移业务墙钟；观察任务自身仍使用相同的真实等待上限。
+  const waitingSince = performance.now();
+  for (;;) {
     const response = await harness!.request('GET', `/v1/tasks/${pkg.runId}`, undefined, auth);
-    return response.body.task?.state !== 'running' ? response.body.task : undefined;
-  }, 'task to finish', timeoutMs);
+    if (response.body.task?.state !== 'running') return response.body.task;
+    if (performance.now() - waitingSince > timeoutMs) throw new Error('timed out waiting for task to finish');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 async function statusReasons(taskId: string): Promise<string[]> {
@@ -980,7 +1199,7 @@ describe('design direction, review passes and live preview', () => {
     expect(view.result.openDesignRunId).toBe('od-run-1');
   });
 
-  it('bounds a slow review, restores the last verified output, and still runs the browser hard gate', async () => {
+  it('bounds a slow review, restores the last verified output, and still records browser observations', async () => {
     const browserInputs: string[] = [];
     harness = await startHarness({ overrides: {
       browserQualityRunner: {
@@ -1152,66 +1371,6 @@ describe('collecting the deliverable', () => {
     expect(harness.daemon.freezes).toBe(harness.daemon.thaws);
   });
 
-  it('repairs a quality rejection by telling the engine exactly what the gate rejected', async () => {
-    harness = await startHarness();
-    const pkg = buildPackage([]);
-    harness.daemon.onRun = ({ workspaceDir, index, body }) => {
-      if (index === 1) {
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><a href="#missing">Jump</a></main></body></html>');
-      }
-      if (String(body.message).includes('controlled rejection reason is missing_fragment_target')) {
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main id="top"><a href="#top">Jump</a></main></body></html>');
-      }
-      return { status: 'succeeded' };
-    };
-    const view = await runToEnd(pkg);
-    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
-    // 首轮 + 终审 + 一次定向修复。
-    expect(harness.daemon.runBodies).toHaveLength(3);
-    expect(String(harness.daemon.runBodies[2].message)).toContain('document-order position(s) 1');
-    expect(await statusReasons(pkg.runId)).toContain('open_design_quality_repairing');
-  });
-
-  it('bounds deterministic repair before finalization and checkpoints the timed-out candidate without committing it', async () => {
-    harness = await startHarness();
-    const pkg = buildPackage([]);
-    harness.daemon.onRun = async ({ workspaceDir, index, signal }) => {
-      if (index === 1) {
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><a href="#missing">trusted-invalid</a></main></body></html>');
-      }
-      if (index === 3) {
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>partial-repair</main></body></html>');
-        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
-      }
-      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
-    };
-
-    const view = await runToEnd(pkg, (request) => ({ ...request, timeoutSeconds: 30 }));
-
-    expect(view.state).toBe('failed');
-    expect(view.error.code).toBe('design_output_quality_rejected');
-    expect(view.error.details).toMatchObject({
-      issueCodes: ['missing_fragment_target'],
-      repairAttempts: 1,
-      repairBudgetExhausted: true,
-    });
-    expect(harness.daemon.cancels).toContain('od-run-3');
-    expect(harness.daemon.freezes).toBe(harness.daemon.thaws);
-    expect(map!.commits).toHaveLength(0);
-    expect(map!.previews.at(-1)?.html).toContain('partial-repair');
-    expect(await statusReasons(pkg.runId)).toEqual(expect.arrayContaining([
-      'open_design_quality_repairing',
-      'open_design_quality_repair_budget_exhausted',
-    ]));
-    const events = (await harness.request('GET', `/v1/tasks/${pkg.runId}/events`, undefined, auth)).body.events;
-    const terminal = events.find((event: { type: string }) => event.type === 'error');
-    expect(terminal.payload.details).toMatchObject({
-      issueCodes: ['missing_fragment_target'],
-      repairAttempts: 1,
-      repairBudgetExhausted: true,
-    });
-  });
-
   it('records presentation browser findings without triggering an automatic paid repair', async () => {
     const firstSourceId = `sb-${'a'.repeat(64)}`;
     const secondSourceId = `sb-${'b'.repeat(64)}`;
@@ -1327,223 +1486,9 @@ describe('collecting the deliverable', () => {
     expect(reportText).not.toContain('thinking');
   });
 
-  it('cancels a browser repair at its absolute deadline, restores the trusted snapshot, and reruns both viewports', async () => {
-    const checkedHtml: string[] = [];
+  it('does not swallow an internal browser worker failure as infrastructure unavailability', async () => {
     harness = await startHarness({ overrides: {
-      browserQualityRunner: {
-        run: async (job) => {
-          const html = fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8');
-          checkedHtml.push(html);
-          fs.mkdirSync(job.evidenceDir, { recursive: true });
-          const measurements = [
-            { viewport: 'desktop' as const, width: 1440, height: 900 },
-            { viewport: 'mobile' as const, width: 390, height: 844 },
-          ].map((viewport) => {
-            const screenshotPath = `assets/quality/deadline-${job.repairAttempt}-${viewport.viewport}.png`;
-            fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
-            return {
-              ...viewport,
-              documentWidth: viewport.width,
-              h1Count: 1,
-              visibleHeadingCount: 1,
-              visibleCtaCount: 1,
-              visibleLandmarkCount: 1,
-              issues: job.repairAttempt === 0 ? [{
-                issueCode: 'mobile_navigation_unusable' as const,
-                severity: 'hard' as const,
-                ruleVersion: 'browser-hard-gate-v1' as const,
-                viewport: viewport.viewport,
-                actual: { measured: false },
-                target: 'usable navigation',
-              }] : [],
-              screenshotPath,
-            };
-          });
-          return { browserVersion: 'test-chromium', measurements };
-        },
-      },
-    } });
-    const pkg = buildPackage([]);
-    harness.daemon.onRun = async ({ workspaceDir, index, signal }) => {
-      if (index === 1) {
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>trusted-candidate</h1></main></body></html>');
-      }
-      if (index === 3) {
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>partial-browser-repair</main></body></html>');
-        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
-      }
-      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
-    };
-
-    const view = await runToEnd(pkg, (request) => ({ ...request, timeoutSeconds: 30 }));
-
-    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
-    expect(harness.daemon.cancels).toContain('od-run-3');
-    expect(checkedHtml).toHaveLength(2);
-    expect(checkedHtml[0]).toContain('trusted-candidate');
-    expect(checkedHtml[1]).toContain('trusted-candidate');
-    expect(checkedHtml[1]).not.toContain('partial-browser-repair');
-    const committedIndex = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
-    expect(Buffer.from(committedIndex.contentBase64, 'base64').toString('utf8')).toContain('trusted-candidate');
-    expect(await statusReasons(pkg.runId)).toEqual(expect.arrayContaining([
-      'open_design_quality_repairing',
-      'open_design_browser_quality_checked',
-    ]));
-    expect(await statusReasons(pkg.runId)).not.toContain('open_design_quality_repair_budget_exhausted');
-  }, 15_000);
-
-  it('uses the reserved second browser repair after the first times out and retains complete rejection evidence', async () => {
-    const checkedHtml: string[] = [];
-    harness = await startHarness({ overrides: {
-      browserQualityRunner: {
-        run: async (job) => {
-          checkedHtml.push(fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8'));
-          fs.mkdirSync(job.evidenceDir, { recursive: true });
-          const measurements = [
-            { viewport: 'desktop' as const, width: 1440, height: 900 },
-            { viewport: 'mobile' as const, width: 390, height: 844 },
-          ].map((viewport) => {
-            const screenshotPath = `assets/quality/rejected-${job.repairAttempt}-${viewport.viewport}.png`;
-            fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
-            return {
-              ...viewport,
-              documentWidth: viewport.width,
-              h1Count: 1,
-              visibleHeadingCount: 1,
-              visibleCtaCount: 1,
-              visibleLandmarkCount: 1,
-              issues: [{
-                issueCode: 'key_text_contrast_low' as const,
-                severity: 'hard' as const,
-                ruleVersion: 'browser-hard-gate-v1' as const,
-                viewport: viewport.viewport,
-                actual: { ratio: 2.5, minimum: 4.5 },
-                target: 'at least 4.5',
-                element: { tag: 'h1', id: 'hero-title', role: 'heading', label: 'Launch heading' },
-              }],
-              screenshotPath,
-            };
-          });
-          return { browserVersion: 'test-chromium', measurements };
-        },
-      },
-    } });
-    const pkg = buildPackage([]);
-    harness.daemon.onRun = async ({ workspaceDir, index, signal }) => {
-      if (index === 1) {
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>trusted-with-hard-issue</h1></main></body></html>');
-      }
-      if (index === 3) {
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>partial-browser-repair</main></body></html>');
-        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
-      }
-      if (index === 4) {
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>trusted-with-hard-issue</h1></main></body></html>');
-      }
-      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
-    };
-
-    const view = await runToEnd(pkg, (request) => ({ ...request, timeoutSeconds: 30 }));
-
-    expect(view.state).toBe('failed');
-    expect(view.error.code).toBe('design_browser_quality_rejected');
-    expect(view.error.details).toMatchObject({
-      repairAttempts: 2,
-      repairBudgetExhausted: false,
-      issueCodes: ['key_text_contrast_low'],
-      bestRepairAttempt: 0,
-      browserQualityEvidence: {
-        schemaVersion: 'map-browser-quality-failure-evidence-v1',
-        repairAttempts: 2,
-        repairBudgetExhausted: false,
-      },
-    });
-    const failureEvidence = view.error.details.browserQualityEvidence;
-    expect(failureEvidence.attempts).toHaveLength(3);
-    expect(failureEvidence.attempts.map((attempt: { repairAttempt: number }) => attempt.repairAttempt)).toEqual([0, 1, 2]);
-    expect(failureEvidence.attempts[0].issues[0]).toEqual({
-      issueCode: 'key_text_contrast_low',
-      viewport: 'desktop',
-      actual: { ratio: 2.5, minimum: 4.5 },
-      target: 'at least 4.5',
-      elementSummary: { tag: 'h1', id: 'hero-title', role: 'heading', label: 'Launch heading' },
-    });
-    expect(JSON.stringify(view.error.details)).not.toContain('trusted-with-hard-issue');
-    expect(JSON.stringify(view.error.details)).not.toContain('assets/quality/');
-    expect(harness.daemon.cancels).toContain('od-run-3');
-    expect(checkedHtml).toHaveLength(3);
-    expect(checkedHtml[1]).toContain('trusted-with-hard-issue');
-    expect(checkedHtml[1]).not.toContain('partial-browser-repair');
-    expect(checkedHtml[2]).toContain('trusted-with-hard-issue');
-    expect(map!.commits).toHaveLength(0);
-  }, 15_000);
-
-  it('restores and flushes the best measured preview when two browser repairs still fail', async () => {
-    harness = await startHarness({ overrides: {
-      browserQualityRunner: {
-        run: async (job) => {
-          fs.mkdirSync(job.evidenceDir, { recursive: true });
-          const html = fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8');
-          const issueCount = html.includes('best-initial') ? 1 : html.includes('repair-one') ? 4 : 3;
-          const measurements = [
-            { viewport: 'desktop' as const, width: 1440, height: 900 },
-            { viewport: 'mobile' as const, width: 390, height: 844 },
-          ].map((viewport) => {
-            const screenshotPath = `assets/quality/attempt-${job.repairAttempt}-${viewport.viewport}.png`;
-            fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
-            return {
-              ...viewport,
-              documentWidth: viewport.width,
-              h1Count: 1,
-              visibleHeadingCount: 2,
-              visibleCtaCount: 1,
-              visibleLandmarkCount: 2,
-              issues: Array.from({ length: issueCount }, () => ({
-                issueCode: 'horizontal_overflow' as const,
-                severity: 'hard' as const,
-                ruleVersion: 'browser-hard-gate-v1' as const,
-                viewport: viewport.viewport,
-                actual: { measured: issueCount },
-                target: 'measured hard target',
-              })),
-              screenshotPath,
-            };
-          });
-          return { browserVersion: 'test-chromium', measurements };
-        },
-      },
-    } });
-    const pkg = buildPackage([]);
-    harness.daemon.onRun = ({ workspaceDir, index }) => {
-      const marker = index === 1 ? 'best-initial' : index === 3 ? 'repair-one' : index === 4 ? 'repair-two' : '';
-      if (marker) {
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main><h1>${marker}</h1></main></body></html>`);
-      }
-      return { status: 'succeeded' };
-    };
-    const view = await runToEnd(pkg);
-    expect(view.state).toBe('failed');
-    expect(view.error.code).toBe('design_browser_quality_rejected');
-    expect(view.error.details.bestRepairAttempt).toBe(0);
-    expect(view.error.details).toMatchObject({
-      repairAttempts: 2,
-      repairBudgetExhausted: false,
-      browserQualityEvidence: {
-        repairAttempts: 2,
-        repairBudgetExhausted: false,
-      },
-    });
-    expect(view.error.details.browserQualityEvidence.attempts).toHaveLength(3);
-    expect(view.error.details.browserQualityEvidence.attempts.map(
-      (attempt: { repairAttempt: number }) => attempt.repairAttempt,
-    )).toEqual([0, 1, 2]);
-    expect(map!.commits).toHaveLength(0);
-    expect(map!.previews.at(-1)?.html).toContain('best-initial');
-  });
-
-  it('fails honestly when the isolated browser worker is unavailable and does not commit an unchecked artifact', async () => {
-    harness = await startHarness({ overrides: {
-      browserQualityRunner: { run: async () => { throw new Error('browser process missing'); } },
+      browserQualityRunner: { run: async () => { throw new AgentWorkspaceRuntimeError('browser_quality_unavailable', 'synthetic worker rejected unsafe input'); } },
     } });
     const pkg = buildPackage([]);
     harness.daemon.onRun = ({ workspaceDir }) => {
@@ -1552,7 +1497,7 @@ describe('collecting the deliverable', () => {
     };
     const view = await runToEnd(pkg);
     expect(view.state).toBe('failed');
-    expect(view.error.message).toContain('browser process missing');
+    expect(view.error.code).toBe('browser_quality_unavailable');
     expect(map!.commits).toHaveLength(0);
   });
 });

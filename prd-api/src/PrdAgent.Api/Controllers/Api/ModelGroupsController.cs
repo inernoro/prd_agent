@@ -7,7 +7,6 @@ using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
-using PrdAgent.Infrastructure.ModelPool;
 using PrdAgent.Infrastructure.ModelPool.Models;
 using PrdAgent.Core.Security;
 
@@ -851,88 +850,20 @@ public class ModelGroupsController : ControllerBase
     }
 
     /// <summary>
-    /// 测试模型池端点连通性
-    /// 向池中所有端点（或指定端点）发送测试请求，返回连通性和延迟信息
+    /// 已退场的模型池测试入口；配置与付费探测由网关控制台统一管理。
     /// </summary>
     /// <param name="id">模型池 ID</param>
     /// <param name="endpointId">可选：指定要测试的端点 ID（格式: platformId:modelId）</param>
     /// <param name="prompt">测试提示词（默认: "Say hello in 10 words."）</param>
     [HttpPost("{id}/test")]
-    public async Task<IActionResult> TestModelPool(
+    public Task<IActionResult> TestModelPool(
         string id,
         [FromQuery] string? endpointId = null,
         [FromQuery] string prompt = "Say hello in 10 words.")
     {
-        var group = await _db.ModelGroups.Find(g => g.Id == id).FirstOrDefaultAsync();
-        if (group == null)
-            return NotFound(ApiResponse<object>.Fail("MODEL_GROUP_NOT_FOUND", "模型分组不存在"));
-
-        if (group.Models == null || group.Models.Count == 0)
-            return BadRequest(ApiResponse<object>.Fail("EMPTY_POOL", "模型池中没有配置模型"));
-
-        // 获取平台配置
-        var platformIds = group.Models.Select(m => m.PlatformId).Distinct().ToList();
-        var platforms = await _db.LLMPlatforms
-            .Find(p => platformIds.Contains(p.Id))
-            .ToListAsync();
-
-        // 构建模型池
-        var httpDispatcher = new HttpPoolDispatcher(new DefaultHttpClientFactory());
-        var factory = new ModelPoolFactory(httpDispatcher, _logger);
-        var pool = factory.Create(group, platforms, _config);
-
-        // 执行测试
-        var testRequest = new PoolTestRequest
-        {
-            Prompt = prompt,
-            ModelType = group.ModelType,
-            TimeoutSeconds = 30,
-            MaxTokens = 100
-        };
-
-        var results = await pool.TestEndpointsAsync(endpointId, testRequest);
-        var healthSnapshot = pool.GetHealthSnapshot();
-
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            poolId = id,
-            poolName = group.Name,
-            strategyType = ((PoolStrategyType)group.StrategyType).ToString(),
-            testResults = results.Select(r => new
-            {
-                r.EndpointId,
-                r.ModelId,
-                r.PlatformName,
-                r.Success,
-                r.StatusCode,
-                r.LatencyMs,
-                r.ResponsePreview,
-                r.ErrorMessage,
-                tokenUsage = r.TokenUsage != null ? new
-                {
-                    r.TokenUsage.InputTokens,
-                    r.TokenUsage.OutputTokens,
-                    r.TokenUsage.TotalTokens
-                } : null,
-                r.TestedAt
-            }),
-            healthSnapshot = new
-            {
-                healthSnapshot.HealthyCount,
-                healthSnapshot.DegradedCount,
-                healthSnapshot.UnavailableCount,
-                healthSnapshot.TotalCount,
-                healthSnapshot.IsFullyUnavailable,
-                endpoints = healthSnapshot.Endpoints.Select(e => new
-                {
-                    e.EndpointId,
-                    e.ModelId,
-                    status = e.Status.ToString(),
-                    e.HealthScore,
-                    e.AverageLatencyMs
-                })
-            }
-        }));
+        return Task.FromResult<IActionResult>(StatusCode(StatusCodes.Status410Gone,
+            ApiResponse<object>.Fail("MDS_WRITE_RETIRED",
+                "模型测试入口已迁入模型网关，请从「模型网关」进入控制台执行测试。")));
     }
 
     /// <summary>
@@ -1068,14 +999,6 @@ public class ModelGroupsController : ControllerBase
 
         return Ok(group);
     }
-}
-
-/// <summary>
-/// 简单的 HttpClientFactory 实现，用于测试端点
-/// </summary>
-internal class DefaultHttpClientFactory : IHttpClientFactory
-{
-    public HttpClient CreateClient(string name) => new();
 }
 
 public class CreateModelGroupRequest

@@ -3,6 +3,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { parse, type DefaultTreeAdapterMap } from 'parse5';
 
 import { assertPublicArtifactPath } from '../artifact/public-package.js';
 import { AgentWorkspaceRuntimeError } from '../errors.js';
@@ -60,6 +61,35 @@ const VERIFIED_PACKAGE_ARTIFACT_CSP = [
 ].join('; ');
 const DOCUMENT_ROOT_RE = /^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
 const DOCUMENT_HEAD_RE = /^\s*(?:<!--[\s\S]*?-->\s*)*<head(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
+const SVG_CSS_URL_ATTRIBUTES = [
+  'fill', 'stroke', 'filter', 'clip-path', 'mask', 'cursor',
+  'marker-start', 'marker-mid', 'marker-end',
+] as const;
+
+function collectVerifiedPackageCssSources(html: string): string[] {
+  const sources: string[] = [];
+  const pending: DefaultTreeAdapterMap['node'][] = [parse(html)];
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    if ('tagName' in node) {
+      if (node.tagName === 'style' && (node.namespaceURI === 'http://www.w3.org/1999/xhtml'
+        || node.namespaceURI === 'http://www.w3.org/2000/svg')) {
+        sources.push(node.childNodes.flatMap((child) => 'value' in child ? [child.value] : []).join(''));
+      }
+      for (const attribute of node.attrs) {
+        if (attribute.name === 'style' || (node.namespaceURI === 'http://www.w3.org/2000/svg'
+          && SVG_CSS_URL_ATTRIBUTES.some((name) => name === attribute.name))) {
+          sources.push(attribute.value);
+        }
+      }
+      if ('content' in node) pending.push(node.content);
+    }
+    if ('childNodes' in node) {
+      for (let index = node.childNodes.length - 1; index >= 0; index -= 1) pending.push(node.childNodes[index]);
+    }
+  }
+  return sources;
+}
 
 export function canAcceptUntrackedWorkspaceEdit(
   deliverableValidation: string | undefined,
@@ -406,9 +436,12 @@ function hardenHtmlWithFactRetention(
     ? undefined
     : validateVerifiedPackagePaths(packagePaths);
   html = convertRelativeKnowledgeAnchors(html);
+  // Keep the legacy declarative path unchanged; only verified packages allow scripted interaction.
+  const cssSources = verifiedPackagePaths === undefined ? [html] : collectVerifiedPackageCssSources(html);
+  const emptyAttributes = new Map<string, string | undefined>();
   for (const tag of iterateHtmlTags(html)) {
-    if (tag.isClosing) continue;
     const name = tag.name.toLowerCase();
+    if (tag.isClosing) continue;
     if (verifiedPackagePaths === undefined && name === 'script') {
       throw new AgentWorkspaceRuntimeError(
         'design_output_not_self_contained',
@@ -421,7 +454,7 @@ function hardenHtmlWithFactRetention(
         'index.html contains a disallowed SVG animation primitive',
       );
     }
-    const attributes = parseHtmlAttributes(tag.attributes);
+    const attributes = tag.attributes.trim() ? parseHtmlAttributes(tag.attributes) : emptyAttributes;
     for (const attribute of ['src', 'href', 'poster', 'background']) {
       const rawValue = attributes.get(attribute);
       if (rawValue === undefined) continue;
@@ -453,20 +486,23 @@ function hardenHtmlWithFactRetention(
       );
     }
   }
-  if (/@import\s+(?:url\s*\()?/i.test(html)) {
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_not_self_contained',
-      'index.html CSS contains a disallowed @import',
-    );
-  }
-  for (const match of html.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
-    const value = match[2].trim();
-    if (!value || value.startsWith('data:') || value.startsWith('#')) continue;
-    if (verifiedPackagePaths !== undefined && resolveVerifiedPackagePath(value, verifiedPackagePaths)) continue;
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_not_self_contained',
-      'index.html CSS references a non-inline resource',
-    );
+  // JavaScript object-URL helpers and page text are not CSS resource declarations.
+  for (const css of cssSources) {
+    if (/@import\s+(?:url\s*\()?/i.test(css)) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_not_self_contained',
+        'index.html CSS contains a disallowed @import',
+      );
+    }
+    for (const match of css.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
+      const value = match[2].trim();
+      if (!value || value.startsWith('data:') || value.startsWith('#')) continue;
+      if (verifiedPackagePaths !== undefined && resolveVerifiedPackagePath(value, verifiedPackagePaths)) continue;
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_not_self_contained',
+        'index.html CSS references a non-inline resource',
+      );
+    }
   }
   if (enforceContentQuality) {
     validateCssGeneratedContent(html);

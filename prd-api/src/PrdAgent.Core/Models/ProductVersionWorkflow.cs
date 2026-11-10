@@ -13,7 +13,7 @@ public class ProductInitiation
     public string? TCode { get; set; }
     /// <summary>实际发号完成时间；普通资料编辑不会改变此时间。</summary>
     public DateTime? IssuedAt { get; set; }
-    /// <summary>只读删除资格：全局最后成功发号、无下游且为申请人本人，不落库。</summary>
+    /// <summary>只读删除资格：所属应用最新版本、无下游且为申请人本人，不落库。</summary>
     [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
     public bool CanDelete { get; set; }
     [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
@@ -33,6 +33,10 @@ public class ProductInitiation
     public string? PlanUrl { get; set; }
     public string VersionType { get; set; } = "minor";
     public List<string> RequirementIds { get; set; } = new();
+    public string? StatusBeforeVoid { get; set; }
+    public string? VoidReason { get; set; }
+    public string? VoidedBy { get; set; }
+    public DateTime? VoidedAt { get; set; }
     public string Status { get; set; } = "draft";
     public string? ReviewSubmissionId { get; set; }
     public int? ReviewScore { get; set; }
@@ -91,9 +95,19 @@ public class InitiationMeetingDraftRound
     public string? Notes { get; set; }
 }
 
+public sealed class ProductReleaseTapdLink
+{
+    public string Title { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+}
+
 public class ProductRelease
 {
+    public bool? NoTapdLinks { get; set; }
+    public List<ProductReleaseTapdLink> TapdLinks { get; set; } = new();
     public ProductClaimNotification? ClaimNotification { get; set; }
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
+    public bool CanDelete { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string ProductId { get; set; } = string.Empty;
     public string? InitiationId { get; set; }
@@ -125,6 +139,10 @@ public class ProductRelease
     public int? PlannedTrainingMinutes { get; set; }
     public DateTime? ReleasedAt { get; set; }
     public string? AnnouncementUrl { get; set; }
+    public string? StatusBeforeVoid { get; set; }
+    public string? VoidReason { get; set; }
+    public string? VoidedBy { get; set; }
+    public DateTime? VoidedAt { get; set; }
     public string Status { get; set; } = "announcement_pending";
     /// <summary>继承来源的上一正式版本上线记录 ID</summary>
     public string? PreviousReleaseId { get; set; }

@@ -1,5 +1,6 @@
 using System.Net;
 using MongoDB.Bson;
+using MongoDB.Driver;
 using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
 
@@ -54,7 +55,8 @@ public sealed record NormalizedExchangeDraft(
     string TransformerType,
     bool Enabled,
     string? Description,
-    long? Version);
+    long? Version,
+    string? ResourceId = null);
 
 public static class GatewayConfigurationProvisioning
 {
@@ -99,6 +101,8 @@ public static class GatewayConfigurationProvisioning
             ["xapikey"] = "XApiKey",
             ["x-api-key"] = "XApiKey",
             ["x-goog-api-key"] = "x-goog-api-key",
+            ["doubaotts"] = "DoubaoTts",
+            ["doubao-tts"] = "DoubaoTts",
         };
     private static readonly HashSet<string> ExchangeTransformerTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -108,6 +112,7 @@ public static class GatewayConfigurationProvisioning
         "fal-image-layered",
         "doubao-asr",
         "doubao-asr-stream",
+        "doubao-tts",
         "volcengine-video",
         "gemini-native",
     };
@@ -120,6 +125,7 @@ public static class GatewayConfigurationProvisioning
         new() { Value = "fal-image-layered", Label = "fal.ai 图片分层", Description = "适配 Qwen-Image-Layered RGBA 图层分解" },
         new() { Value = "doubao-asr", Label = "豆包语音识别", Description = "适配豆包异步语音识别" },
         new() { Value = "doubao-asr-stream", Label = "豆包流式语音识别", Description = "适配豆包 WebSocket 流式语音识别" },
+        new() { Value = "doubao-tts", Label = "豆包语音合成 (HTTP V3)", Description = "配置账号实际开通的资源，适配单向分片语音合成" },
         new() { Value = "volcengine-video", Label = "火山视频生成", Description = "适配火山方舟视频任务协议" },
     ];
 
@@ -129,6 +135,7 @@ public static class GatewayConfigurationProvisioning
         new() { Value = "Key", Label = "Key", Description = "Authorization: Key" },
         new() { Value = "XApiKey", Label = "x-api-key", Description = "x-api-key 请求头" },
         new() { Value = "x-goog-api-key", Label = "Google API Key", Description = "x-goog-api-key 请求头" },
+        new() { Value = "DoubaoTts", Label = "豆包 TTS 双凭据", Description = "旧版 AppID|AccessToken；新版单 API Key 请选择 x-api-key" },
     ];
 
     public static IReadOnlyList<ExchangeOptionItem> GetExchangeModelTypeOptions() =>
@@ -300,6 +307,7 @@ public static class GatewayConfigurationProvisioning
             request.Enabled,
             request.Description,
             version: null,
+            request.ResourceId,
             requireApiKey: true,
             out draft,
             out error);
@@ -330,6 +338,7 @@ public static class GatewayConfigurationProvisioning
             request.Enabled,
             request.Description,
             request.Version,
+            request.ResourceId,
             requireApiKey: false,
             out draft,
             out error);
@@ -352,6 +361,7 @@ public static class GatewayConfigurationProvisioning
         ["TargetApiKeyEncrypted"] = encryptedApiKey,
         ["TargetAuthScheme"] = draft.TargetAuthScheme,
         ["TransformerType"] = draft.TransformerType,
+        ["TransformerConfig"] = draft.ResourceId is null ? new BsonDocument() : new BsonDocument("resourceId", draft.ResourceId),
         ["Enabled"] = draft.Enabled,
         ["Description"] = ToBsonValue(draft.Description),
         ["Authority"] = "llm_gateway",
@@ -361,6 +371,42 @@ public static class GatewayConfigurationProvisioning
         ["UpdatedAt"] = now,
         ["Version"] = 1L,
     };
+
+    /// <summary>只更新公开资源字段，保留旧配置的其他字段；版本检查由写入端原子过滤。</summary>
+    public static UpdateDefinition<BsonDocument> BuildExchangeUpdate(
+        NormalizedExchangeDraft draft, BsonDocument existing, string allowedBy, DateTime now, long nextVersion)
+    {
+        var update = Builders<BsonDocument>.Update
+            .Set("Name", draft.Name)
+            .Set("NameNormalized", draft.NameNormalized)
+            .Set("Models", BuildExchangeModels(draft.Models, allowedBy, now))
+            .Set("TargetUrl", draft.TargetUrl)
+            .Set("TargetAuthScheme", draft.TargetAuthScheme)
+            .Set("TransformerType", draft.TransformerType)
+            .Set("Enabled", draft.Enabled)
+            .Set("Description", ToBsonValue(draft.Description))
+            .Set("UpdatedAt", now)
+            .Set("Version", nextVersion);
+        if (draft.ResourceId is not null)
+            update = existing.TryGetValue("TransformerConfig", out var config) && config.IsBsonDocument
+                ? update.Set("TransformerConfig.resourceId", draft.ResourceId)
+                : update.Set("TransformerConfig", new BsonDocument("resourceId", draft.ResourceId));
+        return update;
+    }
+
+    /// <summary>禁止把任意 TransformerConfig 读回控制台；仅暴露受限的非敏感资源标识。</summary>
+    public static string? ReadExchangeResourceId(BsonDocument document)
+    {
+        if (!document.TryGetValue("TransformerType", out var type) || !type.IsString || type.AsString != "doubao-tts"
+            || !document.TryGetValue("TransformerConfig", out var config) || !config.IsBsonDocument
+            || !config.AsBsonDocument.TryGetValue("resourceId", out var value) || !value.IsString)
+            return null;
+        return IsValidResourceId(value.AsString) ? value.AsString : null;
+    }
+
+    private static bool IsValidResourceId(string value)
+        => value.Length is > 0 and <= 160
+           && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-');
 
     /// <summary>
     /// 兑换所声明的模型清单。名录外的别名在这里**逐条**盖放行标记（谁放的、什么时候）——
@@ -683,6 +729,7 @@ public static class GatewayConfigurationProvisioning
         bool? enabled,
         string? rawDescription,
         long? version,
+        string? rawResourceId,
         bool requireApiKey,
         out NormalizedExchangeDraft? draft,
         out string error)
@@ -729,6 +776,16 @@ public static class GatewayConfigurationProvisioning
         var transformerType = rawTransformerType?.Trim().ToLowerInvariant() ?? "passthrough";
         if (!ExchangeTransformerTypes.Contains(transformerType))
             return Fail($"未知的转换器类型：{transformerType}", out error);
+        var resourceId = rawResourceId?.Trim();
+        if (transformerType == "doubao-tts")
+        {
+            if (resourceId is null || !IsValidResourceId(resourceId))
+                return Fail("豆包 TTS 必须填写实际开通的 resourceId（最多 160 个字母、数字、点、下划线或短横线），不要填写密钥", out error);
+            if (models.Any(model => model.ModelType != "tts"))
+                return Fail("豆包 TTS 的模型用途必须为 tts", out error);
+        }
+        else if (!string.IsNullOrWhiteSpace(resourceId))
+            return Fail("resourceId 专用字段仅用于豆包 TTS", out error);
         var description = TrimToNull(rawDescription, 1000, "Exchange 说明", out error);
         if (error.Length > 0) return false;
 
@@ -742,7 +799,8 @@ public static class GatewayConfigurationProvisioning
             transformerType,
             enabled ?? true,
             description,
-            version);
+            version,
+            transformerType == "doubao-tts" ? resourceId : null);
         return true;
     }
 

@@ -15,9 +15,13 @@ export type OverviewVerdict = 'pass' | 'conditional' | 'fail';
 
 /** 标题合同的九类前缀（§4.1.2）。不在此列的标题归「其他」。 */
 export const REPORT_KINDS = [
-  '功能验收', '每日验收', 'PR验收', 'Commit验收', '分支验收', '缺陷复测', '视觉回归', '发布验收', '规范演练',
+  '功能验收', '每日验收', 'PR验收', 'Commit验收', '分支验收', '缺陷复测', '视觉回归', '发布验收', '规范演练', '代码审查报告',
 ] as const;
 export type ReportKind = (typeof REPORT_KINDS)[number] | '其他';
+export function isCodeReviewReport(report: AcceptanceReportMeta): boolean {
+  return report.reportType === 'code-review'
+    || report.reportType === undefined && parseReportTitle(report.title).kind === '代码审查报告';
+}
 
 export interface ParsedReportTitle {
   kind: ReportKind;
@@ -157,6 +161,13 @@ export function parseReportTitle(title: string): ParsedReportTitle {
   return { kind, target: kind === '其他' ? title.trim() : m[2].trim(), targetDate: m[3] };
 }
 
+/** Persisted type controls code-review identity; other title categories keep their existing contract. */
+export function parseReportMetadata(report: AcceptanceReportMeta): ParsedReportTitle {
+  const parsed = parseReportTitle(report.title);
+  if (isCodeReviewReport(report)) return { ...parsed, kind: '代码审查报告' };
+  return parsed.kind === '代码审查报告' ? { ...parsed, kind: '其他' } : parsed;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** 用调用方时区偏移把 ISO 时间落到 YYYY-MM-DD。offsetMinutes 与 Date#getTimezoneOffset 同号。 */
@@ -247,7 +258,7 @@ function toRef(r: AcceptanceReportMeta, parsed: ParsedReportTitle, version: numb
 export function foldReportVersions(reports: AcceptanceReportMeta[]): { latest: OverviewReportRef[]; superseded: OverviewReportRef[]; folded: number } {
   const groups = new Map<string, AcceptanceReportMeta[]>();
   for (const r of reports) {
-    const key = identityKey(r, parseReportTitle(r.title));
+    const key = identityKey(r, parseReportMetadata(r));
     const g = groups.get(key);
     if (g) g.push(r);
     else groups.set(key, [r]);
@@ -258,9 +269,9 @@ export function foldReportVersions(reports: AcceptanceReportMeta[]): { latest: O
   for (const g of groups.values()) {
     g.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const last = g[g.length - 1];
-    const parsed = parseReportTitle(last.title);
+    const parsed = parseReportMetadata(last);
     latest.push(toRef(last, parsed, g.length, g.slice(0, -1).map((x) => x.id)));
-    g.slice(0, -1).forEach((old, i) => superseded.push(toRef(old, parseReportTitle(old.title), i + 1, [])));
+    g.slice(0, -1).forEach((old, i) => superseded.push(toRef(old, parseReportMetadata(old), i + 1, [])));
     folded += g.length - 1;
   }
   latest.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -451,6 +462,8 @@ export function buildReportsOverview(
   tombstones: BranchTombstone[],
   options: BuildOverviewOptions = {},
 ): ReportsOverview {
+  const ledger = foldReportVersions(reports);
+  reports = reports.filter((r) => !isCodeReviewReport(r));
   const days = Math.max(1, Math.min(90, options.days ?? 7));
   const toMs = (options.to ?? new Date()).getTime();
   const fromMs = toMs - days * DAY_MS;
@@ -473,6 +486,8 @@ export function buildReportsOverview(
   const kindCounts = new Map<ReportKind, number>();
   for (const r of windowReports) kindCounts.set(r.kind, (kindCounts.get(r.kind) ?? 0) + 1);
   const kinds = Array.from(kindCounts, ([kind, count]) => ({ kind, count })).sort((a, b) => b.count - a.count);
+  const reviewCount = ledger.latest.filter((r) => r.kind === '代码审查报告' && inWindow(r.createdAt, fromMs, toMs)).length;
+  if (reviewCount) kinds.push({ kind: '代码审查报告', count: reviewCount });
 
   const clusters = buildClusters(windowReports, allLatest, days, toMs);
   const daily = buildDaily(allLatest, toMs, Math.max(1, Math.min(90, options.dailyDays ?? 14)), tz);
@@ -585,7 +600,7 @@ export function buildReportsOverview(
     clusters,
     daily,
     mergeCoverage,
-    reports: allLatest,
-    supersededReports: allSuperseded,
+    reports: ledger.latest,
+    supersededReports: ledger.superseded,
   };
 }

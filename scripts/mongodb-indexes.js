@@ -1750,6 +1750,18 @@ for (const [keys, options] of designRunV2Indexes) {
   verifyCatalogIndex("design_artifact_runs_v2", options.name, keys, options)
 }
 
+// collection: speech_runs
+// 语音队列、过期租约恢复、终态额度补偿以及个人资产历史。仅DBA手动执行。
+db.speech_runs.createIndex({ Environment: 1, Status: 1, CreatedAt: 1 }, { name: "idx_speech_runs_queue" });
+db.speech_runs.createIndex({ Environment: 1, Status: 1, LeaseUntil: 1 }, { name: "idx_speech_runs_lease" });
+db.speech_runs.createIndex({ Environment: 1, QuotaReleased: 1, Status: 1 }, { name: "idx_speech_runs_settlement" });
+db.speech_runs.createIndex({ OwnerUserId: 1, Environment: 1, CreatedAt: -1 }, { name: "idx_speech_runs_owner_history" });
+// end collection: speech_runs
+
+// collection: speech_presets
+db.speech_presets.createIndex({ OwnerUserId: 1, Environment: 1, UpdatedAt: -1 }, { name: "idx_speech_presets_owner_environment" });
+// end collection: speech_presets
+
 // collection: mcp_call_logs
 // 智能体接入台的调用记录。两个读法都很热：
 //   1. 面板按「我的 + 本部署 + 时间倒序」翻页（Overview 与 calls 列表）
@@ -2066,6 +2078,26 @@ if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
     { name: "idx_llmgw_runtime_grant_tenant_run" }
   )
   // end collection: llmgw_runtime_grants
+
+  // collection: llmgw_consumption_rate_windows
+  // 共享计数依赖内建唯一_id；以下仅用于人工维护过期清理和有界历史查询，不由请求触发DDL。
+  ensureCatalogIndex("llmgw_consumption_rate_windows",
+    { "ExpiresAt": 1 },
+    { name: "ttl_llmgw_consumption_windows", expireAfterSeconds: 0 }
+  )
+  ensureCatalogIndex("llmgw_consumption_rate_windows",
+    { "TenantId": 1, "AppCallerCode": 1, "RequestType": 1, "Scope": 1, "Origin": 1,
+      "WindowSeconds": 1, "WindowStart": -1 },
+    { name: "idx_llmgw_consumption_baseline_scope_window" }
+  )
+  // end collection: llmgw_consumption_rate_windows
+
+  // collection: llmgw_consumption_alerts
+  ensureCatalogIndex("llmgw_consumption_alerts",
+    { "TenantId": 1, "Status": 1, "CreatedAt": -1 },
+    { name: "idx_llmgw_consumption_alerts_tenant_status_created" }
+  )
+  // end collection: llmgw_consumption_alerts
 }
 
 
@@ -2074,3 +2106,14 @@ if (tightenedUniqueIndexMigrationFailures.length > 0) {
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`
   )
 }
+
+// collection: hosted_document_groups
+// 一份文档只允许归属一个关联组，防止并发创建重复导航。
+db.hosted_document_groups.createIndex(
+  { SiteIds: 1 },
+  { unique: true, name: "ux_hosted_document_groups_member" }
+);
+// end collection: hosted_document_groups
+
+// 评论反向引用查询；原评论授权仍独立校验。
+db.hosted_site_comments.createIndex({ ReferencedSiteIds: 1, CreatedAt: -1 }, { name: "idx_hosted_comments_references" });

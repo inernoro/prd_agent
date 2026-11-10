@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -103,15 +104,17 @@ public partial class LlmGateway
                         resolution.LogicalModelPublicId ?? string.Empty,
                         resolution.ActualPlatformName ?? resolution.ActualPlatformId ?? string.Empty,
                         resolution.ActualModel ?? string.Empty,
-                        resolution.OfferingId),
+                        resolution.OfferingId, resolution.Protocol ?? resolution.PlatformType),
                     deadline.Token) is { } admissionError)
             {
                 outcome = admissionError;
                 return outcome;
             }
+            _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
             using var client = CreateOutboundClient(request.Context?.TenantId);
             // 本次 deadline 管理完整请求；不使用 HttpClient 的默认 100 秒截断原生长流。
             client.Timeout = Timeout.InfiniteTimeSpan;
+            if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, deadline.Token);
             MarkLastSendAttemptReachedProvider(attempts);
             reachedProvider = true;
             using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
@@ -185,6 +188,17 @@ public partial class LlmGateway
                 LogId = logId,
                 DurationMs = (long)(DateTime.UtcNow - started).TotalMilliseconds,
             };
+            return outcome;
+        }
+        catch (TaskExecutionAdmissionException task)
+        {
+            // 只有本进程已确认尚未发出请求的拒绝，才允许结算方释放金额预占。
+            outcome = !reachedProvider
+                ? new GatewayResponseRejectedBeforeSend
+                {
+                    Success = false, ErrorCode = task.Code, ErrorMessage = task.Message, StatusCode = task.StatusCode,
+                }
+                : GatewayRawResponse.Fail(task.Code, task.Message, task.StatusCode);
             return outcome;
         }
         catch (OperationCanceledException)
@@ -334,3 +348,11 @@ public partial class LlmGateway
         }
     }
 }
+
+/// <summary>仅由物理发送实现产生的事实：已明确拒绝，且本次没有上游发送。线上错误码保持原值。</summary>
+public sealed class GatewayResponseRejectedBeforeSend : GatewayRawResponse { }
+
+/// <summary>跨全部候选确认没有发送的流式拒绝；不能从错误文本或供应商响应推断。</summary>
+public sealed class GatewayStreamRejectedBeforeSend : GatewayStreamChunk { }
+
+public sealed class GatewaySendRejectedBeforeSend : GatewayResponse { }

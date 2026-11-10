@@ -20,11 +20,14 @@ internal static class ProductVersionCopyTemplate
 
     public static string Build(ProductRelease item)
     {
-        var text = VersionRegistrationCopyTemplate.Build(new VersionRegistration {
+        var tapdSources = item.TapdLinks is { Count: > 0 }
+            ? "\n" + string.Join("\n", item.TapdLinks.Select(link => string.IsNullOrWhiteSpace(link.Title) ? link.Url : $"【{link.Title}】\n{link.Url}"))
+            : null;
+        var text = VersionRegistrationCopyTemplate.BuildFormal(new VersionRegistration {
         Kind = VersionRegistrationKind.Formal,
         Code = item.VCode,
         ProjectType = item.ProjectType,
-        VersionType = item.VersionType,
+        VersionType = item.IsTemporaryOptimization ? "temporary" : item.VersionType,
         IsGlobalOpen = item.IsGlobalOpen,
         DemandSource = item.DemandSource,
         PlanName = item.PlanName,
@@ -32,10 +35,10 @@ internal static class ProductVersionCopyTemplate
         ProjectMemberNames = item.ProjectMemberNames,
         PlannedReleaseAt = item.PlannedReleaseAt,
         PlannedTrainingMinutes = item.PlannedTrainingMinutes,
-        });
+        }, tapdSources);
         if (item.ProjectType != "standard" || item.IsGlobalOpen != true)
             text = string.Join("\n", text.Split('\n').Where(line => !line.StartsWith("预计培训时长：", StringComparison.Ordinal)));
-        return WithOwner(text, item.OwnerName);
+        return WithOwner(text, item.OwnerName).TrimEnd('\n');
     }
 
     private static string WithOwner(string text, string? name)

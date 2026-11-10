@@ -33,6 +33,8 @@ public sealed class DesignArtifactPresentationInput
     public string? SourcePlanJson { get; set; }
     public string? SourcePlanHash { get; set; }
     public string Theme { get; set; } = string.Empty;
+    /// <summary>仅原确认换风格入口显式声明；缺省 false 不从 Theme 推断。</summary>
+    public bool StyleOverride { get; set; }
     public string? ParentRunId { get; set; }
     public string? ParentPackageHash { get; set; }
     /// <summary>用户在隔离编辑器里形成的非可信 HTML 提案；只能作为 OpenDesign edit 输入，不能直接发布。</summary>
@@ -45,6 +47,7 @@ public sealed class DesignArtifactPresentationInput
     /// </summary>
     public string? RepairCandidateHtml { get; set; }
     public string? RepairCandidateHtmlHash { get; set; }
+
 }
 
 /// <summary>
@@ -70,8 +73,12 @@ public sealed class DesignArtifactBrowserQualitySummary
 /// v2 权威生命周期事件与状态保存在同一 Mongo 文档；Redis 仅服务历史流程和兼容投影。
 /// </summary>
 [MongoDB.Bson.Serialization.Attributes.BsonIgnoreExtraElements]
-public class DesignArtifactRun
+public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>创建时冻结的项目、分支和 revision 执行范围。历史读取不补写，缺失保留 null。</summary>
@@ -87,6 +94,10 @@ public class DesignArtifactRun
     public string Operation { get; set; } = DesignArtifactOperations.Generate;
 
     public string SourceSurface { get; set; } = DesignArtifactSourceSurfaces.WebHosting;
+
+    /// <summary>仅工作流服务器创建的原调用身份；不从用户变量或远端请求推断。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public WorkflowDesignSource? WorkflowSource { get; set; }
 
     public string Runtime { get; set; } = DesignArtifactRuntimes.MapGateway;
 
@@ -203,6 +214,12 @@ public class DesignArtifactRun
 
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public string? PptCompletionId { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public HtmlPptEditContext? PptEditContext { get; set; }
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? PptModificationRequestHash { get; set; }
+
 
     public string? TargetSiteId { get; set; }
 
@@ -497,6 +514,7 @@ public static class DesignArtifactSourceSurfaces
 {
     public const string WebHosting = "web-hosting";
     public const string KnowledgeBase = "knowledge-base";
+    public const string Workflow = "workflow";
     public const string HtmlPpt = "html-ppt";
 }
 
@@ -544,4 +562,27 @@ public static class DesignWorkspaceResultWriteStates
     public const string Writing = "writing";
     public const string Stored = "stored";
     public const string SaveFailed = "save-failed";
+}
+
+/// <summary>一次演示稿修改的真实来源与实际基稿；线上指针单独作为并发围栏。</summary>
+public sealed class HtmlPptEditContext
+{
+    public string SourceRunId { get; set; } = string.Empty;
+    public string SourcePackageHash { get; set; } = string.Empty;
+    public string BaseSiteId { get; set; } = string.Empty;
+    public string BaseRevisionId { get; set; } = string.Empty;
+    public string BasePublishedRevisionId { get; set; } = string.Empty;
+    public DateTime BaseContentVersion { get; set; }
+    public string BaseHtmlHash { get; set; } = string.Empty;
+    public string BaseFilesFingerprint { get; set; } = string.Empty;
+}
+
+/// <summary>一个工作流节点操作的稳定来源。自动重投复用 OperationId，不伪造新执行。</summary>
+public sealed class WorkflowDesignSource
+{
+    public string OperationId { get; set; } = string.Empty;
+    public string? ExecutionId { get; set; }
+    public string NodeId { get; set; } = string.Empty;
+    public string NodeType { get; set; } = string.Empty;
+    public string InputFingerprint { get; set; } = string.Empty;
 }

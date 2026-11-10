@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MongoSplitStateBackingStore, type ISplitMongoCollection, type ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
 import type { BranchEntry, CdsState, DeploymentRun, DeploymentVersion, GithubWebhookDelivery, Project, ProjectActivityLog, SelfUpdateRecord, PersistedDeploymentIntent } from '../../src/types.js';
 import { StateService } from '../../src/services/state.js';
+import { SchedulerService } from '../../src/services/scheduler.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { captureDeploymentInput } from '../../src/services/deployment-input.js';
@@ -138,6 +139,49 @@ function makeActivityLog(projectId: string, seq: number, at: string): ProjectAct
 }
 
 describe('MongoSplitStateBackingStore', () => {
+  it.each(['touch-only', 'pending-global-hint', 'pending-full'] as const)('scheduler access persists only its branch while preserving %s work', async mode => {
+    const handle = new FakeSplitHandle(), store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+    const seed = emptyState();
+    seed.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD' } as Project];
+    seed.branches.b = { id: 'b', projectId: 'prd-agent', branch: 'feature/touch', worktreePath: '/unused',
+      status: 'running', createdAt: '2026-07-21T00:00:00.000Z', services: {} };
+    seed.branches.other = { ...seed.branches.b, id: 'other', branch: 'feature/other' };
+    seed.deploymentRuns = Object.fromEntries(Array.from({ length: 20 }, (_, i) => {
+      const run = makeRun(`unrelated-${i}`, 'other'); run.events[0].message = 'history'.repeat(1024); return [run.id, run];
+    }));
+    seed.githubWebhookDeliveries = Array.from({ length: 20 }, (_, i) => makeDelivery(`delivery-${i}`, '2026-07-21T00:00:01.000Z'));
+    store.save(seed); await store.flush();
+    const state = new StateService('/tmp/cds-touch-unused/state.json', undefined, store);
+    state.load(); await state.flush();
+    const observedAt = Date.parse('2026-07-21T00:01:00.000Z');
+    const scheduler = new SchedulerService(state, { enabled: true, maxHotBranches: 3,
+      idleTTLSeconds: 900, tickIntervalSeconds: 60, pinnedBranches: [] }, { now: () => observedAt });
+    const clones = vi.spyOn(globalThis, 'structuredClone');
+    try {
+      if (mode !== 'touch-only') {
+        state.allocatePort(10000);
+        state.save(mode === 'pending-global-hint' ? [{ kind: 'global' }] : undefined);
+      }
+      scheduler.touch('b'); await state.flush();
+      // A real complete state copy also includes unrelated large run/webhook history.
+      // A pending full save keeps its original broad durability obligation.
+      expect(clones.mock.calls.filter(([value]) => value === state.getState()))
+        .toHaveLength(mode === 'pending-full' ? 1 : 0);
+      clones.mockRestore();
+      const reopened = new MongoSplitStateBackingStore(handle); await reopened.init();
+      try {
+        const durable = reopened.load()!;
+        expect(durable.branches.b.lastAccessedAt).toBe(new Date(observedAt).toISOString());
+        expect(durable.branches.other.lastAccessedAt).toBeUndefined();
+        expect(durable.nextPortIndex).toBe(mode === 'touch-only' ? 0 : 1);
+        expect(Object.keys(durable.deploymentRuns || {})).toHaveLength(20);
+        expect(durable.deploymentRuns?.['unrelated-0']?.events[0].message).toBe('history'.repeat(1024));
+        expect(durable.githubWebhookDeliveries).toHaveLength(20);
+      } finally { await reopened.close(); }
+    } finally { clones.mockRestore(); scheduler.stop(); await store.close(); }
+  });
+
   async function acceptedRunFixture() {
     const handle = new FakeSplitHandle(), store = new MongoSplitStateBackingStore(handle); await store.init();
     const seed = emptyState(); seed.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD' } as Project];
@@ -157,16 +201,25 @@ describe('MongoSplitStateBackingStore', () => {
 
   it.each(['global', 'other-run'])('自己的配对run保存成功后%s失败仍确认原受理，未保存变更继续对账', async (failure) => {
     const { handle, store, state, begin } = await acceptedRunFixture();
+    let restoreUnrelatedFailure = () => {};
     if (failure === 'global') {
       (state.getState() as any).nextPortIndex = 123; state.save([{ kind: 'global' }]);
       vi.spyOn(handle.global, 'replaceOne').mockRejectedValueOnce(new Error('unrelated global failed'));
     } else {
       state.addDeploymentRun(makeRun('unrelated-run', 'b'));
-      handle.deploymentRuns.failNextBulkWrite = new Error('unrelated run failed');
+      const unrelatedError = new Error('unrelated run failed');
+      // 故障持续到本次 flush 结算；显式恢复后再核对原恢复断言，不绑定重试次数。
+      const unrelatedWrite = vi.spyOn(handle.deploymentRuns, 'bulkWrite')
+        .mockRejectedValue(unrelatedError);
+      restoreUnrelatedFailure = () => unrelatedWrite.mockRestore();
     }
     const run = await begin();
     expect(handle.deploymentRuns.docs.get(run.id)?.executionIntent?.runId).toBe(run.id);
-    await expect(store.flush()).rejects.toThrow(failure === 'global' ? 'unrelated global failed' : 'unrelated run failed');
+    try {
+      await expect(store.flush()).rejects.toThrow(failure === 'global' ? 'unrelated global failed' : 'unrelated run failed');
+    } finally {
+      restoreUnrelatedFailure();
+    }
     const reopened = new MongoSplitStateBackingStore(handle); await reopened.init();
     const afterRestart = new StateService('/tmp/cds-receipt-unused/reopen.json', undefined, reopened); afterRestart.load();
     const restored = new DeploymentRunService(afterRestart).restoreQueued(new BranchOperationCoordinator());
@@ -177,7 +230,7 @@ describe('MongoSplitStateBackingStore', () => {
     else expect(handle.deploymentRuns.docs.has('unrelated-run')).toBe(true);
   });
 
-  it('配对run保存后global仍挂起时已确认受理，不等待无关状态写入', async () => {
+  it.each([false, true])('配对run保存后global仍挂起时已确认受理，不等待无关状态写入：全局依赖反例=%s', async waitForGlobal => {
     const { handle, state, begin } = await acceptedRunFixture();
     (state.getState() as any).nextPortIndex = 123; state.save([{ kind: 'global' }]);
     let release!: () => void, started!: () => void;
@@ -185,9 +238,22 @@ describe('MongoSplitStateBackingStore', () => {
     const entered = new Promise<void>((resolve) => { started = resolve; });
     const original = handle.global.replaceOne.bind(handle.global);
     vi.spyOn(handle.global, 'replaceOne').mockImplementationOnce(async (...args) => { started(); await hold; return original(...args); });
-    let accepted = false; const run = begin().then((value) => { accepted = true; return value; });
-    try { await entered; await Promise.resolve(); expect(accepted).toBe(true); }
-    finally { release(); await run; await state.flush(); }
+    let accepted = false;
+    const run = begin().then(async value => {
+      // 反例只在夹具边界增加真实全局依赖，检验判据能够拒绝它；不修改生产实现。
+      if (waitForGlobal) await state.flush();
+      accepted = true; return value;
+    });
+    let turn: ReturnType<typeof setImmediate> | undefined;
+    try {
+      await entered;
+      // 断言受理不依赖仍未释放的全局写入，不约束内部 Promise continuation 层数。
+      const completed = await Promise.race([run.then(() => true), new Promise<boolean>(resolve => {
+        turn = setImmediate(() => resolve(false));
+      })]);
+      expect(completed).toBe(!waitForGlobal);
+      expect(accepted).toBe(!waitForGlobal);
+    } finally { if (turn) clearImmediate(turn); release(); await run; await state.flush(); }
   });
 
   it('前置分支写入失败不得确认或持久保存部署意图', async () => {
@@ -214,6 +280,85 @@ describe('MongoSplitStateBackingStore', () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it.each([
+    ['flush', 'retrySuccess'], ['close', 'retrySuccess'],
+    ['flush', 'retryFailure'], ['close', 'retryFailure'],
+  ] as const)('同失败代次%s等待本次真实写终态再结算：%s', async (method, retryOutcome) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    const firstError = new Error('first global write failed');
+    const retryError = retryOutcome === 'retryFailure' ? new Error('retry global write failed') : undefined;
+    let release!: () => void, started!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    const writes: Promise<void>[] = [];
+    let attempted: Promise<{ error: unknown }> | undefined;
+    const original = handle.global.replaceOne.bind(handle.global);
+    const close = vi.spyOn(handle, 'close');
+    const replace = vi.spyOn(handle.global, 'replaceOne')
+      .mockRejectedValueOnce(firstError)
+      .mockImplementationOnce((...args) => {
+        const writing = (async () => {
+          started();
+          await gate;
+          if (retryError) throw retryError;
+          await original(...args);
+        })();
+        writes.push(writing);
+        return writing;
+      });
+    try {
+      await store.init();
+      const state = emptyState(); state.nextPortIndex = 123;
+      store.save(state);
+      await expect(store.flush()).rejects.toBe(firstError);
+      expect(await store.isHealthy()).toBe(false);
+      expect(replace).toHaveBeenCalledTimes(1);
+      expect(handle.global.docs.has('global')).toBe(false);
+
+      // 不再 save，也不推进五秒时钟；重试仍属于原失败代次和同一 handle。
+      let settled = false;
+      attempted = (method === 'close' ? store.close() : store.flush()).then(
+        () => { settled = true; return { error: undefined }; },
+        (error: unknown) => { settled = true; return { error }; },
+      );
+      await entered;
+      // 只让已排入的 Promise continuation 收束，不等待或触发重试定时器。
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(replace).toHaveBeenCalledTimes(2);
+      expect(writes).toHaveLength(1);
+      expect.soft(settled).toBe(false);
+      expect.soft(close).not.toHaveBeenCalled();
+      expect(await store.isHealthy()).toBe(false);
+
+      release();
+      const writeError = await writes[0].then(() => undefined, (error: unknown) => error);
+      expect(writeError).toBe(retryError);
+      const result = await attempted;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (retryError) {
+        expect.soft(result.error).toBe(retryError);
+        expect(await store.isHealthy()).toBe(false);
+        expect(handle.global.docs.has('global')).toBe(false);
+      } else {
+        expect.soft(result.error).toBeUndefined();
+        expect(await store.isHealthy()).toBe(true);
+        expect(handle.global.docs.get('global')?.state.nextPortIndex).toBe(123);
+      }
+      expect(close).toHaveBeenCalledTimes(method === 'close' ? 1 : 0);
+    } finally {
+      release();
+      await Promise.allSettled([...writes, ...(attempted ? [attempted] : [])]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      // 本例独占 fake clock；清理不再 flush，避免制造第三次写掩盖结算结果。
+      vi.clearAllTimers();
+      await handle.close();
+      replace.mockRestore(); close.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it.each([false, true])('写入确认连接中断时精确多数读取匹配=%s，不能借不相同的旧记录确认', async (matches) => {
     const { handle, state, begin } = await acceptedRunFixture();
     const original = handle.deploymentRuns.replaceOne.bind(handle.deploymentRuns);
@@ -224,12 +369,12 @@ describe('MongoSplitStateBackingStore', () => {
     const read = vi.spyOn(handle.deploymentRuns, 'findOne');
     if (matches) {
       const run = await begin(); expect(handle.deploymentRuns.docs.get(run.id)?.doc.status).toBe('queued');
-      expect(write.mock.calls[0][2]).toEqual({ upsert: true, writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 }, maxTimeMS: 5000, ignoreUndefined: true });
+      expect(write.mock.calls[0][2]).toEqual({ upsert: true, writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 }, maxTimeMS: 5000, timeoutMS: 5000, ignoreUndefined: true });
     } else {
       await expect(begin()).rejects.toThrow('write acknowledgement lost');
       const run = state.getDeploymentRuns()[0]; new DeploymentRunService(state).cancel(run.id, '受理失败');
     }
-    expect(read.mock.calls[0][1]).toEqual({ readConcern: { level: 'majority' }, readPreference: 'primary', maxTimeMS: 5000 });
+    expect(read.mock.calls[0][1]).toEqual({ readConcern: { level: 'majority' }, readPreference: 'primary', maxTimeMS: 5000, timeoutMS: 5000 });
     await state.flush();
   });
 

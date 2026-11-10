@@ -14,6 +14,47 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public sealed class CanonicalImageBoundaryTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void Seedream5UsesGenerationJsonForTextSingleAndMultipleReferenceImages(int imageCount)
+    {
+        const string image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+        var request = LlmGateway.RebuildCanonicalImageRequest(new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img,
+            ModelType = ModelTypes.ImageGen,
+            CanonicalImageRequest = new()
+            {
+                Prompt = "保留参考图商品", Size = "1024x1024", Count = 1,
+                Images = Enumerable.Repeat(image, imageCount).ToList(),
+            },
+        }, new ModelResolutionResult
+        {
+            ActualModel = "doubao-seedream-5-0-pro-260628",
+            ApiUrl = "https://ark.cn-beijing.volces.com/api/v3",
+            PlatformType = "openai", Protocol = "openai",
+        });
+
+        Assert.Equal("images/generations", request.EndpointPath);
+        Assert.False(request.IsMultipart);
+        var body = request.RequestBody!;
+        Assert.Equal("1024x1024", body["size"]!.GetValue<string>());
+        Assert.False(body.ContainsKey("n"));
+        Assert.False(body.ContainsKey("sequential_image_generation"));
+        Assert.False(body.ContainsKey("stream"));
+        if (imageCount == 0) Assert.False(body.ContainsKey("image"));
+        else if (imageCount == 1) Assert.Equal(image, body["image"]!.GetValue<string>());
+        else Assert.Equal(imageCount, body["image"]!.AsArray().Count);
+        var info = ImageGenModelAdapterRegistry.GetAdapterInfo("doubao-seedream-5-0-pro-260628");
+        Assert.NotNull(info);
+        Assert.NotEmpty(info.SizesByResolution["1k"]);
+        Assert.NotEmpty(info.SizesByResolution["2k"]);
+        Assert.Empty(info.SizesByResolution["4k"]);
+        Assert.NotNull(GatewayImageModelCatalog.ValidateSize("4096x4096", info));
+    }
+
     private sealed class Transport : HttpMessageHandler, IHttpClientFactory
     {
         public List<string> Paths { get; } = [];
@@ -31,7 +72,7 @@ public sealed class CanonicalImageBoundaryTests
     public async Task MapSendsOnlyCanonicalParameters_NoPreResolveOrWireParameters()
     {
         var transport = new Transport();
-        var client = new HttpLlmGatewayClient(transport, new ConfigurationBuilder().Build(), NullLogger<HttpLlmGatewayClient>.Instance);
+        var client = new HttpLlmGatewayClient(transport, new ConfigurationBuilder().Build(), NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: TransportTestTaskAuthorizer.Instance);
         var result = await client.GenerateImageAsync(new GatewayRawRequest
         {
             AppCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img, ModelType = ModelTypes.ImageGen,

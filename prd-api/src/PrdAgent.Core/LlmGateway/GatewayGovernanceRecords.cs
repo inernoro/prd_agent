@@ -118,14 +118,31 @@ public sealed class GatewayServiceKeyDirectoryRecord
 [BsonIgnoreExtraElements]
 public sealed class GatewayRuntimeGrantRecord
 {
+    /// <summary>空值与旧记录仍仅是设计Responses授权；task-sidecar为受控兼容SDK通道。</summary>
+    public string Purpose { get; set; } = "design";
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string TenantId { get; set; } = string.Empty;
     public string KeyPrefix { get; set; } = string.Empty;
     public string KeyHash { get; set; } = string.Empty;
     public string RunId { get; set; } = string.Empty;
+    /// <summary>设计执行器仅继承发起任务的服务端许可，不能凭短期模型密钥扩大任务范围。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskLeaseRunId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskLeaseOwnerHash { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long? TaskLeaseFence { get; set; }
+    /// <summary>新执行器短凭据必须绑定发行环境；旧设计凭据仍从父许可恢复来源。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? SourceDeployment { get; set; }
     public string UserId { get; set; } = string.Empty;
     public string AppCallerCode { get; set; } = string.Empty;
     public string Environment { get; set; } = string.Empty;
+    /// <summary>受信业务用途。缺失的旧设计grant仍为chat，不消费客户端自报类型。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? ModelType { get; set; }
     public string Model { get; set; } = string.Empty;
     public string? ModelPoolId { get; set; }
     public string? PinnedPlatformId { get; set; }
@@ -159,6 +176,13 @@ public sealed class GatewayRuntimeBudgetScopeRecord
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string TenantId { get; set; } = string.Empty;
+    public string? TaskPermitId { get; set; }
+    public int MaxPhysicalCalls { get; set; }
+    public List<string> AllowedAppCallerCodes { get; set; } = new();
+    public string? PriceVersion { get; set; }
+    public string? PriceProtocol { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? CachedInputUsdPerMillion { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? CacheWriteUsdPerMillion { get; set; }
     public string RootOutlineRunId { get; set; } = string.Empty;
     public string UserId { get; set; } = string.Empty;
     public string SourcePlanHash { get; set; } = string.Empty;
@@ -184,6 +208,22 @@ public sealed class GatewayRuntimeBudgetScopeRecord
     /// 不能抢走人工保存的冻结额度；缺失时，已绑定本 scope 的 PPT 物理请求必须默认拒绝。
     /// </summary>
     public GatewayPptCompletionBudgetRecord? PptCompletion { get; set; }
+    // 根层扩展由旧版本已有 BsonIgnoreExtraElements 忽略，不改变历史嵌套合同的形状。
+    [BsonIgnoreIfNull] public string? PptOperationPurpose { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationRunId { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationRequestHash { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationBaseFingerprint { get; set; }
+    [BsonIgnoreIfNull] public string? PptPendingManualRunId { get; set; }
+    [BsonIgnoreIfNull] public string? PptManualRequestHash { get; set; }
+    [BsonIgnoreIfNull] public string? PptManualBaseFingerprint { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationPolicyId { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationPolicyFingerprint { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationPriceBasis { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationPriceSource { get; set; }
+    [BsonIgnoreIfNull] public DateTime? PptModificationPriceObservedAtUtc { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationPriceSourceUrl { get; set; }
+    [BsonIgnoreIfNull] public bool? PptModificationPriceIsEstimate { get; set; }
+
     public DateTime ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
@@ -206,6 +246,10 @@ public sealed class GatewayRuntimeBudgetReservationRecord
     public string Model { get; set; } = string.Empty;
     public string? OfferingId { get; set; }
     public string PricingTier { get; set; } = "standard";
+    public string? PriceVersion { get; set; }
+    public string? PriceProtocol { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? CachedInputUsdPerMillion { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? CacheWriteUsdPerMillion { get; set; }
     [BsonRepresentation(BsonType.Decimal128)] public decimal InputUsdPerMillion { get; set; }
     [BsonRepresentation(BsonType.Decimal128)] public decimal OutputUsdPerMillion { get; set; }
     [BsonRepresentation(BsonType.Decimal128)] public decimal ReservedUsd { get; set; }
@@ -413,4 +457,10 @@ public sealed class GatewayOfferingRateWindowRecord
     public DateTime WindowStart { get; set; }
     public long Count { get; set; }
     public DateTime ExpiresAt { get; set; }
+}
+
+public static class GatewayPptCompletionPurposes
+{
+    public const string Completion = "completion";
+    public const string Modification = "modification";
 }

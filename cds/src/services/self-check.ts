@@ -29,6 +29,9 @@
  */
 import type { selfStatusCache } from './self-status-cache.js';
 import { SELF_CHECK_PATH } from './self-check-path.js';
+import type { SchedulerService, PreviewActivityStatus } from './scheduler.js';
+import type { ServerEventLogSink } from './server-event-log-store.js';
+import type { HttpLogSink } from './http-log-store.js';
 
 export { SELF_CHECK_PATH };
 
@@ -72,6 +75,7 @@ export const SELF_STATUS_GRACE_MS = 5 * 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HALF_HOUR_MS = 30 * 60 * 1000;
+const PREVIEW_ACTIVITY_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 /** 部署的非终态：还在往前走的那几档。 */
 const DEPLOY_IN_FLIGHT = new Set(['pending', 'queued', 'preparing', 'building', 'starting', 'verifying']);
@@ -116,12 +120,66 @@ export interface SelfCheckDeps {
   diskUsage: () => { totalBytes: number; freeBytes: number } | null;
   dockerPing: () => Promise<{ ok: boolean; ms: number; detail?: string }>;
   /** 最近一段时间主进程的请求统计。没有日志存储时返回 null。 */
-  httpStats: (sinceMs: number) => Promise<{ requests: number; serverErrors: number; branchesP95Ms: number | null; branchesRequests: number } | null>;
+  httpStats: (sinceMs: number) => Promise<{ requests: number; serverErrors: number; branchesP95Ms: number | null; branchesRequests: number; widgetStreamFailures?: number } | null>;
   /** 真的会响的通知通道数（与面板同一份判定）。 */
   liveAlarmChannels: () => number;
   /** `ready=false` 表示自身状态缓存还没算过一次——刚起来的进程会有几十秒这样。 */
   selfStatus: () => SelfCheckRuntimeStatus | null | Promise<SelfCheckRuntimeStatus | null>;
   storeBackend: () => string;
+  previewActivity?: (sinceMs: number) => Promise<{ current: PreviewActivityStatus | undefined;
+    schedulerEnabled: boolean; recentUnknownCount: number | null }>;
+}
+
+/** 初始化未成功时真实日志类会返回空数组；必须保留未知，不能把不可读解释为零故障。 */
+export async function readHttpSelfCheckStats(store: HttpLogSink | null, initialized: boolean, sinceMs: number,
+  nowMs = Date.now()): Promise<Awaited<ReturnType<SelfCheckDeps['httpStats']>>> {
+  if (!initialized || !store?.findRecent) return null;
+  // 上限 5000 条：30 分钟里超过这个量的实例，统计会截到最近 5000 条，
+  // 比例仍然成立，只是样本量少报——宁可少报也不拉整个集合。
+  const rows = await store.findRecent({ layer: 'master', since: new Date(sinceMs), limit: 5000, sort: 'recent' });
+  // 恢复流可能给浏览器200，但原上游失败必须被常设监控读到；有限查询不扫描整个集合。
+  const streamErrors = await store.findRecent({ layer: 'forwarder', minStatus: 500,
+    pathContains: '/_cds/api/', since: new Date(nowMs - 6 * 60 * 60_000), limit: 5000, sort: 'recent' });
+  const branches = rows
+    .filter((r) => r.method === 'GET' && (r.path === '/api/branches' || r.path.startsWith('/api/branches?')))
+    .map((r) => r.durationMs)
+    .filter((ms) => Number.isFinite(ms));
+  const sorted = [...branches].sort((a, b) => a - b);
+  const p95 = sorted.length === 0 ? null : sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(0.95 * sorted.length) - 1))];
+  return {
+    requests: rows.length,
+    serverErrors: rows.filter((r) => r.status >= 500).length,
+    branchesP95Ms: p95,
+    branchesRequests: branches.length,
+    widgetStreamFailures: streamErrors.filter(r => /^\/_cds\/api\/(?:branches\/stream|activity-stream)(?:\?|$)/.test(r.path)).length,
+  };
+}
+
+/** index 与回归共用原事件sink接线，不另建持久库、通知通道或探测目标。 */
+export function wireSchedulerPreviewActivitySelfCheck(scheduler: SchedulerService, events: ServerEventLogSink | null,
+  isEventStoreReadable: () => boolean): NonNullable<SelfCheckDeps['previewActivity']> {
+  scheduler.setPreviewActivityTransitionListener(event => events?.record({
+    ts: event.observedAt, category: 'system', severity: event.status === 'unknown' && event.reason !== 'historical-marker' ? 'warn' : 'info',
+    source: 'scheduler-preview-activity', action: event.reason === 'historical-marker' ? 'historical-marker' : event.status === 'unknown' ? 'unknown' : 'recovered',
+    message: event.reason === 'historical-marker' ? '重启后正在结算历史探针观察，恢复期间暂停自动停机' : event.status === 'unknown' ? '预览活跃状态无法确认，请检查转发器连接' : '预览活跃状态观察已恢复',
+    details: { status: event.status, reason: event.reason, observedAt: event.observedAt, lastUnknownAt: event.lastUnknownAt },
+  }));
+  return async sinceMs => {
+    const current = await scheduler.readPreviewActivityStatus();
+    let recentUnknownCount: number | null = null;
+    if (isEventStoreReadable() && events?.findRecent) {
+      const rows = await events.findRecent({ source: 'scheduler-preview-activity', action: 'unknown', since: new Date(sinceMs), limit: 1 });
+      if (Array.isArray(rows)) {
+        recentUnknownCount = rows.length;
+        if (recentUnknownCount === 0) {
+          const recovered = await events.findRecent({ source: 'scheduler-preview-activity', action: 'recovered', since: new Date(sinceMs), limit: 1000 });
+          recentUnknownCount = Array.isArray(recovered)
+            ? Number(recovered.some(row => Date.parse(String(row.details?.lastUnknownAt ?? '')) >= sinceMs)) : null;
+        }
+      }
+    }
+    return { current, schedulerEnabled: scheduler.isEnabled(), recentUnknownCount };
+  };
 }
 
 export type HealthStatus = 'pass' | 'warn' | 'fail';
@@ -215,6 +273,33 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   const httpRead = boundedSelfRead(() => deps.httpStats(now - HALF_HOUR_MS), null);
   const dockerRead = boundedSelfRead(() => deps.dockerPing(), { ok: false, ms: 3000, detail: 'Docker 检查超时或读取失败' });
   const selfRead = boundedSelfRead(() => deps.selfStatus(), null);
+  const activityRead = deps.previewActivity
+    ? boundedSelfRead(() => deps.previewActivity!(now - PREVIEW_ACTIVITY_WINDOW_MS), null) : null;
+
+  if (activityRead) {
+    const activity = await activityRead;
+    const currentUnknown = activity?.current?.status === 'unknown';
+    const recovering = currentUnknown && activity?.current?.reason === 'historical-marker' && activity.current.recoveryGraceRemainingMs > 0 && activity.recentUnknownCount === 0;
+    const lastUnknownAt = Date.parse(activity?.current?.lastUnknownAt ?? '');
+    const recentInProcessUnknown = lastUnknownAt >= now - PREVIEW_ACTIVITY_WINDOW_MS && lastUnknownAt <= now;
+    const historicalUnknown = recentInProcessUnknown || (typeof activity?.recentUnknownCount === 'number' && activity.recentUnknownCount > 0);
+    const known = activity?.current?.status === 'ready' && typeof activity.recentUnknownCount === 'number' && activity.recentUnknownCount >= 0;
+    const observed = historicalUnknown ? 1 : recovering ? null : currentUnknown ? 1 : known ? 0 : null;
+    const publicMessage = recovering && !historicalUnknown ? '重启后正在结算历史探针观察，恢复期间暂停自动停机' : currentUnknown
+      ? (activity?.schedulerEnabled ? '预览活跃状态无法确认，已暂停自动停机，请检查转发器连接'
+        : '预览活跃状态无法确认，自动停机当前未启用，请检查转发器连接')
+      : historicalUnknown ? '预览活跃状态曾无法确认，请检查转发器连接并确认恢复，异常记录保留六小时'
+        : observed === null ? '预览活跃状态或异常历史无法确认，请检查转发器连接与诊断存储'
+          : '预览活跃状态可确认，近六小时未发现异常记录';
+    checks.push({ componentId: 'scheduler.preview-activity-samples', componentType: 'self', time,
+      observedValue: recovering && !historicalUnknown ? 0 : 1, observedUnit: 'count', status: recovering && !historicalUnknown ? 'warn' : 'pass' });
+    const check = monitored({ componentId: 'scheduler.preview-activity', componentType: 'self',
+      observedValue: observed, observedUnit: 'flag', status: recovering && !historicalUnknown ? 'warn' : observed === 0 ? 'pass' : 'fail',
+      output: publicMessage, publicMessage,
+    }, { name: 'CDS · 预览活跃状态', publicName: '预览自动停机保护', op: 'eq', value: 0,
+      intervalSeconds: 21600, failuresToAlarm: 1, severity: 'P1', observeMode: 'passive', sampleComponentId: 'scheduler.preview-activity-samples' }, time);
+    checks.push(check);
+  }
 
   // ── 部署 ───────────────────────────────────────────────────────────
   const runs = deps.deploymentRuns();
@@ -310,6 +395,19 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
     time,
   ));
   const errorRate = !http || requests === 0 ? 0 : Math.round((http.serverErrors / requests) * 100);
+  const streamFailures = http?.widgetStreamFailures ?? null;
+  checks.push(monitored(
+    {
+      componentId: 'api.widget-stream-failures-6h', componentType: 'http',
+      observedValue: streamFailures, observedUnit: 'failure',
+      status: streamFailures === null ? 'warn' : streamFailures === 0 ? 'pass' : 'fail',
+      output: streamFailures === null ? '挂件上游失败日志不可用，不能判断切换连续性'
+        : streamFailures > 0 ? `近 6 小时采样发现 ${streamFailures} 次挂件上游失败；检查控制面切换、恢复和鉴权，重连成功不能抹去失败`
+          : '近 6 小时采样未发现挂件上游失败',
+    },
+    { name: 'CDS · 挂件流上游失败', publicName: '预览状态连接连续性', op: 'lte', value: 0, failuresToAlarm: 1, severity: 'P1', intervalSeconds: 21600 },
+    time,
+  ));
   checks.push(monitored(
     {
       componentId: 'api.error-rate-30m', componentType: 'http',

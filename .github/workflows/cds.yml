@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  workflow_dispatch:
 
 env:
   NODE_VERSION: '20'
@@ -27,6 +28,7 @@ jobs:
           filters: |
             cds:
               - 'cds/**'
+              - 'cds-instances.json'
               - '.github/workflows/cds.yml'
               - '.github/workflows/cds-prebuilt.yml'
               - '.claude/skills/cds/**'
@@ -79,7 +81,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-bt-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json', 'cds/web/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-bt-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json', 'cds/web/pnpm-lock.yaml', 'cds/mcp/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-bt-
 
@@ -89,6 +91,15 @@ jobs:
       # 同 ci.yml：渲染冒烟要用 cds/web/node_modules 里的 react。
       - name: Install web dependencies
         run: pnpm run install:web
+
+      - name: Install design runtime test dependencies
+        run: pnpm -C ../design-runtime/opendesign install --frozen-lockfile
+
+      - name: Install code review MCP dependencies
+        run: pnpm --dir mcp install --frozen-lockfile
+
+      - name: Code review MCP stdio integration
+        run: pnpm --dir mcp test && pnpm --dir mcp check
 
       - name: Type check
         run: pnpm build
