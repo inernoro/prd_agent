@@ -12,6 +12,31 @@ SPEC.loader.exec_module(GUARD)
 
 
 class MapModelEgressTests(unittest.TestCase):
+    def test_production_notification_and_public_read_audits_reject_added_model_transport(self):
+        ledger = json.loads((ROOT / 'scripts/fixtures/map-model-egress-audit.json').read_text())
+        for name in ['ProductAnnouncementHttpAudit.cs', 'ProductScheduledNotificationWorker.cs']:
+            path = 'prd-api/src/PrdAgent.Api/Services/ProductAgent/' + name
+            with self.subTest(name=name):
+                source = (ROOT / path).read_text()
+                granted = {'prd-api/src/PrdAgent.Api/FutureBusiness.cs': ledger['files'][path]}
+                root, fixture_ledger = self.fixture(source, granted=granted)
+                self.assertEqual([], GUARD.check(root, fixture_ledger))
+                future = root / 'prd-api/src/PrdAgent.Api/FutureBusiness.cs'
+                future.write_text(source + '\nvar modelClient = clients.CreateClient("FuturePaidModel");\n')
+                self.assertTrue(any('新增或变更' in failure for failure in GUARD.check(root, fixture_ledger)))
+
+    def test_user_key_gateway_registration_cannot_authorize_raw_transport(self):
+        path = "llmgw/serving/CodeReviewUserKeys.cs"
+        source = (ROOT / path).read_text()
+        ledger = json.loads((ROOT / "scripts/fixtures/map-model-egress-audit.json").read_text())
+        root, fixture_ledger = self.fixture(source, granted={
+            "prd-api/src/PrdAgent.Api/FutureBusiness.cs": ledger["files"][path],
+        })
+        self.assertEqual([], GUARD.check(root, fixture_ledger))
+        future = root / "prd-api/src/PrdAgent.Api/FutureBusiness.cs"
+        future.write_text(source + '\nvar raw = clients.CreateClient("FuturePaidModel");\n')
+        self.assertTrue(any("新增或变更" in failure for failure in GUARD.check(root, fixture_ledger)))
+
     def fixture(self, source, *, granted=None, program=None, project=None, ci=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

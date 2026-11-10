@@ -1,6 +1,7 @@
 import type { BranchLifecycleService } from './services/branch-lifecycle.js';
 import { createBranchLifecycleRouter } from './routes/branch-lifecycle.js';
 import { lifecycleStopGate } from './services/branch-lifecycle.js';
+import { CodeReviewUserKeys } from './services/code-review-user-keys.js';
 import { createInstanceCatalogRouter } from './routes/instance-catalog.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
@@ -1211,6 +1212,7 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
@@ -1325,6 +1327,12 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/(.+)\/migration\/config-preview$/, '预览可复刻配置'],
     [/^POST \/projects\/(.+)\/migration\/replicate-config$/, '推送配置到目标 CDS'],
     [/^POST \/projects\/(.+)\/migration\/data-plan$/, '扫描数据迁移计划'],
+    [/^GET \/projects\/([^/]+)\/migration\/fingerprint$/, '核对项目指纹'],
+    [/^GET \/projects\/([^/]+)\/migration\/standby$/, '读取分支同步策略'],
+    [/^PUT \/projects\/([^/]+)\/migration\/standby$/, '保存分支同步策略'],
+    [/^POST \/projects\/([^/]+)\/migration\/standby\/audit$/, '核对备用项目'],
+    [/^POST \/projects\/([^/]+)\/migration\/standby\/reconcile$/, '同步项目分支'],
+    [/^GET \/projects\/([^/]+)\/migration\/standby-health$/, '读取备用项目状态'],
     // CDS 配对连接 :id 路径
     [/^POST \/cds-system\/connections\/(.+)\/revoke$/, '撤销配对连接'],
     [/^GET \/cds-system\/connections\/(.+)$/, '查看配对连接'],
@@ -4675,6 +4683,7 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
     authMode,
+    serverEventLogStore: deps.serverEventLogStore,
   }));
   // 项目存储面板(infra named volume 大小/挂载关系，feature-emerge E7，2026-05-29)
   app.use('/api', createProjectStorageRouter({
@@ -4943,6 +4952,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
   const reviews = new CodeReviewService({
     state: deps.stateService, inputs: createCodeReviewInputs(),
+    userKeys: new CodeReviewUserKeys(() => ({ ...process.env, ...deps.stateService.getCustomEnv('_global') })),
     mail: createCodeReviewMail(() => ({ ...process.env, ...deps.stateService.getCustomEnv('_global') })),
     publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL || deps.config.publicBaseUrl || 'http://localhost:9900',
     ownerScope: process.env.CDS_CODE_REVIEW_OWNER || (process.env.CDS_PROJECT_ID

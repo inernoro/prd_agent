@@ -32,7 +32,8 @@ public class LocalAssetStorage : IAssetStorage
         Directory.CreateDirectory(dir);
         var filePath = Path.Combine(dir, $"{sha}.{ext}");
 
-        if (!File.Exists(filePath))
+        var existed = File.Exists(filePath);
+        if (!existed)
         {
             await File.WriteAllBytesAsync(filePath, bytes, ct);
         }
@@ -42,7 +43,7 @@ public class LocalAssetStorage : IAssetStorage
         // 其他 domain/type 会保存成功但读取 404。
         var url = BuildUrlForPath(filePath);
         var key = Path.GetRelativePath(_baseDir, filePath).Replace(Path.DirectorySeparatorChar, '/');
-        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key);
+        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key) { CreatedNew = !existed };
     }
 
     public string? TryBuildContentAddressedKey(
@@ -392,6 +393,7 @@ public class LocalAssetStorage : IAssetStorage
             "audio/webm" => "weba",
             // 视频
             "video/mp4" => "mp4",
+            "video/x-m4v" => "m4v",
             "video/webm" => "webm",
             "video/quicktime" => "mov",
             "video/x-matroska" => "mkv",
@@ -431,6 +433,7 @@ public class LocalAssetStorage : IAssetStorage
             "weba" => "audio/webm",
             // 视频
             "mp4" => "video/mp4",
+            "m4v" => "video/x-m4v",
             "webm" => "video/webm",
             "mov" => "video/quicktime",
             "mkv" => "video/x-matroska",

@@ -460,15 +460,18 @@ export class WorktreeService {
     });
   }
 
-  async create(repoRoot: string, branch: string, targetDir: string): Promise<void> {
+  async create(repoRoot: string, branch: string, targetDir: string, expectedCommit?: string): Promise<void> {
+    if (expectedCommit !== undefined && (!/^[a-f0-9]{40}$/i.test(expectedCommit) || !isSafeGitRef(branch) || branch.startsWith('refs/'))) {
+      throw new Error('同步分支的源提交或分支名称无效');
+    }
     return worktreePathActivity.run([targetDir, WorktreeService.deploymentSourceRootFor(targetDir)], async () => {
-      await this.createManagedWorktree(repoRoot, branch, targetDir);
+      await this.createManagedWorktree(repoRoot, branch, targetDir, undefined, expectedCommit);
     });
   }
 
   /** 调用方已持有 targetDir 活动锁时复用，避免恢复路径二次获取同一把锁。 */
   private async createManagedWorktree(repoRoot: string, branch: string, targetDir: string,
-    cold?: { key: string; assertCurrent: () => void }): Promise<void> {
+    cold?: { key: string; assertCurrent: () => void }, expectedCommit?: string): Promise<void> {
     let owned: fs.Stats | undefined;
     const check = (): void => {
       if (!cold) return;
@@ -525,6 +528,13 @@ export class WorktreeService {
 
     await withRepositoryMutation(repoRoot, async () => {
       check();
+      if (expectedCommit) {
+        const ref = "'" + `refs/remotes/origin/${branch}^{commit}`.replace(/'/g, "'\"'\"'") + "'";
+        const actual = await shell.exec(`git rev-parse --verify ${ref}`, { cwd: repoRoot });
+        if (actual.exitCode !== 0 || actual.stdout.trim().toLowerCase() !== expectedCommit.toLowerCase()) {
+          throw new Error('源提交快照与目标远端分支不同，请重新核对后再同步');
+        }
+      }
       // Always prune stale worktree references before creating a new one.
       // This handles the case where git has a registered worktree whose
       // directory no longer exists (e.g. after a crash or manual rm).
@@ -534,11 +544,14 @@ export class WorktreeService {
       if (!cold) {
         const checkDir = await shell.exec(`test -d "${targetDir}" && echo exists`);
         if (checkDir.stdout.trim() === 'exists') {
+          if (expectedCommit) throw new Error('同步目标目录已存在，已保留现场并拒绝覆盖');
           await shell.exec(`rm -rf "${targetDir}"`);
         }
       }
 
-      const addCommand = `git worktree add "${targetDir}" "origin/${branch}"`;
+      const addCommand = expectedCommit
+        ? `git worktree add --detach "${targetDir}" "${expectedCommit.toLowerCase()}"`
+        : `git worktree add "${targetDir}" "origin/${branch}"`;
       let addResult = await shell.exec(addCommand, { cwd: repoRoot });
       if (addResult.exitCode !== 0 && isMissingRegisteredWorktreeError(addResult)) {
         await shell.exec('git worktree prune', { cwd: repoRoot });
@@ -546,6 +559,13 @@ export class WorktreeService {
       }
       if (addResult.exitCode !== 0) {
         throw new Error(`创建工作树 "${branch}" 失败:\n${combinedOutput(addResult)}`);
+      }
+      if (expectedCommit) {
+        const actual = await shell.exec('git rev-parse --verify HEAD', { cwd: targetDir });
+        if (actual.exitCode !== 0 || actual.stdout.trim().toLowerCase() !== expectedCommit.toLowerCase()) {
+          await shell.exec(`git worktree remove --force "${targetDir}"`, { cwd: repoRoot });
+          throw new Error('新建工作树提交未匹配源快照，已拒绝登记分支');
+        }
       }
     });
     check();

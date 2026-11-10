@@ -186,7 +186,7 @@ describe('受管产物生产身份与显式源码政策', () => {
       configHash: id, profiles: [profile], branch: f.entry, createdByRunId: id });
     const version = create({ ...f.profile, managedBuild: undefined, prebuiltImage: true, localArtifact: true }, 'local-content');
     expect(version.profiles[0]).toMatchObject({ reusable: true, artifactKind: 'managed-image', artifactImage: fixedId });
-    expect(f.versionService.materializeProfiles(version, [f.profile])[0]).toMatchObject({ dockerImage: fixedId, localArtifact: true, prebuiltImage: true });
+    expect(f.versionService.materializeProfiles(version, [f.profile], f.entry)[0]).toMatchObject({ dockerImage: fixedId, localArtifact: true, prebuiltImage: true });
     expect(create({ ...f.profile, managedBuild: undefined, prebuiltImage: false }, 'source-base').profiles[0]).toMatchObject({ reusable: false, artifactKind: 'legacy-runtime' });
   });
 });

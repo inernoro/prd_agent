@@ -154,7 +154,8 @@ const EXACT = {
   '/api/notices': { notices: [] },
   '/api/notices/read-all': { ok: true, changed: 0 },
   '/api/projects': { projects: [project] },
-  '/api/code-reviews': { tasks: [] },
+  '/api/code-reviews': { tasks: [], totals: { source: 0, report: 0, all: 0 }, newCount: 0, historyCount: 0,
+    snapshotAt: '2026-11-09T00:00:00.000Z', page: { offset: 0, limit: 10, total: 0, nextOffset: null } },
   '/api/code-reviews/capabilities': { engineConfigured: false, mailConfigured: false,
     storageConfigured: false, conditionalRetry: true, tools: [] },
   '/api/config': { previewDomain: 'example.invalid', version: 'fixture' },
@@ -269,6 +270,21 @@ const PREFIX = [
   [/^\/api\/branches$/, () => ({
     branches,
     capacity: { maxContainers: 40, runningContainers: 9, totalMemGB: 96 },
+  })],
+  [/^\/api\/projects\/[^/]+\/branch-groups$/, () => ({
+    ok: true,
+    groups: [
+      {
+        id: 'fixture-active-work',
+        name: '正在开发',
+        color: 'blue',
+        rules: [{ kind: 'prefix', value: 'feature/' }],
+        pinnedBranchIds: [],
+      },
+    ],
+    updatedAt: '2026-09-02T09:40:00.000Z',
+    updatedBy: 'user',
+    readOnly: false,
   })],
   [/^\/api\/projects\/[^/]+$/, () => project],
   [/^\/api\/projects\/[^/]+\/branch-groups$/, () => ({

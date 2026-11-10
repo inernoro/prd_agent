@@ -183,6 +183,11 @@
 
 ### 三、指南
 
+- [CDS DeepAudit 代码审查使用与维护 · 指南](./guide.cds.code-review.md) `guide.cds.code-review`
+  > 网页、MCP、模型用量、版本边界与管理员排障入口。
+
+- [代码审查使用自己的模型 Key · 指南](./guide.cds.code-review-user-key.md) `guide.cds.code-review-user-key`
+
 - [MAP 每日自动化验收 SOP · 指南](./guide.acceptance.daily-sop.md) `guide.acceptance.daily-sop`
 - [MAP 验收报告与证据交互 · 指南](./guide.acceptance.report-evidence.md) `guide.acceptance.report-evidence`
 - [AI 百宝箱 (AI Toolbox) · 指南](./guide.ai-toolbox.ops.md) `guide.ai-toolbox.ops`
@@ -299,6 +304,9 @@
 
 ### 五、计划
 
+- [CDS 代码审查需求兑现台账 · 计划](./plan.cds.code-review-delivery.md) `plan.cds.code-review-delivery`
+  > 用户全部要求逐项对照，区分已上线、已合并和仍未完成的工作。
+
 - [平台后台任务与消费最低保护 · 阶段 0 计划](./plan.platform.background-task-safety.phase0.md) `plan.platform.background-task-safety.phase0`
 - [平台任务级准入与统一出口 · 阶段 1 计划](./plan.platform.background-task-safety.phase1.md) `plan.platform.background-task-safety.phase1`
 - [平台业务幂等、执行租约与取消撤销 · 阶段 2 计划](./plan.platform.background-task-safety.phase2.md) `plan.platform.background-task-safety.phase2`
@@ -345,6 +353,7 @@
 - [LLM Gateway 故障隔离与恢复 · 计划](./plan.platform.llm-gateway.resilience.md) `plan.platform.llm-gateway.resilience`
 - [模型路由能力契约治理 · 状态看板](./plan.platform.llm-routing.capability-contract.md) `plan.platform.llm-routing.capability-contract`
 - [MCP 智能体接入台 · 计划](./plan.platform.mcp-agent-console.md) `plan.platform.mcp-agent-console`
+- [MCP 多上游语音能力 · 计划](./plan.platform.mcp.speech.md) `plan.platform.mcp.speech`
 - [PA Agent 可执行任务升级 · 计划](./plan.product-agent.pa.competitive-improvements.md) `plan.product-agent.pa.competitive-improvements`
 - [产品管理智能体版本流程收尾 · 计划](./plan.product-agent.version-workflow.md) `plan.product-agent.version-workflow`
 - [Report Agent 模型质量治理 · 计划](./plan.report-agent.model-governance.md) `plan.report-agent.model-governance`

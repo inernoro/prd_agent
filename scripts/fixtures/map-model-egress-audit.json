@@ -2,6 +2,12 @@
   "version": 1,
   "scope": "prd-api/src 与 llmgw/serving；有限既有调用指纹，不豁免整目录",
   "files": {
+    "llmgw/serving/CodeReviewUserKeys.cs": {
+      "calls": {
+        "dependency:GetRequiredService:12bf3cc94a24b0ecb1545fe4": 1
+      },
+      "purpose": "现网个人审查密钥端点仅解析既有统一LlmGateway，按任务身份与物理额度准入发送；无新HTTP客户端或供应商SDK，新增调用仍逐指纹拒绝"
+    },
     "llmgw/serving/LiveAsrGatewayEndpoint.cs": {
       "calls": {
         "call:SendAsync:c59a53b24c4a50b349a20022": 1,
@@ -19,6 +25,13 @@
         "new:LiveAsrSessionOrchestrator:fc2ec2ba096a6114bcf089ba": 1
       },
       "purpose": "既有 serving 宿主底层网关/ASR DI 装配，首发发送权限 IGatewayInvocationAuthority 强制注入编排器并沿可信 scope/context 校验；注册、解析与构造逐调用指纹锁定，新后台业务不能借宿主新增直连"
+    },
+    "llmgw/serving/TaskBudgetGateway.cs": {
+      "calls": {
+        "new:GatewayLLMClient:1233a25c64eab93e5051e191": 1,
+        "call:CreateClient:c732572d6e67305342700fce": 1
+      },
+      "purpose": "任务金额包装器只创建回到自身的GatewayLLMClient，全部发送复用既有统一网关；不创建HTTP客户端或供应商SDK，新调用仍须逐指纹审计"
     },
     "prd-api/src/PrdAgent.Api/Controllers/Api/AdminPeerNodesController.cs": {
       "calls": {
@@ -297,6 +310,13 @@
       },
       "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
     },
+    "prd-api/src/PrdAgent.Api/Services/HistoricalAssetUrlResolver.cs": {
+      "calls": {
+        "call:CreateClient:efd694db8d145e7518fe6ef0": 1,
+        "call:SendAsync:a3851ba27f5f964ceb55f063": 1
+      },
+      "purpose": "主干历史附件兼容：只对管理员配置的HTTPS COS公域及固定业务key作有时限HEAD探测，禁重定向并校验长度、目标与审计；无模型发送。"
+    },
     "prd-api/src/PrdAgent.Api/Services/HomepageAssetCopier.cs": {
       "calls": {
         "call:CreateClient:28975e7027e2c53611eb0259": 1,
@@ -337,6 +357,27 @@
         "call:SendAsync:ec801ed3cff02ad94d47b32c": 1
       },
       "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductAnnouncementHttpAudit.cs": {
+      "calls": {
+        "call:CreateClient:d6bcc8962e39ae5588cce950": 1,
+        "call:GetAsync:e2c9b16ce66c7d15531de303": 1
+      },
+      "purpose": "公告公开源的有界只读 GET 与脱敏响应审计，2 MiB 与 25 秒限制；承接 ProductAnnouncementSyncService 的原读取，不发送模型请求，保留全 HttpClient 工厂出口守卫。"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductClaimWebhookWorker.cs": {
+      "calls": {
+        "call:CreateClient:c781d8df0074531b48c58bda": 1,
+        "call:PostAsync:f1c3f3fb730c28de5f50fd0b": 1
+      },
+      "purpose": "产品申领企微文本通知；目标限HTTPS企微webhook路径，使用安全出站工厂，结果未知不自动重试，不调用模型"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductScheduledNotificationWorker.cs": {
+      "calls": {
+        "call:CreateClient:49b6d6a402c484507be5a635": 1,
+        "call:PostAsync:a0e440cdc9799705a6f2a88f": 1
+      },
+      "purpose": "既有产品定时通知，仅向通过 ProductClaimWebhookPayload.IsValidWebhook 验证且服务端解密的企微机器人地址发送管理员已配置的通知；不调用模型，保留全 HttpClient 工厂出口守卫。"
     },
     "prd-api/src/PrdAgent.Api/Services/ReportAgent/GitHubConnector.cs": {
       "calls": {
@@ -748,34 +789,6 @@
         "call:GetAsync:766ac21c5f2969a173668008": 2
       },
       "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
-    },
-    "prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductAnnouncementSyncService.cs": {
-      "calls": {
-        "call:CreateClient:d6bcc8962e39ae5588cce950": 1,
-        "call:GetAsync:9e995570f2ce34e2a9a3652e": 1
-      },
-      "purpose": "公开公告列表与法定工作日日历只读下载；不调用模型，新增或变更运输须重新审计"
-    },
-    "prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductClaimWebhookWorker.cs": {
-      "calls": {
-        "call:CreateClient:c781d8df0074531b48c58bda": 1,
-        "call:PostAsync:f1c3f3fb730c28de5f50fd0b": 1
-      },
-      "purpose": "产品申领企微文本通知；目标限HTTPS企微webhook路径，使用安全出站工厂，结果未知不自动重试，不调用模型"
-    },
-    "llmgw/serving/TaskBudgetGateway.cs": {
-      "calls": {
-        "new:GatewayLLMClient:1233a25c64eab93e5051e191": 1,
-        "call:CreateClient:c732572d6e67305342700fce": 1
-      },
-      "purpose": "任务金额包装器只创建回到自身的GatewayLLMClient，全部发送复用既有统一网关；不创建HTTP客户端或供应商SDK，新调用仍须逐指纹审计"
-    },
-    "prd-api/src/PrdAgent.Api/Services/HistoricalAssetUrlResolver.cs": {
-      "calls": {
-        "call:CreateClient:efd694db8d145e7518fe6ef0": 1,
-        "call:SendAsync:a3851ba27f5f964ceb55f063": 1
-      },
-      "purpose": "主干历史附件兼容：只对管理员配置的HTTPS COS公域及固定业务key作有时限HEAD探测，禁重定向并校验长度、目标与审计；无模型发送。"
     }
   },
   "packages": {
