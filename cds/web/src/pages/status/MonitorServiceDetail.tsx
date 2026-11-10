@@ -178,7 +178,7 @@ export function ServiceDetail({ service: service, category, summary, incidents, 
       <span className="lk-src"><Link2 className="ic s" />从通知链接打开</span>
       {entry.incidentId ? <span className="tag">{entry.incidentId}</span> : null}
       <span className="lk-at">{eventAt ? `${snapshot.kind === 'recovery' ? '恢复记录于' : entry?.detectedAt ? '告警触发于' : '故障记录于'} ${time(eventAt)}` : linkError || '原始通知事件暂不可核对'}</span>
-      <span className="lk-then">{eventMeasurement ? `当时 ${eventMeasurement.name} ${eventMeasurement.actual}，预期 ${eventMeasurement.expected}` : eventSample ? `当时检查${eventSample.up ? '通过' : '失败'}；未保留结构化指标读数` : '未取得匹配的历史采样，不补造通知时读数'}</span>
+      <span className="lk-then">{eventSample?.noData ? '当时未取得有效观测，不能据此判断服务正常' : eventMeasurement ? `当时 ${eventMeasurement.name} ${eventMeasurement.actual}，预期 ${eventMeasurement.expected}` : eventSample ? `当时检查${eventSample.up ? '通过' : '失败'}；未保留结构化指标读数` : '未取得匹配的历史采样，不补造通知时读数'}</span>
       <span className={`lk-now ${service.state}`}>{resolvedRecovery ? `${time(entryIncident!.endedAt!)} 已恢复 · ` : ''}{measurement ? `现在 ${measurement.actual}` : `现在${label}`}{service.state === 'bad' ? ' · 仍异常' : ''}</span>
       <span className="sp" /><span className="lk-hint">返回会回到全局里它所在的位置</span>
       <button className="xb sm" aria-label="关闭通知提示" onClick={() => setLinkClosed(true)}><X className="ic s" /></button>

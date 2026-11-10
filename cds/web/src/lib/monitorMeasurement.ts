@@ -138,9 +138,9 @@ export function incidentNotificationSnapshot(incident: UptimeIncidentView | unde
     : { kind: 'unavailable' };
   const at = Date.parse(detectedAt);
   if (!Number.isFinite(at)) return { kind: 'unavailable' };
-  if (incident.endedSample?.t === at) return { sample: incident.endedSample, at, kind: 'recovery' };
-  const alert = incident.notificationSamples?.find((sample) => sample.t === at);
-  if (alert) return { sample: alert, at, kind: 'alert' };
+  if (incident.endedSample?.t === at) return { sample: incident.endedSample, at, kind: incident.endedSample.up && !incident.endedSample.noData ? 'recovery' : 'alert' };
+  const notification = incident.notificationSamples?.find((sample) => sample.t === at);
+  if (notification) return { sample: notification, at, kind: notification.up && !notification.noData ? 'recovery' : 'alert' };
   if (incident.startedSample?.t === at) return { sample: incident.startedSample, at, kind: 'alert' };
   return { kind: 'unavailable' };
 }

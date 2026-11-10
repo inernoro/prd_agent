@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { buildMeasurementChart, incidentNotificationSnapshot, measurementView } from '../../web/src/lib/monitorMeasurement';
-import type { UptimeIncidentView, UptimeMeasurement, UptimeSample } from '../../web/src/lib/monitorCenter';
+import { buildWorkspaceModel } from '../../web/src/lib/monitorWorkspace';
+import { ServiceDetail } from '../../web/src/pages/status/MonitorServiceDetail';
+import type { UptimeIncidentView, UptimeMeasurement, UptimeSample, UptimeSummary, UptimeTargetSummary } from '../../web/src/lib/monitorCenter';
 
 const measurement: UptimeMeasurement = { name: '解析耗时', field: 'observedValue', actual: 1240, expected: '300', op: 'lte', unit: 'ms' };
 const sample = (t: number, actual: UptimeMeasurement['actual'], extra: Partial<UptimeSample> = {}): UptimeSample => ({ t, up: true, ms: 12, measurement: { ...measurement, actual }, ...extra });
@@ -77,5 +81,36 @@ describe('监控真实指标与事件快照', () => {
     const old = { ...incident, startedSample: undefined, endedSample: undefined, notificationSamples: undefined };
     expect(incidentNotificationSnapshot(old, old.targetId)).toEqual({ kind: 'unavailable' });
     expect(incidentNotificationSnapshot(old, old.targetId, new Date(5000).toISOString())).toEqual({ kind: 'unavailable' });
+  });
+
+  it('持续健康后触发的恢复通知使用当次真实采样，不误认成告警或首次转好读数', () => {
+    const recoveryAt = 605000;
+    const recovered = { ...incident, notificationSamples: [...incident.notificationSamples!, sample(recoveryAt, 90)] };
+    expect(recoveryAt).not.toBe(recovered.endedSample!.t);
+    expect(incidentNotificationSnapshot(recovered, recovered.targetId, new Date(recoveryAt).toISOString()))
+      .toMatchObject({ kind: 'recovery', at: recoveryAt, sample: { up: true, t: recoveryAt, measurement: { actual: 90 } } });
+    const noData = { ...recovered, notificationSamples: [sample(recoveryAt, 90, { noData: true })] };
+    expect(incidentNotificationSnapshot(noData, noData.targetId, new Date(recoveryAt).toISOString()).kind).not.toBe('recovery');
+  });
+
+  it('通知详情渲染优先说明无观测，不把遗留up标记显示为当时检查通过', () => {
+    const noDataSample = sample(605000, 90, { noData: true });
+    const target: UptimeTargetSummary = {
+      id: incident.targetId, name: '真实检查', source: 'custom', projectId: 'p', branchId: '', profileId: '', probeKind: 'http',
+      status: 'up', measured: true, lastSample: noDataSample, availability24h: null, availability7d: null,
+      avgLatencyMs24h: null, sampleCount24h: 0, buckets: [], openIncidentSince: null, statusSince: 5000,
+      incidentCount: 1, probeDescription: '有效观测检查', intervalSeconds: 30, timeoutMs: 5000,
+      environment: 'production', environmentLabel: '生产', observeMode: 'active',
+    };
+    const model = buildWorkspaceModel([target], 605000);
+    const html = renderToStaticMarkup(createElement(ServiceDetail, {
+      service: model.services[0], category: model.categories[0], summary: { generatedAt: 605000 } as UptimeSummary,
+      incidents: [{ ...incident, notificationSamples: [noDataSample] }], now: 605000,
+      entry: { incidentId: incident.id, detectedAt: new Date(605000).toISOString() },
+      notifications: { settings: {}, definitions: [], error: '', updateSettings: () => {} },
+      onNotify: () => {}, onProbe: async () => {}, onManage: () => {},
+    }));
+    expect(html).toContain('当时未取得有效观测，不能据此判断服务正常');
+    expect(html).not.toContain('当时检查通过');
   });
 });
