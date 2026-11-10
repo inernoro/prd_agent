@@ -385,6 +385,15 @@ export function createUptimeRouter(deps: {
     res.json({ incidents, generatedAt: Date.now() });
   });
 
+  router.get('/uptime/incidents/:id', (req, res) => {
+    const incident = deps.monitor.getIncident(req.params.id, projectScopeOf(req));
+    if (!incident) {
+      res.status(404).json({ error: '这条故障记录已不存在或当前账号无权查看，请返回监控总览。' });
+      return;
+    }
+    res.json({ incident, generatedAt: Date.now() });
+  });
+
   // ── 自定义监控（写） ──
 
   const store = deps.store;

@@ -13,8 +13,19 @@
  *   3. 任何对外的时序输出都先降采样到固定桶数，禁止一次吐几万点。
  */
 
+/** A scalar actually returned by the configured health-json check. */
+export interface UptimeMeasurement {
+  name: string;
+  field: 'status' | 'observedValue';
+  actual: string | number | boolean | null;
+  expected: string;
+  op: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
+  unit?: string;
+}
+
 /** 单次探测采样。字段用短名，因为要按 target 存上千条并落盘。 */
 export interface UptimeSample {
+  measurement?: UptimeMeasurement;
   /** 已脱离协议语法的指标读数说明。 */
   finding?: string;
   /** 采样时刻（epoch ms） */
@@ -53,6 +64,18 @@ export interface UptimeIncident {
   endedAt: number | null;
   /** 触发原因（首次失败的 err / HTTP 状态） */
   cause: string;
+  startedSample?: UptimeSample;
+  endedSample?: UptimeSample;
+  /** Bounded trigger-time evidence; delivery state remains in channel history. */
+  notificationSamples?: UptimeSample[];
+}
+
+/** Decouple evidence from mutable probe records and future samples. */
+export function snapshotUptimeSample(sample: UptimeSample): UptimeSample {
+  const { t, up, ms, noData, code, err, finding, measurement } = sample;
+  return { t, up, ms, ...(noData === undefined ? {} : { noData }), ...(code === undefined ? {} : { code }),
+    ...(err === undefined ? {} : { err }), ...(finding === undefined ? {} : { finding }),
+    ...(measurement ? { measurement: { ...measurement } } : {}) };
 }
 
 /** 存活状态。paused = 分支被调度器降温或未运行，不计故障。 */
@@ -300,6 +323,8 @@ export interface UptimeBucket {
   down: number;
   avgLatencyMs: number | null;
   status: 'up' | 'down' | 'partial' | 'none';
+  /** Average of actual numeric health readings, not round-trip latency or a window P95. */
+  measurement?: UptimeMeasurement & { aggregation: 'average'; sampleCount: number };
   /**
    * 桶内**第一次**失败的缩写日志，给柱条悬浮用（「当时到底炸了什么」）。
    * 只在原始采样带 err / code 时才有：按天聚合（7d / 30d）不保留原始失败原因，
@@ -353,6 +378,8 @@ export function bucketizeSamples(
   const buckets: UptimeBucket[] = [];
   const sums: number[] = [];
   const msCounts: number[] = [];
+  const metric: Array<{ identity: string; reading: UptimeMeasurement; mean: number; count: number } | undefined> = [];
+  const metricInvalid: boolean[] = [];
   for (let i = 0; i < count; i++) {
     buckets.push({
       from: Math.round(fromMs + i * width),
@@ -364,11 +391,27 @@ export function bucketizeSamples(
     });
     sums.push(0);
     msCounts.push(0);
+    metricInvalid.push(false);
   }
   for (const s of samples) {
     if (s.noData) continue;
     if (s.t < fromMs || s.t >= toMs) continue;
     const idx = Math.min(count - 1, Math.max(0, Math.floor((s.t - fromMs) / width)));
+    const reading = s.measurement;
+    const numeric = reading && (typeof reading.actual === 'number' ? reading.actual
+      : typeof reading.actual === 'string' && reading.actual.trim() ? Number(reading.actual) : Number.NaN);
+    if (!reading || numeric === undefined || !Number.isFinite(numeric)) metricInvalid[idx] = true;
+    else {
+      const identity = JSON.stringify([reading.name, reading.field, reading.op, reading.expected, reading.unit ?? '']);
+      const previous = metric[idx];
+      if (!previous) metric[idx] = { identity, reading, mean: numeric, count: 1 };
+      else if (previous.identity !== identity) metricInvalid[idx] = true;
+      else {
+        const n = previous.count + 1;
+        previous.mean = previous.mean * (previous.count / n) + numeric / n;
+        previous.count = n;
+      }
+    }
     if (s.up) {
       buckets[idx].up += 1;
       sums[idx] += s.ms;
@@ -384,6 +427,10 @@ export function bucketizeSamples(
     }
   }
   for (let i = 0; i < count; i++) {
+    const reading = metric[i];
+    if (reading && !metricInvalid[i] && Number.isFinite(reading.mean)) buckets[i].measurement = {
+      ...reading.reading, actual: reading.mean, sampleCount: reading.count, aggregation: 'average',
+    };
     const b = buckets[i];
     b.avgLatencyMs = msCounts[i] === 0 ? null : Math.round(sums[i] / msCounts[i]);
     if (b.up === 0 && b.down === 0) b.status = 'none';
@@ -403,7 +450,7 @@ export function bucketizeSamples(
 export function applyIncidentTransition(
   incidents: UptimeIncident[],
   transition: 'to-down' | 'to-up' | null,
-  ctx: { targetId: string; at: number; cause?: string },
+  ctx: { targetId: string; at: number; cause?: string; sample?: UptimeSample },
   maxIncidents: number = MAX_INCIDENTS_PER_TARGET,
 ): UptimeIncident[] {
   if (transition === 'to-down') {
@@ -415,6 +462,7 @@ export function applyIncidentTransition(
       startedAt: ctx.at,
       endedAt: null,
       cause: ctx.cause || '探测连续失败',
+      ...(ctx.sample ? { startedSample: snapshotUptimeSample(ctx.sample) } : {}),
     }, maxIncidents);
     return incidents;
   }
@@ -422,6 +470,7 @@ export function applyIncidentTransition(
     for (let i = incidents.length - 1; i >= 0; i--) {
       if (incidents[i].endedAt === null) {
         incidents[i].endedAt = ctx.at;
+        if (ctx.sample) incidents[i].endedSample = snapshotUptimeSample(ctx.sample);
         break;
       }
     }

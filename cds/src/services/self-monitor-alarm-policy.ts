@@ -5,6 +5,8 @@ export interface SelfMonitorAlarmState {
   lastObservedAt?: number;
   acceptedChannels?: string[];
   open?: boolean;
+  /** 归档的稳定恢复独立于通知是否发送或投递成功。 */
+  reportOpen?: boolean;
 }
 export const SELF_ALARM_COOLDOWN_MS = 30 * 60_000;
 export const SELF_ALARM_RECOVERY_MS = 10 * 60_000;
@@ -17,6 +19,7 @@ export function decideSelfMonitorAlarm(
   if (input.noData || !input.up) state.healthySince = undefined;
   if (input.noData) return { reason: 'no-data' };
   if (input.down && !input.up) {
+    state.reportOpen = true;
     if (state.open) return { reason: 'same-incident' };
     if (state.lastDownAttemptAt !== undefined && input.at - state.lastDownAttemptAt < SELF_ALARM_COOLDOWN_MS) return { reason: 'cooldown-30m' };
     state.open = true;
@@ -24,13 +27,15 @@ export function decideSelfMonitorAlarm(
     state.acceptedChannels = [];
     return { emit: 'down' };
   }
-  if (!input.up || !state.open) return previousAt === undefined && input.up ? { reason: 'initial-healthy' } : {};
+  if (!input.up || (!state.open && !state.reportOpen)) return previousAt === undefined && input.up ? { reason: 'initial-healthy' } : {};
   // 停机/采样中断不能充当持续健康的证据。
   if (previousAt === undefined || input.at - previousAt > Math.max(input.intervalMs * 1.5, 60_000)) state.healthySince = undefined;
   state.healthySince ??= input.at;
   if (input.at - state.healthySince < SELF_ALARM_RECOVERY_MS) return { reason: 'recovery-stabilizing-10m' };
+  const notifiedIncident = state.open;
   state.open = false;
+  state.reportOpen = false;
   state.healthySince = undefined;
-  if (!state.acceptedChannels?.length) return { reason: 'no-delivered-down' };
+  if (!notifiedIncident || !state.acceptedChannels?.length) return { reason: 'no-delivered-down' };
   return { emit: 'recovered' };
 }

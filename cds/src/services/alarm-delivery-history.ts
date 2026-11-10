@@ -5,6 +5,8 @@ import { maskSecrets } from './secret-masker.js';
 export const ALARM_HISTORY_SOURCE = 'alarm-delivery';
 
 export interface AlarmDeliveryContext {
+  reportId?: string;
+  eventId?: string;
   channelId: string;
   channelName: string;
   channelKind: string;
@@ -32,7 +34,7 @@ export async function withAlarmDeliveryHistory<T extends { ok: boolean; status?:
   const deliveryId = randomUUID();
   const startedAt = new Date().toISOString();
   const details = {
-    deliveryId, startedAt,
+    deliveryId, startedAt, reportId: context.reportId, eventId: context.eventId,
     channelId: context.channelId, channelName: safeText(context.channelName), channelKind: context.channelKind,
     kind: context.kind, eventKind: context.eventKind, targetId: context.targetId,
     targetName: safeText(context.targetName), detectedAt: context.detectedAt,

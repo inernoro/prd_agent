@@ -23,6 +23,11 @@ export function isCodeReviewReport(report: AcceptanceReportMeta): boolean {
     || report.reportType === undefined && parseReportTitle(report.title).kind === '代码审查报告';
 }
 
+/** Operational monitor snapshots and code reviews are not acceptance evidence. */
+export function isAcceptanceAggregationReport(report: AcceptanceReportMeta): boolean {
+  return !report.monitorEvent && !isCodeReviewReport(report);
+}
+
 export interface ParsedReportTitle {
   kind: ReportKind;
   /** 重点对象（标题中段）；无法解析时为整个标题。 */
@@ -462,8 +467,8 @@ export function buildReportsOverview(
   tombstones: BranchTombstone[],
   options: BuildOverviewOptions = {},
 ): ReportsOverview {
-  const ledger = foldReportVersions(reports);
-  reports = reports.filter((r) => !isCodeReviewReport(r));
+  const ledger = foldReportVersions(reports.filter((r) => !r.monitorEvent));
+  reports = reports.filter(isAcceptanceAggregationReport);
   const days = Math.max(1, Math.min(90, options.days ?? 7));
   const toMs = (options.to ?? new Date()).getTime();
   const fromMs = toMs - days * DAY_MS;

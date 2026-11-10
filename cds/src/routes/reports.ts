@@ -29,6 +29,7 @@
  * The raw HTML is therefore never executed in the CDS origin with session
  * access — only inside the no-same-origin sandbox the frontend builds.
  */
+import { parseReportClassification, matchesClassification } from '../shared/notification-templates.js';
 import { Router, type Request, type Response, json as expressJson, text as expressText, raw as expressRaw } from 'express';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -473,6 +474,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     let rawBranch: unknown;
     let rawPrNumber: unknown;
     let rawDeployMode: unknown;
+    let rawClassification: unknown;
 
     if (contentType.includes('multipart/form-data')) {
       const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
@@ -508,6 +510,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       rawBranch = body.branch;
       rawPrNumber = body.prNumber;
       rawDeployMode = body.deployMode;
+      rawClassification = body.classification;
     } else if (typeof req.body === 'string') {
       content = req.body;
     }
@@ -550,6 +553,15 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (br && (resolvedProjectId === null || (br.projectId ?? 'default') === (resolvedProjectId ?? 'default'))) {
         resolvedBranchId = branchId;
       }
+    }
+
+    let classification;
+    try {
+      classification = rawClassification === undefined ? undefined : parseReportClassification(rawClassification);
+      // 一份明确绑定预览分支的报告不能自称正式调用；跨环境汇总不绑定单分支。
+      if (resolvedBranchId && classification) classification.environments = ['preview'];
+    } catch (error) {
+      return res.status(400).json({ error: 'invalid_classification', message: (error as Error).message });
     }
 
     // 文件夹归属（硬性要求 2026-06-26：项目 = 根目录，技能自取子文件夹路径）：
@@ -600,6 +612,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
 
     const meta = await stateService.createAcceptanceReportAsync({
       reportType: 'acceptance',
+      classification,
       title: cleanTitle,
       format,
       content: normalizedContent,
@@ -645,6 +658,12 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       : undefined;
     const reports = stateService
       .listAcceptanceReports(projectId ?? null, folderFilter, updatedSince)
+      .filter((report) => matchesClassification(report.classification, {
+        categories: typeof req.query.categories === 'string' ? req.query.categories.split(',').filter(Boolean) : [],
+        systems: typeof req.query.systems === 'string' ? req.query.systems.split(',').filter(Boolean) : [],
+        environments: typeof req.query.environments === 'string' ? req.query.environments.split(',').filter(Boolean) : [],
+      }))
+      .filter((report) => typeof req.query.targetId !== 'string' || report.monitorEvent?.targetId === req.query.targetId)
       .filter((report) => typeof req.query.reportId !== 'string' || !req.query.reportId || report.id === req.query.reportId)
       // 响应附带 projectSlug，便于跨系统（MAP）按项目归类展示，免二次查项目表。
       .map((r) => ({ ...r, projectSlug: r.projectId ? stateService.getProject(r.projectId)?.slug ?? null : null }));
@@ -960,6 +979,17 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (Object.prototype.hasOwnProperty.call(body, 'sourcePath')) metaUpdates.sourcePath = normShort(body.sourcePath, 240);
     if (Object.prototype.hasOwnProperty.call(body, 'contentHash')) metaUpdates.contentHash = normShort(body.contentHash, 120);
     if (Object.prototype.hasOwnProperty.call(body, 'publishedAt')) metaUpdates.publishedAt = normShort(body.publishedAt, 80);
+    if (Object.prototype.hasOwnProperty.call(body, 'classification')) {
+      try {
+        metaUpdates.classification = parseReportClassification(body.classification);
+        if (existing.branchId) metaUpdates.classification.environments = ['preview'];
+      } catch (error) {
+        return res.status(400).json({ error: 'invalid_classification', message: (error as Error).message });
+      }
+    }
+    if (existing.monitorEvent && (content !== undefined || Object.keys(metaUpdates).length > 0)) {
+      return res.status(409).json({ error: 'monitor_snapshot_readonly', message: '监控事件事实由监控记录追加，不能改写历史' });
+    }
     const hasMeta = Object.keys(metaUpdates).length > 0;
     // folderId: 字符串=移入该文件夹；null / 'none' / '' = 移出文件夹；缺省=不改动。
     const hasFolder = Object.prototype.hasOwnProperty.call(body, 'folderId');

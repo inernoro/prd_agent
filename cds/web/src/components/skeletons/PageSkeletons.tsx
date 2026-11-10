@@ -175,7 +175,7 @@ export function pageSkeletonForPath(pathname: string, capabilities: { canManageP
     case 'agent-table': return <AgentRequestsSkeleton />;
     case 'topology': return <TopologyPageSkeleton />;
     case 'release-center': return <ReleaseCenterSkeleton />;
-    case 'monitor': return <MonitorCenterSkeleton overview={capabilities.monitoringHome} />;
+    case 'monitor': return <MonitorCenterSkeleton />;
     case 'branch-detail': return <BranchDetailLoadingSkeleton />;
     case 'settings': return <SettingsPageSkeleton />;
     case 'project-settings': return <SettingsPageSkeleton label="加载项目设置" />;

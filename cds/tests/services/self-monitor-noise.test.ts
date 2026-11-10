@@ -75,6 +75,19 @@ describe('零采样与真实故障的边界', () => {
 describe('通知恢复策略', () => {
   const sample = (state: SelfMonitorAlarmState, at: number, up: boolean, noData = false) =>
     decideSelfMonitorAlarm(state, { at: at * MIN, up, noData, down: !up, intervalMs: 5 * MIN });
+  it('冷却故障的归档恢复不继承旧通道，持续故障仍在冷却到期后通知', () => {
+    const s: SelfMonitorAlarmState = { lastDownAttemptAt: 0, acceptedChannels: ['old'], open: false };
+    expect(sample(s, 12, false)).toEqual({ reason: 'cooldown-30m' });
+    sample(s, 13, true); sample(s, 18, true);
+    expect(sample(s, 23, true)).toEqual({ reason: 'no-delivered-down' });
+    expect(s.reportOpen).toBe(false);
+    expect(sample(s, 24, false)).toEqual({ reason: 'cooldown-30m' });
+    expect(sample(s, 30, false)).toEqual({ emit: 'down' });
+    expect(s.acceptedChannels).toEqual([]);
+    s.acceptedChannels = ['new'];
+    sample(s, 31, true); sample(s, 36, true);
+    expect(sample(s, 41, true)).toEqual({ emit: 'recovered' });
+  });
   it('短暂恢复后再次失败仍为同一事件；断档与零样本不能凑够 10 分钟', () => {
     const s: SelfMonitorAlarmState = {};
     expect(sample(s, 0, false).emit).toBe('down'); s.acceptedChannels = ['p'];
@@ -93,7 +106,7 @@ describe('通知恢复策略', () => {
   });
   it('内部指标异常不再声称业务挂掉', () => {
     const result = renderAlarmMessage({ projectId: 'cds-self-monitor', targetName: 'P95', kind: 'business-down', message: '观测超标', detectedAt: '', consecutiveFailures: 3 });
-    expect(result.title).toBe('P95：检查异常'); expect(result.level).toBe('active');
+    expect(result.title).toBe('环境待确认 系统待确认'); expect(result.body).toContain('P95检查异常'); expect(result.level).toBe('active');
     expect(result.body).not.toContain('用户现在用不了');
   });
 });
