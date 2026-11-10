@@ -17,3 +17,5 @@
 .monitor-workspace .monitor-service-detail .history-progress{height:2px;margin-bottom:5px;background:linear-gradient(90deg,transparent,var(--acc),transparent);background-size:200% 100%;animation:monitor-history-progress 1.2s linear infinite}
 @keyframes monitor-history-progress{from{background-position:200% 0}to{background-position:0 0}}
 @media(max-width:760px){.monitor-workspace .monitor-service-detail .chl{grid-template-columns:minmax(0,1fr) auto}.monitor-workspace .monitor-service-detail .chl .dest{grid-column:1;grid-row:2}.monitor-workspace .monitor-service-detail .rt{grid-template-columns:1fr .8fr 1fr 1fr;gap:10px 6px}.monitor-workspace .monitor-service-detail .lk .tag{max-width:100%}}
+
+.monitor-workspace .monitor-service-detail .thl{top:calc(var(--threshold-y) - 18px)}

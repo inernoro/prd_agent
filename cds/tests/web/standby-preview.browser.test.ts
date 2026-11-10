@@ -30,7 +30,7 @@ it.each(['peers-first', 'standby-first'])('saved peer survives %s loading; unsav
     server = await preview({ ...config, preview: { host: '127.0.0.1', port: 0, proxy: { '/api': { target: 'http://127.0.0.1:1' } } } });
     const port = server.httpServer.address().port;
     const origin = `http://127.0.0.1:${port}`;
-    browser = await chromium.launch({ channel: 'chrome', headless: true });
+    browser = await chromium.launch({ ...(process.env.CDS_CHROMIUM_PATH ? { executablePath: process.env.CDS_CHROMIUM_PATH } : { channel: 'chrome' }), headless: true });
     const page = await browser.newPage(); page.setDefaultTimeout(10_000);
     page.on('pageerror', (error: Error) => console.error('fixture page error:', error.message));
     await page.route('**/*', async route => {
