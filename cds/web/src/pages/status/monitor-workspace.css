@@ -485,7 +485,7 @@
 .monitor-workspace .hm-t{font-size:13px;font-weight:600;white-space:nowrap}
 .monitor-workspace .hm-s{margin-left:auto;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .monitor-workspace .hm-s.bad{color:#FFB0AA}.monitor-workspace .hm-s.ok{color:var(--t3)}
-.monitor-workspace .hm-g{display:grid;grid-template-columns:70px repeat(8,minmax(0,1fr));gap:3px;align-items:center}
+.monitor-workspace .hm-g{--hm-label-width:70px;--hm-cell-min:24px;display:grid;grid-template-columns:70px repeat(8,minmax(0,1fr));gap:3px;align-items:center}
 .monitor-workspace .hm-hd{font:500 10.5px/14px var(--mono);color:var(--t3);text-align:center;white-space:nowrap;overflow:hidden}
 .monitor-workspace .hmr{height:18px;padding:0 4px 0 0;font-size:11.5px;line-height:18px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;border-radius:4px}
 .monitor-workspace .hmr:hover{color:var(--t1)}
