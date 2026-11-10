@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
 import { MonitorOnboardingService, OnboardingError } from '../services/monitor-onboarding.js';
 
 export function createMonitorOnboardingRouter(service: MonitorOnboardingService): Router {
@@ -9,8 +10,7 @@ export function createMonitorOnboardingRouter(service: MonitorOnboardingService)
     else res.status(400).json({ error: '接入请求格式无效，请检查后重试。' });
   };
   const owner = (req: Request, res: Response): boolean => {
-    const user = (req as Request & { cdsUser?: { isSystemOwner?: boolean } }).cdsUser;
-    if (user && user.isSystemOwner !== true) { res.status(403).json({ error: '仅系统所有者可以管理监控接入会话。' }); return false; }
+    if (!isHumanSystemOwner(req)) { res.status(403).json({ error: '仅已验证的人类系统所有者可以管理监控接入会话。' }); return false; }
     const denied = assertUnscopedAdmin(req as unknown as Parameters<typeof assertUnscopedAdmin>[0]);
     if (denied) { res.status(denied.status).json(denied.body); return false; }
     return true;
