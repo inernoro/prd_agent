@@ -9273,7 +9273,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </div>
             ) : null}
 
-            <ImageGenerationCancelActions key={workspaceId || ''} items={workspaceReady ? canvas : []} />
+            <ImageGenerationCancelActions key={workspaceId || ''} items={workspaceReady ? canvas : []}
+              onCancelled={(runId) => {
+                if (workspaceIdRef.current !== workspaceId) return;
+                setCanvas((prev) => prev.map((item) => item.runId === runId && item.status === 'running'
+                  ? { ...item, status: 'error' as const, errorMessage: '已取消' } : item));
+              }} />
 
             {!workspaceReady ? (
               <div role="status" className={`mt-2 text-[10px] text-token-muted ${booting ? 'animate-pulse' : ''}`}>

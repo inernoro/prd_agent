@@ -58,7 +58,7 @@ public sealed record GatewayBillingFailure(string Code, string Reason, string Re
         {
             "accountoverdue" or "accountoverdueerror" or "operationdenied.serviceoverdue" => AccountOverdue,
             "insufficient_balance" or "credit_balance_exhausted" => InsufficientBalance,
-            "insufficient_quota" or "organization_usage_limit_exceeded" => QuotaExceeded,
+            "insufficient_quota" or "insufficient_user_quota" or "organization_usage_limit_exceeded" => QuotaExceeded,
             _ => null,
         };
         if (specific != null) return FromCode(specific);

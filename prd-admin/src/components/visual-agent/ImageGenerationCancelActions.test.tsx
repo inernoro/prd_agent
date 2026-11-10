@@ -2,9 +2,9 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cancelImageGenRun } from '@/services';
+import { cancelImageGenRun, getImageGenRun } from '@/services';
 import { ImageGenerationCancelActions } from './ImageGenerationCancelActions';
-vi.mock('@/services', () => ({ cancelImageGenRun: vi.fn() }));
+vi.mock('@/services', () => ({ cancelImageGenRun: vi.fn(), getImageGenRun: vi.fn() }));
 let root: Root;
 let host: HTMLDivElement;
 beforeEach(() => {
@@ -54,4 +54,17 @@ describe('画布取消生成', () => {
     expect(alert?.textContent).not.toContain('private.invalid');
     expect(button().disabled).toBe(false);
   });
+  it.each(['Cancelled', 'Completed', 'Running'])('取消后读取服务端 %s 状态，只将确认取消回填给恢复的画布', async (status) => {
+    vi.mocked(cancelImageGenRun).mockResolvedValue({ success: true, data: true, error: null });
+    vi.mocked(getImageGenRun).mockResolvedValue({ success: true, data: { run: {
+      id: 'owned-run', status, size: '1024x1024', responseFormat: 'url', maxConcurrency: 1,
+      total: 1, done: 0, failed: 0, cancelRequested: true, lastSeq: 1, createdAt: '2026-11-10T00:00:00Z',
+    } }, error: null });
+    const onCancelled = vi.fn();
+    await act(async () => root.render(<ImageGenerationCancelActions items={[running]} onCancelled={onCancelled} />));
+    await act(async () => button().click());
+    expect(getImageGenRun).toHaveBeenCalledWith({ runId: 'owned-run' });
+    expect(onCancelled.mock.calls).toEqual(status === 'Cancelled' ? [['owned-run']] : []);
+  });
+
 });

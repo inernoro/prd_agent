@@ -1,11 +1,14 @@
 import { useState } from 'react';
-import { cancelImageGenRun } from '@/services';
+import { cancelImageGenRun, getImageGenRun } from '@/services';
 import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 
 type ActiveCanvasItem = { status?: string; runId?: string; prompt?: string };
 
-/** 只发送取消指令；运行终态继续由服务端事件回填画布。 */
-export function ImageGenerationCancelActions({ items }: { items: readonly ActiveCanvasItem[] }) {
+/** 取消后确认后台终态，兼容刷新后没有活动事件流的画布。 */
+export function ImageGenerationCancelActions({ items, onCancelled }: {
+  items: readonly ActiveCanvasItem[];
+  onCancelled?: (runId: string) => void;
+}) {
   const [requestingId, setRequestingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const runs = [...new Map(items.filter((item) => item.status === 'running' && item.runId?.trim())
@@ -21,6 +24,9 @@ export function ImageGenerationCancelActions({ items }: { items: readonly Active
         setError(toUserReadableErrorMessage(result.error, {
           fallbackMessage: '取消请求未完成', recoveryMessage: '请重试；若任务已经结束，请以任务结果为准',
         }));
+      } else if (onCancelled) {
+        const confirmed = await getImageGenRun({ runId });
+        if (confirmed.success && confirmed.data?.run.status === 'Cancelled') onCancelled(runId);
       }
     } catch (cause) {
       setError(toUserReadableErrorMessage(cause, {

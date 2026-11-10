@@ -18,6 +18,7 @@ public class GatewayBillingFailureTests
     [InlineData(403, "{\"error\":{\"metadata\":{\"limit_source\":\"openrouter_key_limit\"}}}", GatewayBillingFailure.QuotaExceeded)]
     [InlineData(403, "Key limit exceeded (total limit). $30.01 of $30.00 used; does not reset.", GatewayBillingFailure.QuotaExceeded)]
     [InlineData(403, "user quota is not enough", GatewayBillingFailure.QuotaExceeded)]
+    [InlineData(403, "{\"error\":{\"message\":\"user [30296] quota [3267] preConsumedQuota [12500] is not enough\",\"localized_message\":\"Insufficient user quota\",\"type\":\"shell_api_error\",\"code\":\"insufficient_user_quota\"}}", GatewayBillingFailure.QuotaExceeded)]
     [InlineData(402, "Payment required", GatewayBillingFailure.PaymentRequired)]
     public void ExplicitBillingEvidence_ProducesSpecificSafeCode(int status, string body, string code)
     {
