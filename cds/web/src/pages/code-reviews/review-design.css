@@ -373,6 +373,12 @@
   width: calc(1.029412rem * var(--cr-scale, 1));
   height: calc(1.029412rem * var(--cr-scale, 1));
 }
+.cr-table-grid .cr-row-inline.cr-truncate {
+  display: block;
+}
+.cr-table-grid .cr-row-inline.cr-truncate > svg {
+  vertical-align: -.15em;
+}
 .cr-table-head {
   font-size: calc(0.882353rem * var(--cr-scale, 1));
   color: var(--cr-muted-fg);
