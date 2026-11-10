@@ -183,6 +183,9 @@
 
 ### 三、指南
 
+- [CDS DeepAudit 代码审查使用与维护 · 指南](./guide.cds.code-review.md) `guide.cds.code-review`
+  > 网页、MCP、模型用量、版本边界与管理员排障入口。
+
 - [代码审查使用自己的模型 Key · 指南](./guide.cds.code-review-user-key.md) `guide.cds.code-review-user-key`
 
 - [MAP 每日自动化验收 SOP · 指南](./guide.acceptance.daily-sop.md) `guide.acceptance.daily-sop`
@@ -300,6 +303,9 @@
 - [技能触发消歧 · 规则](./rule.skill.trigger-disambiguation.md) `rule.skill.trigger-disambiguation`
 
 ### 五、计划
+
+- [CDS 代码审查需求兑现台账 · 计划](./plan.cds.code-review-delivery.md) `plan.cds.code-review-delivery`
+  > 用户全部要求逐项对照，区分已上线、已合并和仍未完成的工作。
 
 - [平台后台任务与消费最低保护 · 阶段 0 计划](./plan.platform.background-task-safety.phase0.md) `plan.platform.background-task-safety.phase0`
 - [平台任务级准入与统一出口 · 阶段 1 计划](./plan.platform.background-task-safety.phase1.md) `plan.platform.background-task-safety.phase1`
