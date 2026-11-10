@@ -53,7 +53,8 @@ export class NotificationReportRecorder {
     const duplicate = existing.find(r => r.monitorEvent!.snapshots.some(s => s.detectedAt === event.detectedAt && s.kind === event.kind));
     if (duplicate) return { reportId: duplicate.id, eventId: duplicate.monitorEvent!.eventId };
     const previous = existing.find(r => r.monitorEvent!.state === 'open');
-    const appendTo = recovered ? previous : undefined;
+    // 未稳定恢复前的再次异常仍属于同一未关闭事件，避免冷却重报留下多个永久打开的报告。
+    const appendTo = event.drill ? undefined : previous;
     const eventId = appendTo?.monitorEvent!.eventId || createHash('sha256').update(JSON.stringify([key, event.detectedAt, event.drill])).digest('hex');
     const classification: ReportClassification = { categories: [...NOTIFICATION_TEMPLATES[notification.id].categories],
       primarySystem: event.assessment === 'observation-unavailable' && !event.drill ? 'cds' : subject,

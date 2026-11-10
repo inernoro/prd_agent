@@ -86,4 +86,20 @@ describe('通知交叉分类与唯一模板目录', () => {
     expect(content).not.toContain('sk-private');
     expect(state.listAcceptanceReports(null).filter(r => r.sourceId === `monitor:${a.eventId}`)).toHaveLength(1);
   });
+  it('稳定恢复前的反复异常及冷却重报追加同一报告，稳定恢复后才开始新事件', async () => {
+    const state = new StateService(path.join(dir, crypto.randomUUID() + '.json'), dir); state.load();
+    const recorder = new NotificationReportRecorder(state);
+    const first = await recorder.record({ ...event, incidentId: 'first-probe-incident' });
+    const repeated = await recorder.record({ ...event, incidentId: 'flapping-probe-incident', detectedAt: '2026-11-11T01:30:00.000Z' });
+    expect(repeated).toEqual(first);
+    expect(state.listAcceptanceReports(null)).toHaveLength(1);
+    expect(state.getAcceptanceReport(first.reportId)!.monitorEvent!.snapshots).toHaveLength(2);
+    const recovered = await recorder.record({ ...event, kind: 'business-recovered', detectedAt: '2026-11-11T01:45:00.000Z' });
+    expect(recovered).toEqual(first);
+    expect(state.getAcceptanceReport(first.reportId)!.monitorEvent!.snapshots).toHaveLength(3);
+    const next = await recorder.record({ ...event, detectedAt: '2026-11-11T02:00:00.000Z' });
+    expect(next.reportId).not.toBe(first.reportId);
+    expect(state.listAcceptanceReports(null)).toHaveLength(2);
+  });
+
 });
