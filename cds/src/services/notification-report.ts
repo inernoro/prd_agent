@@ -50,10 +50,14 @@ export class NotificationReportRecorder {
     const existing = this.state.listAcceptanceReports(projectId).filter(r => (r.projectId || null) === projectId && r.sourcePath === key && r.monitorEvent
       && !event.drill && r.monitorEvent.state !== 'drill')
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const duplicate = existing.find(r => r.monitorEvent!.snapshots.some(s => s.detectedAt === event.detectedAt && s.kind === event.kind));
+    const duplicate = existing.find(r => (!event.incidentId || r.monitorEvent!.incidentId === event.incidentId)
+      && r.monitorEvent!.snapshots.some(s => s.detectedAt === event.detectedAt && s.kind === event.kind));
     if (duplicate) return { reportId: duplicate.id, eventId: duplicate.monitorEvent!.eventId };
-    const previous = existing.find(r => r.monitorEvent!.state === 'open');
-    const appendTo = recovered ? previous : undefined;
+    // A real recovery can already have closed the report before the delayed
+    // notification recovery arrives. Stable incident identity joins both.
+    const sameIncident = event.incidentId ? existing.find(r => r.monitorEvent!.incidentId === event.incidentId) : undefined;
+    const previous = existing.find(r => r.monitorEvent!.state === 'open' && (!event.incidentId || !r.monitorEvent!.incidentId));
+    const appendTo = sameIncident || (recovered ? previous : undefined);
     const eventId = appendTo?.monitorEvent!.eventId || createHash('sha256').update(JSON.stringify([key, event.detectedAt, event.drill])).digest('hex');
     const classification: ReportClassification = { categories: [...NOTIFICATION_TEMPLATES[notification.id].categories],
       primarySystem: event.assessment === 'observation-unavailable' && !event.drill ? 'cds' : subject,

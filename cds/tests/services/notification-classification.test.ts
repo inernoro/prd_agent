@@ -6,7 +6,9 @@ import { NOTIFICATION_TEMPLATES, renderNotification, matchesClassification, noti
   renderNotificationDigest, type NotificationFacts, type ReportClassification } from '../../src/shared/notification-templates.js';
 import { NotificationReportRecorder } from '../../src/services/notification-report.js';
 import { StateService } from '../../src/services/state.js';
-import { renderAlarmMessage, type AlarmEvent } from '../../src/services/alarm-route.js';
+import { UptimeMonitorService, type UptimeAlertEventData, type UptimeAlertEventType } from '../../src/services/uptime-monitor.js';
+import type { UptimeCustomMonitor } from '../../src/types.js';
+import { classifyAlert, renderAlarmMessage, type AlarmEvent } from '../../src/services/alarm-route.js';
 import { buildNotificationPayload } from '../../src/services/map-notifier.js';
 import { sendAlarm } from '../../src/services/alarm-dispatch.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -20,6 +22,72 @@ const event: AlarmEvent = { notificationFacts: { environment: 'test', system: 'm
   message: 'HTTP 500 sk-private-must-not-be-pushed', detectedAt: '2026-11-11T01:00:00.000Z', consecutiveFailures: 3 };
 
 describe('通知交叉分类与唯一模板目录', () => {
+  it.each(['无接收通道', '发送失败', '已送达'])('真实事件归档独立于通知投递资格：%s，恢复及重复回调始终对应同一报告', async delivery => {
+    const stateFile = path.join(dir, crypto.randomUUID() + '.json');
+    const state = new StateService(stateFile, dir); state.load();
+    const recorder = new NotificationReportRecorder(state);
+    let now = Date.UTC(2026, 10, 10), up = true;
+    const monitor: UptimeCustomMonitor = { id: 'lifecycle', name: '问答检查', projectId: 'fixture', kind: 'http', url: 'https://monitor.invalid/health', intervalSeconds: 60,
+      enabled: true, createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString() };
+    const pending: Promise<unknown>[] = [];
+    const archived: AlarmEvent[] = [];
+    const alerts: Array<{ type: UptimeAlertEventType; data: UptimeAlertEventData }> = [];
+    const attempts: Array<{ ok: boolean }> = [];
+    const alarm = (type: UptimeAlertEventType, data: UptimeAlertEventData): AlarmEvent => ({ ...event,
+      kind: classifyAlert(type, data.source), incidentId: data.incidentId, targetId: data.targetId,
+      detectedAt: data.detectedAt, consecutiveFailures: data.consecutiveFailures });
+    const service = new UptimeMonitorService({
+      state: { getAllBranches: () => [], getUptimeMonitors: () => [monitor] },
+      config: { enabled: true, intervalMs: 60000, timeoutMs: 1000, failureThreshold: 1, recoveryThreshold: 1, maxSamples: 100,
+        excludePatterns: [], scope: 'all', storePath: stateFile + '.uptime' },
+      now: () => now, probe: async () => ({ up, ms: 3 }),
+      onIncident: (type: UptimeAlertEventType, data: UptimeAlertEventData) => {
+        const value = alarm(type, data); archived.push(value);
+        const task = recorder.record(value); pending.push(task); return task.then(() => undefined);
+      },
+      onAlert: (type, data) => {
+        alerts.push({ type, data });
+        pending.push(recorder.record(alarm(type, data)).then(async () => {
+          if (delivery === '无接收通道') return;
+          attempts.push({ ok: delivery === '已送达' });
+          if (delivery === '已送达' && type === 'uptime.target.down') await service.markAlarmDelivered(data.targetId, 'fixture-channel', data.detectedAt);
+        }));
+      },
+    });
+    const settled = async () => { while (pending.length) await Promise.all(pending.splice(0)); await state.flush(); };
+    try {
+      await service.probeNow('monitor@lifecycle'); await settled();
+      expect(state.listAcceptanceReports(null)).toHaveLength(0);
+      now += 60000; up = false; await service.probeNow('monitor@lifecycle'); await settled();
+      expect(state.listAcceptanceReports(null)).toHaveLength(1);
+      const failure = state.listAcceptanceReports(null)[0]; const incidentId = failure.monitorEvent!.incidentId;
+      expect(failure.monitorEvent!.snapshots).toHaveLength(1);
+      now += 60000; up = true; await service.probeNow('monitor@lifecycle'); await settled();
+      const actualRecoveryAt = new Date(now).toISOString();
+      const actual = state.getAcceptanceReport(failure.id)!;
+      expect(actual.monitorEvent).toMatchObject({ state: 'recovered', incidentId });
+      expect(actual.monitorEvent!.snapshots).toHaveLength(2);
+      expect(actual.monitorEvent!.snapshots.at(-1)?.detectedAt).toBe(actualRecoveryAt);
+      expect(alerts).toHaveLength(1);
+      expect(service.getIncident(incidentId!)!.notificationSamples).toHaveLength(1);
+      for (let i = 0; i < 10; i++) { now += 60000; await service.probeNow('monitor@lifecycle'); await settled(); }
+      expect(state.listAcceptanceReports(null)).toHaveLength(1);
+      const report = state.getAcceptanceReport(failure.id)!;
+      expect(report.monitorEvent!.state).toBe('recovered');
+      expect(report.monitorEvent!.snapshots).toHaveLength(delivery === '已送达' ? 3 : 2);
+      expect(alerts.map(a => a.type)).toEqual(delivery === '已送达' ? ['uptime.target.down', 'uptime.target.recovered'] : ['uptime.target.down']);
+      expect(service.getIncident(incidentId!)!.notificationSamples).toHaveLength(delivery === '已送达' ? 2 : 1);
+      if (delivery === '发送失败') expect(attempts).toEqual([{ ok: false }]);
+      const recovery = archived.find(a => a.kind === 'business-recovered')!;
+      const duplicate = await Promise.all([recorder.record(recovery), recorder.record(recovery)]);
+      expect(duplicate.map(a => a.reportId)).toEqual([failure.id, failure.id]);
+      expect(state.getAcceptanceReport(failure.id)!.monitorEvent!.snapshots).toEqual(report.monitorEvent!.snapshots);
+      await state.flush();
+      const cold = new StateService(stateFile, dir); cold.load();
+      expect(cold.getAcceptanceReport(failure.id)!.monitorEvent).toEqual(report.monitorEvent);
+    } finally { await service.stop(); }
+  });
+
   it('30 个模板均产生一句完整短事实，非截断原始日志', () => {
     expect(Object.keys(NOTIFICATION_TEMPLATES)).toHaveLength(30);
     for (const id of Object.keys(NOTIFICATION_TEMPLATES) as Array<keyof typeof NOTIFICATION_TEMPLATES>) {

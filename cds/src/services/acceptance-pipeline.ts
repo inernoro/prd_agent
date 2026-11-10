@@ -27,7 +27,7 @@
  */
 import type { AcceptanceReportMeta, BranchEntry, BranchTombstone, Project } from '../types.js';
 import {
-  REPORT_KINDS, foldReportVersions, matchesChange, isCodeReviewReport,
+  REPORT_KINDS, foldReportVersions, matchesChange, isAcceptanceAggregationReport,
   type OverviewReportRef, type OverviewVerdict, type ReportKind,
 } from './acceptance-overview.js';
 
@@ -187,7 +187,7 @@ export function buildPipelineOverview(
   reports: AcceptanceReportMeta[],
   options: BuildPipelineOptions = {},
 ): PipelineOverview {
-  reports = reports.filter((r) => !isCodeReviewReport(r));
+  reports = reports.filter(isAcceptanceAggregationReport);
   const nowMs = (options.now ?? new Date()).getTime();
   const recentDays = options.recentDays ?? null;
   const mergedFloorMs = recentDays != null ? nowMs - recentDays * DAY_MS : null;
@@ -503,7 +503,7 @@ export function buildPipelineSeries(
   reports: AcceptanceReportMeta[],
   options: BuildSeriesOptions = {},
 ): PipelineSeries {
-  reports = reports.filter((r) => !isCodeReviewReport(r));
+  reports = reports.filter(isAcceptanceAggregationReport);
   const now = options.now ?? new Date();
   const span = Math.max(1, Math.min(365, Math.floor(options.days ?? 90)));
   const topN = Math.max(0, Math.floor(options.topProjects ?? 4));

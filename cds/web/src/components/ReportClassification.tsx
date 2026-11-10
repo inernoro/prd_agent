@@ -27,7 +27,7 @@ export function ClassificationSummary({ report, onSaved }: { report: AcceptanceR
   const c = report.classification || UNKNOWN_CLASSIFICATION;
   async function save() {
     setSaving(true); setError('');
-    try { const res = await apiRequest<{ report: AcceptanceReport }>(`/api/reports/${report.id}`, { method: 'PATCH', body: JSON.stringify({ classification: value }) }); onSaved?.(res.report); setEditing(false); }
+    try { const res = await apiRequest<{ report: AcceptanceReport }>(`/api/reports/${report.id}`, { method: 'PATCH', body: { classification: value } }); onSaved?.(res.report); setEditing(false); }
     catch (e) { setError((e as Error).message); } finally { setSaving(false); }
   }
   return <div className="shrink-0 space-y-1 border-b border-[hsl(var(--hairline))] bg-card px-3 py-2 text-xs" aria-label="报告交叉分类">
