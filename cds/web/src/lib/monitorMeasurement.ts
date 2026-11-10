@@ -80,12 +80,15 @@ export interface MeasurementChart {
   samples: number;
 }
 
-/** Only graph the same reported metric; missing samples or changed contracts leave gaps. */
-export function buildMeasurementChart(samples: readonly Pick<UptimeSample, 't' | 'measurement' | 'noData'>[], measurement: MonitorMeasurement, width = 480, height = 100): MeasurementChart | null {
+export interface MeasurementChartWindow { from: number; to: number }
+
+/** 仅绘制同一指标；显式时间窗口保留未覆盖区域，缺失读数或合同变化处断开。 */
+export function buildMeasurementChart(samples: readonly Pick<UptimeSample, 't' | 'measurement' | 'noData'>[], measurement: MonitorMeasurement, window?: MeasurementChartWindow, width = 480, height = 100): MeasurementChart | null {
   if (measurement.op === 'eq' || measurement.op === 'ne') return null;
   const threshold = numeric(measurement.expected);
   if (threshold === null) return null;
-  const ordered = [...samples].sort((a, b) => a.t - b.t);
+  if (window && (!Number.isFinite(window.from) || !Number.isFinite(window.to) || window.to <= window.from)) return null;
+  const ordered = samples.filter((sample) => Number.isFinite(sample.t) && (!window || sample.t >= window.from && sample.t <= window.to)).sort((a, b) => a.t - b.t);
   const rows = ordered.map((sample) => {
     const value = sample.measurement;
     const same = value && value.name === measurement.name && value.field === measurement.field
@@ -96,7 +99,7 @@ export function buildMeasurementChart(samples: readonly Pick<UptimeSample, 't' |
   });
   const valid = rows.filter((row): row is typeof row & { value: number } => row.value !== null);
   if (!valid.length) return null;
-  const from = rows[0].at, to = rows[rows.length - 1].at;
+  const from = window?.from ?? rows[0].at, to = window?.to ?? rows[rows.length - 1].at;
   const low = Math.min(0, threshold, ...valid.map((row) => row.value));
   const high = Math.max(1, threshold, ...valid.map((row) => row.value)) * 1.1;
   const y = (value: number) => height - 8 - (value - low) / (high - low) * (height - 16);

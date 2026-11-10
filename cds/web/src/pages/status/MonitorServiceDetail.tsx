@@ -12,6 +12,7 @@ const BUCKET_STATES = { up: 'ok', down: 'fail', partial: 'part', none: 'gap' } a
 const BUCKET_LABELS = { up: '满足检查条件', down: '检查失败', partial: '部分失败', none: '无观测' } as const;
 const percent = (value: number | null): string => value === null ? '—' : `${(value * 100).toFixed(2)}%`;
 const time = (at: number): string => new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+const chartTime = (at: number, range: HistoryRange): string => range === '24h' ? time(at) : new Date(at).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 export interface ServiceDetailEntry {
   incidentId?: string;
@@ -142,7 +143,9 @@ export function ServiceDetail({ service: service, category, summary, incidents, 
     const samples = aggregatedMetric
       ? buckets.map((bucket) => ({ t: bucket.from + (bucket.to - bucket.from) / 2, noData: bucket.status === 'none', measurement: bucket.measurement }))
       : (currentHistory?.recentSamples ?? []).filter((sample) => sample.t >= (currentHistory?.from ?? 0) && sample.t <= (currentHistory?.to ?? now));
-    return buildMeasurementChart(samples, target.lastSample.measurement);
+    const window = currentHistory ? { from: currentHistory.from, to: currentHistory.to }
+      : buckets.length ? { from: buckets[0].from, to: buckets[buckets.length - 1].to } : undefined;
+    return buildMeasurementChart(samples, target.lastSample.measurement, window);
   }, [aggregatedMetric, buckets, currentHistory, measurement, target.lastSample, now]);
   const latencyPaths = useMemo(() => {
     const high = Math.max(1, ...buckets.map((bucket) => bucket.avgLatencyMs ?? 0));
@@ -207,7 +210,7 @@ export function ServiceDetail({ service: service, category, summary, incidents, 
         <div aria-busy={historyBusy}>{historyBusy ? <div className="history-progress" role="status" aria-label="正在读取历史观测" /> : null}{historyError ? <p className="detail-error" role="alert">{historyError}</p> : null}<HistoryStrip buckets={buckets} /></div>
         <div className="ticks">{[4, 3, 2, 1, 0].map((step) => { const at = now - step / 4 * (range === '24h' ? 24 : range === '7d' ? 168 : 720) * 3_600_000; return <span key={step}>{step === 0 ? '现在' : range === '24h' ? time(at) : new Date(at).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}</span>; })}</div>
         <div className="lat-h"><span>{measurement ? measurement.name : '响应延迟'}{metricChart ? aggregatedMetric ? ' · 上报指标采样均值' : ` · 最近 ${metricChart.samples} 次指标采样` : ''}</span><span className="mono">{measurement ? `当前 ${measurement.actual} · 当前预期 ${measurement.expected}` : `当前 ${service.latency} · 平均 ${target.avgLatencyMs24h === null ? '—' : `${Math.round(target.avgLatencyMs24h)} ms`}`}</span></div>
-        {measurement ? metricChart ? <><div className="latw"><svg className="lat" viewBox="0 0 480 100" preserveAspectRatio="none" role="img" aria-label={aggregatedMetric ? '上报指标采样均值与当前预期' : '已保留的真实指标采样与当前预期'}><line className="th" x1="0" x2="480" y1={metricChart.thresholdY} y2={metricChart.thresholdY} />{metricChart.paths.map((path, i) => <path key={i} className="ln" d={path} />)}{metricChart.failingPaths.map((path, i) => <path key={i} className="lnb" d={path} />)}{metricChart.points.map((point, i) => <circle key={i} cx={point.x} cy={point.y} r={metricChart.samples === 1 ? 2.5 : 1.25} className={point.failed ? 'metric-point bad' : 'metric-point'} />)}</svg><span className="thl" style={{ '--threshold-y': `${metricChart.thresholdY}%` } as CSSProperties}>当前预期 {measurement.expected}</span></div><div className="ticks"><span>{time(metricChart.from)}</span><span>{time(metricChart.to)}</span></div><p className="note">{aggregatedMetric ? '每个点是该时段内相同指标合同的有效读数均值；上报 P95 的均值不代表整个时段的 P95。' : '曲线只绘制接口保留的真实指标采样。'}缺失读数处断开。</p></> : <div className="lat lat-empty">尚无可绘制的数字指标历史；当前读数与预期在上方显示</div>
+        {measurement ? metricChart ? <><div className="latw"><svg className="lat" viewBox="0 0 480 100" preserveAspectRatio="none" role="img" aria-label={aggregatedMetric ? '上报指标采样均值与当前预期' : '已保留的真实指标采样与当前预期'}><line className="th" x1="0" x2="480" y1={metricChart.thresholdY} y2={metricChart.thresholdY} />{metricChart.paths.map((path, i) => <path key={i} className="ln" d={path} />)}{metricChart.failingPaths.map((path, i) => <path key={i} className="lnb" d={path} />)}{metricChart.points.map((point, i) => <circle key={i} cx={point.x} cy={point.y} r={metricChart.samples === 1 ? 2.5 : 1.25} className={point.failed ? 'metric-point bad' : 'metric-point'} />)}</svg><span className="thl" style={{ '--threshold-y': `${metricChart.thresholdY}%` } as CSSProperties}>当前预期 {measurement.expected}</span></div><div className="ticks"><span>{chartTime(metricChart.from, range)}</span><span>{chartTime(metricChart.to, range)}</span></div><p className="note">{aggregatedMetric ? '每个点是该时段内相同指标合同的有效读数均值；上报 P95 的均值不代表整个时段的 P95。' : '曲线只绘制接口保留的真实指标采样。'}缺失读数处断开。</p></> : <div className="lat lat-empty">尚无可绘制的数字指标历史；当前读数与预期在上方显示</div>
           : latencyPaths.length ? <svg className="lat" viewBox="0 0 480 100" preserveAspectRatio="none" role="img" aria-label={`${rangeLabel}实际响应延迟`}>{latencyPaths.map((path, i) => <path key={i} className="ln" d={path} />)}</svg> : <div className="lat lat-empty">尚无可用延迟观测，首次检查后自动显示</div>}
       </div>
       <div className="grid2 rv rv3">

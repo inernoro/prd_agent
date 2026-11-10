@@ -68,6 +68,31 @@ describe('监控真实指标与事件快照', () => {
     expect(chart.points.map((point) => point.failed)).toEqual([false, true, true]);
   });
 
+  it('30天窗口中的少量最近采样仅占右侧真实时间，不铺满未知历史', () => {
+    const to = Date.UTC(2026, 10, 10, 15);
+    const from = to - 30 * 24 * 60 * 60_000;
+    const chart = buildMeasurementChart([
+      sample(to - 5 * 60_000, 100), sample(to - 4 * 60_000, 150),
+      sample(to - 3 * 60_000, 999, { noData: true }), sample(to - 60_000, 500),
+    ], measurement, { from, to })!;
+    expect(chart).toMatchObject({ from, to, samples: 3 });
+    expect(chart.points.every((point) => point.x > 479 && point.x < 480)).toBe(true);
+    expect(chart.points[0].x).toBeCloseTo(480 * (1 - 5 / (30 * 24 * 60)), 8);
+    expect(chart.paths).toHaveLength(2);
+    expect(chart.failingPaths).toHaveLength(0);
+    expect(chart.paths.every((path) => path.startsWith('M479.'))).toBe(true);
+  });
+
+  it('显式窗口保留单个采样的实际位置，剔除窗口外读数而不补出边界值', () => {
+    const chart = buildMeasurementChart([sample(1, 999), sample(90, 100), sample(101, 999)], measurement, { from: 10, to: 100 })!;
+    expect(chart.samples).toBe(1);
+    expect(chart.points[0].x).toBeCloseTo(480 * 80 / 90);
+    expect(chart.paths).toHaveLength(1);
+    expect(chart.paths[0]).not.toContain(' L');
+    expect(buildMeasurementChart([sample(1, 100)], measurement, { from: 10, to: 100 })).toBeNull();
+    expect(buildMeasurementChart([sample(90, 100)], measurement, { from: 100, to: 10 })).toBeNull();
+  });
+
   it('通知只读取目标与时间均匹配的真实快照，URL无法替换读数', () => {
     const at = new Date(2000).toISOString();
     expect(incidentNotificationSnapshot(incident, incident.targetId, at)).toMatchObject({ kind: 'alert', at: 2000, sample: { measurement: { actual: 1240 } } });
