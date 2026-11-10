@@ -1247,7 +1247,7 @@ export class UptimeMonitorService {
       onAlarmSuppressed?: (data: { targetId: string; targetName: string; projectId: string; reason: string; at: number }) => void;
       /** Actual incident creation/closure, independent of notification delivery policy. */
       onIncident?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void | Promise<void>;
-      onAlert?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void;
+      onAlert?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void | Promise<void>;
     },
   ) {
     this.load();
@@ -1977,7 +1977,8 @@ export class UptimeMonitorService {
         const evidence = incident.notificationSamples ??= [];
         if (!evidence.some(s => s.t === at)) appendCapped(evidence, snapshotUptimeSample(record.lastSample), 20);
       }
-      this.deps.onAlert(type, data);
+      void Promise.resolve(this.deps.onAlert(type, data))
+        .catch(err => this.deps.logger?.warn?.(`[uptime] 告警外发失败: ${(err as Error).message}`));
     } catch (err) { this.deps.logger?.warn?.(`[uptime] 告警外发失败: ${(err as Error).message}`); }
   }
 
