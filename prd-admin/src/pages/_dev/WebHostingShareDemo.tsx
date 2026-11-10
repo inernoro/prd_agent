@@ -13,13 +13,18 @@ const data: Pick<ShareViewData, 'title' | 'description' | 'sites'> = {
     { id: 'demo-review', title: '工作流验收 · 从设计到发布', description: '逐项核对页面、文档与交付结果，保留完整验收记录。', totalSize: 38297 },
   ].map(site => ({ ...site, siteUrl: '', entryFile: 'index.html', entrySize: site.totalSize, fileCount: 9 })),
 };
+const sampleSites = Array.from({ length: 90 }, (_, index) => {
+  const source = data.sites[index % data.sites.length];
+  return index < 3 ? source : { ...source, id: `demo-document-${index + 1}`, title: `${source.title} · ${index + 1}` };
+});
 
 /** Isolated sample data; the public collection uses the same component. */
 export default function WebHostingShareDemo() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [paused, setPaused] = useState(false);
+  const [count, setCount] = useState(3);
   const [params] = useSearchParams();
-  const current = data.sites.find(site => site.id === params.get('siteId'));
+  const current = sampleSites.find(site => site.id === params.get('siteId'));
   useEffect(() => {
     const previous = document.documentElement.dataset.theme;
     document.documentElement.dataset.theme = theme;
@@ -30,6 +35,7 @@ export default function WebHostingShareDemo() {
   }, [theme]);
   const controls = <div className="hosted-share-demo-controls">
     <span>合集设计预览</span>
+    <label>示例文档数量 <select aria-label="示例文档数量" value={count} onChange={event => setCount(Number(event.target.value))}>{[3, 12, 30, 90].map(value => <option key={value} value={value}>{value} 份</option>)}</select></label>
     <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}{theme === 'dark' ? '切换浅色' : '切换深色'}</button>
     <button aria-pressed={paused} onClick={() => setPaused(!paused)}>{paused ? <Play size={14} /> : <Pause size={14} />}{paused ? '播放背景' : '暂停背景'}</button>
   </div>;
@@ -38,6 +44,6 @@ export default function WebHostingShareDemo() {
     <div className="hosted-share-demo-controls"><Link to="/_dev/web-hosting-share"><ArrowLeft size={14} />返回合集</Link><strong>{current.title}</strong><span>阅读页示意</span></div>
     <article><h1>{current.title}</h1><p>{current.description}</p><p>这里用于演示：从合集打开成员后，仍然保留网页托管阅读骨架。正式页面继续使用现有的关联文档、版本、批注与讨论功能。</p><p>本 Demo 使用示例内容，不创建或修改文档关联。</p></article>
   </main>;
-  return <div className="hosted-share-demo">{controls}<HostedShareCollection data={data} collectionPath="/_dev/web-hosting-share" paused={paused}
+  return <div className="hosted-share-demo">{controls}<HostedShareCollection data={{ ...data, sites: sampleSites.slice(0, count), mainSiteId: sampleSites[0].id }} collectionPath="/_dev/web-hosting-share" paused={paused}
     footer={<>示例资料 · 背景来自 <a href="https://reactbits.dev/backgrounds/threads" target="_blank" rel="noopener noreferrer">React Bits / Threads</a> · 支持减少动态效果偏好</>} /></div>;
 }

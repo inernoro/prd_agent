@@ -1,3 +1,4 @@
+import { HostedCollectionEditor, HostedCollectionLibrary } from '@/components/web-hosting/HostedCollectionManager';
 import { getWebHostingUploadError, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/lib/webHostingUploadLimits';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSelection';
@@ -453,6 +454,8 @@ export default function WebPagesPage() {
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
   // 转知识库目标站点（非 null 时弹出选择文档空间的对话框）
   const [libraryTargetSite, setLibraryTargetSite] = useState<HostedSite | null>(null);
+  const [collectionInitialSites, setCollectionInitialSites] = useState<Array<{ id: string; title: string }> | null>(null);
+  const [showCollectionLibrary, setShowCollectionLibrary] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [shareTargetId, setShareTargetId] = useState<string | null>(null);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
@@ -786,8 +789,7 @@ export default function WebPagesPage() {
 
   const handleBatchShare = () => {
     if (selectedIds.size === 0) return;
-    setShareTargetId(null);
-    setShowShareDialog(true);
+    setCollectionInitialSites(sites.filter(site => selectedIds.has(site.id)).map(site => ({ id: site.id, title: site.title })));
   };
 
   const toggleSelect = (id: string) => {
@@ -1277,6 +1279,7 @@ export default function WebPagesPage() {
           网页托管
         </span>
       </div>
+      <Button size="sm" variant="ghost" onClick={() => setShowCollectionLibrary(true)}><FolderOpen size={14} />我的合集</Button>
                 {/* 语境两档：资产库 / 分享。分享档按钮上的数字与分享档结论句同口径（未过期且未撤销） */}
                 <div className="inline-flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-input)' }}>
                   <button
@@ -1903,6 +1906,7 @@ export default function WebPagesPage() {
                     >
                       <Link2 size={15} /> 分享管理
                     </button>
+                    <button type="button" onClick={() => { setShowMobileFilters(false); setShowCollectionLibrary(true); }} className="h-11 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"><FolderOpen size={15} />我的合集</button>
                     {currentSpace.kind === 'team' && canEditInWebHosting(myWebHostingRole) && (
                       <button
                         type="button"
@@ -1928,7 +1932,7 @@ export default function WebPagesPage() {
             <span className="text-sm text-token-muted">已选 {selectedIds.size} 项</span>
             {/* 团队作用域按角色门控批量操作；个人作用域全开（站点都是自己的）。后端是最终权威。 */}
             {(teamScope.scope !== 'team' || canShareInWebHosting(myWebHostingRole)) && (
-              <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
+              <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 创建合集</Button>
             )}
             {batchGroupPicker}
             {(teamScope.scope !== 'team' || myWebHostingRole === 'owner') && (
@@ -2260,6 +2264,9 @@ export default function WebPagesPage() {
           />
         );
       })()}
+
+      {collectionInitialSites && <HostedCollectionEditor initialSites={collectionInitialSites} onClose={() => { setCollectionInitialSites(null); void loadShares(); }} />}
+      {showCollectionLibrary && <HostedCollectionLibrary onClose={() => { setShowCollectionLibrary(false); void loadShares(); }} />}
 
       {/* Share Dialog（高级设置 + 拖拽快速分享等非下拉路径） */}
       {showShareDialog && (

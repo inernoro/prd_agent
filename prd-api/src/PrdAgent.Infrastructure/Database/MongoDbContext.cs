@@ -362,6 +362,8 @@ public class MongoDbContext
     public IMongoCollection<DesktopUpdateCache> DesktopUpdateCaches => _database.GetCollection<DesktopUpdateCache>("desktop_update_caches");
 
     // Web Hosting 网页托管与分享
+    public IMongoCollection<HostedCollection> HostedCollections => _database.GetCollection<HostedCollection>("hosted_collections");
+
     public IMongoCollection<HostedDocumentGroup> HostedDocumentGroups => _database.GetCollection<HostedDocumentGroup>("hosted_document_groups");
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
     public IMongoCollection<HostedSiteDeletionTask> HostedSiteDeletionTasks => _database.GetCollection<HostedSiteDeletionTask>("hosted_site_deletion_tasks");

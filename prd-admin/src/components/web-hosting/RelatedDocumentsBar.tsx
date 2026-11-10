@@ -9,6 +9,7 @@ import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocume
   type RelatedSummary, type RelatedDocument, type RelatedDocuments, type RelatedDocumentSource, type RelatedPermissionPreview, type RelatedSyncResult } from '@/services/real/relatedDocuments';
 import { SitePreview } from '@/components/SitePreview';
 import { updateSite } from '@/services/real/webPages';
+import { previewCollectionPermissions, syncCollectionPermissions } from '@/services/real/hostedCollections';
 import './RelatedDocumentsBar.css';
 
 export default function RelatedDocumentsBar({ siteId, source, onNavigate, variant = 'bar', summary }: {
@@ -29,6 +30,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
     try { return localStorage.getItem('hosted-related-view') === 'list' ? 'list' : 'cards'; } catch { return 'cards'; }
   });
   const [tagFilter, setTagFilter] = useState('');
+  const [referenceScope, setReferenceScope] = useState<'all' | 'members' | 'references'>('all');
   const [tagTarget, setTagTarget] = useState<RelatedDocument | null>(null);
   const changeView = (next: 'cards' | 'list') => {
     setView(next); try { localStorage.setItem('hosted-related-view', next); } catch { /* 私密浏览仍可切换。 */ }
@@ -86,7 +88,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const [permissions, setPermissions] = useState(false);
   const main = data?.items.find(item => item.isMain);
   const availableTags = [...new Set(data?.items.flatMap(item => item.tags ?? []) ?? [])];
-  const displayed = data?.items.filter(item => !tagFilter || item.tags?.includes(tagFilter)) ?? [];
+  const displayed = data?.items.filter(item => (!tagFilter || item.tags?.includes(tagFilter)) && (referenceScope === 'all' || (referenceScope === 'members' ? item.isManual !== false : item.isManual === false))) ?? [];
   const pages = Math.max(1, Math.ceil(displayed.length / 9));
   const currentPage = Math.min(page, pages - 1);
   const openManager = () => { close(); setManage(true); };
@@ -118,7 +120,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
       className={`related-popover ${token ? 'surface-tone-dark' : ''}`} style={{ width: 'min(720px, calc(100vw - 24px))', maxHeight: 'calc(100dvh - 40px)', padding: 0 }}>
       <div id={menuId} ref={panel} role="dialog" aria-label="关联文档" onPointerDown={event => event.stopPropagation()} onPointerEnter={keepOpen} onPointerLeave={leave}
         onFocusCapture={keepOpen} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) leave(); }}>
-        <div className="related-panel-heading"><div><strong>关联文档</strong><span>在同一组文件间快速切换</span></div>
+        <div className="related-panel-heading"><div><strong>{data?.contextLabel || '关联文档'}</strong><span>手动成员保留作者顺序，评论引用独立展示</span></div>
           <div className="related-heading-actions"><div className="related-view-switch" aria-label="关联文档展示方式">
             <button type="button" aria-label="卡片视图" aria-pressed={view === 'cards'} onClick={() => changeView('cards')}><Grid2X2 size={14} /></button>
             <button type="button" aria-label="列表视图" aria-pressed={view === 'list'} onClick={() => changeView('list')}><List size={15} /></button>
@@ -129,6 +131,11 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
           {data?.canManage && data.version > 0 && <button type="button" className={`related-permission-hint ${data.hasPermissionDifferences ? 'is-warning' : ''}`} onClick={openPermissions}>
             {data.hasPermissionDifferences ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}{data.hasPermissionDifferences ? '权限不一致' : '权限与分享'}
           </button>}
+        </div>}
+        {data?.items.some(item => item.isManual === false) && <div className="related-tag-filters" aria-label="按关联来源筛选">
+          <button type="button" aria-pressed={referenceScope === 'all'} onClick={() => { setReferenceScope('all'); setPage(0); }}>全部</button>
+          <button type="button" aria-pressed={referenceScope === 'members'} onClick={() => { setReferenceScope('members'); setPage(0); }}>{data.contextLabel || '手动关联'}</button>
+          <button type="button" aria-pressed={referenceScope === 'references'} onClick={() => { setReferenceScope('references'); setPage(0); }}>评论引用</button>
         </div>}
         {availableTags.length > 0 && <div className="related-tag-filters" aria-label="按标签筛选">
           <button type="button" aria-pressed={!tagFilter} onClick={() => { setTagFilter(''); setPage(0); }}>全部</button>
@@ -237,7 +244,7 @@ function RelatedDocumentsManager({ siteId, data, onClose, onSaved }: {
     actions={<><Button disabled={saving} onClick={onClose}>取消</Button><Button variant="primary" disabled={saving} onClick={() => void save()}>{saving && <MapSpinner size={14} />}保存关联</Button></>} />;
 }
 
-function RelatedPermissionsDialog({ siteId, onClose }: { siteId: string; onClose: () => void }) {
+export function RelatedPermissionsDialog({ siteId, collectionId, onClose }: { siteId: string; collectionId?: string; onClose: () => void }) {
   const [preview, setPreview] = useState<RelatedPermissionPreview | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -246,16 +253,16 @@ function RelatedPermissionsDialog({ siteId, onClose }: { siteId: string; onClose
   const load = useCallback(async () => {
     setError('');
     try {
-      const response = await previewRelatedPermissions(siteId);
+      const response = await (collectionId ? previewCollectionPermissions(collectionId) : previewRelatedPermissions(siteId));
       if (response.success) setPreview(response.data); else setError(response.error?.message || '权限差异加载失败');
     } catch { setError('权限差异加载失败，请重试'); }
-  }, [siteId]);
+  }, [siteId, collectionId]);
   useEffect(() => { void load(); }, [load]);
   const sync = async () => {
     if (!preview || busy) return;
     setBusy(true); setError('');
     try {
-      const response = await syncRelatedPermissions(siteId, preview.fingerprint, revoke);
+      const response = await (collectionId ? syncCollectionPermissions(collectionId, preview.fingerprint, revoke) : syncRelatedPermissions(siteId, preview.fingerprint, revoke));
       if (response.success) {
         setResult(response.data);
         // 同步可能只完成部分文档；列表和独立分享入口都应重新读取服务端实际状态。
@@ -266,8 +273,8 @@ function RelatedPermissionsDialog({ siteId, onClose }: { siteId: string; onClose
     } catch { setError('请求失败，请重新加载权限差异后核对实际结果'); }
     finally { setBusy(false); }
   };
-  return <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }} title="关联文档权限" maxWidth={680} zIndex={1000}
-    description="以主文档为准，同步手动关联文档的团队、分组和公开页可见性。评论引用保留独立权限。"
+  return <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }} title={collectionId ? "合集文档权限" : "关联文档权限"} maxWidth={680} zIndex={1000}
+    description={collectionId ? "以主文档为准，同步合集成员的团队、分组和公开页可见性。评论引用保留独立权限。" : "以主文档为准，同步手动关联文档的团队、分组和公开页可见性。评论引用保留独立权限。"}
     content={<div className="related-manager">
       {!preview && !error && <div className="related-empty"><MapSpinner size={20} />正在核对访问范围…</div>}
       {preview && <><div className="related-source"><Star size={16} /><div><span>权限来源 · 主文档</span><strong>{preview.sourceTitle}</strong></div></div>

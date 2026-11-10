@@ -1,3 +1,4 @@
+import { HostedCollectionEditor } from '@/components/web-hosting/HostedCollectionManager';
 import HostedShareCollection from '@/components/web-hosting/HostedShareCollection';
 import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
@@ -184,6 +185,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   const currentUserId = useAuthStore(s => s.user?.userId);
   const isMobile = useIsMobile();
   const [data, setData] = useState<ShareViewData | null>(null);
+  const [collectionManagerOpen, setCollectionManagerOpen] = useState(false);
   const requestedRelatedSiteId = siteIdOverride ?? searchParams.get('siteId');
   const [relatedAccountSite, setRelatedAccountSite] = useState<HostedSite | null>(null);
   const [relatedSharedSite, setRelatedSharedSite] = useState<RelatedDocument | null>(null);
@@ -921,6 +923,9 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
             </div>
             {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
+              {data.shareType === 'collection' && requestedRelatedSiteId && <a className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>返回合集</a>}
+              {isOwner && data.shareType === 'collection' && <button className="share-topbar-btn" onClick={() => setCollectionManagerOpen(true)}>管理合集</button>}
+              {collectionManagerOpen && <HostedCollectionEditor shareToken={token} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}
               <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" source={{ token, password: password || undefined }}
                 onNavigate={openRelatedDocument} />
               {relatedAccountSite && <SitePreviewModal key={relatedAccountSite.id} site={relatedAccountSite}
@@ -1237,7 +1242,8 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
 
   // Keep the original share token: member pages use the same authorization scope.
   return <HostedShareCollection data={data} collectionPath={`/s/wp/${encodeURIComponent(token!)}`}
-    action={!isOwner && <button className="hosted-share-save" onClick={handleSave} disabled={saving || saveStatus !== 'idle'}>
+    action={isOwner ? <><button className="hosted-share-save" onClick={() => setCollectionManagerOpen(true)}>管理合集</button>
+      {collectionManagerOpen && <HostedCollectionEditor shareToken={token} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}</> : <button className="hosted-share-save" onClick={handleSave} disabled={saving || saveStatus !== 'idle'}>
       {saving ? <><MapSpinner size={13} />保存中...</>
         : saveStatus === 'saved' ? <><Check size={13} />已保存</>
         : saveStatus === 'already' ? <><Check size={13} />你已经保存过了</>

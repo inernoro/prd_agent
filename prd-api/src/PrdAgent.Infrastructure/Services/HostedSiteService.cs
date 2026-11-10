@@ -3097,6 +3097,13 @@ public class HostedSiteService : IHostedSiteService
     private async Task<(string Error, int HttpStatus, string ErrorCode)?> EnforceShareVisibilityAsync(
         WebPageShareLink share, string? viewerUserId, CancellationToken ct)
     {
+        if (share.CollectionId != null)
+        {
+            var collection = await _db.HostedCollections.Find(x => x.Id == share.CollectionId).FirstOrDefaultAsync(ct);
+            if (!HostedCollectionRules.AllowsShare(collection, share))
+                return ("此合集分享已停止，请联系分享者获取新链接", 404, "not_found");
+        }
+
         // 旧记录 / visit 链 / 默认 public 都识别为可公开访问（不阻断历史链路）
         var effVisibility = string.IsNullOrEmpty(share.Visibility) ? "public" : share.Visibility;
 
@@ -3284,7 +3291,8 @@ public class HostedSiteService : IHostedSiteService
 
         var rawSites = await _db.HostedSites.Find(x => siteIds.Contains(x.Id)).ToListAsync(ct);
         var sites = new List<SharedSiteInfo>(rawSites.Count);
-        foreach (var s in rawSites)
+        foreach (var s in HostedCollectionRules.OrderedIds(siteIds, share.MainSiteId)
+                     .Select(id => rawSites.FirstOrDefault(x => x.Id == id)).OfType<HostedSite>())
         {
             sites.Add(new SharedSiteInfo
             {
@@ -3347,9 +3355,15 @@ public class HostedSiteService : IHostedSiteService
         if (exposeAsk && askSite != null)
             _askOpeners.QueueEnsure(askSite, askOwnerPreferences?.WebPageAskEnabled);
 
+        var sourceCollection = share.CollectionId == null ? null
+            : await _db.HostedCollections.Find(x => x.Id == share.CollectionId).FirstOrDefaultAsync(ct);
         return new ShareViewResult
         {
-            Title = StripLegacySharePrefix(share.Title),
+            CollectionId = share.CollectionId,
+            MainSiteId = sites.Any(x => x.Id == share.MainSiteId) ? share.MainSiteId : null,
+            CollectionVersion = share.CollectionVersion,
+            CollectionNeedsUpdate = viewerUserId == share.CreatedBy && sourceCollection != null && sourceCollection.Version != share.CollectionVersion,
+            Title = sourceCollection?.Title ?? StripLegacySharePrefix(share.Title),
             Description = share.Description,
             ShareType = share.ShareType,
             CreatedAt = share.CreatedAt,

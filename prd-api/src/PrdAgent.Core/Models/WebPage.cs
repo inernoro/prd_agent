@@ -347,6 +347,12 @@ public class WebPageShareLink
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
+    /// <summary>命名合集及本次明确授权的成员快照；空值保留历史独立分享语义。</summary>
+    public string? CollectionId { get; set; }
+    public string? MainSiteId { get; set; }
+    public long CollectionVersion { get; set; }
+    public long CollectionShareGeneration { get; set; } = 1;
+
     /// <summary>短 Token（用于 URL）</summary>
     public string Token { get; set; } = GenerateToken();
 

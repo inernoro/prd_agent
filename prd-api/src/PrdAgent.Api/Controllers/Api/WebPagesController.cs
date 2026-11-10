@@ -1938,6 +1938,10 @@ public partial class WebPagesController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
+            result.CollectionId,
+            result.MainSiteId,
+            result.CollectionVersion,
+            result.CollectionNeedsUpdate,
             result.Title,
             result.Description,
             result.ShareType,

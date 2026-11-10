@@ -1339,6 +1339,10 @@ export interface SharedSiteInfo {
 }
 
 export interface ShareViewData {
+  collectionId?: string;
+  mainSiteId?: string;
+  collectionVersion?: number;
+  collectionNeedsUpdate?: boolean;
   title: string;
   description?: string;
   shareType: string;
