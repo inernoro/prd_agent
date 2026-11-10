@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { isConsoleHref } from '../../web/src/components/layout/RouteMotion.js';
+import { isConsoleHref, isSameDocumentFragment } from '../../web/src/components/layout/RouteMotion.js';
 import { surfaceCamera, SURFACE_MOTION } from '../../web/src/lib/surfaceMotion.js';
 import { investigationPrompt } from '../../web/src/pages/status/MonitorSampleEvidence.js';
 import type { UptimeTargetSummary } from '../../web/src/lib/monitorCenter.js';
 describe('共享镜头与调查事实', () => {
+  it('同页锚点保留原生滚动，跨页、查询条件变化和外站不冒充同一文档', () => {
+    const here = 'https://console.invalid/status/project-a?view=detail#checks';
+    for (const href of ['#delivery', '#', '/status/project-a?view=detail#inspections']) expect(isSameDocumentFragment(href, here)).toBe(true);
+    for (const href of ['/status/project-b#checks', '/status/project-a?view=other#checks', 'https://external.invalid/status/project-a?view=detail#checks', '/status/project-a?view=detail']) expect(isSameDocumentFragment(href, here)).toBe(false);
+  });
   it('沿用原稿几何，在视口内居中连续缩放，最大放大2.2而无垂直回弹', () => {
     const pose = surfaceCamera({ x: 200, y: 100, w: 200, h: 100 }, 1000, 500);
     expect(pose.zoom).toBe('translate(-360px,-180px) scale(2.2)');

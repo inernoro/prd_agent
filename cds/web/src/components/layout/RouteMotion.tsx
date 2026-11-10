@@ -1,9 +1,14 @@
 import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
-import { createContext, forwardRef, useCallback, useContext, useEffect, useLayoutEffect } from 'react';
+import { createContext, forwardRef, useCallback, useContext, useEffect, useLayoutEffect, useRef } from 'react';
 import { Link as RouterLink, useLocation, useNavigate, useNavigationType, useResolvedPath, type LinkProps, type NavigateFunction, type NavigateOptions, type To } from 'react-router-dom';
 import { runSurfaceMotion, skipSurfaceMotion, reducedSurfaceMotion } from '@/lib/surfaceMotion';
 
 export const SurfaceOriginContext = createContext<Element | null>(null);
+export function isSameDocumentFragment(href: string, currentHref: string): boolean {
+  const current = new URL(currentHref), target = new URL(href, current);
+  return (target.hash !== '' || href.endsWith('#')) && target.origin === current.origin
+    && target.pathname === current.pathname && target.search === current.search;
+}
 export function isConsoleHref(href: string): boolean {
   if (!href.startsWith('/') || href.startsWith('//')) return false;
   const scene = loadingSceneForPath(new URL(href, 'https://console.invalid').pathname);
@@ -66,13 +71,16 @@ function restoreVisit(key: string): () => void {
 /** Mounted by the actual page shell, inside any owner/lazy Suspense boundary. */
 export function RouteMotionCommit(): null {
   const location = useLocation(), type = useNavigationType();
+  const previous = useRef(location);
   useLayoutEffect(() => {
+    const hashOnly = previous.current.pathname === location.pathname && previous.current.search === location.search && previous.current.hash !== location.hash;
+    previous.current = location;
     const current = waiter;
     if (current?.destination === location.pathname + location.search + location.hash) {
       if (current.origin) origins.set(location.key, current.origin);
       current.finish();
     }
-    return type === 'POP' ? restoreVisit(location.key) : undefined;
+    return type === 'POP' && !hashOnly ? restoreVisit(location.key) : undefined;
   }, [location.key, location.pathname, location.search, location.hash, type]);
   return null;
 }
@@ -84,7 +92,7 @@ export function useSurfaceNavigate(): NavigateFunction {
     // Resolve object and string destinations without dropping state, relative or replace semantics.
     const raw = typeof to === 'string' ? to : `${to.pathname ?? location.pathname}${to.search ?? ''}${to.hash ?? ''}`;
     const destination = new URL(raw, window.location.href);
-    if (/^\.\.?($|\/)/.test(raw) || destination.origin !== window.location.origin || destination.pathname === location.pathname || !document.querySelector('.cds-main')) { navigate(to, options); return; }
+    if (/^\.\.?($|\/)/.test(raw) || destination.origin !== window.location.origin || destination.pathname === location.pathname || !isConsoleHref(destination.pathname) || !document.querySelector('.cds-main')) { navigate(to, options); return; }
     const url = destination.pathname + destination.search + destination.hash;
     const origin = origins.get(location.key);
     const returning = !options?.replace && options?.state === undefined && origin?.url === url;
@@ -105,10 +113,11 @@ export function useSurfaceNavigate(): NavigateFunction {
 /** Preserve React Router Link's real navigation options and caller handlers. */
 export const MotionLink = forwardRef<HTMLAnchorElement, LinkProps>(function MotionLink({ onClick, to, replace, state, relative, preventScrollReset, reloadDocument, target, ...props }, ref) {
   const navigate = useSurfaceNavigate(), resolved = useResolvedPath(to, { relative }), origin = useContext(SurfaceOriginContext);
-  return <RouterLink {...props} ref={ref} to={to} replace={replace} state={state} relative={relative} preventScrollReset={preventScrollReset} reloadDocument={reloadDocument} target={target} onClick={event => {
+  const nativeFragment = typeof window !== 'undefined' && isSameDocumentFragment(resolved.pathname + resolved.search + resolved.hash, window.location.href);
+  return <RouterLink {...props} ref={ref} to={to} replace={replace} state={state} relative={relative} preventScrollReset={preventScrollReset} reloadDocument={reloadDocument || nativeFragment} target={target} onClick={event => {
     onClick?.(event);
     const targetUrl = new URL(event.currentTarget.href, window.location.href);
-    if (targetUrl.origin !== window.location.origin || !['http:', 'https:'].includes(targetUrl.protocol) || event.defaultPrevented || reloadDocument || target && target !== '_self' || props.download || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (nativeFragment || targetUrl.origin !== window.location.origin || !['http:', 'https:'].includes(targetUrl.protocol) || event.defaultPrevented || reloadDocument || target && target !== '_self' || props.download || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault(); lastSource = origin || event.currentTarget;
     navigate(resolved, { replace, state, relative, preventScrollReset });
   }} />;
@@ -136,7 +145,7 @@ export function RouteMotion(): null {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       const link = (event.target as Element)?.closest<HTMLAnchorElement>('a[href]');
       if (!link || link.target && link.target !== '_self' || link.hasAttribute('download')) return;
-      const url = new URL(link.href); if (url.origin !== window.location.origin || link.getAttribute('href') === '#' || !isConsoleHref(url.pathname)) return;
+      const url = new URL(link.href); if (url.origin !== window.location.origin || isSameDocumentFragment(link.href, window.location.href) || !isConsoleHref(url.pathname)) return;
       event.preventDefault(); lastSource = link; navigate(url.pathname + url.search + url.hash);
     };
     document.addEventListener('pointerdown', pointer, true); document.addEventListener('scroll', save, true); document.addEventListener('click', click);
