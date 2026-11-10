@@ -117,7 +117,7 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   const visibleSlots = useRef(new Map<string, string[]>());
   const layoutKey = JSON.stringify([density, size.width, size.height, size.narrow]);
   const ids = model.categories.map(c => c.id), previous = layoutCache.current;
-  if (!previous || previous.key !== layoutKey || previous.categoryIds.some(id => !ids.includes(id))) {
+  if (!previous || previous.key !== layoutKey || previous.categoryIds.length === 0 && ids.length > 0 || previous.categoryIds.some(id => !ids.includes(id))) {
     layoutCache.current = { key: layoutKey, categoryIds: ids, counts: Object.fromEntries(model.categories.map(c => [c.id, c.services.length])), reserves: Object.fromEntries(model.categories.map(c => [c.id, c.custom ? 3 : 0])), value: planMonitorLayout(model.categories.map(c => ({ id: c.id, count: c.services.length, reserve: c.custom ? 3 : 0 })), size.width, size.height, density, size.narrow) };
     visibleSlots.current.clear();
   } else if (ids.length > previous.categoryIds.length) {
