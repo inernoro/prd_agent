@@ -2,8 +2,21 @@
 export function reportFrameBridge(token: string): string {
   return `<script nonce="${token}">(()=>{
     const token='${token}', limit=100000;
-    let pending=false, lastHeight=0, pageScroll=false;
+    let pending=false, lastHeight=0, pageScroll=false, viewportHeight=innerHeight;
     const post=(kind,extra)=>parent.postMessage({kind,token,...extra},'*');
+    const applyViewport=()=>document.documentElement.style.setProperty('--cds-report-vh',(viewportHeight/100)+'px','important');
+    // Anchor authored viewport-height lengths to the host's visible viewport, not
+    // the expanding iframe. CSSOM keeps selectors and uploaded markup intact.
+    const anchorLengths=style=>{
+      for(const property of Array.from(style)){
+        const value=style.getPropertyValue(property);
+        if(/url\\s*\\(/i.test(value))continue;
+        const next=value.replace(/("(?:\\\\[\\s\\S]|[^"\\\\])*"|'(?:\\\\[\\s\\S]|[^'\\\\])*'|\\/\\*[\\s\\S]*?\\*\\/)|([+-]?(?:\\d*\\.)?\\d+(?:e[+-]?\\d+)?)(?:[dsl]?vh)\\b/gi,
+          (match,quoted,number)=>quoted?match:'calc('+number+' * var(--cds-report-vh))');
+        if(next!==value)style.setProperty(property,next,style.getPropertyPriority(property));
+      }
+    };
+    const anchorRules=rules=>{for(const rule of rules){if(rule.style)anchorLengths(rule.style);if(rule.cssRules)anchorRules(rule.cssRules);}};
     const measure=()=>{
       pending=false;
       if(!document.body)return;
@@ -17,7 +30,11 @@ export function reportFrameBridge(token: string): string {
     };
     const schedule=()=>{if(!pending){pending=true;requestAnimationFrame(measure);}};
     addEventListener('message',event=>{
-      if(event.source===parent&&event.data?.kind==='cds-report-measure'&&event.data.token===token){lastHeight=0;schedule();}
+      if(event.source===parent&&event.data?.kind==='cds-report-measure'&&event.data.token===token){
+        const height=event.data.viewportHeight;
+        if(Number.isFinite(height)&&height>0&&height<=limit){viewportHeight=height;applyViewport();}
+        lastHeight=0;schedule();
+      }
     });
     const nestedScroll=(target,delta)=>{
       for(let node=target instanceof Element?target:target?.parentElement;node&&node!==document.body&&node!==document.documentElement;node=node.parentElement){
@@ -38,6 +55,9 @@ export function reportFrameBridge(token: string): string {
       event.preventDefault();post('cds-report-key',{key:event.key,shift:event.shiftKey});
     });
     const start=()=>{
+      applyViewport();
+      for(const sheet of document.styleSheets){try{anchorRules(sheet.cssRules);}catch{}}
+      for(const node of document.querySelectorAll('[style]'))anchorLengths(node.style);
       // A report follows document flow rather than keeping an authored viewport-height shell.
       for(const node of [document.documentElement,document.body]){
         node.style.setProperty('height','auto','important');

@@ -6,7 +6,7 @@ import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures
 
 export async function verifyCodeReviewDocument(browser, base, out) {
   assert(['127.0.0.1', 'localhost'].includes(new URL(base).hostname));
-  const context = await browser.newContext({ viewport: { width: 1440, height: 940 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 940 }, hasTouch: true });
   await context.addInitScript(() => {
     if (window.top !== window.self) return;
     localStorage.setItem('cds_theme', 'light'); localStorage.setItem('cds_ui_scale', '85');
@@ -43,6 +43,29 @@ export async function verifyCodeReviewDocument(browser, base, out) {
   }
   try {
     let frame = await open();
+    // Pan over the iframe with the reader chrome completely above the viewport.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await main.evaluate(e => e.scrollTop = 600);
+    const touch = await context.newCDPSession(page);
+    const touchBox = await iframe.boundingBox(), mainBox = await main.boundingBox();
+    const origin = { x: touchBox.x + 100, y: mainBox.y + 300 };
+    async function pan(distance) {
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [origin] });
+      for (let step = 1; step <= 6; step++) await touch.send('Input.dispatchTouchEvent', {
+        type: 'touchMove', touchPoints: [{ x: origin.x, y: origin.y + distance * step / 6 }],
+      });
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    }
+    const touchStart = await main.evaluate(e => e.scrollTop);
+    await pan(-180);
+    await page.waitForFunction(value => document.querySelector('.cds-main').scrollTop > value + 50, touchStart);
+    const touchDown = await main.evaluate(e => e.scrollTop);
+    await pan(180);
+    await page.waitForFunction(value => document.querySelector('.cds-main').scrollTop < value - 50, touchDown);
+    assert.equal(await frame.evaluate(() => document.scrollingElement.scrollTop), 0);
+    await touch.detach();
+    results.push({ mobileTouchOverReport: true, readerChromeOffscreen: true, touchBothDirections: true });
+    frame = await open();
     for (const density of ['85', '100']) {
       await page.evaluate(value => { if (value === '85') delete document.documentElement.dataset.uiScale; else document.documentElement.dataset.uiScale = value; }, density);
       for (const width of [1440, 2048, 390]) {
@@ -115,6 +138,29 @@ export async function verifyCodeReviewDocument(browser, base, out) {
     await page.waitForFunction(() => { const e = document.querySelector('.cds-main'); return e.scrollTop + e.clientHeight >= e.scrollHeight - 2; });
     assert.deepEqual(errors, []);
     results.push({ originalHtmlStyle: true, untrustedScriptBlocked: true, customCspAndUnclosedTail: true, horizontalCodeScroll: true, nestedWheel: true, keyboardEnd: true });
+    content = `<html><head><style>
+      :root{--panel-size:100vh;--label:"100vh"}body{margin:8px}header,footer{padding:16px}
+      @media(min-width:600px){.hero{min-height:var(--panel-size)}}
+      .label::after{content:var(--label)}
+      </style></head><body><header>视口高度报告</header><section class="hero" style="height:calc(100dvh - 1rem)">正文</section>
+      <p class="label">单位原文：</p><footer>报告最后一行</footer></body></html>`;
+    frame = await open();
+    const heights = await page.evaluate(() => new Promise(resolve => {
+      const values = [];
+      const sample = () => { values.push(parseFloat(document.querySelector('.cr-document iframe').style.height)); if (values.length < 45) requestAnimationFrame(sample); else resolve(values); };
+      requestAnimationFrame(sample);
+    }));
+    assert(Math.max(...heights) < 5000, 'viewport units inflated the report height');
+    assert(Math.max(...heights.slice(-10)) - Math.min(...heights.slice(-10)) < 1, 'report height did not settle');
+    assert.equal(await frame.evaluate(() => getComputedStyle(document.documentElement).overflowY), 'hidden');
+    assert.equal(await frame.evaluate(() => getComputedStyle(document.querySelector('.label'), '::after').content), '"100vh"');
+    const visibleHeight = await main.evaluate(e => e.clientHeight);
+    assert(Math.abs(await frame.locator('.hero').evaluate(e => e.getBoundingClientRect().height) - visibleHeight) < 1);
+    await page.setViewportSize({ width: 1440, height: 740 });
+    const resizedHeight = await main.evaluate(e => e.clientHeight);
+    await frame.waitForFunction(height => Math.abs(document.querySelector('.hero').getBoundingClientRect().height - height) < 1, resizedHeight);
+    assert(parseFloat(await iframe.evaluate(e => e.style.height)) < 5000, 'resize restarted the viewport feedback loop');
+    results.push({ viewportUnitsStable: true, viewportHeight: visibleHeight, height: heights.at(-1) });
     await fs.writeFile(path.join(out, 'report-document-results.json'), JSON.stringify(results, null, 2));
     return results;
   } catch (error) {

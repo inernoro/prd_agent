@@ -52,7 +52,8 @@ export function ReportDocument({ content, format, title }: { content: string; fo
     return () => { observer.disconnect(); window.removeEventListener('resize', sync); };
   }, []);
   const document = useMemo(() => buildCodeReviewDocument(content, format, theme, token, rootSize), [content, format, theme, token, rootSize]);
-  const requestHeight = (): void => frame.current?.contentWindow?.postMessage({ kind: 'cds-report-measure', token }, '*');
+  const requestHeight = (): void => frame.current?.contentWindow?.postMessage({ kind: 'cds-report-measure', token,
+    viewportHeight: frame.current?.closest<HTMLElement>('.cds-main')?.clientHeight }, '*');
   useEffect(() => {
     setHeight(400);
     const resize = (event: MessageEvent): void => {
@@ -78,8 +79,9 @@ export function ReportDocument({ content, format, title }: { content: string; fo
       }
     };
     window.addEventListener('message', resize);
+    window.addEventListener('resize', requestHeight);
     requestHeight();
-    return () => window.removeEventListener('message', resize);
+    return () => { window.removeEventListener('message', resize); window.removeEventListener('resize', requestHeight); };
   }, [token]);
   return <iframe ref={frame} title={title} srcDoc={document} onLoad={requestHeight}
     sandbox="allow-scripts" referrerPolicy="no-referrer" className="block w-full border-0" style={{ height }} />;
