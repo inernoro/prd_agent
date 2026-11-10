@@ -1,7 +1,7 @@
 import { monitorIncidentPath } from '../../../src/services/monitor-incident-link';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { NOTIFICATION_CATEGORIES, NOTIFICATION_SYSTEMS, NOTIFICATION_ENVIRONMENTS, NOTIFICATION_TEMPLATES, UNKNOWN_CLASSIFICATION, type ReportClassification } from '../../../src/shared/notification-templates';
+import { NOTIFICATION_CATEGORIES, NOTIFICATION_SYSTEMS, NOTIFICATION_ENVIRONMENTS, NOTIFICATION_TEMPLATES, UNKNOWN_CLASSIFICATION, notificationTemplatePattern, type NotificationTemplateId, type ReportClassification } from '../../../src/shared/notification-templates';
 import { apiRequest, type AcceptanceReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -58,6 +58,6 @@ export function NotificationTemplateCatalog() {
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>通知模板 · 单文件维护</DialogTitle></DialogHeader>
       <p className="text-sm text-muted-foreground">手机与手表采用同一句话：环境、系统、功能、结果。优先30字，最多40字。详情进入对应事件报告。</p>
       <p className="break-all text-xs text-muted-foreground">维护文件：cds/src/shared/notification-templates.json</p>
-      <div className="space-y-2">{Object.entries(NOTIFICATION_TEMPLATES).map(([id, t]) => <div key={id} className="rounded border border-[hsl(var(--hairline))] p-2 text-sm"><p className="font-medium">{id} · {t.categories.map(k => NOTIFICATION_CATEGORIES[k]).join('、')}</p><p>{'{环境} {系统} '}{t.text.replace('{subject}', '{受影响系统}')}</p></div>)}</div>
+      <div className="space-y-2">{Object.entries(NOTIFICATION_TEMPLATES).map(([id, t]) => <div key={id} className="rounded border border-[hsl(var(--hairline))] p-2 text-sm"><p className="font-medium">{id} · {t.categories.map(k => NOTIFICATION_CATEGORIES[k]).join('、')}</p><p>{notificationTemplatePattern(id as NotificationTemplateId)}</p></div>)}</div>
     </DialogContent></Dialog></>;
 }

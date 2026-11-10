@@ -317,5 +317,26 @@
   },
   "environmentAliases": {
     "生产": "production"
+  },
+  "fieldLabels": {
+    "environment": "环境",
+    "system": "系统",
+    "subject": "受影响系统",
+    "function": "功能",
+    "provider": "上游",
+    "window": "时间窗口",
+    "count": "次数",
+    "modelCount": "模型数",
+    "version": "版本",
+    "total": "总数",
+    "failed": "失败数",
+    "blocked": "阻塞数",
+    "task": "任务",
+    "waitingFor": "具体事项",
+    "shortTitle": "脱敏短标题",
+    "documentType": "文档类型",
+    "resource": "资源",
+    "days": "天数",
+    "channel": "通道"
   }
 }

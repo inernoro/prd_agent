@@ -39,6 +39,15 @@ interface Template {
 }
 export const NOTIFICATION_TEMPLATES = catalog.templates as unknown as { [K in keyof typeof catalog.templates]: Template };
 export type NotificationTemplateId = keyof typeof NOTIFICATION_TEMPLATES;
+/** 目录展示同一模板的中文变量，固定主体与实际渲染保持一致。 */
+export function notificationTemplatePattern(id: NotificationTemplateId): string {
+  const system = id === 'MON-02' ? NOTIFICATION_SYSTEMS.cds : id === 'GW-06' || id === 'GW-07' ? NOTIFICATION_SYSTEMS.llmgw : '{系统}';
+  const labels = catalog.fieldLabels as Record<string, string>;
+  return `{环境} ${system} ${NOTIFICATION_TEMPLATES[id].text.replace(/\{(\w+)\}/g, (_, key: string) => {
+    if (!labels[key]) throw new Error('通知变量缺少中文名称');
+    return `{${labels[key]}}`;
+  })}`;
+}
 export const UNKNOWN_CLASSIFICATION: ReportClassification = { categories: [], primarySystem: 'unknown', relatedSystems: [], environments: ['unknown'] };
 
 /** 同维度 OR，跨维度 AND；每份报告始终只返回一次。 */

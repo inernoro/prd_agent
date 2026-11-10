@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { NOTIFICATION_TEMPLATES, renderNotification, matchesClassification, notificationEnvironment, parseReportClassification,
-  renderNotificationDigest, type NotificationFacts, type ReportClassification } from '../../src/shared/notification-templates.js';
+  renderNotificationDigest, notificationTemplatePattern, type NotificationFacts, type ReportClassification } from '../../src/shared/notification-templates.js';
 import { NotificationReportRecorder } from '../../src/services/notification-report.js';
 import { StateService } from '../../src/services/state.js';
 import { renderAlarmMessage, type AlarmEvent } from '../../src/services/alarm-route.js';
@@ -28,6 +28,11 @@ describe('通知交叉分类与唯一模板目录', () => {
       expect(text, id).not.toMatch(/\{|\}|\n|点击|管理员|HTTP|token/);
     }
     expect(renderNotification('TASK-02', facts).sentence).toBe('正式 MAP 生图 OpenAI 5分钟失败3次');
+  });
+  it('目录全部使用中文变量，固定主体与真实通知一致', () => {
+    for (const id of Object.keys(NOTIFICATION_TEMPLATES) as Array<keyof typeof NOTIFICATION_TEMPLATES>) expect(notificationTemplatePattern(id)).not.toMatch(/\{[A-Za-z]/);
+    expect(notificationTemplatePattern('MON-02')).toBe('{环境} CDS 监控读取失败，{受影响系统}状态未知');
+    expect(notificationTemplatePattern('GW-06')).toBe('{环境} LLMGW {模型数}个模型未配价格');
   });
   it('缺少窗口不捏造5分钟，缺少次数、未知枚举、零次数、地址或密钥均拒绝', () => {
     expect(renderNotification('TASK-02', { ...facts, window: undefined }).sentence).not.toContain('5分钟');
