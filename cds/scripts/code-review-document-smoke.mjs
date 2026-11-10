@@ -30,11 +30,19 @@ export async function verifyCodeReviewDocument(browser, base, out) {
   page.on('pageerror', e => errors.push(e.message));
   const url = `${base}/code-reviews?source=report&task=${task.id}&report=1`;
   const main = page.locator('.cds-main'), iframe = page.locator('.cr-document iframe');
+  async function currentFrame() {
+    const element = await iframe.elementHandle(); assert(element, 'report iframe must exist');
+    const frame = await element.contentFrame(); assert(frame, 'report browsing context must exist');
+    return frame;
+  }
   async function open() {
     await page.goto(url);
     await iframe.waitFor();
     await page.waitForFunction(() => parseFloat(document.querySelector('.cr-document iframe')?.style.height) > 500);
-    return page.frames().find(f => f !== page.mainFrame() && f.url() === 'about:srcdoc');
+    const frame = await currentFrame();
+    await frame.waitForFunction(() => getComputedStyle(document.documentElement).overflowY === 'hidden'
+      && document.body && document.body.getBoundingClientRect().bottom <= innerHeight);
+    return frame;
   }
   async function wheel(delta) {
     const box = await iframe.boundingBox(), top = await main.evaluate(e => e.getBoundingClientRect().top);
@@ -72,10 +80,16 @@ export async function verifyCodeReviewDocument(browser, base, out) {
         await page.setViewportSize({ width, height: width === 390 ? 844 : 940 });
         await main.evaluate(e => e.scrollTop = 0);
         await page.waitForFunction(() => parseFloat(document.querySelector('.cr-document iframe').style.height) > 500);
-        frame = page.frames().find(f => f !== page.mainFrame() && f.url() === 'about:srcdoc');
-        // Wait for the same density to reach the sandboxed document, not a timer-based guess.
+        frame = await currentFrame();
+        // 换密度会重建srcdoc；字体先匹配时，旧height仍可能保留。
+        // 等当前文档的测高桥完成，随后仍按原断言检查隐藏溢出和内容适配。
         const rootSize = await page.evaluate(() => getComputedStyle(document.documentElement).fontSize);
-        await frame.waitForFunction(size => getComputedStyle(document.documentElement).fontSize === size, rootSize);
+        await frame.waitForFunction(size => {
+          const root = document.documentElement;
+          return getComputedStyle(root).fontSize === size && getComputedStyle(root).overflowY === 'hidden'
+            && document.body && document.body.getBoundingClientRect().bottom <= innerHeight
+            && root.scrollHeight <= root.clientHeight + 1;
+        }, rootSize);
         const inner = await frame.evaluate(() => ({
           height: innerHeight, bottom: document.body.getBoundingClientRect().bottom,
           scrollHeight: document.documentElement.scrollHeight, clientHeight: document.documentElement.clientHeight,
