@@ -167,7 +167,7 @@ for (const width of [390, 1440]) {
         }))).toMatchObject({ bodyFont: '12px', titleFont: '14px', columns: width >= 768 ? 2 : 1 });
         if (width >= 768) {
           const rows = dialog.locator('dt').filter({ hasText: /^(已发布的内容修改|创建时间|更新时间|最近访问)$/ }).locator('..');
-          expect(await rows.evaluateAll(items => items.every(row => [...row.children].every(cell => {
+          expect(await rows.evaluateAll(items => items.every(row => Array.from(row.children).every(cell => {
             return cell.getBoundingClientRect().height <= parseFloat(getComputedStyle(cell).lineHeight) + 1;
           })))).toBe(true);
         }
