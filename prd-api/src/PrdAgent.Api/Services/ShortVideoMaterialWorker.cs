@@ -290,7 +290,9 @@ public sealed class ShortVideoMaterialProcessor
         var run = await _db.ShortVideoMaterialRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(CancellationToken.None)
                   ?? throw new InvalidOperationException("短视频解析运行记录不存在");
         await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
-        if (taskExecutionAttempt.ShouldSkip) return;
+        // Worker 已领取并绑定处理身份；许可不可用也须走它的受控收尾，不能留下 running。
+        if (taskExecutionAttempt.ShouldSkip)
+            throw new InvalidOperationException("本次处理未能取得执行许可，已停止继续处理");
         using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
             ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         using var authorityStop = CancellationTokenSource.CreateLinkedTokenSource(taskExecutionAttempt.Lease?.LostToken ?? CancellationToken.None);
