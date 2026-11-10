@@ -16,12 +16,18 @@ public static class OfferingRemovalPolicy
             return new("OFFERING_MUST_BE_DISABLED", "请先停用这条线路，再移除；公开模型名称和 MAP 中的显示名称会保留。");
         if (hasInFlightJobs)
             return new("OFFERING_HAS_INFLIGHT_JOBS", "这条线路或公开模型还有未完成或保留期内的任务。请等待任务结束、取消或保留期到期后再移除。");
+        return EvaluateDeactivation(logical, hasUsableAlternative, referencedByMap);
+    }
+
+    /// <summary>停用用于排空任务，不检查在途；但必须先保护仍被业务使用的最后可用线路。</summary>
+    public static Rejection? EvaluateDeactivation(BsonDocument logical, bool hasUsableAlternative, bool referencedByMap)
+    {
         var catchesTraffic = logical.AsNullableBool("Enabled") != false
             || logical.AsNullableBool("IsDefaultForType") == true
             || logical.GetValue("DefaultForAppCallerCodes", BsonNull.Value) is BsonArray { Count: > 0 }
             || referencedByMap;
         if (catchesTraffic && !hasUsableAlternative)
-            return new("OFFERING_LAST_USABLE_ROUTE", "这个公开模型仍启用或被 MAP、默认配置引用，尚无其他可用线路。请先接入并验证同一模型的替代线路；不要删除公开模型或取消画师、日光等业务配置。");
+            return new("OFFERING_LAST_USABLE_ROUTE", "这个公开模型仍启用或被 MAP、默认配置引用，尚无其他可用线路。请先接入并验证同一模型的替代线路，再停用或移除旧线路；不要删除公开模型或取消画师、日光等业务配置。");
         return null;
     }
 
