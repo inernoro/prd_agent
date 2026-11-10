@@ -102,11 +102,6 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         => !string.IsNullOrWhiteSpace(tenantId)
            && !string.Equals(tenantId, _internalTenantId, StringComparison.Ordinal);
 
-    private HttpClient CreateOutboundClient(string? tenantId)
-        => IsExternalTenant(tenantId)
-            ? _httpClientFactory.CreateClient("SafeOutbound")
-            : _httpClientFactory.CreateClient();
-
     /// <summary>
     /// 计算是否实际允许思考内容透传。
     /// Intent 模型类型强制禁止思考输出，其他类型尊重请求方的 IncludeThinking 设置。
@@ -533,8 +528,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
             var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
             var retryResolutions = admit is null ? GetProviderRetryResolutions(resolution, request) : new List<ModelResolutionResult> { resolution };
-            var httpClient = CreateOutboundClient(request.Context?.TenantId);
-            httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
+            using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId));
+            var httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
             HttpResponseMessage? response = null;
             var responseBody = string.Empty;
             var durationMs = 0L;
@@ -548,6 +543,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
             {
                 activeResolution = retryResolutions[attemptIndex];
+                httpClient = outboundClients.Get(activeResolution, request.TimeoutSeconds);
                 activeAdapter = GetAdapterForResolution(activeResolution);
                 if (activeAdapter == null)
                 {
@@ -874,8 +870,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var retryResolutions = admit is null
                 ? GetProviderRetryResolutions(resolution, request)
                 : new List<ModelResolutionResult> { resolution };
-            var httpClient = CreateOutboundClient(request.Context?.TenantId);
-            httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
+            using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId));
+            var httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
             HttpResponseMessage? rawResponse = null;
             IGatewayAdapter? adapter = null;
             string? terminalError = null;
@@ -886,6 +882,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
             {
                 resolution = retryResolutions[attemptIndex];
+                httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
                 gatewayResolution = resolution.ToGatewayResolution();
                 adapter = GetAdapterForResolution(resolution);
                 if (adapter == null)
@@ -1544,6 +1541,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             Protocol = resolution.Protocol ?? string.Empty,
             ApiUrl = resolution.ApiUrl,
             ApiKey = resolution.ApiKey,
+            UpstreamProxy = resolution.UpstreamProxy,
             ModelGroupId = resolution.ModelGroupId,
             ModelGroupName = resolution.ModelGroupName,
             ModelGroupCode = resolution.ModelGroupCode,
@@ -2770,8 +2768,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             logId = await StartRawLogAsync(request, gatewayResolution, endpoint, requestBodyForLog, startedAt, ct);
 
             // 6. 发送请求
-            var httpClient = CreateOutboundClient(request.Context?.TenantId);
-            httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
+            using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId));
+            var httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
             rawProviderAttempts = BuildProviderAttempts(resolution, gatewayTransport);
             var retryResolutions = GetProviderRetryResolutions(resolution, request);
 
@@ -2948,6 +2946,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
                     MarkLastSendAttemptReachedProvider(rawProviderAttempts);
+                    httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
                     response = await httpClient.SendAsync(nextBuild.HttpRequest,
                         RequiresBoundedRawRead(request, resolution)
                             ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, ct);
@@ -3060,8 +3059,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         if (submitRequestId != null)
                             queryRequest.Headers.TryAddWithoutValidation("X-Api-Request-Id", submitRequestId);
 
-                        var queryClient = CreateOutboundClient(request.Context?.TenantId);
-                        queryClient.Timeout = TimeSpan.FromSeconds(30);
+                        using var queryClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId));
+                        var queryClient = queryClients.Get(resolution, 30);
                         var queryStartedAt = DateTime.UtcNow;
                         HttpResponseMessage queryResp;
                         if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
@@ -3448,7 +3447,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 audioBytes,
                 resolution.ExchangeTransformerConfig,
                 ct,
-                requirePublicPinnedWebSocket: externalTenant);
+                requirePublicPinnedWebSocket: externalTenant,
+                upstreamProxy: resolution.UpstreamProxy);
 
             var endedAt = DateTime.UtcNow;
             var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;

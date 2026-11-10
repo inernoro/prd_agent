@@ -111,9 +111,9 @@ public partial class LlmGateway
                 return outcome;
             }
             _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
-            using var client = CreateOutboundClient(request.Context?.TenantId);
+            using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId));
+            var client = outboundClients.Get(resolved, 0);
             // 本次 deadline 管理完整请求；不使用 HttpClient 的默认 100 秒截断原生长流。
-            client.Timeout = Timeout.InfiniteTimeSpan;
             if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, deadline.Token);
             MarkLastSendAttemptReachedProvider(attempts);
             reachedProvider = true;

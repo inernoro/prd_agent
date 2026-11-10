@@ -37,6 +37,24 @@ class MapModelEgressTests(unittest.TestCase):
         future.write_text(source + '\nvar raw = clients.CreateClient("FuturePaidModel");\n')
         self.assertTrue(any("新增或变更" in failure for failure in GUARD.check(root, fixture_ledger)))
 
+    def test_proxy_transport_audits_allow_only_current_calls(self):
+        ledger = json.loads((ROOT / 'scripts/fixtures/map-model-egress-audit.json').read_text())
+        for path in [
+            'prd-api/src/LlmGateway.Transport/UpstreamProxy.cs',
+            'prd-api/src/PrdAgent.Infrastructure/LlmGateway/UpstreamProxyClientScope.cs',
+        ]:
+            with self.subTest(path=path):
+                source = (ROOT / path).read_text()
+                audit = ledger['files'][path]
+                self.assertEqual(audit['calls'], dict(GUARD.invocation_fingerprints(source)))
+                root, fixture_ledger = self.fixture(source, granted={
+                    'prd-api/src/PrdAgent.Api/FutureBusiness.cs': audit,
+                })
+                self.assertEqual([], GUARD.check(root, fixture_ledger))
+                future = root / 'prd-api/src/PrdAgent.Api/FutureBusiness.cs'
+                future.write_text(source + '\nvar unapproved = new HttpClient();\n')
+                self.assertTrue(any('新增或变更' in failure for failure in GUARD.check(root, fixture_ledger)))
+
     def fixture(self, source, *, granted=None, program=None, project=None, ci=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

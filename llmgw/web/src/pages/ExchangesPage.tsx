@@ -1,3 +1,5 @@
+import { ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
+import type { UpstreamProxyDraft, UpstreamProxyView } from '@/lib/types';
 // Exchange：把非 OpenAI/Claude 标准上游映射为 Gateway 可调度的虚拟平台。
 // tenantId 永远由服务端会话解析；密钥仅写入，不从 API 读回。
 //
@@ -49,6 +51,8 @@ import { CARD_ACTIONS, CARD_BODY, GAP, INSET_BLOCK, INSET_PADDING } from '@/lib/
 import { BODY_TEXT, FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE } from '@/lib/typography';
 
 type ExchangeFormState = {
+  proxy?: UpstreamProxyDraft;
+  storedProxy?: UpstreamProxyView | null;
   name: string;
   targetUrl: string;
   apiKey: string;
@@ -204,6 +208,8 @@ export function ExchangesPage() {
 
   function openEdit(item: ExchangeItem) {
     setForm({
+      proxy: proxyDraft(item.proxy),
+      storedProxy: item.proxy,
       name: item.name,
       targetUrl: item.targetUrl,
       apiKey: '',
@@ -278,6 +284,7 @@ export function ExchangesPage() {
         displayName: model.displayName?.trim() || null,
         description: model.description?.trim() || null,
       })),
+      proxy: form.proxy,
       targetUrl: form.targetUrl.trim(),
       targetAuthScheme: form.targetAuthScheme,
       transformerType: form.transformerType,
@@ -628,6 +635,7 @@ export function ExchangesPage() {
                   {/* 路由行：adapter 与目标地址此前都是同一种灰字，读起来像一句话而不是两个字段。
                       adapter 本来就是枚举值，改用 Chip；目标地址前加标签，方向感由箭头承担。 */}
                   <div style={{ ...INSET_BLOCK, ...rowStyle, marginTop: GAP.section }}>
+                    <ProxyBadge proxy={item.proxy} />
                     <Chip label={item.transformerType || 'passthrough'} color="var(--text-secondary)" bg="var(--bg-base)" />
                     <ArrowRight size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                     <code style={{ ...MONO_META, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.targetUrl}>{item.targetUrl || '未配置目标地址'}</code>
@@ -676,6 +684,8 @@ export function ExchangesPage() {
                       />
                     </span>
                   </div>
+
+                  {canWrite && item.authority === 'llm_gateway' ? <UpstreamNetworkTest kind="exchange" id={item.id} revision={item.updatedAt} /> : null}
 
                   {/* 模型行此前每条都套一个灰底块，两三条并排下来整张卡片就碎成一堆小方块。
                       改成无底色的行 + 细分隔线：灰底只留给上面那条「打到哪」的路由行，
@@ -826,6 +836,7 @@ function ExchangeForm({ mode, form, meta, busy, onChange, onUpdateModel, onSave,
           </label>
         ) : null}
       </FormGrid>
+      <ProxyFields value={form.proxy ?? { mode: 'inherit' }} onChange={proxy => onChange({ ...form, proxy })} stored={form.storedProxy} />
 
       <div style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.normal, marginTop: GAP.section }}>
         <div style={rowStyle}>

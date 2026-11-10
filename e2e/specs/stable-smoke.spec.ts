@@ -1,8 +1,11 @@
-import { devices, expect, test, type APIRequestContext, type APIResponse, type Page, type Response, type TestInfo } from '@playwright/test';
+import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
+import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
+import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
+import { devices, expect, test, type APIRequestContext, type APIResponse, type BrowserContext, type Locator, type Page, type Response, type TestInfo } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 import { sanitizeStableSmokeArtifactTree, sanitizeStableSmokeTestInfo } from '../utils/stableSmokeDiagnostics.mjs';
@@ -17,6 +20,28 @@ type BusinessCatalog = {
 };
 
 const specDir = dirname(fileURLToPath(import.meta.url));
+const webEvidenceHarnessUrl = pathToFileURL(resolve(specDir,
+  '../../.claude/skills/create-visual-test-to-kb/scripts/harness.mjs')).href;
+async function captureWebEvidence(page: Page, info: TestInfo, name: string, caption: string, target: Locator) {
+  const harness = await import(webEvidenceHarnessUrl);
+  const out = resolve(requiredEnv('STABLE_SMOKE_TEST_OUTPUT'), `web-evidence-${info.testId}-r${info.retry}`);
+  await harness.box(page, target, '1');
+  try {
+    const evidence = await harness.shot(page, out, name, caption, {
+      skipReady: true, module: 'web-hosting-sharing', primaryState: name, testType: '回归',
+      breadcrumb: info.title.includes('空文件夹')
+        ? '首页 → 网页托管 → 个人空间 → 本轮文件夹 → 拖拽归属'
+        : '首页 → 网页托管 → 本轮专用站点 → 分享与匿名提问',
+      environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), runId: requiredEnv('STABLE_SMOKE_RUN_ID'),
+      commit: requiredEnv('STABLE_SMOKE_COMMIT'), methodAnchor: 'method-web',
+    });
+    harness.writeManifest(out, { runId: requiredEnv('STABLE_SMOKE_RUN_ID'), commit: requiredEnv('STABLE_SMOKE_COMMIT') });
+    await info.attach(name, { path: evidence.path, contentType: 'image/png' });
+    expect(evidence.automatedStatus, '截图捕获异常不能被业务成功掩盖').toBe('通过');
+  } finally {
+    await harness.clearBoxes(page);
+  }
+}
 const catalog = JSON.parse(readFileSync(
   resolve(specDir, '../../.claude/skills/stable-smoke/reference/business-function-catalog.json'),
   'utf8',
@@ -159,26 +184,41 @@ async function setLegacyStorageFixture(page: Page, siteId: string, prepare: bool
 }
 
 async function expectAnonymousShareAnswer(
-  request: APIRequestContext,
+  page: Page,
   shareToken: string,
   siteId: string,
   marker: string,
   storagePath: 'current' | 'legacy',
+  testInfo: TestInfo,
 ) {
-  const ask = await request.post(`/api/web-pages/shares/view/${shareToken}/ask/stream`, {
-    headers: { Accept: 'text/event-stream' },
-    data: { siteId, question: '页面中的正文标记是什么？' },
-    timeout: 120_000,
-  });
+  await page.getByRole('button', { name: '向我提问', exact: true }).first().click();
+  await page.getByRole('textbox', { name: '就这一页提个问题', exact: true })
+    .fill('页面中的正文标记是什么？介绍的水果和颜色是什么？');
+  const response = page.waitForResponse(item => item.request().method() === 'POST'
+    && new URL(item.url()).pathname === `/api/web-pages/shares/view/${shareToken}/ask/stream`, { timeout: 120_000 });
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  const ask = await response;
   const stream = await ask.text();
+  await testInfo.attach(`web-ask-${storagePath}-stream`, { body: Buffer.from(stream), contentType: 'text/plain' });
+  expect(ask.request().headers().authorization, '公开分享访客提问不得借用所有者身份').toBeUndefined();
+  expect(ask.request().postDataJSON().siteId).toBe(siteId);
   expect(ask.status(), `${storagePath} storage: ${stream}`).toBe(200);
   expect(ask.headers()['content-type']).toContain('text/event-stream');
   expect(stream).toContain('event: phase');
   expect(stream).toContain('event: typing');
   expect(stream).toContain('event: done');
   expect(readSseTypingText(stream), `${storagePath} storage answer`).toContain(marker);
+  const answer = readSseTypingText(stream);
+  expect(answer).toContain('白桃');
+  expect(answer).toContain('浅粉');
   expect(stream).not.toContain('ASK_NO_CONTENT');
   expect(stream).not.toContain('event: error');
+  // 只认助手产物，不认问题输入或 iframe 正文中的同一个标记。
+  const assistant = page.locator('[id^="ask-msg-"]').filter({ hasText: marker }).last();
+  await expect(assistant).toContainText('白桃');
+  await expect(assistant).toContainText('浅粉');
+  await captureWebEvidence(page, testInfo, `web-ask-${storagePath}-answer`,
+    `匿名访客真实发送后，助手答案包含独有正文标记、白桃与浅粉色；不证明其他模块通过。`, assistant);
 }
 
 async function loginAndReadToken(page: Page, request: APIRequestContext, returnUrl = '/') {
@@ -1266,7 +1306,7 @@ type StableWebFolder = {
 async function uploadStableHostedSite(page: Page, token: string, title: string) {
   const marker = `${title}-正文标记`;
   // 用实体编码的 # 覆盖浏览器会解码、源码扫描器容易漏判的真实锚点形态。
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${title}</title></head><body><a id="jump" href="&#35;target">跳到验收锚点</a><div style="height:900px"></div><section id="target">${marker}</section></body></html>`;
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${title}</title></head><body><a id="jump" href="&#35;target">跳到验收锚点</a><div style="height:900px"></div><section id="target">${marker}。本页介绍白桃，颜色为浅粉色。</section></body></html>`;
   const response = await page.request.post('/api/web-pages/upload', {
     headers: authHeaders(token),
     multipart: {
@@ -1287,33 +1327,16 @@ async function deleteStableHostedSite(page: Page, token: string, siteId: string)
   expect((await page.request.get(`/api/web-pages/${siteId}`, { headers: authHeaders(token) })).status()).toBe(404);
 }
 
-function readSseTypingText(stream: string) {
-  return stream
-    .replaceAll('\r\n', '\n')
-    .split('\n\n')
-    .flatMap((frame) => {
-      const lines = frame.split('\n');
-      const eventType = lines.find((line) => line.startsWith('event:'))?.slice(6).trim();
-      if (eventType !== 'typing') return [];
-      const data = lines
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trim())
-        .join('\n');
-      try {
-        const payload = JSON.parse(data) as { text?: unknown };
-        return typeof payload.text === 'string' ? [payload.text] : [];
-      } catch {
-        return [];
-      }
-    })
-    .join('');
-}
 
 const stableSmokeApiTimeoutMs = 30_000;
 const stableSmokeCleanupTimeoutMs = 60_000;
 test.afterEach(({}, testInfo) => sanitizeStableSmokeTestInfo(testInfo));
 
 test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
+  test.use({ serviceWorkers: process.env.STABLE_SMOKE_RUN === '1' ? 'allow' : 'block' });
+  test.beforeEach(async ({ context }) => {
+    if (process.env.STABLE_SMOKE_RUN === '1') await context.addInitScript(blockStableSmokeServiceWorkerRegistration);
+  });
   test('[REG-stsmk-diagnostic-api-key-001] 真实签发响应与保留诊断不泄漏 API 凭据', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(180_000); // 包含真实登录、签发和撤销回读，不放宽脱敏断言。
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境只读检查诊断产物，不主动签发测试凭据');
@@ -1773,6 +1796,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let siteId = '';
     let shareId = '';
     let legacyFixturePrepared = false;
+    let guestContext: BrowserContext | undefined;
     try {
       const uploaded = await uploadStableHostedSite(page, token, runKey);
       siteId = uploaded.site.id;
@@ -1799,17 +1823,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       );
       shareId = share.id;
 
-      await page.goto(share.shareUrl, { waitUntil: 'domcontentloaded' });
-      await expect(page.locator('#root').getByText(runKey, { exact: true }).first()).toBeVisible();
-      await expect.poll(() => page.frames().some((frame) => frame.url().startsWith('about:srcdoc')), {
+      expect(new URL(share.shareUrl, page.url()).origin).toBe(new URL(page.url()).origin);
+      guestContext = await page.context().browser()!.newContext({ baseURL: testInfo.project.use.baseURL, serviceWorkers: 'allow' });
+      await guestContext.addInitScript(blockStableSmokeServiceWorkerRegistration);
+      const guest = await guestContext.newPage();
+      await guest.goto(share.shareUrl, { waitUntil: 'domcontentloaded' });
+      await expect(guest.locator('#root').getByText(runKey, { exact: true }).first()).toBeVisible();
+      await expect.poll(() => guest.frames().some((frame) => frame.url().startsWith('about:srcdoc')), {
         message: '分享页未进入 srcDoc 预览路径',
         timeout: 20_000,
       }).toBe(true);
-      const frame = page.frames().find((item) => item.url().startsWith('about:srcdoc'))!;
+      const frame = guest.frames().find((item) => item.url().startsWith('about:srcdoc'))!;
       const anchor = frame.locator('#jump');
       await expect(anchor).toHaveAttribute('href', 'about:srcdoc#target');
       const unexpectedNavigations: string[] = [];
-      page.on('request', (item) => {
+      guest.on('request', (item) => {
         if (item.isNavigationRequest() && !item.url().startsWith('about:srcdoc')) {
           unexpectedNavigations.push(item.url());
         }
@@ -1818,16 +1846,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect.poll(() => frame.url()).toBe('about:srcdoc#target');
       await expect(frame.locator('#target')).toBeInViewport();
       expect(unexpectedNavigations, '片段点击不应向对象存储目录发起导航').toEqual([]);
-      await testInfo.attach('web-share-srcdoc-anchor', { body: await page.screenshot(), contentType: 'image/png' });
+      await testInfo.attach('web-share-srcdoc-anchor', { body: await guest.screenshot(), contentType: 'image/png' });
 
-      await expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'current');
+      await expectAnonymousShareAnswer(guest, share.token, siteId, uploaded.marker, 'current', testInfo);
 
       if (environment === 'cds') {
         legacyFixturePrepared = true;
         await setLegacyStorageFixture(page, siteId, true);
-        await expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'legacy');
+        await guest.reload({ waitUntil: 'domcontentloaded' });
+        await expectAnonymousShareAnswer(guest, share.token, siteId, uploaded.marker, 'legacy', testInfo);
       }
     } finally {
+      await guestContext?.close();
       if (siteId && legacyFixturePrepared) {
         await setLegacyStorageFixture(page, siteId, false);
       }
@@ -1841,10 +1871,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-003][REG-auth-identity-permissions-001] 巡检身份持有矩阵所需的全部管理权限', async ({ page, request }) => {
+  test('[CORE-003][REG-auth-identity-permissions-001] 巡检身份持有矩阵所需的全部管理权限', async ({ page, request }, testInfo) => {
     // 2026-09-14：自动开号只给了 Agent 体验者角色，录音、文件、短视频、会话权限四个模块三十余项
     // 在业务动作之前就被权限中间件挡成「无权限」。这里先把外因说清楚，后面的旅程才有资格失败。
+    await page.route('**/api/submissions/public**', route => route.abort('blockedbyclient'));
     const token = await loginAndReadToken(page, request, '/');
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-IDENTITY-PROFILE-02',
+      target: page.locator('aside').first(),
+      caption: '既有身份检查的真实应用侧栏；仅核销本次明确配置的有限证据位，不代替其它模块验收。',
+    });
     const me = await readEnvelope<{
       username: string;
       systemRoleKey?: string | null;
@@ -2541,7 +2577,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[LIT-009] 移动端可输入标题、创建作品并进入编辑页', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
-    const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL, serviceWorkers: 'allow' });
+    await context.addInitScript(blockStableSmokeServiceWorkerRegistration);
     const page = await context.newPage();
     const token = await loginAndReadToken(page, request, '/literary-agent');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID').slice(-30)}-移动文学`;
@@ -4041,7 +4078,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[VIS-009][REG-visual-policy-001] 真实触控手机使用业务默认及授权尺寸', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
-    const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL, serviceWorkers: 'allow' });
+    await context.addInitScript(blockStableSmokeServiceWorkerRegistration);
     const page = await context.newPage();
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'mobile-business-policy');

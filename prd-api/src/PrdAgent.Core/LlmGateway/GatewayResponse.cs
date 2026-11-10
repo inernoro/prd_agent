@@ -149,6 +149,9 @@ public class GatewayResponse
 /// </summary>
 public class GatewayModelResolution
 {
+    [JsonIgnore]
+    public global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy? UpstreamProxy { get; init; }
+
     /// <summary>调用方选择的逻辑模型 ID。</summary>
     public string? LogicalModelId { get; init; }
 
