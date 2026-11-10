@@ -417,6 +417,7 @@ export async function startHarness(options: { apiKey?: string; overrides?: Desig
     presentationSkillSourceDir: createPresentationSkillSource(root),
     designSystemsDir: path.join(FIXTURES, 'design-systems'),
     odPort: 0,
+    odStartTimeoutSeconds: 180,
     odCommand: [],
     odCwd: root,
     engineHome: root,
