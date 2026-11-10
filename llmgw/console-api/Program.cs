@@ -7697,26 +7697,16 @@ app.MapPut("/gw/logical-models/{id}/enabled", async (HttpContext http, string id
         Array.Empty<BsonDocument>())), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
-// 移除单条来源线路，不删除公开模型或 MAP 业务名称。跨集合引用检查仍非事务，运维迁移须串行执行。
-app.MapDelete("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpContext http, string logicalId, string offeringId) =>
+async Task<(bool HasAlternative, bool ReferencedByMap)> CheckOfferingAlternativesAsync(
+    HttpContext http, BsonDocument logical, string offeringId)
 {
     var fb = Builders<BsonDocument>.Filter;
     var tenantId = TenantAccess.GetRequired(http).TenantId;
-    var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, fb.Eq("_id", logicalId))).FirstOrDefaultAsync();
-    var offering = await gwModelOfferings.Find(TenantAccess.Filter(http,
-        fb.And(fb.Eq("_id", offeringId), fb.Eq("LogicalModelId", logicalId)))).FirstOrDefaultAsync();
-    if (logical is null || offering is null)
-        return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "公开模型或线路不存在，请刷新列表"), jsonOptions, 404);
+    var logicalId = logical.GetStringOrEmpty("_id");
     var publicId = logical.GetStringOrEmpty("PublicId");
     var referencedByMap = tenantId == internalTenantId && publicId.Length > 0
         && (await mapAppSettings.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildVisualPolicyFilter(publicId)) > 0
             || await mapAgentApiKeys.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildAgentApiKeyReferenceFilter(publicId)) > 0);
-    var inFlightVideo = OfferingReferencePolicy.BuildInFlightVideoRunFilter([offeringId]);
-    var liveDirectVideo = OfferingReferencePolicy.BuildLiveDirectVideoJobFilter([offeringId], DateTime.UtcNow);
-    var hasInFlightJobs = await videoGenRuns.CountDocumentsAsync(inFlightVideo!) > 0
-        || await directVideoJobOwnerships.CountDocumentsAsync(liveDirectVideo!) > 0
-        || tenantId == internalTenantId && publicId.Length > 0
-            && await mapImageGenRuns.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildInFlightImageRunFilter(publicId)) > 0;
     var siblings = await gwModelOfferings.Find(TenantAccess.Filter(http, fb.Eq("LogicalModelId", logicalId))).ToListAsync();
     var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
     var platformDocs = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
@@ -7729,9 +7719,29 @@ app.MapDelete("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (Ht
         var platform = platformDocs.FirstOrDefault(x => x.GetStringOrEmpty("_id") == target?.AsNullableString("PlatformId"));
         return ValidateAsrOfferingContract(logical, route, target, platform) is null;
     }).ToList();
+    return (OfferingRemovalPolicy.HasUsableAlternative(offeringId, validSiblings, modelDocs, platformDocs, exchangeDocs), referencedByMap);
+}
+
+// 移除单条来源线路，不删除公开模型或 MAP 业务名称。跨集合引用检查仍非事务，运维迁移须串行执行。
+app.MapDelete("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpContext http, string logicalId, string offeringId) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, fb.Eq("_id", logicalId))).FirstOrDefaultAsync();
+    var offering = await gwModelOfferings.Find(TenantAccess.Filter(http,
+        fb.And(fb.Eq("_id", offeringId), fb.Eq("LogicalModelId", logicalId)))).FirstOrDefaultAsync();
+    if (logical is null || offering is null)
+        return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "公开模型或线路不存在，请刷新列表"), jsonOptions, 404);
+    var publicId = logical.GetStringOrEmpty("PublicId");
+    var inFlightVideo = OfferingReferencePolicy.BuildInFlightVideoRunFilter([offeringId]);
+    var liveDirectVideo = OfferingReferencePolicy.BuildLiveDirectVideoJobFilter([offeringId], DateTime.UtcNow);
+    var hasInFlightJobs = await videoGenRuns.CountDocumentsAsync(inFlightVideo!) > 0
+        || await directVideoJobOwnerships.CountDocumentsAsync(liveDirectVideo!) > 0
+        || tenantId == internalTenantId && publicId.Length > 0
+            && await mapImageGenRuns.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildInFlightImageRunFilter(publicId)) > 0;
+    var alternatives = await CheckOfferingAlternativesAsync(http, logical, offeringId);
     var rejection = OfferingRemovalPolicy.Evaluate(logical, offering,
-        OfferingRemovalPolicy.HasUsableAlternative(offeringId, validSiblings, modelDocs, platformDocs, exchangeDocs),
-        referencedByMap, hasInFlightJobs);
+        alternatives.HasAlternative, alternatives.ReferencedByMap, hasInFlightJobs);
     if (rejection is { } blocked)
         return Json(ApiEnvelope<object>.Fail(blocked.Code, blocked.Message), jsonOptions, 409);
 
@@ -7807,6 +7817,15 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}/enabled", asyn
             return Json(ApiEnvelope<ModelOfferingItem>.Fail(
                 AsrOfferingContractPolicy.ErrorCode,
                 contractError), jsonOptions, 409);
+    }
+    if (!enabled && existing.AsNullableBool("Enabled") != false)
+    {
+        // 先保护再停用；停用是 drain，不因已在途任务而阻止。删除仍单独等待任务结束。
+        var alternatives = await CheckOfferingAlternativesAsync(http, logical, offeringId);
+        var disableRejection = OfferingRemovalPolicy.EvaluateDeactivation(logical,
+            alternatives.HasAlternative, alternatives.ReferencedByMap);
+        if (disableRejection is { } blocked)
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(blocked.Code, blocked.Message), jsonOptions, 409);
     }
     var updated = await gwModelOfferings.FindOneAndUpdateAsync(filter,
         Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow),

@@ -49,6 +49,44 @@ public sealed class OfferingRemovalPolicyTests
         => Assert.Equal("OFFERING_HAS_INFLIGHT_JOBS", OfferingRemovalPolicy.Evaluate(Logical(), Offering(), true, false, true)?.Code);
 
     [Theory]
+    [InlineData(true, false, false, false)]
+    [InlineData(false, false, true, false)]
+    [InlineData(false, false, false, true)]
+    [InlineData(true, true, true, true)]
+    public void DeactivationProtectsBusinessRouteBeforeItStops(bool enabled, bool alternative, bool referenced, bool allowed)
+    {
+        var decision = OfferingRemovalPolicy.EvaluateDeactivation(Logical(enabled), alternative, referenced);
+        Assert.Equal(allowed, decision is null);
+        if (!allowed) Assert.Equal("OFFERING_LAST_USABLE_ROUTE", decision?.Code);
+    }
+
+    [Fact]
+    public void DeactivationDrainsInFlightJobsWhileDeletionWaitsForCompletion()
+    {
+        Assert.Null(OfferingRemovalPolicy.EvaluateDeactivation(Logical(), true, true));
+        Assert.Equal("OFFERING_HAS_INFLIGHT_JOBS", OfferingRemovalPolicy.Evaluate(Logical(), Offering(), true, true, true)?.Code);
+    }
+
+    [Fact]
+    public void DisableEndpointUsesSharedGuardBeforeWritingAndDoesNotBlockDrain()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, "llmgw"))) directory = directory.Parent;
+        Assert.NotNull(directory);
+        var program = File.ReadAllText(Path.Combine(directory!.FullName, "llmgw", "console-api", "Program.cs"));
+        var start = program.IndexOf("app.MapPut(\"/gw/logical-models/{logicalId}/offerings/{offeringId}/enabled\"", StringComparison.Ordinal);
+        var end = program.IndexOf("// 字段级参数能力元数据", start, StringComparison.Ordinal);
+        var endpoint = program[start..end];
+        Assert.Contains("if (!enabled && existing.AsNullableBool(\"Enabled\") != false)", endpoint);
+        Assert.Contains("CheckOfferingAlternativesAsync(http, logical, offeringId)", endpoint);
+        Assert.Contains("OfferingRemovalPolicy.EvaluateDeactivation", endpoint);
+        Assert.True(endpoint.IndexOf("OfferingRemovalPolicy.EvaluateDeactivation", StringComparison.Ordinal)
+            < endpoint.IndexOf("var updated = await gwModelOfferings.FindOneAndUpdateAsync", StringComparison.Ordinal));
+        Assert.DoesNotContain("hasInFlightJobs", endpoint);
+        Assert.DoesNotContain("BuildInFlightVideoRunFilter", endpoint);
+    }
+
+    [Theory]
     [InlineData(true, true, true, 0, true)]
     [InlineData(true, true, true, 1, true)]
     [InlineData(true, true, true, 2, false)]
