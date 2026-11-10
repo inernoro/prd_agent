@@ -1246,6 +1246,8 @@ export class UptimeMonitorService {
        */
       onAlarmSuppressed?: (data: { targetId: string; targetName: string; projectId: string; reason: string; at: number }) => void;
       onAlert?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void;
+      /** 状态事实与通知抑制独立：未投递过故障的稳定恢复也须关闭原报告。 */
+      onReportEvent?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void;
     },
   ) {
     this.load();
@@ -1896,6 +1898,11 @@ export class UptimeMonitorService {
       });
       if (decision.emit) this.emitAlert(decision.emit === 'down' ? 'uptime.target.down' : 'uptime.target.recovered', target, record, sample.t,
         decision.emit === 'down' ? cause : '指标连续稳定 10 分钟');
+      else if (decision.reason === 'no-delivered-down' || (next.transition === 'to-down' && decision.reason === 'cooldown-30m')) {
+        this.emitAlert(decision.reason === 'no-delivered-down' ? 'uptime.target.recovered' : 'uptime.target.down', target, record, sample.t,
+          decision.reason === 'no-delivered-down' ? '检查连续稳定 10 分钟，未发送恢复通知' : cause, false);
+        if (next.transition) this.deps.onAlarmSuppressed?.({ targetId: target.id, targetName: target.name, projectId: target.projectId, reason: decision.reason, at: sample.t });
+      }
       else if (next.transition && decision.reason) this.deps.onAlarmSuppressed?.({ targetId: target.id, targetName: target.name,
         projectId: target.projectId, reason: decision.reason, at: sample.t });
     } else if (next.transition && !record.excluded) {
@@ -1926,8 +1933,10 @@ export class UptimeMonitorService {
     record: UptimeTargetRecord,
     at: number,
     message: string,
+    notify = true,
   ): void {
-    if (!this.deps.onAlert) return;
+    const callback = notify ? this.deps.onAlert || this.deps.onReportEvent : this.deps.onReportEvent;
+    if (!callback) return;
     try {
       const incident = [...record.incidents].reverse().find(i => type === 'uptime.target.down' ? i.endedAt === null : i.endedAt !== null);
       if (incident && record.lastSample && record.lastSample.t === at) {
@@ -1937,7 +1946,7 @@ export class UptimeMonitorService {
       const facet = this.environmentFacet(record, this.previewBranchLookup());
       const urgent = type === 'uptime.target.down' && facet.environment === 'production'
         && facet.observeMode === 'active' && !target.collection && target.monitor?.kind !== 'health-json';
-      this.deps.onAlert(type, {
+      callback(type, {
         targetId: target.id,
         ...(incident ? { incidentId: incident.id } : {}),
         urgency: urgent ? 'urgent' : 'normal',
