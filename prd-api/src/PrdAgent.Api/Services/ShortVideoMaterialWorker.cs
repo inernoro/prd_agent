@@ -373,7 +373,7 @@ public sealed class ShortVideoMaterialProcessor
         string runId,
         DateTime now)
     {
-        var fileName = BuildVideoFileName(title);
+        var fileName = BuildVideoFileName(title, video.MimeType);
         var attachment = new Attachment
         {
             UploaderId = userId,
@@ -540,13 +540,24 @@ public sealed class ShortVideoMaterialProcessor
         }
     }
 
-    private static string BuildVideoFileName(string title)
+    internal static string BuildVideoFileName(string title, string? mimeType)
     {
         var safe = Regex.Replace(title.Trim(), @"[\\/:*?""<>|\r\n]+", " ");
         safe = Regex.Replace(safe, @"\s+", " ").Trim();
         if (string.IsNullOrWhiteSpace(safe)) safe = "短视频素材";
         if (safe.Length > 60) safe = safe[..60].Trim();
-        return $"{safe}.mp4";
+        var extension = (mimeType ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "video/mp4" => "mp4",
+            "video/x-m4v" => "m4v",
+            "video/quicktime" => "mov",
+            "video/webm" => "webm",
+            "video/x-matroska" => "mkv",
+            "video/x-msvideo" => "avi",
+            _ => throw new InvalidOperationException(
+                $"下载的视频格式不受支持（{mimeType ?? "未知"}），请改用 MP4、MOV、WebM、MKV 或 AVI 文件"),
+        };
+        return $"{safe}.{extension}";
     }
 
     private static string BuildVideoIndex(string title, string originalUrl, string platform, ParsedShortVideoSource parsed)
@@ -703,6 +714,17 @@ public sealed class ShortVideoMaterialProcessor
            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
            && !string.IsNullOrWhiteSpace(uri.Host);
 
+    public static bool IsDirectVideoUrl(string? value)
+    {
+        if (!Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || string.IsNullOrWhiteSpace(uri.Host))
+            return false;
+
+        return Path.GetExtension(uri.AbsolutePath).ToLowerInvariant() is
+            ".mp4" or ".m4v" or ".mov" or ".webm" or ".mkv" or ".avi";
+    }
+
     public static string DetectPlatform(string url)
     {
         var lower = url.ToLowerInvariant();
@@ -719,6 +741,22 @@ public sealed class ShortVideoMaterialProcessor
     {
         var trimmedManual = manualText?.Trim();
         var hasManualText = !string.IsNullOrWhiteSpace(trimmedManual);
+        if (Uri.TryCreate(videoUrl.Trim(), UriKind.Absolute, out var directUri)
+            && string.Equals(Path.GetExtension(directUri.AbsolutePath), ".ogv", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("当前下载与转写流水线不支持 OGV 直链，请先转换为 MP4、MOV、WebM、MKV 或 AVI");
+        if (IsDirectVideoUrl(videoUrl))
+        {
+            return new ParsedShortVideoSource(
+                CleanTitle(requestedTitle),
+                trimmedManual,
+                hasManualText ? "manual" : "direct-video",
+                hasManualText
+                    ? "已识别到直接视频文件，并使用用户提供的文字作为后续加工来源"
+                    : "已识别到直接视频文件；默认先保存原始视频，再从视频执行真实转写",
+                null,
+                videoUrl,
+                null);
+        }
         var apiKey = ResolveTikHubApiKey();
         if (string.IsNullOrWhiteSpace(apiKey))
         {
