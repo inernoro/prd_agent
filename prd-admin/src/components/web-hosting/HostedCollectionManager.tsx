@@ -33,7 +33,7 @@ export function HostedCollectionLibrary({ onClose }: { onClose: () => void }) {
     return () => { alive = false; };
   }, [keyword, page, selected]);
   if (selected) return <HostedCollectionEditor collectionId={selected === 'new' ? undefined : selected} onClose={() => setSelected(null)} />;
-  return <Dialog open onOpenChange={open => { if (!open) onClose(); }} title="我的合集" description="管理长期资料组织。停止分享和解散合集都不会删除原文档。" maxWidth={800} zIndex={800}
+  return <Dialog open onOpenChange={open => { if (!open) onClose(); }} title="我的合集" description="管理合集，保留原文档与独立分享。" maxWidth={800} zIndex={800}
     content={<div className="collection-manager" style={{ maxHeight: '65dvh', overflowY: 'auto', minHeight: 0 }}>
       <div className="collection-search"><Search size={16} /><input aria-label="搜索合集" placeholder="搜索合集名称" value={keyword} onChange={e => { setKeyword(e.target.value); setPage(1); }} /></div>
       {loading ? <MapSpinner size={22} /> : items.length ? items.map(item => <button key={item.id} className="collection-library-row" onClick={() => setSelected(item.id)}><span><strong>{item.title}</strong><small>{item.siteIds.length} 份文档 · 可管理名称、成员、主文档和分享</small></span><ExternalLink size={16} /></button>) : <p>还没有可管理合集。可新建合集，或从旧合集分享页选择“管理合集”导入。</p>}
@@ -116,7 +116,7 @@ export function HostedCollectionEditor({ collectionId, shareToken, initialSites 
   };
   if (sharing && collection) return <CollectionShareForm collection={collection} onClose={() => { setSharing(false); void reload(); }} />;
   return <><Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }} title={legacy ? '将旧分享设为可管理合集' : collection ? '管理合集' : '创建合集'} maxWidth={850} zIndex={850}
-    description="合集负责组织内容，分享链接独立授权。主文档置顶，其余成员按保存顺序展示。"
+    description="组织文档、指定主文档与管理分享。"
     content={<div className="collection-manager" style={{ maxHeight: '65dvh', overflowY: 'auto', minHeight: 0 }}>
       {loading ? <MapSpinner size={22} /> : pending ? <div className="collection-confirm"><h3>{pending === 'dissolve' ? '解散这个合集？' : '停止分享？'}</h3><p>{pending === 'dissolve' ? '合集的全部分享入口将失效。原文档及其独立分享保留，已有手动关联组不会被解除。' : pending === 'stop' ? '本合集当前全部分享入口将失效，合集和原文档保留。以后可重新生成新链接。' : '仅停止这一条链接，其他分享和原文档保留。'}</p><p>已下载或缓存的副本无法收回。</p></div> : <>
         {legacy && <p className="collection-notice">旧链接和原授权范围保留。先确认名称与主文档完成导入，再调整成员；不会自动合并已有的关联组。</p>}
@@ -147,7 +147,7 @@ export function HostedCollectionEditor({ collectionId, shareToken, initialSites 
       {error && <div className="collection-error" role="alert">{error}<Button disabled={busy} onClick={() => void reload()}>刷新实际状态</Button></div>}
     </div>}
     actions={pending ? <><Button disabled={busy} onClick={() => setPending(null)}>取消</Button><Button variant="danger" disabled={busy} onClick={() => void execute()}>{busy && <MapSpinner size={13} />}{pending === 'dissolve' ? '确认解散合集' : '确认停止分享'}</Button></>
-      : <><Button disabled={busy} onClick={onClose}>关闭</Button>{collection && <Button disabled={busy || dirty} onClick={() => setSharing(true)}>生成分享链接</Button>}<Button variant="primary" disabled={busy || loading || !title.trim() || !main || !members.length} onClick={() => void save()}>{busy && <MapSpinner size={13} />}{legacy ? '确认导入' : '保存合集'}</Button></>} />
+      : <><Button disabled={busy} onClick={onClose}>关闭</Button>{collection && <Button disabled={busy || dirty} onClick={() => setSharing(true)}>生成分享链接</Button>}<Button variant="primary" disabled={busy || loading || !title.trim() || !main || !members.length || (!!collection && !dirty)} onClick={() => void save()}>{busy && <MapSpinner size={13} />}{legacy ? '确认导入' : '保存合集'}</Button></>} />
     {permissions && collection && <RelatedPermissionsDialog siteId={collection.mainSiteId} collectionId={collection.id} onClose={() => setPermissions(false)} />}
   </>;
 }
@@ -179,7 +179,7 @@ function CollectionShareForm({ collection, onClose }: { collection: HostedCollec
     catch { setError('未能复制，请选择下方链接手动复制'); }
   };
   return <><Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }} title={`分享合集 · ${collection.title}`} maxWidth={720} zIndex={900}
-    description="核对成员和访问范围后再生成链接。不会自动修改原文档页面权限。"
+    description="核对成员和访问范围，再生成分享。"
     content={<div className="collection-manager" style={{ maxHeight: '65dvh', overflowY: 'auto', minHeight: 0 }}>
       {result ? <><p className="collection-notice" role="status">分享已生成，包含已确认的成员快照。</p><a className="collection-generated-link" href={result.shareUrl} target="_blank" rel="noopener noreferrer">{window.location.origin}{result.shareUrl}<ExternalLink size={15} /></a>{result.password && <p>访问密码：<code>{result.password}</code></p>}</>
         : <>{preview ? <><p>{preview.notice}</p><div className="collection-preflight-list">{preview.items.map(item => <div key={item.id}><span>{item.isMain && <Star size={13} />}{item.title}</span><small>{item.visibility === 'public' ? '页面公开' : '页面受限'} · {item.teamCount} 个共享团队</small></div>)}</div>
