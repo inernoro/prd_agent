@@ -1,3 +1,4 @@
+import { CodeReviewUserKeys, type ReviewUserKeyInput } from './code-review-user-keys.js';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { StateService } from './state.js';
 import type { CodeReviewTask, CodeReviewEngineBinding } from '../shared/code-review.js';
@@ -51,10 +52,13 @@ export interface CodeReviewDeps {
   cdsSnapshot?: (input: { projectId: string; branchId: string; branchName: string; excludePatterns: string[]; signal: AbortSignal }) => Promise<{
     zip: Buffer; commitSha: string; sourceName: string; skippedFiles: number;
   }>;
+  userKeys?: CodeReviewUserKeys;
   autoStart?: boolean;
   resolveEngine?: (origin?: CodeReviewEngineBinding) => (Pick<CodeReviewEngine, 'run'> & Partial<Pick<CodeReviewEngine, 'readExisting'>>) | undefined;
 }
 export interface SubmitCodeReview {
+  userKey?: ReviewUserKeyInput;
+  credentialOwner?: string;
   projectId: string;
   sourceType: 'github' | 'zip' | 'cds';
   branchId?: string;
@@ -100,7 +104,7 @@ export class CodeReviewService {
     }
   }
   capabilities() {
-    return { engineConfigured: Boolean(this.engine()), mailConfigured: this.deps.mail.configured(), storageConfigured: this.deps.inputs.configured(), conditionalRetry: true,
+    return { userKeyBindingVersion: 1, userKeyConfigured: Boolean(this.deps.userKeys?.configured()), engineConfigured: Boolean(this.engine()), mailConfigured: this.deps.mail.configured(), storageConfigured: this.deps.inputs.configured(), conditionalRetry: true,
       tools: CDS_AGENT_CAPABILITY_DEFINITIONS.find((capability) => capability.id === 'code-reviews')?.mcpTools || [] };
   }
   list(projectId?: string) { return this.deps.state.listCodeReviewTasks(projectId); }
@@ -148,6 +152,15 @@ export class CodeReviewService {
             const key = await this.deps.inputs.put(`${id}-existing-result-v1`, task.projectId, Buffer.from(JSON.stringify(saved)));
             const current = this.get(id);
             if (current.engineTaskId === engineTaskId && terminal.has(current.status) && !current.resultKey && !controller.signal.aborted && !this.stopped) {
+              // Cancellation can arrive before the last in-flight files finish. Read-only
+              // recovery must report the native checkpoint counts, while preserving status.
+              if (Number.isSafeInteger(upstream.totalFiles) && upstream.totalFiles >= 0
+                && Number.isSafeInteger(upstream.scannedFiles) && upstream.scannedFiles >= 0
+                && upstream.scannedFiles <= upstream.totalFiles
+                && (current.progress.totalFiles === 0 || upstream.totalFiles === current.progress.totalFiles)
+                && upstream.scannedFiles >= current.progress.scannedFiles) {
+                current.progress = { totalFiles: upstream.totalFiles, scannedFiles: upstream.scannedFiles };
+              }
               current.resultKey = key;
               current.findingsSummary = {};
               for (const finding of saved.findings) current.findingsSummary[finding.severity] = (current.findingsSummary[finding.severity] || 0) + 1;
@@ -197,6 +210,7 @@ export class CodeReviewService {
     if (task.ownerScope !== this.deps.ownerScope) throw new CodeReviewError(409, '请在创建该任务的 CDS 实例操作');
   }
   async submit(input: SubmitCodeReview): Promise<CodeReviewTask> {
+    if (input.userKey && (typeof input.userKey !== 'object' || typeof input.userKey.apiKey !== 'string' || !input.userKey.apiKey || typeof input.userKey.model !== 'string')) throw new CodeReviewError(400, '用户 Key 配置无效');
     let release!: () => void;
     const previous = this.submissions;
     this.submissions = new Promise<void>((resolve) => { release = resolve; });
@@ -223,6 +237,7 @@ export class CodeReviewService {
     } else if (input.sourceType !== 'zip' || !input.zip?.length) throw new CodeReviewError(400, '请上传 ZIP 源码包');
     const idempotencyKey = createHash('sha256').update(JSON.stringify({ projectId: input.projectId, sourceType: input.sourceType,
       githubUrl: input.githubUrl, ref: input.ref, branchId: input.branchId, hash: input.zip ? createHash('sha256').update(input.zip).digest('hex') : undefined,
+      credential: input.userKey ? [input.credentialOwner, input.userKey.provider, input.userKey.model, input.userKey.tokenLimit, createHash('sha256').update(input.userKey.apiKey).digest('hex')] : null,
       exclude: input.excludePatterns || [], email: input.email || '', key: input.idempotencyKey || '' })).digest('hex');
     // Without an explicit key, only deduplicate in-flight work; finished reviews can be requested again.
     const existing = this.list(input.projectId).find((t) => t.idempotencyKey === idempotencyKey && t.ownerScope === this.deps.ownerScope
@@ -242,7 +257,24 @@ export class CodeReviewService {
       task.inputSkippedFiles = validated.skippedFiles;
       task.inputKey = await this.deps.inputs.put(task.id, task.projectId, validated.zip);
     }
+    const bindingEvidence: Array<Record<string, unknown>> = [];
+    if (input.userKey) {
+      if (!this.deps.userKeys?.configured() || !input.credentialOwner) throw new CodeReviewError(503, '用户 Key 通道或身份未配置');
+      try { task.userKeyBinding = await this.deps.userKeys.bind(input.userKey, { owner: input.credentialOwner, projectId: task.projectId, taskId: task.id }, async e => { bindingEvidence.push({ ...e }); }); }
+      catch {
+        task.status = 'failed'; task.phase = '用户 Key 绑定失败';
+        task.error = '凭据绑定未完成，请重新提交并填写用户 Key；未使用平台凭据';
+        task.modelCredential = { source: 'user', provider: input.userKey.provider, model: input.userKey.model,
+          fingerprint: '未绑定', tokenLimit: input.userKey.tokenLimit ?? 200000 };
+        await this.save(task);
+        for (const event of bindingEvidence) await this.audit(task.id, event);
+        throw new CodeReviewError(502, `用户 Key 绑定失败，证据已保存在审查任务 ${task.id}；未使用平台凭据`);
+      }
+      const binding = task.userKeyBinding;
+      task.modelCredential = { source: 'user', provider: binding.provider, model: binding.model, fingerprint: binding.fingerprint, tokenLimit: binding.tokenLimit };
+    }
     await this.save(task);
+    for (const event of bindingEvidence) await this.audit(task.id, event);
     if (this.deps.autoStart !== false) void this.pump();
     return task;
   }
@@ -281,6 +313,7 @@ export class CodeReviewService {
   }
   async retry(id: string, expectedUpdatedAt?: string) {
     const task = this.get(id); this.assertOwned(task);
+    if (task.modelCredential?.source === 'user' && !task.userKeyBinding) throw new CodeReviewError(409, '用户 Key 绑定未完成，请重新提交并填写 Key');
     if (expectedUpdatedAt !== undefined && (task.status !== 'failed' || task.updatedAt !== expectedUpdatedAt)) {
       throw new CodeReviewError(409, '任务状态已变化，未执行条件重试，请刷新后查看');
     }
@@ -432,7 +465,10 @@ export class CodeReviewService {
       const zip = await this.deps.inputs.get(task.inputKey!);
       const selectedFiles = task.progress.totalFiles;
       let lastCounts = [-1, -1, -1, -1, -1], lastEngineTaskId: string | undefined;
-      const result = await engine.run({ taskId: id, zip, signal: controller.signal, excludePatterns: task.excludePatterns,
+      if (task.modelCredential?.source === 'user' && !task.userKeyBinding) throw new CodeReviewError(503, '用户 Key 绑定缺失；未使用平台凭据');
+      const userKeyConfig = task.userKeyBinding ? await this.deps.userKeys?.engineConfig(task.userKeyBinding, task.projectId, async e => this.audit(id, e)) : undefined;
+      if (task.userKeyBinding && !userKeyConfig) throw new CodeReviewError(503, '用户 Key 绑定不可用；未使用平台凭据');
+      const result = await engine.run({ userKeyConfig, taskId: id, zip, signal: controller.signal, excludePatterns: task.excludePatterns,
         engineTaskId: task.engineTaskId, retryFailed: task.engineRetryRequested,
         onProgress: async (p) => {
           const current = this.get(id); this.checkActive(current, controller.signal);

@@ -1,5 +1,8 @@
+import type { ReviewUserKeyInput } from '../../../src/shared/code-review-user-key';
 import { ApiError, apiRequest, apiUrl } from './api';
 import type { CodeReviewResultPage } from '../../../src/shared/code-review-result';
+import type { ReviewListSource, ReviewListStatus } from '../../../src/shared/code-review-list';
+export type { ReviewListSource, ReviewListStatus } from '../../../src/shared/code-review-list';
 export { REVIEW_CATEGORIES, REVIEW_SEVERITIES, REVIEW_SEVERITY_LABELS } from '../../../src/shared/code-review-result';
 export type { CodeReviewFinding, CodeReviewResultPage } from '../../../src/shared/code-review-result';
 
@@ -20,6 +23,7 @@ export interface CodeReviewTask {
   sourceHash?: string;
   inputSkippedFiles?: number;
   engineCompleted?: boolean;
+  engineTaskId?: string;
   status: CodeReviewStatus;
   phase: string;
   progress: { totalFiles: number; scannedFiles: number };
@@ -32,10 +36,12 @@ export interface CodeReviewTask {
     email?: string;
     error?: string;
   };
+  modelCredential?: { source: 'user'; provider: string; model: string; fingerprint: string; tokenLimit: number };
   findingsSummary?: Record<string, number>;
 }
 
 export interface CodeReviewSubmission {
+  userKey?: ReviewUserKeyInput;
   projectId: string;
   sourceType: 'zip' | 'github' | 'cds';
   branchId?: string;
@@ -65,6 +71,25 @@ export async function listCodeReviews(projectId: string, signal?: AbortSignal): 
   const query = projectId ? `?${new URLSearchParams({ projectId })}` : '';
   const response = await apiRequest<{ tasks: CodeReviewTask[] }>(`/api/code-reviews${query}`, { signal });
   return response.tasks;
+}
+
+export interface CodeReviewTaskPage {
+  tasks: CodeReviewTask[]; snapshotAt: string; newCount: number; historyCount: number;
+  totals: Record<ReviewListSource, number>;
+  page: { offset: number; limit: number; total: number; nextOffset: number | null };
+}
+export function listCodeReviewPage(options: { projectId: string; source: ReviewListSource; status: ReviewListStatus; query: string; page: number; history: boolean; snapshotAt?: string }, signal?: AbortSignal): Promise<CodeReviewTaskPage> {
+  const query = new URLSearchParams({ limit: '10', offset: String(options.page * 10), source: options.source, status: options.status, q: options.query, history: options.history ? '1' : '0' });
+  if (options.projectId) query.set('projectId', options.projectId);
+  if (options.snapshotAt) query.set('snapshotAt', options.snapshotAt);
+  return apiRequest<CodeReviewTaskPage>(`/api/code-reviews?${query}`, { signal });
+}
+export async function getCodeReviewTask(id: string, signal?: AbortSignal): Promise<CodeReviewTask> {
+  return (await apiRequest<{ task: CodeReviewTask }>(`/api/code-reviews/${encodeURIComponent(id)}`, { signal })).task;
+}
+export interface CodeReviewAuditPage { events: Array<{ sequence?: number; startedAt?: string; operation?: string; status?: number; outcome?: string; [key: string]: unknown }>; nextBefore?: number | null }
+export function getCodeReviewAudit(id: string, signal?: AbortSignal): Promise<CodeReviewAuditPage> {
+  return apiRequest<CodeReviewAuditPage>(`/api/code-reviews/${encodeURIComponent(id)}/audit`, { signal });
 }
 
 export interface CodeReviewBranch { id: string; branch: string; status: string }
@@ -115,6 +140,7 @@ export async function submitCodeReview(input: CodeReviewSubmission, signal?: Abo
         ...(input.sourceType === 'cds' ? { branchId: input.branchId } : { githubUrl: input.githubUrl, ref: input.ref || undefined }),
         excludePatterns: input.excludePatterns,
         email: input.email || undefined,
+        userKey: input.userKey,
       },
       signal,
     });
@@ -124,6 +150,7 @@ export async function submitCodeReview(input: CodeReviewSubmission, signal?: Abo
   const form = new FormData();
   form.set('projectId', input.projectId);
   form.set('sourceType', 'zip');
+  if (input.userKey) form.set('userKey', JSON.stringify(input.userKey));
   form.set('file', input.file);
   form.set('excludePatterns', JSON.stringify(input.excludePatterns || []));
   if (input.email) form.set('email', input.email);

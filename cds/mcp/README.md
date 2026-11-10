@@ -75,3 +75,9 @@ pnpm --dir cds/mcp check
 用户选择返回的分支后调用 `cds_code_review_submit({"branchId":"所选分支ID"})`。
 无需上传文件或填写 GitHub URL。准备源码时复用现有项目仓库授权，同步远端分支并固定 SHA；
 审查不包含工作树未提交内容，不切换部署分支，也不运行项目脚本。`ref` 仅用于 GitHub 来源。
+
+### 使用自己的 Key
+
+`cds_code_review_submit` 可选 `userKey`，包含 `provider`（`openai` / `anthropic` / `openrouter` / `deepseek`）、`model`、`apiKeyEnv`（本地环境变量名）和 `tokenLimit`（默认 200000）。桥接读取该变量后上传，不在 MCP 参数中填写明文 Key，不把 Key 写入 `.cds/credentials.json`。用户 Key 通道不可用时直接失败，不消费平台额度。`cds_code_review_get` 对用户 Key 任务附带 `usage`；权限不足或通道不可用时标注 `usageUnavailable`。
+
+用量只包含同一项目、同一凭据所有者经本系统产生的请求；不是供应商账号余额。无可靠计价数据时费用为未知。

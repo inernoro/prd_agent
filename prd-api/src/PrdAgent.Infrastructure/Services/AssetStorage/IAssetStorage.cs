@@ -12,7 +12,12 @@ namespace PrdAgent.Infrastructure.Services.AssetStorage;
 /// 拼本站前缀，地址就跟着部署走。可空只是为了兼容存量与测试替身；
 /// 真实实现必须回填，有守卫盯着。</para>
 /// </summary>
-public record StoredAsset(string Sha256, string Url, long SizeBytes, string Mime, string? Key = null);
+public record StoredAsset(string Sha256, string Url, long SizeBytes, string Mime, string? Key = null)
+{
+    // 内部保存确证；未知或复用对象不得当作本次新建。生成视频仍须持有原 SHA 锁。
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool? CreatedNew { get; init; }
+}
 public record AssetReadHandle(Stream Content, string Mime, long? Length);
 
 /// <summary>

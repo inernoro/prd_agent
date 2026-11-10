@@ -56,6 +56,23 @@ describe('DeploymentVersionService', () => {
     expect(a).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it('同提交产物复用保留分支独立库和运行配置，版本仍只保存固定产物', () => {
+    const service = new DeploymentVersionService(stateService);
+    const baseline = profile({ env: { DATABASE_NAME: 'shared', TOKEN: '${TOKEN}' },
+      deployModes: { express: { label: '极速版', prebuilt: true, env: { RUNTIME: 'production' } } } });
+    branch.profileOverrides = { web: { activeDeployMode: 'express',
+      env: { DATABASE_NAME: 'owned-isolated', TOKEN: 'owned-runtime-secret' } } };
+    const effective = resolveEffectiveProfile(baseline, branch);
+    const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: '1234567',
+      configHash: service.computeConfigHash([effective], {}), profiles: [effective], branch, createdByRunId: 'owned-run' });
+    const materialized = service.materializeProfiles(version, [baseline], branch)[0];
+    expect(materialized.env).toEqual({ DATABASE_NAME: 'owned-isolated', TOKEN: 'owned-runtime-secret', RUNTIME: 'production' });
+    expect(materialized.dockerImage).toBe(version.profiles[0].artifactImage);
+    expect(materialized.deployModes).toBeUndefined();
+    expect(JSON.stringify(version)).not.toContain('owned-runtime-secret');
+    expect(baseline.env?.DATABASE_NAME).toBe('shared');
+  });
+
   it.each([
     { buildTimeout: 30 }, { buildScope: ['src'] }, { cacheMounts: [{ hostPath: '/tmp/pnpm-cache', containerPath: '/cache' }] },
     { fallbackImage: 'node:22' }, { localArtifact: true }, { dbScope: 'per-branch' as const }, { dbInit: 'clone' as const },
@@ -79,7 +96,7 @@ describe('DeploymentVersionService', () => {
     await stateService.flush();
     const reloaded = new StateService(path.join(tmpDir, 'state.json')); reloaded.load();
     const stored = reloaded.getDeploymentVersion(version.id)!;
-    const materialized = new DeploymentVersionService(reloaded).materializeProfiles(stored, [baseline])[0];
+    const materialized = new DeploymentVersionService(reloaded).materializeProfiles(stored, [baseline], branch)[0];
     expect(materialized.staticWeb).toEqual(expected);
     expect(materialized.deployModes).toBeUndefined();
     materialized.staticWeb!.proxyRules![0].profileId = 'different';
@@ -90,7 +107,7 @@ describe('DeploymentVersionService', () => {
     const service = new DeploymentVersionService(stateService);
     const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: '1234567', configHash: 'h',
       profiles: [profile()], branch, createdByRunId: 'run-container' });
-    expect(service.materializeProfiles(version, [profile({ staticWeb: { imagePath: '/new-site' } })])[0].staticWeb).toBeUndefined();
+    expect(service.materializeProfiles(version, [profile({ staticWeb: { imagePath: '/new-site' } })], branch)[0].staticWeb).toBeUndefined();
   });
 
   it('静态运行配置改变参与目标身份，普通容器既有配置hash保持', () => {
@@ -147,7 +164,7 @@ describe('DeploymentVersionService', () => {
 
     expect(service.findReusable({ projectId: 'p1', branchId: 'b1', commitSha: 'abc1234', configHash: 'b'.repeat(64) })?.id)
       .toBe(reusable.id);
-    expect(service.materializeProfiles(reusable, [profile()])[0]).toMatchObject({
+    expect(service.materializeProfiles(reusable, [profile()], branch)[0]).toMatchObject({
       dockerImage: 'ghcr.io/acme/web:sha-1234567',
       prebuiltImage: true,
       fallbackImage: undefined,
@@ -160,7 +177,7 @@ describe('DeploymentVersionService', () => {
       branch, createdByRunId: 'dr_2',
     });
     expect(legacy.profiles[0].reusable).toBe(false);
-    expect(() => service.materializeProfiles(legacy, [profile()])).toThrow(/legacy compose\/source/);
+    expect(() => service.materializeProfiles(legacy, [profile()], branch)).toThrow(/legacy compose\/source/);
   });
 
   it('recognizes only digest and sha-tag image references as immutable', () => {
@@ -176,9 +193,9 @@ describe('DeploymentVersionService', () => {
     const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: 'b'.repeat(40), configHash: 'd'.repeat(64),
       profiles: [original], branch, createdByRunId: 'owned-scope-proof' });
     original.buildScope!.push('not-part-of-frozen-input');
-    expect(service.materializeProfiles(version, [profile({ buildScope: ['src/one-file'] })])[0].buildScope).toEqual(['src/**', 'Dockerfile']);
+    expect(service.materializeProfiles(version, [profile({ buildScope: ['src/one-file'] })], branch)[0].buildScope).toEqual(['src/**', 'Dockerfile']);
     const historical = structuredClone(version); delete historical.profiles[0].buildScope;
-    expect(service.materializeProfiles(historical, [profile({ buildScope: ['src/one-file'] })])[0].buildScope).toBeUndefined();
+    expect(service.materializeProfiles(historical, [profile({ buildScope: ['src/one-file'] })], branch)[0].buildScope).toBeUndefined();
   });
 
   it('survives a state service restart with the same immutable snapshot', async () => {

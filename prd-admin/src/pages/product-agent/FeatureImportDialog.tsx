@@ -154,7 +154,7 @@ export function FeatureImportDialog({
             {selectedRelease && (
               <div className="mt-1.5 text-[11px] text-token-muted">
                 {selectedRelease.planName}
-                {selectedRelease.status === 'released' ? ' · 已上线' : ' · 待完成上线'}
+                {selectedRelease.status === 'released' ? ' · 已上线' : ' · 待填写上线公告'}
               </div>
             )}
           </div>

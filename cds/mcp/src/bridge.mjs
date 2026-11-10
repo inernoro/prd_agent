@@ -12,7 +12,9 @@ const common = {
   email: z.email().max(320).optional(),
   idempotencyKey: z.string().min(1).max(200).optional(),
 };
+const userKeySchema = z.object({ provider: z.enum(['openai', 'anthropic', 'openrouter', 'deepseek']), model: id, apiKeyEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), tokenLimit: z.number().int().min(4096).max(10000000).optional() }).strict();
 const submitSchema = z.object({
+  userKey: userKeySchema.optional(),
   zipPath: z.string().min(1).optional(),
   githubUrl: z.url().optional(),
   branchId: id.optional(),
@@ -48,6 +50,7 @@ export const TOOLS = [
         ref: stringProperty('仅 GitHub 来源使用的分支、标签或提交'),
         title: stringProperty('审查任务名称'),
         excludePatterns: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 250 } },
+        userKey: { type: 'object', additionalProperties: false, required: ['provider', 'model', 'apiKeyEnv'], properties: { provider: { type: 'string', enum: ['openai', 'anthropic', 'openrouter', 'deepseek'] }, model: stringProperty('供应商模型名称'), apiKeyEnv: stringProperty('本地环境变量名；桥接读取 Key 后上传，不把明文 Key 传给 MCP 客户端'), tokenLimit: { type: 'integer', minimum: 4096, maximum: 10000000 } } },
         email: stringProperty('可选报告收件邮箱，提供即授权本次任务发送邮件'),
         idempotencyKey: stringProperty('可选重试幂等键，相同提交重试时复用'),
       },
@@ -223,6 +226,14 @@ export function createBridge(credentials, { fetchImpl = fetch, dispatcher } = {}
       if (!supportedTools.has(name)) throw new Error('当前 CDS 能力目录未开放此代码审查工具');
       if (name === 'cds_code_review_submit') {
         const args = submitSchema.parse(input);
+        if (args.userKey) {
+          const capability = await request('GET', '/api/code-reviews/capabilities');
+          if (capability.userKeyConfigured !== true || capability.userKeyBindingVersion !== 1) throw new Error('当前 CDS 不支持用户 Key 隔离，未提交审查或使用平台额度');
+          const { apiKeyEnv, ...binding } = args.userKey;
+          const apiKey = process.env[apiKeyEnv];
+          if (!apiKey?.trim()) throw new Error('指定的本地 Key 环境变量未配置');
+          args.userKey = { ...binding, apiKey };
+        }
         let result;
         if (args.zipPath) {
           const file = await localFile(credentials, args.zipPath, ['.zip'], MAX_ZIP_BYTES);
@@ -232,6 +243,7 @@ export function createBridge(credentials, { fetchImpl = fetch, dispatcher } = {}
           form.set('file', new Blob([file.bytes], { type: 'application/zip' }), file.name);
           for (const key of ['title', 'email', 'idempotencyKey']) if (args[key]) form.set(key, args[key]);
           if (args.excludePatterns) form.set('excludePatterns', JSON.stringify(args.excludePatterns));
+          if (args.userKey) form.set('userKey', JSON.stringify(args.userKey));
           result = await request('POST', '/api/code-reviews', form);
         } else if (args.branchId) {
           const { zipPath: ignoredZip, githubUrl: ignoredGithub, ref: ignoredRef, ...rest } = args;
@@ -259,6 +271,9 @@ export function createBridge(credentials, { fetchImpl = fetch, dispatcher } = {}
         if (result.result) {
           assertProject(result.result);
           if (result.result.taskId !== args.taskId) throw new Error('CDS 返回问题与请求任务不匹配');
+        }
+        if (result.task.modelCredential?.source === 'user') {
+          try { result.usage = await request('GET', `/api/code-reviews/${encodeURIComponent(args.taskId)}/usage`); } catch { result.usageUnavailable = true; }
         }
         return result;
       }

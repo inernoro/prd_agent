@@ -28,6 +28,8 @@ public static class TaskAdmissionPolicies
         var result = new Dictionary<string, TaskAdmissionPolicy>(StringComparer.Ordinal);
         // 多能力工具与工作流只可用平台注册的有限能力，不接受未注册 caller 或任意字符串。
         var all = AppCallerRegistrationService.GetAllDefinitions().Select(x => x.AppCode).Distinct().ToArray();
+        Register("McpSpeechController", "Create", new[] { AppCallerRegistry.McpSpeech.Synthesize }, false, 1, 1);
+        Register("SpeechOpenApiController", "Create", new[] { AppCallerRegistry.McpSpeech.Synthesize }, false, 1, 1);
         Add("ModelLabController", "RunStream", new[] { "prd-agent-web.model-lab." });
         Register("LabController", "SimulateMessage",
             new[] { AppCallerRegistry.Desktop.Chat.SendMessageChat }, false, 128,
@@ -57,7 +59,9 @@ public static class TaskAdmissionPolicies
         Add("LiteraryAgentImageGenController", "CreateRun", new[] { "literary-agent.", "visual-agent." });
         Add("LiteraryOpenApiController", "WriteContent UpdateIllustrationPrompt", new[] { "literary-agent.", "visual-agent." });
         Add("LiteraryImageOpenApiController", "Generate", new[] { "literary-agent.", "visual-agent." });
-        Add("VideoAgentController", "VideoGenDirect CreateRun RegenerateScene RenderScene RenderScenes CreateV2dRun", new[] { "video-agent.", "visual-agent.", "workflow-agent." });
+        // 直出视频最多查询 10 分钟（每 6 秒一次），还需提交和下载；不能沿用普通 Agent 的 16 次额度。
+        Add("VideoAgentController", "VideoGenDirect CreateRun", new[] { "video-agent.", "visual-agent.", "workflow-agent." }, agentMaxCalls: 128);
+        Add("VideoAgentController", "RegenerateScene RenderScene RenderScenes CreateV2dRun", new[] { "video-agent.", "visual-agent.", "workflow-agent." });
         Add("TranscriptAgentController", "UploadItem CreateCopywriteRun", new[] { "transcript-agent." });
         Add("DocumentStoreController", "CreativePublishEntry SelectionRewrite GenerateSubtitle TranscribeEntry RestyleTranscribeRun Reprocess SendReprocessChat StartRecordingUpload CompleteRecordingUpload RetryRecordingArchive LiveTranscription StartAutoLink", new[] { "document-store.", "transcript-agent.", "prd-agent-web.web-hosting.", "md-to-ppt-agent." });
         Add("ShortVideoMaterialController", "CreateRun", new[] { "video-agent.", "workflow-agent.", "transcript-agent.", "document-store." });
@@ -124,10 +128,10 @@ public static class TaskAdmissionPolicies
         return result;
 
         void Add(string controller, string actions, string[] prefixes, bool root = false, int maxCalls = 128,
-            TaskAdmissionTiming timing = TaskAdmissionTiming.Middleware)
+            TaskAdmissionTiming timing = TaskAdmissionTiming.Middleware, int agentMaxCalls = 16)
         {
             var callers = all.Where(code => prefixes.Any(prefix => code.StartsWith(prefix, StringComparison.Ordinal))).ToArray();
-            Register(controller, actions, callers, root, maxCalls, timing: timing);
+            Register(controller, actions, callers, root, maxCalls, agentMaxCalls, timing: timing);
         }
         void AddAll(string controller, string actions, bool root = false) => Register(controller, actions, all, root, 128);
         void Register(string controller, string actions, string[] callers, bool root, int maxCalls, int agentMaxCalls = 16,
