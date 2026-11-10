@@ -158,7 +158,8 @@ for (const width of [390, 1440]) {
         await expect(dialog.locator('details, [aria-expanded="false"]')).toHaveCount(0);
         await expect(dialog.getByRole('tab', { name: '基本信息', exact: true })).toHaveAttribute('aria-selected', 'true');
         await expect(dialog.getByRole('region', { name: '完整文件列表' })).toHaveCount(0);
-        expect((await dialog.boundingBox())!.width).toBeCloseTo(Math.min(520, width * 0.92), 1);
+        await expect(dialog).toHaveCSS('max-width', '520px');
+        await expect.poll(async () => (await dialog.boundingBox())!.width).toBeCloseTo(Math.min(520, width * 0.92), 1);
         expect(await dialog.evaluate(el => ({
           bodyFont: getComputedStyle(el.querySelector('[data-site-details]')!).fontSize,
           titleFont: getComputedStyle(el.querySelector('[data-site-details] h2')!).fontSize,
