@@ -3,6 +3,7 @@
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
 import { Link } from 'react-router-dom';
+import { ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
 import { Server } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
@@ -87,7 +88,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     const p = selectedProvider;
     return <CollectionDetailPane key={p.id} title={p.name} icon={<Server size={18}/>} identifier={summarizeProviderModels(ownedRows(p.id))} onClose={() => setExpandedModelsFor(null)} tabs={<><CollectionPaneTab active={providerTab === 'models'} onClick={() => setProviderTab('models')}>名下模型</CollectionPaneTab><CollectionPaneTab active={providerTab === 'connection'} onClick={() => setProviderTab('connection')}>连接配置</CollectionPaneTab><CollectionPaneTab active={providerTab === 'activity'} onClick={() => setProviderTab('activity')}>调用记录</CollectionPaneTab></>}>
       <div className={providerTab === 'models' ? 'lg-collection-provider-models' : 'lg-collection-hidden'}><ProviderModelsPanel rows={ownedRows(p.id)} onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude' ? () => void openDiscovery(p) : undefined} /></div>
-      {providerTab === 'connection' ? <div className="lg-collection-key-facts"><h3>连接配置</h3><CollectionFacts items={[{label:'接口类型',value:platformTypeLabel(p.platformType)},{label:'API 地址',value:<code>{p.apiUrl || '未配置'}</code>},{label:'供应方标识',value:p.providerId || '未单独设置'},{label:'最大并发',value:p.maxConcurrency ?? '未配置'},{label:'配置来源',value:p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入'},{label:'密钥状态',value:<>{p.keyStatus === 'unreadable' ? '解不开' : p.hasKey ? '已配置' : '未配置'}{p.keyFingerprint ? <code>{p.keyFingerprint}</code> : null}</>},{label:'备注',value:p.remark || '无备注'},{label:'最近更新',value:formatPlatformTime(p.updatedAt)},{label:'导入时间',value:p.claimedAt || '未导入'}]}/>{canWrite && p.authority === 'llm_gateway' ? editId === p.id ? renderConnectionEditor(p) : <Button size="sm" disabled={busyId === p.id} onClick={() => beginEdit(p)}>编辑连接</Button> : null}<Link className="lg-text-link" to={`/platforms/view?id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name)}`}>供应方详情</Link></div> : null}
+      {providerTab === 'connection' ? <div className="lg-collection-key-facts"><h3>连接配置</h3><CollectionFacts items={[{label:'接口类型',value:platformTypeLabel(p.platformType)},{label:'API 地址',value:<code>{p.apiUrl || '未配置'}</code>},{label:'连接方式',value:<ProxyBadge proxy={p.proxy}/>},{label:'供应方标识',value:p.providerId || '未单独设置'},{label:'最大并发',value:p.maxConcurrency ?? '未配置'},{label:'配置来源',value:p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入'},{label:'密钥状态',value:<>{p.keyStatus === 'unreadable' ? '解不开' : p.hasKey ? '已配置' : '未配置'}{p.keyFingerprint ? <code>{p.keyFingerprint}</code> : null}</>},{label:'备注',value:p.remark || '无备注'},{label:'最近更新',value:formatPlatformTime(p.updatedAt)},{label:'导入时间',value:p.claimedAt || '未导入'}]}/>{canWrite && p.authority === 'llm_gateway' ? editId === p.id ? renderConnectionEditor(p) : <Button size="sm" disabled={busyId === p.id} onClick={() => beginEdit(p)}>编辑连接</Button> : null}{canWrite && p.authority === 'llm_gateway' ? <UpstreamNetworkTest kind="platform" id={p.id} revision={p.updatedAt} disabled={editId === p.id} /> : null}<Link className="lg-text-link" to={`/platforms/view?id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name)}`}>供应方详情</Link></div> : null}
       {providerTab === 'activity' ? <div className="lg-collection-key-facts"><h3>调用记录<HelpPopover label="调用记录">查看这条供应方的真实请求、响应状态与最近调用。</HelpPopover></h3><Link className="lg-text-link" to={`/logs?platformId=${encodeURIComponent(p.id)}`}>查看全部请求记录</Link></div> : null}
     </CollectionDetailPane>;
   }
@@ -332,6 +333,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
               />
             </div>
           </details>
+          <ProxyFields value={editDraft.proxy ?? proxyDraft(p.proxy)} onChange={proxy => setEditDraft(v => ({ ...v, proxy }))} stored={p.proxy} />
           <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveEdit(p)}>
             保存
           </Button>
@@ -543,6 +545,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                 </label>
               </div>
             </details>
+            <ProxyFields value={draft.proxy ?? { mode: 'inherit' }} onChange={proxy => setDraft(value => ({ ...value, proxy }))} />
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <Button type="submit" variant="primary" size="sm" disabled={createBusy}>{createBusy ? '保存中…' : '保存并测试连接'}</Button>
@@ -635,6 +638,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                   <td style={td}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
                       <span style={{ fontWeight: 600 }}>{p.name}</span>
+                      <ProxyBadge proxy={p.proxy} />
                       <EntityPreviewDrawer
                         buttonLabel="查看接口"
                         kicker="Provider 接口预览"

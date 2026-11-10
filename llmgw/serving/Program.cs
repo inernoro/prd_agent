@@ -312,7 +312,7 @@ builder.Services.AddScoped<LiveAsrBatchFallbackService>();
 builder.Services.AddScoped(sp => new LiveAsrSessionOrchestrator(
     sp.GetRequiredService<PrdAgent.Core.LlmGateway.IModelResolver>(), sp.GetRequiredService<DoubaoStreamAsrService>(),
     sp.GetRequiredService<LiveAsrBatchFallbackService>(), sp.GetRequiredService<ILogger<LiveAsrSessionOrchestrator>>(),
-    sp.GetRequiredService<IGatewayInvocationAuthority>()));
+    sp.GetRequiredService<IGatewayInvocationAuthority>(), builder.Configuration));
 
 // serving 侧平台密钥自检（消盲区：serving 到底能不能解密真实平台密文）。
 // 此前密钥完整性 Worker 只在 MAP(api) 侧注册，serving 缺钥时静默用 stub 兜底、无任何自检。

@@ -1046,3 +1046,13 @@ export function updateImageGenConfig(id: string, req: UpsertImageGenConfigReques
 export function deleteImageGenConfig(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
   return apiRequest<{ deleted: boolean }>(`/imagegen-configs/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
+
+export function getUpstreamProxy(): Promise<ApiResponse<import('./types').UpstreamProxyView>> {
+  return apiRequest('/upstream-proxy');
+}
+export function saveUpstreamProxy(body: import('./types').UpstreamProxyDraft): Promise<ApiResponse<import('./types').UpstreamProxyView>> {
+  return apiRequest('/upstream-proxy', { method: 'PUT', body });
+}
+export function testUpstreamNetwork(kind: 'platform' | 'exchange', id: string, samples = 3): Promise<ApiResponse<import('./types').UpstreamNetworkTestResult>> {
+  return apiRequest(`/upstreams/${kind}/${encodeURIComponent(id)}/network-test`, { method: 'POST', body: { samples } });
+}

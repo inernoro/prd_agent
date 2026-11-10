@@ -1,3 +1,4 @@
+using PrdAgent.GatewayTransport;
 namespace PrdAgent.LlmGw.Models;
 
 // 统一响应信封：{ success, data, error }。JSON 输出走 camelCase（见 Program.cs 配置）。
@@ -975,6 +976,7 @@ public sealed class PoolModelItem
 public sealed class PlatformsData { public List<PlatformItem> Items { get; set; } = new(); public long Total { get; set; } }
 public sealed class PlatformItem
 {
+    public UpstreamProxyView? Proxy { get; set; }
     public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string PlatformType { get; set; } = "";
     public string? ProviderId { get; set; } public string? ApiUrl { get; set; } public bool Enabled { get; set; }
     public int MaxConcurrency { get; set; } public string? Remark { get; set; } public bool HasKey { get; set; }
@@ -1081,6 +1083,7 @@ public sealed class AppCallerDeleteResult
 /// <summary>编辑上游：只改这几项；密钥走独立的轮换端点，不混在这里。</summary>
 public sealed class UpdatePlatformRequest
 {
+    public UpstreamProxyWrite? Proxy { get; set; }
     public string? Name { get; set; }
     public string? PlatformType { get; set; }
     public string? ApiUrl { get; set; }
@@ -1090,6 +1093,7 @@ public sealed class UpdatePlatformRequest
 
 public sealed class CreatePlatformRequest
 {
+    public UpstreamProxyWrite? Proxy { get; set; }
     public string? Name { get; set; }
     public string? PlatformType { get; set; }
     public string? ProviderId { get; set; }
@@ -1655,6 +1659,7 @@ public sealed class ParameterCapabilityTemplateItem
 public sealed class ExchangesData { public List<ExchangeItem> Items { get; set; } = new(); public long Total { get; set; } }
 public sealed class ExchangeItem
 {
+    public UpstreamProxyView? Proxy { get; set; }
     public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string ModelAlias { get; set; } = "";
     public List<string> ModelAliases { get; set; } = new(); public List<ExchangeModelItem> Models { get; set; } = new();
     public string TargetUrl { get; set; } = ""; public string TargetAuthScheme { get; set; } = ""; public string TransformerType { get; set; } = "";
@@ -1692,6 +1697,7 @@ public sealed class ExchangeModelWriteRequest
 }
 public sealed class CreateExchangeRequest
 {
+    public UpstreamProxyWrite? Proxy { get; set; }
     public string? Name { get; set; }
     public List<ExchangeModelWriteRequest> Models { get; set; } = new();
     public string? TargetUrl { get; set; }
@@ -1704,6 +1710,7 @@ public sealed class CreateExchangeRequest
 }
 public sealed class UpdateExchangeRequest
 {
+    public UpstreamProxyWrite? Proxy { get; set; }
     public string? Name { get; set; }
     public List<ExchangeModelWriteRequest> Models { get; set; } = new();
     public string? TargetUrl { get; set; }
