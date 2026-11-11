@@ -28,6 +28,19 @@ public sealed class ModelRuntimeReferenceSnapshotTests
         => ModelRuntimeReferenceSnapshotBuilder.Build(config ?? Config(), new ChatAgentOptions(),
             new ClaudeSidecarOptions(), database ?? Empty, identity ?? Identity, Now, environment);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OwnDeploymentSnapshotHeartbeatIsAdmittedAsMaintenance(bool cds)
+    {
+        var configuration = cds ? Config(("CDS_PROJECT_ID", "prd-agent"), ("VITE_GIT_BRANCH", "main")) : Config();
+        var registry = new PrdAgent.Api.Services.BackgroundTasks.BackgroundTaskAdmissionRegistry(configuration);
+        var admission = registry.Check(typeof(ModelRuntimeReferenceSnapshotWorker));
+        Assert.Equal(PrdAgent.Api.Services.BackgroundTasks.BackgroundTaskKind.Maintenance, admission.Kind);
+        Assert.True(admission.Allowed);
+        Assert.False(registry.SharedAutomaticEnabled); // admission does not grant any shared automatic model work
+    }
+
     [Fact]
     public void MissingConfigurationPublishesActualComputedDefaultsAndExplicitEmptyEntries()
     {
