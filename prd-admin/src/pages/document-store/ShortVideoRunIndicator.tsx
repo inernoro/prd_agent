@@ -1,12 +1,26 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { CheckCircle2, AlertCircle, X, Video } from 'lucide-react';
+import { CheckCircle2, AlertCircle, X, Video, type LucideIcon } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { getShortVideoMaterialRun } from '@/services';
 import { shortVideoCompactStatus } from './ReprocessChatDrawer';
 import {
   useShortVideoRunStore,
+  normalizeShortVideoRunStatus,
+  isTerminalShortVideoRunStatus,
   type ShortVideoRunRecord,
+  type ShortVideoRunStatus,
 } from '@/stores/shortVideoRunStore';
+
+const SHORT_VIDEO_RUN_PRESENTATION: Record<ShortVideoRunStatus, {
+  color: string;
+  Icon: typeof MapSpinner | LucideIcon;
+  subtitle: (run: ShortVideoRunRecord) => string;
+}> = {
+  running: { color: 'var(--accent-fg-info)', Icon: MapSpinner, subtitle: (run) => run.phase || '处理中…' },
+  done: { color: 'var(--accent-fg-success)', Icon: CheckCircle2, subtitle: (run) => run.hasTranscript ? '已完成 · 已生成文字' : '视频已入库' },
+  failed: { color: 'var(--accent-fg-error)', Icon: AlertCircle, subtitle: (run) => run.errorMessage ? `失败：${run.errorMessage}` : '解析失败，可重试' },
+  cancelled: { color: 'var(--text-muted)', Icon: X, subtitle: () => '已取消' },
+};
 
 /**
  * 右上角「运行中的智能体」入口（短视频解析）。关掉抽屉 / 刷新页面后仍可见，点击重开抽屉恢复状态。
@@ -67,7 +81,7 @@ export function ShortVideoRunIndicator({
           if (cancelled) return;
           if (res.success && res.data) {
             const run = res.data;
-            const status = run.status === 'done' ? 'done' : run.status === 'failed' ? 'failed' : 'running';
+            const status = normalizeShortVideoRunStatus(run.status);
             // running → done 跃迁时回调页面 reload：抽屉关着/刷新后本 Host 是唯一轮询者，
             // 不通知页面的话新入库的源视频/转写条目不会出现在知识库列表（Codex P2）。
             const prevStatus = useShortVideoRunStore.getState().runs[id]?.status;
@@ -81,7 +95,7 @@ export function ShortVideoRunIndicator({
             });
             // 终态（done 或 failed）跃迁都刷新列表：失败也可能已部分入库（如视频已保存），
             // 不刷新会让这些条目直到手动刷新才出现（Bugbot Medium）。
-            const terminal = status === 'done' || status === 'failed';
+            const terminal = isTerminalShortVideoRunStatus(status);
             if (terminal && prevStatus && prevStatus !== status) onRunCompletedRef.current?.();
           }
         }
@@ -118,16 +132,9 @@ export function ShortVideoRunIndicator({
   return (
     <div className="fixed top-20 right-5 z-40 flex flex-col gap-2" style={{ maxWidth: 300 }}>
       {runs.map((r) => {
-        const accent = r.status === 'done'
-          ? 'rgba(74,222,128,0.95)'
-          : r.status === 'failed'
-            ? 'rgba(248,113,113,0.95)'
-            : 'rgba(96,165,250,0.95)';
-        const subtitle = r.status === 'running'
-          ? r.phase || '处理中…'
-          : r.status === 'done'
-            ? (r.hasTranscript ? '已完成 · 已生成文字' : '视频已入库')
-            : (r.errorMessage ? `失败：${r.errorMessage}` : '解析失败，可重试');
+        const presentation = SHORT_VIDEO_RUN_PRESENTATION[normalizeShortVideoRunStatus(r.status)];
+        const StatusIcon = presentation.Icon;
+        const subtitle = presentation.subtitle(r);
         return (
           <div
             key={r.runId}
@@ -137,13 +144,9 @@ export function ShortVideoRunIndicator({
           >
             <div
               className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[8px] bg-token-nested"
-              style={{ color: accent }}
+              style={{ color: presentation.color }}
             >
-              {r.status === 'done'
-                ? <CheckCircle2 size={14} />
-                : r.status === 'failed'
-                  ? <AlertCircle size={14} />
-                  : <MapSpinner size={14} />}
+              <StatusIcon size={14} />
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[11px] font-semibold text-token-primary">

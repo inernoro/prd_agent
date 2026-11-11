@@ -25,6 +25,9 @@ public class ShortVideoMaterialRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     [System.Text.Json.Serialization.JsonIgnore]
     public string? ProcessingToken { get; set; }
 
+    /// <summary>本人明确请求取消；处理中仍保留处理身份，直到后台确认停止。</summary>
+    public bool CancelRequested { get; set; }
+
     /// <summary>原始短视频链接</summary>
     public string VideoUrl { get; set; } = string.Empty;
 
@@ -55,7 +58,7 @@ public class ShortVideoMaterialRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     /// <summary>解析过程说明</summary>
     public string? ParserMessage { get; set; }
 
-    /// <summary>状态：queued / running / done / failed。默认 queued——绝不能默认 running，
+    /// <summary>状态：queued / running / done / failed / cancelled。默认 queued——绝不能默认 running，
     /// 否则任何缺省/反序列化出的 run 会被当成"处理中"却永远没人 claim/recover，变成僵尸卡死。</summary>
     public string Status { get; set; } = "queued";
 

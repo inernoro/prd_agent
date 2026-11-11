@@ -370,7 +370,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         var parsed = Activator.CreateInstance(method.GetParameters()[0].ParameterType,
             [null, null, "direct-video", "synthetic", null, "https://download.example.invalid/video.mp4", null]);
         var run = new ShortVideoMaterialRun { Id = "synthetic-short-video-run", UserId = "synthetic-owner" };
-        var task = (Task)method.Invoke(processor, [parsed, run])!;
+        var task = (Task)method.Invoke(processor, [parsed, run, CancellationToken.None])!;
         if (rejected) await Should.ThrowAsync<InvalidOperationException>(() => task);
         else await task;
         var audit = services.GetRequiredService<List<ApiRequestLog>>().Single();
