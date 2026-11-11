@@ -10,14 +10,14 @@ public interface IModelLabRepository
     Task<ModelLabExperiment> InsertExperimentAsync(ModelLabExperiment experiment);
     Task<ModelLabExperiment?> GetExperimentAsync(string id, string ownerAdminId);
     Task<List<ModelLabExperiment>> ListExperimentsAsync(string ownerAdminId, string? search, int page, int pageSize);
-    Task UpdateExperimentAsync(ModelLabExperiment experiment);
+    Task<bool> UpdateExperimentAsync(ModelLabExperiment experiment, DateTime expectedUpdatedAt);
     Task<bool> DeleteExperimentAsync(string id, string ownerAdminId);
 
-    Task<ModelLabModelSet> UpsertModelSetAsync(ModelLabModelSet modelSet);
+    Task<ModelLabModelSet?> UpsertModelSetAsync(ModelLabModelSet modelSet, DateTime? expectedUpdatedAt);
     Task<List<ModelLabModelSet>> ListModelSetsAsync(string ownerAdminId, string? search, int limit);
     Task<ModelLabModelSet?> GetModelSetAsync(string id, string ownerAdminId);
 
-    Task<ModelLabGroup> UpsertLabGroupAsync(ModelLabGroup group);
+    Task<ModelLabGroup?> UpsertLabGroupAsync(ModelLabGroup group, DateTime? expectedUpdatedAt);
     Task<List<ModelLabGroup>> ListLabGroupsAsync(string ownerAdminId, string? search, int limit);
     Task<ModelLabGroup?> GetLabGroupAsync(string id, string ownerAdminId);
     Task<bool> DeleteLabGroupAsync(string id, string ownerAdminId);

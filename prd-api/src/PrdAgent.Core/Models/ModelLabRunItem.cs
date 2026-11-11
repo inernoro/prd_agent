@@ -16,6 +16,8 @@ public class ModelLabRunItem
 
     public string? ExperimentId { get; set; }
 
+    public string? LogicalModelId { get; set; }
+
     public string ModelId { get; set; } = string.Empty;
     public string PlatformId { get; set; } = string.Empty;
 
