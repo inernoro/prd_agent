@@ -440,6 +440,30 @@ public sealed class ShortVideoMaterialDeletionTests : IAsyncLifetime
         _coordinator.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Cancel_QueuedCancellationAlreadyPersisted_RepeatedRequestIsAcceptedWithoutRewritingIdentity(bool duringRevocation)
+    {
+        var run = Run("queued");
+        run.CancelRequested = !duringRevocation;
+        await _rows.InsertOneAsync(run);
+        var before = (await _rows.Find(x => x.Id == run.Id).SingleAsync()).ToBsonDocument();
+        before["CancelRequested"] = true;
+        if (duringRevocation)
+            _coordinator.Setup(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None))
+                .Returns(async () => await _rows.UpdateOneAsync(x => x.Id == run.Id,
+                    Builders<ShortVideoMaterialRun>.Update.Set(x => x.CancelRequested, true)));
+
+        using var repeated = await Cancel(run.Id);
+
+        Assert.Equal(HttpStatusCode.Accepted, repeated.StatusCode);
+        Assert.Equal(before, (await _rows.Find(x => x.Id == run.Id).SingleAsync()).ToBsonDocument());
+        if (duringRevocation)
+            _coordinator.Verify(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Once);
+        _coordinator.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task Recovery_AcknowledgesRequestedCancellationWithoutRewritingOtherOwners()
     {

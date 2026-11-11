@@ -133,7 +133,7 @@ public class ShortVideoMaterialController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "运行记录不存在"));
         if (run.Status is "done" or "failed" or "cancelled")
             return Ok(ApiResponse<object>.Ok(new { cancelled = run.Status == "cancelled", status = run.Status }));
-        if (run.Status == "running" && run.CancelRequested)
+        if (run.Status is "queued" or "running" && run.CancelRequested)
             return Accepted(ApiResponse<object>.Ok(new { cancelled = false, cancellationRequested = true }));
         if (run.Status != "running" && (run.Status != "queued" || run.ProcessingToken != null))
             return Conflict(ApiResponse<object>.Fail("SHORT_VIDEO_RUN_CHANGED", "素材状态已变化，请刷新后查看当前处理结果"));
@@ -150,7 +150,15 @@ public class ShortVideoMaterialController : ControllerBase
         // 沿用数据库包装器撤销原许可；处理中的身份由后台停止确认后释放。
         var changed = await _db.ShortVideoMaterialRuns.UpdateOneAsync(observed, update, cancellationToken: CancellationToken.None);
         if (changed.ModifiedCount != 1)
+        {
+            // 并发取消可已持久化同一许可的意图；重读只承认原任务，不改写新许可或处理身份。
+            var requested = await _db.ShortVideoMaterialRuns.Find(task).FirstOrDefaultAsync(CancellationToken.None);
+            if (requested?.CancelRequested == true && requested.Status is "queued" or "running" or "cancelled")
+                return requested.Status == "cancelled"
+                    ? Ok(ApiResponse<object>.Ok(new { cancelled = true }))
+                    : Accepted(ApiResponse<object>.Ok(new { cancelled = false, cancellationRequested = true }));
             return Conflict(ApiResponse<object>.Fail("SHORT_VIDEO_RUN_CHANGED", "素材状态已变化，请刷新后查看当前处理结果"));
+        }
         if (run.Status == "queued")
         {
             // 标记已持久化后 Worker 不再领取；只终结已无处理身份的排队/失败记录。
