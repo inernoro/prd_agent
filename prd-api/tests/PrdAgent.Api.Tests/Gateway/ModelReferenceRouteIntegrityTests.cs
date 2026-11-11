@@ -1,3 +1,4 @@
+using System.Net;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.LlmGw.ModelReferences;
@@ -17,6 +18,8 @@ public sealed class ModelReferenceRouteIntegrityTests
     [InlineData("different-tenant")]
     [InlineData("different-upstream")]
     [InlineData("exchange")]
+    [InlineData("protocol")]
+    [InlineData("endpoint")]
     public async Task TargetRouteChangedAfterPlanCannotRemainValidated(string mutation)
     {
         await using var f = new Fixture();
@@ -34,6 +37,8 @@ public sealed class ModelReferenceRouteIntegrityTests
                 "different-logical" => ("LogicalModelId", (BsonValue)"source"),
                 "different-tenant" => ("TenantId", (BsonValue)"other-tenant"),
                 "different-upstream" => ("UpstreamModelId", (BsonValue)"another-upstream"),
+                "protocol" => ("Protocol", (BsonValue)"openai-responses"),
+                "endpoint" => ("EndpointPath", (BsonValue)"/changed-endpoint"),
                 _ => ("TargetKind", (BsonValue)"exchange")
             };
             await f.Offerings.UpdateOneAsync(new BsonDocument("_id", "target-offering"),
@@ -48,14 +53,27 @@ public sealed class ModelReferenceRouteIntegrityTests
     {
         await using var f = new Fixture();
         await f.SeedAsync();
+        var proof = await f.Offerings.Find(new BsonDocument("_id", "target-offering")).SingleAsync();
         var mapping = await f.Catalog.BuildSwitchAsync(Fixture.Tenant, "source",
             new ModelUpgradeTarget { OfferingId = "source-offering", ModelId = "old-model", ProviderId = "provider", UpstreamModelId = "old-upstream" },
             new ModelUpgradeCandidate { ModelId = "new-model", ProviderId = "provider", UpstreamModelId = "new-upstream",
-                ValidationRoute = new() { OfferingId = "target-offering" } });
+                ValidationRoute = new() { OfferingId = "target-offering", OfferingVersion = ModelUpgradeWire.Fingerprint(proof) } });
         Assert.Equal(mapping.Source.LogicalId, mapping.Target.LogicalId);
         Assert.Empty(await f.Catalog.ValidateAsync(mapping, [], default));
         await f.Logicals.UpdateOneAsync(new BsonDocument("_id", "target"), Builders<BsonDocument>.Update.Set("Enabled", false));
         Assert.NotEmpty(await f.Catalog.ValidateAsync(mapping, [], default));
+    }
+
+    [Fact]
+    public async Task ExplicitOfferingWireNameCanDifferFromPhysicalCatalogName()
+    {
+        await using var f = new Fixture();
+        await f.SeedAsync();
+        await f.Offerings.UpdateOneAsync(new BsonDocument("_id", "target-offering"),
+            Builders<BsonDocument>.Update.Set("UpstreamModelId", "explicit-wire-name"));
+        var mapping = await f.Catalog.BuildAsync(Fixture.Tenant, "source", "target");
+        Assert.Equal("explicit-wire-name", mapping.Target.UpstreamModelId);
+        Assert.Empty(await f.Catalog.ValidateAsync(mapping, [], default));
     }
 
     [Fact]
@@ -64,6 +82,33 @@ public sealed class ModelReferenceRouteIntegrityTests
         await using var f = new Fixture();
         await f.SeedAsync();
         await Assert.ThrowsAsync<ModelReferenceException>(() => f.Catalog.BuildAsync("other-tenant", "source", "target"));
+    }
+
+    [Theory]
+    [InlineData("mongodb://example.net:27912")]
+    [InlineData("mongodb://user:password@127.0.0.1:27912")]
+    [InlineData("mongodb+srv://localhost")]
+    [InlineData("mongodb://127.0.0.1:27912/?tls=true")]
+    [InlineData("mongodb://127.0.0.1:27912/business_database")]
+    public void IntegrationFixtureRejectsNonLocalOrCredentialBearingUris(string uri)
+        => Assert.Throws<InvalidOperationException>(() => LoopbackMongoUri(uri));
+
+    [Theory]
+    [InlineData("mongodb://127.0.0.1:27912")]
+    [InlineData("mongodb://localhost:27913")]
+    public void IntegrationFixtureAcceptsOnlyExplicitLoopbackPorts(string uri)
+        => Assert.Equal(uri, LoopbackMongoUri(uri));
+
+    private static string LoopbackMongoUri(string? configured)
+    {
+        var text = configured ?? "mongodb://127.0.0.1:27912";
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Scheme != "mongodb"
+            || uri.Port is < 1 or > 65535 || uri.UserInfo.Length != 0 || uri.Query.Length != 0
+            || uri.Fragment.Length != 0 || uri.AbsolutePath is not ("" or "/")
+            || !(string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                 || IPAddress.TryParse(uri.Host, out var address) && IPAddress.IsLoopback(address)))
+            throw new InvalidOperationException("模型引用集成测试仅允许无认证、无参数的显式本机 Mongo 端口。");
+        return text;
     }
 
     private sealed class Fixture : IAsyncDisposable
@@ -78,8 +123,7 @@ public sealed class ModelReferenceRouteIntegrityTests
 
         public Fixture()
         {
-            var settings = MongoClientSettings.FromConnectionString(Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
-                ?? "mongodb://127.0.0.1:27912");
+            var settings = MongoClientSettings.FromConnectionString(LoopbackMongoUri(Environment.GetEnvironmentVariable("MODEL_REFERENCE_TEST_MONGO_URI")));
             settings.ServerSelectionTimeout = TimeSpan.FromSeconds(3);
             _client = new MongoClient(settings);
             Db = _client.GetDatabase(_name);
