@@ -81,13 +81,13 @@ jobs:
             # 仓库根 scripts/fixtures 下的三份共享夹具，夹具改了也要跑。
             design_runtime:
               - 'design-runtime/**'
+              - 'scripts/ci/normalize-ubuntu-apt-sources.py'
               - 'scripts/fixtures/generated-html-normalization-v1.json'
               - 'scripts/fixtures/opendesign-task-v1.json'
               - 'scripts/fixtures/opendesign-task-v1-direction.json'
               - '.github/workflows/ci.yml'
             cds:
               - 'cds/**'
-              - 'scripts/ci/normalize-ubuntu-apt-sources.py'
               - '.github/workflows/ci.yml'
               - '.github/workflows/cds-prebuilt.yml'
               - '.claude/skills/cds/**'

@@ -219,7 +219,16 @@ class WorkflowAptWiring(unittest.TestCase):
 
     def test_helper_changes_trigger_all_four_jobs_and_fixture_guard_is_unconditional(self):
         source = WORKFLOW.read_text()
-        for section in ['server', 'admin', 'desktop', 'cds']:
+        helper = 'sudo python3 \"${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py\" --root /'
+        consumers = []
+        for job in re.finditer(r'(?ms)^  ([a-z][a-z0-9-]*):\n(.*?)(?=^  [a-z][a-z0-9-]*:|\Z)', source):
+            if helper not in job[2]:
+                continue
+            condition = re.search(r'(?m)^    if: needs\.changes\.outputs\.([a-z_]+)', job[2])
+            self.assertIsNotNone(condition, f'APT consumer {job[1]} must declare its change filter')
+            consumers.append(condition[1])
+        self.assertEqual(len(consumers), 4)
+        for section in consumers:
             block = re.search(rf'(?ms)^            {section}:\n(.*?)(?=^            [a-z_]+:)', source)
             self.assertIsNotNone(block)
             self.assertIn("- 'scripts/ci/normalize-ubuntu-apt-sources.py'", block[1])
