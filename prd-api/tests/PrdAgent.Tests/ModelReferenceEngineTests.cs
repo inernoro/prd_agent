@@ -7,6 +7,54 @@ namespace PrdAgent.Tests;
 
 public sealed class ModelReferenceEngineTests
 {
+    [Theory]
+    [InlineData("Completed")]
+    [InlineData("Running")]
+    public async Task GeneratedVideoVersionModelIsDeclaredImmutableHistory(string status)
+    {
+        var store = new MemoryStore();
+        var doc = store.Add("video_gen_runs", "{_id:'video-history',Status:'" + status + "',Scenes:[{Model:'unrelated-current',Versions:[{Model:'old-fixed'}]}]}");
+        var engine = Engine(store);
+        var plan = await engine.PlanAsync(Mapping(), "admin");
+        Assert.Equal(0, plan.Coverage.Unknown);
+        Assert.Equal(0, plan.Coverage.Residual);
+        Assert.Empty(plan.Changes);
+        var result = await engine.ApplyAsync(plan.Id, "internal", plan.Revision);
+        Assert.True(result.Coverage.Verified);
+        Assert.Equal("old-fixed", doc["Scenes"][0]["Versions"][0]["Model"].AsString);
+        Assert.Equal(0, store.Writes);
+    }
+    [Fact]
+    public async Task NewUnclassifiedSelectionInsideVideoVersionStillBlocksCompletion()
+    {
+        var store = new MemoryStore();
+        store.Add("video_gen_runs", "{_id:'video-history',Status:'Completed',Scenes:[{Versions:[{FutureModelId:'unclassified'}]}]}");
+        Assert.False((await Engine(store).InspectAsync(Mapping())).CanComplete);
+    }
+    [Theory]
+    [InlineData(false, "", false)]
+    [InlineData(true, "", true)]
+    [InlineData(false, "promote", true)]
+    public async Task RetiredPolicyJournalIsPreservedButArmedPolicyMustDrain(bool enabled, string pendingAction, bool blocked)
+    {
+        var store = new MemoryStore();
+        store.Add("llmgw_model_upgrade_policies", "{_id:'policy',TenantId:'internal',LogicalModelId:'old-logical',Policy:{Enabled:" + enabled.ToString().ToLowerInvariant() + "},PendingAction:'" + pendingAction + "'}");
+        var result = await Engine(store).FindDeleteBlockersAsync(Mapping());
+        Assert.Equal(blocked, result.Blocked > 0);
+        Assert.Equal(0, result.Unknown);
+        Assert.Equal(0, store.Writes);
+    }
+    [Theory]
+    [InlineData("active-current", true)]
+    [InlineData("historical-from", false)]
+    public async Task OnlyApplicableSuccessorTargetBlocksRetirement(string from, bool blocked)
+    {
+        var store = new MemoryStore();
+        store.Add("llmgw_model_upgrade_policies", "{_id:'policy',TenantId:'internal',LogicalModelId:'other-role',Current:{UpstreamModelId:'active-current'},Policy:{Enabled:true,Successors:[{ProviderId:'old-provider',FromModel:'" + from + "',ToModel:'old-upstream'}]}}");
+        var result = await Engine(store).InspectAsync(Mapping());
+        Assert.Equal(blocked, result.Blocked > 0);
+        Assert.Equal(0, result.Unknown);
+    }
     private static ReferenceMigrationMapping Mapping(string tenant = "internal") => new()
     {
         TenantId = tenant,

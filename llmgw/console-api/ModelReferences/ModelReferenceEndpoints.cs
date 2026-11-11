@@ -118,6 +118,6 @@ public static class ModelReferenceEndpoints
             plan.Coverage.Consumers.Add(new() { Key = "registry.changed", Unknown = 1, Reasons = ["模型使用位置注册表已更新，请重新进行完整检查。"] });
             plan.Status = "blocked";
         }
-        return new { plan.IntentId, plan.Revision, plan.TenantId, plan.ActorId, plan.Mapping, plan.Coverage, plan.Status, plan.CreatedAt, plan.UpdatedAt };
+        return new { plan.IntentId, plan.Revision, plan.TenantId, plan.ActorId, plan.Mapping, plan.Coverage, plan.Status, plan.CanResume, plan.CreatedAt, plan.UpdatedAt };
     }
 }
