@@ -19,7 +19,7 @@ public class ModelUpgradePolicyTests
     public void ScheduledCheckReusesValidEvidenceBeforeConsideringAnotherPaidCanary(bool valid, bool autoValidate, string expected)
     {
         var state = new ModelUpgradeState { ExecutionRequestedBy = "scheduled", Policy = Policy(),
-            Current = new() { ModelId = "old" }, Candidate = new() { ModelId = "new", ValidatedAt = valid ? DateTime.UtcNow : DateTime.UtcNow.AddDays(-2) },
+            Current = new() { ModelId = "old" }, Candidate = new() { ModelId = "new", ValidationRoute = new() { OfferingId = "fixed-offering", OfferingVersion = "wire" }, ValidatedAt = valid ? DateTime.UtcNow : DateTime.UtcNow.AddDays(-2) },
             Gates = new() { Capabilities = true, Price = true, Budget = true, Validation = valid } };
         state.Policy.AutoValidate = autoValidate;
         Assert.Equal(expected, ModelUpgradeRules.NextAutomaticAction(state, DateTime.UtcNow));
@@ -100,7 +100,7 @@ public class ModelUpgradePolicyTests
         => Assert.Equal(expected, ModelUpgradeRules.IsStable(new BsonDocument("IdentityKind", kind)));
     [Fact] public void ManualUnknownPriceExceptionStillRequiresRealRecentValidation()
     {
-        var s = new ModelUpgradeState { Candidate = new() { ValidatedAt = DateTime.UtcNow }, Gates = new() { Capabilities = true, Validation = true } };
+        var s = new ModelUpgradeState { Candidate = new() { ValidatedAt = DateTime.UtcNow, ValidationRoute = new() { OfferingId = "fixed-offering", OfferingVersion = "wire" } }, Gates = new() { Capabilities = true, Validation = true } };
         Assert.True(ModelUpgradeRules.CanPromote(s, false, DateTime.UtcNow));
         Assert.False(ModelUpgradeRules.CanPromote(s, true, DateTime.UtcNow));
         s.OutcomeUnknown = true; Assert.False(ModelUpgradeRules.CanPromote(s, false, DateTime.UtcNow));

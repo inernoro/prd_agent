@@ -39,6 +39,17 @@ public sealed class ModelUpgradeTarget
     public string ProviderId { get; set; } = "";
     public string UpstreamModelId { get; set; } = "";
 }
+public sealed class ModelUpgradeRouteSnapshot
+{
+    public string OfferingId { get; set; } = "";
+    public string LogicalModelId { get; set; } = "";
+    public string ModelId { get; set; } = "";
+    public string UpstreamModelId { get; set; } = "";
+    public string OfferingVersion { get; set; } = "";
+    public DateTime? OfferingUpdatedAt { get; set; }
+    public string Protocol { get; set; } = "";
+    public string? EndpointPath { get; set; }
+}
 public sealed class ModelUpgradeCandidate
 {
     public string ModelId { get; set; } = "";
@@ -49,6 +60,7 @@ public sealed class ModelUpgradeCandidate
     public string? ValidationRequestId { get; set; }
     public DateTime? ValidatedAt { get; set; }
     public string Fingerprint { get; set; } = "";
+    public ModelUpgradeRouteSnapshot? ValidationRoute { get; set; }
 }
 public sealed class ModelUpgradeGates
 {

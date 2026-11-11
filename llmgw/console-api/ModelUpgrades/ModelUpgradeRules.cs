@@ -125,7 +125,7 @@ public static class ModelUpgradeRules
            && state.Policy.MaxDailyCostUsd is { } daily
            && (state.BudgetDate == now.ToString("yyyy-MM-dd") ? state.ReservedCostUsd : 0) + estimate <= daily;
     public static bool CanPromote(ModelUpgradeState s, bool automatic, DateTime now)
-        => !s.OutcomeUnknown && s.Candidate?.ValidatedAt is { } at && at > now.AddHours(-24)
+        => !s.OutcomeUnknown && s.Candidate?.ValidationRoute is { OfferingId.Length: > 0, OfferingVersion.Length: > 0 } && s.Candidate.ValidatedAt is { } at && at > now.AddHours(-24)
            && s.Gates.Capabilities && s.Gates.Validation && (!automatic || s.Gates.Price && s.Gates.Budget);
     public static string Fingerprint(BsonDocument logical, BsonDocument provider, BsonDocument model)
     {

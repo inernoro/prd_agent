@@ -69,9 +69,15 @@ public sealed partial class ModelUpgradeService
         s.Candidate = new ModelUpgradeCandidate { ModelId = model.GetStringOrEmpty("_id"), ProviderId = relation.ProviderId,
             UpstreamModelId = relation.ToModel, DocumentationUrl = relation.DocumentationUrl, DiscoveredAt = DateTime.UtcNow, Fingerprint = fingerprint,
             ValidatedAt = previous?.Fingerprint == fingerprint ? previous.ValidatedAt : null,
-            ValidationRequestId = previous?.Fingerprint == fingerprint ? previous.ValidationRequestId : null };
+            ValidationRequestId = previous?.Fingerprint == fingerprint ? previous.ValidationRequestId : null,
+            ValidationRoute = previous?.Fingerprint == fingerprint ? previous.ValidationRoute : null };
+        if (s.Candidate.ValidatedAt is not null)
+        {
+            try { await ReadValidatedRouteAsync(s, logical, provider, model); }
+            catch (ModelUpgradeException) { s.Candidate.ValidatedAt = null; s.Candidate.ValidationRoute = null; s.ValidationStatus = "not-run"; }
+        }
         var currentModel = await RequiredAsync(Models, s.TenantId, s.Current.ModelId);
-        var priorBudgetGranted = previous?.Fingerprint == fingerprint && previous.ValidatedAt > DateTime.UtcNow.AddHours(-24) && s.Gates.Budget;
+        var priorBudgetGranted = s.Candidate.ValidatedAt > DateTime.UtcNow.AddHours(-24) && s.Gates.Budget;
         s.Gates = new ModelUpgradeGates { Capabilities = ModelUpgradeRules.CandidateCapabilitiesPass(logical, relation, model),
             Price = ModelUpgradeRules.PricePass(currentModel, model, logical.GetStringOrEmpty("ModelType"), s.Policy.MaxPriceIncreasePercent),
             Budget = priorBudgetGranted || ModelUpgradeRules.BudgetPass(s, s.Policy.CanaryUnitCostUpperBoundUsd, DateTime.UtcNow),
@@ -91,8 +97,10 @@ public sealed partial class ModelUpgradeService
         if (s.ValidationMode == "evidence")
         {
             var evidence = await Logs.Find(Scope(s.TenantId, F.Eq("RequestId", s.EvidenceRequestId ?? ""))).Sort(Builders<BsonDocument>.Sort.Descending("EndedAt")).Limit(20).ToListAsync(CancellationToken.None);
-            if (!evidence.Any(x => ModelUpgradeRules.EvidencePasses(x, s.TenantId, s.Candidate!, logical.GetStringOrEmpty("ModelType"))))
+            var matching = evidence.Where(x => ModelUpgradeRules.EvidencePasses(x, s.TenantId, s.Candidate!, logical.GetStringOrEmpty("ModelType"))).ToList();
+            if (matching.Count == 0)
                 throw new ModelUpgradeException("SERVICE_EVIDENCE_REQUIRED", "该请求没有匹配候选、组织和近期成功输出的真实日志；HTTP 响应或模型登记不能代替服务验收。");
+            await CaptureEvidenceWireAsync(s, logical, provider, model, matching);
             CompleteValidation(s, s.EvidenceRequestId!);
             return;
         }
@@ -113,6 +121,7 @@ public sealed partial class ModelUpgradeService
             if (l is not null && ModelUpgradeRules.IsFixedValidationTarget(l, logical.GetStringOrEmpty("ModelType"))) { candidateLogical = l; candidateRoute = route; break; }
         }
         if (candidateLogical is null || candidateRoute is null) throw new ModelUpgradeException("CANDIDATE_ROUTE_REQUIRED", "请先通过正常模型管理为候选登记可验收线路与用途授权，再发起验收。");
+        s.Candidate!.ValidationRoute = ModelUpgradeWire.Capture(candidateRoute, model, provider);
         var now = DateTime.UtcNow;
         var requestId = "model-upgrade-" + Guid.NewGuid().ToString("N");
         s.Candidate!.ValidationRequestId = requestId;
@@ -130,7 +139,8 @@ public sealed partial class ModelUpgradeService
             { "AppCallerCode", s.Policy.ValidationAppCallerCode }, { "MaxCostUsd", new Decimal128(s.Policy.MaxValidationCostUsd!.Value) },
             { "MaxDailyCostUsd", new Decimal128(s.Policy.MaxDailyCostUsd!.Value) }, { "EstimatedCostUsd", new Decimal128(estimate.Value) },
             { "CandidateFingerprint", s.Candidate.Fingerprint }, { "CandidateLogicalModelPublicId", candidateLogical.GetStringOrEmpty("PublicId") },
-            { "CandidateOfferingId", candidateRoute.GetStringOrEmpty("_id") }, { "Protocol", candidateRoute.AsNullableString("Protocol") ?? model.AsNullableString("Protocol") ?? provider.GetStringOrEmpty("PlatformType") },
+            { "CandidateOfferingId", s.Candidate.ValidationRoute.OfferingId }, { "OfferingVersion", s.Candidate.ValidationRoute.OfferingVersion },
+            { "EndpointPath", (BsonValue?)s.Candidate.ValidationRoute.EndpointPath ?? BsonNull.Value }, { "Protocol", s.Candidate.ValidationRoute.Protocol },
             { "Provider", provider.GetStringOrEmpty("Name") }, { "UnitCostUpperBoundUsd", new Decimal128(estimate.Value) }, { "PricingBasis", model.AsNullableDecimal("PricePerCall") is not null ? "per-call" : "token" },
             { "PriceVersion", model.AsNullableUtcDateTime("UpdatedAt")?.ToString("O") ?? "" }, { "ExecutionRequestedBy", s.ExecutionRequestedBy },
             { "Status", "pending" }, { "CreatedAt", now }, { "UpdatedAt", now }, { "ExpiresAt", now.AddMinutes(10) } };
@@ -153,11 +163,11 @@ public sealed partial class ModelUpgradeService
         if (s.TenantId != internalTenantId || job.GetStringOrEmpty("PolicyId") != s.Id) return false;
         var id = job.GetStringOrEmpty("_id");
         var audit = await AuditBeginAsync(s, "validate.expire-unused");
-        if (!(job.GetStringOrEmpty("Status") == "failed" && job.GetValue("ExpiredUnsent", false) == true))
+        if (!(job.GetStringOrEmpty("Status") == "failed" && (job.GetValue("ExpiredUnsent", false) == true || job.GetValue("UnsentConfirmed", false) == true)))
         {
             var cancelled = await ValidationRuns.UpdateOneAsync(Scope(s.TenantId, F.And(F.Eq("_id", id), F.Eq("PolicyId", s.Id),
                     F.Eq("Status", "pending"), F.Lt("ExpiresAt", now))), Builders<BsonDocument>.Update
-                .Set("Status", "failed").Set("ExpiredUnsent", true).Set("Message", "排队已过期，已确认未发送；可重新验收。")
+                .Set("Status", "failed").Set("ExpiredUnsent", true).Set("UnsentConfirmed", true).Set("Message", "排队已过期，已确认未发送；可重新验收。")
                 .Set("UpdatedAt", now).Set("ExpiryAuditId", audit), cancellationToken: CancellationToken.None);
             if (cancelled.ModifiedCount != 1) { await AuditCompleteAsync(s, audit, false); return false; }
         }
@@ -176,15 +186,20 @@ public sealed partial class ModelUpgradeService
     }
     private async Task PollValidationAsync(ModelUpgradeState s)
     {
-        var (logical, _, _) = await CandidateAsync(s);
+        var (logical, provider, model) = await CandidateAsync(s);
         var id = s.Candidate!.ValidationRequestId ?? "";
         var logs = await Logs.Find(Scope(s.TenantId, F.Eq("RequestId", id))).Limit(20).ToListAsync(CancellationToken.None);
-        if (logs.Any(x => ModelUpgradeRules.EvidencePasses(x, s.TenantId, s.Candidate, logical.GetStringOrEmpty("ModelType"))))
-        { s.PendingAction = ""; CompleteValidation(s, id); return; }
+        if (s.Candidate.ValidationRoute is { } wire && logs.Any(x => ModelUpgradeRules.EvidencePasses(x, s.TenantId, s.Candidate, logical.GetStringOrEmpty("ModelType")) && ModelUpgradeWire.LogMatches(wire, x)))
+        {
+            var route = await ReadValidatedRouteAsync(s, logical, provider, model);
+            // The finite wire fingerprint excludes health counters, timestamps and priority.
+            s.Candidate.ValidationRoute = ModelUpgradeWire.Capture(route, model, provider);
+            s.PendingAction = ""; CompleteValidation(s, id); return;
+        }
         var job = await ValidationRuns.Find(Scope(s.TenantId, F.Eq("_id", id))).FirstOrDefaultAsync(CancellationToken.None);
         var status = job?.GetStringOrEmpty("Status");
         if (job is not null && (status == "pending" && job.AsNullableUtcDateTime("ExpiresAt") < DateTime.UtcNow
-            || status == "failed" && job.GetValue("ExpiredUnsent", false) == true))
+            || status == "failed" && (job.GetValue("ExpiredUnsent", false) == true || job.GetValue("UnsentConfirmed", false) == true)))
         {
             s.OutcomeUnknown = true; s.ValidationStatus = "unknown";
             if (await ExpireUnsentValidationAsync(s, job, DateTime.UtcNow))
