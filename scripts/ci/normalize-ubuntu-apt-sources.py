@@ -13,6 +13,10 @@ from urllib.parse import urlsplit
 
 
 MIRROR_FILES = {'/etc/apt/apt-mirrors.txt', '/etc/apt/apt-mirrors-security.txt'}
+MIRRORS = {
+    'canonical': {'archive': 'https://archive.ubuntu.com/ubuntu', 'security': 'https://security.ubuntu.com/ubuntu'},
+    'kernel': {'archive': 'https://mirrors.kernel.org/ubuntu', 'security': 'https://mirrors.kernel.org/ubuntu'},
+}
 NETWORK_BOUNDS = '''// CI network bounds; package signature and TLS verification remain unchanged.
 Acquire::Retries "2";
 Acquire::http::Timeout "20";
@@ -20,7 +24,7 @@ Acquire::https::Timeout "20";
 '''
 
 
-def canonical_uri(uri, security=False):
+def canonical_uri(uri, security=False, mirror='canonical'):
     parsed = urlsplit(uri)
     if parsed.query or parsed.fragment or parsed.username or parsed.password:
         return uri
@@ -30,25 +34,27 @@ def canonical_uri(uri, security=False):
                      and parsed.path.rstrip('/') == '/ubuntu'
                      and ((parsed.hostname or '').lower() in {'archive.ubuntu.com', 'security.ubuntu.com'}
                           or (parsed.hostname or '').lower().endswith('.archive.ubuntu.com')))
-    if not mirror_file and not official_http:
+    # Recognize only our exact managed output so canonical can explicitly undo kernel.
+    managed_kernel = uri == MIRRORS['kernel']['archive']
+    if not mirror_file and not official_http and not managed_kernel:
         return uri
     security = security or parsed.hostname == 'security.ubuntu.com' or parsed.path.endswith('apt-mirrors-security.txt')
-    return f'https://{"security" if security else "archive"}.ubuntu.com/ubuntu'
+    return MIRRORS[mirror]['security' if security else 'archive']
 
 
-def normalize_legacy(text):
+def normalize_legacy(text, mirror='canonical'):
     entry = re.compile(r'^(\s*deb(?:-src)?[ \t]+(?:\[[^\]\r\n]*\][ \t]+)?)(\S+)([ \t]+)(\S+)(.*)$')
     result = []
     for line in text.splitlines(keepends=True):
         match = entry.match(line.rstrip('\r\n'))
         if match:
-            uri = canonical_uri(match[2], match[4].endswith('-security'))
+            uri = canonical_uri(match[2], match[4].endswith('-security'), mirror)
             line = line[:match.start(2)] + uri + line[match.end(2):]
         result.append(line)
     return ''.join(result)
 
 
-def normalize_stanza(text):
+def normalize_stanza(text, mirror='canonical'):
     lines = text.splitlines(keepends=True)
     fields = {}
     current = None
@@ -66,15 +72,17 @@ def normalize_stanza(text):
     suites = ' '.join(lines[index][start:].strip() for index, start in fields.get('suites', [])).split()
     security = bool(suites) and all(suite.endswith('-security') for suite in suites)
     for index, start in fields.get('uris', []):
-        lines[index] = lines[index][:start] + re.sub(r'\S+', lambda match: canonical_uri(match[0], security), lines[index][start:])
+        lines[index] = lines[index][:start] + re.sub(r'\S+', lambda match: canonical_uri(match[0], security, mirror), lines[index][start:])
     return ''.join(lines)
 
 
-def normalize_deb822(text):
-    return ''.join(normalize_stanza(part) for part in re.split(r'(\r?\n[ \t]*\r?\n)', text))
+def normalize_deb822(text, mirror='canonical'):
+    return ''.join(normalize_stanza(part, mirror) for part in re.split(r'(\r?\n[ \t]*\r?\n)', text))
 
 
-def prepare(root):
+def prepare(root, mirror='canonical'):
+    if mirror not in MIRRORS:
+        raise ValueError('unsupported Ubuntu mirror selection')
     root = root.resolve(strict=True)
     apt = root / 'etc/apt'
     files = [apt / 'sources.list']
@@ -88,7 +96,7 @@ def prepare(root):
         # A fixture must never follow a source symlink outside its selected root.
         path.resolve().relative_to(root)
         original = path.read_bytes().decode('utf-8')
-        normalized = normalize_deb822(original) if path.suffix == '.sources' else normalize_legacy(original)
+        normalized = normalize_deb822(original, mirror) if path.suffix == '.sources' else normalize_legacy(original, mirror)
         if normalized != original:
             path.write_bytes(normalized.encode('utf-8'))
             changed += 1
@@ -104,9 +112,10 @@ def prepare(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True, help='APT filesystem root; use / only on the CI runner')
+    parser.add_argument('--mirror', choices=('canonical', 'kernel'), default='canonical', help='fixed HTTPS mirror; Ubuntu signature and expiry checks remain enabled')
     args = parser.parse_args()
-    changed = prepare(args.root)
-    print(f'Ubuntu CI APT: normalized {changed} source files; retries=2, connect/data timeout=20s')
+    changed = prepare(args.root, args.mirror)
+    print(f'Ubuntu CI APT ({args.mirror}): normalized {changed} source files; retries=2, connect/data timeout=20s')
 
 
 if __name__ == '__main__':
