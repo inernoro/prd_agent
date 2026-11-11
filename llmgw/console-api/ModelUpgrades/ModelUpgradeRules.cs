@@ -73,8 +73,28 @@ public static class ModelUpgradeRules
     public static bool IsStable(BsonDocument logical) => logical.AsNullableString("IdentityKind") == "stable";
     public static List<string> Strings(BsonDocument d, string field)
         => d.GetValue(field, BsonNull.Value) is BsonArray a ? a.Where(x => x.IsString).Select(x => x.AsString).ToList() : [];
-    public static bool CapabilitiesPass(BsonDocument logical, ModelSuccessor successor)
-        => Strings(logical, "Capabilities").All(successor.Capabilities.Contains);
+    public static List<string> PhysicalCapabilities(BsonDocument model, string logicalModelType)
+    {
+        if (model.GetValue("Enabled", BsonNull.Value) is not { IsBoolean: true } enabled || !enabled.AsBoolean
+            || model.GetValue("Capabilities", BsonNull.Value) is not BsonArray capabilities) return [];
+        var docs = capabilities.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument).ToList();
+        var codes = docs.Select(x => x.AsNullableString("Type")).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!)
+            .Where(type => GatewayConfigurationProvisioning.HasEnabledCapability(docs, type));
+        // Explicit false stays disabled even when legacy image_generation expands to scenario capabilities.
+        var disabled = docs.Where(x => x.GetValue("Value", BsonNull.Value) is { IsBoolean: true } value && !value.AsBoolean)
+            .Select(x => LogicalModelCapabilityPolicy.TryCanonicalize(x.AsNullableString("Type")))
+            .Where(x => x is not null).ToHashSet(StringComparer.Ordinal);
+        return LogicalModelCapabilityPolicy.Normalize(logicalModelType, codes).Where(x => !disabled.Contains(x)).ToList();
+    }
+    public static bool CandidateCapabilitiesPass(BsonDocument logical, ModelSuccessor successor, BsonDocument physicalModel)
+    {
+        if (physicalModel.GetValue("Enabled", BsonNull.Value) is not { IsBoolean: true } enabled || !enabled.AsBoolean) return false;
+        var type = logical.GetStringOrEmpty("ModelType");
+        var required = LogicalModelCapabilityPolicy.Normalize(type, Strings(logical, "Capabilities"));
+        var declared = LogicalModelCapabilityPolicy.Normalize(type, successor.Capabilities);
+        var physical = PhysicalCapabilities(physicalModel, type);
+        return required.All(declared.Contains) && required.All(physical.Contains);
+    }
     public static decimal? ValidationEstimate(BsonDocument model, string modelType)
     {
         if (model.AsNullableString("PriceCurrency")?.ToUpperInvariant() != "USD"
