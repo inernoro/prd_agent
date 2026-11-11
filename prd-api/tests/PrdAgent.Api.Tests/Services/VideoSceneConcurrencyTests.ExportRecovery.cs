@@ -247,4 +247,28 @@ public partial class VideoSceneConcurrencyTests
         Assert.Empty(test.VideoClient.Invocations);Assert.Empty(test.AssetStorage.Invocations);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task ExportCompletion_ActualServiceWithoutProjectProducesRecoverableReceipt(string? projectId)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("export-no-project",test.OwnerId,SceneItemStatus.Done);
+        run.Mode = VideoGenMode.Storyboard;run.Status = VideoGenRunStatus.Editing;
+        run.ProjectId = projectId;run.DeploymentSlug = "synthetic-export-scope";
+        run.Scenes[0].VideoUrl = "https://synthetic.invalid/already-generated.mp4";
+        await test.SaveRunAsync(run);
+        var task = await test.CreateService().RequestExportAsync(run.Id,test.OwnerId,run.AppKey);
+        Assert.Equal(string.Empty,task.ProjectId);
+        using var worker = test.CreateWorker();worker.QueueDeploymentScope = run.DeploymentSlug;
+        task = (await worker.ClaimExportTaskAsync(default))!;
+        Assert.True(await worker.RecordCompletedExportAsync(run,task,
+            new StoredAsset(new string('a',64),"https://synthetic.invalid/export-no-project.mp4",3,"video/mp4"),null));
+        Assert.True(await worker.RecoverCompletedExportTaskAsync(default));
+        var saved = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.Equal(VideoGenRunStatus.Completed,saved.Status);
+        Assert.Equal("https://synthetic.invalid/export-no-project.mp4",saved.VideoAssetUrl);
+        Assert.Empty(test.VideoClient.Invocations);Assert.Empty(test.AssetStorage.Invocations);
+    }
+
 }

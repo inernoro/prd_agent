@@ -70,9 +70,12 @@ public partial class VideoGenRunWorker
         if (task.Status != VideoExportTaskStatus.Completed || task.DeploymentSlug != QueueDeploymentScope
             || string.IsNullOrWhiteSpace(task.OutputUrl) || string.IsNullOrWhiteSpace(task.OutputSha256)) return false;
         var f = Builders<VideoGenRun>.Filter;
+        var projectIdentity = string.IsNullOrEmpty(task.ProjectId)
+            ? f.Eq(x => x.ProjectId, null) | f.Eq(x => x.ProjectId, string.Empty)
+            : f.Eq(x => x.ProjectId, task.ProjectId);
         var run = await _db.VideoGenRuns.Find(f.Eq(x => x.Id, task.RunId)
             & f.Eq(x => x.OwnerAdminId, task.OwnerAdminId) & f.Eq(x => x.AppKey, task.AppKey)
-            & f.Eq(x => x.ProjectId, task.ProjectId) & f.Eq(x => x.DeploymentSlug, QueueDeploymentScope))
+            & projectIdentity & f.Eq(x => x.DeploymentSlug, QueueDeploymentScope))
             .FirstOrDefaultAsync(ct);
         if (run != null && !run.CancelRequested && run.DeletionRequestedAt == null
             && run.LatestExportTaskId == task.Id
