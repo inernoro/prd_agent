@@ -289,8 +289,12 @@ PRD_GATEWAY_DB=1 mongosh "<connection-uri>/<网关库名>" scripts/mongodb-index
 6. 将未解决问题登记到对应 `debt.*`。
 
 
-模型兼容命名空间由人工维护脚本 `scripts/migrate-gateway-model-identities.js` 预检、条件回填并建立
+模型兼容命名空间由专用人工维护脚本预检、条件回填并建立
 `llmgw_logical_models.uniq_llmgw_model_identity_namespace`。索引覆盖同租户、同用途下的公开标识、
 显式兼容标识与历史池身份，阻止并发导入占用旧调用标识。先在目标网关库 dry-run，确认无重复后
 显式执行 apply；应用启动不创建索引，不自动重命名冲突模型。删除索引不会回滚已登记别名，
 需先停用兼容写入，再按审计恢复对应模型的别名配置。
+
+## 实现来源
+
+- [模型兼容命名空间维护脚本](../scripts/migrate-gateway-model-identities.js)
