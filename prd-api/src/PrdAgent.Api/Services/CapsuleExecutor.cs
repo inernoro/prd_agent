@@ -5749,8 +5749,9 @@ public static class CapsuleExecutor
         WorkflowNode node,
         Dictionary<string, string> variables,
         List<ExecutionArtifact> inputArtifacts,
-        WorkflowDesignInvocation? invocation = null)
+        WorkflowDesignInvocation? invocation = null, CancellationToken authorityToken = default)
     {
+        authorityToken.ThrowIfCancellationRequested();
         var sb = new StringBuilder();
 
         // 获取视频 URL：优先配置，否则从上游 videoInfo 中提取
@@ -5782,7 +5783,8 @@ public static class CapsuleExecutor
             && configuredMaxBytes > 0
             ? Math.Min(configuredMaxBytes, DefaultMaxVideoDownloadBytes)
             : DefaultMaxVideoDownloadBytes;
-        using var downloadDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+        using var downloadDeadline = CancellationTokenSource.CreateLinkedTokenSource(authorityToken);
+        downloadDeadline.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         var downloadToken = downloadDeadline.Token;
         var target = Uri.TryCreate(videoUrl, UriKind.Absolute, out var downloadUri)
             ? $"host={downloadUri.IdnHost}, pathSha256={Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(downloadUri.AbsolutePath))).ToLowerInvariant()}"
@@ -5883,6 +5885,7 @@ public static class CapsuleExecutor
             }
         }
 
+        authorityToken.ThrowIfCancellationRequested();
         if (failure != null)
             throw new InvalidOperationException($"{failure}记录编号：{auditId}");
 
@@ -6184,14 +6187,15 @@ public static class CapsuleExecutor
         WorkflowNode node,
         Dictionary<string, string> variables,
         List<ExecutionArtifact> inputArtifacts,
-        EmitEventDelegate? emitEvent)
+        EmitEventDelegate? emitEvent, CancellationToken authorityToken = default)
     {
+        authorityToken.ThrowIfCancellationRequested();
         var sb = new StringBuilder();
         var extractMode = (GetConfigString(node, "extractMode") ?? "metadata").Trim().ToLowerInvariant();
 
         // ASR 模式走专门通道（下载视频 + ffmpeg 抽音 + 流式 ASR + 可选 hook 提炼），单独分发避免污染老 metadata/llm 路径
         if (extractMode == "asr")
-            return await ExecuteVideoToTextAsrAsync(sp, node, variables, inputArtifacts, emitEvent);
+            return await ExecuteVideoToTextAsrAsync(sp, node, variables, inputArtifacts, emitEvent, authorityToken);
 
         var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "vt-in")?.InlineContent
             ?? inputArtifacts.FirstOrDefault()?.InlineContent;
@@ -6247,7 +6251,7 @@ public static class CapsuleExecutor
                 }
             };
 
-            var llmResponse = await gateway.SendAsync(request, CancellationToken.None);
+            var llmResponse = await gateway.SendAsync(request, authorityToken);
             var llmContent = llmResponse.Content ?? "";
             sb.AppendLine($"[VideoToText] LLM 分析完成，输出长度: {llmContent.Length}");
 
@@ -6288,8 +6292,9 @@ public static class CapsuleExecutor
         WorkflowNode node,
         Dictionary<string, string> variables,
         List<ExecutionArtifact> inputArtifacts,
-        EmitEventDelegate? emitEvent)
+        EmitEventDelegate? emitEvent, CancellationToken authorityToken)
     {
+        authorityToken.ThrowIfCancellationRequested();
         var sb = new StringBuilder();
 
         var videoUrlField = (GetConfigString(node, "videoUrlField") ?? "videoUrl").Trim();
@@ -6362,6 +6367,7 @@ public static class CapsuleExecutor
         var resolutionErrors = new List<string>();
         foreach (var caller in asrCallerChain)
         {
+            authorityToken.ThrowIfCancellationRequested();
             var r = await modelResolver.ResolveAsync(caller, ModelTypes.Asr);
             if (r.Success && firstSuccessfulResolution == null)
             {
@@ -6399,6 +6405,7 @@ public static class CapsuleExecutor
         int idx = 0;
         foreach (var item in rawItems)
         {
+            authorityToken.ThrowIfCancellationRequested();
             idx++;
 
             // 复制原 item 为可写 JsonObject（保留所有原字段，再追加 transcript/hook/bullets）
@@ -6415,7 +6422,8 @@ public static class CapsuleExecutor
             if (idx > processCount)
             {
                 // 超出 maxItems 的条目原样透传
-                enrichedItems.Add(enriched);
+                authorityToken.ThrowIfCancellationRequested();
+            enrichedItems.Add(enriched);
                 continue;
             }
 
@@ -6443,13 +6451,14 @@ public static class CapsuleExecutor
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 流式下载视频");
                     // 流式直写 temp file，避免把整个视频读到 byte[] 内存（视频可能 50MB+，
                     // maxItems 上限 20 → 1GB 内存压力。同 media-rehost 的修复路径）
-                    tmpVideoPath = await DownloadToTempFileAsync(http, urlValidator, videoUrl);
+                    tmpVideoPath = await DownloadToTempFileAsync(http, urlValidator, videoUrl, authorityToken);
                     var videoSize = new System.IO.FileInfo(tmpVideoPath).Length;
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 视频 {videoSize} 字节落盘，开始抽音");
 
                     var audioBytes = await ExtractAudioWithFfmpegFromFileAsync(tmpVideoPath);
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 音频 {audioBytes.Length} 字节，提交 ASR");
 
+                    authorityToken.ThrowIfCancellationRequested();
                     var gwRes = resolution.ToGatewayResolution();
                     // chat-audio(OpenAI input_audio→/v1/chat/completions)只用于非 Exchange 的 OpenAI 兼容平台。
                     // Exchange 走自己的 transformer(doubao-asr 已在上游单独分流;gemini-native 的
@@ -6479,8 +6488,8 @@ public static class CapsuleExecutor
                         throw new InvalidOperationException(routeError);
                     }
                     var gatewayResult = !gwRes.IsExchange && AsrAudioRoutePolicy.ShouldUseChatAudio(gwRes.ActualModel, gwRes.Protocol, gwRes.PlatformType)
-                        ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
-                        : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
+                        ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes, authorityToken)
+                        : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes, authorityToken);
                     transcript = gatewayResult.Transcript;
                     if (gatewayResult.Cues.Count > 0)
                     {
@@ -6492,6 +6501,7 @@ public static class CapsuleExecutor
                         sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成（model={gwRes.ActualModel}），转写 {transcript.Length} 字");
                     }
                 }
+                catch (OperationCanceledException) when (authorityToken.IsCancellationRequested) { throw; }
                 catch (Exception ex)
                 {
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 异常: {ex.Message}");
@@ -6554,7 +6564,7 @@ public static class CapsuleExecutor
                         SystemPromptRedacted: "video-to-text-asr-hook",
                         RequestType: "chat",
                         AppCallerCode: AppCallerRegistry.VideoAgent.VideoToText.Chat));
-                    var llmResponse = await gateway.SendAsync(llmRequest, CancellationToken.None);
+                    var llmResponse = await gateway.SendAsync(llmRequest, authorityToken);
                     var llmContent = (llmResponse.Content ?? "").Trim();
 
                     if (TryExtractJsonObject(llmContent, out var parsed))
@@ -6587,12 +6597,14 @@ public static class CapsuleExecutor
                         sb.AppendLine($"[VideoToText:asr] item#{idx} LLM 输出非 JSON ({llmContent.Length} 字)，跳过 hook 提炼");
                     }
                 }
+                catch (OperationCanceledException) when (authorityToken.IsCancellationRequested) { throw; }
                 catch (Exception ex)
                 {
                     sb.AppendLine($"[VideoToText:asr] item#{idx} hook 提炼异常: {ex.Message}");
                 }
             }
 
+            authorityToken.ThrowIfCancellationRequested();
             enrichedItems.Add(enriched);
         }
 
@@ -6628,8 +6640,9 @@ public static class CapsuleExecutor
         ILlmGateway gateway,
         string appCallerCode,
         byte[] audioBytes,
-        GatewayModelResolution resolution)
+        GatewayModelResolution resolution, CancellationToken authorityToken = default)
     {
+        authorityToken.ThrowIfCancellationRequested();
         var rawRequest = new GatewayRawRequest
         {
             RequiredOfferingId = resolution.OfferingId,
@@ -6647,7 +6660,7 @@ public static class CapsuleExecutor
             TimeoutSeconds = 600,
         };
 
-        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, CancellationToken.None);
+        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, authorityToken);
         if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
         {
             var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
@@ -6665,7 +6678,7 @@ public static class CapsuleExecutor
         ILlmGateway gateway,
         string appCallerCode,
         byte[] audioBytes,
-        GatewayModelResolution resolution)
+        GatewayModelResolution resolution, CancellationToken authorityToken = default)
     {
         var base64 = Convert.ToBase64String(audioBytes);
         var body = new JsonObject
@@ -6698,6 +6711,7 @@ public static class CapsuleExecutor
             },
         };
 
+        authorityToken.ThrowIfCancellationRequested();
         var rawRequest = new GatewayRawRequest
         {
             RequiredOfferingId = resolution.OfferingId,
@@ -6711,7 +6725,7 @@ public static class CapsuleExecutor
             TimeoutSeconds = 600,
         };
 
-        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, CancellationToken.None);
+        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, authorityToken);
         if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
         {
             var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
@@ -6857,21 +6871,29 @@ public static class CapsuleExecutor
     /// 流式下载到 temp 文件，返回路径。避免把整个 body 读到 byte[] 内存。
     /// 调用方负责 finally 删除 temp 文件。
     /// </summary>
-    private static async Task<string> DownloadToTempFileAsync(System.Net.Http.HttpClient http, ISafeOutboundUrlValidator urlValidator, string url)
+    private static async Task<string> DownloadToTempFileAsync(System.Net.Http.HttpClient http, ISafeOutboundUrlValidator urlValidator, string url, CancellationToken authorityToken = default)
     {
         var tmpPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"capsule-dl-{Guid.NewGuid():N}");
-        using var resp = await GetSafeOutboundAsync(
-            http,
-            urlValidator,
-            url,
-            "视频转文字下载地址",
-            System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
-            CancellationToken.None);
-        resp.EnsureSuccessStatusCode();
-        await using var srcStream = await resp.Content.ReadAsStreamAsync(CancellationToken.None);
-        await using var dstStream = System.IO.File.Create(tmpPath);
-        await srcStream.CopyToAsync(dstStream, 64 * 1024, CancellationToken.None);
-        return tmpPath;
+        try
+        {
+            using var resp = await GetSafeOutboundAsync(
+                http,
+                urlValidator,
+                url,
+                "视频转文字下载地址",
+                System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
+                authorityToken);
+            resp.EnsureSuccessStatusCode();
+            await using var srcStream = await resp.Content.ReadAsStreamAsync(authorityToken);
+            await using var dstStream = System.IO.File.Create(tmpPath);
+            await srcStream.CopyToAsync(dstStream, 64 * 1024, authorityToken);
+            return tmpPath;
+        }
+        catch
+        {
+            try { if (System.IO.File.Exists(tmpPath)) System.IO.File.Delete(tmpPath); } catch { }
+            throw;
+        }
     }
 
     private static async Task<System.Net.Http.HttpResponseMessage> GetSafeOutboundAsync(
