@@ -1,7 +1,7 @@
 # AGENTS.md
 
 > PRD Agent 全栈项目（`prd-api` .NET 8 / `prd-admin` React+Vite / `prd-desktop` Tauri / `prd-video` Remotion / `llmgw` LLM 网关 / `cds` 分支预览部署）。
-> 本文件是全体 AI Agent 的共用规则 SSOT，工具中立。各模块构建命令见子目录同名文件；架构规则见 `.claude/rules/`。
+> 本文件是全体 AI Agent 的共用规则 SSOT，工具中立。各模块构建命令见子目录同名文件；架构规则见 `.claude/rules/`。新增或调整 CDS 页面导航前，必读[页面切换动效规范](.claude/rules/cds-page-motion.md)。
 
 <!--
 为什么这份是 SSOT：本仓库曾经并行维护根 CLAUDE.md 与根 AGENTS.md 两份 95% 相同的副本，
