@@ -90,6 +90,37 @@ public sealed class TaskBusinessIntentTests
             "PrdAgent.Api.Controllers.McpGatewayController.Handle", TaskExecutionOrigins.Agent, false, default));
     }
 
+    [Fact]
+    public async Task McpSdkReplay_IgnoresFiniteObservedTransportMetadataAcrossTurns()
+    {
+        Task<TaskBusinessIntent> Intent(string call,int progress,string prompt="sample",string trace="same-turn",bool businessCallChanged=false,string unknownMeta="unchanged")
+            => TaskBusinessIntent.ResolveAsync(Json(JsonSerializer.Serialize(new {
+                jsonrpc="2.0",id=progress,method="tools/call",@params=new {
+                    name="map_visual_generate_image",arguments=new { clientRequestId="stable-sdk-request",prompt,
+                        modelId="image-2-all",count=1,size="1024x1024",callId=businessCallChanged?"other-business":"same-business" },
+                    _meta=new Dictionary<string,object> {
+                        ["callId"]=call,["progressToken"]=progress,["threadId"]="thread-"+trace,["sessionId"]="session-"+trace,
+                        ["windowId"]="window-"+trace,["itemId"]="item-"+trace,["x-codex-turn-metadata"]=new { trace },["customGuard"]=unknownMeta
+                    }
+                }
+            }),null),"PrdAgent.Api.Controllers.McpGatewayController.Handle",TaskExecutionOrigins.Agent,false,default);
+        var initial=await Intent("sdk-call-one",11);
+        Assert.Equal(initial,await Intent("sdk-call-two",12));
+        Assert.NotEqual(initial.Fingerprint,(await Intent("sdk-call-three",13,prompt:"changed")).Fingerprint);
+        Assert.Equal(initial,await Intent("sdk-call-four",14,trace:"different-turn-session"));
+        Assert.NotEqual(initial.Fingerprint,(await Intent("sdk-call-unknown",16,unknownMeta:"changed")).Fingerprint);
+        Assert.NotEqual(initial.Fingerprint,(await Intent("sdk-call-five",15,businessCallChanged:true)).Fingerprint);
+    }
+
+    [Fact]
+    public async Task McpProgressOnlyEnvelope_IsEquivalentToAbsentTransportMetadata()
+    {
+        Task<TaskBusinessIntent> Intent(string metadata) => TaskBusinessIntent.ResolveAsync(Json(
+            "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"map_visual_generate_image\",\"arguments\":{\"clientRequestId\":\"same\",\"prompt\":\"sample\"}"+metadata+"}}",null),
+            "PrdAgent.Api.Controllers.McpGatewayController.Handle",TaskExecutionOrigins.Agent,false,default);
+        Assert.Equal(await Intent(""),await Intent(",\"_meta\":{\"callId\":\"request-one\",\"progressToken\":11}"));
+    }
+
     private static Task<TaskBusinessIntent> Resolve(HttpContext http) => TaskBusinessIntent.ResolveAsync(http,
         "future.registered.operation", TaskExecutionOrigins.Interactive, false, default);
     private static DefaultHttpContext Json(string body, string? key)
