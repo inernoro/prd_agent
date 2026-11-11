@@ -76,14 +76,14 @@ public partial class VideoGenRunWorker
             & f.Eq(x => x.OwnerAdminId, task.OwnerAdminId) & f.Eq(x => x.AppKey, task.AppKey)
             & projectIdentity)
             .FirstOrDefaultAsync(ct);
-        // 本人入口先移动回执后移动父任务；这段间隙只等待，不提前消耗核对标记。
-        if (run != null && run.DeploymentSlug != QueueDeploymentScope) return false;
         if (run != null && !run.CancelRequested && run.DeletionRequestedAt == null
             && run.LatestExportTaskId == task.Id
             && run.Status is VideoGenRunStatus.Rendering or VideoGenRunStatus.Completed
             && (run.Status != VideoGenRunStatus.Completed || string.IsNullOrWhiteSpace(run.VideoAssetUrl)
                 || run.VideoAssetUrl == task.OutputUrl && run.VideoAssetSha256 == task.OutputSha256))
         {
+            // 真正待交接才等待；取消、删除或已被取代的回执走下面的保留式收口。
+            if (run.DeploymentSlug != QueueDeploymentScope) return false;
             // 已完成但记录了另一结果时按已取代处理，不阻塞后续回执，也不覆盖新结果。
             var completed = await _db.VideoGenRuns.UpdateOneAsync(
                 ExportRunIdentity(run) & f.Eq(x => x.Status, run.Status)

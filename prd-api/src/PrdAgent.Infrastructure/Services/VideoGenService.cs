@@ -101,7 +101,7 @@ public class VideoGenService : IVideoGenService
             await db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId && x.OwnerAdminId == task.OwnerAdminId
                 && x.AppKey == task.AppKey && x.LatestRunId == run.Id
                 && (x.LatestExportTaskId == null || x.LatestExportTaskId == task.Id || x.LatestExportTaskId == run.LatestExportTaskId)
-                && (x.Status == VideoProjectStatus.Editing || x.Status == VideoProjectStatus.Rendering),
+                && (x.Status == VideoProjectStatus.Editing || x.Status == VideoProjectStatus.Rendering || x.Status == VideoProjectStatus.Completed),
                 Builders<VideoProject>.Update.Set(x => x.LatestExportTaskId, task.Id)
                     .Set(x => x.Status, VideoProjectStatus.Rendering).Set(x => x.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
