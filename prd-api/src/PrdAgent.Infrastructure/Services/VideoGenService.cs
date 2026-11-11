@@ -511,6 +511,7 @@ public class VideoGenService : IVideoGenService
         var task = new VideoExportTask
         {
             AppKey = run.AppKey,
+            DeploymentSlug = run.DeploymentSlug,
             OwnerAdminId = ownerAdminId,
             ProjectId = run.ProjectId ?? string.Empty,
             RunId = run.Id,

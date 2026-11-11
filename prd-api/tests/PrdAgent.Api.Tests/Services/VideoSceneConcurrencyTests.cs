@@ -430,6 +430,16 @@ public partial class VideoSceneConcurrencyTests
                     return Task.FromResult<VideoExportTask>(null!);
                 });
             database.Setup(x => x.GetCollection<VideoExportTask>("video_export_tasks", null)).Returns(exports.Object);
+            exports.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<VideoExportTask>>(),
+                It.IsAny<FindOptions<VideoExportTask, VideoExportTask>>(), It.IsAny<CancellationToken>()))
+                .Returns(() =>
+                {
+                    var cursor = new Mock<IAsyncCursor<VideoExportTask>>(MockBehavior.Strict);
+                    cursor.SetupGet(x => x.Current).Returns(Array.Empty<VideoExportTask>());
+                    cursor.Setup(x => x.MoveNextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
+                    cursor.Setup(x => x.Dispose());
+                    return Task.FromResult(cursor.Object);
+                });
             exports.Setup(x => x.CountDocumentsAsync(It.IsAny<FilterDefinition<VideoExportTask>>(), It.IsAny<CountOptions>(), CancellationToken.None))
                 .ReturnsAsync(() => AssetReference == "export" ? 1L : 0L);
             var projects = new Mock<IMongoCollection<VideoProject>>(MockBehavior.Strict);
