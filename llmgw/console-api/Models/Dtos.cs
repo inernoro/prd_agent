@@ -2453,6 +2453,7 @@ public sealed class UpsertImageGenConfigRequest
 
 public sealed class CatalogEntriesData
 {
+    public IReadOnlyDictionary<string, string> LegacyCapabilityAliases { get; set; } = new Dictionary<string, string>();
     public List<CatalogEntryItem> Items { get; set; } = new();
     public int Total { get; set; }
 
