@@ -45,7 +45,7 @@ public partial class VideoGenRunWorker
 
     internal async Task<bool> RenewExportHolderAsync(VideoGenRun run, VideoExportTask task)
     {
-        var stillCurrent = await _db.VideoGenRuns.Find(ExportRunIdentity(run)
+        var stillCurrent = await _db.VideoGenRuns.Find(ExportRunIdentity(run, task)
             & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Rendering)
             & Builders<VideoGenRun>.Filter.Eq(x => x.LatestExportTaskId, task.Id)).AnyAsync(CancellationToken.None);
         if (!stillCurrent) return false;

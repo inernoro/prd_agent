@@ -7,19 +7,21 @@ namespace PrdAgent.Api.Services;
 
 public partial class VideoGenRunWorker
 {
-    private FilterDefinition<VideoGenRun> ExportRunIdentity(VideoGenRun run)
+    private FilterDefinition<VideoGenRun> ExportRunIdentity(VideoGenRun run, VideoExportTask? task = null)
     {
         var f = Builders<VideoGenRun>.Filter;
         return f.Eq(x => x.Id, run.Id) & f.Eq(x => x.OwnerAdminId, run.OwnerAdminId)
             & f.Eq(x => x.AppKey, run.AppKey) & f.Eq(x => x.ProjectId, run.ProjectId)
+            & f.Eq(x => x.ExportHolderLeaseId, task?.WorkerLeaseId ?? run.ExportHolderLeaseId)
             & f.Eq(x => x.DeploymentSlug, run.DeploymentSlug)
             & f.Eq(x => x.CancelRequested, false) & f.Eq(x => x.DeletionRequestedAt, null);
     }
 
-    private Task<UpdateResult> UpdateExportProjectAsync(VideoGenRun run, string status)
+    private Task<UpdateResult> UpdateExportProjectAsync(VideoGenRun run, string status, VideoExportTask? task = null)
         => _db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId && x.OwnerAdminId == run.OwnerAdminId
             && x.AppKey == run.AppKey && x.LatestRunId == run.Id
-            && x.LatestExportTaskId == run.LatestExportTaskId && x.Status == VideoProjectStatus.Rendering,
+            && x.LatestExportTaskId == run.LatestExportTaskId && x.Status == VideoProjectStatus.Rendering
+            && x.ExportHolderLeaseId == (task == null ? run.ExportHolderLeaseId : task.WorkerLeaseId),
             Builders<VideoProject>.Update.Set(x => x.Status, status).Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
 

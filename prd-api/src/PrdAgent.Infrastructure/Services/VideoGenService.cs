@@ -66,8 +66,22 @@ public class VideoGenService : IVideoGenService
         if (parent.MatchedCount == 1) run.DeploymentSlug = current;
     }
 
+    private static Task<bool> OwnsExportLinkAsync(MongoDbContext db, VideoExportTask task, string? current, CancellationToken ct)
+    {
+        var f = Builders<VideoExportTask>.Filter;
+        var identity = f.Eq(x => x.Id, task.Id) & f.Eq(x => x.RunId, task.RunId)
+            & f.Eq(x => x.OwnerAdminId, task.OwnerAdminId) & f.Eq(x => x.AppKey, task.AppKey)
+            & f.Eq(x => x.ProjectId, task.ProjectId) & f.Eq(x => x.DeploymentSlug, current);
+        if (task.WorkerLeaseId == null)
+            identity &= f.In(x => x.Status, new[] { VideoExportTaskStatus.ScopedQueued, VideoExportTaskStatus.Queued });
+        else identity &= f.Eq(x => x.Status, VideoExportTaskStatus.Processing) & f.Eq(x => x.WorkerLeaseId, task.WorkerLeaseId)
+            & new MongoDB.Bson.BsonDocument("$expr", new MongoDB.Bson.BsonDocument("$gt",
+                new MongoDB.Bson.BsonArray { "$WorkerLeaseExpiresAt", "$$NOW" }));
+        return db.VideoExportTasks.Find(identity).AnyAsync(ct);
+    }
+
     public static async Task<VideoGenRun?> LinkExportTaskAsync(MongoDbContext db, VideoExportTask task,
-        string? current, string? durable, CancellationToken ct)
+        string? current, string? durable, CancellationToken ct, int retries = 1)
     {
         if (task.DeploymentSlug != current) return null;
         var f = Builders<VideoGenRun>.Filter;
@@ -78,6 +92,7 @@ public class VideoGenService : IVideoGenService
         if (run == null || !IsExportBranchScope(run.DeploymentSlug, current, durable) || run.CancelRequested
             || run.DeletionRequestedAt != null || run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Rendering)
             || run.Scenes.Count == 0 || run.Scenes.Any(x => x.Status != SceneItemStatus.Done || string.IsNullOrWhiteSpace(x.VideoUrl))) return null;
+        var holder = task.WorkerLeaseId ?? "pending:" + task.Id;
         if (run.LatestExportTaskId != null && run.LatestExportTaskId != task.Id)
         {
             if (run.Status != VideoGenRunStatus.Editing) return null;
@@ -87,14 +102,16 @@ public class VideoGenService : IVideoGenService
             if (previous?.Status is not (VideoExportTaskStatus.Failed or VideoExportTaskStatus.Cancelled
                 or VideoExportTaskStatus.Completed)) return null;
         }
+        if (!await OwnsExportLinkAsync(db, task, current, ct)) return null;
         var changed = await db.VideoGenRuns.UpdateOneAsync(f.Eq(x => x.Id, run.Id)
             & f.Eq(x => x.OwnerAdminId, task.OwnerAdminId) & f.Eq(x => x.AppKey, task.AppKey) & project
             & f.Eq(x => x.Status, run.Status) & f.Eq(x => x.DeploymentSlug, run.DeploymentSlug)
             & f.Eq(x => x.LatestExportTaskId, run.LatestExportTaskId) & f.Eq(x => x.CancelRequested, false)
-            & f.Eq(x => x.DeletionRequestedAt, null),
+            & f.Eq(x => x.DeletionRequestedAt, null) & f.Eq(x => x.ExportHolderLeaseId, run.ExportHolderLeaseId),
             Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, current).Set(x => x.Status, VideoGenRunStatus.Rendering)
                 .Set(x => x.LatestExportTaskId, task.Id).Set(x => x.ExportRequested, false)
-                .Set(x => x.ExportErrorMessage, (string?)null).Set(x => x.CurrentPhase, "export-queued").Set(x => x.PhaseProgress, 1),
+                .Set(x => x.ExportErrorMessage, (string?)null).Set(x => x.CurrentPhase, "export-queued").Set(x => x.PhaseProgress, 1)
+                .Set(x => x.ExportHolderLeaseId, holder),
             cancellationToken: CancellationToken.None);
         if (changed.MatchedCount != 1)
         {
@@ -106,6 +123,8 @@ public class VideoGenService : IVideoGenService
                 & f.In(x => x.Status, new[] { VideoGenRunStatus.Rendering, VideoGenRunStatus.Completed }))
                 .FirstOrDefaultAsync(ct);
             if (run == null) return null;
+            if (run.ExportHolderLeaseId != holder)
+                return retries > 0 ? await LinkExportTaskAsync(db, task, current, durable, ct, retries - 1) : null;
             if (run.Status == VideoGenRunStatus.Completed) return run;
         }
         if (!string.IsNullOrWhiteSpace(run.ProjectId))
@@ -124,16 +143,22 @@ public class VideoGenService : IVideoGenService
                         && x.ProjectId == task.ProjectId).FirstOrDefaultAsync(ct);
                     replace = previous?.Status is VideoExportTaskStatus.Failed or VideoExportTaskStatus.Cancelled or VideoExportTaskStatus.Completed;
                 }
-                if (replace)
-                    await db.VideoProjects.UpdateOneAsync(x => x.Id == parentProject.Id && x.OwnerAdminId == task.OwnerAdminId
+                if (replace && await OwnsExportLinkAsync(db, task, current, ct))
+                {
+                    var synced = await db.VideoProjects.UpdateOneAsync(x => x.Id == parentProject.Id && x.OwnerAdminId == task.OwnerAdminId
                         && x.AppKey == task.AppKey && x.LatestRunId == run.Id
-                        && x.LatestExportTaskId == parentProject.LatestExportTaskId && x.Status == parentProject.Status,
+                        && x.LatestExportTaskId == parentProject.LatestExportTaskId && x.Status == parentProject.Status
+                        && x.ExportHolderLeaseId == parentProject.ExportHolderLeaseId,
                         Builders<VideoProject>.Update.Set(x => x.LatestExportTaskId, task.Id)
-                            .Set(x => x.Status, VideoProjectStatus.Rendering).Set(x => x.UpdatedAt, DateTime.UtcNow),
+                            .Set(x => x.Status, VideoProjectStatus.Rendering).Set(x => x.UpdatedAt, DateTime.UtcNow)
+                            .Set(x => x.ExportHolderLeaseId, holder),
                         cancellationToken: CancellationToken.None);
+                    if (synced.MatchedCount != 1)
+                        return retries > 0 ? await LinkExportTaskAsync(db, task, current, durable, ct, retries - 1) : null;
+                }
             }
         }
-        run.DeploymentSlug = current;run.Status = VideoGenRunStatus.Rendering;run.LatestExportTaskId = task.Id;
+        run.DeploymentSlug = current;run.Status = VideoGenRunStatus.Rendering;run.LatestExportTaskId = task.Id;run.ExportHolderLeaseId = holder;
         return run;
     }
 
@@ -645,13 +670,38 @@ public class VideoGenService : IVideoGenService
         };
         await _db.VideoExportTasks.InsertOneAsync(task, cancellationToken: ct);
 
+        async Task<VideoExportTask?> ClaimedByWorkerAsync() => await _db.VideoExportTasks.Find(x => x.Id == task.Id
+            && x.RunId == runId && x.OwnerAdminId == ownerAdminId && x.AppKey == run.AppKey
+            && x.ProjectId == task.ProjectId && x.DeploymentSlug == ExportDeploymentScope
+            && (x.Status == VideoExportTaskStatus.Processing || x.Status == VideoExportTaskStatus.Completed)).FirstOrDefaultAsync(ct);
         if (await LinkExportTaskAsync(_db, task, ExportDeploymentScope, ExportDurableScope, ct) == null)
         {
-            await _db.VideoExportTasks.UpdateOneAsync(x => x.Id == task.Id && x.OwnerAdminId == ownerAdminId
-                    && x.AppKey == run.AppKey && x.Status == VideoExportTaskStatus.ScopedQueued,
+            var claimed = await ClaimedByWorkerAsync();
+            if (claimed != null) return claimed;
+            var failed = await _db.VideoExportTasks.UpdateOneAsync(x => x.Id == task.Id && x.OwnerAdminId == ownerAdminId
+                    && x.AppKey == run.AppKey && x.RunId == runId && x.ProjectId == task.ProjectId
+                    && x.DeploymentSlug == ExportDeploymentScope && x.Status == VideoExportTaskStatus.ScopedQueued,
                 Builders<VideoExportTask>.Update.Set(x => x.Status, VideoExportTaskStatus.Failed)
                     .Set(x => x.ErrorMessage, "导出目标已改变，未启动本次导出").Set(x => x.EndedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
+            if (failed.MatchedCount != 1)
+            {
+                claimed = await ClaimedByWorkerAsync();
+                if (claimed != null) return claimed;
+            }
+            else
+            {
+                await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId && x.OwnerAdminId == ownerAdminId
+                    && x.AppKey == run.AppKey && x.DeploymentSlug == ExportDeploymentScope
+                    && x.LatestExportTaskId == task.Id && x.ExportHolderLeaseId == "pending:" + task.Id
+                    && x.Status == VideoGenRunStatus.Rendering && !x.CancelRequested && x.DeletionRequestedAt == null,
+                    Builders<VideoGenRun>.Update.Set(x => x.Status, VideoGenRunStatus.Editing)
+                        .Set(x => x.ExportErrorMessage, "导出目标已改变，未启动本次导出"), cancellationToken: CancellationToken.None);
+                if (!string.IsNullOrWhiteSpace(run.ProjectId)) await _db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId && x.OwnerAdminId == ownerAdminId
+                    && x.AppKey == run.AppKey && x.LatestRunId == runId && x.LatestExportTaskId == task.Id
+                    && x.ExportHolderLeaseId == "pending:" + task.Id && x.Status == VideoProjectStatus.Rendering,
+                    Builders<VideoProject>.Update.Set(x => x.Status, VideoProjectStatus.Editing), cancellationToken: CancellationToken.None);
+            }
             throw new InvalidOperationException("导出目标已改变，未启动本次导出");
         }
         await PublishEventAsync(runId, "export.queued", new { taskId = task.Id, sceneCount = run.Scenes.Count });

@@ -138,7 +138,7 @@ public partial class VideoGenRunWorker : BackgroundService
                     if (taskRun == null)
                     {
                         await _db.VideoExportTasks.UpdateOneAsync(
-                            x => x.Id == exportTask.Id,
+                            OwnedExportHolder(exportTask),
                             Builders<VideoExportTask>.Update
                                 .Set(x => x.Status, VideoExportTaskStatus.Failed)
                                 .Set(x => x.ErrorMessage, "关联的视频生成任务不存在")
@@ -1467,12 +1467,28 @@ public partial class VideoGenRunWorker : BackgroundService
             & f.Eq(x => x.DeploymentSlug, QueueDeploymentScope);
         var candidate = await _db.VideoExportTasks.Find(filter).SortBy(x => x.CreatedAt).ThenBy(x => x.Id).FirstOrDefaultAsync(ct);
         if (candidate == null) return null;
+        filter &= f.Eq(x => x.Id, candidate.Id) & f.Eq(x => x.DeploymentSlug, candidate.DeploymentSlug)
+            & f.Eq(x => x.OwnerAdminId, candidate.OwnerAdminId) & f.Eq(x => x.AppKey, candidate.AppKey)
+            & f.Eq(x => x.RunId, candidate.RunId) & f.Eq(x => x.ProjectId, candidate.ProjectId);
+        var update = new BsonDocument("$set", new BsonDocument
+        {
+            ["DeploymentSlug"] = QueueDeploymentScope == null ? BsonNull.Value : QueueDeploymentScope,
+            ["Status"] = VideoExportTaskStatus.Processing, ["CurrentPhase"] = "export-preparing", ["Progress"] = 5,
+            ["StartedAt"] = "$$NOW", ["WorkerLeaseId"] = Guid.NewGuid().ToString("N"),
+            ["WorkerLeaseExpiresAt"] = new BsonDocument("$dateAdd", new BsonDocument
+                { ["startDate"] = "$$NOW", ["unit"] = "millisecond", ["amount"] = (long)ExportHolderDuration.TotalMilliseconds })
+        });
+        var claimed = await _db.VideoExportTasks.FindOneAndUpdateAsync(filter,
+            new PipelineUpdateDefinition<VideoExportTask>(new[] { update }),
+            new FindOneAndUpdateOptions<VideoExportTask> { ReturnDocument = ReturnDocument.After }, ct);
+        if (claimed == null) return null;
+        candidate = claimed;
         if (await VideoGenService.LinkExportTaskAsync(_db, candidate, QueueDeploymentScope, ExportDurableDeploymentScope, ct) == null)
         {
             var parent = await _db.VideoGenRuns.Find(x => x.Id == candidate.RunId
                 && x.OwnerAdminId == candidate.OwnerAdminId && x.AppKey == candidate.AppKey).FirstOrDefaultAsync(ct);
             var cancelled = parent?.CancelRequested == true || parent?.Status == VideoGenRunStatus.Cancelled;
-            var failed = await _db.VideoExportTasks.UpdateOneAsync(filter & f.Eq(x => x.Id, candidate.Id),
+            var failed = await _db.VideoExportTasks.UpdateOneAsync(OwnedExportHolder(candidate),
                 Builders<VideoExportTask>.Update.Set(x => x.Status, cancelled ? VideoExportTaskStatus.Cancelled : VideoExportTaskStatus.Failed)
                     .Set(x => x.ErrorMessage, cancelled ? "任务已取消" : "导出目标已改变，未重新启动")
                     .Set(x => x.EndedAt, DateTime.UtcNow), cancellationToken: CancellationToken.None);
@@ -1489,20 +1505,7 @@ public partial class VideoGenRunWorker : BackgroundService
             }
             return null;
         }
-        filter &= f.Eq(x => x.Id, candidate.Id) & f.Eq(x => x.DeploymentSlug, candidate.DeploymentSlug)
-            & f.Eq(x => x.OwnerAdminId, candidate.OwnerAdminId) & f.Eq(x => x.AppKey, candidate.AppKey)
-            & f.Eq(x => x.RunId, candidate.RunId) & f.Eq(x => x.ProjectId, candidate.ProjectId);
-        var update = new BsonDocument("$set", new BsonDocument
-        {
-            ["DeploymentSlug"] = QueueDeploymentScope == null ? BsonNull.Value : QueueDeploymentScope,
-            ["Status"] = VideoExportTaskStatus.Processing, ["CurrentPhase"] = "export-preparing", ["Progress"] = 5,
-            ["StartedAt"] = "$$NOW", ["WorkerLeaseId"] = Guid.NewGuid().ToString("N"),
-            ["WorkerLeaseExpiresAt"] = new BsonDocument("$dateAdd", new BsonDocument
-                { ["startDate"] = "$$NOW", ["unit"] = "millisecond", ["amount"] = (long)ExportHolderDuration.TotalMilliseconds })
-        });
-        return await _db.VideoExportTasks.FindOneAndUpdateAsync(filter,
-            new PipelineUpdateDefinition<VideoExportTask>(new[] { update }),
-            new FindOneAndUpdateOptions<VideoExportTask> { ReturnDocument = ReturnDocument.After }, ct);
+        return candidate;
     }
 
     private async Task ProcessExportAsync(VideoGenRun run, VideoExportTask? exportTask = null, CancellationToken authorityToken = default)
@@ -1805,7 +1808,7 @@ public partial class VideoGenRunWorker : BackgroundService
             if (written.MatchedCount != 1) throw new OperationCanceledException("导出持有者已失效");
         }
         var f = Builders<VideoGenRun>.Filter;
-        var filter = ExportRunIdentity(run) & f.Eq(x => x.Status, VideoGenRunStatus.Rendering)
+        var filter = ExportRunIdentity(run, task) & f.Eq(x => x.Status, VideoGenRunStatus.Rendering)
             & f.Eq(x => x.LatestExportTaskId, task?.Id ?? run.LatestExportTaskId);
         var changed = await _db.VideoGenRuns.UpdateOneAsync(filter,
             Builders<VideoGenRun>.Update.Set(x => x.CurrentPhase, phase).Set(x => x.PhaseProgress, progress),
@@ -1830,14 +1833,14 @@ public partial class VideoGenRunWorker : BackgroundService
             if (taskFailed.MatchedCount != 1) return;
         }
         var changed = await _db.VideoGenRuns.UpdateOneAsync(
-            ExportRunIdentity(run) & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Rendering)
+            ExportRunIdentity(run, expectedTask) & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Rendering)
                 & Builders<VideoGenRun>.Filter.Eq(x => x.LatestExportTaskId, exportTaskId ?? run.LatestExportTaskId),
             Builders<VideoGenRun>.Update.Set(x => x.Status, VideoGenRunStatus.Editing)
                 .Set(x => x.ExportRequested, false).Set(x => x.ExportErrorMessage, userMessage)
                 .Set(x => x.CurrentPhase, "export-failed").Set(x => x.PhaseProgress, 0),
             cancellationToken: CancellationToken.None);
         if (changed.MatchedCount != 1) return;
-        await UpdateExportProjectAsync(run, VideoProjectStatus.Editing);
+        await UpdateExportProjectAsync(run, VideoProjectStatus.Editing, expectedTask);
         await PublishEventAsync(run.Id, "export.error", new { message = userMessage });
     }
 

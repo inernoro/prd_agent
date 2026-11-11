@@ -109,6 +109,8 @@ public class VideoProject
     public bool GenerateAudio { get; set; } = true;
     public string? LatestRunId { get; set; }
     public string? LatestExportTaskId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ExportHolderLeaseId { get; set; }
     public List<VideoProjectAsset> Assets { get; set; } = new();
     public List<VideoTimelineTrack> TimelineTracks { get; set; } =
     [
@@ -365,6 +367,8 @@ public class VideoGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 
     /// <summary>最近一次独立导出任务 ID。</summary>
     public string? LatestExportTaskId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ExportHolderLeaseId { get; set; }
 
     /// <summary>用户已请求把全部分镜合成为完整视频</summary>
     public bool ExportRequested { get; set; }

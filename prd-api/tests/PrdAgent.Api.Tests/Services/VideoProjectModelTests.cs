@@ -42,6 +42,12 @@ public class VideoProjectModelTests
         task.Id.Length.ShouldBe(32);
         task.PublicStatus.ShouldBe(VideoExportTaskStatus.Queued);
         task.Status.ShouldBe(VideoExportTaskStatus.ScopedQueued);
+        foreach (object parent in new object[] { new VideoGenRun { ExportHolderLeaseId = "private-run-holder" },
+            new VideoProject { ExportHolderLeaseId = "private-project-holder" } })
+        {
+            using var parentJson = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(parent));
+            parentJson.RootElement.TryGetProperty("ExportHolderLeaseId",out _).ShouldBeFalse();
+        }
         task.CurrentPhase.ShouldBe("queued");
     }
 
