@@ -3815,6 +3815,7 @@ app.MapGet("/gw/catalog-entries", async (HttpContext http) =>
         }).ToList(),
         // 控制台只让填这些用途名；与运行时的能力词表同源（守卫钉住）。
         KnownCapabilities = [.. LogicalModelCapabilityPolicy.CanonicalCapabilities.OrderBy(x => x, StringComparer.Ordinal)],
+        LegacyCapabilityAliases = LogicalModelCapabilityPolicy.LegacyAliases,
     }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
