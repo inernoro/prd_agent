@@ -36,13 +36,13 @@ public partial class WebPagesController
         return await RelatedViewAsync(resolved.Site, userId, allowed, token, resolved.Share.CollectionId != null ? resolved.Share : null);
     }
 
-    private async Task<IActionResult> RelatedViewAsync(HostedSite current, string? userId, HashSet<string> sharedIds, string? shareToken = null, WebPageShareLink? collectionShare = null)
+    private async Task<IActionResult> RelatedViewAsync(HostedSite current, string? userId, HashSet<string> sharedIds, string? shareToken = null, WebPageShareLink? collectionShare = null, HostedDocumentGroup? contextGroup = null)
     {
         Response.Headers.CacheControl = "no-store";
-        var group = collectionShare == null
+        var group = contextGroup ?? (collectionShare == null
             ? await _db.HostedDocumentGroups.Find(x => x.SiteIds.Contains(current.Id)).FirstOrDefaultAsync()
             : new HostedDocumentGroup { SiteIds = HostedCollectionRules.OrderedIds(collectionShare.TargetSiteIds(), collectionShare.MainSiteId),
-                MainSiteId = collectionShare.MainSiteId ?? string.Empty, OwnerUserId = collectionShare.CreatedBy };
+                MainSiteId = collectionShare.MainSiteId ?? string.Empty, OwnerUserId = collectionShare.CreatedBy });
         var ids = group?.SiteIds ?? new List<string> { current.Id };
         var visible = new List<HostedSite>();
         foreach (var id in ids)
@@ -53,7 +53,7 @@ public partial class WebPagesController
                 : userId == null ? null : await _siteService.GetByIdAsync(id, userId, CancellationToken.None);
             if (item != null) visible.Add(item);
         }
-        var canManage = collectionShare == null && userId != null && current.OwnerUserId == userId && (group == null || group.OwnerUserId == userId);
+        var canManage = contextGroup == null && collectionShare == null && userId != null && current.OwnerUserId == userId && (group == null || group.OwnerUserId == userId);
         if (canManage && group != null)
         {
             var existing = await _db.HostedSites.Find(x => group.SiteIds.Contains(x.Id)).ToListAsync();
@@ -65,7 +65,7 @@ public partial class WebPagesController
         var ordered = visible;
         return Ok(ApiResponse<object>.Ok(new
         {
-            contextLabel = collectionShare != null ? "合集成员" : "关联文档",
+            contextLabel = collectionShare != null || contextGroup != null ? "合集成员" : "关联文档",
             version = canManage ? group?.Version ?? 0 : 0,
             mainSiteId = visible.Any(x => x.Id == group?.MainSiteId) ? group!.MainSiteId : null,
             canManage,

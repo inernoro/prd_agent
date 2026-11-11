@@ -518,7 +518,7 @@ export function SiteCard({
               {site.title}
             </h3>
             <SiteNewBadge activity={activity} />
-            <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionHistory variant="badge" summary={relatedSummary}
+            <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionNavigation variant="badge" summary={relatedSummary}
               onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
             <button ref={detailsButton} type="button" data-site-details-button data-no-drag
               aria-label="查看网页详情" aria-haspopup="dialog" aria-expanded={detailsOpen} title="查看完整信息"

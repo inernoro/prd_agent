@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import RelatedDocumentsBar from './RelatedDocumentsBar';
-import { getCollectionHistory } from '@/services/real/hostedCollections';
+import { getCollectionContexts, getCollectionContextDocuments, getCollectionContextLinks, type CollectionContext } from '@/services/real/hostedCollections';
 import { updateSite } from '@/services/real/webPages';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
   type RelatedDocuments, type RelatedPermissionPreview } from '@/services/real/relatedDocuments';
@@ -15,7 +15,7 @@ vi.mock('@/stores/authStore', () => ({ useAuthStore: (selector: (value: { token:
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => <span>正在加载</span> }));
 vi.mock('@/components/ui/Dialog', () => ({ Dialog: ({ open, title, content, actions }: { open: boolean; title: string; content: React.ReactNode; actions: React.ReactNode }) => open ? <section role="dialog" aria-label={title}>{content}{actions}</section> : null }));
 
-vi.mock('@/services/real/hostedCollections', async importOriginal => ({ ...await importOriginal<typeof import('@/services/real/hostedCollections')>(), getCollectionHistory: vi.fn() }));
+vi.mock('@/services/real/hostedCollections', async importOriginal => ({ ...await importOriginal<typeof import('@/services/real/hostedCollections')>(), getCollectionContexts: vi.fn(), getCollectionContextDocuments: vi.fn(), getCollectionContextLinks: vi.fn() }));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -26,6 +26,7 @@ const data: RelatedDocuments = {
     { id: 'b', title: '技术设计', href: '/web-pages?openSite=b' },
   ],
 };
+const makeContext = (id: string, shareCount: number): CollectionContext => ({ id: 'collection:' + id, title: '合集 ' + id, memberCount: 2, updatedAt: '2026-11-11T10:00:00Z', collectionId: id, legacyShareId: null, shareCount, primaryLink: shareCount ? { id: 'link-' + id, title: id, shareUrl: '/s/wp/' + id, createdAt: '2026-11-11T10:00:00Z', accessLevel: 'public', memberCount: 2, isActive: true, statusLabel: '有效' } : null });
 const preview: RelatedPermissionPreview = {
   sourceId: 'a', sourceTitle: '总体方案', fingerprint: 'checked-version', canSync: true, canRevokeShares: true,
   shareNotice: '分享链接独立授权，不复制密码。',
@@ -43,7 +44,8 @@ const open = async () => { await act(async () => container.querySelector<HTMLBut
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.clearAllMocks();
-  vi.mocked(getCollectionHistory).mockResolvedValue({ success: true, data: { items: [], total: 0, page: 1, pageSize: 20 }, error: null });
+  vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [], total: 0, totalContexts: 0, page: 1, pageSize: 20 }, error: null });
+  vi.mocked(getCollectionContextDocuments).mockResolvedValue({ success: true, data: { ...data, canManage: false }, error: null });
   localStorage.clear();
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
   vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data, error: null });
@@ -53,37 +55,71 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe('顶部关联文档', () => {
-  it('合集快捷入口与关联卡片共用浮层，打开合集时不读取或修改关联', async () => {
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionHistory siteTitle="总体方案" summary={{ count: 1, isMain: true, titles: ['技术设计'] }} />));
-    expect(getCollectionHistory).not.toHaveBeenCalled();
-    const trigger = container.querySelector<HTMLButtonElement>('[data-site-collection-history]')!;
+  it('卡片只保留一个悬浮入口，没有合集时直接显示文档', async () => {
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation siteTitle="总体方案" summary={{ count: 1, isMain: true, titles: ['技术设计'] }} />));
+    expect(getCollectionContexts).not.toHaveBeenCalled();
+    const trigger = container.querySelector<HTMLButtonElement>('.related-trigger')!;
     const enter = new Event('pointerover', { bubbles: true }); Object.defineProperty(enter, 'pointerType', { value: 'mouse' });
     await act(async () => trigger.dispatchEvent(enter));
-    expect(getCollectionHistory).toHaveBeenCalledWith('a', 1, '');
-    expect(getRelatedDocuments).not.toHaveBeenCalled();
+    expect(getCollectionContexts).toHaveBeenCalledWith('a', 1, '');
     expect(document.querySelectorAll('.related-popover')).toHaveLength(1);
-    await clickText('关联文档');
+    expect(container.querySelectorAll('button')).toHaveLength(1);
+    expect(document.querySelector('[aria-label="所属合集"]')).toBeNull();
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
-    await clickText('合集分享');
-    expect(document.querySelectorAll('.related-popover')).toHaveLength(1);
-    expect(document.querySelector('[aria-label="合集分享列表"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="文档关系类型"]')).toBeNull();
     expect(saveRelatedDocuments).not.toHaveBeenCalled();
   });
-  it('没有手动关联的文档仍能直接打开合集入口', async () => {
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionHistory />));
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-site-collection-history]')!.click());
-    expect(getCollectionHistory).toHaveBeenCalledWith('a', 1, '');
-    expect(document.querySelector('[aria-label="合集分享列表"]')).not.toBeNull();
+  it('单个合集直接展示文档和原链接，多条分享不会增加合集选择栏', async () => {
+    const context = makeContext('one', 3);
+    vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
+    vi.mocked(getCollectionContextLinks).mockResolvedValue({ success: true, data: { items: [context.primaryLink!], total: 3, page: 1, pageSize: 20 }, error: null });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    expect(document.querySelector('[data-collection-layout="single"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="所属合集"]')).toBeNull();
+    expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', 'collection:one');
     expect(getRelatedDocuments).not.toHaveBeenCalled();
+    expect(document.querySelector('a[href="/s/wp/one"]')?.getAttribute('target')).toBe('_blank');
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
+    await clickText('查看全部 3 条链接');
+    expect(getCollectionContextLinks).toHaveBeenCalledWith('a', 'collection:one', 1);
+    expect(document.querySelector('[aria-label="所属合集"]')).toBeNull();
   });
-  it('键盘可直接进入合集搜索，关联入口保持唯一', async () => {
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionHistory summary={{ count: 1, isMain: false, titles: ['技术设计'] }} />));
-    expect(container.querySelectorAll('.related-trigger')).toHaveLength(1);
-    const trigger = container.querySelector<HTMLButtonElement>('[data-site-collection-history]')!;
-    await act(async () => trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })));
-    await act(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); });
-    expect(document.activeElement?.getAttribute('aria-label')).toBe('搜索合集分享');
-    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+  it('多个合集左侧切换，右侧读取对应文档，未分享合集也可选择', async () => {
+    const contexts = [makeContext('one', 2), makeContext('two', 0)];
+    vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: contexts, total: 2, totalContexts: 2, page: 1, pageSize: 20 }, error: null });
+    vi.mocked(getCollectionContextDocuments).mockImplementation(async (_site, contextId) => ({ success: true, data: { ...data, canManage: false, items: [{ id: contextId, title: contextId, href: '/web-pages?openSite=' + contextId }] }, error: null }));
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    expect(document.querySelector('[data-collection-layout="split"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="所属合集"] a')?.getAttribute('href')).toBe('/s/wp/one');
+    await act(async () => document.querySelectorAll<HTMLButtonElement>('.collection-context-select')[1].click());
+    expect(getCollectionContextDocuments).toHaveBeenLastCalledWith('a', 'collection:two');
+    expect(document.querySelector('.related-document-card')?.textContent).toContain('collection:two');
+    expect(document.querySelector('.collection-context-entry.is-selected')?.textContent).toContain('暂无包含此文档的分享链接');
+    expect(saveRelatedDocuments).not.toHaveBeenCalled();
+  });
+  it('合集搜索覆盖服务器全部记录，翻页稳定，筛成一项仍保留选择栏', async () => {
+    vi.mocked(getCollectionContexts).mockImplementation(async (_site, page = 1, keyword = '') => ({ success: true, data: { items: keyword ? [makeContext('matched', 1)] : Array.from({ length: 20 }, (_, i) => makeContext(String((page - 1) * 20 + i), 1)), total: keyword ? 1 : 45, totalContexts: 45, page, pageSize: 20 }, error: null }));
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    const nav = document.querySelector('[aria-label="合集分页"]')!;
+    await act(async () => [...nav.querySelectorAll('button')].find(button => button.textContent === '下一页')!.click());
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
+    expect(getCollectionContexts).toHaveBeenLastCalledWith('a', 2, '');
+    const input = document.querySelector<HTMLInputElement>('[aria-label="搜索所属合集"]')!;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'matched'); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
+    expect(getCollectionContexts).toHaveBeenLastCalledWith('a', 1, 'matched');
+    expect(document.querySelectorAll('.collection-context-select')).toHaveLength(1);
+    expect(document.querySelector('[aria-label="所属合集"]')).not.toBeNull();
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="清除合集搜索"]')!.click());
+    expect(getCollectionContexts).toHaveBeenLastCalledWith('a', 1, '');
+  });
+  it('读取失败显示重试，不误判成没有合集，也不读取无关文档', async () => {
+    vi.mocked(getCollectionContexts).mockResolvedValueOnce({ success: false, data: null as never, error: { code: 'FAILED', message: '合集暂时无法读取' } });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('合集暂时无法读取');
+    expect(getRelatedDocuments).not.toHaveBeenCalled();
+    await clickText('重试');
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
   });
 
   it('Escape 先关闭关联浮层并归还焦点，再按一次才交给父阅读器', async () => {

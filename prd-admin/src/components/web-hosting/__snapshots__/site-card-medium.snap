@@ -35,10 +35,11 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
         h3 .min-w-0.truncate
           "多租户架构设计"
         div [data-no-drag=true aria-label=关联文档导航]
-          button [data-no-drag=true aria-label=查看「多租户架构设计」的合集分享 type=button]
+          button [aria-label=查看「多租户架构设计」的关联文档与所属合集 type=button]
             svg
             span
-              "合集"
+              "关联"
+            svg
         button .h-5.inline-flex.items-center.justify-center.ml-auto.shrink-0.w-5 [data-no-drag=true aria-label=查看网页详情 type=button]
           svg
       div .flex.gap-2.items-center.min-w-0

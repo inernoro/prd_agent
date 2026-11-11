@@ -3158,7 +3158,7 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
             {site.title}
           </span>
           <SiteNewBadge activity={activity} />
-          <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionHistory variant="badge" summary={relatedSummary}
+          <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionNavigation variant="badge" summary={relatedSummary}
             onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
           {site.sourceType !== 'upload' && (
             <Badge className="hidden shrink-0 whitespace-nowrap @[768px]:inline-flex" variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>

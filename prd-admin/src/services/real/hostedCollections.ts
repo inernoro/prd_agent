@@ -1,5 +1,5 @@
 import { apiRequest } from './apiClient';
-import type { RelatedPermissionPreview, RelatedSyncResult } from './relatedDocuments';
+import type { RelatedDocuments, RelatedPermissionPreview, RelatedSyncResult } from './relatedDocuments';
 import type { createShareLink } from './webPages';
 type CreateShareLinkRequest = Parameters<typeof createShareLink>[0];
 
@@ -26,6 +26,15 @@ export interface CollectionHistoryItem {
   memberCount: number; isActive: boolean; statusLabel: string;
 }
 export const getCollectionHistory = (siteId: string, page = 1, keyword = '') => apiRequest<{ items: CollectionHistoryItem[]; total: number; page: number; pageSize: number }>(`${root}/history?${new URLSearchParams({ siteId, page: String(page), keyword })}`);
+export interface CollectionContext {
+  id: string; title: string; memberCount: number; updatedAt: string;
+  collectionId: string | null; legacyShareId: string | null; shareCount: number; primaryLink: CollectionHistoryItem | null;
+}
+export interface CollectionContextPage { items: CollectionContext[]; total: number; totalContexts: number; page: number; pageSize: number }
+const contextPath = (siteId: string, contextId?: string) => `/api/web-pages/${encodeURIComponent(siteId)}/collection-contexts${contextId ? '/' + encodeURIComponent(contextId) : ''}`;
+export const getCollectionContexts = (siteId: string, page = 1, keyword = '') => apiRequest<CollectionContextPage>(`${contextPath(siteId)}?${new URLSearchParams({ page: String(page), keyword })}`);
+export const getCollectionContextDocuments = (siteId: string, contextId: string) => apiRequest<RelatedDocuments>(`${contextPath(siteId, contextId)}/documents`);
+export const getCollectionContextLinks = (siteId: string, contextId: string, page = 1) => apiRequest<{ items: CollectionHistoryItem[]; total: number; page: number; pageSize: number }>(`${contextPath(siteId, contextId)}/links?${new URLSearchParams({ page: String(page) })}`);
 export const listCollections = (keyword = '', page = 1) => apiRequest<{ items: HostedCollection[]; total: number; page: number; pageSize: number }>(`${root}?${new URLSearchParams({ keyword, page: String(page) })}`);
 export const getCollection = (id: string) => apiRequest<CollectionDetails>(path(id));
 export const getCollectionByShare = (token: string) => apiRequest<CollectionDetails>(`${root}/by-share/${encodeURIComponent(token)}`);

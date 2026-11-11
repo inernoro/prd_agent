@@ -304,6 +304,7 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       else if (path === '/api/changelog/current-week') data = { weekStart: sites[0].createdAt, weekEnd: sites[0].createdAt, fetchedAt: sites[0].createdAt, dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
       else if (path === '/api/web-pages') data = { items: sites, total: sites.length };
       else if (path === '/api/web-pages/related-documents/summaries') data = { items: { source: { count: 1, isMain: true, titles: ['关联目标'] } } };
+      else if (path.endsWith('/collection-contexts')) data = { items: [], total: 0, totalContexts: 0, page: 1, pageSize: 20 };
       else if (path.endsWith('/related-documents')) data = { version: 1, mainSiteId: 'source', canManage: false,
         hasPermissionDifferences: false, items: sites.map(site => ({ ...site, isMain: site.id === 'source',
           preview: { ...site, useShareAccess: mode === 'guest-share' },
@@ -354,5 +355,93 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       expect(await sourceFrame.locator('body').evaluate(el => el.ownerDocument.defaultView!.scrollY)).toBe(200);
     }
     expect(errors).toEqual([]);
+  });
+}
+
+// 合集选择控制同一文档区；单一上下文不显示无意义的选择栏。
+for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const) for (const multiple of [false, true]) {
+  test(`文档合集联动 ${width}px ${theme} ${multiple ? '多个合集' : '单个合集多条分享'}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 960 });
+    const date = '2026-11-11T10:00:00Z';
+    const site = { id: 'context-source', title: '发布指南', description: '合集联动验收', sourceType: 'upload', cosPrefix: '', entryFile: 'index.html', siteUrl: 'https://hosting.example/context-source/index.html',
+      coverImageUrl: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="360" height="190"><rect width="360" height="190" fill="#e1e8ef"/></svg>'),
+      files: [], totalSize: 1024, ownerUserId: 'qa-context-user', visibility: 'private', viewCount: 0, tags: [], createdAt: date, updatedAt: date };
+    const totalContexts = multiple ? 45 : 1;
+    const link = (id: number, index = 0) => ({ id: `link-${id}-${index}`, title: `发布资料 ${id}`, shareUrl: `/s/wp/original-${id}-${index}`, createdAt: date, accessLevel: 'public', memberCount: 2, isActive: true, statusLabel: '有效' });
+    const context = (id: number) => ({ id: `collection:${id}`, title: `发布资料 ${id}`, memberCount: 2, updatedAt: date, collectionId: String(id), legacyShareId: null, shareCount: 3, primaryLink: link(id) });
+    await page.addInitScript(() => {
+      if (window.top !== window) return;
+      localStorage.setItem('webpages.pref.viewMode', 'grid'); localStorage.setItem('webpages.pref.cardSize', 'medium');
+      localStorage.setItem('prd-admin-auth', JSON.stringify({ state: { isAuthenticated: true,
+        user: { userId: 'qa-context-user', username: 'qa-context-user', role: 'ADMIN' }, token: 'qa-context-session',
+        permissions: ['access', 'web-pages.read'], permissionsLoaded: true, isRoot: false, menuCatalog: [], menuCatalogLoaded: true }, version: 0 }));
+    });
+    const errors: string[] = [], platformErrors: string[] = [], writes: string[] = [];
+    // 与上方阅读器回归一致：保留 Playwright 禁用 SW 的沙箱注入错误证据，应用错误仍须为零。
+    page.on('pageerror', error => {
+      if (error.message.includes('Service worker is disabled because the context is sandboxed')) platformErrors.push(error.stack || error.message);
+      else errors.push(error.stack || error.message);
+    });
+    await page.route('https://hosting.example/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>发布指南</h1>' }));
+    await page.route('**/api/**', async route => {
+      const url = new URL(route.request().url()), path = decodeURIComponent(url.pathname);
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(route.request().method()) && path.startsWith('/api/web-pages')) writes.push(path);
+      let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
+      if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
+      else if (path === '/api/web-pages') data = { items: [site], total: 1 };
+      else if (path === '/api/web-pages/related-documents/summaries') data = { items: { 'context-source': { count: 1, isMain: true, titles: ['会议纪要'] } } };
+      else if (path.endsWith('/content')) data = { siteId: site.id, siteUrl: site.siteUrl, contentType: 'text/html', html: '<!doctype html><h1>发布指南</h1>' };
+      else if (path.endsWith('/collection-contexts')) {
+        const current = Number(url.searchParams.get('page') || 1), keyword = url.searchParams.get('keyword') || '';
+        const ids = Array.from({ length: totalContexts }, (_, id) => id).filter(id => !keyword || String(id).includes(keyword));
+        data = { items: ids.slice((current - 1) * 20, current * 20).map(context), total: ids.length, totalContexts, page: current, pageSize: 20 };
+      } else if (path.endsWith('/documents')) {
+        const id = Number(path.match(/collection:(\d+)/)?.[1] || 0);
+        data = { version: 0, mainSiteId: site.id, canManage: false, hasPermissionDifferences: false, contextLabel: '合集成员',
+          items: [{ id: site.id, title: '发布指南', isMain: true, href: '/web-pages?openSite=context-source' },
+            { id: `target-${id}`, title: `关联目标 ${id}`, href: `/web-pages?openSite=target-${id}` }] };
+      } else if (path.endsWith('/links')) {
+        const id = Number(path.match(/collection:(\d+)/)?.[1] || 0);
+        data = { items: [0, 1, 2].map(index => link(id, index)), total: 3, page: 1, pageSize: 20 };
+      } else if (path === '/api/changelog/current-week') data = { weekStart: date, weekEnd: date, fetchedAt: date, dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
+      await route.fulfill({ json: { success: true, data, error: null } });
+    });
+    await page.goto('/web-pages');
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    const trigger = page.locator('[data-hosted-site-id="context-source"] .related-trigger');
+    await expect(trigger).toHaveCount(1); await trigger.click();
+    const dialog = page.getByRole('dialog', { name: '关联文档', exact: true });
+    await expect(dialog.locator('.related-document-card')).toHaveCount(2);
+    await expect(dialog.locator('[aria-label="文档关系类型"]')).toHaveCount(0);
+    await expect(dialog.locator('a[href="/s/wp/original-0-0"]')).toHaveAttribute('target', '_blank');
+    const sidebar = dialog.getByRole('complementary', { name: '所属合集' });
+    if (multiple) {
+      await expect(sidebar).toBeVisible(); await expect(sidebar.locator('.collection-context-select')).toHaveCount(20);
+      await sidebar.locator('.collection-context-select').nth(1).click();
+      await expect(dialog.locator('.related-document-card').filter({ hasText: '关联目标 1' })).toBeVisible();
+      await sidebar.getByRole('button', { name: '查看全部 3 条链接', exact: true }).click();
+      await expect(sidebar.locator('.is-selected .collection-context-link')).toHaveCount(3);
+      await sidebar.getByLabel('搜索所属合集', { exact: true }).fill('44');
+      await expect(sidebar.locator('.collection-context-select')).toHaveCount(1);
+      await expect(dialog.locator('.related-document-card').filter({ hasText: '关联目标 44' })).toBeVisible();
+      await sidebar.getByRole('button', { name: '清除合集搜索' }).click();
+      await expect(sidebar.locator('.collection-context-select')).toHaveCount(20);
+      await sidebar.getByRole('navigation', { name: '合集分页', exact: true }).getByRole('button', { name: '下一页' }).click();
+      await expect(sidebar.locator('.collection-context-select').first()).toHaveText('发布资料 202 份文档');
+      const left = await sidebar.boundingBox(), right = await dialog.locator('.collection-context-documents').boundingBox();
+      expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x + 1);
+    } else {
+      await expect(sidebar).toHaveCount(0); await dialog.getByRole('button', { name: '查看全部 3 条链接', exact: true }).click();
+      await expect(dialog.locator('.collection-context-link')).toHaveCount(3);
+      await expect(dialog.locator('[data-collection-layout="single"]')).toBeVisible();
+    }
+    await dialog.getByRole('button', { name: '列表视图', exact: true }).click();
+    await expect(dialog.locator('.related-document-grid.is-list')).toBeVisible();
+    await dialog.getByRole('button', { name: '卡片视图', exact: true }).click();
+    const box = await dialog.boundingBox(); expect(box!.x).toBeGreaterThanOrEqual(0); expect(box!.x + box!.width).toBeLessThanOrEqual(width); expect(box!.y + box!.height).toBeLessThanOrEqual(960);
+    const overflow = await dialog.evaluate(node => node.scrollWidth > node.clientWidth); expect(overflow).toBe(false);
+    expect(errors).toEqual([]); expect(writes).toEqual([]);
+    await testInfo.attach('sandbox-platform-diagnostics', { body: JSON.stringify(platformErrors), contentType: 'application/json' });
+    await page.screenshot({ path: testInfo.outputPath('collection-context-layout.png'), fullPage: false });
   });
 }
