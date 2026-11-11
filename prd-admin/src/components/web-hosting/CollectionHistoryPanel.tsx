@@ -19,9 +19,10 @@ export function CollectionHistoryPanel({ siteId }: { siteId: string }) {
   const result = loaded?.token === token && loaded.siteId === siteId && loaded.page === page && loaded.keyword === keyword ? loaded : null;
   const pending = loading || search.trim() !== keyword || (!result && !error);
   useEffect(() => {
+    if (search.trim() === keyword) return;
     const timer = setTimeout(() => { setKeyword(search.trim()); setPage(1); }, 250);
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, keyword]);
   useEffect(() => {
     let alive = true; setLoading(true); setError(''); setLoaded(null);
     void getCollectionHistory(siteId, page, keyword).then(response => {

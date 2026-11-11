@@ -1,7 +1,7 @@
 .related-documents-bar { display:flex; align-items:center; gap:18px; min-width:0; padding:9px 20px; color:var(--text-primary); background:var(--bg-elevated); border-bottom:1px solid var(--border-subtle); font-size:12px; }
-.related-trigger { display:flex; align-items:center; gap:8px; flex-shrink:0; padding:6px 9px; border-radius:7px; color:var(--text-secondary); transition:background .15s,color .15s; }
-.related-trigger:hover,.related-trigger[aria-expanded=true] { background:var(--bg-hover); color:var(--text-primary); }
-.related-trigger:focus-visible,.related-text-button:focus-visible,.related-document-card:focus-visible { outline:2px solid var(--accent-primary); outline-offset:3px; }
+.related-trigger,.related-collection-trigger { display:flex; align-items:center; gap:8px; flex-shrink:0; padding:6px 9px; border-radius:7px; color:var(--text-secondary); transition:background .15s,color .15s; }
+.related-trigger:hover,.related-trigger[aria-expanded=true],.related-collection-trigger:hover,.related-collection-trigger[aria-expanded=true] { background:var(--bg-hover); color:var(--text-primary); }
+.related-trigger:focus-visible,.related-collection-trigger:focus-visible,.related-text-button:focus-visible,.related-document-card:focus-visible { outline:2px solid var(--accent-primary); outline-offset:3px; }
 .related-trigger svg:last-child { transition:transform .15s; }
 .related-chevron-open { transform:rotate(180deg); }
 .related-count { padding:0 5px; border-radius:4px; background:var(--bg-tertiary); font-size:11px; font-variant-numeric:tabular-nums; }
@@ -135,7 +135,7 @@
 
 .related-variant-toolbar,.related-variant-badge { display:inline-flex; padding:0; border:0; background:transparent; gap:0; flex-shrink:0; }
 .related-variant-toolbar .related-trigger { min-height:30px; font-size:11px; gap:5px; padding:5px 8px; }
-.related-variant-badge .related-trigger { min-height:20px; max-width:150px; padding:1px 5px; gap:3px; border:1px solid var(--semantic-info-border); background:var(--semantic-info-soft); color:var(--accent-fg-blue); font-size:10px; }
+.related-variant-badge .related-trigger,.related-variant-badge .related-collection-trigger { min-height:20px; max-width:150px; padding:1px 5px; gap:3px; border:1px solid var(--semantic-info-border); background:var(--semantic-info-soft); color:var(--accent-fg-blue); font-size:10px; }
 .related-variant-badge .related-count { background:transparent; padding:0; line-height:16px; }
 .related-variant-badge .related-trigger>svg:last-child { display:none; }
 .related-variant-badge .related-collection-trigger { margin-left:3px; color:var(--text-secondary); background:var(--bg-tertiary); border-color:var(--border-subtle); }
@@ -149,6 +149,7 @@
 .collection-history-tools>span { color:var(--text-muted); font-size:11px; white-space:nowrap; }
 .collection-history-search { display:flex; align-items:center; gap:7px; flex:1; min-width:0; padding:7px 9px; border:1px solid var(--border-default); border-radius:6px; background:var(--bg-input); color:var(--text-muted); }
 .collection-history-search input { width:100%; min-width:0; outline:none; background:transparent; color:var(--text-primary); font:inherit; }
+.collection-history-search:focus-within { border-color:var(--accent-primary); }
 .collection-history-search button { display:flex; flex-shrink:0; }
 .collection-history-records { flex:1; padding:0 20px; }
 .collection-history-record { display:flex; gap:12px; align-items:center; padding:11px 0; border-bottom:1px solid var(--border-subtle); }
@@ -166,7 +167,6 @@
 .collection-history-empty button { margin-top:10px; color:var(--accent-primary); }
 .collection-history-footer { display:flex; flex-shrink:0; align-items:center; justify-content:space-between; gap:12px; padding:12px 20px; border-top:1px solid var(--border-subtle); color:var(--text-muted); font-size:10px; }
 @media(max-width:600px) {
-  .related-variant-badge .related-collection-trigger { min-height:28px; min-width:28px; justify-content:center; }
   .related-context-tabs { padding:0 12px 10px; }
   .collection-history-tools { padding:12px; flex-wrap:wrap; gap:7px; }
   .collection-history-search { flex-basis:100%; }

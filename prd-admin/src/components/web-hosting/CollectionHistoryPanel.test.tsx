@@ -28,6 +28,7 @@ it('大量记录服务端分页，搜索可以找到当前页之外的原链接'
     expect(element.querySelector('a[href="/s/wp/original-2"]')).toBeNull();
     expect(element.textContent).toContain('密码保护');
     await act(async () => [...element.querySelectorAll('button')].find(button => button.textContent === '下一页')!.click());
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
     expect(getCollectionHistory).toHaveBeenLastCalledWith('document-a', 2, '');
     const input = element.querySelector<HTMLInputElement>('[aria-label="搜索合集分享"]')!;
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'original-45'); input.dispatchEvent(new Event('input', { bubbles: true })); });

@@ -76,6 +76,15 @@ describe('顶部关联文档', () => {
     expect(document.querySelector('[aria-label="合集分享列表"]')).not.toBeNull();
     expect(getRelatedDocuments).not.toHaveBeenCalled();
   });
+  it('键盘可直接进入合集搜索，关联入口保持唯一', async () => {
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionHistory summary={{ count: 1, isMain: false, titles: ['技术设计'] }} />));
+    expect(container.querySelectorAll('.related-trigger')).toHaveLength(1);
+    const trigger = container.querySelector<HTMLButtonElement>('[data-site-collection-history]')!;
+    await act(async () => trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })));
+    await act(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); });
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('搜索合集分享');
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+  });
 
   it('Escape 先关闭关联浮层并归还焦点，再按一次才交给父阅读器', async () => {
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" />));

@@ -125,10 +125,13 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
       {warn && <ShieldAlert size={12} data-permission-warning aria-hidden />}
       <ChevronDown size={13} className={open ? 'related-chevron-open' : ''} />
     </button>}
-    {collectionsEnabled && <button ref={historyAnchor} type="button" className="related-trigger related-collection-trigger" data-site-collection-history data-no-drag
+    {collectionsEnabled && <button ref={historyAnchor} type="button" className="related-collection-trigger" data-site-collection-history data-no-drag
       title="查看包含此文档的合集分享" aria-label={siteTitle ? `查看「${siteTitle}」的合集分享` : '查看合集分享'} aria-haspopup="dialog" aria-expanded={open && section === 'collections'} aria-controls={menuId}
       onPointerDown={event => event.stopPropagation()} onPointerEnter={event => { if (event.pointerType === 'mouse') openContext('collections', false); }} onPointerLeave={leave}
-      onClick={() => openContext('collections', true)}><FolderOpen size={12} aria-hidden /><span>合集</span></button>}
+      onClick={() => openContext('collections', true)} onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault(); setSection('collections'); setHistoryAnchorActive(true); setOpen(true); setPinned(true);
+        requestAnimationFrame(() => panel.current?.querySelector<HTMLInputElement>('input')?.focus());
+      } }}><FolderOpen size={12} aria-hidden /><span>合集</span></button>}
     {!compact && main && <span className="related-main-label"><Star size={12} />主文档<span title={main.title}>{main.title}</span></span>}
     {!compact && data?.canManage && data.version > 0 && <button type="button" className={`related-permission-hint ${data.hasPermissionDifferences ? 'is-warning' : ''}`} onClick={openPermissions}>
       {data.hasPermissionDifferences ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}
