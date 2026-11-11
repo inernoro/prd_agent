@@ -492,6 +492,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.VideoGenRunWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.VideoToDocRunWorker>();
 
 // 竞技场 Run 后台执行器（多模型并行 + afterSeq 断线重连）
+builder.Services.AddScoped<PrdAgent.Api.Services.BusinessModelReferenceService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
 
 // 转录 Agent 后台执行器（ASR 转写 + 模板转文案）
