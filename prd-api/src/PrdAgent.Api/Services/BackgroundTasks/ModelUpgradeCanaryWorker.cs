@@ -181,10 +181,19 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
 
     internal static bool MatchesOfferingSnapshot(BsonDocument job, BsonDocument offering, string effectiveProtocol)
         => S(job, "OfferingVersion").Length > 0
-           && offering.TryGetValue("UpdatedAt", out var updated) && updated.IsBsonDateTime
-           && updated.ToUniversalTime().ToString("O") == S(job, "OfferingVersion")
+           && OfferingWireVersion(offering) == S(job, "OfferingVersion")
            && job.Contains("EndpointPath") && S(job, "EndpointPath") == S(offering, "EndpointPath")
            && GatewayProtocolAliases.NormalizeAdapterKey(S(job, "Protocol")) == GatewayProtocolAliases.NormalizeAdapterKey(effectiveProtocol);
+
+    internal static string OfferingWireVersion(BsonDocument offering)
+    {
+        // 与控制台队列合同同序；健康、权重和 UpdatedAt 不是请求 wire 身份。
+        var wire = new BsonArray { offering.GetValue("_id", ""), offering.GetValue("LogicalModelId", ""),
+            offering.GetValue("TargetKind", "model"), offering.GetValue("TargetId", ""),
+            offering.GetValue("UpstreamModelId", BsonNull.Value), offering.GetValue("Protocol", BsonNull.Value),
+            offering.GetValue("EndpointPath", BsonNull.Value), offering.GetValue("Enabled", false) };
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(wire.ToJson()))).ToLowerInvariant();
+    }
 
     internal static GatewayRawRequest CreateChatCanaryRequest(BsonDocument job, GatewayRequestContext context)
         => new() { AppCallerCode = S(job, "AppCallerCode"), ModelType = ModelTypes.Chat,

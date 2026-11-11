@@ -151,17 +151,27 @@ public sealed class ModelUpgradeCanaryTests
     }
 
     [Fact]
-    public void OfferingWireSnapshot_RejectsMissingVersionOrChangedVersionEndpointAndProtocol()
+    public void OfferingWireSnapshot_IgnoresHealthButRejectsChangedWireOrMissingVersion()
     {
         var at = new DateTime(2026,11,11,10,0,0,DateTimeKind.Utc);
-        var offering = new BsonDocument { {"UpdatedAt",at},{"EndpointPath","chat/completions"} };
-        var job = new BsonDocument { {"OfferingVersion",at.ToString("O")},{"EndpointPath","chat/completions"},{"Protocol","openai"} };
+        var offering = new BsonDocument { {"_id","route"},{"LogicalModelId","logical"},{"TargetKind","model"},{"TargetId","physical"},
+            {"UpstreamModelId","candidate"},{"Protocol","openai"},{"EndpointPath","chat/completions"},{"Enabled",true},{"UpdatedAt",at} };
+        var job = new BsonDocument { {"OfferingVersion",ModelUpgradeCanaryWorker.OfferingWireVersion(offering)},
+            {"EndpointPath","chat/completions"},{"Protocol","openai"} };
         Assert.True(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,offering,"openai"));
         Assert.False(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,offering,"claude"));
         offering["EndpointPath"]="responses";
         Assert.False(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,offering,"openai"));
         offering["EndpointPath"]="chat/completions";offering["UpdatedAt"]=at.AddSeconds(1);
-        Assert.False(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,offering,"openai"));
+        offering["HealthStatus"]="healthy";offering["Priority"]=50;
+        Assert.True(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,offering,"openai"));
+        foreach (var field in new[] { "_id", "LogicalModelId", "TargetKind", "TargetId", "UpstreamModelId", "Protocol", "EndpointPath" })
+        {
+            var changed = offering.DeepClone().AsBsonDocument;changed[field]="changed";
+            Assert.False(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,changed,"openai"));
+        }
+        var disabled = offering.DeepClone().AsBsonDocument;disabled["Enabled"]=false;
+        Assert.False(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,disabled,"openai"));
         job.Remove("OfferingVersion");
         Assert.False(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,offering,"openai"));
     }
