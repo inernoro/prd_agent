@@ -61,9 +61,16 @@ public class DocumentTextlessUploadContractTests
         Assert.True(
             deleteStore.LastIndexOf("TrackPendingAsync", StringComparison.Ordinal)
             > deleteStore.IndexOf("Attachments.DeleteManyAsync", StringComparison.Ordinal));
-        Assert.True(
-            deleteEntry.IndexOf("TrackPendingAsync", StringComparison.Ordinal)
-            < deleteEntry.IndexOf("DocumentEntries.DeleteManyAsync", StringComparison.Ordinal));
+        var deleteCall = deleteEntry.IndexOf("DeleteEntriesAndApplyCountsAsync(_db", StringComparison.Ordinal);
+        Assert.True(deleteCall >= 0);
+        Assert.True(deleteEntry.IndexOf("TrackPendingAsync", StringComparison.Ordinal) >= 0);
+        Assert.True(deleteEntry.IndexOf("TrackPendingAsync", StringComparison.Ordinal) < deleteCall);
+        var countConsumerStart = controller.IndexOf("internal static async Task<DeleteResult> DeleteEntriesAndApplyCountsAsync", StringComparison.Ordinal);
+        Assert.True(countConsumerStart >= 0);
+        var countConsumer = controller[countConsumerStart..controller.IndexOf(
+            "internal static async Task ApplyDocumentCountDeletionAsync", countConsumerStart, StringComparison.Ordinal)];
+        Assert.Contains("db.DocumentEntries.DeleteManyAsync", countConsumer);
+        Assert.Contains("db.DocumentEntries.DeleteOneAsync", countConsumer);
         Assert.Contains("public string? StorageKey", attachment);
         Assert.Contains("createdFileUrls.push(uploaded.fileUrl)", stableSmoke);
         Assert.Contains("删除知识库后原始文件必须同步清理", stableSmoke);
