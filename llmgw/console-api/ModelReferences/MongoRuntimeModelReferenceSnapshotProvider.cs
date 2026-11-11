@@ -75,7 +75,7 @@ public sealed class MongoRuntimeModelReferenceSnapshotProvider(IMongoDatabase ma
     {
         "logical-id" => !string.IsNullOrEmpty(identity.LogicalId) && entry.Value == identity.LogicalId,
         "public-id" => ModelReferenceAnalysis.PublicMatch(identity, entry.Value),
-        "pool-id" => !string.IsNullOrEmpty(entry.Value) && (entry.Value == identity.LogicalId || identity.PoolIds.Contains(entry.Value, StringComparer.Ordinal)
+        "pool-id" => !string.IsNullOrEmpty(entry.Value) && (entry.Value == identity.LogicalId || identity.PoolIds.Contains(entry.Value, StringComparer.Ordinal) || identity.PoolIds.Any(x => entry.Value == "pool_" + x)
             || !string.IsNullOrEmpty(identity.LogicalId) && entry.Value == "pool_" + identity.LogicalId),
         "physical-pair" => !string.IsNullOrEmpty(identity.ProviderId) && entry.ProviderId == identity.ProviderId
             && !string.IsNullOrEmpty(entry.Value) && (entry.Value == identity.PhysicalModelId || entry.Value == identity.UpstreamModelId),
