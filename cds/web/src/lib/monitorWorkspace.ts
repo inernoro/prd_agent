@@ -1,5 +1,6 @@
 import { formatLatency, formatRelative, proberLiveness, type UptimeSummary, type UptimeTargetSummary } from './monitorCenter';
 import { explainTarget, homeState, type HomeState } from './statusHome';
+import { assessFreshness } from './ownerBoard';
 
 export type WorkspaceState = 'ok' | 'bad' | 'warn' | 'none';
 export interface WorkspaceService {
@@ -58,10 +59,16 @@ export function buildWorkspaceModel(targets: readonly UptimeTargetSummary[], now
     } else if (target.projectName) category.name = target.projectName;
     const custom = target.source === 'custom' && target.addedBy?.origin !== 'discovered' && !target.id.startsWith('monitor@self-');
     if (!custom) category.custom = false;
-    let state = STATES[homeState(target, now)];
+    const confirmedState = homeState(target, now);
+    // A failed observation can precede the backend's consecutive-failure threshold.
+    // Keep the confirmed alarm unchanged, but never present that fresh failure as healthy.
+    const pendingFailure = (confirmedState === 'up' || confirmedState === 'unknown')
+      && target.lastSample?.up === false && !target.lastSample.noData
+      && assessFreshness(target, now) === 'fresh';
+    let state = pendingFailure ? 'warn' as const : STATES[confirmedState];
     if (state === 'ok' && stopped) state = 'warn';
     const reason = state === 'bad' ? target.lastSample?.err || explainTarget(target).impact
-      : state === 'warn' ? '检查未持续更新，当前状态待确认'
+      : state === 'warn' ? pendingFailure ? '最近一次检查未通过，等待连续失败确认' : '检查未持续更新，当前状态待确认'
       : state === 'none' ? target.pausedReason || (target.lastSample?.noData ? '本轮没有可用观测数据' : target.lastSample ? '检查暂停或已排除' : '等待首次观测') : '最近检查通过';
     const service: WorkspaceService = {
       id: target.id, name: target.name, categoryId, state, custom,
