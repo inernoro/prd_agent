@@ -63,6 +63,8 @@ if [ "$runtime" = docker ]; then
     nginx:1.27-alpine >/dev/null
   port="$(docker port "$container_name" 80/tcp | awk -F: 'NR == 1 {print $NF}')"
 else
+  # A root-started native nginx drops worker privileges; mktemp defaults to 700.
+  chmod 755 "$tmp_root"
   port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
   {
     printf 'pid %s/nginx.pid;\nerror_log %s/error.log;\nevents {}\nhttp { access_log off;\n' "$tmp_root" "$tmp_root"
