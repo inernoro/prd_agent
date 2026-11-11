@@ -10,7 +10,7 @@ public static class ModelUpgradeEndpoints
     public static IServiceCollection AddModelUpgrades(this IServiceCollection services, IMongoDatabase gateway, IMongoDatabase map,
         IConfiguration configuration, string internalTenantId)
     {
-        services.AddSingleton<IModelUpgradeDiscovery>(new ModelUpgradeDiscovery(new UpstreamProxyService(gateway, configuration, internalTenantId), configuration, internalTenantId));
+        services.AddSingleton<IModelUpgradeDiscovery>(new ModelUpgradeDiscovery(new UpstreamProxyService(gateway, configuration, internalTenantId), configuration, internalTenantId, gateway));
         services.AddSingleton(sp => new ModelUpgradeService(gateway, map, sp.GetRequiredService<IModelUpgradeDiscovery>(), internalTenantId, sp.GetRequiredService<ILogger<ModelUpgradeService>>(), configuration));
         services.AddHostedService<ModelUpgradeWorker>();
         return services;

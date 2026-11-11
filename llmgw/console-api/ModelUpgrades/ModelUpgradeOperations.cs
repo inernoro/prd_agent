@@ -43,6 +43,7 @@ public sealed partial class ModelUpgradeService
             try { found = await discovery.DiscoverAsync(s, p, ct); }
             catch (ModelUpgradeException e)
             {
+                if (e.Code == "DISCOVERY_AUDIT_FAILED") throw;
                 s.Discoveries.Add(new ModelUpgradeDiscoveryItem { ProviderId = providerId, Status = "blocked", Message = e.Message });
                 continue;
             }
@@ -147,6 +148,32 @@ public sealed partial class ModelUpgradeService
         s.Message = s.Gates.Price ? "候选已有匹配的真实成功输出，可按策略晋级。" : "真实服务验收通过；价格未知或涨幅未通过，只允许管理员明确手动晋级。";
         if (s.ExecutionRequestedBy == "scheduled" && s.Policy.Mode == "auto" && ModelUpgradeRules.CanPromote(s, true, DateTime.UtcNow)) s.PendingAction = "promote";
     }
+    private async Task<bool> ExpireUnsentValidationAsync(ModelUpgradeState s, BsonDocument job, DateTime now)
+    {
+        if (s.TenantId != internalTenantId || job.GetStringOrEmpty("PolicyId") != s.Id) return false;
+        var id = job.GetStringOrEmpty("_id");
+        var audit = await AuditBeginAsync(s, "validate.expire-unused");
+        if (!(job.GetStringOrEmpty("Status") == "failed" && job.GetValue("ExpiredUnsent", false) == true))
+        {
+            var cancelled = await ValidationRuns.UpdateOneAsync(Scope(s.TenantId, F.And(F.Eq("_id", id), F.Eq("PolicyId", s.Id),
+                    F.Eq("Status", "pending"), F.Lt("ExpiresAt", now))), Builders<BsonDocument>.Update
+                .Set("Status", "failed").Set("ExpiredUnsent", true).Set("Message", "排队已过期，已确认未发送；可重新验收。")
+                .Set("UpdatedAt", now).Set("ExpiryAuditId", audit), cancellationToken: CancellationToken.None);
+            if (cancelled.ModifiedCount != 1) { await AuditCompleteAsync(s, audit, false); return false; }
+        }
+        // Persist the refund and a request-scoped marker in the same state CAS; recovery cannot refund twice.
+        if (!s.History.Any(x => x.Action == "validate.expire-unused" && x.Status == "succeeded" && x.RequestId == id))
+        {
+            var amount = job.AsNullableDecimal("EstimatedCostUsd");
+            if (s.BudgetDate == now.ToString("yyyy-MM-dd") && job.AsNullableUtcDateTime("CreatedAt")?.ToString("yyyy-MM-dd") == s.BudgetDate && amount is > 0)
+                s.ReservedCostUsd = Math.Max(0, s.ReservedCostUsd - amount.Value);
+            History(s, "validate.expire-unused", "succeeded", "已确认排队过期且未发送；对应当日内部预占已释放，可重新验收。", id);
+        }
+        s.OutcomeUnknown = false; s.ValidationStatus = "not-run"; s.Gates.Validation = false; s.Candidate!.ValidatedAt = null;
+        await PersistAsync(s);
+        await AuditCompleteAsync(s, audit, true);
+        return true;
+    }
     private async Task PollValidationAsync(ModelUpgradeState s)
     {
         var (logical, _, _) = await CandidateAsync(s);
@@ -156,6 +183,14 @@ public sealed partial class ModelUpgradeService
         { s.PendingAction = ""; CompleteValidation(s, id); return; }
         var job = await ValidationRuns.Find(Scope(s.TenantId, F.Eq("_id", id))).FirstOrDefaultAsync(CancellationToken.None);
         var status = job?.GetStringOrEmpty("Status");
+        if (job is not null && (status == "pending" && job.AsNullableUtcDateTime("ExpiresAt") < DateTime.UtcNow
+            || status == "failed" && job.GetValue("ExpiredUnsent", false) == true))
+        {
+            s.OutcomeUnknown = true; s.ValidationStatus = "unknown";
+            if (await ExpireUnsentValidationAsync(s, job, DateTime.UtcNow))
+                throw new ModelUpgradeException("CANARY_EXPIRED_UNSENT", "验收排队已过期，已确认未发送；当日内部预占已释放，可重新发起验收。请求 ID 已保留供审计。");
+            throw new ModelUpgradeException("CANARY_OUTCOME_UNKNOWN", "任务可能已被消费，未退还预算且禁止重发；请按原请求 ID 核对日志。");
+        }
         if (status == "failed") throw new ModelUpgradeException("CANARY_FAILED", "受预算验收失败，原线路保持不变；请检查管理诊断后重新验收。");
         if (status == "unknown" || job is null || job.AsNullableUtcDateTime("ExpiresAt") < DateTime.UtcNow)
         { s.OutcomeUnknown = true; s.ValidationStatus = "unknown"; throw new ModelUpgradeException("CANARY_OUTCOME_UNKNOWN", "验收未取得确定结果，禁止自动重发；请按该请求 ID 核对真实日志后继续。"); }

@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using MongoDB.Bson;
@@ -7,6 +6,7 @@ using PrdAgent.LlmGw.Auth;
 using PrdAgent.LlmGw.Mongo;
 using PrdAgent.LlmGw.Provisioning;
 using PrdAgent.LlmGw.Security;
+using MongoDB.Driver;
 
 namespace PrdAgent.LlmGw.ModelUpgrades;
 
@@ -16,7 +16,7 @@ public interface IModelUpgradeDiscovery
 }
 
 /// <summary>复用官方预设的 models URL、代理与加密读取。只拉清单，不发送付费推理。</summary>
-public sealed class ModelUpgradeDiscovery(UpstreamProxyService proxies, IConfiguration config, string internalTenantId) : IModelUpgradeDiscovery
+public sealed class ModelUpgradeDiscovery(UpstreamProxyService proxies, IConfiguration config, string internalTenantId, IMongoDatabase gateway) : IModelUpgradeDiscovery
 {
     public static ProviderPreset RequireOfficial(BsonDocument provider)
     {
@@ -40,29 +40,14 @@ public sealed class ModelUpgradeDiscovery(UpstreamProxyService proxies, IConfigu
         var key = GwApiKeyCrypto.Decrypt(provider.AsNullableString("ApiKeyEncrypted"), config);
         if (!key.Success) throw new ModelUpgradeException("KEY_UNREADABLE", "官方 Provider 密钥不可读取，请在上游设置中修复后重新检查。", 409);
         using var client = new HttpClient(UpstreamProxy.CreateHandler(resolved ?? new("system", null, null, null), state.TenantId != internalTenantId));
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(20));
-        using var request = new HttpRequestMessage(HttpMethod.Get, ProviderPresets.ResolveModelsUrl(provider.GetStringOrEmpty("ApiUrl")));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key.PlainText);
-        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-        if (!response.IsSuccessStatusCode)
-            throw new ModelUpgradeException("DISCOVERY_REJECTED", $"官方模型清单请求返回 HTTP {(int)response.StatusCode}；原线路未改变，请检查上游权限或稍后重试。", 502);
-        using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
-        using var body = new MemoryStream();
-        var buffer = new byte[16384];
-        int read;
-        while ((read = await stream.ReadAsync(buffer, timeout.Token)) > 0)
-        {
-            if (body.Length + read > 4 * 1024 * 1024) throw new ModelUpgradeException("DISCOVERY_TOO_LARGE", "模型清单过大，本次检查停止，原线路未改变。", 502);
-            await body.WriteAsync(buffer.AsMemory(0, read), timeout.Token);
-        }
-        return ReadModelNames(body.ToArray());
+        return await new ModelUpgradeDiscoveryAudit(gateway, config).ExecuteAsync(state, provider,
+            new Uri(ProviderPresets.ResolveModelsUrl(provider.GetStringOrEmpty("ApiUrl"))), client, key.PlainText!, ct);
     }
 
     public static HashSet<string> ReadModelNames(byte[] body)
     {
         using var json = JsonDocument.Parse(body);
-        if (!json.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+        if (json.RootElement.ValueKind != JsonValueKind.Object || !json.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
             throw new ModelUpgradeException("DISCOVERY_SHAPE", "上游未返回模型清单，本次未判断任何型号退役。", 502);
         return data.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object && x.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
             .Select(x => x.GetProperty("id").GetString()!).ToHashSet(StringComparer.Ordinal);
