@@ -401,6 +401,7 @@ public static class McpBuiltinTools
             Params = new List<McpToolParam>
             {
                 new() { Name = "prompt", In = "body", Required = true, Description = "画面描述，中英文均可，越具体越好" },
+                new() { Name = "modelId", In = "body", Description = "可选：先用 map_visual_list_models 查看开放模型。省略跟随组织默认；稳定标识跟随已验收版本，具体版本标识固定版本；兼容别名由服务端解析。" },
                 new() { Name = "size", In = "body", Description = "尺寸，如 1024x1024（默认）/ 1024x1536 / 1536x1024" },
                 new() { Name = "count", In = "body", Type = "integer", Description = "张数，1-4，默认 1" },
                 new() { Name = "clientRequestId", In = "body", Description = "幂等键：重试时带同一个值不会重复生成" },
@@ -421,7 +422,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_visual_list_models",
-            Description = "看当前视觉创作开放给智能体的生图模型。生图报「未配默认模型」时用它确认。",
+            Description = "列出视觉创作开放给智能体的生图模型、默认项和兼容别名。生图可省略 modelId 跟随默认，也可传其中的标识；未知模型不会静默替换。",
             RequiredScope = McpCapabilityCatalog.ScopeVisualUse,
             Method = "GET",
             PathTemplate = "/api/open/visual/models",
