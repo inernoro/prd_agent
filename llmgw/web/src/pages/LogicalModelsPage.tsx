@@ -22,6 +22,7 @@ import {
   createLogicalModel,
   createModelOffering,
   deleteLogicalModel,
+  deleteModelOffering,
   getExchangeMeta,
   getExchanges,
   getLogicalModels,
@@ -319,6 +320,31 @@ export function LogicalModelsPage() {
     okNotice(`已删除「${item.name}」，连带 ${res.data.offeringsDeleted} 条 Offering`);
   }
 
+  async function removeOffering(logical: LogicalModelItem, offering: ModelOfferingItem) {
+    if (!canWrite || busy !== null) return;
+    if (offering.enabled) { failNotice('请先停用这条线路，再确认删除'); return; }
+    setBusy(offering.id); setNotice(null);
+    try {
+      const typed = await promptText({
+        title: '删除已停用线路',
+        description: `${logical.name}（${logical.publicId}）\n${offering.targetName || offering.upstreamModelId || offering.targetId}\n线路 ID：${offering.id}\n仅删除这条已停用线路，无法撤销。公开模型、兼容标识及 MAP 配置会保留；仍会检查业务依赖和进行中的任务。`,
+        inputLabel: '请输入线路 ID 确认',
+        requireExact: offering.id,
+        tone: 'danger',
+        confirmLabel: '删除线路',
+      });
+      if (typed === null) return;
+      if (typed.trim() !== offering.id) { failNotice('线路 ID 不一致，已取消删除'); return; }
+      const result = await deleteModelOffering(logical.id, offering.id);
+      if (!result.success) { failNotice(result.error?.message || '线路未删除，请刷新列表后重试'); return; }
+      setItems(previous => previous?.map(item => item.id === logical.id
+        ? { ...item, offerings: item.offerings.filter(itemOffering => itemOffering.id !== offering.id) }
+        : item) || null);
+      okNotice('已删除停用线路，公开模型和 MAP 配置已保留');
+    } catch { failNotice('线路删除结果未确认，请刷新列表核对后再操作'); }
+    finally { setBusy(null); }
+  }
+
   async function toggleOffering(logical: LogicalModelItem, offeringId: string, enabled: boolean) {
     setBusy(offeringId);
     const res = await setModelOfferingEnabled(logical.id, offeringId, !enabled);
@@ -537,7 +563,7 @@ export function LogicalModelsPage() {
                         <div className="lg-logical-model-route-detail" key={`detail-${route.id}`}>
                           <div className="lg-collection-route-heading"><strong title={route.upstreamModelId || route.offering.targetName || route.label}>{route.upstreamModelId || route.offering.targetName || route.label}</strong><Chip label={route.roleLabel} color="var(--accent)" bg="var(--accent-soft)" /></div>
                           <div className="lg-collection-route-meta"><span title={route.label}>{route.providerName || route.label} · 优先级 {route.priority}</span><span title={route.priceOrigin}>{route.price}</span></div>
-                          <div className="lg-collection-route-actions"><RouteDot health={route.health} /><span style={HINT_TEXT}>{route.protocol}</span><span style={{flex:1}} />{canWrite ? <><Button size="sm" variant="ghost" onClick={() => openOfferingEditor(item.id, route.offering)}>编辑</Button>{route.health === 'down' ? <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void recoverOffering(item, route.id)}>手动恢复</Button> : null}<Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void toggleOffering(item, route.id, route.offering.enabled)}>{route.offering.enabled ? '停用' : '启用'}</Button></> : null}</div>
+                          <div className="lg-collection-route-actions"><RouteDot health={route.health} /><span style={HINT_TEXT}>{route.protocol}</span><span style={{flex:1}} />{canWrite ? <><Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => openOfferingEditor(item.id, route.offering)}>编辑</Button>{route.health === 'down' ? <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void recoverOffering(item, route.id)}>手动恢复</Button> : null}<Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void toggleOffering(item, route.id, route.offering.enabled)}>{route.offering.enabled ? '停用' : '启用'}</Button><Button size="sm" variant="ghost" disabled={busy !== null || route.offering.enabled} title={route.offering.enabled ? '请先停用这条线路' : '删除此线路，保留公开模型与 MAP 配置'} onClick={() => void removeOffering(item, route.offering)}>删除线路</Button></> : null}</div>
                           <details className="lg-collection-route-properties"><summary>线路参数</summary><div>{route.label} · {route.priceOrigin}<br />优先级 {route.priority} · 权重 {route.weight} · {route.governance}</div></details>
                         </div>
                       ))}</>}
