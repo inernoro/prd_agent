@@ -5749,7 +5749,8 @@ public static class CapsuleExecutor
         WorkflowNode node,
         Dictionary<string, string> variables,
         List<ExecutionArtifact> inputArtifacts,
-        WorkflowDesignInvocation? invocation = null, CancellationToken authorityToken = default)
+        WorkflowDesignInvocation? invocation = null, CancellationToken authorityToken = default,
+        Func<byte[], string, Task<PrdAgent.Infrastructure.Services.AssetStorage.StoredAsset>>? persistAssetAsync = null)
     {
         authorityToken.ThrowIfCancellationRequested();
         var sb = new StringBuilder();
@@ -5891,7 +5892,9 @@ public static class CapsuleExecutor
 
         // 上传到 COS
         var assetStorage = sp.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
-        var stored = await assetStorage.SaveAsync(videoBytes, contentType ?? "video/mp4", CancellationToken.None, domain: "workflow-agent", type: "doc");
+        var stored = persistAssetAsync == null
+            ? await assetStorage.SaveAsync(videoBytes, contentType ?? "video/mp4", CancellationToken.None, domain: "workflow-agent", type: "doc")
+            : await persistAssetAsync(videoBytes, contentType ?? "video/mp4");
 
         sb.AppendLine($"[VideoDownloader] COS 上传成功: {stored.Url}");
         sb.AppendLine($"[VideoDownloader] SHA256: {stored.Sha256}, 大小: {stored.SizeBytes} bytes");

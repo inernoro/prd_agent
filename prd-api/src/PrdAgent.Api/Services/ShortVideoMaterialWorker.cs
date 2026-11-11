@@ -8,6 +8,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services;
 
@@ -207,6 +208,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
                 Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.CancelRequested, true),
+                Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.CleanupPending, true),
                 ownerScope),
             Builders<ShortVideoMaterialRun>.Update
                 .Set(r => r.Status, "running")
@@ -292,20 +294,32 @@ public sealed class ShortVideoMaterialProcessor
     {
         var run = await _db.ShortVideoMaterialRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(CancellationToken.None)
                   ?? throw new InvalidOperationException("短视频解析运行记录不存在");
-        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
-        // Worker 已领取并绑定处理身份；许可不可用也须走它的受控收尾，不能留下 running。
-        if (taskExecutionAttempt.ShouldSkip)
-            throw new InvalidOperationException("本次处理未能取得执行许可，已停止继续处理");
-        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
-            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
-        using var authorityStop = CancellationTokenSource.CreateLinkedTokenSource(taskExecutionAttempt.Lease?.LostToken ?? CancellationToken.None);
-        using var monitorStop = new CancellationTokenSource();
-        var monitor = WatchProcessingAuthorityAsync(run, authorityStop, monitorStop.Token);
-        try { await ProcessCoreAsync(run, authorityStop.Token); }
-        finally
+        var identity = new ShortVideoMaterialRun { Id = run.Id, UserId = run.UserId, OwnerInstanceId = run.OwnerInstanceId,
+            TaskPermitId = run.TaskPermitId, ProcessingToken = run.ProcessingToken };
+        try
         {
-            monitorStop.Cancel();
-            await monitor;
+            await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+            // Worker 已领取并绑定处理身份；许可不可用也须走它的受控收尾，不能留下 running。
+            if (taskExecutionAttempt.ShouldSkip)
+                throw new InvalidOperationException("本次处理未能取得执行许可，已停止继续处理");
+            using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+                ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
+            using var authorityStop = CancellationTokenSource.CreateLinkedTokenSource(taskExecutionAttempt.Lease?.LostToken ?? CancellationToken.None);
+            using var monitorStop = new CancellationTokenSource();
+            var monitor = WatchProcessingAuthorityAsync(run, authorityStop, monitorStop.Token);
+            try { await ProcessCoreAsync(run, authorityStop.Token); }
+            finally
+            {
+                monitorStop.Cancel();
+                await monitor;
+            }
+        }
+        catch
+        {
+            // 原执行作用域已经退出；补偿仍通过原数据库包装器和原任务条件，不恢复已结束的执行租约。
+            try { await CleanupArtifactsAfterFailureAsync(run, identity); }
+            catch (Exception ex) { _logger.LogError(ex, "短视频产物补偿未确认 run={RunId}", run.Id); }
+            throw;
         }
     }
 
@@ -382,7 +396,7 @@ public sealed class ShortVideoMaterialProcessor
             parsed,
             run.VideoUrl,
             run.Platform,
-            run.Id,
+            run,
             now);
         run.SourceEntryId = sourceEntry.Id;
         await EnsureProcessingAuthorityAsync(run, authorityToken);
@@ -419,7 +433,8 @@ public sealed class ShortVideoMaterialProcessor
                     ["platform"] = run.Platform,
                     ["sourceMode"] = "asr",
                 },
-                now);
+                now,
+                run);
             run.TranscriptEntryId = transcriptEntry.Id;
             await EnsureProcessingAuthorityAsync(run, authorityToken);
             run.EntryId = transcriptEntry.Id;
@@ -437,6 +452,8 @@ public sealed class ShortVideoMaterialProcessor
         }
 
         run.Status = "done";
+        run.CleanupPending = false;
+        if (run.ArtifactReceipt != null) run.ArtifactReceipt.PhysicalState = "linked";
         run.UpdatedAt = DateTime.UtcNow;
         await SaveRunAsync(run);
     }
@@ -450,7 +467,7 @@ public sealed class ShortVideoMaterialProcessor
         ParsedShortVideoSource parsed,
         string originalUrl,
         string platform,
-        string runId,
+        ShortVideoMaterialRun run,
         DateTime now)
     {
         var fileName = BuildVideoFileName(title, video.MimeType);
@@ -464,8 +481,6 @@ public sealed class ShortVideoMaterialProcessor
             Type = AttachmentType.Document,
             UploadedAt = now,
         };
-        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: CancellationToken.None);
-
         var entry = new DocumentEntry
         {
             StoreId = store.Id,
@@ -479,7 +494,7 @@ public sealed class ShortVideoMaterialProcessor
             Metadata = new Dictionary<string, string>
             {
                 ["kind"] = "short-video-video",
-                ["runId"] = runId,
+                ["runId"] = run.Id,
                 ["originalShareUrl"] = originalUrl,
                 ["assetUrl"] = video.Url,
                 ["platform"] = platform,
@@ -497,8 +512,20 @@ public sealed class ShortVideoMaterialProcessor
         if (!string.IsNullOrWhiteSpace(parsed.CoverUrl))
             entry.Metadata["coverUrl"] = parsed.CoverUrl!;
 
+        var receipt = GetArtifactReceipt(run);
+        receipt.Url ??= video.Url;
+        receipt.PublicationStarted = true;
+        var planned = new ShortVideoMaterialEntryReceipt { EntryId = entry.Id, StoreId = store.Id,
+            EntryCreatedAt = entry.UpdatedAt, AttachmentId = attachment.AttachmentId };
+        receipt.Entries.Add(planned);
+        run.CleanupPending = true;
+        await SaveRunAsync(run);
+        planned.UnconfirmedWrite = true;
+        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: CancellationToken.None);
         await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
         await IncrementStoreDocumentCountAsync(store, entry.Id);
+        planned.CountIncrementConfirmed = true;
+        planned.UnconfirmedWrite = false;
         return entry;
     }
 
@@ -535,7 +562,8 @@ public sealed class ShortVideoMaterialProcessor
             node,
             new Dictionary<string, string>(),
             new List<ExecutionArtifact>(),
-            new WorkflowDesignInvocation(run.UserId, run.Id, node.NodeId, run.Id, run.UserId), authorityToken);
+            new WorkflowDesignInvocation(run.UserId, run.Id, node.NodeId, run.Id, run.UserId), authorityToken,
+            (bytes, mime) => StoreAttemptVideoAsync(run, bytes, mime, authorityToken));
         return ExtractDownloadedVideo(result.Artifacts.FirstOrDefault()?.InlineContent);
     }
 
@@ -696,12 +724,11 @@ public sealed class ShortVideoMaterialProcessor
         string summary,
         List<string> tags,
         Dictionary<string, string> metadata,
-        DateTime now)
+        DateTime now,
+        ShortVideoMaterialRun run)
     {
         var parsed = await _documentService.ParseAsync(markdown);
         parsed.Title = title;
-        await _documentService.SaveAsync(parsed);
-
         var entry = new DocumentEntry
         {
             StoreId = store.Id,
@@ -722,9 +749,169 @@ public sealed class ShortVideoMaterialProcessor
             CreatedAt = now,
             UpdatedAt = now,
         };
+        var planned = new ShortVideoMaterialEntryReceipt { EntryId = entry.Id, StoreId = store.Id, EntryCreatedAt = entry.UpdatedAt, DocumentId = parsed.Id,
+            DocumentCreatedNew = Guid.TryParse(parsed.Id, out _) && await _db.Documents.CountDocumentsAsync(x => x.Id == parsed.Id) == 0 };
+        GetArtifactReceipt(run).Entries.Add(planned);
+        run.CleanupPending = true;
+        await SaveRunAsync(run);
+        planned.UnconfirmedWrite = true;
+        await _documentService.SaveAsync(parsed);
         await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
         await IncrementStoreDocumentCountAsync(store, entry.Id);
+        planned.CountIncrementConfirmed = true;
+        planned.UnconfirmedWrite = false;
         return entry;
+    }
+
+    private static ShortVideoMaterialArtifactReceipt GetArtifactReceipt(ShortVideoMaterialRun run)
+    {
+        if (string.IsNullOrWhiteSpace(run.ProcessingToken))
+            throw new InvalidOperationException("素材处理身份未确认，已停止继续保存产物");
+        var receipt = run.ArtifactReceipt ??= new() { ProcessingToken = run.ProcessingToken };
+        if (!string.Equals(receipt.ProcessingToken, run.ProcessingToken, StringComparison.Ordinal))
+            throw new InvalidOperationException("此前产物责任尚未确认，请先查看原任务处理结果");
+        return receipt;
+    }
+
+    private async Task<StoredAsset> StoreAttemptVideoAsync(ShortVideoMaterialRun run, byte[] bytes, string mime, CancellationToken authorityToken)
+    {
+        authorityToken.ThrowIfCancellationRequested();
+        var storage = _serviceProvider.GetRequiredService<IAssetStorage>();
+        // 旧处理标识或不支持精确键的兼容存储继续原路径；不能把共享 SHA 当作本次所有权。
+        if (!Regex.IsMatch(run.Id, "^[a-f0-9]{32}$") || !Regex.IsMatch(run.ProcessingToken ?? "", "^[a-f0-9]{32}$"))
+            return await storage.SaveAsync(bytes, mime, CancellationToken.None, "workflow-agent", "doc");
+        var predicted = storage.TryBuildContentAddressedKey(bytes, mime, "workflow-agent", "doc");
+        if (string.IsNullOrWhiteSpace(predicted))
+            return await storage.SaveAsync(bytes, mime, CancellationToken.None, "workflow-agent", "doc");
+        predicted = predicted.Replace('\\', '/');
+        if (predicted.Split('/').Any(s => s is "." or "..") || !predicted.Contains('/'))
+            throw new InvalidOperationException("素材存储位置未能确认，已停止保存");
+        var receipt = GetArtifactReceipt(run);
+        receipt.PredictedKey = predicted;
+        receipt.StorageKey = predicted[..predicted.LastIndexOf('/')]
+            + $"/short-video/{run.Id}/{run.ProcessingToken}/{Path.GetFileName(predicted)}";
+        var url = storage.BuildUrlForKey(receipt.StorageKey);
+        receipt.Url = url;
+        if (!IsAttemptStorageKey(run, receipt, storage))
+            throw new InvalidOperationException("素材存储归属未能确认，已停止保存");
+        receipt.PhysicalState = "not-started";
+        run.CleanupPending = true;
+        await SaveRunAsync(run); // 先留下精确意图；未取得许可不得开始对象写入。
+        authorityToken.ThrowIfCancellationRequested();
+        try
+        {
+            receipt.PhysicalState = "upload-started";
+            await storage.UploadToKeyAsync(receipt.StorageKey, bytes, mime, CancellationToken.None);
+            receipt.PhysicalState = "uploaded";
+        }
+        catch (Exception ex)
+        {
+            receipt.PhysicalState = "upload-outcome-unknown";
+            throw new InvalidOperationException("视频产物保存结果未确认，已停止后续处理并保留责任记录，请稍后查看", ex);
+        }
+        await SaveRunAsync(run);
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        return new StoredAsset(sha, url, bytes.LongLength, mime, receipt.StorageKey) { CreatedNew = true };
+    }
+
+    private async Task CleanupArtifactsAfterFailureAsync(ShortVideoMaterialRun run, ShortVideoMaterialRun identity)
+    {
+        var receipt = run.ArtifactReceipt;
+        if (receipt == null || string.IsNullOrWhiteSpace(identity.ProcessingToken)
+            || receipt.ProcessingToken != identity.ProcessingToken) return;
+        var active = ActiveRunFilter(identity);
+        // 与 done 保存竞争同一条 CAS；一旦进入补偿，迟到保存不能再把已解除的引用写成完成。
+        var fenced = await _db.ShortVideoMaterialRuns.UpdateOneAsync(active,
+            Builders<ShortVideoMaterialRun>.Update.Set(x => x.ArtifactCleanupStarted, true)
+                .Set(x => x.CleanupPending, true), cancellationToken: CancellationToken.None);
+        if (fenced.MatchedCount != 1) return;
+        var removed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in receipt.Entries)
+        {
+            var own = Builders<DocumentEntry>.Filter.Eq(x => x.Id, item.EntryId)
+                & Builders<DocumentEntry>.Filter.Eq(x => x.StoreId, item.StoreId)
+                & Builders<DocumentEntry>.Filter.Eq(x => x.CreatedBy, identity.UserId)
+                & Builders<DocumentEntry>.Filter.Eq(x => x.UpdatedAt, item.EntryCreatedAt)
+                & Builders<DocumentEntry>.Filter.Eq("Metadata.runId", identity.Id);
+            var deleted = await _db.DocumentEntries.DeleteOneAsync(own, CancellationToken.None);
+            if (deleted.DeletedCount == 1)
+            {
+                removed.Add(item.EntryId);
+                if (item.CountIncrementConfirmed)
+                    await _db.DocumentStores.UpdateOneAsync(x => x.Id == item.StoreId && x.OwnerId == identity.UserId && x.DocumentCount > 0,
+                        Builders<DocumentStore>.Update.Inc(x => x.DocumentCount, -1).Set(x => x.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
+                var replacement = await _db.DocumentEntries.Find(x => x.StoreId == item.StoreId)
+                    .SortBy(x => x.CreatedAt).Project(x => x.Id).FirstOrDefaultAsync(CancellationToken.None);
+                await _db.DocumentStores.UpdateOneAsync(x => x.Id == item.StoreId && x.OwnerId == identity.UserId && x.PrimaryEntryId == item.EntryId,
+                    Builders<DocumentStore>.Update.Set(x => x.PrimaryEntryId, replacement), cancellationToken: CancellationToken.None);
+            }
+            // 主表写入失败仍可能留下附件/正文；仅处理预先登记的本次 ID，其他条目仍引用则保留。
+            if (item.AttachmentId != null && await _db.DocumentEntries.CountDocumentsAsync(x => x.AttachmentId == item.AttachmentId) == 0)
+                await _db.Attachments.DeleteOneAsync(x => x.AttachmentId == item.AttachmentId && x.UploaderId == identity.UserId, CancellationToken.None);
+            if (item.DocumentCreatedNew && item.DocumentId != null
+                && await _db.DocumentEntries.CountDocumentsAsync(x => x.DocumentId == item.DocumentId) == 0)
+                await _db.Documents.DeleteOneAsync(x => x.Id == item.DocumentId, CancellationToken.None);
+        }
+        var pending = receipt.PhysicalState is "upload-outcome-unknown" or "upload-started"
+            || receipt.Entries.Any(x => x.UnconfirmedWrite);
+        if (receipt.PublicationStarted)
+        {
+            // URL 曾进入条目写入流程，无法证明跨库/人工复制从未引用；不扩大存储删除权限。
+            receipt.PhysicalState = "retained-published";
+        }
+        else if (receipt.PhysicalState == "uploaded" && IsAttemptStorageKey(identity, receipt, _serviceProvider.GetRequiredService<IAssetStorage>()))
+        {
+            var referenced = await _db.Attachments.CountDocumentsAsync(x => x.Url == receipt.Url) > 0
+                || await _db.DocumentEntries.CountDocumentsAsync(Builders<DocumentEntry>.Filter.Eq("Metadata.assetUrl", receipt.Url)) > 0
+                || await _db.ShortVideoMaterialRuns.CountDocumentsAsync(x => x.Id != identity.Id && x.SourceVideoUrl == receipt.Url) > 0
+                || await PrdAgent.Infrastructure.Services.VideoAssetMutationLease.HasReferencesAsync(
+                    _db, string.Empty, receipt.Url!, CancellationToken.None);
+            if (referenced) receipt.PhysicalState = "retained-referenced";
+            else
+            {
+                try
+                {
+                    await _serviceProvider.GetRequiredService<IAssetStorage>().DeleteByKeyAsync(receipt.StorageKey!, CancellationToken.None);
+                    receipt.PhysicalState = "deleted";
+                }
+                catch (Exception ex)
+                {
+                    pending = true;
+                    receipt.PhysicalState = "delete-pending";
+                    _logger.LogWarning(ex, "短视频独立对象清理未确认，保留责任记录 run={RunId}", identity.Id);
+                }
+            }
+        }
+        else if (receipt.PhysicalState == "uploaded")
+        {
+            pending = true;
+            receipt.PhysicalState = "ownership-unconfirmed";
+        }
+        var update = Builders<ShortVideoMaterialRun>.Update.Set(x => x.ArtifactReceipt, receipt)
+            .Set(x => x.CleanupPending, pending).Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (run.SourceEntryId != null && removed.Contains(run.SourceEntryId))
+        {
+            update = update.Set(x => x.SourceEntryId, null).Set(x => x.SourceVideoUrl, null);
+            if (run.Card != null) update = update.Set(x => x.Card!.VideoUrl, null);
+        }
+        if (run.TranscriptEntryId != null && removed.Contains(run.TranscriptEntryId)) update = update.Set(x => x.TranscriptEntryId, null);
+        if (run.EntryId != null && removed.Contains(run.EntryId)) update = update.Set(x => x.EntryId, null);
+        await _db.ShortVideoMaterialRuns.UpdateOneAsync(active, update, cancellationToken: CancellationToken.None);
+    }
+
+    private static bool IsAttemptStorageKey(ShortVideoMaterialRun identity, ShortVideoMaterialArtifactReceipt receipt, IAssetStorage storage)
+    {
+        var predicted = receipt.PredictedKey;
+        if (string.IsNullOrWhiteSpace(predicted) || string.IsNullOrWhiteSpace(receipt.StorageKey)
+            || !Regex.IsMatch(identity.Id, "^[a-f0-9]{32}$") || !Regex.IsMatch(identity.ProcessingToken ?? "", "^[a-f0-9]{32}$")
+            || predicted.Contains('\\') || predicted.Split('/').Any(x => x is "." or "..") || !predicted.Contains('/')
+            || !Regex.IsMatch(Path.GetFileName(predicted), "^[a-z0-9_-]+\\.[a-z0-9]+$")) return false;
+        var logical = $"workflow-agent/doc/short-video/{identity.Id}/{identity.ProcessingToken}/{Path.GetFileName(predicted)}";
+        return receipt.StorageKey == predicted[..predicted.LastIndexOf('/')]
+            + $"/short-video/{identity.Id}/{identity.ProcessingToken}/{Path.GetFileName(predicted)}"
+            && receipt.Url == storage.BuildUrlForKey(receipt.StorageKey)
+            && receipt.Url == storage.BuildUrlForLogicalKey(logical);
     }
 
     internal static FilterDefinition<ShortVideoMaterialRun> ActiveRunFilter(ShortVideoMaterialRun run)
@@ -750,7 +937,8 @@ public sealed class ShortVideoMaterialProcessor
     }
 
     private static FilterDefinition<ShortVideoMaterialRun> ContinuableRunFilter(ShortVideoMaterialRun run)
-        => ActiveRunFilter(run) & Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.CancelRequested, true);
+        => ActiveRunFilter(run) & Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.CancelRequested, true)
+            & Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.ArtifactCleanupStarted, true);
 
     public static List<ShortVideoMaterialStage> BuildInitialStages()
         => new()

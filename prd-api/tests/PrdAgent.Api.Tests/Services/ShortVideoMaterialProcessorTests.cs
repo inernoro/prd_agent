@@ -18,6 +18,17 @@ namespace PrdAgent.Api.Tests.Services;
 public class ShortVideoMaterialProcessorTests
 {
     [Fact]
+    public void ArtifactReceipt_IsStoredServerSideButNeverExposedInRunJson()
+    {
+        var run = new ShortVideoMaterialRun { CleanupPending = true, ArtifactCleanupStarted = true,
+            ProcessingToken = "private-processing-token", TaskPermitId = "private-task-permit",
+            ArtifactReceipt = new() { ProcessingToken = "private-artifact-processing", StorageKey = "private-object-key" } };
+        var json = System.Text.Json.JsonSerializer.Serialize(run, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        json.ShouldContain("\"cleanupPending\":true");
+        json.ShouldNotContain("private-"); json.ShouldNotContain("artifactReceipt"); json.ShouldNotContain("artifactCleanupStarted");
+    }
+
+    [Fact]
     public void RequireResolvedVideoUrl_ShouldRejectMissingVideoUrl()
     {
         var ex = Should.Throw<InvalidOperationException>(() => ShortVideoMaterialProcessor.RequireResolvedVideoUrl(null));
@@ -283,7 +294,9 @@ public class ShortVideoMaterialProcessorTests
             [null, null, "direct-video", "synthetic", null, "https://synthetic.invalid/source", null]);
         var task = (Task)method.Invoke(processor,
             [new PrdAgent.Core.Models.DocumentStore { Id = "synthetic-store" }, "synthetic-owner", "合成用户",
-                "合成素材", video, parsed, "https://synthetic.invalid/source", "unknown", "synthetic-run", DateTime.UnixEpoch])!;
+                "合成素材", video, parsed, "https://synthetic.invalid/source", "unknown",
+                new ShortVideoMaterialRun { Id = "synthetic-run", UserId = "synthetic-owner", Status = "running",
+                    OwnerInstanceId = "synthetic-instance", TaskPermitId = "synthetic-permit", ProcessingToken = "synthetic-processing" }, DateTime.UnixEpoch])!;
         await task;
         var entry = (PrdAgent.Core.Models.DocumentEntry)task.GetType().GetProperty("Result")!.GetValue(task)!;
         stored.Single().FileName.ShouldBe(expected);
@@ -315,6 +328,10 @@ public class ShortVideoMaterialProcessorTests
         database.Setup(x => x.GetCollection<PrdAgent.Core.Models.Attachment>("attachments", null)).Returns(attachments.Object);
         database.Setup(x => x.GetCollection<PrdAgent.Core.Models.DocumentEntry>("document_entries", null)).Returns(entries.Object);
         database.Setup(x => x.GetCollection<PrdAgent.Core.Models.DocumentStore>("document_stores", null)).Returns(stores.Object);
+        var runs = new Moq.Mock<IMongoCollection<ShortVideoMaterialRun>>(Moq.MockBehavior.Strict);
+        runs.Setup(x => x.ReplaceOneAsync(It.IsAny<FilterDefinition<ShortVideoMaterialRun>>(), It.IsAny<ShortVideoMaterialRun>(),
+            It.IsAny<ReplaceOptions>(), CancellationToken.None)).ReturnsAsync(new ReplaceOneResult.Acknowledged(1, 1, null));
+        database.Setup(x => x.GetCollection<ShortVideoMaterialRun>("short_video_material_runs", null)).Returns(runs.Object);
         var context = (PrdAgent.Infrastructure.Database.MongoDbContext)System.Runtime.CompilerServices.RuntimeHelpers
             .GetUninitializedObject(typeof(PrdAgent.Infrastructure.Database.MongoDbContext));
         typeof(PrdAgent.Infrastructure.Database.MongoDbContext).GetField("_database",

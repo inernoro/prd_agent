@@ -201,6 +201,18 @@ public sealed class ShortVideoMaterialDeletionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Delete_TerminalWithUnconfirmedCleanup_KeepsResponsibilityRecord()
+    {
+        var run = Run("cancelled");
+        run.CleanupPending = true;
+        await _rows.InsertOneAsync(run);
+        using var response = await Delete(run.Id);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.True((await _rows.Find(x => x.Id == run.Id).SingleAsync()).CleanupPending);
+        _coordinator.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task Cancel_QueuedWithoutProcessingIdentity_BecomesCancelledAndRevokesOnlyOwnPermit()
     {
         var run = Run("queued");
