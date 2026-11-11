@@ -31,11 +31,13 @@ public static class ModelReferenceRegistry
         new("map.legacy-physical", "map", "llmmodels", "inactive", ["PlatformId", "ModelName", "Enabled", "IsMain", "IsIntent", "IsVision", "IsImageGen"], ["PlatformId", "ModelName"]),
         new("map.legacy-pools", "map", "model_groups", "inactive", ["Models.ModelId", "Models.PlatformId"], ["Models[].ModelId", "Models[].PlatformId"]),
         new("map.legacy-callers", "map", "llm_app_callers", "inactive", ["ModelRequirements.ModelGroupIds", "ModelRequirements.ModelGroupId"], ["ModelRequirements[].ModelGroupIds", "ModelRequirements[].ModelGroupId", "ModelRequirements[].ModelType"]),
-        new("gateway.fixed-logical-versions", "gateway", "llmgw_model_offerings", "wire", ["LogicalModelId", "TargetId", "TargetKind", "UpstreamModelId", "Enabled"], ["LogicalModelId", "UpstreamModelId"]),
+        // Offering lineage, caller observations and discovery results describe provenance, not dispatch selectors.
+        // Active wire, declared pools and approved successors remain projected and checked below.
+        new("gateway.fixed-logical-versions", "gateway", "llmgw_model_offerings", "wire", ["LogicalModelId", "TargetId", "TargetKind", "UpstreamModelId", "Enabled"], ["LogicalModelId", "UpstreamModelId", "SupersedesOfferingId", "SupersededByOfferingId"]),
         new("gw.logical-roles", "gateway", "llmgw_logical_models", "roles", ["PublicId", "Aliases", "MigratedFromPoolIds", "DefaultForAppCallerCodes", "IsDefaultForType", "ModelType"], ["MigratedFromPoolIds", "ModelType"]),
         new("gw.legacy-pools", "gateway", "llmgw_model_pools", "inactive", ["Models.ModelId", "Models.PlatformId"], ["Models[].ModelId", "Models[].PlatformId", "ModelType"]),
-        new("gw.legacy-callers", "gateway", "llmgw_app_callers", "inactive", ["ModelPoolId", "DefaultModelPoolId", "AllowedModelPoolIds"], ["ModelPoolId", "DefaultModelPoolId", "AllowedModelPoolIds"]),
-        new("gw.upgrade-policy", "gateway", "llmgw_model_upgrade_policies", "upgrade-policy", ["LogicalModelId", "Policy.Enabled", "Policy.Successors.ProviderId", "Policy.Successors.FromModel", "Policy.Successors.ToModel", "PendingAction", "PendingSwitch.OperationId", "LeaseUntil", "Current.UpstreamModelId", "Candidate.ValidationRoute.LogicalModelId"], ["LogicalModelId", "Policy.Successors[].FromModel", "Policy.Successors[].ToModel"]),
+        new("gw.legacy-callers", "gateway", "llmgw_app_callers", "inactive", ["ModelPoolId", "DefaultModelPoolId", "AllowedModelPoolIds"], ["ModelPoolId", "DefaultModelPoolId", "AllowedModelPoolIds", "ObservedModelPoolIds", "LastObservedModelPoolId"]),
+        new("gw.upgrade-policy", "gateway", "llmgw_model_upgrade_policies", "upgrade-policy", ["LogicalModelId", "Policy.Enabled", "Policy.Successors.ProviderId", "Policy.Successors.FromModel", "Policy.Successors.ToModel", "PendingAction", "PendingSwitch.OperationId", "LeaseUntil", "Current.UpstreamModelId", "Candidate.ValidationRoute.LogicalModelId"], ["LogicalModelId", "Policy.Successors[].FromModel", "Policy.Successors[].ToModel", "Discoveries[].UpstreamModelId"]),
     };
     public static readonly IReadOnlyList<string> HistoricalExclusions = new[]
     {
