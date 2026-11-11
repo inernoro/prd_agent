@@ -157,9 +157,7 @@ public sealed record TaskBusinessIntent(string Key, string Fingerprint, string S
                 // JSON-RPC id 是传输关联标识，不属于付费操作参数；重试可使用新的 id。
                 if (operation == "PrdAgent.Api.Controllers.McpGatewayController.Handle"
                     && body.RootElement.ValueKind == JsonValueKind.Object)
-                    parameters.Append("{" + string.Join(",", body.RootElement.EnumerateObject()
-                        .Where(x => x.Name != "id").OrderBy(x => x.Name, StringComparer.Ordinal)
-                        .Select(x => JsonSerializer.Serialize(x.Name) + ":" + Canonical(x.Value))) + "}");
+                    parameters.Append(CanonicalMcpRequest(body.RootElement));
                 else parameters.Append(Canonical(body.RootElement));
             }
             catch (JsonException)
@@ -186,6 +184,38 @@ public sealed record TaskBusinessIntent(string Key, string Fingerprint, string S
         if (key.Length > 256 || key.Any(char.IsControl))
             throw new TaskExecutionAdmissionException("TASK_INTENT_INVALID", "操作标识格式不正确，未启动任务；请使用256字以内的稳定标识。", 400);
         return new(key, TaskExecutionCoordinator.Fingerprint(parameters.ToString()), scope);
+    }
+
+    // 真实 SDK 报文已观测的有限传输上下文；不得扩成忽略任意 _meta 或业务 arguments。
+    private static readonly HashSet<string> McpTransportMetadataFields = new(StringComparer.Ordinal)
+    {
+        "callId", "progressToken", "x-codex-turn-metadata", "threadId", "sessionId", "windowId", "itemId"
+    };
+
+    private static string CanonicalMcpRequest(JsonElement root)
+        => "{" + string.Join(",", root.EnumerateObject().Where(x => x.Name != "id")
+            .OrderBy(x => x.Name, StringComparer.Ordinal).Select(x => JsonSerializer.Serialize(x.Name) + ":"
+                + (x.Name == "params" && x.Value.ValueKind == JsonValueKind.Object
+                    ? CanonicalMcpParameters(x.Value) : Canonical(x.Value)))) + "}";
+
+    private static string CanonicalMcpParameters(JsonElement parameters)
+    {
+        var fields = new List<string>();
+        foreach (var field in parameters.EnumerateObject().OrderBy(x => x.Name, StringComparer.Ordinal))
+        {
+            if (field.Name == "_meta" && field.Value.ValueKind == JsonValueKind.Object)
+            {
+                // 已观测的 SDK 调用、进度及会话追踪上下文不是业务提交参数。
+                // 仅限此协议路径；其它元数据及 arguments 中同名业务字段仍参与指纹。
+                var retained = field.Value.EnumerateObject().Where(x => !McpTransportMetadataFields.Contains(x.Name))
+                    .OrderBy(x => x.Name, StringComparer.Ordinal).ToArray();
+                if (retained.Length == 0) continue;
+                fields.Add(JsonSerializer.Serialize(field.Name) + ":{" + string.Join(",", retained
+                    .Select(x => JsonSerializer.Serialize(x.Name) + ":" + Canonical(x.Value))) + "}");
+            }
+            else fields.Add(JsonSerializer.Serialize(field.Name) + ":" + Canonical(field.Value));
+        }
+        return "{" + string.Join(",", fields) + "}";
     }
 
     private static string Canonical(JsonElement value) => value.ValueKind switch
