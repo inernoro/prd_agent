@@ -33,7 +33,7 @@ public class ModelUpgradeEvidenceTests
             db.Setup(x => x.GetCollection<BsonDocument>(name, It.IsAny<MongoCollectionSettings>())).Returns(collection.Object);
         }
         var discovery = new Mock<IModelUpgradeDiscovery>(MockBehavior.Strict);
-        var service = new ModelUpgradeService(db.Object, db.Object, discovery.Object, "tenant", NullLogger<ModelUpgradeService>.Instance);
+        var service = new ModelUpgradeService(db.Object, db.Object, discovery.Object, "tenant", NullLogger<ModelUpgradeService>.Instance, ModelUpgradeTestConfiguration.AuthorizedProduction());
         var state = new ModelUpgradeState { TenantId = "tenant", LogicalModelId = "stable-id", ValidationMode = "evidence", EvidenceRequestId = "real-request", Gates = new() { Capabilities = true },
             Candidate = new() { ModelId = "physical", ProviderId = "official", UpstreamModelId = "exact-candidate", Fingerprint = ModelUpgradeRules.Fingerprint(logical, provider, model) } };
         var operation = typeof(ModelUpgradeService).GetMethod("ValidateAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;

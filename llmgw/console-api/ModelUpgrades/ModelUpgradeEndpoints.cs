@@ -11,7 +11,7 @@ public static class ModelUpgradeEndpoints
         IConfiguration configuration, string internalTenantId)
     {
         services.AddSingleton<IModelUpgradeDiscovery>(new ModelUpgradeDiscovery(new UpstreamProxyService(gateway, configuration, internalTenantId), configuration, internalTenantId));
-        services.AddSingleton(sp => new ModelUpgradeService(gateway, map, sp.GetRequiredService<IModelUpgradeDiscovery>(), internalTenantId, sp.GetRequiredService<ILogger<ModelUpgradeService>>()));
+        services.AddSingleton(sp => new ModelUpgradeService(gateway, map, sp.GetRequiredService<IModelUpgradeDiscovery>(), internalTenantId, sp.GetRequiredService<ILogger<ModelUpgradeService>>(), configuration));
         services.AddHostedService<ModelUpgradeWorker>();
         return services;
     }
