@@ -177,13 +177,35 @@ public static class ModelReferenceAnalysis
                     break;
                 case "video-run":
                     if (Text(doc, "Status") is "Completed" or "Failed" or "Cancelled") break; // Terminal actual wire is immutable history.
-                    foreach (var leaf in Leaves(doc).Where(x => x.Path == "DirectVideoModel" || x.Path.EndsWith(".Model", StringComparison.Ordinal)))
+                    foreach (var leaf in Leaves(doc).Where(x => x.Path == "DirectVideoModel" || System.Text.RegularExpressions.Regex.IsMatch(x.Path, @"^Scenes\.\d+\.Model$")))
                     {
                         if (!leaf.Value.IsString || !Matches(m.Source, leaf.Value.AsString)) continue;
                         var prefix = leaf.Path.Contains('.') ? leaf.Path[..(leaf.Path.LastIndexOf('.') + 1)] : "DirectVideo";
                         var job = Text(doc, prefix + "JobId");
                         Finding(leaf.Path, "blocked", job.Length > 0 ? "SUBMITTED_VIDEO_JOB_MUST_DRAIN" : "UNSUBMITTED_VIDEO_REQUIRES_LIFECYCLE_VALIDATION");
                     }
+                    break;
+                case "upgrade-policy":
+                    var ownerLogical = Text(doc, "LogicalModelId");
+                    if (ownerLogical.Length == 0) { Finding("LogicalModelId", "unknown", "UPGRADE_POLICY_OWNER_UNKNOWN"); break; }
+                    var enabledPolicy = TryGet(doc, "Policy.Enabled", out var policyEnabled) && policyEnabled == BsonBoolean.True;
+                    var busyPolicy = Text(doc, "PendingAction").Length > 0
+                        || TryGet(doc, "PendingSwitch", out var pendingSwitch) && !pendingSwitch.IsBsonNull
+                        || TryGet(doc, "LeaseUntil", out var leaseUntil) && leaseUntil.IsValidDateTime && leaseUntil.ToUniversalTime() > DateTime.UtcNow;
+                    if (ownerLogical == m.Source.LogicalId && m.Source.LogicalId != m.Target.LogicalId)
+                        Finding("LogicalModelId", enabledPolicy || busyPolicy ? "blocked" : "excluded",
+                            enabledPolicy || busyPolicy ? "DISABLE_AND_DRAIN_SOURCE_UPGRADE_POLICY" : "INACTIVE_POLICY_JOURNAL_PRESERVED");
+                    if (!string.IsNullOrEmpty(m.Source.LogicalId) && Text(doc, "Candidate.ValidationRoute.LogicalModelId") == m.Source.LogicalId)
+                        Finding("Candidate.ValidationRoute.LogicalModelId", "blocked", "CANDIDATE_VALIDATION_STILL_REFERENCES_MODEL");
+                    if (enabledPolicy || busyPolicy)
+                        foreach (var prefix in Members("Policy.Successors"))
+                        {
+                            var currentWire = Text(doc, "Current.UpstreamModelId");
+                            if (!string.IsNullOrEmpty(m.Source.UpstreamModelId) && Text(doc, prefix + "ToModel") == m.Source.UpstreamModelId
+                                && Text(doc, prefix + "ProviderId") == m.Source.ProviderId
+                                && (currentWire.Length == 0 || Text(doc, prefix + "FromModel") == currentWire))
+                                Finding(prefix + "ToModel", "blocked", "ACTIVE_SUCCESSOR_TARGET_REQUIRES_POLICY_REVIEW");
+                        }
                     break;
                 case "physical":
                     if (PhysicalMatch(m.Source, Text(doc, "PlatformId"), Text(doc, "ModelName"))) Finding("ModelName", "blocked", "RETIRE_LEGACY_PHYSICAL_MIRROR_THROUGH_GATEWAY");

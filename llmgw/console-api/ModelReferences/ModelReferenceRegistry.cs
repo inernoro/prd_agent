@@ -25,7 +25,8 @@ public static class ModelReferenceRegistry
         new("map.speech-profiles", "map", "speech_settings", "blocked", ["Profiles.ModelPoolId", "Profiles.Model", "Profiles.OfferingId"], ["Profiles[].ModelPoolId", "Profiles[].Model", "Profiles[].OfferingId"]),
         new("map.infra-profiles", "map", "infra_agent_runtime_profiles", "independent", ["Model"], ["Model"]),
         new("map.infra-sessions", "map", "infra_agent_sessions", "independent", ["Model", "RuntimeProfileId"], ["Model"]),
-        new("map.video-unsubmitted", "map", "video_gen_runs", "video-run", ["Status", "DirectVideoModel", "DirectVideoJobId", "DirectVideoOfferingId", "Scenes.Model", "Scenes.JobId", "Scenes.OfferingId"], ["DirectVideoModel", "DirectVideoOfferingId", "Scenes[].Model", "Scenes[].OfferingId"]),
+        // Versions[].Model is immutable generated-output provenance, deliberately not projected for migration.
+        new("map.video-unsubmitted", "map", "video_gen_runs", "video-run", ["Status", "DirectVideoModel", "DirectVideoJobId", "DirectVideoOfferingId", "Scenes.Model", "Scenes.JobId", "Scenes.OfferingId"], ["DirectVideoModel", "DirectVideoOfferingId", "Scenes[].Model", "Scenes[].OfferingId", "Scenes[].Versions[].Model"]),
         new("map.legacy-config", "map", "llmconfigs", "inactive", ["Model", "IsActive"], ["Model"]),
         new("map.legacy-physical", "map", "llmmodels", "inactive", ["PlatformId", "ModelName", "Enabled", "IsMain", "IsIntent", "IsVision", "IsImageGen"], ["PlatformId", "ModelName"]),
         new("map.legacy-pools", "map", "model_groups", "inactive", ["Models.ModelId", "Models.PlatformId"], ["Models[].ModelId", "Models[].PlatformId"]),
@@ -34,7 +35,7 @@ public static class ModelReferenceRegistry
         new("gw.logical-roles", "gateway", "llmgw_logical_models", "roles", ["PublicId", "Aliases", "MigratedFromPoolIds", "DefaultForAppCallerCodes", "IsDefaultForType", "ModelType"], ["MigratedFromPoolIds", "ModelType"]),
         new("gw.legacy-pools", "gateway", "llmgw_model_pools", "inactive", ["Models.ModelId", "Models.PlatformId"], ["Models[].ModelId", "Models[].PlatformId", "ModelType"]),
         new("gw.legacy-callers", "gateway", "llmgw_app_callers", "inactive", ["ModelPoolId", "DefaultModelPoolId", "AllowedModelPoolIds"], ["ModelPoolId", "DefaultModelPoolId", "AllowedModelPoolIds"]),
-        new("gw.upgrade-policy", "gateway", "llmgw_model_upgrade_policies", "upgrade-policy", ["LogicalModelId", "Policy.Successors.ProviderId", "Policy.Successors.FromModel", "Policy.Successors.ToModel"], ["LogicalModelId", "Policy.Successors[].FromModel", "Policy.Successors[].ToModel"]),
+        new("gw.upgrade-policy", "gateway", "llmgw_model_upgrade_policies", "upgrade-policy", ["LogicalModelId", "Policy.Enabled", "Policy.Successors.ProviderId", "Policy.Successors.FromModel", "Policy.Successors.ToModel", "PendingAction", "PendingSwitch.OperationId", "LeaseUntil", "Current.UpstreamModelId", "Candidate.ValidationRoute.LogicalModelId"], ["LogicalModelId", "Policy.Successors[].FromModel", "Policy.Successors[].ToModel"]),
     };
     public static readonly IReadOnlyList<string> HistoricalExclusions = new[]
     {
