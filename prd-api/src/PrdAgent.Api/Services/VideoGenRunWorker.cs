@@ -66,6 +66,7 @@ public partial class VideoGenRunWorker : BackgroundService
             try
             {
                 if (await ResumePendingDeletionAsync(stoppingToken)) continue;
+                if (await RecoverCompletedExportTaskAsync(stoppingToken)) continue;
 
                 // 路径 1: Queued → 根据 Mode 路由
                 //   - direct      → 直接走 ProcessDirectVideoGenAsync (Rendering)
@@ -128,7 +129,10 @@ public partial class VideoGenRunWorker : BackgroundService
                 var exportTask = await ClaimExportTaskAsync(stoppingToken);
                 if (exportTask != null)
                 {
-                    var taskRun = await _db.VideoGenRuns.Find(x => x.Id == exportTask.RunId)
+                    var taskRun = await _db.VideoGenRuns.Find(x => x.Id == exportTask.RunId
+                            && x.OwnerAdminId == exportTask.OwnerAdminId && x.AppKey == exportTask.AppKey
+                            && (x.ProjectId ?? string.Empty) == exportTask.ProjectId
+                            && x.DeploymentSlug == QueueDeploymentScope)
                         .FirstOrDefaultAsync(stoppingToken);
                     if (taskRun == null)
                     {
@@ -1454,9 +1458,10 @@ public partial class VideoGenRunWorker : BackgroundService
             ct);
     }
 
-    private async Task<VideoExportTask?> ClaimExportTaskAsync(CancellationToken ct)
+    internal async Task<VideoExportTask?> ClaimExportTaskAsync(CancellationToken ct)
     {
-        var filter = Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Queued);
+        var filter = Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Queued)
+            & Builders<VideoExportTask>.Filter.Eq(x => x.DeploymentSlug, QueueDeploymentScope);
         return await _db.VideoExportTasks.FindOneAndUpdateAsync(
             filter,
             Builders<VideoExportTask>.Update
@@ -1623,38 +1628,27 @@ public partial class VideoGenRunWorker : BackgroundService
             if (!string.Equals(stored.Sha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("视频资产摘要校验失败");
 
-            var totalCost = run.Scenes.Where(scene => scene.Cost.HasValue).Sum(scene => scene.Cost!.Value);
+            double? totalCost = run.Scenes.All(scene => scene.Cost.HasValue)
+                ? run.Scenes.Sum(scene => scene.Cost!.Value) : null;
+            if (exportTask != null)
+            {
+                var recorded = await TryCommitStoredVideoAsync(stored,
+                    () => RecordCompletedExportAsync(run, exportTask, stored, totalCost));
+                if (recorded) await ReconcileCompletedExportAsync(exportTask, CancellationToken.None);
+                return;
+            }
+            // 存量 ExportRequested 路径仍保留，但迟到结果不能覆盖取消、删除或后续独立导出。
             var committed = await TryCommitStoredVideoAsync(stored, async () =>
             {
                 return (await _db.VideoGenRuns.UpdateOneAsync(
-                    x => x.Id == run.Id,
-                    Builders<VideoGenRun>.Update
-                        .Set(x => x.Status, VideoGenRunStatus.Completed)
-                        .Set(x => x.VideoAssetUrl, stored.Url)
-                        .Set(x => x.VideoAssetSha256, stored.Sha256)
-                        .Set(x => x.DirectVideoCost, totalCost)
-                        .Set(x => x.ExportErrorMessage, (string?)null)
-                        .Set(x => x.ExportedAt, DateTime.UtcNow)
-                        .Set(x => x.EndedAt, DateTime.UtcNow)
-                        .Set(x => x.CurrentPhase, "completed")
-                        .Set(x => x.PhaseProgress, 100),
+                    ExportRunIdentity(run) & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Rendering)
+                        & Builders<VideoGenRun>.Filter.Eq(x => x.LatestExportTaskId, run.LatestExportTaskId)
+                        & Builders<VideoGenRun>.Filter.Eq(x => x.ExportStartedAt, run.ExportStartedAt),
+                    CompletedExportRunUpdate(stored.Url, stored.Sha256, totalCost, DateTime.UtcNow),
                     cancellationToken: CancellationToken.None)).MatchedCount == 1;
             });
             if (!committed) return;
-            if (exportTask != null)
-            {
-                await _db.VideoExportTasks.UpdateOneAsync(
-                    x => x.Id == exportTask.Id,
-                    Builders<VideoExportTask>.Update
-                        .Set(x => x.Status, VideoExportTaskStatus.Completed)
-                        .Set(x => x.CurrentPhase, "completed")
-                        .Set(x => x.Progress, 100)
-                        .Set(x => x.OutputUrl, stored.Url)
-                        .Set(x => x.ErrorMessage, (string?)null)
-                        .Set(x => x.EndedAt, DateTime.UtcNow),
-                    cancellationToken: CancellationToken.None);
-            }
-            await UpdateProjectAsync(run, VideoProjectStatus.Completed);
+            await UpdateExportProjectAsync(run, VideoProjectStatus.Completed);
             await PublishEventAsync(run.Id, "export.completed", new { videoUrl = stored.Url, cost = totalCost });
         }
         finally
@@ -1803,28 +1797,27 @@ public partial class VideoGenRunWorker : BackgroundService
     private async Task FailExportAsync(VideoGenRun run, string errorMessage, string? exportTaskId = null)
     {
         var userMessage = VideoGenerationUserError.ForPersistence("EXPORT_FAILED", errorMessage);
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
-            Builders<VideoGenRun>.Update
-                .Set(x => x.Status, VideoGenRunStatus.Editing)
-                .Set(x => x.ExportRequested, false)
-                .Set(x => x.ExportErrorMessage, userMessage)
-                .Set(x => x.CurrentPhase, "export-failed")
-                .Set(x => x.PhaseProgress, 0),
-            cancellationToken: CancellationToken.None);
         if (!string.IsNullOrWhiteSpace(exportTaskId))
         {
-            await _db.VideoExportTasks.UpdateOneAsync(
-                x => x.Id == exportTaskId,
-                Builders<VideoExportTask>.Update
-                    .Set(x => x.Status, VideoExportTaskStatus.Failed)
-                    .Set(x => x.CurrentPhase, "export-failed")
-                    .Set(x => x.Progress, 0)
-                    .Set(x => x.ErrorMessage, userMessage)
-                    .Set(x => x.EndedAt, DateTime.UtcNow),
+            var taskFailed = await _db.VideoExportTasks.UpdateOneAsync(
+                x => x.Id == exportTaskId && x.RunId == run.Id && x.OwnerAdminId == run.OwnerAdminId
+                    && x.AppKey == run.AppKey && x.ProjectId == (run.ProjectId ?? string.Empty)
+                    && x.DeploymentSlug == QueueDeploymentScope && x.Status == VideoExportTaskStatus.Processing,
+                Builders<VideoExportTask>.Update.Set(x => x.Status, VideoExportTaskStatus.Failed)
+                    .Set(x => x.CurrentPhase, "export-failed").Set(x => x.Progress, 0)
+                    .Set(x => x.ErrorMessage, userMessage).Set(x => x.EndedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
+            if (taskFailed.MatchedCount != 1) return;
         }
-        await UpdateProjectAsync(run, VideoProjectStatus.Editing);
+        var changed = await _db.VideoGenRuns.UpdateOneAsync(
+            ExportRunIdentity(run) & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Rendering)
+                & Builders<VideoGenRun>.Filter.Eq(x => x.LatestExportTaskId, exportTaskId ?? run.LatestExportTaskId),
+            Builders<VideoGenRun>.Update.Set(x => x.Status, VideoGenRunStatus.Editing)
+                .Set(x => x.ExportRequested, false).Set(x => x.ExportErrorMessage, userMessage)
+                .Set(x => x.CurrentPhase, "export-failed").Set(x => x.PhaseProgress, 0),
+            cancellationToken: CancellationToken.None);
+        if (changed.MatchedCount != 1) return;
+        await UpdateExportProjectAsync(run, VideoProjectStatus.Editing);
         await PublishEventAsync(run.Id, "export.error", new { message = userMessage });
     }
 

@@ -434,6 +434,16 @@ public class VideoExportTask
     public string CurrentPhase { get; set; } = "queued";
     public int Progress { get; set; }
     public string? OutputUrl { get; set; }
+    // 完成回执先落库，恢复只核对本人当前导出，不重新生成、上传或申请执行许可。
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? DeploymentSlug { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? OutputSha256 { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public double? TotalCost { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime? RunReconciledAt { get; set; }
+
     public string? ErrorMessage { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
