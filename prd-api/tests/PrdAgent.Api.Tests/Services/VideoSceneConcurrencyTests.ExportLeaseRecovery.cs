@@ -201,6 +201,65 @@ public partial class VideoSceneConcurrencyTests
         Assert.Empty(test.VideoClient.Invocations);Assert.Empty(test.AssetStorage.Invocations);
     }
 
+    [Theory]
+    [InlineData(VideoExportTaskStatus.Failed)]
+    [InlineData(VideoExportTaskStatus.Cancelled)]
+    [InlineData(VideoExportTaskStatus.Completed)]
+    public async Task ExportHolder_NormalReexportReplacesOnlyTerminalPreviousReference(string previousStatus)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("terminal-reexport",test.OwnerId,SceneItemStatus.Done);
+        run.Mode = VideoGenMode.Storyboard;run.Status = VideoGenRunStatus.Editing;
+        run.ProjectId = "terminal-project";run.LatestExportTaskId = "previous-terminal";
+        run.DeploymentSlug = "synthetic-export-scope";
+        run.Scenes[0].VideoUrl = "https://synthetic.invalid/already-generated.mp4";
+        await test.SaveRunAsync(run);
+        await test.Context.VideoProjects.InsertOneAsync(new VideoProject { Id = run.ProjectId,
+            OwnerAdminId = test.OwnerId,AppKey = run.AppKey,LatestRunId = run.Id,
+            LatestExportTaskId = run.LatestExportTaskId,Status = VideoProjectStatus.Editing });
+        await test.Context.VideoExportTasks.InsertOneAsync(new VideoExportTask { Id = run.LatestExportTaskId,
+            RunId = run.Id,OwnerAdminId = test.OwnerId,AppKey = run.AppKey,ProjectId = run.ProjectId,
+            DeploymentSlug = run.DeploymentSlug,Status = previousStatus });
+        var service = test.CreateService();service.ExportDeploymentScope = run.DeploymentSlug;
+        var next = await service.RequestExportAsync(run.Id,test.OwnerId,run.AppKey);
+        Assert.NotEqual(run.LatestExportTaskId,next.Id);
+        Assert.Equal(next.Id,(await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync()).LatestExportTaskId);
+        Assert.Equal(next.Id,(await test.Context.VideoProjects.Find(x => x.Id == run.ProjectId).SingleAsync()).LatestExportTaskId);
+        Assert.Equal(next.Id,(await service.RequestExportAsync(run.Id,test.OwnerId,run.AppKey)).Id);
+        Assert.Equal(previousStatus,(await test.Context.VideoExportTasks.Find(x => x.Id == run.LatestExportTaskId).SingleAsync()).Status);
+        Assert.Equal(2,await test.Context.VideoExportTasks.CountDocumentsAsync(FilterDefinition<VideoExportTask>.Empty));
+        Assert.Empty(test.AssetStorage.Invocations);Assert.Empty(test.VideoClient.Invocations);
+    }
+
+    [Fact]
+    public async Task ExportHolder_CompletedHandoffGapDoesNotConsumeReceiptBeforeParentMoves()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        const string branch = "synthetic-project::synthetic-branch";
+        var run = NewRun("receipt-handoff-gap",test.OwnerId,SceneItemStatus.Done);
+        run.Status = VideoGenRunStatus.Rendering;run.ProjectId = "receipt-gap-project";
+        run.LatestExportTaskId = "receipt-gap-task";run.DeploymentSlug = branch + "::revision::old";
+        await test.SaveRunAsync(run);
+        await test.Context.VideoProjects.InsertOneAsync(new VideoProject { Id = run.ProjectId,
+            OwnerAdminId = test.OwnerId,AppKey = run.AppKey,LatestRunId = run.Id,
+            LatestExportTaskId = run.LatestExportTaskId,Status = VideoProjectStatus.Rendering });
+        var task = new VideoExportTask { Id = run.LatestExportTaskId,RunId = run.Id,ProjectId = run.ProjectId,
+            OwnerAdminId = test.OwnerId,AppKey = run.AppKey,Status = VideoExportTaskStatus.Completed,
+            DeploymentSlug = branch + "::revision::new",OutputUrl = "https://synthetic.invalid/existing-result.mp4",
+            OutputSha256 = new string('a',64),EndedAt = DateTime.UtcNow };
+        await test.Context.VideoExportTasks.InsertOneAsync(task);
+        using var worker = test.CreateWorker();worker.QueueDeploymentScope = task.DeploymentSlug;worker.ExportDurableDeploymentScope = branch;
+        Assert.False(await worker.RecoverCompletedExportTaskAsync(default));
+        Assert.Null((await test.Context.VideoExportTasks.Find(x => x.Id == task.Id).SingleAsync()).RunReconciledAt);
+        await PrdAgent.Infrastructure.Services.VideoGenService.RefreshOwnedExportScopeAsync(test.Context,run,
+            test.OwnerId,run.AppKey,task.DeploymentSlug,branch,default);
+        Assert.True(await worker.RecoverCompletedExportTaskAsync(default));
+        Assert.Equal(VideoGenRunStatus.Completed,(await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync()).Status);
+        Assert.Equal(VideoProjectStatus.Completed,(await test.Context.VideoProjects.Find(x => x.Id == run.ProjectId).SingleAsync()).Status);
+        Assert.NotNull((await test.Context.VideoExportTasks.Find(x => x.Id == task.Id).SingleAsync()).RunReconciledAt);
+        Assert.Empty(test.AssetStorage.Invocations);Assert.Empty(test.VideoClient.Invocations);
+    }
+
     [Fact]
     [Trait("Category","Manual")]
     public async Task ExportHolder_LostAuthorityWaitsForOnlyItsOwnChildToExit()

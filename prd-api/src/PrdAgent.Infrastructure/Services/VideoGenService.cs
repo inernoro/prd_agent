@@ -77,8 +77,16 @@ public class VideoGenService : IVideoGenService
             & f.Eq(x => x.AppKey, task.AppKey) & project).FirstOrDefaultAsync(ct);
         if (run == null || !IsExportBranchScope(run.DeploymentSlug, current, durable) || run.CancelRequested
             || run.DeletionRequestedAt != null || run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Rendering)
-            || run.LatestExportTaskId != null && run.LatestExportTaskId != task.Id
             || run.Scenes.Count == 0 || run.Scenes.Any(x => x.Status != SceneItemStatus.Done || string.IsNullOrWhiteSpace(x.VideoUrl))) return null;
+        if (run.LatestExportTaskId != null && run.LatestExportTaskId != task.Id)
+        {
+            if (run.Status != VideoGenRunStatus.Editing) return null;
+            var previous = await db.VideoExportTasks.Find(x => x.Id == run.LatestExportTaskId
+                && x.RunId == run.Id && x.OwnerAdminId == task.OwnerAdminId && x.AppKey == task.AppKey
+                && x.ProjectId == task.ProjectId).FirstOrDefaultAsync(ct);
+            if (previous?.Status is not (VideoExportTaskStatus.Failed or VideoExportTaskStatus.Cancelled
+                or VideoExportTaskStatus.Completed)) return null;
+        }
         var changed = await db.VideoGenRuns.UpdateOneAsync(f.Eq(x => x.Id, run.Id)
             & f.Eq(x => x.OwnerAdminId, task.OwnerAdminId) & f.Eq(x => x.AppKey, task.AppKey) & project
             & f.Eq(x => x.Status, run.Status) & f.Eq(x => x.DeploymentSlug, run.DeploymentSlug)
@@ -92,7 +100,7 @@ public class VideoGenService : IVideoGenService
         if (!string.IsNullOrWhiteSpace(run.ProjectId))
             await db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId && x.OwnerAdminId == task.OwnerAdminId
                 && x.AppKey == task.AppKey && x.LatestRunId == run.Id
-                && (x.LatestExportTaskId == null || x.LatestExportTaskId == task.Id)
+                && (x.LatestExportTaskId == null || x.LatestExportTaskId == task.Id || x.LatestExportTaskId == run.LatestExportTaskId)
                 && (x.Status == VideoProjectStatus.Editing || x.Status == VideoProjectStatus.Rendering),
                 Builders<VideoProject>.Update.Set(x => x.LatestExportTaskId, task.Id)
                     .Set(x => x.Status, VideoProjectStatus.Rendering).Set(x => x.UpdatedAt, DateTime.UtcNow),

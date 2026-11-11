@@ -74,8 +74,10 @@ public partial class VideoGenRunWorker
             : f.Eq(x => x.ProjectId, task.ProjectId);
         var run = await _db.VideoGenRuns.Find(f.Eq(x => x.Id, task.RunId)
             & f.Eq(x => x.OwnerAdminId, task.OwnerAdminId) & f.Eq(x => x.AppKey, task.AppKey)
-            & projectIdentity & f.Eq(x => x.DeploymentSlug, QueueDeploymentScope))
+            & projectIdentity)
             .FirstOrDefaultAsync(ct);
+        // 本人入口先移动回执后移动父任务；这段间隙只等待，不提前消耗核对标记。
+        if (run != null && run.DeploymentSlug != QueueDeploymentScope) return false;
         if (run != null && !run.CancelRequested && run.DeletionRequestedAt == null
             && run.LatestExportTaskId == task.Id
             && run.Status is VideoGenRunStatus.Rendering or VideoGenRunStatus.Completed

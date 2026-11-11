@@ -459,14 +459,14 @@
     "prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs": {
       "calls": {
         "call:CreateClient:499f3ccee209ab00560cb1b2": 1,
-        "call:GetAsync:86376031f0bf4c159c203ba7": 1,
+        "call:GetAsync:6b506362219f98d0aa2deb4d": 1,
         "new:HttpClient:9246b599c4afd0b454dbeea5": 1,
         "new:HttpClientHandler:118800402633b3772fd33858": 1,
         "new:ProcessStartInfo:11f4fae89856137dfaeb5099": 1,
         "new:ProcessStartInfo:ebed41c4f4dc125ef9169622": 1,
         "static:Process.Start:910bc708027ce74b617027a5": 2
       },
-      "purpose": "既有附件/供应商已生成文件/字体下载或对象存储；不提交模型生成请求；保留既有 ffmpeg/ffprobe 媒体处理，新子进程用途须单独审计，进程网络仍需部署层隔离"
+      "purpose": "既有附件/供应商已生成文件/字体下载或对象存储；原媒体下载只把 None 令牌改为持有者失效令牌，不新增请求或模型生成；保留既有 ffmpeg/ffprobe 媒体处理，新子进程用途须单独审计，进程网络仍需部署层隔离"
     },
     "prd-api/src/PrdAgent.Api/Services/VideoToDocRunWorker.cs": {
       "calls": {
