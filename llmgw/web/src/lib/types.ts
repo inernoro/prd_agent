@@ -1891,6 +1891,7 @@ export type ReferenceMigrationPlan = {
   id?: string; intentId: string; revision: number; tenantId: string; actorId: string;
   mapping: { tenantId: string; source: ReferenceIdentity; target: ReferenceIdentity };
   coverage: ReferenceCoverage; status: 'planned' | 'blocked' | 'applying' | 'conflict' | 'completed';
+  canResume?: boolean;
   createdAt: string; updatedAt: string;
 };
 export type CreateReferenceMigrationPlanRequest = { sourceLogicalId: string; targetLogicalId: string; clientRequestId: string };
