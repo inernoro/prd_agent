@@ -61,6 +61,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
   const startedAt = useRef(Date.now());
   const readFlight = useRef<symbol | null>(null);
   const notified = useRef('');
+  const resumeAttemptedFor = useRef<string | null>(null);
   const target = models.find(item => item.id === targetId && item.modelType === source.modelType && item.enabled);
   const validScope = Boolean(target && target.id !== source.id && !catalogError && (!usage || (usage.status === 'orphan' && usage.modelType)));
   const observing = Boolean(pending || plan?.status === 'applying');
@@ -125,7 +126,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
   }
 
   useEffect(() => {
-    generation.current++; readFlight.current = null; currentPlan.current = null; notified.current = '';
+    generation.current++; readFlight.current = null; currentPlan.current = null; notified.current = ''; resumeAttemptedFor.current = null;
     setCoverage(null); setPlan(null); setPending(null); setConfirmed(false); setError(null); setBusy(null); setSeconds(0);
     if (initialPlan && initialPlan.mapping.target.logicalId === targetId) void readPlan({ intentId: initialPlan.intentId, operation: 'verify' }, scopeKey, generation.current);
     else if (validScope && !usage && source.id && !sourceUnavailable) void scan(scopeKey, generation.current);
@@ -153,12 +154,17 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
     return () => window.clearInterval(timer);
   }, [plan?.intentId, observing, scopeKey]);
 
-  async function perform(action: 'create' | 'apply' | 'verify') {
-    if (!canWrite || busy || observing || (!validScope && action !== 'verify')) return;
+  async function perform(action: 'create' | 'apply' | 'verify', resume = false) {
+    const resuming = resume && action === 'apply' && plan?.status === 'applying' && plan.canResume === true
+      && resumeAttemptedFor.current !== plan.intentId;
+    if (resume && !resuming) return;
+    if (!canWrite || busy || (observing && !resuming) || (!validScope && action !== 'verify')) return;
     if (action === 'create' && (!usage && (sourceUnavailable || !source.id || !canApplyCoverage(coverage)))) return;
     if (action !== 'create' && !hasCoverage(coverage)) return;
-    if (action === 'apply' && (error || !plan || plan.status !== 'planned' || !canApplyCoverage(plan.coverage))) return;
+    if (action === 'apply' && (error || !plan || (plan.status !== 'planned' && !resuming) || !canApplyCoverage(plan.coverage))) return;
     if (action !== 'create' && !plan) return;
+    // 显式恢复只提交一次；未知结果即使读到旧可恢复标志，也只继续 GET 原计划。
+    if (resuming) resumeAttemptedFor.current = plan!.intentId;
     const key = scopeKey; const epoch = generation.current;
     const locator: Pending = action === 'create' ? { clientRequestId: crypto.randomUUID(), operation: action }
       : { intentId: plan!.intentId, operation: action };
@@ -218,6 +224,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
       <Button size="sm" variant="ghost" disabled={Boolean(busy) || (!plan && !pending && (!validScope || Boolean(usage || !source.id || sourceUnavailable)))} onClick={() => { if (pending || plan) void readPlan(pending || { intentId: plan!.intentId, operation: 'verify' }); else void scan(); }}>{pending || plan ? '继续查询原计划' : '重新扫描范围'}</Button>
       {!plan ? <Button size="sm" disabled={!canWrite || !validScope || (!usage && (!safe || sourceUnavailable)) || active || Boolean(error)} onClick={() => void perform('create')}>{usage ? '生成修复计划' : '生成升级计划'}</Button> : <>
         <Button size="sm" disabled={!canWrite || active || !validScope || !safe || Boolean(error) || plan.status !== 'planned'} onClick={() => void perform('apply')}>{usage ? '升级所选使用位置' : '升级全部使用位置'}</Button>
+        {plan.status === 'applying' ? <Button size="sm" disabled={!canWrite || Boolean(busy) || !validScope || !safe || Boolean(error) || plan.canResume !== true || resumeAttemptedFor.current === plan.intentId} onClick={() => void perform('apply', true)}>继续原升级计划</Button> : null}
         <Button size="sm" variant="ghost" disabled={!canWrite || active} onClick={() => void perform('verify')}>重新扫描核验</Button>
         <Button size="sm" variant="ghost" disabled={active} onClick={() => { generation.current++; currentPlan.current = null; setPlan(null); setCoverage(null); setConfirmed(false); void scan(scopeKey, generation.current); }}>重新生成计划</Button>
       </>}

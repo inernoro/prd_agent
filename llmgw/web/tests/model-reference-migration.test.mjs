@@ -129,3 +129,26 @@ test('Lab生图引用只选择generation目标，空用途或结构待核对不�
   await h.render(h.c.ModelReferenceUsageRepairPanel);await h.click('选择使用位置');assert.equal(document.querySelector('option[value="target"]'),null);await h.select('image');await h.click('生成修复计划');assert.equal(h.f.calls.find(x=>x.name==='createModelReferenceMigrationFromUsage').args[0].targetLogicalId,'image');
   const choices=[...document.querySelectorAll('button')].filter(b=>b.textContent.trim()==='选择使用位置');await act(async()=>choices[1].click());assert.match(h.body(),/结构或用途尚未确认/);assert.equal(h.button('生成修复计划').disabled,true);assert.equal(h.f.calls.filter(x=>x.name==='createModelReferenceMigrationFromUsage').length,1);
 });
+test('有效执行中的原计划不能恢复，客户端时间流逝不能代替服务端许可',async t=>{
+  const h=await setup(t);h.f.plan.status='applying';h.f.plan.canResume=false;
+  await h.render(h.c.ModelReferenceMigrationPanel,{initialPlan:h.f.plan});
+  assert.equal(h.button('继续原升级计划').disabled,true);assert.equal(h.button('升级全部使用位置').disabled,true);
+  h.f.now+=3600000;await h.tick(2000);assert.equal(h.button('继续原升级计划').disabled,true);
+  assert.equal(h.f.calls.filter(x=>x.name==='runModelReferenceMigrationAction').length,0);assert.doesNotMatch(h.body(),/升级全部使用位置完成/);
+});
+test('GET确认可恢复后显式沿用原intent和revision提交一次，未知结果只GET且不能假报完成',async t=>{
+  const h=await setup(t);h.f.plan.status='applying';h.f.plan.canResume=false;
+  await h.render(h.c.ModelReferenceMigrationPanel,{initialPlan:h.f.plan});assert.equal(h.button('继续原升级计划').disabled,true);
+  h.f.plan.canResume=true;h.f.plan.revision=7;await h.tick(2000);assert.equal(h.button('继续原升级计划').disabled,false);
+  h.f.unknownApply=true;await h.click('继续原升级计划');
+  const writes=()=>h.f.calls.filter(x=>x.name==='runModelReferenceMigrationAction');assert.equal(writes().length,1);assert.deepEqual(writes()[0].args,['original-intent','apply',7]);
+  // 即使响应丢失后的读取仍带canResume=true，也不能自动或再次点击重发本次恢复。
+  assert.equal(h.f.plan.canResume,true);assert.equal(h.button('继续原升级计划').disabled,true);await h.tick(2000);await h.tick(2000);assert.equal(writes().length,1);
+  assert.equal(h.f.calls.filter(x=>x.name.startsWith('createModelReferenceMigration')).length,0);assert.ok(h.f.calls.filter(x=>x.name==='getModelReferenceMigrationPlan').every(x=>x.args[0]==='original-intent'));assert.doesNotMatch(h.body(),/升级全部使用位置完成/);
+});
+test('原计划恢复继续遵守只读、目标有效性和覆盖阻断守卫',async t=>{
+  const h=await setup(t);h.f.plan.status='applying';h.f.plan.canResume=true;
+  h.f.role='viewer';await h.render(h.c.ModelReferenceMigrationPanel,{initialPlan:h.f.plan});assert.equal(h.button('继续原升级计划').disabled,true);
+  h.f.role='owner';h.f.plan.coverage=coverage({blocked:1,canComplete:false});await h.render(h.c.ModelReferenceMigrationPanel,{initialPlan:h.f.plan});assert.equal(h.button('继续原升级计划').disabled,true);
+  h.f.plan.coverage=coverage();h.f.models.find(x=>x.id==='target').enabled=false;await h.render(h.c.ModelReferenceMigrationPanel,{initialPlan:h.f.plan});assert.equal(h.button('继续原升级计划').disabled,true);assert.equal(h.f.calls.filter(x=>x.name==='runModelReferenceMigrationAction').length,0);
+});
