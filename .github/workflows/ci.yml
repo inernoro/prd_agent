@@ -81,7 +81,6 @@ jobs:
             # 仓库根 scripts/fixtures 下的三份共享夹具，夹具改了也要跑。
             design_runtime:
               - 'design-runtime/**'
-              - 'scripts/ci/normalize-ubuntu-apt-sources.py'
               - 'scripts/fixtures/generated-html-normalization-v1.json'
               - 'scripts/fixtures/opendesign-task-v1.json'
               - 'scripts/fixtures/opendesign-task-v1-direction.json'
@@ -878,11 +877,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install isolated quality browser
+      - name: Verify pinned quality browser
         timeout-minutes: 10
-        run: |
-          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel
-          pnpm exec playwright-core install --with-deps chromium
+        run: pnpm exec playwright-core install chromium
 
       - name: Type check
         run: pnpm exec tsc --noEmit && pnpm run typecheck
