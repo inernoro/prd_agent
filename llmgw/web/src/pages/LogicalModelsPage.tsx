@@ -72,7 +72,7 @@ export function LogicalModelsPage() {
   const navigate = useNavigate();
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
-  const { promptText, confirm } = useDialogs();
+  const { promptText } = useDialogs();
   const [items, setItems] = useState<LogicalModelItem[] | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [platformNames, setPlatformNames] = useState<Map<string, string>>(() => new Map());
@@ -360,6 +360,7 @@ export function LogicalModelsPage() {
       setItems(previous => previous?.map(item => item.id === logical.id
         ? { ...item, offerings: item.offerings.filter(itemOffering => itemOffering.id !== offering.id) }
         : item) || null);
+      if (!await refreshRoutes()) return;
       okNotice('已删除停用线路，公开模型和 MAP 配置已保留');
     } catch { failNotice('线路删除结果未确认，请刷新列表核对后再操作'); }
     finally { setBusy(null); }

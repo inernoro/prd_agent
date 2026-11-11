@@ -34,7 +34,7 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
       load(id) {
         if (id === '\0logical-speech-router') return Object.keys(globalThis.__logicalSpeechRouter).filter(name => name !== 'default').map(name => `export const ${name}=globalThis.__logicalSpeechRouter.${name};`).join('\n');
         if (id.endsWith('/src/lib/auth.tsx')) return 'export function useAuth(){return {tenant:{role:"admin"}}}';
-        if (id.endsWith('/src/components/ConfirmDialog.tsx')) return 'export function useDialogs(){return {confirm:async(options)=>{globalThis.__logicalSpeechFixture.confirmOptions=options;return true},promptText:async()=>null}}';
+        if (id.endsWith('/src/components/ConfirmDialog.tsx')) return 'export function useDialogs(){return {confirm:async(options)=>{globalThis.__logicalSpeechFixture.confirmOptions=options;return true},promptText:async(options)=>{globalThis.__logicalSpeechFixture.confirmOptions=options;return options.requireExact}}}';
         if (id.endsWith('/src/lib/api.ts')) return apiNames.map(name => {
           if (name === 'getLogicalModels') return 'export async function getLogicalModels(){const f=globalThis.__logicalSpeechFixture;f.reads++;if(f.failNextRead){f.failNextRead=false;return {success:false,error:{message:"队列读取失败"}}}return {success:true,data:{items:f.requeue?f.requeue():f.items}}}';
           if (name === 'getModels') return 'export async function getModels(){return {success:true,data:{items:globalThis.__logicalSpeechFixture.models}}}';
@@ -106,16 +106,16 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
     assert.equal(fixture.items[0].modelType, 'tts');
     const routeActions = () => document.querySelector('.lg-collection-route-actions');
     const routeButton = text => [...routeActions().querySelectorAll('button')].find(element => element.textContent.trim() === text);
-    assert.equal(routeButton('移除').disabled, true, '启用中的线路不能直接删除');
+    assert.equal(routeButton('删除线路').disabled, true, '启用中的线路不能直接删除');
     await act(async () => routeButton('停用').click());
-    assert.equal(routeButton('移除').disabled, false);
+    assert.equal(routeButton('删除线路').disabled, false);
     fixture.rejectRemove = true;
-    await act(async () => routeButton('移除').click());
+    await act(async () => routeButton('删除线路').click());
     assert.match(document.body.textContent, /替代线路未验证，拒绝移除/);
-    assert.ok(routeButton('移除'), '拒绝后线路应保留');
-    assert.match(fixture.confirmOptions.description, /保留公开模型 doubao-tts-1.0 和 MAP 昵称/);
+    assert.ok(routeButton('删除线路'), '拒绝后线路应保留');
+    assert.match(fixture.confirmOptions.description, /公开模型、兼容标识及 MAP 配置会保留/);
     fixture.rejectRemove = false;
-    await act(async () => routeButton('移除').click());
+    await act(async () => routeButton('删除线路').click());
     assert.equal(document.querySelector('.lg-collection-route-actions'), null);
     assert.match(document.body.textContent, /豆包语音/);
     assert.match(document.body.textContent, /doubao-tts-1.0/);
@@ -173,7 +173,7 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
     assert.match(roleLabel('第三官网'), /主$/, '新增优先级更高的线路后服务端排队生效');
     await clickRoute('APIyi', '停用');
     assert.equal(fixture.reads, ++reads);
-    await clickRoute('APIyi', '移除');
+    await clickRoute('APIyi', '删除线路');
     assert.equal(fixture.reads, ++reads);
     assert.equal(routeCard('APIyi'), undefined);
     assert.match(roleLabel('第三官网'), /主$/);
