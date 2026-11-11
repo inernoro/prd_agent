@@ -2,6 +2,7 @@ using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Security;
 using PrdAgent.Core.Models;
 using System.Text;
+using System.Text.Json;
 
 namespace PrdAgent.Api.Middleware;
 
@@ -34,7 +35,10 @@ public sealed class TaskAdmissionMiddleware(RequestDelegate next)
         {
             var permit = replay.Permit;
             http.Response.Headers["Idempotency-Replayed"] = "true";
-            if (permit.AcceptedResponseStatus is { } status && permit.AcceptedResponseBody is { } body)
+            var replayBody = permit.AcceptedResponseBody;
+            if (replayBody is not null && permit.SourceTask == "PrdAgent.Api.Controllers.McpGatewayController.Handle")
+                replayBody = await RebindMcpReplayIdAsync(http.Request, replayBody);
+            if (permit.AcceptedResponseStatus is { } status && replayBody is { } body)
             {
                 http.Response.StatusCode = status;
                 http.Response.ContentType = permit.AcceptedResponseContentType ?? "application/json";
@@ -54,6 +58,49 @@ public sealed class TaskAdmissionMiddleware(RequestDelegate next)
                 foreach (var lease in state.Leases.AsEnumerable().Reverse()) await lease.DisposeAsync();
         }
     }
+
+    private static async Task<string?> RebindMcpReplayIdAsync(HttpRequest request, string cachedBody)
+    {
+        request.EnableBuffering();
+        request.Body.Position = 0;
+        try
+        {
+            using var incoming = await JsonDocument.ParseAsync(request.Body, cancellationToken: CancellationToken.None);
+            using var cached = JsonDocument.Parse(cachedBody);
+            var current = incoming.RootElement;
+            var response = cached.RootElement;
+            if (current.ValueKind != JsonValueKind.Object || response.ValueKind != JsonValueKind.Object
+                || current.EnumerateObject().Select(x => x.Name).Distinct(StringComparer.Ordinal).Count() != current.EnumerateObject().Count()
+                || response.EnumerateObject().Select(x => x.Name).Distinct(StringComparer.Ordinal).Count() != response.EnumerateObject().Count()
+                || !current.TryGetProperty("jsonrpc", out var version) || version.ValueKind != JsonValueKind.String || version.GetString() != "2.0"
+                || !current.TryGetProperty("method", out var method) || method.ValueKind != JsonValueKind.String || method.GetString() != "tools/call"
+                || !current.TryGetProperty("id", out var id) || !ValidRpcId(id)
+                || !response.TryGetProperty("jsonrpc", out var cachedVersion) || cachedVersion.ValueKind != JsonValueKind.String || cachedVersion.GetString() != "2.0"
+                || !response.TryGetProperty("id", out var cachedId) || !ValidRpcId(cachedId)
+                || response.TryGetProperty("result", out _) == response.TryGetProperty("error", out _)) return null;
+            if (response.TryGetProperty("error", out var error)
+                && (error.ValueKind != JsonValueKind.Object || !error.TryGetProperty("code", out var code) || code.ValueKind != JsonValueKind.Number || !code.TryGetInt32(out _)
+                    || !error.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.String)) return null;
+            using var buffer = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(buffer))
+            {
+                writer.WriteStartObject();
+                foreach (var property in response.EnumerateObject())
+                {
+                    writer.WritePropertyName(property.Name);
+                    if (property.Name == "id") id.WriteTo(writer);
+                    else property.Value.WriteTo(writer);
+                }
+                writer.WriteEndObject();
+            }
+            return Encoding.UTF8.GetString(buffer.ToArray());
+        }
+        catch (JsonException) { return null; }
+        finally { request.Body.Position = 0; }
+    }
+
+    private static bool ValidRpcId(JsonElement id)
+        => id.ValueKind == JsonValueKind.String || id.ValueKind == JsonValueKind.Number && id.TryGetInt64(out _);
 
     /// <summary>流式响应立即透传，JSON最多旁录128KiB；不缓存完整SSE或改变用户等待过程。</summary>
     private sealed class BoundedResponseCapture(Stream destination, Func<string?> contentType) : Stream
