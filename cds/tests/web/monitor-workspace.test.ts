@@ -49,6 +49,19 @@ describe('真实监控工作区', () => {
     expect(model.services.map(s => s.state)).toEqual(['none', 'none', 'none', 'none', 'warn', 'bad', 'ok']);
     expect(model.services[4].reason).toBe('检查未持续更新，当前状态待确认');
   });
+  it('失败采样从新鲜进入稍迟再到逾期时不短暂变绿', () => {
+    const failed = target('pending', { lastSample: { t: now, up: false, ms: 1 } });
+    for (const age of [0, 90_000, 90_001, 120_000, 180_000]) {
+      const service = buildWorkspaceModel([failed], now + age).services[0];
+      expect(service.state, `采样年龄${age}`).toBe('warn');
+      expect(service.reason).toBe('最近一次检查未通过，等待连续失败确认');
+    }
+    const overdue = buildWorkspaceModel([failed], now + 180_001).services[0];
+    expect(overdue.state).toBe('warn');
+    expect(overdue.reason).toBe('检查未持续更新，当前状态待确认');
+    const recovered = { ...failed, lastSample: { t: now + 120_000, up: true, ms: 1 } };
+    expect(buildWorkspaceModel([recovered], now + 120_000).services[0].state).toBe('ok');
+  });
   it('无样本、暂停、已故障和停止采集互不冒充正常', () => {
     const rows = [target('empty', { lastSample: null, availability24h: null }), target('paused', { status: 'paused' }), target('failed', { status: 'down', lastSample: { t: now, up: false, ms: 1, err: '服务不可达' } }), target('ok')];
     const model = buildWorkspaceModel(rows, now, { enabled: false } as UptimeSummary);

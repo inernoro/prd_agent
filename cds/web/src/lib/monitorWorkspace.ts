@@ -60,11 +60,12 @@ export function buildWorkspaceModel(targets: readonly UptimeTargetSummary[], now
     const custom = target.source === 'custom' && target.addedBy?.origin !== 'discovered' && !target.id.startsWith('monitor@self-');
     if (!custom) category.custom = false;
     const confirmedState = homeState(target, now);
+    const freshness = assessFreshness(target, now);
     // A failed observation can precede the backend's consecutive-failure threshold.
-    // Keep the confirmed alarm unchanged, but never present that fresh failure as healthy.
+    // Keep the confirmed alarm unchanged, but never present that current failure as healthy.
     const pendingFailure = (confirmedState === 'up' || confirmedState === 'unknown')
       && target.lastSample?.up === false && !target.lastSample.noData
-      && assessFreshness(target, now) === 'fresh';
+      && (freshness === 'fresh' || freshness === 'late');
     let state = pendingFailure ? 'warn' as const : STATES[confirmedState];
     if (state === 'ok' && stopped) state = 'warn';
     const reason = state === 'bad' ? target.lastSample?.err || explainTarget(target).impact
