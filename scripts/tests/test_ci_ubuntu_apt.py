@@ -189,6 +189,13 @@ Signed-By: /key/microsoft.gpg
 
 
 class WorkflowAptWiring(unittest.TestCase):
+    def test_browser_consumers_use_the_validated_lts_instead_of_moving_latest(self):
+        source = WORKFLOW.read_text()
+        for job_id in ['admin-build', 'design-runtime-test']:
+            job = re.search(rf'(?ms)^  {job_id}:\n(.*?)(?=^  [a-z][a-z0-9-]*:|\Z)', source)
+            self.assertIsNotNone(job)
+            self.assertRegex(job[1], r'(?m)^    runs-on: ubuntu-24\.04$')
+
     def test_all_four_ci_consumers_explicitly_select_the_fixed_backup(self):
         source = WORKFLOW.read_text()
         self.assertEqual(source.count('scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel'), 4)
