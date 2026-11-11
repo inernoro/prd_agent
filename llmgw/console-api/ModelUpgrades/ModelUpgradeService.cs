@@ -180,7 +180,7 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
             { "_id", id }, { "TenantId", s.TenantId }, { "Action", "model-upgrade." + action }, { "TargetType", "llmgw_logical_model" },
             { "TargetId", s.LogicalModelId }, { "ActorUserId", s.ActorConsoleUserId }, { "ActorUsername", s.ActorUsername },
             { "Success", false }, { "State", "pending" }, { "CreatedAt", DateTime.UtcNow },
-            { "Changes", new BsonDocument { { "policyVersion", s.Version }, { "candidateModelId", s.Candidate?.ModelId ?? "" } } },
+            { "Changes", new BsonDocument { { "policyVersion", s.Version }, { "candidateModelId", s.Candidate?.ModelId ?? "" }, { "requestId", s.Candidate?.ValidationRequestId ?? s.EvidenceRequestId ?? "" } } },
         }, cancellationToken: CancellationToken.None);
         return id;
     }

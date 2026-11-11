@@ -67,7 +67,7 @@ public sealed partial class ModelUpgradeService
             }
             catch (Exception ex)
             {
-                if (action is "validate" or "await-validation" && !s.OutcomeUnknown) s.ValidationStatus = "failed";
+                if (action is "validate" or "await-validation" && !s.OutcomeUnknown && ex is not ModelUpgradeException { Code: "CANARY_EXPIRED_UNSENT" }) s.ValidationStatus = "failed";
                 s.PendingAction = ""; s.Phase = ex is ModelUpgradeException ? "blocked" : "failed";
                 s.Message = ex is ModelUpgradeException known ? known.Message : "后台操作未完成，原线路未确认改变；请核对诊断后重试。";
                 History(s, action == "await-validation" ? "validate" : action, "blocked", s.Message, s.Candidate?.ValidationRequestId);
