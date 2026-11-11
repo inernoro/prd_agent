@@ -60,7 +60,8 @@ public sealed partial class ModelUpgradeService
         }
         else
         {
-            var (_, candidateProvider, model) = await CandidateAsync(s);
+            var (stableLogical, candidateProvider, model) = await CandidateAsync(s);
+            await ReadValidatedRouteAsync(s, stableLogical, candidateProvider, model);
             if (!ModelUpgradeRules.CanPromote(s, s.ExecutionRequestedBy == "scheduled", DateTime.UtcNow))
                 throw new ModelUpgradeException("GATES_REQUIRED", "验收或自动晋级门禁未通过，原线路未改变。");
             if (current.ModelId == s.Candidate!.ModelId && current.UpstreamModelId == s.Candidate.UpstreamModelId)
@@ -68,8 +69,7 @@ public sealed partial class ModelUpgradeService
             next = old.DeepClone().AsBsonDocument;
             next["_id"] = Guid.NewGuid().ToString("N"); next["TargetId"] = s.Candidate.ModelId;
             next["UpstreamModelId"] = model.GetStringOrEmpty("ModelName");
-            next["Protocol"] = model.AsNullableString("Protocol") ?? candidateProvider.GetStringOrEmpty("PlatformType");
-            next.Remove("EndpointPath"); next["HealthStatus"] = 0; next["ConsecutiveFailures"] = 0;
+            ModelUpgradeWire.Apply(next, s.Candidate.ValidationRoute!); next["HealthStatus"] = 0; next["ConsecutiveFailures"] = 0;
             next.Remove("HalfOpenLeaseUntil"); next.Remove("LastFailedAt");
             next["Enabled"] = false; next["CreatedAt"] = DateTime.UtcNow; next["UpdatedAt"] = DateTime.UtcNow;
             next["SupersededByOfferingId"] = "staging";
