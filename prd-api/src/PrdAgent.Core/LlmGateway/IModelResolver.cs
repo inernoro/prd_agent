@@ -92,6 +92,9 @@ public class ModelResolutionResult
     /// <summary>调用方稳定使用的逻辑模型公开标识。</summary>
     public string? LogicalModelPublicId { get; init; }
 
+    /// <summary>仅从已授权逻辑模型配置读取，供严格请求身份校验。</summary>
+    public List<string> AcceptedModelAliases { get; set; } = new();
+
     /// <summary>本次实际命中的 Offering ID。</summary>
     public string? OfferingId { get; init; }
 
@@ -365,6 +368,7 @@ public class ModelResolutionResult
             BillingAlerts = billingAlerts ?? [],
             LogicalModelId = LogicalModelId,
             LogicalModelPublicId = LogicalModelPublicId,
+            AcceptedModelAliases = [.. AcceptedModelAliases],
             OfferingId = OfferingId,
             OfferingTargetKind = OfferingTargetKind,
             OfferingRateLimitPerMinute = OfferingRateLimitPerMinute,

@@ -14,6 +14,10 @@ public sealed class GatewayLogicalModel
     public string TenantId { get; set; } = string.Empty;
     public string PublicId { get; set; } = string.Empty;
     public string PublicIdNormalized { get; set; } = string.Empty;
+    /// <summary>fixed 保留精确版本；stable 允许通过受控升级策略替换实际供给。</summary>
+    public string IdentityKind { get; set; } = "fixed";
+    /// <summary>显式兼容标识，规范为小写；不是未知模型的通配兜底。</summary>
+    public List<string> Aliases { get; set; } = new();
     public string Name { get; set; } = string.Empty;
     public string ModelType { get; set; } = string.Empty;
     public List<string> Capabilities { get; set; } = new();

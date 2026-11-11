@@ -1481,10 +1481,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 resolution.ErrorMessage ?? "未找到可用模型", GatewayRouteFailure.HttpStatusCode(resolution.FailureCode));
 
         if (!string.IsNullOrWhiteSpace(request.RequiredLogicalModelPublicId)
-            && !string.Equals(
-                request.RequiredLogicalModelPublicId.Trim(),
-                resolution.LogicalModelPublicId?.Trim(),
-                StringComparison.OrdinalIgnoreCase))
+            && !GatewayLogicalModelIdentity.Accepts(request.RequiredLogicalModelPublicId,
+                resolution.LogicalModelPublicId, resolution.AcceptedModelAliases))
         {
             return GatewayRawResponse.Fail(
                 "LOGICAL_MODEL_RESOLUTION_MISMATCH",
@@ -1527,6 +1525,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             LogicalModelId = resolution.LogicalModelId,
             LogicalModelPublicId = resolution.LogicalModelPublicId,
+            AcceptedModelAliases = [.. resolution.AcceptedModelAliases],
             OfferingId = resolution.OfferingId,
             OfferingTargetKind = resolution.OfferingTargetKind,
             OfferingRateLimitPerMinute = resolution.OfferingRateLimitPerMinute,

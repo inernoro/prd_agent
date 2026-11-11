@@ -232,6 +232,9 @@ public class AvailableModelPool
     /// </summary>
     public string Code { get; init; } = string.Empty;
 
+    /// <summary>当前逻辑模型明确登记的兼容标识，不携带供应商凭据。</summary>
+    public List<string> Aliases { get; init; } = new();
+
     /// <summary>
     /// 优先级
     /// </summary>
