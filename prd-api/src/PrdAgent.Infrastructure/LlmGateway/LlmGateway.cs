@@ -1874,6 +1874,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var spec = source.CanonicalImageRequest!;
         var protocol = string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol;
         var normalizedProtocol = protocol?.Trim().ToLowerInvariant();
+        if (spec.Quality is not null && (normalizedProtocol != "openai" || resolution.IsExchange
+            || !resolution.ActualModel!.StartsWith("gpt-image-", StringComparison.OrdinalIgnoreCase)
+            || spec.Quality is not ("low" or "medium" or "high" or "auto")))
+            throw new InvalidOperationException("当前图片线路不支持所请求的质量参数，未发送请求。");
         var images = spec.Images.Select(image => ImageInputNormalizer.Read(image).DataUri).ToList();
         // 上游模型能力优先于 MAP 静态兼容表。只有存量模型尚未配置 image_size 能力时，
         // 才回退到旧适配表，避免新增模型继续依赖按名称猜测。
@@ -2048,6 +2052,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
         }
 
+        if (spec.Quality is not null)
+        {
+            if (multipartFields is not null) multipartFields["quality"] = spec.Quality;
+            else if (body is not null) body["quality"] = spec.Quality;
+        }
         if (upstreamSizeControl.IsConfigured)
         {
             var effectiveSize = ResolveEffectiveImageSizeFromWire(
@@ -2067,9 +2076,18 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (!resolution.IsExchange && !string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath))
             endpointPath = resolution.OfferingEndpointPath;
 
+        if (source.Context?.SourceTask?.StartsWith("ModelUpgradeCanaryWorker:", StringComparison.Ordinal) == true
+            && (string.IsNullOrWhiteSpace(source.RequiredOfferingId) || spec.Count != 1 || spec.Size != "1024x1024"
+                || spec.Quality != "low" || spec.Prompt.Length is < 1 or > 200 || spec.Images.Count != 0
+                || spec.MaskBase64 is not null || isMultipart || body?["n"]?.ToString() != "1"
+                || body?["size"]?.ToString() != "1024x1024" || body?["quality"]?.ToString() != "low"
+                || body?["prompt"]?.ToString().Length is not (> 0 and <= 200)
+                || endpointPath?.TrimStart('/') is not ("images/generations" or "v1/images/generations")))
+            throw new InvalidOperationException("候选验收最终请求超出已授权的图片范围，未发送请求。");
         return new GatewayRawRequest
         {
             CanonicalImageRequest = spec,
+            RequiredOfferingId = source.RequiredOfferingId,
             RequiredLogicalModelPublicId = source.RequiredLogicalModelPublicId,
             AppCallerCode = source.AppCallerCode,
             ModelType = source.ModelType,
@@ -2509,6 +2527,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 Count = spec.Count,
                 Size = spec.Size,
                 ResponseFormat = spec.ResponseFormat,
+                Quality = spec.Quality,
                 // URL 引用由已有协议处理；此处不新增网络读取或改变 URL 安全边界。
                 Images = spec.Images.Select(value =>
                     Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
