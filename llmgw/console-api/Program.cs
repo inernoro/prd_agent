@@ -6480,6 +6480,12 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
             jsonOptions, 409);
     }
 
+    var businessReferences = await CollectMapBusinessModelReferencesAsync(
+        http, mapDatabase, internalTenantId, logicalModelId: id);
+    if (businessReferences.Count > 0)
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail("MODEL_REFERENCED_BY_MAP",
+            $"仍有 {string.Join("、", businessReferences)} 引用此逻辑模型。请先在对应业务配置中明确改绑或移除，再删除；不会自动替换固定版本。"), jsonOptions, 409);
+
     /*
       网关模型与 MAP 业务配置是跨库引用，没有 Mongo 外键。删除前统一检查所有仍会参与未来执行的
       PublicId 引用，避免只删目录、留下“默认但不可用”的业务配置。这里不自动替 MAP 换模型：
@@ -7644,6 +7650,14 @@ app.MapPut("/gw/logical-models/{id}/enabled", async (HttpContext http, string id
     var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var existing = await gwLogicalModels.Find(filter).FirstOrDefaultAsync();
     if (existing is null) return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+    if (!enabled)
+    {
+        var businessReferences = await CollectMapBusinessModelReferencesAsync(
+            http, mapDatabase, internalTenantId, logicalModelId: id);
+        if (businessReferences.Count > 0)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_REFERENCED_BY_MAP",
+                $"仍有 {string.Join("、", businessReferences)} 引用此逻辑模型。请先在对应业务配置中明确改绑或移除，再停用；原模型保持不变。"), jsonOptions, 409);
+    }
     if (enabled && string.Equals(existing.GetStringOrEmpty("ModelType"), "asr", StringComparison.OrdinalIgnoreCase))
     {
         var enabledOfferings = await gwModelOfferings.Find(TenantAccess.Filter(http,
@@ -13965,6 +13979,14 @@ app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, Tog
         filter = sourceFilter;
     }
     if (doc is null) return Json(ApiEnvelope<PlatformItem>.Fail("NOT_FOUND", $"平台不存在：{id}"), jsonOptions, 404);
+    if (!enabled)
+    {
+        var businessReferences = await CollectMapBusinessModelReferencesAsync(
+            http, mapDatabase, internalTenantId, platformId: id);
+        if (businessReferences.Count > 0)
+            return Json(ApiEnvelope<PlatformItem>.Fail("PLATFORM_REFERENCED_BY_MAP",
+                $"仍有 {string.Join("、", businessReferences)} 直接绑定此上游。请先在对应业务配置中明确迁移到可用逻辑模型或移除，再停用；原配置保持不变。"), jsonOptions, 409);
+    }
     if (enabled && targetAuthority == "llm_gateway")
     {
         var proposed = new BsonDocument(doc) { ["Enabled"] = true };
@@ -14761,6 +14783,12 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id, bool? cl
         try { await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, cleanupAudit, success: true, reason: null); }
         catch { return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_AUDIT_PENDING", "未使用模型已清理，上游仍保留，审计待收口；请刷新并检查审计后重试删除"), jsonOptions, 503); }
     }
+
+    var businessReferences = await CollectMapBusinessModelReferencesAsync(
+        http, mapDatabase, internalTenantId, platformId: id);
+    if (businessReferences.Count > 0)
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_REFERENCED_BY_MAP",
+            $"仍有 {string.Join("、", businessReferences)} 直接绑定此上游。请先在对应业务配置中明确迁移到可用逻辑模型或移除，再删除；不会自动匹配同名模型。"), jsonOptions, 409);
 
     var blockers = await CollectPlatformDeleteBlockersAsync(http, id, gwModels, models, gwModelPools, modelGroups, internalTenantId);
     if (blockers.TotalCount > 0)
@@ -18506,6 +18534,28 @@ static async Task<List<string>> CollectOfferingHolderNamesAsync(
 /// （池成员是 (modelId, platformId) 复合定位，只查模型会漏掉「模型已删、池成员还挂着」的残留）。
 /// GW 与 MAP 两套集合都扫，内部租户才看得到 MAP 那一侧。
 /// </summary>
+// MAP 业务引用属于内部租户。配置写入与跨库检查没有事务：业务保存入口也必须校验目标，
+// 这里防止顺序管理操作制造悬空引用，不声称替代跨服务并发提交协议。
+static async Task<List<string>> CollectMapBusinessModelReferencesAsync(
+    HttpContext http,
+    IMongoDatabase mapDatabase,
+    string internalTenantId,
+    string? logicalModelId = null,
+    string? platformId = null)
+{
+    if (TenantAccess.GetRequired(http).TenantId != internalTenantId) return new List<string>();
+    var queries = logicalModelId is not null
+        ? MapLogicalModelReferencePolicy.BuildBusinessLogicalModelQueries(logicalModelId)
+        : MapLogicalModelReferencePolicy.BuildLegacyPlatformQueries(platformId!);
+    var references = new List<string>();
+    foreach (var query in queries)
+    {
+        var count = await mapDatabase.GetCollection<BsonDocument>(query.CollectionName).CountDocumentsAsync(query.Filter);
+        if (count > 0) references.Add($"{query.Usage} {count} 项");
+    }
+    return references;
+}
+
 static async Task<PlatformDeleteBlockers> CollectPlatformDeleteBlockersAsync(
     HttpContext http,
     string platformId,

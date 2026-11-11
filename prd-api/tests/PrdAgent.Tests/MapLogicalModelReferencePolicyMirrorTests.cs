@@ -75,6 +75,80 @@ public sealed class MapLogicalModelReferencePolicyMirrorTests
         Assert.Contains("MODEL_REFERENCED_BY_MAP", console);
     }
 
+    [Fact]
+    public void 业务引用覆盖四种未来配置而不扫描运行历史()
+    {
+        var queries = MapLogicalModelReferencePolicy.BuildBusinessLogicalModelQueries("logical-internal-id");
+        Assert.Equal(new[] { "arena_slots", "model_lab_experiments", "model_lab_model_sets", "model_lab_groups" },
+            queries.Select(q => q.CollectionName));
+        Assert.Equal(BsonDocument.Parse("{ LogicalModelId: 'logical-internal-id' }"), RenderDocument(queries[0].Filter));
+        Assert.Equal(BsonDocument.Parse("{ SelectedModels: { $elemMatch: { LogicalModelId: 'logical-internal-id' } } }"),
+            RenderDocument(queries[1].Filter));
+        Assert.All(queries.Skip(2), query => Assert.Equal(
+            BsonDocument.Parse("{ Models: { $elemMatch: { LogicalModelId: 'logical-internal-id' } } }"), RenderDocument(query.Filter)));
+        // 停用配置也保留外键；删除后重新启用不能复活一个悬空 ID。
+        Assert.All(queries, query => Assert.DoesNotContain("Enabled", Render(query.Filter)));
+        var source = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs");
+        Assert.Contains("GetCollection<ArenaSlot>(\"arena_slots\")", source);
+        Assert.Contains("GetCollection<ModelLabExperiment>(\"model_lab_experiments\")", source);
+        Assert.Contains("GetCollection<ModelLabModelSet>(\"model_lab_model_sets\")", source);
+        Assert.Contains("GetCollection<ModelLabGroup>(\"model_lab_groups\")", source);
+        AssertNestedProperty(typeof(ModelLabExperiment), "SelectedModels.PlatformId");
+        AssertNestedProperty(typeof(ModelLabModelSet), "Models.ModelId");
+        AssertNestedProperty(typeof(ModelLabGroup), "Models.PlatformId");
+    }
+
+    [Fact]
+    public void 旧物理绑定必须同成员且未明确迁移才阻断平台退役()
+    {
+        var queries = MapLogicalModelReferencePolicy.BuildLegacyPlatformQueries("retired-platform");
+        var expectedMember = BsonDocument.Parse("""
+            { LogicalModelId: { $in: [null, ""] }, PlatformId: "retired-platform",
+              ModelId: { $type: 2, $ne: "" } }
+            """);
+        Assert.Equal(expectedMember, RenderDocument(queries[0].Filter));
+        Assert.Equal(new BsonDocument("SelectedModels", new BsonDocument("$elemMatch", expectedMember)),
+            RenderDocument(queries[1].Filter));
+        Assert.All(queries.Skip(2), query => Assert.Equal(
+            new BsonDocument("Models", new BsonDocument("$elemMatch", expectedMember)), RenderDocument(query.Filter)));
+        // 对照真正实体序列化，防止误把 ModelId 当内部物理登记 ID 或漏掉旧字段。
+        var legacy = new ArenaSlot { PlatformId = "retired-platform", ModelId = "exact-fixed-version" }.ToBsonDocument();
+        Assert.Equal("retired-platform", legacy["PlatformId"].AsString);
+        Assert.Equal("exact-fixed-version", legacy["ModelId"].AsString);
+        AssertNestedProperty(typeof(ArenaSlot), "PlatformId");
+        AssertNestedProperty(typeof(ModelLabExperiment), "SelectedModels.ModelId");
+    }
+
+    [Theory]
+    [InlineData("app.MapDelete(\"/gw/logical-models/{id}\"", "logicalModelId: id", "MODEL_REFERENCED_BY_MAP")]
+    [InlineData("app.MapPut(\"/gw/logical-models/{id}/enabled\"", "logicalModelId: id", "MODEL_REFERENCED_BY_MAP")]
+    [InlineData("app.MapDelete(\"/gw/platforms/{id}\"", "platformId: id", "PLATFORM_REFERENCED_BY_MAP")]
+    [InlineData("app.MapPut(\"/gw/platforms/{id}/enabled\"", "platformId: id", "PLATFORM_REFERENCED_BY_MAP")]
+    public void 四个破坏性入口在写入前调用同一跨库引用闸(string route, string identityArgument, string errorCode)
+    {
+        var source = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = source.IndexOf(route, StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var end = source.IndexOf("}).RequireAuthorization(\"ConfigWrite\");", start, StringComparison.Ordinal);
+        var endpoint = source[start..end];
+        var guard = endpoint.IndexOf("CollectMapBusinessModelReferencesAsync", StringComparison.Ordinal);
+        Assert.True(guard > 0);
+        Assert.Contains(identityArgument, endpoint);
+        Assert.Contains(errorCode, endpoint);
+        var mutation = endpoint.IndexOf(route.Contains("MapDelete") ? ".Delete" : route.Contains("logical-models")
+            ? ".FindOneAndUpdateAsync" : ".UpdateOneAsync", StringComparison.Ordinal);
+        Assert.True(mutation > guard, "检查必须先于实际写入");
+        var helperStart = source.IndexOf("static async Task<List<string>> CollectMapBusinessModelReferencesAsync", StringComparison.Ordinal);
+        var helperEnd = source.IndexOf("static async Task<PlatformDeleteBlockers>", helperStart, StringComparison.Ordinal);
+        var helper = source[helperStart..helperEnd];
+        Assert.True(helper.IndexOf("TenantId != internalTenantId", StringComparison.Ordinal)
+            < helper.IndexOf("mapDatabase.GetCollection", StringComparison.Ordinal));
+    }
+
+    private static BsonDocument RenderDocument(FilterDefinition<BsonDocument> filter)
+        => filter.Render(new RenderArgs<BsonDocument>(
+            BsonSerializer.SerializerRegistry.GetSerializer<BsonDocument>(), BsonSerializer.SerializerRegistry));
+
     private static void AssertNestedProperty(Type rootType, string path)
     {
         var current = rootType;
