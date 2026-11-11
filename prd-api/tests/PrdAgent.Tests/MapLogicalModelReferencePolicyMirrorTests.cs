@@ -93,6 +93,10 @@ public sealed class MapLogicalModelReferencePolicyMirrorTests
         Assert.Contains("GetCollection<ModelLabExperiment>(\"model_lab_experiments\")", source);
         Assert.Contains("GetCollection<ModelLabModelSet>(\"model_lab_model_sets\")", source);
         Assert.Contains("GetCollection<ModelLabGroup>(\"model_lab_groups\")", source);
+        AssertNestedProperty(typeof(ArenaSlot), "LogicalModelId");
+        AssertNestedProperty(typeof(ModelLabExperiment), "SelectedModels.LogicalModelId");
+        AssertNestedProperty(typeof(ModelLabModelSet), "Models.LogicalModelId");
+        AssertNestedProperty(typeof(ModelLabGroup), "Models.LogicalModelId");
         AssertNestedProperty(typeof(ModelLabExperiment), "SelectedModels.PlatformId");
         AssertNestedProperty(typeof(ModelLabModelSet), "Models.ModelId");
         AssertNestedProperty(typeof(ModelLabGroup), "Models.PlatformId");
