@@ -216,4 +216,55 @@ public class GatewayMaxTokensCapTests
         Assert.Equal(1024, body["max_tokens"]!.GetValue<int>());
         Assert.False(body.ContainsKey("max_completion_tokens"));
     }
+    [Theory]
+    [InlineData("o1")]
+    [InlineData("o1-mini")]
+    [InlineData("o1-preview-2024-09-12")]
+    [InlineData("o3")]
+    [InlineData("o3-mini-2025-01-31")]
+    [InlineData("openai/o4-mini-2025-04-16")]
+    public void KnownReasoningChat_UsesSmallestBudgetWithOrWithoutModelCap(string model)
+    {
+        foreach (var modelCap in new int?[] { null, 1024, 64 })
+        {
+            var body = ChatBody(128);
+            body["max_completion_tokens"] = 512;
+            body["max_output_tokens"] = 256;
+            LlmGateway.ApplyResolvedMaxTokensCap(body, Gpt5(model, modelCap));
+            Assert.Equal(Math.Min(128, modelCap ?? int.MaxValue), body["max_completion_tokens"]!.GetValue<int>());
+            Assert.False(body.ContainsKey("max_tokens"));
+            Assert.False(body.ContainsKey("max_output_tokens"));
+        }
+    }
+
+    [Theory]
+    [InlineData("o30")]
+    [InlineData("o3-future")]
+    [InlineData("o3-2025-02-30")]
+    [InlineData("o4")]
+    [InlineData("o4-mini-extra")]
+    [InlineData("other-reasoning")]
+    public void UnknownReasoningNames_AreNotGuessed(string model)
+    {
+        var body = ChatBody(128);
+        LlmGateway.ApplyResolvedMaxTokensCap(body, Gpt5(model));
+        Assert.Equal(128, body["max_tokens"]!.GetValue<int>());
+        Assert.False(body.ContainsKey("max_completion_tokens"));
+    }
+
+    [Fact]
+    public void ReasoningName_DoesNotRewriteOtherProtocolOrNonChatBody()
+    {
+        var body = ChatBody(128);
+        var resolution = new ModelResolutionResult
+        { Success = true, ActualModel = "o3", Protocol = "claude", MaxTokens = 1024 };
+        LlmGateway.ApplyResolvedMaxTokensCap(body, resolution);
+        Assert.Equal(128, body["max_tokens"]!.GetValue<int>());
+        Assert.False(body.ContainsKey("max_completion_tokens"));
+        body = new JsonObject { ["prompt"] = "synthetic", ["max_tokens"] = 128 };
+        LlmGateway.ApplyResolvedMaxTokensCap(body, Gpt5("o3"));
+        Assert.Equal(128, body["max_tokens"]!.GetValue<int>());
+        Assert.False(body.ContainsKey("max_completion_tokens"));
+    }
+
 }
