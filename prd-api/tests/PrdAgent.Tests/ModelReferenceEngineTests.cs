@@ -469,4 +469,22 @@ public sealed class ModelReferenceEngineTests
         Assert.Equal("administrator-other-model", second["LogicalModelId"]); Assert.Equal("new-logical", first["LogicalModelId"]);
         Assert.Equal(0, store.Writes);
     }
+    [Fact]
+    public async Task DeployedLineageObservationAndDiscoveryMetadataDoNotBlockUnrelatedMigration()
+    {
+        var store = new MemoryStore();
+        var slot = store.Add("arena_slots", "{_id:'slot',LogicalModelId:'old-logical'}");
+        var wire = store.Add("llmgw_model_offerings", "{_id:'wire',TenantId:'internal',Enabled:false,SupersedesOfferingId:'old-wire',SupersededByOfferingId:'retired-wire'}");
+        var caller = store.Add("llmgw_app_callers", "{_id:'caller',TenantId:'internal',ObservedModelPoolIds:['old-pool'],LastObservedModelPoolId:'old-pool'}");
+        var policy = store.Add("llmgw_model_upgrade_policies", "{_id:'policy',TenantId:'internal',LogicalModelId:'other-logical',Policy:{Enabled:false},Discoveries:[{UpstreamModelId:'old-upstream'}]}");
+        var wireBefore = wire.DeepClone(); var callerBefore = caller.DeepClone(); var policyBefore = policy.DeepClone();
+        var engine = Engine(store); var plan = await engine.PlanAsync(Mapping(), "admin");
+        Assert.Equal(0, plan.Coverage.Unknown); Assert.Equal(0, plan.Coverage.Blocked); Assert.Single(plan.Changes);
+        var done = await engine.ApplyAsync(plan.Id, "internal", plan.Revision);
+        Assert.True(done.Coverage.Verified); Assert.Equal("new-logical", slot["LogicalModelId"]);
+        Assert.Equal(wireBefore, wire); Assert.Equal(callerBefore, caller); Assert.Equal(policyBefore, policy);
+        wire["FutureOfferingId"] = "old-wire";
+        Assert.True((await engine.VerifyAsync(plan.Id, "internal")).Unknown > 0);
+    }
+
 }
