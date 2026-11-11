@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Api.Mcp;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Security;
 
@@ -94,8 +95,14 @@ public sealed record TaskBusinessIntent(string Key, string Fingerprint, string S
         try
         {
             using var body = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: ct);
-            return body.RootElement.ValueKind == JsonValueKind.Object && body.RootElement.TryGetProperty("method", out var method)
-                && method.ValueKind == JsonValueKind.String && method.GetString() == "tools/call";
+            var root = body.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("method", out var method)
+                || method.ValueKind != JsonValueKind.String || method.GetString() != "tools/call") return false;
+            // 只豁免服务端登记的纯 GET 工具；未知、动态和写工具仍须有限任务许可。
+            var name = root.TryGetProperty("params", out var p) && p.ValueKind == JsonValueKind.Object
+                && p.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
+            var tool = McpBuiltinTools.All.FirstOrDefault(t => t.Name == name);
+            return tool is null || !string.Equals(tool.Method, "GET", StringComparison.OrdinalIgnoreCase);
         }
         catch (JsonException) { return false; } // 协议错误仍由原 MCP 端点返回，不授予付费权。
         finally { http.Request.Body.Position = 0; }
@@ -147,7 +154,13 @@ public sealed record TaskBusinessIntent(string Key, string Fingerprint, string S
                             key = "mcp:" + rpcId.GetString();
                     }
                 }
-                parameters.Append(Canonical(body.RootElement));
+                // JSON-RPC id 是传输关联标识，不属于付费操作参数；重试可使用新的 id。
+                if (operation == "PrdAgent.Api.Controllers.McpGatewayController.Handle"
+                    && body.RootElement.ValueKind == JsonValueKind.Object)
+                    parameters.Append("{" + string.Join(",", body.RootElement.EnumerateObject()
+                        .Where(x => x.Name != "id").OrderBy(x => x.Name, StringComparer.Ordinal)
+                        .Select(x => JsonSerializer.Serialize(x.Name) + ":" + Canonical(x.Value))) + "}");
+                else parameters.Append(Canonical(body.RootElement));
             }
             catch (JsonException)
             {
