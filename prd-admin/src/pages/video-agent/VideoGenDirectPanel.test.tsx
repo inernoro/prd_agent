@@ -41,6 +41,8 @@ describe('取消后的原作业费用详情刷新', () => {
     })));
     await act(async () => root.render(<VideoGenDirectPanel externalRunId="existing-run" />));
     expect(container.querySelector('[data-testid="video-generation-stage"]')?.textContent).toContain('避免重复费用');
+    expect(container.textContent).toContain('待核对');
+    expect(container.textContent).not.toContain('生成中');
     expect(container.textContent).not.toContain('已取消');
     expect(container.textContent).not.toContain('$0.000');
     await tick(); expect(api.get).toHaveBeenCalledTimes(2);
