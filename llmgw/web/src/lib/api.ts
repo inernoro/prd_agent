@@ -654,8 +654,8 @@ export function updateModelOffering(logicalModelId: string, offeringId: string, 
     { method: 'PUT', body: req },
   );
 }
-export function deleteModelOffering(logicalModelId: string, offeringId: string): Promise<ApiResponse<{ offeringId: string }>> {
-  return apiRequest<{ offeringId: string }>(
+export function deleteModelOffering(logicalModelId: string, offeringId: string): Promise<ApiResponse<{ logicalModelId: string; offeringId: string; removed: boolean }>> {
+  return apiRequest<{ logicalModelId: string; offeringId: string; removed: boolean }>(
     `/logical-models/${encodeURIComponent(logicalModelId)}/offerings/${encodeURIComponent(offeringId)}`,
     { method: 'DELETE' },
   );
