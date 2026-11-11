@@ -7,6 +7,9 @@ using PrdAgent.LlmGatewayHost;
 using System.Reflection;
 using PrdAgent.Infrastructure.LlmGateway;
 using System.Text.Json.Nodes;
+using Moq;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Security;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -230,6 +233,22 @@ public sealed class ModelUpgradeCanaryTests
         Assert.False(Wire());
         body["messages"]![0]!["content"]="Reply OK.";body["stream"]=true;
         Assert.False(Wire());
+    }
+
+    [Fact]
+    public async Task ScheduledCanaryLease_UsesQueueRequestAsBusinessExecutionId()
+    {
+        const string requestId="model-upgrade-one-explicit-validation";
+        var admission = new TaskExecutionIdentity("permit-id");
+        var coordinator = new Mock<ITaskExecutionCoordinator>(MockBehavior.Strict);
+        var proof = new TaskExecutionLeaseProof(admission.PermitId,requestId,"owner",1);
+        var expected = new TaskExecutionLease(coordinator.Object,proof,borrowed:true);
+        coordinator.Setup(x=>x.AcquireAsync(admission.PermitId,requestId,It.IsAny<CancellationToken>())).ReturnsAsync(expected);
+        await using var lease = await ModelUpgradeCanaryWorker.AcquireCanaryLeaseAsync(coordinator.Object,admission,requestId,default);
+        Assert.Equal(requestId,lease.Identity.RunId);
+        Assert.Equal(admission.PermitId,lease.Identity.PermitId);
+        coordinator.Verify(x=>x.AcquireAsync(admission.PermitId,requestId,It.IsAny<CancellationToken>()),Times.Once);
+        coordinator.VerifyNoOtherCalls();
     }
 
     private static (BsonDocument Job,BsonDocument State) Pair()

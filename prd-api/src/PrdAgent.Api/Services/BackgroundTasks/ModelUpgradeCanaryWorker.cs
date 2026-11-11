@@ -76,7 +76,7 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
                 TaskExecutionCoordinator.Fingerprint(job.ToJson()), S(job, "ActorUserId"), S(job, "AppCallerCode"),
                 budget, S(job, "ExecutionRequestedBy") == "scheduled", ct);
             var executions = scope.ServiceProvider.GetRequiredService<ITaskExecutionCoordinator>();
-            await using var lease = await executions.AcquireAsync(identity.PermitId, null, ct);
+            await using var lease = await AcquireCanaryLeaseAsync(executions, identity, S(job, "_id"), ct);
             using var execution = TaskExecutionContext.Enter(lease.Identity);
             var caller = S(job, "AppCallerCode");
             var client = scope.ServiceProvider.GetRequiredService<HttpLlmGatewayClient>();
@@ -168,6 +168,10 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
             Protocol = S(job, "Protocol"), PriceVersion = S(job, "PriceVersion"), InputUsdPerMillion = D(model, "InputPricePerMillion"),
             OutputUsdPerMillion = D(model, "OutputPricePerMillion"), CachedInputUsdPerMillion = Math.Max(D(model, "CachedInputPricePerMillion"), D(model, "InputPricePerMillion")), CacheWriteUsdPerMillion = Math.Max(D(model, "CacheWritePricePerMillion"), D(model, "InputPricePerMillion")) }, type);
     }
+
+    internal static Task<TaskExecutionLease> AcquireCanaryLeaseAsync(ITaskExecutionCoordinator executions,
+        TaskExecutionIdentity admission, string requestId, CancellationToken ct)
+        => executions.AcquireAsync(admission.PermitId, requestId, ct);
 
     internal static BsonDocument PendingClaimFilter(string tenant, DateTime now, bool allowScheduled)
     {
