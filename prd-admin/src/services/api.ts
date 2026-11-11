@@ -123,6 +123,7 @@ export const api = {
         list: () => '/api/lab/model/experiments',
         byId: (id: string) => `/api/lab/model/experiments/${id}`,
       },
+      modelOptions: (purpose: string = 'chat') => `/api/lab/model/model-options?purpose=${encodeURIComponent(purpose)}`,
       modelSets: () => '/api/lab/model/model-sets',
       labGroups: {
         list: () => '/api/lab/model/lab-groups',
@@ -1217,6 +1218,7 @@ export const api = {
 
   // ============ Arena 竞技场 ============
   arena: {
+    modelOptions: () => '/api/lab/arena/model-options',
     groups: {
       list: () => '/api/lab/arena/groups',
       byId: (id: string) => `/api/lab/arena/groups/${id}`,
