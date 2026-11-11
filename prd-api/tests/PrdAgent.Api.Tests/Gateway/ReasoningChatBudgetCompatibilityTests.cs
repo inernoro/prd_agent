@@ -41,11 +41,13 @@ public sealed class ReasoningChatBudgetCompatibilityTests
     [InlineData("o1")]
     [InlineData("o1-mini-2024-09-12")]
     [InlineData("o1-preview")]
+    [InlineData("o3-mini-2025-01-31")]
     public void HistoricalReasoning_OnlyNormalizesBudgetAndSampling_NotRolesOrStreaming(string model)
     {
         var body = Request().RequestBody!.DeepClone().AsObject();
         body["stream"] = false;
         var messages = body["messages"]!.ToJsonString();
+        var stop = body["stop"]!.ToJsonString();
         var compatibility = typeof(LlmGateway).GetMethod("ApplyOpenAiChatCompletionsCompatibility", BindingFlags.NonPublic | BindingFlags.Static)!;
         compatibility.Invoke(null, new object?[] { body, new ModelResolutionResult
             { Success = true, ActualModel = model, Protocol = "openai" }, null });
@@ -54,6 +56,7 @@ public sealed class ReasoningChatBudgetCompatibilityTests
         Assert.False(body.ContainsKey("top_p"));
         Assert.False(body.ContainsKey("max_tokens"));
         Assert.Equal(messages, body["messages"]!.ToJsonString());
+        Assert.Equal(stop, body["stop"]!.ToJsonString());
         Assert.False(body["stream"]!.GetValue<bool>());
     }
 
