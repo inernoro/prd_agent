@@ -13,10 +13,15 @@ import type {
   UpdateModelLabExperimentContract,
   UpsertModelLabModelSetContract,
 } from '@/services/contracts/modelLab';
+import type { LogicalModelOption, ModelLabPurpose } from '@/services/contracts/modelReferences';
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, ok, type ApiResponse } from '@/types/api';
+
+export async function getModelLabModelOptionsReal(purpose: ModelLabPurpose = 'chat'): Promise<ApiResponse<{ items: LogicalModelOption[] }>> {
+  return await apiRequest(api.lab.model.modelOptions(purpose));
+}
 
 function normalizeSuiteFromApi(x: unknown): ModelLabSuite {
   if (typeof x === 'string') {

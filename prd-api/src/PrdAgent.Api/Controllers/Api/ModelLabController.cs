@@ -11,7 +11,7 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Prompts.Templates;
-using PrdAgent.Infrastructure.Security;
+using PrdAgent.Api.Services;
 using static PrdAgent.Core.Models.AppCallerRegistry;
 using PrdAgent.Core.LlmGateway;
 
@@ -28,7 +28,8 @@ public class ModelLabController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly IModelLabRepository _repo;
-    private readonly IConfiguration _config;
+    private readonly BusinessModelReferenceService _modelReferences;
+    private readonly IVisualModelPolicyService _visualModels;
     private readonly ILLMRequestContextAccessor _ctxAccessor;
     private readonly PrdAgent.Core.LlmGateway.ILlmGateway _gateway;
 
@@ -37,18 +38,72 @@ public class ModelLabController : ControllerBase
     public ModelLabController(
         MongoDbContext db,
         IModelLabRepository repo,
-        IConfiguration config,
         ILLMRequestContextAccessor ctxAccessor,
-        PrdAgent.Core.LlmGateway.ILlmGateway gateway)
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
+        BusinessModelReferenceService modelReferences,
+        IVisualModelPolicyService visualModels)
     {
         _db = db;
         _repo = repo;
-        _config = config;
+        _modelReferences = modelReferences;
+        _visualModels = visualModels;
         _ctxAccessor = ctxAccessor;
         _gateway = gateway;
     }
 
     private string GetAdminId() => this.GetRequiredUserId();
+
+    [HttpGet("model-options")]
+    public async Task<IActionResult> GetModelOptions([FromQuery] string purpose = "chat", CancellationToken ct = default)
+    {
+        if (purpose is not ("chat" or "image" or "image-batch"))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_PURPOSE", "请选择对话、单次生图或批量生图用途。"));
+        try { return Ok(ApiResponse<object>.Ok(new { items = await OptionsForPurposeAsync(purpose, ct) })); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { return StatusCode(503, ApiResponse<object>.Fail("MODEL_CATALOG_UNAVAILABLE", "暂时无法读取此用途的模型目录，请稍后重试。")); }
+    }
+
+    private Task<IReadOnlyList<BusinessModelOption>> OptionsAsync(CancellationToken ct = default)
+        => _modelReferences.GetOptionsAsync(Admin.ModelLab.Run, ModelTypes.Chat, ct);
+
+    private async Task<IReadOnlyList<BusinessModelOption>> OptionsForPurposeAsync(string purpose, CancellationToken ct)
+        => purpose == "chat" ? await OptionsAsync(ct)
+            : BusinessModelReferenceService.ProjectOptions(await _visualModels.ListAsync(purpose == "image"
+                ? VisualAgent.Image.Text2Img : VisualAgent.ImageGen.BatchGenerate, ct));
+
+    private async Task<(IReadOnlyList<BusinessModelOption> Options, bool HasUnknown)> UnionCatalogAsync()
+    {
+        var catalogs = await Task.WhenAll(new[] { "chat", "image", "image-batch" }.Select(async purpose =>
+        {
+            try { return (Options: await OptionsForPurposeAsync(purpose, CancellationToken.None), Unknown: false); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            { return (Options: (IReadOnlyList<BusinessModelOption>)Array.Empty<BusinessModelOption>(), Unknown: true); }
+        }));
+        var options = catalogs.SelectMany(x => x.Options).GroupBy(x => x.LogicalModelId, StringComparer.Ordinal)
+            .Select(group => group.FirstOrDefault(x => x.Available) ?? group.First()).ToList();
+        return (options, catalogs.Any(x => x.Unknown));
+    }
+
+    private async Task<(List<ModelLabSelectedModel> Models, IActionResult? Failure)> NormalizeForSaveAsync(
+        IEnumerable<ModelLabSelectedModel> incoming, IReadOnlyList<ModelLabSelectedModel>? existing)
+    {
+        var catalog = await UnionCatalogAsync();
+        if (!ModelLabModelReferences.TryNormalize(catalog.Options, incoming, existing, out var models, out var reason))
+            return (models, catalog.HasUnknown
+                ? StatusCode(503, ApiResponse<object>.Fail("MODEL_CATALOG_UNAVAILABLE", "部分用途目录暂时不可用，未保存新模型引用；请稍后重试。"))
+                : BadRequest(ApiResponse<object>.Fail("MODEL_REFERENCE_INVALID", reason ?? "请明确选择当前授权逻辑模型。")));
+        ModelLabModelReferences.Annotate(models, catalog.Options, catalog.HasUnknown);
+        return (models, null);
+    }
+
+    private async Task AnnotateReadAsync(IEnumerable<ModelLabSelectedModel> models)
+    {
+        var catalog = await UnionCatalogAsync();
+        ModelLabModelReferences.Annotate(models, catalog.Options, catalog.HasUnknown);
+    }
+
+    private IActionResult ConfigurationConflict()
+        => Conflict(ApiResponse<object>.Fail("MODEL_CONFIGURATION_CONFLICT", "配置已被其他操作更新；请刷新后重新编辑，当前模型引用未被覆盖。"));
 
     [HttpGet("experiments")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
@@ -56,6 +111,7 @@ public class ModelLabController : ControllerBase
     {
         var adminId = GetAdminId();
         var items = await _repo.ListExperimentsAsync(adminId, search, page, pageSize);
+        await AnnotateReadAsync(items.SelectMany(x => x.SelectedModels));
         return Ok(ApiResponse<object>.Ok(new { items, page, pageSize }));
     }
 
@@ -64,12 +120,14 @@ public class ModelLabController : ControllerBase
     public async Task<IActionResult> CreateExperiment([FromBody] UpsertExperimentRequest request)
     {
         var adminId = GetAdminId();
+        var selection = await NormalizeForSaveAsync(request.SelectedModels ?? new(), null);
+        if (selection.Failure is { } failure) return failure;
         var exp = new ModelLabExperiment
         {
             OwnerAdminId = adminId,
             Name = string.IsNullOrWhiteSpace(request.Name) ? "未命名实验" : request.Name.Trim(),
             Suite = request.Suite ?? ModelLabSuite.Speed,
-            SelectedModels = request.SelectedModels ?? new List<ModelLabSelectedModel>(),
+            SelectedModels = selection.Models,
             PromptTemplateId = request.PromptTemplateId,
             PromptText = request.PromptText,
             Params = request.Params ?? new ModelLabParams()
@@ -86,6 +144,7 @@ public class ModelLabController : ControllerBase
         var adminId = GetAdminId();
         var exp = await _repo.GetExperimentAsync(id, adminId);
         if (exp == null) return NotFound(ApiResponse<object>.Fail("EXPERIMENT_NOT_FOUND", "实验不存在"));
+        await AnnotateReadAsync(exp.SelectedModels);
         return Ok(ApiResponse<object>.Ok(exp));
     }
 
@@ -97,14 +156,18 @@ public class ModelLabController : ControllerBase
         var exp = await _repo.GetExperimentAsync(id, adminId);
         if (exp == null) return NotFound(ApiResponse<object>.Fail("EXPERIMENT_NOT_FOUND", "实验不存在"));
 
+        var expectedUpdatedAt = exp.UpdatedAt;
+        var selection = await NormalizeForSaveAsync(request.SelectedModels ?? exp.SelectedModels, exp.SelectedModels);
+        if (selection.Failure is { } failure) return failure;
         exp.Name = string.IsNullOrWhiteSpace(request.Name) ? exp.Name : request.Name.Trim();
         exp.Suite = request.Suite ?? exp.Suite;
-        exp.SelectedModels = request.SelectedModels ?? exp.SelectedModels;
+        exp.SelectedModels = selection.Models;
         exp.PromptTemplateId = request.PromptTemplateId;
         exp.PromptText = request.PromptText;
         exp.Params = request.Params ?? exp.Params;
 
-        await _repo.UpdateExperimentAsync(exp);
+        if (!await _repo.UpdateExperimentAsync(exp, expectedUpdatedAt))
+            return ConfigurationConflict();
         return Ok(ApiResponse<object>.Ok(exp));
     }
 
@@ -124,6 +187,7 @@ public class ModelLabController : ControllerBase
     {
         var adminId = GetAdminId();
         var items = await _repo.ListModelSetsAsync(adminId, search, limit);
+        await AnnotateReadAsync(items.SelectMany(x => x.Models));
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -132,15 +196,15 @@ public class ModelLabController : ControllerBase
     public async Task<IActionResult> UpsertModelSet([FromBody] UpsertModelSetRequest request)
     {
         var adminId = GetAdminId();
-        var set = new ModelLabModelSet
-        {
-            Id = request.Id ?? Guid.NewGuid().ToString(),
-            OwnerAdminId = adminId,
-            Name = string.IsNullOrWhiteSpace(request.Name) ? "未命名集合" : request.Name.Trim(),
-            Models = request.Models ?? new List<ModelLabSelectedModel>()
-        };
+        var existing = string.IsNullOrWhiteSpace(request.Id) ? null : await _repo.GetModelSetAsync(request.Id, adminId);
+        var selection = await NormalizeForSaveAsync(request.Models ?? existing?.Models ?? new(), existing?.Models);
+        if (selection.Failure is { } failure) return failure;
+        var set = existing ?? new ModelLabModelSet { Id = request.Id ?? Guid.NewGuid().ToString(), OwnerAdminId = adminId };
+        set.Name = string.IsNullOrWhiteSpace(request.Name) ? set.Name : request.Name.Trim();
+        set.Models = selection.Models;
 
-        var saved = await _repo.UpsertModelSetAsync(set);
+        var saved = await _repo.UpsertModelSetAsync(set, existing?.UpdatedAt);
+        if (saved is null) return ConfigurationConflict();
         return Ok(ApiResponse<object>.Ok(saved));
     }
 
@@ -150,6 +214,7 @@ public class ModelLabController : ControllerBase
     {
         var adminId = GetAdminId();
         var items = await _repo.ListLabGroupsAsync(adminId, search, limit);
+        await AnnotateReadAsync(items.SelectMany(x => x.Models));
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -158,17 +223,17 @@ public class ModelLabController : ControllerBase
     public async Task<IActionResult> UpsertLabGroup([FromBody] UpsertLabGroupRequest request)
     {
         var adminId = GetAdminId();
-        var g = new ModelLabGroup
-        {
-            Id = request.Id ?? Guid.NewGuid().ToString(),
-            OwnerAdminId = adminId,
-            Name = string.IsNullOrWhiteSpace(request.Name) ? "未命名分组" : request.Name.Trim(),
-            Models = request.Models ?? new List<ModelLabSelectedModel>()
-        };
+        var existing = string.IsNullOrWhiteSpace(request.Id) ? null : await _repo.GetLabGroupAsync(request.Id, adminId);
+        var selection = await NormalizeForSaveAsync(request.Models ?? existing?.Models ?? new(), existing?.Models);
+        if (selection.Failure is { } failure) return failure;
+        var g = existing ?? new ModelLabGroup { Id = request.Id ?? Guid.NewGuid().ToString(), OwnerAdminId = adminId };
+        g.Name = string.IsNullOrWhiteSpace(request.Name) ? g.Name : request.Name.Trim();
+        g.Models = selection.Models;
 
         try
         {
-            var saved = await _repo.UpsertLabGroupAsync(g);
+            var saved = await _repo.UpsertLabGroupAsync(g, existing?.UpdatedAt);
+            if (saved is null) return ConfigurationConflict();
             return Ok(ApiResponse<object>.Ok(saved));
         }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
@@ -196,10 +261,6 @@ public class ModelLabController : ControllerBase
         Response.Headers.Connection = "keep-alive";
 
         var adminId = GetAdminId();
-        // 业务规则：不再使用“全局开关”，而是以“主模型 enablePromptCache”作为总开关
-        var mainModel = await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(cancellationToken);
-        var mainEnablePromptCache = mainModel == null ? false : (mainModel.EnablePromptCache ?? true);
-
         var effective = await ResolveEffectiveRunRequestAsync(adminId, request, cancellationToken);
         if (!effective.Success)
         {
@@ -234,7 +295,7 @@ public class ModelLabController : ControllerBase
                 try
                 {
                     var queueMs = (long)Math.Max(0, (DateTime.UtcNow - queuedAt).TotalMilliseconds);
-                    await RunOneModelAsync(sm, run, mainEnablePromptCache, effective, writeLock, queueMs, cancellationToken);
+                    await RunOneModelAsync(sm, run, effective, writeLock, queueMs, cancellationToken);
                 }
                 finally
                 {
@@ -265,277 +326,13 @@ public class ModelLabController : ControllerBase
         await WriteEventAsync("run", new { type = "runDone", runId = run.Id, status = run.Status, endedAt = run.EndedAt }, cancellationToken);
     }
 
-    private async Task RunOneModelAsync(
-        ModelLabSelectedModel selected,
-        ModelLabRun run,
-        bool mainEnablePromptCache,
-        EffectiveRunRequest effective,
-        SemaphoreSlim writeLock,
-        long queueMs,
-        CancellationToken ct)
+    private async Task RunOneModelAsync(ModelLabSelectedModel selected, ModelLabRun run,
+        EffectiveRunRequest effective, SemaphoreSlim writeLock, long queueMs, CancellationToken ct)
     {
-        // 统一语义：
-        // - selected.ModelId: 平台侧模型 ID（等价于旧语义的 ModelName）
-        // - selected.PlatformId: 平台 ID
-        // 兼容旧数据：ResolveEffectiveRunRequestAsync 会尽量把旧的“ModelId=llmmodels.id”转换为上述新语义。
-        var platformId = (selected.PlatformId ?? string.Empty).Trim();
-        var modelName = (string.IsNullOrWhiteSpace(selected.ModelName) ? selected.ModelId : selected.ModelName).Trim();
-
-        // 已配置模型（llmmodels）：按 platformId + modelId 精确匹配（字段名：ModelName；避免跨平台同名冲突）
-        var model = string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelName)
-            ? null
-            : await _db.LLMModels.Find(m => m.PlatformId == platformId && m.ModelName == modelName).FirstOrDefaultAsync(ct);
-
-        // 未配置模型：直接使用平台配置 + modelName 调用
-        if (model == null)
-        {
-            if (string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelName))
-            {
-                // 这里无法为 repeat 拆分具体 item（缺少必要信息），直接写一个错误 item，避免前端“无回显”。
-                var errItem = new ModelLabRunItem
-                {
-                    OwnerAdminId = run.OwnerAdminId,
-                    RunId = run.Id,
-                    ExperimentId = run.ExperimentId,
-                    ModelId = (selected.ModelId ?? string.Empty).Trim(),
-                    PlatformId = platformId,
-                    DisplayName = (selected.ModelId ?? string.Empty).Trim(),
-                    ModelName = modelName,
-                    Success = false,
-                    ErrorCode = "MODEL_NOT_FOUND",
-                    ErrorMessage = "模型不存在",
-                    EndedAt = DateTime.UtcNow
-                };
-                await _repo.InsertRunItemAsync(errItem);
-                await WriteWithLockAsync(writeLock, "model", new
-                {
-                    type = "modelStart",
-                    runId = run.Id,
-                    itemId = errItem.Id,
-                    modelId = errItem.ModelId,
-                    displayName = errItem.DisplayName,
-                    modelName = errItem.ModelName,
-                    queueMs,
-                    repeatIndex = 1,
-                    repeatN = 1
-                }, ct);
-                await WriteWithLockAsync(writeLock, "model", new
-                {
-                    type = "modelError",
-                    runId = run.Id,
-                    itemId = errItem.Id,
-                    modelId = errItem.ModelId,
-                    errorCode = errItem.ErrorCode,
-                    errorMessage = errItem.ErrorMessage,
-                    repeatIndex = 1,
-                    repeatN = 1
-                }, ct);
-                return;
-            }
-
-            var platform = await _db.LLMPlatforms.Find(p => p.Id == platformId).FirstOrDefaultAsync(ct);
-            if (platform == null || !platform.Enabled)
-            {
-                var errItem = new ModelLabRunItem
-                {
-                    OwnerAdminId = run.OwnerAdminId,
-                    RunId = run.Id,
-                    ExperimentId = run.ExperimentId,
-                    ModelId = (selected.ModelId ?? string.Empty).Trim(),
-                    PlatformId = platformId,
-                    DisplayName = (selected.ModelId ?? string.Empty).Trim(),
-                    ModelName = modelName,
-                    Success = false,
-                    ErrorCode = "PLATFORM_NOT_FOUND",
-                    ErrorMessage = "平台不存在或未启用",
-                    EndedAt = DateTime.UtcNow
-                };
-                await _repo.InsertRunItemAsync(errItem);
-                await WriteWithLockAsync(writeLock, "model", new
-                {
-                    type = "modelStart",
-                    runId = run.Id,
-                    itemId = errItem.Id,
-                    modelId = errItem.ModelId,
-                    displayName = errItem.DisplayName,
-                    modelName = errItem.ModelName,
-                    queueMs,
-                    repeatIndex = 1,
-                    repeatN = 1
-                }, ct);
-                await WriteWithLockAsync(writeLock, "model", new
-                {
-                    type = "modelError",
-                    runId = run.Id,
-                    itemId = errItem.Id,
-                    modelId = errItem.ModelId,
-                    errorCode = errItem.ErrorCode,
-                    errorMessage = errItem.ErrorMessage,
-                    repeatIndex = 1,
-                    repeatN = 1
-                }, ct);
-                return;
-            }
-
-            var (platformApiUrl, platformApiKey, _) = ResolveApiConfigForPlatform(platform);
-            if (string.IsNullOrWhiteSpace(platformApiUrl) || string.IsNullOrWhiteSpace(platformApiKey))
-            {
-                var errItem = new ModelLabRunItem
-                {
-                    OwnerAdminId = run.OwnerAdminId,
-                    RunId = run.Id,
-                    ExperimentId = run.ExperimentId,
-                    ModelId = (selected.ModelId ?? string.Empty).Trim(),
-                    PlatformId = platformId,
-                    DisplayName = (selected.ModelId ?? string.Empty).Trim(),
-                    ModelName = modelName,
-                    Success = false,
-                    ErrorCode = "INVALID_CONFIG",
-                    ErrorMessage = "平台 API 配置不完整",
-                    EndedAt = DateTime.UtcNow
-                };
-                await _repo.InsertRunItemAsync(errItem);
-                await WriteWithLockAsync(writeLock, "model", new
-                {
-                    type = "modelStart",
-                    runId = run.Id,
-                    itemId = errItem.Id,
-                    modelId = errItem.ModelId,
-                    displayName = errItem.DisplayName,
-                    modelName = errItem.ModelName,
-                    queueMs,
-                    repeatIndex = 1,
-                    repeatN = 1
-                }, ct);
-                await WriteWithLockAsync(writeLock, "model", new
-                {
-                    type = "modelError",
-                    runId = run.Id,
-                    itemId = errItem.Id,
-                    modelId = errItem.ModelId,
-                    errorCode = errItem.ErrorCode,
-                    errorMessage = errItem.ErrorMessage,
-                    repeatIndex = 1,
-                    repeatN = 1
-                }, ct);
-                return;
-            }
-
-            var enablePromptCacheForPlatform = mainEnablePromptCache && (effective.EnablePromptCache ?? true);
-            ILLMClient client2 = _gateway.CreateClient(
-                Admin.ModelLab.Run,
-                ModelTypes.Chat,
-                maxTokens: 4096,
-                temperature: 0.2,
-                expectedModel: modelName,
-                pinnedPlatformId: platform.Id,
-                pinnedModelId: modelName);
-
-            // 继续使用下方通用逻辑（systemPrompt/prompt/stream）
-            await RunStreamWithClientAsync(client2, selected, run, effective, enablePromptCacheForPlatform, writeLock, queueMs, ct);
-            return;
-        }
-
-        if (!model.Enabled)
-        {
-            var errItem = new ModelLabRunItem
-            {
-                OwnerAdminId = run.OwnerAdminId,
-                RunId = run.Id,
-                ExperimentId = run.ExperimentId,
-                ModelId = (selected.ModelId ?? string.Empty).Trim(),
-                PlatformId = platformId,
-                DisplayName = (selected.ModelId ?? string.Empty).Trim(),
-                ModelName = modelName,
-                Success = false,
-                ErrorCode = "MODEL_NOT_FOUND",
-                ErrorMessage = "模型不存在或未启用",
-                EndedAt = DateTime.UtcNow
-            };
-            await _repo.InsertRunItemAsync(errItem);
-            await WriteWithLockAsync(writeLock, "model", new
-            {
-                type = "modelStart",
-                runId = run.Id,
-                itemId = errItem.Id,
-                modelId = errItem.ModelId,
-                displayName = errItem.DisplayName,
-                modelName = errItem.ModelName,
-                queueMs,
-                repeatIndex = 1,
-                repeatN = 1
-            }, ct);
-            await WriteWithLockAsync(writeLock, "model", new
-            {
-                type = "modelError",
-                runId = run.Id,
-                itemId = errItem.Id,
-                modelId = errItem.ModelId,
-                errorCode = errItem.ErrorCode,
-                errorMessage = errItem.ErrorMessage,
-                repeatIndex = 1,
-                repeatN = 1
-            }, ct);
-            return;
-        }
-
-        var (apiUrl, apiKey, _, resolvedPlatformId, _) = ResolveApiConfigForModel(model);
-        if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
-        {
-            var errItem = new ModelLabRunItem
-            {
-                OwnerAdminId = run.OwnerAdminId,
-                RunId = run.Id,
-                ExperimentId = run.ExperimentId,
-                ModelId = (selected.ModelId ?? string.Empty).Trim(),
-                PlatformId = platformId,
-                DisplayName = (selected.ModelId ?? string.Empty).Trim(),
-                ModelName = modelName,
-                Success = false,
-                ErrorCode = "INVALID_CONFIG",
-                ErrorMessage = "模型 API 配置不完整",
-                EndedAt = DateTime.UtcNow
-            };
-            await _repo.InsertRunItemAsync(errItem);
-            await WriteWithLockAsync(writeLock, "model", new
-            {
-                type = "modelStart",
-                runId = run.Id,
-                itemId = errItem.Id,
-                modelId = errItem.ModelId,
-                displayName = errItem.DisplayName,
-                modelName = errItem.ModelName,
-                queueMs,
-                repeatIndex = 1,
-                repeatN = 1
-            }, ct);
-            await WriteWithLockAsync(writeLock, "model", new
-            {
-                type = "modelError",
-                runId = run.Id,
-                itemId = errItem.Id,
-                modelId = errItem.ModelId,
-                errorCode = errItem.ErrorCode,
-                errorMessage = errItem.ErrorMessage,
-                repeatIndex = 1,
-                repeatN = 1
-            }, ct);
-            return;
-        }
-
-        var enablePromptCache = mainEnablePromptCache && (model.EnablePromptCache ?? true) && (effective.EnablePromptCache ?? true);
-        ILLMClient client = _gateway.CreateClient(
-            Admin.ModelLab.Run,
-            ModelTypes.Chat,
-            maxTokens: 4096,
-            temperature: 0.2,
-            expectedModel: model.ModelName,
-            pinnedPlatformId: resolvedPlatformId,
-            pinnedModelId: model.ModelName);
-
-        await RunStreamWithClientAsync(client, selected, run, effective, enablePromptCache, writeLock, queueMs, ct);
-        return;
-
+        // 只传已经验证的逻辑公开标识；物理线路与凭据由网关在真实发送时解析一次。
+        var client = _gateway.CreateClient(Admin.ModelLab.Run, ModelTypes.Chat, maxTokens: 4096,
+            temperature: 0.2, expectedModel: selected.ModelId);
+        await RunStreamWithClientAsync(client, selected, run, effective, effective.EnablePromptCache ?? true, writeLock, queueMs, ct);
     }
 
     private async Task RunStreamWithClientAsync(
@@ -635,6 +432,7 @@ public class ModelLabController : ControllerBase
                 OwnerAdminId = run.OwnerAdminId,
                 RunId = run.Id,
                 ExperimentId = run.ExperimentId,
+                LogicalModelId = selected.LogicalModelId,
                 ModelId = selected.ModelId,
                 PlatformId = selected.PlatformId,
                 DisplayName = string.IsNullOrWhiteSpace(selected.Name) ? selected.ModelName : selected.Name,
@@ -649,6 +447,7 @@ public class ModelLabController : ControllerBase
                 type = "modelStart",
                 runId = run.Id,
                 itemId = item.Id,
+                logicalModelId = item.LogicalModelId,
                 modelId = item.ModelId,
                 displayName = item.DisplayName,
                 modelName = item.ModelName,
@@ -670,9 +469,8 @@ public class ModelLabController : ControllerBase
                 SystemPromptRedacted: "[MODEL_LAB]",
                 RequestType: requestType,
                 AppCallerCode: appCallerCode,
-                // ModelLab 仍锁定 admin 明确选中的 platform+model，但该语义已由 pinned gateway 保证。
-                // transport 不在调用方硬写，由网关在日志构建点标注。
-                ModelResolutionType: ModelResolutionType.DirectModel));
+                ModelResolutionType: ModelResolutionType.LogicalModel,
+                LogicalModelPublicId: selected.ModelId));
 
             var startedAt = item.StartedAt;
             var firstTokenAt = (DateTime?)null;
@@ -852,117 +650,20 @@ public class ModelLabController : ControllerBase
             systemPromptOverride = null;
         }
 
-        var models = new List<ModelLabSelectedModel>();
-        // 规则：若前端显式传 models，则认为是“本次运行的临时模型列表”（例如临时禁用/过滤），优先级最高，不写入实验。
-        if (request.Models?.Count > 0)
-        {
-            models = request.Models;
-        }
-        else if (exp?.SelectedModels?.Count > 0)
-        {
-            models = exp.SelectedModels;
-        }
-        else if (request.ModelIds?.Count > 0)
-        {
-            var ids = request.ModelIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct().ToList();
-            var ms = await _db.LLMModels.Find(m => ids.Contains(m.Id)).ToListAsync(ct);
-            models = ms.Select(m => new ModelLabSelectedModel
-            {
-                // 兼容：这里 request.ModelIds 仍视为“配置模型内部 id”，但落到运行时统一转换为 platform 语义
-                ModelId = m.ModelName,
-                PlatformId = m.PlatformId ?? string.Empty,
-                Name = m.ModelName,
-                ModelName = m.ModelName,
-                Group = m.Group
-            }).ToList();
-        }
-
-        if (models.Count == 0)
-        {
-            return EffectiveRunRequest.Fail("NO_MODELS", "未选择任何模型");
-        }
-
-        // 可选：追加主模型作为标准答案（便于对照）
         if (request.IncludeMainModelAsStandard == true)
-        {
-            var main = await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct);
-            if (main != null)
-            {
-                var mainPid = (main.PlatformId ?? string.Empty).Trim();
-                var mainMid = (main.ModelName ?? string.Empty).Trim();
-                var mainKey = $"{mainPid}:{mainMid}".ToLowerInvariant();
-                var has = models.Any(x =>
-                {
-                    var pid = (x.PlatformId ?? string.Empty).Trim();
-                    var mid = (string.IsNullOrWhiteSpace(x.ModelName) ? x.ModelId : x.ModelName).Trim();
-                    return $"{pid}:{mid}".ToLowerInvariant() == mainKey;
-                });
-                if (!has)
-                {
-                    if (string.IsNullOrWhiteSpace(mainPid) || string.IsNullOrWhiteSpace(mainMid)) { /* ignore */ }
-                    models.Add(new ModelLabSelectedModel
-                    {
-                        ModelId = mainMid,
-                        PlatformId = mainPid,
-                        Name = $"标准答案 · {mainMid}".Trim(),
-                        ModelName = mainMid,
-                        Group = main.Group
-                    });
-                }
-            }
-        }
-
-        // 统一规范化：确保每个模型都具备 platformId + modelId(=modelName) 的业务语义
-        var normalized = new List<ModelLabSelectedModel>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var sm in models)
-        {
-            var pid = (sm.PlatformId ?? string.Empty).Trim();
-            var mid = (sm.ModelId ?? string.Empty).Trim();
-            var mname = (sm.ModelName ?? string.Empty).Trim();
-            var group = sm.Group;
-
-            if (string.IsNullOrWhiteSpace(mid)) continue;
-
-            // 1) 兼容：如果传入的是内部 id（或旧实验数据），优先按 id 查一次，转换为平台语义
-            var byId = await _db.LLMModels.Find(m => m.Id == mid).FirstOrDefaultAsync(ct);
-            if (byId != null)
-            {
-                if (!string.IsNullOrWhiteSpace(byId.PlatformId)) pid = byId.PlatformId!.Trim();
-                if (!string.IsNullOrWhiteSpace(byId.ModelName)) mname = byId.ModelName.Trim();
-                mid = mname;
-                group ??= byId.Group;
-            }
-
-            // 2) 若未显式给 ModelName，则视为与 ModelId 同义（平台侧模型ID）
-            if (string.IsNullOrWhiteSpace(mname)) mname = mid;
-            // 强制一致：ModelId == ModelName（业务侧只用 ModelId；ModelName 仅保留兼容字段）
-            mid = mname;
-
-            if (string.IsNullOrWhiteSpace(pid) || string.IsNullOrWhiteSpace(mid))
-            {
-                continue;
-            }
-
-            var key = $"{pid}:{mid}".Trim().ToLowerInvariant();
-            if (!seen.Add(key)) continue;
-
-            normalized.Add(new ModelLabSelectedModel
-            {
-                PlatformId = pid,
-                ModelId = mid,
-                ModelName = mname,
-                Name = mid,
-                Group = group
-            });
-        }
-
-        if (normalized.Count == 0)
-        {
+            return EffectiveRunRequest.Fail("MODEL_REFERENCE_REQUIRED", "不再自动追加物理主模型；请从授权逻辑模型目录明确选择对照模型。");
+        if (request.Models is null && exp is null && request.ModelIds?.Count > 0)
+            return EffectiveRunRequest.Fail("MODEL_REFERENCE_REQUIRED", "旧模型编号不能继续执行，请从授权逻辑模型目录重新选择模型。");
+        var selectedModels = request.Models ?? exp?.SelectedModels ?? new();
+        if (selectedModels.Count == 0)
             return EffectiveRunRequest.Fail("NO_MODELS", "未选择任何模型");
-        }
-
-        models = normalized;
+        IReadOnlyList<BusinessModelOption> options;
+        try { options = await OptionsAsync(ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { return EffectiveRunRequest.Fail("MODEL_CATALOG_UNAVAILABLE", "暂时无法核对模型目录，未启动实验；请稍后重试。"); }
+        if (!ModelLabModelReferences.TryNormalize(options, selectedModels, null, out var normalized, out var reason))
+            return EffectiveRunRequest.Fail("MODEL_REFERENCE_INVALID", reason ?? "模型引用已失效，请重新选择授权逻辑模型。");
+        var models = normalized.DistinctBy(x => x.LogicalModelId, StringComparer.Ordinal).ToList();
 
         // 识图模式：过滤空白项，限制数量
         var imageBase64List = (request.ImageBase64List ?? new List<string>())
@@ -983,36 +684,6 @@ public class ModelLabController : ControllerBase
             imageBase64List: imageBase64List);
     }
 
-    private (string? apiUrl, string? apiKey, string? platformType, string? platformId, string? platformName) ResolveApiConfigForModel(LLMModel model)
-    {
-        string? apiUrl = model.ApiUrl;
-        string? apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, _config);
-        string? platformType = null;
-        string? platformId = model.PlatformId;
-        string? platformName = null;
-
-        if (model.PlatformId != null)
-        {
-            var platform = _db.LLMPlatforms.Find(p => p.Id == model.PlatformId).FirstOrDefault();
-            platformType = platform?.PlatformType?.ToLowerInvariant();
-            platformName = platform?.Name;
-            if (platform != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
-            {
-                apiUrl ??= platform.ApiUrl;
-                apiKey ??= ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
-            }
-        }
-
-        return (apiUrl, apiKey, platformType, platformId, platformName);
-    }
-
-    private (string? apiUrl, string? apiKey, string? platformType) ResolveApiConfigForPlatform(LLMPlatform platform)
-    {
-        var apiUrl = platform.ApiUrl;
-        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
-        var platformType = platform.PlatformType?.ToLowerInvariant();
-        return (apiUrl, apiKey, platformType);
-    }
 
 }
 

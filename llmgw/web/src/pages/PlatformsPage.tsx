@@ -391,7 +391,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   async function removePlatform(p: PlatformItem) {
     const typed = await promptText({
       title: `删除上游「${p.name}」`,
-      description: `${p.apiUrl || '无地址'}\n删除后这条上游的地址与密钥一并消失，无法撤销。`,
+      description: `${p.apiUrl || '无地址'}\n删除上游及密钥，清理未被线路使用的名下模型，保留公开模型和 MAP 配置。仍有引用时拒绝删除，请先迁移并验证替代线路。删除无法撤销。`,
       inputLabel: '确认请输入平台名',
       requireExact: p.name,
       tone: 'danger',

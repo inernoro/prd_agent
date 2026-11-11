@@ -1,3 +1,4 @@
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, Clock3, Copy, Download, Expand, Eye, ImagePlus, Layers, Maximize2, Plus, Save, ScanEye, Sparkles, Tag, TimerOff, Trash2, Upload, X, XCircle, Zap } from 'lucide-react';
 import JSZip from 'jszip';
@@ -34,6 +35,9 @@ import {
 } from '@/services';
 import type { ModelLabExperiment, ModelLabModelSet, ModelLabParams, ModelLabSelectedModel, ModelLabSuite } from '@/services/contracts/modelLab';
 import type { ImageGenGenerateResponse, ImageGenPlanItem, ImageGenPlanResponse } from '@/services/contracts/imageGen';
+import { ModelReferenceStatus } from '@/components/model/ModelReferenceStatus';
+import type { ModelLabPurpose } from '@/services/contracts/modelReferences';
+import { getModelLabModelOptions } from '@/services';
 import { ModelPickerDialog } from '@/pages/lab-llm/components/ModelPickerDialog';
 import { useAuthStore } from '@/stores/authStore';
 import { clearLlmLabImagesForUser, getLlmLabImageBlob, putLlmLabImageBlob } from '@/lib/llmLabImageDb';
@@ -236,12 +240,13 @@ function parsePromptSizeMeta(prompt: string): PromptSizeMeta {
 }
 
 function signatureOfSelectedModels(list: ModelLabSelectedModel[]) {
-  // 用于“是否需要自动保存”的变更检测；与 setSelectedModelsDedupe 的唯一性规则保持一致（平台 + modelId）
+  // 同一 PublicId 可以被重建；自动保存必须识别内部逻辑身份的显式修复。
   return (list ?? [])
     .map((m) => {
+      const logicalId = String(m.logicalModelId ?? '').trim();
       const pid = String(m.platformId ?? '').trim();
-      const mid = String((m as any).modelId ?? m.modelName ?? '').trim();
-      return `${pid}:${mid}`.toLowerCase();
+      const mid = String(m.modelId ?? m.modelName ?? '').trim();
+      return JSON.stringify([logicalId, pid.toLowerCase(), mid.toLowerCase()]);
     })
     .filter(Boolean)
     .sort()
@@ -776,6 +781,9 @@ export default function LlmLabTab() {
   // 临时禁用：仅影响“本次运行”（startRun 时过滤），不写入实验 selectedModels
   const [disabledModelKeys, setDisabledModelKeys] = useState<Record<string, boolean>>({});
 
+  const [checkingModelReferences, setCheckingModelReferences] = useState(false);
+  const modelReferenceCheck = useRef(false);
+  const [modelReferenceError, setModelReferenceError] = useState<string | null>(null);
   const [mainMode, setMainMode] = useState<MainMode>('infer');
   const [imageSubMode, setImageSubMode] = useState<ImageSubMode>('single');
 
@@ -1595,6 +1603,30 @@ export default function LlmLabTab() {
     }
   };
 
+  async function ensureModelReferences(purpose: ModelLabPurpose): Promise<boolean> {
+    if (modelReferenceCheck.current) return false;
+    const requested = selectedModels.filter(model => !disabledModelKeys[modelKeyOfSelected(model)]);
+    if (!requested.length) { toast.warning('请先选择至少一个模型'); return false; }
+    modelReferenceCheck.current = true; setCheckingModelReferences(true); setModelReferenceError(null);
+    try {
+      const result = await getModelLabModelOptions(purpose);
+      if (!result.success) throw new Error('模型目录未读取');
+      const valid = requested.every(model => model.logicalModelId && result.data.items.some(option => option.logicalModelId === model.logicalModelId && option.available));
+      if (!valid) {
+        setModelReferenceError('当前用途有模型引用需要修复，请明确选择已授权模型后重试。');
+        setPickerOpen(true);
+        return false;
+      }
+      if (signatureOfSelectedModels(selectedModelsRef.current) !== signatureOfSelectedModels(selectedModels)) {
+        setModelReferenceError('模型选择已变化，请核对后重新开始。'); return false;
+      }
+      return true;
+    } catch {
+      setModelReferenceError('当前用途的模型状态未确认，请稍后重试。原选择已保留。');
+      return false;
+    } finally { modelReferenceCheck.current = false; setCheckingModelReferences(false); }
+  }
+
   const startGenerateImage = async () => {
     const prompt = (promptText ?? '').trim();
     if (!prompt) {
@@ -1605,6 +1637,8 @@ export default function LlmLabTab() {
       toast.warning('请先在左侧选择至少 1 个模型');
       return;
     }
+
+    if (!await ensureModelReferences('image')) return;
 
     const perModelN = Math.max(1, Math.min(20, Number(singleN || 1)));
     const total = perModelN * imageGenModels.length;
@@ -1710,6 +1744,8 @@ export default function LlmLabTab() {
       return;
     }
 
+    if (!await ensureModelReferences('image')) return;
+
     // 生成 30 种尺寸（10 比例 × 3 档）
     const allSizes: Array<{ aspectId: string; tier: string; size: string }> = [];
     for (const opt of NEW_ASPECT_OPTIONS) {
@@ -1745,7 +1781,7 @@ export default function LlmLabTab() {
           setFullSizeItems((prev) => ({ ...prev, [key]: newItem }));
 
           try {
-            const res = await generateImageGen({ prompt, n: 1, size, modelId: m.modelId });
+            const res = await generateImageGen({ prompt, n: 1, size, modelId: m.modelId, platformId: m.platformId, modelName: m.modelName });
             if (!res.success) throw new Error(res.error?.message || '生成失败');
 
             const asset = (res.data as any)?.asset;
@@ -1818,6 +1854,8 @@ export default function LlmLabTab() {
       toast.warning('请先在左侧选择至少 1 个模型');
       return;
     }
+
+    if (!await ensureModelReferences('image-batch')) return;
 
     const planTotal = Math.max(0, Number(planResult.total || 0));
     const total = planTotal * imageGenModels.length;
@@ -2007,6 +2045,8 @@ export default function LlmLabTab() {
       return;
     }
 
+    if (!await ensureModelReferences('chat')) return;
+
     // 安全提示：如果选中列表里包含“生图模型”，一键实验可能造成较高费用/更长耗时（尤其在生图相关套件）
     const imageGenModelIds = new Set(allModelsRef.current.filter((m) => (m as any).isImageGen).map((m) => m.id));
     const imageGenModelNames = new Set(
@@ -2051,7 +2091,7 @@ export default function LlmLabTab() {
           ? {
               imagePlanMaxItems: 10,
               systemPromptOverride: String(imageGenPlanSystemPromptText ?? '').trim() || undefined,
-              includeMainModelAsStandard: true,
+              includeMainModelAsStandard: false,
             }
           : {}),
         promptText,
@@ -2215,6 +2255,8 @@ export default function LlmLabTab() {
       toast.warning('当前已将所有模型临时禁用，请先恢复至少 1 个');
       return;
     }
+
+    if (!await ensureModelReferences('chat')) return;
 
     setVisionRunError(null);
     setVisionRunItems({});
@@ -2699,6 +2741,8 @@ export default function LlmLabTab() {
                 {modelsLoading ? <Badge variant="subtle">加载中</Badge> : null}
               </div>
             </div>
+            {checkingModelReferences ? <span role="status" className="inline-flex items-center gap-2 text-xs"><MapSpinner size={14} />正在核对当前用途模型</span> : null}
+            {modelReferenceError ? <div role="alert" className="text-xs" style={{ color: 'var(--semantic-danger-text)' }}>{modelReferenceError}<Button size="xs" variant="ghost" onClick={() => setPickerOpen(true)}>修复模型引用</Button></div> : null}
             <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1">
               {selectedModels.length === 0 ? (
                 <div className="text-sm text-token-muted">
@@ -2721,7 +2765,7 @@ export default function LlmLabTab() {
 
                     return order.map((pid) => {
                       const list = groups.get(pid) ?? [];
-                      const platformLabel = platformNameById.get(pid) || pid;
+                      const platformLabel = pid === 'logical-model' ? '授权模型' : platformNameById.get(pid) || pid;
                       const disabledCount = list.filter((m) => disabledModelKeys[modelKeyOfSelected(m)]).length;
                       return (
                         <div
@@ -2766,6 +2810,7 @@ export default function LlmLabTab() {
                                       className={cn('min-w-0 truncate', isDisabled ? 'text-token-muted line-through' : 'text-token-primary')}
                                     >
                                       {mid}
+                                      <ModelReferenceStatus reference={m} />
                                     </span>
                                   </span>
                                   <button
@@ -4636,9 +4681,9 @@ export default function LlmLabTab() {
 
       {/* 弹窗放在 grid 外，避免参与布局 */}
       <ModelPickerDialog
+        purpose={mainMode === 'image' ? imageSubMode === 'batch' ? 'image-batch' : 'image' : 'chat'}
         open={pickerOpen}
         onOpenChange={(o) => setPickerOpen(o)}
-        platforms={platforms}
         selectedModels={selectedModels}
         onConfirm={(finalList) => {
           setSelectedModelsDedupe(finalList);
