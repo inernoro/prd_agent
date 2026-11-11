@@ -41,14 +41,17 @@ public sealed partial class ModelUpgradeService
             var action = s.PendingAction;
             try
             {
-                await RequireActorAsync(s);
                 if (s.PendingSwitch is not null)
                 {
+                    // Compensate the already-authorized durable intent; never continue into a new action here.
+                    audit = await AuditBeginAsync(s, "rollback");
                     await RecoverSwitchAsync(s);
-                    throw new ModelUpgradeException("INTERRUPTED_SWITCH", "已恢复中断切换的保留版本，请刷新并重新确认操作。");
+                    await AuditCompleteAsync(s, audit, true); audit = null;
+                    throw new ModelUpgradeException("INTERRUPTED_SWITCH", "已恢复中断切换的保留版本，请由当前有权限的管理员刷新并重新确认操作。");
                 }
+                await RequireActorAsync(s);
                 if (action.Length == 0) { action = "check"; s.ExecutionRequestedBy = "scheduled"; }
-                if (s.OutcomeUnknown && !(action == "validate" && s.ValidationMode == "evidence" && !string.IsNullOrWhiteSpace(s.EvidenceRequestId)))
+                if (s.OutcomeUnknown && action != "await-validation" && !(action == "validate" && s.ValidationMode == "evidence" && !string.IsNullOrWhiteSpace(s.EvidenceRequestId)))
                     throw new ModelUpgradeException("OUTCOME_UNKNOWN", "上次验收结果未知，自动操作已停止；请提供原请求真实证据核验，禁止重发。");
                 if (action != "await-validation") audit = await AuditBeginAsync(s, action);
                 s.PendingAction = "";
@@ -67,6 +70,9 @@ public sealed partial class ModelUpgradeService
             }
             catch (Exception ex)
             {
+                var reconciliation = action == "await-validation" && !string.IsNullOrWhiteSpace(s.Candidate?.ValidationRequestId)
+                    && ex is not ModelUpgradeException { Code: "CANARY_EXPIRED_UNSENT" };
+                if (reconciliation) { s.OutcomeUnknown = true; s.ValidationStatus = "unknown"; }
                 if (action is "validate" or "await-validation" && !s.OutcomeUnknown && ex is not ModelUpgradeException { Code: "CANARY_EXPIRED_UNSENT" }) s.ValidationStatus = "failed";
                 s.PendingAction = ""; s.Phase = ex is ModelUpgradeException ? "blocked" : "failed";
                 s.Message = ex is ModelUpgradeException known ? known.Message : "后台操作未完成，原线路未确认改变；请核对诊断后重试。";
