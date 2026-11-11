@@ -73,7 +73,8 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
             UpdatedAt = s?.UpdatedAt, LastCheckedAt = s?.LastCheckedAt, NextCheckAt = s?.NextCheckAt, History = s?.History ?? [],
             CanPromote = canPromote, CanRollback = DeploymentBlockReason is null && stable && s?.LastPromotion is { RolledBack: false } && !Busy(s),
             ActionDisabledReason = DeploymentBlockReason ?? (!stable ? "固定版本标识不参与升级，请配置稳定业务模型。" : s is not null && Busy(s)
-                ? "任务正在执行，请等待状态更新。" : s?.OutcomeUnknown == true ? "上次验收结果未知，请先提供对应真实请求证据；禁止自动重试。" : canPromote ? null : "候选尚未通过真实验收，原线路保持不变。"),
+                ? "任务正在执行，请等待状态更新。" : s?.OutcomeUnknown == true ? "上次验收结果未知，请先提供对应真实请求证据；禁止自动重试。" : canPromote ? null : s?.Candidate is { } adopted && current?.ModelId == adopted.ModelId
+                    ? "当前已采用此候选版本。" : "候选尚未通过真实验收，原线路保持不变。"),
         };
     }
     public async Task<List<ModelUpgradeView>> ListAsync(string tenant)
