@@ -425,6 +425,56 @@ public sealed class ShortVideoArtifactRecoveryTests : IAsyncLifetime
         Assert.Equal(0, _outboundCalls);
     }
 
+    [Theory]
+    [InlineData("delete-pending")]
+    [InlineData("ownership-unconfirmed")]
+    public async Task ReenteredCleanup_PreservesUnresolvedPhysicalResponsibility(string state)
+    {
+        var run = await SeedUploadedAttempt(); run.ArtifactReceipt!.PhysicalState = state;
+        await _db.ShortVideoMaterialRuns.ReplaceOneAsync(x => x.Id == run.Id, run);
+        var cleanup = typeof(ShortVideoMaterialProcessor).GetMethod("CleanupArtifactsAfterFailureAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            run = await _db.ShortVideoMaterialRuns.Find(x => x.Id == run.Id).SingleAsync();
+            await (Task)cleanup.Invoke(Processor(), [run, run])!;
+            var actual = await _db.ShortVideoMaterialRuns.Find(x => x.Id == run.Id).SingleAsync();
+            Assert.True(actual.CleanupPending); Assert.Equal(state, actual.ArtifactReceipt!.PhysicalState);
+        }
+        Assert.Single(Directory.GetFiles(_files, "*", SearchOption.AllDirectories));
+        _storage.Verify(x => x.DeleteByKeyAsync(It.IsAny<string>(), CancellationToken.None), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ReenteredCleanup_RepairsCountFromSurvivingEntriesAfterInterruptedAcknowledgements(bool entryAlreadyDeleted, bool hasForeignEntry)
+    {
+        var run = await Seed(); run.CleanupPending = true;
+        var entry = new DocumentEntry { StoreId = run.StoreId!, CreatedBy = run.UserId, Metadata = new() { ["runId"] = run.Id } };
+        if (!entryAlreadyDeleted) await _db.DocumentEntries.InsertOneAsync(entry);
+        if (hasForeignEntry) await _db.DocumentEntries.InsertOneAsync(new() { StoreId = run.StoreId!, CreatedBy = "another-author" });
+        await _db.DocumentStores.UpdateOneAsync(x => x.Id == run.StoreId,
+            Builders<DocumentStore>.Update.Set(x => x.DocumentCount, hasForeignEntry ? 2 : 1).Set(x => x.PrimaryEntryId, entry.Id));
+        run.SourceEntryId = entry.Id;
+        run.ArtifactReceipt = new() { ProcessingToken = run.ProcessingToken!, PhysicalState = "retained-published", PublicationStarted = true,
+            Entries = [new() { EntryId = entry.Id, StoreId = run.StoreId!, EntryCreatedAt = entry.UpdatedAt }] };
+        await _db.ShortVideoMaterialRuns.ReplaceOneAsync(x => x.Id == run.Id, run);
+        var cleanup = typeof(ShortVideoMaterialProcessor).GetMethod("CleanupArtifactsAfterFailureAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            run = await _db.ShortVideoMaterialRuns.Find(x => x.Id == run.Id).SingleAsync();
+            await (Task)cleanup.Invoke(Processor(), [run, run])!;
+            var store = await _db.DocumentStores.Find(x => x.Id == run.StoreId).SingleAsync();
+            Assert.Equal(hasForeignEntry ? 1 : 0, store.DocumentCount);
+            Assert.Equal(hasForeignEntry ? 1 : 0, await _db.DocumentEntries.CountDocumentsAsync(x => x.StoreId == run.StoreId));
+            Assert.NotEqual(entry.Id, store.PrimaryEntryId);
+            Assert.Null((await _db.ShortVideoMaterialRuns.Find(x => x.Id == run.Id).SingleAsync()).SourceEntryId);
+        }
+        Assert.Equal(0, _outboundCalls);
+    }
+
     [Fact]
     public async Task SuccessfulManualPipeline_KeepsBothCommittedEntriesAndFile_WithoutProviderCalls()
     {

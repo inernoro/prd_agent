@@ -121,7 +121,6 @@ public sealed class ShortVideoMaterialEntryReceipt
     public string? DocumentId { get; set; }
     public bool DocumentCreatedNew { get; set; }
     public bool UnconfirmedWrite { get; set; }
-    public bool CountIncrementConfirmed { get; set; }
 }
 
 /// <summary>
