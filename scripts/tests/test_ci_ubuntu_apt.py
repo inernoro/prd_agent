@@ -139,7 +139,60 @@ Signed-By: /key/third-party.gpg
         self.assertFalse((outside / 'not-created').exists())
 
 
+    def test_kernel_mode_only_changes_managed_ubuntu_uris_and_retains_trust(self):
+        original = '''Types: deb
+URIs: mirror+file:/etc/apt/apt-mirrors.txt
+Suites: noble noble-updates resolute
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+Check-Valid-Until: yes
+
+Types: deb
+URIs: https://security.ubuntu.com/ubuntu
+Suites: noble-security resolute-security
+Components: main universe
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+Check-Valid-Until: yes
+
+Types: deb
+URIs: https://packages.microsoft.com/repos/code
+Suites: stable
+Components: main
+Signed-By: /key/microsoft.gpg
+'''
+        path = self.write('etc/apt/sources.list.d/ubuntu.sources', original)
+        legacy = self.write('etc/apt/sources.list', 'deb [signed-by=/key/ubuntu.gpg check-valid-until=yes] http://azure.archive.ubuntu.com/ubuntu jammy-security main\n')
+        subprocess.run([sys.executable, str(HELPER), '--root', str(self.root), '--mirror', 'kernel'], check=True, capture_output=True)
+        expected = original.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://mirrors.kernel.org/ubuntu').replace('https://security.ubuntu.com/ubuntu', 'https://mirrors.kernel.org/ubuntu')
+        self.assertEqual(path.read_text(), expected)
+        self.assertEqual(legacy.read_text(), 'deb [signed-by=/key/ubuntu.gpg check-valid-until=yes] https://mirrors.kernel.org/ubuntu jammy-security main\n')
+        self.assertEqual(apt.prepare(self.root, 'kernel'), 0, 'fixed kernel output is idempotent')
+        self.assertEqual((self.root / 'etc/apt/apt.conf.d/99-ci-network-bounds').read_text(), apt.NETWORK_BOUNDS)
+        self.assertEqual(apt.canonical_uri('https://mirrors.kernel.org/debian', mirror='kernel'), 'https://mirrors.kernel.org/debian')
+        self.assertEqual(apt.canonical_uri('https://private.example/ubuntu', mirror='kernel'), 'https://private.example/ubuntu')
+
+    def test_explicit_canonical_can_restore_our_exact_kernel_output(self):
+        path = self.write('etc/apt/sources.list', 'deb https://mirrors.kernel.org/ubuntu jammy main\ndeb https://mirrors.kernel.org/ubuntu jammy-security main\n')
+        apt.prepare(self.root, 'canonical')
+        self.assertEqual(path.read_text(), 'deb https://archive.ubuntu.com/ubuntu jammy main\ndeb https://security.ubuntu.com/ubuntu jammy-security main\n')
+
+    def test_arbitrary_mirror_values_are_rejected_before_any_write(self):
+        original = 'deb http://azure.archive.ubuntu.com/ubuntu noble main\n'
+        path = self.write('etc/apt/sources.list', original)
+        for mirror in ['https://untrusted.example/ubuntu', 'kernel-other', '']:
+            with self.subTest(mirror=mirror):
+                result = subprocess.run([sys.executable, str(HELPER), '--root', str(self.root), '--mirror', mirror], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(path.read_text(), original)
+                self.assertFalse((self.root / 'etc/apt/apt.conf.d/99-ci-network-bounds').exists())
+                with self.assertRaises(ValueError): apt.prepare(self.root, mirror)
+
+
 class WorkflowAptWiring(unittest.TestCase):
+    def test_all_four_ci_consumers_explicitly_select_the_fixed_backup(self):
+        source = WORKFLOW.read_text()
+        self.assertEqual(source.count('scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel'), 4)
+
     def test_all_four_real_consumers_prepare_sources_before_unchanged_dependency_commands(self):
         source = WORKFLOW.read_text()
         helper = 'sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root /'

@@ -454,7 +454,7 @@ jobs:
       - name: Install video test dependencies
         timeout-minutes: 10
         run: |
-          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root /
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
@@ -619,7 +619,7 @@ jobs:
         timeout-minutes: 10
         working-directory: ${{ github.workspace }}/e2e
         run: |
-          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root /
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel
           pnpm exec playwright install --with-deps chromium
 
       - name: Run focused browser acceptance
@@ -742,7 +742,7 @@ jobs:
       - name: Install system dependencies (Linux)
         timeout-minutes: 10
         run: |
-          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root /
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
@@ -879,7 +879,7 @@ jobs:
       - name: Install isolated quality browser
         timeout-minutes: 10
         run: |
-          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root /
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel
           pnpm exec playwright-core install --with-deps chromium
 
       - name: Type check
