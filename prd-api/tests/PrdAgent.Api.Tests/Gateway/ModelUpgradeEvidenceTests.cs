@@ -1,0 +1,70 @@
+using System.Reflection;
+using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Bson;
+using MongoDB.Driver;
+using Moq;
+using PrdAgent.LlmGw.ModelUpgrades;
+using Xunit;
+
+namespace PrdAgent.Api.Tests.Gateway;
+
+public class ModelUpgradeEvidenceTests
+{
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task EvidenceValidationUsesAuthoritativeOutputAndDoesNotSendProbe(bool hasOutput, bool includeOffering)
+    {
+        var now = DateTime.UtcNow;
+        var logical = new BsonDocument { { "_id", "stable-id" }, { "TenantId", "tenant" }, { "IdentityKind", "stable" }, { "Enabled", true }, { "ModelType", "generation" }, { "UpdatedAt", now } };
+        var provider = new BsonDocument { { "_id", "official" }, { "TenantId", "tenant" }, { "Enabled", true }, { "PlatformType", "openai" }, { "ApiUrl", "https://api.openai.com/v1" }, { "UpdatedAt", now } };
+        var model = new BsonDocument { { "_id", "physical" }, { "TenantId", "tenant" }, { "Enabled", true }, { "PlatformId", "official" }, { "ModelName", "exact-candidate" }, { "UpdatedAt", now } };
+        var fixedLogical = new BsonDocument { { "_id", "fixed-id" }, { "ModelType", "generation" }, { "Enabled", true }, { "IdentityKind", "fixed" } };
+        var route = new BsonDocument { { "_id", "fixed-offering" }, { "LogicalModelId", "fixed-id" }, { "TargetKind", "model" }, { "TargetId", "physical" }, { "UpstreamModelId", "exact-candidate" }, { "Enabled", true }, { "Protocol", "openai" }, { "EndpointPath", "custom/images" }, { "UpdatedAt", now } };
+        var log = new BsonDocument { { "OfferingId", "fixed-offering" }, { "Protocol", "openai" }, { "Path", "/v1/custom/images" }, { "TenantId", "tenant" }, { "RequestId", "real-request" }, { "PlatformId", "official" }, { "Model", "exact-candidate" }, { "Status", "succeeded" }, { "StatusCode", 200 }, { "EndedAt", now }, { "ImageSuccessCount", hasOutput ? 1 : 0 } };
+        if (!includeOffering) log.Remove("OfferingId");
+        var db = new Mock<IMongoDatabase>(MockBehavior.Strict);
+        var collections = new Dictionary<string, Mock<IMongoCollection<BsonDocument>>>();
+        foreach (var (name, doc) in new[] { ("llmgw_logical_models", logical), ("llmgw_platforms", provider), ("llmgw_models", model), ("llmrequestlogs", log), ("llmgw_model_offerings", route) })
+        {
+            var cursor = new Mock<IAsyncCursor<BsonDocument>>();
+            cursor.SetupGet(x => x.Current).Returns(new[] { doc });
+            cursor.SetupSequence(x => x.MoveNextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true).ReturnsAsync(false);
+            var collection = new Mock<IMongoCollection<BsonDocument>>();
+            collection.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<BsonDocument>>(), It.IsAny<FindOptions<BsonDocument, BsonDocument>>(), It.IsAny<CancellationToken>())).ReturnsAsync(cursor.Object);
+            collections[name] = collection;
+            db.Setup(x => x.GetCollection<BsonDocument>(name, It.IsAny<MongoCollectionSettings>())).Returns(collection.Object);
+        }
+        var logicalReads = 0;
+        collections["llmgw_logical_models"].Setup(x => x.FindAsync(It.IsAny<FilterDefinition<BsonDocument>>(), It.IsAny<FindOptions<BsonDocument, BsonDocument>>(), It.IsAny<CancellationToken>())).Returns(() =>
+        {
+            var cursor = new Mock<IAsyncCursor<BsonDocument>>();
+            cursor.SetupGet(x => x.Current).Returns(new[] { logicalReads++ == 0 ? logical : fixedLogical });
+            cursor.SetupSequence(x => x.MoveNextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true).ReturnsAsync(false);
+            return Task.FromResult(cursor.Object);
+        });
+        var discovery = new Mock<IModelUpgradeDiscovery>(MockBehavior.Strict);
+        var service = new ModelUpgradeService(db.Object, db.Object, discovery.Object, "tenant", NullLogger<ModelUpgradeService>.Instance, ModelUpgradeTestConfiguration.AuthorizedProduction());
+        var state = new ModelUpgradeState { TenantId = "tenant", LogicalModelId = "stable-id", ValidationMode = "evidence", EvidenceRequestId = "real-request", Gates = new() { Capabilities = true },
+            Candidate = new() { ModelId = "physical", ProviderId = "official", UpstreamModelId = "exact-candidate", Fingerprint = ModelUpgradeRules.Fingerprint(logical, provider, model) } };
+        var operation = typeof(ModelUpgradeService).GetMethod("ValidateAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var task = (Task)operation.Invoke(service, new object[] { state })!;
+        if (hasOutput && includeOffering)
+        {
+            await task;
+            Assert.True(state.Gates.Validation); Assert.Equal("passed", state.ValidationStatus); Assert.Equal("validated", state.Phase);
+            Assert.Equal("custom/images", state.Candidate!.ValidationRoute!.EndpointPath);
+            Assert.Equal("fixed-offering", state.Candidate.ValidationRoute.OfferingId);
+            Assert.False(state.Gates.Price); // Unknown pricing permits evidence, never automatic promotion.
+            Assert.False(ModelUpgradeRules.CanPromote(state, true, now));
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<ModelUpgradeException>(async () => await task);
+            Assert.Equal(hasOutput ? "EVIDENCE_WIRE_REQUIRED" : "SERVICE_EVIDENCE_REQUIRED", error.Code); Assert.False(state.Gates.Validation);
+        }
+        discovery.VerifyNoOtherCalls();
+        foreach (var collection in collections.Values) collection.Verify(x => x.InsertOneAsync(It.IsAny<BsonDocument>(), It.IsAny<InsertOneOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+}

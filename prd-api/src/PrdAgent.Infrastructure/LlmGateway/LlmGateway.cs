@@ -1471,10 +1471,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 resolution.ErrorMessage ?? "未找到可用模型", GatewayRouteFailure.HttpStatusCode(resolution.FailureCode));
 
         if (!string.IsNullOrWhiteSpace(request.RequiredLogicalModelPublicId)
-            && !string.Equals(
-                request.RequiredLogicalModelPublicId.Trim(),
-                resolution.LogicalModelPublicId?.Trim(),
-                StringComparison.OrdinalIgnoreCase))
+            && !GatewayLogicalModelIdentity.Accepts(request.RequiredLogicalModelPublicId,
+                resolution.LogicalModelPublicId, resolution.AcceptedModelAliases))
         {
             return GatewayRawResponse.Fail(
                 "LOGICAL_MODEL_RESOLUTION_MISMATCH",
@@ -1517,6 +1515,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             LogicalModelId = resolution.LogicalModelId,
             LogicalModelPublicId = resolution.LogicalModelPublicId,
+            AcceptedModelAliases = [.. resolution.AcceptedModelAliases],
             OfferingId = resolution.OfferingId,
             OfferingTargetKind = resolution.OfferingTargetKind,
             OfferingRateLimitPerMinute = resolution.OfferingRateLimitPerMinute,
@@ -1858,6 +1857,32 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return null;
     }
 
+    /// <summary>专用单次候选验收的最终聊天 wire 约束；许可和金额仍由既有统一出口核验。</summary>
+    public static bool IsBoundedCanaryChatWire(GatewayRawRequest request, string? offeringId, string? protocol, string? serializedBody, string? actualModel = null)
+    {
+        if (request.ModelType != ModelTypes.Chat || request.IsMultipart || request.CanonicalImageRequest is not null
+            || string.IsNullOrWhiteSpace(offeringId) || request.RequiredOfferingId != offeringId
+            || GatewayProtocolAliases.NormalizeAdapterKey(protocol) != GatewayProtocolAliases.OpenAI) return false;
+        try
+        {
+            var tokenField = actualModel is not null && IsGpt5FamilyModel(actualModel) ? MaxCompletionTokensField : MaxTokensField;
+            var allowsReasoningNone = actualModel is not null && IsGpt56FamilyModel(actualModel);
+            if (JsonNode.Parse(serializedBody ?? "") is not JsonObject body
+                || body.Any(p => p.Key is not ("model" or "messages" or "stream") && p.Key != tokenField
+                    && !(allowsReasoningNone && p.Key == "reasoning_effort"))
+                || actualModel is not null && body["model"]?.GetValue<string>() != actualModel
+                || body.ContainsKey("reasoning_effort") && (!allowsReasoningNone || body["reasoning_effort"]?.GetValue<string>() != "none")
+                || body[tokenField] is not JsonValue cap || !cap.TryGetValue<int>(out var max) || max != 16
+                || body["stream"] is JsonValue streaming && (!streaming.TryGetValue<bool>(out var stream) || stream)
+                || body["messages"] is not JsonArray { Count: 1 } messages || messages[0] is not JsonObject message
+                || message.Count != 2 || message["role"]?.GetValue<string>() != "user"
+                || message["content"] is not JsonValue content || !content.TryGetValue<string>(out var text)
+                || text.Length is < 1 or > 200) return false;
+            return true;
+        }
+        catch { return false; }
+    }
+
     internal static GatewayRawRequest RebuildCanonicalImageRequest(
         GatewayRawRequest source,
         ModelResolutionResult resolution)
@@ -1865,6 +1890,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var spec = source.CanonicalImageRequest!;
         var protocol = string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol;
         var normalizedProtocol = protocol?.Trim().ToLowerInvariant();
+        if (spec.Quality is not null && (normalizedProtocol != "openai" || resolution.IsExchange
+            || !resolution.ActualModel!.StartsWith("gpt-image-", StringComparison.OrdinalIgnoreCase)
+            || spec.Quality is not ("low" or "medium" or "high" or "auto")))
+            throw new InvalidOperationException("当前图片线路不支持所请求的质量参数，未发送请求。");
         var images = spec.Images.Select(image => ImageInputNormalizer.Read(image).DataUri).ToList();
         // 上游模型能力优先于 MAP 静态兼容表。只有存量模型尚未配置 image_size 能力时，
         // 才回退到旧适配表，避免新增模型继续依赖按名称猜测。
@@ -2039,6 +2068,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
         }
 
+        if (spec.Quality is not null)
+        {
+            if (multipartFields is not null) multipartFields["quality"] = spec.Quality;
+            else if (body is not null) body["quality"] = spec.Quality;
+        }
         if (upstreamSizeControl.IsConfigured)
         {
             var effectiveSize = ResolveEffectiveImageSizeFromWire(
@@ -2058,9 +2092,18 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (!resolution.IsExchange && !string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath))
             endpointPath = resolution.OfferingEndpointPath;
 
+        if (source.Context?.SourceTask?.StartsWith("ModelUpgradeCanaryWorker:", StringComparison.Ordinal) == true
+            && (string.IsNullOrWhiteSpace(source.RequiredOfferingId) || spec.Count != 1 || spec.Size != "1024x1024"
+                || spec.Quality != "low" || spec.Prompt.Length is < 1 or > 200 || spec.Images.Count != 0
+                || spec.MaskBase64 is not null || isMultipart || body?["n"]?.ToString() != "1"
+                || body?["size"]?.ToString() != "1024x1024" || body?["quality"]?.ToString() != "low"
+                || body?["prompt"]?.ToString().Length is not (> 0 and <= 200)
+                || endpointPath?.TrimStart('/') is not ("images/generations" or "v1/images/generations")))
+            throw new InvalidOperationException("候选验收最终请求超出已授权的图片范围，未发送请求。");
         return new GatewayRawRequest
         {
             CanonicalImageRequest = spec,
+            RequiredOfferingId = source.RequiredOfferingId,
             RequiredLogicalModelPublicId = source.RequiredLogicalModelPublicId,
             AppCallerCode = source.AppCallerCode,
             ModelType = source.ModelType,
@@ -2500,6 +2543,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 Count = spec.Count,
                 Size = spec.Size,
                 ResponseFormat = spec.ResponseFormat,
+                Quality = spec.Quality,
                 // URL 引用由已有协议处理；此处不新增网络读取或改变 URL 安全边界。
                 Images = spec.Images.Select(value =>
                     Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
@@ -2743,6 +2787,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 };
                 requestBodyForLog = jsonContent;
             }
+
+            if (request.Context?.SourceTask?.StartsWith("ModelUpgradeCanaryWorker:", StringComparison.Ordinal) == true
+                && request.ModelType == ModelTypes.Chat
+                && !IsBoundedCanaryChatWire(request, resolution.OfferingId, resolution.Protocol ?? resolution.PlatformType, requestBodyForLog, resolution.ActualModel))
+                return GatewayRawResponse.Fail("GATEWAY_CANARY_WIRE_DENIED", "候选验收最终聊天参数超出许可范围，未发送请求。", 409);
 
             // 4. 设置请求头（支持 Exchange 可配置认证方案）
             if (!string.IsNullOrWhiteSpace(resolution.ApiKey))

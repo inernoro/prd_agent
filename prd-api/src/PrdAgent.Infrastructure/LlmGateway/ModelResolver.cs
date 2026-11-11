@@ -1163,6 +1163,7 @@ public class ModelResolver : IModelResolver
                 Id = logical.Id,
                 Name = logical.Name,
                 Code = logical.PublicId,
+                Aliases = [.. logical.Aliases],
                 Description = logical.Description,
                 Priority = logical.DisplayOrder,
                 ResolutionType = "LogicalModel",
@@ -1255,25 +1256,31 @@ public class ModelResolver : IModelResolver
         var key = expectedModel.Trim();
         var normalized = key.ToLowerInvariant();
         var logicalModels = _gatewayDb.Context.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models");
-        var logical = await logicalModels.Find(Builders<GatewayLogicalModel>.Filter.And(
+        var matches = await logicalModels.Find(Builders<GatewayLogicalModel>.Filter.And(
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, CurrentTenantId),
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.Enabled, true),
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType),
                 Builders<GatewayLogicalModel>.Filter.Or(
                     Builders<GatewayLogicalModel>.Filter.Eq(x => x.PublicIdNormalized, normalized),
                     Builders<GatewayLogicalModel>.Filter.Eq(x => x.PublicId, key),
+                    Builders<GatewayLogicalModel>.Filter.AnyEq(x => x.Aliases, normalized),
                     // 搬迁期的桥：`model_policy=pool` 这条契约还活着，serving 会把
                     // model_pool_id 塞进 expectedModel，而客户端存的是**池文档 ID**、
                     // 不是搬迁后的 PublicId。不认它的话这些请求一律查不到，又因为
                     // expectedModel 非空而跳过默认那一支，直接 MODEL_NOT_FOUND——
                     // 池退场把它们整条打断了。见 GatewayLogicalModel.MigratedFromPoolIds。
                     Builders<GatewayLogicalModel>.Filter.AnyEq(x => x.MigratedFromPoolIds, key))))
-            .FirstOrDefaultAsync(ct);
+            .Limit(2).ToListAsync(ct);
 
-        if (logical is null)
-            return null;
-
-        return await ResolveFromLogicalModelAsync(logical, appCallerCode, expectedModel, allowedGroups, ct, readOnlyMetadata);
+        if (matches.Count == 0) return null;
+        if (matches.Count != 1)
+            return ModelResolutionResult.NotFound(expectedModel,
+                "模型标识匹配多条配置，请管理员核对兼容别名；已拒绝任意代选。",
+                GatewayRouteFailure.RouteConfigIncompatible, "logical-model-alias", appCallerCode);
+        var logical = matches[0];
+        var resolution = await ResolveFromLogicalModelAsync(logical, appCallerCode, expectedModel, allowedGroups, ct, readOnlyMetadata);
+        if (resolution.Success) resolution.AcceptedModelAliases = [.. logical.Aliases];
+        return resolution;
     }
 
     /// <summary>
@@ -1534,10 +1541,12 @@ public class ModelResolver : IModelResolver
                 return null;
             }
             var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(exchange.TargetApiKeyEncrypted, _config);
-            return ModelResolutionResult.FromExchangePool(
+            var exchangeResolution = ModelResolutionResult.FromExchangePool(
                 "LogicalModel", expectedModel, item, logicalGroup, exchange, apiKey,
                 logical.Id, logical.PublicId, offering.Id, "exchange",
                 offering.MaxConcurrency, offering.RateLimitPerMinute, offering.EndpointPath);
+            exchangeResolution.AcceptedModelAliases = [.. logical.Aliases];
+            return exchangeResolution;
         }
 
         var modelCollection = _gatewayDb!.Context.Database.GetCollection<LLMModel>("llmgw_models");
@@ -1602,10 +1611,12 @@ public class ModelResolver : IModelResolver
             ? platform.ApiKeyEncrypted
             : model.ApiKeyEncrypted;
         var apiKeyValue = ApiKeyCryptoKeyRing.DecryptPlainOrNull(encryptedKey, _config);
-        return ModelResolutionResult.FromPool(
+        var modelResolution = ModelResolutionResult.FromPool(
             "LogicalModel", expectedModel, item, logicalGroup, endpointPlatform, apiKeyValue, model,
             logical.Id, logical.PublicId, offering.Id, "model", offering.MaxConcurrency,
             offering.RateLimitPerMinute, offering.EndpointPath);
+        modelResolution.AcceptedModelAliases = [.. logical.Aliases];
+        return modelResolution;
     }
 
 

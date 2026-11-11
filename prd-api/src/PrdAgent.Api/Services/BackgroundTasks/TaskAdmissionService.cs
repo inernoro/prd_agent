@@ -114,8 +114,24 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
             new(taskId, TaskExecutionCoordinator.Fingerprint(subjectUserId), operation), null, ct, subjectUserId);
     }
 
+    /// <summary>仅候选验收消费器使用；专用部署授权不放开其他共享自动任务。</summary>
+    internal Task<TaskExecutionIdentity> AdmitModelUpgradeCanaryAsync(string requestId, string fingerprint,
+        string subjectUserId, string appCallerCode, TaskBudgetContractPolicy budget, bool scheduled, CancellationToken ct)
+    {
+        if (!ModelUpgradeCanaryWorker.Enabled(configuration)
+            || scheduled && !configuration.GetValue<bool>("LlmGateway:ModelUpgrades:ScheduledCanaryEnabled")
+            || AutomaticTaskExecutionContext.SourceDeployment is not { } source
+            || !source.Contains("/ModelUpgradeCanaryWorker/", StringComparison.Ordinal)
+            || !AppCallerRegistrationService.GetAllDefinitions().Any(x => x.AppCode == appCallerCode))
+            throw new TaskExecutionAdmissionException("TASK_CANARY_NOT_ADMITTED", "当前部署未获候选验收授权，未启动付费调用。");
+        var operation = "ModelUpgradeCanaryWorker:" + requestId;
+        return IssueAsync(new(operation, new[] { appCallerCode }), subjectUserId,
+            TaskExecutionOrigins.Scheduled, "model-upgrade:" + requestId,
+            new(requestId, fingerprint, "ModelUpgradeCanaryWorker"), null, ct, subjectUserId, budget);
+    }
+
     private async Task<TaskExecutionIdentity> IssueAsync(TaskAdmissionPolicy policy, string actor,
-        string origin, string credential, TaskBusinessIntent intent, HttpContext? http, CancellationToken ct, string? subjectUserId = null)
+        string origin, string credential, TaskBusinessIntent intent, HttpContext? http, CancellationToken ct, string? subjectUserId = null, TaskBudgetContractPolicy? canaryBudget = null)
     {
         if (string.IsNullOrWhiteSpace(actor) || string.IsNullOrWhiteSpace(credential)
             || actor.Length > 200 || credential.Length > 400 || policy.AppCallers.Count == 0
@@ -134,9 +150,9 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
             SourceDeployment = TaskPermitDeployment.Resolve(configuration),
             SourceTask = policy.Operation,
             AllowedAppCallerCodes = policy.AppCallers.ToList(),
-            MaxCalls = origin == TaskExecutionOrigins.Interactive ? policy.InteractiveMaxCalls
+            MaxCalls = canaryBudget is not null ? 1 : origin == TaskExecutionOrigins.Interactive ? policy.InteractiveMaxCalls
                 : origin == TaskExecutionOrigins.Scheduled ? 8 : policy.AgentMaxCalls,
-            MaxRuns = origin == TaskExecutionOrigins.Interactive ? 16
+            MaxRuns = canaryBudget is not null ? 1 : origin == TaskExecutionOrigins.Interactive ? 16
                 : origin == TaskExecutionOrigins.Scheduled ? 1 : 2,
             CreatedAt = now,
             ExpiresAt = now + GatewayTaskPermitRecord.MaximumLifetime,
@@ -145,7 +161,7 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
         permit.Id = TaskExecutionCoordinator.BusinessId(permit.TenantId, actor, intent.Scope, intent.Key);
         permit.BusinessKeyHash = TaskExecutionCoordinator.Fingerprint(intent.Key);
         permit.RequestFingerprint = intent.Fingerprint;
-        await TaskBudgetContracts.BindAsync(permit, configuration, data, ct);
+        await TaskBudgetContracts.BindAsync(permit, configuration, data, ct, canaryBudget);
         var result = await _executions.RegisterAsync(permit, http is not null, ct);
         if (result.Replayed && origin != TaskExecutionOrigins.Scheduled) throw new TaskIntentReplayException(result.Permit);
         var identity = result.Lease?.Identity ?? new TaskExecutionIdentity(result.Permit.Id);

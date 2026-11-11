@@ -47,6 +47,9 @@ public class ImageGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     /// </summary>
     public string? ModelId { get; set; }
 
+    /// <summary>MCP 调用方明确提交的公开标识或兼容别名；省略时为空，幂等重放保留原选择。</summary>
+    public string? RequestedModelId { get; set; }
+
     /// <summary>
     /// 用户在视觉创作模型列表中选择的逻辑模型公开 ID。
     /// 该值在任务整个生命周期内保持稳定，不得被本次命中的上游模型名覆盖；

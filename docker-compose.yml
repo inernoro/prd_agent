@@ -58,6 +58,10 @@ services:
       - ASPNETCORE_URLS=http://+:8080
       # 稳定部署域：与分支名共同组成后台任务 OwnerInstanceId；滚动发布期间保持不变。
       - Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}
+      # 模型更新探测单独授权，不扩大其他自动任务的执行范围。
+      - LlmGateway__ModelUpgrades__CanaryEnabled=${LLMGW_MODEL_UPGRADE_CANARY_ENABLED:-false}
+      - LlmGateway__ModelUpgrades__ScheduledCanaryEnabled=${LLMGW_MODEL_UPGRADE_SCHEDULED_CANARY_ENABLED:-false}
+      - LlmGateway__ModelUpgrades__CanaryDeployment=${LLMGW_MODEL_UPGRADE_CANARY_DEPLOYMENT:-}
       # 正式实例明确承担既有定时任务；共库预览仍由 CDS 标记与运行时权限拒绝。
       - Deployment__SharedScheduledWorkEnabled=${SHARED_SCHEDULED_WORK_ENABLED:-true}
       # 首次引入部署域时，生产默认接管固定截止线前由旧 main owner 创建的任务。
@@ -293,6 +297,9 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8090
+      - Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}
+      - LlmGateway__ModelUpgrades__WorkerEnabled=${LLMGW_MODEL_UPGRADE_WORKER_ENABLED:-false}
+      - LlmGateway__ModelUpgrades__WorkerDeployment=${LLMGW_MODEL_UPGRADE_WORKER_DEPLOYMENT:-}
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__MongoConnectionString=${LLMGW_MONGO_CONNECTION_STRING:-}

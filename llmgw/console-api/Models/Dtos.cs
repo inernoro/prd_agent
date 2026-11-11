@@ -1365,6 +1365,8 @@ public sealed class LogicalModelItem
 {
     public string Id { get; set; } = "";
     public string PublicId { get; set; } = "";
+    public string IdentityKind { get; set; } = "fixed";
+    public List<string> Aliases { get; set; } = new();
     public string Name { get; set; } = "";
     public string ModelType { get; set; } = "";
     public List<string> Capabilities { get; set; } = new();
@@ -1584,6 +1586,8 @@ public sealed class CallTraceLedger
 public sealed class CreateLogicalModelRequest
 {
     public string? PublicId { get; set; }
+    public string IdentityKind { get; set; } = "fixed";
+    public List<string> Aliases { get; set; } = new();
     public string? Name { get; set; }
     public string? ModelType { get; set; }
     public List<string> Capabilities { get; set; } = new();
@@ -1598,6 +1602,7 @@ public sealed class CreateLogicalModelRequest
 public sealed class UpdateLogicalModelRequest
 {
     public string? Name { get; set; }
+    public List<string>? Aliases { get; set; }
     public List<string>? Capabilities { get; set; }
     public List<string>? AllowedAppCallerCodes { get; set; }
     /// <summary>「对这些调用方而言我是默认」；不传表示不改。</summary>
@@ -2448,6 +2453,7 @@ public sealed class UpsertImageGenConfigRequest
 
 public sealed class CatalogEntriesData
 {
+    public IReadOnlyDictionary<string, string> LegacyCapabilityAliases { get; set; } = new Dictionary<string, string>();
     public List<CatalogEntryItem> Items { get; set; } = new();
     public int Total { get; set; }
 

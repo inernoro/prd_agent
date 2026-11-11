@@ -38,7 +38,7 @@ public partial class LlmGateway
         // PinnedModelId 支持登记记录 Id 或模型名；由唯一一次 resolver 校验，不能与物理模型名再次比较。
         if ((!string.IsNullOrWhiteSpace(request.PinnedPlatformId) && request.PinnedPlatformId != resolution.ActualPlatformId)
             || (!string.IsNullOrWhiteSpace(request.RequiredLogicalModelPublicId)
-                && request.RequiredLogicalModelPublicId != resolution.LogicalModelPublicId))
+                && !GatewayLogicalModelIdentity.Accepts(request.RequiredLogicalModelPublicId, resolution.LogicalModelPublicId, resolution.AcceptedModelAliases)))
             return GatewayRawResponse.Fail("NATIVE_RESPONSES_TARGET_MISMATCH", "指定模型与解析结果不一致", 409);
 
         var resolved = RestoreRawResolution(resolution);

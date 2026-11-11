@@ -181,10 +181,8 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
             pinnedModelId: null,
             ct);
         if (resolution.Success
-            && string.Equals(
-                required,
-                resolution.LogicalModelPublicId?.Trim(),
-                StringComparison.OrdinalIgnoreCase))
+            && GatewayLogicalModelIdentity.Accepts(required,
+                resolution.LogicalModelPublicId, resolution.AcceptedModelAliases))
         {
             return resolution;
         }
@@ -231,6 +229,9 @@ public class AvailableModelPool
     /// 模型池代码
     /// </summary>
     public string Code { get; init; } = string.Empty;
+
+    /// <summary>当前逻辑模型明确登记的兼容标识，不携带供应商凭据。</summary>
+    public List<string> Aliases { get; init; } = new();
 
     /// <summary>
     /// 优先级

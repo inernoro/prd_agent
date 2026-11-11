@@ -1056,3 +1056,14 @@ export function saveUpstreamProxy(body: import('./types').UpstreamProxyDraft): P
 export function testUpstreamNetwork(kind: 'platform' | 'exchange', id: string, samples = 3): Promise<ApiResponse<import('./types').UpstreamNetworkTestResult>> {
   return apiRequest(`/upstreams/${kind}/${encodeURIComponent(id)}/network-test`, { method: 'POST', body: { samples } });
 }
+
+// 稳定模型升级：动作返回服务端最新状态；检查和验证只由用户显式提交，轮询只读详情。
+export function getModelUpgrade(logicalModelId: string): Promise<ApiResponse<import('./types').ModelUpgradeView>> {
+  return apiRequest<import('./types').ModelUpgradeView>(`/model-upgrades/${encodeURIComponent(logicalModelId)}`);
+}
+export function saveModelUpgradePolicy(logicalModelId: string, body: import('./types').UpdateModelUpgradePolicyRequest): Promise<ApiResponse<import('./types').ModelUpgradeView>> {
+  return apiRequest<import('./types').ModelUpgradeView>(`/model-upgrades/${encodeURIComponent(logicalModelId)}`, { method: 'PUT', body });
+}
+export function runModelUpgradeAction(logicalModelId: string, action: import('./types').ModelUpgradeAction, body: import('./types').ModelUpgradeActionRequest): Promise<ApiResponse<import('./types').ModelUpgradeView>> {
+  return apiRequest<import('./types').ModelUpgradeView>(`/model-upgrades/${encodeURIComponent(logicalModelId)}/${action}`, { method: 'POST', body });
+}
