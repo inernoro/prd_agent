@@ -99,6 +99,70 @@ test -r "$restricted_root/current/assets/app.js"
 find "$restricted_root/.releases/restricted" -type d -exec test -x {} \;
 find "$restricted_root/.releases/restricted" -type f -exec test -r {} \;
 
+# Equal-length reproducible entries need fresh metadata for every switch,
+# including failure recovery after current was already replaced.
+python3 - "$repo_root" "$tmp_root" <<'PYCACHE'
+import hashlib
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+repo, tmp = map(Path, sys.argv[1:])
+root = tmp / 'cache-layout'
+root.mkdir()
+for version in ['A', 'B']:
+    stage = root / f'.staging-{version}'
+    stage.mkdir()
+    (stage / 'index.html').write_text(f'<div>{version}</div>\n')
+    (stage / 'manifest.json').write_text('{"immutable":true}\n')
+    (stage / 'asset.js').write_text('immutable asset\n')
+    for path in stage.iterdir():
+        os.utime(path, (946656000, 946656000))
+before = {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in root.glob('*/*')}
+
+def run(commands):
+    subprocess.run(['sh', '-eu', '-c', '. "$1/scripts/lib/static-release.sh"; ' + commands, 'cache-test', str(repo), str(root)], check=True, stdout=subprocess.DEVNULL)
+
+run('static_release_activate "$2/.staging-A" "$2" A')
+a = root / '.releases/A/index.html'
+a_time = a.stat().st_mtime
+run('static_release_activate "$2/.staging-B" "$2" B')
+b = root / '.releases/B/index.html'
+b_time = b.stat().st_mtime
+assert b_time > a_time
+run('static_release_rollback "$2" .releases/A')
+assert a.stat().st_mtime > b_time
+for version in ['A', 'B']:
+    for path in (root / f'.releases/{version}').iterdir():
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == before[f'.staging-{version}/{path.name}']
+        assert path.stat().st_mode & 0o777 == 0o644
+        if path.name != 'index.html':
+            assert path.stat().st_mtime == 946656000
+
+stage = root / '.staging-fail'
+stage.mkdir()
+(stage / 'index.html').write_text('<div>C</div>\n')
+# Simulate an interrupt/error reported after os.replace actually took effect.
+run("""
+static_release_atomic_link() {
+  python3 - "$1" "$2" <<'PYLINK'
+import os
+import sys
+link, target = sys.argv[1:]
+next_link = link + '.test-next'
+os.symlink(target, next_link)
+os.replace(next_link, link)
+PYLINK
+  case "$2" in .releases/fail) return 1 ;; esac
+}
+if static_release_activate "$2/.staging-fail" "$2" fail; then exit 1; fi
+""")
+assert os.readlink(root / 'current') == '.releases/A'
+assert a.stat().st_mtime > b_time + 1
+assert not (root / '.releases/fail').exists()
+PYCACHE
+
 python3 - "$repo_root/exec_dep.sh" <<'PY'
 import sys
 from pathlib import Path
