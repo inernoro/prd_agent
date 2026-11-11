@@ -54,6 +54,7 @@ import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, METRIC_CAPTION, MONO_META } from '
 import { CARD_BODY, CARD_PADDING, GAP, INSET_BLOCK } from '@/lib/surface';
 import { RouteDot, UpstreamMark, UsageSparkline, type RouteHealth } from '@/components/ModelRouteVisuals';
 import { CallTracePanel } from '@/components/CallTracePanel';
+import { ModelUpgradePanel } from '@/components/ModelUpgradePanel';
 import './LogicalModelsPage.css';
 import { CollectionView, CollectionDetailPane, CollectionPaneTab } from '@/components/CollectionView';
 
@@ -85,6 +86,7 @@ export function LogicalModelsPage() {
   const [configurationOpen, setConfigurationOpen] = useState(false);
   /** 正在看调用全貌的那个模型。和「展开」分开：一个给配置，一个给推演。 */
   const [traceFor, setTraceFor] = useState<string | null>(null);
+  const [upgradeFor, setUpgradeFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // 带 tone 的提示：此前是裸字符串 + 固定 tone="ok"，10 个写入点里有 6 个是失败路径，
   // 于是「更新路由策略失败」会渲染成一条绿色成功条 —— 运维会以为改动生效了（Codex P2）。
@@ -92,6 +94,7 @@ export function LogicalModelsPage() {
   const okNotice = (text: string) => setNotice({ tone: 'ok', text });
   const failNotice = (text: string) => setNotice({ tone: 'error', text });
   const [createOpen, setCreateOpen] = useState(false);
+  const [createAliases, setCreateAliases] = useState('');
   const [offeringFor, setOfferingFor] = useState<string | null>(null);
   const [editingOfferingId, setEditingOfferingId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -99,7 +102,7 @@ export function LogicalModelsPage() {
   const [claimDraft, setClaimDraft] = useState<{ id: string; value: string } | null>(null);
   const [allowlistDraft, setAllowlistDraft] = useState<{ id: string; value: string } | null>(null);
   const [draft, setDraft] = useState<CreateLogicalModelRequest>({
-    publicId: '', name: '', modelType: 'generation', capabilities: defaultImageGenerationCapabilities(),
+    identityKind: 'fixed', publicId: '', name: '', modelType: 'generation', capabilities: defaultImageGenerationCapabilities(),
     allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100,
   });
   const [offeringDraft, setOfferingDraft] = useState<CreateModelOfferingRequest>({
@@ -159,6 +162,7 @@ export function LogicalModelsPage() {
     setNotice(null);
     const request = {
       ...draft,
+      ...(draft.identityKind === 'stable' ? { aliases: createAliases.split(/\r?\n/).map(value => value.trim()).filter(Boolean) } : {}),
       publicId: draft.publicId.trim(), name: draft.name.trim(),
       capabilities: draft.capabilities.map((x) => x.trim()).filter(Boolean),
       allowedAppCallerCodes: draft.allowedAppCallerCodes.map((x) => x.trim()).filter(Boolean),
@@ -168,8 +172,9 @@ export function LogicalModelsPage() {
     setBusy(null);
     if (!res.success) { failNotice(res.error?.message || '创建失败'); return; }
     setItems((prev) => [...(prev || []), res.data]);
-    setDraft({ publicId: '', name: '', modelType: 'generation', capabilities: defaultImageGenerationCapabilities(), allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100 });
+    setDraft({ identityKind: 'fixed', publicId: '', name: '', modelType: 'generation', capabilities: defaultImageGenerationCapabilities(), allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100 });
     setCreateOpen(false);
+    setCreateAliases('');
     okNotice(`逻辑模型「${res.data.name}」已创建，请继续添加至少一个上游 Offering`);
   }
 
@@ -384,10 +389,11 @@ export function LogicalModelsPage() {
     () => [...(usage?.values() ?? [])].reduce((sum, x) => sum + (x.unpricedCalls || 0), 0),
     [usage]);
 
-  const selectedItem = items?.find((item) => item.id === (expanded || traceFor));
+  const selectedItem = items?.find((item) => item.id === (expanded || traceFor || upgradeFor));
   function renderSelectedDetails() {
     if (!selectedItem) return null;
     const item = selectedItem;
+    if (upgradeFor === item.id) return <ModelUpgradePanel key={item.id} logicalModelId={item.id} onRoutingChanged={() => void reload()} />;
     const routes = describeRoutes(item, models);
     const health = summarizeHealth(item, routes);
     const tracing = traceFor === item.id;
@@ -610,9 +616,20 @@ export function LogicalModelsPage() {
               {modelTypesError ? <InlineAlert tone="error">{modelTypesError}</InlineAlert> : null}
               <FormGrid>
                 <label style={labelStyle}>
+                  <span>模型身份</span>
+                  <select aria-label="模型身份" value={draft.identityKind || 'fixed'} onChange={event => setDraft(value => ({ ...value, identityKind: event.target.value as 'fixed' | 'stable' }))} style={inputStyle}>
+                    <option value="fixed">固定版本</option>
+                    <option value="stable">跟随升级</option>
+                  </select>
+                </label>
+                <label style={labelStyle}>
                   <span>公开模型标识</span>
                   <input required value={draft.publicId} onChange={(e) => setDraft((x) => ({ ...x, publicId: e.target.value }))} placeholder="例如 image2" style={inputStyle} />
                 </label>
+                {draft.identityKind === 'stable' ? <label style={labelStyle}>
+                  <span>兼容旧标识（可选，一行一个）</span>
+                  <textarea aria-label="兼容旧标识（可选，一行一个）" value={createAliases} onChange={event => setCreateAliases(event.target.value)} rows={3} placeholder="旧调用方使用的标识，创建后继续指向此稳定模型" style={{ ...inputStyle, height: 'auto', paddingBlock: 8, resize: 'vertical' }} />
+                </label> : null}
                 <label style={labelStyle}>
                   <span>显示名称</span>
                   <input required value={draft.name} onChange={(e) => setDraft((x) => ({ ...x, name: e.target.value }))} placeholder="例如 GPT Image 2" style={inputStyle} />
@@ -708,7 +725,7 @@ export function LogicalModelsPage() {
                       <UpstreamMark hints={[routes[0]?.providerName, routes[0]?.upstreamModelId, item.publicId]} />
                       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                         <strong title={item.name} style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
-                        <span className="lg-collection-model-identity" title={`${item.publicId} · ${describeScope(item.allowedAppCallerCodes)}`}><code>{item.publicId}</code>{item.isDefaultForType ? <Chip label="默认" color="var(--accent)" bg="var(--accent-soft)" title="没点名时用它" /> : null}{item.defaultForAppCallerCodes.length ? <Chip label={`指定 ${item.defaultForAppCallerCodes.length}`} color="var(--ok)" bg="var(--ok-bg)" title={item.defaultForAppCallerCodes.join('\n')} /> : null}</span>
+                        <span className="lg-collection-model-identity" title={`${item.publicId} · ${describeScope(item.allowedAppCallerCodes)}`}><code>{item.publicId}</code><Chip label={item.identityKind === 'stable' ? '跟随升级' : '固定版本'} color="var(--text-secondary)" bg="var(--bg-elevated)" />{item.isDefaultForType ? <Chip label="默认" color="var(--accent)" bg="var(--accent-soft)" title="没点名时用它" /> : null}{item.defaultForAppCallerCodes.length ? <Chip label={`指定 ${item.defaultForAppCallerCodes.length}`} color="var(--ok)" bg="var(--ok-bg)" title={item.defaultForAppCallerCodes.join('\n')} /> : null}</span>
                       </span>
                     </span>
 
@@ -737,7 +754,7 @@ export function LogicalModelsPage() {
                     <span className="lg-logical-model-actions" style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                       {/* 「调用全貌」独立于「展开」：展开给的是可改的配置，全貌给的是
                           「现在发一个请求会落到谁」。后者是人最想确认、而配置项答不出的那件事。 */}
-                      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => { setConfigurationOpen(false); setTraceFor(null); setExpanded((x) => (x === item.id ? null : item.id)); }}>
+                      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => { setConfigurationOpen(false); setTraceFor(null); setUpgradeFor(null); setExpanded((x) => (x === item.id ? null : item.id)); }}>
                         <span style={{ whiteSpace: 'nowrap' }}>{open ? '收起' : '查看'}</span>
                       </Button>
                     </span>
@@ -750,7 +767,7 @@ export function LogicalModelsPage() {
             </>}
             </CollectionView>
           </Card>
-          {selectedItem ? <CollectionDetailPane key={selectedItem.id} title={selectedItem.name} identifier={selectedItem.publicId} onClose={() => { setExpanded(null); setTraceFor(null); }} tabs={<><CollectionPaneTab active={Boolean(expanded) && !configurationOpen} onClick={() => {setConfigurationOpen(false);setTraceFor(null);setExpanded(selectedItem.id);}}>上游线路</CollectionPaneTab><CollectionPaneTab active={Boolean(expanded) && configurationOpen} onClick={() => {setConfigurationOpen(true);setTraceFor(null);setExpanded(selectedItem.id);}}>模型配置</CollectionPaneTab><CollectionPaneTab active={Boolean(traceFor)} onClick={() => {setExpanded(null);setTraceFor(selectedItem.id);}}>调用全貌</CollectionPaneTab></>}>
+          {selectedItem ? <CollectionDetailPane key={selectedItem.id} title={selectedItem.name} identifier={selectedItem.publicId} onClose={() => { setExpanded(null); setTraceFor(null); setUpgradeFor(null); }} tabs={<><CollectionPaneTab active={Boolean(expanded) && !configurationOpen} onClick={() => {setConfigurationOpen(false);setTraceFor(null);setUpgradeFor(null);setExpanded(selectedItem.id);}}>上游线路</CollectionPaneTab><CollectionPaneTab active={Boolean(expanded) && configurationOpen} onClick={() => {setConfigurationOpen(true);setTraceFor(null);setUpgradeFor(null);setExpanded(selectedItem.id);}}>模型配置</CollectionPaneTab><CollectionPaneTab active={Boolean(traceFor)} onClick={() => {setExpanded(null);setUpgradeFor(null);setTraceFor(selectedItem.id);}}>调用全貌</CollectionPaneTab>{selectedItem.identityKind === 'stable' ? <CollectionPaneTab active={upgradeFor === selectedItem.id} onClick={() => {setExpanded(null);setTraceFor(null);setUpgradeFor(selectedItem.id);}}>升级策略</CollectionPaneTab> : null}</>}>
             {renderSelectedDetails()}
           </CollectionDetailPane> : null}
           </div>

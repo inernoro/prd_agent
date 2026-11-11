@@ -1103,6 +1103,8 @@ export type CallTraceData = {
   };
 };
 export type LogicalModelItem = {
+  identityKind?: 'fixed' | 'stable';
+  aliases?: string[];
   id: string;
   publicId: string;
   name: string;
@@ -1147,6 +1149,8 @@ export type LogicalModelUsageData = {
   items: LogicalModelUsageItem[];
 };
 export type CreateLogicalModelRequest = {
+  identityKind?: 'fixed' | 'stable';
+  aliases?: string[];
   publicId: string;
   name: string;
   modelType: string;
@@ -1159,7 +1163,7 @@ export type CreateLogicalModelRequest = {
   description?: string;
 };
 export type UpdateLogicalModelRequest =
-  Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType'>>
+  Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType' | 'identityKind'>>
   /** 设为 true 会顶掉同用途原来的那个默认，接口会把顶掉了谁回给你。 */
   & { isDefaultForType?: boolean };
 export type CreateModelOfferingRequest = {
@@ -1818,3 +1822,54 @@ export type UpstreamNetworkTestResult = {
   averageMs: number | null; minMs: number | null; maxMs: number | null; testedAt: string;
   samples: Array<{ attempt: number; connected: boolean; httpStatus: number | null; elapsedMs: number; message: string }>;
 };
+
+// 稳定模型升级策略：身份与历史别名由服务端维护，UI只编辑受控策略。
+export type ModelUpgradeSuccessor = {
+  providerId: string;
+  fromModel: string;
+  toModel: string;
+  documentationUrl: string;
+  capabilities: string[];
+};
+export type ModelUpgradePolicy = {
+  enabled: boolean;
+  mode: 'manual' | 'auto';
+  autoValidate: boolean;
+  checkIntervalHours: number;
+  maxValidationCostUsd: number | null;
+  canaryUnitCostUpperBoundUsd: number | null;
+  maxDailyCostUsd: number | null;
+  maxPriceIncreasePercent: number | null;
+  validationAppCallerCode: string;
+  successors: ModelUpgradeSuccessor[];
+};
+export type ModelUpgradePhase = 'idle' | 'checking' | 'candidate' | 'validating' | 'validated' | 'blocked' | 'promoting' | 'promoted' | 'rolling_back' | 'rolled_back' | 'failed';
+export type ModelUpgradeView = {
+  validationMode: 'evidence' | 'canary';
+  validationModes: ('evidence' | 'canary')[];
+  validationStatus: 'not-run' | 'pending' | 'passed' | 'failed' | 'unknown';
+  discoveries: { providerId: string; upstreamModelId: string; status: 'unconfirmed'; message: string }[];
+  identityKind: 'fixed' | 'stable';
+  logicalModelId: string;
+  publicId: string;
+  name: string;
+  aliases: string[];
+  modelType: string;
+  version: number;
+  policy: ModelUpgradePolicy;
+  phase: ModelUpgradePhase;
+  message: string;
+  current: { offeringId: string; modelId: string; providerId: string; upstreamModelId: string };
+  candidate: null | { modelId: string; providerId: string; upstreamModelId: string; documentationUrl: string; discoveredAt: string; validationRequestId: string | null; validatedAt: string | null };
+  gates: { capabilities: boolean; price: boolean; budget: boolean; validation: boolean };
+  canPromote: boolean;
+  canRollback: boolean;
+  actionDisabledReason: string | null;
+  lastCheckedAt: string | null;
+  nextCheckAt: string | null;
+  updatedAt: string | null;
+  history: { id: string; action: string; status: string; message: string; requestId: string | null; createdAt: string }[];
+};
+export type UpdateModelUpgradePolicyRequest = ModelUpgradePolicy & { version: number };
+export type ModelUpgradeAction = 'check' | 'validate' | 'promote' | 'rollback';
+export type ModelUpgradeActionRequest = { version: number; requestId?: string; mode?: 'evidence' | 'canary' };
