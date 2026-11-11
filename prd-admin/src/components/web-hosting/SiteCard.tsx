@@ -33,6 +33,7 @@ import RelatedDocumentsBar from './RelatedDocumentsBar';
 import { SiteCardMetrics } from './SiteCardMetrics';
 import type { RelatedSummary } from '@/services/real/relatedDocuments';
 import { WEB_HOSTING_UPLOAD_ACCEPT } from '@/lib/webHostingUploadLimits';
+import { SiteCollectionHistory } from './SiteCollectionHistory';
 
 /** 网页托管卡片拖进 ShareDock 投放槽时用的 MIME（页面与卡片共用同一个常量，不各写一份）。 */
 export const WEB_PAGE_MIME = 'application/x-map-site-id';
@@ -546,6 +547,8 @@ export function SiteCard({
               <Clock size={10} className="shrink-0" aria-hidden />{traffic?.all.lastViewedAt ? relativeTime(traffic.all.lastViewedAt) : traffic ? '暂无' : '—'}
             </span>}
           </div>
+
+          <div><SiteCollectionHistory siteId={site.id} siteTitle={site.title} /></div>
 
           {/* 标签摘要不预留空行；三种尺寸均可通过详情查看全部标签与明确的创建/更新时间。 */}
           {!isSmall && site.tags.length > 0 && (

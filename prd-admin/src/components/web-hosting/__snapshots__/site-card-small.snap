@@ -20,6 +20,10 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
       div .flex.gap-2.items-center.min-w-0
         span .shrink-0
           "11.0 KB"
+      div
+        button .gap-1.inline-flex.items-center.max-sm:min-h-9.min-h-7.px-1.5.shrink-0 [data-no-drag=true aria-label=查看「多租户架构设计」的合集历史 type=button]
+          svg
+          "合集历史"
       div .@[235px]:grid-cols-4.gap-x-2.gap-y-1.grid.grid-cols-2.items-center.min-w-0.mt-auto [aria-label=网页统计]
         span .gap-1.inline-flex.items-center.min-w-0.whitespace-nowrap [aria-label=编辑次数暂不可用]
           svg

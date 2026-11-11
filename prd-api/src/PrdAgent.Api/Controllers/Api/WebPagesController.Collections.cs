@@ -32,6 +32,41 @@ public partial class WebPagesController
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize = 20 }));
     }
 
+    // 从文档找回原合集链接：按成员快照查完整历史，不依赖全局最近 100 条或过期宽限窗。
+    [HttpGet("collections/history")]
+    public async Task<IActionResult> CollectionHistory([FromQuery] string? siteId, [FromQuery] int page = 1)
+    {
+        Response.Headers.CacheControl = "no-store";
+        if (string.IsNullOrWhiteSpace(siteId)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择要查找合集历史的文档"));
+        var userId = GetUserId();
+        if (await _siteService.GetByIdAsync(siteId, userId, CancellationToken.None) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在或当前无权查看"));
+        page = Math.Max(1, page);
+        const int pageSize = 20;
+        var fb = Builders<WebPageShareLink>.Filter;
+        var filter = fb.Eq(x => x.CreatedBy, userId) & fb.Eq(x => x.ShareType, "collection") & fb.Ne(x => x.Purpose, "visit")
+            & (fb.Eq(x => x.SiteId, siteId) | fb.AnyEq(x => x.SiteIds, siteId));
+        var total = await _db.WebPageShareLinks.CountDocumentsAsync(filter);
+        var offset = (long)(page - 1) * pageSize;
+        var shares = offset > int.MaxValue ? new List<WebPageShareLink>() : await _db.WebPageShareLinks.Find(filter)
+            .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((int)offset).Limit(pageSize).ToListAsync();
+        var collectionIds = shares.Where(x => x.CollectionId != null).Select(x => x.CollectionId!).Distinct().ToList();
+        var collections = collectionIds.Count == 0 ? new Dictionary<string, HostedCollection>()
+            : (await _db.HostedCollections.Find(x => collectionIds.Contains(x.Id) && x.OwnerUserId == userId).ToListAsync()).ToDictionary(x => x.Id);
+        var now = DateTime.UtcNow;
+        var items = shares.Select(share =>
+        {
+            var collection = share.CollectionId == null ? null : collections.GetValueOrDefault(share.CollectionId);
+            var stopped = share.CollectionId != null && !HostedCollectionRules.AllowsShare(collection, share);
+            var expired = share.ExpiresAt.HasValue && share.ExpiresAt.Value <= now;
+            var active = !share.IsRevoked && !stopped && !expired;
+            return new { share.Id, title = string.IsNullOrWhiteSpace(share.Title) ? collection?.Title ?? "未命名合集" : share.Title, shareUrl = $"/s/wp/{Uri.EscapeDataString(share.Token)}",
+                share.CreatedAt, share.ExpiresAt, share.AccessLevel, memberCount = share.TargetSiteIds().Count, isActive = active,
+                statusLabel = share.IsRevoked ? "已撤销" : stopped ? "已停止" : expired ? "已过期" : "有效" };
+        });
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
     [HttpGet("collections/candidates")]
     public async Task<IActionResult> CollectionCandidates([FromQuery] string? keyword, [FromQuery] int page = 1)
     {

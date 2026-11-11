@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import { BarChart3, Copy, Lock, Search, Share2, X } from 'lucide-react';
+import { BarChart3, Copy, Eye, Lock, Search, Share2, X } from 'lucide-react';
 import type { HostedSite, ShareLinkItem } from '@/services/real/webPages';
 import { listSiteShares, renewSiteShare, revokeSiteShare } from '@/services';
 import { toast } from '@/lib/toast';
@@ -392,14 +392,14 @@ function TierSection({
         return (
           <div
             key={l.id}
-            className="group flex items-center gap-3 rounded-xl px-3.5 py-2.5 transition-colors"
+            className="group flex flex-wrap items-center gap-3 rounded-xl px-3.5 py-2.5 transition-colors"
             style={{
               background: tier === 'revoked' ? 'var(--semantic-danger-soft)' : 'var(--bg-card)',
               border: `1px ${dashed ? 'dashed' : 'solid'} ${borderColor}`,
               opacity: tier === 'active' ? 1 : 0.78,
             }}
           >
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 basis-60">
               {/* 第一句：这是什么 */}
               <div className="flex min-w-0 items-baseline gap-2">
                 <span
@@ -473,6 +473,10 @@ function TierSection({
               </div>
               <div className="mt-0.5 text-[10.5px]" style={{ color: 'var(--text-muted)' }}>次浏览</div>
             </div>
+
+            {tier === 'active' && <a href={sharePath(l)} target="_blank" rel="noopener noreferrer"
+              aria-label={`预览分享：${l.title || '未命名链接'}`} className="inline-flex min-h-7 shrink-0 items-center gap-1 rounded px-2 text-[11px] hover-bg-soft max-sm:min-h-9"
+              style={{ color: 'var(--accent-primary)' }}><Eye size={12} aria-hidden />预览</a>}
 
             {/* 操作：平时不占地方，指针移到这一行才出现。
                 触屏没有 hover，所以 [@media(hover:hover)] 之外恒显——不能让触屏用户点不到续期。 */}

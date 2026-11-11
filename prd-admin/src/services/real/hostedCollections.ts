@@ -21,6 +21,11 @@ export interface CollectionSharingPreview {
 }
 const root = '/api/web-pages/collections';
 const path = (id: string) => `${root}/${encodeURIComponent(id)}`;
+export interface CollectionHistoryItem {
+  id: string; title: string; shareUrl: string; createdAt: string; expiresAt?: string; accessLevel: string;
+  memberCount: number; isActive: boolean; statusLabel: string;
+}
+export const getCollectionHistory = (siteId: string, page = 1) => apiRequest<{ items: CollectionHistoryItem[]; total: number; page: number; pageSize: number }>(`${root}/history?${new URLSearchParams({ siteId, page: String(page) })}`);
 export const listCollections = (keyword = '', page = 1) => apiRequest<{ items: HostedCollection[]; total: number; page: number; pageSize: number }>(`${root}?${new URLSearchParams({ keyword, page: String(page) })}`);
 export const getCollection = (id: string) => apiRequest<CollectionDetails>(path(id));
 export const getCollectionByShare = (token: string) => apiRequest<CollectionDetails>(`${root}/by-share/${encodeURIComponent(token)}`);
