@@ -16,14 +16,48 @@ namespace PrdAgent.Api.Tests.Services;
 
 public partial class VideoSceneConcurrencyTests
 {
-    private static Task<bool> RecoverGeneration(VideoGenRunWorker worker) => (Task<bool>)typeof(VideoGenRunWorker)
+    private static Task<bool> RecoverGeneration(VideoGenRunWorker worker, CancellationToken ct = default) => (Task<bool>)typeof(VideoGenRunWorker)
         .GetMethod("RecoverInterruptedGenerationAsync", BindingFlags.NonPublic | BindingFlags.Instance)!
-        .Invoke(worker, [CancellationToken.None])!;
+        .Invoke(worker, [ct])!;
 
     private static Task ExpireGeneration(VideoSceneTestDatabase test, string permitId, int dispatches = 0)
         => test.Data.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName)
             .UpdateOneAsync(x => x.Id == permitId, new BsonDocument("$set", new BsonDocument
             { ["Executions.0.LeaseUntil"] = DateTime.UnixEpoch, ["Executions.0.DispatchCount"] = dispatches }));
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task GenerationRecovery_ShutdownImmediatelyAfterAcquire_ReturnsUnusedOriginalLeaseForNextWorker()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("generation-shutdown", test.OwnerId, SceneItemStatus.Draft);
+        run.Status = VideoGenRunStatus.Scripting; run.ArticleMarkdown = "";
+        var (coordinator, oldLease) = await test.SaveAuthorizedRunAsync(run);
+        await using var old = oldLease;
+        await ExpireGeneration(test, run.TaskPermitId!);
+        using var stop = new CancellationTokenSource();
+        var shutdown = new Mock<ITaskExecutionCoordinator>();
+        shutdown.Setup(x => x.AcquireAsync(run.TaskPermitId!, run.Id, It.IsAny<CancellationToken>()))
+            .Returns(async (string permit, string id, CancellationToken _) =>
+            {
+                var lease = await coordinator.AcquireAsync(permit, id, CancellationToken.None);
+                stop.Cancel(); return lease;
+            });
+        using (var worker = test.CreateWorker(shutdown.Object, generationRecovery: true))
+        {
+            try { await RecoverGeneration(worker, stop.Token); }
+            catch (OperationCanceledException) { }
+        }
+        var grant = await test.Data.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName)
+            .Find(x => x.Id == run.TaskPermitId).SingleAsync();
+        grant.Executions[0].State.ShouldBe(TaskExecutionLeaseStates.Pending);
+        grant.Executions[0].DispatchCount.ShouldBe(0);
+        (await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync()).Status.ShouldBe(VideoGenRunStatus.Scripting);
+        using var next = test.CreateWorker(coordinator, generationRecovery: true);
+        (await RecoverGeneration(next)).ShouldBeTrue();
+        (await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync()).ErrorCode.ShouldBe("EMPTY_ARTICLE");
+        test.VideoClient.Invocations.Count.ShouldBe(0);
+    }
 
     [Theory]
     [Trait("Category", "Integration")]
@@ -184,9 +218,11 @@ public partial class VideoSceneConcurrencyTests
         test.VideoClient.Invocations.Count.ShouldBe(0);
     }
 
-    [Fact]
+    [Theory]
     [Trait("Category", "Integration")]
-    public async Task GenerationRecovery_UnknownReceiptIsResponseOnlyAndActiveKnownJobKeepsNormalProgress()
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task GenerationRecovery_UnknownReceiptIsResponseOnlyAndActiveKnownJobKeepsNormalProgress(int dispatches)
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();
         var run = NewRun("generation-read-only", test.OwnerId, SceneItemStatus.Draft);
@@ -197,7 +233,7 @@ public partial class VideoSceneConcurrencyTests
         var recovery = new VideoGenerationRecovery(test.Context, test.Data, coordinator, GenerationConfiguration());
         await recovery.PrepareOwnedReadAsync(run, test.OwnerId, run.AppKey, null, null, default);
         run.ErrorCode.ShouldBeNull();
-        await ExpireGeneration(test, run.TaskPermitId!, 1);
+        await ExpireGeneration(test, run.TaskPermitId!, dispatches);
         (await recovery.AcquireAsync(run, default))!.ErrorCode.ShouldBe("VIDEO_RECOVERY_OUTCOME_UNKNOWN");
         await recovery.PrepareOwnedReadAsync(run, test.OwnerId, run.AppKey, null, null, default);
         VideoGenerationUserError.SanitizeForResponse(run).ErrorMessage.ShouldContain("避免重复费用");

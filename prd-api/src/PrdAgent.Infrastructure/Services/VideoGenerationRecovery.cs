@@ -74,15 +74,15 @@ public sealed class VideoGenerationRecovery(
         }
     }
 
-    public static FilterDefinition<VideoGenRun> Snapshot(VideoGenRun run, Target target)
+    public static FilterDefinition<VideoGenRun> Snapshot(VideoGenRun run, Target target, bool compareAllScenes = true)
     {
         var f = Builders<VideoGenRun>.Filter;
         var filter = f.Eq(x => x.Id, run.Id) & f.Eq(x => x.OwnerAdminId, run.OwnerAdminId)
             & f.Eq(x => x.AppKey, run.AppKey) & f.Eq(x => x.Mode, run.Mode) & f.Eq(x => x.Status, run.Status)
             & f.Eq(x => x.DeploymentSlug, run.DeploymentSlug) & f.Eq(x => x.TaskPermitId, run.TaskPermitId)
             & f.Eq(x => x.CancelRequested, false) & f.Eq(x => x.DeletionRequestedAt, null)
-            & f.Eq(x => x.LatestExportTaskId, run.LatestExportTaskId)
-            & f.Eq(x => x.Scenes, run.Scenes);
+            & f.Eq(x => x.LatestExportTaskId, run.LatestExportTaskId);
+        if (compareAllScenes) filter &= f.Eq(x => x.Scenes, run.Scenes);
         return target.SceneIndex < 0 ? filter & f.Eq(x => x.DirectVideoJobId, run.DirectVideoJobId)
             : filter & f.Eq($"Scenes.{target.SceneIndex}.Status", SceneItemStatus.Generating)
                 & f.Eq($"Scenes.{target.SceneIndex}.TaskPermitId", target.PermitId);
@@ -98,7 +98,8 @@ public sealed class VideoGenerationRecovery(
         var permit = await ReadPermitAsync(run, target, ct);
         var entry = permit?.Executions.SingleOrDefault(x => x.RunId == target.ExecutionId);
         var code = permit == null ? "VIDEO_RECOVERY_NOT_ADMITTED"
-            : entry?.State is TaskExecutionLeaseStates.OutcomeUnknown or TaskExecutionLeaseStates.Completed
+            : (entry?.State is TaskExecutionLeaseStates.OutcomeUnknown or TaskExecutionLeaseStates.Completed
+                || entry?.State == TaskExecutionLeaseStates.Pending && !string.IsNullOrWhiteSpace(run.DirectVideoJobId))
                 ? "VIDEO_RECOVERY_OUTCOME_UNKNOWN" : null;
         if (code != null) { ShowBlocked(run, code); return; }
         if (run.DeploymentSlug == current) return;
