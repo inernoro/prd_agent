@@ -11,6 +11,32 @@ public class ModelUpgradePolicyTests
     private static ModelUpgradePolicy Policy() => new() { Enabled = true, Mode = "auto", AutoValidate = true,
         ValidationAppCallerCode = "visual-agent.image::generation", CanaryUnitCostUpperBoundUsd = .05m, MaxValidationCostUsd = .1m, MaxDailyCostUsd = .2m,
         Successors = [new() { ProviderId = "official", FromModel = "version-a", ToModel = "version-b", DocumentationUrl = "https://openai.com/models", Capabilities = ["image_generation"] }] };
+    [Theory]
+    [InlineData(true, true, "promote")]
+    [InlineData(true, false, "promote")]
+    [InlineData(false, true, "validate")]
+    [InlineData(false, false, "")]
+    public void ScheduledCheckReusesValidEvidenceBeforeConsideringAnotherPaidCanary(bool valid, bool autoValidate, string expected)
+    {
+        var state = new ModelUpgradeState { ExecutionRequestedBy = "scheduled", Policy = Policy(),
+            Current = new() { ModelId = "old" }, Candidate = new() { ModelId = "new", ValidatedAt = valid ? DateTime.UtcNow : DateTime.UtcNow.AddDays(-2) },
+            Gates = new() { Capabilities = true, Price = true, Budget = true, Validation = valid } };
+        state.Policy.AutoValidate = autoValidate;
+        Assert.Equal(expected, ModelUpgradeRules.NextAutomaticAction(state, DateTime.UtcNow));
+        Assert.Equal(0, state.ReservedCostUsd);
+        state.OutcomeUnknown = true; Assert.Equal("", ModelUpgradeRules.NextAutomaticAction(state, DateTime.UtcNow));
+    }
+    [Fact] public void DefaultCallerRequiresClaimRegistryAuthorizationAndScenario()
+    {
+        var logical = new BsonDocument { { "ModelType", "generation" }, { "Capabilities", new BsonArray { "text2img" } },
+            { "AllowedAppCallerCodes", new BsonArray { "visual-agent.image.text2img::generation" } },
+            { "DefaultForAppCallerCodes", new BsonArray { "visual-agent.image.text2img::generation" } } };
+        var caller = new BsonDocument { { "AppCallerCode", "visual-agent.image.text2img::generation" }, { "RequestType", "generation" }, { "Status", "active" } };
+        Assert.Equal("visual-agent.image.text2img::generation", ModelUpgradeRules.DefaultValidationCaller(logical, new[] { caller }));
+        caller["RequestType"] = "chat"; Assert.Equal("", ModelUpgradeRules.DefaultValidationCaller(logical, new[] { caller }));
+        caller["RequestType"] = "generation"; logical["Capabilities"] = new BsonArray { "img2img" };
+        Assert.Equal("", ModelUpgradeRules.DefaultValidationCaller(logical, new[] { caller }));
+    }
     [Fact] public void CandidateCanaryTargetsFixedIdentityAndKnownMediaEnvelope()
     {
         var fixedModel = new BsonDocument { { "IdentityKind", "fixed" }, { "Enabled", true }, { "ModelType", "generation" } };
