@@ -5184,6 +5184,7 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                 {
                     { "_id", logicalId }, { "TenantId", tenantId },
                     { "PublicId", publicId }, { "PublicIdNormalized", normalized },
+                    { "IdentityKeys", new BsonArray { normalized, poolId.ToLowerInvariant() } },
                     { "Name", poolName }, { "ModelType", modelType },
                     // 能力必须从池成员的快照里取。传 null 进去得到的是空集合，而空能力的模型
                     // 能力门一律不放行——搬迁报成功、调用方却调不到它，请求默默回落到池。
@@ -5255,6 +5256,7 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                             fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
                             Builders<BsonDocument>.Update
                                 .AddToSet("MigratedFromPoolIds", poolId)
+                                .AddToSet("IdentityKeys", poolId.ToLowerInvariant())
                                 .Set("UpdatedAt", DateTime.UtcNow));
                     result.Skipped.Add(new PoolMigrationSkip
                     {
@@ -5464,6 +5466,7 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             // 被别人占着就已经降级成 false 并如实报进 Skipped，所以这里直接用它是安全的。
             var reuseUpdate = Builders<BsonDocument>.Update
                 .AddToSet("MigratedFromPoolIds", poolId)
+                                .AddToSet("IdentityKeys", poolId.ToLowerInvariant())
                 .Set("UpdatedAt", DateTime.UtcNow);
             if (entry.IsDefaultForType)
                 reuseUpdate = reuseUpdate.Set("IsDefaultForType", true);
@@ -6320,6 +6323,22 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     var normalized = publicId.ToLowerInvariant();
+    var identityKind = (body?.IdentityKind ?? "fixed").Trim().ToLowerInvariant();
+    var aliases = LogicalModelAliasPolicy.Normalize(body?.Aliases);
+    if (LogicalModelAliasPolicy.Validate(identityKind, publicId, aliases) is { } aliasError)
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_ALIAS", aliasError), jsonOptions, 400);
+    if (aliases.Count > 0)
+    {
+        using var indexCursor = await gwLogicalModels.Indexes.ListAsync();
+        if (!(await indexCursor.ToListAsync()).Any(x => x.GetValue("name", "").AsString == "uniq_llmgw_model_identity_namespace"))
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("IDENTITY_INDEX_REQUIRED",
+                "兼容标识尚未完成发布前命名空间维护，请管理员执行索引预检后重试。"), jsonOptions, 503);
+    }
+    var identityNamespace = await gwLogicalModels.Find(TenantAccess.Filter(http,
+        Builders<BsonDocument>.Filter.Eq("ModelType", modelType))).ToListAsync();
+    if (identityNamespace.Any(x => LogicalModelAliasPolicy.Conflicts(x, aliases.Append(publicId))))
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_IDENTITY_CONFLICT", "公开标识或兼容标识已被占用，请保留原模型身份并换一个标识。"), jsonOptions, 409);
+
     if (await gwLogicalModels.Find(Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
             Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", normalized))).AnyAsync())
@@ -6370,6 +6389,8 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
     var document = new BsonDocument
     {
         { "_id", id }, { "TenantId", tenantId }, { "PublicId", publicId }, { "PublicIdNormalized", normalized },
+        { "IdentityKind", identityKind }, { "Aliases", new BsonArray(aliases) },
+        { "IdentityKeys", new BsonArray(aliases.Append(normalized).Distinct()) }, { "AliasRevision", 0 },
         { "Name", name }, { "ModelType", modelType }, { "Capabilities", new BsonArray(capabilities) },
         // 写入即打契约版本：没有版本的文档一律被迁移当成存量重算，避免新写入的数据也要靠迁移兜底。
         { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
@@ -6394,6 +6415,9 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
     }
     catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
     {
+        if (ex.Message.Contains("uniq_llmgw_model_identity_namespace", StringComparison.Ordinal))
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_IDENTITY_CONFLICT",
+                "公开标识或兼容标识刚被占用，请刷新后重新选择。"), jsonOptions, 409);
         var claimRace = ex.Message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal);
         return Json(ApiEnvelope<LogicalModelItem>.Fail(
             claimRace ? "CLAIM_TAKEN" : "PUBLIC_ID_TAKEN",
@@ -6786,6 +6810,31 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     if (currentModel is null)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
 
+    if (body.Aliases is not null)
+    {
+        var aliases = LogicalModelAliasPolicy.Normalize(body.Aliases);
+        if (LogicalModelAliasPolicy.Validate(currentModel.AsNullableString("IdentityKind") ?? "fixed",
+            currentModel.GetStringOrEmpty("PublicId"), aliases) is { } aliasError)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_ALIAS", aliasError), jsonOptions, 400);
+        using var indexCursor = await gwLogicalModels.Indexes.ListAsync();
+        if (!(await indexCursor.ToListAsync()).Any(x => x.GetValue("name", "").AsString == "uniq_llmgw_model_identity_namespace"))
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("IDENTITY_INDEX_REQUIRED",
+                "兼容标识尚未完成命名空间维护，请管理员执行索引预检后重试。"), jsonOptions, 503);
+        var siblings = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Ne("_id", id),
+            Builders<BsonDocument>.Filter.Eq("ModelType", currentModel.GetStringOrEmpty("ModelType"))))).ToListAsync();
+        if (siblings.Any(x => LogicalModelAliasPolicy.Conflicts(x, aliases)))
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_IDENTITY_CONFLICT", "兼容标识已被其他模型占用，请先核对原模型身份。"), jsonOptions, 409);
+        updates.Add(Builders<BsonDocument>.Update.Set("Aliases", new BsonArray(aliases)));
+        updates.Add(Builders<BsonDocument>.Update.Set("IdentityKeys", new BsonArray(aliases
+            .Append(currentModel.GetStringOrEmpty("PublicId").ToLowerInvariant())
+            .Concat(currentModel.AsStringList("MigratedFromPoolIds").Select(x => x.ToLowerInvariant())).Distinct())));
+        updates.Add(Builders<BsonDocument>.Update.Inc("AliasRevision", 1));
+        await WriteOperationAuditAsync(operationAudits, http, "logical-model.aliases.intent", "llmgw_logical_model", id,
+            currentModel.GetStringOrEmpty("Name"), false, "validated-write-intent",
+            new BsonDocument { { "aliases", new BsonArray(aliases) } }, throwOnFailure: true);
+    }
+
     // 与创建那一侧同一份身份规则，理由见那里：控制面不许比运行时松。
     var normalizedClaims = body.DefaultForAppCallerCodes is null
         ? null
@@ -6972,8 +7021,16 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     BsonDocument? updated;
     try
     {
+        var writeFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
+        if (body.Aliases is not null)
+        {
+            var revision = currentModel.GetValue("AliasRevision", 0).ToInt64();
+            writeFilter &= revision == 0
+                ? Builders<BsonDocument>.Filter.Or(Builders<BsonDocument>.Filter.Exists("AliasRevision", false), Builders<BsonDocument>.Filter.Eq("AliasRevision", 0))
+                : Builders<BsonDocument>.Filter.Eq("AliasRevision", revision);
+        }
         updated = await gwLogicalModels.FindOneAndUpdateAsync(
-            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)),
+            TenantAccess.Filter(http, writeFilter),
             Builders<BsonDocument>.Update.Combine(updates),
             new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
     }
@@ -6992,7 +7049,11 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
           判据比它该管的范围窄，两种输入被压成一种）。
         */
         var claimRace = ex.Message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal);
-        await CompensateAsync(restoreDefaults: claimRace);
+        var identityRace = ex.Message.Contains("uniq_llmgw_model_identity_namespace", StringComparison.Ordinal);
+        await CompensateAsync(restoreDefaults: claimRace || identityRace);
+        if (identityRace)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_IDENTITY_CONFLICT",
+                WithCompensationNote("兼容标识刚被另一个模型占用，请刷新后重试。")), jsonOptions, 409);
         var conflictMessage = claimRace
             ? "这几个调用方里有一个刚刚被另一个模型认领了。刷新看一眼它现在归谁，确认之后再改。"
             : "这个用途刚刚被另一个人设了默认模型。刷新看一眼当前默认是谁，确认之后再改。";
@@ -7011,12 +7072,14 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
         // 目标在这中间被别人删了。这时「摘掉的默认」必须还回去：没有赢家，
         // 不还的话这个用途就此没有默认，而返回的只是一句「模型不存在」。
         await CompensateAsync(restoreDefaults: true);
-        return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", WithCompensationNote("逻辑模型不存在")), jsonOptions, 404);
+        return Json(ApiEnvelope<LogicalModelItem>.Fail(body.Aliases is null ? "NOT_FOUND" : "MODEL_IDENTITY_CHANGED",
+            WithCompensationNote(body.Aliases is null ? "逻辑模型不存在" : "模型兼容配置刚被修改，请刷新后重试。")), jsonOptions, body.Aliases is null ? 404 : 409);
     }
     await WriteOperationAuditAsync(operationAudits, http, "logical-model.update", "llmgw_logical_model", id, updated.GetStringOrEmpty("Name"), true, null,
         new BsonDocument
         {
             { "fieldCount", updates.Count - 1 },
+            { "aliases", body.Aliases is null ? BsonNull.Value : new BsonArray(LogicalModelAliasPolicy.Normalize(body.Aliases)) },
             // 换兜底模型是会改变线上行为的动作：日后排查「什么时候开始默认走它了」要查得到人
             { "isDefaultForType", body.IsDefaultForType.HasValue ? body.IsDefaultForType.Value : BsonNull.Value },
             { "displacedDefaults", new BsonArray(displacedDefaults) },
@@ -17987,6 +18050,14 @@ static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, 
             $"{publicId}（认不出它是哪种用途：这个模型没有可识别的能力声明）");
     }
 
+    var identityNamespace = await logicalModels.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("ModelType", modelType))).ToListAsync();
+    if (identityNamespace.Any(x => x.GetStringOrEmpty("_id") != logical?.GetStringOrEmpty("_id")
+        && LogicalModelAliasPolicy.Conflicts(x, [publicId])))
+        return (publicId, false, false, "identity-conflict",
+            $"{publicId}（标识已用于稳定模型兼容，物理模型已保存；请核对已有逻辑模型，不会自动挂入稳定线路）");
+
     string logicalId;
     var createdLogical = false;
     var linkedToExisting = false;
@@ -17997,6 +18068,7 @@ static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, 
         {
             { "_id", logicalId }, { "TenantId", tenantId },
             { "PublicId", publicId }, { "PublicIdNormalized", normalizedPublicId },
+            { "IdentityKind", "fixed" }, { "Aliases", new BsonArray() }, { "IdentityKeys", new BsonArray { normalizedPublicId } },
             { "Name", publicId }, { "ModelType", modelType },
             { "Capabilities", new BsonArray(LogicalModelCapabilityPolicy.NormalizeDetailed(modelType, capabilityCodes).Persisted) },
             // 能力口径的版本戳。漏了它，capability-audit 会把这条算成「未迁移」——
@@ -18950,6 +19022,8 @@ static LogicalModelItem MapLogicalModel(
     {
         Id = logicalId,
         PublicId = logical.GetStringOrEmpty("PublicId"),
+        IdentityKind = logical.AsNullableString("IdentityKind") ?? "fixed",
+        Aliases = logical.AsStringList("Aliases"),
         Name = logical.GetStringOrEmpty("Name"),
         ModelType = logical.GetStringOrEmpty("ModelType"),
         Capabilities = logical.AsStringList("Capabilities"),

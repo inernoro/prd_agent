@@ -181,10 +181,8 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
             pinnedModelId: null,
             ct);
         if (resolution.Success
-            && string.Equals(
-                required,
-                resolution.LogicalModelPublicId?.Trim(),
-                StringComparison.OrdinalIgnoreCase))
+            && GatewayLogicalModelIdentity.Accepts(required,
+                resolution.LogicalModelPublicId, resolution.AcceptedModelAliases))
         {
             return resolution;
         }
