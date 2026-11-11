@@ -99,6 +99,26 @@ public sealed class MapLogicalModelReferencePolicyMirrorTests
     }
 
     [Fact]
+    public void 显式旧逻辑绑定仅在缺少内部身份时按精确公开名阻断退役()
+    {
+        var queries = MapLogicalModelReferencePolicy.BuildBusinessLogicalModelQueries("new-logical-id", "fixed-version");
+        var expectedMember = BsonDocument.Parse("""
+            { $or: [ { LogicalModelId: "new-logical-id" },
+                { LogicalModelId: { $in: [null, ""] }, PlatformId: "logical-model", ModelId: "fixed-version" } ] }
+            """);
+        Assert.Equal(expectedMember, RenderDocument(queries[0].Filter));
+        Assert.Equal(new BsonDocument("SelectedModels", new BsonDocument("$elemMatch", expectedMember)),
+            RenderDocument(queries[1].Filter));
+        Assert.All(queries.Skip(2), query => Assert.Equal(
+            new BsonDocument("Models", new BsonDocument("$elemMatch", expectedMember)), RenderDocument(query.Filter)));
+        Assert.Equal(BsonDocument.Parse("{ LogicalModelId: 'new-logical-id' }"),
+            RenderDocument(MapLogicalModelReferencePolicy.BuildBusinessLogicalModelQueries("new-logical-id", "")[0].Filter));
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("logicalModelId: id, publicId: doc.AsNullableString(\"PublicId\")", console);
+        Assert.Contains("logicalModelId: id, publicId: existing.AsNullableString(\"PublicId\")", console);
+    }
+
+    [Fact]
     public void 旧物理绑定必须同成员且未明确迁移才阻断平台退役()
     {
         var queries = MapLogicalModelReferencePolicy.BuildLegacyPlatformQueries("retired-platform");

@@ -6481,7 +6481,7 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
     }
 
     var businessReferences = await CollectMapBusinessModelReferencesAsync(
-        http, mapDatabase, internalTenantId, logicalModelId: id);
+        http, mapDatabase, internalTenantId, logicalModelId: id, publicId: doc.AsNullableString("PublicId"));
     if (businessReferences.Count > 0)
         return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail("MODEL_REFERENCED_BY_MAP",
             $"仍有 {string.Join("、", businessReferences)} 引用此逻辑模型。请先在对应业务配置中明确改绑或移除，再删除；不会自动替换固定版本。"), jsonOptions, 409);
@@ -7653,7 +7653,7 @@ app.MapPut("/gw/logical-models/{id}/enabled", async (HttpContext http, string id
     if (!enabled)
     {
         var businessReferences = await CollectMapBusinessModelReferencesAsync(
-            http, mapDatabase, internalTenantId, logicalModelId: id);
+            http, mapDatabase, internalTenantId, logicalModelId: id, publicId: existing.AsNullableString("PublicId"));
         if (businessReferences.Count > 0)
             return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_REFERENCED_BY_MAP",
                 $"仍有 {string.Join("、", businessReferences)} 引用此逻辑模型。请先在对应业务配置中明确改绑或移除，再停用；原模型保持不变。"), jsonOptions, 409);
@@ -18541,11 +18541,12 @@ static async Task<List<string>> CollectMapBusinessModelReferencesAsync(
     IMongoDatabase mapDatabase,
     string internalTenantId,
     string? logicalModelId = null,
-    string? platformId = null)
+    string? platformId = null,
+    string? publicId = null)
 {
     if (TenantAccess.GetRequired(http).TenantId != internalTenantId) return new List<string>();
     var queries = logicalModelId is not null
-        ? MapLogicalModelReferencePolicy.BuildBusinessLogicalModelQueries(logicalModelId)
+        ? MapLogicalModelReferencePolicy.BuildBusinessLogicalModelQueries(logicalModelId, publicId)
         : MapLogicalModelReferencePolicy.BuildLegacyPlatformQueries(platformId!);
     var references = new List<string>();
     foreach (var query in queries)

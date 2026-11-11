@@ -26,8 +26,18 @@ public static class MapLogicalModelReferencePolicy
         string CollectionName, string Usage, FilterDefinition<BsonDocument> Filter);
 
     /// <summary>业务配置中的 LogicalModelId 是 GW 内部 ID，不是 PublicId。</summary>
-    public static IReadOnlyList<BusinessReferenceQuery> BuildBusinessLogicalModelQueries(string logicalModelId)
-        => BusinessQueries(Builders<BsonDocument>.Filter.Eq(BusinessLogicalModelField, logicalModelId));
+    public static IReadOnlyList<BusinessReferenceQuery> BuildBusinessLogicalModelQueries(string logicalModelId, string? publicId = null)
+    {
+        var fb = Builders<BsonDocument>.Filter;
+        var exactIdentity = fb.Eq(BusinessLogicalModelField, logicalModelId);
+        if (string.IsNullOrWhiteSpace(publicId)) return BusinessQueries(exactIdentity);
+        // 与业务 Resolve 的显式 logical-model 兼容入口一致。已有非空内部 ID 优先，
+        // 不能因公开名称相同而把被删除的旧身份认作重建的新身份。
+        return BusinessQueries(fb.Or(exactIdentity, fb.And(
+            fb.In(BusinessLogicalModelField, new BsonValue[] { BsonNull.Value, "" }),
+            fb.Eq("PlatformId", LogicalModelPlatformId),
+            fb.Eq("ModelId", publicId))));
+    }
 
     /// <summary>
     /// 只保护尚未迁移的物理绑定。已明确绑定逻辑模型后，保留的旧 pair 只是迁移来源，不能继续阻断退役。
