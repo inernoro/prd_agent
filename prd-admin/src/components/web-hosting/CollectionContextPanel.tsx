@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Copy, ExternalLink, Search, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { toast } from '@/lib/toast';
+import { copyWithFeedback } from '@/lib/clipboard';
 import { getCollectionContexts, getCollectionContextDocuments, getCollectionContextLinks,
   type CollectionContext, type CollectionContextPage, type CollectionHistoryItem } from '@/services/real/hostedCollections';
 import { getRelatedDocuments, type RelatedDocument, type RelatedDocuments } from '@/services/real/relatedDocuments';
@@ -135,10 +135,7 @@ function CollectionLinks({ siteId, context, selected }: { siteId: string; contex
 }
 
 function CollectionLink({ link }: { link: CollectionHistoryItem }) {
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(new URL(link.shareUrl, window.location.origin).href); toast.success('原链接已复制'); }
-    catch { toast.error('未能复制链接', '请重试，或复制下方显示的链接地址。'); }
-  };
+  const copy = () => copyWithFeedback(new URL(link.shareUrl, window.location.origin).href, { successMessage: '原链接已复制', label: '原链接' });
   return <div className="collection-context-link">
     <div>{link.isActive ? <a href={link.shareUrl} target="_blank" rel="noopener noreferrer" title="打开原合集分享"><code>{link.shareUrl}</code><ExternalLink size={11} aria-hidden /></a>
       : <code title={link.shareUrl}>{link.shareUrl}</code>}

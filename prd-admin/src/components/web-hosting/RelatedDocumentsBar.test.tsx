@@ -80,6 +80,20 @@ describe('顶部关联文档', () => {
     expect(getRelatedDocuments).not.toHaveBeenCalled();
     expect(document.querySelector('a[href="/s/wp/one"]')?.getAttribute('target')).toBe('_blank');
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
+    const modernCopy = vi.fn().mockRejectedValue(new Error('clipboard permission denied'));
+    vi.stubGlobal('navigator', { clipboard: { writeText: modernCopy } }); vi.stubGlobal('isSecureContext', true);
+    let copiedText = '';
+    const legacyCopy = vi.fn(() => { copiedText = document.querySelector('textarea')?.value ?? ''; return true; });
+    const originalCopy = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    Object.defineProperty(document, 'execCommand', { value: legacyCopy, configurable: true });
+    try {
+      await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="复制原链接：/s/wp/one"]')!.click());
+      expect(modernCopy).toHaveBeenCalledWith(new URL('/s/wp/one', window.location.origin).href);
+      expect(legacyCopy).toHaveBeenCalledWith('copy');
+      expect(copiedText).toBe(new URL('/s/wp/one', window.location.origin).href);
+    } finally {
+      if (originalCopy) Object.defineProperty(document, 'execCommand', originalCopy); else Reflect.deleteProperty(document, 'execCommand');
+    }
     await clickText('查看全部 3 条链接');
     expect(getCollectionContextLinks).toHaveBeenCalledWith('a', 'collection:one', 1);
     expect(document.querySelector('[aria-label="所属合集"]')).toBeNull();
