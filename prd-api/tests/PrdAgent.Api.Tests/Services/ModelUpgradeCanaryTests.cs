@@ -21,7 +21,18 @@ public sealed class ModelUpgradeCanaryTests
         Assert.False(ModelUpgradeCanaryWorker.Enabled(C(("LlmGateway:ModelUpgrades:CanaryEnabled","true"),
             ("LlmGateway:ModelUpgrades:CanaryDeployment","different"))));
         Assert.True(ModelUpgradeCanaryWorker.Enabled(C(("LlmGateway:ModelUpgrades:CanaryEnabled","true"),
+            ("Deployment:Identity","prd-agent:production"),
             ("LlmGateway:ModelUpgrades:CanaryDeployment","prd-agent:production"))));
+        Assert.False(ModelUpgradeCanaryWorker.Enabled(C(("LlmGateway:ModelUpgrades:CanaryEnabled","true"),
+            ("LlmGateway:ModelUpgrades:CanaryDeployment","prd-agent:production"))));
+        Assert.True(ModelUpgradeCanaryWorker.Enabled(C(("LlmGateway:ModelUpgrades:CanaryEnabled","true"),
+            ("CDS_PROJECT_ID","prd-agent"),("VITE_GIT_BRANCH","main"),
+            ("LlmGateway:ModelUpgrades:CanaryDeployment","prd-agent::main"))));
+        Assert.False(ModelUpgradeCanaryWorker.Enabled(C(("LlmGateway:ModelUpgrades:CanaryEnabled","true"),
+            ("CDS_PROJECT_ID","prd-agent"),("VITE_GIT_BRANCH","codex/preview"),
+            ("LlmGateway:ModelUpgrades:CanaryDeployment","prd-agent::codex/preview"))));
+        Assert.False(ModelUpgradeCanaryWorker.Enabled(C(("LlmGateway:ModelUpgrades:CanaryEnabled","true"),
+            ("CDS_PROJECT_ID","prd-agent"),("LlmGateway:ModelUpgrades:CanaryDeployment","prd-agent::main"))));
     }
 
     [Fact]
