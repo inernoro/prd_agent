@@ -196,6 +196,19 @@ class WorkflowAptWiring(unittest.TestCase):
             self.assertIsNotNone(job)
             self.assertRegex(job[1], r'(?m)^    runs-on: ubuntu-24\.04$')
 
+    def test_design_browser_image_matches_the_locked_playwright_dependency(self):
+        import json
+        source = WORKFLOW.read_text()
+        job = re.search(r'(?ms)^  design-runtime-test:\n(.*?)(?=^  [a-z][a-z0-9-]*:|\Z)', source)[1]
+        package = json.loads((ROOT / 'design-runtime/opendesign/package.json').read_text())
+        version = package['devDependencies'].get('playwright-core') or package.get('dependencies', {}).get('playwright-core')
+        self.assertIn(f'image: mcr.microsoft.com/playwright:v{version}-noble@sha256:', job)
+        self.assertRegex(job, r'image: mcr\.microsoft\.com/playwright:[^\n]+@sha256:[a-f0-9]{64}\n')
+        self.assertNotIn('--privileged', job)
+        self.assertNotIn('--ipc=host', job)
+        self.assertIn('pnpm exec playwright-core install --with-deps chromium', job)
+        self.assertIn('run: pnpm test', job)
+
     def test_all_four_ci_consumers_explicitly_select_the_fixed_backup(self):
         source = WORKFLOW.read_text()
         self.assertEqual(source.count('scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel'), 4)
