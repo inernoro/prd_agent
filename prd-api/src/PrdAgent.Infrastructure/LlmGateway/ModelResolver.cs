@@ -1541,10 +1541,12 @@ public class ModelResolver : IModelResolver
                 return null;
             }
             var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(exchange.TargetApiKeyEncrypted, _config);
-            return ModelResolutionResult.FromExchangePool(
+            var exchangeResolution = ModelResolutionResult.FromExchangePool(
                 "LogicalModel", expectedModel, item, logicalGroup, exchange, apiKey,
                 logical.Id, logical.PublicId, offering.Id, "exchange",
                 offering.MaxConcurrency, offering.RateLimitPerMinute, offering.EndpointPath);
+            exchangeResolution.AcceptedModelAliases = [.. logical.Aliases];
+            return exchangeResolution;
         }
 
         var modelCollection = _gatewayDb!.Context.Database.GetCollection<LLMModel>("llmgw_models");
@@ -1609,10 +1611,12 @@ public class ModelResolver : IModelResolver
             ? platform.ApiKeyEncrypted
             : model.ApiKeyEncrypted;
         var apiKeyValue = ApiKeyCryptoKeyRing.DecryptPlainOrNull(encryptedKey, _config);
-        return ModelResolutionResult.FromPool(
+        var modelResolution = ModelResolutionResult.FromPool(
             "LogicalModel", expectedModel, item, logicalGroup, endpointPlatform, apiKeyValue, model,
             logical.Id, logical.PublicId, offering.Id, "model", offering.MaxConcurrency,
             offering.RateLimitPerMinute, offering.EndpointPath);
+        modelResolution.AcceptedModelAliases = [.. logical.Aliases];
+        return modelResolution;
     }
 
 

@@ -48,4 +48,37 @@ public class GatewayLogicalModelIdentityTests
         Assert.True(GatewayLogicalModelIdentity.Accepts(result.ExpectedModel, result.LogicalModelPublicId, result.AcceptedModelAliases));
         Assert.False(GatewayLogicalModelIdentity.Accepts("gpt-image-2", result.LogicalModelPublicId, result.AcceptedModelAliases));
     }
+    [Theory]
+    [InlineData("image-quality", true)]
+    [InlineData("image-2-all", true)]
+    [InlineData("gpt-image-2", false)]
+    [InlineData("another-model", false)]
+    public async Task StrictLogicalBoundaryAcceptsOnlyResolvedIdentity(string requested, bool success)
+    {
+        ILlmGateway gateway = new IdentityGateway();
+        var result = await gateway.ResolveRequiredLogicalModelAsync("visual-agent.image.text2img::generation", "generation", requested);
+        Assert.Equal(success, result.Success);
+        if (success) Assert.Equal("image-quality", result.LogicalModelPublicId);
+    }
+
+    private sealed class IdentityGateway : ILlmGateway
+    {
+        public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType,
+            string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null,
+            CancellationToken ct = default) => Task.FromResult(new GatewayModelResolution
+            { Success = true, LogicalModelPublicId = "image-quality", ExpectedModel = expectedModel,
+                ActualModel = "gpt-image-2.6-flare", AcceptedModelAliases = ["image-2-all"] });
+        public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        { await Task.CompletedTask; yield break; }
+        public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest request, GatewayModelResolution resolution,
+            CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(string appCallerCode, string modelType,
+            CancellationToken ct = default) => throw new NotSupportedException();
+        public PrdAgent.Core.Interfaces.ILLMClient CreateClient(string appCallerCode, string modelType,
+            int maxTokens = 4096, double temperature = 0.2, bool includeThinking = false,
+            string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null) => throw new NotSupportedException();
+    }
+
 }
