@@ -26,7 +26,7 @@ public class ModelUpgradePolicyTests
         Assert.Equal(0, state.ReservedCostUsd);
         state.OutcomeUnknown = true; Assert.Equal("", ModelUpgradeRules.NextAutomaticAction(state, DateTime.UtcNow));
     }
-    [Fact] public void DefaultCallerRequiresClaimRegistryAuthorizationAndScenario()
+    [Fact] public void DefaultCallerPrefersClaimsAndRequiresRegistryAuthorizationAndScenario()
     {
         var logical = new BsonDocument { { "ModelType", "generation" }, { "Capabilities", new BsonArray { "text2img" } },
             { "AllowedAppCallerCodes", new BsonArray { "visual-agent.image.text2img::generation" } },
@@ -35,6 +35,17 @@ public class ModelUpgradePolicyTests
         Assert.Equal("visual-agent.image.text2img::generation", ModelUpgradeRules.DefaultValidationCaller(logical, new[] { caller }));
         caller["RequestType"] = "chat"; Assert.Equal("", ModelUpgradeRules.DefaultValidationCaller(logical, new[] { caller }));
         caller["RequestType"] = "generation"; logical["Capabilities"] = new BsonArray { "img2img" };
+        Assert.Equal("", ModelUpgradeRules.DefaultValidationCaller(logical, new[] { caller }));
+    }
+    [Fact] public void NewStableModelCanValidateWithoutTakingOverAnExistingBusinessDefault()
+    {
+        var logical = new BsonDocument { { "ModelType", "generation" }, { "Capabilities", new BsonArray { "text2img" } },
+            { "AllowedAppCallerCodes", new BsonArray { "visual-agent.image.text2img::generation" } },
+            { "DefaultForAppCallerCodes", new BsonArray() } };
+        var caller = new BsonDocument { { "AppCallerCode", "visual-agent.image.text2img::generation" }, { "RequestType", "generation" }, { "Status", "active" } };
+        Assert.Equal("visual-agent.image.text2img::generation", ModelUpgradeRules.DefaultValidationCaller(logical, new[] { caller }));
+        Assert.Empty(logical["DefaultForAppCallerCodes"].AsBsonArray);
+        caller["Status"] = "disabled";
         Assert.Equal("", ModelUpgradeRules.DefaultValidationCaller(logical, new[] { caller }));
     }
     [Fact] public void CandidateCanaryTargetsFixedIdentityAndKnownMediaEnvelope()

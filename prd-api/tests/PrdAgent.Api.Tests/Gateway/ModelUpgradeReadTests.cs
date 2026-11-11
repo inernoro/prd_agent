@@ -51,10 +51,12 @@ public class ModelUpgradeReadTests
         Assert.Equal("visual-agent.image.text2img::generation", view.Policy.ValidationAppCallerCode);
     }
     [Fact]
-    public async Task FirstPolicyDoesNotInventUnregisteredOrBlockedCaller()
+    public async Task FirstPolicyDoesNotUseUnauthorizedOrBlockedCaller()
     {
         var db = new Mock<IMongoDatabase>(MockBehavior.Strict);
-        Collection(db, "llmgw_logical_models", Logical());
+        var logical = Logical();
+        logical["AllowedAppCallerCodes"] = new BsonArray { "visual-agent.image.text2img::generation" };
+        Collection(db, "llmgw_logical_models", logical);
         Collection<ModelUpgradeState>(db, ModelUpgradeService.CollectionName);
         Collection<BsonDocument>(db, "llmgw_model_offerings");
         Collection(db, "llmgw_app_callers", Caller("visual-agent.image.text2img::generation", "disabled"), Caller("unclaimed::generation"));
