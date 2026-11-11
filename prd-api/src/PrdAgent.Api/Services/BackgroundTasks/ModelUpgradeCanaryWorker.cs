@@ -34,9 +34,18 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
         }
     }
 
-    internal static bool Enabled(IConfiguration c) => c.GetValue<bool>("LlmGateway:ModelUpgrades:CanaryEnabled")
-        && c["LlmGateway:ModelUpgrades:CanaryDeployment"] is { Length: > 0 } deployment
-        && deployment == TaskPermitDeployment.Resolve(c);
+    internal static bool Enabled(IConfiguration c)
+    {
+        if (!c.GetValue<bool>("LlmGateway:ModelUpgrades:CanaryEnabled")
+            || string.IsNullOrWhiteSpace(c["LlmGateway:ModelUpgrades:CanaryDeployment"])) return false;
+        if (!string.IsNullOrWhiteSpace(c["CDS_PROJECT_ID"]))
+        {
+            // 预览共享库不代表它获准消费 main 的模型验收队列。
+            if (c["VITE_GIT_BRANCH"]?.Trim() != "main") return false;
+        }
+        else if (string.IsNullOrWhiteSpace(c[DeploymentAuthority.DeploymentIdentityKey])) return false;
+        return c["LlmGateway:ModelUpgrades:CanaryDeployment"] == TaskPermitDeployment.Resolve(c);
+    }
 
     private async Task PollAsync(CancellationToken ct)
     {

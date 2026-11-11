@@ -118,12 +118,10 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
     internal Task<TaskExecutionIdentity> AdmitModelUpgradeCanaryAsync(string requestId, string fingerprint,
         string subjectUserId, string appCallerCode, TaskBudgetContractPolicy budget, bool scheduled, CancellationToken ct)
     {
-        if (!configuration.GetValue<bool>("LlmGateway:ModelUpgrades:CanaryEnabled")
+        if (!ModelUpgradeCanaryWorker.Enabled(configuration)
             || scheduled && !configuration.GetValue<bool>("LlmGateway:ModelUpgrades:ScheduledCanaryEnabled")
             || AutomaticTaskExecutionContext.SourceDeployment is not { } source
             || !source.Contains("/ModelUpgradeCanaryWorker/", StringComparison.Ordinal)
-            || string.IsNullOrWhiteSpace(configuration["LlmGateway:ModelUpgrades:CanaryDeployment"])
-            || configuration["LlmGateway:ModelUpgrades:CanaryDeployment"] != TaskPermitDeployment.Resolve(configuration)
             || !AppCallerRegistrationService.GetAllDefinitions().Any(x => x.AppCode == appCallerCode))
             throw new TaskExecutionAdmissionException("TASK_CANARY_NOT_ADMITTED", "当前部署未获候选验收授权，未启动付费调用。");
         var operation = "ModelUpgradeCanaryWorker:" + requestId;
