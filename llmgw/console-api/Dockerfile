@@ -10,7 +10,11 @@ RUN dotnet restore llmgw/console-api/prd-llmgw.csproj
 # 再 COPY 全部源码并发布
 COPY llmgw/console-api/ llmgw/console-api/
 COPY prd-api/src/LlmGateway.Transport/ prd-api/src/LlmGateway.Transport/
-RUN dotnet publish llmgw/console-api/prd-llmgw.csproj -c Release -o /app/publish /p:UseAppHost=false
+# .git 不进入构建上下文；版本门必须读取产物内烘焙的完整提交，不能依赖运行时 ENV。
+ARG GIT_COMMIT
+RUN test "${#GIT_COMMIT}" -eq 40 \
+    && case "$GIT_COMMIT" in *[!0-9a-fA-F]*) echo "GIT_COMMIT must be a full hexadecimal commit" >&2; exit 1;; esac \
+    && dotnet publish llmgw/console-api/prd-llmgw.csproj -c Release -o /app/publish /p:UseAppHost=false /p:SourceRevisionId="$GIT_COMMIT"
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
