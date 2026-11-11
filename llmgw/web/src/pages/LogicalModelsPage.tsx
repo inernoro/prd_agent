@@ -17,7 +17,7 @@
 // 本路由被 e2e/llmgw-layout-drift.mjs 监测：新增上游与新建模型都必须留在页面内联表单里，
 // 不要改成抽屉或对话框——被测的扁平 DOM 一旦变成浮层，量到的就不是这一页的版式了。
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   createLogicalModel,
   createModelOffering,
@@ -40,6 +40,7 @@ import type {
   ExchangeItem,
   ExchangeOptionItem,
   LogicalModelItem,
+  ReferenceMigrationPlan,
   LogicalModelUsageItem,
   ModelItem,
   ModelOfferingItem,
@@ -54,6 +55,7 @@ import { CARD_BODY, CARD_PADDING, GAP, INSET_BLOCK } from '@/lib/surface';
 import { RouteDot, UpstreamMark, UsageSparkline, type RouteHealth } from '@/components/ModelRouteVisuals';
 import { CallTracePanel } from '@/components/CallTracePanel';
 import { ModelUpgradePanel } from '@/components/ModelUpgradePanel';
+import { ModelReferenceMigrationOverview, ModelReferenceMigrationPanel, ModelReferenceUsageRepairPanel } from '@/components/ModelReferenceMigrationPanel';
 import './LogicalModelsPage.css';
 import { CollectionView, CollectionDetailPane, CollectionPaneTab } from '@/components/CollectionView';
 
@@ -69,6 +71,8 @@ function defaultImageGenerationCapabilities() {
 
 export function LogicalModelsPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const referenceSource = searchParams.get('references');
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const { promptText } = useDialogs();
@@ -85,6 +89,10 @@ export function LogicalModelsPage() {
   /** 正在看调用全貌的那个模型。和「展开」分开：一个给配置，一个给推演。 */
   const [traceFor, setTraceFor] = useState<string | null>(null);
   const [upgradeFor, setUpgradeFor] = useState<string | null>(null);
+  const [migrationFor, setMigrationFor] = useState<string | null>(null);
+  const [migrationPlan, setMigrationPlan] = useState<ReferenceMigrationPlan | null>(null);
+  const [repairOpen, setRepairOpen] = useState(false);
+  useEffect(() => { if (referenceSource) { setExpanded(null); setTraceFor(null); setUpgradeFor(null); setMigrationPlan(null); setMigrationFor(referenceSource); } }, [referenceSource]);
   const [error, setError] = useState<string | null>(null);
   // 带 tone 的提示：此前是裸字符串 + 固定 tone="ok"，10 个写入点里有 6 个是失败路径，
   // 于是「更新路由策略失败」会渲染成一条绿色成功条 —— 运维会以为改动生效了（Codex P2）。
@@ -384,11 +392,21 @@ export function LogicalModelsPage() {
     () => [...(usage?.values() ?? [])].reduce((sum, x) => sum + (x.unpricedCalls || 0), 0),
     [usage]);
 
-  const selectedItem = items?.find((item) => item.id === (expanded || traceFor || upgradeFor));
+  function openMigration(id: string, plan: ReferenceMigrationPlan | null = null) {
+    setExpanded(null); setTraceFor(null); setUpgradeFor(null); setRepairOpen(false);
+    setMigrationPlan(plan); setMigrationFor(id);
+  }
+  const selectedItem = items?.find((item) => item.id === (migrationFor || expanded || traceFor || upgradeFor));
+  const migrationSource = migrationFor !== null ? items?.find(item => item.id === migrationFor) || (migrationPlan ? {
+    id: migrationPlan.mapping.source.logicalId || '', publicId: migrationPlan.mapping.source.publicId || '原使用位置',
+    name: '原模型目录信息不可用', enabled: false,
+    modelType: items?.find(item => item.id === migrationPlan.mapping.target.logicalId)?.modelType || '',
+  } : null) : null;
   function renderSelectedDetails() {
+    if (migrationSource) return <ModelReferenceMigrationPanel key={`${migrationFor}:${migrationPlan?.intentId || 'new'}`} source={migrationSource} sourceUnavailable={!items?.some(item => item.id === migrationFor)} initialPlan={migrationPlan} onChanged={() => void reload()} />;
     if (!selectedItem) return null;
     const item = selectedItem;
-    if (upgradeFor === item.id) return <ModelUpgradePanel key={item.id} logicalModelId={item.id} onRoutingChanged={() => void reload()} />;
+    if (upgradeFor === item.id) return <ModelUpgradePanel key={item.id} logicalModelId={item.id} onRoutingChanged={() => void reload()} onReferenceCoverage={() => openMigration(item.id)} />;
     const routes = describeRoutes(item, models);
     const health = summarizeHealth(item, routes);
     const tracing = traceFor === item.id;
@@ -603,6 +621,9 @@ export function LogicalModelsPage() {
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
         {notice ? <InlineAlert tone={notice.tone}>{notice.text}</InlineAlert> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
+        <ModelReferenceMigrationOverview onOpen={plan => openMigration(plan.mapping.source.logicalId || '', plan)} />
+        <div><Button size="sm" variant="ghost" onClick={() => { setRepairOpen(value => !value); setMigrationFor(null); }}>{repairOpen ? '收起失效引用修复' : '修复失效引用'}</Button></div>
+        {repairOpen ? <Card style={CARD_BODY}><ModelReferenceUsageRepairPanel /></Card> : null}
 
         {createOpen && canWrite ? (
           <Card style={CARD_BODY}>
@@ -748,9 +769,9 @@ export function LogicalModelsPage() {
                     <span className="lg-logical-model-actions" style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                       {/* 「调用全貌」独立于「展开」：展开给的是可改的配置，全貌给的是
                           「现在发一个请求会落到谁」。后者是人最想确认、而配置项答不出的那件事。 */}
-                      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => { setConfigurationOpen(false); setTraceFor(null); setUpgradeFor(null); setExpanded((x) => (x === item.id ? null : item.id)); }}>
+                      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => { setMigrationFor(null); setConfigurationOpen(false); setTraceFor(null); setUpgradeFor(null); setExpanded((x) => (x === item.id ? null : item.id)); }}>
                         <span style={{ whiteSpace: 'nowrap' }}>{open ? '收起' : '查看'}</span>
-                      </Button>
+                      </Button><Button size="sm" variant="ghost" onClick={() => openMigration(item.id)}>使用位置与升级</Button>
                     </span>
                   </div>
 
@@ -761,9 +782,9 @@ export function LogicalModelsPage() {
             </>}
             </CollectionView>
           </Card>
-          {selectedItem ? <CollectionDetailPane key={selectedItem.id} title={selectedItem.name} identifier={selectedItem.publicId} onClose={() => { setExpanded(null); setTraceFor(null); setUpgradeFor(null); }} tabs={<><CollectionPaneTab active={Boolean(expanded) && !configurationOpen} onClick={() => {setConfigurationOpen(false);setTraceFor(null);setUpgradeFor(null);setExpanded(selectedItem.id);}}>上游线路</CollectionPaneTab><CollectionPaneTab active={Boolean(expanded) && configurationOpen} onClick={() => {setConfigurationOpen(true);setTraceFor(null);setUpgradeFor(null);setExpanded(selectedItem.id);}}>模型配置</CollectionPaneTab><CollectionPaneTab active={Boolean(traceFor)} onClick={() => {setExpanded(null);setUpgradeFor(null);setTraceFor(selectedItem.id);}}>调用全貌</CollectionPaneTab>{selectedItem.identityKind === 'stable' ? <CollectionPaneTab active={upgradeFor === selectedItem.id} onClick={() => {setExpanded(null);setTraceFor(null);setUpgradeFor(selectedItem.id);}}>升级策略</CollectionPaneTab> : null}</>}>
+          {selectedItem ? <CollectionDetailPane key={selectedItem.id} title={selectedItem.name} identifier={selectedItem.publicId} onClose={() => { setExpanded(null); setTraceFor(null); setUpgradeFor(null); setMigrationFor(null); }} tabs={<><CollectionPaneTab active={Boolean(expanded) && !configurationOpen} onClick={() => {setMigrationFor(null);setConfigurationOpen(false);setTraceFor(null);setUpgradeFor(null);setExpanded(selectedItem.id);}}>上游线路</CollectionPaneTab><CollectionPaneTab active={Boolean(expanded) && configurationOpen} onClick={() => {setMigrationFor(null);setConfigurationOpen(true);setTraceFor(null);setUpgradeFor(null);setExpanded(selectedItem.id);}}>模型配置</CollectionPaneTab><CollectionPaneTab active={Boolean(traceFor)} onClick={() => {setMigrationFor(null);setExpanded(null);setUpgradeFor(null);setTraceFor(selectedItem.id);}}>调用全貌</CollectionPaneTab>{selectedItem.identityKind === 'stable' ? <CollectionPaneTab active={upgradeFor === selectedItem.id} onClick={() => {setMigrationFor(null);setExpanded(null);setTraceFor(null);setUpgradeFor(selectedItem.id);}}>升级策略</CollectionPaneTab> : null}<CollectionPaneTab active={migrationFor === selectedItem.id} onClick={() => openMigration(selectedItem.id)}>使用位置与升级</CollectionPaneTab></>}>
             {renderSelectedDetails()}
-          </CollectionDetailPane> : null}
+          </CollectionDetailPane> : migrationSource ? <CollectionDetailPane title={migrationSource.name} identifier={migrationSource.publicId} onClose={() => setMigrationFor(null)}>{renderSelectedDetails()}</CollectionDetailPane> : null}
           </div>
         ) : null}
 
