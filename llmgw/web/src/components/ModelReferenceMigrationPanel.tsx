@@ -193,6 +193,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
   return <section aria-label="使用位置与升级" data-testid="model-reference-migration-panel" style={{ display: 'flex', flexDirection: 'column', gap: GAP.section, padding: 14, minWidth: 0 }}>
     <h3 style={SECTION_TITLE}>全量使用位置</h3>
     <div style={HINT_TEXT}>仅更新活动使用配置，历史记录保持原样。阻断、未确认或未扫描的位置都会阻止完成。</div>
+    <div style={HINT_TEXT}>已更新按配置记录计数，旧引用残留按使用位置计数。</div>
     {usage && (usage.status === 'unknown' || !usage.modelType) ? <InlineAlert tone="error">此位置的结构或用途尚未确认，当前不能自动迁移；请先核对原配置。</InlineAlert> : null}
     {usage ? <InlineAlert>只修改所选使用位置，不会更改同名的其他业务字段。生成计划后才核对完整覆盖范围。</InlineAlert> : null}
     {!canWrite ? <ReadOnlyNotice /> : null}
@@ -216,7 +217,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
     <div style={{ display: 'flex', gap: GAP.normal, flexWrap: 'wrap' }}>
       <Button size="sm" variant="ghost" disabled={Boolean(busy) || (!plan && !pending && (!validScope || Boolean(usage || !source.id || sourceUnavailable)))} onClick={() => { if (pending || plan) void readPlan(pending || { intentId: plan!.intentId, operation: 'verify' }); else void scan(); }}>{pending || plan ? '继续查询原计划' : '重新扫描范围'}</Button>
       {!plan ? <Button size="sm" disabled={!canWrite || !validScope || (!usage && (!safe || sourceUnavailable)) || active || Boolean(error)} onClick={() => void perform('create')}>{usage ? '生成修复计划' : '生成升级计划'}</Button> : <>
-        <Button size="sm" disabled={!canWrite || active || !validScope || !safe || Boolean(error) || plan.status !== 'planned'} onClick={() => void perform('apply')}>升级全部使用位置</Button>
+        <Button size="sm" disabled={!canWrite || active || !validScope || !safe || Boolean(error) || plan.status !== 'planned'} onClick={() => void perform('apply')}>{usage ? '升级所选使用位置' : '升级全部使用位置'}</Button>
         <Button size="sm" variant="ghost" disabled={!canWrite || active} onClick={() => void perform('verify')}>重新扫描核验</Button>
         <Button size="sm" variant="ghost" disabled={active} onClick={() => { generation.current++; currentPlan.current = null; setPlan(null); setCoverage(null); setConfirmed(false); void scan(scopeKey, generation.current); }}>重新生成计划</Button>
       </>}
@@ -232,13 +233,19 @@ export function ModelReferenceMigrationOverview({ onOpen }: { onOpen: (plan: Ref
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const [unresolvedTotal, setUnresolvedTotal] = useState<number | null>(null);
+  const [hasMore, setHasMore] = useState(false);
   const readVersion = useRef(0);
   async function refresh() {
     const version = ++readVersion.current;
     try {
       const result = await getModelReferenceMigrationPlans();
       if (version !== readVersion.current) return;
-      if (result.success && Array.isArray(result.data.items) && result.data.items.every(item => item?.intentId && item.mapping?.source && item.mapping?.target)) { setPlans(result.data.items); setFailed(false); setLoaded(true); }
+      if (result.success && Array.isArray(result.data.items) && result.data.items.every(item => item?.intentId && item.mapping?.source && item.mapping?.target)) {
+        setPlans(result.data.items); setFailed(false); setLoaded(true);
+        setUnresolvedTotal(Number.isSafeInteger(result.data.unresolvedTotal) ? result.data.unresolvedTotal! : null);
+        setHasMore(result.data.hasMore === true);
+      }
       else setFailed(true);
     } catch { if (version === readVersion.current) setFailed(true); }
   }
@@ -248,11 +255,13 @@ export function ModelReferenceMigrationOverview({ onOpen }: { onOpen: (plan: Ref
     return () => { readVersion.current++; window.clearInterval(timer); };
   }, [tenant?.id]);
   const unresolved = plans.filter(plan => plan.status !== 'completed' || !isReferenceCoverageVerified(plan.coverage, now));
+  const unresolvedCount = Math.max(unresolved.length, unresolvedTotal ?? 0);
   return <div data-testid="model-reference-migration-overview" style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}><Button size="sm" variant="ghost" onClick={() => setOpen(value => !value)}>升级记录与遗漏</Button><span style={HINT_TEXT}>{failed ? '升级记录需重新核对' : !loaded ? '正在读取升级记录' : `最近 ${plans.length} 个计划 · 待处理 ${unresolved.length}`}</span><Button size="sm" variant="ghost" onClick={() => void refresh()}>刷新升级记录</Button></div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}><Button size="sm" variant="ghost" onClick={() => setOpen(value => !value)}>升级记录与遗漏</Button><span style={HINT_TEXT}>{failed ? '升级记录需重新核对' : !loaded ? '正在读取升级记录' : `显示 ${plans.length} 个计划 · 待处理 ${unresolvedCount}`}</span><Button size="sm" variant="ghost" onClick={() => void refresh()}>刷新升级记录</Button></div>
     {!loaded && !failed ? <Spinner size={14} /> : null}
     {failed ? <InlineAlert tone="error">升级记录读取失败，不能确认全量完成，请重新读取。</InlineAlert> : null}
-    {unresolved.length && !failed ? <InlineAlert tone="error">仍有 {unresolved.length} 个计划需处理或重新核对，请查看阻断、未确认与旧引用残留。</InlineAlert> : null}
+    {unresolvedCount && !failed ? <InlineAlert tone="error">仍有 {unresolvedCount} 个计划需处理或重新核对，请查看阻断、未确认与旧引用残留。</InlineAlert> : null}
+    {hasMore && !failed ? <InlineAlert tone="info">当前优先展示待处理计划，尚有更多记录；处理后刷新继续查看，不能将当前列表当作全部记录。</InlineAlert> : null}
     {open ? <CollectionView items={plans} searchText={plan => `${plan.mapping.source.publicId} ${plan.mapping.target.publicId} ${plan.status}`} placeholder="搜索升级计划" emptyText="尚无升级计划；这不代表已完成全量覆盖。">{rows => <>{rows.map(plan => <div key={plan.intentId} style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, padding: 8, flexWrap: 'wrap' }}><span style={MONO_META}>{plan.mapping.source.publicId || plan.mapping.source.logicalId} → {plan.mapping.target.publicId || plan.mapping.target.logicalId}</span><span style={HINT_TEXT}>{failed ? '需重新核对' : plan.status === 'completed' && isReferenceCoverageVerified(plan.coverage, now) ? '有效核验' : PLAN_LABELS[plan.status] || '需重新核对'} · 阻断 {plan.coverage?.blocked ?? '未扫描'} · 未确认 {plan.coverage?.unknown ?? '未扫描'} · 残留 {plan.coverage?.residual ?? '未扫描'}</span><Button size="sm" onClick={() => onOpen(plan)}>查看使用位置计划</Button></div>)}</>}</CollectionView> : null}
   </div>;
 }

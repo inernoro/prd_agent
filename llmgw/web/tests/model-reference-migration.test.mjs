@@ -11,6 +11,14 @@ import React, { act } from 'react';
 const ok = data => ({ success: true, data, error: null });
 const fail = () => ({ success: false, data: null, error: { code: 'NETWORK_ERROR', message: 'raw-secret-stack' } });
 const model = (id, modelType = 'chat', enabled = true) => ({ id, publicId: `public-${id}`, name: `模型${id}`, modelType, enabled, identityKind: 'fixed', aliases: [], capabilities: [], allowedAppCallerCodes: [], defaultForAppCallerCodes: [], routingStrategy: 'priority', isDefaultForType: false, offerings: [] });
+test('全局待处理总数超过当前页时仍明确提示未展示遗漏', async t => {
+  const h = await setup(t);
+  h.f.override = name => name === 'getModelReferenceMigrationPlans' ? ok({ items: [h.f.plan], total: 250, unresolvedTotal: 240, hasMore: true }) : undefined;
+  await h.render(h.c.ModelReferenceMigrationOverview, { onOpen() {} });
+  assert.match(h.body(), /待处理 240/);
+  assert.match(h.body(), /尚有更多记录/);
+  assert.match(h.body(), /不能将当前列表当作全部记录/);
+});
 function coverage(overrides = {}) {
   const c = { registryVersion: 'v1', registryHash: 'hash-v1', canComplete: true, verified: false, affected: 2, migrated: 0, blocked: 0, unknown: 0, residual: 2, ...overrides };
   return { ...c, consumers: [{ key: 'arena.slots', count: 4, ...Object.fromEntries(['affected','migrated','blocked','unknown','residual'].map(k => [k,c[k]])), reasons: [] }], items: [{ consumerKey: 'arena.slots', collection: 'arena_slots', recordId: 'slot', path: 'logicalModelId', status: 'affected', reason: '活动阵容需要更新' }] };
@@ -96,7 +104,7 @@ test('迟到旧扫描不能覆盖新目标，切换范围丢弃旧计划',async 
 test('孤立引用使用安全位置创建计划，不提交任意source，不冒称清单是全覆盖',async t=>{
   const h=await setup(t);h.f.usages=[{consumerKey:'arena.slots',recordId:'old-slot',path:'modelId',modelType:'chat',value:'deleted-model',status:'orphan'},{consumerKey:'prefs',recordId:'user',path:'voice',modelType:'chat',value:'unparsed',status:'unknown'},{consumerKey:'lab',recordId:'known',path:'model',modelType:'chat',value:'existing',status:'available'}];
   await h.render(h.c.ModelReferenceUsageRepairPanel);assert.match(h.body(),/目录身份失效|结构待核对/);assert.doesNotMatch(h.body(),/existing/);assert.match(h.body(),/不代表全量覆盖/);await h.click('选择使用位置');await h.select('target');await h.click('生成修复计划');
-  const req=h.f.calls.find(x=>x.name==='createModelReferenceMigrationFromUsage').args[0];assert.deepEqual(Object.keys(req).sort(),['clientRequestId','consumerKey','path','recordId','targetLogicalId']);assert.equal(req.recordId,'old-slot');assert.equal(req.path,'modelId');assert.equal(h.f.calls.filter(x=>x.name==='getModelReferenceCoverage').length,0);assert.match(h.body(),/只修改所选使用位置/);await h.click('升级全部使用位置');assert.match(h.body(),/升级全部使用位置完成/);
+  const req=h.f.calls.find(x=>x.name==='createModelReferenceMigrationFromUsage').args[0];assert.deepEqual(Object.keys(req).sort(),['clientRequestId','consumerKey','path','recordId','targetLogicalId']);assert.equal(req.recordId,'old-slot');assert.equal(req.path,'modelId');assert.equal(h.f.calls.filter(x=>x.name==='getModelReferenceCoverage').length,0);assert.match(h.body(),/只修改所选使用位置/);await h.click('升级所选使用位置');assert.match(h.body(),/升级全部使用位置完成/);
 });
 test('全局入口显示遗漏并打开原计划，空列表不冒称成功',async t=>{
   const h=await setup(t);h.f.plan.status='blocked';h.f.plan.coverage=coverage({canComplete:false,blocked:2,unknown:1});h.f.plans=[h.f.plan];let opened;await h.render(h.c.ModelReferenceMigrationOverview,{onOpen:p=>{opened=p;}});

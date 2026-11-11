@@ -253,7 +253,16 @@ public sealed class ModelReferenceEngine(IModelReferenceStore store, string inte
         var plan = await RequiredPlanAsync(intentId, tenantId, ct);
         if (plan.Revision != expectedRevision || plan.LeaseUntil > DateTime.UtcNow || plan.Status == "applying")
             throw new ModelReferenceException("REFERENCE_PLAN_BUSY", "计划正在执行或已变化，请等待原计划完成并刷新后核对。");
-        if (plan.Coverage.RegistryHash != ModelReferenceRegistry.Hash) throw new ModelReferenceException("REFERENCE_REGISTRY_CHANGED", "引用注册表已更新，请重新进行完整检查。");
+        if (plan.Coverage.RegistryHash != ModelReferenceRegistry.Hash)
+        {
+            plan.Coverage.Verified = false; plan.Coverage.VerifiedAt = null; plan.Coverage.ValidUntil = null;
+            plan.Coverage.Consumers.RemoveAll(x => x.Key == "registry.changed");
+            plan.Coverage.Consumers.Add(new() { Key = "registry.changed", Unknown = 1, Reasons = ["模型使用位置注册表已更新，旧证明已失效，请重新建立完整计划；旧计划不会按新规则直接执行。"] });
+            plan.Status = "blocked";
+            // Retain the original registry hash, so Apply cannot reuse old approved changes with a new schema.
+            await SaveAsync(plan, CancellationToken.None);
+            return plan;
+        }
         try
         {
             plan.Coverage = await InspectAsync(plan.Mapping, ct);
@@ -264,6 +273,8 @@ public sealed class ModelReferenceEngine(IModelReferenceStore store, string inte
         {
             plan.Coverage = new ReferenceCoverage { Consumers = [new() { Key = "verification.unavailable", Unknown = 1, Reasons = ["本次全量复核未能完成，旧验证结果已失效；请恢复连接后核对原计划。"] }] };
         }
+        plan.Coverage.Migrated = plan.Changes.Count(x => x.Status == "applied");
+        foreach (var result in plan.Coverage.Consumers) result.Migrated = plan.Changes.Count(x => x.ConsumerKey == result.Key && x.Status == "applied");
         MarkVerified(plan.Coverage);
         plan.Status = plan.Coverage.Verified ? "completed" : "blocked";
         await SaveAsync(plan, CancellationToken.None);
