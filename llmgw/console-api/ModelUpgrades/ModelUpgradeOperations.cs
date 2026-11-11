@@ -186,26 +186,30 @@ public sealed partial class ModelUpgradeService
     }
     private async Task PollValidationAsync(ModelUpgradeState s)
     {
+        var id = s.Candidate?.ValidationRequestId ?? "";
+        var previouslyUnknown = s.OutcomeUnknown;
+        s.OutcomeUnknown = true; s.ValidationStatus = "unknown";
+        // Reconcile the original job before loading mutable candidate configuration.
+        var job = await ValidationRuns.Find(Scope(s.TenantId, F.Eq("_id", id))).FirstOrDefaultAsync(CancellationToken.None);
+        var status = job?.GetStringOrEmpty("Status");
+        if (job is not null && (status == "pending" && job.AsNullableUtcDateTime("ExpiresAt") < DateTime.UtcNow
+            || status == "failed" && (job.GetValue("ExpiredUnsent", false) == true || job.GetValue("UnsentConfirmed", false) == true)))
+        {
+            if (await ExpireUnsentValidationAsync(s, job, DateTime.UtcNow))
+                throw new ModelUpgradeException("CANARY_EXPIRED_UNSENT", "验收未发送；当日内部预占已释放，可修复配置后重新验收。原请求 ID 已保留供审计。");
+            throw new ModelUpgradeException("CANARY_OUTCOME_UNKNOWN", "任务可能已被消费，未退还预算且禁止重发；请按原请求 ID 核对日志。");
+        }
         var (logical, provider, model) = await CandidateAsync(s);
-        var id = s.Candidate!.ValidationRequestId ?? "";
         var logs = await Logs.Find(Scope(s.TenantId, F.Eq("RequestId", id))).Limit(20).ToListAsync(CancellationToken.None);
-        if (s.Candidate.ValidationRoute is { } wire && logs.Any(x => ModelUpgradeRules.EvidencePasses(x, s.TenantId, s.Candidate, logical.GetStringOrEmpty("ModelType")) && ModelUpgradeWire.LogMatches(wire, x)))
+        if (s.Candidate!.ValidationRoute is { } wire && logs.Any(x => ModelUpgradeRules.EvidencePasses(x, s.TenantId, s.Candidate, logical.GetStringOrEmpty("ModelType")) && ModelUpgradeWire.LogMatches(wire, x)))
         {
             var route = await ReadValidatedRouteAsync(s, logical, provider, model);
             // The finite wire fingerprint excludes health counters, timestamps and priority.
             s.Candidate.ValidationRoute = ModelUpgradeWire.Capture(route, model, provider);
             s.PendingAction = ""; CompleteValidation(s, id); return;
         }
-        var job = await ValidationRuns.Find(Scope(s.TenantId, F.Eq("_id", id))).FirstOrDefaultAsync(CancellationToken.None);
-        var status = job?.GetStringOrEmpty("Status");
-        if (job is not null && (status == "pending" && job.AsNullableUtcDateTime("ExpiresAt") < DateTime.UtcNow
-            || status == "failed" && (job.GetValue("ExpiredUnsent", false) == true || job.GetValue("UnsentConfirmed", false) == true)))
-        {
-            s.OutcomeUnknown = true; s.ValidationStatus = "unknown";
-            if (await ExpireUnsentValidationAsync(s, job, DateTime.UtcNow))
-                throw new ModelUpgradeException("CANARY_EXPIRED_UNSENT", "验收排队已过期，已确认未发送；当日内部预占已释放，可重新发起验收。请求 ID 已保留供审计。");
-            throw new ModelUpgradeException("CANARY_OUTCOME_UNKNOWN", "任务可能已被消费，未退还预算且禁止重发；请按原请求 ID 核对日志。");
-        }
+        s.OutcomeUnknown = previouslyUnknown;
+        s.ValidationStatus = previouslyUnknown ? "unknown" : "pending";
         if (status == "failed") throw new ModelUpgradeException("CANARY_FAILED", "受预算验收失败，原线路保持不变；请检查管理诊断后重新验收。");
         if (status == "unknown" || job is null || job.AsNullableUtcDateTime("ExpiresAt") < DateTime.UtcNow)
         { s.OutcomeUnknown = true; s.ValidationStatus = "unknown"; throw new ModelUpgradeException("CANARY_OUTCOME_UNKNOWN", "验收未取得确定结果，禁止自动重发；请按该请求 ID 核对真实日志后继续。"); }

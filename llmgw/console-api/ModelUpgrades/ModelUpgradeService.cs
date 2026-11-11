@@ -139,7 +139,8 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
         if (!ModelUpgradeRules.IsStable(logical)) throw new ModelUpgradeException("FIXED_MODEL", "固定版本型号不参与升级。", 400);
         var state = await StateAsync(actor.TenantId, id) ?? throw new ModelUpgradeException("POLICY_REQUIRED", "请先保存更新策略。");
         if (state.Version != request.Version || Busy(state)) throw new ModelUpgradeException("VERSION_CONFLICT", "策略正在执行或已更新，请刷新后重试。");
-        if (state.OutcomeUnknown && !(action == "validate" && !string.IsNullOrWhiteSpace(request.RequestId)))
+        if (state.OutcomeUnknown && !(action == "validate" && request.Mode == "evidence"
+                && !string.IsNullOrWhiteSpace(request.RequestId) && request.RequestId.Trim() == state.Candidate?.ValidationRequestId))
             throw new ModelUpgradeException("OUTCOME_UNKNOWN", "上次验收结果未知，禁止重发。请提供该请求的真实日志 ID 继续核验。");
         if (action is "validate" or "promote" && state.Candidate is null) throw new ModelUpgradeException("CANDIDATE_REQUIRED", "请先检查并确认候选型号。");
         if (action == "promote" && !ModelUpgradeRules.CanPromote(state, false, DateTime.UtcNow))
@@ -148,8 +149,9 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
         if (request.RequestId?.Length > 200) throw new ModelUpgradeException("INVALID_REQUEST_ID", "请求 ID 过长。", 400);
         if (action == "validate" && (request.Mode is not ("evidence" or "canary") || request.Mode == "evidence" && string.IsNullOrWhiteSpace(request.RequestId)))
             throw new ModelUpgradeException("EVIDENCE_REQUIRED", "请选择真实请求证据并填写请求 ID，或明确选择受预算验收。", 400);
+        var reconcileExistingRequest = state.OutcomeUnknown && action == "validate";
         state.ValidationMode = request.Mode; state.ExecutionRequestedBy = "manual";
-        state.PendingAction = action; state.EvidenceRequestId = request.RequestId?.Trim();
+        state.PendingAction = reconcileExistingRequest ? "await-validation" : action; state.EvidenceRequestId = request.RequestId?.Trim();
         state.ActorConsoleUserId = actor.UserId; state.ActorUserId = actor.ExternalUserId ?? actor.UserId; state.ActorUsername = actor.Username;
         state.Phase = Phase(action); state.Message = "任务已排队，正在等待后台执行；原线路尚未改变。";
         History(state, action, "queued", state.Message, state.EvidenceRequestId);
