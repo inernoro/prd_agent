@@ -1,5 +1,6 @@
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services;
@@ -11,7 +12,7 @@ public partial class VideoGenRunWorker
         var f = Builders<VideoGenRun>.Filter;
         return f.Eq(x => x.Id, run.Id) & f.Eq(x => x.OwnerAdminId, run.OwnerAdminId)
             & f.Eq(x => x.AppKey, run.AppKey) & f.Eq(x => x.ProjectId, run.ProjectId)
-            & f.Eq(x => x.DeploymentSlug, QueueDeploymentScope)
+            & f.Eq(x => x.DeploymentSlug, run.DeploymentSlug)
             & f.Eq(x => x.CancelRequested, false) & f.Eq(x => x.DeletionRequestedAt, null);
     }
 
@@ -38,15 +39,13 @@ public partial class VideoGenRunWorker
             || run.DeploymentSlug != QueueDeploymentScope) return false;
         var endedAt = DateTime.UtcNow;
         var recorded = await _db.VideoExportTasks.UpdateOneAsync(
-            x => x.Id == task.Id && x.RunId == run.Id && x.OwnerAdminId == run.OwnerAdminId
-                && x.AppKey == run.AppKey && x.ProjectId == task.ProjectId
-                && x.DeploymentSlug == QueueDeploymentScope && x.Status == VideoExportTaskStatus.Processing
-                && x.StartedAt == task.StartedAt,
+            OwnedExportHolder(task) & Builders<VideoExportTask>.Filter.Eq(x => x.StartedAt, task.StartedAt),
             Builders<VideoExportTask>.Update.Set(x => x.Status, VideoExportTaskStatus.Completed)
                 .Set(x => x.CurrentPhase, "completed").Set(x => x.Progress, 100)
                 .Set(x => x.OutputUrl, stored.Url).Set(x => x.OutputSha256, stored.Sha256)
                 .Set(x => x.TotalCost, cost).Set(x => x.ErrorMessage, (string?)null)
-                .Set(x => x.EndedAt, endedAt).Set(x => x.RunReconciledAt, (DateTime?)null),
+                .Set(x => x.EndedAt, endedAt).Set(x => x.RunReconciledAt, (DateTime?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null),
             cancellationToken: CancellationToken.None);
         if (recorded.MatchedCount != 1) return false;
         task.Status = VideoExportTaskStatus.Completed; task.OutputUrl = stored.Url;
@@ -88,7 +87,8 @@ public partial class VideoGenRunWorker
                 ExportRunIdentity(run) & f.Eq(x => x.Status, run.Status)
                     & f.Eq(x => x.LatestExportTaskId, task.Id) & f.Eq(x => x.VideoAssetUrl, run.VideoAssetUrl)
                     & f.Eq(x => x.VideoAssetSha256, run.VideoAssetSha256),
-                CompletedExportRunUpdate(task.OutputUrl, task.OutputSha256, task.TotalCost, task.EndedAt ?? DateTime.UtcNow),
+                CompletedExportRunUpdate(task.OutputUrl, task.OutputSha256, task.TotalCost, task.EndedAt ?? DateTime.UtcNow)
+                    .Set(x => x.DeploymentSlug, QueueDeploymentScope),
                 cancellationToken: CancellationToken.None);
             if (completed.MatchedCount != 1) return false;
             if (!string.IsNullOrWhiteSpace(run.ProjectId))
@@ -111,9 +111,9 @@ public partial class VideoGenRunWorker
         // 取消、删除或后续导出已取代它时不改 run/project。任务仍保留为输出引用，不删对象。
         var marked = await _db.VideoExportTasks.UpdateOneAsync(x => x.Id == task.Id && x.RunId == task.RunId
             && x.OwnerAdminId == task.OwnerAdminId && x.AppKey == task.AppKey && x.ProjectId == task.ProjectId
-            && x.DeploymentSlug == QueueDeploymentScope && x.Status == VideoExportTaskStatus.Completed
+            && x.DeploymentSlug == task.DeploymentSlug && x.Status == VideoExportTaskStatus.Completed
             && x.OutputUrl == task.OutputUrl && x.OutputSha256 == task.OutputSha256 && x.RunReconciledAt == null,
-            Builders<VideoExportTask>.Update.Set(x => x.RunReconciledAt, DateTime.UtcNow),
+            Builders<VideoExportTask>.Update.Set(x => x.RunReconciledAt, DateTime.UtcNow).Set(x => x.DeploymentSlug, QueueDeploymentScope),
             cancellationToken: CancellationToken.None);
         return marked.MatchedCount == 1;
     }

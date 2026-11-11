@@ -112,16 +112,18 @@ public partial class VideoSceneConcurrencyTests
         await using var test = await VideoSceneTestDatabase.CreateAsync();
         var run = NewRun("export-durable-receipt", test.OwnerId, SceneItemStatus.Done);
         run.Status = VideoGenRunStatus.Rendering; run.Mode = VideoGenMode.Storyboard;
+        run.Scenes[0].VideoUrl = "https://synthetic.invalid/existing-scene.mp4";
         run.ProjectId = "durable-project"; run.LatestExportTaskId = "durable-task";
         run.DeploymentSlug = "synthetic-export-scope";
         var task = new VideoExportTask { Id = run.LatestExportTaskId, RunId = run.Id, ProjectId = run.ProjectId,
             OwnerAdminId = run.OwnerAdminId, AppKey = run.AppKey, DeploymentSlug = run.DeploymentSlug,
-            Status = VideoExportTaskStatus.Processing, StartedAt = DateTime.UtcNow.AddMinutes(-2) };
+            Status = VideoExportTaskStatus.ScopedQueued };
         await test.SaveRunAsync(run); await test.Context.VideoExportTasks.InsertOneAsync(task);
         await test.Context.VideoProjects.InsertOneAsync(new VideoProject { Id = run.ProjectId,
             OwnerAdminId = test.OwnerId, AppKey = run.AppKey, LatestRunId = run.Id,
             LatestExportTaskId = task.Id, Status = VideoProjectStatus.Rendering });
         using var worker = test.CreateWorker(); worker.QueueDeploymentScope = run.DeploymentSlug;
+        task = (await worker.ClaimExportTaskAsync(default))!;
         var asset = new StoredAsset(new string('a',64), "https://synthetic.invalid/saved-existing.mp4", 3, "video/mp4");
         Assert.True(await worker.RecordCompletedExportAsync(run, task, asset, cost));
         var receipt = await test.Context.VideoExportTasks.Find(x => x.Id == task.Id).SingleAsync();
@@ -186,11 +188,12 @@ public partial class VideoSceneConcurrencyTests
         run.Mode = VideoGenMode.Storyboard; run.Status = VideoGenRunStatus.Editing;
         run.DeploymentSlug = "synthetic-export-scope"; run.Scenes[0].VideoUrl = "https://synthetic.invalid/scene.mp4";
         await test.SaveRunAsync(run);
-        var task = await test.CreateService().RequestExportAsync(run.Id,test.OwnerId,run.AppKey);
+        var service = test.CreateService();service.ExportDeploymentScope = run.DeploymentSlug;
+        var task = await service.RequestExportAsync(run.Id,test.OwnerId,run.AppKey);
         Assert.Equal(run.DeploymentSlug,task.DeploymentSlug);
         using var foreign = test.CreateWorker(); foreign.QueueDeploymentScope = "different-deployment";
         Assert.Null(await foreign.ClaimExportTaskAsync(default));
-        Assert.Equal(VideoExportTaskStatus.Queued,(await test.Context.VideoExportTasks.Find(x => x.Id == task.Id).SingleAsync()).Status);
+        Assert.Equal(VideoExportTaskStatus.Queued,(await test.Context.VideoExportTasks.Find(x => x.Id == task.Id).SingleAsync()).PublicStatus);
         using var current = test.CreateWorker(); current.QueueDeploymentScope = run.DeploymentSlug;
         Assert.Equal(task.Id,(await current.ClaimExportTaskAsync(default))!.Id);
         Assert.Null(await current.ClaimExportTaskAsync(default));
@@ -206,6 +209,7 @@ public partial class VideoSceneConcurrencyTests
         run.ProjectId = "fence-project"; run.DeploymentSlug = "synthetic-export-scope";
         var old = new VideoExportTask { Id = "fenced-task",RunId = run.Id,OwnerAdminId = test.OwnerId,
             AppKey = run.AppKey,ProjectId = run.ProjectId,DeploymentSlug = run.DeploymentSlug,
+            WorkerLeaseId = "synthetic-existing-holder",WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(2),
             Status = VideoExportTaskStatus.Processing,StartedAt = DateTime.UtcNow.AddMinutes(-3) };
         await test.SaveRunAsync(run);await test.Context.VideoExportTasks.InsertOneAsync(old);
         await test.Context.VideoExportTasks.UpdateOneAsync(x => x.Id == old.Id,
@@ -237,7 +241,7 @@ public partial class VideoSceneConcurrencyTests
             while (DateTime.UtcNow < until)
             {
                 var current = await test.Context.VideoExportTasks.Find(x => x.Id == task.Id).SingleAsync();
-                if (current.Status != VideoExportTaskStatus.Queued && current.Status != VideoExportTaskStatus.Processing) break;
+                if (current.Status != VideoExportTaskStatus.Queued && current.Status != VideoExportTaskStatus.ScopedQueued && current.Status != VideoExportTaskStatus.Processing) break;
                 await Task.Delay(30);
             }
         }
@@ -258,7 +262,8 @@ public partial class VideoSceneConcurrencyTests
         run.ProjectId = projectId;run.DeploymentSlug = "synthetic-export-scope";
         run.Scenes[0].VideoUrl = "https://synthetic.invalid/already-generated.mp4";
         await test.SaveRunAsync(run);
-        var task = await test.CreateService().RequestExportAsync(run.Id,test.OwnerId,run.AppKey);
+        var service = test.CreateService();service.ExportDeploymentScope = run.DeploymentSlug;
+        var task = await service.RequestExportAsync(run.Id,test.OwnerId,run.AppKey);
         Assert.Equal(string.Empty,task.ProjectId);
         using var worker = test.CreateWorker();worker.QueueDeploymentScope = run.DeploymentSlug;
         task = (await worker.ClaimExportTaskAsync(default))!;

@@ -52,6 +52,7 @@ public static class VideoTrackType
 public static class VideoExportTaskStatus
 {
     public const string Queued = "Queued";
+    public const string ScopedQueued = "ScopedQueued";
     public const string Processing = "Processing";
     public const string Completed = "Completed";
     public const string Failed = "Failed";
@@ -430,7 +431,19 @@ public class VideoExportTask
     public string OwnerAdminId { get; set; } = string.Empty;
     public string ProjectId { get; set; } = string.Empty;
     public string RunId { get; set; } = string.Empty;
-    public string Status { get; set; } = VideoExportTaskStatus.Queued;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string Status { get; set; } = VideoExportTaskStatus.ScopedQueued;
+    [BsonIgnore]
+    [System.Text.Json.Serialization.JsonPropertyName("status")]
+    public string PublicStatus
+    {
+        get => Status == VideoExportTaskStatus.ScopedQueued ? VideoExportTaskStatus.Queued : Status;
+        set => Status = value;
+    }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? WorkerLeaseId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime? WorkerLeaseExpiresAt { get; set; }
     public string CurrentPhase { get; set; } = "queued";
     public int Progress { get; set; }
     public string? OutputUrl { get; set; }

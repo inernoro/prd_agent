@@ -400,9 +400,8 @@ public partial class VideoSceneConcurrencyTests
                     var deletionName = BsonClassMap.LookupClassMap(typeof(VideoGenRun)).GetMemberMap(nameof(VideoGenRun.DeletionRequestedAt)).ElementName;
                     if (query.Contains(deletionName) || ProbeScheduling && query.Contains(nameof(VideoGenRun.ExportRequested)))
                     {
-                        if (query.Contains(deletionName))
-                            Run.DeletionRequestedAt.ShouldBeNull();
-                        else
+                        if (query.Contains(deletionName)) Run.DeletionRequestedAt.ShouldBeNull();
+                        if (ProbeScheduling && query.Contains(nameof(VideoGenRun.ExportRequested)))
                             SchedulingPaths.Add("legacy-export");
                         return Task.FromResult<VideoGenRun>(null!);
                     }
@@ -432,8 +431,10 @@ public partial class VideoSceneConcurrencyTests
             database.Setup(x => x.GetCollection<VideoExportTask>("video_export_tasks", null)).Returns(exports.Object);
             exports.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<VideoExportTask>>(),
                 It.IsAny<FindOptions<VideoExportTask, VideoExportTask>>(), It.IsAny<CancellationToken>()))
-                .Returns(() =>
+                .Returns((FilterDefinition<VideoExportTask> filter, FindOptions<VideoExportTask, VideoExportTask> _, CancellationToken _) =>
                 {
+                    var query = filter.Render(new RenderArgs<VideoExportTask>(BsonSerializer.LookupSerializer<VideoExportTask>(), BsonSerializer.SerializerRegistry)).ToString();
+                    if (ProbeScheduling && query.Contains(VideoExportTaskStatus.ScopedQueued)) SchedulingPaths.Add("export-task");
                     var cursor = new Mock<IAsyncCursor<VideoExportTask>>(MockBehavior.Strict);
                     cursor.SetupGet(x => x.Current).Returns(Array.Empty<VideoExportTask>());
                     cursor.Setup(x => x.MoveNextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
@@ -983,6 +984,7 @@ public partial class VideoSceneConcurrencyTests
         public LlmGatewayDataContext Data => new(Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")!, _databaseName);
         public Mock<IOpenRouterVideoClient> VideoClient { get; }
         public Mock<IAssetStorage> AssetStorage => _assetStorage;
+        public IRunEventStore Events => _runStore.Object;
         public string OwnerId { get; }
 
         public Task SaveRunAsync(VideoGenRun run) => Context.VideoGenRuns.InsertOneAsync(run);

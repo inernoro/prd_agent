@@ -67,6 +67,7 @@ public partial class VideoGenRunWorker : BackgroundService
             {
                 if (await ResumePendingDeletionAsync(stoppingToken)) continue;
                 if (await RecoverCompletedExportTaskAsync(stoppingToken)) continue;
+                if (await RecoverExpiredExportHolderAsync(stoppingToken)) continue;
 
                 // 路径 1: Queued → 根据 Mode 路由
                 //   - direct      → 直接走 ProcessDirectVideoGenAsync (Rendering)
@@ -147,12 +148,12 @@ public partial class VideoGenRunWorker : BackgroundService
                     }
                     try
                     {
-                        await ProcessExportAsync(taskRun, exportTask);
+                        await ProcessExportWithHolderAsync(taskRun, exportTask);
                     }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "VideoGen 独立导出异常: runId={RunId}, taskId={TaskId}", taskRun.Id, exportTask.Id);
-                        await FailExportAsync(taskRun, ex.Message, exportTask.Id);
+                        await FailExportAsync(taskRun, ex.Message, exportTask.Id, exportTask);
                     }
                     continue;
                 }
@@ -1445,7 +1446,8 @@ public partial class VideoGenRunWorker : BackgroundService
     {
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.Status, VideoGenRunStatus.Rendering)
-                     & fb.Eq(x => x.ExportRequested, true);
+                     & fb.Eq(x => x.ExportRequested, true) & fb.Eq(x => x.DeploymentSlug, QueueDeploymentScope)
+                     & fb.Eq(x => x.CancelRequested, false) & fb.Eq(x => x.DeletionRequestedAt, null);
         var update = Builders<VideoGenRun>.Update
             .Set(x => x.ExportRequested, false)
             .Set(x => x.ExportStartedAt, DateTime.UtcNow)
@@ -1460,20 +1462,50 @@ public partial class VideoGenRunWorker : BackgroundService
 
     internal async Task<VideoExportTask?> ClaimExportTaskAsync(CancellationToken ct)
     {
-        var filter = Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Queued)
-            & Builders<VideoExportTask>.Filter.Eq(x => x.DeploymentSlug, QueueDeploymentScope);
-        return await _db.VideoExportTasks.FindOneAndUpdateAsync(
-            filter,
-            Builders<VideoExportTask>.Update
-                .Set(x => x.Status, VideoExportTaskStatus.Processing)
-                .Set(x => x.CurrentPhase, "export-preparing")
-                .Set(x => x.Progress, 5)
-                .Set(x => x.StartedAt, DateTime.UtcNow),
-            new FindOneAndUpdateOptions<VideoExportTask> { ReturnDocument = ReturnDocument.After },
-            ct);
+        var f = Builders<VideoExportTask>.Filter;
+        var filter = f.In(x => x.Status, new[] { VideoExportTaskStatus.ScopedQueued, VideoExportTaskStatus.Queued })
+            & f.Eq(x => x.DeploymentSlug, QueueDeploymentScope);
+        var candidate = await _db.VideoExportTasks.Find(filter).SortBy(x => x.CreatedAt).ThenBy(x => x.Id).FirstOrDefaultAsync(ct);
+        if (candidate == null) return null;
+        if (await VideoGenService.LinkExportTaskAsync(_db, candidate, QueueDeploymentScope, ExportDurableDeploymentScope, ct) == null)
+        {
+            var parent = await _db.VideoGenRuns.Find(x => x.Id == candidate.RunId
+                && x.OwnerAdminId == candidate.OwnerAdminId && x.AppKey == candidate.AppKey).FirstOrDefaultAsync(ct);
+            var cancelled = parent?.CancelRequested == true || parent?.Status == VideoGenRunStatus.Cancelled;
+            var failed = await _db.VideoExportTasks.UpdateOneAsync(filter & f.Eq(x => x.Id, candidate.Id),
+                Builders<VideoExportTask>.Update.Set(x => x.Status, cancelled ? VideoExportTaskStatus.Cancelled : VideoExportTaskStatus.Failed)
+                    .Set(x => x.ErrorMessage, cancelled ? "任务已取消" : "导出目标已改变，未重新启动")
+                    .Set(x => x.EndedAt, DateTime.UtcNow), cancellationToken: CancellationToken.None);
+            if (failed.MatchedCount == 1 && !cancelled && parent != null
+                && VideoGenService.IsExportBranchScope(parent.DeploymentSlug, QueueDeploymentScope, ExportDurableDeploymentScope))
+            {
+                var pf = Builders<VideoGenRun>.Filter;
+                var changed = await _db.VideoGenRuns.UpdateOneAsync(ExportRunIdentity(parent)
+                    & pf.Eq(x => x.Status, VideoGenRunStatus.Rendering) & pf.Eq(x => x.LatestExportTaskId, candidate.Id),
+                    Builders<VideoGenRun>.Update.Set(x => x.Status, VideoGenRunStatus.Editing)
+                        .Set(x => x.ExportErrorMessage, "导出目标已改变，未重新启动").Set(x => x.CurrentPhase, "export-failed"),
+                    cancellationToken: CancellationToken.None);
+                if (changed.MatchedCount == 1) await UpdateExportProjectAsync(parent, VideoProjectStatus.Editing);
+            }
+            return null;
+        }
+        filter &= f.Eq(x => x.Id, candidate.Id) & f.Eq(x => x.DeploymentSlug, candidate.DeploymentSlug)
+            & f.Eq(x => x.OwnerAdminId, candidate.OwnerAdminId) & f.Eq(x => x.AppKey, candidate.AppKey)
+            & f.Eq(x => x.RunId, candidate.RunId) & f.Eq(x => x.ProjectId, candidate.ProjectId);
+        var update = new BsonDocument("$set", new BsonDocument
+        {
+            ["DeploymentSlug"] = QueueDeploymentScope == null ? BsonNull.Value : QueueDeploymentScope,
+            ["Status"] = VideoExportTaskStatus.Processing, ["CurrentPhase"] = "export-preparing", ["Progress"] = 5,
+            ["StartedAt"] = "$$NOW", ["WorkerLeaseId"] = Guid.NewGuid().ToString("N"),
+            ["WorkerLeaseExpiresAt"] = new BsonDocument("$dateAdd", new BsonDocument
+                { ["startDate"] = "$$NOW", ["unit"] = "millisecond", ["amount"] = (long)ExportHolderDuration.TotalMilliseconds })
+        });
+        return await _db.VideoExportTasks.FindOneAndUpdateAsync(filter,
+            new PipelineUpdateDefinition<VideoExportTask>(new[] { update }),
+            new FindOneAndUpdateOptions<VideoExportTask> { ReturnDocument = ReturnDocument.After }, ct);
     }
 
-    private async Task ProcessExportAsync(VideoGenRun run, VideoExportTask? exportTask = null)
+    private async Task ProcessExportAsync(VideoGenRun run, VideoExportTask? exportTask = null, CancellationToken authorityToken = default)
     {
         if (run.CancelRequested)
         {
@@ -1481,7 +1513,7 @@ public partial class VideoGenRunWorker : BackgroundService
             if (exportTask != null)
             {
                 await _db.VideoExportTasks.UpdateOneAsync(
-                    x => x.Id == exportTask.Id,
+                    OwnedExportHolder(exportTask),
                     Builders<VideoExportTask>.Update
                         .Set(x => x.Status, VideoExportTaskStatus.Cancelled)
                         .Set(x => x.CurrentPhase, "cancelled")
@@ -1496,7 +1528,7 @@ public partial class VideoGenRunWorker : BackgroundService
         var videoTrack = project?.TimelineTracks.FirstOrDefault(track => track.Type == VideoTrackType.Video);
         if (videoTrack?.Muted == true)
         {
-            await FailExportAsync(run, "视频轨已静音，无法导出可播放视频", exportTask?.Id);
+            await FailExportAsync(run, "视频轨已静音，无法导出可播放视频", exportTask?.Id, exportTask);
             return;
         }
         var timelineClips = videoTrack?.Clips
@@ -1514,11 +1546,11 @@ public partial class VideoGenRunWorker : BackgroundService
         var selectedScenes = timelineClips.Select(clip => (Clip: clip, Scene: run.Scenes[clip.SceneIndex!.Value])).ToList();
         if (selectedScenes.Count == 0 || selectedScenes.Any(item => string.IsNullOrWhiteSpace(item.Scene.VideoUrl)))
         {
-            await FailExportAsync(run, "存在尚未生成的视频分镜", exportTask?.Id);
+            await FailExportAsync(run, "存在尚未生成的视频分镜", exportTask?.Id, exportTask);
             return;
         }
 
-        var tempDir = Path.Combine(Path.GetTempPath(), $"prd-video-export-{run.Id}");
+        var tempDir = Path.Combine(Path.GetTempPath(), $"prd-video-export-{run.Id}-{exportTask?.WorkerLeaseId ?? Guid.NewGuid().ToString("N")}");
         Directory.CreateDirectory(tempDir);
         try
         {
@@ -1534,8 +1566,8 @@ public partial class VideoGenRunWorker : BackgroundService
             for (var index = 0; index < selectedScenes.Count; index++)
             {
                 var inputFile = Path.Combine(tempDir, $"scene-{index:D3}.mp4");
-                await DownloadToFileAsync(httpClient, selectedScenes[index].Scene.VideoUrl!, inputFile, 1024L * 1024 * 1024);
-                var probe = await ProbeMediaAsync(inputFile);
+                await DownloadToFileAsync(httpClient, selectedScenes[index].Scene.VideoUrl!, inputFile, 1024L * 1024 * 1024, authorityToken);
+                var probe = await ProbeMediaAsync(inputFile, authorityToken);
                 var timelineClip = selectedScenes[index].Clip;
                 videoInputs.Add(new VideoExportClipSource(
                     inputFile,
@@ -1546,7 +1578,7 @@ public partial class VideoGenRunWorker : BackgroundService
                     timelineClip.Transition));
 
                 var progress = 10 + (int)Math.Round((index + 1d) / selectedScenes.Count * 25d);
-                await UpdateExportProgressAsync(run.Id, exportTask?.Id, "export-downloading", progress);
+                await UpdateExportProgressAsync(run, exportTask, "export-downloading", progress);
             }
 
             var audioInputs = new List<VideoExportAudioSource>();
@@ -1560,8 +1592,8 @@ public partial class VideoGenRunWorker : BackgroundService
                 var item = audioTimelineClips[index];
                 await EnsurePublicHttpsUrlAsync(item.Clip.AssetUrl!);
                 var inputFile = Path.Combine(tempDir, $"audio-{index:D3}.bin");
-                await DownloadToFileAsync(externalHttpClient, item.Clip.AssetUrl!, inputFile, 100L * 1024 * 1024);
-                var probe = await ProbeMediaAsync(inputFile);
+                await DownloadToFileAsync(externalHttpClient, item.Clip.AssetUrl!, inputFile, 100L * 1024 * 1024, authorityToken);
+                var probe = await ProbeMediaAsync(inputFile, authorityToken);
                 if (!probe.HasAudio) throw new InvalidOperationException($"音频轨素材 {index + 1} 不包含可识别音轨");
                 audioInputs.Add(new VideoExportAudioSource(
                     inputFile,
@@ -1590,29 +1622,20 @@ public partial class VideoGenRunWorker : BackgroundService
             };
             foreach (var arg in args) startInfo.ArgumentList.Add(arg);
 
-            await UpdateExportProgressAsync(run.Id, exportTask?.Id, "export-composing", 50);
+            await UpdateExportProgressAsync(run, exportTask, "export-composing", 50);
+            authorityToken.ThrowIfCancellationRequested();
             using var process = Process.Start(startInfo)
                                 ?? throw new InvalidOperationException("ffmpeg 进程启动失败");
-            var stderrTask = process.StandardError.ReadToEndAsync();
-            var stdoutTask = process.StandardOutput.ReadToEndAsync();
-            var exitTask = process.WaitForExitAsync(CancellationToken.None);
-            var completed = await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromMinutes(15), CancellationToken.None));
-            if (completed != exitTask)
-            {
-                try { process.Kill(entireProcessTree: true); } catch { }
-                throw new TimeoutException("视频合成超过 15 分钟");
-            }
-            await exitTask;
-            var stderr = await stderrTask;
-            _ = await stdoutTask;
+            using var terminateLost = authorityToken.Register(() => { try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } });
+            var (_, stderr) = await WaitOwnedExportProcessAsync(process, authorityToken, TimeSpan.FromMinutes(15));
             if (process.ExitCode != 0 || !File.Exists(outputFile))
             {
                 var detail = stderr.Length > 1200 ? stderr[^1200..] : stderr;
                 throw new InvalidOperationException($"ffmpeg 合成失败 (exit={process.ExitCode}): {detail}");
             }
 
-            await UpdateExportProgressAsync(run.Id, exportTask?.Id, "export-uploading", 90);
-            var bytes = await File.ReadAllBytesAsync(outputFile, CancellationToken.None);
+            await UpdateExportProgressAsync(run, exportTask, "export-uploading", 90);
+            var bytes = await File.ReadAllBytesAsync(outputFile, authorityToken);
             var expectedSha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
             await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
                 _db,
@@ -1622,7 +1645,7 @@ public partial class VideoGenRunWorker : BackgroundService
             var stored = await _assetStorage.SaveAsync(
                 bytes,
                 "video/mp4",
-                CancellationToken.None,
+                authorityToken,
                 domain: AppDomainPaths.DomainVideoAgent,
                 type: AppDomainPaths.TypeVideo);
             if (!string.Equals(stored.Sha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
@@ -1658,28 +1681,28 @@ public partial class VideoGenRunWorker : BackgroundService
         }
     }
 
-    private static async Task DownloadToFileAsync(HttpClient client, string url, string targetPath, long maxBytes)
+    private static async Task DownloadToFileAsync(HttpClient client, string url, string targetPath, long maxBytes, CancellationToken authorityToken = default)
     {
-        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, CancellationToken.None);
+        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, authorityToken);
         response.EnsureSuccessStatusCode();
         var contentLength = response.Content.Headers.ContentLength;
         if (contentLength.HasValue && contentLength.Value > maxBytes)
             throw new InvalidOperationException($"媒体文件超过大小限制：{contentLength.Value} bytes");
-        await using var source = await response.Content.ReadAsStreamAsync(CancellationToken.None);
+        await using var source = await response.Content.ReadAsStreamAsync(authorityToken);
         await using var target = File.Create(targetPath);
         var buffer = new byte[81920];
         long total = 0;
         while (true)
         {
-            var read = await source.ReadAsync(buffer, CancellationToken.None);
+            var read = await source.ReadAsync(buffer, authorityToken);
             if (read == 0) break;
             total += read;
             if (total > maxBytes) throw new InvalidOperationException("媒体文件超过大小限制");
-            await target.WriteAsync(buffer.AsMemory(0, read), CancellationToken.None);
+            await target.WriteAsync(buffer.AsMemory(0, read), authorityToken);
         }
     }
 
-    private static async Task<MediaProbeResult> ProbeMediaAsync(string filePath)
+    private static async Task<MediaProbeResult> ProbeMediaAsync(string filePath, CancellationToken authorityToken = default)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -1695,13 +1718,11 @@ public partial class VideoGenRunWorker : BackgroundService
                      "-of", "json", filePath,
                  })
             startInfo.ArgumentList.Add(arg);
+        authorityToken.ThrowIfCancellationRequested();
         using var process = Process.Start(startInfo)
                             ?? throw new InvalidOperationException("ffprobe 进程启动失败");
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync(CancellationToken.None);
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
+        using var terminateLost = authorityToken.Register(() => { try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } });
+        var (stdout, stderr) = await WaitOwnedExportProcessAsync(process, authorityToken);
         if (process.ExitCode != 0)
             throw new InvalidOperationException($"ffprobe 读取媒体失败: {stderr}");
         var json = JsonNode.Parse(stdout) as JsonObject
@@ -1774,38 +1795,37 @@ public partial class VideoGenRunWorker : BackgroundService
 
     private sealed record MediaProbeResult(double DurationSeconds, bool HasAudio);
 
-    private async Task UpdateExportProgressAsync(string runId, string? exportTaskId, string phase, int progress)
+    private async Task UpdateExportProgressAsync(VideoGenRun run, VideoExportTask? task, string phase, int progress)
     {
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
-            Builders<VideoGenRun>.Update
-                .Set(x => x.CurrentPhase, phase)
-                .Set(x => x.PhaseProgress, progress),
-            cancellationToken: CancellationToken.None);
-        if (!string.IsNullOrWhiteSpace(exportTaskId))
+        if (task != null)
         {
-            await _db.VideoExportTasks.UpdateOneAsync(
-                x => x.Id == exportTaskId,
-                Builders<VideoExportTask>.Update
-                    .Set(x => x.CurrentPhase, phase)
-                    .Set(x => x.Progress, progress),
+            var written = await _db.VideoExportTasks.UpdateOneAsync(OwnedExportHolder(task),
+                Builders<VideoExportTask>.Update.Set(x => x.CurrentPhase, phase).Set(x => x.Progress, progress),
                 cancellationToken: CancellationToken.None);
+            if (written.MatchedCount != 1) throw new OperationCanceledException("导出持有者已失效");
         }
-        await PublishEventAsync(runId, "export.progress", new { taskId = exportTaskId, phase, progress });
+        var f = Builders<VideoGenRun>.Filter;
+        var filter = ExportRunIdentity(run) & f.Eq(x => x.Status, VideoGenRunStatus.Rendering)
+            & f.Eq(x => x.LatestExportTaskId, task?.Id ?? run.LatestExportTaskId);
+        var changed = await _db.VideoGenRuns.UpdateOneAsync(filter,
+            Builders<VideoGenRun>.Update.Set(x => x.CurrentPhase, phase).Set(x => x.PhaseProgress, progress),
+            cancellationToken: CancellationToken.None);
+        if (changed.MatchedCount != 1) throw new OperationCanceledException("导出目标已被取代或取消");
+        await PublishEventAsync(run.Id, "export.progress", new { taskId = task?.Id, phase, progress });
     }
 
-    private async Task FailExportAsync(VideoGenRun run, string errorMessage, string? exportTaskId = null)
+    private async Task FailExportAsync(VideoGenRun run, string errorMessage, string? exportTaskId = null, VideoExportTask? expectedTask = null)
     {
         var userMessage = VideoGenerationUserError.ForPersistence("EXPORT_FAILED", errorMessage);
         if (!string.IsNullOrWhiteSpace(exportTaskId))
         {
             var taskFailed = await _db.VideoExportTasks.UpdateOneAsync(
-                x => x.Id == exportTaskId && x.RunId == run.Id && x.OwnerAdminId == run.OwnerAdminId
-                    && x.AppKey == run.AppKey && x.ProjectId == (run.ProjectId ?? string.Empty)
-                    && x.DeploymentSlug == QueueDeploymentScope && x.Status == VideoExportTaskStatus.Processing,
+                expectedTask != null ? OwnedExportHolder(expectedTask)
+                    : Builders<VideoExportTask>.Filter.Exists(x => x.Id, false),
                 Builders<VideoExportTask>.Update.Set(x => x.Status, VideoExportTaskStatus.Failed)
                     .Set(x => x.CurrentPhase, "export-failed").Set(x => x.Progress, 0)
-                    .Set(x => x.ErrorMessage, userMessage).Set(x => x.EndedAt, DateTime.UtcNow),
+                    .Set(x => x.ErrorMessage, userMessage).Set(x => x.EndedAt, DateTime.UtcNow)
+                    .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null),
                 cancellationToken: CancellationToken.None);
             if (taskFailed.MatchedCount != 1) return;
         }
