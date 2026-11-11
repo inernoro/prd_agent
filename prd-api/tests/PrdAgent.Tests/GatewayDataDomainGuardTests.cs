@@ -4039,27 +4039,27 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void ModelLabAndArena_PinSelectedModelThroughGateway()
+    public void ModelLabAndArena_UseAuthorizedLogicalModelsWithoutPhysicalPins()
     {
         var modelLab = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ModelLabController.cs");
         var arenaWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ArenaRunWorker.cs");
-
+        var arenaController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ArenaController.cs");
         Assert.Contains("_gateway.CreateClient(", modelLab);
         Assert.Contains("Admin.ModelLab.Run", modelLab);
-        Assert.Contains("expectedModel: modelName", modelLab);
-        Assert.Contains("pinnedPlatformId: platform.Id", modelLab);
-        Assert.Contains("pinnedModelId: modelName", modelLab);
-        Assert.Contains("expectedModel: model.ModelName", modelLab);
-        Assert.Contains("pinnedPlatformId: resolvedPlatformId", modelLab);
-        Assert.Contains("pinnedModelId: model.ModelName", modelLab);
-        Assert.Contains("ModelResolutionType: ModelResolutionType.DirectModel", modelLab);
-
+        Assert.Contains("ModelLabModelReferences.TryNormalize", modelLab);
+        Assert.Contains("BusinessModelReferenceService.Resolve", ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ModelLabModelReferences.cs"));
+        Assert.DoesNotContain("pinnedPlatformId:", modelLab);
+        Assert.DoesNotContain("pinnedModelId:", modelLab);
         Assert.Contains("gateway.CreateClient(", arenaWorker);
         Assert.Contains("AppCallerRegistry.Desktop.Arena.BattleChat", arenaWorker);
-        Assert.Contains("expectedModel: slot.ModelId", arenaWorker);
-        Assert.Contains("pinnedPlatformId: platform.Id", arenaWorker);
-        Assert.Contains("pinnedModelId: slot.ModelId", arenaWorker);
-        Assert.Contains("ModelResolutionType: ModelResolutionType.DirectModel", arenaWorker);
+        Assert.Contains("expectedModel: reference.PublicId", arenaWorker);
+        Assert.Contains("BusinessModelReferenceService.Resolve", arenaWorker);
+        Assert.DoesNotContain("pinnedPlatformId:", arenaWorker);
+        Assert.DoesNotContain("pinnedModelId:", arenaWorker);
+        Assert.DoesNotContain("db.LLMPlatforms", arenaWorker);
+        Assert.Contains("ModelResolutionType: ModelResolutionType.LogicalModel", arenaWorker);
+        Assert.Contains("stored.LogicalModelId", arenaController);
+        Assert.Contains("MODEL_REFERENCE_UNAVAILABLE", arenaController);
     }
 
     [Fact]

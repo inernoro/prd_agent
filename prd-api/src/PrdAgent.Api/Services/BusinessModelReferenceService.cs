@@ -9,14 +9,17 @@ public sealed class BusinessModelReferenceService(ILlmGateway gateway)
         string appCallerCode, string modelType, CancellationToken ct)
     {
         var catalog = await gateway.GetAvailablePoolsAsync(appCallerCode, modelType, ct);
-        return catalog.Where(x => x.ResolutionType == "LogicalModel")
+        return ProjectOptions(catalog);
+    }
+
+    public static IReadOnlyList<BusinessModelOption> ProjectOptions(IEnumerable<AvailableModelPool> catalog) =>
+        catalog.Where(x => x.ResolutionType == "LogicalModel")
             .Select(x => new BusinessModelOption(x.Id, x.Code, x.Name,
                 x.Models.Any(m => m.IsRecoveryProbeAvailable ||
                     string.Equals(m.HealthStatus, "Healthy", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(m.HealthStatus, "Degraded", StringComparison.OrdinalIgnoreCase)),
                 "当前模型没有可用线路，请在模型网关修复线路或选择其他模型。"))
             .Select(x => x.Available ? x with { Reason = null } : x).ToList();
-    }
 
     public static BusinessModelReferenceResult Resolve(IReadOnlyList<BusinessModelOption> options,
         string? logicalModelId, string? platformId, string? modelId)

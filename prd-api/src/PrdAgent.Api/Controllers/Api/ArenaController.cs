@@ -277,6 +277,8 @@ public sealed class ArenaController : ControllerBase
             if (!reference.Success)
                 return BadRequest(ApiResponse<object>.Fail("MODEL_REFERENCE_UNAVAILABLE", reference.Reason!));
         }
+        var nextVersion = DateTime.UtcNow;
+        if (nextVersion <= existing.UpdatedAt.AddMilliseconds(1)) nextVersion = existing.UpdatedAt.AddMilliseconds(1);
         var update = Builders<ArenaSlot>.Update
             .Set(s => s.DisplayName, (request.DisplayName ?? existing.DisplayName).Trim())
             .Set(s => s.Group, (request.Group ?? existing.Group).Trim())
@@ -284,7 +286,7 @@ public sealed class ArenaController : ControllerBase
             .Set(s => s.Enabled, request.Enabled ?? existing.Enabled)
             .Set(s => s.AvatarColor, request.AvatarColor?.Trim() ?? existing.AvatarColor)
             .Set(s => s.Description, request.Description?.Trim() ?? existing.Description)
-            .Set(s => s.UpdatedAt, DateTime.UtcNow);
+            .Set(s => s.UpdatedAt, nextVersion);
 
         if (reference is not null)
             update = update.Set(s => s.LogicalModelId, reference.LogicalModelId)
@@ -330,11 +332,13 @@ public sealed class ArenaController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail("MODEL_REFERENCE_UNAVAILABLE", reference.Reason!));
         }
 
+        var nextVersion = DateTime.UtcNow;
+        if (nextVersion <= slot.UpdatedAt.AddMilliseconds(1)) nextVersion = slot.UpdatedAt.AddMilliseconds(1);
         var result = await _db.ArenaSlots.UpdateOneAsync(
             s => s.Id == id && s.UpdatedAt == slot.UpdatedAt,
             Builders<ArenaSlot>.Update
                 .Set(s => s.Enabled, newEnabled)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                .Set(s => s.UpdatedAt, nextVersion),
             cancellationToken: ct);
 
         if (result.MatchedCount == 0)
