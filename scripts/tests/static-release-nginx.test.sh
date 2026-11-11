@@ -4,15 +4,24 @@ set -eu
 repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 . "$repo_root/scripts/lib/static-release.sh"
 
+runtime=docker
 if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-  echo "Static release nginx test: SKIP docker unavailable"
-  exit 0
+  if command -v nginx >/dev/null 2>&1; then
+    runtime=native
+  else
+    echo "Static release nginx test: SKIP docker and native nginx unavailable"
+    exit 0
+  fi
 fi
 
 tmp_root="$(mktemp -d)"
 container_name="static-release-nginx-$$"
 cleanup() {
-  docker rm -f "$container_name" >/dev/null 2>&1 || true
+  if [ "$runtime" = docker ]; then
+    docker rm -f "$container_name" >/dev/null 2>&1 || true
+  elif [ -f "$tmp_root/nginx.pid" ]; then
+    nginx -p "$tmp_root/" -c "$tmp_root/nginx.conf" -s quit >/dev/null 2>&1 || true
+  fi
   rm -rf "$tmp_root"
 }
 trap cleanup EXIT HUP INT TERM
@@ -39,19 +48,31 @@ printf '%s\n' \
   '  server_name _;' \
   '  root /usr/share/nginx/html/current;' \
   '  index index.html;' \
+  '  add_header Cache-Control no-cache;' \
   '  location ^~ /assets/ { try_files $uri =404; }' \
   '  location / { try_files $uri /index.html; }' \
   '}' > "$nginx_conf"
 chmod 644 "$nginx_conf"
 
-docker run --rm -d \
-  --name "$container_name" \
-  -p 127.0.0.1::80 \
-  -v "$static_root:/usr/share/nginx/html:ro" \
-  -v "$nginx_conf:/etc/nginx/conf.d/default.conf:ro" \
-  nginx:1.27-alpine >/dev/null
-
-port="$(docker port "$container_name" 80/tcp | awk -F: 'NR == 1 {print $NF}')"
+if [ "$runtime" = docker ]; then
+  docker run --rm -d \
+    --name "$container_name" \
+    -p 127.0.0.1::80 \
+    -v "$static_root:/usr/share/nginx/html:ro" \
+    -v "$nginx_conf:/etc/nginx/conf.d/default.conf:ro" \
+    nginx:1.27-alpine >/dev/null
+  port="$(docker port "$container_name" 80/tcp | awk -F: 'NR == 1 {print $NF}')"
+else
+  # A root-started native nginx drops worker privileges; mktemp defaults to 700.
+  chmod 755 "$tmp_root"
+  port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+  {
+    printf 'pid %s/nginx.pid;\nerror_log %s/error.log;\nevents {}\nhttp { access_log off;\n' "$tmp_root" "$tmp_root"
+    sed -e "s/listen 80;/listen 127.0.0.1:$port;/" -e "s|/usr/share/nginx/html|$static_root|" "$nginx_conf"
+    printf '}\n'
+  } > "$tmp_root/nginx.conf"
+  nginx -p "$tmp_root/" -c "$tmp_root/nginx.conf"
+fi
 [ -n "$port" ] || { echo "ERROR: nginx test port unavailable" >&2; exit 1; }
 
 attempt=1
@@ -66,4 +87,72 @@ done
 grep -F '/assets/app.js' "$tmp_root/root.html" >/dev/null
 test "$(curl -fsS "http://127.0.0.1:$port/assets/app.js")" = "new"
 
-echo "Static release nginx test: PASS"
+# A/B differ only in content, not length or archive mtime. Confirm the fixture
+# would collide in nginx before exercising the release metadata refresh.
+for version in A B; do
+  mkdir -p "$static_root/.staging-cache-$version"
+  printf '<script src="/assets/%s.js"></script>\n' "$version" > "$static_root/.staging-cache-$version/index.html"
+done
+python3 - "$static_root" <<'PYFIXTURE'
+import os
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+entries = [root / f'.staging-cache-{version}/index.html' for version in ['A', 'B']]
+for entry in entries:
+    os.utime(entry, (946656000, 946656000))
+assert entries[0].stat().st_size == entries[1].stat().st_size
+assert entries[0].stat().st_mtime == entries[1].stat().st_mtime
+assert entries[0].read_bytes() != entries[1].read_bytes()
+PYFIXTURE
+
+entry_headers() {
+  curl -fsS -D "$1" -o "$2" "http://127.0.0.1:$port/"
+}
+header_value() {
+  awk -v field="$2" 'tolower($1) == tolower(field ":") { $1=""; sub(/^ /, ""); sub(/\r$/, ""); print; exit }' "$1"
+}
+expect_changed() {
+  cached_headers="$1"
+  expected_version="$2"
+  # Check both validators individually, then together as browsers send them.
+  for validator in etag modified both; do
+    set --
+    if [ "$validator" != modified ]; then
+      set -- "$@" -H "If-None-Match: $(header_value "$cached_headers" ETag)"
+    fi
+    if [ "$validator" != etag ]; then
+      set -- "$@" -H "If-Modified-Since: $(header_value "$cached_headers" Last-Modified)"
+    fi
+    status="$(curl -sS -o "$tmp_root/conditional.html" -w '%{http_code}' "$@" "http://127.0.0.1:$port/")"
+    test "$status" = 200
+    grep -F "/assets/$expected_version.js" "$tmp_root/conditional.html" >/dev/null
+  done
+}
+
+static_release_activate "$static_root/.staging-cache-A" "$static_root" cache-A >/dev/null
+entry_headers "$tmp_root/A.headers" "$tmp_root/A.html"
+test -n "$(header_value "$tmp_root/A.headers" ETag)"
+test -n "$(header_value "$tmp_root/A.headers" Last-Modified)"
+# A validator against unchanged A must really yield 304, not a cache bypass.
+test "$(curl -sS -o /dev/null -w '%{http_code}' -H "If-None-Match: $(header_value "$tmp_root/A.headers" ETag)" "http://127.0.0.1:$port/")" = 304
+test "$(curl -sS -o /dev/null -w '%{http_code}' -H "If-Modified-Since: $(header_value "$tmp_root/A.headers" Last-Modified)" "http://127.0.0.1:$port/")" = 304
+static_release_activate "$static_root/.staging-cache-B" "$static_root" cache-B >/dev/null
+entry_headers "$tmp_root/B.headers" "$tmp_root/B.html"
+expect_changed "$tmp_root/A.headers" B
+static_release_rollback "$static_root" .releases/cache-A
+entry_headers "$tmp_root/rollback.headers" "$tmp_root/rollback.html"
+expect_changed "$tmp_root/B.headers" A
+expect_changed "$tmp_root/A.headers" A
+python3 - "$static_root" "$tmp_root" <<'PYVERIFY'
+import sys
+from pathlib import Path
+root, tmp = map(Path, sys.argv[1:])
+for version in ['A', 'B']:
+    deployed = root / f'.releases/cache-{version}/index.html'
+    assert deployed.read_bytes() == (tmp / f'{version}.html').read_bytes()
+    assert deployed.stat().st_mode & 0o777 == 0o644
+assert (root / 'current/index.html').read_bytes() == (tmp / 'A.html').read_bytes()
+PYVERIFY
+
+echo "Static release nginx test: PASS ($runtime)"
