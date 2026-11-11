@@ -120,6 +120,7 @@ public sealed class ShortVideoMaterialEntryReceipt
     public string? AttachmentId { get; set; }
     public string? DocumentId { get; set; }
     public bool DocumentCreatedNew { get; set; }
+    public bool DocumentPublicationStarted { get; set; }
     public bool UnconfirmedWrite { get; set; }
 }
 

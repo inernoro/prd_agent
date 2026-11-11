@@ -26,6 +26,7 @@ public sealed class ShortVideoArtifactRecoveryTests : IAsyncLifetime
     private MongoDbContext _db = null!;
     private readonly string _files = Path.Combine(Path.GetTempPath(), "short-video-owned-artifacts-" + Guid.NewGuid().ToString("N"));
     private readonly Mock<IDocumentService> _documents = new(MockBehavior.Strict);
+    private readonly Mock<ICacheManager> _cache = new(MockBehavior.Strict);
     private LocalAssetStorage _local = null!;
     private readonly Mock<IAssetStorage> _storage = new(MockBehavior.Strict);
     private ServiceProvider _services = null!;
@@ -84,7 +85,9 @@ public sealed class ShortVideoArtifactRecoveryTests : IAsyncLifetime
             await _db.Documents.InsertOneAsync(doc);
             return doc;
         });
+        _cache.Setup(x => x.RemoveAsync(It.IsAny<string>())).Returns(Task.CompletedTask);
         var services = new ServiceCollection();
+        services.AddSingleton(_cache.Object);
         services.AddSingleton(_storage.Object);
         services.AddSingleton(_db.ApiRequestLogs);
         var validator = new Mock<ISafeOutboundUrlValidator>(MockBehavior.Strict);
@@ -512,8 +515,12 @@ public sealed class ShortVideoArtifactRecoveryTests : IAsyncLifetime
         run.ArtifactReceipt = new() { ProcessingToken = run.ProcessingToken!, PublicationStarted = true,
             Entries = [new() { EntryId = own.Id, StoreId = run.StoreId!, EntryCreatedAt = own.UpdatedAt }] };
         await _db.ShortVideoMaterialRuns.ReplaceOneAsync(x => x.Id == run.Id, run);
-        async Task DeleteOriginal() => await PrdAgent.Api.Controllers.Api.DocumentStoreController.DeleteEntriesAndApplyCountsAsync(
-            _db, run.StoreId!, mixedBatch ? [own.Id, other.Id] : [own.Id], DateTime.UtcNow);
+        async Task DeleteOriginal()
+        {
+            var receipt = await PrdAgent.Api.Controllers.Api.DocumentStoreController.BeginEntryDeletionAsync(
+                _db, run.StoreId!, mixedBatch ? [own.Id, other.Id] : [own.Id]);
+            await PrdAgent.Api.Controllers.Api.DocumentStoreController.CompleteEntryDeletionCountsAsync(_db, receipt, DateTime.UtcNow);
+        }
         async Task Cleanup() => await (Task)typeof(ShortVideoMaterialProcessor).GetMethod("CleanupArtifactsAfterFailureAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(Processor(), [run, run])!;
         if (userDeletesFirst) { await DeleteOriginal(); await Cleanup(); }
@@ -522,6 +529,88 @@ public sealed class ShortVideoArtifactRecoveryTests : IAsyncLifetime
         Assert.Equal(mixedBatch ? 0 : 1, await _db.DocumentEntries.CountDocumentsAsync(x => x.StoreId == run.StoreId));
         Assert.Empty(await ShortVideoMaterialProcessor.ReadCountedEntryIdsAsync(_db.DocumentStores, run.StoreId!, [own.Id]));
         Assert.Equal(0, _outboundCalls);
+    }
+
+    [Fact]
+    public async Task ProductionHashedParserAndPersistence_UseOwnedBodyWithoutChangingSharedDocument_AndClearItsCache()
+    {
+        var parser = new Mock<IMarkdownParser>(MockBehavior.Strict);
+        parser.Setup(x => x.Parse(It.IsAny<string>())).Returns((string text) => new ParsedPrd { RawContent = text });
+        var cached = new Dictionary<string, ParsedPrd>();
+        _cache.Setup(x => x.SetAsync(It.IsAny<string>(), It.IsAny<ParsedPrd>(), null))
+            .Callback<string, ParsedPrd, TimeSpan?>((key, doc, _) => cached[key] = doc).Returns(Task.CompletedTask);
+        _cache.Setup(x => x.RemoveAsync(It.IsAny<string>())).Callback<string>(key => cached.Remove(key)).Returns(Task.CompletedTask);
+        var repository = new Mock<IPrdDocumentRepository>(MockBehavior.Strict);
+        repository.Setup(x => x.UpsertAsync(It.IsAny<ParsedPrd>())).Returns<ParsedPrd>(async doc =>
+            await _db.Documents.ReplaceOneAsync(x => x.Id == doc.Id, doc, new ReplaceOptions { IsUpsert = true }));
+        var production = new PrdAgent.Core.Services.DocumentService(_cache.Object, parser.Object, repository.Object);
+        string? sharedId = null; string? savedId = null;
+        _documents.Setup(x => x.ParseAsync(It.IsAny<string>())).Returns<string>(async text =>
+        {
+            var parsed = await production.ParseAsync(text); sharedId = parsed.Id;
+            Assert.Matches("^[a-f0-9]{64}$", parsed.Id);
+            await _db.Documents.InsertOneAsync(new() { Id = parsed.Id, RawContent = text, Title = "原共享正文标题" });
+            return parsed;
+        });
+        _documents.Setup(x => x.SaveAsync(It.IsAny<ParsedPrd>())).Returns<ParsedPrd>(async doc =>
+        {
+            savedId = doc.Id; var result = await production.SaveAsync(doc);
+            await _db.ShortVideoMaterialRuns.UpdateOneAsync(x => x.Id == _runId,
+                Builders<ShortVideoMaterialRun>.Update.Set(x => x.CancelRequested, true));
+            return result;
+        });
+        var run = await Seed();
+        await Assert.ThrowsAnyAsync<Exception>(() => Processor().ProcessAsync(run.Id));
+        Assert.NotNull(savedId); Assert.True(Guid.TryParse(savedId, out _)); Assert.NotEqual(sharedId, savedId);
+        Assert.Equal(0, await _db.Documents.CountDocumentsAsync(x => x.Id == savedId));
+        Assert.Equal("原共享正文标题", (await _db.Documents.Find(x => x.Id == sharedId).SingleAsync()).Title);
+        Assert.False(cached.ContainsKey(CacheKeys.ForDocument(savedId!)));
+        Assert.Equal(1, _outboundCalls);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task OwnedBody_PreservesPublishedOrStillReferencedContent(bool published, bool referenced)
+    {
+        var run = await Seed(); var body = new ParsedPrd { RawContent = "本机合成正文" };
+        await _db.Documents.InsertOneAsync(body);
+        if (referenced) await _db.DocumentEntries.InsertOneAsync(new() { StoreId = "another-store", DocumentId = body.Id, CreatedBy = "another-user" });
+        run.ArtifactReceipt = new() { ProcessingToken = run.ProcessingToken!, Entries = [new() { EntryId = Guid.NewGuid().ToString("N"),
+            StoreId = run.StoreId!, DocumentId = body.Id, DocumentCreatedNew = true, DocumentPublicationStarted = published }] };
+        run.CleanupPending = true;
+        await _db.ShortVideoMaterialRuns.ReplaceOneAsync(x => x.Id == run.Id, run);
+        await (Task)typeof(ShortVideoMaterialProcessor).GetMethod("CleanupArtifactsAfterFailureAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(Processor(), [run, run])!;
+        Assert.Equal(1, await _db.Documents.CountDocumentsAsync(x => x.Id == body.Id));
+        Assert.Equal(published, (await _db.ShortVideoMaterialRuns.Find(x => x.Id == run.Id).SingleAsync()).CleanupPending);
+        _cache.Verify(x => x.RemoveAsync(CacheKeys.ForDocument(body.Id)), Times.Never);
+    }
+
+    [Fact]
+    public async Task DeferredCountFailure_HappensAfterLinkedArtifactsAreRemoved()
+    {
+        var run = await Seed(); var body = new ParsedPrd { RawContent = "本机合成正文" };
+        var attachment = new Attachment { UploaderId = run.UserId };
+        var entry = new DocumentEntry { StoreId = run.StoreId!, CreatedBy = run.UserId, DocumentId = body.Id, AttachmentId = attachment.AttachmentId };
+        var bodies = _db.Documents; var attachments = _db.Attachments;
+        await bodies.InsertOneAsync(body); await attachments.InsertOneAsync(attachment); await _db.DocumentEntries.InsertOneAsync(entry);
+        await _db.DocumentStores.UpdateOneAsync(x => x.Id == run.StoreId,
+            Builders<DocumentStore>.Update.Set(x => x.DocumentCount, 1).AddToSet("ShortVideoCountedEntryIds", entry.Id));
+        var receipt = await PrdAgent.Api.Controllers.Api.DocumentStoreController.BeginEntryDeletionAsync(_db, run.StoreId!, [entry.Id]);
+        Assert.Equal(1, (await _db.DocumentStores.Find(x => x.Id == run.StoreId).SingleAsync()).DocumentCount);
+        await bodies.DeleteOneAsync(x => x.Id == body.Id); await attachments.DeleteOneAsync(x => x.AttachmentId == attachment.AttachmentId);
+        var failedStores = new Mock<IMongoCollection<DocumentStore>>(MockBehavior.Strict);
+        failedStores.Setup(x => x.UpdateOneAsync(It.IsAny<FilterDefinition<DocumentStore>>(), It.IsAny<UpdateDefinition<DocumentStore>>(),
+            It.IsAny<UpdateOptions>(), CancellationToken.None)).ThrowsAsync(new TimeoutException("本机计数回执未确认"));
+        var failedDb = new Mock<IMongoDatabase>(MockBehavior.Strict);
+        failedDb.Setup(x => x.GetCollection<DocumentStore>("document_stores", null)).Returns(failedStores.Object);
+        var field = typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        field.SetValue(_db, failedDb.Object);
+        try { await Assert.ThrowsAsync<TimeoutException>(() => PrdAgent.Api.Controllers.Api.DocumentStoreController.CompleteEntryDeletionCountsAsync(_db, receipt, DateTime.UtcNow)); }
+        finally { field.SetValue(_db, _database); }
+        Assert.Equal(0, await bodies.CountDocumentsAsync(x => x.Id == body.Id));
+        Assert.Equal(0, await attachments.CountDocumentsAsync(x => x.AttachmentId == attachment.AttachmentId));
     }
 
     [Fact]

@@ -752,6 +752,8 @@ public sealed class ShortVideoMaterialProcessor
         ShortVideoMaterialRun run)
     {
         var parsed = await _documentService.ParseAsync(markdown);
+        // 解析器的内容哈希可能属于共享正文；本次补偿只拥有独立新记录，不覆盖共享正文。
+        parsed.Id = Guid.NewGuid().ToString("N");
         parsed.Title = title;
         var entry = new DocumentEntry
         {
@@ -774,13 +776,15 @@ public sealed class ShortVideoMaterialProcessor
             UpdatedAt = now,
         };
         var planned = new ShortVideoMaterialEntryReceipt { EntryId = entry.Id, StoreId = store.Id, EntryCreatedAt = entry.UpdatedAt, DocumentId = parsed.Id,
-            DocumentCreatedNew = Guid.TryParse(parsed.Id, out _) && await _db.Documents.CountDocumentsAsync(x => x.Id == parsed.Id) == 0 };
+            DocumentCreatedNew = true };
         planned.UnconfirmedWrite = true;
         GetArtifactReceipt(run).Entries.Add(planned);
         run.CleanupPending = true;
         await SaveRunWithIntentAsync(run, () => planned.UnconfirmedWrite = false);
         await _documentService.SaveAsync(parsed);
         await IncrementStoreDocumentCountAsync(store, entry.Id);
+        planned.DocumentPublicationStarted = true;
+        await SaveRunWithIntentAsync(run, () => { planned.DocumentPublicationStarted = false; planned.UnconfirmedWrite = false; });
         await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
         planned.UnconfirmedWrite = false;
         return entry;
@@ -885,6 +889,7 @@ public sealed class ShortVideoMaterialProcessor
         if (fenced.MatchedCount != 1) return;
         var removed = new HashSet<string>(StringComparer.Ordinal);
         var countPending = false;
+        var documentPending = false;
         foreach (var item in receipt.Entries)
         {
             var own = Builders<DocumentEntry>.Filter.Eq(x => x.Id, item.EntryId)
@@ -905,12 +910,20 @@ public sealed class ShortVideoMaterialProcessor
             // 主表写入失败仍可能留下附件/正文；仅处理预先登记的本次 ID，其他条目仍引用则保留。
             if (item.AttachmentId != null && await _db.DocumentEntries.CountDocumentsAsync(x => x.AttachmentId == item.AttachmentId) == 0)
                 await _db.Attachments.DeleteOneAsync(x => x.AttachmentId == item.AttachmentId && x.UploaderId == identity.UserId, CancellationToken.None);
-            if (item.DocumentCreatedNew && item.DocumentId != null
+            if (item.DocumentCreatedNew && item.DocumentId != null && Guid.TryParse(item.DocumentId, out _)
                 && await _db.DocumentEntries.CountDocumentsAsync(x => x.DocumentId == item.DocumentId) == 0)
-                await _db.Documents.DeleteOneAsync(x => x.Id == item.DocumentId, CancellationToken.None);
+            {
+                if (item.DocumentPublicationStarted) documentPending = true;
+                else
+                {
+                    await _db.Documents.DeleteOneAsync(x => x.Id == item.DocumentId, CancellationToken.None);
+                    var cache = _serviceProvider.GetService<ICacheManager>();
+                    if (cache != null) await cache.RemoveAsync(CacheKeys.ForDocument(item.DocumentId));
+                }
+            }
         }
         var pending = receipt.PhysicalState is "upload-outcome-unknown" or "upload-started" or "delete-pending" or "ownership-unconfirmed"
-            || receipt.Entries.Any(x => x.UnconfirmedWrite) || countPending;
+            || receipt.Entries.Any(x => x.UnconfirmedWrite) || countPending || documentPending;
         if (receipt.PublicationStarted || receipt.Entries.Any(x => x.AttachmentId != null && x.UnconfirmedWrite))
         {
             // URL 曾进入条目写入流程，无法证明跨库/人工复制从未引用；不扩大存储删除权限。
