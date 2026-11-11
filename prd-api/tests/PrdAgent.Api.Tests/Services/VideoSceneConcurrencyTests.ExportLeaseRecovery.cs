@@ -2,6 +2,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Controllers.Api;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -301,6 +302,137 @@ public partial class VideoSceneConcurrencyTests
         Assert.Equal(before,(await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync()).ToBsonDocument());
         Assert.True(await worker.RecoverCompletedExportTaskAsync(default));
         Assert.Equal(VideoGenRunStatus.Completed,(await test.Context.VideoGenRuns.Find(x => x.Id == nextRun.Id).SingleAsync()).Status);
+        Assert.Empty(test.AssetStorage.Invocations);Assert.Empty(test.VideoClient.Invocations);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExportHolder_RequestAcceptsConcurrentLinkOnlyToSameTask(bool differentTarget)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("concurrent-export-link",test.OwnerId,SceneItemStatus.Done);
+        run.Mode = VideoGenMode.Storyboard;run.Status = VideoGenRunStatus.Editing;
+        run.DeploymentSlug = "synthetic-export-scope";run.Scenes[0].VideoUrl = "https://synthetic.invalid/existing.mp4";
+        await test.SaveRunAsync(run);
+        var actualRuns = test.Context.VideoGenRuns;var actualTasks = test.Context.VideoExportTasks;
+        var runs = new Mock<IMongoCollection<VideoGenRun>>(MockBehavior.Strict);
+        runs.SetupGet(x => x.DocumentSerializer).Returns(actualRuns.DocumentSerializer);
+        runs.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<VideoGenRun>>(),It.IsAny<FindOptions<VideoGenRun,VideoGenRun>>(),It.IsAny<CancellationToken>()))
+            .Returns((FilterDefinition<VideoGenRun> f,FindOptions<VideoGenRun,VideoGenRun> o,CancellationToken c) => actualRuns.FindAsync(f,o,c));
+        var updates = 0;
+        runs.Setup(x => x.UpdateOneAsync(It.IsAny<FilterDefinition<VideoGenRun>>(),It.IsAny<UpdateDefinition<VideoGenRun>>(),It.IsAny<UpdateOptions>(),It.IsAny<CancellationToken>()))
+            .Returns(async (FilterDefinition<VideoGenRun> f,UpdateDefinition<VideoGenRun> u,UpdateOptions o,CancellationToken c) => {
+                if (++updates == 1)
+                {
+                    Assert.Equal(1,(await actualRuns.UpdateOneAsync(f,u,o,c)).MatchedCount);
+                    if (differentTarget) await actualRuns.UpdateOneAsync(x => x.Id == run.Id,
+                        Builders<VideoGenRun>.Update.Set(x => x.LatestExportTaskId,"different-current-export"));
+                }
+                return await actualRuns.UpdateOneAsync(f,u,o,c);
+            });
+        var database = new Mock<IMongoDatabase>(MockBehavior.Strict);
+        database.Setup(x => x.GetCollection<VideoGenRun>("video_gen_runs",null)).Returns(runs.Object);
+        database.Setup(x => x.GetCollection<VideoExportTask>("video_export_tasks",null)).Returns(actualTasks);
+        typeof(MongoDbContext).GetField("_database",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(test.Context,database.Object);
+        var service = test.CreateService();service.ExportDeploymentScope = run.DeploymentSlug;
+        if (differentTarget)
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => service.RequestExportAsync(run.Id,test.OwnerId,run.AppKey));
+            Assert.Equal("different-current-export",(await actualRuns.Find(x => x.Id == run.Id).SingleAsync()).LatestExportTaskId);
+        }
+        else
+        {
+            var linked = await service.RequestExportAsync(run.Id,test.OwnerId,run.AppKey);
+            Assert.Equal(linked.Id,(await actualRuns.Find(x => x.Id == run.Id).SingleAsync()).LatestExportTaskId);
+            Assert.Equal(VideoExportTaskStatus.ScopedQueued,(await actualTasks.Find(x => x.Id == linked.Id).SingleAsync()).Status);
+        }
+        Assert.Equal(1,await actualTasks.CountDocumentsAsync(FilterDefinition<VideoExportTask>.Empty));
+        Assert.Empty(test.AssetStorage.Invocations);Assert.Empty(test.VideoClient.Invocations);
+    }
+
+    [Fact]
+    public async Task ExportHolder_InterruptedReexportRepairsOriginalProjectBeforeClaim()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("interrupted-project-link",test.OwnerId,SceneItemStatus.Done);
+        run.Mode = VideoGenMode.Storyboard;run.Status = VideoGenRunStatus.Editing;
+        run.ProjectId = "interrupted-project";run.LatestExportTaskId = "previous-export";
+        run.DeploymentSlug = "synthetic-export-scope";run.Scenes[0].VideoUrl = "https://synthetic.invalid/existing.mp4";
+        await test.SaveRunAsync(run);
+        await test.Context.VideoExportTasks.InsertOneAsync(new VideoExportTask { Id = run.LatestExportTaskId,
+            RunId = run.Id,ProjectId = run.ProjectId,OwnerAdminId = test.OwnerId,AppKey = run.AppKey,
+            Status = VideoExportTaskStatus.Failed,DeploymentSlug = run.DeploymentSlug });
+        await test.Context.VideoProjects.InsertOneAsync(new VideoProject { Id = run.ProjectId,
+            OwnerAdminId = test.OwnerId,AppKey = run.AppKey,LatestRunId = run.Id,
+            LatestExportTaskId = run.LatestExportTaskId,Status = VideoProjectStatus.Editing });
+        var actualRuns = test.Context.VideoGenRuns;var actualTasks = test.Context.VideoExportTasks;var actualProjects = test.Context.VideoProjects;
+        var projects = new Mock<IMongoCollection<VideoProject>>(MockBehavior.Strict);
+        projects.SetupGet(x => x.DocumentSerializer).Returns(actualProjects.DocumentSerializer);
+        projects.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<VideoProject>>(),It.IsAny<FindOptions<VideoProject,VideoProject>>(),It.IsAny<CancellationToken>()))
+            .Returns((FilterDefinition<VideoProject> f,FindOptions<VideoProject,VideoProject> o,CancellationToken c) => actualProjects.FindAsync(f,o,c));
+        var writes = 0;
+        projects.Setup(x => x.UpdateOneAsync(It.IsAny<FilterDefinition<VideoProject>>(),It.IsAny<UpdateDefinition<VideoProject>>(),It.IsAny<UpdateOptions>(),It.IsAny<CancellationToken>()))
+            .Returns((FilterDefinition<VideoProject> f,UpdateDefinition<VideoProject> u,UpdateOptions o,CancellationToken c) =>
+                ++writes == 1 ? Task.FromException<UpdateResult>(new IOException("synthetic-project-link-interruption")) : actualProjects.UpdateOneAsync(f,u,o,c));
+        var database = new Mock<IMongoDatabase>(MockBehavior.Strict);
+        database.Setup(x => x.GetCollection<VideoGenRun>("video_gen_runs",null)).Returns(actualRuns);
+        database.Setup(x => x.GetCollection<VideoExportTask>("video_export_tasks",null)).Returns(actualTasks);
+        database.Setup(x => x.GetCollection<VideoProject>("video_projects",null)).Returns(projects.Object);
+        typeof(MongoDbContext).GetField("_database",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(test.Context,database.Object);
+        var service = test.CreateService();service.ExportDeploymentScope = run.DeploymentSlug;
+        await Assert.ThrowsAsync<IOException>(() => service.RequestExportAsync(run.Id,test.OwnerId,run.AppKey));
+        var newTask = await actualTasks.Find(x => x.Id != run.LatestExportTaskId).SingleAsync();
+        Assert.Equal(newTask.Id,(await actualRuns.Find(x => x.Id == run.Id).SingleAsync()).LatestExportTaskId);
+        using var worker = test.CreateWorker();worker.QueueDeploymentScope = run.DeploymentSlug;
+        Assert.Equal(newTask.Id,(await worker.ClaimExportTaskAsync(default))!.Id);
+        Assert.Equal(newTask.Id,(await actualProjects.Find(x => x.Id == run.ProjectId).SingleAsync()).LatestExportTaskId);
+        Assert.Equal(VideoProjectStatus.Rendering,(await actualProjects.Find(x => x.Id == run.ProjectId).SingleAsync()).Status);
+        Assert.Equal(2,await actualTasks.CountDocumentsAsync(FilterDefinition<VideoExportTask>.Empty));
+        Assert.Empty(test.AssetStorage.Invocations);Assert.Empty(test.VideoClient.Invocations);
+    }
+
+    [Fact]
+    public async Task ExportHolder_LateLinkNeverReopensProjectAlreadyCompletedBySameTask()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("late-project-link",test.OwnerId,SceneItemStatus.Done);
+        run.Mode = VideoGenMode.Storyboard;run.Status = VideoGenRunStatus.Editing;
+        run.ProjectId = "late-link-project";run.DeploymentSlug = "synthetic-export-scope";
+        run.Scenes[0].VideoUrl = "https://synthetic.invalid/existing.mp4";await test.SaveRunAsync(run);
+        await test.Context.VideoProjects.InsertOneAsync(new VideoProject { Id = run.ProjectId,
+            OwnerAdminId = test.OwnerId,AppKey = run.AppKey,LatestRunId = run.Id,Status = VideoProjectStatus.Editing });
+        var actualRuns = test.Context.VideoGenRuns;var actualTasks = test.Context.VideoExportTasks;var actualProjects = test.Context.VideoProjects;
+        var projects = new Mock<IMongoCollection<VideoProject>>(MockBehavior.Strict);
+        projects.SetupGet(x => x.DocumentSerializer).Returns(actualProjects.DocumentSerializer);
+        var reads = 0;
+        projects.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<VideoProject>>(),It.IsAny<FindOptions<VideoProject,VideoProject>>(),It.IsAny<CancellationToken>()))
+            .Returns(async (FilterDefinition<VideoProject> f,FindOptions<VideoProject,VideoProject> o,CancellationToken c) => {
+                if (++reads == 1)
+                {
+                    using var worker = test.CreateWorker();worker.QueueDeploymentScope = run.DeploymentSlug;
+                    var claimed = (await worker.ClaimExportTaskAsync(default))!;
+                    var linked = await actualRuns.Find(x => x.Id == run.Id).SingleAsync();
+                    Assert.True(await worker.RecordCompletedExportAsync(linked,claimed,
+                        new PrdAgent.Infrastructure.Services.AssetStorage.StoredAsset(new string('a',64),
+                            "https://synthetic.invalid/recorded-output.mp4",3,"video/mp4"),null));
+                    Assert.True(await worker.ReconcileCompletedExportAsync(claimed,default));
+                }
+                return await actualProjects.FindAsync(f,o,c);
+            });
+        projects.Setup(x => x.UpdateOneAsync(It.IsAny<FilterDefinition<VideoProject>>(),It.IsAny<UpdateDefinition<VideoProject>>(),It.IsAny<UpdateOptions>(),It.IsAny<CancellationToken>()))
+            .Returns((FilterDefinition<VideoProject> f,UpdateDefinition<VideoProject> u,UpdateOptions o,CancellationToken c) => actualProjects.UpdateOneAsync(f,u,o,c));
+        var database = new Mock<IMongoDatabase>(MockBehavior.Strict);
+        database.Setup(x => x.GetCollection<VideoGenRun>("video_gen_runs",null)).Returns(actualRuns);
+        database.Setup(x => x.GetCollection<VideoExportTask>("video_export_tasks",null)).Returns(actualTasks);
+        database.Setup(x => x.GetCollection<VideoProject>("video_projects",null)).Returns(projects.Object);
+        typeof(MongoDbContext).GetField("_database",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(test.Context,database.Object);
+        var service = test.CreateService();service.ExportDeploymentScope = run.DeploymentSlug;
+        var task = await service.RequestExportAsync(run.Id,test.OwnerId,run.AppKey);
+        Assert.Equal(VideoGenRunStatus.Completed,(await actualRuns.Find(x => x.Id == run.Id).SingleAsync()).Status);
+        var completed = await actualProjects.Find(x => x.Id == run.ProjectId).SingleAsync();
+        Assert.Equal(task.Id,completed.LatestExportTaskId);Assert.Equal(VideoProjectStatus.Completed,completed.Status);
+        Assert.Equal(VideoExportTaskStatus.Completed,(await actualTasks.Find(x => x.Id == task.Id).SingleAsync()).Status);
         Assert.Empty(test.AssetStorage.Invocations);Assert.Empty(test.VideoClient.Invocations);
     }
 

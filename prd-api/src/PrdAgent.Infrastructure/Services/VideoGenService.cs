@@ -96,15 +96,43 @@ public class VideoGenService : IVideoGenService
                 .Set(x => x.LatestExportTaskId, task.Id).Set(x => x.ExportRequested, false)
                 .Set(x => x.ExportErrorMessage, (string?)null).Set(x => x.CurrentPhase, "export-queued").Set(x => x.PhaseProgress, 1),
             cancellationToken: CancellationToken.None);
-        if (changed.MatchedCount != 1) return null;
+        if (changed.MatchedCount != 1)
+        {
+            // 请求与 Worker 可同时关联同一任务；只接受已建立的同身份同任务关联。
+            run = await db.VideoGenRuns.Find(f.Eq(x => x.Id, task.RunId)
+                & f.Eq(x => x.OwnerAdminId, task.OwnerAdminId) & f.Eq(x => x.AppKey, task.AppKey) & project
+                & f.Eq(x => x.DeploymentSlug, current) & f.Eq(x => x.LatestExportTaskId, task.Id)
+                & f.Eq(x => x.CancelRequested, false) & f.Eq(x => x.DeletionRequestedAt, null)
+                & f.In(x => x.Status, new[] { VideoGenRunStatus.Rendering, VideoGenRunStatus.Completed }))
+                .FirstOrDefaultAsync(ct);
+            if (run == null) return null;
+            if (run.Status == VideoGenRunStatus.Completed) return run;
+        }
         if (!string.IsNullOrWhiteSpace(run.ProjectId))
-            await db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId && x.OwnerAdminId == task.OwnerAdminId
-                && x.AppKey == task.AppKey && x.LatestRunId == run.Id
-                && (x.LatestExportTaskId == null || x.LatestExportTaskId == task.Id || x.LatestExportTaskId == run.LatestExportTaskId)
-                && (x.Status == VideoProjectStatus.Editing || x.Status == VideoProjectStatus.Rendering || x.Status == VideoProjectStatus.Completed),
-                Builders<VideoProject>.Update.Set(x => x.LatestExportTaskId, task.Id)
-                    .Set(x => x.Status, VideoProjectStatus.Rendering).Set(x => x.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: CancellationToken.None);
+        {
+            var parentProject = await db.VideoProjects.Find(x => x.Id == run.ProjectId
+                && x.OwnerAdminId == task.OwnerAdminId && x.AppKey == task.AppKey && x.LatestRunId == run.Id)
+                .FirstOrDefaultAsync(ct);
+            if (parentProject?.Status is VideoProjectStatus.Editing or VideoProjectStatus.Rendering or VideoProjectStatus.Completed
+                && (parentProject.Status != VideoProjectStatus.Completed || parentProject.LatestExportTaskId != task.Id))
+            {
+                var replace = parentProject.LatestExportTaskId == null || parentProject.LatestExportTaskId == task.Id;
+                if (!replace)
+                {
+                    var previous = await db.VideoExportTasks.Find(x => x.Id == parentProject.LatestExportTaskId
+                        && x.RunId == run.Id && x.OwnerAdminId == task.OwnerAdminId && x.AppKey == task.AppKey
+                        && x.ProjectId == task.ProjectId).FirstOrDefaultAsync(ct);
+                    replace = previous?.Status is VideoExportTaskStatus.Failed or VideoExportTaskStatus.Cancelled or VideoExportTaskStatus.Completed;
+                }
+                if (replace)
+                    await db.VideoProjects.UpdateOneAsync(x => x.Id == parentProject.Id && x.OwnerAdminId == task.OwnerAdminId
+                        && x.AppKey == task.AppKey && x.LatestRunId == run.Id
+                        && x.LatestExportTaskId == parentProject.LatestExportTaskId && x.Status == parentProject.Status,
+                        Builders<VideoProject>.Update.Set(x => x.LatestExportTaskId, task.Id)
+                            .Set(x => x.Status, VideoProjectStatus.Rendering).Set(x => x.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
+            }
+        }
         run.DeploymentSlug = current;run.Status = VideoGenRunStatus.Rendering;run.LatestExportTaskId = task.Id;
         return run;
     }
