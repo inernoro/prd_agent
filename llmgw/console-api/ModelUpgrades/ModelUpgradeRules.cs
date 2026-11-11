@@ -52,8 +52,8 @@ public static class ModelUpgradeRules
         var claims = Strings(logical, "DefaultForAppCallerCodes");
         return callers.Where(c => IsAuthorizedValidationCaller(logical, c))
             .Select(c => c.GetStringOrEmpty("AppCallerCode"))
-            .Where(c => claims.Contains(c, AppCallerIdentityPolicy.Comparer))
-            .OrderBy(c => logical.GetStringOrEmpty("ModelType") == "generation"
+            .OrderBy(c => claims.Contains(c, AppCallerIdentityPolicy.Comparer) ? 0 : 1)
+            .ThenBy(c => logical.GetStringOrEmpty("ModelType") == "generation"
                 && AppCallerIdentityPolicy.Comparer.Equals(c, "visual-agent.image.text2img::generation") ? 0 : 1)
             .ThenBy(c => c, AppCallerIdentityPolicy.Comparer).FirstOrDefault() ?? "";
     }
