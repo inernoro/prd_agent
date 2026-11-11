@@ -1857,6 +1857,27 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return null;
     }
 
+    /// <summary>专用单次候选验收的最终聊天 wire 约束；许可和金额仍由既有统一出口核验。</summary>
+    public static bool IsBoundedCanaryChatWire(GatewayRawRequest request, string? offeringId, string? protocol, string? serializedBody)
+    {
+        if (request.ModelType != ModelTypes.Chat || request.IsMultipart || request.CanonicalImageRequest is not null
+            || string.IsNullOrWhiteSpace(offeringId) || request.RequiredOfferingId != offeringId
+            || GatewayProtocolAliases.NormalizeAdapterKey(protocol) != GatewayProtocolAliases.OpenAI) return false;
+        try
+        {
+            if (JsonNode.Parse(serializedBody ?? "") is not JsonObject body
+                || body.Any(p => p.Key is not ("model" or "messages" or "max_tokens" or "stream"))
+                || body["max_tokens"] is not JsonValue cap || !cap.TryGetValue<int>(out var max) || max != 16
+                || body["stream"] is JsonValue streaming && (!streaming.TryGetValue<bool>(out var stream) || stream)
+                || body["messages"] is not JsonArray { Count: 1 } messages || messages[0] is not JsonObject message
+                || message.Count != 2 || message["role"]?.GetValue<string>() != "user"
+                || message["content"] is not JsonValue content || !content.TryGetValue<string>(out var text)
+                || text.Length is < 1 or > 200) return false;
+            return true;
+        }
+        catch { return false; }
+    }
+
     internal static GatewayRawRequest RebuildCanonicalImageRequest(
         GatewayRawRequest source,
         ModelResolutionResult resolution)
@@ -2761,6 +2782,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 };
                 requestBodyForLog = jsonContent;
             }
+
+            if (request.Context?.SourceTask?.StartsWith("ModelUpgradeCanaryWorker:", StringComparison.Ordinal) == true
+                && request.ModelType == ModelTypes.Chat
+                && !IsBoundedCanaryChatWire(request, resolution.OfferingId, resolution.Protocol ?? resolution.PlatformType, requestBodyForLog))
+                return GatewayRawResponse.Fail("GATEWAY_CANARY_WIRE_DENIED", "候选验收最终聊天参数超出许可范围，未发送请求。", 409);
 
             // 4. 设置请求头（支持 Exchange 可配置认证方案）
             if (!string.IsNullOrWhiteSpace(resolution.ApiKey))

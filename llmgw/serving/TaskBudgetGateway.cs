@@ -189,18 +189,20 @@ public sealed class TaskBudgetGateway(
             var scope = await data.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
                 .Find(x => x.Id == permit.BudgetScopeId && x.TaskPermitId == permit.Id
                     && x.TenantId == permit.TenantId && x.UserId == permit.ActorUserId).FirstOrDefaultAsync(ct);
-            if (!AllowsBoundedImageCanary(permit, scope, request, resolution))
+            var imageCanary = AllowsBoundedImageCanary(permit, scope, request, resolution);
+            var chatCanary = AllowsBoundedChatCanary(permit, scope, request, resolution);
+            if (!imageCanary && !chatCanary)
                 return GatewayRawResponse.Fail("GATEWAY_TASK_BUDGET_PRICING_UNSUPPORTED", "此原始或媒体请求尚无匹配的单次候选计价合同，已停止发送", 409);
             var policy = await counter.ResolveTaskPolicyAsync(scope!.Id, permit.TenantId, permit.ActorUserId,
                 RunId(request.Context), request.AppCallerCode, ct);
-            if (policy?.BoundedCanaryCall != true)
+            if (policy is null || policy.BoundedCanaryCall != imageCanary)
                 return GatewayRawResponse.Fail("GATEWAY_CANARY_BUDGET_INACTIVE", "候选验收金额合同已失效，未发送请求。", 409);
             var attempt = new GatewayTaskBudgetRequest(scope.Id, permit.TenantId, permit.ActorUserId,
                 RunId(request.Context), request.AppCallerCode, permit.Id, request.Context?.RequestId ?? "",
-                System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(request.CanonicalImageRequest).Length, 1,
+                System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(imageCanary ? (object?)request.CanonicalImageRequest : request.RequestBody).Length, imageCanary ? 1 : 16,
                 resolution.LogicalModelPublicId ?? "", resolution.ActualPlatformName ?? resolution.ActualPlatformId ?? "",
                 resolution.ActualModel ?? "", resolution.OfferingId, TaskPermitId: permit.Id,
-                Protocol: resolution.Protocol ?? resolution.PlatformType, BoundedCanaryCall: true);
+                Protocol: resolution.Protocol ?? resolution.PlatformType, BoundedCanaryCall: imageCanary);
             var decision = await counter.TryReserveTaskAsync(attempt, ct);
             if (!decision.Allowed) return GatewayRawResponse.Fail(decision.ErrorCode, decision.Detail, decision.StatusCode);
             reserved = attempt;
@@ -235,6 +237,19 @@ public sealed class TaskBudgetGateway(
            && request.ModelType == ModelTypes.ImageGen && !request.IsMultipart && request.RequestBody is null
            && request.CanonicalImageRequest is { Count: 1, Size: "1024x1024", Quality: "low", MaskBase64: null } image
            && image.Images.Count == 0 && image.Prompt.Length is > 0 and <= 200;
+
+    internal static bool AllowsBoundedChatCanary(GatewayTaskPermitRecord permit, GatewayRuntimeBudgetScopeRecord? scope,
+        GatewayRawRequest request, GatewayModelResolution resolution)
+        => IsBoundedCanaryPermit(permit) && scope is { CanaryUnitCostUpperBoundUsd: null, MaxPhysicalCalls: 1, MaxOutputTokens: 16 }
+           && scope.Status == "active" && scope.ExpiresAt > DateTime.UtcNow
+           && scope.ExpectedOfferingId == resolution.OfferingId
+           && scope.ExpectedLogicalModelPublicId == resolution.LogicalModelPublicId
+           && request.RequiredLogicalModelPublicId == resolution.LogicalModelPublicId
+           && scope.ExpectedProvider == (resolution.ActualPlatformName ?? resolution.ActualPlatformId)
+           && scope.ExpectedModel == resolution.ActualModel
+           && GatewayProtocolAliases.NormalizeAdapterKey(scope.PriceProtocol) == GatewayProtocolAliases.OpenAI
+           && PrdAgent.Infrastructure.LlmGateway.LlmGateway.IsBoundedCanaryChatWire(request, resolution.OfferingId,
+               resolution.Protocol ?? resolution.PlatformType, request.RequestBody?.ToJsonString());
 
     public Task<GatewayRawResponse> TestUpstreamProfileAsync(GatewayUpstreamProfileTestRequest request, CancellationToken ct = default)
         => Bound ? Task.FromResult(GatewayRawResponse.Fail("GATEWAY_TASK_BUDGET_PRICING_UNSUPPORTED", "任务金额合同不能用于临时供应商配置", 409))

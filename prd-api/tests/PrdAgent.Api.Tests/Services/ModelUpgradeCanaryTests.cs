@@ -5,6 +5,8 @@ using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.LlmGatewayHost;
 using System.Reflection;
+using PrdAgent.Infrastructure.LlmGateway;
+using System.Text.Json.Nodes;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -124,6 +126,100 @@ public sealed class ModelUpgradeCanaryTests
         Assert.False(Allowed(Request(1,"high")));
         scope.ExpectedOfferingId="other";Assert.False(Allowed(Request()));scope.ExpectedOfferingId="route";
         permit.SourceTask="OrdinaryImageWorker:test";Assert.False(Allowed(Request()));
+    }
+
+    [Fact]
+    public void PendingClaim_ExcludesExpiredJobsAndKeepsScheduledOptIn()
+    {
+        var now = new DateTime(2026,11,11,10,0,0,DateTimeKind.Utc);
+        var filter = ModelUpgradeCanaryWorker.PendingClaimFilter("tenant",now,false);
+        Assert.Equal(now,filter["ExpiresAt"]["$gt"].ToUniversalTime());
+        Assert.Equal("pending",filter["Status"].AsString);
+        Assert.Equal("manual",filter["ExecutionRequestedBy"].AsString);
+        Assert.False(ModelUpgradeCanaryWorker.PendingClaimFilter("tenant",now,true).Contains("ExecutionRequestedBy"));
+    }
+
+    [Theory]
+    [InlineData(false,"failed",true)]
+    [InlineData(true,"failed",false)]
+    [InlineData(true,"unknown",false)]
+    [InlineData(true,"succeeded",false)]
+    public void RefundEvidence_OnlyConfirmsUnsentBeforeEnteringPaidClient(bool entered,string status,bool unsent)
+    {
+        var fields = ModelUpgradeCanaryWorker.CompletionFields(status,"message",entered,DateTime.UtcNow);
+        Assert.Equal(unsent,fields["UnsentConfirmed"].AsBoolean);
+    }
+
+    [Fact]
+    public void OfferingWireSnapshot_RejectsMissingVersionOrChangedVersionEndpointAndProtocol()
+    {
+        var at = new DateTime(2026,11,11,10,0,0,DateTimeKind.Utc);
+        var offering = new BsonDocument { {"UpdatedAt",at},{"EndpointPath","chat/completions"} };
+        var job = new BsonDocument { {"OfferingVersion",at.ToString("O")},{"EndpointPath","chat/completions"},{"Protocol","openai"} };
+        Assert.True(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,offering,"openai"));
+        Assert.False(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,offering,"claude"));
+        offering["EndpointPath"]="responses";
+        Assert.False(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,offering,"openai"));
+        offering["EndpointPath"]="chat/completions";offering["UpdatedAt"]=at.AddSeconds(1);
+        Assert.False(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,offering,"openai"));
+        job.Remove("OfferingVersion");
+        Assert.False(ModelUpgradeCanaryWorker.MatchesOfferingSnapshot(job,offering,"openai"));
+    }
+
+    [Fact]
+    public void ChatCanaryRequest_PinsCandidateOfferingAndSmallOutput()
+    {
+        var job = new BsonDocument { {"CandidateLogicalModelPublicId","fixed-candidate"},{"CandidateOfferingId","candidate-route"},
+            {"AppCallerCode","chat.test"},{"EndpointPath","custom/chat/completions"} };
+        var request = ModelUpgradeCanaryWorker.CreateChatCanaryRequest(job,new GatewayRequestContext { RequestId="existing-request" });
+        Assert.Equal("fixed-candidate",request.RequiredLogicalModelPublicId);
+        Assert.Equal("candidate-route",request.RequiredOfferingId);
+        Assert.Equal("custom/chat/completions",request.EndpointPath);
+        Assert.Equal(16,request.RequestBody!["max_tokens"]!.GetValue<int>());
+        Assert.Equal("existing-request",request.Context!.RequestId);
+    }
+
+    [Theory]
+    [InlineData("{}",false)]
+    [InlineData("{\"choices\":[{\"message\":{\"refusal\":\"no\"}}]}",false)]
+    [InlineData("{\"choices\":[{\"message\":{\"content\":\" \"}}]}",false)]
+    [InlineData("{\"choices\":[{\"message\":{\"content\":\"OK\"}}]}",true)]
+    [InlineData("{\"choices\":[{\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"OK\"}]}}]}",true)]
+    public void ChatCompletion_RequiresRealAnswer(string body,bool expected)
+        => Assert.Equal(expected,ModelUpgradeCanaryWorker.HasChatOutput(body));
+
+    [Fact]
+    public void ChatRawBudget_RemainsRestrictedToSingleCanaryPermitAndFrozenRoute()
+    {
+        var job = new BsonDocument { {"CandidateLogicalModelPublicId","fixed"},{"CandidateOfferingId","route"},{"AppCallerCode","chat.test"},{"EndpointPath",BsonNull.Value} };
+        var request = ModelUpgradeCanaryWorker.CreateChatCanaryRequest(job,new GatewayRequestContext());
+        var permit = new GatewayTaskPermitRecord { SourceTask="ModelUpgradeCanaryWorker:request",MaxCalls=1,MaxRuns=1 };
+        var scope = new GatewayRuntimeBudgetScopeRecord { MaxPhysicalCalls=1,MaxOutputTokens=16,ExpectedOfferingId="route",
+            ExpectedLogicalModelPublicId="fixed",ExpectedProvider="Official",ExpectedModel="chat-version",PriceProtocol="openai",ExpiresAt=DateTime.UtcNow.AddMinutes(5) };
+        var resolution = new GatewayModelResolution { LogicalModelPublicId="fixed",OfferingId="route",ActualPlatformName="Official",ActualModel="chat-version",Protocol="openai" };
+        bool Allowed() => (bool)typeof(TaskBudgetGateway).GetMethod("AllowsBoundedChatCanary",BindingFlags.NonPublic|BindingFlags.Static)!
+            .Invoke(null,new object?[]{permit,scope,request,resolution})!;
+        Assert.True(Allowed());
+        permit.MaxCalls=2;Assert.False(Allowed());permit.MaxCalls=1;
+        permit.AllowDelegatedSubjects=true;Assert.False(Allowed());permit.AllowDelegatedSubjects=false;
+        scope.ExpectedOfferingId="other";Assert.False(Allowed());scope.ExpectedOfferingId="route";
+        scope.CanaryUnitCostUpperBoundUsd=.05m;Assert.False(Allowed());scope.CanaryUnitCostUpperBoundUsd=null;
+        request.RequestBody!["max_tokens"]=32;Assert.False(Allowed());
+    }
+
+    [Fact]
+    public void FinalChatWire_RejectsExpandedTokensImagesAndChangedOffering()
+    {
+        var request = ModelUpgradeCanaryWorker.CreateChatCanaryRequest(new BsonDocument {
+            {"CandidateLogicalModelPublicId","fixed"},{"CandidateOfferingId","route"},{"AppCallerCode","chat.test"} },new GatewayRequestContext());
+        var body = request.RequestBody!.DeepClone().AsObject();body["model"]="chat-version";
+        bool Wire(string route="route") => LlmGateway.IsBoundedCanaryChatWire(request,route,"openai",body.ToJsonString());
+        Assert.True(Wire());Assert.False(Wire("other"));
+        body["max_tokens"]=32;Assert.False(Wire());body["max_tokens"]=16;
+        body["messages"]![0]!["content"]=new JsonArray(new JsonObject { ["type"]="image_url",["image_url"]="image" });
+        Assert.False(Wire());
+        body["messages"]![0]!["content"]="Reply OK.";body["stream"]=true;
+        Assert.False(Wire());
     }
 
     private static (BsonDocument Job,BsonDocument State) Pair()

@@ -57,8 +57,7 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
         await queue.UpdateManyAsync(new BsonDocument { { "TenantId", tenant }, { "Status", "running" },
             { "ExecutionDeadline", new BsonDocument("$lt", DateTime.UtcNow) } },
             new BsonDocument("$set", new BsonDocument { { "Status", "unknown" }, { "Message", "执行中断，等待既有日志核账；不会重发。" }, { "UpdatedAt", DateTime.UtcNow } }), cancellationToken: ct);
-        var filter = new BsonDocument { { "TenantId", tenant }, { "Status", "pending" } };
-        if (!config.GetValue<bool>("LlmGateway:ModelUpgrades:ScheduledCanaryEnabled")) filter.Add("ExecutionRequestedBy", "manual");
+        var filter = PendingClaimFilter(tenant, DateTime.UtcNow, config.GetValue<bool>("LlmGateway:ModelUpgrades:ScheduledCanaryEnabled"));
         var job = await queue.FindOneAndUpdateAsync(filter, new BsonDocument("$set", new BsonDocument {
             { "Status", "running" }, { "ExecutionDeadline", DateTime.UtcNow.AddMinutes(12) }, { "UpdatedAt", DateTime.UtcNow },
             { "ConsumerDeployment", TaskPermitDeployment.Resolve(config) } }),
@@ -90,23 +89,23 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
             using var requestScope = accessor.BeginScope(new LlmRequestContext(S(job, "_id"), null, null,
                 S(job, "ActorUserId"), null, null, null, null, AppCallerCode: caller,
                 RunId: S(job, "_id"), TenantId: tenant, SourceSystem: "map"));
-            dispatchEntered = true;
             if (type == ModelTypes.ImageGen)
             {
-                var response = await client.GenerateImageAsync(new GatewayRawRequest { AppCallerCode = caller, ModelType = type,
+                var imageRequest = new GatewayRawRequest { AppCallerCode = caller, ModelType = type,
                     RequiredLogicalModelPublicId = S(job, "CandidateLogicalModelPublicId"), RequiredOfferingId = S(job, "CandidateOfferingId"),
                     Context = context, TimeoutSeconds = 600,
                     CanonicalImageRequest = new() { Prompt = "A small blue circle on a plain white background.", Count = 1,
-                        Size = "1024x1024", Quality = "low", ResponseFormat = "b64_json" } }, ct);
+                        Size = "1024x1024", Quality = "low", ResponseFormat = "b64_json" } };
+                dispatchEntered = true;
+                var response = await client.GenerateImageAsync(imageRequest, ct);
                 status = response.Success && response.StatusCode is >= 200 and < 300 && HasImageOutput(response.Content) ? "succeeded" : "unknown";
             }
             else
             {
-                var response = await client.SendAsync(new GatewayRequest { AppCallerCode = caller, ModelType = type,
-                    ExpectedModel = S(job, "CandidateLogicalModelPublicId"), Context = context,
-                    RequestBody = new JsonObject { ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "Reply OK." }), ["max_tokens"] = 16 },
-                    TimeoutSeconds = 120 }, ct);
-                status = response.Success && !string.IsNullOrWhiteSpace(response.Content) ? "succeeded" : "unknown";
+                var chatRequest = CreateChatCanaryRequest(job, context);
+                dispatchEntered = true;
+                var response = await client.SendRawWithResolutionAsync(chatRequest, resolved, ct);
+                status = response.Success && response.StatusCode is >= 200 and < 300 && HasChatOutput(response.Content) ? "succeeded" : "unknown";
             }
             message = status == "succeeded" ? "受限验收已完成，等待权威日志核验真实输出。" : "验收未获确定成功结果，仅核查既有日志，不会重发。";
         }
@@ -115,7 +114,7 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
         finally
         {
             await queue.UpdateOneAsync(new BsonDocument { { "_id", job["_id"] }, { "Status", "running" } },
-                new BsonDocument("$set", new BsonDocument { { "Status", status }, { "Message", message }, { "UpdatedAt", DateTime.UtcNow } }), cancellationToken: CancellationToken.None);
+                new BsonDocument("$set", CompletionFields(status, message, dispatchEntered, DateTime.UtcNow)), cancellationToken: CancellationToken.None);
         }
     }
 
@@ -137,6 +136,9 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
         var model = await Find(data, "llmgw_models", Scoped(tenant, S(job, "ModelId")), ct);
         var offering = await Find(data, "llmgw_model_offerings", Scoped(tenant, S(job, "CandidateOfferingId")), ct);
         if (stable is null || provider is null || model is null || offering is null) return null;
+        var effectiveProtocol = !string.IsNullOrWhiteSpace(S(offering, "Protocol")) ? S(offering, "Protocol")
+            : !string.IsNullOrWhiteSpace(S(model, "Protocol")) ? S(model, "Protocol") : S(provider, "PlatformType");
+        if (!MatchesOfferingSnapshot(job, offering, effectiveProtocol)) return null;
         var fixedLogical = await Find(data, "llmgw_logical_models", Scoped(tenant, S(offering, "LogicalModelId")), ct);
         var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(new BsonArray(new[] { stable, provider, model }.Select(d =>
             new BsonDocument { { "id", d["_id"] }, { "updatedAt", d.GetValue("UpdatedAt", BsonNull.Value) } })).ToJson()))).ToLowerInvariant();
@@ -165,6 +167,45 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
             LogicalModelPublicId = S(job, "CandidateLogicalModelPublicId"), Provider = S(job, "Provider"), Model = S(job, "UpstreamModelId"),
             Protocol = S(job, "Protocol"), PriceVersion = S(job, "PriceVersion"), InputUsdPerMillion = D(model, "InputPricePerMillion"),
             OutputUsdPerMillion = D(model, "OutputPricePerMillion"), CachedInputUsdPerMillion = Math.Max(D(model, "CachedInputPricePerMillion"), D(model, "InputPricePerMillion")), CacheWriteUsdPerMillion = Math.Max(D(model, "CacheWritePricePerMillion"), D(model, "InputPricePerMillion")) }, type);
+    }
+
+    internal static BsonDocument PendingClaimFilter(string tenant, DateTime now, bool allowScheduled)
+    {
+        var filter = new BsonDocument { { "TenantId", tenant }, { "Status", "pending" }, { "ExpiresAt", new BsonDocument("$gt", now) } };
+        if (!allowScheduled) filter.Add("ExecutionRequestedBy", "manual");
+        return filter;
+    }
+
+    internal static BsonDocument CompletionFields(string status, string message, bool dispatchEntered, DateTime now)
+        => new() { { "Status", status }, { "Message", message }, { "UpdatedAt", now }, { "UnsentConfirmed", !dispatchEntered } };
+
+    internal static bool MatchesOfferingSnapshot(BsonDocument job, BsonDocument offering, string effectiveProtocol)
+        => S(job, "OfferingVersion").Length > 0
+           && offering.TryGetValue("UpdatedAt", out var updated) && updated.IsBsonDateTime
+           && updated.ToUniversalTime().ToString("O") == S(job, "OfferingVersion")
+           && job.Contains("EndpointPath") && S(job, "EndpointPath") == S(offering, "EndpointPath")
+           && GatewayProtocolAliases.NormalizeAdapterKey(S(job, "Protocol")) == GatewayProtocolAliases.NormalizeAdapterKey(effectiveProtocol);
+
+    internal static GatewayRawRequest CreateChatCanaryRequest(BsonDocument job, GatewayRequestContext context)
+        => new() { AppCallerCode = S(job, "AppCallerCode"), ModelType = ModelTypes.Chat,
+            RequiredLogicalModelPublicId = S(job, "CandidateLogicalModelPublicId"), RequiredOfferingId = S(job, "CandidateOfferingId"),
+            ExpectedModel = S(job, "CandidateLogicalModelPublicId"), Context = context,
+            EndpointPath = S(job, "EndpointPath") is { Length: > 0 } endpoint ? endpoint : "chat/completions",
+            RequestBody = new JsonObject { ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "Reply OK." }),
+                ["max_tokens"] = 16, ["stream"] = false }, TimeoutSeconds = 120 };
+
+    internal static bool HasChatOutput(string? content)
+    {
+        try
+        {
+            if (JsonNode.Parse(content ?? "")?["choices"] is not JsonArray choices) return false;
+            return choices.OfType<JsonObject>().Any(choice => choice["message"]?["content"] switch {
+                JsonValue value => value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text),
+                JsonArray parts => parts.OfType<JsonObject>().Any(part => part["text"] is JsonValue textValue
+                    && textValue.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text)),
+                _ => false });
+        }
+        catch { return false; }
     }
 
     internal static bool HasSufficientKnownImageEnvelope(string model, decimal upper, decimal inputRate, decimal outputRate)
@@ -202,6 +243,7 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
         && r.ActualPlatformId == S(job, "ProviderId") && r.ActualModel == S(job, "UpstreamModelId")
         && r.ActualPlatformName == S(job, "Provider") && r.OfferingId == S(job, "CandidateOfferingId")
         && r.LogicalModelPublicId == S(job, "CandidateLogicalModelPublicId")
+        && (r.OfferingEndpointPath ?? "") == S(job, "EndpointPath")
         && GatewayProtocolAliases.NormalizeAdapterKey(r.Protocol ?? r.PlatformType) == GatewayProtocolAliases.NormalizeAdapterKey(S(job, "Protocol"));
     internal static bool HasImageOutput(string? content)
     {
