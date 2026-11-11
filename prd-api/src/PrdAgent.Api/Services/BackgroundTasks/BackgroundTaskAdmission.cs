@@ -102,6 +102,7 @@ public sealed class BackgroundTaskAdmissionRegistry
             typeof(PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarHealthChecker),
             typeof(PrdAgent.Infrastructure.Services.ClaudeSidecar.CdsSidecarSyncService));
         Add(BackgroundTaskKind.UserRunConsumer,
+            typeof(ModelUpgradeCanaryWorker),
             typeof(Speech.SpeechRunWorker),
             typeof(DataSync.DataSyncRunWorker), typeof(Toolbox.ToolboxRunWorker),
             typeof(ImageGenRunWorker), typeof(ProfileAvatarGenerationCleanupService),
