@@ -29,7 +29,7 @@ test('稳定模型升级页签按真实状态保存策略、验证、采用与�
     view: { validationMode: 'evidence', validationModes: ['evidence', 'canary'], validationStatus: 'not-run', discoveries: [{ providerId: 'official', upstreamModelId: 'future-image-5', status: 'unconfirmed', message: '官方目录发现的新型号，尚未确认继任关系' }], identityKind: 'stable', logicalModelId: 'quality', publicId: 'image-quality', name: '画师', aliases: ['image-2-all'], modelType: 'generation', version: 3, policy, phase: 'candidate', message: '候选等待验收，当前版本继续服务。', current, candidate, gates: { capabilities: true, price: false, budget: true, validation: false }, canPromote: false, canRollback: false, actionDisabledReason: '候选需要真实验收后才能采用', lastCheckedAt: '2026-11-11T01:00:00Z', nextCheckAt: '2026-11-12T01:00:00Z', updatedAt: '2026-11-11T01:00:00Z', history: [] },
     logical: [{ id: 'quality', identityKind: 'stable', publicId: 'image-quality', name: '画师', aliases: ['image-2-all'], modelType: 'generation', capabilities: ['image_generation'], allowedAppCallerCodes: [], defaultForAppCallerCodes: [], isDefaultForType: false, routingStrategy: 'priority', enabled: true, offerings: [] }, { id: 'fixed', identityKind: 'fixed', publicId: 'future-image-2', name: '固定版本', modelType: 'generation', capabilities: [], allowedAppCallerCodes: [], defaultForAppCallerCodes: [], isDefaultForType: false, routingStrategy: 'priority', enabled: true, offerings: [] }],
   };
-  fixture.models = ['future-image-2', 'future-image-3', 'future-image-4'].map((name, index) => ({ id: `physical-${index}`, name, modelName: name, platformId: 'official', authority: 'llm_gateway', enabled: true, capabilities: [{ type: 'image_generation', value: true, source: 'admin' }] }));
+  fixture.models = ['future-image-2', 'future-image-3', 'future-image-4'].map((name, index) => ({ id: `physical-${index}`, name, modelName: name, platformId: 'official', authority: 'llm_gateway', enabled: true, capabilities: [{ type: 'image_generation', value: true, source: 'admin' }, { type: 'parameter:image_size.field.size', value: true }, { type: 'unknown-capability', value: true }, { type: 'chat', value: false }, { type: 'image-gen', value: true }] }));
   fixture.perform = (id, action, body) => {
     fixture.calls.push({ id, action, body });
     if (fixture.actionError) return { success: false, error: { code: 'CONFLICT', message: fixture.actionError } };
@@ -53,6 +53,7 @@ test('稳定模型升级页签按真实状态保存策略、验证、采用与�
       if (id.endsWith('/src/lib/api.ts')) return apiNames.map(name => {
         if (name === 'getLogicalModels') return 'export async function getLogicalModels(){globalThis.__upgradeFixture.logicalReads++;return {success:true,data:{items:structuredClone(globalThis.__upgradeFixture.logical)}}}';
         if (name === 'getModelUpgrade') return 'export async function getModelUpgrade(){const f=globalThis.__upgradeFixture;f.reads++;return f.failGet?{success:false,error:{code:"UNAVAILABLE",message:"状态暂时无法读取，请重试"}}:{success:true,data:structuredClone(f.view),error:null}}';
+        if (name === 'getCatalogEntries') return 'export async function getCatalogEntries(){return {success:true,data:{items:[],knownCapabilities:["image_generation","chat"],legacyCapabilityAliases:{"image-gen":"image_generation"}}}}';
         if (name === 'getModels') return 'export async function getModels(){return {success:true,data:{items:structuredClone(globalThis.__upgradeFixture.models)}}}';
         if (name === 'getPlatforms') return 'export async function getPlatforms(){return {success:true,data:{items:[{id:"official",name:"官方上游"}]}}}';
         if (name === 'getExchangeMeta') return 'export async function getExchangeMeta(){return {success:true,data:{modelTypes:[{value:"generation",label:"图片生成"}]}}}';
@@ -101,6 +102,8 @@ test('稳定模型升级页签按真实状态保存策略、验证、采用与�
     await fill(from, 'future-image-3'); await fill(to, 'future-image-4');
     await fill(document.querySelector('[aria-label="官方版本资料地址"]'), 'https://official.example/models/image-4');
     assert.equal(document.querySelector('[aria-label="继任能力 image_generation"]').checked, true, '能力来自已接入的目标模型，不靠名称猜测');
+    for (const code of ['parameter:image_size.field.size', 'unknown-capability', 'chat', 'image-gen']) assert.equal(document.querySelector(`[aria-label="继任能力 ${code}"]`), null, `${code} 不应作为独立继任能力出现`);
+    assert.equal(document.querySelectorAll('[aria-label^="继任能力 "]').length, 1, '历史别名归一去重，禁用能力和参数元数据不出现在复选框');
     await click('加入策略');
     await click('保存升级策略');
     assert.equal(fixture.calls.at(-1).body.successors.length, 2);
