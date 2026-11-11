@@ -4276,14 +4276,17 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private static bool IsKnownOSeriesModel(string? model)
     {
         var leaf = NormalizeModelLeaf(model);
-        foreach (var family in new[] { "o1", "o1-mini", "o1-preview", "o3", "o3-mini", "o4-mini" })
-        {
-            if (leaf == family) return true;
-            if (leaf.StartsWith(family + "-", StringComparison.Ordinal)
-                && DateOnly.TryParseExact(leaf[(family.Length + 1)..], "yyyy-MM-dd",
-                    System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _))
-                return true;
-        }
+        return new[] { "o1", "o1-mini", "o1-preview", "o3", "o3-mini", "o4-mini" }
+            .Any(family => IsExactOrDatedModel(leaf, family));
+    }
+
+    private static bool IsExactOrDatedModel(string leaf, string family)
+    {
+        if (leaf == family) return true;
+        if (leaf.StartsWith(family + "-", StringComparison.Ordinal)
+            && DateOnly.TryParseExact(leaf[(family.Length + 1)..], "yyyy-MM-dd",
+                System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _))
+            return true;
         return false;
     }
 
@@ -4297,8 +4300,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         yield return "top_logprobs";
         yield return "logit_bias";
         var leaf = NormalizeModelLeaf(model);
-        if (leaf == "o3" || leaf.StartsWith("o3-", StringComparison.Ordinal)
-            || leaf == "o4-mini" || leaf.StartsWith("o4-mini-", StringComparison.Ordinal))
+        // 官方只明确这两条型号不支持 stop；不能把 o3-mini 的显式停止条件也丢掉。
+        if (IsExactOrDatedModel(leaf, "o3") || IsExactOrDatedModel(leaf, "o4-mini"))
             yield return "stop";
     }
 
