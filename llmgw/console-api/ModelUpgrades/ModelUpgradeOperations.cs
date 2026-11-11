@@ -69,12 +69,9 @@ public sealed partial class ModelUpgradeService
             UpstreamModelId = relation.ToModel, DocumentationUrl = relation.DocumentationUrl, DiscoveredAt = DateTime.UtcNow, Fingerprint = fingerprint,
             ValidatedAt = previous?.Fingerprint == fingerprint ? previous.ValidatedAt : null,
             ValidationRequestId = previous?.Fingerprint == fingerprint ? previous.ValidationRequestId : null };
-        var required = LogicalModelCapabilityPolicy.Normalize(logical.GetStringOrEmpty("ModelType"), ModelUpgradeRules.Strings(logical, "Capabilities"));
-        var declared = LogicalModelCapabilityPolicy.Normalize(logical.GetStringOrEmpty("ModelType"), relation.Capabilities);
-        var physical = LogicalModelCapabilityPolicy.Normalize(model.GetStringOrEmpty("ModelType"), ModelUpgradeRules.Strings(model, "Capabilities"));
         var currentModel = await RequiredAsync(Models, s.TenantId, s.Current.ModelId);
         var priorBudgetGranted = previous?.Fingerprint == fingerprint && previous.ValidatedAt > DateTime.UtcNow.AddHours(-24) && s.Gates.Budget;
-        s.Gates = new ModelUpgradeGates { Capabilities = required.All(declared.Contains) && required.All(physical.Contains),
+        s.Gates = new ModelUpgradeGates { Capabilities = ModelUpgradeRules.CandidateCapabilitiesPass(logical, relation, model),
             Price = ModelUpgradeRules.PricePass(currentModel, model, logical.GetStringOrEmpty("ModelType"), s.Policy.MaxPriceIncreasePercent),
             Budget = priorBudgetGranted || ModelUpgradeRules.BudgetPass(s, s.Policy.CanaryUnitCostUpperBoundUsd, DateTime.UtcNow),
             Validation = s.Candidate.ValidatedAt > DateTime.UtcNow.AddHours(-24) };
