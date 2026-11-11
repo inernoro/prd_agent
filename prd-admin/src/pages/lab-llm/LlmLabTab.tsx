@@ -240,12 +240,13 @@ function parsePromptSizeMeta(prompt: string): PromptSizeMeta {
 }
 
 function signatureOfSelectedModels(list: ModelLabSelectedModel[]) {
-  // 用于“是否需要自动保存”的变更检测；与 setSelectedModelsDedupe 的唯一性规则保持一致（平台 + modelId）
+  // 同一 PublicId 可以被重建；自动保存必须识别内部逻辑身份的显式修复。
   return (list ?? [])
     .map((m) => {
+      const logicalId = String(m.logicalModelId ?? '').trim();
       const pid = String(m.platformId ?? '').trim();
-      const mid = String((m as any).modelId ?? m.modelName ?? '').trim();
-      return `${pid}:${mid}`.toLowerCase();
+      const mid = String(m.modelId ?? m.modelName ?? '').trim();
+      return JSON.stringify([logicalId, pid.toLowerCase(), mid.toLowerCase()]);
     })
     .filter(Boolean)
     .sort()
