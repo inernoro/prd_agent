@@ -325,4 +325,21 @@ public sealed class ModelReferenceEngineTests
         store.Add("chat_agent_sessions", "{_id:'deleted',Deleted:true,Model:'old-fixed'}");
         var plan = await Engine(store).PlanAsync(Mapping(), "admin"); Assert.True(plan.Coverage.CanComplete); Assert.Empty(plan.Changes); Assert.Equal(0, plan.Coverage.Residual);
     }
+
+    [Fact]
+    public async Task PublicIdentityUsesRuntimeNormalizationButAllOpaqueIdsRemainExact()
+    {
+        var store = new MemoryStore();
+        var preferences = store.Add("user_preferences", "{_id:'u',VisualAgentPreferences:{ModelId:' OLD-ALIAS '},LiteraryAgentPreferences:{ChatModelId:' OLD-FIXED '}} ");
+        var slot = store.Add("arena_slots", "{_id:'a',PlatformId:'logical-model',ModelId:' OLD-FIXED '}");
+        var engine = Engine(store); var p = await engine.PlanAsync(Mapping(), "admin");
+        Assert.Equal(2, p.Changes.Count); var applied = await engine.ApplyAsync(p.Id, "internal", p.Revision); Assert.True(applied.Coverage.Verified);
+        Assert.Equal("new-fixed", preferences["VisualAgentPreferences"]["ModelId"]); Assert.Equal("new-fixed", slot["ModelId"]);
+        Assert.False(ModelReferenceAnalysis.Matches(Mapping().Source, "OLD-LOGICAL"));
+        Assert.False(ModelReferenceAnalysis.Matches(Mapping().Source, "OLD-POOL"));
+        Assert.False(ModelReferenceAnalysis.Matches(Mapping().Source, " OLD-WIRE "));
+        Assert.False(ModelReferenceAnalysis.Matches(Mapping().Source, "OLD-PHYSICAL"));
+        Assert.False(ModelReferenceAnalysis.Matches(Mapping().Source, "OLD-UPSTREAM"));
+        Assert.True(MongoRuntimeModelReferenceSnapshotProvider.Matches(Mapping().Source, new("c", "p", "public-id", " OLD-ALIAS ")));
+    }
 }
