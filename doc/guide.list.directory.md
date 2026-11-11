@@ -55,7 +55,7 @@
 
 ### 二、设计文档
 
-- [稳定模型标识与模型生命周期](./design.llmgw.model-lifecycle.md) `design.llmgw.model-lifecycle`
+- [稳定模型标识与模型生命周期 · 设计](./design.llmgw.model-lifecycle.md) `design.llmgw.model-lifecycle`
 
 - [CDS 项目检查与通知总览 · 设计](./design.cds.project-status.md) `design.cds.project-status`
 
@@ -369,7 +369,7 @@
 
 ### 六、技术债务台账
 
-- [模型生命周期边界台账](./debt.llmgw.model-lifecycle.md) `debt.llmgw.model-lifecycle`
+- [模型生命周期边界 · 债务台账](./debt.llmgw.model-lifecycle.md) `debt.llmgw.model-lifecycle`
 
 - [CDS 通知验收边界 · 债务台账](./debt.cds.notification.md) `debt.cds.notification`
 - [平台后台任务与消费治理 · 债务台账](./debt.platform.background-task-safety.md) `debt.platform.background-task-safety`
