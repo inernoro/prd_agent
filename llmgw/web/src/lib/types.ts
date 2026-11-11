@@ -815,6 +815,8 @@ export type CatalogEntriesData = {
   builtin: CatalogEntryItem[];
   /** 运行时真正认的那几种用途。界面只让从这里挑，填别的当场拒。 */
   knownCapabilities: string[];
+  /** 服务端维护的有限历史能力别名；旧响应缺省时只接受规范能力。 */
+  legacyCapabilityAliases?: Record<string, string>;
 };
 
 export type UpsertCatalogEntryRequest = {

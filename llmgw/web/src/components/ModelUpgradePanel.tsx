@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getModelUpgrade, getModels, getPlatforms, runModelUpgradeAction, saveModelUpgradePolicy } from '@/lib/api';
-import type { ModelItem, ModelUpgradeAction, ModelUpgradePhase, ModelUpgradePolicy, ModelUpgradeSuccessor, ModelUpgradeView } from '@/lib/types';
+import { getCatalogEntries, getModelUpgrade, getModels, getPlatforms, runModelUpgradeAction, saveModelUpgradePolicy } from '@/lib/api';
+import type { CatalogEntriesData, ModelItem, ModelUpgradeAction, ModelUpgradePhase, ModelUpgradePolicy, ModelUpgradeSuccessor, ModelUpgradeView } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { useDialogs } from '@/components/ConfirmDialog';
@@ -38,6 +38,7 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
   const [draft, setDraft] = useState<ModelUpgradePolicy | null>(null);
   const [providers, setProviders] = useState<Map<string, string>>(() => new Map());
   const [models, setModels] = useState<ModelItem[]>([]);
+  const [capabilityCatalog, setCapabilityCatalog] = useState<Pick<CatalogEntriesData, 'knownCapabilities' | 'legacyCapabilityAliases'> | null>(null);
   const [successorDraft, setSuccessorDraft] = useState<ModelUpgradeSuccessor | null>(null);
   const [successorIndex, setSuccessorIndex] = useState<number | null>(null);
   const [successorError, setSuccessorError] = useState<string | null>(null);
@@ -63,14 +64,15 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
 
   useEffect(() => {
     const current = ++generation.current;
-    setView(null); setDraft(null); setError(null); setNotice(null); setBusy(null); setLoading(true); setEvidenceRequestId(''); setProviders(new Map()); setModels([]); setValidationMode('evidence'); setModelLookupFailed(false); setSuccessorDraft(null); setSuccessorError(null); currentVersion.current = null; draftBasePolicy.current = null; draftVersion.current = null;
-    void Promise.all([getModelUpgrade(logicalModelId), getPlatforms(), getModels()]).then(([result, platforms, physical]) => {
+    setView(null); setDraft(null); setError(null); setNotice(null); setBusy(null); setLoading(true); setEvidenceRequestId(''); setProviders(new Map()); setModels([]); setCapabilityCatalog(null); setValidationMode('evidence'); setModelLookupFailed(false); setSuccessorDraft(null); setSuccessorError(null); currentVersion.current = null; draftBasePolicy.current = null; draftVersion.current = null;
+    void Promise.all([getModelUpgrade(logicalModelId), getPlatforms(), getModels(), getCatalogEntries()]).then(([result, platforms, physical, catalog]) => {
       if (current !== generation.current) return;
       if (result.success) { currentVersion.current = result.data.current; draftBasePolicy.current = result.data.policy; draftVersion.current = result.data.version; setView(result.data); setDraft(result.data.policy); setValidationMode(result.data.validationMode || 'evidence'); }
       else setError(result.error.message || '升级策略未读取成功，请重试');
       if (platforms.success) setProviders(new Map(platforms.data.items.map(item => [item.id, item.name])));
       if (physical.success) setModels(physical.data.items.filter(item => item.authority === 'llm_gateway'));
-      setModelLookupFailed(!physical.success || !platforms.success);
+      if (catalog.success) setCapabilityCatalog(catalog.data);
+      setModelLookupFailed(!physical.success || !platforms.success || !catalog.success);
     }).catch(() => {
       if (current === generation.current) setError('升级策略未读取成功，请检查网络后重试');
     }).finally(() => { if (current === generation.current) setLoading(false); });
@@ -158,29 +160,42 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
   if (successorIndex !== null && successorDraft?.fromModel && !fromNames.includes(successorDraft.fromModel)) fromNames.push(successorDraft.fromModel);
   const toNames = successorIndex !== null && successorDraft?.toModel ? [...new Set([...successorNames, successorDraft.toModel])] : successorNames;
   const selectedSuccessorModel = successorDraft ? successorModels.find(model => model.modelName === successorDraft.toModel) : null;
-  const successorCapabilities = [...new Set([...(selectedSuccessorModel?.capabilities.filter(capability => capability.value).map(capability => capability.type) ?? []), ...(successorIndex !== null ? successorDraft?.capabilities ?? [] : [])])];
+  // Only the server catalog defines routable capabilities; parameter metadata is not a capability.
+  function canonicalCapabilities(codes: string[]) {
+    const known = new Set(capabilityCatalog?.knownCapabilities ?? []);
+    return [...new Set(codes.map(code => {
+      const normalized = code.trim().toLowerCase();
+      return known.has(normalized) ? normalized : capabilityCatalog?.legacyCapabilityAliases?.[normalized];
+    }).filter((code): code is string => !!code && known.has(code)))];
+  }
+  function modelCapabilities(model?: ModelItem | null) {
+    return canonicalCapabilities(model?.capabilities.filter(capability => capability.value === true).map(capability => capability.type) ?? []);
+  }
+  const successorCapabilities = selectedSuccessorModel ? modelCapabilities(selectedSuccessorModel) : canonicalCapabilities(successorIndex !== null ? successorDraft?.capabilities ?? [] : []);
 
   function editSuccessor(index: number | null) {
     if (!draft || !view) return;
     setSuccessorIndex(index); setSuccessorError(null);
-    setSuccessorDraft(index === null ? { providerId: view.current?.providerId || '', fromModel: view.current?.upstreamModelId || '', toModel: '', documentationUrl: '', capabilities: [] } : { ...draft.successors[index], capabilities: [...draft.successors[index].capabilities] });
+    setSuccessorDraft(index === null ? { providerId: view.current?.providerId || '', fromModel: view.current?.upstreamModelId || '', toModel: '', documentationUrl: '', capabilities: [] } : { ...draft.successors[index], capabilities: canonicalCapabilities(draft.successors[index].capabilities) });
   }
   function stageSuccessor() {
     if (!draft || !successorDraft) return;
     if (!successorDraft.providerId || !successorDraft.fromModel || !successorDraft.toModel) { setSuccessorError('请选择上游、原版本和继任版本'); return; }
     if (successorDraft.fromModel === successorDraft.toModel) { setSuccessorError('继任版本需要与原版本不同'); return; }
     if (!safeDocumentUrl(successorDraft.documentationUrl) || new URL(successorDraft.documentationUrl).protocol !== 'https:') { setSuccessorError('请填写官方 HTTPS 版本资料地址'); return; }
-    if (successorDraft.capabilities.length === 0) { setSuccessorError('请选择已登记的继任版本能力'); return; }
+    const capabilities = canonicalCapabilities(successorDraft.capabilities).filter(capability => successorCapabilities.includes(capability));
+    if (capabilities.length === 0) { setSuccessorError('请选择已登记的继任版本能力'); return; }
     if (draft.successors.some((item, index) => index !== successorIndex && item.providerId === successorDraft.providerId && item.fromModel === successorDraft.fromModel && item.toModel === successorDraft.toModel)) { setSuccessorError('这条继任关系已在策略中'); return; }
     const successors = [...draft.successors];
-    if (successorIndex === null) successors.push(successorDraft); else successors[successorIndex] = successorDraft;
+    if (successorIndex === null) successors.push({ ...successorDraft, capabilities }); else successors[successorIndex] = { ...successorDraft, capabilities };
     setDraft({ ...draft, successors }); setSuccessorDraft(null); setSuccessorError(null);
   }
   async function reloadTargets() {
-    const [platforms, physical] = await Promise.all([getPlatforms(), getModels()]);
+    const [platforms, physical, catalog] = await Promise.all([getPlatforms(), getModels(), getCatalogEntries()]);
     if (platforms.success) setProviders(new Map(platforms.data.items.map(item => [item.id, item.name])));
     if (physical.success) setModels(physical.data.items.filter(item => item.authority === 'llm_gateway'));
-    setModelLookupFailed(!platforms.success || !physical.success);
+    if (catalog.success) setCapabilityCatalog(catalog.data);
+    setModelLookupFailed(!platforms.success || !physical.success || !catalog.success);
   }
 
   return <section data-testid="model-upgrade-panel" aria-label="升级策略" style={{ display: 'flex', flexDirection: 'column', gap: GAP.section, padding: 14, minWidth: 0 }}>
@@ -237,12 +252,12 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
             <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>{safeDocumentUrl(successor.documentationUrl) ? <a href={successor.documentationUrl} target="_blank" rel="noreferrer">官方版本资料</a> : null}{canWrite ? <><Button type="button" size="sm" variant="ghost" disabled={busy !== null || running} onClick={() => editSuccessor(index)}>编辑关系</Button><Button type="button" size="sm" variant="ghost" disabled={busy !== null || running} onClick={() => { setDraft({ ...draft, successors: draft.successors.filter((_, candidateIndex) => candidateIndex !== index) }); setSuccessorDraft(null); }}>移除关系</Button></> : null}</div>
           </div>) : <span style={HINT_TEXT}>尚未配置继任关系，自动升级不会切换版本。</span>}
           {successorDraft && canWrite ? <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
-            {modelLookupFailed ? <InlineAlert tone="error">上游模型清单暂未读取成功。<Button type="button" size="sm" onClick={() => void reloadTargets()}>重新读取模型</Button></InlineAlert> : null}
+            {modelLookupFailed ? <InlineAlert tone="error">上游模型或能力清单暂未读取成功。<Button type="button" size="sm" onClick={() => void reloadTargets()}>重新读取模型</Button></InlineAlert> : null}
             {successorDraft.providerId && successorModels.length === 0 ? <span style={HINT_TEXT}>此上游尚无已接入模型，请先到<Link to="/platforms">上游</Link>接入原版本与新版本。</span> : null}
             <FormGrid>
               <label style={FIELD_LABEL}><span>继任关系的上游</span><select aria-label="继任关系的上游" value={successorDraft.providerId} style={FIELD_INPUT} onChange={event => setSuccessorDraft({ providerId: event.target.value, fromModel: '', toModel: '', documentationUrl: '', capabilities: [] })}><option value="">选择已接入的上游</option>{[...providers].map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
               <label style={FIELD_LABEL}><span>原版本</span><select aria-label="原版本" value={successorDraft.fromModel} style={FIELD_INPUT} onChange={event => setSuccessorDraft({ ...successorDraft, fromModel: event.target.value })}><option value="">选择原版本</option>{fromNames.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
-              <label style={FIELD_LABEL}><span>继任版本</span><select aria-label="继任版本" value={successorDraft.toModel} style={FIELD_INPUT} onChange={event => { const model = successorModels.find(item => item.modelName === event.target.value); setSuccessorDraft({ ...successorDraft, toModel: event.target.value, capabilities: model?.capabilities.filter(capability => capability.value).map(capability => capability.type) ?? [] }); }}><option value="">选择已接入的新版本</option>{toNames.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
+              <label style={FIELD_LABEL}><span>继任版本</span><select aria-label="继任版本" value={successorDraft.toModel} style={FIELD_INPUT} onChange={event => { const model = successorModels.find(item => item.modelName === event.target.value); setSuccessorDraft({ ...successorDraft, toModel: event.target.value, capabilities: modelCapabilities(model) }); }}><option value="">选择已接入的新版本</option>{toNames.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
               <label style={FIELD_LABEL}><span>官方版本资料地址</span><input aria-label="官方版本资料地址" type="url" value={successorDraft.documentationUrl} onChange={event => setSuccessorDraft({ ...successorDraft, documentationUrl: event.target.value.trim() })} style={FIELD_INPUT} placeholder="https://官方文档中的版本说明" /></label>
             </FormGrid>
             <fieldset style={{ margin: 0, padding: 0, border: 0 }}><legend style={FIELD_LABEL}>继任版本能力</legend><div style={{ display: 'flex', gap: GAP.normal, flexWrap: 'wrap' }}>{successorCapabilities.map(capability => <label key={capability} style={{ ...HINT_TEXT, display: 'flex', alignItems: 'center', gap: GAP.tight }}><input type="checkbox" aria-label={`继任能力 ${capability}`} checked={successorDraft.capabilities.includes(capability)} onChange={event => setSuccessorDraft({ ...successorDraft, capabilities: event.target.checked ? [...successorDraft.capabilities, capability] : successorDraft.capabilities.filter(item => item !== capability) })} />{capabilityLabel(capability)}</label>)}</div></fieldset>
