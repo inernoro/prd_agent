@@ -169,6 +169,25 @@ public sealed class MapLogicalModelReferencePolicyMirrorTests
             < helper.IndexOf("mapDatabase.GetCollection", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void 正式退役清理与镜像停用必须先通过业务引用检查()
+    {
+        var source = ReadRepoFile("llmgw/console-api/Program.cs");
+        var deleteStart = source.IndexOf("app.MapDelete(\"/gw/platforms/{id}\"", StringComparison.Ordinal);
+        var deleteEnd = source.IndexOf("}).RequireAuthorization(\"ConfigWrite\");", deleteStart, StringComparison.Ordinal);
+        var delete = source[deleteStart..deleteEnd];
+        Assert.True(delete.IndexOf("CollectMapBusinessModelReferencesAsync", StringComparison.Ordinal)
+            < delete.IndexOf("if (cleanupUnusedModels == true)", StringComparison.Ordinal));
+        Assert.Contains("ProviderRemovalPolicy.UnchangedFilter(mapDocument)", delete);
+        Assert.Contains("ProviderRemovalPolicy.UnchangedFilter(gatewayDocument, tenantId)", delete);
+        Assert.Contains("BeginRequiredOperationAuditAsync", delete);
+        var enabledStart = source.IndexOf("app.MapPut(\"/gw/platforms/{id}/enabled\"", StringComparison.Ordinal);
+        var enabledEnd = source.IndexOf("}).RequireAuthorization(\"ConfigWrite\");", enabledStart, StringComparison.Ordinal);
+        var enabled = source[enabledStart..enabledEnd];
+        Assert.True(enabled.IndexOf("CollectMapBusinessModelReferencesAsync", StringComparison.Ordinal)
+            < enabled.IndexOf("ProviderRemovalPolicy.ShouldDisableMapMirror", StringComparison.Ordinal));
+    }
+
     private static BsonDocument RenderDocument(FilterDefinition<BsonDocument> filter)
         => filter.Render(new RenderArgs<BsonDocument>(
             BsonSerializer.SerializerRegistry.GetSerializer<BsonDocument>(), BsonSerializer.SerializerRegistry));
