@@ -45,16 +45,24 @@ describe('model reference release identity contract', () => {
 
   it('bakes the validated build argument into the published console assembly', () => {
     const buildStage = dockerfile.split(/^FROM .* AS final$/m)[0];
-    expect(buildStage).toMatch(/^ARG GIT_COMMIT$/m);
+    expect(buildStage).toMatch(/^ARG GIT_COMMIT=""$/m);
     expect(buildStage).toMatch(/dotnet publish[^\n]*\/p:SourceRevisionId="\$GIT_COMMIT"/);
     expect(readFileSync(new URL('.dockerignore', root), 'utf8')).toMatch(/^\.git$/m);
   });
 
-  it.each(['', 'a'.repeat(39), 'a'.repeat(41), 'g'.repeat(40), 'a'.repeat(39) + ';'])(
+  it.each(['a'.repeat(39), 'a'.repeat(41), 'g'.repeat(40), 'a'.repeat(39) + ';'])(
     'rejects an invalid commit before publishing (%s)', (commit) => {
       expect(() => runBuildValidation(commit)).toThrow();
     },
   );
+
+  it('allows the existing development Compose to build without a version', () => {
+    const dev = load(readFileSync(new URL('docker-compose.dev.yml', root), 'utf8')) as {
+      services: { llmgw: { build: { args?: Record<string, string> } } };
+    };
+    expect(dev.services.llmgw.build.args?.GIT_COMMIT).toBeUndefined();
+    expect(runBuildValidation('')).toBe('');
+  });
 
   it.each(['a'.repeat(40), '0123456789ABCDEF'.repeat(2) + '01234567'])(
     'accepts only a complete hexadecimal commit (%s)', (commit) => {
@@ -65,7 +73,7 @@ describe('model reference release identity contract', () => {
 
 function runBuildValidation(commit: string): string {
   // Execute the actual Docker RUN precondition in sh; no mirrored validator or Docker daemon.
-  const publishRun = dockerfile.match(/^RUN test[\s\S]*?&& dotnet publish[^\n]*/m)?.[0];
+  const publishRun = dockerfile.match(/^RUN if[\s\S]*?&& dotnet publish[^\n]*/m)?.[0];
   expect(publishRun).toBeDefined();
   const validation = publishRun!.slice(4).split('&& dotnet publish')[0].replace(/\\\n/g, ' ');
   return execFileSync('sh', ['-c', `${validation} && printf '%s' "$GIT_COMMIT"`], {
