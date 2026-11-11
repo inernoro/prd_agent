@@ -5,8 +5,8 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { SitePreview } from '@/components/SitePreview';
 import type { RelatedDocument, RelatedDocuments, RelatedDocumentSource } from '@/services/real/relatedDocuments';
 
-export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, onReload, onManage, onPermissions, onTagEdit, onNavigate, onClose, heading = '关联文档', links }: {
-  siteId: string; data: RelatedDocuments | null; error?: string; loading: boolean; source?: RelatedDocumentSource; compact?: boolean;
+export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, maxHeight, onReload, onManage, onPermissions, onTagEdit, onNavigate, onClose, heading = '关联文档', links }: {
+  siteId: string; data: RelatedDocuments | null; error?: string; loading: boolean; source?: RelatedDocumentSource; compact?: boolean; maxHeight?: number;
   onReload: () => void; onManage: () => void; onPermissions: () => void; onTagEdit: (item: RelatedDocument) => void;
   onNavigate?: (item: RelatedDocument) => void; onClose: () => void; heading?: string; links?: React.ReactNode;
 }) {
@@ -31,7 +31,7 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
   const displayed = data?.items.filter(item => (!tagFilter || item.tags?.includes(tagFilter)) && (referenceScope === 'all' || (referenceScope === 'members' ? item.isManual !== false : item.isManual === false))) ?? [];
   const pages = Math.max(1, Math.ceil(displayed.length / 9));
   const currentPage = Math.min(page, pages - 1);
-  return <section className="related-document-content" aria-label={heading} style={{ minHeight: 0, maxHeight: 'calc(100dvh - 44px)' }}>
+  return <section className="related-document-content" aria-label={heading} style={{ minHeight: 0, maxHeight: maxHeight ?? 'calc(100dvh - 44px)' }}>
     <div className="related-panel-heading"><div><strong>{heading}</strong>{data && <span>{data.items.length} 份可见文档 · 引用保留来源</span>}</div>
       <div className="related-heading-actions"><div className="related-view-switch" aria-label="关联文档展示方式">
         <button type="button" aria-label="卡片视图" aria-pressed={view === 'cards'} onClick={() => changeView('cards')}><Grid2X2 size={14} /></button>

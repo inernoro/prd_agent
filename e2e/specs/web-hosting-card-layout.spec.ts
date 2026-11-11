@@ -439,6 +439,8 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const)
     await expect(dialog.locator('.related-document-grid.is-list')).toBeVisible();
     await dialog.getByRole('button', { name: '卡片视图', exact: true }).click();
     const box = await dialog.boundingBox(); expect(box!.x).toBeGreaterThanOrEqual(0); expect(box!.x + box!.width).toBeLessThanOrEqual(width); expect(box!.y + box!.height).toBeLessThanOrEqual(960);
+    const anchorBox = await trigger.boundingBox();
+    expect(box!.y >= anchorBox!.y + anchorBox!.height || box!.y + box!.height <= anchorBox!.y).toBe(true);
     const overflow = await dialog.evaluate(node => node.scrollWidth > node.clientWidth); expect(overflow).toBe(false);
     expect(errors).toEqual([]); expect(writes).toEqual([]);
     await testInfo.attach('sandbox-platform-diagnostics', { body: JSON.stringify(platformErrors), contentType: 'application/json' });

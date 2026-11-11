@@ -13,7 +13,7 @@ type DocumentActions = {
 };
 
 /** 合集是选择上下文，右侧始终是该上下文的文档；只有一组时省去选择栏。 */
-export function CollectionContextPanel({ siteId, onSplitChange, ...actions }: DocumentActions & { siteId: string; onSplitChange: (split: boolean) => void }) {
+export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...actions }: DocumentActions & { siteId: string; maxHeight: number; onSplitChange: (split: boolean) => void }) {
   const [search, setSearch] = useState('');
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
@@ -52,7 +52,7 @@ export function CollectionContextPanel({ siteId, onSplitChange, ...actions }: Do
   const clear = () => { setSearch(''); setKeyword(''); setPage(1); };
   if (error) return <div className="related-empty" role="alert">{error}<button type="button" onClick={() => setReload(value => value + 1)}>重试</button></div>;
   if (!result) return <div className="related-empty" role="status"><MapSpinner size={20} />正在读取文档所属合集…</div>;
-  return <div className={`collection-context-layout ${split ? 'is-split' : 'is-single'}`} data-collection-layout={split ? 'split' : 'single'} style={{ minHeight: 0, height: split ? 'min(600px, calc(100dvh - 64px))' : undefined }}>
+  return <div className={`collection-context-layout ${split ? 'is-split' : 'is-single'}`} data-collection-layout={split ? 'split' : 'single'} style={{ minHeight: 0, height: split ? Math.min(600, maxHeight) : undefined }}>
     {split && <aside className="collection-context-sidebar" aria-label="所属合集">
       <header><strong>所属合集</strong><span>{result.totalContexts} 个</span></header>
       <label className="collection-context-search"><Search size={14} aria-hidden /><input aria-label="搜索所属合集" placeholder="搜索合集或链接尾码" maxLength={100} value={search} onChange={event => setSearch(event.target.value)} />
@@ -77,13 +77,13 @@ export function CollectionContextPanel({ siteId, onSplitChange, ...actions }: Do
     </aside>}
     <div className="collection-context-documents" style={{ minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
       {pending ? <div className="related-empty" role="status"><MapSpinner size={20} />正在读取合集…</div>
-        : selected || result.totalContexts === 0 ? <ContextDocuments key={`${siteId}:${selected?.id ?? 'related'}:${reload}`} siteId={siteId} context={selected} split={split} {...actions} />
+        : selected || result.totalContexts === 0 ? <ContextDocuments key={`${siteId}:${selected?.id ?? 'related'}:${reload}`} siteId={siteId} maxHeight={maxHeight} context={selected} split={split} {...actions} />
           : <div className="related-empty">选择左侧合集查看文档。</div>}
     </div>
   </div>;
 }
 
-function ContextDocuments({ siteId, context, split, ...actions }: DocumentActions & { siteId: string; context?: CollectionContext; split: boolean }) {
+function ContextDocuments({ siteId, context, split, maxHeight, ...actions }: DocumentActions & { siteId: string; context?: CollectionContext; split: boolean; maxHeight: number }) {
   const [data, setData] = useState<RelatedDocuments | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -99,7 +99,7 @@ function ContextDocuments({ siteId, context, split, ...actions }: DocumentAction
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [siteId, contextId, reload]);
-  return <RelatedDocumentContent siteId={siteId} data={data} loading={loading} error={error} heading={context?.title ?? '关联文档'}
+  return <RelatedDocumentContent siteId={siteId} maxHeight={maxHeight} data={data} loading={loading} error={error} heading={context?.title ?? '关联文档'}
     links={context && !split ? <div className="collection-context-single-link"><CollectionLinks siteId={siteId} context={context} selected /></div> : undefined}
     onReload={() => setReload(value => value + 1)} onManage={() => { if (data) actions.onManage(data); }} onPermissions={() => { if (data) actions.onPermissions(data); }}
     onTagEdit={actions.onTagEdit} onClose={actions.onClose} onNavigate={actions.onNavigate} />;

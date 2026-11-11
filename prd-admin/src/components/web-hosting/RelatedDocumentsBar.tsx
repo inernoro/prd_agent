@@ -27,6 +27,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const [manage, setManage] = useState(false);
   const [permissions, setPermissions] = useState(false);
   const [split, setSplit] = useState(false);
+  const [maxHeight, setMaxHeight] = useState(() => typeof window === 'undefined' ? 600 : window.innerHeight - 40);
   const anchor = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -37,6 +38,16 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const collectionsEnabled = collectionNavigation && !token;
   const active = !collectionsEnabled && (variant !== 'badge' || open);
   const close = useCallback(() => { setOpen(false); setPinned(false); }, []);
+  const measureAvailableHeight = useCallback(() => {
+    const bounds = anchor.current?.getBoundingClientRect();
+    return bounds ? Math.floor(Math.max(bounds.top - 14, window.innerHeight - bounds.bottom - 14)) : window.innerHeight - 40;
+  }, []);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const update = () => setMaxHeight(measureAvailableHeight());
+    update(); window.addEventListener('resize', update); window.addEventListener('scroll', update, true);
+    return () => { window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
+  }, [open, measureAvailableHeight]);
   useEffect(() => {
     if (!open) return;
     const onEscape = (event: KeyboardEvent) => {
@@ -73,6 +84,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const openPanel = (pin: boolean) => {
     keepOpen(); if (!pin && pinned) return;
     if (pin && pinned && open) { close(); return; }
+    setMaxHeight(measureAvailableHeight());
     setOpen(true); if (pin) setPinned(true);
   };
   const openManager = (next = data) => { setData(next); close(); setManage(true); };
@@ -89,7 +101,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
       aria-label={variant === 'badge' ? badgeTitle : '关联文档'} aria-expanded={open} aria-controls={menuId} aria-haspopup="dialog"
       onPointerEnter={event => { if (event.pointerType === 'mouse') openPanel(false); }} onPointerLeave={leave} onClick={() => openPanel(true)}
       onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault(); keepOpen(); setOpen(true); setPinned(true);
+        event.preventDefault(); keepOpen(); setMaxHeight(measureAvailableHeight()); setOpen(true); setPinned(true);
         requestAnimationFrame(() => (panel.current?.querySelector<HTMLElement>('input,a,button') ?? panel.current)?.focus());
       } }}>
       {variant === 'badge' ? <Link2 size={12} /> : <Grid2X2 size={14} />}{variant !== 'badge' && <span>关联文档</span>}
@@ -102,12 +114,12 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
       {data.hasPermissionDifferences ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}<span>{data.hasPermissionDifferences ? '权限不一致' : '权限与分享'}</span>
     </button>}
     <AnchoredMenu open={open} onClose={close} anchorRef={anchor} align={compact ? 'right' : 'left'} gap={6} minWidth={280}
-      className={`related-popover ${token ? 'surface-tone-dark' : ''}`} style={{ width: collectionsEnabled && split ? 'min(1040px, calc(100vw - 24px))' : 'min(720px, calc(100vw - 24px))', maxHeight: 'calc(100dvh - 40px)', padding: 0 }}>
+      className={`related-popover ${token ? 'surface-tone-dark' : ''}`} style={{ width: collectionsEnabled && split ? 'min(1040px, calc(100vw - 24px))' : 'min(720px, calc(100vw - 24px))', maxHeight, padding: 0 }}>
       <div id={menuId} ref={panel} tabIndex={-1} role="dialog" aria-label="关联文档" onPointerDown={event => { event.stopPropagation(); setPinned(true); }} onPointerEnter={keepOpen} onPointerLeave={leave}
         onFocusCapture={keepOpen} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) leave(); }}>
-        {collectionsEnabled ? <CollectionContextPanel key={siteId + authToken} siteId={siteId} onSplitChange={setSplit} onClose={close} onNavigate={onNavigate}
+        {collectionsEnabled ? <CollectionContextPanel key={siteId + authToken} siteId={siteId} maxHeight={maxHeight - 2} onSplitChange={setSplit} onClose={close} onNavigate={onNavigate}
           onManage={next => openManager(next)} onPermissions={next => openPermissions(next)} onTagEdit={item => { close(); setTagTarget(item); }} />
-          : <RelatedDocumentContent key={siteId + token} siteId={siteId} source={source} data={data} error={error} loading={loading} compact={compact}
+          : <RelatedDocumentContent key={siteId + token} siteId={siteId} maxHeight={maxHeight - 2} source={source} data={data} error={error} loading={loading} compact={compact}
             onReload={() => { setLoading(true); void refresh(); }} onManage={() => openManager()} onPermissions={() => openPermissions()}
             onTagEdit={item => { close(); setTagTarget(item); }} onNavigate={onNavigate} onClose={close} />}
       </div>
