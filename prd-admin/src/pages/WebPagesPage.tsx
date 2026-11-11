@@ -1,5 +1,4 @@
 import { HostedCollectionEditor, HostedCollectionLibrary } from '@/components/web-hosting/HostedCollectionManager';
-import { SiteCollectionHistory } from '@/components/web-hosting/SiteCollectionHistory';
 import { getWebHostingUploadError, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/lib/webHostingUploadLimits';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSelection';
@@ -3159,8 +3158,8 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
             {site.title}
           </span>
           <SiteNewBadge activity={activity} />
-          {relatedSummary && relatedSummary.count > 0 && <RelatedDocumentsBar siteId={site.id} variant="badge" summary={relatedSummary}
-            onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />}
+          <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionHistory variant="badge" summary={relatedSummary}
+            onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
           {site.sourceType !== 'upload' && (
             <Badge className="hidden shrink-0 whitespace-nowrap @[768px]:inline-flex" variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
               {siteSourceLabel(site.sourceType)}
@@ -3191,7 +3190,6 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
-        <SiteCollectionHistory siteId={site.id} siteTitle={site.title} />
         <button onClick={handleVisit} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="打开" aria-label="打开">
           <ExternalLink size={14} className="text-token-muted" />
         </button>

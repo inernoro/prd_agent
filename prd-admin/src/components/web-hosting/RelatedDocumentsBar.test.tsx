@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import RelatedDocumentsBar from './RelatedDocumentsBar';
+import { getCollectionHistory } from '@/services/real/hostedCollections';
 import { updateSite } from '@/services/real/webPages';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
   type RelatedDocuments, type RelatedPermissionPreview } from '@/services/real/relatedDocuments';
@@ -13,6 +14,8 @@ vi.mock('@/services/real/relatedDocuments', async importOriginal => ({ ...await 
 vi.mock('@/stores/authStore', () => ({ useAuthStore: (selector: (value: { token: string }) => unknown) => selector({ token: 'session' }) }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => <span>正在加载</span> }));
 vi.mock('@/components/ui/Dialog', () => ({ Dialog: ({ open, title, content, actions }: { open: boolean; title: string; content: React.ReactNode; actions: React.ReactNode }) => open ? <section role="dialog" aria-label={title}>{content}{actions}</section> : null }));
+
+vi.mock('@/services/real/hostedCollections', async importOriginal => ({ ...await importOriginal<typeof import('@/services/real/hostedCollections')>(), getCollectionHistory: vi.fn() }));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -40,6 +43,7 @@ const open = async () => { await act(async () => container.querySelector<HTMLBut
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.clearAllMocks();
+  vi.mocked(getCollectionHistory).mockResolvedValue({ success: true, data: { items: [], total: 0, page: 1, pageSize: 20 }, error: null });
   localStorage.clear();
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
   vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data, error: null });
@@ -49,6 +53,30 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe('顶部关联文档', () => {
+  it('合集快捷入口与关联卡片共用浮层，打开合集时不读取或修改关联', async () => {
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionHistory siteTitle="总体方案" summary={{ count: 1, isMain: true, titles: ['技术设计'] }} />));
+    expect(getCollectionHistory).not.toHaveBeenCalled();
+    const trigger = container.querySelector<HTMLButtonElement>('[data-site-collection-history]')!;
+    const enter = new Event('pointerover', { bubbles: true }); Object.defineProperty(enter, 'pointerType', { value: 'mouse' });
+    await act(async () => trigger.dispatchEvent(enter));
+    expect(getCollectionHistory).toHaveBeenCalledWith('a', 1, '');
+    expect(getRelatedDocuments).not.toHaveBeenCalled();
+    expect(document.querySelectorAll('.related-popover')).toHaveLength(1);
+    await clickText('关联文档');
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
+    await clickText('合集分享');
+    expect(document.querySelectorAll('.related-popover')).toHaveLength(1);
+    expect(document.querySelector('[aria-label="合集分享列表"]')).not.toBeNull();
+    expect(saveRelatedDocuments).not.toHaveBeenCalled();
+  });
+  it('没有手动关联的文档仍能直接打开合集入口', async () => {
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionHistory />));
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-site-collection-history]')!.click());
+    expect(getCollectionHistory).toHaveBeenCalledWith('a', 1, '');
+    expect(document.querySelector('[aria-label="合集分享列表"]')).not.toBeNull();
+    expect(getRelatedDocuments).not.toHaveBeenCalled();
+  });
+
   it('Escape 先关闭关联浮层并归还焦点，再按一次才交给父阅读器', async () => {
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" />));
     const parentEscape = vi.fn();

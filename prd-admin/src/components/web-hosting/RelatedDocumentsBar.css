@@ -138,6 +138,41 @@
 .related-variant-badge .related-trigger { min-height:20px; max-width:150px; padding:1px 5px; gap:3px; border:1px solid var(--semantic-info-border); background:var(--semantic-info-soft); color:var(--accent-fg-blue); font-size:10px; }
 .related-variant-badge .related-count { background:transparent; padding:0; line-height:16px; }
 .related-variant-badge .related-trigger>svg:last-child { display:none; }
+.related-variant-badge .related-collection-trigger { margin-left:3px; color:var(--text-secondary); background:var(--bg-tertiary); border-color:var(--border-subtle); }
+.related-collection-trigger span { display:none; }
+@container (min-width:270px) { .related-collection-trigger span { display:inline; } }
+.related-context-tabs { display:flex; flex-shrink:0; gap:5px; padding:0 20px 12px; border-bottom:1px solid var(--border-subtle); }
+.related-context-tabs button { padding:6px 12px; border-radius:6px; color:var(--text-muted); font-size:12px; }
+.related-context-tabs button[aria-pressed=true] { color:var(--accent-primary); background:var(--bg-hover); }
+.collection-history-panel { display:flex; flex-direction:column; color:var(--text-primary); }
+.collection-history-tools { display:flex; align-items:center; gap:14px; padding:14px 20px 10px; flex-shrink:0; }
+.collection-history-tools>span { color:var(--text-muted); font-size:11px; white-space:nowrap; }
+.collection-history-search { display:flex; align-items:center; gap:7px; flex:1; min-width:0; padding:7px 9px; border:1px solid var(--border-default); border-radius:6px; background:var(--bg-input); color:var(--text-muted); }
+.collection-history-search input { width:100%; min-width:0; outline:none; background:transparent; color:var(--text-primary); font:inherit; }
+.collection-history-search button { display:flex; flex-shrink:0; }
+.collection-history-records { flex:1; padding:0 20px; }
+.collection-history-record { display:flex; gap:12px; align-items:center; padding:11px 0; border-bottom:1px solid var(--border-subtle); }
+.collection-history-record:last-child { border-bottom:0; }
+.collection-history-record-content { flex:1; min-width:0; }
+.collection-history-record-content>a { display:inline-flex; max-width:100%; align-items:center; gap:5px; color:var(--accent-primary); font-weight:600; }
+.collection-history-record-content>a:hover { text-decoration:underline; }
+.collection-history-record-content>a>span,.collection-history-record-content>strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.collection-history-record-content>a>svg { flex-shrink:0; }
+.collection-history-record-meta { display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:4px; color:var(--text-muted); font-size:11px; }
+.collection-history-address { display:block; overflow:hidden; text-overflow:ellipsis; margin-top:4px; color:var(--text-secondary); font-size:10px; white-space:nowrap; }
+.collection-history-copy { flex-shrink:0; padding:8px; color:var(--text-secondary); border-radius:5px; }
+.collection-history-copy:hover { background:var(--bg-hover); }
+.collection-history-empty { padding:30px 12px; text-align:center; color:var(--text-muted); }
+.collection-history-empty button { margin-top:10px; color:var(--accent-primary); }
+.collection-history-footer { display:flex; flex-shrink:0; align-items:center; justify-content:space-between; gap:12px; padding:12px 20px; border-top:1px solid var(--border-subtle); color:var(--text-muted); font-size:10px; }
+@media(max-width:600px) {
+  .related-variant-badge .related-collection-trigger { min-height:28px; min-width:28px; justify-content:center; }
+  .related-context-tabs { padding:0 12px 10px; }
+  .collection-history-tools { padding:12px; flex-wrap:wrap; gap:7px; }
+  .collection-history-search { flex-basis:100%; }
+  .collection-history-records { padding:0 12px; }
+  .collection-history-footer { padding:10px 12px; flex-wrap:wrap; }
+}
 .related-badge-name { display:none; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 @container (min-width:330px) { .related-badge-name { display:inline; max-width:90px; } }
 .related-context-row { display:flex; gap:12px; align-items:center; padding:0 20px 14px; }

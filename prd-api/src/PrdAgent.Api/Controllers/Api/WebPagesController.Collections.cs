@@ -34,10 +34,11 @@ public partial class WebPagesController
 
     // 从文档找回原合集链接：按成员快照查完整历史，不依赖全局最近 100 条或过期宽限窗。
     [HttpGet("collections/history")]
-    public async Task<IActionResult> CollectionHistory([FromQuery] string? siteId, [FromQuery] int page = 1)
+    public async Task<IActionResult> CollectionHistory([FromQuery] string? siteId, [FromQuery] int page = 1, [FromQuery] string? keyword = null)
     {
         Response.Headers.CacheControl = "no-store";
         if (string.IsNullOrWhiteSpace(siteId)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择要查找合集历史的文档"));
+        if (keyword?.Trim().Length > 100) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "搜索内容请控制在 100 字以内"));
         var userId = GetUserId();
         if (await _siteService.GetByIdAsync(siteId, userId, CancellationToken.None) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在或当前无权查看"));
@@ -46,6 +47,11 @@ public partial class WebPagesController
         var fb = Builders<WebPageShareLink>.Filter;
         var filter = fb.Eq(x => x.CreatedBy, userId) & fb.Eq(x => x.ShareType, "collection") & fb.Ne(x => x.Purpose, "visit")
             & (fb.Eq(x => x.SiteId, siteId) | fb.AnyEq(x => x.SiteIds, siteId));
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var pattern = new MongoDB.Bson.BsonRegularExpression(Regex.Escape(keyword.Trim()), "i");
+            filter &= fb.Regex(x => x.Title, pattern) | fb.Regex(x => x.Token, pattern);
+        }
         var total = await _db.WebPageShareLinks.CountDocumentsAsync(filter);
         var offset = (long)(page - 1) * pageSize;
         var shares = offset > int.MaxValue ? new List<WebPageShareLink>() : await _db.WebPageShareLinks.Find(filter)

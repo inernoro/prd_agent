@@ -53,6 +53,10 @@ public sealed class WebPagesCollectionHistoryTests
         Assert.Equal(new[] { "有效", "已撤销", "已过期", "已停止" }, items.Select(x => x.GetProperty("statusLabel").GetString()));
         Assert.Equal("未命名合集", items[2].GetProperty("title").GetString());
         Assert.DoesNotContain("must-not-be-returned", data.GetRawText());
+        await controller.CollectionHistory("site-a", 1, "评审");
+        var searched = Assert.IsType<BsonDocument>(query).ToJson();
+        Assert.Contains("Title", searched); Assert.Contains("Token", searched); Assert.Contains("评审", searched);
+        Assert.Contains("owner-user", searched); Assert.Contains("site-a", searched);
         service.VerifyAll();
     }
 

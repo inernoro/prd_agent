@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, FolderPlus, Grid2X2, List, Tags, Plus, Link2, Search, ShieldAlert, ShieldCheck, Star, X, ExternalLink } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, FolderPlus, Grid2X2, List, Tags, Plus, Link2, Search, ShieldAlert, ShieldCheck, Star, X, ExternalLink, FolderOpen } from 'lucide-react';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
@@ -10,10 +10,13 @@ import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocume
 import { SitePreview } from '@/components/SitePreview';
 import { updateSite } from '@/services/real/webPages';
 import { previewCollectionPermissions, syncCollectionPermissions } from '@/services/real/hostedCollections';
+import { CollectionHistoryPanel } from './CollectionHistoryPanel';
 import './RelatedDocumentsBar.css';
 
-export default function RelatedDocumentsBar({ siteId, source, onNavigate, variant = 'bar', summary }: {
+export default function RelatedDocumentsBar({ siteId, source, onNavigate, variant = 'bar', summary, collectionHistory = false, siteTitle }: {
   siteId: string;
+  collectionHistory?: boolean;
+  siteTitle?: string;
   variant?: 'bar' | 'toolbar' | 'badge';
   summary?: RelatedSummary;
   source?: RelatedDocumentSource;
@@ -25,6 +28,8 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
+  const [section, setSection] = useState<'related' | 'collections'>('related');
+  const [historyAnchorActive, setHistoryAnchorActive] = useState(false);
   const [page, setPage] = useState(0);
   const [view, setView] = useState<'cards' | 'list'>(() => {
     try { return localStorage.getItem('hosted-related-view') === 'list' ? 'list' : 'cards'; } catch { return 'cards'; }
@@ -36,13 +41,15 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
     setView(next); try { localStorage.setItem('hosted-related-view', next); } catch { /* 私密浏览仍可切换。 */ }
   };
   const anchor = useRef<HTMLButtonElement>(null);
+  const historyAnchor = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout>>();
   const generation = useRef(0);
   const menuId = useId();
-  const active = variant !== 'badge' || open;
+  const active = variant !== 'badge' || (open && section === 'related');
   const token = source?.token;
   const password = source?.password;
+  const collectionsEnabled = collectionHistory && !token;
   const close = useCallback(() => { setOpen(false); setPinned(false); }, []);
   useEffect(() => {
     if (!open) return;
@@ -50,11 +57,11 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       // 在文档和窗口上的父弹窗监听器之前消费按键，一次只关闭关联浮层。
       event.preventDefault(); event.stopPropagation();
-      close(); anchor.current?.focus();
+      close(); (historyAnchorActive ? historyAnchor : anchor).current?.focus();
     };
     window.addEventListener('keydown', onEscape, true);
     return () => window.removeEventListener('keydown', onEscape, true);
-  }, [open, close]);
+  }, [open, close, historyAnchorActive]);
   const invalidate = useCallback(() => { generation.current++; }, []);
   const refresh = useCallback(async () => {
     const current = ++generation.current;
@@ -93,39 +100,55 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const currentPage = Math.min(page, pages - 1);
   const openManager = () => { close(); setManage(true); };
   const openPermissions = () => { close(); setPermissions(true); };
-  if (variant === 'badge' && !summary?.count && !open) return null;
+  const openContext = (next: 'related' | 'collections', pin: boolean) => {
+    keepOpen();
+    if (!pin && pinned) return;
+    if (pin && pinned && open && section === next) { close(); return; }
+    setSection(next); setHistoryAnchorActive(next === 'collections'); setOpen(true);
+    if (pin) setPinned(true);
+  };
+  if (variant === 'badge' && !summary?.count && !collectionsEnabled && !open) return null;
   const compact = variant !== 'bar';
   const warn = variant === 'toolbar' && data?.canManage && data.hasPermissionDifferences;
   const badgeTitle = summary ? `${summary.isMain ? '主文档 · ' : ''}关联 ${summary.count} 份文档：${summary.titles.join('、')}` : undefined;
   return <div className={`related-documents-bar related-variant-${variant}`} aria-label="关联文档导航" data-no-drag>
-    <button ref={anchor} type="button" className="related-trigger" title={warn ? '关联文档权限不一致，展开查看' : badgeTitle}
-      aria-description={warn ? '关联文档权限不一致，展开可查看差异' : undefined} style={warn ? { color: 'var(--accent-fg-warning)' } : undefined} aria-label={variant === 'badge' ? badgeTitle : '关联文档'} aria-expanded={open} aria-controls={menuId} aria-haspopup="dialog"
-      onPointerEnter={event => { if (event.pointerType === 'mouse') { keepOpen(); setOpen(true); } }} onPointerLeave={leave}
-      onClick={() => { keepOpen(); if (pinned) close(); else { setOpen(true); setPinned(true); } }}
+    {(variant !== 'badge' || !!summary?.count || (!collectionsEnabled && open)) && <button ref={anchor} type="button" className="related-trigger" title={warn ? '关联文档权限不一致，展开查看' : badgeTitle}
+      aria-description={warn ? '关联文档权限不一致，展开可查看差异' : undefined} style={warn ? { color: 'var(--accent-fg-warning)' } : undefined} aria-label={variant === 'badge' ? badgeTitle : '关联文档'} aria-expanded={open && section === 'related'} aria-controls={menuId} aria-haspopup="dialog"
+      onPointerEnter={event => { if (event.pointerType === 'mouse') openContext('related', false); }} onPointerLeave={leave}
+      onClick={() => openContext('related', true)}
       onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault(); setOpen(true); setPinned(true); requestAnimationFrame(() => panel.current?.querySelector<HTMLElement>('a,button')?.focus());
+        event.preventDefault(); setSection('related'); setHistoryAnchorActive(false); setOpen(true); setPinned(true); requestAnimationFrame(() => panel.current?.querySelector<HTMLElement>('a,button')?.focus());
       } }}>
       {variant === 'badge' ? <Link2 size={12} /> : <Grid2X2 size={14} />}{variant !== 'badge' && <span>关联文档</span>}
       {variant === 'badge' ? <><span className="related-count">{summary?.count ?? 0}</span><span className="related-badge-name">{summary?.isMain ? '主文档' : summary?.mainTitle || summary?.titles[0]}</span></>
         : loading ? <MapSpinner size={12} /> : <span className="related-count">{data?.items.length ?? '—'}</span>}
       {warn && <ShieldAlert size={12} data-permission-warning aria-hidden />}
       <ChevronDown size={13} className={open ? 'related-chevron-open' : ''} />
-    </button>
+    </button>}
+    {collectionsEnabled && <button ref={historyAnchor} type="button" className="related-trigger related-collection-trigger" data-site-collection-history data-no-drag
+      title="查看包含此文档的合集分享" aria-label={siteTitle ? `查看「${siteTitle}」的合集分享` : '查看合集分享'} aria-haspopup="dialog" aria-expanded={open && section === 'collections'} aria-controls={menuId}
+      onPointerDown={event => event.stopPropagation()} onPointerEnter={event => { if (event.pointerType === 'mouse') openContext('collections', false); }} onPointerLeave={leave}
+      onClick={() => openContext('collections', true)}><FolderOpen size={12} aria-hidden /><span>合集</span></button>}
     {!compact && main && <span className="related-main-label"><Star size={12} />主文档<span title={main.title}>{main.title}</span></span>}
     {!compact && data?.canManage && data.version > 0 && <button type="button" className={`related-permission-hint ${data.hasPermissionDifferences ? 'is-warning' : ''}`} onClick={openPermissions}>
       {data.hasPermissionDifferences ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}
       <span>{data.hasPermissionDifferences ? '权限不一致' : '权限与分享'}</span>
     </button>}
-    <AnchoredMenu open={open} onClose={close} anchorRef={anchor} align={compact ? 'right' : 'left'} gap={6} minWidth={280}
+    <AnchoredMenu open={open} onClose={close} anchorRef={historyAnchorActive ? historyAnchor : anchor} align={compact ? 'right' : 'left'} gap={6} minWidth={280}
       className={`related-popover ${token ? 'surface-tone-dark' : ''}`} style={{ width: 'min(720px, calc(100vw - 24px))', maxHeight: 'calc(100dvh - 40px)', padding: 0 }}>
-      <div id={menuId} ref={panel} role="dialog" aria-label="关联文档" onPointerDown={event => event.stopPropagation()} onPointerEnter={keepOpen} onPointerLeave={leave}
+      <div id={menuId} ref={panel} role="dialog" aria-label={section === 'collections' ? '合集分享记录' : '关联文档'} onPointerDown={event => { event.stopPropagation(); setPinned(true); }} onPointerEnter={keepOpen} onPointerLeave={leave}
         onFocusCapture={keepOpen} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) leave(); }}>
-        <div className="related-panel-heading"><div><strong>{data?.contextLabel || '关联文档'}</strong><span>手动成员保留作者顺序，评论引用独立展示</span></div>
-          <div className="related-heading-actions"><div className="related-view-switch" aria-label="关联文档展示方式">
+        <div className="related-panel-heading"><div><strong>{section === 'collections' ? '合集分享记录' : data?.contextLabel || '关联文档'}</strong><span>{section === 'collections' ? '查找包含此文档的原分享，权限与密码保持不变' : '手动成员保留作者顺序，评论引用独立展示'}</span></div>
+          {section === 'related' && <div className="related-heading-actions"><div className="related-view-switch" aria-label="关联文档展示方式">
             <button type="button" aria-label="卡片视图" aria-pressed={view === 'cards'} onClick={() => changeView('cards')}><Grid2X2 size={14} /></button>
             <button type="button" aria-label="列表视图" aria-pressed={view === 'list'} onClick={() => changeView('list')}><List size={15} /></button>
-          </div>{data?.canManage && <button className="related-text-button" type="button" onClick={openManager}><FolderPlus size={14} />管理关联</button>}</div>
+          </div>{data?.canManage && <button className="related-text-button" type="button" onClick={openManager}><FolderPlus size={14} />管理关联</button>}</div>}
         </div>
+        {collectionsEnabled && <div className="related-context-tabs" role="group" aria-label="文档关系类型">
+          <button type="button" aria-pressed={section === 'related'} onClick={() => { setSection('related'); setPinned(true); }}>关联文档</button>
+          <button type="button" aria-pressed={section === 'collections'} onClick={() => { setSection('collections'); setPinned(true); }}>合集分享</button>
+        </div>}
+        {collectionsEnabled && section === 'collections' ? <CollectionHistoryPanel siteId={siteId} /> : <>
         {compact && (main || (data?.canManage && data.version > 0)) && <div className="related-context-row">
           {main && <span className="related-main-label"><Star size={12} />主文档<span title={main.title}>{main.title}</span></span>}
           {data?.canManage && data.version > 0 && <button type="button" className={`related-permission-hint ${data.hasPermissionDifferences ? 'is-warning' : ''}`} onClick={openPermissions}>
@@ -180,7 +203,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
             <span>{currentPage + 1} / {pages}</span><button aria-label="下一页" disabled={currentPage + 1 === pages} onClick={() => setPage(currentPage + 1)}><ChevronRight size={15} /></button></div>
             : data?.canManage && data.version > 0 && <button type="button" className="related-text-button" onClick={openPermissions}>{data.hasPermissionDifferences ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}
               {data.hasPermissionDifferences ? '查看权限差异' : '查看权限与分享'}</button>}
-        </div>
+        </div></>}
       </div>
     </AnchoredMenu>
     {manage && data?.canManage && <RelatedDocumentsManager key={siteId} siteId={siteId} data={data} onClose={() => setManage(false)} onSaved={next => { setData(next); setManage(false); window.dispatchEvent(new Event('hosted-relations-changed')); }} />}
