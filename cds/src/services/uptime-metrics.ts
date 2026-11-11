@@ -25,6 +25,8 @@ export interface UptimeMeasurement {
 
 /** 单次探测采样。字段用短名，因为要按 target 存上千条并落盘。 */
 export interface UptimeSample {
+  exchange?: { request: { method: string; url: string }; response?: { status: number; contentType?: string; excerpt?: unknown }; note: string };
+
   measurement?: UptimeMeasurement;
   /** 已脱离协议语法的指标读数说明。 */
   finding?: string;

@@ -1,7 +1,7 @@
 {
   "_provenance": {
     "method": "Reduced and sanitized copies of genuine recorded uptime summary, target and history response contracts; all identifiers, names, locations and values below are synthetic test data. No credentials, live endpoints, recipients or original incident payloads.",
-    "schemaSource": "CDS uptime summary and target history GET responses, recorded 2026-11-10; reduced to one target template and empty point arrays.",
+    "schemaSource": "CDS uptime summary and target history GET responses, recorded 2026-11-10; subscription fields re-recorded from the actual updated summary contract; reduced to one synthetic target template and empty point arrays.",
     "scope": "Loopback-only navigation regression, not operator-login or production acceptance."
   },
   "summary": {
@@ -111,7 +111,9 @@
       "by": "fixture",
       "kind": "human",
       "origin": "manual"
-    }
+    },
+    "subscribed": true,
+    "overviewIncluded": true
   },
   "history": {
     "id": "monitor@navigation",

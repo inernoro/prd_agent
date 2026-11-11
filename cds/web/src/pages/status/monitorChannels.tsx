@@ -1,5 +1,6 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+
 import { apiRequest, ApiError } from '@/lib/api';
 
 export type ChannelKind = 'bark' | 'webhook' | 'map';

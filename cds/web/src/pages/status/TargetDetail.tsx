@@ -1,3 +1,4 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 /*
  * 右栏：单目标详情。
  *
@@ -21,7 +22,7 @@ import {
   Trash2,
   Zap,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+
 
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';

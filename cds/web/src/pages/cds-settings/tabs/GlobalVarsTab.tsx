@@ -1,5 +1,6 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+
 
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';

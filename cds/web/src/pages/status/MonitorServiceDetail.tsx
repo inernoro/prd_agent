@@ -6,6 +6,7 @@ import { formatRelative, type HistoryRange, type UptimeBucket, type UptimeHistor
 import type { WorkspaceCategory, WorkspaceService, WorkspaceState } from '@/lib/monitorWorkspace';
 import { effectiveNotifications, type NotificationSnapshot, type WorkspaceNotificationSettings } from './useMonitorNotifications';
 import './monitor-service-detail.css';
+import { MonitorSampleEvidence } from './MonitorSampleEvidence';
 
 const STATES: Record<WorkspaceState, string> = { ok: '正常', bad: '异常', warn: '待确认', none: '无观测' };
 const BUCKET_STATES = { up: 'ok', down: 'fail', partial: 'part', none: 'gap' } as const;
@@ -19,6 +20,7 @@ export interface ServiceDetailEntry {
   /** URL reference only. A timestamp never supplies the content of an observation. */
   detectedAt?: string;
   source?: string;
+  outsideOverview?: boolean;
 }
 
 export interface ServiceDetailProps {
@@ -185,7 +187,7 @@ export function ServiceDetail({ service: service, category, summary, incidents, 
       <span className="lk-at">{eventAt ? `${snapshot.kind === 'recovery' ? '恢复记录于' : entry?.detectedAt ? '告警触发于' : '故障记录于'} ${time(eventAt)}` : linkError || '原始通知事件暂不可核对'}</span>
       <span className="lk-then">{eventSample?.noData ? '当时未取得有效观测，不能据此判断服务正常' : eventMeasurement ? `当时 ${eventMeasurement.name} ${eventMeasurement.actual}，预期 ${eventMeasurement.expected}` : eventSample ? `当时检查${eventSample.up ? '通过' : '失败'}；未保留结构化指标读数` : '未取得匹配的历史采样，不补造通知时读数'}</span>
       <span className={`lk-now ${service.state}`}>{resolvedRecovery ? `${time(entryIncident!.endedAt!)} 已恢复 · ` : ''}{measurement ? `现在 ${measurement.actual}` : `现在${label}`}{service.state === 'bad' ? ' · 仍异常' : ''}</span>
-      <span className="sp" /><span className="lk-hint">返回会回到全局里它所在的位置</span>
+      <span className="sp" /><span className="lk-hint">{entry.outsideOverview ? '返回当前订阅总览，此服务不在当前总览范围内' : '返回会回到全局里它所在的位置'}</span>
       <button className="xb sm" aria-label="关闭通知提示" onClick={() => setLinkClosed(true)}><X className="ic s" /></button>
     </div> : null}
     <div className="svh">
@@ -215,6 +217,7 @@ export function ServiceDetail({ service: service, category, summary, incidents, 
         {measurement ? metricChart ? <><div className="latw"><svg className="lat" viewBox="0 0 480 100" preserveAspectRatio="none" role="img" aria-label={aggregatedMetric ? '上报指标采样均值与当前预期' : '已保留的真实指标采样与当前预期'}><line className="th" x1="0" x2="480" y1={metricChart.thresholdY} y2={metricChart.thresholdY} />{metricChart.paths.map((path, i) => <path key={i} className="ln" d={path} />)}{metricChart.failingPaths.map((path, i) => <path key={i} className="lnb" d={path} />)}{metricChart.points.map((point, i) => <circle key={i} cx={point.x} cy={point.y} r={metricChart.samples === 1 ? 2.5 : 1.25} className={point.failed ? 'metric-point bad' : 'metric-point'} />)}</svg><span className="thl" style={{ '--threshold-y': `${metricChart.thresholdY}%` } as CSSProperties}>预期 {measurement.expected}</span></div><p className="note detail-history-note">{aggregatedMetric ? '每个点是该时段内相同指标合同的有效读数均值；上报 P95 的均值不代表整个时段的 P95。' : `曲线只绘制接口保留的 ${metricChart.samples} 次真实指标采样。`}缺失读数处断开。</p></> : <div className="lat lat-empty">尚无可绘制的数字指标历史；当前读数与预期在上方显示</div>
           : latencyPaths.length ? <svg className="lat" viewBox="0 0 480 100" preserveAspectRatio="none" role="img" aria-label={`${rangeLabel}实际响应延迟`}>{latencyPaths.map((path, i) => <path key={i} className="ln" d={path} />)}</svg> : <div className="lat lat-empty">尚无可用延迟观测，首次检查后自动显示</div>}
       </div>
+      <MonitorSampleEvidence key={service.id} target={target} samples={currentHistory?.recentSamples ?? []} busy={historyBusy} error={historyError} generatedAt={summary.generatedAt} />
       <div className="grid2 rv rv3">
         <div className="card"><h3>各探测点当前</h3><div className="rt"><span className="rh">观测来源</span><span className="rh">当前</span><span className="rh">实际</span><span className="rh">检查</span><span>{observationLocation}</span><span className="c"><Glyph state={service.state} />{label}</span><span className="mono">{measurement?.actual ?? service.latency}</span><span className="mono">{service.ago}</span></div><p className="note">{target.observeMode === 'passive' ? '读取真实业务调用的观测窗口' : '按设定间隔主动检查'}；仅展示已接入的观测来源。</p></div>
         <div className="card"><h3>{service.state === 'bad' ? '异常经过' : '最近事件'}</h3><div className="ev">{events.length ? events.map((event, i) => <div className="evi" key={`${event.at}:${i}`}><span className="t">{time(event.at)}</span><span className={`evd ${event.state}`} aria-hidden="true" /><span>{event.text}</span></div>) : <p className="note">暂无已记录的故障或恢复事件。</p>}</div></div>

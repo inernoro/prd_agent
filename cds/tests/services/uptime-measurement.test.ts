@@ -83,6 +83,34 @@ describe('historical metric means retain their actual meaning', () => {
 });
 
 describe('incident snapshots and scoped notification landing', () => {
+  it.each(['production', 'staging'] as const)('共享采集故障与恢复保留已解析环境：%s', async environment => {
+    let unavailable = true, now = Date.UTC(2026, 10, 10);
+    const url = await listen((_req, res) => {
+      res.statusCode = unavailable ? 503 : 200;
+      res.end(JSON.stringify({ checks: { query: { observedValue: 1 } } }));
+    });
+    const monitor: UptimeCustomMonitor = { id: 'collection-env', projectId: 'p-a', name: '采集环境检查', kind: 'health-json', enabled: true,
+      url, environment, intervalSeconds: 60, healthComponentId: 'query', healthField: 'observedValue', healthOp: 'lte', healthValue: '3', createdAt: '', updatedAt: '' };
+    const events: Array<{ type: string; data: UptimeAlertEventData }> = [];
+    const service = new UptimeMonitorService({
+      state: { getAllBranches: () => [], getUptimeMonitors: () => [monitor] }, now: () => now,
+      config: { enabled: true, intervalMs: 60_000, timeoutMs: 2000, failureThreshold: 1, recoveryThreshold: 1, maxSamples: 20, excludePatterns: [], scope: 'all' },
+      onAlert: (type, data) => { events.push({ type, data }); },
+      onReportEvent: (type, data) => { events.push({ type, data }); },
+    });
+    try {
+      await service.runCycle();
+      const failed = events.find(event => event.data.assessment === 'observation-unavailable')!;
+      expect(failed.type).toBe('uptime.target.down');
+      expect(failed.data.notificationEnvironment).toBe(environment);
+      expect(failed.data.environmentLabel).toBe(environment === 'production' ? '生产' : '预发');
+      unavailable = false;
+      for (let i = 0; i <= 10; i++) { now += 60_000; await service.runCycle(); }
+      const recovered = events.find(event => event.type === 'uptime.target.recovered' && event.data.assessment === 'observation-unavailable')!;
+      expect(recovered.data.notificationEnvironment).toBe(environment);
+      expect(recovered.data.targetId).toBe(failed.data.targetId);
+    } finally { await service.stop(); }
+  });
   it('copies readings at transitions so later probe mutations cannot rewrite history', () => {
     const records: UptimeIncident[] = []; const failed = sample(1, 1240, { up: false });
     applyIncidentTransition(records, 'to-down', { targetId: 'monitor@a', at: 1, sample: failed });

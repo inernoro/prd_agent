@@ -32,6 +32,8 @@ export interface UptimeMeasurement {
 }
 
 export interface UptimeSample {
+  exchange?: { request: { method: string; url: string }; response?: { status: number; contentType?: string; excerpt?: unknown }; note: string };
+
   measurement?: UptimeMeasurement;
   finding?: string;
   noData?: boolean;
@@ -67,6 +69,9 @@ export interface UptimeBucketFailure {
 }
 
 export interface UptimeTargetSummary {
+  /** 服务端订阅关系；无字段的旧实例不推断为已订阅。 */
+  subscribed?: boolean;
+  overviewIncluded?: boolean;
   collectionTargetId?: string;
   collectionMembers?: Array<{ id: string; name: string }>;
   alarmIdentity?: {observer: {id:string;name:string;environment:string;location?:string};subject:{id:string;name:string;environment:string;location?:string}};

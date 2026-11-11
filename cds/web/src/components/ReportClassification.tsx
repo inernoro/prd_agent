@@ -1,6 +1,6 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { monitorIncidentPath } from '../../../src/services/monitor-incident-link';
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { NOTIFICATION_CATEGORIES, NOTIFICATION_SYSTEMS, NOTIFICATION_ENVIRONMENTS, NOTIFICATION_TEMPLATES, UNKNOWN_CLASSIFICATION, notificationTemplatePattern, type NotificationTemplateId, type ReportClassification } from '../../../src/shared/notification-templates';
 import { apiRequest, type AcceptanceReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';

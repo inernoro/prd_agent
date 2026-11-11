@@ -102,8 +102,8 @@ export interface WorkspaceHealthCell {
   title: string;
   serviceId?: string;
 }
-export function workspaceHealthCell(category: WorkspaceCategory, region: string): WorkspaceHealthCell {
-  const entries = category.services.filter(service => service.region === region), summary = counts();
+export function workspaceHealthCell(category: WorkspaceCategory, region: string, dimension: 'region' | 'environment' = 'region'): WorkspaceHealthCell {
+  const entries = category.services.filter(service => (dimension === 'region' ? service.region : service.target.environmentLabel) === region), summary = counts();
   entries.forEach(service => summary[service.state]++);
   const state = !entries.length ? 'empty' : summary.bad ? 'bad' : summary.warn ? 'warn' : summary.none ? 'none' : 'ok';
   const parts = ([['ok', '正常'], ['bad', '异常'], ['warn', '待确认'], ['none', '无观测']] as const).filter(([key]) => summary[key]).map(([key, name]) => `${summary[key]} ${name}`);

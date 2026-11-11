@@ -20,6 +20,7 @@ import { identityForAlarm, type AlarmIdentitySettings } from '../services/alarm-
  */
 
 import crypto from 'node:crypto';
+import { publicMonitorObservation } from '../services/monitor-evidence.js';
 import { Router, type Request, type Response } from 'express';
 import type { AlarmChannelSnapshot, AlarmChannelStatusView } from '../services/alarm-channel.js';
 
@@ -170,6 +171,8 @@ export interface UptimeMonitorStore {
   getUptimeMonitor(id: string): UptimeCustomMonitor | undefined;
   upsertUptimeMonitor(monitor: UptimeCustomMonitor): UptimeCustomMonitor;
   removeUptimeMonitor(id: string): boolean;
+  getMonitorSubscriptions?(): Record<string, { subscribed: boolean; updatedAt: string; updatedBy: string }>;
+  setMonitorSubscription?(targetId: string, subscribed: boolean, updatedBy: string): void;
   flush?: () => Promise<void>;
   /** 校验归属项目存在；不接则不校验 */
   getProject?(projectId: string): unknown;
@@ -248,7 +251,20 @@ export function createUptimeRouter(deps: {
 
   router.get('/uptime/summary', (req, res) => {
     const segments = resolveBucketCount(req.query.segments, DEFAULT_BAR_SEGMENTS);
-    const summary = deps.monitor.getSummary(segments);
+    const raw = deps.monitor.getSummary(segments);
+    const subscriptions = deps.store?.getMonitorSubscriptions?.() ?? {};
+    const subscribed = (target: typeof raw.targets[number]): boolean => subscriptions[target.id]?.subscribed
+      ?? !!(target.monitorId && deps.store?.getUptimeMonitor(target.monitorId)?.enabled && !target.excluded && target.status !== 'paused');
+    const eligible = (target: typeof raw.targets[number]): boolean => !target.excluded && target.enabled !== false && target.status !== 'paused';
+    const byId = new Map(raw.targets.map(target => [target.id, target]));
+    const annotated = raw.targets.map(target => {
+      const relation = target.collectionMembers
+        ? target.collectionMembers.some(member => { const entry = byId.get(member.id); return entry && eligible(entry) && subscribed(entry); })
+        : subscribed(target);
+      return { ...target, subscribed: relation, overviewIncluded: relation && eligible(target) };
+    });
+    const selected = req.query.subscribed === 'true' ? annotated.filter(target => target.overviewIncluded) : annotated;
+    const summary = { ...raw, targets: selected, overall: tallyTargetSummaries(selected) };
     const scope = projectScopeOf(req);
     if (!scope) {
       res.json(withAlarm(summary));
@@ -267,6 +283,27 @@ export function createUptimeRouter(deps: {
       coverage: deps.monitor.getCoverage(scope),
       projectScope: scope,
     });
+  });
+
+  router.put('/uptime/targets/:id/subscription', async (req, res) => {
+    if (!deps.store?.setMonitorSubscription) { res.status(501).json({ error: '本实例未接入订阅存储' }); return; }
+    if (denyForeignTarget(req, deps.monitor, req.params.id, res)) return;
+    if (projectScopeOf(req)) {
+      const target = deps.monitor.getSummary(1).targets.find(entry => entry.id === req.params.id);
+      const definition = target?.monitorId && deps.store.getUptimeMonitor(target.monitorId);
+      if (!definition || definition.origin !== 'agent-api') { res.status(403).json({ error: '项目级 Key 只能管理自己登记的监控订阅' }); return; }
+    }
+    if (!projectScopeOf(req)) { const guard = assertUnscopedAdmin(req as unknown as Parameters<typeof assertUnscopedAdmin>[0]); if (guard) { res.status(guard.status).json(guard.body); return; } }
+    const requestedTarget = deps.monitor.getSummary(1).targets.find(target => target.id === req.params.id);
+    if (!requestedTarget) {
+      res.status(404).json({ error: '监控目标不存在' }); return;
+    }
+    if (requestedTarget.collectionMembers) { res.status(400).json({ error: '采集通道随其已订阅指标展示，请调整各指标的订阅' }); return; }
+    if (typeof req.body?.subscribed !== 'boolean') { res.status(400).json({ error: 'subscribed 必须为布尔值' }); return; }
+    const username = (req as Request & { cdsUser?: { username?: string } }).cdsUser?.username;
+    deps.store.setMonitorSubscription(req.params.id, req.body.subscribed, username || projectScopeOf(req) || 'global-key');
+    await deps.store.flush?.();
+    res.json({ targetId: req.params.id, subscribed: req.body.subscribed });
   });
 
   /**
@@ -577,7 +614,7 @@ export function createUptimeRouter(deps: {
       monitorId: monitor.id,
       name: monitor.name,
       description: describeMonitorProbe(monitor),
-      observations: monitor.observations || [],
+      observations: (monitor.observations || []).map(publicMonitorObservation),
     });
   });
 

@@ -1,5 +1,6 @@
+import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { Archive, ChevronLeft, ChevronRight, GitBranch, MoreHorizontal, Plug, Plus, RefreshCw, Search } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { CodeReviewsSkeleton } from '@/components/skeletons/CodeReviewsSkeleton';

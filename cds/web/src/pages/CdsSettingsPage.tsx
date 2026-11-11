@@ -326,7 +326,7 @@ export function CdsSettingsPage(): JSX.Element {
 
   useEffect(() => {
     if (!viewerStatus) return;
-    window.history.replaceState(null, '', `#${activeTab}`);
+    window.history.replaceState(window.history.state, '', `#${activeTab}`);
   }, [activeTab, viewerStatus]);
 
   useEffect(() => {

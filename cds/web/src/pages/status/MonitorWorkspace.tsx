@@ -1,3 +1,4 @@
+import { SURFACE_MOTION, surfaceCamera, reducedSurfaceMotion } from '@/lib/surfaceMotion';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ArrowLeft, Bell, ChevronDown, ChevronRight, Plus, Search, Wind, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
@@ -20,11 +21,12 @@ const BUCKET_STATES = { up: 'ok', down: 'fail', partial: 'part', none: 'gap' } a
 const BUCKET_LABELS = { up: '通过', down: '失败', partial: '部分失败', none: '无观测' } as const;
 const IDENTITY: Pose = { transform: 'none', opacity: 1, clipPath: 'inset(0)', visibility: 'visible', pointerEvents: 'auto', transition: 'none' };
 const HIDDEN: Pose = { ...IDENTITY, opacity: 0, visibility: 'hidden', pointerEvents: 'none' };
-const EASE = 'cubic-bezier(.22,.8,.24,1)';
+const EASE = SURFACE_MOTION.ease;
 const time = (at: number): string => new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 
 export interface MonitorWorkspaceProps {
   targets: UptimeTargetSummary[];
+  notificationTarget?: UptimeTargetSummary;
   summary: UptimeSummary;
   incidents: UptimeIncidentView[];
   now: number;
@@ -76,7 +78,7 @@ function AlertNotification({ service, notifications, summary, now }: { service: 
   return <span className="ai-n ai-one"><span className="ai-nt">{text}</span>{config.mutedUntil <= now && names.slice(0, 2).map((name, i) => <span className="chn" key={`${name}:${i}`}>{name}</span>)}</span>;
 }
 
-export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNotify, onProbe, onManage, entry, added, onAddedSeen }: MonitorWorkspaceProps): JSX.Element {
+export function MonitorWorkspace({ targets, notificationTarget, summary, incidents, now, onAdd, onNotify, onProbe, onManage, entry, added, onAddedSeen }: MonitorWorkspaceProps): JSX.Element {
   const route = useLocation();
   const firstSeen = useRef({ categories: new Map<string, number>(), services: new Map<string, number>() });
   const model = useMemo(() => {
@@ -90,6 +92,7 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
     next.services.sort((a, b) => firstSeen.current.services.get(a.id)! - firstSeen.current.services.get(b.id)!);
     return next;
   }, [targets, now, summary]);
+  const notificationModel = useMemo(() => buildWorkspaceModel(notificationTarget ? [notificationTarget] : [], now, summary), [notificationTarget, now, summary]);
   const root = useRef<HTMLDivElement>(null);
   const workspace = useRef<HTMLDivElement>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -113,9 +116,10 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   const [source, setSource] = useState<'all' | 'public' | 'custom'>('all');
   const [density, setDensity] = useState<Density>('auto');
   const [sort, setSort] = useState<'original' | 'issues'>('original');
+  const [healthDimension, setHealthDimension] = useState<'environment' | 'region'>('environment');
   const [railOpen, setRailOpen] = useState(false);
   const [noneOpen, setNoneOpen] = useState(true);
-  const [reduced, setReduced] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const [reduced, setReduced] = useState(() => reducedSurfaceMotion());
   const [size, setSize] = useState({ width: 1200, height: 750, narrow: window.innerWidth <= 760 });
   const current = stack[stack.length - 1];
   const layoutCache = useRef<{ key: string; categoryIds: string[]; value: MonitorLayout; tracks?: string; counts: Record<string, number>; reserves: Record<string, number> }>();
@@ -135,8 +139,8 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   }
   const layout = layoutCache.current!.value;
   useLayoutEffect(() => { const grid = root.current?.querySelector<HTMLElement>('.cg'); if (!grid) return; const record = () => { const value = getComputedStyle(grid).gridTemplateRows; if (value !== 'none') measuredRows.current = { key: layoutKey, value }; root.current?.querySelectorAll<HTMLElement>('.Lg .cat .cgrid').forEach(element => { const id = element.closest<HTMLElement>('[data-anchor]')?.dataset.anchor, tracks = getComputedStyle(element).gridTemplateRows; if (id && tracks !== 'none' && categoryTracks.current.get(id)?.key !== layoutKey) categoryTracks.current.set(id, { key: layoutKey, value: tracks }); }); }; record(); const observer = new ResizeObserver(record); observer.observe(grid); return () => observer.disconnect(); }, [layoutKey, ids.join('|'), layout.bands.length]);
-  const category = model.categories.find((c) => c.id === categoryId);
-  const service = model.services.find((s) => s.id === serviceId);
+  const category = model.categories.find((c) => c.id === categoryId) ?? notificationModel.categories.find(c => c.id === categoryId);
+  const service = model.services.find((s) => s.id === serviceId) ?? notificationModel.services.find(s => s.id === serviceId);
   const q = query.trim().toLocaleLowerCase();
   const matches = (s: WorkspaceService, c: WorkspaceCategory) => (!q || `${s.name} ${c.name}`.toLocaleLowerCase().includes(q)) && (status === 'all' || s.state === status) && (source === 'all' || s.custom === (source === 'custom'));
   const searchMatches = q ? model.services.filter((s) => { const c = model.categories.find((entry) => entry.id === s.categoryId); return c && `${s.name} ${c.name}`.toLocaleLowerCase().includes(q); }) : [];
@@ -152,12 +156,12 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
   useEffect(() => {
     const history = stackRef.current;
-    const invalid = history.findIndex((entry) => (entry.categoryId && !model.categories.some((c) => c.id === entry.categoryId)) || (entry.serviceId && !model.services.some((s) => s.id === entry.serviceId)));
+    const invalid = history.findIndex((entry) => (entry.categoryId && !model.categories.concat(notificationModel.categories).some((c) => c.id === entry.categoryId)) || (entry.serviceId && !model.services.concat(notificationModel.services).some((s) => s.id === entry.serviceId)));
     if (invalid < 1) return;
     timers.current.forEach(clearTimeout); timers.current = []; busyRef.current = false;
     const valid = history.slice(0, invalid);
     setStack(valid); setStage({}); setPoses({ g: HIDDEN, c: HIDDEN, s: HIDDEN, [valid[valid.length - 1].kind]: IDENTITY });
-  }, [model]);
+  }, [model, notificationModel]);
   useEffect(() => {
     root.current?.querySelectorAll<HTMLElement>('.layer').forEach((layer) => layer.toggleAttribute('inert', !layer.classList.contains(`L${current.kind}`)));
   }, [current.kind]);
@@ -183,12 +187,8 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   };
   // Camera coordinates come from getBoundingClientRect in physical CSS pixels;
   // they must remain in that coordinate system rather than scale with typography.
-  const camera = (rect: Box) => { const scale = Math.max(1, Math.min(size.width / rect.w, size.height / rect.h)); return { scale, x: size.width / 2 - scale * (rect.x + rect.w / 2), y: size.height / 2 - scale * (rect.y + rect.h / 2) }; };
-  const zoomed = (rect: Box): Pose => { const scale = Math.min(camera(rect).scale, 2.2), x = rect.x + rect.w / 2, y = rect.y + rect.h / 2; return { ...IDENTITY, transform: `translate(${x - scale * x}px,${y - scale * y}px) scale(${scale})`, opacity: 0, pointerEvents: 'none' }; };
-  const collapsed = (rect: Box): Pose => {
-    const cam = camera(rect), n = cam.scale;
-    return { ...IDENTITY, transform: `translate(${-cam.x / n}px,${-cam.y / n}px) scale(${1 / n})`, clipPath: `inset(${Math.max(0, n * rect.y + cam.y)}px ${Math.max(0, size.width - (n * rect.x + cam.x + n * rect.w))}px ${Math.max(0, size.height - (n * rect.y + cam.y + n * rect.h))}px ${Math.max(0, n * rect.x + cam.x)}px round ${10 * n}px)`, opacity: 0, pointerEvents: 'none' };
-  };
+  const zoomed = (rect: Box): Pose => ({ ...IDENTITY, transform: surfaceCamera(rect, size.width, size.height).zoom, opacity: 0, pointerEvents: 'none' });
+  const collapsed = (rect: Box): Pose => { const pose = surfaceCamera(rect, size.width, size.height); return { ...IDENTITY, transform: pose.collapsed, clipPath: pose.clip, opacity: 0, pointerEvents: 'none' }; };
   const raf = (fn: () => void) => requestAnimationFrame(() => requestAnimationFrame(() => later(16, fn)));
   const push = (entries: Location[]) => {
     if (busyRef.current) return;
@@ -212,6 +212,9 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
     if (busyRef.current || index < 0 || index >= history.length - 1) return;
     busyRef.current = true;
     const from = history[history.length - 1], to = history[index], via = history[index + 1];
+    if (to.kind === 'g' && from.serviceId && !model.services.some(item => item.id === from.serviceId)) {
+      setStack([{ kind: 'g' }]); setPoses({ g: IDENTITY, c: HIDDEN, s: HIDDEN }); setStage({}); setEntryActive(false); busyRef.current = false; return;
+    }
     const serviceEntry = via.skipReturn ? history[index + 2] : via;
     const anchor = to.kind === 'g' && via.skipReturn
       ? findAnchor('g', `svc:${serviceEntry?.serviceId}`) ?? findAnchor('g', `ovf:${via.categoryId}`) ?? findAnchor('g', `cat:${via.categoryId}`)
@@ -289,12 +292,14 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   const entryKey = entry ? `${route.key}:${entry.targetId}:${entry.incidentId}:${entry.detectedAt ?? ''}` : '';
   useEffect(() => {
     if (!entry || !entryKey || handledEntry.current === entryKey) return;
-    const item = model.services.find(s => s.id === entry.targetId), group = model.categories.find(c => c.id === item?.categoryId);
+    const item = model.services.find(s => s.id === entry.targetId) ?? notificationModel.services.find(s => s.id === entry.targetId);
+    const inOverview = model.services.some(s => s.id === entry.targetId);
+    const group = (inOverview ? model.categories : notificationModel.categories).find(c => c.id === item?.categoryId);
     if (!item || !group) return;
     handledEntry.current = entryKey; setCategoryId(group.id); setServiceId(item.id); setCategorySelection(item.id); setLocating(undefined); setSelection(item.id); setMarkedAlert(item.id); setEntryActive(true);
-    setStack([{ kind: 'g' }, ...(group.services.length > 1 ? [{ kind: 'c' as const, categoryId: group.id, skipReturn: true }] : []), { kind: 's', categoryId: group.id, serviceId: item.id }]);
+    setStack([{ kind: 'g' }, ...(inOverview && group.services.length > 1 ? [{ kind: 'c' as const, categoryId: group.id, skipReturn: true }] : []), { kind: 's', categoryId: group.id, serviceId: item.id }]);
     setPoses({ g: HIDDEN, c: HIDDEN, s: IDENTITY }); setStage({}); busyRef.current = false;
-  }, [entryKey, model]);
+  }, [entryKey, model, notificationModel]);
   useEffect(() => {
     if (!added || handledAdded.current === added.key) return;
     const ids = [...new Set(added.targetIds)], items = ids.flatMap(id => { const item = model.services.find(service => service.id === id); return item ? [item] : []; });
@@ -310,8 +315,9 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
     later(5200, () => setToast(current => current?.key === added.key ? undefined : current));
     onAddedSeen?.();
   }, [added, model, onAddedSeen]);
-  const regions = [...new Set(model.services.map(s => s.region))];
-  const badRegions = regions.filter(region => model.services.some(s => s.region === region && s.state === 'bad'));
+  const healthGroup = (service: WorkspaceService) => healthDimension === 'environment' ? service.target.environmentLabel : service.region;
+  const regions = [...new Set(model.services.map(healthGroup))];
+  const badRegions = regions.filter(region => model.services.some(s => healthGroup(s) === region && s.state === 'bad'));
   const noneGroups = new Map<string, { category: WorkspaceCategory; reason: string; services: WorkspaceService[] }>();
   model.services.filter(s => s.state === 'none').forEach(s => {
     const group = model.categories.find(c => c.id === s.categoryId)!;
@@ -349,18 +355,18 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   };
   return <div className="monitor-workspace" ref={root}>
     <div className="main">
-      <div className="t2"><div className="search"><Search className="ic s" /><input type="search" aria-label="搜索服务或分类" placeholder={`搜索 ${model.services.length} 项服务、分类`} value={query} onChange={e => { setQuery(e.target.value); setDropdownOpen(true); setSelection(undefined); }} onFocus={() => setDropdownOpen(true)} onKeyDown={e => { if (e.key === 'Escape') setDropdownOpen(false); if (e.key === 'Enter' && results[0]) openService(results[0]); }} />{dropdownOpen && q ? <div className="dd"><p className="dd-h">{results.length ? `匹配 ${searchMatches.length} 项${searchMatches.length > 8 ? '，显示前 8 项' : ''} · 画布中已高亮，其余变暗；点击直接定位` : '没有找到匹配的服务或分类'}</p>{results.map(s => <button key={s.id} onClick={() => openService(s)}><Glyph state={s.state} /><span className="nm">{s.name}</span><span className="loc">{model.categories.find(c => c.id === s.categoryId)?.name} · {serviceStateLabel(s)}</span></button>)}</div> : null}</div><select className="source-filter" aria-label="服务来源" value={source} onChange={e => { setSource(e.target.value as typeof source); setSelection(undefined); }}><option value="all">全部来源</option><option value="public">公共基础设施</option><option value="custom">我的服务</option></select><div className="tokens" role="group" aria-label="按当前状态筛选">{(Object.keys(STATES) as WorkspaceState[]).map(state => <button key={state} className={`tok ${state}${status === state ? ' on' : ''}`} aria-pressed={status === state} onClick={() => { setStatus(status === state ? 'all' : state); setSelection(undefined); }}><Glyph state={state} /><b>{model.counts[state]}</b><span className="tkl">{STATES[state]}</span></button>)}</div><span className="sp" /><span className="seg-l">密度</span><div className="seg vseg" role="group" aria-label="视图密度">{([{ key: 'auto', label: '自动' }, { key: 'L1', label: '卡片' }, { key: 'L2', label: '两行' }, { key: 'L3', label: '单行' }] as const).map(x => <button key={x.key} className={density === x.key ? 'on' : ''} aria-pressed={density === x.key} onClick={() => resetDensity(x.key)}>{x.label}</button>)}</div><button className={`rm-b${reduced ? ' on' : ''}`} aria-label="减少动态效果" title="减少动态效果" aria-pressed={reduced} onClick={() => setReduced(!reduced)}><Wind className="ic s" /></button></div>
+      <div className="t2"><div className="search"><Search className="ic s" /><input type="search" aria-label="搜索服务或分类" placeholder={`搜索 ${model.services.length} 项服务、分类`} value={query} onChange={e => { setQuery(e.target.value); setDropdownOpen(true); setSelection(undefined); }} onFocus={() => setDropdownOpen(true)} onKeyDown={e => { if (e.key === 'Escape') setDropdownOpen(false); if (e.key === 'Enter' && results[0]) openService(results[0]); }} />{dropdownOpen && q ? <div className="dd"><p className="dd-h">{results.length ? `匹配 ${searchMatches.length} 项${searchMatches.length > 8 ? '，显示前 8 项' : ''} · 画布中已高亮，其余变暗；点击直接定位` : '没有找到匹配的服务或分类'}</p>{results.map(s => <button key={s.id} onClick={() => openService(s)}><Glyph state={s.state} /><span className="nm">{s.name}</span><span className="loc">{model.categories.find(c => c.id === s.categoryId)?.name} · {serviceStateLabel(s)}</span></button>)}</div> : null}</div><select className="source-filter" aria-label="服务来源" value={source} onChange={e => { setSource(e.target.value as typeof source); setSelection(undefined); }}><option value="all">全部来源</option><option value="public">公共基础设施</option><option value="custom">我的服务</option></select><div className="tokens" role="group" aria-label="按当前状态筛选">{(Object.keys(STATES) as WorkspaceState[]).map(state => <button key={state} className={`tok ${state}${status === state ? ' on' : ''}`} aria-pressed={status === state} onClick={() => { setStatus(status === state ? 'all' : state); setSelection(undefined); }}><Glyph state={state} /><b>{model.counts[state]}</b><span className="tkl">{STATES[state]}</span></button>)}</div><span className="sp" /><span className="seg-l">密度</span><div className="seg vseg" role="group" aria-label="视图密度">{([{ key: 'auto', label: '自动' }, { key: 'L1', label: '卡片' }, { key: 'L2', label: '两行' }, { key: 'L3', label: '单行' }] as const).map(x => <button key={x.key} className={density === x.key ? 'on' : ''} aria-pressed={density === x.key} onClick={() => resetDensity(x.key)}>{x.label}</button>)}</div><button className={`rm-b${reduced ? ' on' : ''}`} aria-label="减少动态效果" title="减少动态效果" aria-pressed={reduced} onClick={() => { setReduced(!reduced); try { localStorage.setItem('cds.reduce-motion', String(!reduced)); window.dispatchEvent(new Event('cds-motion-preference')); } catch { /* unavailable storage */ } }}><Wind className="ic s" /></button></div>
       <div className="t2r"><button className="rail-tg" aria-expanded={railOpen} onClick={() => setRailOpen(!railOpen)}><h2>需要处理</h2><span className="cnt bad">{model.counts.bad} 异常</span><span className="cnt warn">{model.counts.warn} 待确认</span><ChevronDown className="ic s chev" /></button></div>
-      <section className="wsw" aria-label="工作区"><div className="crumbs"><button className="cb" disabled={stack.length === 1} onClick={() => pop()} aria-label={stack.length === 1 ? '已在全部服务' : stack.at(-2)?.skipReturn || stack.length === 2 ? '返回全部服务' : '返回分类'}><ArrowLeft className="ic s" />返回</button>{stack.map((place, i) => <Fragment key={`${place.kind}:${i}`}>{i > 0 ? <span className="csep">/</span> : null}{i === stack.length - 1 ? <span className="crumb-t cur">{place.kind === 'g' ? '全部服务' : place.kind === 'c' ? model.categories.find(c => c.id === place.categoryId)?.name : model.services.find(s => s.id === place.serviceId)?.name}</span> : <button className="cb" onClick={() => pop(i)}>{place.kind === 'g' ? '全部服务' : model.categories.find(c => c.id === place.categoryId)?.name}</button>}</Fragment>)}<span className="sp" />{current.kind !== 'g' ? <div className="oth"><span className="lab">其他分类</span>{model.categories.filter(c => c.id !== categoryId && c.counts.bad + c.counts.warn > 0).slice(0, 5).map(c => <button key={c.id} className={`ochip${c.counts.bad ? '' : ' w'}`} onClick={() => { const item = c.services.find(s => s.state === 'bad') ?? c.services.find(s => s.state === 'warn'); if (item) openService(item); }}><Glyph state={c.counts.bad ? 'bad' : 'warn'} />{c.name} · {c.counts.bad ? `${c.counts.bad} 异常` : `${c.counts.warn} 待确认`}</button>)}</div> : <span className="mode-l">密度按空间{density === 'auto' ? '自动' : '固定'} · {layout.bands[0]?.level.name ?? '单行'}</span>}</div>
-        {entry && !model.services.some(s => s.id === entry.targetId) ? <div role="alert" className="entry-warning">通知对应的服务不存在，或当前账号没有访问权限。请选择可见的服务查看，未自动定位到其他服务。</div> : null}
+      <section className="wsw" aria-label="工作区"><div className="crumbs"><button className="cb" disabled={stack.length === 1} onClick={() => pop()} aria-label={stack.length === 1 ? '已在全部服务' : stack.at(-2)?.skipReturn || stack.length === 2 ? '返回全部服务' : '返回分类'}><ArrowLeft className="ic s" />返回</button>{stack.map((place, i) => <Fragment key={`${place.kind}:${i}`}>{i > 0 ? <span className="csep">/</span> : null}{i === stack.length - 1 ? <span className="crumb-t cur">{place.kind === 'g' ? '全部服务' : place.kind === 'c' ? model.categories.find(c => c.id === place.categoryId)?.name : model.services.concat(notificationModel.services).find(s => s.id === place.serviceId)?.name}</span> : <button className="cb" onClick={() => pop(i)}>{place.kind === 'g' ? '全部服务' : model.categories.find(c => c.id === place.categoryId)?.name}</button>}</Fragment>)}<span className="sp" />{current.kind !== 'g' ? <div className="oth"><span className="lab">其他分类</span>{model.categories.filter(c => c.id !== categoryId && c.counts.bad + c.counts.warn > 0).slice(0, 5).map(c => <button key={c.id} className={`ochip${c.counts.bad ? '' : ' w'}`} onClick={() => { const item = c.services.find(s => s.state === 'bad') ?? c.services.find(s => s.state === 'warn'); if (item) openService(item); }}><Glyph state={c.counts.bad ? 'bad' : 'warn'} />{c.name} · {c.counts.bad ? `${c.counts.bad} 异常` : `${c.counts.warn} 待确认`}</button>)}</div> : <span className="mode-l">密度按空间{density === 'auto' ? '自动' : '固定'} · {layout.bands[0]?.level.name ?? '单行'}</span>}</div>
+        {entry && !model.services.concat(notificationModel.services).some(s => s.id === entry.targetId) ? <div role="alert" className="entry-warning">通知对应的服务不在当前订阅或环境范围内，也可能已删除或无权访问。可切换全部环境或在监控管理中查看；未自动定位到其他服务。</div> : null}
         <div className="ws" ref={workspace}>
           <div className={`layer Lg ${stage.g ?? ''}${reduced ? ' nomo' : ''}`} aria-hidden={current.kind !== 'g'} style={poses.g}>{model.categories.length ? <div className={`cg${layout.fits && !layoutCache.current!.tracks ? ' fit' : ''}`} style={{ gridTemplateRows: layoutCache.current!.tracks ?? layout.bands.map(b => layout.narrow ? 'auto' : layout.fits ? `${b.height}fr` : `${b.height}px`).join(' ') }}>{layout.bands.flatMap((band, bi) => band.parts.map((part, pi) => part.stacked ? <Fragment key={`${bi}:${pi}`}>{renderStack(part, band)}</Fragment> : <div className="category-slot" key={`${bi}:${pi}`} style={{ gridColumn: `span ${part.span}` }}>{renderCategory(model.categories[part.indices[0]], part, band.level.key, false)}</div>))}</div> : <div className="workspace-empty"><h2>接入服务，开始统一观测</h2><p>已接入的公共基础设施和个人服务会铺满这里。</p><button className="btn pri" onClick={onAdd}><Plus className="ic s" />接入我的服务</button></div>}</div>
           <div className={`layer Lc ${stage.c ?? ''}${reduced ? ' nomo' : ''}`} aria-hidden={current.kind !== 'c'} style={poses.c}>{category ? <div className="lv"><div className="lvh"><div><p className="eyebrow">分类 · {category.custom ? '我的服务' : '公共基础设施'} · {category.services.length} 项</p><h2>{category.name}</h2></div><div className="ltoks">{tokens(category, true)}</div><span className="sp" /><div className="lvn rv rv2"><Bell className="ic xs" />异常时通知 <b>{globalNotification.known ? '按此服务实际通道设置' : '通知规则待确认'}</b><button className="linkb" onClick={() => onNotify()}>调整</button></div><div className="seg rv rv2" role="group" aria-label="排列"><button className={sort === 'original' ? 'on' : ''} onClick={() => setSort('original')}>原始顺序</button><button className={sort === 'issues' ? 'on' : ''} onClick={() => setSort('issues')}>异常优先</button></div></div><div className="ctiles rv rv2" style={{ gridTemplateColumns: `repeat(${categoryDensity.columns},minmax(0,1fr))`, gridAutoRows: `${categoryDensity.rowHeight}px`, rowGap: `${categoryDensity.gap}px` }}>{categoryServices.map(s => <ServiceTile key={s.id} service={s} mode={categoryDensity.level} matches={matches(s, category)} selected={categorySelection === s.id} searched={Boolean(q)} anchor={`svc:${s.id}`} onOpen={() => openService(s, false)} />)}</div></div> : null}</div>
-          <div className={`layer Ls ${stage.s ?? ''}${reduced ? ' nomo' : ''}`} aria-hidden={current.kind !== 's'} style={poses.s}>{service && category ? <ServiceDetail key={service.id} service={service} category={category} summary={summary} incidents={incidents} now={now} onNotify={() => onNotify(service.id)} onProbe={() => onProbe(service.id)} onManage={() => onManage(service.id)} notifications={notifications} entry={entryActive && entry ? { incidentId: entry.incidentId, detectedAt: entry.detectedAt, source: '通知' } : undefined} onOpenService={id => { const item = model.services.find(s => s.id === id); if (item) openService(item); }} /> : null}</div>
+          <div className={`layer Ls ${stage.s ?? ''}${reduced ? ' nomo' : ''}`} aria-hidden={current.kind !== 's'} style={poses.s}>{service && category ? <ServiceDetail key={service.id} service={service} category={category} summary={summary} incidents={incidents} now={now} onNotify={() => onNotify(service.id)} onProbe={() => onProbe(service.id)} onManage={() => onManage(service.id)} notifications={notifications} entry={entryActive && entry ? { incidentId: entry.incidentId, detectedAt: entry.detectedAt, source: '通知', outsideOverview: !model.services.some(item => item.id === service.id) } : undefined} onOpenService={id => { const item = model.services.find(s => s.id === id); if (item) openService(item); }} /> : null}</div>
           {toast ? <div className="toast" role="status"><Glyph state="none" /><span>{toast.text}</span><button className="toast-close" aria-label="关闭接入成功提示" onClick={() => setToast(undefined)}><X className="ic xs" /></button></div> : null}
         </div>
       </section>
-      <aside className={`alw${railOpen ? '' : ' closed'}`} aria-label="需要处理的异常"><div className="hm"><div className="hm-h"><span className="hm-t">健康总览</span><span className={`hm-s${badRegions.length ? ' bad' : ''}`}>{badRegions.length ? `异常在 ${badRegions.slice(0, 3).join('、')}` : !model.services.length ? '尚未接入服务' : model.counts.none || model.counts.warn ? '有待确认或无观测服务' : '全部服务最近检查通过'}</span></div><div className="hm-scroll"><div className="hm-g" style={{ gridTemplateColumns: `var(--hm-label-width) repeat(${Math.max(1, regions.length)},minmax(var(--hm-cell-min),1fr))` }}><span />{regions.map(region => <span className="hm-hd" key={region} title={region}>{region}</span>)}{model.categories.map(c => <Fragment key={c.id}><button className={`hmr${categoryId === c.id && current.kind !== 'g' ? ' cur' : ''}`} title={c.name} onClick={() => openCategory(c)}>{c.name}</button>{regions.map(region => { const cell = workspaceHealthCell(c, region); return <button key={region} className={`hmc ${cell.state === 'empty' ? 'em' : cell.state}${current.kind !== 'g' && categoryId === c.id && service?.region === region ? ' cur' : ''}`} disabled={cell.state === 'empty'} title={cell.title} aria-label={cell.title} onClick={() => { const item = model.services.find(s => s.id === cell.serviceId); if (item) openService(item); else openCategory(c); }}>{cell.counts.bad + cell.counts.warn || ''}</button>; })}</Fragment>)}</div></div></div>
+      <aside className={`alw${railOpen ? '' : ' closed'}`} aria-label="需要处理的异常"><div className="hm"><div className="hm-h"><span className="hm-t">健康总览</span><select aria-label="健康总览维度" className="health-dimension" value={healthDimension} onChange={event => setHealthDimension(event.target.value as 'environment' | 'region')}><option value="environment">环境</option><option value="region">区域</option></select><span className={`hm-s${badRegions.length ? ' bad' : ''}`}>{badRegions.length ? `异常在 ${badRegions.slice(0, 3).join('、')}` : !model.services.length ? '尚未接入服务' : model.counts.none || model.counts.warn ? '有待确认或无观测服务' : '全部服务最近检查通过'}</span></div><div className="hm-scroll"><div className="hm-g" style={{ gridTemplateColumns: `var(--hm-label-width) repeat(${Math.max(1, regions.length)},minmax(var(--hm-cell-min),1fr))` }}><span />{regions.map(region => <span className="hm-hd" key={region} title={region}>{region}</span>)}{model.categories.map(c => <Fragment key={c.id}><button className={`hmr${categoryId === c.id && current.kind !== 'g' ? ' cur' : ''}`} title={c.name} onClick={() => openCategory(c)}>{c.name}</button>{regions.map(region => { const cell = workspaceHealthCell(c, region, healthDimension); return <button key={region} className={`hmc ${cell.state === 'empty' ? 'em' : cell.state}${current.kind !== 'g' && categoryId === c.id && service && healthGroup(service) === region ? ' cur' : ''}`} disabled={cell.state === 'empty'} title={cell.title} aria-label={cell.title} onClick={() => { const item = model.services.find(s => s.id === cell.serviceId); if (item) openService(item); else openCategory(c); }}>{cell.counts.bad + cell.counts.warn || ''}</button>; })}</Fragment>)}</div></div></div>
         <div className="al">{alerts.length === 0 ? <div className="al-empty">当前没有需要处理的异常</div> : null}{alerts.map(s => { const metric = measurementView(s.target.lastSample); return <button className={`ai ${s.state}${current.kind === 's' && serviceId === s.id ? ' cur' : current.kind === 'g' && markedAlert === s.id ? ' was' : ''}`} key={s.id} title={`${s.name} · ${s.reason}`} onClick={() => openService(s)}><span className="ai-h"><Glyph state={s.state} /><span className="nm">{s.name}</span><span className="dur">{s.target.statusSince ? formatRelative(s.target.statusSince, now) : '等待检查'}</span></span><span className="ai-gap"><b className={`ai-a ${s.state}`}>{metric?.actual ?? serviceStateLabel(s)}</b><span className="ai-e">{metric ? `${metric.name} · 预期 ${metric.expected}` : s.reason}</span>{metric ? <span className={`ai-x ${s.state}`}>{metric.shortGap}</span> : null}</span><span className="ai-where">{model.categories.find(c => c.id === s.categoryId)?.name} · {s.target.environmentLabel}</span><AlertNotification service={s} notifications={notifications} summary={summary} now={now} /></button>; })}
           {recovered.length ? <div className="al-sec"><p className="al-sh"><Glyph state="ok" />最近恢复 <b>{recovered.length}</b> 项</p>{recovered.map(e => { const s = model.services.find(value => value.id === e.targetId)!; return <button className="ain" key={e.id} onClick={() => openService(s)}><span className="r1">{s.name}</span><span className="r2">{model.categories.find(c => c.id === s.categoryId)?.name} · {formatRelative(e.endedAt!, now)}恢复</span></button>; })}</div> : null}
           <div className="al-sec"><button className="al-tg" aria-expanded={noneOpen} onClick={() => setNoneOpen(!noneOpen)}><Glyph state="none" />无观测 {model.counts.none} 项<span className="sp" />{noneOpen ? '收起' : '展开'}</button>{noneOpen ? [...noneGroups].map(([key, value]) => <button key={key} className="ain" onClick={() => value.services.length === 1 ? openService(value.services[0]) : openCategory(value.category)}><span className="r1"><Glyph state="none" />{value.category.name}<b>{value.services.length}</b></span><span className="r2">{value.reason}</span></button>) : null}</div>
