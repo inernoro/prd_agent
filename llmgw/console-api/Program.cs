@@ -14726,6 +14726,12 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id, bool? cl
     if (doc is null)
         return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("NOT_FOUND", "上游不存在或不属于当前组织，请刷新列表"), jsonOptions, 404);
 
+    var businessReferences = await CollectMapBusinessModelReferencesAsync(
+        http, mapDatabase, internalTenantId, platformId: id);
+    if (businessReferences.Count > 0)
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_REFERENCED_BY_MAP",
+            $"仍有 {string.Join("、", businessReferences)} 直接绑定此上游。请先在对应业务配置中明确迁移到可用逻辑模型或移除，再删除；不会自动匹配同名模型。"), jsonOptions, 409);
+
     if (cleanupUnusedModels == true)
     {
         var fb = Builders<BsonDocument>.Filter;
@@ -14783,12 +14789,6 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id, bool? cl
         try { await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, cleanupAudit, success: true, reason: null); }
         catch { return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_AUDIT_PENDING", "未使用模型已清理，上游仍保留，审计待收口；请刷新并检查审计后重试删除"), jsonOptions, 503); }
     }
-
-    var businessReferences = await CollectMapBusinessModelReferencesAsync(
-        http, mapDatabase, internalTenantId, platformId: id);
-    if (businessReferences.Count > 0)
-        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_REFERENCED_BY_MAP",
-            $"仍有 {string.Join("、", businessReferences)} 直接绑定此上游。请先在对应业务配置中明确迁移到可用逻辑模型或移除，再删除；不会自动匹配同名模型。"), jsonOptions, 409);
 
     var blockers = await CollectPlatformDeleteBlockersAsync(http, id, gwModels, models, gwModelPools, modelGroups, internalTenantId);
     if (blockers.TotalCount > 0)
