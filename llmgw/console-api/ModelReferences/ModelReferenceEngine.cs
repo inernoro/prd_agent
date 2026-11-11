@@ -234,7 +234,7 @@ public sealed class ModelReferenceEngine(IModelReferenceStore store, string inte
             var publicId = logical.GetValue("PublicId", BsonNull.Value);
             if (publicId.IsString)
             {
-                if (!string.IsNullOrEmpty(identity.PublicId) && identity.PublicId != publicId.AsString)
+                if (!string.IsNullOrEmpty(identity.PublicId) && !string.Equals(identity.PublicId.Trim(), publicId.AsString.Trim(), StringComparison.OrdinalIgnoreCase))
                     throw new ModelReferenceException("REFERENCE_IDENTITY_CHANGED", "逻辑模型与公开名称不一致，请刷新模型目录后重新检查。");
                 identity.PublicId = publicId.AsString;
             }

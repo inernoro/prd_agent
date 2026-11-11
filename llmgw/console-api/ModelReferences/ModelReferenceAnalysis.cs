@@ -27,11 +27,13 @@ public static class ModelReferenceAnalysis
     }
     private static string Text(BsonDocument d, string path) => TryGet(d, path, out var value) && value.IsString ? value.AsString : "";
     public static bool Matches(ReferenceIdentity identity, string? value)
-        => !string.IsNullOrEmpty(value) && new[] { identity.LogicalId, identity.PublicId, identity.OfferingId,
+        => !string.IsNullOrEmpty(value) && (new[] { identity.LogicalId, identity.OfferingId,
                 identity.PhysicalModelId, identity.UpstreamModelId, identity.LogicalId is { Length: > 0 } id ? "pool_" + id : null }
-            .Concat(identity.Aliases).Concat(identity.PoolIds).Any(x => !string.IsNullOrEmpty(x) && string.Equals(x, value, StringComparison.Ordinal));
-    private static bool PublicMatch(ReferenceIdentity id, string value) => !string.IsNullOrEmpty(value)
-        && (value == id.PublicId || id.Aliases.Contains(value, StringComparer.Ordinal));
+            .Concat(identity.PoolIds).Any(x => !string.IsNullOrEmpty(x) && string.Equals(x, value, StringComparison.Ordinal))
+            || PublicMatch(identity, value));
+    public static bool PublicMatch(ReferenceIdentity id, string? value)
+        => !string.IsNullOrWhiteSpace(value) && new[] { id.PublicId }.Concat(id.Aliases)
+            .Any(x => !string.IsNullOrWhiteSpace(x) && string.Equals(x.Trim(), value.Trim(), StringComparison.OrdinalIgnoreCase));
     private static bool PhysicalMatch(ReferenceIdentity id, string platform, string model)
         => !string.IsNullOrEmpty(id.ProviderId) && platform == id.ProviderId && !string.IsNullOrEmpty(model)
             && (model == id.PhysicalModelId || model == id.UpstreamModelId);
