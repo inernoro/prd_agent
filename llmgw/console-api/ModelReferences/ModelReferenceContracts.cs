@@ -98,6 +98,8 @@ public sealed class ReferenceMigrationPlan
     public List<ReferenceDocumentChange> Changes { get; set; } = [];
     public List<ReferenceFinding> AffectedFindings { get; set; } = [];
     public string Status { get; set; } = "planned";
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
+    public bool CanResume => Status == "applying" && !(LeaseUntil > DateTime.UtcNow);
     public string? LeaseToken { get; set; }
     public DateTime? LeaseUntil { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

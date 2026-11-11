@@ -373,4 +373,52 @@ public sealed class ModelReferenceEngineTests
         Assert.True(MongoRuntimeModelReferenceSnapshotProvider.Matches(Mapping().Source, new("c", "p", "pool-id", "pool_old-pool")));
         Assert.False(MongoRuntimeModelReferenceSnapshotProvider.Matches(Mapping().Source, new("c", "p", "pool-id", "pool_OLD-POOL")));
     }
+
+    [Theory]
+    [InlineData("applying", -5, true)]
+    [InlineData("applying", 5, false)]
+    [InlineData("applying", null, true)]
+    [InlineData("completed", -5, false)]
+    [InlineData("blocked", null, false)]
+    [InlineData("planned", -5, false)]
+    public void ResumeIsExplicitAndOnlyAvailableWithoutAnActiveLease(string status, int? minutes, bool expected)
+    {
+        var plan = new ReferenceMigrationPlan { Status = status, LeaseUntil = minutes is null ? null : DateTime.UtcNow.AddMinutes(minutes.Value) };
+        Assert.Equal(expected, plan.CanResume);
+        Assert.DoesNotContain("CanResume", plan.ToBsonDocument().Names); // derived from current clock, never persisted as stale truth
+    }
+    [Fact]
+    public async Task ExpiredApplyingLeaseResumesOriginalIntentAndReconcilesPartialLostAcknowledgement()
+    {
+        var store = new MemoryStore();
+        var first = store.Add("arena_slots", "{_id:'first',LogicalModelId:'old-logical'}");
+        var second = store.Add("arena_slots", "{_id:'second',LogicalModelId:'old-logical'}");
+        var engine = Engine(store); var plan = await engine.PlanAsync(Mapping(), "admin");
+        foreach (var field in plan.Changes.Single(x => x.RecordId == "first").Fields) MemoryStore.Set(first, field.Path, field.After);
+        plan.Status = "applying"; plan.LeaseToken = "crashed-holder"; plan.LeaseUntil = DateTime.UtcNow.AddMinutes(-1); plan.Revision = 4;
+        store.Plans[plan.Id] = plan;
+        var original = await engine.GetAsync(plan.Id, "internal"); Assert.True(original.CanResume);
+        var resumed = await engine.ApplyAsync(original.Id, "internal", original.Revision);
+        Assert.Equal(plan.Id, resumed.Id); Assert.Equal("completed", resumed.Status); Assert.True(resumed.Coverage.Verified);
+        Assert.Equal("new-logical", second["LogicalModelId"]); Assert.Equal(1, store.Writes); Assert.False(resumed.CanResume);
+        Assert.Null(resumed.LeaseToken); Assert.Null(resumed.LeaseUntil); Assert.All(resumed.Changes, x => Assert.Equal("applied", x.Status));
+    }
+    [Fact]
+    public async Task ExpiredIntentRecoveryRejectsConcurrentUserEditAndFreshOrStaleRevision()
+    {
+        var store = new MemoryStore(); var first = store.Add("arena_slots", "{_id:'first',LogicalModelId:'old-logical'}");
+        var second = store.Add("arena_slots", "{_id:'second',LogicalModelId:'old-logical'}");
+        var engine = Engine(store); var plan = await engine.PlanAsync(Mapping(), "admin");
+        foreach (var field in plan.Changes.Single(x => x.RecordId == "first").Fields) MemoryStore.Set(first, field.Path, field.After);
+        plan.Status = "applying"; plan.LeaseUntil = DateTime.UtcNow.AddMinutes(2); store.Plans[plan.Id] = plan;
+        Assert.False((await engine.GetAsync(plan.Id, "internal")).CanResume);
+        Assert.Equal("REFERENCE_PLAN_BUSY", (await Assert.ThrowsAsync<ModelReferenceException>(() => engine.ApplyAsync(plan.Id, "internal", plan.Revision))).Code);
+        plan.LeaseUntil = DateTime.UtcNow.AddMinutes(-1); plan.Revision++; store.Plans[plan.Id] = plan;
+        Assert.Equal("REFERENCE_PLAN_BUSY", (await Assert.ThrowsAsync<ModelReferenceException>(() => engine.ApplyAsync(plan.Id, "internal", plan.Revision - 1))).Code);
+        second["LogicalModelId"] = "administrator-other-model";
+        var conflict = await engine.ApplyAsync(plan.Id, "internal", plan.Revision);
+        Assert.Equal(plan.Id, conflict.Id); Assert.Equal("conflict", conflict.Status); Assert.False(conflict.Coverage.Verified);
+        Assert.Equal("administrator-other-model", second["LogicalModelId"]); Assert.Equal("new-logical", first["LogicalModelId"]);
+        Assert.Equal(0, store.Writes);
+    }
 }
