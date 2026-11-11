@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
+using MongoDB.Bson;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -539,21 +540,28 @@ public sealed class ShortVideoMaterialProcessor
         await SaveRunWithIntentAsync(run, () => planned.UnconfirmedWrite = false);
         receipt.PublicationStarted = true;
         await _db.Attachments.InsertOneAsync(attachment, cancellationToken: CancellationToken.None);
-        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
         await IncrementStoreDocumentCountAsync(store, entry.Id);
+        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
         planned.UnconfirmedWrite = false;
         return entry;
     }
 
     private async Task IncrementStoreDocumentCountAsync(DocumentStore store, string entryId)
     {
-        await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == store.Id,
+        var counted = await _db.DocumentStores.UpdateOneAsync(
+            Builders<DocumentStore>.Filter.Eq(s => s.Id, store.Id)
+                & Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, store.OwnerId)
+                & Builders<DocumentStore>.Filter.Ne(CountedEntryIdsField, entryId),
             Builders<DocumentStore>.Update
                 .Inc(s => s.DocumentCount, 1)
+                .AddToSet(CountedEntryIdsField, entryId)
                 .Set(s => s.PrimaryEntryId, string.IsNullOrEmpty(store.PrimaryEntryId) ? entryId : store.PrimaryEntryId)
                 .Set(s => s.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        if (counted.MatchedCount != 1 && await _db.DocumentStores.CountDocumentsAsync(
+            Builders<DocumentStore>.Filter.Eq(x => x.Id, store.Id) & Builders<DocumentStore>.Filter.Eq(x => x.OwnerId, store.OwnerId)
+                & Builders<DocumentStore>.Filter.Eq(CountedEntryIdsField, entryId)) != 1)
+            throw new InvalidOperationException("目标文档空间状态已变化，已停止保存并保留产物责任记录");
         if (string.IsNullOrEmpty(store.PrimaryEntryId))
             store.PrimaryEntryId = entryId;
     }
@@ -772,8 +780,8 @@ public sealed class ShortVideoMaterialProcessor
         run.CleanupPending = true;
         await SaveRunWithIntentAsync(run, () => planned.UnconfirmedWrite = false);
         await _documentService.SaveAsync(parsed);
-        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
         await IncrementStoreDocumentCountAsync(store, entry.Id);
+        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
         planned.UnconfirmedWrite = false;
         return entry;
     }
@@ -876,7 +884,7 @@ public sealed class ShortVideoMaterialProcessor
                 .Set(x => x.CleanupPending, true), cancellationToken: CancellationToken.None);
         if (fenced.MatchedCount != 1) return;
         var removed = new HashSet<string>(StringComparer.Ordinal);
-        var recountStores = new HashSet<string>(StringComparer.Ordinal);
+        var countPending = false;
         foreach (var item in receipt.Entries)
         {
             var own = Builders<DocumentEntry>.Filter.Eq(x => x.Id, item.EntryId)
@@ -888,7 +896,7 @@ public sealed class ShortVideoMaterialProcessor
             if (deleted.DeletedCount == 1 || await _db.DocumentEntries.CountDocumentsAsync(x => x.Id == item.EntryId) == 0)
             {
                 removed.Add(item.EntryId);
-                recountStores.Add(item.StoreId);
+                if (!await ReleaseCountedEntriesAsync(_db.DocumentStores, item.StoreId, [item.EntryId], identity.UserId)) countPending = true;
                 var replacement = await _db.DocumentEntries.Find(x => x.StoreId == item.StoreId)
                     .SortBy(x => x.CreatedAt).Project(x => x.Id).FirstOrDefaultAsync(CancellationToken.None);
                 await _db.DocumentStores.UpdateOneAsync(x => x.Id == item.StoreId && x.OwnerId == identity.UserId && x.PrimaryEntryId == item.EntryId,
@@ -902,11 +910,7 @@ public sealed class ShortVideoMaterialProcessor
                 await _db.Documents.DeleteOneAsync(x => x.Id == item.DocumentId, CancellationToken.None);
         }
         var pending = receipt.PhysicalState is "upload-outcome-unknown" or "upload-started" or "delete-pending" or "ownership-unconfirmed"
-            || receipt.Entries.Any(x => x.UnconfirmedWrite);
-        // 沿用文档空间存量导入的实存重算，不依赖进程内计数回执或本次 DeletedCount。
-        // CAS 避免覆盖期间已确认的其他增量；无法确认则保留责任记录。
-        foreach (var storeId in recountStores)
-            if (!await ReconcileOwnedStoreCountAsync(storeId, identity.UserId)) pending = true;
+            || receipt.Entries.Any(x => x.UnconfirmedWrite) || countPending;
         if (receipt.PublicationStarted || receipt.Entries.Any(x => x.AttachmentId != null && x.UnconfirmedWrite))
         {
             // URL 曾进入条目写入流程，无法证明跨库/人工复制从未引用；不扩大存储删除权限。
@@ -952,21 +956,37 @@ public sealed class ShortVideoMaterialProcessor
         await _db.ShortVideoMaterialRuns.UpdateOneAsync(active, update, cancellationToken: CancellationToken.None);
     }
 
-    private async Task<bool> ReconcileOwnedStoreCountAsync(string storeId, string userId)
+    internal const string CountedEntryIdsField = "ShortVideoCountedEntryIds";
+
+    internal static async Task<HashSet<string>> ReadCountedEntryIdsAsync(IMongoCollection<DocumentStore> stores,
+        string storeId, IEnumerable<string> candidateIds)
     {
-        for (var attempt = 0; attempt < 3; attempt++)
+        var row = await stores.Find(x => x.Id == storeId).Project(Builders<DocumentStore>.Projection.Include(CountedEntryIdsField))
+            .FirstOrDefaultAsync(CancellationToken.None);
+        var candidates = candidateIds.ToHashSet(StringComparer.Ordinal);
+        return row != null && row.TryGetValue(CountedEntryIdsField, out var value) && value.IsBsonArray
+            ? value.AsBsonArray.Where(x => x.IsString && candidates.Contains(x.AsString)).Select(x => x.AsString).ToHashSet(StringComparer.Ordinal)
+            : new(StringComparer.Ordinal);
+    }
+
+    internal static async Task<bool> ReleaseCountedEntriesAsync(IMongoCollection<DocumentStore> stores, string storeId,
+        IReadOnlyCollection<string> entryIds, string? ownerId = null)
+    {
+        var scope = Builders<DocumentStore>.Filter.Eq(x => x.Id, storeId);
+        if (ownerId != null) scope &= Builders<DocumentStore>.Filter.Eq(x => x.OwnerId, ownerId);
+        foreach (var id in entryIds)
         {
-            var store = await _db.DocumentStores.Find(x => x.Id == storeId && x.OwnerId == userId)
-                .FirstOrDefaultAsync(CancellationToken.None);
-            if (store == null) return false;
-            var count = checked((int)await _db.DocumentEntries.CountDocumentsAsync(x => x.StoreId == storeId));
-            var saved = await _db.DocumentStores.UpdateOneAsync(x => x.Id == storeId && x.OwnerId == userId
-                && x.DocumentCount == store.DocumentCount && x.UpdatedAt == store.UpdatedAt,
-                Builders<DocumentStore>.Update.Set(x => x.DocumentCount, count).Set(x => x.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: CancellationToken.None);
-            if (saved.MatchedCount == 1) return true;
+            var counted = scope & Builders<DocumentStore>.Filter.Eq(CountedEntryIdsField, id);
+            // 令牌和减量在同一个 store 文档原子提交。重复删除/响应丢失不再重复扣量。
+            await stores.UpdateOneAsync(counted & Builders<DocumentStore>.Filter.Gt(x => x.DocumentCount, 0),
+                Builders<DocumentStore>.Update.Inc(x => x.DocumentCount, -1).Pull(CountedEntryIdsField, id)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: CancellationToken.None);
+            await stores.UpdateOneAsync(counted & Builders<DocumentStore>.Filter.Lte(x => x.DocumentCount, 0),
+                Builders<DocumentStore>.Update.Set(x => x.DocumentCount, 0).Pull(CountedEntryIdsField, id)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: CancellationToken.None);
         }
-        return false;
+        if (ownerId != null && await stores.CountDocumentsAsync(scope) != 1) return false;
+        return await stores.CountDocumentsAsync(scope & Builders<DocumentStore>.Filter.AnyIn(CountedEntryIdsField, entryIds)) == 0;
     }
 
     private static bool IsAttemptStorageKey(ShortVideoMaterialRun identity, ShortVideoMaterialArtifactReceipt receipt, IAssetStorage storage)

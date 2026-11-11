@@ -449,14 +449,15 @@ public sealed class ShortVideoArtifactRecoveryTests : IAsyncLifetime
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task ReenteredCleanup_RepairsCountFromSurvivingEntriesAfterInterruptedAcknowledgements(bool entryAlreadyDeleted, bool hasForeignEntry)
+    public async Task ReenteredCleanup_ConsumesDurableCountTokenAfterInterruptedAcknowledgements(bool entryAlreadyDeleted, bool hasForeignEntry)
     {
         var run = await Seed(); run.CleanupPending = true;
         var entry = new DocumentEntry { StoreId = run.StoreId!, CreatedBy = run.UserId, Metadata = new() { ["runId"] = run.Id } };
         if (!entryAlreadyDeleted) await _db.DocumentEntries.InsertOneAsync(entry);
         if (hasForeignEntry) await _db.DocumentEntries.InsertOneAsync(new() { StoreId = run.StoreId!, CreatedBy = "another-author" });
         await _db.DocumentStores.UpdateOneAsync(x => x.Id == run.StoreId,
-            Builders<DocumentStore>.Update.Set(x => x.DocumentCount, hasForeignEntry ? 2 : 1).Set(x => x.PrimaryEntryId, entry.Id));
+            Builders<DocumentStore>.Update.Set(x => x.DocumentCount, hasForeignEntry ? 2 : 1).Set(x => x.PrimaryEntryId, entry.Id)
+                .AddToSet("ShortVideoCountedEntryIds", entry.Id));
         run.SourceEntryId = entry.Id;
         run.ArtifactReceipt = new() { ProcessingToken = run.ProcessingToken!, PhysicalState = "retained-published", PublicationStarted = true,
             Entries = [new() { EntryId = entry.Id, StoreId = run.StoreId!, EntryCreatedAt = entry.UpdatedAt }] };
@@ -472,6 +473,54 @@ public sealed class ShortVideoArtifactRecoveryTests : IAsyncLifetime
             Assert.NotEqual(entry.Id, store.PrimaryEntryId);
             Assert.Null((await _db.ShortVideoMaterialRuns.Find(x => x.Id == run.Id).SingleAsync()).SourceEntryId);
         }
+        Assert.Equal(0, _outboundCalls);
+    }
+
+    [Fact]
+    public async Task FailureCleanup_DoesNotCountAnOrdinaryEntryWhoseIncrementIsStillPending()
+    {
+        var run = await Seed(); run.CleanupPending = true;
+        var own = new DocumentEntry { StoreId = run.StoreId!, CreatedBy = run.UserId, Metadata = new() { ["runId"] = run.Id } };
+        await _db.DocumentEntries.InsertOneAsync(own);
+        await _db.DocumentStores.UpdateOneAsync(x => x.Id == run.StoreId,
+            Builders<DocumentStore>.Update.Set(x => x.DocumentCount, 1).AddToSet("ShortVideoCountedEntryIds", own.Id));
+        run.ArtifactReceipt = new() { ProcessingToken = run.ProcessingToken!, PublicationStarted = true,
+            Entries = [new() { EntryId = own.Id, StoreId = run.StoreId!, EntryCreatedAt = own.UpdatedAt }] };
+        await _db.ShortVideoMaterialRuns.ReplaceOneAsync(x => x.Id == run.Id, run);
+        // 原 AddEntry 契约先插入、后 $inc；把两步间的真实窗口留给补偿，不改该写入者。
+        await _db.DocumentEntries.InsertOneAsync(new() { StoreId = run.StoreId!, CreatedBy = "ordinary-add-entry" });
+        await (Task)typeof(ShortVideoMaterialProcessor).GetMethod("CleanupArtifactsAfterFailureAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(Processor(), [run, run])!;
+        await _db.DocumentStores.UpdateOneAsync(x => x.Id == run.StoreId, Builders<DocumentStore>.Update.Inc(x => x.DocumentCount, 1));
+        Assert.Equal(1, (await _db.DocumentStores.Find(x => x.Id == run.StoreId).SingleAsync()).DocumentCount);
+        Assert.Equal(1, await _db.DocumentEntries.CountDocumentsAsync(x => x.StoreId == run.StoreId));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task OriginalDeleteConsumer_AndFailureCleanupShareOneCountDecrement(bool userDeletesFirst, bool mixedBatch)
+    {
+        var run = await Seed(); run.CleanupPending = true;
+        var own = new DocumentEntry { StoreId = run.StoreId!, CreatedBy = run.UserId, Metadata = new() { ["runId"] = run.Id } };
+        var other = new DocumentEntry { StoreId = run.StoreId!, CreatedBy = "ordinary-entry" };
+        await _db.DocumentEntries.InsertManyAsync([own, other]);
+        await _db.DocumentStores.UpdateOneAsync(x => x.Id == run.StoreId,
+            Builders<DocumentStore>.Update.Set(x => x.DocumentCount, 2).AddToSet("ShortVideoCountedEntryIds", own.Id));
+        run.ArtifactReceipt = new() { ProcessingToken = run.ProcessingToken!, PublicationStarted = true,
+            Entries = [new() { EntryId = own.Id, StoreId = run.StoreId!, EntryCreatedAt = own.UpdatedAt }] };
+        await _db.ShortVideoMaterialRuns.ReplaceOneAsync(x => x.Id == run.Id, run);
+        async Task DeleteOriginal() => await PrdAgent.Api.Controllers.Api.DocumentStoreController.DeleteEntriesAndApplyCountsAsync(
+            _db, run.StoreId!, mixedBatch ? [own.Id, other.Id] : [own.Id], DateTime.UtcNow);
+        async Task Cleanup() => await (Task)typeof(ShortVideoMaterialProcessor).GetMethod("CleanupArtifactsAfterFailureAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(Processor(), [run, run])!;
+        if (userDeletesFirst) { await DeleteOriginal(); await Cleanup(); }
+        else { await Cleanup(); await DeleteOriginal(); }
+        Assert.Equal(mixedBatch ? 0 : 1, (await _db.DocumentStores.Find(x => x.Id == run.StoreId).SingleAsync()).DocumentCount);
+        Assert.Equal(mixedBatch ? 0 : 1, await _db.DocumentEntries.CountDocumentsAsync(x => x.StoreId == run.StoreId));
+        Assert.Empty(await ShortVideoMaterialProcessor.ReadCountedEntryIdsAsync(_db.DocumentStores, run.StoreId!, [own.Id]));
         Assert.Equal(0, _outboundCalls);
     }
 

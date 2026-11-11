@@ -1219,7 +1219,7 @@ public class DocumentStoreController : ControllerBase
         }
 
         // 级联清理
-        var entriesResult = await _db.DocumentEntries.DeleteManyAsync(e => idsToDelete.Contains(e.Id));
+        var entriesResult = await DeleteEntriesAndApplyCountsAsync(_db, entry.StoreId, idsToDelete, DateTime.UtcNow);
         var syncLogsResult = await _db.DocumentSyncLogs.DeleteManyAsync(l => idsToDelete.Contains(l.EntryId));
         var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.EntryId != null && idsToDelete.Contains(v.EntryId));
         var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => idsToDelete.Contains(c.EntryId));
@@ -1258,13 +1258,7 @@ public class DocumentStoreController : ControllerBase
 
         // 按实际删除数原子递减，可与并发新增、删除交换顺序；历史少计时再以 $max
         // 夹到零，既不产生负数，也不读取或覆盖任何陈旧条目统计。
-        await ApplyDocumentCountDeletionAsync(
-            _db.DocumentStores,
-            entry.StoreId,
-            checked((int)entriesResult.DeletedCount),
-            DateTime.UtcNow,
-            CancellationToken.None,
-            idsToDelete.Where(IsDeterministicRecordingEntryId).ToArray());
+        // 条目删除与计数减量已由上面的原子令牌消费者按实际归属提交。
 
         _logger.LogInformation(
             "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} views={Views} inlineComments={Comments} agentRuns={Runs} versions={Versions} mentions={Mentions}",
@@ -3386,6 +3380,23 @@ public class DocumentStoreController : ControllerBase
                 .PullAll(RecordingCountedEntryIdsField, entryIds)
                 .Set(s => s.UpdatedAt, now),
             cancellationToken: cancellationToken);
+    }
+
+    internal static async Task<DeleteResult> DeleteEntriesAndApplyCountsAsync(MongoDbContext db, string storeId,
+        IReadOnlyCollection<string> entryIds, DateTime now)
+    {
+        var counted = await ShortVideoMaterialProcessor.ReadCountedEntryIdsAsync(db.DocumentStores, storeId, entryIds);
+        var ordinary = entryIds.Where(id => !counted.Contains(id)).ToArray();
+        long normalDeleted = ordinary.Length == 0 ? 0
+            : (await db.DocumentEntries.DeleteManyAsync(x => ordinary.Contains(x.Id), CancellationToken.None)).DeletedCount;
+        long managedDeleted = 0;
+        foreach (var id in counted)
+            managedDeleted += (await db.DocumentEntries.DeleteOneAsync(x => x.Id == id && x.StoreId == storeId, CancellationToken.None)).DeletedCount;
+        await ApplyDocumentCountDeletionAsync(db.DocumentStores, storeId, checked((int)normalDeleted), now,
+            CancellationToken.None, ordinary.Where(IsDeterministicRecordingEntryId).ToArray());
+        if (!await ShortVideoMaterialProcessor.ReleaseCountedEntriesAsync(db.DocumentStores, storeId, counted))
+            throw new InvalidOperationException("条目计数尚未核对完成，请稍后查看文档空间");
+        return new DeleteResult.Acknowledged(normalDeleted + managedDeleted);
     }
 
     internal static async Task ApplyDocumentCountDeletionAsync(
