@@ -1,4 +1,5 @@
-import { Link, useLocation } from 'react-router-dom';
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
+import { useLocation } from 'react-router-dom';
 import { readStatusLocation } from '@/lib/statusHome';
 
 const views = [

@@ -115,6 +115,8 @@ export function StatusPage(): JSX.Element {
     return { targetId, incidentId, detectedAt: searchParams.get('detectedAt') ?? undefined };
   }, [searchParams]);
   const [catalogProject, setCatalogProject] = useState<string | null>(null);
+  const [environment, setEnvironment] = useState('all');
+  const [subscriptionBusy, setSubscriptionBusy] = useState(false);
   const [summary, setSummary] = useState<UptimeSummary | null>(null);
   const [incidents, setIncidents] = useState<UptimeIncidentView[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -338,6 +340,23 @@ export function StatusPage(): JSX.Element {
     setMobileView('list');
   };
 
+  const subscribedTargets = targets.filter(target => target.overviewIncluded === true);
+  const environmentOptions = [...new Map(subscribedTargets.map(target => [target.environment, target.environmentLabel])).entries()];
+  useEffect(() => {
+    if (summary && environment !== 'all' && !summary.targets.some(target => target.overviewIncluded && target.environment === environment)) setEnvironment('all');
+  }, [summary, environment]);
+  const effectiveEnvironment = environment === 'all' || environmentOptions.some(([key]) => key === environment) ? environment : 'all';
+  const workspaceTargets = effectiveEnvironment === 'all' ? subscribedTargets : subscribedTargets.filter(target => target.environment === effectiveEnvironment);
+  const subscribe = async (targetId: string, subscribed: boolean): Promise<void> => {
+    setSubscriptionBusy(true);
+    try {
+      await apiRequest(`/api/uptime/targets/${encodeURIComponent(targetId)}/subscription`, { method: 'PUT', body: { subscribed } });
+      await load();
+      setNotice({ tone: 'ok', text: subscribed ? '已保存订阅。监控启用且未排除时进入业务总览。' : '已取消总览订阅。探测与通知配置保持原样，可在管理中单独调整。' });
+    } catch (error) { setNotice({ tone: 'danger', text: error instanceof Error ? error.message : '订阅未保存' }); }
+    finally { setSubscriptionBusy(false); }
+  };
+
   return (
     <AppShell
       active="status"
@@ -347,6 +366,10 @@ export function StatusPage(): JSX.Element {
           center={<MonitorViewNav />}
           right={boardView === 'home' ? (
             <>
+              <select className="monitor-environment-select" aria-label="监控环境" value={effectiveEnvironment} onChange={event => setEnvironment(event.target.value)}>
+                <option value="all">本 CDS · 全部环境</option>
+                {environmentOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+              </select>
               <PaletteHint />
               <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
                 <RefreshCw className={refreshing ? 'animate-spin' : undefined} />
@@ -403,13 +426,13 @@ export function StatusPage(): JSX.Element {
             <>
               {proberLiveness(summary)?.stalled || !summary.enabled ? <div role="alert" className="rounded-lg border border-warn/40 bg-warn-soft p-4 text-warn">{summary.enabled ? '检查器未按时更新' : '检查器已关闭'}，下方为最近记录，不能据此确认当前业务正常。请在监控管理中排查检查器。</div> : null}
               <div key={`${boardView}:${location.targetId ?? ''}`} className={boardView === 'home' ? 'monitor-page-content' : 'status-home-content'}>
-              {boardView === 'home' ? <MonitorWorkspace targets={targets} now={now} summary={summary} incidents={incidents} entry={workspaceEntry} added={searchParams.toString() ? undefined : addedServices} onAddedSeen={() => setAddedServices(undefined)} onAdd={() => setWorkspacePanel({ panel: 'connect' })} onNotify={(targetId) => setWorkspacePanel({ panel: 'notify', targetId })} onManage={(targetId) => targetId ? openTarget(targetId) : setBoardView('owner')} onProbe={async (targetId) => { await probeTarget(targetId); await load(); }} onReload={() => void load()} /> :
+              {boardView === 'home' ? <MonitorWorkspace key={effectiveEnvironment} targets={workspaceTargets} now={now} summary={summary} incidents={incidents} entry={workspaceEntry} notificationTarget={workspaceEntry ? targets.find(target => target.id === workspaceEntry.targetId) : undefined} added={searchParams.toString() ? undefined : addedServices} onAddedSeen={() => setAddedServices(undefined)} onAdd={() => setWorkspacePanel({ panel: 'connect' })} onNotify={(targetId) => setWorkspacePanel({ panel: 'notify', targetId })} onManage={(targetId) => targetId ? openTarget(targetId) : setBoardView('owner')} onProbe={async (targetId) => { await probeTarget(targetId); await load(); }} onReload={() => void load()} /> :
                 boardView === 'catalog' ? <MonitorCatalog targets={targets} now={now} projectId={catalogProject} onProject={setCatalogProject} onOpen={openTarget} /> :
                 boardView === 'history' ? <div><h1>处理记录</h1><p className="status-home-muted mb-4">最近 100 条故障发生与恢复记录。立即检查会追加采样，只有达到恢复判据才会结束故障。</p><IncidentTimeline scrollMode="page" incidents={incidents} filter={incidentFilter} onFilter={setIncidentFilter} onOpenTarget={openTarget} /></div> :
-                boardView === 'detail' ? <div className="status-home-detail">{selected ? <TargetDetail scrollMode="page" key={selected.id} target={selected} incidents={incidents} generatedAt={summary.generatedAt} now={now} actions={actions} busy={busy} onBack={() => setBoardView('catalog')} /> : <div className="status-home-panel"><h1>暂时无法查看这项监控</h1><p>该监控可能已删除，或当前账号没有访问权限。没有改为显示其他监控。</p><Button onClick={() => setBoardView('home')}>返回业务总览</Button></div>}</div> : null}
+                boardView === 'detail' ? <div className="status-home-detail">{selected ? <div className="monitor-subscription-control"><span>{selected.collectionMembers ? '采集通道随已订阅指标展示' : selected.subscribed ? selected.overviewIncluded ? '已订阅到业务总览' : '已订阅，当前未启用或已排除，恢复检查后回到总览' : '尚未订阅到业务总览'}</span><Button size="sm" variant="outline" disabled={subscriptionBusy || !!selected.collectionMembers} onClick={() => void subscribe(selected.id, !selected.subscribed)}>{selected.collectionMembers ? '随指标订阅' : subscriptionBusy ? '保存中…' : selected.subscribed ? '取消订阅' : '订阅到总览'}</Button></div> : null}{selected ? <TargetDetail scrollMode="page" key={selected.id} target={selected} incidents={incidents} generatedAt={summary.generatedAt} now={now} actions={actions} busy={busy} onBack={() => setBoardView('catalog')} /> : <div className="status-home-panel"><h1>暂时无法查看这项监控</h1><p>该监控可能已删除，或当前账号没有访问权限。没有改为显示其他监控。</p><Button onClick={() => setBoardView('home')}>返回业务总览</Button></div>}</div> : null}
               {boardView === 'owner' ? (
                 <div className="flex min-h-0 flex-col lg:flex-1">
-                  <Button variant="outline" className="mb-3 self-start" onClick={() => setBoardView('all')}>全部探测目标与基础设施</Button>
+                  <div className="monitor-management-header"><div><p>MONITORING / MANAGEMENT</p><h1>监控管理</h1><span>订阅决定总览展示，探测决定如何检查，通知决定发到哪里。</span></div><div className="monitor-management-actions"><span><b>{subscribedTargets.length}</b> 已订阅</span><span><b>{targets.length}</b> 探测目标</span><Button variant="outline" onClick={() => setBoardView('all')}>全部探测目标与基础设施</Button></div></div>
                   <OwnerBoard
                     targets={targets}
                     now={now}
@@ -511,7 +534,7 @@ export function StatusPage(): JSX.Element {
         onSelectBranch={openBranch}
       />
       <CoverageDialog open={coverageOpen} onOpenChange={setCoverageOpen} coverage={summary?.coverage} prober={summary?.prober} />
-      <MonitorDrawers panel={workspacePanel?.panel ?? null} targetId={workspacePanel?.targetId} targets={targets} onClose={() => setWorkspacePanel(null)} onSaved={async (result) => { await load(); if (workspacePanel?.panel === 'connect') { if (searchParams.toString()) setSearchParams({}); if (result?.targetIds.length) setAddedServices({ key: Date.now(), targetIds: result.targetIds }); } }} onManageNotifications={() => { window.location.assign('/cds-settings#alarm-notify'); }} />
+      <MonitorDrawers panel={workspacePanel?.panel ?? null} targetId={workspacePanel?.targetId} targets={targets} onClose={() => setWorkspacePanel(null)} onSaved={async (result) => { await load(); if (workspacePanel?.panel === 'connect') { if (searchParams.toString()) setSearchParams({}); if (result?.targetIds.length) { setEnvironment('all'); setAddedServices({ key: Date.now(), targetIds: result.targetIds }); } } }} onManageNotifications={() => { window.location.assign('/cds-settings#alarm-notify'); }} />
       <MonitorEditorDialog
         open={editor.open}
         monitor={editor.monitor}

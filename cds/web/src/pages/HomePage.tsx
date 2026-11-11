@@ -1,3 +1,4 @@
+import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 /*
  * HomePage — CDS 落地页(2026-07-02 由"单屏 demo"升级为多分区滚动叙事)。
  *
@@ -13,7 +14,7 @@
  * 在 prefers-reduced-motion 下降级为静态。
  */
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+
 import ShapeGrid from '@/components/effects/ShapeGrid';
 // 叙事场景（three + postprocessing，约 690 kB）不进首页主链路：滚到叙事区才下载；场景自己再等进入视口才建 WebGL
 const BranchlineScene = lazy(() => import('@/components/effects/BranchlineScene'));

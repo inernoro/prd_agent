@@ -1,10 +1,11 @@
+import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * BranchRelationsPage — 全屏关系图（plan.cds.service-relations 第四批）。独立路由，可分享。
  * 与总览关系卡、展开视图、cdscli topology 读同一份 service-graph 数据。
  */
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { Copy, Minimize2, RefreshCw } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';

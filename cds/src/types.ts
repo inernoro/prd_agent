@@ -1694,6 +1694,8 @@ export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp' | 'health-json'
  * 不留证据的功能监控，红了以后没人说得清是模型抽风还是判据写错，最后只能被静音。
  */
 export interface MonitorObservation {
+  /** 产物地址含鉴权信息时，公开证据隐藏地址并说明原因。 */
+  artifactProtected?: boolean;
   upstreamCalls?: import('./services/mcp-monitor.js').McpCallEvidence[];
   /** ISO 时间 */
   at: string;
@@ -2281,6 +2283,8 @@ export interface CdsState {
   releasePlans?: Record<string, ReleasePlan>;
   /** 监控中心的自定义探测目标，key 为 UptimeCustomMonitor.id。旧状态可缺省。 */
   uptimeMonitors?: Record<string, UptimeCustomMonitor>;
+  /** 总览订阅独立于探测开关；取消订阅不会改动共享探测或通知策略。 */
+  monitorSubscriptions?: Record<string, { subscribed: boolean; updatedAt: string; updatedBy: string }>;
   monitorNotifications?: import('./services/alarm-route.js').MonitorNotificationSettings;
   mcpMonitorAudits?: import('./services/mcp-monitor.js').McpCallEvidence[];
   /**

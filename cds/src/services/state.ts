@@ -2672,6 +2672,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       grants: (this.state.projectGrants || []).filter(p => projectGrantsToRevoke.includes(p.id)),
       dbLedger: (this.state.dbLedger || []).filter(p => p.projectId === id),
       monitors: uptimeMonitorsToRemove.map(mid => this.state.uptimeMonitors![mid]),
+      monitorSubscriptions: uptimeMonitorsToRemove.map(mid => ({ targetId: customProbeTargetId({ id: mid }), value: this.state.monitorSubscriptions?.[customProbeTargetId({ id: mid })] })),
       monitorNotifications: uptimeMonitorsToRemove.map(mid => {
         const targetId = customProbeTargetId({ id: mid });
         const settings = this.state.monitorNotifications;
@@ -2693,6 +2694,9 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       for (const b of snapshot.branches) this.state.branches[b.id] ??= b;
       for (const [bid, logs] of Object.entries(snapshot.logs)) this.state.logs[bid] ??= logs;
       for (const m of snapshot.monitors) (this.state.uptimeMonitors ??= {})[m.id] ??= m;
+      for (const previous of snapshot.monitorSubscriptions) {
+        if (previous.value) (this.state.monitorSubscriptions ??= {})[previous.targetId] ??= previous.value;
+      }
       for (const previous of snapshot.monitorNotifications) {
         if (previous.override === undefined && previous.mutedUntil === undefined && previous.acknowledgedAt === undefined) continue;
         const settings = this.state.monitorNotifications ??= {};
@@ -3204,6 +3208,22 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     this.save();
   }
 
+  getMonitorSubscriptions(): NonNullable<CdsState['monitorSubscriptions']> {
+    let changed = false;
+    const subscriptions = this.state.monitorSubscriptions ??= {};
+    for (const monitor of this.listUptimeMonitors()) {
+      const id = customProbeTargetId(monitor);
+      if (!subscriptions[id]) { subscriptions[id] = { subscribed: monitor.enabled !== false, updatedBy: 'registered-monitor', updatedAt: monitor.createdAt }; changed = true; }
+    }
+    if (changed) this.save(HINT_GLOBAL);
+    return structuredClone(subscriptions);
+  }
+
+  setMonitorSubscription(targetId: string, subscribed: boolean, updatedBy: string): void {
+    (this.state.monitorSubscriptions ??= {})[targetId] = { subscribed, updatedBy, updatedAt: new Date().toISOString() };
+    this.save(HINT_GLOBAL);
+  }
+
   getMonitorNotifications(): import('./alarm-route.js').MonitorNotificationSettings {
     return structuredClone(this.state.monitorNotifications ?? {});
   }
@@ -3244,6 +3264,9 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     // 新接入不能继承旧版本删除后残留的静默；正常编辑保留现有通知。
     if (!existing) this.clearUptimeMonitorNotifications(monitor.id);
     this.state.uptimeMonitors[monitor.id] = saved;
+    if (!existing) (this.state.monitorSubscriptions ??= {})[customProbeTargetId(saved)] ??= {
+      subscribed: saved.enabled !== false, updatedAt: now, updatedBy: saved.createdBy || 'registered-monitor',
+    };
     this.save(HINT_GLOBAL);
     return saved;
   }
@@ -3267,6 +3290,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     if (!this.state.uptimeMonitors?.[id]) return false;
     delete this.state.uptimeMonitors[id];
     this.clearUptimeMonitorNotifications(id);
+    // Keep explicit opt-outs across discovery disappearance/reappearance of the stable id.
+    if (this.state.monitorSubscriptions?.[customProbeTargetId({ id })]?.subscribed) delete this.state.monitorSubscriptions[customProbeTargetId({ id })];
     return true;
   }
 

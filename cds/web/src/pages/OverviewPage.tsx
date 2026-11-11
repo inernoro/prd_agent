@@ -1,3 +1,4 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * OverviewPage — 「概览」菜单（plan.cds.service-relations 第四批）：全部项目的关系与体检。
@@ -5,7 +6,7 @@ import { ContentLoading } from '@/components/skeletons/ContentLoading';
  * 数据：GET /api/overview/topology。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+
 import { RefreshCw } from 'lucide-react';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';

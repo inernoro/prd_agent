@@ -1,5 +1,6 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { useEffect, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+
 import { Moon, Sun } from 'lucide-react';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { ShinyText } from '@/components/effects/ShinyText';

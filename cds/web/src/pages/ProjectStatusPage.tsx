@@ -1,5 +1,6 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { ArrowRight, Bell, CircleAlert, RefreshCw, ShieldCheck } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';

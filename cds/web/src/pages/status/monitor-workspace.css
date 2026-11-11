@@ -645,3 +645,5 @@
 
 /* Match the measured reference canvas budget while preserving native CDS chrome. */
 @media(min-width:761px){.monitor-workspace .main{padding-top:4px;padding-left:15px}}
+
+.monitor-workspace .health-dimension { color: var(--t2); background: var(--p1); border: 0; font: inherit; font-size: 10px; border-radius: 4px; padding: 2px; }

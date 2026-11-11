@@ -555,6 +555,8 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
     expect(restored.getBranch(entry.id)?.githubCommitSha).toBe(shaA);
     const again = await reconcile(); expect(again.body.result.planned).toEqual([]);
     expect(again.body.result.divergent).toEqual([]); expect(writes).toEqual(['/api/branches']);
+    // 冷读实例也会持久化加载迁移；删除临时目录前等待它自己的写入完成。
+    await restored.flush();
   });
   it('rejects source A after origin advances to B without worktree or state orphan', async () => {
     seed(source, 'main', shaA); const shaB = advanceOrigin(); expect(shaB).not.toBe(shaA);

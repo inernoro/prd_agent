@@ -1,3 +1,6 @@
+import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
+import { flushSync } from 'react-dom';
+import { runSurfaceMotion } from '@/lib/surfaceMotion';
 import { ArchivedBranchCard, BranchLifecycleControls, type BranchArchiveView } from '@/components/branch/BranchLifecycleControls';
 import { CiImageNotice } from '@/components/branch/CiImageNotice';
 import { ciImageNotice, type CiDiagnosisView } from '@/lib/ci-image-notice';
@@ -6,7 +9,7 @@ import { projectUnavailable } from '../lib/project-availability.js';
 import { BranchListOverview } from '@/components/branch/BranchListOverview';
 import { Fragment, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useParams } from 'react-router-dom';
 import {
   Activity,
   Database,
@@ -2995,17 +2998,18 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   }, [canOpenPreview, setAction, state]);
 
   const openBranchDetail = useCallback((branchId: string) => {
-    setDetailDrawerResourceFocus(null);
-    setDetailDrawerBranchId(branchId);
+    const source = document.querySelector(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
+    runSurfaceMotion(() => flushSync(() => { setDetailDrawerResourceFocus(null); setDetailDrawerBranchId(branchId); }), source, false, true);
   }, []);
 
   const openBranchResourcePanel = useCallback((branch: BranchSummary, resource: BranchResource) => {
-    setDetailDrawerResourceFocus({
+    const source = document.querySelector(`[data-branch-card-id="${CSS.escape(branch.id)}"]`);
+    runSurfaceMotion(() => flushSync(() => { setDetailDrawerResourceFocus({
       resourceId: resource.id,
       detailTab: resource.kind === 'app' ? 'logs' : 'data',
       directWorkbench: resource.kind === 'database',
     });
-    setDetailDrawerBranchId(branch.id);
+    setDetailDrawerBranchId(branch.id); }), source, false, true);
   }, []);
 
   const deployBranch = useCallback(async (
@@ -3745,7 +3749,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     setManualBranchName(requestedBranch);
     const params = new URLSearchParams(window.location.search);
     params.delete('preview');
-    window.history.replaceState(null, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
     void previewBranchByName(requestedBranch);
   }, [previewBranchByName, state.status]);
 
@@ -3765,7 +3769,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     params.delete('openBranch');
     params.delete('resource');
     params.delete('resourceTab');
-    window.history.replaceState(null, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
   }, [state]);
 
   const capacityAssist = useMemo(() => {
@@ -4565,8 +4569,8 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             return target?.status;
           })()}
           onClose={() => {
-            setDetailDrawerBranchId(null);
-            setDetailDrawerResourceFocus(null);
+            const source = detailDrawerBranchId ? document.querySelector(`[data-branch-card-id="${CSS.escape(detailDrawerBranchId)}"]`) : null;
+            runSurfaceMotion(() => flushSync(() => { setDetailDrawerBranchId(null); setDetailDrawerResourceFocus(null); }), source, true, true);
           }}
           onToast={setToast}
           onActionComplete={() => void refresh()}

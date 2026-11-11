@@ -1,3 +1,4 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 /*
  * AccessRequestInbox — 被动授权审批提醒(右下角)
  *
@@ -15,7 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { KeyRound, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,

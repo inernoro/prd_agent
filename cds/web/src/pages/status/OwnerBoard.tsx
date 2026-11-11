@@ -607,67 +607,19 @@ export function OwnerBoard({
   const rehearsalNote = rehearsalById(rehearsal);
 
   return (
-    <div className="flex min-h-0 flex-col gap-3 lg:h-full">
-      {/* 项目 + 环境：我在看谁 */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[0.6875rem] text-muted-foreground">我的项目</span>
-        <div className="inline-flex flex-wrap items-center gap-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-0.5">
-          <button
-            type="button"
-            onClick={() => onScope({ ...scope, projectId: null })}
-            aria-pressed={scope.projectId === null}
-            className={cn(
-              'rounded px-2 py-1 text-xs transition-colors',
-              scope.projectId === null ? 'bg-[hsl(var(--surface-raised))] font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            全部项目
-          </button>
-          {projects.map((project) => (
-            <button
-              key={project.id}
-              type="button"
-              onClick={() => onScope({ ...scope, projectId: project.id })}
-              aria-pressed={scope.projectId === project.id}
-              className={cn(
-                'inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
-                scope.projectId === project.id ? 'bg-[hsl(var(--surface-raised))] font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {project.name}
-              {project.troubleCount > 0 ? (
-                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 font-mono text-[0.625rem] text-destructive-foreground">
-                  {project.troubleCount}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-
-        <span className="ml-2 text-[0.6875rem] text-muted-foreground">环境</span>
-        <div className="flex flex-wrap items-center gap-1">
-          {environments.map((env) => {
-            const envTargets = projectTargets.filter((t) => t.environment === env);
-            const label = envTargets[0]?.environmentLabel ?? env;
-            const bad = envTargets.some((t) => t.status === 'down');
-            const on = activeEnvs.has(env);
-            return (
-              <button
-                key={env}
-                type="button"
-                onClick={() => toggleEnv(env)}
-                aria-pressed={on}
-                className={cn(
-                  'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors',
-                  on ? 'border-primary/45 bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground',
-                )}
-              >
-                <span className={cn('h-1.5 w-1.5 rounded-full', bad ? 'bg-destructive' : 'bg-ok')} />
-                {label}
-              </button>
-            );
-          })}
-        </div>
+    <div className="monitor-management-board flex min-h-0 flex-col gap-3 lg:h-full">
+      {/* 复用监控稿紧凑工具区，项目数量增长时不横向铺菜单。 */}
+      <div className="monitor-management-tools flex flex-wrap items-center gap-2">
+        <select className="management-scope" aria-label="管理项目" value={scope.projectId ?? ''} onChange={event => onScope({ ...scope, projectId: event.target.value || null })}>
+          <option value="">全部项目</option>
+          {projects.map(project => <option key={project.id} value={project.id}>{project.name}{project.troubleCount ? ` · ${project.troubleCount} 项需处理` : ''}</option>)}
+        </select>
+        <details className="management-environments">
+          <summary aria-label="管理环境范围">{activeEnvs.size === environments.length ? '全部环境' : activeEnvs.size ? environments.filter(env => activeEnvs.has(env)).map(env => projectTargets.find(target => target.environment === env)?.environmentLabel ?? env).join('、') : '未选择环境'}<ChevronDown className="h-3 w-3" /></summary>
+          <div className="management-environment-options">
+            {environments.map(env => <label key={env}><input type="checkbox" checked={activeEnvs.has(env)} onChange={() => toggleEnv(env)} /><span>{projectTargets.find(target => target.environment === env)?.environmentLabel ?? env}</span></label>)}
+          </div>
+        </details>
 
         {/* 右上角：三枚状态芯片 + 演练下拉。左上是「我在哪」，右上是「我要做什么」。
             芯片每一枚都有状态可读，点开才是配置——配置不进阅读流。 */}
