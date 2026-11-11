@@ -52,6 +52,7 @@ public static class VideoTrackType
 public static class VideoExportTaskStatus
 {
     public const string Queued = "Queued";
+    public const string ScopedQueued = "ScopedQueued";
     public const string Processing = "Processing";
     public const string Completed = "Completed";
     public const string Failed = "Failed";
@@ -108,6 +109,8 @@ public class VideoProject
     public bool GenerateAudio { get; set; } = true;
     public string? LatestRunId { get; set; }
     public string? LatestExportTaskId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ExportHolderLeaseId { get; set; }
     public List<VideoProjectAsset> Assets { get; set; } = new();
     public List<VideoTimelineTrack> TimelineTracks { get; set; } =
     [
@@ -364,6 +367,8 @@ public class VideoGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 
     /// <summary>最近一次独立导出任务 ID。</summary>
     public string? LatestExportTaskId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ExportHolderLeaseId { get; set; }
 
     /// <summary>用户已请求把全部分镜合成为完整视频</summary>
     public bool ExportRequested { get; set; }
@@ -430,7 +435,19 @@ public class VideoExportTask
     public string OwnerAdminId { get; set; } = string.Empty;
     public string ProjectId { get; set; } = string.Empty;
     public string RunId { get; set; } = string.Empty;
-    public string Status { get; set; } = VideoExportTaskStatus.Queued;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string Status { get; set; } = VideoExportTaskStatus.ScopedQueued;
+    [BsonIgnore]
+    [System.Text.Json.Serialization.JsonPropertyName("status")]
+    public string PublicStatus
+    {
+        get => Status == VideoExportTaskStatus.ScopedQueued ? VideoExportTaskStatus.Queued : Status;
+        set => Status = value;
+    }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? WorkerLeaseId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime? WorkerLeaseExpiresAt { get; set; }
     public string CurrentPhase { get; set; } = "queued";
     public int Progress { get; set; }
     public string? OutputUrl { get; set; }

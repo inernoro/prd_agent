@@ -13,6 +13,155 @@ namespace PrdAgent.Infrastructure.Services;
 /// </summary>
 public class VideoGenService : IVideoGenService
 {
+    internal string? ExportDeploymentScope { get; set; } = DeploymentScope.Current;
+    internal string? ExportDurableScope { get; set; } = DeploymentScope.CurrentDurable;
+
+    public static bool IsExportBranchScope(string? scope, string? current, string? durable)
+        => scope == current || current != null && durable != null
+            && (current == durable || current.StartsWith(durable + "::revision::", StringComparison.Ordinal))
+            && (scope == durable || scope?.StartsWith(durable + "::revision::", StringComparison.Ordinal) == true);
+
+    // 版本选择只来自本人通过当前受鉴权入口读取；后台不凭同分支前缀猜测新旧版本。
+    public static async Task RefreshOwnedExportScopeAsync(MongoDbContext db, VideoGenRun run,
+        string ownerId, string appKey, string? current, string? durable, CancellationToken ct)
+    {
+        if (run.OwnerAdminId != ownerId || run.AppKey != appKey
+            || !IsExportBranchScope(run.DeploymentSlug, current, durable) || run.CancelRequested
+            || run.DeletionRequestedAt != null || string.IsNullOrWhiteSpace(run.LatestExportTaskId)) return;
+        var f = Builders<VideoExportTask>.Filter;
+        var identity = f.Eq(x => x.Id, run.LatestExportTaskId) & f.Eq(x => x.RunId, run.Id)
+            & f.Eq(x => x.OwnerAdminId, ownerId) & f.Eq(x => x.AppKey, appKey);
+        var task = await db.VideoExportTasks.Find(identity).FirstOrDefaultAsync(ct);
+        if (task == null || task.DeploymentSlug != null && !IsExportBranchScope(task.DeploymentSlug, current, durable)
+            || task.ProjectId != (run.ProjectId ?? string.Empty)) return;
+        if (run.DeploymentSlug == current && task.DeploymentSlug == current) return;
+        FilterDefinition<VideoExportTask> eligible;
+        var completed = task.Status == VideoExportTaskStatus.Completed && task.RunReconciledAt == null
+            && !string.IsNullOrWhiteSpace(task.OutputUrl) && task.OutputSha256?.Length == 64;
+        if (completed) eligible = f.Eq(x => x.Status, VideoExportTaskStatus.Completed) & f.Eq(x => x.RunReconciledAt, null)
+            & f.Eq(x => x.OutputUrl, task.OutputUrl) & f.Eq(x => x.OutputSha256, task.OutputSha256);
+        else if (task.Status is VideoExportTaskStatus.Queued or VideoExportTaskStatus.ScopedQueued)
+            eligible = f.Eq(x => x.Status, task.Status);
+        else if (task.Status == VideoExportTaskStatus.Processing && !string.IsNullOrWhiteSpace(task.WorkerLeaseId)
+            && task.WorkerLeaseExpiresAt != null)
+            eligible = f.Eq(x => x.Status, VideoExportTaskStatus.Processing) & f.Eq(x => x.WorkerLeaseId, task.WorkerLeaseId)
+                & f.Ne(x => x.WorkerLeaseExpiresAt, null)
+                & new MongoDB.Bson.BsonDocument("$expr", new MongoDB.Bson.BsonDocument("$lte",
+                    new MongoDB.Bson.BsonArray { "$WorkerLeaseExpiresAt", "$$NOW" }));
+        else return; // 无持有者证据的旧 Processing 保留，不以时间猜测进程已退出。
+        var update = Builders<VideoExportTask>.Update.Set(x => x.DeploymentSlug, current);
+        if (!completed) update = update.Set(x => x.Status, VideoExportTaskStatus.ScopedQueued)
+            .Set(x => x.CurrentPhase, "export-recovering").Set(x => x.WorkerLeaseId, (string?)null)
+            .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null).Set(x => x.StartedAt, (DateTime?)null);
+        var moved = await db.VideoExportTasks.UpdateOneAsync(identity & eligible
+            & f.Eq(x => x.DeploymentSlug, task.DeploymentSlug) & f.Eq(x => x.ProjectId, task.ProjectId),
+            update, cancellationToken: CancellationToken.None);
+        if (moved.MatchedCount != 1) return;
+        var r = Builders<VideoGenRun>.Filter;
+        var parent = await db.VideoGenRuns.UpdateOneAsync(r.Eq(x => x.Id, run.Id) & r.Eq(x => x.OwnerAdminId, ownerId)
+            & r.Eq(x => x.AppKey, appKey) & r.Eq(x => x.ProjectId, run.ProjectId)
+            & r.Eq(x => x.DeploymentSlug, run.DeploymentSlug) & r.Eq(x => x.LatestExportTaskId, task.Id)
+            & r.Eq(x => x.CancelRequested, false) & r.Eq(x => x.DeletionRequestedAt, null),
+            Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, current), cancellationToken: CancellationToken.None);
+        if (parent.MatchedCount == 1) run.DeploymentSlug = current;
+    }
+
+    private static Task<bool> OwnsExportLinkAsync(MongoDbContext db, VideoExportTask task, string? current, CancellationToken ct)
+    {
+        var f = Builders<VideoExportTask>.Filter;
+        var identity = f.Eq(x => x.Id, task.Id) & f.Eq(x => x.RunId, task.RunId)
+            & f.Eq(x => x.OwnerAdminId, task.OwnerAdminId) & f.Eq(x => x.AppKey, task.AppKey)
+            & f.Eq(x => x.ProjectId, task.ProjectId) & f.Eq(x => x.DeploymentSlug, current);
+        if (task.WorkerLeaseId == null)
+            identity &= f.In(x => x.Status, new[] { VideoExportTaskStatus.ScopedQueued, VideoExportTaskStatus.Queued });
+        else identity &= f.Eq(x => x.Status, VideoExportTaskStatus.Processing) & f.Eq(x => x.WorkerLeaseId, task.WorkerLeaseId)
+            & new MongoDB.Bson.BsonDocument("$expr", new MongoDB.Bson.BsonDocument("$gt",
+                new MongoDB.Bson.BsonArray { "$WorkerLeaseExpiresAt", "$$NOW" }));
+        return db.VideoExportTasks.Find(identity).AnyAsync(ct);
+    }
+
+    public static async Task<VideoGenRun?> LinkExportTaskAsync(MongoDbContext db, VideoExportTask task,
+        string? current, string? durable, CancellationToken ct, int retries = 1)
+    {
+        if (task.DeploymentSlug != current) return null;
+        var f = Builders<VideoGenRun>.Filter;
+        var project = string.IsNullOrEmpty(task.ProjectId)
+            ? f.Eq(x => x.ProjectId, null) | f.Eq(x => x.ProjectId, string.Empty) : f.Eq(x => x.ProjectId, task.ProjectId);
+        var run = await db.VideoGenRuns.Find(f.Eq(x => x.Id, task.RunId) & f.Eq(x => x.OwnerAdminId, task.OwnerAdminId)
+            & f.Eq(x => x.AppKey, task.AppKey) & project).FirstOrDefaultAsync(ct);
+        if (run == null || !IsExportBranchScope(run.DeploymentSlug, current, durable) || run.CancelRequested
+            || run.DeletionRequestedAt != null || run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Rendering)
+            || run.Scenes.Count == 0 || run.Scenes.Any(x => x.Status != SceneItemStatus.Done || string.IsNullOrWhiteSpace(x.VideoUrl))) return null;
+        var holder = task.WorkerLeaseId ?? "pending:" + task.Id;
+        if (run.LatestExportTaskId != null && run.LatestExportTaskId != task.Id)
+        {
+            if (run.Status != VideoGenRunStatus.Editing) return null;
+            var previous = await db.VideoExportTasks.Find(x => x.Id == run.LatestExportTaskId
+                && x.RunId == run.Id && x.OwnerAdminId == task.OwnerAdminId && x.AppKey == task.AppKey
+                && x.ProjectId == task.ProjectId).FirstOrDefaultAsync(ct);
+            if (previous?.Status is not (VideoExportTaskStatus.Failed or VideoExportTaskStatus.Cancelled
+                or VideoExportTaskStatus.Completed)) return null;
+        }
+        if (!await OwnsExportLinkAsync(db, task, current, ct)) return null;
+        var changed = await db.VideoGenRuns.UpdateOneAsync(f.Eq(x => x.Id, run.Id)
+            & f.Eq(x => x.OwnerAdminId, task.OwnerAdminId) & f.Eq(x => x.AppKey, task.AppKey) & project
+            & f.Eq(x => x.Status, run.Status) & f.Eq(x => x.DeploymentSlug, run.DeploymentSlug)
+            & f.Eq(x => x.LatestExportTaskId, run.LatestExportTaskId) & f.Eq(x => x.CancelRequested, false)
+            & f.Eq(x => x.DeletionRequestedAt, null) & f.Eq(x => x.ExportHolderLeaseId, run.ExportHolderLeaseId),
+            Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, current).Set(x => x.Status, VideoGenRunStatus.Rendering)
+                .Set(x => x.LatestExportTaskId, task.Id).Set(x => x.ExportRequested, false)
+                .Set(x => x.ExportErrorMessage, (string?)null).Set(x => x.CurrentPhase, "export-queued").Set(x => x.PhaseProgress, 1)
+                .Set(x => x.ExportHolderLeaseId, holder),
+            cancellationToken: CancellationToken.None);
+        if (changed.MatchedCount != 1)
+        {
+            // 请求与 Worker 可同时关联同一任务；只接受已建立的同身份同任务关联。
+            run = await db.VideoGenRuns.Find(f.Eq(x => x.Id, task.RunId)
+                & f.Eq(x => x.OwnerAdminId, task.OwnerAdminId) & f.Eq(x => x.AppKey, task.AppKey) & project
+                & f.Eq(x => x.DeploymentSlug, current) & f.Eq(x => x.LatestExportTaskId, task.Id)
+                & f.Eq(x => x.CancelRequested, false) & f.Eq(x => x.DeletionRequestedAt, null)
+                & f.In(x => x.Status, new[] { VideoGenRunStatus.Rendering, VideoGenRunStatus.Completed }))
+                .FirstOrDefaultAsync(ct);
+            if (run == null) return null;
+            if (run.ExportHolderLeaseId != holder)
+                return retries > 0 ? await LinkExportTaskAsync(db, task, current, durable, ct, retries - 1) : null;
+            if (run.Status == VideoGenRunStatus.Completed) return run;
+        }
+        if (!string.IsNullOrWhiteSpace(run.ProjectId))
+        {
+            var parentProject = await db.VideoProjects.Find(x => x.Id == run.ProjectId
+                && x.OwnerAdminId == task.OwnerAdminId && x.AppKey == task.AppKey && x.LatestRunId == run.Id)
+                .FirstOrDefaultAsync(ct);
+            if (parentProject?.Status is VideoProjectStatus.Editing or VideoProjectStatus.Rendering or VideoProjectStatus.Completed
+                && (parentProject.Status != VideoProjectStatus.Completed || parentProject.LatestExportTaskId != task.Id))
+            {
+                var replace = parentProject.LatestExportTaskId == null || parentProject.LatestExportTaskId == task.Id;
+                if (!replace)
+                {
+                    var previous = await db.VideoExportTasks.Find(x => x.Id == parentProject.LatestExportTaskId
+                        && x.RunId == run.Id && x.OwnerAdminId == task.OwnerAdminId && x.AppKey == task.AppKey
+                        && x.ProjectId == task.ProjectId).FirstOrDefaultAsync(ct);
+                    replace = previous?.Status is VideoExportTaskStatus.Failed or VideoExportTaskStatus.Cancelled or VideoExportTaskStatus.Completed;
+                }
+                if (replace && await OwnsExportLinkAsync(db, task, current, ct))
+                {
+                    var synced = await db.VideoProjects.UpdateOneAsync(x => x.Id == parentProject.Id && x.OwnerAdminId == task.OwnerAdminId
+                        && x.AppKey == task.AppKey && x.LatestRunId == run.Id
+                        && x.LatestExportTaskId == parentProject.LatestExportTaskId && x.Status == parentProject.Status
+                        && x.ExportHolderLeaseId == parentProject.ExportHolderLeaseId,
+                        Builders<VideoProject>.Update.Set(x => x.LatestExportTaskId, task.Id)
+                            .Set(x => x.Status, VideoProjectStatus.Rendering).Set(x => x.UpdatedAt, DateTime.UtcNow)
+                            .Set(x => x.ExportHolderLeaseId, holder),
+                        cancellationToken: CancellationToken.None);
+                    if (synced.MatchedCount != 1)
+                        return retries > 0 ? await LinkExportTaskAsync(db, task, current, durable, ct, retries - 1) : null;
+                }
+            }
+        }
+        run.DeploymentSlug = current;run.Status = VideoGenRunStatus.Rendering;run.LatestExportTaskId = task.Id;run.ExportHolderLeaseId = holder;
+        return run;
+    }
+
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _runStore;
     private readonly IAssetStorage _assetStorage;
@@ -495,23 +644,25 @@ public class VideoGenService : IVideoGenService
     {
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
                   ?? throw new KeyNotFoundException("任务不存在");
+        if (!IsExportBranchScope(run.DeploymentSlug, ExportDeploymentScope, ExportDurableScope))
+            throw new InvalidOperationException("请在任务所属部署中导出，未跨部署创建任务");
         if (run.Mode != VideoGenMode.Storyboard)
             throw new InvalidOperationException("仅分镜项目需要合成导出");
+        var existing = await _db.VideoExportTasks.Find(task =>
+                task.RunId == runId && task.OwnerAdminId == ownerAdminId && task.AppKey == run.AppKey &&
+                (task.Status == VideoExportTaskStatus.Queued || task.Status == VideoExportTaskStatus.ScopedQueued || task.Status == VideoExportTaskStatus.Processing))
+            .FirstOrDefaultAsync(ct);
+        if (existing != null) return existing;
+
         if (run.Status != VideoGenRunStatus.Editing)
             throw new InvalidOperationException("当前任务不在可导出状态");
         if (run.Scenes.Count == 0 || run.Scenes.Any(scene => scene.Status != SceneItemStatus.Done || string.IsNullOrWhiteSpace(scene.VideoUrl)))
             throw new InvalidOperationException("所有分镜生成完成后才能导出完整视频");
 
-        var existing = await _db.VideoExportTasks.Find(task =>
-                task.RunId == runId && task.OwnerAdminId == ownerAdminId &&
-                (task.Status == VideoExportTaskStatus.Queued || task.Status == VideoExportTaskStatus.Processing))
-            .FirstOrDefaultAsync(ct);
-        if (existing != null) return existing;
-
         var task = new VideoExportTask
         {
             AppKey = run.AppKey,
-            DeploymentSlug = run.DeploymentSlug,
+            DeploymentSlug = ExportDeploymentScope,
             OwnerAdminId = ownerAdminId,
             ProjectId = run.ProjectId ?? string.Empty,
             RunId = run.Id,
@@ -519,25 +670,39 @@ public class VideoGenService : IVideoGenService
         };
         await _db.VideoExportTasks.InsertOneAsync(task, cancellationToken: ct);
 
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
-            Builders<VideoGenRun>.Update
-                .Set(x => x.Status, VideoGenRunStatus.Rendering)
-                .Set(x => x.ExportRequested, false)
-                .Set(x => x.LatestExportTaskId, task.Id)
-                .Set(x => x.ExportErrorMessage, (string?)null)
-                .Set(x => x.CurrentPhase, "export-queued")
-                .Set(x => x.PhaseProgress, 1),
-            cancellationToken: ct);
-        if (!string.IsNullOrWhiteSpace(run.ProjectId))
+        async Task<VideoExportTask?> ClaimedByWorkerAsync() => await _db.VideoExportTasks.Find(x => x.Id == task.Id
+            && x.RunId == runId && x.OwnerAdminId == ownerAdminId && x.AppKey == run.AppKey
+            && x.ProjectId == task.ProjectId && x.DeploymentSlug == ExportDeploymentScope
+            && (x.Status == VideoExportTaskStatus.Processing || x.Status == VideoExportTaskStatus.Completed)).FirstOrDefaultAsync(ct);
+        if (await LinkExportTaskAsync(_db, task, ExportDeploymentScope, ExportDurableScope, ct) == null)
         {
-            await _db.VideoProjects.UpdateOneAsync(
-                x => x.Id == run.ProjectId && x.OwnerAdminId == ownerAdminId,
-                Builders<VideoProject>.Update
-                    .Set(x => x.LatestExportTaskId, task.Id)
-                    .Set(x => x.Status, VideoProjectStatus.Rendering)
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: ct);
+            var claimed = await ClaimedByWorkerAsync();
+            if (claimed != null) return claimed;
+            var failed = await _db.VideoExportTasks.UpdateOneAsync(x => x.Id == task.Id && x.OwnerAdminId == ownerAdminId
+                    && x.AppKey == run.AppKey && x.RunId == runId && x.ProjectId == task.ProjectId
+                    && x.DeploymentSlug == ExportDeploymentScope && x.Status == VideoExportTaskStatus.ScopedQueued,
+                Builders<VideoExportTask>.Update.Set(x => x.Status, VideoExportTaskStatus.Failed)
+                    .Set(x => x.ErrorMessage, "导出目标已改变，未启动本次导出").Set(x => x.EndedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+            if (failed.MatchedCount != 1)
+            {
+                claimed = await ClaimedByWorkerAsync();
+                if (claimed != null) return claimed;
+            }
+            else
+            {
+                await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId && x.OwnerAdminId == ownerAdminId
+                    && x.AppKey == run.AppKey && x.DeploymentSlug == ExportDeploymentScope
+                    && x.LatestExportTaskId == task.Id && x.ExportHolderLeaseId == "pending:" + task.Id
+                    && x.Status == VideoGenRunStatus.Rendering && !x.CancelRequested && x.DeletionRequestedAt == null,
+                    Builders<VideoGenRun>.Update.Set(x => x.Status, VideoGenRunStatus.Editing)
+                        .Set(x => x.ExportErrorMessage, "导出目标已改变，未启动本次导出"), cancellationToken: CancellationToken.None);
+                if (!string.IsNullOrWhiteSpace(run.ProjectId)) await _db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId && x.OwnerAdminId == ownerAdminId
+                    && x.AppKey == run.AppKey && x.LatestRunId == runId && x.LatestExportTaskId == task.Id
+                    && x.ExportHolderLeaseId == "pending:" + task.Id && x.Status == VideoProjectStatus.Rendering,
+                    Builders<VideoProject>.Update.Set(x => x.Status, VideoProjectStatus.Editing), cancellationToken: CancellationToken.None);
+            }
+            throw new InvalidOperationException("导出目标已改变，未启动本次导出");
         }
         await PublishEventAsync(runId, "export.queued", new { taskId = task.Id, sceneCount = run.Scenes.Count });
         return task;
@@ -588,6 +753,11 @@ public class VideoGenService : IVideoGenService
     {
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct);
         if (run == null) return false;
+        if (run.Status == VideoGenRunStatus.Cancelled)
+        {
+            await CancelRunExportsAsync(run);
+            return true;
+        }
         if (run.Status is VideoGenRunStatus.Completed or VideoGenRunStatus.Failed or VideoGenRunStatus.Cancelled)
             return true;
 
@@ -604,6 +774,7 @@ public class VideoGenService : IVideoGenService
                 .Set(x => x.Status, VideoGenRunStatus.Cancelled).Set(x => x.EndedAt, now),
             cancellationToken: ct);
         if (cancelled.ModifiedCount == 0) return true;
+        await CancelRunExportsAsync(run);
 
         if (!string.IsNullOrWhiteSpace(run.ProjectId))
             await _db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId && x.OwnerAdminId == ownerAdminId
@@ -614,6 +785,14 @@ public class VideoGenService : IVideoGenService
         await PublishEventAsync(runId, "run.cancelled", new { });
         return true;
     }
+
+    private Task<UpdateResult> CancelRunExportsAsync(VideoGenRun run)
+        => _db.VideoExportTasks.UpdateManyAsync(x => x.RunId == run.Id && x.OwnerAdminId == run.OwnerAdminId
+            && x.AppKey == run.AppKey && (x.Status == VideoExportTaskStatus.Queued
+                || x.Status == VideoExportTaskStatus.ScopedQueued || x.Status == VideoExportTaskStatus.Processing),
+            Builders<VideoExportTask>.Update.Set(x => x.Status, VideoExportTaskStatus.Cancelled)
+                .Set(x => x.CurrentPhase, "cancelled").Set(x => x.EndedAt, DateTime.UtcNow)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null), cancellationToken: CancellationToken.None);
 
     public async Task<DeleteVideoGenRunResult?> DeleteRunAsync(
         string runId,

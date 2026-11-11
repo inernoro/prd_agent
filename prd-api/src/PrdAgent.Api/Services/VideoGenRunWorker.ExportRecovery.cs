@@ -1,24 +1,27 @@
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services;
 
 public partial class VideoGenRunWorker
 {
-    private FilterDefinition<VideoGenRun> ExportRunIdentity(VideoGenRun run)
+    private FilterDefinition<VideoGenRun> ExportRunIdentity(VideoGenRun run, VideoExportTask? task = null)
     {
         var f = Builders<VideoGenRun>.Filter;
         return f.Eq(x => x.Id, run.Id) & f.Eq(x => x.OwnerAdminId, run.OwnerAdminId)
             & f.Eq(x => x.AppKey, run.AppKey) & f.Eq(x => x.ProjectId, run.ProjectId)
-            & f.Eq(x => x.DeploymentSlug, QueueDeploymentScope)
+            & f.Eq(x => x.ExportHolderLeaseId, task?.WorkerLeaseId ?? run.ExportHolderLeaseId)
+            & f.Eq(x => x.DeploymentSlug, run.DeploymentSlug)
             & f.Eq(x => x.CancelRequested, false) & f.Eq(x => x.DeletionRequestedAt, null);
     }
 
-    private Task<UpdateResult> UpdateExportProjectAsync(VideoGenRun run, string status)
+    private Task<UpdateResult> UpdateExportProjectAsync(VideoGenRun run, string status, VideoExportTask? task = null)
         => _db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId && x.OwnerAdminId == run.OwnerAdminId
             && x.AppKey == run.AppKey && x.LatestRunId == run.Id
-            && x.LatestExportTaskId == run.LatestExportTaskId && x.Status == VideoProjectStatus.Rendering,
+            && x.LatestExportTaskId == run.LatestExportTaskId && x.Status == VideoProjectStatus.Rendering
+            && x.ExportHolderLeaseId == (task == null ? run.ExportHolderLeaseId : task.WorkerLeaseId),
             Builders<VideoProject>.Update.Set(x => x.Status, status).Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
 
@@ -38,15 +41,13 @@ public partial class VideoGenRunWorker
             || run.DeploymentSlug != QueueDeploymentScope) return false;
         var endedAt = DateTime.UtcNow;
         var recorded = await _db.VideoExportTasks.UpdateOneAsync(
-            x => x.Id == task.Id && x.RunId == run.Id && x.OwnerAdminId == run.OwnerAdminId
-                && x.AppKey == run.AppKey && x.ProjectId == task.ProjectId
-                && x.DeploymentSlug == QueueDeploymentScope && x.Status == VideoExportTaskStatus.Processing
-                && x.StartedAt == task.StartedAt,
+            OwnedExportHolder(task) & Builders<VideoExportTask>.Filter.Eq(x => x.StartedAt, task.StartedAt),
             Builders<VideoExportTask>.Update.Set(x => x.Status, VideoExportTaskStatus.Completed)
                 .Set(x => x.CurrentPhase, "completed").Set(x => x.Progress, 100)
                 .Set(x => x.OutputUrl, stored.Url).Set(x => x.OutputSha256, stored.Sha256)
                 .Set(x => x.TotalCost, cost).Set(x => x.ErrorMessage, (string?)null)
-                .Set(x => x.EndedAt, endedAt).Set(x => x.RunReconciledAt, (DateTime?)null),
+                .Set(x => x.EndedAt, endedAt).Set(x => x.RunReconciledAt, (DateTime?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null),
             cancellationToken: CancellationToken.None);
         if (recorded.MatchedCount != 1) return false;
         task.Status = VideoExportTaskStatus.Completed; task.OutputUrl = stored.Url;
@@ -75,7 +76,7 @@ public partial class VideoGenRunWorker
             : f.Eq(x => x.ProjectId, task.ProjectId);
         var run = await _db.VideoGenRuns.Find(f.Eq(x => x.Id, task.RunId)
             & f.Eq(x => x.OwnerAdminId, task.OwnerAdminId) & f.Eq(x => x.AppKey, task.AppKey)
-            & projectIdentity & f.Eq(x => x.DeploymentSlug, QueueDeploymentScope))
+            & projectIdentity)
             .FirstOrDefaultAsync(ct);
         if (run != null && !run.CancelRequested && run.DeletionRequestedAt == null
             && run.LatestExportTaskId == task.Id
@@ -83,12 +84,15 @@ public partial class VideoGenRunWorker
             && (run.Status != VideoGenRunStatus.Completed || string.IsNullOrWhiteSpace(run.VideoAssetUrl)
                 || run.VideoAssetUrl == task.OutputUrl && run.VideoAssetSha256 == task.OutputSha256))
         {
+            // 真正待交接才等待；取消、删除或已被取代的回执走下面的保留式收口。
+            if (run.DeploymentSlug != QueueDeploymentScope) return false;
             // 已完成但记录了另一结果时按已取代处理，不阻塞后续回执，也不覆盖新结果。
             var completed = await _db.VideoGenRuns.UpdateOneAsync(
                 ExportRunIdentity(run) & f.Eq(x => x.Status, run.Status)
                     & f.Eq(x => x.LatestExportTaskId, task.Id) & f.Eq(x => x.VideoAssetUrl, run.VideoAssetUrl)
                     & f.Eq(x => x.VideoAssetSha256, run.VideoAssetSha256),
-                CompletedExportRunUpdate(task.OutputUrl, task.OutputSha256, task.TotalCost, task.EndedAt ?? DateTime.UtcNow),
+                CompletedExportRunUpdate(task.OutputUrl, task.OutputSha256, task.TotalCost, task.EndedAt ?? DateTime.UtcNow)
+                    .Set(x => x.DeploymentSlug, QueueDeploymentScope),
                 cancellationToken: CancellationToken.None);
             if (completed.MatchedCount != 1) return false;
             if (!string.IsNullOrWhiteSpace(run.ProjectId))
@@ -111,9 +115,9 @@ public partial class VideoGenRunWorker
         // 取消、删除或后续导出已取代它时不改 run/project。任务仍保留为输出引用，不删对象。
         var marked = await _db.VideoExportTasks.UpdateOneAsync(x => x.Id == task.Id && x.RunId == task.RunId
             && x.OwnerAdminId == task.OwnerAdminId && x.AppKey == task.AppKey && x.ProjectId == task.ProjectId
-            && x.DeploymentSlug == QueueDeploymentScope && x.Status == VideoExportTaskStatus.Completed
+            && x.DeploymentSlug == task.DeploymentSlug && x.Status == VideoExportTaskStatus.Completed
             && x.OutputUrl == task.OutputUrl && x.OutputSha256 == task.OutputSha256 && x.RunReconciledAt == null,
-            Builders<VideoExportTask>.Update.Set(x => x.RunReconciledAt, DateTime.UtcNow),
+            Builders<VideoExportTask>.Update.Set(x => x.RunReconciledAt, DateTime.UtcNow).Set(x => x.DeploymentSlug, QueueDeploymentScope),
             cancellationToken: CancellationToken.None);
         return marked.MatchedCount == 1;
     }
