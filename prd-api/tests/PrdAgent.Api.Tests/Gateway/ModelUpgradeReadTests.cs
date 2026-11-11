@@ -43,6 +43,22 @@ public class ModelUpgradeReadTests
         Assert.Contains("未启用", view.ActionDisabledReason);
     }
     [Fact]
+    public async Task AdoptedCandidateExplainsAlreadyCurrentWithoutClaimingValidationFailed()
+    {
+        var db = new Mock<IMongoDatabase>(MockBehavior.Strict);
+        Collection(db, "llmgw_logical_models", Logical());
+        Collection(db, ModelUpgradeService.CollectionName, new ModelUpgradeState
+        {
+            Phase = "promoted", ValidationStatus = "passed", Gates = new() { Validation = true },
+            Candidate = new() { ModelId = "candidate-model", ValidatedAt = DateTime.UtcNow },
+        });
+        Collection(db, "llmgw_model_offerings", new BsonDocument { { "_id", "promoted-route" }, { "TargetKind", "model" }, { "TargetId", "candidate-model" } });
+        Collection(db, "llmgw_models", new BsonDocument { { "_id", "candidate-model" }, { "PlatformId", "official" }, { "ModelName", "gpt-image-2.6" } });
+        var view = await Service(db).ReadAsync("tenant", "stable");
+        Assert.Equal("promoted", view.Phase); Assert.Equal("passed", view.ValidationStatus); Assert.True(view.Gates.Validation);
+        Assert.False(view.CanPromote); Assert.Equal("当前已采用此候选版本。", view.ActionDisabledReason);
+    }
+    [Fact]
     public async Task ReadReturnsActualCanaryModeRatherThanDefaultEvidence()
     {
         var db = new Mock<IMongoDatabase>(MockBehavior.Strict);
