@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fixture-only APT normalization and all four workflow consumer contracts."""
+"""Fixture-only APT normalization and host APT and pinned browser consumer contracts."""
 
 import importlib.util
 from pathlib import Path
@@ -206,21 +206,23 @@ class WorkflowAptWiring(unittest.TestCase):
         self.assertRegex(job, r'image: mcr\.microsoft\.com/playwright:[^\n]+@sha256:[a-f0-9]{64}\n')
         self.assertNotIn('--privileged', job)
         self.assertNotIn('--ipc=host', job)
-        self.assertIn('pnpm exec playwright-core install --with-deps chromium', job)
+        self.assertIn('run: pnpm exec playwright-core install chromium', job)
+        self.assertNotIn('--with-deps', job)
+        self.assertNotIn('sudo ', job)
+        self.assertNotIn('normalize-ubuntu-apt-sources.py', job)
         self.assertIn('run: pnpm test', job)
 
-    def test_all_four_ci_consumers_explicitly_select_the_fixed_backup(self):
+    def test_all_host_apt_consumers_explicitly_select_the_fixed_backup(self):
         source = WORKFLOW.read_text()
-        self.assertEqual(source.count('scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel'), 4)
+        self.assertEqual(source.count('scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel'), 3)
 
-    def test_all_four_real_consumers_prepare_sources_before_unchanged_dependency_commands(self):
+    def test_all_host_consumers_prepare_sources_before_unchanged_dependency_commands(self):
         source = WORKFLOW.read_text()
         helper = 'sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root /'
         steps = {
             'Install video test dependencies': ['sudo apt-get update', 'sudo apt-get install -y ffmpeg'],
             'Install Chromium for recording acceptance': ['pnpm exec playwright install --with-deps chromium'],
             'Install system dependencies (Linux)': ['sudo apt-get update', 'sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf'],
-            'Install isolated quality browser': ['pnpm exec playwright-core install --with-deps chromium'],
         }
         for name, commands in steps.items():
             with self.subTest(step=name):
@@ -234,10 +236,10 @@ class WorkflowAptWiring(unittest.TestCase):
                 for command in commands:
                     self.assertIn(command, executable)
                     self.assertLess(executable.index(helper), executable.index(command))
-        self.assertEqual(source.count(helper), 4)
+        self.assertEqual(source.count(helper), 3)
         self.assertNotIn('sudo sed -i', source, 'the former partial Azure rewrite must not survive')
 
-    def test_helper_changes_trigger_all_four_jobs_and_fixture_guard_is_unconditional(self):
+    def test_helper_changes_trigger_actual_host_jobs_and_fixture_guard_is_unconditional(self):
         source = WORKFLOW.read_text()
         helper = 'sudo python3 \"${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py\" --root /'
         consumers = []
@@ -247,7 +249,7 @@ class WorkflowAptWiring(unittest.TestCase):
             condition = re.search(r'(?m)^    if: needs\.changes\.outputs\.([a-z_]+)', job[2])
             self.assertIsNotNone(condition, f'APT consumer {job[1]} must declare its change filter')
             consumers.append(condition[1])
-        self.assertEqual(len(consumers), 4)
+        self.assertEqual(len(consumers), 3)
         for section in consumers:
             block = re.search(rf'(?ms)^            {section}:\n(.*?)(?=^            [a-z_]+:)', source)
             self.assertIsNotNone(block)
