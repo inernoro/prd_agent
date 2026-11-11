@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import {
   Crown, Users, Bot, DollarSign, Link2, TrendingUp,
   MessageSquare, Image, Bug, Zap, Activity,
@@ -25,11 +25,11 @@ import type {
   ExecutiveTeamMember,
   ExecutiveAgentStat,
   ExecutiveModelStat,
-  TeamInsights,
 } from '@/services/contracts/executive';
 import type { EChartsOption } from 'echarts';
 import { Tooltip } from '@/components/ui/Tooltip';
 import TeamInsightsPanel from '@/pages/executive/TeamInsightsPanel';
+import { useExecutiveQuery } from '@/pages/executive/useExecutiveQuery';
 
 // ─── Enterprise Dashboard Design Tokens ──────────────────────────────
 // Linear / Vercel inspired: flat, controlled, monochrome primary
@@ -662,41 +662,17 @@ export default function ExecutiveDashboardPage() {
   const { isMobile } = useBreakpoint();
   const [activeTab, setActiveTab] = useState('team');
   const [days, setDays] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-
-  const [overview, setOverview] = useState<ExecutiveOverview | null>(null);
-  const [trends, setTrends] = useState<ExecutiveTrendItem[]>([]);
-  const [team, setTeam] = useState<ExecutiveTeamMember[]>([]);
-  const [agents, setAgents] = useState<ExecutiveAgentStat[]>([]);
-  const [models, setModels] = useState<ExecutiveModelStat[]>([]);
-  const [teamInsights, setTeamInsights] = useState<TeamInsights | null>(null);
-
-  const fetchAll = useCallback(async (d: number, isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    else setLoading(true);
-    try {
-      const [ovRes, trRes, tmRes, agRes, mdRes, tiRes] = await Promise.all([
-        getExecutiveOverview(d),
-        getExecutiveTrends(Math.max(d, 14)),
-        getExecutiveTeam(d),
-        getExecutiveAgents(d),
-        getExecutiveModels(d),
-        getTeamInsights(d),
-      ]);
-      if (ovRes.success) setOverview(ovRes.data);
-      if (trRes.success) setTrends(trRes.data);
-      if (tmRes.success) setTeam(tmRes.data);
-      if (agRes.success) setAgents(agRes.data);
-      if (mdRes.success) setModels(mdRes.data);
-      if (tiRes.success) setTeamInsights(tiRes.data);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => { fetchAll(days); }, [days, fetchAll]);
+  const [revision, setRevision] = useState(0);
+  const overviewQuery = useExecutiveQuery(getExecutiveOverview, days, activeTab === 'overview', revision);
+  const trendsQuery = useExecutiveQuery(getExecutiveTrends, Math.max(days, 14), activeTab === 'overview', revision);
+  const teamQuery = useExecutiveQuery(getExecutiveTeam, days, activeTab === 'agents', revision);
+  const agentsQuery = useExecutiveQuery(getExecutiveAgents, days, activeTab === 'overview' || activeTab === 'agents', revision);
+  const modelsQuery = useExecutiveQuery(getExecutiveModels, days, activeTab === 'cost', revision);
+  const insightsQuery = useExecutiveQuery(getTeamInsights, days, activeTab === 'team', revision);
+  const queries = [overviewQuery, trendsQuery, teamQuery, agentsQuery, modelsQuery, insightsQuery];
+  const loading = queries.some(query => query.loading);
+  const error = queries.find(query => query.error)?.error;
+  const refreshing = loading;
 
   return (
     <div className="space-y-5 relative">
@@ -723,7 +699,7 @@ export default function ExecutiveDashboardPage() {
               {DAYS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
             <button
-              onClick={() => fetchAll(days, true)}
+              onClick={() => setRevision(value => value + 1)}
               disabled={refreshing}
               className="p-1.5 rounded-lg transition-all hover-bg-soft"
               style={{ color: refreshing ? D.primary : D.text3 }}
@@ -735,10 +711,11 @@ export default function ExecutiveDashboardPage() {
         )}
       />
 
-      {activeTab === 'overview' && <OverviewTab overview={overview} trends={trends} agents={agents} loading={loading} />}
-      {activeTab === 'team' && <TeamInsightsPanel data={teamInsights} loading={loading} />}
-      {activeTab === 'agents' && <AgentUsageTab agents={agents} team={team} loading={loading} />}
-      {activeTab === 'cost' && <CostCenterTab models={models} loading={loading} />}
+      {error && <div role="alert" className="text-sm" style={{ color: D.danger }}>统计加载失败：{error}。<button className="ml-2 underline" onClick={() => setRevision(value => value + 1)}>重试</button></div>}
+      {activeTab === 'overview' && <OverviewTab overview={overviewQuery.data ?? null} trends={trendsQuery.data ?? []} agents={agentsQuery.data ?? []} loading={overviewQuery.loading} />}
+      {activeTab === 'team' && <TeamInsightsPanel data={insightsQuery.data ?? null} loading={insightsQuery.loading} />}
+      {activeTab === 'agents' && <AgentUsageTab agents={agentsQuery.data ?? []} team={teamQuery.data ?? []} loading={agentsQuery.loading} />}
+      {activeTab === 'cost' && <CostCenterTab models={modelsQuery.data ?? []} loading={modelsQuery.loading} />}
       {activeTab === 'integrations' && <IntegrationsTab />}
     </div>
   );
