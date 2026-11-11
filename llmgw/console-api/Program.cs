@@ -1,3 +1,4 @@
+using PrdAgent.LlmGw.ModelUpgrades;
 // AI 大模型网关 —— 独立观测/登录后端（与 MAP 物理隔离）。
 //
 // 设计意图（见 doc/design.platform.llm-gateway.physical-isolation.md）：
@@ -231,6 +232,8 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
 });
+
+builder.Services.AddModelUpgrades(gatewayDatabase, mapDatabase, config, internalTenantId);
 
 var app = builder.Build();
 
@@ -3602,6 +3605,7 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
 // 平台列表（密钥字段绝不外泄，只回 hasKey）
 var upstreamProxies = new UpstreamProxyService(gatewayDatabase, config, internalTenantId);
 upstreamProxies.MapEndpoints(app, jsonOptions);
+app.MapModelUpgrades(jsonOptions);
 
 app.MapGet("/gw/platforms", async (HttpContext http) =>
 {
