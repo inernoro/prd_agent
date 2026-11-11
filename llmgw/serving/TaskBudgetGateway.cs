@@ -53,6 +53,8 @@ public sealed class TaskBudgetGateway(
                 && x.TenantId == permit.TenantId && x.UserId == permit.ActorUserId).FirstOrDefaultAsync(ct);
         if (scope is null || !scope.AllowedAppCallerCodes.Contains(caller, StringComparer.OrdinalIgnoreCase))
             throw Denied("GATEWAY_TASK_BUDGET_BINDING_INVALID", "任务金额合同与许可不匹配，已停止发送。");
+        if (scope.CanaryUnitCostUpperBoundUsd is > 0 && !IsBoundedCanaryPermit(permit))
+            throw Denied("GATEWAY_CANARY_BUDGET_SCOPE_DENIED", "此按次金额合同仅限已准入的单次候选验收。");
         return await counter.ResolveTaskPolicyAsync(scope.Id, permit.TenantId, permit.ActorUserId, RunId(context), caller, ct)
             ?? throw Denied("GATEWAY_TASK_BUDGET_INACTIVE", "任务金额合同已关闭或失效，已停止发送。");
     }
@@ -63,7 +65,7 @@ public sealed class TaskBudgetGateway(
         GatewayTaskBudgetPolicy policy, GatewayPhysicalAdmissionContext physical)
         => new(policy.ScopeId, Permit!.TenantId, Permit.ActorUserId, RunId(context), caller, Permit.Id,
             physical.RequestId, physical.RequestBodyUtf8Bytes, physical.EffectiveMaxOutputTokens,
-            physical.LogicalModelPublicId, physical.Provider, physical.Model, physical.OfferingId, TaskPermitId: Permit.Id, Protocol: physical.Protocol);
+            physical.LogicalModelPublicId, physical.Provider, physical.Model, physical.OfferingId, TaskPermitId: Permit.Id, Protocol: physical.Protocol, BoundedCanaryCall: policy.BoundedCanaryCall);
 
     public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
         => Bound ? SendWithAdmissionAsync(request, (_, _) => Task.FromResult<GatewayResponse?>(null), ct) : inner.SendAsync(request, ct);
@@ -175,9 +177,65 @@ public sealed class TaskBudgetGateway(
         finally { if (reserved is not null) await counter.FinalizeTaskAsync(reserved, usage, outcome, CancellationToken.None); }
     }
 
-    public Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
-        => Bound ? Task.FromResult(GatewayRawResponse.Fail("GATEWAY_TASK_BUDGET_PRICING_UNSUPPORTED", "此原始或媒体请求尚无物理计价合同，已停止发送", 409))
-            : inner.SendRawWithResolutionAsync(request, resolution, ct);
+    public async Task<GatewayRawResponse> SendRawWithResolutionAsync(GatewayRawRequest request, GatewayModelResolution resolution, CancellationToken ct = default)
+    {
+        if (!Bound) return await inner.SendRawWithResolutionAsync(request, resolution, ct);
+        GatewayTaskBudgetRequest? reserved = null;
+        var outcome = "unknown";
+        GatewayTokenUsage? usage = null;
+        try
+        {
+            var permit = Permit!;
+            var scope = await data.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+                .Find(x => x.Id == permit.BudgetScopeId && x.TaskPermitId == permit.Id
+                    && x.TenantId == permit.TenantId && x.UserId == permit.ActorUserId).FirstOrDefaultAsync(ct);
+            if (!AllowsBoundedImageCanary(permit, scope, request, resolution))
+                return GatewayRawResponse.Fail("GATEWAY_TASK_BUDGET_PRICING_UNSUPPORTED", "此原始或媒体请求尚无匹配的单次候选计价合同，已停止发送", 409);
+            var policy = await counter.ResolveTaskPolicyAsync(scope!.Id, permit.TenantId, permit.ActorUserId,
+                RunId(request.Context), request.AppCallerCode, ct);
+            if (policy?.BoundedCanaryCall != true)
+                return GatewayRawResponse.Fail("GATEWAY_CANARY_BUDGET_INACTIVE", "候选验收金额合同已失效，未发送请求。", 409);
+            var attempt = new GatewayTaskBudgetRequest(scope.Id, permit.TenantId, permit.ActorUserId,
+                RunId(request.Context), request.AppCallerCode, permit.Id, request.Context?.RequestId ?? "",
+                System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(request.CanonicalImageRequest).Length, 1,
+                resolution.LogicalModelPublicId ?? "", resolution.ActualPlatformName ?? resolution.ActualPlatformId ?? "",
+                resolution.ActualModel ?? "", resolution.OfferingId, TaskPermitId: permit.Id,
+                Protocol: resolution.Protocol ?? resolution.PlatformType, BoundedCanaryCall: true);
+            var decision = await counter.TryReserveTaskAsync(attempt, ct);
+            if (!decision.Allowed) return GatewayRawResponse.Fail(decision.ErrorCode, decision.Detail, decision.StatusCode);
+            reserved = attempt;
+            // RequiredOfferingId 禁止回退；物理发送事实只可消费一次，重复发送仍被统一出口拒绝。
+            MarkAdmission(attempt);
+            var response = await inner.SendRawWithResolutionAsync(request, resolution, ct);
+            usage = response.TokenUsage;
+            outcome = response is GatewayResponseRejectedBeforeSend ? GatewayTaskBudgetOutcomes.RejectedBeforeSend
+                : response.Success ? "succeeded" : response.ErrorCode ?? "failed-unknown";
+            return response;
+        }
+        catch (TaskExecutionAdmissionException ex) { return GatewayRawResponse.Fail(ex.Code, ex.Message, ex.StatusCode); }
+        finally { if (reserved is not null) await counter.FinalizeTaskAsync(reserved, usage, outcome, CancellationToken.None); }
+    }
+
+    internal static bool IsBoundedCanaryPermit(GatewayTaskPermitRecord permit)
+        => permit.SourceTask.StartsWith("ModelUpgradeCanaryWorker:", StringComparison.Ordinal)
+           && permit.MaxCalls == 1 && permit.MaxRuns == 1 && !permit.AllowDelegatedSubjects;
+
+    internal static bool AllowsBoundedImageCanary(GatewayTaskPermitRecord permit, GatewayRuntimeBudgetScopeRecord? scope,
+        GatewayRawRequest request, GatewayModelResolution resolution)
+        => IsBoundedCanaryPermit(permit) && scope?.CanaryUnitCostUpperBoundUsd is > 0
+           && scope.MaxPhysicalCalls == 1 && scope.CanaryUnitCostUpperBoundUsd <= scope.AuthorizedLimitUsd
+           && scope.Status == "active" && scope.ExpiresAt > DateTime.UtcNow
+           && scope.ExpectedOfferingId == resolution.OfferingId && request.RequiredOfferingId == resolution.OfferingId
+           && !string.IsNullOrWhiteSpace(resolution.OfferingId)
+           && scope.ExpectedLogicalModelPublicId == resolution.LogicalModelPublicId
+           && scope.ExpectedProvider == (resolution.ActualPlatformName ?? resolution.ActualPlatformId)
+           && scope.ExpectedModel == resolution.ActualModel
+           && GatewayProtocolAliases.NormalizeAdapterKey(scope.PriceProtocol) == GatewayProtocolAliases.OpenAI
+           && GatewayProtocolAliases.NormalizeAdapterKey(resolution.Protocol ?? resolution.PlatformType) == GatewayProtocolAliases.OpenAI
+           && request.ModelType == ModelTypes.ImageGen && !request.IsMultipart && request.RequestBody is null
+           && request.CanonicalImageRequest is { Count: 1, Size: "1024x1024", Quality: "low", MaskBase64: null } image
+           && image.Images.Count == 0 && image.Prompt.Length is > 0 and <= 200;
+
     public Task<GatewayRawResponse> TestUpstreamProfileAsync(GatewayUpstreamProfileTestRequest request, CancellationToken ct = default)
         => Bound ? Task.FromResult(GatewayRawResponse.Fail("GATEWAY_TASK_BUDGET_PRICING_UNSUPPORTED", "任务金额合同不能用于临时供应商配置", 409))
             : inner.TestUpstreamProfileAsync(request, ct);
