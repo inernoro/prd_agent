@@ -670,7 +670,7 @@ public class GatewayDataDomainGuardTests
         // 上一版这里钉的是写死 false 的那种写法，等于反向锁死了缺陷：
         // 认领撞车时用途默认没有赢家，不还就把这个用途弄丢了。
         // 判据见 撞车补偿先分清撞的是哪条索引。
-        Assert.Contains("CompensateAsync(restoreDefaults: claimRace)", consoleProgram);
+        Assert.Contains("CompensateAsync(restoreDefaults: claimRace || identityRace)", consoleProgram);
 
         Assert.Contains("DefaultForAppCallerCodes", consoleProgram);
         Assert.Contains("claimedBy", consoleProgram);
@@ -1573,7 +1573,8 @@ public class GatewayDataDomainGuardTests
         // 模式开关已删除：任何一份 compose 重新出现它，都意味着有人想把旧路径接回来。
         foreach (var compose in new[] { dockerCompose, cdsCompose, devCompose })
         {
-            Assert.DoesNotContain("LlmGateway__Mode", compose);
+            Assert.False(System.Text.RegularExpressions.Regex.IsMatch(compose, @"(?m)^\s*(?:-\s*)?LlmGateway__Mode\s*[:=]"),
+                "旧 Mode 配置不得重新引入；ModelUpgrades 是独立配置命名空间。");
             Assert.DoesNotContain("LlmGateway__HttpAppCallerAllowlist", compose);
             Assert.DoesNotContain("LlmGateway__ShadowFullSample", compose);
             Assert.DoesNotContain("LlmGateway__LogicalModelsRequireHttp", compose);
@@ -6291,10 +6292,12 @@ public class GatewayDataDomainGuardTests
         var program = ReadRepoFile("llmgw/console-api/Program.cs");
 
         var decideAt = program.IndexOf("var claimRace = ex.Message.Contains(", StringComparison.Ordinal);
-        var compensateAt = program.IndexOf("await CompensateAsync(restoreDefaults: claimRace);", StringComparison.Ordinal);
+        var compensateAt = program.IndexOf("await CompensateAsync(restoreDefaults: claimRace || identityRace);", StringComparison.Ordinal);
+        var identityAt = program.IndexOf("var identityRace = ex.Message.Contains(\"uniq_llmgw_model_identity_namespace\"", StringComparison.Ordinal);
+        Assert.True(identityAt >= 0 && identityAt < compensateAt, "兼容身份撞车也应在补偿前识别并恢复未竞争的默认");
         Assert.True(decideAt >= 0, "没找到判「撞的是哪条索引」那一句");
         Assert.True(compensateAt >= 0,
-            "补偿没有按撞车类型决定要不要还默认（应为 CompensateAsync(restoreDefaults: claimRace)）");
+            "补偿没有按撞车类型决定要不要还默认（应为 CompensateAsync(restoreDefaults: claimRace || identityRace)）");
         Assert.True(decideAt < compensateAt,
             "claimRace 算在补偿之后：那等于对两种撞车用同一个答案，认领撞车会把这个用途的默认弄丢");
 
