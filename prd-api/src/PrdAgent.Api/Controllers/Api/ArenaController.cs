@@ -8,6 +8,8 @@ using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Api.Services;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -23,16 +25,46 @@ public sealed class ArenaController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _runStore;
     private readonly IRunQueue _runQueue;
+    private readonly BusinessModelReferenceService _modelReferences;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public ArenaController(MongoDbContext db, IRunEventStore runStore, IRunQueue runQueue)
+    public ArenaController(MongoDbContext db, IRunEventStore runStore, IRunQueue runQueue, BusinessModelReferenceService modelReferences)
     {
         _db = db;
         _runStore = runStore;
         _runQueue = runQueue;
+        _modelReferences = modelReferences;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
+
+    private Task<IReadOnlyList<BusinessModelOption>> ReadModels(CancellationToken ct) =>
+        _modelReferences.GetOptionsAsync(AppCallerRegistry.Desktop.Arena.BattleChat, ModelTypes.Chat, ct);
+
+    private async Task AnnotateSlots(IReadOnlyList<ArenaSlot> slots, CancellationToken ct)
+    {
+        IReadOnlyList<BusinessModelOption> options;
+        try { options = await ReadModels(ct); }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            foreach (var slot in slots)
+            {
+                slot.ModelReferenceStatus = "unknown";
+                slot.ModelReferenceReason = "暂时无法确认模型状态，请稍后刷新；原配置已保留。";
+            }
+            return;
+        }
+        foreach (var slot in slots)
+        {
+            var result = BusinessModelReferenceService.Resolve(options, slot.LogicalModelId, slot.PlatformId, slot.ModelId);
+            slot.ModelReferenceStatus = result.Status;
+            slot.ModelReferenceReason = result.Reason;
+        }
+    }
+
+    [HttpGet("model-options")]
+    public async Task<IActionResult> ModelOptions(CancellationToken ct) =>
+        Ok(ApiResponse<object>.Ok(new { items = await ReadModels(ct) }));
 
     // ─────────────────────────── Groups CRUD ───────────────────────────
 
@@ -52,6 +84,7 @@ public sealed class ArenaController : ControllerBase
             .SortBy(s => s.SortOrder)
             .ToListAsync(ct);
 
+        await AnnotateSlots(slots, ct);
         var slotsByGroup = slots
             .GroupBy(s => s.Group)
             .ToDictionary(g => g.Key, g => g.ToList());
@@ -183,6 +216,7 @@ public sealed class ArenaController : ControllerBase
             .SortBy(s => s.SortOrder)
             .ToListAsync(ct);
 
+        await AnnotateSlots(slots, ct);
         return Ok(ApiResponse<object>.Ok(new { items = slots }));
     }
 
@@ -194,20 +228,20 @@ public sealed class ArenaController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.DisplayName))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "displayName 不能为空"));
-        if (string.IsNullOrWhiteSpace(request.PlatformId))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "platformId 不能为空"));
-        if (string.IsNullOrWhiteSpace(request.ModelId))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "modelId 不能为空"));
+        var reference = BusinessModelReferenceService.Resolve(await ReadModels(ct), request.LogicalModelId, request.PlatformId, request.ModelId);
+        if (!reference.Success)
+            return BadRequest(ApiResponse<object>.Fail("MODEL_REFERENCE_UNAVAILABLE", reference.Reason!));
         if (string.IsNullOrWhiteSpace(request.Group))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "group 不能为空"));
 
         var slot = new ArenaSlot
         {
             DisplayName = request.DisplayName.Trim(),
-            PlatformId = request.PlatformId.Trim(),
-            ModelId = request.ModelId.Trim(),
+            LogicalModelId = reference.LogicalModelId,
+            PlatformId = "logical-model",
+            ModelId = reference.PublicId,
             Group = request.Group.Trim(),
-            SortOrder = request.SortOrder,
+            SortOrder = request.SortOrder ?? 0,
             Enabled = request.Enabled ?? true,
             AvatarColor = request.AvatarColor?.Trim(),
             Description = request.Description?.Trim(),
@@ -233,18 +267,31 @@ public sealed class ArenaController : ControllerBase
         if (existing == null)
             return NotFound(ApiResponse<object>.Fail("SLOT_NOT_FOUND", "Slot 不存在"));
 
+        var changesModel = request.LogicalModelId is not null || request.PlatformId is not null || request.ModelId is not null;
+        BusinessModelReferenceResult? reference = null;
+        if (changesModel || (request.Enabled == true && !existing.Enabled))
+        {
+            reference = BusinessModelReferenceService.Resolve(await ReadModels(ct),
+                request.LogicalModelId ?? existing.LogicalModelId,
+                request.PlatformId ?? existing.PlatformId, request.ModelId ?? existing.ModelId);
+            if (!reference.Success)
+                return BadRequest(ApiResponse<object>.Fail("MODEL_REFERENCE_UNAVAILABLE", reference.Reason!));
+        }
         var update = Builders<ArenaSlot>.Update
             .Set(s => s.DisplayName, (request.DisplayName ?? existing.DisplayName).Trim())
-            .Set(s => s.PlatformId, (request.PlatformId ?? existing.PlatformId).Trim())
-            .Set(s => s.ModelId, (request.ModelId ?? existing.ModelId).Trim())
             .Set(s => s.Group, (request.Group ?? existing.Group).Trim())
-            .Set(s => s.SortOrder, request.SortOrder)
+            .Set(s => s.SortOrder, request.SortOrder ?? existing.SortOrder)
             .Set(s => s.Enabled, request.Enabled ?? existing.Enabled)
             .Set(s => s.AvatarColor, request.AvatarColor?.Trim() ?? existing.AvatarColor)
             .Set(s => s.Description, request.Description?.Trim() ?? existing.Description)
             .Set(s => s.UpdatedAt, DateTime.UtcNow);
 
-        await _db.ArenaSlots.UpdateOneAsync(s => s.Id == id, update, cancellationToken: ct);
+        if (reference is not null)
+            update = update.Set(s => s.LogicalModelId, reference.LogicalModelId)
+                .Set(s => s.PlatformId, "logical-model").Set(s => s.ModelId, reference.PublicId);
+        var result = await _db.ArenaSlots.UpdateOneAsync(s => s.Id == id && s.UpdatedAt == existing.UpdatedAt, update, cancellationToken: ct);
+        if (result.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("CONFIG_CHANGED", "阵容刚刚被修改，请刷新后重试。"));
 
         var updated = await _db.ArenaSlots.Find(s => s.Id == id).FirstOrDefaultAsync(ct);
         return Ok(ApiResponse<object>.Ok(updated));
@@ -276,14 +323,22 @@ public sealed class ArenaController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("SLOT_NOT_FOUND", "Slot 不存在"));
 
         var newEnabled = !slot.Enabled;
+        if (newEnabled)
+        {
+            var reference = BusinessModelReferenceService.Resolve(await ReadModels(ct), slot.LogicalModelId, slot.PlatformId, slot.ModelId);
+            if (!reference.Success)
+                return BadRequest(ApiResponse<object>.Fail("MODEL_REFERENCE_UNAVAILABLE", reference.Reason!));
+        }
 
-        await _db.ArenaSlots.UpdateOneAsync(
-            s => s.Id == id,
+        var result = await _db.ArenaSlots.UpdateOneAsync(
+            s => s.Id == id && s.UpdatedAt == slot.UpdatedAt,
             Builders<ArenaSlot>.Update
                 .Set(s => s.Enabled, newEnabled)
                 .Set(s => s.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
 
+        if (result.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("CONFIG_CHANGED", "阵容刚刚被修改，请刷新后重试。"));
         return Ok(ApiResponse<object>.Ok(new { id, enabled = newEnabled }));
     }
 
@@ -306,6 +361,7 @@ public sealed class ArenaController : ControllerBase
             .SortBy(s => s.SortOrder)
             .ToListAsync(ct);
 
+        await AnnotateSlots(enabledSlots, ct);
         var slotsByGroup = enabledSlots
             .GroupBy(s => s.Group)
             .ToDictionary(g => g.Key, g => g.ToList());
@@ -321,7 +377,10 @@ public sealed class ArenaController : ControllerBase
                 {
                     s.Id,
                     s.PlatformId,
-                    s.ModelId
+                    s.ModelId,
+                    s.LogicalModelId,
+                    s.ModelReferenceStatus,
+                    s.ModelReferenceReason
                 })
             });
 
@@ -354,7 +413,7 @@ public sealed class ArenaController : ControllerBase
         {
             s.Id,
             s.DisplayName,
-            PlatformName = platformNameMap.TryGetValue(s.PlatformId, out var pn) ? pn : s.PlatformId,
+            PlatformName = s.PlatformId == "logical-model" ? "LLM Gateway" : platformNameMap.TryGetValue(s.PlatformId, out var pn) ? pn : "原上游已移除",
             s.AvatarColor,
             s.Description
         });
@@ -375,6 +434,27 @@ public sealed class ArenaController : ControllerBase
         if (request.Slots == null || request.Slots.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "slots 不能为空"));
 
+        // 请求中的模型字段不具备选择权限；以服务端保存的阵容为准，入队前整组校验。
+        var ids = request.Slots.Select(s => s.SlotId?.Trim() ?? "").ToList();
+        if (ids.Any(string.IsNullOrEmpty) || ids.Distinct().Count() != ids.Count)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "阵容包含重复或缺失的成员，请重新选择阵容。"));
+        var storedSlots = await _db.ArenaSlots.Find(Builders<ArenaSlot>.Filter.In(s => s.Id, ids)).ToListAsync(ct);
+        var options = await ReadModels(ct);
+        var runSlots = new List<object>();
+        foreach (var requested in request.Slots)
+        {
+            var stored = storedSlots.SingleOrDefault(s => s.Id == requested.SlotId?.Trim());
+            if (stored is null || !stored.Enabled || stored.Group != request.GroupKey?.Trim())
+                return BadRequest(ApiResponse<object>.Fail("MODEL_REFERENCE_UNAVAILABLE", "阵容已变更，请重新选择阵容后重试。"));
+            var reference = BusinessModelReferenceService.Resolve(options, stored.LogicalModelId, stored.PlatformId, stored.ModelId);
+            if (!reference.Success)
+                return BadRequest(ApiResponse<object>.Fail("MODEL_REFERENCE_UNAVAILABLE", reference.Reason!));
+            runSlots.Add(new {
+                slotId = stored.Id, logicalModelId = reference.LogicalModelId,
+                platformId = "logical-model", modelId = reference.PublicId,
+                label = (requested.Label ?? "").Trim(), labelIndex = requested.LabelIndex
+            });
+        }
         var userId = GetUserId();
         var runId = Guid.NewGuid().ToString("N");
 
@@ -393,14 +473,7 @@ public sealed class ArenaController : ControllerBase
                 prompt = request.Prompt.Trim(),
                 groupKey = (request.GroupKey ?? "").Trim(),
                 userId,
-                slots = request.Slots.Select(s => new
-                {
-                    slotId = (s.SlotId ?? "").Trim(),
-                    platformId = (s.PlatformId ?? "").Trim(),
-                    modelId = (s.ModelId ?? "").Trim(),
-                    label = (s.Label ?? "").Trim(),
-                    labelIndex = s.LabelIndex
-                }),
+                slots = runSlots,
                 attachmentIds = request.AttachmentIds?
                     .Where(id => !string.IsNullOrWhiteSpace(id))
                     .Select(id => id.Trim())
@@ -625,11 +698,12 @@ public class UpsertArenaGroupRequest
 
 public class UpsertArenaSlotRequest
 {
+    public string? LogicalModelId { get; set; }
     public string? DisplayName { get; set; }
     public string? PlatformId { get; set; }
     public string? ModelId { get; set; }
     public string? Group { get; set; }
-    public int SortOrder { get; set; }
+    public int? SortOrder { get; set; }
     public bool? Enabled { get; set; }
     public string? AvatarColor { get; set; }
     public string? Description { get; set; }
