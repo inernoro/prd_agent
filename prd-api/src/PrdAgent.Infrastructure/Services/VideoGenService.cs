@@ -166,18 +166,27 @@ public class VideoGenService : IVideoGenService
     private readonly IRunEventStore _runStore;
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<VideoGenService> _logger;
+    private readonly VideoGenerationRecovery? _generationRecovery;
 
     public VideoGenService(
         MongoDbContext db,
         IRunEventStore runStore,
         IAssetStorage assetStorage,
-        ILogger<VideoGenService> logger)
+        ILogger<VideoGenService> logger,
+        ITaskExecutionCoordinator? taskExecutions = null, LlmGatewayDataContext? gatewayData = null,
+        Microsoft.Extensions.Configuration.IConfiguration? configuration = null)
     {
         _db = db;
         _runStore = runStore;
         _assetStorage = assetStorage;
         _logger = logger;
+        if (taskExecutions != null && gatewayData != null && configuration != null)
+            _generationRecovery = new(db, gatewayData, taskExecutions, configuration);
     }
+
+    public Task PrepareGenerationRecoveryAsync(VideoGenRun run, string ownerAdminId, string appKey, CancellationToken ct = default)
+        => _generationRecovery?.PrepareOwnedReadAsync(run, ownerAdminId, appKey, ExportDeploymentScope, ExportDurableScope, ct)
+            ?? Task.CompletedTask;
 
     public async Task<VideoProject> CreateProjectAsync(
         string appKey,

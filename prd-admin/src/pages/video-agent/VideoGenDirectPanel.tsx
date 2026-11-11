@@ -219,6 +219,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
       ? '已取消，尚未提交生成'
       : currentRun.directVideoReconciledAt ? '已取消，供应商任务已结束' : '已取消；供应商状态与费用尚未核定';
     if (currentRun.status === 'Queued') return '排队中…';
+    if (currentRun.currentPhase === 'generation-recovery-blocked') return currentRun.errorMessage || '上次生成结果待核对，未自动重新提交';
     if (currentRun.currentPhase === 'videogen-submitting') return '正在提交到模型网关…';
     if (currentRun.currentPhase === 'videogen-polling') return 'AI 正在生成视频…';
     if (currentRun.status === 'Completed') return '生成完成';

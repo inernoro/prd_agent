@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Reflection;
@@ -960,6 +961,8 @@ public partial class VideoSceneConcurrencyTests
         private readonly ServiceProvider _services;
         private readonly Mock<IRunEventStore> _runStore;
         private readonly Mock<IAssetStorage> _assetStorage;
+        private readonly List<ServiceProvider> _generationServices = new();
+        private string? _gatewayDatabaseName;
 
         private VideoSceneTestDatabase(
             MongoDbContext context,
@@ -981,7 +984,7 @@ public partial class VideoSceneConcurrencyTests
         }
 
         public MongoDbContext Context { get; }
-        public LlmGatewayDataContext Data => new(Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")!, _databaseName);
+        public LlmGatewayDataContext Data => new(Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")!, _gatewayDatabaseName ?? _databaseName);
         public Mock<IOpenRouterVideoClient> VideoClient { get; }
         public Mock<IAssetStorage> AssetStorage => _assetStorage;
         public IRunEventStore Events => _runStore.Object;
@@ -993,7 +996,7 @@ public partial class VideoSceneConcurrencyTests
         {
             var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
                 ?? throw new InvalidOperationException("租约取消回归必须提供独占Mongo");
-            var coordinator = new TaskExecutionCoordinator(new LlmGatewayDataContext(connection, _databaseName));
+            var coordinator = new TaskExecutionCoordinator(Data);
             var key = Guid.NewGuid().ToString("N");
             var permit = new GatewayTaskPermitRecord
             {
@@ -1018,7 +1021,7 @@ public partial class VideoSceneConcurrencyTests
             => _runStore.Verify(x => x.AppendEventAsync(RunKinds.VideoGen, runId, "run.cancelled", It.IsAny<object>(),
                 It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()), Times.Once);
 
-        public static async Task<VideoSceneTestDatabase> CreateAsync()
+        public static async Task<VideoSceneTestDatabase> CreateAsync(bool dualGateway = false)
         {
             var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
                                    ?? "mongodb://127.0.0.1:27018";
@@ -1027,7 +1030,8 @@ public partial class VideoSceneConcurrencyTests
             var client = new MongoClient(settings);
             await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
             var databaseName = $"video_scene_concurrency_{Guid.NewGuid():N}";
-            var context = new MongoDbContext(connectionString, databaseName);
+            var gatewayDatabase = dualGateway ? databaseName + "_gw" : null;
+            var context = new MongoDbContext(connectionString, databaseName, llmRequestLogDatabaseName: gatewayDatabase);
             var runStore = new Mock<IRunEventStore>();
             runStore.Setup(x => x.AppendEventAsync(
                     It.IsAny<string>(),
@@ -1050,7 +1054,7 @@ public partial class VideoSceneConcurrencyTests
                 services,
                 runStore,
                 videoClient,
-                assetStorage);
+                assetStorage) { _gatewayDatabaseName = gatewayDatabase };
         }
 
         public VideoGenService CreateService() => new(
@@ -1059,17 +1063,34 @@ public partial class VideoSceneConcurrencyTests
             _assetStorage.Object,
             NullLogger<VideoGenService>.Instance);
 
-        public VideoGenRunWorker CreateWorker(ITaskExecutionCoordinator? coordinator = null) => new(
+        public VideoGenRunWorker CreateWorker(ITaskExecutionCoordinator? coordinator = null, bool generationRecovery = false) => new(
             Context,
             _services.GetRequiredService<IServiceScopeFactory>(),
             _runStore.Object,
             _assetStorage.Object,
-            NullLogger<VideoGenRunWorker>.Instance, coordinator);
+            NullLogger<VideoGenRunWorker>.Instance, coordinator, generationRecovery ? Data : null,
+            generationRecovery ? new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?> { [PrdAgent.Infrastructure.Security.DeploymentAuthority.DeploymentIdentityKey] = "synthetic-deployment" }).Build() : null);
 
         public async ValueTask DisposeAsync()
         {
+            foreach (var services in _generationServices) await services.DisposeAsync();
             await _services.DisposeAsync();
             await _client.DropDatabaseAsync(_databaseName);
+            if (_gatewayDatabaseName != null) await _client.DropDatabaseAsync(_gatewayDatabaseName);
+        }
+
+        public VideoGenRunWorker CreateGenerationWorker(ITaskExecutionCoordinator coordinator, ILlmGateway gateway)
+        {
+            var services = new ServiceCollection().AddSingleton(VideoClient.Object).AddSingleton(gateway)
+                .AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>().BuildServiceProvider();
+            _generationServices.Add(services);
+            return new(Context, services.GetRequiredService<IServiceScopeFactory>(), Events, AssetStorage.Object,
+                NullLogger<VideoGenRunWorker>.Instance, coordinator, Data, GenerationConfiguration());
         }
     }
+
+    private static IConfiguration GenerationConfiguration() => new ConfigurationBuilder()
+        .AddInMemoryCollection(new Dictionary<string, string?>
+            { [DeploymentAuthority.DeploymentIdentityKey] = "synthetic-deployment" }).Build();
 }

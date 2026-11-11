@@ -619,6 +619,7 @@ public class VideoAgentController : ControllerBase
 
         await VideoGenService.RefreshOwnedExportScopeAsync(_db, run, GetAdminId(), AppKey,
             ExportDeploymentScope, ExportDurableScope, ct);
+        await _videoGenService.PrepareGenerationRecoveryAsync(run, GetAdminId(), AppKey, ct);
         return Ok(ApiResponse<VideoGenRun>.Ok(VideoGenerationUserError.SanitizeForResponse(run)));
     }
 

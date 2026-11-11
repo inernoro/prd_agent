@@ -48,7 +48,8 @@ public partial class VideoGenRunWorker : BackgroundService
         IRunEventStore runStore,
         IAssetStorage assetStorage,
         ILogger<VideoGenRunWorker> logger,
-        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null,
+        LlmGatewayDataContext? gatewayData = null, IConfiguration? configuration = null)
     {
         _taskExecutions = taskExecutions;
         _db = db;
@@ -56,6 +57,8 @@ public partial class VideoGenRunWorker : BackgroundService
         _runStore = runStore;
         _assetStorage = assetStorage;
         _logger = logger;
+        if (taskExecutions != null && gatewayData != null && configuration != null)
+            _generationRecovery = new(db, gatewayData, taskExecutions, configuration);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -68,6 +71,7 @@ public partial class VideoGenRunWorker : BackgroundService
                 if (await ResumePendingDeletionAsync(stoppingToken)) continue;
                 if (await RecoverCompletedExportTaskAsync(stoppingToken)) continue;
                 if (await RecoverExpiredExportHolderAsync(stoppingToken)) continue;
+                if (await RecoverInterruptedGenerationAsync(stoppingToken)) continue;
 
                 // 路径 1: Queued → 根据 Mode 路由
                 //   - direct      → 直接走 ProcessDirectVideoGenAsync (Rendering)
@@ -175,7 +179,7 @@ public partial class VideoGenRunWorker : BackgroundService
                 }
 
                 // 路径 3: Editing 状态有 scene.Status==Generating → LLM 重生成单镜 prompt
-                var regenRun = await FindEditingRunWithSceneGeneratingAsync(stoppingToken);
+                var regenRun = _generationRecovery != null ? null : await FindEditingRunWithSceneGeneratingAsync(stoppingToken);
                 if (regenRun != null)
                 {
                     try
@@ -943,6 +947,8 @@ public partial class VideoGenRunWorker : BackgroundService
         }
 
         var filter = fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                    & fb.Eq(x => x.DeploymentSlug, QueueDeploymentScope)
+                    & fb.Eq(x => x.CancelRequested, false) & fb.Eq(x => x.DeletionRequestedAt, null)
                     & fb.ElemMatch(x => x.Scenes,
                         sceneFilter.Eq(s => s.Status, SceneItemStatus.Submitting)
                         & sceneFilter.Eq(s => s.JobId, null));
@@ -1322,6 +1328,11 @@ public partial class VideoGenRunWorker : BackgroundService
     {
         var sceneIdx = run.Scenes.FindIndex(s => s.Status == SceneItemStatus.Generating);
         if (sceneIdx < 0) return;
+        await ProcessSceneRegenerateAtAsync(run, sceneIdx);
+    }
+
+    private async Task ProcessSceneRegenerateAtAsync(VideoGenRun run, int sceneIdx)
+    {
         var scene = run.Scenes[sceneIdx];
         await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, scene.TaskPermitId, $"{run.Id}_scene_{sceneIdx}");
         if (taskExecutionAttempt.ShouldSkip) return;
