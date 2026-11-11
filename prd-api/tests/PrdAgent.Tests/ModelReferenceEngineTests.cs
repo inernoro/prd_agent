@@ -342,4 +342,16 @@ public sealed class ModelReferenceEngineTests
         Assert.False(ModelReferenceAnalysis.Matches(Mapping().Source, "OLD-UPSTREAM"));
         Assert.True(MongoRuntimeModelReferenceSnapshotProvider.Matches(Mapping().Source, new("c", "p", "public-id", " OLD-ALIAS ")));
     }
+
+    [Fact]
+    public async Task RegisteredMigratedPoolAcceptsOnlyExactBareOrPrefixedIds()
+    {
+        var store = new MemoryStore(); var doc = store.Add("user_preferences", "{_id:'u',VisualAgentPreferences:{ModelId:'pool_old-pool'}}");
+        var engine = Engine(store); var plan = await engine.PlanAsync(Mapping(), "admin");
+        Assert.Single(plan.Changes); var done = await engine.ApplyAsync(plan.Id, "internal", plan.Revision);
+        Assert.True(done.Coverage.Verified); Assert.Equal("pool_new-logical", doc["VisualAgentPreferences"]["ModelId"]);
+        Assert.False(ModelReferenceAnalysis.Matches(Mapping().Source, "pool_OLD-POOL"));
+        Assert.True(MongoRuntimeModelReferenceSnapshotProvider.Matches(Mapping().Source, new("c", "p", "pool-id", "pool_old-pool")));
+        Assert.False(MongoRuntimeModelReferenceSnapshotProvider.Matches(Mapping().Source, new("c", "p", "pool-id", "pool_OLD-POOL")));
+    }
 }

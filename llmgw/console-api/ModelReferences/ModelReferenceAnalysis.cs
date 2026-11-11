@@ -29,7 +29,7 @@ public static class ModelReferenceAnalysis
     public static bool Matches(ReferenceIdentity identity, string? value)
         => !string.IsNullOrEmpty(value) && (new[] { identity.LogicalId, identity.OfferingId,
                 identity.PhysicalModelId, identity.UpstreamModelId, identity.LogicalId is { Length: > 0 } id ? "pool_" + id : null }
-            .Concat(identity.PoolIds).Any(x => !string.IsNullOrEmpty(x) && string.Equals(x, value, StringComparison.Ordinal))
+            .Concat(identity.PoolIds).Concat(identity.PoolIds.Select(x => "pool_" + x)).Any(x => !string.IsNullOrEmpty(x) && string.Equals(x, value, StringComparison.Ordinal))
             || PublicMatch(identity, value));
     public static bool PublicMatch(ReferenceIdentity id, string? value)
         => !string.IsNullOrWhiteSpace(value) && new[] { id.PublicId }.Concat(id.Aliases)
