@@ -854,7 +854,8 @@ jobs:
     name: Design Runtime Test
     needs: changes
     if: needs.changes.outputs.design_runtime == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # 固定已验证的 LTS，避免 latest 切换后原有字体依赖在 26.04 缺失。
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: design-runtime/opendesign
