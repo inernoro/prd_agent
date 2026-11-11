@@ -41,6 +41,30 @@ public static class ModelUpgradeRules
         }
     }
 
+    public static bool IsAuthorizedValidationCaller(BsonDocument logical, BsonDocument caller)
+        => caller.GetStringOrEmpty("AppCallerCode").Length > 0
+           && caller.GetStringOrEmpty("RequestType") == logical.GetStringOrEmpty("ModelType")
+           && CallTracePlanner.AllowsTraffic(caller.AsNullableString("Status"))
+           && LogicalModelCapabilityPolicy.SupportsAppCallerScenario(Strings(logical, "Capabilities"),
+               Strings(logical, "AllowedAppCallerCodes"), caller.GetStringOrEmpty("AppCallerCode"));
+    public static string DefaultValidationCaller(BsonDocument logical, IEnumerable<BsonDocument> callers)
+    {
+        var claims = Strings(logical, "DefaultForAppCallerCodes");
+        return callers.Where(c => IsAuthorizedValidationCaller(logical, c))
+            .Select(c => c.GetStringOrEmpty("AppCallerCode"))
+            .Where(c => claims.Contains(c, AppCallerIdentityPolicy.Comparer))
+            .OrderBy(c => logical.GetStringOrEmpty("ModelType") == "generation"
+                && AppCallerIdentityPolicy.Comparer.Equals(c, "visual-agent.image.text2img::generation") ? 0 : 1)
+            .ThenBy(c => c, AppCallerIdentityPolicy.Comparer).FirstOrDefault() ?? "";
+    }
+    public static string NextAutomaticAction(ModelUpgradeState s, DateTime now)
+    {
+        if (s.ExecutionRequestedBy != "scheduled" || !s.Policy.Enabled || s.Policy.Mode != "auto"
+            || s.Candidate is null || s.Current?.ModelId == s.Candidate.ModelId || s.OutcomeUnknown
+            || !s.Gates.Capabilities || !s.Gates.Price || !s.Gates.Budget) return "";
+        if (CanPromote(s, true, now)) return "promote";
+        return s.Policy.AutoValidate ? "validate" : "";
+    }
     public static bool IsFixedValidationTarget(BsonDocument logical, string modelType)
         => !IsStable(logical) && logical.GetStringOrEmpty("ModelType") == modelType && logical.GetValue("Enabled", false).ToBoolean();
     public static bool HasCanaryEnvelope(string model, decimal upper, decimal inputRate, decimal outputRate)

@@ -73,15 +73,17 @@ public sealed partial class ModelUpgradeService
         var declared = LogicalModelCapabilityPolicy.Normalize(logical.GetStringOrEmpty("ModelType"), relation.Capabilities);
         var physical = LogicalModelCapabilityPolicy.Normalize(model.GetStringOrEmpty("ModelType"), ModelUpgradeRules.Strings(model, "Capabilities"));
         var currentModel = await RequiredAsync(Models, s.TenantId, s.Current.ModelId);
+        var priorBudgetGranted = previous?.Fingerprint == fingerprint && previous.ValidatedAt > DateTime.UtcNow.AddHours(-24) && s.Gates.Budget;
         s.Gates = new ModelUpgradeGates { Capabilities = required.All(declared.Contains) && required.All(physical.Contains),
             Price = ModelUpgradeRules.PricePass(currentModel, model, logical.GetStringOrEmpty("ModelType"), s.Policy.MaxPriceIncreasePercent),
-            Budget = ModelUpgradeRules.BudgetPass(s, s.Policy.CanaryUnitCostUpperBoundUsd, DateTime.UtcNow),
+            Budget = priorBudgetGranted || ModelUpgradeRules.BudgetPass(s, s.Policy.CanaryUnitCostUpperBoundUsd, DateTime.UtcNow),
             Validation = s.Candidate.ValidatedAt > DateTime.UtcNow.AddHours(-24) };
         s.LastCheckedAt = DateTime.UtcNow;
         s.Phase = !s.Gates.Capabilities ? "blocked" : s.Gates.Validation ? "validated" : "candidate";
         s.Message = s.Gates.Capabilities ? "已发现明确候选，等待真实服务验收；价格未知会阻止自动晋级。" : "候选能力声明不足，请核对能力，原线路保持不变。";
-        if (s.ExecutionRequestedBy == "scheduled" && s.Policy.Mode == "auto" && s.Policy.AutoValidate && s.Gates.Capabilities && s.Gates.Price && s.Gates.Budget && s.Current.ModelId != s.Candidate.ModelId)
-        { s.PendingAction = "validate"; s.ValidationMode = "canary"; s.EvidenceRequestId = null; }
+        s.PendingAction = ModelUpgradeRules.NextAutomaticAction(s, DateTime.UtcNow);
+        if (s.PendingAction == "validate") { s.ValidationMode = "canary"; s.EvidenceRequestId = null; }
+        if (s.PendingAction == "promote") s.Message = "现有候选验收仍有效，已排队晋级，不会再次发起付费验收。";
     }
 
     private async Task ValidateAsync(ModelUpgradeState s)

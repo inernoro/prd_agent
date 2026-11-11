@@ -44,18 +44,24 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
         };
     }
 
+    private async Task<List<BsonDocument>> ValidationCallersAsync(string tenant, BsonDocument logical)
+        => await gateway.GetCollection<BsonDocument>("llmgw_app_callers")
+            .Find(Scope(tenant, F.Eq("RequestType", logical.GetStringOrEmpty("ModelType")))).ToListAsync(CancellationToken.None);
+
     public async Task<ModelUpgradeView> ReadAsync(string tenant, string logicalId)
     {
         var logical = await LogicalAsync(tenant, logicalId);
         var s = await StateAsync(tenant, logicalId);
         var stable = ModelUpgradeRules.IsStable(logical);
+        var policy = s?.Policy ?? new ModelUpgradePolicy
+        { ValidationAppCallerCode = ModelUpgradeRules.DefaultValidationCaller(logical, await ValidationCallersAsync(tenant, logical)) };
         var current = await CurrentAsync(tenant, logicalId);
         var canPromote = stable && s is not null && !Busy(s) && current?.ModelId != s.Candidate?.ModelId && ModelUpgradeRules.CanPromote(s, false, DateTime.UtcNow);
         return new ModelUpgradeView
         {
             LogicalModelId = logicalId, PublicId = logical.GetStringOrEmpty("PublicId"), Name = logical.GetStringOrEmpty("Name"),
             ModelType = logical.GetStringOrEmpty("ModelType"), IdentityKind = logical.AsNullableString("IdentityKind") ?? "fixed",
-            Aliases = ModelUpgradeRules.Strings(logical, "Aliases"), Version = s?.Version ?? 0, Policy = s?.Policy ?? new(),
+            Aliases = ModelUpgradeRules.Strings(logical, "Aliases"), Version = s?.Version ?? 0, Policy = policy, ValidationMode = s?.ValidationMode ?? "evidence",
             Current = current, Candidate = s?.Candidate, Gates = s?.Gates ?? new(),
             Discoveries = s?.Discoveries ?? [], ValidationStatus = s?.ValidationStatus ?? "not-run",
             Phase = s?.Phase ?? "idle", Message = s?.Message ?? "尚未配置自动更新策略。",
@@ -78,6 +84,13 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
         ModelUpgradeRules.ValidatePolicy(write);
         var logical = await LogicalAsync(actor.TenantId, id);
         if (!ModelUpgradeRules.IsStable(logical)) throw new ModelUpgradeException("FIXED_MODEL", "固定版本型号不能启用升级；请使用稳定业务标识。", 400);
+        if (!string.IsNullOrWhiteSpace(write.ValidationAppCallerCode))
+        {
+            var callers = await ValidationCallersAsync(actor.TenantId, logical);
+            if (!callers.Any(c => AppCallerIdentityPolicy.Comparer.Equals(c.GetStringOrEmpty("AppCallerCode"), write.ValidationAppCallerCode.Trim())
+                    && ModelUpgradeRules.IsAuthorizedValidationCaller(logical, c)))
+                throw new ModelUpgradeException("VALIDATION_CALLER_UNAUTHORIZED", "验收调用用途尚未登记、已停用或未获此模型授权；请先修复调用用途与模型授权后保存。", 400);
+        }
         foreach (var successor in write.Successors)
         {
             var provider = await Providers.Find(Scope(actor.TenantId, F.Eq("_id", successor.ProviderId))).FirstOrDefaultAsync(CancellationToken.None)
