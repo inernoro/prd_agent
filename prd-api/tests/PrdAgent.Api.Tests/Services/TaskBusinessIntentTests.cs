@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.LlmGateway;
@@ -60,6 +61,33 @@ public sealed class TaskBusinessIntentTests
         var http = Json("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"" + method + "\"}", null);
         Assert.Equal(paid, await TaskBusinessIntent.IsMcpToolCallAsync(http, default));
         Assert.Equal(0, http.Request.Body.Position);
+    }
+
+    [Theory]
+    [InlineData("map_visual_list_models", false)]
+    [InlineData("map_visual_generate_image", true)]
+    [InlineData("unregistered_read_tool", true)]
+    public async Task McpReadTools_SkipOnlyRegisteredGetAdmission(string name, bool paid)
+    {
+        var http = Json(JsonSerializer.Serialize(new { method = "tools/call", @params = new { name } }), null);
+        Assert.Equal(paid, await TaskBusinessIntent.IsMcpToolCallAsync(http, default));
+        Assert.Equal(0, http.Request.Body.Position);
+    }
+
+    [Fact]
+    public async Task McpWriteIntent_UsesClientRequestId_AndIgnoresTransportIdOnly()
+    {
+        Task<TaskBusinessIntent> Intent(int id, string prompt) => TaskBusinessIntent.ResolveAsync(Json(
+            JsonSerializer.Serialize(new { jsonrpc = "2.0", id, method = "tools/call", @params = new {
+                name = "map_visual_generate_image", arguments = new { clientRequestId = "stable-image-submit", prompt }
+            } }), null), "PrdAgent.Api.Controllers.McpGatewayController.Handle", TaskExecutionOrigins.Agent, false, default);
+        var first = await Intent(1, "sample");
+        Assert.Equal("stable-image-submit", first.Key);
+        Assert.Equal(first, await Intent(2, "sample"));
+        Assert.NotEqual(first.Fingerprint, (await Intent(3, "changed")).Fingerprint);
+        await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => TaskBusinessIntent.ResolveAsync(
+            Json("{\"method\":\"tools/call\",\"id\":1,\"params\":{\"name\":\"map_visual_generate_image\"}}", null),
+            "PrdAgent.Api.Controllers.McpGatewayController.Handle", TaskExecutionOrigins.Agent, false, default));
     }
 
     private static Task<TaskBusinessIntent> Resolve(HttpContext http) => TaskBusinessIntent.ResolveAsync(http,
