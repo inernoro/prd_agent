@@ -204,6 +204,7 @@ class WorkflowAptWiring(unittest.TestCase):
         version = package['devDependencies'].get('playwright-core') or package.get('dependencies', {}).get('playwright-core')
         self.assertIn(f'image: mcr.microsoft.com/playwright:v{version}-noble@sha256:', job)
         self.assertRegex(job, r'image: mcr\.microsoft\.com/playwright:[^\n]+@sha256:[a-f0-9]{64}\n')
+        self.assertIn('options: --init --shm-size=1g', job)
         self.assertNotIn('--privileged', job)
         self.assertNotIn('--ipc=host', job)
         self.assertIn('run: pnpm exec playwright-core install chromium', job)
