@@ -84,6 +84,8 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             var recoverFilter = Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
                 ownerScope);
+            await RecoverArtifactRunsAsync(scope.ServiceProvider, db, recoverFilter,
+                ErrorCodes.SHORT_VIDEO_INTERRUPTED, "服务重启，短视频解析任务被中断", instanceId);
             var recovered = await db.ShortVideoMaterialRuns.UpdateManyAsync(
                 recoverFilter & Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.CancelRequested, true),
                 Builders<ShortVideoMaterialRun>.Update
@@ -132,6 +134,8 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 Builders<ShortVideoMaterialRun>.Filter.Lt(r => r.UpdatedAt, cutoff),
                 Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.Id, current),
                 ownerScope);
+            await RecoverArtifactRunsAsync(scope.ServiceProvider, db, filter,
+                ErrorCodes.SHORT_VIDEO_TIMEOUT, "处理超时或中断，请重试", instanceId);
             var res = await db.ShortVideoMaterialRuns.UpdateManyAsync(
                 filter & Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.CancelRequested, true),
                 Builders<ShortVideoMaterialRun>.Update
@@ -150,6 +154,19 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         {
             _logger.LogError(ex, "[short-video-material] 周期兜底回收失败");
         }
+    }
+
+    private static async Task RecoverArtifactRunsAsync(IServiceProvider services, MongoDbContext db,
+        FilterDefinition<ShortVideoMaterialRun> recoveryFilter, string code, string message, string instanceId)
+    {
+        var candidates = await db.ShortVideoMaterialRuns.Find(recoveryFilter
+            & Builders<ShortVideoMaterialRun>.Filter.Eq(x => x.CleanupPending, true)
+            & Builders<ShortVideoMaterialRun>.Filter.Ne(x => x.ArtifactReceipt, null)
+            & Builders<ShortVideoMaterialRun>.Filter.Ne(x => x.ProcessingToken, null)).ToListAsync(CancellationToken.None);
+        if (candidates.Count == 0) return;
+        var processor = services.GetRequiredService<ShortVideoMaterialProcessor>();
+        foreach (var run in candidates)
+            await processor.RecoverInterruptedArtifactsAsync(run, recoveryFilter, code, message, instanceId);
     }
 
     private async Task MarkCurrentRunFailedAsync(string message)
@@ -514,13 +531,13 @@ public sealed class ShortVideoMaterialProcessor
 
         var receipt = GetArtifactReceipt(run);
         receipt.Url ??= video.Url;
-        receipt.PublicationStarted = true;
         var planned = new ShortVideoMaterialEntryReceipt { EntryId = entry.Id, StoreId = store.Id,
-            EntryCreatedAt = entry.UpdatedAt, AttachmentId = attachment.AttachmentId };
+            EntryCreatedAt = entry.UpdatedAt, AttachmentId = attachment.AttachmentId, UnconfirmedWrite = true };
         receipt.Entries.Add(planned);
         run.CleanupPending = true;
-        await SaveRunAsync(run);
-        planned.UnconfirmedWrite = true;
+        // 持久化写入意图；明确的 CAS 拒绝证明未开始元数据写入，未知回执则必须保留。
+        await SaveRunWithIntentAsync(run, () => planned.UnconfirmedWrite = false);
+        receipt.PublicationStarted = true;
         await _db.Attachments.InsertOneAsync(attachment, cancellationToken: CancellationToken.None);
         await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
         await IncrementStoreDocumentCountAsync(store, entry.Id);
@@ -751,10 +768,10 @@ public sealed class ShortVideoMaterialProcessor
         };
         var planned = new ShortVideoMaterialEntryReceipt { EntryId = entry.Id, StoreId = store.Id, EntryCreatedAt = entry.UpdatedAt, DocumentId = parsed.Id,
             DocumentCreatedNew = Guid.TryParse(parsed.Id, out _) && await _db.Documents.CountDocumentsAsync(x => x.Id == parsed.Id) == 0 };
+        planned.UnconfirmedWrite = true;
         GetArtifactReceipt(run).Entries.Add(planned);
         run.CleanupPending = true;
-        await SaveRunAsync(run);
-        planned.UnconfirmedWrite = true;
+        await SaveRunWithIntentAsync(run, () => planned.UnconfirmedWrite = false);
         await _documentService.SaveAsync(parsed);
         await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
         await IncrementStoreDocumentCountAsync(store, entry.Id);
@@ -794,10 +811,12 @@ public sealed class ShortVideoMaterialProcessor
         receipt.Url = url;
         if (!IsAttemptStorageKey(run, receipt, storage))
             throw new InvalidOperationException("素材存储归属未能确认，已停止保存");
-        receipt.PhysicalState = "not-started";
+        receipt.PhysicalState = "upload-started";
         run.CleanupPending = true;
-        await SaveRunAsync(run); // 先留下精确意图；未取得许可不得开始对象写入。
-        authorityToken.ThrowIfCancellationRequested();
+        await SaveRunWithIntentAsync(run, () => receipt.PhysicalState = "not-started");
+        // 命令发出前明确失去处理权时尚无上传；回执未知则不能这样回退。
+        try { authorityToken.ThrowIfCancellationRequested(); }
+        catch (OperationCanceledException) { receipt.PhysicalState = "not-started"; throw; }
         try
         {
             receipt.PhysicalState = "upload-started";
@@ -812,6 +831,39 @@ public sealed class ShortVideoMaterialProcessor
         await SaveRunAsync(run);
         var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
         return new StoredAsset(sha, url, bytes.LongLength, mime, receipt.StorageKey) { CreatedNew = true };
+    }
+
+    internal async Task RecoverInterruptedArtifactsAsync(ShortVideoMaterialRun run,
+        FilterDefinition<ShortVideoMaterialRun> recoveryFilter, string code, string message, string instanceId)
+    {
+        if (TaskExecutionContext.Current != null || _taskExecutions == null || string.IsNullOrWhiteSpace(run.TaskPermitId))
+            throw new InvalidOperationException("原任务停止状态未能确认，已保留产物责任记录");
+        var active = ActiveRunFilter(run);
+        // 先冻结同一代次，再撤销原许可；不申请新执行权、不恢复旧租约。
+        var fenced = await _db.ShortVideoMaterialRuns.UpdateOneAsync(active & recoveryFilter,
+            Builders<ShortVideoMaterialRun>.Update.Set(x => x.ArtifactCleanupStarted, true)
+                .Set(x => x.CleanupPending, true), cancellationToken: CancellationToken.None);
+        if (fenced.MatchedCount != 1) return;
+        await _taskExecutions.RevokeAsync(run.TaskPermitId, run.Id, CancellationToken.None);
+        await CleanupArtifactsAfterFailureAsync(run, run);
+        // 补偿成功或明确保留未知责任后，才清除处理身份；失败保留原身份供原恢复路径续接。
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var latest = await _db.ShortVideoMaterialRuns.Find(active).FirstOrDefaultAsync(CancellationToken.None);
+            if (latest == null) return;
+            var cancelled = latest.CancelRequested;
+            latest.Status = cancelled ? "cancelled" : "failed";
+            latest.ProcessingToken = null;
+            latest.OwnerInstanceId = instanceId;
+            latest.ErrorCode = cancelled ? null : code;
+            latest.ErrorMessage = cancelled ? "已取消短视频素材处理" : message;
+            latest.UpdatedAt = DateTime.UtcNow;
+            var cancellationState = cancelled ? Builders<ShortVideoMaterialRun>.Filter.Eq(x => x.CancelRequested, true)
+                : Builders<ShortVideoMaterialRun>.Filter.Ne(x => x.CancelRequested, true);
+            var saved = await _db.ShortVideoMaterialRuns.ReplaceOneAsync(active & cancellationState, latest,
+                cancellationToken: CancellationToken.None);
+            if (saved.MatchedCount == 1) return;
+        }
     }
 
     private async Task CleanupArtifactsAfterFailureAsync(ShortVideoMaterialRun run, ShortVideoMaterialRun identity)
@@ -855,7 +907,7 @@ public sealed class ShortVideoMaterialProcessor
         }
         var pending = receipt.PhysicalState is "upload-outcome-unknown" or "upload-started"
             || receipt.Entries.Any(x => x.UnconfirmedWrite);
-        if (receipt.PublicationStarted)
+        if (receipt.PublicationStarted || receipt.Entries.Any(x => x.AttachmentId != null && x.UnconfirmedWrite))
         {
             // URL 曾进入条目写入流程，无法证明跨库/人工复制从未引用；不扩大存储删除权限。
             receipt.PhysicalState = "retained-published";
@@ -924,7 +976,9 @@ public sealed class ShortVideoMaterialProcessor
             & f.Eq(x => x.ProcessingToken, run.ProcessingToken) & f.Eq(x => x.Status, "running");
     }
 
-    private async Task SaveRunAsync(ShortVideoMaterialRun run)
+    private Task SaveRunAsync(ShortVideoMaterialRun run) => SaveRunWithIntentAsync(run, null);
+
+    private async Task SaveRunWithIntentAsync(ShortVideoMaterialRun run, Action? onConfirmedRejection)
     {
         // 先冻结本次处理条件，再清终态标识；不允许迟到保存重建已删除或接管的记录。
         var filter = ContinuableRunFilter(run);
@@ -933,7 +987,10 @@ public sealed class ShortVideoMaterialProcessor
         var saved = await _db.ShortVideoMaterialRuns.ReplaceOneAsync(
             filter, run, new ReplaceOptions { IsUpsert = false }, CancellationToken.None);
         if (saved.MatchedCount != 1)
+        {
+            onConfirmedRejection?.Invoke();
             throw new InvalidOperationException("短视频任务处理权已失效，已停止继续写入");
+        }
     }
 
     private static FilterDefinition<ShortVideoMaterialRun> ContinuableRunFilter(ShortVideoMaterialRun run)

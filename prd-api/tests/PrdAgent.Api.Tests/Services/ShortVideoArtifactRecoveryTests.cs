@@ -32,6 +32,7 @@ public sealed class ShortVideoArtifactRecoveryTests : IAsyncLifetime
     private string? _failure;
     private int _outboundCalls;
     private string? _runId;
+    private string? _durableUploadIntent;
     private bool _denyDelete;
     private Func<Task>? _beforeDocumentFailure;
 
@@ -62,6 +63,7 @@ public sealed class ShortVideoArtifactRecoveryTests : IAsyncLifetime
         _storage.Setup(x => x.UploadToKeyAsync(It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), null))
             .Returns<string, byte[], string, CancellationToken, string?>(async (key, bytes, mime, ct, _) =>
             {
+                _durableUploadIntent = (await _db.ShortVideoMaterialRuns.Find(x => x.Id == _runId).SingleAsync()).ArtifactReceipt?.PhysicalState;
                 await _local.UploadToKeyAsync(key, bytes, mime, ct);
                 if (_failure == "cancel-after-upload-ack")
                     await _db.ShortVideoMaterialRuns.UpdateOneAsync(x => x.Id == _runId, Builders<ShortVideoMaterialRun>.Update.Set(x => x.CancelRequested, true));
@@ -287,6 +289,140 @@ public sealed class ShortVideoArtifactRecoveryTests : IAsyncLifetime
         coordinator.Verify(x => x.AcquireAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Once);
         coordinator.Verify(x => x.CompleteAsync(proof, CancellationToken.None), Times.Once);
         Assert.DoesNotContain(coordinator.Invocations, call => call.Method.Name == "RegisterAsync");
+    }
+
+    private async Task<ShortVideoMaterialRun> SeedUploadedAttempt()
+    {
+        var run = await Seed();
+        var predicted = _local.TryBuildContentAddressedKey(Mp4(), "video/mp4", "workflow-agent", "doc")!;
+        var key = predicted[..predicted.LastIndexOf('/')] + $"/short-video/{run.Id}/{run.ProcessingToken}/{Path.GetFileName(predicted)}";
+        await _local.UploadToKeyAsync(key, Mp4(), "video/mp4", CancellationToken.None);
+        run.CleanupPending = true;
+        run.ArtifactReceipt = new() { ProcessingToken = run.ProcessingToken!, PredictedKey = predicted,
+            StorageKey = key, Url = _local.BuildUrlForKey(key), PhysicalState = "uploaded" };
+        await _db.ShortVideoMaterialRuns.ReplaceOneAsync(x => x.Id == run.Id, run);
+        return run;
+    }
+
+    [Fact]
+    public async Task CancelRejectsPublicationIntentBeforeAnyMetadataWrite_ReclaimsUnpublishedAcknowledgedFile()
+    {
+        var run = await SeedUploadedAttempt();
+        await _db.ShortVideoMaterialRuns.UpdateOneAsync(x => x.Id == run.Id,
+            Builders<ShortVideoMaterialRun>.Update.Set(x => x.CancelRequested, true));
+        var processor = Processor();
+        var method = typeof(ShortVideoMaterialProcessor).GetMethod("CreateVideoEntryAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var parameters = method.GetParameters();
+        var video = Activator.CreateInstance(parameters[4].ParameterType, [run.ArtifactReceipt!.Url, "video/mp4", 4L, "synthetic-sha"]);
+        var parsed = Activator.CreateInstance(parameters[5].ParameterType, [null, null, "direct-video", "synthetic", null, "https://fixture.invalid/source", null]);
+        var task = (Task)method.Invoke(processor, [new DocumentStore { Id = run.StoreId! }, run.UserId, "本机合成用户",
+            "合成素材", video, parsed, "https://fixture.invalid/source", "unknown", run, DateTime.UtcNow])!;
+        await Assert.ThrowsAnyAsync<Exception>(() => task);
+        await (Task)typeof(ShortVideoMaterialProcessor).GetMethod("CleanupArtifactsAfterFailureAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(processor, [run, run])!;
+        Assert.Empty(Directory.GetFiles(_files, "*", SearchOption.AllDirectories));
+        Assert.Equal(0, await _db.Attachments.CountDocumentsAsync(FilterDefinition<Attachment>.Empty));
+        Assert.Equal(0, await _db.DocumentEntries.CountDocumentsAsync(FilterDefinition<DocumentEntry>.Empty));
+        var actual = await _db.ShortVideoMaterialRuns.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.False(actual.CleanupPending); Assert.Equal("deleted", actual.ArtifactReceipt!.PhysicalState);
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    public async Task OriginalWorkerRecovery_ReclaimsKnownUnpublishedReceiptBeforeClearingExecution(bool stale, bool cancelled, bool wrapped)
+    {
+        var run = await SeedUploadedAttempt();
+        var configuration = new ConfigurationBuilder().Build();
+        run.OwnerInstanceId = InstanceIdentity.Get(configuration);
+        run.CancelRequested = cancelled; run.UpdatedAt = DateTime.UtcNow.AddMinutes(-16);
+        await _db.ShortVideoMaterialRuns.ReplaceOneAsync(x => x.Id == run.Id, run);
+        var foreign = new ShortVideoMaterialRun { UserId = run.UserId, Status = "running", OwnerInstanceId = "another-instance",
+            ProcessingToken = Guid.NewGuid().ToString("N"), TaskPermitId = "another-synthetic-permit", UpdatedAt = run.UpdatedAt };
+        await _db.ShortVideoMaterialRuns.InsertOneAsync(foreign);
+        var coordinator = new Mock<ITaskExecutionCoordinator>(MockBehavior.Strict);
+        coordinator.Setup(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None)).Returns(Task.CompletedTask);
+        if (wrapped) typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(_db, TaskLifecycleMongoDatabase.Wrap(_database, () => coordinator.Object));
+        await using var provider = new ServiceCollection().AddSingleton(_db).AddSingleton<IConfiguration>(configuration)
+            .AddSingleton(_documents.Object).AddSingleton(_storage.Object)
+            .AddSingleton<ShortVideoMaterialProcessor>(sp => new(_db, _documents.Object, configuration, sp,
+                NullLogger<ShortVideoMaterialProcessor>.Instance, coordinator.Object)).BuildServiceProvider();
+        var worker = new ShortVideoMaterialWorker(provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<ShortVideoMaterialWorker>.Instance);
+        await (Task)typeof(ShortVideoMaterialWorker).GetMethod(stale ? "RecoverStaleRunningRunsAsync" : "RecoverRunningRunsAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(worker, null)!;
+        Assert.Empty(Directory.GetFiles(_files, "*", SearchOption.AllDirectories));
+        var actual = await _db.ShortVideoMaterialRuns.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.Equal(cancelled ? "cancelled" : "failed", actual.Status); Assert.Null(actual.ProcessingToken);
+        Assert.False(actual.CleanupPending); Assert.Equal("deleted", actual.ArtifactReceipt!.PhysicalState);
+        var other = await _db.ShortVideoMaterialRuns.Find(x => x.Id == foreign.Id).SingleAsync();
+        Assert.Equal(foreign.Status, other.Status); Assert.Equal(foreign.ProcessingToken, other.ProcessingToken);
+        coordinator.Verify(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.AtLeastOnce);
+        Assert.DoesNotContain(coordinator.Invocations, call => call.Method.Name is "AcquireAsync" or "RegisterAsync");
+        Assert.Equal(0, _outboundCalls);
+    }
+
+    [Fact]
+    public async Task CancelBeforeUploadIntentIsAccepted_DoesNotCreateAnUnknownUploadResponsibility()
+    {
+        var run = await Seed();
+        await _db.ShortVideoMaterialRuns.UpdateOneAsync(x => x.Id == run.Id,
+            Builders<ShortVideoMaterialRun>.Update.Set(x => x.CancelRequested, true));
+        var processor = Processor();
+        var upload = typeof(ShortVideoMaterialProcessor).GetMethod("StoreAttemptVideoAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        await Assert.ThrowsAnyAsync<Exception>(() => (Task)upload.Invoke(processor, [run, Mp4(), "video/mp4", CancellationToken.None])!);
+        await (Task)typeof(ShortVideoMaterialProcessor).GetMethod("CleanupArtifactsAfterFailureAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(processor, [run, run])!;
+        var actual = await _db.ShortVideoMaterialRuns.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.False(actual.CleanupPending); Assert.Empty(Directory.GetFiles(_files, "*", SearchOption.AllDirectories));
+        _storage.Verify(x => x.UploadToKeyAsync(It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), null), Times.Never);
+    }
+
+    [Fact]
+    public async Task UploadAcceptance_AlreadyHasDurableUnknownOutcomeResponsibility()
+    {
+        var run = await Seed();
+        await Processor().ProcessAsync(run.Id);
+        Assert.Equal("upload-started", _durableUploadIntent);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task OriginalRecovery_PreservesUnknownUploadOrPublicationIntent(bool stale, bool publication)
+    {
+        var run = await SeedUploadedAttempt();
+        var configuration = new ConfigurationBuilder().Build();
+        run.OwnerInstanceId = InstanceIdentity.Get(configuration); run.UpdatedAt = DateTime.UtcNow.AddMinutes(-16);
+        if (publication) run.ArtifactReceipt!.Entries.Add(new() { EntryId = Guid.NewGuid().ToString("N"),
+            StoreId = run.StoreId!, AttachmentId = Guid.NewGuid().ToString("N"), UnconfirmedWrite = true });
+        else run.ArtifactReceipt!.PhysicalState = "upload-started";
+        await _db.ShortVideoMaterialRuns.ReplaceOneAsync(x => x.Id == run.Id, run);
+        var coordinator = new Mock<ITaskExecutionCoordinator>(MockBehavior.Strict);
+        coordinator.Setup(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None)).Returns(Task.CompletedTask);
+        typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(_db, TaskLifecycleMongoDatabase.Wrap(_database, () => coordinator.Object));
+        await using var provider = new ServiceCollection().AddSingleton(_db).AddSingleton<IConfiguration>(configuration)
+            .AddSingleton<ShortVideoMaterialProcessor>(sp => new(_db, _documents.Object, configuration, _services,
+                NullLogger<ShortVideoMaterialProcessor>.Instance, coordinator.Object)).BuildServiceProvider();
+        var worker = new ShortVideoMaterialWorker(provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<ShortVideoMaterialWorker>.Instance);
+        await (Task)typeof(ShortVideoMaterialWorker).GetMethod(stale ? "RecoverStaleRunningRunsAsync" : "RecoverRunningRunsAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(worker, null)!;
+        var actual = await _db.ShortVideoMaterialRuns.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.Equal("failed", actual.Status); Assert.Null(actual.ProcessingToken); Assert.True(actual.CleanupPending);
+        Assert.Equal(publication ? "retained-published" : "upload-started", actual.ArtifactReceipt!.PhysicalState);
+        Assert.Single(Directory.GetFiles(_files, "*", SearchOption.AllDirectories));
+        _storage.Verify(x => x.DeleteByKeyAsync(It.IsAny<string>(), CancellationToken.None), Times.Never);
+        Assert.DoesNotContain(coordinator.Invocations, call => call.Method.Name is "AcquireAsync" or "RegisterAsync");
+        Assert.Equal(0, _outboundCalls);
     }
 
     [Fact]
