@@ -1951,6 +1951,29 @@ public class LlmGatewayTests
         Assert.Equal("failed", attempt.Status);
     }
 
+    [Theory]
+    [InlineData("gpt-5",false)]
+    [InlineData("gpt-5.6-terra",true)]
+    [InlineData("openai/gpt-5.6-terra",true)]
+    public async Task ModelUpgradeCanary_Gpt5FinalWireRetainsBoundedNormalizedParameters(string model,bool reasoningNone)
+    {
+        var http = new SequenceHttpClientFactory((200,"{\"choices\":[{\"message\":{\"content\":\"OK\"}}]}"));
+        var gateway = new LlmGateway(new InMemoryModelResolver(),http,new TestLogger<LlmGateway>());
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest {
+            AppCallerCode=AppCallerRegistry.System.HealthProbe.Chat,ModelType=ModelTypes.Chat,RequiredOfferingId="fixed-route",
+            Context=new GatewayRequestContext { SourceTask="ModelUpgradeCanaryWorker:bounded-request" },
+            RequestBody=new JsonObject { ["messages"]=new JsonArray(new JsonObject { ["role"]="user",["content"]="Reply OK." }),
+                ["max_tokens"]=16,["stream"]=false }
+        },new GatewayModelResolution { Success=true,ActualModel=model,ActualPlatformId="official",ActualPlatformName="OpenAI",
+            PlatformType="openai",Protocol="openai",ApiUrl="https://api.openai.com",ApiKey="test",OfferingId="fixed-route",MaxTokens=1024 });
+        Assert.True(response.Success,response.ErrorMessage);
+        var body=JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.Equal(16,(int?)body["max_completion_tokens"]);
+        Assert.False(body.ContainsKey("max_tokens"));
+        Assert.Equal(reasoningNone,body.ContainsKey("reasoning_effort"));
+        if(reasoningNone) Assert.Equal("none",(string?)body["reasoning_effort"]);
+    }
+
     [Fact]
     public async Task SendRawWithResolutionAsync_WhenGpt56UsesDefaultChatEndpoint_ShouldNormalizeLegacyParameters()
     {

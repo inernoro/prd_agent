@@ -251,6 +251,27 @@ public sealed class ModelUpgradeCanaryTests
         coordinator.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData("gpt-5","max_completion_tokens",16,false,null,true)]
+    [InlineData("gpt-5.6-terra","max_completion_tokens",16,false,"none",true)]
+    [InlineData("gpt-5","max_tokens",16,false,null,false)]
+    [InlineData("gpt-5","max_completion_tokens",32,false,null,false)]
+    [InlineData("gpt-5.6-terra","max_completion_tokens",16,true,"none",false)]
+    [InlineData("gpt-5.6-terra","max_completion_tokens",16,false,"high",false)]
+    [InlineData("gpt-5","max_completion_tokens",16,false,"none",false)]
+    public void FinalCanaryWire_UsesOnlyActualModelCompatibilityFields(string model,string field,int cap,bool dual,string? effort,bool expected)
+    {
+        var request=ModelUpgradeCanaryWorker.CreateChatCanaryRequest(new BsonDocument {
+            {"CandidateLogicalModelPublicId","fixed"},{"CandidateOfferingId","route"},{"AppCallerCode","chat.test"} },new GatewayRequestContext());
+        var body=request.RequestBody!.DeepClone().AsObject();body.Remove("max_tokens");body[field]=cap;body["model"]=model;
+        if(dual) body["max_tokens"]=16;
+        if(effort is not null) body["reasoning_effort"]=effort;
+        Assert.Equal(expected,LlmGateway.IsBoundedCanaryChatWire(request,"route","openai",body.ToJsonString(),model));
+        // 服务端兼容改写只允许用于最终 wire；前置金额门仍拒绝客户端自报的归一化字段。
+        Assert.Equal(field=="max_tokens" && cap==16 && !dual && effort is null,
+            LlmGateway.IsBoundedCanaryChatWire(request,"route","openai",body.ToJsonString()));
+    }
+
     private static (BsonDocument Job,BsonDocument State) Pair()
     {
         var job = new BsonDocument { {"_id","request"},{"TenantId","tenant"},{"LogicalModelId","stable"},{"PolicyVersion",1L},
