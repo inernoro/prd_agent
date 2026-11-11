@@ -109,6 +109,7 @@ public class ShortVideoMaterialController : ControllerBase
         var deletable = filter.Eq(r => r.Id, runId)
             & filter.Eq(r => r.UserId, userId)
             & filter.Eq(r => r.ProcessingToken, null)
+            & filter.Ne(r => r.CleanupPending, true)
             & filter.In(r => r.Status, new[] { "queued", "done", "failed", "cancelled" });
         // 数据库包装器负责撤销旧执行许可，并把许可快照约束加回最终删除条件。
         var result = await _db.ShortVideoMaterialRuns.DeleteOneAsync(deletable, CancellationToken.None);
@@ -120,7 +121,9 @@ public class ShortVideoMaterialController : ControllerBase
             .FirstOrDefaultAsync(CancellationToken.None);
         if (existing == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "运行记录不存在"));
-        return Conflict(ApiResponse<object>.Fail("SHORT_VIDEO_RUN_ACTIVE", "素材仍在处理中或状态已变化，请等待处理结束后再删除"));
+        return Conflict(ApiResponse<object>.Fail("SHORT_VIDEO_RUN_ACTIVE", existing.CleanupPending
+            ? "产物清理结果尚未确认，请保留任务记录并联系管理员核对后再删除"
+            : "素材仍在处理中或状态已变化，请等待处理结束后再删除"));
     }
 
     [HttpPost("runs/{runId}/cancel")]
