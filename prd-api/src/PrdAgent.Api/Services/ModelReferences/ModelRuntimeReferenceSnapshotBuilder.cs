@@ -61,8 +61,8 @@ public sealed class ModelRuntimeReferenceSnapshotBuilder(
                 state: configuredFallback is null ? "default" : "configured"),
             Stored("llm.main-model", "llmmodels[IsMain=true,Enabled=true]", "physical-pair", database.MainModels, database.Complete),
             Stored("llm.active-config", "llmconfigs[IsActive=true].Model", "public-id", database.ActiveConfigs, database.Complete),
-            Entry("sdk.openai.default", "OpenAIClient.constructor.model", "upstream-model-id", ConstructorDefault(typeof(OpenAIClient)), required: true, state: "default"),
-            Entry("sdk.claude.default", "ClaudeClient.constructor.model", "upstream-model-id", ConstructorDefault(typeof(ClaudeClient)), required: true, state: "default"),
+            Entry("sdk.openai.default", "OpenAIClient.constructor.model", "upstream-model-id", LlmTransportModelMetadata.OpenAiDefaultModel, required: true, state: "default"),
+            Entry("sdk.claude.default", "ClaudeClient.constructor.model", "upstream-model-id", LlmTransportModelMetadata.ClaudeDefaultModel, required: true, state: "default"),
             Entry("design-artifact.model", "DesignArtifactRuntime:Model", "public-id", configuration["DesignArtifactRuntime:Model"]),
             Entry("design-artifact.pool", "DesignArtifactRuntime:ModelPoolId", "pool-id", configuration["DesignArtifactRuntime:ModelPoolId"]),
             Entry("design-artifact.pinned-model", "DesignArtifactRuntime:RequestPolicy:PinnedModelId", "physical-pair",
@@ -96,10 +96,6 @@ public sealed class ModelRuntimeReferenceSnapshotBuilder(
         {
             identity.TenantId, identity.DeploymentIdentity, identity.DeploymentScope, identity.InstanceId
         })))).ToLowerInvariant();
-
-    private static string? ConstructorDefault(Type type)
-        => type.GetConstructors().SelectMany(x => x.GetParameters())
-            .FirstOrDefault(x => x.Name == "model" && x.HasDefaultValue)?.DefaultValue as string;
 
     private static ModelRuntimeReferenceEntry Stored(
         string key, string path, string kind, IReadOnlyList<ModelRuntimeStoredSelection> values, bool complete)
