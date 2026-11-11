@@ -1,3 +1,4 @@
+import type { ModelReferenceState } from './modelReferences';
 import type { ApiResponse } from '@/types/api';
 
 export type ModelLabSuite = 'speed' | 'intent' | 'custom';
@@ -10,7 +11,7 @@ export type ModelLabParams = {
   repeatN: number;
 };
 
-export type ModelLabSelectedModel = {
+export type ModelLabSelectedModel = ModelReferenceState & {
   /** 平台侧模型 ID（业务语义 modelId） */
   modelId: string;
   platformId: string;

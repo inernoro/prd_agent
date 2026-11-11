@@ -323,12 +323,6 @@
     "darkRgbaBg": 1,
     "lightFg": 0
   },
-  "/components/model/PlatformAvailableModelsDialog.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
   "/components/model/PoolHealthOverview.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
