@@ -4,6 +4,10 @@ namespace PrdAgent.LlmGw.ModelReferences;
 
 public sealed class ReferenceIdentity
 {
+    public bool HasCatalogSnapshot { get; set; }
+    public string? ModelType { get; set; }
+    public List<string> Capabilities { get; set; } = [];
+    public List<string> AllowedAppCallerCodes { get; set; } = [];
     public string? LogicalId { get; set; }
     public string? PublicId { get; set; }
     public List<string> Aliases { get; set; } = [];

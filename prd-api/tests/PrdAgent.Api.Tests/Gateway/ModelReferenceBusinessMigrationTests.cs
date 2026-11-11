@@ -10,6 +10,26 @@ namespace PrdAgent.Api.Tests.Gateway;
 public sealed class ModelReferenceBusinessMigrationTests
 {
     [Fact]
+    public async Task RetiredSourceCatalogDoesNotInvalidateMigrationOrEraseOriginalCapabilityContract()
+    {
+        await using var f = new Fixture();
+        await f.SeedAsync("generation", Fixture.VisualCallers, openVisualTarget: true);
+        await f.PutAsync("user_preferences", Preference("owner", "old-image"));
+        var mapping = await new ModelReferenceCatalog(f.Db, f.Db, Fixture.Tenant).BuildAsync(Fixture.Tenant, "source", "target");
+        var plan = await f.ApplyAsync(mapping);
+        Assert.Equal("completed", plan.Status);
+        await f.Db.GetCollection<BsonDocument>("llmgw_logical_models").DeleteOneAsync(new BsonDocument("_id", "source"));
+        await f.Db.GetCollection<BsonDocument>("llmgw_model_offerings").DeleteOneAsync(new BsonDocument("_id", "source-offering"));
+        var verified = await f.Engine.VerifyPlanAsync(plan.Id, Fixture.Tenant, plan.Revision);
+        Assert.Equal("completed", verified.Status);
+        Assert.Equal(1, verified.Coverage.Migrated);
+        await f.Db.GetCollection<BsonDocument>("llmgw_logical_models").UpdateOneAsync(new BsonDocument("_id", "target"),
+            Builders<BsonDocument>.Update.Set("Capabilities", new BsonArray { "text2img" }));
+        var changed = await f.Engine.VerifyPlanAsync(plan.Id, Fixture.Tenant, verified.Revision);
+        Assert.Equal("blocked", changed.Status);
+        Assert.False(changed.Coverage.Verified);
+    }
+    [Fact]
     public async Task ScopedPreferenceRepairsRequireGlobalCompletionAndInvalidateOnNewOldReference()
     {
         await using var f = new Fixture();

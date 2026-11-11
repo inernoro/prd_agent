@@ -1093,7 +1093,7 @@ export function runModelReferenceMigrationAction(intentId: string, action: 'appl
   return apiRequest(`/model-reference-migrations/plans/${encodeURIComponent(intentId)}/${action}`, { method: 'POST', body: { revision } });
 }
 
-export function getModelReferenceMigrationPlans(): Promise<ApiResponse<{ items: import('./types').ReferenceMigrationPlan[] }>> {
+export function getModelReferenceMigrationPlans(): Promise<ApiResponse<{ items: import('./types').ReferenceMigrationPlan[]; total?: number; unresolvedTotal?: number; hasMore?: boolean }>> {
   return apiRequest('/model-reference-migrations/plans');
 }
 export function getRepairableModelUsages(): Promise<ApiResponse<{ items: import('./types').RepairableModelUsage[] }>> {

@@ -1,4 +1,5 @@
 using PrdAgent.LlmGw.ModelUpgrades;
+using PrdAgent.LlmGw.ModelReferences;
 // AI 大模型网关 —— 独立观测/登录后端（与 MAP 物理隔离）。
 //
 // 设计意图（见 doc/design.platform.llm-gateway.physical-isolation.md）：
@@ -233,6 +234,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
 });
 
+builder.Services.AddModelReferences(gatewayDatabase, mapDatabase, config, internalTenantId);
 builder.Services.AddModelUpgrades(gatewayDatabase, mapDatabase, config, internalTenantId);
 
 var app = builder.Build();
@@ -3606,6 +3608,7 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
 var upstreamProxies = new UpstreamProxyService(gatewayDatabase, config, internalTenantId);
 upstreamProxies.MapEndpoints(app, jsonOptions);
 app.MapModelUpgrades(jsonOptions);
+app.MapModelReferences(jsonOptions);
 
 app.MapGet("/gw/platforms", async (HttpContext http) =>
 {
@@ -6450,6 +6453,11 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
     if (doc is null)
         return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail("NOT_FOUND", $"逻辑模型不存在：{id}"), jsonOptions, 404);
 
+    var fullRetirementCoverage = await InspectModelRetirementAsync(http, id);
+    if (!fullRetirementCoverage.CanComplete || fullRetirementCoverage.Residual > 0)
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail("MODEL_REFERENCE_COVERAGE_BLOCKED",
+            "完整使用位置检查仍有引用或未知项，请先在使用位置与升级中完成迁移并复核，再删除模型。"), jsonOptions, 409);
+
     /*
       还在接流量的模型不许直接删。
 
@@ -6492,7 +6500,7 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
       自动替换会把用户选择的模型语义悄悄改掉，正确恢复动作是先在引用处明确迁移，再回来删除。
 
       三类引用分别覆盖：视觉创作开放策略、MCP/OpenAPI 模型绑定密钥、尚未终结的生图任务。
-      历史日志和用户最近选择不阻断，它们不会再发起调用。过滤器与 MAP 实体的镜像契约由
+      历史日志不改写；用户保存的模型选择会参与未来调用，由完整引用注册表保护。过滤器与 MAP 实体的镜像契约由
       MapLogicalModelReferencePolicyMirrorTests 守住。
     */
     var publicId = doc.AsNullableString("PublicId")?.Trim() ?? string.Empty;
@@ -7652,6 +7660,10 @@ app.MapPut("/gw/logical-models/{id}/enabled", async (HttpContext http, string id
     if (existing is null) return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
     if (!enabled)
     {
+        var fullRetirementCoverage = await InspectModelRetirementAsync(http, id);
+        if (!fullRetirementCoverage.CanComplete || fullRetirementCoverage.Residual > 0)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_REFERENCE_COVERAGE_BLOCKED",
+                "完整使用位置检查仍有引用或未知项，请先完成迁移并复核；原模型保持启用。"), jsonOptions, 409);
         var businessReferences = await CollectMapBusinessModelReferencesAsync(
             http, mapDatabase, internalTenantId, logicalModelId: id, publicId: existing.AsNullableString("PublicId"));
         if (businessReferences.Count > 0)
@@ -13981,6 +13993,9 @@ app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, Tog
     if (doc is null) return Json(ApiEnvelope<PlatformItem>.Fail("NOT_FOUND", $"平台不存在：{id}"), jsonOptions, 404);
     if (!enabled)
     {
+        if (await IsPlatformReferenceCoverageBlockedAsync(http, gatewayDatabase, mapDatabase, internalTenantId, id))
+            return Json(ApiEnvelope<PlatformItem>.Fail("PLATFORM_REFERENCE_COVERAGE_BLOCKED",
+                "使用位置检查发现此上游仍被引用或状态未知，请先完成模型迁移并复核；上游保持启用。"), jsonOptions, 409);
         var businessReferences = await CollectMapBusinessModelReferencesAsync(
             http, mapDatabase, internalTenantId, platformId: id);
         if (businessReferences.Count > 0)
@@ -14726,6 +14741,10 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id, bool? cl
     if (doc is null)
         return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("NOT_FOUND", "上游不存在或不属于当前组织，请刷新列表"), jsonOptions, 404);
 
+    if (await IsPlatformReferenceCoverageBlockedAsync(http, gatewayDatabase, mapDatabase, internalTenantId, id))
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_REFERENCE_COVERAGE_BLOCKED",
+            "使用位置检查发现此上游仍被引用或状态未知，请先完成模型迁移并复核，再删除上游。"), jsonOptions, 409);
+
     var businessReferences = await CollectMapBusinessModelReferencesAsync(
         http, mapDatabase, internalTenantId, platformId: id);
     if (businessReferences.Count > 0)
@@ -14865,6 +14884,11 @@ app.MapDelete("/gw/models/{id}", async (HttpContext http, string id) =>
             return Json(ApiEnvelope<ModelDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型；MAP 来源模型请先认领"), jsonOptions, 409);
         isMapLegacy = true;
     }
+
+    var physicalRetirementCoverage = await InspectPhysicalModelRetirementAsync(http, doc);
+    if (!physicalRetirementCoverage.CanComplete || physicalRetirementCoverage.Residual > 0)
+        return Json(ApiEnvelope<ModelDeleteBlockers>.Fail("MODEL_REFERENCE_COVERAGE_BLOCKED",
+            "使用位置检查发现此物理型号仍被引用或状态未知，请先完成迁移并复核，再删除型号。"), jsonOptions, 409);
 
     var blockers = await CollectModelDeleteBlockersAsync(
         http, doc, gwModelPools, modelGroups, gwModelOfferings, gwLogicalModels, internalTenantId);
@@ -18536,6 +18560,49 @@ static async Task<List<string>> CollectOfferingHolderNamesAsync(
 /// </summary>
 // MAP 业务引用属于内部租户。配置写入与跨库检查没有事务：业务保存入口也必须校验目标，
 // 这里防止顺序管理操作制造悬空引用，不声称替代跨服务并发提交协议。
+static async Task<ReferenceCoverage> InspectModelRetirementAsync(HttpContext http, string logicalId)
+{
+    var catalog = http.RequestServices.GetRequiredService<ModelReferenceCatalog>();
+    var engine = http.RequestServices.GetRequiredService<ModelReferenceEngine>();
+    var mapping = await catalog.BuildRetirementAsync(TenantAccess.GetRequired(http).TenantId, logicalId, http.RequestAborted);
+    return await engine.FindDeleteBlockersAsync(mapping, http.RequestAborted);
+}
+
+static async Task<ReferenceCoverage> InspectPhysicalModelRetirementAsync(HttpContext http, BsonDocument model)
+{
+    var mapping = new ReferenceMigrationMapping { TenantId = TenantAccess.GetRequired(http).TenantId, Source = new()
+    {
+        PhysicalModelId = model.GetStringOrEmpty("_id"), ProviderId = model.AsNullableString("PlatformId"),
+        UpstreamModelId = model.AsNullableString("ModelName"),
+    } };
+    return await http.RequestServices.GetRequiredService<ModelReferenceEngine>().FindDeleteBlockersAsync(mapping, http.RequestAborted);
+}
+
+static async Task<bool> IsPlatformReferenceCoverageBlockedAsync(HttpContext http, IMongoDatabase gateway,
+    IMongoDatabase map, string internalTenantId, string platformId)
+{
+    var tenant = TenantAccess.GetRequired(http).TenantId;
+    var fb = Builders<BsonDocument>.Filter;
+    var projection = new BsonDocument { { "PlatformId", 1 }, { "ModelName", 1 } };
+    var physical = await gateway.GetCollection<BsonDocument>("llmgw_models")
+        .Find(fb.And(fb.Eq("TenantId", tenant), fb.Eq("PlatformId", platformId))).Project(projection).ToListAsync(http.RequestAborted);
+    if (tenant == internalTenantId) physical.AddRange(await map.GetCollection<BsonDocument>("llmmodels")
+        .Find(fb.Eq("PlatformId", platformId)).Project(projection).ToListAsync(http.RequestAborted));
+    foreach (var model in physical)
+    {
+        var coverage = await InspectPhysicalModelRetirementAsync(http, model);
+        if (!coverage.CanComplete || coverage.Residual > 0) return true;
+    }
+    // A pinned deployment may still reference an already removed physical catalog row.
+    if (tenant == internalTenantId)
+    {
+        var snapshot = await http.RequestServices.GetRequiredService<IRuntimeModelReferenceSnapshotProvider>()
+            .ReadAsync(new() { TenantId = tenant }, http.RequestAborted);
+        if (!snapshot.Complete || snapshot.Items.Any(x => x.IdentityKind == "physical-pair" && x.ProviderId == platformId)) return true;
+    }
+    return false;
+}
+
 static async Task<List<string>> CollectMapBusinessModelReferencesAsync(
     HttpContext http,
     IMongoDatabase mapDatabase,

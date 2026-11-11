@@ -31,6 +31,25 @@ public sealed class ModelReferenceEngineTests
         }
     }
     private static ModelReferenceEngine Engine(MemoryStore store) => new(store, "internal", new Runtime(), new Validator());
+    [Fact]
+    public async Task RegistryChangeWithdrawsOldSuccessWithoutReauthorizingOldChanges()
+    {
+        var store = new MemoryStore();
+        store.Add("user_preferences", "{_id:'owner',VisualAgentPreferences:{ModelId:'old-fixed',ModelAuto:false}}");
+        var engine = Engine(store);
+        var plan = await engine.PlanAsync(Mapping(), "admin");
+        plan = await engine.ApplyAsync(plan.Id, "internal", plan.Revision);
+        Assert.True(plan.Coverage.Verified);
+        store.Plans[plan.Id].Coverage.RegistryHash = "previous-registry";
+        var checkedPlan = await engine.VerifyPlanAsync(plan.Id, "internal", plan.Revision);
+        Assert.Equal("blocked", checkedPlan.Status);
+        Assert.False(checkedPlan.Coverage.Verified);
+        Assert.Null(checkedPlan.Coverage.ValidUntil);
+        Assert.Equal("previous-registry", checkedPlan.Coverage.RegistryHash);
+        Assert.Contains(checkedPlan.Coverage.Consumers, x => x.Key == "registry.changed" && x.Unknown == 1);
+        var denied = await Assert.ThrowsAsync<ModelReferenceException>(() => engine.ApplyAsync(plan.Id, "internal", checkedPlan.Revision));
+        Assert.Equal("REFERENCE_REGISTRY_CHANGED", denied.Code);
+    }
     private sealed class MemoryStore : IModelReferenceStore
     {
         public Dictionary<string, List<BsonDocument>> Data { get; } = new();
