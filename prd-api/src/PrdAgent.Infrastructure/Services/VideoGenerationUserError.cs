@@ -54,6 +54,8 @@ public static partial class VideoGenerationUserError
         var normalizedCode = (errorCode ?? string.Empty).Trim().ToUpperInvariant();
         return normalizedCode switch
         {
+            "VIDEO_RECOVERY_OUTCOME_UNKNOWN" => "上次生成结果尚未确认，已停止自动重试以避免重复费用。请核对已有结果后再决定下一步。",
+            "VIDEO_RECOVERY_NOT_ADMITTED" => "这次生成的原执行许可已不可用，系统没有重新提交。请联系管理员核对原任务。",
             "EMPTY_PROMPT" => "视频描述为空，请返回并输入内容后重试。",
             "EMPTY_ARTICLE" => "创作内容为空，请补充文稿后重试。",
             "MODEL_RESOLVE_FAILED" => "当前没有可用的视频生成模型，请联系管理员检查模型配置后重试。",
