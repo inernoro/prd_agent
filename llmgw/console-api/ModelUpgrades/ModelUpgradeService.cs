@@ -7,7 +7,7 @@ using PrdAgent.LlmGw.Mongo;
 namespace PrdAgent.LlmGw.ModelUpgrades;
 
 public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDatabase map, IModelUpgradeDiscovery discovery,
-    string internalTenantId, ILogger<ModelUpgradeService> logger)
+    string internalTenantId, ILogger<ModelUpgradeService> logger, IConfiguration? configuration = null)
 {
     public const string CollectionName = "llmgw_model_upgrade_policies";
     public const string ValidationCollectionName = "llmgw_model_upgrade_validation_runs";
@@ -19,6 +19,11 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
     private IMongoCollection<BsonDocument> Logs => gateway.GetCollection<BsonDocument>("llmrequestlogs");
     private IMongoCollection<BsonDocument> ValidationRuns => gateway.GetCollection<BsonDocument>(ValidationCollectionName);
     private IMongoCollection<BsonDocument> Audits => gateway.GetCollection<BsonDocument>("llmgw_operation_audits");
+    private string? DeploymentBlockReason => ModelUpgradeDeploymentAuthority.BlockReason(configuration);
+    private void RequireDeploymentAuthority()
+    {
+        if (DeploymentBlockReason is { } reason) throw new ModelUpgradeException("MODEL_UPGRADE_DEPLOYMENT_BLOCKED", reason);
+    }
     private static FilterDefinitionBuilder<BsonDocument> F => Builders<BsonDocument>.Filter;
     private static FilterDefinition<BsonDocument> Scope(string tenant, FilterDefinition<BsonDocument>? filter = null)
         => F.And(F.Eq("TenantId", tenant), filter ?? F.Empty);
@@ -56,7 +61,7 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
         var policy = s?.Policy ?? new ModelUpgradePolicy
         { ValidationAppCallerCode = ModelUpgradeRules.DefaultValidationCaller(logical, await ValidationCallersAsync(tenant, logical)) };
         var current = await CurrentAsync(tenant, logicalId);
-        var canPromote = stable && s is not null && !Busy(s) && current?.ModelId != s.Candidate?.ModelId && ModelUpgradeRules.CanPromote(s, false, DateTime.UtcNow);
+        var canPromote = DeploymentBlockReason is null && stable && s is not null && !Busy(s) && current?.ModelId != s.Candidate?.ModelId && ModelUpgradeRules.CanPromote(s, false, DateTime.UtcNow);
         return new ModelUpgradeView
         {
             LogicalModelId = logicalId, PublicId = logical.GetStringOrEmpty("PublicId"), Name = logical.GetStringOrEmpty("Name"),
@@ -66,9 +71,9 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
             Discoveries = s?.Discoveries ?? [], ValidationStatus = s?.ValidationStatus ?? "not-run",
             Phase = s?.Phase ?? "idle", Message = s?.Message ?? "尚未配置自动更新策略。",
             UpdatedAt = s?.UpdatedAt, LastCheckedAt = s?.LastCheckedAt, NextCheckAt = s?.NextCheckAt, History = s?.History ?? [],
-            CanPromote = canPromote, CanRollback = stable && s?.LastPromotion is { RolledBack: false } && !Busy(s),
-            ActionDisabledReason = !stable ? "固定版本标识不参与升级，请配置稳定业务模型。" : s is not null && Busy(s)
-                ? "任务正在执行，请等待状态更新。" : s?.OutcomeUnknown == true ? "上次验收结果未知，请先提供对应真实请求证据；禁止自动重试。" : canPromote ? null : "候选尚未通过真实验收，原线路保持不变。",
+            CanPromote = canPromote, CanRollback = DeploymentBlockReason is null && stable && s?.LastPromotion is { RolledBack: false } && !Busy(s),
+            ActionDisabledReason = DeploymentBlockReason ?? (!stable ? "固定版本标识不参与升级，请配置稳定业务模型。" : s is not null && Busy(s)
+                ? "任务正在执行，请等待状态更新。" : s?.OutcomeUnknown == true ? "上次验收结果未知，请先提供对应真实请求证据；禁止自动重试。" : canPromote ? null : "候选尚未通过真实验收，原线路保持不变。"),
         };
     }
     public async Task<List<ModelUpgradeView>> ListAsync(string tenant)
@@ -81,6 +86,7 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
 
     public async Task<ModelUpgradeView> SavePolicyAsync(TenantAccessContext actor, string id, ModelUpgradePolicyWrite write)
     {
+        RequireDeploymentAuthority();
         ModelUpgradeRules.ValidatePolicy(write);
         var logical = await LogicalAsync(actor.TenantId, id);
         if (!ModelUpgradeRules.IsStable(logical)) throw new ModelUpgradeException("FIXED_MODEL", "固定版本型号不能启用升级；请使用稳定业务标识。", 400);
@@ -127,6 +133,7 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
 
     public async Task<ModelUpgradeView> QueueAsync(TenantAccessContext actor, string id, string action, ModelUpgradeAction request)
     {
+        RequireDeploymentAuthority();
         var logical = await LogicalAsync(actor.TenantId, id);
         if (!ModelUpgradeRules.IsStable(logical)) throw new ModelUpgradeException("FIXED_MODEL", "固定版本型号不参与升级。", 400);
         var state = await StateAsync(actor.TenantId, id) ?? throw new ModelUpgradeException("POLICY_REQUIRED", "请先保存更新策略。");

@@ -28,7 +28,20 @@ public class ModelUpgradeReadTests
         { "DefaultForAppCallerCodes", new BsonArray { "visual-agent.image.img2img::generation", "visual-agent.image.text2img::generation" } },
         { "Capabilities", new BsonArray { "image_generation" } } };
     private static BsonDocument Caller(string code, string status = "active") => new() { { "AppCallerCode", code }, { "RequestType", "generation" }, { "Status", status } };
-    private static ModelUpgradeService Service(Mock<IMongoDatabase> db) => new(db.Object, db.Object, Mock.Of<IModelUpgradeDiscovery>(), "tenant", NullLogger<ModelUpgradeService>.Instance);
+    private static ModelUpgradeService Service(Mock<IMongoDatabase> db) => new(db.Object, db.Object, Mock.Of<IModelUpgradeDiscovery>(), "tenant", NullLogger<ModelUpgradeService>.Instance, ModelUpgradeTestConfiguration.AuthorizedProduction());
+    [Fact]
+    public async Task ReadRemainsAvailableButExplainsDefaultDeniedDeployment()
+    {
+        var db = new Mock<IMongoDatabase>(MockBehavior.Strict);
+        Collection(db, "llmgw_logical_models", Logical());
+        Collection(db, ModelUpgradeService.CollectionName, new ModelUpgradeState { ValidationMode = "canary", LastPromotion = new() });
+        Collection<BsonDocument>(db, "llmgw_model_offerings");
+        var service = new ModelUpgradeService(db.Object, db.Object, Mock.Of<IModelUpgradeDiscovery>(), "tenant", NullLogger<ModelUpgradeService>.Instance);
+        var view = await service.ReadAsync("tenant", "stable");
+        Assert.Equal("canary", view.ValidationMode);
+        Assert.False(view.CanPromote); Assert.False(view.CanRollback);
+        Assert.Contains("未启用", view.ActionDisabledReason);
+    }
     [Fact]
     public async Task ReadReturnsActualCanaryModeRatherThanDefaultEvidence()
     {

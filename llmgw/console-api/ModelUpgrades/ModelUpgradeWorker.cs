@@ -24,6 +24,7 @@ public sealed partial class ModelUpgradeService
 {
     public async Task TickAsync(CancellationToken ct)
     {
+        if (DeploymentBlockReason is not null) return;
         var now = DateTime.UtcNow;
         var filter = Builders<ModelUpgradeState>.Filter.Where(s => (s.PendingSwitch != null || s.PendingAction != "" || s.Policy.Enabled && s.NextCheckAt <= now)
             && (s.LeaseUntil == null || s.LeaseUntil < now));
