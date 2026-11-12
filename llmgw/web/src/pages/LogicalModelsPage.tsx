@@ -457,7 +457,7 @@ export function LogicalModelsPage() {
                               value={claimDraft.value}
                               placeholder="document-store.transcribe-summary::chat"
                               onChange={(e) => setClaimDraft({ id: item.id, value: e.target.value })}
-                              style={{ flex: 1, minWidth: 260 }}
+                              style={{ flex: '1 1 200px', minWidth: 0, width: '100%' }}
                             />
                             <Button
                               size="sm"
@@ -481,7 +481,7 @@ export function LogicalModelsPage() {
                               aria-label={`${item.name} 允许的调用方`}
                               value={allowlistDraft.value}
                               onChange={(e) => setAllowlistDraft({ id: item.id, value: e.target.value })}
-                              style={{ ...inputStyle, flex: 1, minWidth: 260 }}
+                              style={{ ...inputStyle, flex: '1 1 200px', minWidth: 0, width: '100%' }}
                             />
                             <Button size="sm" disabled={busy === `allowlist:${item.id}`} onClick={() => void saveAllowlist(item, allowlistDraft.value)}>保存</Button>
                             <Button size="sm" variant="ghost" onClick={() => setAllowlistDraft(null)}>取消</Button>
