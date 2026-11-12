@@ -90,6 +90,17 @@ test('未知创建结果按同clientRequestId恢复，未知应用仅GET原计�
   assert.equal(h.f.calls.filter(x=>x.name==='runModelReferenceMigrationAction').length,1);assert.ok(h.f.calls.filter(x=>x.name==='getModelReferenceMigrationPlan').every(x=>x.args[0]==='original-intent'));assert.doesNotMatch(h.body(),/升级全部使用位置完成|raw-secret-stack/);
   h.f.plan.status='completed';await h.tick(2000);assert.match(h.body(),/升级全部使用位置完成/);
 });
+test('部署明确在建档前拒绝时显示恢复动作，不查询不存在的计划且可重新创建',async t=>{
+  const h=await setup(t);
+  const reason='当前分支不允许修改模型配置，请前往 main 主环境处理。';
+  h.f.override=name=>name==='createModelReferenceMigrationPlan'?{success:false,data:null,error:{code:'REFERENCE_DEPLOYMENT_BLOCKED',message:reason}}:undefined;
+  await h.render();await h.select('target');await h.click('生成升级计划');
+  assert.match(h.body(),new RegExp(reason));assert.equal(h.button('重新扫描范围').disabled,false);
+  assert.equal(h.f.calls.filter(x=>x.name==='getModelReferenceMigrationPlanByRequest').length,0);
+  assert.doesNotMatch(h.body(),/结果尚未确认|正在生成升级计划|升级全部使用位置完成/);
+  h.f.override=null;await h.click('重新扫描范围');await h.click('生成升级计划');assert.equal(h.button('升级全部使用位置').disabled,false);
+  assert.equal(h.f.calls.filter(x=>x.name==='createModelReferenceMigrationPlan').length,2);
+});
 test('完成必须GET复读且零残留；过期及读失败撤销绿色状态',async t=>{
   const h=await setup(t);let contradict=false;h.f.override=name=>{if(name==='getModelReferenceMigrationPlan'&&contradict)return ok({...structuredClone(h.f.plan),coverage:coverage({migrated:1,residual:1,verified:true,validUntil:new Date(h.f.now+600000).toISOString()})});};
   await h.render();await h.select('target');await h.click('生成升级计划');contradict=true;await h.click('升级全部使用位置');assert.doesNotMatch(h.body(),/升级全部使用位置完成/);assert.match(h.body(),/需重新核对/);
