@@ -137,8 +137,14 @@ public sealed class KnowledgeRetrievalService
         var storeById = stores.ToDictionary(x => x.Id, StringComparer.Ordinal);
         foreach (var entry in entries)
             documents.Add(new KnowledgeRetrievalDocument(storeById[entry.StoreId], entry, await ReadContentAsync(entry, ct)));
+        var currentHashes = documents.ToDictionary(doc => doc.Entry.Id, doc =>
+            (storeId: doc.Store.Id, hashes: DocumentChunker.Split(doc.Content)
+                .Select(text => DocumentChunker.ComputeHash(text, batch.Model)).ToHashSet()));
+        // Only reveal counts for entries that still exist and remain accessible now.
+        var staleChunks = rows.Count(row => currentHashes.TryGetValue(row.EntryId, out var current)
+            && current.storeId == row.StoreId && !current.hashes.Contains(row.ContentHash));
         var hits = RankCurrent(rows, documents, userId, batch.Model, batch.Vectors[0], limit, DeploymentScope.Current);
-        return SearchResult(query, hits, watch.ElapsedMilliseconds);
+        return SearchResult(query, hits, watch.ElapsedMilliseconds, staleChunks);
     }
 
     /// <summary>Shared runtime ranking boundary, testable without a model or database.</summary>
@@ -164,11 +170,13 @@ public sealed class KnowledgeRetrievalService
             .GroupBy(hit => hit.Entry.Id).Select(group => group.First()).Take(Math.Clamp(limit, 1, 50)).ToList();
     }
 
-    private static AgentToolInvokeResult SearchResult(string query, IReadOnlyList<KnowledgeRetrievalHit> hits, long elapsed)
+    private static AgentToolInvokeResult SearchResult(string query, IReadOnlyList<KnowledgeRetrievalHit> hits, long elapsed, int staleChunks = 0)
         => AgentToolInvokeResult.Ok(JsonSerializer.Serialize(new
         {
             query, mode = "semantic", readonlyAccess = true, total = hits.Count,
-            retrievalLatencyMs = elapsed, contextEntryIds = hits.Select(x => x.Entry.Id),
+            retrievalLatencyMs = elapsed, staleChunks,
+            indexWarning = staleChunks > 0 ? "已排除旧版索引块；若新正文未命中，请明确选择该篇文档重新索引，不会自动建库" : null,
+            contextEntryIds = hits.Select(x => x.Entry.Id),
             minimumScore = MinimumScore, thresholdCalibrated = false,
             freshness = "每次回读权限与原文；更新和删除提交后的下一次检索排除失效块；新内容需单篇索引",
             answerInstruction = hits.Count == 0 ? "没有找到依据，请明确回答知识库中未找到答案" : "仅按命中原文作答，逐项引用 source.uri；相似度不代表答案充分，不得补写无依据事实",
