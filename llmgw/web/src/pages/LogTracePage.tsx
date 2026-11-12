@@ -77,7 +77,7 @@ export function LogTracePage() {
             {item.sameReceiptRecords > 1 ? <p>同一上游回执出现在 {item.sameReceiptRecords} 条记录中，需核对重复回执／记账；不能据此认定发生了多次收费。</p> : null}
             {item.attempts.length ? <ol>{item.attempts.map((attempt, index) => <li key={`${attempt.order}-${index}`}>
               第 {attempt.order} 次尝试 · {attempt.stage} · {attempt.platformName || attempt.provider || '上游未知'} / {attempt.model || '型号未知'} · {statuses[attempt.status] || attempt.status}
-              {attempt.reachedProvider === true ? ' · 已到达上游' : attempt.reachedProvider === false ? ' · 未到达上游' : ' · 是否到达上游未记录'}
+              {attempt.reachedProvider === true ? ' · 已尝试访问上游' : attempt.reachedProvider === false ? ' · 未记录发送证据' : ' · 访问状态未记录'}
               {attempt.statusCode != null ? ` · HTTP ${attempt.statusCode}` : ''}
               <p style={{ overflowWrap: 'anywhere' }}>尝试编号 {attempt.attemptId || '历史记录未保存'} · 上游回执 {attempt.providerRequestId || '未记录'} · 作业 {attempt.providerTaskId || log.providerTaskId || '未记录'}</p>
               <p>本次尝试实际费用：{attempt.providerReportedCost == null ? '未知' : fmtCost(attempt.providerReportedCost, attempt.providerCostCurrency)} · 输入 / 输出 token：{attempt.inputTokens ?? '未知'} / {attempt.outputTokens ?? '未知'}</p>

@@ -3520,7 +3520,9 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
             .Include("AllowedModelPoolIds")
             .Include("DefaultModelPoolId"))
         .ToListAsync();
-    var logFilter = Builders<BsonDocument>.Filter.Gte("StartedAt", since);
+    var logFilter = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Not(LogTraceQuery.LegacySummary),
+        Builders<BsonDocument>.Filter.Gte("StartedAt", since));
     var logStatsDocs = await logs.Aggregate()
         .Match(TenantAccess.FilterTeamScope(http, logFilter))
         .Group(new BsonDocument
@@ -12664,6 +12666,7 @@ app.MapGet("/gw/cost-reconciliations", async (HttpContext http, string? from, st
         .Sort(new BsonDocument("Count", -1))
         .ToListAsync();
     var logFilter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Not(LogTraceQuery.LegacySummary),
         Builders<BsonDocument>.Filter.Gte("StartedAt", range.From),
         Builders<BsonDocument>.Filter.Lt("StartedAt", range.To),
         Builders<BsonDocument>.Filter.Or(
@@ -16905,9 +16908,9 @@ static FilterDefinition<BsonDocument> BuildBusinessOperationFilter()
         fb.Or(
             fb.Ne("RequestType", "video-gen"),
             fb.Nin("HttpMethod", new[] { "GET", "DELETE" })));
-    return fb.Or(
+    return fb.And(fb.Not(LogTraceQuery.LegacySummary), fb.Or(
         fb.In("Operation", new[] { "invoke", "submit" }),
-        legacyBusiness);
+        legacyBusiness));
 }
 
 static FilterDefinition<BsonDocument> BuildOperationFilter(string operation)

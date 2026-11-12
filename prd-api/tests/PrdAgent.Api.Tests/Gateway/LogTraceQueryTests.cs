@@ -34,7 +34,16 @@ public class LogTraceQueryTests
             rows.Add(new BsonDocument { { "_id", "foreign-team" }, { "TenantId", "tenant-a" }, { "TeamId", "team-b" }, { "RunId", "run-a" }, { "ProviderTaskId", "job-1" }, { "PlatformId", "provider-a" } });
             rows.Add(new BsonDocument { { "_id", "job-collision" }, { "TenantId", "tenant-a" }, { "TeamId", "team-a" }, { "ProviderTaskId", "job-1" }, { "PlatformId", "provider-b" } });
             rows.Add(new BsonDocument { { "_id", "independent" }, { "TenantId", "tenant-a" }, { "TeamId", "team-a" }, { "RequestId", "request-0" }, { "RunId", "run-b" } });
+            var summary = new BsonDocument { { "_id", "summary" }, { "TenantId", "tenant-a" },
+                { "Provider", "anthropic-sdk" }, { "RequestType", "agent" }, { "Path", "/v1/messages" }, { "GatewayTransport", "http" } };
+            rows.Add(summary);
+            var native = summary.DeepClone().AsBsonDocument;
+            native["_id"] = "native"; native["IngressProtocol"] = "gw-native";
+            rows.Add(native);
             await logs.InsertManyAsync(rows);
+            Assert.Equal("summary", (await logs.Find(LogTraceQuery.LegacySummary).SingleAsync())["_id"].AsString);
+            Assert.True(LogTraceQuery.IsLegacySummary(summary));
+            Assert.False(LogTraceQuery.IsLegacySummary(native));
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.UseTestServer();
             builder.Services.AddAuthorization(options => options.AddPolicy("LogsRead", policy => policy.RequireAssertion(_ => true)));
