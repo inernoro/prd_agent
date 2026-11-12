@@ -95,7 +95,10 @@
     "prCreated": false,
     "previewUrl": null,
     "browserUserPathVerified": false,
-    "ciVerification": "pending remote checks"
+    "ciVerification": "unverified: gh workflow dispatch returned Forbidden; connector combined statuses empty and PR-filtered workflow lookup empty, neither establishes Branch Image or Server Build & Test success",
+    "codeCommit": "b389e96416947159aef8f4a03764cb1f3f760d5f",
+    "pushedAndRemoteHeadVerified": true,
+    "previewLookup": "post-push authoritative cdscli failed: HTTP CONNECT 403"
   },
   "userPath": [
     "正常登录",
