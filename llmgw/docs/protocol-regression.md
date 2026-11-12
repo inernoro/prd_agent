@@ -14,6 +14,7 @@
 | OpenAI Chat compatible | 固定 text/tools 请求 | 固定 text/tools 请求 | 两种上游适配器；流式必须有 finish_reason 和 [DONE]；工具 id、名称与 JSON 参数不允许缺失 |
 | Claude compatible | 固定 text/tools 请求 | 固定 text/tools 请求 | 工具转换到 tool_use/input_json_delta；必须有 message_stop；当前流式仅输出 output usage，input/cache 用量尚不保真 |
 | Gemini compatible | 固定 text/tools 请求 | 固定 text/tools 请求 | functionDeclarations；ANY + 单个 allowedFunctionNames；functionCall 参数必须完整 JSON 对象；流式分片按索引合并后输出 |
+| 原生 Gemini 上游 transformer | 复用 GeminiNativeTransformerTests 的工具/用量固定夹具 | 未新增验证 | 仅证明既有独立转换器的对应字段映射；不在 40 组合 HTTP 回放与真实供应商报告范围，不能以 Gemini 入口回放替代 |
 | Responses compatible `/v1/responses` | 复用既有端点测试 | 复用既有工具事件测试 | 这是 Chat 转换路径，未声称完整原生 Responses 保真；不在新 HTTP 语料/跨版本语义比较中 |
 | Native Responses `/gw/v1/responses` | 复用真实网关的固定响应测试 | 复用双工具轮次原始 SSE 测试 | 只支持原生 OpenAI Responses；完整输入历史、store:false；上游存储会话引用明确拒绝；不在新 HTTP 语料/跨版本语义比较中 |
 | 工具调用 | 名称、id、参数结构、choice 与 schema | 分片重组、结束原因 | 固定单工具；Claude 多轮翻译复用旧测试。并行交错、多模态工具、流式取消没有新增完整组合覆盖 |
