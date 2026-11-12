@@ -18,6 +18,8 @@
 
 ## 文档列表
 
+- [MAP 与 CDS 磁盘容量治理 · 指南](./guide.platform.capacity.md) `guide.platform.capacity`
+
 - [网页托管关联文档 · 计划](./plan.web-hosting.related-documents.md) `plan.web-hosting.related-documents`
 
 - [CDS 骨架维护与验收 · 指南](./guide.cds.loading.md) `guide.cds.loading`
