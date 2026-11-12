@@ -345,4 +345,23 @@ describe('固定验收版本的批次发布协调器', () => {
     flush.mockRestore();
   });
 
+  it('批次收尾重新核对先完成目标，后续目标执行期间的现场变化不能沿用旧证据报全部成功', async () => {
+    const batch = await create(); await coordinator.preflight(batch.id);
+    const originalStart = service.startRelease.getMockImplementation()!;
+    let firstTargetActual = SHA;
+    service.startRelease.mockImplementation(async input => {
+      const run = await originalStart(input);
+      if (input.targetId === 'site-b') firstTargetActual = NEXT_SHA;
+      return run;
+    });
+    service.readRemoteReleaseState.mockImplementation(async target => ({
+      inventory: { currentCommitSha: target.id === 'site-a' ? firstTargetActual : SHA }, readAt: NOW,
+    }));
+    await coordinator.start(batch.id, 'final-observation-request');
+    const result = await settled(batch.id);
+    expect(result.status).toBe('inconsistent');
+    expect(result.targets.map(row => row.observedCommitSha)).toEqual([NEXT_SHA, SHA]);
+    expect(service.startRelease).toHaveBeenCalledTimes(2);
+  });
+
 });

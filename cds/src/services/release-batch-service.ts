@@ -275,6 +275,9 @@ export class ReleaseBatchService {
       await this.observe(batchId, targetId);
       await this.state.flush();
     }
+    // Earlier targets may have changed while later targets were deploying. The
+    // final verdict must use a fresh read of every target, including untouched successes.
+    for (const row of this.get(batchId).targets) await this.observe(batchId, row.targetId);
     this.update(batchId, batch => { batch.status = summarizeReleaseBatch(batch); });
     await this.state.flush();
   }

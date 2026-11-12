@@ -134,7 +134,14 @@ mv "$site/running.next" "$site/running"
     return batch as Batch;
   };
   const read = async (id: string) => (await call(`/${id}`)).batch as Batch;
-  const settle = (id: string) => waitFor(() => read(id), batch => !['draft', 'checking', 'ready', 'running'].includes(batch.status));
+  const settle = async (id: string) => {
+    await waitFor(() => read(id), batch => !['draft', 'checking', 'ready', 'running'].includes(batch.status));
+    // A result can be visible while its final durable flush is still settling.
+    // Wait for that confirmation before the fixture initiates another write.
+    await state.flush();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return read(id);
+  };
   const launch = async (batch: Batch) => {
     const checked = (await call(`/${batch.id}/preflight`, {})).batch as Batch;
     expect(checked.status, JSON.stringify(checked)).toBe('ready');
