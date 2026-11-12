@@ -78,8 +78,9 @@ function ReportDiagram({ code }: { code: string }) {
     <MermaidDiagram key={attempt} code={code} />
     <details style={{ color: 'var(--text-secondary)', fontSize: '0.875em' }}>
       <summary>图表无法显示？</summary>
-      <p>展开图表源码检查语法；网络恢复后可重新渲染，源码始终保留。</p>
+      <p>网络问题请重新加载页面；语法问题请作者检查源码后更新报告，源码始终保留。</p>
       <button type="button" className="underline" onClick={() => setAttempt(value => value + 1)}>重新渲染图表</button>
+      <button type="button" className="underline ml-3" onClick={() => window.location.reload()}>重新加载页面</button>
     </details>
   </div>;
 }
