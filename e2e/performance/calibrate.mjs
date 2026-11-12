@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import { calibrate } from './metrics.mjs';
+const args = process.argv.slice(2);
+const index = args.indexOf('--out');
+if (index < 0 || !args[index + 1]) throw new Error('用法: node calibrate.mjs result1.json result2.json result3.json --out baseline.json');
+const output = args[index + 1];
+args.splice(index, 2);
+const baseline = calibrate(args.map(path => JSON.parse(fs.readFileSync(path, 'utf8'))));
+fs.writeFileSync(output, JSON.stringify(baseline, null, 2) + '\n');
+console.log(`基线已生成: ${output}`);

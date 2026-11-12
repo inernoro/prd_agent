@@ -1,6 +1,13 @@
 name: Preview Acceptance
 
 on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'prd-api/**'
+      - 'prd-admin/**'
+      - 'e2e/performance/**'
+      - '.github/workflows/preview-acceptance.yml'
   workflow_dispatch:
     inputs:
       smoke_host:
@@ -15,12 +22,87 @@ on:
         description: 'Playwright E2E 目标 URL；留空则跳过 e2e'
         required: false
         default: ''
+      perf_ref:
+        description: '隔离性能回归的候选提交或 ref；留空跳过，不接受 URL'
+        required: false
+        default: ''
+      perf_base_ref:
+        description: '同机三次校准的基准提交'
+        required: false
+        default: 'origin/main'
+      perf_profile:
+        description: 'normal 为回归门禁；all 另含并发增长和持续运行'
+        type: choice
+        options: [normal, all]
+        default: normal
 
 env:
   NODE_VERSION: '20'
   PNPM_VERSION: '9'
 
 jobs:
+  performance-isolated:
+    name: MAP Performance (Isolated)
+    if: github.event_name == 'pull_request' || github.event.inputs.perf_ref != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    env:
+      PERF_REF: ${{ github.event.inputs.perf_ref || github.event.pull_request.head.sha }}
+      PERF_BASE_REF: ${{ github.event.inputs.perf_base_ref || github.event.pull_request.base.sha || 'origin/main' }}
+      PERF_PROFILE: ${{ github.event.inputs.perf_profile || 'normal' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.428'
+      - name: Install existing E2E dependencies and browser
+        run: |
+          pnpm -C e2e install --frozen-lockfile
+          pnpm -C e2e exec playwright install --with-deps chromium
+      - name: Verify regression judge and server timing probe
+        run: |
+          node --test e2e/performance/metrics.test.mjs
+          dotnet run --project e2e/performance/probe-tests -c Release
+      - name: Calibrate on three clean environments
+        run: |
+          for attempt in 1 2 3; do
+            node e2e/performance/run.mjs --ref "$PERF_BASE_REF" --profile normal --out "work/performance/base-$attempt"
+          done
+          node e2e/performance/calibrate.mjs work/performance/base-{1,2,3}/result.json --out work/performance/baseline.json
+      - name: Compare candidate commit
+        run: node e2e/performance/run.mjs --ref "$PERF_REF" --profile "$PERF_PROFILE" --baseline work/performance/baseline.json --out work/performance/candidate
+      - name: Prove injected application regression is rejected
+        run: |
+          set +e
+          node e2e/performance/run.mjs --ref "$PERF_BASE_REF" --profile normal --inject-ms 350 --baseline work/performance/baseline.json --out work/performance/injected
+          status=$?
+          set -e
+          test "$status" -eq 1
+          node e2e/performance/prove.mjs work/performance/injected/result.json
+      - name: Upload performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: map-performance-${{ github.run_id }}
+          retention-days: 14
+          path: |
+            work/performance/baseline.json
+            work/performance/*/result.json
+            work/performance/*/requests.ndjson
+            work/performance/*/fixture.json
+            work/performance/*/browser-*.png
+            work/performance/*/*-build.log
+
   smoke-preview:
     name: Smoke (Preview Branch)
     if: github.event.inputs.smoke_host != ''
