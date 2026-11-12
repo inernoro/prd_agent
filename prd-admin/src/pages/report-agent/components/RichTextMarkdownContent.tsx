@@ -1,14 +1,16 @@
-import { useMemo, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
+import { MermaidDiagram } from '@/components/ui/MermaidDiagram';
 import { useDataTheme } from '../hooks/useDataTheme';
 
 interface RichTextMarkdownContentProps {
   content: string;
   showRealtimeLabel?: boolean;
   imageMaxHeight?: number;
+  imageUrls?: string[];
   className?: string;
 }
 
@@ -31,129 +33,113 @@ function extractMarkdownImages(content: string): PreviewImage[] {
   return images;
 }
 
+function ReportImage({ src, alt, maxHeight, onPreview }: {
+  src: string; alt: string; maxHeight: number; onPreview: () => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  src = defaultUrlTransform(src);
+  if (!src) return <span role="status">图片地址无效：{alt}。请联系作者更新图片地址。</span>;
+  if (failed) return <span className="block my-2 rounded-lg border p-3" role="status" style={{ borderColor: 'var(--border-default)' }}>
+    图片加载失败：{alt}。请检查网络后重试，或打开原图检查访问权限。
+    <span className="flex flex-wrap gap-3 mt-2">
+      <button type="button" className="underline" onClick={() => { setFailed(false); setAttempt(value => value + 1); }}>重新加载图片</button>
+      <a href={src} target="_blank" rel="noopener noreferrer" className="underline">打开原图</a>
+    </span>
+  </span>;
+  return <button type="button" onClick={onPreview} title="点击查看完整图片" className="block max-w-full my-2 cursor-zoom-in">
+    <img key={attempt} src={src} alt={alt} onError={() => setFailed(true)}
+      style={{ display: 'block', maxWidth: '100%', height: 'auto', maxHeight, objectFit: 'contain', borderRadius: 8 }} />
+  </button>;
+}
+
+function ReportDiagram({ code }: { code: string }) {
+  const [attempt, setAttempt] = useState(0);
+  const container = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const preserveDiagramSize = () => {
+      container.current?.querySelectorAll<SVGSVGElement>('.mermaid-render svg').forEach(svg => {
+        const width = svg.viewBox?.baseVal.width;
+        if (width > 0) {
+          // Keep diagram labels readable; the existing chart viewport scrolls horizontally.
+          svg.style.width = `${width}px`;
+          svg.style.maxWidth = 'none';
+          svg.style.flexShrink = '0';
+          if (svg.parentElement) svg.parentElement.style.justifyContent = 'flex-start';
+        }
+      });
+    };
+    const observer = new MutationObserver(preserveDiagramSize);
+    if (container.current) observer.observe(container.current, { childList: true, subtree: true });
+    preserveDiagramSize();
+    return () => observer.disconnect();
+  }, []);
+  return <div ref={container}>
+    <MermaidDiagram key={attempt} code={code} />
+    <details style={{ color: 'var(--text-secondary)', fontSize: '0.875em' }}>
+      <summary>图表无法显示？</summary>
+      <p>展开图表源码检查语法；网络恢复后可重新渲染，源码始终保留。</p>
+      <button type="button" className="underline" onClick={() => setAttempt(value => value + 1)}>重新渲染图表</button>
+    </details>
+  </div>;
+}
+
 export function RichTextMarkdownContent({
   content,
   showRealtimeLabel = false,
   imageMaxHeight = 220,
+  imageUrls,
   className,
 }: RichTextMarkdownContentProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
-  const images = useMemo(() => extractMarkdownImages(content), [content]);
+  const images = useMemo(() => [...extractMarkdownImages(content), ...(imageUrls ?? []).map(url => ({ url, alt: '报告附件图片' }))], [content, imageUrls]);
   const dataTheme = useDataTheme();
-  const isLight = dataTheme === 'light';
-  const serifStyle: React.CSSProperties = isLight
-    ? { fontFamily: 'var(--font-serif)', letterSpacing: '-0.005em', color: 'var(--text-primary)' }
+  const serifStyle: React.CSSProperties = dataTheme === 'light'
+    ? { fontFamily: 'var(--font-serif)', color: 'var(--text-primary)' }
     : {};
-  const quoteStyle: React.CSSProperties = isLight
-    ? {
-        borderLeft: '3px solid var(--accent-claude)',
-        paddingLeft: '0.75rem',
-        margin: '0.5rem 0',
-        color: 'var(--text-secondary)',
-        fontStyle: 'italic',
-      }
-    : {
-        borderLeft: '3px solid var(--border-default)',
-        paddingLeft: '0.75rem',
-        margin: '0.5rem 0',
-        color: 'var(--text-secondary)',
-      };
-
-  return (
-    <>
-      <div
-        className={`surface-inset rounded-xl p-3 ${className ?? ''}`.trim()}
-        style={{
-          boxShadow: isLight
-            ? 'var(--shadow-card)'
-            : 'inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 22px rgba(0,0,0,0.14)',
-        }}
-      >
-        {showRealtimeLabel && (
-          <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
-            实时预览
-          </div>
-        )}
-        <div className="text-[12px] leading-relaxed text-left">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkBreaks]}
-            components={{
-              p: ({ children }) => (
-                <p className="my-1 whitespace-pre-wrap break-words">{children}</p>
-              ),
-              h1: ({ children }) => (
-                <h1 className="text-[17px] font-semibold mt-3 mb-1.5" style={serifStyle}>{children}</h1>
-              ),
-              h2: ({ children }) => (
-                <h2 className="text-[15px] font-semibold mt-2.5 mb-1" style={serifStyle}>{children}</h2>
-              ),
-              h3: ({ children }) => (
-                <h3 className="text-[13.5px] font-semibold mt-2 mb-1" style={serifStyle}>{children}</h3>
-              ),
-              blockquote: ({ children }) => (
-                <blockquote style={quoteStyle}>{children}</blockquote>
-              ),
-              img: ({ src, alt }) => {
-                const imageSrc = typeof src === 'string' ? src : '';
-                if (!imageSrc) return null;
-                const idx = Math.max(0, images.findIndex((it) => it.url === imageSrc));
-                return (
-                  <button
-                    type="button"
-                    className="group relative inline-block max-w-full my-2 cursor-zoom-in align-top"
-                    onClick={() => {
-                      setPreviewIndex(idx);
-                      setPreviewOpen(true);
-                    }}
-                    title="点击查看大图"
-                  >
-                    <div
-                      className="relative inline-block overflow-hidden rounded-xl border transition-all duration-200"
-                      style={{
-                        borderColor: 'var(--border-primary)',
-                        background: isLight
-                          ? 'transparent'
-                          : 'linear-gradient(180deg, var(--nested-block-bg), var(--nested-block-bg))',
-                        boxShadow: isLight
-                          ? 'var(--shadow-card-hover)'
-                          : '0 8px 20px rgba(0,0,0,0.18)',
-                      }}
-                    >
-                      <img
-                        src={imageSrc}
-                        alt={alt || '周报图片'}
-                        className="block h-auto w-auto max-w-full object-contain transition-transform duration-200 group-hover:scale-[1.01] bg-token-nested"
-                        style={{ maxHeight: `min(${imageMaxHeight}px, 42vh)` }}
-                      />
-                      <div
-                        className="absolute inset-x-0 bottom-0 px-3 py-1.5 text-[11px] opacity-0 transition-opacity duration-200 group-hover:opacity-100"
-                        style={{
-                          color: isLight ? 'rgba(15,23,42,0.92)' : 'var(--text-primary)',
-                          background: isLight
-                            ? 'linear-gradient(180deg, rgba(255,255,255,0), var(--nested-block-bg))'
-                            : 'linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,0.55))',
-                        }}
-                      >
-                        点击查看大图
-                      </div>
-                    </div>
-                  </button>
-                );
-              },
-            }}
-          >
-            {content?.trim() ? content : '（空）'}
-          </ReactMarkdown>
-        </div>
+  const cellStyle: React.CSSProperties = {
+    border: '1px solid var(--border-default)', padding: '8px 12px', minWidth: 120,
+    textAlign: 'left', verticalAlign: 'top', overflowWrap: 'anywhere',
+  };
+  return <>
+    <div className={`surface-inset rounded-xl p-3 ${className ?? ''}`.trim()}
+      style={{ minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', color: 'var(--text-primary)' }}>
+      {showRealtimeLabel && <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>实时预览</div>}
+      <div className="text-[14px] leading-relaxed text-left">
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={{
+          p: ({ children }) => <div className="my-2 whitespace-pre-wrap">{children}</div>,
+          h1: ({ children }) => <h1 className="text-[20px] font-semibold mt-4 mb-2" style={serifStyle}>{children}</h1>,
+          h2: ({ children }) => <h2 className="text-[18px] font-semibold mt-4 mb-2" style={serifStyle}>{children}</h2>,
+          h3: ({ children }) => <h3 className="text-[16px] font-semibold mt-3 mb-2" style={serifStyle}>{children}</h3>,
+          ul: ({ children }) => <ul className="list-disc pl-5 my-2">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal pl-5 my-2">{children}</ol>,
+          blockquote: ({ children }) => <blockquote style={{ borderLeft: '3px solid var(--accent-claude)', paddingLeft: 12, margin: '12px 0', color: 'var(--text-secondary)' }}>{children}</blockquote>,
+          a: ({ href, children }) => <a href={href} target={href?.startsWith('#') ? undefined : '_blank'} rel="noopener noreferrer"
+            style={{ color: 'var(--accent-fg-info)', textDecoration: 'underline', textUnderlineOffset: 3 }}>{children}</a>,
+          table: ({ children }) => <div role="region" aria-label="报告表格，可横向滚动查看全部列" tabIndex={0}
+            style={{ overflowX: 'auto', maxWidth: '100%', margin: '12px 0' }}>
+            <table style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%', fontSize: 'inherit' }}>{children}</table>
+          </div>,
+          th: ({ children }) => <th scope="col" style={{ ...cellStyle, background: 'var(--nested-block-bg)' }}>{children}</th>,
+          td: ({ children }) => <td style={cellStyle}>{children}</td>,
+          pre: ({ children }) => <div style={{ overflowX: 'auto', maxWidth: '100%', margin: '12px 0', padding: 12, background: 'var(--nested-block-bg)', borderRadius: 8 }}>{children}</div>,
+          code: ({ className: codeClass, children }) => {
+            const code = String(children ?? '').replace(/\n$/, '');
+            if (/language-mermaid(?:\s|$)/i.test(codeClass ?? '')) return <ReportDiagram code={code} />;
+            return <code className={codeClass} style={{ fontFamily: 'ui-monospace, monospace', whiteSpace: codeClass || code.includes('\n') ? 'pre' : 'pre-wrap' }}>{children}</code>;
+          },
+          img: ({ src, alt }) => {
+            if (typeof src !== 'string' || !src) return null;
+            return <ReportImage key={src} src={src} alt={alt || '报告图片'} maxHeight={imageMaxHeight} onPreview={() => {
+              setPreviewIndex(Math.max(0, images.findIndex(image => image.url === src)));
+              setPreviewOpen(true);
+            }} />;
+          },
+        }}>{content?.trim() ? content : '（空）'}</ReactMarkdown>
       </div>
-      <ImagePreviewDialog
-        images={images}
-        initialIndex={previewIndex}
-        open={previewOpen}
-        onClose={() => setPreviewOpen(false)}
-      />
-    </>
-  );
+      {imageUrls?.map((src, index) => <ReportImage key={src} src={src} alt={`报告附件图片 ${index + 1}`} maxHeight={imageMaxHeight} onPreview={() => { setPreviewIndex(images.findIndex(image => image.url === src)); setPreviewOpen(true); }} />)}
+    </div>
+    <ImagePreviewDialog images={images} initialIndex={previewIndex} open={previewOpen} onClose={() => setPreviewOpen(false)} />
+  </>;
 }
-

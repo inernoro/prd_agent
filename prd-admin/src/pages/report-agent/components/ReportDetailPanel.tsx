@@ -293,7 +293,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                                   )}
                                 </div>
                               )}
-                              <RichTextMarkdownContent content={item.content} imageMaxHeight={220} />
+                              <RichTextMarkdownContent content={item.content} imageUrls={item.imageUrls} imageMaxHeight={220} />
                             </div>
                           );
                         })}
@@ -308,6 +308,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                           <RichTextMarkdownContent
                             key={iIdx}
                             content={item.content}
+                            imageUrls={item.imageUrls}
                             imageMaxHeight={260}
                           />
                         ))}
@@ -317,9 +318,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                         {section.items.map((item, iIdx) => (
                           <li key={iIdx} className="flex items-start gap-2">
                             <span className="text-[13px] mt-0.5 font-medium" style={{ color: accentColor }}>•</span>
-                            <span className="text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                              {item.content || '（空）'}
-                            </span>
+                            <div className="min-w-0 flex-1"><RichTextMarkdownContent content={item.content} imageUrls={item.imageUrls} /></div>
                           </li>
                         ))}
                       </ul>

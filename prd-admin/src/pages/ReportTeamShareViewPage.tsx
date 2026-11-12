@@ -1,3 +1,6 @@
+import { SharedReportSection } from './report-agent/components/SharedReportSection';
+import { RichTextMarkdownContent } from './report-agent/components/RichTextMarkdownContent';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSmartBack } from '@/hooks/useSmartBack';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -93,7 +96,7 @@ export default function ReportTeamShareViewPage() {
   };
 
   if (loading) {
-    return <div style={{ ...pageStyles.fullScreen, background: '#0a0a0a' }} />;
+    return <div style={pageStyles.fullScreen}><MapSpinner size={20} /><span role="status">正在加载团队周报…</span></div>;
   }
 
   // ── Error: Not Found / Expired ──
@@ -116,6 +119,8 @@ export default function ReportTeamShareViewPage() {
                 ? '该分享链接已超过有效期，请联系分享者重新生成'
                 : error.message}
           </p>
+          <button type="button" onClick={() => void fetchShare()} style={pageStyles.primaryBtn}>重新加载</button>
+          <button type="button" onClick={goBack} style={pageStyles.backBtn} aria-label="返回上一页"><ArrowLeft size={16} /></button>
         </div>
       </div>
     );
@@ -165,7 +170,7 @@ export default function ReportTeamShareViewPage() {
           <p
             style={{
               ...pageStyles.cardDesc,
-              color: wrongPassword ? 'rgba(239, 68, 68, 0.7)' : 'rgba(255,255,255,0.5)',
+              color: wrongPassword ? 'rgba(239, 68, 68, 0.7)' : 'var(--text-secondary)',
             }}
           >
             {wrongPassword
@@ -189,7 +194,7 @@ export default function ReportTeamShareViewPage() {
                   borderRadius: 10,
                   border: `1px solid ${wrongPassword ? 'rgba(239, 68, 68, 0.5)' : 'var(--border-subtle)'}`,
                   background: 'var(--nested-block-bg)',
-                  color: '#fff',
+                  color: 'var(--text-primary)',
                   fontSize: 14,
                   outline: 'none',
                   width: 220,
@@ -207,7 +212,7 @@ export default function ReportTeamShareViewPage() {
                   border: 'none',
                   cursor: 'pointer',
                   padding: 4,
-                  color: 'rgba(255,255,255,0.4)',
+                  color: 'var(--text-secondary)',
                   display: 'flex',
                   alignItems: 'center',
                 }}
@@ -222,10 +227,8 @@ export default function ReportTeamShareViewPage() {
                 padding: '10px 20px',
                 borderRadius: 10,
                 border: 'none',
-                background: wrongPassword
-                  ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.8), rgba(239, 68, 68, 0.6))'
-                  : 'linear-gradient(135deg, rgba(59, 130, 246, 0.8), rgba(99, 102, 241, 0.8))',
-                color: '#fff',
+                background: 'var(--button-primary-bg)',
+                color: 'var(--button-primary-fg)',
                 fontSize: 14,
                 fontWeight: 500,
                 cursor: 'pointer',
@@ -254,44 +257,44 @@ export default function ReportTeamShareViewPage() {
     <div style={pageStyles.successRoot}>
       <div style={pageStyles.topBar}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button type="button" onClick={goBack} style={pageStyles.backBtn}>
+          <button type="button" onClick={goBack} style={pageStyles.backBtn} aria-label="返回上一页">
             <ArrowLeft size={14} />
           </button>
           <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" />
           {data.shareInfo.createdByName && (
-            <span style={{ color: 'rgba(34, 197, 94, 0.9)', fontSize: 13, fontWeight: 600 }}>
+            <span style={{ color: 'var(--accent-fg-success)', fontSize: 13, fontWeight: 600 }}>
               {data.shareInfo.createdByName}
             </span>
           )}
-          <span style={{ color: '#fff', fontSize: 14, fontWeight: 500 }}>
+          <span style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 500 }}>
             分享「{data.team.name}」{data.weekYear} 年第 {data.weekNumber} 周周报
           </span>
         </div>
-        <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>
+        <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
           {data.shareInfo.expiresAt
             ? `有效期至 ${new Date(data.shareInfo.expiresAt).toLocaleDateString()}`
             : '永不过期'}
         </div>
       </div>
 
-      <div style={pageStyles.scrollBody}>
+      <div style={pageStyles.scrollBody} role="region" aria-label="报告正文" tabIndex={0}>
         <div style={pageStyles.container}>
           {/* Stats */}
           <div style={pageStyles.statsRow}>
             <div style={pageStyles.statCard}>
-              <Users size={14} color="rgba(255,255,255,0.5)" />
+              <Users size={14} color="var(--text-secondary)" />
               <span style={pageStyles.statLabel}>团队人数</span>
               <span style={pageStyles.statValue}>{data.stats.totalMembers}</span>
             </div>
             <div style={pageStyles.statCard}>
               <CheckCircle2 size={14} color="rgba(34,197,94,0.8)" />
               <span style={pageStyles.statLabel}>已提交</span>
-              <span style={{ ...pageStyles.statValue, color: 'rgba(34,197,94,0.95)' }}>{data.stats.submittedCount}</span>
+              <span style={{ ...pageStyles.statValue, color: 'var(--accent-fg-success)' }}>{data.stats.submittedCount}</span>
             </div>
             <div style={pageStyles.statCard}>
               <Clock size={14} color="rgba(249,115,22,0.8)" />
               <span style={pageStyles.statLabel}>待提交</span>
-              <span style={{ ...pageStyles.statValue, color: 'rgba(249,115,22,0.95)' }}>{data.stats.pendingCount}</span>
+              <span style={{ ...pageStyles.statValue, color: 'var(--accent-fg-warning)' }}>{data.stats.pendingCount}</span>
             </div>
           </div>
 
@@ -307,11 +310,11 @@ export default function ReportTeamShareViewPage() {
                   <div key={idx} style={pageStyles.summaryCard}>
                     <div style={pageStyles.summaryCardTitle}>{section.title}</div>
                     {section.items.length === 0 ? (
-                      <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>（无内容）</div>
+                      <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>（无内容）</div>
                     ) : (
-                      <ul style={{ margin: 0, paddingLeft: 18, color: 'rgba(255,255,255,0.85)', fontSize: 13, lineHeight: 1.7 }}>
+                      <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.7 }}>
                         {section.items.map((item, itemIdx) => (
-                          <li key={itemIdx}>{item}</li>
+                          <li key={itemIdx}><RichTextMarkdownContent content={item} /></li>
                         ))}
                       </ul>
                     )}
@@ -334,10 +337,10 @@ export default function ReportTeamShareViewPage() {
                 {data.items.map((item) => (
                   <div key={item.reportId} style={pageStyles.reportCard}>
                     <div style={pageStyles.reportCardHeader}>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
                         {item.userName || item.userId}
                       </div>
-                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
                         {item.submittedAt ? `提交于 ${new Date(item.submittedAt).toLocaleString()}` : ''}
                       </div>
                     </div>
@@ -345,13 +348,9 @@ export default function ReportTeamShareViewPage() {
                       <div key={sIdx} style={pageStyles.reportSection}>
                         {sec.title && <div style={pageStyles.reportSectionTitle}>{sec.title}</div>}
                         {sec.items.length === 0 ? (
-                          <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12 }}>（无内容）</div>
+                          <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>（无内容）</div>
                         ) : (
-                          <ul style={{ margin: 0, paddingLeft: 18, color: 'rgba(255,255,255,0.82)', fontSize: 13, lineHeight: 1.65 }}>
-                            {sec.items.map((it, itIdx) => (
-                              <li key={itIdx}>{it.content}</li>
-                            ))}
-                          </ul>
+                          <SharedReportSection section={sec} />
                         )}
                       </div>
                     ))}
@@ -386,7 +385,7 @@ const pageStyles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: '#0a0a0a',
+    background: 'var(--bg-base)',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     overflow: 'hidden',
     padding: 24,
@@ -397,7 +396,7 @@ const pageStyles: Record<string, React.CSSProperties> = {
     width: '92%',
     borderRadius: 20,
     padding: '40px 32px',
-    background: 'rgba(17, 17, 17, 0.85)',
+    background: 'var(--panel-solid)',
     backdropFilter: 'blur(40px) saturate(130%)',
     WebkitBackdropFilter: 'blur(40px) saturate(130%)',
     border: '1px solid var(--border-subtle)',
@@ -405,13 +404,13 @@ const pageStyles: Record<string, React.CSSProperties> = {
     textAlign: 'center',
   },
   cardTitle: {
-    color: '#fff',
+    color: 'var(--text-primary)',
     margin: '0 0 8px',
     fontSize: 20,
     fontWeight: 600,
   },
   cardDesc: {
-    color: 'rgba(255,255,255,0.55)',
+    color: 'var(--text-secondary)',
     margin: '0 0 24px',
     fontSize: 14,
     lineHeight: 1.6,
@@ -420,27 +419,32 @@ const pageStyles: Record<string, React.CSSProperties> = {
     padding: '10px 24px',
     borderRadius: 10,
     border: 'none',
-    background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.8), rgba(99, 102, 241, 0.8))',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-fg)',
     fontSize: 14,
     fontWeight: 500,
     cursor: 'pointer',
   },
   successRoot: {
-    minHeight: '100vh',
+    height: '100dvh',
+    minHeight: 0,
+    overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
-    background: '#0a0a0a',
+    background: 'var(--bg-base)',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    color: '#fff',
+    color: 'var(--text-primary)',
   },
   topBar: {
+    flexWrap: 'wrap',
+    gap: 8,
+    overflowWrap: 'anywhere',
     flexShrink: 0,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '10px 20px',
-    background: 'rgba(17, 17, 17, 0.85)',
+    background: 'var(--panel-solid)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
     borderBottom: '1px solid var(--border-subtle)',
@@ -454,7 +458,7 @@ const pageStyles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     background: 'var(--nested-block-bg)',
     border: '1px solid var(--border-subtle)',
-    color: 'rgba(255,255,255,0.7)',
+    color: 'var(--text-secondary)',
     cursor: 'pointer',
   },
   scrollBody: {
@@ -465,7 +469,7 @@ const pageStyles: Record<string, React.CSSProperties> = {
   container: {
     maxWidth: 960,
     margin: '0 auto',
-    padding: '20px 20px 60px',
+    padding: '16px var(--mobile-padding, 10px) calc(60px + env(safe-area-inset-bottom))',
     display: 'flex',
     flexDirection: 'column',
     gap: 20,
@@ -487,13 +491,13 @@ const pageStyles: Record<string, React.CSSProperties> = {
   },
   statLabel: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.55)',
+    color: 'var(--text-secondary)',
   },
   statValue: {
     marginLeft: 'auto',
     fontSize: 18,
     fontWeight: 600,
-    color: '#fff',
+    color: 'var(--text-primary)',
   },
   section: {
     display: 'flex',
@@ -508,14 +512,14 @@ const pageStyles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
   },
   sectionTitle: {
-    color: '#fff',
+    color: 'var(--text-primary)',
   },
   emptyHint: {
     padding: '24px 20px',
     borderRadius: 12,
     background: 'var(--nested-block-bg)',
     border: '1px solid var(--border-subtle)',
-    color: 'rgba(255,255,255,0.5)',
+    color: 'var(--text-secondary)',
     fontSize: 13,
     textAlign: 'center',
   },
@@ -528,11 +532,12 @@ const pageStyles: Record<string, React.CSSProperties> = {
   summaryCardTitle: {
     fontSize: 13,
     fontWeight: 600,
-    color: '#fff',
+    color: 'var(--text-primary)',
     marginBottom: 8,
   },
   reportCard: {
-    padding: '16px 18px',
+    padding: '12px var(--mobile-padding, 10px)',
+    minWidth: 0,
     borderRadius: 12,
     background: 'var(--nested-block-bg)',
     border: '1px solid var(--border-subtle)',
@@ -544,12 +549,13 @@ const pageStyles: Record<string, React.CSSProperties> = {
     marginBottom: 10,
   },
   reportSection: {
+    minWidth: 0,
     marginTop: 10,
   },
   reportSectionTitle: {
     fontSize: 12,
     fontWeight: 600,
-    color: 'rgba(255,255,255,0.6)',
+    color: 'var(--text-secondary)',
     marginBottom: 6,
     textTransform: 'uppercase',
     letterSpacing: 0.5,

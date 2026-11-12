@@ -5055,7 +5055,17 @@ public class ReportAgentController : ControllerBase
                 sections = r.Sections.Select(s => new
                 {
                     title = s.TemplateSection?.Title,
-                    items = s.Items.Select(i => new { content = i.Content, source = i.Source, sourceRef = i.SourceRef }).ToList()
+                    templateSection = s.TemplateSection,
+                    items = s.Items.Select(i => new
+                    {
+                        content = i.Content,
+                        source = i.Source,
+                        sourceRef = i.SourceRef,
+                        cells = i.Cells,
+                        imageUrls = i.ImageUrls,
+                        issueCategoryKey = i.IssueCategoryKey,
+                        issueStatusKey = i.IssueStatusKey,
+                    }).ToList()
                 }).ToList(),
                 weekYear = r.WeekYear,
                 weekNumber = r.WeekNumber,

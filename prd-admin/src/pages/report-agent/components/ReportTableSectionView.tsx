@@ -7,16 +7,18 @@ function resolveRowCells(item: WeeklyReportItem, columnCount: number): string[] 
   const raw = item.cells && item.cells.length > 0
     ? [...item.cells]
     : (item.content ? item.content.split(' | ') : []);
-  const cells = raw.slice(0, columnCount);
+  const cells = [...raw];
   while (cells.length < columnCount) cells.push('');
   return cells;
 }
 
 /** Table 章节只读渲染（周报详情页 / 详情面板共用） */
 export function ReportTableSectionView({ section, isLight }: { section: WeeklyReportSection; isLight: boolean }) {
-  const columns = section.templateSection.tableColumns && section.templateSection.tableColumns.length > 0
+  const configuredColumns = section.templateSection.tableColumns && section.templateSection.tableColumns.length > 0
     ? section.templateSection.tableColumns
     : DEFAULT_TABLE_COLUMNS;
+  const columnCount = Math.max(configuredColumns.length, ...section.items.map(item => resolveRowCells(item, 0).length));
+  const columns = Array.from({ length: columnCount }, (_, index) => configuredColumns[index] ?? `补充列 ${index + 1}`);
   // 列宽：0 = 自动；任一列有自定义宽度则整表切 fixed 布局，与编辑器观感一致
   const widths = columns.map((_, i) => section.templateSection.tableColumnWidths?.[i] ?? 0);
   const hasCustomWidths = widths.some((w) => w > 0);
@@ -32,7 +34,7 @@ export function ReportTableSectionView({ section, isLight }: { section: WeeklyRe
   };
 
   return (
-    <div style={{ overflowX: 'auto', overscrollBehavior: 'contain' }}>
+    <div role="region" aria-label="报告表格，可横向滚动查看全部列" tabIndex={0} style={{ maxWidth: '100%', overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
       <table
         className="w-full"
         style={{
@@ -51,6 +53,7 @@ export function ReportTableSectionView({ section, isLight }: { section: WeeklyRe
             {columns.map((col, cIdx) => (
               <th
                 key={cIdx}
+                scope="col"
                 style={{
                   ...cellStyle,
                   fontWeight: 600,

@@ -510,7 +510,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                                 )}
                               </div>
                             )}
-                            <RichTextMarkdownContent content={item.content} imageMaxHeight={240} />
+                            <RichTextMarkdownContent content={item.content} imageUrls={item.imageUrls} imageMaxHeight={240} />
                           </div>
                         );
                       })}
@@ -525,6 +525,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                         <RichTextMarkdownContent
                           key={iIdx}
                           content={item.content}
+                          imageUrls={item.imageUrls}
                           imageMaxHeight={260}
                         />
                       ))}
@@ -539,9 +540,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                           >
                             ·
                           </span>
-                          <span className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                            {item.content || '（空）'}
-                          </span>
+                          <div className="min-w-0 flex-1"><RichTextMarkdownContent content={item.content} imageUrls={item.imageUrls} /></div>
                         </li>
                       ))}
                     </ul>

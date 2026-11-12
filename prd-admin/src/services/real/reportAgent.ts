@@ -3,6 +3,8 @@ import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
 import type {
+  ReportTemplateSection,
+  WeeklyReportItem,
   ListReportTeamsContract,
   GetReportTeamContract,
   CreateReportTeamContract,
@@ -1071,7 +1073,8 @@ export interface TeamWeekShareViewItem {
   updatedAt?: string;
   sections: {
     title?: string;
-    items: { content: string; source?: string; sourceRef?: string }[];
+    templateSection?: ReportTemplateSection;
+    items: WeeklyReportItem[];
   }[];
   weekYear: number;
   weekNumber: number;
