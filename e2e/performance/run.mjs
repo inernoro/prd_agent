@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { setTimeout as pause } from 'node:timers/promises';
 import { chromium, expect } from '@playwright/test';
 import { workload, digest, summarize, compare, capacity } from './metrics.mjs';
+import { readProcesses, processTree } from './resources.mjs';
 
 const exec = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -56,6 +57,7 @@ const contract = { schema: 1, workload, limits, images, sdkVersion,
   nodeMajor: process.versions.node.split('.')[0], arch: os.arch(), cpu: os.cpus()[0].model,
   probe: digest(await fs.readFile(path.join(here, 'probe/Probe.cs'), 'utf8')),
   metricsCode: digest(await fs.readFile(path.join(here, 'metrics.mjs'), 'utf8')),
+  resourcesCode: digest(await fs.readFile(path.join(here, 'resources.mjs'), 'utf8')),
   proxyRecipe: digest(await fs.readFile(path.join(here, 'nginx.conf'), 'utf8')),
   runtimeRecipe: digest(await fs.readFile(path.join(here, 'runtime.Dockerfile'), 'utf8')),
   workloadCode: digest(await fs.readFile(fileURLToPath(import.meta.url), 'utf8')) };
@@ -331,6 +333,25 @@ try {
   const web = JSON.parse(await docker(['inspect', `${runId}-web`]))[0];
   base = `http://127.0.0.1:${web.NetworkSettings.Ports['80/tcp'][0].HostPort}`;
   result.isolation = { networkInternal: true, publishedAddress: base, freshDatabases: true, persistentVolumes: false };
+  const roots = JSON.parse(await docker(['inspect', ...containers])).map(c => ({
+    role: c.Name.split('-').at(-1), pid: c.State.Pid,
+  }));
+  contract.effectiveCgroups = {};
+  for (const name of containers) {
+    const role = name.split('-').at(-1);
+    const values = (await docker(['exec', name, 'sh', '-c', 'cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/memory.max'])).split('\n');
+    contract.effectiveCgroups[role] = { cpuMax: values[0], memoryMax: values[1] };
+  }
+  result.resourceAccounting = { source: 'Linux /proc process tree; CPU ticks and summed RSS',
+    requestedLimitsEnforced: Object.entries(limits).every(([role, [cpu, memory]]) => {
+      const actual = contract.effectiveCgroups[role];
+      const [quota, period] = actual.cpuMax.split(' ').map(Number);
+      return quota / period === Number(cpu) && actual.memoryMax === String(Number.parseInt(memory, 10) * 1024 ** 2);
+    }),
+    clockTicksPerSecond: Number(await command('getconf', ['CLK_TCK'])),
+    pageBytes: Number(await command('getconf', ['PAGESIZE'])) };
+  if (!result.resourceAccounting.requestedLimitsEnforced)
+    log('Docker未实施声明的容器配额；使用独立进程树资源统计，容量仅适用于记录的共享cgroup');
   await ready(); log('真实登录、知识库接口就绪，准备固定数据');
   // All VUs share this isolated account. Keep the actual Redis admission path,
   // but raise only this disposable instance's limits through the supported API
@@ -346,9 +367,21 @@ try {
   }
   sampling = true;
   monitor = (async () => {
+    const previous = new Map();
     while (sampling) {
-      const text = await docker(['stats', '--no-stream', '--format', '{{json .}}', ...containers]);
-      result.resources.push({ at: new Date().toISOString(), samples: text.split('\n').filter(Boolean).map(line => JSON.parse(line)) });
+      const table = await readProcesses();
+      const now = performance.now();
+      const samples = roots.map(({ role, pid }) => {
+        const current = processTree(table, pid), last = previous.get(role);
+        if (!current.pids.length) throw new Error(`${role}进程已退出，无法采样`);
+        const cpuPercent = last ? Math.max(0, current.ticks - last.ticks) / result.resourceAccounting.clockTicksPerSecond
+          / ((now - last.at) / 1000) * 100 : null;
+        previous.set(role, { ...current, at: now });
+        return { role, cpuPercent, rssBytes: current.rssPages * result.resourceAccounting.pageBytes,
+          cpuSeconds: current.ticks / result.resourceAccounting.clockTicksPerSecond, pids: current.pids };
+      });
+      result.resources.push({ at: new Date().toISOString(), samples });
+      await pause(1000);
     }
   })().catch(error => { sampling = false; result.failure ??= `资源采样失败: ${error.message}`; });
   await phase('normal', workload.normal.users, workload.normal.seconds, workload.normal.intervalMs);

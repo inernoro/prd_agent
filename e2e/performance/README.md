@@ -7,7 +7,7 @@
 ```bash
 pnpm -C e2e install --frozen-lockfile
 pnpm -C e2e exec playwright install --with-deps chromium
-node --test e2e/performance/metrics.test.mjs
+node --test e2e/performance/*.test.mjs
 dotnet run --project e2e/performance/probe-tests -c Release
 ```
 
@@ -28,7 +28,7 @@ node e2e/performance/run.mjs --ref HEAD --profile all --baseline work/performanc
 
 `normal` 为 2 个并发用户、每用户每秒开始一次事务、持续 20 秒。`all` 再执行 2/4/8/16/32/64/128 并发用户，各 15 秒无思考间隔；最后以正常负载持续 120 秒。压力阶段事务错误率超过 10% 时停止继续加压，仍执行持续运行阶段。间隔只控制负载节奏；所有登录、导航、正文加载、保存和写后校验都等待实际响应或可见内容，无固定 UI 等待。
 
-正常阶段每场景至少 30 个样本。预热不进入统计。各阶段独立报告 p50/p95/p99、错误率、成功吞吐和 Docker CPU/内存/块设备与网络累计消耗。原始请求留在 `requests.ndjson`，阶段资源样本范围在 `result.json`。吞吐以实际阶段墙钟时间为分母，包括尾部完成时间。请求错误保留状态与异常，成功延迟分位数不混入超时；同时必须查看错误率。
+正常阶段每场景至少 30 个样本。预热不进入统计。各阶段独立报告 p50/p95/p99、错误率、成功吞吐和各容器进程树 CPU/内存消耗。CPU 从 Linux `/proc` 的进程累计时钟增量计算，100% 表示一个核；内存是各进程 RSS 之和，包含共享页重复计算，不等于 PSS。原始请求留在 `requests.ndjson`，阶段资源样本范围在 `result.json`。吞吐以实际阶段墙钟时间为分母，包括尾部完成时间。请求错误保留状态与异常，成功延迟分位数不混入超时；同时必须查看错误率。
 
 负例执行会返回 1；必须再验证失败确实来自应用性能退化：
 
@@ -62,6 +62,8 @@ node e2e/performance/prove.mjs work/performance/injected/result.json
 ## 隔离与 CI
 
 执行器无目标 URL 参数，输出限于仓库 `work/`，拒绝覆盖已有结果。每轮创建独立 `--internal` Docker 网络，Mongo、Redis、API 不发布端口；仅固定路由的静态 Web 代理额外加入本轮入口网络，并发布到随机的 `127.0.0.1` 端口（Docker 29 不对纯内部网络发布端口）。容器显式清空代理，浏览器拒绝非本地请求。API 限 1 CPU/1 GiB，Mongo 1 CPU/768 MiB，Redis 与 Web 各 0.5 CPU/256 MiB，禁用额外 swap。镜像按 digest 固定。API 的测试运行镜像以 Mongo 官方 Ubuntu/OpenSSL 基础环境补装固定版本 ICU，以只读挂载的同一 .NET SDK 启动，替换入口，不启动该容器的 mongod；API 进程沿用执行用户 UID/GID。成功和异常退出都会清理本次容器、匿名卷和网络，不接触其他实例。进程被硬终止或宿主崩溃时仍需按本次 `map-perf` 标签清理遗留资源。
+
+执行器核对容器内实际 cgroup 的 CPU 和内存限制，并记录进比较契约。上段是请求的配额；无 cgroup 委派的 rootless Docker 可能不执行这些限制，此时明确标记 `requestedLimitsEnforced=false`，不能把请求配额写成实际容量条件。资源始终按各容器 PID 的独立进程树采样，不采信共享 cgroup 的 `docker stats`。本次云环境若使用共享 4 CPU/16 GiB，容量报告只适用于这组实测条件；支持 cgroup 的 CI runner 则使用实际容器配额重新校准，二者不可混比。
 
 现有 **Preview Acceptance** 增加隔离性能 job：相关 PR 自动校准基准 SHA 并比较候选 SHA，手动执行可提供 `perf_ref` / `perf_base_ref` / `perf_profile`。默认正常负载门禁，`all` 执行全部三类测试；同一 runner 先测基准再测候选，最后必须证明受控退化被拒绝。该 job 不使用环境密钥、不部署、不购买资源；报告作为 Actions artifact 保留 14 天。没有 PR 时可手动 dispatch；本任务不自动创建 PR。
 

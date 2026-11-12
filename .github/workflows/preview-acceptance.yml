@@ -71,7 +71,7 @@ jobs:
           pnpm -C e2e exec playwright install --with-deps chromium
       - name: Verify regression judge and server timing probe
         run: |
-          node --test e2e/performance/metrics.test.mjs
+          node --test e2e/performance/*.test.mjs
           dotnet run --project e2e/performance/probe-tests -c Release
       - name: Calibrate on three clean environments
         run: |
