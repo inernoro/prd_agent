@@ -256,6 +256,46 @@ public sealed class VisualLogicalModelCatalogTests
             Assert.Equal(GatewayRouteFailure.ModelPoolAllUnavailable, busyRecovery.FailureCode);
             Assert.Equal(503, GatewayRouteFailure.HttpStatusCode(busyRecovery.FailureCode));
 
+            // 半开失败必须消耗人工恢复资格，回到冷却期；不能让坏线路被每次请求重试。
+            await resolver.RecordFailureAsync(recoveryAttempt);
+            var failedProbe = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Equal(ModelHealthStatus.Unavailable, failedProbe.HealthStatus);
+            Assert.Equal(1, failedProbe.ConsecutiveFailures);
+            Assert.Null(failedProbe.HalfOpenLeaseUntil);
+            Assert.Null(failedProbe.ManualRecoveryAt);
+            Assert.NotNull(failedProbe.LastFailedAt);
+            var cooling = await resolver.ResolveAsync(caller, "generation", "image2");
+            Assert.False(cooling.Success);
+            Assert.Equal(GatewayRouteFailure.ModelPoolAllUnavailable, cooling.FailureCode);
+
+            // 只推进自有测试数据库的时间，不 sleep、不调用供应商；并发请求只能取得一张探测票。
+            await offerings.UpdateOneAsync(x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update.Set(x => x.LastFailedAt, DateTime.UtcNow.AddHours(-1)));
+            var contenders = await Task.WhenAll(Enumerable.Range(0, 8)
+                .Select(_ => resolver.ResolveAsync(caller, "generation", "image2")));
+            var winner = Assert.Single(contenders, x => x.Success);
+            Assert.Equal("image2-offering", winner.OfferingId);
+            Assert.All(contenders.Where(x => !x.Success),
+                loser => Assert.Equal(GatewayRouteFailure.ModelPoolAllUnavailable, loser.FailureCode));
+
+            // 真正消费成功回执后才恢复健康，释放租约并清失败数；后续正常请求不再争半开票。
+            await offerings.UpdateOneAsync(x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update.Set(x => x.ManualRecoveryAt, DateTime.UtcNow));
+            await resolver.RecordSuccessAsync(winner);
+            var recovered = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Equal(ModelHealthStatus.Healthy, recovered.HealthStatus);
+            Assert.Equal(0, recovered.ConsecutiveFailures);
+            Assert.Equal(1, recovered.ConsecutiveSuccesses);
+            Assert.Null(recovered.HalfOpenLeaseUntil);
+            Assert.Null(recovered.ManualRecoveryAt);
+            Assert.NotNull(recovered.LastSuccessAt);
+            var recoveredCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.False(Assert.Single(recoveredCatalog[0].Models).IsRecoveryProbeAvailable);
+            var normalAfterRecovery = await resolver.ResolveAsync(caller, "generation", "image2");
+            Assert.True(normalAfterRecovery.Success, normalAfterRecovery.ErrorMessage);
+            Assert.Equal("image2-offering", normalAfterRecovery.OfferingId);
+            Assert.Null((await offerings.Find(x => x.Id == "image2-offering").SingleAsync()).HalfOpenLeaseUntil);
+
             await offerings
                 .UpdateManyAsync(
                     FilterDefinition<GatewayModelOffering>.Empty,

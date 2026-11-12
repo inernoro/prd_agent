@@ -163,6 +163,66 @@ assert a.stat().st_mtime > b_time + 1
 assert not (root / '.releases/fail').exists()
 PYCACHE
 
+# Upgrade migration must retain more than just previous, preserve nested lazy
+# chunks, and keep both directions usable even after old releases are removed.
+python3 - "$repo_root" "$tmp_root" <<'PYRETAIN'
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+repo, tmp = map(Path, sys.argv[1:])
+root = tmp / 'retention'
+for version in ['A', 'B', 'C']:
+    stage = root / f'.staging-{version}'
+    (stage / 'assets/nested').mkdir(parents=True)
+    (stage / 'index.html').write_text(f'<script src="/assets/{version}.js"></script>')
+    (stage / f'assets/{version}.js').write_text(version)
+    (stage / f'assets/nested/{version}.js').write_text(f'{version} chunk')
+    (stage / 'assets/shared.js').write_text(version)
+# Simulate releases made before retention was introduced (A absent from B).
+(root / '.releases').mkdir()
+shutil.move(str(root / '.staging-A'), root / '.releases/A')
+shutil.move(str(root / '.staging-B'), root / '.releases/B')
+(root / 'current').symlink_to('.releases/B')
+def run(command):
+    subprocess.run(['sh', '-eu', '-c', '. "$1/scripts/lib/static-release.sh"; ' + command, 'test', str(repo), str(root)], check=True, stdout=subprocess.DEVNULL)
+run('static_release_activate "$2/.staging-C" "$2" C')
+assert (root / 'current/assets/shared.js').read_text() == 'C'
+for version in ['A', 'B', 'C']:
+    assert (root / f'current/assets/{version}.js').read_text() == version
+    assert (root / f'current/assets/nested/{version}.js').read_text() == f'{version} chunk'
+shutil.rmtree(root / '.releases/A')
+assert (root / 'current/assets/A.js').read_text() == 'A'
+run('static_release_rollback "$2" .releases/B')
+assert (root / 'current/assets/shared.js').read_text() == 'B'
+assert (root / 'current/assets/C.js').read_text() == 'C'
+assert (root / 'current/assets/nested/C.js').stat().st_mode & 0o777 == 0o644
+# A malformed historical tree fails before changing the online pointer.
+stage = root / '.staging-D'
+stage.mkdir()
+(stage / 'index.html').write_text('D')
+(root / '.releases/C/assets/unsafe').symlink_to('/tmp')
+result = subprocess.run(['sh', '-c', '. "$1/scripts/lib/static-release.sh"; static_release_activate "$2/.staging-D" "$2" D', 'test', str(repo), str(root)], capture_output=True)
+assert result.returncode != 0
+assert (root / 'current').readlink().as_posix() == '.releases/B'
+# Recovery must not be blocked by optional compatibility work. The target's
+# own files are already known-good and must remain intact.
+def recover(setup=''):
+    (root / 'current').unlink()
+    (root / 'current').symlink_to('.releases/C')
+    result = subprocess.run(['sh', '-eu', '-c', '. "$1/scripts/lib/static-release.sh"; ' + setup + '; static_release_rollback "$2" .releases/B', 'test', str(repo), str(root)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert (root / 'current').readlink().as_posix() == '.releases/B'
+    assert (root / 'previous').readlink().as_posix() == '.releases/C'
+    assert (root / 'current/index.html').read_text() == '<script src="/assets/B.js"></script>'
+    assert (root / 'current/assets/B.js').read_text() == 'B'
+    return result.stderr
+assert 'continuing rollback' in recover(':')
+(root / '.releases/C/assets/unsafe').unlink()
+assert 'continuing rollback' in recover('static_release_retain_assets() { return 1; }')
+assert 'continuing rollback' in recover('static_release_make_web_readable() { return 1; }')
+PYRETAIN
+
 python3 - "$repo_root/exec_dep.sh" <<'PY'
 import sys
 from pathlib import Path
