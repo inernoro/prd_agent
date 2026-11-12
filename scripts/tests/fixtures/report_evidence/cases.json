@@ -1,0 +1,337 @@
+{
+  "schemaVersion": 1,
+  "sampleType": "synthetic",
+  "workItems": [
+    {
+      "id": "export",
+      "title": "跨日导出功能",
+      "owner": "开发甲",
+      "nextStep": {
+        "action": "补充导出端到端验证",
+        "owner": "测试甲"
+      }
+    },
+    {
+      "id": "retry",
+      "title": "同一支付重试功能多次修复",
+      "owner": "开发乙"
+    },
+    {
+      "id": "merge",
+      "title": "已合并但无发布证据的权限功能"
+    },
+    {
+      "id": "tests",
+      "title": "测试失败后的修复"
+    },
+    {
+      "id": "external",
+      "title": "第三方接口阻塞"
+    },
+    {
+      "id": "cross-month",
+      "title": "跨月推进的批量任务"
+    }
+  ],
+  "events": [
+    {
+      "id": "export-start",
+      "workItemId": "export",
+      "occurredAt": "2026-01-30T10:00:00+08:00",
+      "kind": "commit",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#export-start",
+        "excerpt": "export-start：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "export-v1"
+    },
+    {
+      "id": "export-done",
+      "workItemId": "export",
+      "occurredAt": "2026-01-31T10:00:00+08:00",
+      "kind": "code_complete",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#export-done",
+        "excerpt": "export-done：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "export-v2"
+    },
+    {
+      "id": "export-check",
+      "workItemId": "export",
+      "occurredAt": "2026-02-01T10:00:00+08:00",
+      "kind": "validation_passed",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#export-check",
+        "excerpt": "export-check：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "export-v2",
+      "scope": "feature"
+    },
+    {
+      "id": "retry-1",
+      "workItemId": "retry",
+      "occurredAt": "2026-01-30T10:00:00+08:00",
+      "kind": "commit",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#retry-1",
+        "excerpt": "retry-1：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "retry-v1"
+    },
+    {
+      "id": "retry-2",
+      "workItemId": "retry",
+      "occurredAt": "2026-01-31T10:00:00+08:00",
+      "kind": "commit",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#retry-2",
+        "excerpt": "retry-2：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "retry-v2"
+    },
+    {
+      "id": "retry-3",
+      "workItemId": "retry",
+      "occurredAt": "2026-02-01T10:00:00+08:00",
+      "kind": "code_complete",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#retry-3",
+        "excerpt": "retry-3：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "retry-v3"
+    },
+    {
+      "id": "retry-check",
+      "workItemId": "retry",
+      "occurredAt": "2026-02-02T10:00:00+08:00",
+      "kind": "validation_passed",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#retry-check",
+        "excerpt": "retry-check：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "retry-v3",
+      "scope": "feature"
+    },
+    {
+      "id": "retry-fix",
+      "workItemId": "retry",
+      "occurredAt": "2026-02-03T10:00:00+08:00",
+      "kind": "commit",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#retry-fix",
+        "excerpt": "retry-fix：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "retry-v4"
+    },
+    {
+      "id": "retry-recheck",
+      "workItemId": "retry",
+      "occurredAt": "2026-02-04T10:00:00+08:00",
+      "kind": "validation_failed",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#retry-recheck",
+        "excerpt": "retry-recheck：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "retry-v4",
+      "scope": "feature"
+    },
+    {
+      "id": "retry-done",
+      "workItemId": "retry",
+      "occurredAt": "2026-02-05T10:00:00+08:00",
+      "kind": "code_complete",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#retry-done",
+        "excerpt": "retry-done：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "retry-v5"
+    },
+    {
+      "id": "retry-final",
+      "workItemId": "retry",
+      "occurredAt": "2026-02-06T10:00:00+08:00",
+      "kind": "validation_passed",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#retry-final",
+        "excerpt": "retry-final：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "retry-v5",
+      "scope": "feature"
+    },
+    {
+      "id": "merge-code",
+      "workItemId": "merge",
+      "occurredAt": "2026-01-31T10:00:00+08:00",
+      "kind": "code_complete",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#merge-code",
+        "excerpt": "merge-code：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "merge-v1"
+    },
+    {
+      "id": "merge-integrated",
+      "workItemId": "merge",
+      "occurredAt": "2026-02-01T10:00:00+08:00",
+      "kind": "merged",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#merge-integrated",
+        "excerpt": "merge-integrated：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "merge-v1"
+    },
+    {
+      "id": "merge-ci",
+      "workItemId": "merge",
+      "occurredAt": "2026-02-02T10:00:00+08:00",
+      "kind": "validation_passed",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#merge-ci",
+        "excerpt": "merge-ci：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "merge-v1",
+      "scope": "ci"
+    },
+    {
+      "id": "merge-preview",
+      "workItemId": "merge",
+      "occurredAt": "2026-02-02T10:00:00+08:00",
+      "kind": "release_succeeded",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#merge-preview",
+        "excerpt": "merge-preview：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "merge-v1",
+      "environment": "preview"
+    },
+    {
+      "id": "tests-code",
+      "workItemId": "tests",
+      "occurredAt": "2026-01-31T10:00:00+08:00",
+      "kind": "code_complete",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#tests-code",
+        "excerpt": "tests-code：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "tests-v1"
+    },
+    {
+      "id": "tests-fail",
+      "workItemId": "tests",
+      "occurredAt": "2026-02-01T10:00:00+08:00",
+      "kind": "validation_failed",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#tests-fail",
+        "excerpt": "tests-fail：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "tests-v1",
+      "scope": "feature"
+    },
+    {
+      "id": "tests-patch",
+      "workItemId": "tests",
+      "occurredAt": "2026-02-02T10:00:00+08:00",
+      "kind": "commit",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#tests-patch",
+        "excerpt": "tests-patch：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "tests-v2"
+    },
+    {
+      "id": "external-start",
+      "workItemId": "external",
+      "occurredAt": "2026-01-31T10:00:00+08:00",
+      "kind": "started",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#external-start",
+        "excerpt": "external-start：人工构造边界事实，非真实业务数据"
+      }
+    },
+    {
+      "id": "external-block",
+      "workItemId": "external",
+      "occurredAt": "2026-02-01T10:00:00+08:00",
+      "kind": "blocked",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#external-block",
+        "excerpt": "external-block：人工构造边界事实，非真实业务数据"
+      },
+      "reason": "供应商尚未提供联调账号"
+    },
+    {
+      "id": "cross-start",
+      "workItemId": "cross-month",
+      "occurredAt": "2026-01-30T10:00:00+08:00",
+      "kind": "commit",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#cross-start",
+        "excerpt": "cross-start：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "cross-v1"
+    },
+    {
+      "id": "cross-code",
+      "workItemId": "cross-month",
+      "occurredAt": "2026-02-01T10:00:00+08:00",
+      "kind": "code_complete",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#cross-code",
+        "excerpt": "cross-code：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "cross-v2"
+    },
+    {
+      "id": "cross-check",
+      "workItemId": "cross-month",
+      "occurredAt": "2026-02-03T10:00:00+08:00",
+      "kind": "validation_passed",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#cross-check",
+        "excerpt": "cross-check：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "cross-v2",
+      "scope": "feature"
+    },
+    {
+      "id": "cross-launch",
+      "workItemId": "cross-month",
+      "occurredAt": "2026-03-01T10:00:00+08:00",
+      "kind": "release_succeeded",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#cross-launch",
+        "excerpt": "cross-launch：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "cross-v2",
+      "environment": "production"
+    },
+    {
+      "id": "unassigned",
+      "workItemId": null,
+      "occurredAt": "2026-02-01T10:00:00+08:00",
+      "kind": "commit",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#unassigned",
+        "excerpt": "unassigned：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "unknown-v1"
+    },
+    {
+      "id": "export-check",
+      "workItemId": "export",
+      "occurredAt": "2026-02-01T10:00:00+08:00",
+      "kind": "validation_passed",
+      "source": {
+        "uri": "fixture://report-evidence/cases.json#export-check",
+        "excerpt": "export-check：人工构造边界事实，非真实业务数据"
+      },
+      "revision": "export-v2",
+      "scope": "feature"
+    }
+  ],
+  "limitations": [
+    "固定边界夹具；不代表真实员工、工时、效率或收益。"
+  ],
+  "historyComplete": true
+}

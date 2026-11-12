@@ -1,0 +1,334 @@
+[
+  {
+    "id": "day-start",
+    "cadence": "daily",
+    "start": "2026-01-30",
+    "end": "2026-01-30",
+    "states": {
+      "export": {
+        "code": "in_progress",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "retry": {
+        "code": "in_progress",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "cross-month": {
+        "code": "in_progress",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      }
+    },
+    "newMilestones": {
+      "code": 0,
+      "validation": 0,
+      "release": 0
+    },
+    "metricsAvailable": false
+  },
+  {
+    "id": "day-complete",
+    "cadence": "daily",
+    "start": "2026-01-31",
+    "end": "2026-01-31",
+    "states": {
+      "export": {
+        "code": "complete",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "retry": {
+        "code": "in_progress",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "cross-month": {
+        "code": "in_progress",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "merge": {
+        "code": "complete",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "tests": {
+        "code": "complete",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "external": {
+        "code": "in_progress",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      }
+    },
+    "newMilestones": {
+      "code": 3,
+      "validation": 0,
+      "release": 0
+    },
+    "metricsAvailable": false
+  },
+  {
+    "id": "day-check",
+    "cadence": "daily",
+    "start": "2026-02-01",
+    "end": "2026-02-01",
+    "states": {
+      "export": {
+        "code": "complete",
+        "validation": "passed",
+        "release": "unknown",
+        "blocked": false
+      },
+      "retry": {
+        "code": "complete",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "cross-month": {
+        "code": "complete",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "merge": {
+        "code": "complete",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "tests": {
+        "code": "complete",
+        "validation": "failed",
+        "release": "unknown",
+        "blocked": false
+      },
+      "external": {
+        "code": "in_progress",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": true
+      }
+    },
+    "newMilestones": {
+      "code": 2,
+      "validation": 1,
+      "release": 0
+    },
+    "metricsAvailable": false
+  },
+  {
+    "id": "week-boundary",
+    "cadence": "weekly",
+    "start": "2026-01-26",
+    "end": "2026-02-01",
+    "states": {
+      "export": {
+        "code": "complete",
+        "validation": "passed",
+        "release": "unknown",
+        "blocked": false
+      },
+      "retry": {
+        "code": "complete",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "cross-month": {
+        "code": "complete",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "merge": {
+        "code": "complete",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "tests": {
+        "code": "complete",
+        "validation": "failed",
+        "release": "unknown",
+        "blocked": false
+      },
+      "external": {
+        "code": "in_progress",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": true
+      }
+    },
+    "newMilestones": {
+      "code": 5,
+      "validation": 1,
+      "release": 0
+    },
+    "metricsAvailable": false
+  },
+  {
+    "id": "day-stale",
+    "cadence": "daily",
+    "start": "2026-02-03",
+    "end": "2026-02-03",
+    "states": {
+      "export": {
+        "code": "complete",
+        "validation": "passed",
+        "release": "unknown",
+        "blocked": false
+      },
+      "retry": {
+        "code": "in_progress",
+        "validation": "stale",
+        "release": "unknown",
+        "blocked": false
+      },
+      "cross-month": {
+        "code": "complete",
+        "validation": "passed",
+        "release": "unknown",
+        "blocked": false
+      },
+      "merge": {
+        "code": "complete",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "tests": {
+        "code": "in_progress",
+        "validation": "stale",
+        "release": "unknown",
+        "blocked": false
+      },
+      "external": {
+        "code": "in_progress",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": true
+      }
+    },
+    "newMilestones": {
+      "code": 0,
+      "validation": 1,
+      "release": 0
+    },
+    "metricsAvailable": false
+  },
+  {
+    "id": "month-feb",
+    "cadence": "monthly",
+    "start": "2026-02-01",
+    "end": "2026-02-28",
+    "states": {
+      "export": {
+        "code": "complete",
+        "validation": "passed",
+        "release": "unknown",
+        "blocked": false
+      },
+      "retry": {
+        "code": "complete",
+        "validation": "passed",
+        "release": "unknown",
+        "blocked": false
+      },
+      "cross-month": {
+        "code": "complete",
+        "validation": "passed",
+        "release": "unknown",
+        "blocked": false
+      },
+      "merge": {
+        "code": "complete",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "tests": {
+        "code": "in_progress",
+        "validation": "stale",
+        "release": "unknown",
+        "blocked": false
+      },
+      "external": {
+        "code": "in_progress",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": true
+      }
+    },
+    "newMilestones": {
+      "code": 2,
+      "validation": 3,
+      "release": 0
+    },
+    "metricsAvailable": false
+  },
+  {
+    "id": "month-march",
+    "cadence": "monthly",
+    "start": "2026-03-01",
+    "end": "2026-03-31",
+    "states": {
+      "export": {
+        "code": "complete",
+        "validation": "passed",
+        "release": "unknown",
+        "blocked": false
+      },
+      "retry": {
+        "code": "complete",
+        "validation": "passed",
+        "release": "unknown",
+        "blocked": false
+      },
+      "cross-month": {
+        "code": "complete",
+        "validation": "passed",
+        "release": "released",
+        "blocked": false
+      },
+      "merge": {
+        "code": "complete",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": false
+      },
+      "tests": {
+        "code": "in_progress",
+        "validation": "stale",
+        "release": "unknown",
+        "blocked": false
+      },
+      "external": {
+        "code": "in_progress",
+        "validation": "unknown",
+        "release": "unknown",
+        "blocked": true
+      }
+    },
+    "newMilestones": {
+      "code": 0,
+      "validation": 0,
+      "release": 1
+    },
+    "metricsAvailable": false
+  }
+]

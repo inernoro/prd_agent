@@ -1,0 +1,768 @@
+{
+  "method": "人工按旧模板的提交分层方式固定复演；保留将提交当交付、漏掉无新提交的阻塞等失败。不是旧 LLM 实跑，不是线上历史原文。真实原文见 historical-baseline.json。",
+  "reports": {
+    "day-start": {
+      "text": "export：完成交付，可以使用。\nretry：完成交付，可以使用。\ncross-month：完成交付，可以使用。",
+      "claims": [
+        {
+          "workItemId": "export",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "export-start"
+          ],
+          "span": "export：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "export",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "export-start"
+          ],
+          "span": "export：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "export",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "export-start"
+          ],
+          "span": "export：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "retry-1"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "retry-1"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "retry-1"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "cross-start"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "cross-start"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "cross-start"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        }
+      ]
+    },
+    "day-complete": {
+      "text": "export：完成交付，可以使用。\nretry：完成交付，可以使用。\nmerge：完成交付，可以使用。\ntests：完成交付，可以使用。",
+      "claims": [
+        {
+          "workItemId": "export",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "export-done"
+          ],
+          "span": "export：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "export",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "export-done"
+          ],
+          "span": "export：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "export",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "export-done"
+          ],
+          "span": "export：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "retry-2"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "retry-2"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "retry-2"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "merge-code"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "merge-code"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "merge-code"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "tests",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "tests-code"
+          ],
+          "span": "tests：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "tests",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "tests-code"
+          ],
+          "span": "tests：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "tests",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "tests-code"
+          ],
+          "span": "tests：完成交付，可以使用。"
+        }
+      ]
+    },
+    "day-check": {
+      "text": "retry：完成交付，可以使用。\nmerge：完成交付，可以使用。\ncross-month：完成交付，可以使用。",
+      "claims": [
+        {
+          "workItemId": "retry",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "retry-3"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "retry-3"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "retry-3"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "merge-integrated"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "merge-integrated"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "merge-integrated"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "cross-code"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "cross-code"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "cross-code"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        }
+      ]
+    },
+    "week-boundary": {
+      "text": "export：完成交付，可以使用。\nexport：完成交付，可以使用。\nretry：完成交付，可以使用。\nretry：完成交付，可以使用。\nretry：完成交付，可以使用。\nmerge：完成交付，可以使用。\nmerge：完成交付，可以使用。\ntests：完成交付，可以使用。\ncross-month：完成交付，可以使用。\ncross-month：完成交付，可以使用。",
+      "claims": [
+        {
+          "workItemId": "export",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "export-start"
+          ],
+          "span": "export：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "export",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "export-start"
+          ],
+          "span": "export：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "export",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "export-start"
+          ],
+          "span": "export：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "export",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "export-done"
+          ],
+          "span": "export：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "export",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "export-done"
+          ],
+          "span": "export：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "export",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "export-done"
+          ],
+          "span": "export：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "retry-1"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "retry-1"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "retry-1"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "retry-2"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "retry-2"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "retry-2"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "retry-3"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "retry-3"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "retry-3"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "merge-code"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "merge-code"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "merge-code"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "merge-integrated"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "merge-integrated"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "merge-integrated"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "tests",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "tests-code"
+          ],
+          "span": "tests：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "tests",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "tests-code"
+          ],
+          "span": "tests：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "tests",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "tests-code"
+          ],
+          "span": "tests：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "cross-start"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "cross-start"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "cross-start"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "cross-code"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "cross-code"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "cross-code"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        }
+      ]
+    },
+    "day-stale": {
+      "text": "retry：完成交付，可以使用。",
+      "claims": [
+        {
+          "workItemId": "retry",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "retry-fix"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "retry-fix"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "retry-fix"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        }
+      ]
+    },
+    "month-feb": {
+      "text": "retry：完成交付，可以使用。\nretry：完成交付，可以使用。\nretry：完成交付，可以使用。\nmerge：完成交付，可以使用。\ntests：完成交付，可以使用。\ncross-month：完成交付，可以使用。",
+      "claims": [
+        {
+          "workItemId": "retry",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "retry-3"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "retry-3"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "retry-3"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "retry-fix"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "retry-fix"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "retry-fix"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "retry-done"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "retry-done"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "retry",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "retry-done"
+          ],
+          "span": "retry：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "merge-integrated"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "merge-integrated"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "merge",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "merge-integrated"
+          ],
+          "span": "merge：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "tests",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "tests-patch"
+          ],
+          "span": "tests：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "tests",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "tests-patch"
+          ],
+          "span": "tests：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "tests",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "tests-patch"
+          ],
+          "span": "tests：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "code",
+          "value": "complete",
+          "sources": [
+            "cross-code"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "validation",
+          "value": "passed",
+          "sources": [
+            "cross-code"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        },
+        {
+          "workItemId": "cross-month",
+          "field": "release",
+          "value": "released",
+          "sources": [
+            "cross-code"
+          ],
+          "span": "cross-month：完成交付，可以使用。"
+        }
+      ]
+    },
+    "month-march": {
+      "text": "本期没有新增提交。",
+      "claims": []
+    }
+  }
+}

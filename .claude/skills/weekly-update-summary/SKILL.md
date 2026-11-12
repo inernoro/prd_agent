@@ -26,6 +26,16 @@ description: 'Generates business-facing weekly project reports for executives, p
 
 ## 核心纪律（必须遵守）
 
+### 纪律 0：先重建同一事项的连续进展，再写业务解读
+
+先按仓库 `scripts/reporting/README.md` 维护跨周期台账，沿用稳定事项 ID，把同一成果的开发、返修、验证、上线及阻塞事件关联到它。不得按每个提交、PR、日报条目重复计成果。日报是线索，不因被周报/月报引用而产生新成果。
+
+Phase 2.7 必传 `--evidence-ledger "$LEDGER"`，读取 `deliveryEvidence`。该段不可用时明确展示证据缺口，不生成确定的成果/效率结论。渲染 `scripts/reporting/evidence.py render --ledger "$LEDGER" --start "$MONDAY" --end "$SUNDAY" --cadence weekly --out work/weekly-facts`，将事实区放在周刊报头之后、封面与业务解读之前。
+
+每项重要结论保留事项 ID、当前版本、上期与本期状态、来源及下一步（执行人/期限未知则待确认）。功能完成、验证完成、上线完成三个维度独立报告，合并、CI 通过、预览部署都不能替代它们。旧版本验证不能覆盖后续修改；无新事件的旧成果不再包装为新增。未解决阻塞即使本周没有提交也要延续。
+
+效率、工时与收益只采用有单位、周期、方法、样本范围及来源的测量；缺证据写不可用，不从提交数或代码量外推。只有相邻且等长、口径一致的周期可比较。管理月度汇总使用同一台账 `--cadence monthly`，只提供事实参考；员工个人月报的评价、认可、建议及提交继续由本人完成。
+
 ### 纪律 1：时间边界按“提交日期文本”判断，不做时区换算
 
 > **根因案例**：同一批提交如果按 `--since/--until` 直接让 Git 解析日期，容易受提交自带时区影响，把周日晚或下周一的提交卷进错误周次。
@@ -498,6 +508,7 @@ git 只知道代码，回答不了纪律 9/10/12 的问题。本阶段用采集�
 python3 .claude/skills/weekly-update-summary/scripts/collect_week_context.py \
   --week-start "$MONDAY" --week-end "$SUNDAY" \
   --prev-week-hint "${PREV_ISO_YEAR}-W$(printf '%02d' $PREV_WEEK_NUM)" \
+  --evidence-ledger "$LEDGER" \
   --deeplinks \
   --out /tmp/week-context-${ISO_YEAR}-W${WEEK_NUM}.json --human
 ```
@@ -564,7 +575,7 @@ v1 直接把 PR 按模块聚类就开写，产出的是工程视角。v2 必须�
 
 1. 先按功能主题把 PR 聚成技术脉络（同 v1）
 2. **再把每条技术脉络翻译成一条业务能力陈述**，模板：
-   > **谁**（内部团队 / 外部客户 / 运维 / 产品）现在**能做什么**（以前不能做 / 以前很麻烦），**因此**（省了什么、赚了什么、避免了什么风险）。
+   > **谁**（内部团队 / 外部客户 / 运维 / 产品）在已证实的交付阶段**能做什么**；预期价值标为预期，只有独立测量支持时才写已节省或已收益。
 3. 翻译不出业务价值的脉络（纯重构 / 纯清理 / 纯文档），归入「地基工作」一段合并带过，**不占正文篇幅**，但要在附录 PR 表保留
 4. 交叉验证：把翻译结果与本周日报的「新增功能」段对照，日报讲过的用户可见变化，周报不能漏
 
