@@ -1602,3 +1602,71 @@ html[data-perf-mode="performance"] .app-aurora {
   --speech-success: #365c43;
   --speech-success-bg: #dbe6d7;
 }
+
+/* MAP writing design v14 · source SHA-256 recorded in writing-design-spec.json. */
+:root {
+  --writing-bg: #0C0E12;
+  --writing-sf: #14171D;
+  --writing-sf2: #1A1E25;
+  --writing-ln: #262B34;
+  --writing-ln2: #353B46;
+  --writing-ink: #E9ECF1;
+  --writing-ink2: #B3BAC6;
+  --writing-ink3: #8A93A1;
+  --writing-ac: #8EA0FF;
+  --writing-acs: #1E2550;
+  --writing-am: #E5A84B;
+  --writing-ams: #2E2414;
+  --writing-dg: #F97066;
+  --writing-dgs: #3A1A17;
+  --writing-ok: #5BBF8A;
+  --writing-oks: #14281E;
+}
+[data-theme="light"] {
+  --writing-bg: #EEF0F3;
+  --writing-sf: #FFFFFF;
+  --writing-sf2: #F7F8FA;
+  --writing-ln: #E2E5EA;
+  --writing-ln2: #CDD2DA;
+  --writing-ink: #14171C;
+  --writing-ink2: #4A5260;
+  --writing-ink3: #667080;
+  --writing-ac: #3046C5;
+  --writing-acs: #E8EBFA;
+  --writing-am: #8A5200;
+  --writing-ams: #FBF0DC;
+  --writing-dg: #B42318;
+  --writing-dgs: #FDECEA;
+  --writing-ok: #1E7046;
+  --writing-oks: #E4F3EA;
+}
+
+/* Media remains a dark viewing surface in both design themes. */
+:root {
+  --writing-on-accent: #0C0E12;
+  --writing-player-bg: #0F1218;
+  --writing-media-ink: #14171C;
+  --writing-media-accent: #3046C5;
+  --writing-media-muted: #667080;
+  --writing-media-border: #CDD2DA;
+  --writing-media-line: #E2E5EA;
+  --writing-media-focus: #E5A84B;
+  --writing-player-text: #E9ECF1;
+  --writing-media-paper: #F7F8FA;
+  --writing-caption-bg: rgba(0,0,0,.78);
+  --writing-player-overlay: rgba(15,18,24,.82);
+}
+[data-theme="light"] {
+  --writing-on-accent: #fff;
+  --writing-player-bg: #0F1218;
+  --writing-media-ink: #14171C;
+  --writing-media-accent: #3046C5;
+  --writing-media-muted: #667080;
+  --writing-media-border: #CDD2DA;
+  --writing-media-line: #E2E5EA;
+  --writing-media-focus: #E5A84B;
+  --writing-player-text: #E9ECF1;
+  --writing-media-paper: #F7F8FA;
+  --writing-caption-bg: rgba(0,0,0,.78);
+  --writing-player-overlay: rgba(15,18,24,.82);
+}

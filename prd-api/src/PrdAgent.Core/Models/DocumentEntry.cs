@@ -5,6 +5,9 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class DocumentEntry
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public WritingDocumentState? Writing { get; set; }
+
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 

@@ -2391,6 +2391,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 <Share2 size={13} /> 分享
               </Button>
             </span>
+            <Button variant="secondary" size="xs" onClick={() => navigate(`/document-store/${storeId}/collection`)}><BookOpen size={13} /> 合集阅读</Button>
+            <Button variant="secondary" size="xs" onClick={() => navigate(`/document-store/${storeId}/write${entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? `/${selectedDocEntry?.id}` : ''}`)}><FilePlus size={13} />{entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? '继续成文' : '按模版成文'}</Button>
             {selectedDocEntry && (
               <Button
                 variant="primary"
@@ -2707,6 +2709,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
           onCreateDocument={handleCreateDocument}
+          onCreateWriting={() => navigate(`/document-store/${storeId}/write`)}
           onUploadFile={() => fileInputRef.current?.click()}
           onOpenVideoParser={handleOpenVideoParser}
           onSearch={handleSearch}
@@ -2814,6 +2817,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             <div className="flex-1 flex items-center justify-center">
               <DocEmptyState
                 onCreateDocument={handleCreateDocument}
+          onCreateWriting={() => navigate(`/document-store/${storeId}/write`)}
                 onUploadFile={() => fileInputRef.current?.click()}
                 onAddSubscription={() => setShowSubscribe(true)}
               />

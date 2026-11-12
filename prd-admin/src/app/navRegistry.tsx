@@ -31,6 +31,8 @@ const TranscriptAgentPage = lazy(() => import('@/pages/transcript-agent').then(m
 const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutsPage })));
 const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
+const WritingWorkspacePage = lazy(() => import('@/pages/document-store/writing/WritingWorkspacePage'));
+const WritingCollectionPage = lazy(() => import('@/pages/document-store/writing/WritingCollectionPage'));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
 const RecordingResultPage = lazy(() => import('@/pages/document-store/RecordingResultPage').then(m => ({ default: m.RecordingResultPage })));
 const RecordingProcessingPage = lazy(() => import('@/pages/document-store/RecordingProcessingPage').then(m => ({ default: m.RecordingProcessingPage })));
@@ -910,6 +912,12 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       tags: ['文档', '知识', '知识库', 'docs'],
     },
   },
+  ...['/document-store/:storeId/write', '/document-store/:storeId/write/:entryId', '/document-store/:storeId/write/:entryId/:view'].map(path => ({
+    path, placement: 'fullscreen' as const, permission: 'document-store.read',
+    element: fullscreenGuarded('document-store.read', <WritingWorkspacePage />),
+  })),
+  { path: '/document-store/:storeId/collection', placement: 'fullscreen', permission: 'document-store.read',
+    element: fullscreenGuarded('document-store.read', <WritingCollectionPage />) },
   {
     // 录音交付页走独立全屏路由：设计稿这批「整屏」画板自带顶部栏与屏底主操作，
     // 套在平台外壳里还原不到位（结构与版式的失分大半在这一层）。

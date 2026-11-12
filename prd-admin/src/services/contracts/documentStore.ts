@@ -3,6 +3,7 @@ import type { ApiResponse } from '@/types/api';
 // ── 数据类型 ──
 
 export type DocumentStore = {
+  pmProjectId?: string;
   id: string;
   name: string;
   description?: string;
