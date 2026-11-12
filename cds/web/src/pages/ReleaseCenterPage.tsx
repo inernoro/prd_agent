@@ -718,14 +718,10 @@ export function ReleaseCenterPage(): JSX.Element {
               <Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>重试</Button>
             </div> : null}
 
-            {state.status === 'ok' && rows.length === 0 ? (
-              <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} />
-            ) : null}
-
-            {state.status === 'ok' && rows.length > 0 ? (
+            {state.status === 'ok' ? (
               <div className="flex flex-col gap-[1.125rem]">
                 {/* ══ 监控条：常驻所有分区，页面第一块 ══ */}
-                <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[0.875rem] border px-[1.625rem] py-[1.375rem] max-lg:px-4">
+                {rows.length > 0 ? <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[0.875rem] border px-[1.625rem] py-[1.375rem] max-lg:px-4">
                   <div className="flex min-w-0 flex-1 basis-[20rem] items-start gap-3">
                     <span
                       className={`mt-2 h-[0.5625rem] w-[0.5625rem] shrink-0 rounded-full ${
@@ -794,12 +790,13 @@ export function ReleaseCenterPage(): JSX.Element {
                       去处理 {fleetEnvs.find((env) => env.id === verdict.actionEnvId)?.name || verdict.actionEnvId}
                     </Button>
                   ) : null}
-                </section>
+                </section> : null}
 
                 {/* ══ 分区一：全环境矩阵 ══ */}
                 {section === 'fleet' ? <BatchReleasePanel key={projectId} projectId={projectId} targets={rows.map((row) => row.target)} onOpenLogs={setLogRun} /> : null}
+                {rows.length === 0 ? <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} /> : null}
                 {section === 'fleet' ? (
-                  <FleetMatrix
+                  rows.length > 0 ? <FleetMatrix
                     envs={fleetEnvs}
                     sort={fleetSort}
                     onSort={setFleetSort}
@@ -807,11 +804,11 @@ export function ReleaseCenterPage(): JSX.Element {
                     wide={wide}
                     onInspect={inspectEnv}
                     onExecute={executeRowAction}
-                  />
+                  /> : null
                 ) : null}
 
                 {/* ══ 分区二~五：都落到单个环境上，左边一列选环境 ══ */}
-                {section !== 'fleet' ? (
+                {section !== 'fleet' && rows.length > 0 ? (
                   <div className={wide ? 'grid grid-cols-[16.25rem_minmax(0,1fr)] items-start gap-4' : 'flex flex-col gap-4'}>
                     <EnvironmentSidebar
                       sections={sections}
