@@ -41,6 +41,12 @@
 - 证据：`OpenAIGatewayAdapter.ParseExtensions` 已提取非流式 `choices[0].logprobs`；`LlmGateway.SendAsync` 写入 `GatewayResponse.Extensions`；OpenAI-compatible `/v1/chat/completions` 回吐 `choices[0].logprobs`。
 - 测试：`OpenAIAdapter_ParseExtensions_PreservesChoiceLogprobs`、`SendAsync_PreservesOpenAiLogprobsInExtensions`、`OpenAiCompatibleEndpoint_PreservesLogprobsExtension`。
 
+## 故障恢复时的协议与模型约束（2026-11-12）
+
+HTTP 恢复继续使用计算阶段已解析的候选，每条备用仍经过自身适配器与能力检查；有逻辑模型身份时，候选必须属于同一逻辑模型。固定模型/平台/Offering 不因错误或本地并发拒绝而换线。可控 HTTP 回归同时核对工具定义与 tool_choice，防止把纯文本成功当成协议保真证据。
+
+本批没有增加新的跨协议映射。Stream 的异常 EOF 不再冒充正常完成；没有首个输出也不足以证明供应商未执行。未知执行结果明确失败，保留已有部分输出和尝试证据，禁止靠换模型掩盖中断。更广的真实跨协议配对与供应商幂等合同仍由协议维护者按原台账核销。
+
 ## 已知边界（本波未做，刻意不半成品）
 
 ### Codex 原生 Responses 接入（2026-09-09）

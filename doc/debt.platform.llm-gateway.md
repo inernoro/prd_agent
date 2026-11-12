@@ -6,6 +6,25 @@
 **谁该读**：接手网关的工程师；做发布判断的人。
 **读完能做什么**：查清某条债务的状态与对应证据。
 
+## 2026-11-12 上游恢复的执行证明与等待边界
+
+本批优先复核已合并的半开只读预解析（PR #1798）、代理配置继承（PR #1943）与模型生命周期验收保护（PR #1955），继续复用已有选路、半开租约、协议能力检查和并发准入，不另建恢复调度器。
+
+| 场景 | 本批契约 |
+|---|---|
+| DNS 失败、连接明确被拒绝 | 确认未发送，允许消费预解析的合法备用；尝试标记 not_sent |
+| HTTP 401–404、425、429 | 明确拒绝时允许合法备用；内容策略拒绝不切换。429 不在同一次恢复中立即重打同一 Provider |
+| HTTP 408、409、5xx、发送超时、连接重置、流读取中断 | 缺少未执行证明，返回 UPSTREAM_OUTCOME_UNKNOWN；不自动重提付费生成。没有首 token 也不能当未执行 |
+| 固定平台、固定模型、固定 Offering、健康探测 | 继续单线路；Raw 本地并发拒绝也不得绕过这些约束 |
+| 已绑定物理预算准入 | 保留一次准入对应一次物理发送；不以恢复绕过预占。上层不能把结果未知当作可重新生成 |
+| 首字与总等待 | Stream 首个有效正文、思考、工具增量或完成信号最多等 30 秒且不超过总期限；LlmGateway:FirstByteTimeoutSeconds 可收紧到 1–30 秒，空角色帧与心跳不延长期限；TimeoutSeconds 覆盖所有候选、读取及轮询，不在换线路后重置。缺省 120 秒；非正值按 120 秒处理。已有终止帧后的可选用量读取仍最多 500 毫秒 |
+| 流完成与追溯 | 只有协议完成信号才报成功；异常 EOF 保留部分正文并失败。最终日志保留各尝试线路、模型、原因、执行证明与恢复动作，连接失败不再冒充确认到达上游 |
+| 请求数量 | 继续顺序尝试和候选去重；默认最多 2 次，既有配置硬上限 4 次；复用 Provider 并发和速率准入，不增加合成付费探测 |
+
+**验收边界**：永久回归使用本机真实 HTTP 故障上游与隔离 Mongo 日志回读，进入默认非 Integration/Manual 测试。分支提交与隔离测试不代表生产发布或供应商实付已核销。 本轮现有 CDS main 基线的单次真实样本限制输出 16 token，固定原有逻辑模型，返回 LLM_QUOTA_EXCEEDED；临时密钥已删除并回读确认。补稳定幂等标识前的 TASK_INTENT_REQUIRED 明确未启动任务，不计作上游执行。OpenAPI 日志可回读，但网关控制台按该 RequestId 暂未检出物理详情；真实成功生成、物理关联与供应商实付核对仍由网关运维负责人关闭，不能据此宣称新分支已线上验收。
+
+**剩余边界与负责人**：网关维护者继续负责跨请求、跨实例的 Retry-After 冷却协调；本批只避免同一次恢复即时重打被限流的 Provider，并保留既有并发/速率保护。供应商幂等提交、未知结果查询与费用对账仍需逐供应商合同，不因可用备用而开放 5xx/超时重放。关闭条件是有明确未执行/幂等证据的供应商回归及原请求核账闭环。原生 Responses、WebSocket 识别和业务层自动重试仍按各自既有合同独立验收，不把本批三条 HTTP 路径外推为全网关完成。
+
 ## 接入密钥总清单仍有 500 条返回上限（2026-10-13）
 
 **状态**：未还 | **严重度**：低（超过 500 把密钥的组织受影响）
@@ -209,7 +228,7 @@ legacy 兜底），然后连同 `InMemoryModelResolver` 一起删。
 | 2026-09-17-default-switch-not-atomic | medium | 2026-09-17 | 管理员把某个用途的默认从 A 改成 B 时，控制台先把 A 的 `IsDefaultForType` 清掉、再把 B 置上，两次写之间有一个**没有任何默认**的窗口（一次库往返）。落在这个窗口里的「不点名、也没人认领」的请求会解析失败（`no-logical-model`）。现有的回滚账本只管最终写入失败那一档，护不住这个「两步都成功」的过渡态 | 线上有流量时改某个用途的默认指向 | open | **换顺序解决不了**：库里那条 `uniq_llmgw_logical_default_per_type`（同租户同用途唯一、只覆盖 `IsDefaultForType:true` 的部分索引）明确禁止「同时有两个默认」这个重叠态，所以先置新再清旧会直接撞唯一键。也就是说，只要那条不变量还在，切换就必然经过零默认的一瞬。真正的两条出路：① 把这两次写放进一个 Mongo 事务（要求网关库是副本集，本仓库至今没有对部署形态做过这个要求，属于新前提）；② 改成单文档指针——另建一行「这个用途的默认是谁」，切换就是那一行的一次原子更新，而 `IsDefaultForType` 降级成它的派生展示字段。后者更稳但要动读侧（运行时第二层查询、面板、搬迁、控制台四处）与一次数据迁移，属 AGENTS.md §5.5 的 B 类，越过本 PR 的范围基线。判据：持续打不点名请求的同时切换默认，一条都不失败 |
 | 2026-09-16-catalog-backlog | medium | 2026-09-16 | 名录补登的**机制**已落地（控制台可补、立刻生效、可回退），但**存量没补**：实测线上两个上游共 573 个模型，落在名录里的只有 27 个（4.7%）。OpenAI 那 130 个里 116 个在名录外（89.2%），其中 `babbage-002` / `davinci-002` 这类连一条用途都猜不出来，导进来就是「哑」模型——入库了，但模型池选型时不参与任何用途匹配 | 有人导入一批名录外模型、以为它们能被选中时 | open | 这是运营动作不是代码动作：得有人逐批核对上游文档再补。优先级排序建议按「已导入且在用」的那批先来（OpenAI 已导入 110 个）。不做也不会坏，只是那些模型选不中——但**选不中这件事今天在界面上是看得见的**（「名录外」chip + 「用途待定」chip），不是静默的 |
 | 2026-09-16-capability-vocab-has-synonyms | low | 2026-09-16 | 运行时的用途词表（`LogicalModelCapabilityPolicy.CanonicalCapabilities`）有 35 项，其中多组互为同义：`tools` / `tool_calling` / `function_calling` / `parallel_tools` / `parallel_tool_calls` / `parallel_function_calling`；`image` / `image_generation` / `text2img`；`vision` / `multimodal` / `image_input` / `vision_generation`；`json_mode` / `json_schema` / `response_format` / `structured_output`；`logprobs` / `top_logprobs` / `token_logprobs`。补登表单直接把这 35 个摆成复选框，人从里面挑很容易挑错或漏挑，而挑错的后果是「填了没用」 | 补登模型时 / 给对外模型配能力时 | open | 本轮刻意没动：收敛词表会改变线上路由行为（哪些模型算命中哪种用途），属产品行为变更，须用户明确批准（AGENTS.md §5.5 范围熔断，B 类）。还债的样子是先在词表里标出「规范项 / 同义项」，界面只让选规范项、同义项做输入时的自动归一，且归一表要有覆盖守卫 |
-| 2026-09-11-sse-midstream-no-failover | low | 2026-09-11 | 流式请求一旦吐出第一个 chunk，之后上游断连就不能再切线路：只记一次失败 + 推 Fail chunk，已产出内容原样留给调用方。切换窗口严格在首个 chunk 之前 | 长回答中途连接重置 / 读超时 / 上游 5xx trailer | open | 中途重放会重复计费且可能重复内容，不切是正确取舍。但**连 0 token 的情况都没有重试**：`firstByteAt` 为 null（一个 SSE 事件都没到）时本来可以安全重试，现在也直接失败。补这一档是低风险改动 |
+| 2026-09-11-sse-midstream-no-failover | low | 2026-09-11 | 流中断不能证明未执行，已产生或尚未收到输出均不得盲目重放 | 流连接重置、读取超时、异常 EOF | partial | 2026-11-12 补齐有界等待、异常 EOF 失败及完整尝试日志；纠正原先“0 token 可以安全重试”的判断。继续不切换结果未知请求；供应商幂等与核账合同由网关维护者独立关闭 |
 | 2026-09-11-model-pool-dispatcher-is-a-shell | low | 2026-09-11 | `PoolHealthTracker` / `ModelPoolFactory` / `ModelPoolDispatcher` / `Strategies/*` 这一整套看起来在管熔断调度，实际**在生产请求链路上是死代码**：`IModelPool.DispatchAsync` 全仓无调用方，`ModelPoolFactory` 唯一使用点是池连通性测试而该测试还绕过了策略。其中 `PoolHealthTracker.IsAvailable()` 带副作用置半开标志且无租约，置位后只能靠后续 Record 复位，而调用方是对全部端点做过滤、只对第一个发请求，其余端点从此在本进程内永久不可用；`GetSnapshot` 读 `LatencyWindow` 还没加锁，与 `AddLatency` 并发会抛异常，而类注释写着「线程安全」 | 有人以为改它就改了线上行为时 | open | 真正跑在请求链路上的熔断全部在 `ModelResolver.cs`。这套空壳的危险在于误导后来者。建议随「模型池冻结新建」一起删除或明确标注为仅测试用 |
 | 2026-09-11-unpriced-calls-not-blockable | medium | 2026-09-11 | 缺价模型的调用现在「看得见、不计入限额」，但还**拦不住**：成本状态记为 `unpriced`、不进美金汇总，调用本身照常放行。对「避免滥用」来说这只做到一半——一个没配价的模型可以无限量调用而不触发任何预算闸 | 有人拿没配价的模型跑量时 | open | 本轮（模型可编辑 + 缓存计价 + 美金口径）刻意没做拦截：拒绝调用会改变线上可用性，属于产品行为变更，须用户明确批准（AGENTS.md §5.5 范围熔断）。补法是租户级开关 `BlockUnpricedModels`，默认关闭；开启后 `CostStatus=unpriced` 的模型在解析阶段直接拒绝并给出「去补价格」的下一步。判据：开关打开时，对一个没配价的模型发请求必须被拒且错误里点名该模型 |
 | 2026-09-08-default-generation-member-flapping | medium | 2026-09-08 | 图片生成默认池（`pool-default:tenant_map_internal:generation`）有两个成员，`chatgpt-image-latest` 健康态在抖：连打 14 次真实网关解析，12 次落到健康的 `gpt-image-1`，2 次落到它且 `healthStatus=Unavailable`。命中时出图请求会失败，而对话出图工具（`chat-agent.image-gen::generation`）走的正是「不指定模型、由默认池兜底」。**影响面只有这一个调用方**：视觉创作不落到这个池——它建 run 时先经视觉模型开放策略把「未指定」选成一个显式逻辑模型 id（`platformId=logical-model`），worker 沿用该身份，与未指定模型的默认池无关 | 对话出图工具的池内调度恰好选中该成员时（约 1/7） | open | 来源 #1338 关闭时的运维观察。不是池缺失，是成员健康。补法二选一：在网关控制台把该成员从默认池停用；或查它对应 Offering 的上游状态（401 / 限流）修好上游。修完用 `GET /api/open-platform/app-callers/resolve-model?appCallerCode=chat-agent.image-gen::generation&modelType=generation` 连打 20 次，`healthStatus` 全 Healthy 即可结清 |
