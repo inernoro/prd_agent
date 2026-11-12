@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import { buildPlan, loadCatalog, selectFeatureLines } from '../stable-smoke-plan.mjs';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import {
   redactStableSmokeDiagnosticText,
   sanitizeStableSmokeArtifactTree,
@@ -65,6 +68,73 @@ test('Playwright 错误对象会在 reporter 读取前原地脱敏', () => {
   const info = { errors: [{ message: secretSamples[0], stack: secretSamples[2], snippet: secretSamples[5] }] };
   sanitizeStableSmokeTestInfo(info);
   assert.deepEqual(Object.values(info.errors[0]).every((value) => String(value).includes('[REDACTED]')), true);
+});
+
+test('真实 Playwright 失败经 afterEach 后，list 和 JSON reporter 均不泄漏无权限假密钥', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stsmk-reporter-contract-'));
+  const e2e = resolve(import.meta.dirname, '../../e2e');
+  const diagnostics = pathToFileURL(resolve(e2e, 'utils/stableSmokeDiagnostics.mjs')).href;
+  // 正式脚本检查已安装 CDS 的 playwright；独立执行时可复用 e2e 的同一测试运行器。
+  // 两处都未安装必须失败，不能 skip 后冒充 reporter 走通。
+  let runner;
+  let testModule;
+  try {
+    const require = createRequire(resolve(e2e, '../cds/package.json'));
+    runner = resolve(dirname(require.resolve('playwright/package.json')), 'cli.js');
+    testModule = require.resolve('playwright/test');
+  } catch (error) {
+    if (error.code !== 'MODULE_NOT_FOUND') throw error;
+    const require = createRequire(resolve(e2e, 'package.json'));
+    runner = require.resolve('@playwright/test/cli');
+    testModule = require.resolve('@playwright/test');
+  }
+  const playwright = pathToFileURL(testModule).href;
+  const jsonOutput = resolve(directory, 'results.json');
+  const canary = 'no-permission-reporter-canary-only';
+  try {
+    writeFileSync(resolve(directory, 'canary.spec.mjs'), `
+import playwright from ${JSON.stringify(playwright)};
+const { test, expect } = playwright;
+import { sanitizeStableSmokeTestInfo } from ${JSON.stringify(diagnostics)};
+test.afterEach(({}, info) => sanitizeStableSmokeTestInfo(info));
+test('controlled reporter failure without any browser or network', () => {
+  const response = { endpoint: '/api/agent-api-keys', status: 503,
+    data: { item: { id: 'public-test-key-id' }, apiKey: process.env.DIAGNOSTIC_CANARY } };
+  expect(response).toEqual({ success: true });
+});
+`);
+    writeFileSync(resolve(directory, 'playwright.config.mjs'), `
+import { stableSmokeReporterConfig, stableSmokeTraceMode } from ${JSON.stringify(diagnostics)};
+export default { testDir: ${JSON.stringify(directory)}, testMatch: 'canary.spec.mjs',
+  outputDir: ${JSON.stringify(resolve(directory, 'artifacts'))}, retries: 0, workers: 1,
+  reporter: stableSmokeReporterConfig({ jsonOutput: ${JSON.stringify(jsonOutput)}, stableRun: true }),
+  use: { trace: stableSmokeTraceMode(true), video: 'off', screenshot: 'off' } };
+`);
+    const child = spawnSync(process.execPath,
+      [runner, 'test', '--config', resolve(directory, 'playwright.config.mjs')],
+      { cwd: directory, encoding: 'utf8', timeout: 30_000,
+        env: { PATH: process.env.PATH, HOME: process.env.HOME, CI: '1', NO_COLOR: '1', DIAGNOSTIC_CANARY: canary } });
+    assert.ifError(child.error);
+    assert.equal(child.status, 1, '子进程应只有那一条故意失败，不得用空跑或跳过冒通过');
+    const stdout = child.stdout + child.stderr;
+    const json = readFileSync(jsonOutput, 'utf8');
+    const result = JSON.parse(json);
+    assert.equal(result.stats.unexpected, 1, JSON.stringify(result.errors));
+    assert.equal(result.stats.skipped, 0);
+    for (const retained of [stdout, json]) {
+      assert.ok(!retained.includes(canary), '真实 reporter 输出中不能包含假密钥明文');
+      assert.match(retained, /\[REDACTED\]/);
+      assert.match(retained, /public-test-key-id/);
+      assert.match(retained, /agent-api-keys/);
+      assert.match(retained, /503/);
+    }
+    const scan = sanitizeStableSmokeArtifactTree(directory);
+    assert.ok(scan.scanned >= 1);
+    assert.equal(scan.changed, 0, 'reporter 产物应在写出前已脱敏，不能靠事后扫描补救');
+    assert.deepEqual(sanitizeStableSmokeArtifactTree(directory), scan);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('REG-stsmk-diagnostic-api-key-001：真实签发响应字段和有限别名均脱敏且保留业务标识', () => {
