@@ -2836,6 +2836,17 @@ export interface ScheduledJob {
   lastRunStatus?: ScheduledJobRunStatus;
   lastRunId?: string;
   nextRunAt?: string | null;
+  /** 报告生产者须将 X-CDS-Job-Run-Id / CDS_JOB_RUN_ID 带到归档请求。 */
+  completion?: ScheduledJobCompletion;
+  scheduleGraceSeconds?: number;
+  /** 独立于手动运行，且不受运行历史裁剪影响。 */
+  lastScheduledRun?: ScheduledJobRun;
+  recoveryRequiredRunId?: string;
+  healthAlertKey?: string;
+  /** 旧幂等键拒绝重放，最新请求保留结果，不依赖运行史保留时长。 */
+  lastManualRequest?: ScheduledJobRun;
+  /** 每个来源分支最近一次认领的 push 版本；重复 webhook 不重放。 */
+  lastPushCommits?: Record<string, string>;
   /**
    * 连续失败计数（成功或跳过即清零）。只对含 release 动作的任务累计——
    * 给 http/command 任务加自动停用会改变存量行为，本轮不动它们。
@@ -2848,6 +2859,15 @@ export interface ScheduledJob {
 }
 
 export type ScheduledJobRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped';
+
+export interface ScheduledJobCompletion {
+  type: 'reports';
+  minCount: number;
+  requireObjectStorage?: boolean;
+  allowedVerdicts?: Array<'pass' | 'conditional' | 'fail'>;
+}
+
+export type ScheduledJobFailureKind = 'missed' | 'execution' | 'timeout' | 'artifact-invalid' | 'interrupted';
 
 /**
  * 一次运行里单个动作的结果。
@@ -2873,6 +2893,15 @@ export interface ScheduledJobRun {
   projectId: string;
   trigger: 'schedule' | 'manual' | 'push';
   status: ScheduledJobRunStatus;
+  scheduledFor?: string;
+  failureKind?: ScheduledJobFailureKind;
+  phase?: 'executing' | 'validating';
+  actionCount?: number;
+  deadlineAt?: string;
+  completion?: ScheduledJobCompletion;
+  artifacts?: Array<{ reportId: string; sha256: string; sizeBytes: number }>;
+  /** 客户端重试仅复用原结果；不重放动作。 */
+  requestKey?: string;
   queuedAt: string;
   startedAt?: string;
   finishedAt?: string;
@@ -2941,6 +2970,7 @@ export interface PeerPairingCode {
  * 存储位置，可选地通过 projectId 关联到某个项目以便过滤）。
  */
 export interface AcceptanceReportMeta {
+  scheduledJobRunId?: string;
   classification?: import('./shared/notification-templates.js').ReportClassification;
   monitorEvent?: import('./shared/notification-templates.js').ReportMonitorEvent;
   reportType?: 'acceptance' | 'code-review';

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration,
-  groupJobs, groupKeyOf, msUntil, startOfNextDay, startOfToday,
+  groupJobs, groupKeyOf, taskHealthTone, msUntil, startOfNextDay, startOfToday,
 } from '../../web/src/lib/task-schedule-view.js';
 import type { ScheduledJob, ScheduledJobRun } from '../../web/src/types/task-schedule.js';
 
@@ -590,4 +590,11 @@ describe('结论条的状态是有限枚举，不是越叠越长的条件链', (
     expect(o.detail).toContain('另有 1 次失败来自已删除的任务');
     expect(o.stats.find((x) => x.label === '失败')?.value).toBe('2');
   });
+});
+
+
+it('健康指示色使用定时健康，手动成功不会把漏跑标绿', () => {
+  expect(taskHealthTone(job({ id: 'missed', lastRunStatus: 'success', health: { state: 'missed', message: '漏跑', recoveryRequired: false } }))).toBe('bg-bad');
+  expect(taskHealthTone(job({ id: 'waiting', lastRunStatus: 'failed', health: { state: 'waiting', message: '未到执行时间', recoveryRequired: false } }))).toBe('bg-ok');
+  expect(taskHealthTone(job({ id: 'paused', enabled: false, lastRunStatus: 'success' }))).toBe('bg-muted-foreground');
 });

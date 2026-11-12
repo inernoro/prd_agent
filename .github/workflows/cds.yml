@@ -110,6 +110,9 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      - name: Scheduled jobs isolated recovery drill
+        run: pnpm drill:scheduled-jobs
+
       - name: Agent setup CLI HTTP integration
         run: python3 -m unittest discover -s ../.claude/skills/cds/tests -p 'test_cdscli_setup_check.py'
 
