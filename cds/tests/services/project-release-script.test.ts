@@ -102,6 +102,48 @@ describe('project-owned publishing contract', () => {
     expect(deployments).toBe(0);
     await state.flush();
   });
+  it.each([
+    { source: 'project', expected: 'pass' },
+    { source: 'other-project', expected: 'fail' },
+    { source: 'missing', expected: 'fail' },
+  ])('checks committed scripts without a prebuilt branch checkout: $source', async ({ source, expected }) => {
+    const f = fixture();
+    f.git('remote', 'add', 'origin', source === 'other-project'
+      ? 'https://operator:must-not-leak@github.com/other/project.git'
+      : 'https://github.com/owner/project.git');
+    fs.writeFileSync(path.join(f.repo, 'cds-release.sh'), f.content.replace('old', 'newer'));
+    f.git('add', '.'); f.git('commit', '-m', 'newer');
+    const state = new StateService(path.join(f.root, 'state.json')); state.load();
+    const now = new Date().toISOString();
+    const worktree = path.join(f.root, 'no-source-checkout');
+    state.addProject({ id: 'project', slug: 'project', name: 'Project', kind: 'git', githubRepoFullName: 'owner/project', createdAt: now, updatedAt: now });
+    state.addBranch({ id: 'branch', projectId: 'project', branch: 'main', worktreePath: worktree, status: 'running', pinnedCommit: f.sha, createdAt: now, services: {} });
+    state.addRemoteHost({ id: 'host', name: 'Host', host: '127.0.0.1', sshPort: 22, sshUser: 'deploy', sshPrivateKeyEncrypted: 'fixture', sshPrivateKeyFingerprint: 'fixture', tags: [], isEnabled: true, createdAt: now });
+    state.upsertReleaseTarget({ id: 'target', projectId: 'project', name: 'Target', type: 'ssh', isEnabled: true, createdAt: now,
+      strategy: { mode: 'project-script', scriptFile: 'cds-release.sh' },
+      ssh: { host: '127.0.0.1', port: 22, user: 'deploy', privateKeyRef: 'host', appPath: f.repo, deployCommand: '', healthcheckUrl: 'https://project.example.test/health' } });
+    const service = new ReleaseService(state, {
+      verifyProjectCI: async () => ({ ok: true, message: 'same commit CI passed' }),
+      resolveProjectRepository: (projectId) => {
+        expect(projectId).toBe('project');
+        return source === 'missing' ? path.join(f.root, 'missing-repo') : f.repo;
+      },
+      sshExecutor: async req => req.command.includes('CDS_REPO_ORIGIN=') ? 'CDS_REPO_ORIGIN=https://github.com/owner/project.git\n' : '',
+    });
+    try {
+      const result = await service.preflight({ branchId: 'branch', targetId: 'target', previewUrl: 'https://preview.example.test', operator: 'test' });
+      expect(result.checks.find(check => check.id === 'release-script')?.status).toBe(expected);
+      expect(result.ok).toBe(expected === 'pass');
+      expect(JSON.stringify(result.checks)).not.toContain('must-not-leak');
+      expect(fs.existsSync(worktree)).toBe(false);
+      if (expected === 'pass') {
+        expect(result.artifact?.artifactPath).toBe(f.repo);
+        expect(result.checks.find(check => check.id === 'release-script')?.message).toContain(crypto.createHash('sha256').update(f.content).digest('hex'));
+      }
+    } finally {
+      await state.flush();
+    }
+  });
   it('a failed project-owned final check restores the previous script and keeps the release failed', async () => {
     const f = fixture();
     const state = new StateService(path.join(f.root, 'state.json')); state.load();
