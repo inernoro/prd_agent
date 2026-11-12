@@ -607,6 +607,7 @@ export const api = {
       adapterInfo: (modelId: string) => `/api/literary-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
       runs: {
         create: () => '/api/literary-agent/image-gen/runs',
+        byRequest: (requestId: string) => `/api/literary-agent/image-gen/runs/by-request?requestId=${encodeURIComponent(requestId)}`,
         byId: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}`,
         stream: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}/stream`,
         cancel: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}/cancel`,

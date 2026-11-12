@@ -38,7 +38,7 @@ public sealed class ModelReferenceUsageCatalog(IMongoDatabase gateway, IModelRef
                         platform is not null && platform != "logical-model" ? false :
                         string.Equals(value.Trim(), x.GetStringOrEmpty("PublicId"), StringComparison.OrdinalIgnoreCase) || value == x.GetStringOrEmpty("_id") || value == "pool_" + x.GetStringOrEmpty("_id")
                         || ModelUpgrades.ModelUpgradeRules.Strings(x, "Aliases").Contains(value.Trim(), StringComparer.OrdinalIgnoreCase)
-                        || ModelUpgrades.ModelUpgradeRules.Strings(x, "MigratedFromPoolIds").Contains(value, StringComparer.Ordinal)).ToList();
+                        || ModelUpgrades.ModelUpgradeRules.Strings(x, "MigratedFromPoolIds").Any(pool => value == pool || value == "pool_" + pool)).ToList();
                     if (type.Length == 0)
                     {
                         var types = matching.Select(x => x.GetStringOrEmpty("ModelType")).Distinct(StringComparer.Ordinal).ToArray();

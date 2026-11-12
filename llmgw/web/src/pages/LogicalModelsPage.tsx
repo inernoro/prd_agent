@@ -101,6 +101,7 @@ export function LogicalModelsPage() {
   const failNotice = (text: string) => setNotice({ tone: 'error', text });
   const [createOpen, setCreateOpen] = useState(false);
   const [createAliases, setCreateAliases] = useState('');
+  const [aliasDraft, setAliasDraft] = useState<{ id: string; value: string } | null>(null);
   const [offeringFor, setOfferingFor] = useState<string | null>(null);
   const [editingOfferingId, setEditingOfferingId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -194,6 +195,18 @@ export function LogicalModelsPage() {
     if (!res.success) { failNotice(res.error?.message || '更新路由策略失败'); return; }
     setItems((prev) => prev?.map((x) => x.id === item.id ? res.data : x) || null);
     okNotice(`「${item.name}」已切换为${routingStrategy === 'weighted' ? '权重负载均衡' : '优先级与故障切换'}`);
+  }
+
+  async function saveAliases(item: LogicalModelItem, value: string) {
+    setBusy(`aliases:${item.id}`);
+    try {
+      const res = await updateLogicalModel(item.id, { aliases: value.split(/\r?\n/).map(x => x.trim()).filter(Boolean) });
+      if (!res.success) { failNotice(res.error?.message || '兼容标识未保存，请刷新后重试'); return; }
+      setItems(prev => prev?.map(x => x.id === item.id ? res.data : x) || null);
+      setAliasDraft(null);
+      okNotice(`「${item.name}」的兼容标识已保存`);
+    } catch { failNotice('兼容标识保存结果未确认，请刷新核对后再试'); }
+    finally { setBusy(null); }
   }
 
   function openNewOffering(logicalId: string) {
@@ -458,11 +471,18 @@ export function LogicalModelsPage() {
                               允许调用方
                             </Button>
                             <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button>
+                            {item.identityKind === 'stable' ? <Button size="sm" variant="ghost" onClick={() => setAliasDraft({ id: item.id, value: (item.aliases ?? []).join('\n') })}>兼容旧标识</Button> : null}
                             <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button>
                             <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void removeLogical(item)}>删除</Button>
                           </>
                         ) : null}
                       </div>
+
+                      {aliasDraft?.id === item.id && canWrite ? <div style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
+                        <span style={HINT_TEXT}>兼容旧标识，一行一个</span>
+                        <textarea aria-label={`${item.name} 兼容旧标识`} value={aliasDraft.value} rows={3} onChange={e => setAliasDraft({ id: item.id, value: e.target.value })} style={{ ...inputStyle, height: 'auto' }} />
+                        <div><Button size="sm" disabled={busy === `aliases:${item.id}`} onClick={() => void saveAliases(item, aliasDraft.value)}>保存兼容标识</Button><Button size="sm" variant="ghost" disabled={busy === `aliases:${item.id}`} onClick={() => setAliasDraft(null)}>取消</Button></div>
+                      </div> : null}
 
                       {claimDraft?.id === item.id && canWrite ? (
                         <div data-testid="logical-model-claims" style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.tight }}>

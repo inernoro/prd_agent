@@ -69,7 +69,7 @@ public sealed class ModelReferenceEngine(IModelReferenceStore store, string inte
                 if (snapshot is not null) foreach (var item in snapshot.Items)
                 {
                     result.Count++;
-                    var matches = MongoRuntimeModelReferenceSnapshotProvider.Matches(m.Source, item);
+                    var matches = MongoRuntimeModelReferenceSnapshotProvider.Matches(ModelReferenceAnalysis.SelectionIdentity(m), item);
                     if (!matches || MongoRuntimeModelReferenceSnapshotProvider.Matches(m.Target, item)) continue;
                     result.Affected++; result.Blocked++; result.Residual++;
                     coverage.Items.Add(new() { ConsumerKey = item.ConsumerKey, Collection = "runtime", Path = item.Path, Status = "blocked", Reason = "RUNTIME_REFERENCE_REQUIRES_AUTHORIZED_CONFIGURATION_UPDATE" });

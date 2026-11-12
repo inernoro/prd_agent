@@ -6,6 +6,15 @@ namespace PrdAgent.LlmGw.ModelReferences;
 public static class ModelReferenceAnalysis
 {
     public sealed record Analysis(ReferenceConsumerResult Result, List<ReferenceFinding> Items, List<ReferenceDocumentChange> Changes);
+    // 升级稳定角色只影响这个角色的调用者；固定版本仍钉住原物理模型。
+    // 物理退役/跨逻辑迁移保留完整身份，仍会被固定线路与独立运行时引用阻挡。
+    public static ReferenceIdentity SelectionIdentity(ReferenceMigrationMapping m)
+        => !string.IsNullOrEmpty(m.Source.LogicalId) && m.Source.LogicalId == m.Target.LogicalId
+            && m.Source.PublicId == m.Target.PublicId
+            ? new ReferenceIdentity { LogicalId = m.Source.LogicalId, PublicId = m.Source.PublicId,
+                Aliases = [.. m.Source.Aliases], PoolIds = [.. m.Source.PoolIds] }
+            : m.Source;
+
     public static IEnumerable<(string Path, BsonValue Value)> Leaves(BsonValue value, string path = "")
     {
         if (value is BsonDocument doc)
@@ -61,6 +70,7 @@ public static class ModelReferenceAnalysis
     public static Analysis Analyze(ReferenceCollection c, IReadOnlyList<BsonDocument> docs,
         IReadOnlyList<string> selectionPaths, ReferenceMigrationMapping m)
     {
+        var source = SelectionIdentity(m);
         var result = new ReferenceConsumerResult { Key = c.Key, Count = docs.Count };
         var findings = new List<ReferenceFinding>(); var changes = new List<ReferenceDocumentChange>();
         foreach (var path in selectionPaths.Where(p => !KnownPath(c, p)).Distinct(StringComparer.Ordinal))
@@ -93,8 +103,8 @@ public static class ModelReferenceAnalysis
                 if (!TryGet(doc, path, out var value) || value.IsBsonNull) return;
                 if (!value.IsString) { Finding(path, "unknown", "MODEL_REFERENCE_SCHEMA_INVALID"); return; }
                 var text = value.AsString;
-                if (m.Source.LogicalId is { Length: > 0 } same && same == m.Target.LogicalId && m.Source.PublicId == m.Target.PublicId && Matches(m.Target, text)) return;
-                if (!(publicOnly ? PublicMatch(m.Source, text) : Matches(m.Source, text))) return;
+                if (source.LogicalId is { Length: > 0 } same && same == m.Target.LogicalId && source.PublicId == m.Target.PublicId && Matches(m.Target, text)) return;
+                if (!(publicOnly ? PublicMatch(source, text) : Matches(source, text))) return;
                 var next = Replacement(m, text, publicOnly);
                 if (next.Length == 0) { Finding(path, "blocked", "TARGET_IDENTITY_REQUIRED"); return; }
                 if (next == text) return; // Stable identity already remains stable; wire is handled separately.
@@ -105,7 +115,7 @@ public static class ModelReferenceAnalysis
                 if (m.ScopePath is not null && !new[] { prefix + "LogicalModelId", prefix + "ModelId", prefix + "PlatformId" }.Contains(m.ScopePath, StringComparer.Ordinal)) return;
                 foreach (var key in new[] { "LogicalModelId", "PlatformId", "ModelId" })
                     if (TryGet(doc, prefix + key, out var raw) && !raw.IsBsonNull && !raw.IsString) { Finding(prefix + key, "unknown", "MODEL_REFERENCE_SCHEMA_INVALID"); return; }
-                if (!BusinessMatch(m.Source, doc, prefix)) return;
+                if (!BusinessMatch(source, doc, prefix)) return;
                 if (string.IsNullOrEmpty(m.Target.LogicalId) || string.IsNullOrEmpty(m.Target.PublicId)) { Finding(prefix + "LogicalModelId", "blocked", "TARGET_LOGICAL_ID_REQUIRED"); return; }
                 if (Text(doc, prefix + "LogicalModelId") == m.Target.LogicalId && Text(doc, prefix + "ModelId") == m.Target.PublicId && Text(doc, prefix + "PlatformId") == "logical-model") return;
                 Finding(prefix + "LogicalModelId", "affected", null);
@@ -126,8 +136,8 @@ public static class ModelReferenceAnalysis
                 case "visual":
                     var policyMembers = Members("VisualModelPolicy.Models").ToArray();
                     var policyModels = policyMembers.Select(prefix => Text(doc, prefix + "ModelId")).ToArray();
-                    if (policyModels.Any(value => PublicMatch(m.Source, value) && !PublicMatch(m.Target, value))
-                        && policyModels.Count(value => PublicMatch(m.Source, value) || PublicMatch(m.Target, value)) > 1)
+                    if (policyModels.Any(value => PublicMatch(source, value) && !PublicMatch(m.Target, value))
+                        && policyModels.Count(value => PublicMatch(source, value) || PublicMatch(m.Target, value)) > 1)
                     {
                         Finding("VisualModelPolicy.Models", "blocked", "VISUAL_POLICY_TARGET_COLLISION_REQUIRES_EXPLICIT_RESOLUTION");
                         break;
@@ -141,9 +151,9 @@ public static class ModelReferenceAnalysis
                         if ((m.ScopePath is null || m.ScopePath == path) && TryGet(doc, path, out var list))
                         {
                             if (list is not BsonArray a || a.Any(x => !x.IsString)) { Finding(path, "unknown", "MODEL_REFERENCE_SCHEMA_INVALID"); continue; }
-                            if (!a.Any(x => PublicMatch(m.Source, x.AsString) && !PublicMatch(m.Target, x.AsString))) continue;
+                            if (!a.Any(x => PublicMatch(source, x.AsString) && !PublicMatch(m.Target, x.AsString))) continue;
                             var seenTarget = false;
-                            var next = new BsonArray(a.Select(x => PublicMatch(m.Source, x.AsString) ? m.Target.PublicId ?? "" : x.AsString)
+                            var next = new BsonArray(a.Select(x => PublicMatch(source, x.AsString) ? m.Target.PublicId ?? "" : x.AsString)
                                 .Where(x => x != m.Target.PublicId || !seenTarget && (seenTarget = true)));
                             if (next.Any(x => x.AsString.Length == 0)) Finding(path, "blocked", "TARGET_PUBLIC_ID_REQUIRED");
                             else if (!next.Equals(a)) { Finding(path, "affected", null); Set(path, next); }
@@ -152,7 +162,7 @@ public static class ModelReferenceAnalysis
                     break;
                 case "scalar": Scalar("DefaultVideoModel"); break;
                 case "chat":
-                    if (Text(doc, "RunningTurnId").Length > 0 && PublicMatch(m.Source, Text(doc, "Model"))) Finding("Model", "blocked", "ACTIVE_CHAT_TURN_MUST_DRAIN");
+                    if (Text(doc, "RunningTurnId").Length > 0 && PublicMatch(source, Text(doc, "Model"))) Finding("Model", "blocked", "ACTIVE_CHAT_TURN_MUST_DRAIN");
                     else Scalar("Model", true);
                     break;
                 case "workflow":
@@ -161,33 +171,33 @@ public static class ModelReferenceAnalysis
                         var value = Text(doc, prefix + "Config.model"); var type = Text(doc, prefix + "NodeType");
                         if (value.Contains("{{", StringComparison.Ordinal) || value.Contains("${", StringComparison.Ordinal)) { Finding(prefix + "Config.model", "unknown", "VARIABLE_MODEL_REQUIRES_EXPLICIT_MAPPING"); continue; }
                         if (type == "cli-agent-executor" && Text(doc, prefix + "Config.executorType") == "claude-sdk") Scalar(prefix + "Config.model", true);
-                        else if (PublicMatch(m.Source, value)) Finding(prefix + "Config.model", "blocked", "INDEPENDENT_OR_UNKNOWN_WORKFLOW_RUNTIME");
+                        else if (PublicMatch(source, value)) Finding(prefix + "Config.model", "blocked", "INDEPENDENT_OR_UNKNOWN_WORKFLOW_RUNTIME");
                     }
                     break;
                 case "roles":
-                    if (change.RecordId == m.Source.LogicalId && m.Source.LogicalId != m.Target.LogicalId
+                    if (change.RecordId == source.LogicalId && source.LogicalId != m.Target.LogicalId
                         && (doc.GetValue("IsDefaultForType", false) == BsonBoolean.True || doc.GetValue("DefaultForAppCallerCodes", new BsonArray()) is BsonArray { Count: > 0 }))
                         Finding("DefaultForAppCallerCodes", "blocked", "MOVE_DEFAULT_AND_CLAIMS_THROUGH_AUTHORIZED_GATEWAY_FIRST");
                     break;
                 case "inactive":
-                    foreach (var leaf in Leaves(doc)) if (leaf.Value.IsString && Matches(m.Source, leaf.Value.AsString))
+                    foreach (var leaf in Leaves(doc)) if (leaf.Value.IsString && Matches(source, leaf.Value.AsString))
                         Finding(leaf.Path, "excluded", "INACTIVE_LEGACY_METADATA_RUNTIME_AUTHORITY_CHECKED_SEPARATELY");
                     break;
                 case "wire":
-                    if (!string.IsNullOrEmpty(m.Source.LogicalId) && Text(doc, "LogicalModelId") == m.Source.LogicalId)
+                    if (!string.IsNullOrEmpty(source.LogicalId) && Text(doc, "LogicalModelId") == source.LogicalId)
                     {
                         Finding("TargetId", "excluded", "SOURCE_OFFERING_MANAGED_BY_EXISTING_GATEWAY_LIFECYCLE");
                         break;
                     }
                     if (doc.GetValue("Enabled", false) == BsonBoolean.True
-                        && (change.RecordId == m.Source.OfferingId || Text(doc, "TargetId") == m.Source.PhysicalModelId && !string.IsNullOrEmpty(m.Source.PhysicalModelId)))
+                        && (change.RecordId == source.OfferingId || Text(doc, "TargetId") == source.PhysicalModelId && !string.IsNullOrEmpty(source.PhysicalModelId)))
                         Finding("TargetId", "blocked", "SWITCH_VALIDATED_OFFERING_THROUGH_GATEWAY_FIRST");
                     break;
                 case "video-run":
                     if (Text(doc, "Status") is "Completed" or "Failed" or "Cancelled") break; // Terminal actual wire is immutable history.
                     foreach (var leaf in Leaves(doc).Where(x => x.Path == "DirectVideoModel" || System.Text.RegularExpressions.Regex.IsMatch(x.Path, @"^Scenes\.\d+\.Model$")))
                     {
-                        if (!leaf.Value.IsString || !Matches(m.Source, leaf.Value.AsString)) continue;
+                        if (!leaf.Value.IsString || !Matches(source, leaf.Value.AsString)) continue;
                         var prefix = leaf.Path.Contains('.') ? leaf.Path[..(leaf.Path.LastIndexOf('.') + 1)] : "DirectVideo";
                         var job = Text(doc, prefix + "JobId");
                         Finding(leaf.Path, "blocked", job.Length > 0 ? "SUBMITTED_VIDEO_JOB_MUST_DRAIN" : "UNSUBMITTED_VIDEO_REQUIRES_LIFECYCLE_VALIDATION");
@@ -200,32 +210,32 @@ public static class ModelReferenceAnalysis
                     var busyPolicy = Text(doc, "PendingAction").Length > 0
                         || TryGet(doc, "PendingSwitch", out var pendingSwitch) && !pendingSwitch.IsBsonNull
                         || TryGet(doc, "LeaseUntil", out var leaseUntil) && leaseUntil.IsValidDateTime && leaseUntil.ToUniversalTime() > DateTime.UtcNow;
-                    if (ownerLogical == m.Source.LogicalId && m.Source.LogicalId != m.Target.LogicalId)
+                    if (ownerLogical == source.LogicalId && source.LogicalId != m.Target.LogicalId)
                         Finding("LogicalModelId", enabledPolicy || busyPolicy ? "blocked" : "excluded",
                             enabledPolicy || busyPolicy ? "DISABLE_AND_DRAIN_SOURCE_UPGRADE_POLICY" : "INACTIVE_POLICY_JOURNAL_PRESERVED");
-                    if (!string.IsNullOrEmpty(m.Source.LogicalId) && Text(doc, "Candidate.ValidationRoute.LogicalModelId") == m.Source.LogicalId)
+                    if (!string.IsNullOrEmpty(source.LogicalId) && Text(doc, "Candidate.ValidationRoute.LogicalModelId") == source.LogicalId)
                         Finding("Candidate.ValidationRoute.LogicalModelId", "blocked", "CANDIDATE_VALIDATION_STILL_REFERENCES_MODEL");
                     if (enabledPolicy || busyPolicy)
                         foreach (var prefix in Members("Policy.Successors"))
                         {
                             var currentWire = Text(doc, "Current.UpstreamModelId");
-                            if (!string.IsNullOrEmpty(m.Source.UpstreamModelId) && Text(doc, prefix + "ToModel") == m.Source.UpstreamModelId
-                                && Text(doc, prefix + "ProviderId") == m.Source.ProviderId
+                            if (!string.IsNullOrEmpty(source.UpstreamModelId) && Text(doc, prefix + "ToModel") == source.UpstreamModelId
+                                && Text(doc, prefix + "ProviderId") == source.ProviderId
                                 && (currentWire.Length == 0 || Text(doc, prefix + "FromModel") == currentWire))
                                 Finding(prefix + "ToModel", "blocked", "ACTIVE_SUCCESSOR_TARGET_REQUIRES_POLICY_REVIEW");
                         }
                     break;
                 case "physical":
-                    if (PhysicalMatch(m.Source, Text(doc, "PlatformId"), Text(doc, "ModelName"))) Finding("ModelName", "blocked", "RETIRE_LEGACY_PHYSICAL_MIRROR_THROUGH_GATEWAY");
+                    if (PhysicalMatch(source, Text(doc, "PlatformId"), Text(doc, "ModelName"))) Finding("ModelName", "blocked", "RETIRE_LEGACY_PHYSICAL_MIRROR_THROUGH_GATEWAY");
                     break;
                 default:
                     if (c.Collection is "model_groups" or "llmgw_model_pools")
                     {
-                        foreach (var prefix in Members("Models")) if (PhysicalMatch(m.Source, Text(doc, prefix + "PlatformId"), Text(doc, prefix + "ModelId"))) Finding(prefix + "ModelId", "blocked", "RETIRE_OLD_POOL_MEMBER_THROUGH_GATEWAY");
+                        foreach (var prefix in Members("Models")) if (PhysicalMatch(source, Text(doc, prefix + "PlatformId"), Text(doc, prefix + "ModelId"))) Finding(prefix + "ModelId", "blocked", "RETIRE_OLD_POOL_MEMBER_THROUGH_GATEWAY");
                     }
                     else foreach (var leaf in Leaves(doc).Where(x => !ModelReferenceRegistry.MetadataPaths.Contains(x.Path)))
                     {
-                        if (leaf.Value.IsString && Matches(m.Source, leaf.Value.AsString) && !Matches(m.Target, leaf.Value.AsString))
+                        if (leaf.Value.IsString && Matches(source, leaf.Value.AsString) && !Matches(m.Target, leaf.Value.AsString))
                             Finding(leaf.Path, "blocked", c.Mode == "independent" ? "INDEPENDENT_SDK_IDENTITY_REQUIRES_EXPLICIT_ATTESTATION" : "REFERENCE_REQUIRES_SPECIALIZED_AUTHORIZED_MIGRATION");
                     }
                     break;
