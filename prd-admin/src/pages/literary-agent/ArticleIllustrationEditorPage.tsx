@@ -31,6 +31,7 @@ import {
   bindWatermarkApp,
   unbindWatermarkApp,
   getImageGenRun,
+  getLiteraryAgentRunByRequest,
   listReferenceImageConfigs,
   createReferenceImageConfig,
   updateReferenceImageConfig,
@@ -59,8 +60,9 @@ import {
   type LiteraryIllustrationChoice,
 } from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
-import { buildLiteraryModelOptions, selectLiteraryModelOption, type LiteraryModelOption } from './literaryModelOptions';
+import { buildLiteraryModelOptions, selectLiteraryModelOption, selectFreshLiteraryModel, type LiteraryModelOption } from './literaryModelOptions';
 import { fitLiteraryImageSize, imageRunFailure } from './literaryImageRunContract';
+import { runLiteraryImageBatch, type LiteraryImageAttempt } from './literaryImageBatch';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { type SizesByResolution } from '@/lib/imageAspectOptions';
@@ -165,6 +167,7 @@ type MarkerRunItem = {
   planItem?: ImageGenPlanItem | null;
   status: MarkerRunStatus;
   runId?: string | null;
+  generationRequestId?: string | null;
   base64?: string | null;
   url?: string | null;
   assetUrl?: string | null;
@@ -667,6 +670,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const effectiveModel = useMemo<PoolModel | null>(() => {
     const fromPool = selectLiteraryModelOption(enabledImageModels, imageModelPrefId);
     if (fromPool) return fromPool;
+    if (imageModelPrefId) return null;
     // 无可选池时，显示预解析的自动调度模型（isAutoResolved=true 标记，生成时不传 platformId/modelId）
     if (autoResolvedModel) return { ...autoResolvedModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
     return null;
@@ -675,6 +679,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const effectiveChatModel = useMemo<PoolModel | null>(() => {
     const fromPool = selectLiteraryModelOption(enabledChatModels, chatModelPrefId);
     if (fromPool) return fromPool;
+    if (chatModelPrefId) return null;
     if (autoResolvedChatModel) return { ...autoResolvedChatModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
     return null;
   }, [enabledChatModels, chatModelPrefId, autoResolvedChatModel]);
@@ -738,6 +743,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [markerRunItemsRestored, setMarkerRunItemsRestored] = useState(false); // 标记是否已从后端恢复
 
   const genAbortRef = useRef<AbortController | null>(null);
+  const generationGateRef = useRef(false);
+  const modelMigrationNoticeRef = useRef<string | null>(null);
+  useEffect(() => () => { genAbortRef.current?.abort(); }, [workspaceId]);
   const markerListRef = useRef<HTMLDivElement>(null); // 配图列表容器的 ref
   const articlePreviewRef = useRef<HTMLDivElement>(null); // 文章预览区域的 ref
   const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
@@ -1015,7 +1023,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       void updateLiteraryAgentPreferences({
         imageModelId: imageModelPrefId || undefined,
         chatModelId: chatModelPrefId || undefined,
-      }).catch(() => {});
+      }).then(res => {
+        if (!res.success) toast.warning(res.error?.message || '模型偏好未保存，请稍后重试。');
+      }).catch(() => toast.warning('模型偏好未保存，请稍后重试。'));
     }, 500);
     return () => clearTimeout(timeout);
   }, [imageModelPrefId, chatModelPrefId, modelPrefReady, userId]);
@@ -1023,11 +1033,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 验证用户选择的模型是否仍在可用列表中
   useEffect(() => {
     if (modelsLoading) return;
-    if (imageModelPrefId && !enabledImageModels.some((m) => m.id === imageModelPrefId)) {
-      setImageModelPrefId('');
-    }
-    if (chatModelPrefId && !enabledChatModels.some((m) => m.id === chatModelPrefId)) {
-      setChatModelPrefId('');
+    if (imageModelPrefId && !selectLiteraryModelOption(enabledImageModels, imageModelPrefId)) {
+      setImageGenModelError('原配图模型已变更或暂不可用，请从模型菜单重新选择。');
     }
   }, [enabledImageModels, enabledChatModels, imageModelPrefId, chatModelPrefId, modelsLoading]);
 
@@ -1291,6 +1298,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               size: m.planItem.size || undefined,
             } : null,
             runId: m.runId || null,
+            generationRequestId: m.generationRequestId || null,
             // 恢复图片数据（只使用 URL，不使用 base64 以减少存储压力）
             base64: null, // 前端不从后端恢复 base64
             url: m.url || null,
@@ -1303,12 +1311,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
           // 对于 status === 'running' 且有 runId 的 marker，查询后端 Run 的真实状态
           // 后端是状态的唯一来源，前端只是观察者
-          const runningItems = restoredItems.filter(item => item.status === 'running' && item.runId);
+          const runningItems = restoredItems.filter(item => item.status === 'running' && (item.runId || item.generationRequestId));
           if (runningItems.length > 0) {
             // 异步查询每个 run 的真实状态（不阻塞 UI）
             Promise.all(runningItems.map(async (item) => {
               try {
-                const runRes = await getImageGenRun({ runId: item.runId!, includeItems: true });
+                let recoveredRunId = item.runId;
+                if (!recoveredRunId && item.generationRequestId) {
+                  const found = await getLiteraryAgentRunByRequest(item.generationRequestId);
+                  recoveredRunId = found.success ? found.data?.runId : null;
+                  if (!recoveredRunId) return;
+                  setMarkerRunItems(prev => prev.map(x => x.markerIndex === item.markerIndex ? { ...x, runId: recoveredRunId } : x));
+                  await updateMarkerStatus(item.markerIndex, { status: 'running', runId: recoveredRunId });
+                }
+                const runRes = await getImageGenRun({ runId: recoveredRunId!, includeItems: true });
                 if (runRes.success && runRes.data) {
                   const runStatus = runRes.data.run.status;
                   // 根据后端 Run 状态更新前端显示
@@ -1887,21 +1903,157 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [markerRunItems, phase, rebuildMergedMarkdown]);
 
-  const runSingleMarker = async (markerIndex: number) => {
+  const observeMarkerRun = async (markerIndex: number, runId: string, plannedPrompt: string, markerText: string): Promise<LiteraryImageAttempt> => {
+    // 3) 订阅 SSE，拿到 base64/url
+    let gotBase64: string | null = null;
+    let gotUrl: string | null = null;
+    let generationFailure: string | null = null;
+    const ac = genAbortRef.current;
+    const res = await streamLiteraryAgentImageGenRunWithRetry({
+      runId,
+      afterSeq: 0,
+      maxAttempts: 20,
+      signal: ac?.signal ?? new AbortController().signal,
+      onEvent: (evt) => {
+        if (ac?.signal.aborted) return;
+        if (!evt.data) return;
+        const obj = safeJsonParse(String(evt.data));
+        if (!obj || typeof obj !== 'object') return;
+        const o = obj as Record<string, unknown>;
+        const t = String(o.type ?? '');
+        if (t === 'imageDone') {
+          const evtRunId = String(o.runId ?? '').trim();
+          if (evtRunId && evtRunId !== runId) return;
+          const b64 = (o.base64 as string | null | undefined) ?? null;
+          const url = (o.url as string | null | undefined) ?? null;
+          gotBase64 = b64;
+          gotUrl = url;
+          setMarkerRunItems((prev) =>
+            prev.map((x) => (x.markerIndex === markerIndex ? { ...x, base64: b64, url: url, errorMessage: null } : x))
+          );
+        }
+        const failure = imageRunFailure(o);
+        if (failure) {
+          generationFailure = failure;
+          const msg = failure;
+          setMarkerRunItems((prev) =>
+            prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: msg } : x))
+          );
+        }
+      },
+    });
+    if (ac?.signal.aborted) return 'pending';
+    if (!res.success) {
+      // SSE 断开只读核对原任务，不能把“没收到结果”当成可以再次付费生成。
+      const confirmed = await getImageGenRun({ runId, includeItems: true, includeImages: true });
+      const status = confirmed.success ? confirmed.data?.run.status : null;
+      if (status === 'Completed') {
+        gotUrl = confirmed.data?.items?.find(item => item.url)?.url ?? null;
+        gotBase64 = confirmed.data?.items?.find(item => item.base64)?.base64 ?? null;
+      } else if (status === 'Failed' || status === 'Cancelled') {
+        const message = confirmed.data?.items?.[0]?.errorMessage || res.error?.message || '生图失败';
+        setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+        await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: message });
+        return 'failed';
+      } else {
+        const message = '暂未确认任务结果，已暂停后续配图；请刷新查看原任务，请勿重复生成。';
+        setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'running', errorMessage: message } : x));
+        await updateMarkerStatus(markerIndex, { status: 'running', runId, errorMessage: message });
+        return 'pending';
+      }
+    }
+
+    // 4) 将结果转为可插入文章的 url：优先 SSE url；否则上传 base64 得到 asset.url
+    const finalUrl = String(gotUrl || '').trim();
+    const finalB64 = String(gotBase64 || '').trim();
+    if (finalUrl) {
+      setMarkerRunItems((prev) =>
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl: finalUrl, url: finalUrl, errorMessage: null } : x))
+      );
+      // 保存图片URL到后端
+      await updateMarkerStatus(markerIndex, { status: 'done' });
+      try {
+        await updateArticleMarker({
+          workspaceId,
+          markerIndex,
+          url: finalUrl,
+        });
+      } catch (error) {
+        console.error('Failed to save image url:', error);
+      }
+      return 'completed';
+    }
+    if (!finalB64) {
+      setMarkerRunItems((prev) =>
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: generationFailure || '图片尚未生成，请稍后重试或选择其他模型。' } : x))
+      );
+      return 'failed';
+    }
+
+    const dataUrl = finalB64.startsWith('data:') ? finalB64 : `data:image/png;base64,${finalB64}`;
+    const up = await uploadVisualAgentWorkspaceAsset({
+      id: workspaceId,
+      data: dataUrl,
+      prompt: plannedPrompt,
+      articleInsertionIndex: markerIndex,
+      originalMarkerText: markerText
+    });
+    if (!up.success) {
+      setMarkerRunItems((prev) =>
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: up.error?.message || '图片持久化失败' } : x))
+      );
+      return 'failed';
+    }
+    const assetUrl = String(up.data?.asset?.url || '').trim();
+    if (!assetUrl) {
+      setMarkerRunItems((prev) =>
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: '图片持久化失败：未返回 url' } : x))
+      );
+      return 'failed';
+    }
+    setMarkerRunItems((prev) =>
+      prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl, url: assetUrl, errorMessage: null } : x))
+    );
+    // 图片已经通过 uploadVisualAgentWorkspaceAsset 上传到腾讯云 COS，assetUrl 就是 COS 的 URL
+    // 保存 URL 到后端（刷新后可恢复）
+    await updateMarkerStatus(markerIndex, { status: 'done' });
+    try {
+      await updateArticleMarker({
+        workspaceId,
+        markerIndex,
+        url: assetUrl,
+      });
+    } catch (error) {
+      console.error('Failed to save asset url:', error);
+    }
+    return 'completed';
+  };
+
+  const runSingleMarker = async (markerIndex: number): Promise<LiteraryImageAttempt> => {
+    const current = markerRunItemsRef.current.find((x) => x.markerIndex === markerIndex) ?? null;
+    if (!current) return 'failed';
+    let resumeOriginalRequest = false;
+    if (current.status === 'running') {
+      const found = !current.runId && current.generationRequestId
+        ? await getLiteraryAgentRunByRequest(current.generationRequestId) : null;
+      const previousRunId = current.runId || (found?.success ? found.data?.runId : null);
+      if (previousRunId) return observeMarkerRun(markerIndex, previousRunId, current.planItem?.prompt || current.draftText, current.markerText);
+      // 仅用户点击“恢复原请求”且只读确认尚未入库时，重放同一幂等请求；不会自动重试。
+      if (found?.error?.code === 'IMAGE_GEN_REQUEST_PENDING' && current.generationRequestId) resumeOriginalRequest = true;
+      else { toast.warning('原请求结果尚未确认，请稍后刷新核对，系统不会再次生成。'); return 'pending'; }
+    }
     if (!imageGenModel) {
       toast.error(imageGenModelError || '未选择生图模型');
-      return;
+      return 'failed';
     }
     if (imageCapabilitiesModel !== (effectiveModel?.modelName || imageGenModel.modelName)) {
       toast.error(imageCapabilitiesError || '正在读取模型的图片能力，请稍后重试。');
-      return;
+      return 'failed';
     }
-    const current = markerRunItems.find((x) => x.markerIndex === markerIndex) ?? null;
-    if (!current) return;
     const text = String(current.draftText || current.markerText || '').trim();
     if (!text) {
       toast.warning('提示词为空');
-      return;
+      return 'failed';
     }
 
     const cachedPlanItem = current.planItem;
@@ -1910,11 +2062,42 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setMarkerRunItems((prev) =>
       prev.map((x) =>
         x.markerIndex === markerIndex
-          ? { ...x, status: 'parsing', errorMessage: null, planItem: null, runId: null, base64: null, url: null, assetUrl: null }
+          ? { ...x, status: 'parsing', errorMessage: null, planItem: null, runId: null }
           : x
       )
     );
     await updateMarkerStatus(markerIndex, { status: 'parsing' }); // 保存到后端
+
+    const freshCatalog = await getLiteraryAgentModels();
+    if (!freshCatalog.success || !freshCatalog.data) {
+      const message = freshCatalog.error?.message || '无法核对最新模型目录，请稍后重试。';
+      setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: message });
+      return 'failed';
+    }
+    const freshModel = selectFreshLiteraryModel(buildLiteraryModelOptions(freshCatalog.data), effectiveModel);
+    setImageGenPools(freshCatalog.data);
+    if (!freshModel) {
+      const message = '原配图模型已退役或暂不可用，请从模型菜单重新选择后继续。';
+      setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: message });
+      return 'failed';
+    }
+    const freshCapabilities = await getLiteraryAgentAdapterInfo(freshModel.modelName);
+    if (!freshCapabilities.success || !freshCapabilities.data?.matched || !freshCapabilities.data.sizesByResolution) {
+      const message = freshCapabilities.error?.message || '无法核对所选模型的图片能力，请稍后重试。';
+      setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: message });
+      return 'failed';
+    }
+    if (effectiveModel && effectiveModel.modelName !== freshModel.modelName) {
+      const notice = `${effectiveModel.modelName}:${freshModel.modelName}`;
+      if (modelMigrationNoticeRef.current !== notice) {
+        toast.info(`配图模型已升级，本次使用 ${freshModel.actualModelId}。`);
+        modelMigrationNoticeRef.current = notice;
+      }
+      setImageModelPrefId(freshModel.id);
+    }
 
     let plannedPrompt = '';
     let plannedSize = '';
@@ -1934,7 +2117,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
         );
         await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-        return;
+        return 'failed';
       }
       const first = (planRes.data?.items ?? [])[0] ?? null;
       if (!first || !String(first.prompt || '').trim()) {
@@ -1943,7 +2126,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
         );
         await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-        return;
+        return 'failed';
       }
       planItem = first;
       plannedPrompt = String(first.prompt || '').trim();
@@ -1951,13 +2134,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     plannedSize = plannedSize || parseSizeFromText(plannedPrompt) || parseSizeFromText(text) || '1024x1024';
-    const fittedSize = fitLiteraryImageSize(plannedSize, sizesByResolutionForPicker, currentModelSizesNotApplicable);
+    const freshSizes = freshCapabilities.data.sizesByResolution;
+    const fittedSize = fitLiteraryImageSize(plannedSize, {
+      '1k': freshSizes['1k'] ?? [], '2k': freshSizes['2k'] ?? [], '4k': freshSizes['4k'] ?? [],
+    }, freshCapabilities.data.sizesNotApplicable === true);
     if (!fittedSize) {
       const errorMsg = '当前模型不支持这个配图比例，请从尺寸菜单重新选择。';
       setMarkerRunItems((prev) => prev.map((x) => x.markerIndex === markerIndex
         ? { ...x, status: 'error', errorMessage: errorMsg, planItem: cachedPlanItem } : x));
       await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-      return;
+      return 'failed';
     }
     plannedSize = fittedSize;
     planItem = { ...(planItem || { prompt: plannedPrompt, count: 1 }), size: plannedSize };
@@ -1987,7 +2173,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         x.markerIndex === markerIndex ? { ...x, status: 'running' } : x
       )
     );
-    const idem = `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const idem = resumeOriginalRequest ? current.generationRequestId! : `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     // 如果用户选择了特定模型池，传入 platformId 和 modelId；自动解析模型（isAutoResolved）不传，Worker 自行 resolve
     const runInput: CreateImageGenRunInput = {
       items: [{ prompt: plannedPrompt, count: 1, size: plannedSize }],
@@ -1997,139 +2183,48 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       workspaceId,
       appKey: 'literary-agent',
       articleMarkerIndex: markerIndex,
-      ...(effectiveModel && !effectiveModel.isAutoResolved ? { platformId: effectiveModel.platformId, modelId: effectiveModel.modelName } : {}),
+      platformId: freshModel.platformId, modelId: freshModel.modelName,
     };
-    const created = await createLiteraryAgentImageGenRun({
-      input: runInput,
-      idempotencyKey: idem,
-    });
-    if (!created.success) {
+    const remembered = await updateArticleMarker({ workspaceId, markerIndex, status: 'running', generationRequestId: idem });
+    if (!remembered.success) {
+      const message = remembered.error?.message || '未能保存配图请求标识，本次没有提交生成，请稍后重试。';
+      setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+      return 'failed';
+    }
+    setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, generationRequestId: idem } : x));
+    const created = await createLiteraryAgentImageGenRun({ input: runInput, idempotencyKey: idem });
+    let recoveredRunId: string | null = null;
+    if (!created.success || !created.data?.runId) {
+      const found = await getLiteraryAgentRunByRequest(idem);
+      recoveredRunId = found.success ? found.data?.runId || null : null;
+      const uncertain = created.success || ['NETWORK_ERROR', 'TIMEOUT', 'SERVER_ERROR', 'SERVER_UNAVAILABLE', 'INTERNAL_ERROR'].includes(created.error?.code || '');
+      if (!recoveredRunId && uncertain) {
+        const message = '创建结果尚未确认，已暂停后续配图；刷新会继续查询原请求，请勿重复生成。';
+        setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'running', generationRequestId: idem, errorMessage: message } : x));
+        return 'pending';
+      }
+    }
+    if (!created.success && !recoveredRunId) {
       const errorMsg = created.error?.message || '生图失败';
       setMarkerRunItems((prev) =>
         prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
       );
       await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-      return;
+      return 'failed';
     }
-    const runId = String(created.data?.runId || '').trim();
+    const runId = String(recoveredRunId || created.data?.runId || '').trim();
     if (!runId) {
       const errorMsg = '生图失败：未返回 runId';
       setMarkerRunItems((prev) =>
         prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
       );
       await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-      return;
+      return 'failed';
     }
     setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === markerIndex ? { ...x, runId } : x)));
     await updateMarkerStatus(markerIndex, { status: 'running', runId }); // 保存
 
-    // 3) 订阅 SSE，拿到 base64/url
-    let gotBase64: string | null = null;
-    let gotUrl: string | null = null;
-    let generationFailure: string | null = null;
-    const ac = genAbortRef.current;
-    const res = await streamLiteraryAgentImageGenRunWithRetry({
-      runId,
-      afterSeq: 0,
-      maxAttempts: 20,
-      signal: ac?.signal ?? new AbortController().signal,
-      onEvent: (evt) => {
-        if (!evt.data) return;
-        const obj = safeJsonParse(String(evt.data));
-        if (!obj || typeof obj !== 'object') return;
-        const o = obj as Record<string, unknown>;
-        const t = String(o.type ?? '');
-        if (t === 'imageDone') {
-          const evtRunId = String(o.runId ?? '').trim();
-          if (evtRunId && evtRunId !== runId) return;
-          const b64 = (o.base64 as string | null | undefined) ?? null;
-          const url = (o.url as string | null | undefined) ?? null;
-          gotBase64 = b64;
-          gotUrl = url;
-          setMarkerRunItems((prev) =>
-            prev.map((x) => (x.markerIndex === markerIndex ? { ...x, base64: b64, url: url, errorMessage: null } : x))
-          );
-        }
-        const failure = imageRunFailure(o);
-        if (failure) {
-          generationFailure = failure;
-          const msg = failure;
-          setMarkerRunItems((prev) =>
-            prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: msg } : x))
-          );
-        }
-      },
-    });
-    if (!res.success) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: res.error?.message || '生图失败' } : x))
-      );
-      return;
-    }
-
-    // 4) 将结果转为可插入文章的 url：优先 SSE url；否则上传 base64 得到 asset.url
-    const finalUrl = String(gotUrl || '').trim();
-    const finalB64 = String(gotBase64 || '').trim();
-    if (finalUrl) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl: finalUrl, url: finalUrl, errorMessage: null } : x))
-      );
-      // 保存图片URL到后端
-      await updateMarkerStatus(markerIndex, { status: 'done' });
-      try {
-        await updateArticleMarker({
-          workspaceId,
-          markerIndex,
-          url: finalUrl,
-        });
-      } catch (error) {
-        console.error('Failed to save image url:', error);
-      }
-      return;
-    }
-    if (!finalB64) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: generationFailure || '图片尚未生成，请稍后重试或选择其他模型。' } : x))
-      );
-      return;
-    }
-
-    const dataUrl = finalB64.startsWith('data:') ? finalB64 : `data:image/png;base64,${finalB64}`;
-    const up = await uploadVisualAgentWorkspaceAsset({
-      id: workspaceId,
-      data: dataUrl,
-      prompt: plannedPrompt,
-      articleInsertionIndex: markerIndex,
-      originalMarkerText: current.markerText
-    });
-    if (!up.success) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: up.error?.message || '图片持久化失败' } : x))
-      );
-      return;
-    }
-    const assetUrl = String(up.data?.asset?.url || '').trim();
-    if (!assetUrl) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: '图片持久化失败：未返回 url' } : x))
-      );
-      return;
-    }
-    setMarkerRunItems((prev) =>
-      prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl, url: assetUrl, errorMessage: null } : x))
-    );
-    // 图片已经通过 uploadVisualAgentWorkspaceAsset 上传到腾讯云 COS，assetUrl 就是 COS 的 URL
-    // 保存 URL 到后端（刷新后可恢复）
-    await updateMarkerStatus(markerIndex, { status: 'done' });
-    try {
-      await updateArticleMarker({
-        workspaceId,
-        markerIndex,
-        url: assetUrl,
-      });
-    } catch (error) {
-      console.error('Failed to save asset url:', error);
-    }
+    return observeMarkerRun(markerIndex, runId, plannedPrompt, current.markerText);
   };
 
   // 新增辅助函数：保存 marker 状态到后端
@@ -2160,6 +2255,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   };
 
   const handleBatchGenerate = async () => {
+    if (generationGateRef.current) return;
     if (!imageGenModel) {
       toast.error(imageGenModelError || '未选择生图模型');
       return;
@@ -2173,6 +2269,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
 
+    generationGateRef.current = true;
     genAbortRef.current?.abort();
     const ac = new AbortController();
     genAbortRef.current = ac;
@@ -2181,45 +2278,49 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setArticleWithImages('');
 
     try {
-      // 并行发起所有生图任务：仅针对未完成（失败或未开始）的项目
+      // 只生成未完成项；等待前一张确认结果后再发下一张。
       const ordered = [...markerRunItemsRef.current]
         .sort((a, b) => a.markerIndex - b.markerIndex)
         .filter(it => it.status !== 'done' && it.status !== 'running');
 
       if (ordered.length === 0) {
         toast.info('没有需要生成的配图');
-        setGenerating(false);
         return;
       }
 
-      const results = await Promise.allSettled(
-        ordered.map(it => runSingleMarker(it.markerIndex))
-      );
-
-      // 检查是否有失败
-      const anyError = results.some(r => r.status === 'rejected') ||
-                       markerRunItemsRef.current.some(x => x.status === 'error');
+      const result = await runLiteraryImageBatch(ordered, item => runSingleMarker(item.markerIndex), ac.signal);
+      if (ac.signal.aborted) return;
+      const anyError = result.failed > 0;
+      if (result.paused && !ac.signal.aborted) {
+        toast.warning(`配图已暂停，${result.remaining} 张尚未提交；已生成的图片保留，请确认服务恢复后继续。`);
+      }
 
       setGenerating(false);
       // 3 状态模式：生图完成后仍保持在 MarkersGenerated
       setPhase(2); // MarkersGenerated
 
-      if (anyError && !ac.signal.aborted) {
+      if (anyError && !result.paused && !ac.signal.aborted) {
         toast.warning('部分配图生成失败：可在右侧逐条修改并重新生成');
       }
-      tryAutoSubmit();
+      if (!result.paused && !ac.signal.aborted) tryAutoSubmit();
     } catch (error) {
+      toast.warning('配图已暂停，请刷新核对原任务状态后继续。');
       console.error('Batch generate error:', error);
       setGenerating(false);
       setPhase(2); // MarkersGenerated
+    } finally {
+      generationGateRef.current = false;
+      setGenerating(false);
     }
   };
 
   const handleRegenerateOne = async (markerIndex: number) => {
-    // 每个配图独立生成，不检查全局 isBusy
+    if (generationGateRef.current) { toast.info('请等待当前配图任务结束。'); return; }
+    generationGateRef.current = true;
+    genAbortRef.current = new AbortController();
     try {
-      await runSingleMarker(markerIndex);
-      tryAutoSubmit();
+      const result = await runSingleMarker(markerIndex);
+      if (result === 'completed') tryAutoSubmit();
     } catch (error) {
       console.error('Regenerate error:', error);
       // 确保在任何错误情况下都设置状态为 error，使按钮立即可用
@@ -2231,6 +2332,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         )
       );
     } finally {
+      generationGateRef.current = false;
       // 3 状态模式：生图完成后仍保持在 MarkersGenerated
       setPhase(2); // MarkersGenerated
     }
@@ -2807,7 +2909,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       title={effectiveChatModel ? `${effectiveChatModel.name} - 点击切换提示词模型` : '选择提示词模型'}
                     >
                       <Sparkles size={11} className="shrink-0" />
-                      <span className="truncate">{effectiveChatModel?.name || '选择模型'}</span>
+                      <span className="truncate">{effectiveChatModel?.name || (chatModelPrefId ? '原模型不可用，请重选' : '选择模型')}</span>
                       <ChevronsUpDown size={11} className="shrink-0" style={{ opacity: 0.7 }} />
                     </button>
                   }
@@ -2867,7 +2969,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       title={effectiveModel ? `${effectiveModel.name} - 点击切换生图模型` : '选择生图模型'}
                     >
                       <Sparkles size={11} className="shrink-0" />
-                      <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
+                      <span className="truncate">{effectiveModel?.name || (imageModelPrefId ? '原模型不可用，请重选' : '选择模型')}</span>
                       <ChevronsUpDown size={11} className="shrink-0" style={{ opacity: 0.7 }} />
                     </button>
                   }
@@ -2889,7 +2991,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           </span>
                         }
                         selected={effectiveModel?.id === m.id}
-                        onSelect={() => setImageModelPrefId(m.id)}
+                        onSelect={() => { setImageModelPrefId(m.id); setImageGenModelError(null); }}
                       />
                     ))
                   )}
@@ -3966,7 +4068,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 const showPlaceholder = it.status === 'running' || it.status === 'parsing';
                 const canShow = Boolean(src) && it.status === 'done';
                 const hasImage = Boolean(String(it.assetUrl || it.url || '').trim() || it.base64);
-                const genLabel = hasImage ? '重新生成' : '生成图片';
+                const pendingRecovery = it.status === 'running' && Boolean(it.errorMessage) && Boolean(it.runId || it.generationRequestId);
+                const genLabel = pendingRecovery ? '恢复原请求' : hasImage ? '重新生成' : '生成图片';
                 const genTitle = hasImage ? '重新生成该配图（会替换左侧预览中的对应插图）' : '生成该配图（会插入左侧预览中对应 [插图] 位置）';
 
                 const isGlowing = glowingMarkers.has(it.markerIndex);
@@ -4225,9 +4328,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       <Button
                         size="sm"
                         variant="secondary"
-                        disabled={it.status === 'running' || it.status === 'parsing' || !imageGenModel}
+                        disabled={(it.status === 'running' && !pendingRecovery) || it.status === 'parsing' || (!imageGenModel && !pendingRecovery)}
                         onClick={() => void handleRegenerateOne(it.markerIndex)}
-                        title={genTitle}
+                        title={pendingRecovery ? '先查询原任务；尚未入库时仅重放同一请求标识，避免重复生成' : genTitle}
                       >
                         <Sparkles size={14} />
                         {genLabel}

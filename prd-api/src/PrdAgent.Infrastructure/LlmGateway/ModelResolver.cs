@@ -1146,6 +1146,7 @@ public class ModelResolver : IModelResolver
                 Name = logical.Name,
                 Code = logical.PublicId,
                 Aliases = [.. logical.Aliases],
+                LegacyPoolIds = [.. logical.MigratedFromPoolIds],
                 Description = logical.Description,
                 Priority = logical.DisplayOrder,
                 ResolutionType = "LogicalModel",

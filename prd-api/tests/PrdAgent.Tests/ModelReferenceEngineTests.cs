@@ -359,13 +359,19 @@ public sealed class ModelReferenceEngineTests
         var unchanged = await Engine(store).InspectAsync(stable); Assert.Equal(0, unchanged.Affected);
     }
     [Fact]
-    public async Task StableWireIsSwitchOwnedButOtherEnabledFixedLogicalStillBlocksUpgrade()
+    public async Task StableRoleSwitchPreservesPinnedFixedVersionsButPhysicalRetirementStillBlocks()
     {
         var store = new MemoryStore(); var m = Mapping(); m.Target.LogicalId = m.Source.LogicalId; m.Target.PublicId = m.Source.PublicId;
         store.Add("llmgw_model_offerings", "{_id:'old-wire',TenantId:'internal',Enabled:true,LogicalModelId:'old-logical',TargetId:'old-physical'}");
         Assert.True((await Engine(store).InspectAsync(m)).CanComplete);
         store.Add("llmgw_model_offerings", "{_id:'fixed-route',TenantId:'internal',Enabled:true,LogicalModelId:'different-fixed-logical',TargetId:'old-physical'}");
-        var result = await Engine(store).InspectAsync(m); Assert.Equal(1, result.Blocked); Assert.False(result.CanComplete);
+        store.Add("arena_slots", "{_id:'fixed-caller',PlatformId:'old-provider',ModelId:'old-upstream'}");
+        var result = await Engine(store).InspectAsync(m);
+        Assert.True(result.CanComplete); Assert.Equal(0, result.Affected);
+        Assert.Equal("old-physical", store.Data["llmgw_model_offerings"][1]["TargetId"]);
+        // 退役物理身份与升级稳定角色是不同动作，固定版本仍必须拦住物理退役。
+        var retirement = Mapping();
+        Assert.True((await Engine(store).InspectAsync(retirement)).Blocked > 0);
     }
     [Fact]
     public async Task DeleteIgnoresOwnWireButNeverIgnoresDefaultRole()
