@@ -122,11 +122,18 @@ export function QuickMenu({
           align={align}
           sideOffset={6}
           className="lqm-content"
-          style={{ width, maxWidth: `min(92vw, ${width}px)` }}
+          style={{
+            width,
+            maxWidth: `min(92vw, ${width}px)`,
+            maxHeight: 'var(--radix-dropdown-menu-content-available-height)',
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+          }}
         >
           {title && <div className="lqm-title">{title}</div>}
           {note && <div className="lqm-note">{note}</div>}
-          <div style={{ maxHeight: 300, overflowY: 'auto', overscrollBehavior: 'contain' }}>{children}</div>
+          <div style={{ minHeight: 0, maxHeight: 300, overflowY: 'auto', overscrollBehavior: 'contain' }}>{children}</div>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

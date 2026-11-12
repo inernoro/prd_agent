@@ -66,6 +66,7 @@ import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { type SizesByResolution } from '@/lib/imageAspectOptions';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, ChevronsUpDown, SlidersHorizontal, History, AlertTriangle } from 'lucide-react';
 import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
+import { ArticleEditorToolbar, ArticleEditorModelField } from './ArticleEditorToolbar';
 import { PopupButton, QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
 import type { WatermarkConfig } from '@/services/contracts/watermark';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -2762,9 +2763,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       {/* 左侧：文章编辑器 */}
       <div className={cn("flex-1 min-w-0 flex flex-col gap-4", isMobile && mobileTab !== 'article' && "hidden")}>
         <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
-          {/* 精简头部：标题 + 模型信息 */}
-          <div className={cn("mb-2 flex", isMobile ? "flex-col items-stretch gap-2" : "items-center justify-between")}>
-            <div className={cn("min-w-0 flex", isMobile ? "flex-col gap-2" : "items-center gap-3")}>
+          <ArticleEditorToolbar
+            title={
               <div className="flex min-w-0 items-center gap-2">
                 <button
                   type="button"
@@ -2777,39 +2777,97 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <ArrowLeft size={16} />
                 </button>
                 <FileText size={16} className="shrink-0" style={{ color: 'var(--text-primary)' }} />
-                <div className="min-w-0 truncate text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="min-w-0 truncate text-sm font-semibold" style={{ color: 'var(--text-primary)' }} title={uploadedFileName || '文章内容'}>
                   {uploadedFileName || '文章内容'}
                 </div>
               </div>
-
-              {/* 模型切换器：提示词模型 + 生图模型 */}
-              <div
-                className={cn("flex min-w-0 items-center gap-1.5", isMobile && "overflow-x-auto pb-1")}
-                style={isMobile ? { overscrollBehaviorX: 'contain' } : undefined}
-              >
-                {/* 提示词/标记生成模型切换器 */}
-                {effectiveChatModel?.isAutoResolved ? (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[11px] font-medium truncate max-w-[200px]"
+            }
+            actions={
+              <>
+                {phase === 0 && uploadedFileName && (
+                  <Button size="sm" variant="primary" onClick={handleEnterPreview}>
+                    <Edit2 size={14} />
+                    进入预览
+                  </Button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!autoSubmitSuppressed) setAutoSubmitEnabled((v) => !v);
+                  }}
+                  disabled={autoSubmitSuppressed}
+                  className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
+                  style={{
+                    // 白天的写法：浅色填充 + 语义深色字，不加彩色描边（彩边是暗色界面的发光手法）
+                    color: autoSubmitSuppressed ? 'var(--text-muted)' : submissionState.submitted || autoSubmitEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)',
+                    background: autoSubmitSuppressed ? 'transparent' : submissionState.submitted ? 'rgba(16, 185, 129, 0.12)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
+                    cursor: autoSubmitSuppressed ? 'not-allowed' : undefined,
+                  }}
+                  title={autoSubmitSuppressed ? '私有工作区不自动投稿；如需公开，请点击“投稿当前”' : submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
+                >
+                  <Send size={13} />
+                  <span>{autoSubmitSuppressed ? '私有' : submissionState.submitted ? '已投稿' : autoSubmitEnabled ? '投稿' : '投稿关'}</span>
+                </button>
+                {!submissionState.submitted && (
+                  <button
+                    type="button"
+                    onClick={handleManualSubmit}
+                    disabled={manualSubmitting}
+                    className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
                     style={{
-                      background: 'rgba(99, 102, 241, 0.08)',
                       color: 'var(--accent-fg-blue)',
+                      background: 'rgba(59, 130, 246, 0.10)',
+                      opacity: manualSubmitting ? 0.5 : 1,
                     }}
-                    title={`自动调度: ${effectiveChatModel.name}`}
+                    title="手动将当前作品投稿到作品广场"
                   >
-                    <Sparkles size={11} className="shrink-0" />
-                    <span className="truncate">自动: {effectiveChatModel.name}</span>
-                  </span>
-                ) : (
+                    <Send size={13} />
+                    <span>{manualSubmitting ? '投稿中…' : '投稿当前'}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen(true)}
+                  data-tour-id="literary-editor-history"
+                  className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
+                  style={{ color: 'var(--text-secondary)' }}
+                  title="这篇文章生成过的全部配图，改稿或重新生成前的旧图也在"
+                >
+                  <History size={13} />
+                  <span>历史配图</span>
+                </button>
+                {/* 本页教程入口(内嵌头部右侧):自动开讲关掉/已消费后,仍可手动重开编辑器教程 */}
+                <TipsEntryButton compact />
+              </>
+            }
+          >
+            <ArticleEditorModelField label="写作模型">
+              {effectiveChatModel?.isAutoResolved ? (
+                <span
+                  className="inline-flex items-center gap-1 min-w-0 w-full rounded-lg px-2 h-8 text-xs font-medium"
+                  style={{
+                    background: 'rgba(99, 102, 241, 0.08)',
+                    color: 'var(--accent-fg-blue)',
+                  }}
+                  title={`自动调度: ${effectiveChatModel.name}`}
+                >
+                  <Sparkles size={11} className="shrink-0" />
+                  <span className="min-w-0 flex-1 truncate text-left">自动: {effectiveChatModel.name}</span>
+                </span>
+              ) : (
                 <QuickMenu
-                  title="文生提示词模型"
+                  title="写作模型"
                   width={280}
                   open={chatModelPrefOpen}
-                  onOpenChange={setChatModelPrefOpen}
+                  onOpenChange={(open) => {
+                    setChatModelPrefOpen(open);
+                    if (open) setImageModelPrefOpen(false);
+                  }}
                   trigger={
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 rounded-full pl-2 pr-1.5 h-6 text-[11px] font-medium max-w-[200px] cursor-pointer transition-colors"
+                      aria-label="写作模型"
+                      className="inline-flex items-center gap-1 min-w-0 w-full rounded-lg pl-2 pr-1.5 h-8 text-xs font-medium cursor-pointer transition-colors"
                       style={{
                         background: effectiveChatModel ? 'rgba(99, 102, 241, 0.12)' : 'rgba(239, 68, 68, 0.10)',
                         color: effectiveChatModel ? 'var(--accent-fg-blue)' : 'var(--accent-fg-danger)',
@@ -2817,7 +2875,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       title={effectiveChatModel ? `${effectiveChatModel.name} - 点击切换提示词模型` : '选择提示词模型'}
                     >
                       <Sparkles size={11} className="shrink-0" />
-                      <span className="truncate">{effectiveChatModel?.name || '选择模型'}</span>
+                      <span className="min-w-0 flex-1 truncate text-left">{effectiveChatModel?.name || '选择模型'}</span>
                       <ChevronsUpDown size={11} className="shrink-0" style={{ opacity: 0.7 }} />
                     </button>
                   }
@@ -2844,32 +2902,36 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     ))
                   )}
                 </QuickMenu>
-                )}
-
-                {/* 生图模型切换器：有可选模型池时显示下拉；无池但有自动解析模型时显示只读标签 */}
-                {effectiveModel?.isAutoResolved ? (
-                  // 自动解析模型：只读显示，无下拉（Worker 自行 resolve，不需用户选择）
-                  <div
-                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[11px] font-medium truncate max-w-[200px]"
-                    style={{
-                      background: 'rgba(34, 197, 94, 0.08)',
-                      color: 'var(--accent-fg-success)',
-                    }}
-                    title={`自动调度: ${effectiveModel.name}（无专属模型池时 Gateway 自动选择）`}
-                  >
-                    <Sparkles size={11} className="shrink-0" />
-                    <span className="truncate">自动: {effectiveModel.name}</span>
-                  </div>
-                ) : (
+              )}
+            </ArticleEditorModelField>
+            <ArticleEditorModelField label="配图模型">
+              {effectiveModel?.isAutoResolved ? (
+                // 自动解析模型：只读显示，无下拉（Worker 自行 resolve，不需用户选择）
+                <div
+                  className="inline-flex items-center gap-1 min-w-0 w-full rounded-lg px-2 h-8 text-xs font-medium"
+                  style={{
+                    background: 'rgba(34, 197, 94, 0.08)',
+                    color: 'var(--accent-fg-success)',
+                  }}
+                  title={`自动调度: ${effectiveModel.name}（无专属模型池时 Gateway 自动选择）`}
+                >
+                  <Sparkles size={11} className="shrink-0" />
+                  <span className="min-w-0 flex-1 truncate text-left">自动: {effectiveModel.name}</span>
+                </div>
+              ) : (
                 <QuickMenu
-                  title="生图模型"
+                  title="配图模型"
                   width={280}
                   open={imageModelPrefOpen}
-                  onOpenChange={setImageModelPrefOpen}
+                  onOpenChange={(open) => {
+                    setImageModelPrefOpen(open);
+                    if (open) setChatModelPrefOpen(false);
+                  }}
                   trigger={
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 rounded-full pl-2 pr-1.5 h-6 text-[11px] font-medium max-w-[200px] cursor-pointer transition-colors"
+                      aria-label="配图模型"
+                      className="inline-flex items-center gap-1 min-w-0 w-full rounded-lg pl-2 pr-1.5 h-8 text-xs font-medium cursor-pointer transition-colors"
                       style={{
                         background: effectiveModel ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.10)',
                         color: effectiveModel ? 'var(--accent-fg-success)' : 'var(--accent-fg-danger)',
@@ -2877,7 +2939,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       title={effectiveModel ? `${effectiveModel.name} - 点击切换生图模型` : '选择生图模型'}
                     >
                       <Sparkles size={11} className="shrink-0" />
-                      <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
+                      <span className="min-w-0 flex-1 truncate text-left">{effectiveModel?.name || '选择模型'}</span>
                       <ChevronsUpDown size={11} className="shrink-0" style={{ opacity: 0.7 }} />
                     </button>
                   }
@@ -2904,77 +2966,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     ))
                   )}
                 </QuickMenu>
-                )}
-
-                {/* 生图错误提示（无池且未能预解析时才显示） */}
-                {imageGenModelError && enabledImageModels.length === 0 && !autoResolvedModel && (
-                  <div className="text-[10px] px-1.5 py-0.5 rounded text-red-400 bg-red-500/10">
-                    生图不可用
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div
-              className={cn("flex items-center gap-2", isMobile && "min-w-0 overflow-x-auto pb-1")}
-              style={isMobile ? { overscrollBehaviorX: 'contain' } : undefined}
-            >
-              {phase === 0 && uploadedFileName && (
-                <Button size="sm" variant="primary" onClick={handleEnterPreview}>
-                  <Edit2 size={14} />
-                  进入预览
-                </Button>
               )}
-              <button
-                type="button"
-                onClick={() => {
-                  if (!autoSubmitSuppressed) setAutoSubmitEnabled((v) => !v);
-                }}
-                disabled={autoSubmitSuppressed}
-                className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
-                style={{
-                  // 白天的写法：浅色填充 + 语义深色字，不加彩色描边（彩边是暗色界面的发光手法）
-                  color: autoSubmitSuppressed ? 'var(--text-muted)' : submissionState.submitted || autoSubmitEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)',
-                  background: autoSubmitSuppressed ? 'transparent' : submissionState.submitted ? 'rgba(16, 185, 129, 0.12)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
-                  cursor: autoSubmitSuppressed ? 'not-allowed' : undefined,
-                }}
-                title={autoSubmitSuppressed ? '私有工作区不自动投稿；如需公开，请点击“投稿当前”' : submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
-              >
-                <Send size={13} />
-                <span>{autoSubmitSuppressed ? '私有' : submissionState.submitted ? '已投稿' : autoSubmitEnabled ? '投稿' : '投稿关'}</span>
-              </button>
-              {!submissionState.submitted && (
-                <button
-                  type="button"
-                  onClick={handleManualSubmit}
-                  disabled={manualSubmitting}
-                  className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
-                  style={{
-                    color: 'var(--accent-fg-blue)',
-                    background: 'rgba(59, 130, 246, 0.10)',
-                    opacity: manualSubmitting ? 0.5 : 1,
-                  }}
-                  title="手动将当前作品投稿到作品广场"
-                >
-                  <Send size={13} />
-                  <span>{manualSubmitting ? '投稿中…' : '投稿当前'}</span>
-                </button>
+
+              {/* 生图错误提示（无池且未能预解析时才显示） */}
+              {imageGenModelError && enabledImageModels.length === 0 && !autoResolvedModel && (
+                <div className="text-[10px] px-1.5 py-0.5 rounded text-red-400 bg-red-500/10">
+                  生图不可用
+                </div>
               )}
-              <button
-                type="button"
-                onClick={() => setHistoryOpen(true)}
-                data-tour-id="literary-editor-history"
-                className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
-                style={{ color: 'var(--text-secondary)' }}
-                title="这篇文章生成过的全部配图，改稿或重新生成前的旧图也在"
-              >
-                <History size={13} />
-                <span>历史配图</span>
-              </button>
-              {/* 本页教程入口(内嵌头部右侧):自动开讲关掉/已消费后,仍可手动重开编辑器教程 */}
-              <TipsEntryButton compact />
-            </div>
-          </div>
+            </ArticleEditorModelField>
+          </ArticleEditorToolbar>
 
           <div
             ref={articlePreviewRef}
