@@ -132,7 +132,9 @@ public static class ModelReferenceAnalysis
                 case "business": Business(""); break;
                 case "business-array": foreach (var prefix in Members(c.Collection == "model_lab_experiments" ? "SelectedModels" : "Models")) Business(prefix); break;
                 case "preferences":
-                    Scalar("VisualAgentPreferences.ModelId"); Scalar("LiteraryAgentPreferences.ImageModelId"); Scalar("LiteraryAgentPreferences.ChatModelId"); break;
+                    if (m.ModelType is null or "generation") { Scalar("VisualAgentPreferences.ModelId"); Scalar("LiteraryAgentPreferences.ImageModelId"); }
+                    if (m.ModelType is null or "chat") Scalar("LiteraryAgentPreferences.ChatModelId");
+                    break;
                 case "visual":
                     var policyMembers = Members("VisualModelPolicy.Models").ToArray();
                     var policyModels = policyMembers.Select(prefix => Text(doc, prefix + "ModelId")).ToArray();
@@ -147,7 +149,7 @@ public static class ModelReferenceAnalysis
                     if (change.Fields.Count > 0 && TryGet(doc, "VisualModelPolicy.Revision", out var rev) && rev.IsNumeric) Set("VisualModelPolicy.Revision", rev.ToInt64() + 1);
                     break;
                 case "keys":
-                    foreach (var path in new[] { "OpenApiChatModels", "OpenApiImageModels" })
+                    foreach (var path in (m.ModelType switch { "chat" => new[] { "OpenApiChatModels" }, "generation" => new[] { "OpenApiImageModels" }, null => new[] { "OpenApiChatModels", "OpenApiImageModels" }, _ => Array.Empty<string>() }))
                         if ((m.ScopePath is null || m.ScopePath == path) && TryGet(doc, path, out var list))
                         {
                             if (list is not BsonArray a || a.Any(x => !x.IsString)) { Finding(path, "unknown", "MODEL_REFERENCE_SCHEMA_INVALID"); continue; }
@@ -158,7 +160,7 @@ public static class ModelReferenceAnalysis
                             if (next.Any(x => x.AsString.Length == 0)) Finding(path, "blocked", "TARGET_PUBLIC_ID_REQUIRED");
                             else if (!next.Equals(a)) { Finding(path, "affected", null); Set(path, next); }
                         }
-                    if (doc.GetValue("McpLiteraryImageModelMode", BsonNull.Value) == new BsonInt32(1)) Scalar("McpLiteraryImageModelPublicId", true);
+                    if (m.ModelType is null or "generation" && doc.GetValue("McpLiteraryImageModelMode", BsonNull.Value) == new BsonInt32(1)) Scalar("McpLiteraryImageModelPublicId", true);
                     break;
                 case "scalar": Scalar("DefaultVideoModel"); break;
                 case "chat":

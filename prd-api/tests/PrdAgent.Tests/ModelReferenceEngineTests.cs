@@ -8,6 +8,26 @@ namespace PrdAgent.Tests;
 public sealed class ModelReferenceEngineTests
 {
     [Theory]
+    [InlineData("chat", "OpenApiChatModels", "OpenApiImageModels", "LiteraryAgentPreferences.ChatModelId", "LiteraryAgentPreferences.ImageModelId")]
+    [InlineData("generation", "OpenApiImageModels", "OpenApiChatModels", "LiteraryAgentPreferences.ImageModelId", "LiteraryAgentPreferences.ChatModelId")]
+    public async Task SameAliasInOtherPurposeIsNeverRewritten(string type, string changedKey, string retainedKey, string changedPreference, string retainedPreference)
+    {
+        var store = new MemoryStore();
+        var key = store.Add("agent_api_keys", "{_id:'key',OpenApiChatModels:['old-fixed'],OpenApiImageModels:['old-fixed'],McpLiteraryImageModelMode:1,McpLiteraryImageModelPublicId:'old-fixed'}");
+        var prefs = store.Add("user_preferences", "{_id:'prefs',LiteraryAgentPreferences:{ChatModelId:'old-fixed',ImageModelId:'old-fixed'}}");
+        var mapping = Mapping(); mapping.ModelType = type;
+        var engine = Engine(store); var plan = await engine.PlanAsync(mapping, "admin");
+        var applied = await engine.ApplyAsync(plan.Id, "internal", plan.Revision);
+        Assert.True(applied.Coverage.Verified);
+        Assert.Equal("new-fixed", key[changedKey][0].AsString);
+        Assert.Equal("old-fixed", key[retainedKey][0].AsString);
+        Assert.True(ModelReferenceAnalysis.TryGet(prefs, changedPreference, out var changed));
+        Assert.True(ModelReferenceAnalysis.TryGet(prefs, retainedPreference, out var retained));
+        Assert.Equal("new-fixed", changed.AsString); Assert.Equal("old-fixed", retained.AsString);
+        Assert.Equal(type == "generation" ? "new-fixed" : "old-fixed", key["McpLiteraryImageModelPublicId"].AsString);
+    }
+
+    [Theory]
     [InlineData("Completed")]
     [InlineData("Running")]
     public async Task GeneratedVideoVersionModelIsDeclaredImmutableHistory(string status)
@@ -384,14 +404,14 @@ public sealed class ModelReferenceEngineTests
     [Fact]
     public async Task ScopedOrphanRepairCannotChangeAnotherUsageOrAnotherPurpose()
     {
-        var store = new MemoryStore(); var doc = store.Add("user_preferences", "{_id:'owner',VisualAgentPreferences:{ModelId:'orphan'},LiteraryAgentPreferences:{ChatModelId:'orphan'}}");
+        var store = new MemoryStore(); var doc = store.Add("user_preferences", "{_id:'owner',VisualAgentPreferences:{ModelId:'orphan'},LiteraryAgentPreferences:{ImageModelId:'orphan',ChatModelId:'orphan'}}");
         var m = Mapping(); m.Source = new() { PublicId = "orphan" }; m.ModelType = "generation";
         m.ScopeConsumerKey = "map.preferences"; m.ScopeRecordId = "owner"; m.ScopePath = "VisualAgentPreferences.ModelId";
         var p = await Engine(store).PlanAsync(m, "admin"); var done = await Engine(store).ApplyAsync(p.Id, "internal", p.Revision);
         Assert.Equal("blocked", done.Status); Assert.False(done.Coverage.Verified);
         Assert.Contains(done.Coverage.Consumers, x => x.Key == "scope.global-old-identity" && x.Residual > 0);
         Assert.Equal("new-fixed", doc["VisualAgentPreferences"]["ModelId"]); Assert.Equal("orphan", doc["LiteraryAgentPreferences"]["ChatModelId"]);
-        doc["LiteraryAgentPreferences"]["ChatModelId"] = "new-fixed";
+        doc["LiteraryAgentPreferences"]["ImageModelId"] = "new-fixed";
         var verified = await Engine(store).VerifyPlanAsync(p.Id, "internal", done.Revision); Assert.True(verified.Coverage.Verified);
         store.Add("user_preferences", "{_id:'another-owner',VisualAgentPreferences:{ModelId:'orphan'}}");
         var invalid = await Engine(store).VerifyPlanAsync(p.Id, "internal", verified.Revision); Assert.False(invalid.Coverage.Verified);
