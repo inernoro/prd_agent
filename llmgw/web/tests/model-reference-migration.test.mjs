@@ -152,3 +152,25 @@ test('原计划恢复继续遵守只读、目标有效性和覆盖阻断守卫',
   h.f.role='owner';h.f.plan.coverage=coverage({blocked:1,canComplete:false});await h.render(h.c.ModelReferenceMigrationPanel,{initialPlan:h.f.plan});assert.equal(h.button('继续原升级计划').disabled,true);
   h.f.plan.coverage=coverage();h.f.models.find(x=>x.id==='target').enabled=false;await h.render(h.c.ModelReferenceMigrationPanel,{initialPlan:h.f.plan});assert.equal(h.button('继续原升级计划').disabled,true);assert.equal(h.f.calls.filter(x=>x.name==='runModelReferenceMigrationAction').length,0);
 });
+
+for (const failInitialRead of [false,true]) test(`局部更新尚有全局残留时仅在权威读取后刷新候选位置，读取失败=${failInitialRead}`,async t=>{
+  const h=await setup(t);
+  const first={consumerKey:'prefs',recordId:'first-owner',path:'chatModelId',modelType:'chat',value:'retired-shared-model',status:'orphan'};
+  const second={...first,recordId:'second-owner'};h.f.usages=[first,second];
+  h.f.override=name=>{
+    if(name==='runModelReferenceMigrationAction'){
+      h.f.plan.revision++;h.f.plan.status='blocked';h.f.plan.coverage=coverage({migrated:1,residual:1,blocked:1,canComplete:false,verified:false});
+      h.f.usages=[second];h.f.failRead=failInitialRead;return ok(structuredClone(h.f.plan));
+    }
+  };
+  await h.render(h.c.ModelReferenceUsageRepairPanel);await h.click('选择使用位置');await h.select('target');await h.click('生成修复计划');await h.click('升级所选使用位置');
+  const writes=()=>h.f.calls.filter(x=>x.name==='runModelReferenceMigrationAction').length;
+  if(failInitialRead){
+    assert.match(h.body(),/first-owner/);assert.equal(h.f.calls.filter(x=>x.name==='getRepairableModelUsages').length,1);
+    h.f.failRead=false;await h.click('继续查询原计划');
+  }
+  assert.doesNotMatch(h.body(),/first-owner/);assert.match(h.body(),/second-owner/);
+  assert.match(h.body(),/当前位置已更新，其他位置待迁移/);assert.doesNotMatch(h.body(),/升级全部使用位置完成/);
+  assert.equal(h.f.calls.filter(x=>x.name==='getRepairableModelUsages').length,2);assert.equal(writes(),1);
+  await h.click('继续查询原计划');assert.equal(h.f.calls.filter(x=>x.name==='getRepairableModelUsages').length,2);assert.equal(writes(),1);
+});

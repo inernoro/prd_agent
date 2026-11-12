@@ -93,7 +93,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
     setConfirmed(completed);
     const operation = pendingRef.current?.operation;
     if (fromRead && (operation === 'create' || ['completed', 'blocked', 'conflict'].includes(next.status))) setPending(null);
-    if (completed && notified.current !== `${next.intentId}:${next.revision}`) {
+    if (fromRead && (completed || next.coverage.migrated > 0) && notified.current !== `${next.intentId}:${next.revision}`) {
       notified.current = `${next.intentId}:${next.revision}`;
       onChanged?.();
     }
