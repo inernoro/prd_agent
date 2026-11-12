@@ -28,6 +28,12 @@
 | 2026-09-30-llmgw-production-smoke-key-drift | P1 | 2026-09-30 | GitHub `production` 环境中的 LLMGW 发布后 scoped smoke key 已失效，正式工作流在容器、Serving 与静态包均健康后仍以 `GATEWAY_KEY_INVALID` 阻断并回滚前端；本次只能在受信正式机上用运行中 MAP Legacy Key、显式 `SourceSystem=map` 和原发布脚本完成 7/7 门禁 | 运行 `LLM Gateway Production Stage` 的发布后 D 层 smoke | open | 在 Gateway 控制台轮换专用 runtime service key，同步 `LLMGW_PROD_POST_DEPLOY_SERVICE_KEY`，随后用全新 workflow run 验证 7/7；增加只输出长度与 SHA256 指纹的排队前一致性检查，禁止再次靠重跑猜测 Secret 是否刷新。Legacy Key 仅是本次应急发布手段，不作为长期工作流配置 |
 | 2026-11-06-design-chromium-pin-retention | P2 | 2026-11-06 | Chromium 精确版本依赖滚动 APK 仓库保留旧包，历史提交的冷构建可能因旧包退出而失败 | 当前构建源已无法满足历史固定版本 | open | 本次更新当前可用的精确版本，保留实际版本与降权视口烟测；不保证未来旧包仍可获取。责任归属：设计镜像与发布维护者。关闭条件：历史精确依赖可按保留策略取回，并有冷构建证据 |
 
+### 静态资源保留边界（2026-11-12）
+
+为兼容已打开的旧页面，发布和回滚会补齐历史资源；同一文件系统优先使用硬链接。当前不自动按时间删除这些兼容资源，避免清理再次破坏旧页面。跨文件系统会复制文件，需要预留磁盘空间。后续清理策略须先约定旧页面支持时长，并验证过期提示与恢复行为；不能直接按发布版本数删除仍被引用的资源。
+
+本次缓存与切换修复在独立环境验证，尚未发布生产；线上效果须待正式发布后按实际入口复验。
+
 ## 已还的债务（归档）
 
 | ID | 修复 PR | 修复日期 | 备注 |
