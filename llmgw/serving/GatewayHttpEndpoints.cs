@@ -4869,7 +4869,14 @@ public static class GatewayHttpEndpoints
                         @object = "chat.completion.chunk",
                         created,
                         model,
-                        choices = new[] { new { index = 0, delta = new { }, finishReason = chunk.FinishReason ?? "stop" } },
+                        choices = new[] { new { index = 0, delta = new { }, finishReason = chunk.FinishReason switch
+                        {
+                            "end_turn" or "stop_sequence" => "stop",
+                            "max_tokens" => "length",
+                            "tool_use" => "tool_calls",
+                            null => "stop",
+                            var reason => reason,
+                        } } },
                         usage = new { promptTokens, completionTokens, totalTokens = promptTokens + completionTokens },
                     });
                     await SendDoneAsync();
@@ -5601,7 +5608,14 @@ public static class GatewayHttpEndpoints
                     await WriteEventAsync("message_delta", new
                     {
                         type = "message_delta",
-                        delta = new { stopReason = chunk.FinishReason ?? "end_turn" },
+                        delta = new { stopReason = chunk.FinishReason switch
+                        {
+                            "stop" => "end_turn",
+                            "length" => "max_tokens",
+                            "tool_calls" or "function_call" => "tool_use",
+                            null => "end_turn",
+                            var reason => reason,
+                        } },
                         usage = new { outputTokens = chunk.TokenUsage?.OutputTokens ?? 0 },
                     });
                     await WriteEventAsync("message_stop", new { type = "message_stop" });

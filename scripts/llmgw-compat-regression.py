@@ -133,6 +133,9 @@ def normalize(case, status, content_type, raw, expected_usage=None):
     assert isinstance(reported_model, str) and reported_model.strip(), 'missing reported model'
     assert terminal, 'missing stream terminator'
     assert finish, 'missing finish reason'
+    allowed = {'openai': {'stop','tool_calls'}, 'claude': {'end_turn','tool_use'}, 'gemini': {'STOP','FUNCTION_CALL'}}
+    if protocol in allowed:
+        assert finish in allowed[protocol], 'invalid finish enum for ingress protocol'
     finish = {'stop':'stop', 'end_turn':'stop', 'STOP':'stop', 'tools':'tools',
               'tool_calls':'tools', 'tool_use':'tools', 'FUNCTION_CALL':'tools'}.get(finish, finish)
     assert finish in ('stop', 'tools'), 'unexpected finish reason'

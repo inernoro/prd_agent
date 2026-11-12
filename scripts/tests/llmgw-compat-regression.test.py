@@ -32,11 +32,12 @@ class CompatibilityTests(unittest.TestCase):
   self.assertEqual([{'name':'echo_city','arguments':{'city':'北京'}}],result['tools'])
 
  def test_key_field_mutations_are_detected(self):
-  for mutation in ['finish_reason','arguments','name','id','usage','terminator','error']:
+  for mutation in ['finish_reason','finish_enum','arguments','name','id','usage','terminator','error']:
    with self.subTest(mutation=mutation):
     frames=copy.deepcopy(FRAMES)
     raw=None
     if mutation=='finish_reason': del frames[-1]['choices'][0]['finish_reason']
+    elif mutation=='finish_enum': frames[-1]['choices'][0]['finish_reason']='tool_use'
     elif mutation=='usage': del frames[-1]['usage']
     elif mutation=='terminator': raw=wire(frames).replace('data: [DONE]\n\n','')
     elif mutation=='error': frames.append({'error':{'message':'upstream failure'}})
