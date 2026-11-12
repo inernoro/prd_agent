@@ -43,6 +43,23 @@ public partial class VideoSceneConcurrencyTests
         Assert.Empty(test.AssetStorage.Invocations);
     }
 
+    [Fact]
+    public async Task NarrationAdoption_LegacyMissingNarrationAndVersionFieldsAllowsFirstAdoption()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("legacy-narration-adopt", test.OwnerId, SceneItemStatus.Done);
+        run.Scenes[0].VideoUrl = "https://synthetic.invalid/existing.mp4";
+        await test.SaveRunAsync(run);
+        await test.Context.VideoGenRuns.UpdateOneAsync(x => x.Id == run.Id,
+            Builders<VideoGenRun>.Update.Unset("Scenes.0.Narration").Unset("Scenes.0.ActiveVersionId"));
+
+        Assert.True(await CreateNarrationController(test).SaveNarrationAsync(run, 0,
+            new() { SpeechRunId = "first-adoption", Text = "首次采用", DurationSeconds = 1.5 }));
+        var saved = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.Equal("first-adoption", saved.Scenes[0].Narration!.SpeechRunId);
+        Assert.Empty(test.VideoClient.Invocations);
+    }
+
     [Theory]
     [InlineData("export-started")]
     [InlineData("cancelled")]
@@ -51,13 +68,17 @@ public partial class VideoSceneConcurrencyTests
     [InlineData("app-changed")]
     [InlineData("deployment-changed")]
     [InlineData("video-changed")]
+    [InlineData("active-version-changed")]
     [InlineData("other-adoption")]
+    [InlineData("replaced-adoption")]
     public async Task NarrationAdoption_StaleWriterCannotReplaceChangedTask(string change)
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();
         var snapshot = NewRun("narration-fence", test.OwnerId, SceneItemStatus.Done);
         snapshot.DeploymentSlug = "synthetic-branch";
         snapshot.Scenes[0].VideoUrl = "https://synthetic.invalid/original.mp4";
+        if (change == "replaced-adoption") snapshot.Scenes[0].Narration = new()
+            { SpeechRunId = "original-adoption", Text = "原配音", DurationSeconds = 1.5 };
         await test.SaveRunAsync(snapshot);
         var current = await test.Context.VideoGenRuns.Find(x => x.Id == snapshot.Id).SingleAsync();
         if (change == "export-started") { current.Status = VideoGenRunStatus.Rendering; current.LatestExportTaskId = "new-export"; }
@@ -67,7 +88,8 @@ public partial class VideoSceneConcurrencyTests
         if (change == "app-changed") current.AppKey = "visual-agent";
         if (change == "deployment-changed") current.DeploymentSlug = "another-branch";
         if (change == "video-changed") current.Scenes[0].VideoUrl = "https://synthetic.invalid/another-version.mp4";
-        if (change == "other-adoption") current.Scenes[0].Narration = new() { SpeechRunId = "already-adopted", Text = "保留", DurationSeconds = 2 };
+        if (change == "active-version-changed") current.Scenes[0].ActiveVersionId = "same-url-different-version";
+        if (change is "other-adoption" or "replaced-adoption") current.Scenes[0].Narration = new() { SpeechRunId = "already-adopted", Text = "保留", DurationSeconds = 2 };
         await test.Context.VideoGenRuns.ReplaceOneAsync(x => x.Id == current.Id, current);
         var before = current.ToBsonDocument();
 

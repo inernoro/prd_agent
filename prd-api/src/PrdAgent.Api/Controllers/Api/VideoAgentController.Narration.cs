@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using MongoDB.Bson;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Services.Speech;
 using PrdAgent.Core.Models;
@@ -109,9 +110,14 @@ public partial class VideoAgentController
             & f.Eq(x => x.Status, run.Status) & f.Eq(x => x.LatestExportTaskId, run.LatestExportTaskId)
             & f.Eq(x => x.CancelRequested, false) & f.Eq(x => x.DeletionRequestedAt, null)
             & f.Eq($"Scenes.{sceneIndex}.VideoUrl", scene.VideoUrl)
-            & f.Eq($"Scenes.{sceneIndex}.ActiveVersionId", scene.ActiveVersionId)
+            & (scene.ActiveVersionId == null
+                ? f.Type($"Scenes.{sceneIndex}.ActiveVersionId", BsonType.Null) | f.Exists($"Scenes.{sceneIndex}.ActiveVersionId", false)
+                : f.Eq($"Scenes.{sceneIndex}.ActiveVersionId", scene.ActiveVersionId))
             & f.Eq($"Scenes.{sceneIndex}.Status", SceneItemStatus.Done)
-            & f.Eq($"Scenes.{sceneIndex}.Narration", scene.Narration);
+            // 数字数组路径上的 Eq(null) 还会匹配非空对象，不能充当首次采用的并发保护。
+            & (scene.Narration == null
+                ? f.Type($"Scenes.{sceneIndex}.Narration", BsonType.Null) | f.Exists($"Scenes.{sceneIndex}.Narration", false)
+                : f.Eq($"Scenes.{sceneIndex}.Narration", scene.Narration));
         var changed = await _db.VideoGenRuns.UpdateOneAsync(identity,
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Narration", narration)
                 .Set(x => x.Status, VideoGenRunStatus.Editing).Set(x => x.CurrentPhase, "editing").Set(x => x.PhaseProgress, 100)
