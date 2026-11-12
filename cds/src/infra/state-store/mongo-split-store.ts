@@ -305,7 +305,7 @@ function compactGlobalRestToFit(restOfState: GlobalRest): GlobalRest {
   return restOfState;
 }
 
-function globalRestOf(state: CdsState): GlobalRest {
+function projectGlobalRest(state: CdsState): GlobalRest {
   const restOfState: GlobalRest = { ...state } as CdsState;
   delete (restOfState as Partial<CdsState>).projects;
   delete (restOfState as Partial<CdsState>).branches;
@@ -352,7 +352,31 @@ function globalRestOf(state: CdsState): GlobalRest {
       }),
     ) as CdsState['executors'];
   }
-  return compactGlobalRestToFit(restOfState);
+  return restOfState;
+}
+
+function globalRestOf(state: CdsState): GlobalRest {
+  return compactGlobalRestToFit(projectGlobalRest(state));
+}
+
+/**
+ * 全量保存也只克隆实际会持久化的诊断投影。先克隆 live 再截尾会把不落库的
+ * 历史全文反复搬过主线程；部署越密集，普通读取就越容易被这段同步复制阻塞。
+ * 分片字段仍完整保留，沿用既有 global 保留策略，不修改内存中的原始日志。
+ */
+function clonePersistenceSnapshot(state: CdsState): CdsState {
+  return structuredClone({
+    // 容量检查和 JSON 序列化仍留在原异步持久化路径，沿用其失败/重试处理。
+    ...projectGlobalRest(state),
+    projects: state.projects,
+    branches: state.branches,
+    deploymentRuns: state.deploymentRuns,
+    deploymentIntents: state.deploymentIntents,
+    deploymentVersions: state.deploymentVersions,
+    selfUpdateHistory: state.selfUpdateHistory,
+    githubWebhookDeliveries: state.githubWebhookDeliveries,
+    activityLogs: state.activityLogs,
+  });
 }
 
 /** cds_webhook_deliveries 的 _id — delivery.id 全局唯一（github delivery guid）。 */
@@ -837,8 +861,9 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       this.deploymentRunDirtyGeneration = Math.max(this.deploymentRunDirtyGeneration, generation);
       this.deploymentRunDirtyIds.clear();
       this.needFullResync = false;
-      const snapshot = timeMainThreadSection('state.snapshot.full-clone', () => structuredClone(live));
-      this.cache = snapshot;
+      const snapshot = timeMainThreadSection('state.snapshot.full-clone', () => clonePersistenceSnapshot(live));
+      // 与增量保存一样，load() 继续看到完整 live 数据；有界投影仅供异步落库。
+      this.cache = live;
       this.pendingWrite = { generation, full: snapshot };
     } else {
       const partial = timeMainThreadSection('state.snapshot.partial-clone', () => this.buildPartial(live, kinds, idMap, generation));
@@ -1192,8 +1217,8 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
         // 找回（排队中的本就是 full 则它自身即对账，两种情况都消费 needFullResync）。
         const queued = this.pendingWrite;
         if (queued && !queued.full && this.liveStateRef) {
-          const snapshot = structuredClone(this.liveStateRef);
-          this.cache = snapshot;
+          const snapshot = clonePersistenceSnapshot(this.liveStateRef);
+          this.cache = this.liveStateRef;
           this.pendingWrite = { generation: queued.generation, full: snapshot };
           this.needFullResync = false;
         } else if (queued?.full) {

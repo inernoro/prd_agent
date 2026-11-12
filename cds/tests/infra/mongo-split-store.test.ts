@@ -166,7 +166,9 @@ describe('MongoSplitStateBackingStore', () => {
       scheduler.touch('b'); await state.flush();
       // A real complete state copy also includes unrelated large run/webhook history.
       // A pending full save keeps its original broad durability obligation.
-      expect(clones.mock.calls.filter(([value]) => value === state.getState()))
+      // 全量克隆现在接收持久化投影，仍必须携带无关分片的完整保存责任。
+      expect(clones.mock.calls.filter(([value]) => value?.deploymentRuns === state.getState().deploymentRuns
+        && value?.githubWebhookDeliveries === state.getState().githubWebhookDeliveries))
         .toHaveLength(mode === 'pending-full' ? 1 : 0);
       clones.mockRestore();
       const reopened = new MongoSplitStateBackingStore(handle); await reopened.init();
@@ -1376,12 +1378,47 @@ describe('MongoSplitStateBackingStore', () => {
     expect(handle.branches.bulkWrites).toHaveLength(0);
     expect(handle.deploymentRuns.bulkWrites).toHaveLength(0);
 
-    // takeSnapshot 克隆一次 live state；persist 完成后没有第二次全量克隆。
+    // takeSnapshot 只克隆一次持久化投影；persist 完成后没有第二次全量克隆。
     expect(cloneArgs).toHaveLength(1);
-    expect(cloneArgs[0]).toBe(again);
+    expect(cloneArgs[0]).not.toBe(again);
+    expect((cloneArgs[0] as CdsState).branches).toBe(again.branches);
     // 单侧 stringify：4 个实体（1 project + 2 branches + 1 run）+ global rest
     // 的 compact 字节检查与 diff 各 1 次 ≈ 6。旧实现双侧 stringify 至少 2 倍。
     expect(stringifyCalls).toBeLessThanOrEqual(8);
+  });
+
+  it('full snapshots clone only the existing persisted log projection and preserve live history', async () => {
+    const handle = new FakeSplitHandle(), store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+    const state = emptyState();
+    state.logs.a = Array.from({ length: 8 }, (_, log) => ({
+      type: 'build' as const, status: 'completed' as const, startedAt: `t-${log}`,
+      events: Array.from({ length: 12 }, (_, event) => ({
+        step: `${log}-${event}`, status: 'info' as const, log: '中文诊断'.repeat(5000) + `末尾-${log}-${event}`,
+      })),
+    }));
+    const original = structuredClone(state.logs);
+    const cloneSpy = vi.spyOn(globalThis, 'structuredClone');
+    let captured: CdsState;
+    try {
+      store.save(state);
+      const flushed = store.flush();
+      captured = cloneSpy.mock.calls[0][0] as CdsState;
+      // 实际克隆入口，而不是只测写库后的截尾。旧实现会克隆 8×12 条全文。
+      expect(captured.logs.a).toHaveLength(5);
+      expect(captured.logs.a.every(log => log.events.length === 5)).toBe(true);
+      expect(captured.logs.a.at(-1)!.events.at(-1)!.log).toContain('末尾-7-11');
+      expect(Buffer.byteLength(captured.logs.a.at(-1)!.events.at(-1)!.log!, 'utf8')).toBeLessThanOrEqual(16 * 1024);
+      await flushed;
+    } finally { cloneSpy.mockRestore(); await store.flush(); }
+    expect(state.logs).toEqual(original);
+    expect(store.load()!.logs).toEqual(original);
+
+    // 已有增量投影是保留策略的对照：全量优化不得多删日志或改变落库内容。
+    const controlHandle = new FakeSplitHandle(), control = new MongoSplitStateBackingStore(controlHandle);
+    await control.init();
+    control.save(state, [{ kind: 'global' }]); await control.flush();
+    expect(handle.global.docs.get('global')!.state).toEqual(controlHandle.global.docs.get('global')!.state);
   });
 
   it('recovers dropped changes with a full resync after a failed partial write', async () => {
