@@ -1,0 +1,1476 @@
+[
+  {
+    "n": 200,
+    "round": 1,
+    "browseMs": 562.5807839999998,
+    "expandMs": 164.041795000001,
+    "searchMs": 691.7000840000001,
+    "tailSearchMs": 703.1062010000005,
+    "openMs": 229.41516899999988,
+    "searchRows": 200,
+    "searchTotal": null,
+    "tailFound": true,
+    "browseRequests": [
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/peer-sync/runs?resourceType=document-store&itemId=scale-200",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/navigation?pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/tutorial-link-graph?publisher=llmgw-authoritative-tutorial",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/sync",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/transcribe-styles",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-200-00010/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00010/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00010/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00010/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-200-00010/links",
+        "method": "GET"
+      }
+    ],
+    "expandRequests": [],
+    "searchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-200/navigation?pageSize=500&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "tailSearchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-200/navigation?pageSize=500&keyword=%E5%94%AF%E4%B8%80%E5%B0%BE%E9%83%A8%E6%A3%80%E7%B4%A2203&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "openRequests": [
+      {
+        "url": "/api/document-store/view-events/22f11d8198674619a93db4b7466db38f/leave",
+        "method": "POST"
+      },
+      {
+        "url": "/api/mentions/documents/scale-200-00004/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00004/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00004/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00004/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00004/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-200-00004/links",
+        "method": "GET"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "n": 200,
+    "round": 2,
+    "browseMs": 625.8498749999999,
+    "expandMs": 174.50684900000124,
+    "searchMs": 922.1830769999997,
+    "tailSearchMs": 609.9877720000004,
+    "openMs": 226.95696099999986,
+    "searchRows": 200,
+    "searchTotal": null,
+    "tailFound": true,
+    "browseRequests": [
+      {
+        "url": "/api/dashboard/user-preferences",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/with-preview?page=1&pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/analytics-summary",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/peer-sync/runs?resourceType=document-store&itemId=scale-200",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/navigation?pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/tutorial-link-graph?publisher=llmgw-authoritative-tutorial",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/sync",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/transcribe-styles",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-200-00010/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00010/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00010/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00010/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-200-00010/links",
+        "method": "GET"
+      }
+    ],
+    "expandRequests": [],
+    "searchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-200/navigation?pageSize=500&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "tailSearchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-200/navigation?pageSize=500&keyword=%E5%94%AF%E4%B8%80%E5%B0%BE%E9%83%A8%E6%A3%80%E7%B4%A2203&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "openRequests": [
+      {
+        "url": "/api/document-store/view-events/22f11d8198674619a93db4b7466db38f/leave",
+        "method": "POST"
+      },
+      {
+        "url": "/api/mentions/documents/scale-200-00004/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00004/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00004/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00004/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00004/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-200-00004/links",
+        "method": "GET"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "n": 200,
+    "round": 3,
+    "browseMs": 563.290316999999,
+    "expandMs": 148.23076299999957,
+    "searchMs": 728.5459499999997,
+    "tailSearchMs": 603.3672450000013,
+    "openMs": 205.0441200000023,
+    "searchRows": 200,
+    "searchTotal": null,
+    "tailFound": true,
+    "browseRequests": [
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/peer-sync/runs?resourceType=document-store&itemId=scale-200",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/navigation?pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/tutorial-link-graph?publisher=llmgw-authoritative-tutorial",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/sync",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/transcribe-styles",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-200-00010/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00010/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00010/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00010/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-200-00010/links",
+        "method": "GET"
+      }
+    ],
+    "expandRequests": [],
+    "searchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-200/navigation?pageSize=500&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "tailSearchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-200/navigation?pageSize=500&keyword=%E5%94%AF%E4%B8%80%E5%B0%BE%E9%83%A8%E6%A3%80%E7%B4%A2203&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "openRequests": [
+      {
+        "url": "/api/document-store/view-events/22f11d8198674619a93db4b7466db38f/leave",
+        "method": "POST"
+      },
+      {
+        "url": "/api/mentions/documents/scale-200-00004/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00004/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00004/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00004/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-200-00004/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-200-00004/links",
+        "method": "GET"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "n": 1000,
+    "round": 1,
+    "browseMs": 1043.1667860000016,
+    "expandMs": 195.12988800000312,
+    "searchMs": 899.5490449999998,
+    "tailSearchMs": 760.0226739999998,
+    "openMs": 290.03602399999727,
+    "searchRows": 200,
+    "searchTotal": null,
+    "tailFound": true,
+    "browseRequests": [
+      {
+        "url": "/api/dashboard/user-preferences",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/with-preview?page=1&pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/analytics-summary",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/peer-sync/runs?resourceType=document-store&itemId=scale-1000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/tutorial-link-graph?publisher=llmgw-authoritative-tutorial",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/sync",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/transcribe-styles",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&afterId=scale-1000-00499&before=2026-11-12T10%3A25%3A36.6770438Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&afterId=scale-1000-00999&before=2026-11-12T10%3A25%3A36.6770438Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-1000-00010/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-1000-00010/links",
+        "method": "GET"
+      }
+    ],
+    "expandRequests": [],
+    "searchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&afterId=scale-1000-00503&before=2026-11-12T10%3A25%3A38.4308666Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "tailSearchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&keyword=%E5%94%AF%E4%B8%80%E5%B0%BE%E9%83%A8%E6%A3%80%E7%B4%A21003&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      }
+    ],
+    "openRequests": [
+      {
+        "url": "/api/document-store/view-events/90aa8c9249194e29ba48def1b7158771/leave",
+        "method": "POST"
+      },
+      {
+        "url": "/api/mentions/documents/scale-1000-00004/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00004/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00004/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00004/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00004/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-1000-00004/links",
+        "method": "GET"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "n": 1000,
+    "round": 2,
+    "browseMs": 1278.3409760000031,
+    "expandMs": 194.6941939999997,
+    "searchMs": 869.9580499999975,
+    "tailSearchMs": 655.664671999999,
+    "openMs": 387.96631199999683,
+    "searchRows": 200,
+    "searchTotal": null,
+    "tailFound": true,
+    "browseRequests": [
+      {
+        "url": "/api/dashboard/user-preferences",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/with-preview?page=1&pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/analytics-summary",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/peer-sync/runs?resourceType=document-store&itemId=scale-1000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/tutorial-link-graph?publisher=llmgw-authoritative-tutorial",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/sync",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/transcribe-styles",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&afterId=scale-1000-00499&before=2026-11-12T10%3A25%3A42.6547596Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&afterId=scale-1000-00999&before=2026-11-12T10%3A25%3A42.6547596Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-1000-00010/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-1000-00010/links",
+        "method": "GET"
+      }
+    ],
+    "expandRequests": [],
+    "searchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&afterId=scale-1000-00503&before=2026-11-12T10%3A25%3A44.3822642Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "tailSearchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&keyword=%E5%94%AF%E4%B8%80%E5%B0%BE%E9%83%A8%E6%A3%80%E7%B4%A21003&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "openRequests": [
+      {
+        "url": "/api/document-store/view-events/90aa8c9249194e29ba48def1b7158771/leave",
+        "method": "POST"
+      },
+      {
+        "url": "/api/mentions/documents/scale-1000-00004/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00004/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00004/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00004/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00004/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-1000-00004/links",
+        "method": "GET"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "n": 1000,
+    "round": 3,
+    "browseMs": 821.6108620000014,
+    "expandMs": 192.65688199999568,
+    "searchMs": 826.6594949999999,
+    "tailSearchMs": 648.9364570000034,
+    "openMs": 331.37172299999656,
+    "searchRows": 200,
+    "searchTotal": null,
+    "tailFound": true,
+    "browseRequests": [
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/peer-sync/runs?resourceType=document-store&itemId=scale-1000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/tutorial-link-graph?publisher=llmgw-authoritative-tutorial",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/sync",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/transcribe-styles",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&afterId=scale-1000-00499&before=2026-11-12T10%3A25%3A48.6032216Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&afterId=scale-1000-00999&before=2026-11-12T10%3A25%3A48.6032216Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-1000-00010/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-1000-00010/links",
+        "method": "GET"
+      }
+    ],
+    "expandRequests": [],
+    "searchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&afterId=scale-1000-00503&before=2026-11-12T10%3A25%3A50.0807289Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "tailSearchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-1000/navigation?pageSize=500&keyword=%E5%94%AF%E4%B8%80%E5%B0%BE%E9%83%A8%E6%A3%80%E7%B4%A21003&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "openRequests": [
+      {
+        "url": "/api/document-store/view-events/90aa8c9249194e29ba48def1b7158771/leave",
+        "method": "POST"
+      },
+      {
+        "url": "/api/mentions/documents/scale-1000-00004/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00004/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00004/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00004/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-1000-00004/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-1000-00004/links",
+        "method": "GET"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "n": 5000,
+    "round": 1,
+    "browseMs": 1473.8383959999992,
+    "expandMs": 217.56599199999619,
+    "searchMs": 1471.7518290000007,
+    "tailSearchMs": 744.9297779999979,
+    "openMs": 415.36530199999834,
+    "searchRows": 200,
+    "searchTotal": null,
+    "tailFound": true,
+    "browseRequests": [
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/peer-sync/runs?resourceType=document-store&itemId=scale-5000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/tutorial-link-graph?publisher=llmgw-authoritative-tutorial",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/sync",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/transcribe-styles",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-00499&before=2026-11-12T10%3A25%3A54.1171691Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-00999&before=2026-11-12T10%3A25%3A54.1171691Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-01499&before=2026-11-12T10%3A25%3A54.1171691Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-01999&before=2026-11-12T10%3A25%3A54.1171691Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-02499&before=2026-11-12T10%3A25%3A54.1171691Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-02999&before=2026-11-12T10%3A25%3A54.1171691Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-03499&before=2026-11-12T10%3A25%3A54.1171691Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-03999&before=2026-11-12T10%3A25%3A54.1171691Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-04499&before=2026-11-12T10%3A25%3A54.1171691Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-04999&before=2026-11-12T10%3A25%3A54.1171691Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-5000-00010/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-5000-00010/links",
+        "method": "GET"
+      }
+    ],
+    "expandRequests": [],
+    "searchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-00503&before=2026-11-12T10%3A25%3A56.2859199Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-01003&before=2026-11-12T10%3A25%3A56.2859199Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-01503&before=2026-11-12T10%3A25%3A56.2859199Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-02003&before=2026-11-12T10%3A25%3A56.2859199Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-02503&before=2026-11-12T10%3A25%3A56.2859199Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-03003&before=2026-11-12T10%3A25%3A56.2859199Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-03503&before=2026-11-12T10%3A25%3A56.2859199Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-04003&before=2026-11-12T10%3A25%3A56.2859199Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-04503&before=2026-11-12T10%3A25%3A56.2859199Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "tailSearchRequests": [
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&keyword=%E5%94%AF%E4%B8%80%E5%B0%BE%E9%83%A8%E6%A3%80%E7%B4%A25003&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/peer-sync/runs?resourceType=document-store&itemId=scale-5000",
+        "method": "GET"
+      }
+    ],
+    "openRequests": [
+      {
+        "url": "/api/document-store/view-events/26887b9213324a2e81eb167ee352aab6/leave",
+        "method": "POST"
+      },
+      {
+        "url": "/api/mentions/documents/scale-5000-00004/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00004/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00004/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00004/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00004/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-5000-00004/links",
+        "method": "GET"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "n": 5000,
+    "round": 2,
+    "browseMs": 1317.9729929999958,
+    "expandMs": 198.52579900000273,
+    "searchMs": 1843.0989880000052,
+    "tailSearchMs": 756.6605070000005,
+    "openMs": 387.85029799999757,
+    "searchRows": 200,
+    "searchTotal": null,
+    "tailFound": true,
+    "browseRequests": [
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/peer-sync/runs?resourceType=document-store&itemId=scale-5000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/tutorial-link-graph?publisher=llmgw-authoritative-tutorial",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/sync",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/transcribe-styles",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-00499&before=2026-11-12T10%3A26%3A01.175568Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-00999&before=2026-11-12T10%3A26%3A01.175568Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-01499&before=2026-11-12T10%3A26%3A01.175568Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-01999&before=2026-11-12T10%3A26%3A01.175568Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-02499&before=2026-11-12T10%3A26%3A01.175568Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-02999&before=2026-11-12T10%3A26%3A01.175568Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-03499&before=2026-11-12T10%3A26%3A01.175568Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-03999&before=2026-11-12T10%3A26%3A01.175568Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-04499&before=2026-11-12T10%3A26%3A01.175568Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-04999&before=2026-11-12T10%3A26%3A01.175568Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-5000-00010/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-5000-00010/links",
+        "method": "GET"
+      }
+    ],
+    "expandRequests": [],
+    "searchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-00503&before=2026-11-12T10%3A26%3A03.4208535Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-01003&before=2026-11-12T10%3A26%3A03.4208535Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-01503&before=2026-11-12T10%3A26%3A03.4208535Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-02003&before=2026-11-12T10%3A26%3A03.4208535Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-02503&before=2026-11-12T10%3A26%3A03.4208535Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-03003&before=2026-11-12T10%3A26%3A03.4208535Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-03503&before=2026-11-12T10%3A26%3A03.4208535Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-04003&before=2026-11-12T10%3A26%3A03.4208535Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-04503&before=2026-11-12T10%3A26%3A03.4208535Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      }
+    ],
+    "tailSearchRequests": [
+      {
+        "url": "/api/peer-sync/runs?resourceType=document-store&itemId=scale-5000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&keyword=%E5%94%AF%E4%B8%80%E5%B0%BE%E9%83%A8%E6%A3%80%E7%B4%A25003&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "openRequests": [
+      {
+        "url": "/api/document-store/view-events/26887b9213324a2e81eb167ee352aab6/leave",
+        "method": "POST"
+      },
+      {
+        "url": "/api/mentions/documents/scale-5000-00004/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00004/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00004/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00004/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00004/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-5000-00004/links",
+        "method": "GET"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "n": 5000,
+    "round": 3,
+    "browseMs": 1514.6798849999977,
+    "expandMs": 199.34517700000288,
+    "searchMs": 1550.7097289999947,
+    "tailSearchMs": 834.5540009999968,
+    "openMs": 514.192035,
+    "searchRows": 200,
+    "searchTotal": null,
+    "tailFound": true,
+    "browseRequests": [
+      {
+        "url": "/api/dashboard/user-preferences",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/with-preview?page=1&pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/analytics-summary",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-1000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-200/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/peer-sync/runs?resourceType=document-store&itemId=scale-5000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/tutorial-link-graph?publisher=llmgw-authoritative-tutorial",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/sync",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/transcribe-styles",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-00499&before=2026-11-12T10%3A26%3A08.7922812Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-00999&before=2026-11-12T10%3A26%3A08.7922812Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-01499&before=2026-11-12T10%3A26%3A08.7922812Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-01999&before=2026-11-12T10%3A26%3A08.7922812Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-02499&before=2026-11-12T10%3A26%3A08.7922812Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-02999&before=2026-11-12T10%3A26%3A08.7922812Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-03499&before=2026-11-12T10%3A26%3A08.7922812Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-03999&before=2026-11-12T10%3A26%3A08.7922812Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-04499&before=2026-11-12T10%3A26%3A08.7922812Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-04999&before=2026-11-12T10%3A26%3A08.7922812Z",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/size",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-5000-00010/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-5000-00010/links",
+        "method": "GET"
+      }
+    ],
+    "expandRequests": [],
+    "searchRequests": [
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-00503&before=2026-11-12T10%3A26%3A10.8931606Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-01003&before=2026-11-12T10%3A26%3A10.8931606Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-01503&before=2026-11-12T10%3A26%3A10.8931606Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-02003&before=2026-11-12T10%3A26%3A10.8931606Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-02503&before=2026-11-12T10%3A26%3A10.8931606Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-03003&before=2026-11-12T10%3A26%3A10.8931606Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-03503&before=2026-11-12T10%3A26%3A10.8931606Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-04003&before=2026-11-12T10%3A26%3A10.8931606Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&afterId=scale-5000-04503&before=2026-11-12T10%3A26%3A10.8931606Z&keyword=%E5%85%B1%E5%90%8C%E5%85%B3%E9%94%AE%E8%AF%8D&searchContent=true",
+        "method": "GET"
+      }
+    ],
+    "tailSearchRequests": [
+      {
+        "url": "/api/document-store/entries/scale-5000-00010/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/stores/scale-5000/navigation?pageSize=500&keyword=%E5%94%AF%E4%B8%80%E5%B0%BE%E9%83%A8%E6%A3%80%E7%B4%A25003&searchContent=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/peer-sync/runs?resourceType=document-store&itemId=scale-5000",
+        "method": "GET"
+      }
+    ],
+    "openRequests": [
+      {
+        "url": "/api/document-store/view-events/26887b9213324a2e81eb167ee352aab6/leave",
+        "method": "POST"
+      },
+      {
+        "url": "/api/mentions/documents/scale-5000-00004/links",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00004/view",
+        "method": "POST"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00004/inline-comments",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00004/content",
+        "method": "GET"
+      },
+      {
+        "url": "/api/document-store/entries/scale-5000-00004/agent-runs/latest?kind=transcribe&ownUserOnly=true",
+        "method": "GET"
+      },
+      {
+        "url": "/api/mentions/documents/scale-5000-00004/links",
+        "method": "GET"
+      }
+    ],
+    "errors": []
+  }
+]

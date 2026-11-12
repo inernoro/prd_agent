@@ -1,0 +1,125 @@
+{
+  "verdict": "pass",
+  "results": [
+    {
+      "n": 200,
+      "browse": {
+        "count": 204,
+        "pages": [
+          204
+        ],
+        "ms": 77.42230100000006
+      },
+      "search": {
+        "count": 200,
+        "pages": [
+          200
+        ],
+        "ms": 132.35744899999963
+      },
+      "fullBody": {
+        "count": 200,
+        "pages": [
+          200
+        ],
+        "ms": 71.45414600000004
+      },
+      "tailFound": true
+    },
+    {
+      "n": 1000,
+      "browse": {
+        "count": 1004,
+        "pages": [
+          500,
+          500,
+          4
+        ],
+        "ms": 60.53114200000027
+      },
+      "search": {
+        "count": 1000,
+        "pages": [
+          500,
+          500
+        ],
+        "ms": 207.40990199999987
+      },
+      "fullBody": {
+        "count": 1000,
+        "pages": [
+          500,
+          500
+        ],
+        "ms": 307.42802200000006
+      },
+      "tailFound": true
+    },
+    {
+      "n": 5000,
+      "browse": {
+        "count": 5004,
+        "pages": [
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          4
+        ],
+        "ms": 255.20530800000006
+      },
+      "search": {
+        "count": 5000,
+        "pages": [
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500
+        ],
+        "ms": 434.1324370000002
+      },
+      "fullBody": {
+        "count": 5000,
+        "pages": [
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500
+        ],
+        "ms": 1289.009332
+      },
+      "tailFound": true
+    }
+  ],
+  "permissions": [
+    "private",
+    "public-readonly",
+    "team-revocation-per-page",
+    "content-open"
+  ],
+  "boundaries": [
+    "same-createdAt",
+    "cursor-insert-delete",
+    "literal-regex",
+    "attachment-tail",
+    "future-source-time"
+  ]
+}

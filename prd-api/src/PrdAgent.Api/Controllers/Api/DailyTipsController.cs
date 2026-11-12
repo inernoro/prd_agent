@@ -1017,7 +1017,7 @@ public sealed class DailyTipsController : ControllerBase
                     {
                         new() { Selector = "[data-tour-id=library-stats], [data-tour-id=library-tabs]", Title = "第 1 步：欢迎来到知识库", Body = "把文档、订阅源整理成知识库，可私藏也可发布到智识殿堂。顶部可切换「我的空间 / 团队空间 / 收藏 / 点赞」。", NavigateTo = "/document-store" },
                         new() { Selector = "[data-tour-id=library-stats], [data-tour-id=library-tabs]", Title = "第 2 步：库房总览", Body = "在「我的空间 / 团队空间」tab 下，这里实时显示你有多少个知识库、多少篇文章。" },
-                        new() { Selector = "[data-tour-id=library-search], [data-tour-id=library-tabs]", Title = "第 3 步：搜索", Body = "按名称或标签快速找到目标知识库。" },
+                        new() { Selector = "[data-tour-id=library-search], [data-tour-id=library-tabs]", Title = "第 3 步：搜索", Body = "按名称或标签快速找到目标知识库。进入空间后可搜索标题和完整正文；目录或搜索结果超过 200 条时，用列表底部的上一页、下一页继续浏览，每个展开的目录分别翻页。" },
                         new() { Selector = "[data-tour-id=library-tag-filter], [data-tour-id=library-tabs]", Title = "第 4 步：标签筛选", Body = "给知识库打标签后，可在这里按标签多选过滤。" },
                         new() { Selector = "[data-tour-id=library-sort], [data-tour-id=library-tabs]", Title = "第 5 步：排序", Body = "按最近更新 / 创建时间 / 名称 / 文章数切换列表顺序。" },
                         new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 6 步：新建知识库", Body = "点「新建知识库」取个名字，这就是你的第一个库。" },

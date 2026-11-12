@@ -1,0 +1,279 @@
+{
+  "status": "本地隔离验证通过；CDS 同提交预览及归档待网络恢复，不代表最终验收完成",
+  "branch": "perf/knowledge-space-scale",
+  "baseCommit": "3035365de",
+  "capturedAtShanghai": "2026-11-12T18:29:17.770768+08:00",
+  "sourceSha256": {
+    "prd-admin/src/components/doc-browser/DocBrowser.tsx": "8657dee71c8ab075fa9e69600a76b398e63dd0d2dbfea0f5e2dd47ec5c72363a",
+    "prd-admin/src/components/doc-browser/EntryWindow.tsx": "209e2f49b6632918cffff4d04af992bc9d8473b75b0a4dd3d12ff3f2871c35ae",
+    "prd-admin/src/components/doc-browser/__tests__/EntryWindow.test.tsx": "6f25119ec166cc2eb2065da23f962d62c9067d14115f705e6cb985d988c0383c",
+    "prd-admin/src/components/doc-browser/__tests__/docBrowserTree.test.ts": "63146600d2808d8d4e5deb2e2631a96061e1c9c880754ba383bbd1098ad8f21b",
+    "prd-admin/src/components/doc-browser/docBrowserTree.ts": "d12f9b72dd064ed5ef1f9b219e35eb406b2a39cdc9662c8dfca1ed99e38dc513",
+    "prd-admin/src/pages/document-store/DocumentStorePage.tsx": "bd2f75ef77fa940c76ce24f2068fa1dec1ca4ab07be407b27a38fb0d025b1ec1",
+    "prd-admin/src/services/real/documentNavigation.test.ts": "f06d588bab51acfa2152b629ad5b89a40d8788ce82d422e7c3c5b5d24b8c7d24",
+    "prd-admin/src/services/real/documentNavigation.ts": "3cb39e99589ffd91be5d27e6fdb928c9843910566c7f1750af5cd34ae81a2efc",
+    "prd-admin/src/services/real/documentStore.ts": "f990acf568b0d9619687323ebd9c43a84eb5cd707b55e985800549fb48fddd15",
+    "prd-api/src/PrdAgent.Api/Controllers/Api/DailyTipsController.cs": "178ecd3a0d7ad51329aec94122265b3922801b706cb86bc8c5316cab0ae6ba42",
+    "prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs": "56410fea124b4fb0f116faf39c83a415221001f5e928aaaa7ca330a4a872233b"
+  },
+  "environment": {
+    "browser": "Chrome 157.0.8103.78",
+    "dotnetSdk": "8.0.428",
+    "mongo": "8.0.38",
+    "redis": "7-alpine",
+    "logicalCpu": 5,
+    "ramMiB": 18007,
+    "viewportDesktop": [
+      1440,
+      1000
+    ],
+    "viewportResponsive": [
+      375,
+      812
+    ],
+    "localDatabase": "kb_scale_isolated",
+    "productionDataTouched": false
+  },
+  "method": [
+    "生产前端构建，修复前 API 与前端固定在基线提交，修复后为 sourceSha256 所列源码。构建资源中的版本标识仍为提交前 HEAD，不能冒充已部署 SHA。",
+    "每档三轮，以中位数报告。每轮将奇数编号条目的旧短索引置空，模拟一半历史文档缺索引；缓存随正常访问预热，不注入响应延迟。",
+    "正文超过 2000 字符并含尾部唯一词。每档恰有指定正文篇数，另有 4 个目录，含旧订阅目录、缺失父节点与相同创建时间。",
+    "浏览计时止于目录可交互，搜索计时包含 400ms 防抖且等待所有服务端游标页完成，打开计时止于正文出现。浏览首屏的数量动画可能仍在运行；完整计数见底栏与遍历断言。",
+    "修复前浏览只能取得首页 200 条记录，无法完成全量浏览；因此大空间浏览耗时不是同等工作量的速度比较。",
+    "请求总数包含实际用户路径触发的正文、批注、访问统计与后台轮询；另列核心目录和搜索请求数，不把这些附带请求静默扣除。",
+    "真实浏览器采用登录、导航、展开、翻页、搜索、打开与滚动，不注入 token 或伪造身份。375px 为 Chromium 响应式验证，不是真机实验。"
+  ],
+  "summary": [
+    {
+      "documents": 200,
+      "directoryNodes": 4,
+      "entries": 204,
+      "beforeMs": {
+        "browseMs": 1106.27,
+        "expandMs": 435.93,
+        "searchMs": 1544.28,
+        "tailSearchMs": 768.82,
+        "openMs": 537.68
+      },
+      "afterMs": {
+        "browseMs": 563.29,
+        "expandMs": 164.04,
+        "searchMs": 728.55,
+        "tailSearchMs": 609.99,
+        "openMs": 226.96
+      },
+      "firstSearchReductionPct": 52.82,
+      "browserApiRequestsMedian": {
+        "before": {
+          "browseRequests": 17,
+          "expandRequests": 0,
+          "searchRequests": 3,
+          "tailSearchRequests": 3,
+          "openRequests": 7
+        },
+        "after": {
+          "browseRequests": 17,
+          "expandRequests": 0,
+          "searchRequests": 1,
+          "tailSearchRequests": 1,
+          "openRequests": 7
+        }
+      },
+      "coreRequests": {
+        "browseBefore": 1,
+        "browseAfter": 1,
+        "searchBefore": 2,
+        "searchAfter": 1,
+        "expandAfter": 0
+      },
+      "beforeTailFound": false,
+      "afterTailFound": true,
+      "afterReachableDocuments": 200
+    },
+    {
+      "documents": 1000,
+      "directoryNodes": 4,
+      "entries": 1004,
+      "beforeMs": {
+        "browseMs": 618.09,
+        "expandMs": 228.55,
+        "searchMs": 1987.73,
+        "tailSearchMs": 805.69,
+        "openMs": 1737.81
+      },
+      "afterMs": {
+        "browseMs": 1043.17,
+        "expandMs": 194.69,
+        "searchMs": 869.96,
+        "tailSearchMs": 655.66,
+        "openMs": 331.37
+      },
+      "firstSearchReductionPct": 56.23,
+      "browserApiRequestsMedian": {
+        "before": {
+          "browseRequests": 20,
+          "expandRequests": 0,
+          "searchRequests": 3,
+          "tailSearchRequests": 3,
+          "openRequests": 7
+        },
+        "after": {
+          "browseRequests": 22,
+          "expandRequests": 0,
+          "searchRequests": 2,
+          "tailSearchRequests": 1,
+          "openRequests": 7
+        }
+      },
+      "coreRequests": {
+        "browseBefore": 1,
+        "browseAfter": 3,
+        "searchBefore": 2,
+        "searchAfter": 2,
+        "expandAfter": 0
+      },
+      "beforeTailFound": false,
+      "afterTailFound": true,
+      "afterReachableDocuments": 1000
+    },
+    {
+      "documents": 5000,
+      "directoryNodes": 4,
+      "entries": 5004,
+      "beforeMs": {
+        "browseMs": 929.45,
+        "expandMs": 253.63,
+        "searchMs": 5415.54,
+        "tailSearchMs": 815.49,
+        "openMs": 1709.2
+      },
+      "afterMs": {
+        "browseMs": 1473.84,
+        "expandMs": 199.35,
+        "searchMs": 1550.71,
+        "tailSearchMs": 756.66,
+        "openMs": 415.37
+      },
+      "firstSearchReductionPct": 71.37,
+      "browserApiRequestsMedian": {
+        "before": {
+          "browseRequests": 17,
+          "expandRequests": 0,
+          "searchRequests": 4,
+          "tailSearchRequests": 2,
+          "openRequests": 8
+        },
+        "after": {
+          "browseRequests": 27,
+          "expandRequests": 0,
+          "searchRequests": 10,
+          "tailSearchRequests": 3,
+          "openRequests": 7
+        }
+      },
+      "coreRequests": {
+        "browseBefore": 1,
+        "browseAfter": 11,
+        "searchBefore": 2,
+        "searchAfter": 10,
+        "expandAfter": 0
+      },
+      "beforeTailFound": false,
+      "afterTailFound": true,
+      "afterReachableDocuments": 5000
+    }
+  ],
+  "checks": {
+    "frontend": {
+      "files": 525,
+      "passed": 4580,
+      "failed": 0
+    },
+    "backendNonIntegrationNonManual": {
+      "passed": 8796,
+      "skipped": 79,
+      "failed": 0
+    },
+    "typescript": "pnpm build 内 tsc 通过",
+    "lint": "0 error，270 条既有 warning；改动源码无新增告警",
+    "backendBuild": "本地 0 error；改动 C# 文件无新增告警",
+    "browserMatrix": {
+      "passed": 12,
+      "pageErrors": 0,
+      "allDocumentsBrowsableAndSearchable": true,
+      "tailVisibleAfterOpening": true
+    },
+    "api": [
+      "private",
+      "public-readonly",
+      "team-revocation-per-page",
+      "content-open",
+      "same-createdAt",
+      "cursor-insert-delete",
+      "literal-regex",
+      "attachment-tail",
+      "future-source-time"
+    ],
+    "docs": "readability ratchet 与 git diff --check 通过"
+  },
+  "handoff": {
+    "入口与导航": "正常登录后：首页 → 知识库 → 规模验证 200/1000/5000 → 目录或搜索 → 文档正文。沿用既有入口，无新增导航。",
+    "文档与决策": "知识库债务 K-16 标为 partial；同步页面教程和隔离复现说明。语义检索供应商、GitHub 同步等既有债务未宣称关闭。",
+    "契约与数据": "新增只读轻量目录游标，逐页重新校验权限；保留旧列表协议。无新集合、索引或持久化字段，无存量迁移。",
+    "测试与证据": "before/after 保存全部三轮计时及请求；browser-matrix 保存 12 格全量遍历结果，截图和脱敏 trace 在同目录。",
+    "发布与运维": "仅独立分支提交推送，不创建 PR、不合并、不发布生产。CDS /api/branches 因当前代理策略返回 403，无法取得权威预览地址或归档。",
+    "安全与隐私": "私有隔离、匿名拒绝、公开只读、团队撤权后的下一页和正文权限均验证。仅自建测试容器和专用数据库被修改；共享 trace 已移除认证头、Cookie 与会话字段。",
+    "已知边界": "完整元数据仍为 O(n)，性能承诺仅到本次 5000 篇；不是事务快照，来源未来时间与并发修改在刷新后收敛。未抽取二进制不能全文检索；旧短索引兜底可能产生多余匹配。79 个后端用例按既有条件跳过。",
+    "后续与回滚": "网络开放后须在本分支同一提交的真实预览域名重跑核心路径并归档 CDS，不能用本地记录关闭该门。无需生产数据回滚或迁移；代码可整体撤回，旧前端与旧列表接口仍兼容。"
+  },
+  "preview": {
+    "status": "blocked",
+    "reason": "Tunnel connection failed: 403 Forbidden",
+    "url": null
+  },
+  "artifacts": {
+    "after.json": "3d6ea9ed50b722dd01fcf032fea4f694808dddbdde6b3c2f4e88e1f8bf1b359c",
+    "api-checks.json": "15b453ca970da5f2348d824302d59f438ae3bd26596e3018a891bc65876f1534",
+    "before-5000-trace.zip": "5c58275d355cee00f19b3bb739ff23059de9027005bd68c89801e144a92cc847",
+    "before.json": "95a4a7f6222ec1f07f90fd9ec92a66e12d8a64850d8ffdbdbeb1691f7a42ae5e",
+    "browser-matrix.json": "2d1b5cfe9a1d3e7396e84902642d994e5fc77a8239b308d61fba5a7e7c28204d",
+    "final-dark-1440-1000-browse.png": "58fd23a8a52ea58b11741e079c4a0dd983e0bf54b2e01b4ccaa8cd789ecd3270",
+    "final-dark-1440-1000-open.png": "210b9afcdcd3b969fbc516456850950857d892f49700f2afc97d71b5a76f53c0",
+    "final-dark-1440-1000-search.png": "a503b78894f4ef12a44135de904a7d6a821a7f4249bce7a532c171a8e8c64b06",
+    "final-dark-1440-200-browse.png": "4353a8d386b8f6724153515fd6d9d87d5ff249ce0b7e4b999fbc8f386009f752",
+    "final-dark-1440-200-open.png": "b55adb9f16dbabcd6a0ec1b3b61d89e0e057439d909a0ffb8819945c928be825",
+    "final-dark-1440-200-search.png": "eda8f4e82f1900975402757ad6a7bc3e2797fe895f44796a411c2cb7b6f88b28",
+    "final-dark-1440-5000-browse.png": "d6fe5b33893228a0ee28e5f1bf80ea24787755c18bd28d2b067559f90b786033",
+    "final-dark-1440-5000-open.png": "cc0e97b4e4db381c43797cb98e6c8d4059da90c1e667402020c4e5903f8f0cd8",
+    "final-dark-1440-5000-search.png": "cad331eca5ee96eb25317d34f5af5788fa36c16a9f618cb03d87273c92eb3bb0",
+    "final-dark-1440-5000-trace.zip": "0c324698c9a6da616577fa2b0bfef92cc7219e7b31f49ad66d6570c1bdf52246",
+    "final-dark-375-1000-browse.png": "e034b5440bd8de9b12da311eb2d90c8359c16dd884a67760c901cbfc4be046ec",
+    "final-dark-375-1000-open.png": "0dedb849dd99b534d3acbeb7412f83b289c642f1b41f1de5fbbb146c03874b0b",
+    "final-dark-375-1000-search.png": "9639d418957deca5d9f4e70dabe8e5b21b517c83c5f0f7ad38448fa0e95bc2e1",
+    "final-dark-375-200-browse.png": "f4b28db3cb99e967a32c0fdb69a61db314492b1a8f021c1d692225b57969aee2",
+    "final-dark-375-200-open.png": "271ccef9bddf062e95fd10923087ded5bf94397f65c3e6124d0a05f972aa5251",
+    "final-dark-375-200-search.png": "da5649a57d4fe02e322f13dc61c252ee2a368bccea23bf6106fb38c9a52130d5",
+    "final-dark-375-5000-browse.png": "6fdbf782f9b941ac6ac5390fe13f3ea7339a4ef5330ae0f421eefd5be66dbbaf",
+    "final-dark-375-5000-open.png": "27492c3e37b4bb6a7f3593adac027c65750cb71dd761a029dbb502379a57879c",
+    "final-dark-375-5000-search.png": "21fb1f8dc71f4dd1056f6f2749328d815e0c3c1edbab2d500aa5697d2eb0bba2",
+    "final-light-1440-1000-browse.png": "0c88e1c915b1d840d34be15fadab26d02d2a4c859aee7adfcf6dc1eed448971b",
+    "final-light-1440-1000-open.png": "f2a2f0db90942a2d5fac401edbf67dd42d19f83afaff3e8ce9a030260d602b14",
+    "final-light-1440-1000-search.png": "ea93add31ad5caa0b15913f71027ea24a2f102f94d75cf15d8595572d9f76bce",
+    "final-light-1440-200-browse.png": "cd7acde29b70654798c290f6ce6d823c04b20448fd25a305b658334120399904",
+    "final-light-1440-200-open.png": "5ffc902342088399c001dc7d67399d6119286e5f966e6ddd7bae8be0752c612d",
+    "final-light-1440-200-search.png": "ea5c6a7853a94c1cb4592b0623e2255ffbb07e56b95b127ad64eb4ec84e94b6f",
+    "final-light-1440-5000-browse.png": "b05c46161b9e04148619d51f4491a4e90c62ba49689474c0eba03a856532efdf",
+    "final-light-1440-5000-open.png": "382ba02a4871f45d1a693bab39ec9ec324656ff719cac8060f93d7e3fd6e2d9d",
+    "final-light-1440-5000-search.png": "12866164a557c5e6b750fdbdf36bbd4d8207a78430edb805480bbf2687fb67d6",
+    "final-light-375-1000-browse.png": "6c146b7fe9d9854578dd2529643d0a1b2afb8f3156a066812ee9295185d17636",
+    "final-light-375-1000-open.png": "41b69a23c197f622040427f56566241866e26672b7421627693da4fefb22b08c",
+    "final-light-375-1000-search.png": "f8669af2c683651e690508cd8f49407cda2957c87f14e514504195840cf711f2",
+    "final-light-375-200-browse.png": "787fbd0a1bb48f7c0026ed97485a8d85eadd69dfc60dd87a1cb7229bbbb0ff29",
+    "final-light-375-200-open.png": "c5506a43fbc5af3b6634d37343c1603b200d5920975b8c86f1c4b13923b5bd65",
+    "final-light-375-200-search.png": "8f465398b8d9855f814a2b31359e02f2048613b1988262e1531586470e89a0d7",
+    "final-light-375-5000-browse.png": "ee4d5a8bafd621fc6261ce8ea49ed0714fc61b73d374ac124814a5bb90219311",
+    "final-light-375-5000-open.png": "5b84714fce8fcc10c356b0d3d27722dc3329b2bdef811c97e5a15cedf57eb662",
+    "final-light-375-5000-search.png": "3b4e7b0501d05808f48957e7b5ae99f6312dab666587cb35f0f554b766ef585c",
+    "final-light-375-5000-trace.zip": "21f07c7a8fc3b413d613b0eefdbf76cca5fdf030f9d582bef7c98e8e83e1ed5b"
+  }
+}

@@ -952,29 +952,14 @@ public class DocumentStoreController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
-            // 关键词按字面量处理：转义正则元字符，避免 [draft] / v1.0 / foo( 等
-            // 被当作正则误匹配或非法正则导致请求失败（行为对齐原本地 includes）。
-            var kw = System.Text.RegularExpressions.Regex.Escape(keyword.Trim());
-            var searchFilters = new List<FilterDefinition<DocumentEntry>>
-            {
-                filterBuilder.Regex(e => e.Title, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
-                filterBuilder.Regex(e => e.Summary, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
-            };
-
-            // 启用内容搜索时，同时搜索 ContentIndex 字段
-            if (searchContent)
-            {
-                searchFilters.Add(
-                    filterBuilder.Regex(e => e.ContentIndex, new MongoDB.Bson.BsonRegularExpression(kw, "i")));
-            }
-
-            filter &= filterBuilder.Or(searchFilters);
+            filter &= await BuildEntrySearchFilterAsync(filter, keyword, searchContent);
         }
 
         var total = await _db.DocumentEntries.CountDocumentsAsync(filter);
         var items = await _db.DocumentEntries.Find(filter)
             .SortByDescending(e => e.IsFolder) // 文件夹优先
             .ThenByDescending(e => e.CreatedAt)
+            .ThenBy(e => e.Id) // 同一时刻批量导入也必须有唯一排序键
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
             .ToListAsync();
@@ -993,6 +978,85 @@ public class DocumentStoreController : ControllerBase
             .ToList();
 
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds }));
+    }
+
+    // 正文只在已授权空间的引用集合内匹配；不回填、不逐篇读缓存，也不传回正文。
+    // 保留短索引兜底，使仅有索引、尚无持久化正文的历史条目仍可检索。
+    private async Task<FilterDefinition<DocumentEntry>> BuildEntrySearchFilterAsync(
+        FilterDefinition<DocumentEntry> scope, string keyword, bool searchContent)
+    {
+        var f = Builders<DocumentEntry>.Filter;
+        var regex = new BsonRegularExpression(Regex.Escape(keyword.Trim()), "i");
+        var matches = new List<FilterDefinition<DocumentEntry>>
+        {
+            f.Regex(e => e.Title, regex), f.Regex(e => e.Summary, regex),
+        };
+        if (searchContent)
+        {
+            matches.Add(f.Regex(e => e.ContentIndex, regex));
+            // 已由标题、摘要或短索引命中的记录无需重复查正文。
+            var references = await _db.DocumentEntries.Find(scope & f.Not(f.Or(matches)))
+                .Project(e => new { e.DocumentId, e.AttachmentId }).ToListAsync();
+            var documentIds = references.Select(e => e.DocumentId).Where(id => !string.IsNullOrEmpty(id)).Distinct().ToList();
+            var attachmentIds = references.Select(e => e.AttachmentId).Where(id => !string.IsNullOrEmpty(id)).Distinct().ToList();
+            if (documentIds.Count > 0)
+            {
+                var df = Builders<ParsedPrd>.Filter;
+                var hits = await _db.Documents.Find(df.In(d => d.Id, documentIds) & df.Regex(d => d.RawContent, regex))
+                    .Project(d => d.Id).ToListAsync();
+                matches.Add(f.In(e => e.DocumentId, hits));
+            }
+            if (attachmentIds.Count > 0)
+            {
+                var af = Builders<Attachment>.Filter;
+                var hits = await _db.Attachments.Find(af.In(a => a.AttachmentId, attachmentIds) & af.Regex(a => a.ExtractedText, regex))
+                    .Project(a => a.AttachmentId).ToListAsync();
+                matches.Add(f.In(e => e.AttachmentId, hits));
+            }
+        }
+        return f.Or(matches);
+    }
+
+    /// <summary>轻量目录游标。每页重新检查权限；固定创建时间上界，避免新增挤动分页。</summary>
+    [HttpGet("stores/{storeId}/navigation")]
+    public async Task<IActionResult> ListNavigation(
+        string storeId, [FromQuery] string? afterId = null, [FromQuery] DateTime? before = null,
+        [FromQuery] int pageSize = 500, [FromQuery] string? keyword = null,
+        [FromQuery] bool searchContent = false)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        if (store == null || !await CanReadStoreAsync(store, userId, await _teams.GetMyTeamIdsAsync(userId)))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        pageSize = Math.Clamp(pageSize, 1, 500);
+        var snapshot = before?.ToUniversalTime() ?? DateTime.UtcNow;
+        if (before == null)
+        {
+            // 跨实例同步可保留来源时间。时钟偏差产生的未来时间也不能使既有条目永久不可见。
+            var latestCreatedAt = await _db.DocumentEntries.Find(e => e.StoreId == storeId)
+                .SortByDescending(e => e.CreatedAt).Project(e => e.CreatedAt).FirstOrDefaultAsync();
+            if (latestCreatedAt > snapshot) snapshot = latestCreatedAt;
+        }
+        var f = Builders<DocumentEntry>.Filter;
+        var filter = f.Eq(e => e.StoreId, storeId) & f.Lte(e => e.CreatedAt, snapshot);
+        if (!string.IsNullOrEmpty(afterId)) filter &= f.Gt(e => e.Id, afterId);
+        if (!string.IsNullOrWhiteSpace(keyword))
+            filter &= await BuildEntrySearchFilterAsync(filter, keyword, searchContent);
+        var items = await _db.DocumentEntries.Find(filter).SortBy(e => e.Id).Limit(pageSize + 1)
+            .Project<DocumentEntry>(Builders<DocumentEntry>.Projection.Exclude(e => e.ContentIndex))
+            .ToListAsync();
+        var hasMore = items.Count > pageSize;
+        if (hasMore) items.RemoveAt(items.Count - 1);
+        var ids = items.Where(e => !e.IsFolder).Select(e => e.Id).ToList();
+        var now = DateTime.UtcNow;
+        var links = await _db.DocumentStoreShareLinks.Find(l => l.StoreId == storeId && !l.IsRevoked && ids.Contains(l.EntryId!))
+            .Project(l => new { l.EntryId, l.ExpiresAt }).ToListAsync();
+        var sharedEntryIds = links.Where(l => l.ExpiresAt == null || l.ExpiresAt > now).Select(l => l.EntryId).Distinct().ToList();
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items, before = snapshot, nextCursor = hasMore ? items[^1].Id : null, sharedEntryIds,
+        }));
     }
 
     /// <summary>

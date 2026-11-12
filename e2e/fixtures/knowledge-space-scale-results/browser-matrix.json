@@ -1,0 +1,233 @@
+{
+  "results": [
+    {
+      "mode": "dark",
+      "width": 1440,
+      "n": 200,
+      "browse": {
+        "reachable": 204,
+        "rootPages": 1
+      },
+      "search": {
+        "reachable": 200,
+        "pages": 1
+      },
+      "tailOpened": true,
+      "tailVisible": true,
+      "overflow": {
+        "width": 1440,
+        "body": 1440
+      }
+    },
+    {
+      "mode": "dark",
+      "width": 1440,
+      "n": 1000,
+      "browse": {
+        "reachable": 1004,
+        "rootPages": 3
+      },
+      "search": {
+        "reachable": 1000,
+        "pages": 5
+      },
+      "tailOpened": true,
+      "tailVisible": true,
+      "overflow": {
+        "width": 1440,
+        "body": 1440
+      }
+    },
+    {
+      "mode": "dark",
+      "width": 1440,
+      "n": 5000,
+      "browse": {
+        "reachable": 5004,
+        "rootPages": 13
+      },
+      "search": {
+        "reachable": 5000,
+        "pages": 25
+      },
+      "tailOpened": true,
+      "tailVisible": true,
+      "overflow": {
+        "width": 1440,
+        "body": 1440
+      }
+    },
+    {
+      "mode": "dark",
+      "width": 375,
+      "n": 200,
+      "browse": {
+        "reachable": 204,
+        "rootPages": 1
+      },
+      "search": {
+        "reachable": 200,
+        "pages": 1
+      },
+      "tailOpened": true,
+      "tailVisible": true,
+      "overflow": {
+        "width": 375,
+        "body": 375
+      }
+    },
+    {
+      "mode": "dark",
+      "width": 375,
+      "n": 1000,
+      "browse": {
+        "reachable": 1004,
+        "rootPages": 3
+      },
+      "search": {
+        "reachable": 1000,
+        "pages": 5
+      },
+      "tailOpened": true,
+      "tailVisible": true,
+      "overflow": {
+        "width": 375,
+        "body": 375
+      }
+    },
+    {
+      "mode": "dark",
+      "width": 375,
+      "n": 5000,
+      "browse": {
+        "reachable": 5004,
+        "rootPages": 13
+      },
+      "search": {
+        "reachable": 5000,
+        "pages": 25
+      },
+      "tailOpened": true,
+      "tailVisible": true,
+      "overflow": {
+        "width": 375,
+        "body": 375
+      }
+    },
+    {
+      "mode": "light",
+      "width": 1440,
+      "n": 200,
+      "browse": {
+        "reachable": 204,
+        "rootPages": 1
+      },
+      "search": {
+        "reachable": 200,
+        "pages": 1
+      },
+      "tailOpened": true,
+      "tailVisible": true,
+      "overflow": {
+        "width": 1440,
+        "body": 1440
+      }
+    },
+    {
+      "mode": "light",
+      "width": 1440,
+      "n": 1000,
+      "browse": {
+        "reachable": 1004,
+        "rootPages": 3
+      },
+      "search": {
+        "reachable": 1000,
+        "pages": 5
+      },
+      "tailOpened": true,
+      "tailVisible": true,
+      "overflow": {
+        "width": 1440,
+        "body": 1440
+      }
+    },
+    {
+      "mode": "light",
+      "width": 1440,
+      "n": 5000,
+      "browse": {
+        "reachable": 5004,
+        "rootPages": 13
+      },
+      "search": {
+        "reachable": 5000,
+        "pages": 25
+      },
+      "tailOpened": true,
+      "tailVisible": true,
+      "overflow": {
+        "width": 1440,
+        "body": 1440
+      }
+    },
+    {
+      "mode": "light",
+      "width": 375,
+      "n": 200,
+      "browse": {
+        "reachable": 204,
+        "rootPages": 1
+      },
+      "search": {
+        "reachable": 200,
+        "pages": 1
+      },
+      "tailOpened": true,
+      "tailVisible": true,
+      "overflow": {
+        "width": 375,
+        "body": 375
+      }
+    },
+    {
+      "mode": "light",
+      "width": 375,
+      "n": 1000,
+      "browse": {
+        "reachable": 1004,
+        "rootPages": 3
+      },
+      "search": {
+        "reachable": 1000,
+        "pages": 5
+      },
+      "tailOpened": true,
+      "tailVisible": true,
+      "overflow": {
+        "width": 375,
+        "body": 375
+      }
+    },
+    {
+      "mode": "light",
+      "width": 375,
+      "n": 5000,
+      "browse": {
+        "reachable": 5004,
+        "rootPages": 13
+      },
+      "search": {
+        "reachable": 5000,
+        "pages": 25
+      },
+      "tailOpened": true,
+      "tailVisible": true,
+      "overflow": {
+        "width": 375,
+        "body": 375
+      }
+    }
+  ],
+  "errors": []
+}

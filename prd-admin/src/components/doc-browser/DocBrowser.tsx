@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { buildDocBrowserTree } from './docBrowserTree';
+import { EntryWindow } from './EntryWindow';
 import { TranscribeStatusCard, type TranscribeStatusRun } from './TranscribeStatusCard';
 import { requestRecordingPlay } from './recordingPlayBridge';
 import type { FailedTranscriptionNotice } from '@/pages/document-store/recordingVault';
@@ -1172,6 +1174,7 @@ function TreeNode({
   selectedIds,
   onToggleSelect,
   selectionActive,
+  focusIds,
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
@@ -1211,8 +1214,9 @@ function TreeNode({
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
   selectionActive?: boolean;
+  focusIds: Set<string>;
 }) {
-  const isFolder = entry.isFolder;
+  const isFolder = entry.isFolder || entry.sourceType === 'github_directory';
   const isOpen = expandedFolders.has(entry.id);
   const isSelected = entry.id === selectedEntryId;
   const isReturnContext = !isSelected && entry.id === returnEntryId;
@@ -1257,7 +1261,7 @@ function TreeNode({
           // 双击文件名重命名（文件夹双击仍是展开/收起，不抢交互）
           if (!isFolder && onRequestRename) onRequestRename(entry);
         }}
-        draggable={!isFolder || !!onReorderDrop}
+        draggable={entry.sourceType !== 'github_directory' && (!isFolder || !!onReorderDrop)}
         onDragStart={(e) => {
           if (isFolder && !onReorderDrop) return;
           e.dataTransfer.setData('text/plain', entry.id);
@@ -1268,6 +1272,7 @@ function TreeNode({
         onDragOver={(e) => {
           const folderDrag = e.dataTransfer.types.includes('application/x-kb-folder');
           if (isFolder) {
+            if (!entry.isFolder) return; // 旧订阅目录只恢复浏览，不冒充可移动目标
             if (folderDrag) {
               // 文件夹拖到文件夹上：上/下半区 = 章节换位（拖拽不做嵌套，嵌套心智留给「拖文档进文件夹」）
               if (!onReorderDrop) return;
@@ -1294,6 +1299,7 @@ function TreeNode({
           const draggedId = e.dataTransfer.getData('text/plain');
           const folderDrag = e.dataTransfer.types.includes('application/x-kb-folder');
           if (isFolder) {
+            if (!entry.isFolder) return;
             e.preventDefault();
             if (folderDrag) {
               const position = reorderHint ?? 'after';
@@ -1555,10 +1561,11 @@ function TreeNode({
       </button>
 
       {/* 子节点 */}
-      {isFolder && isOpen && children.map(child => (
+      {isFolder && isOpen && <EntryWindow items={children} entryId={child => child.id} focusIds={focusIds} scope={entry.title}>{child => (
         <TreeNode
           key={child.id}
           entry={child}
+          focusIds={focusIds}
           childrenMap={childrenMap}
           depth={depth + 1}
           selectedEntryId={selectedEntryId}
@@ -1593,7 +1600,7 @@ function TreeNode({
           onToggleSelect={onToggleSelect}
           selectionActive={selectionActive}
         />
-      ))}
+      )}</EntryWindow>}
     </>
   );
 }
@@ -1678,6 +1685,7 @@ export function DocBrowser({
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
+  const [searchFailed, setSearchFailed] = useState(false);
   const [searching, setSearching] = useState(false);
   const [preview, setPreview] = useState<EntryPreview | null>(null);
   // 音频条目的转录笔记 markdown（歌词滚轮跟读数据源；无笔记为 null）
@@ -1910,12 +1918,18 @@ export function DocBrowser({
   // 父链映射（entryId → parentId），用于展开选中条目的所有祖先文件夹。
   // 合并 searchResults：搜索命中 / 深链 ?entry 的条目可能不在已加载的 entries 里，
   // 否则祖先链断、文件夹不展开、滚不到位。
+  const navigationTree = useMemo(() => buildDocBrowserTree(entries), [entries]);
   const parentMap = useMemo(() => {
-    const m = new Map<string, string | undefined>();
-    for (const e of entries) m.set(e.id, e.parentId);
+    const m = new Map<string, string | undefined>(navigationTree.parents);
     for (const e of (searchResults ?? [])) if (!m.has(e.id)) m.set(e.id, e.parentId);
     return m;
-  }, [entries, searchResults]);
+  }, [navigationTree, searchResults]);
+  const focusIds = useMemo(() => {
+    const ids = new Set<string>();
+    let id = selectedEntryId ?? lastVisitedEntryId;
+    while (id && !ids.has(id)) { ids.add(id); id = parentMap.get(id); }
+    return ids;
+  }, [selectedEntryId, lastVisitedEntryId, parentMap]);
 
   // 选中条目自动展开祖先；退回列表后继续滚到刚才阅读的来源行，保留空间记忆。
   useEffect(() => {
@@ -2591,18 +2605,8 @@ export function DocBrowser({
   // 构建树结构
   const { rootEntries, childrenMap, fileCount } = useMemo(() => {
     // 移除对 'github_directory' 的硬编码过滤，使订阅文件夹与文件可以在树结构中正常显示。
-    const cMap = new Map<string, DocBrowserEntry[]>();
-    const roots: DocBrowserEntry[] = [];
-
-    for (const e of entries) {
-      if (!e.parentId) {
-        roots.push(e);
-      } else {
-        const siblings = cMap.get(e.parentId) ?? [];
-        siblings.push(e);
-        cMap.set(e.parentId, siblings);
-      }
-    }
+    const cMap = new Map([...navigationTree.childrenMap].map(([id, children]) => [id, [...children]]));
+    const roots = [...navigationTree.roots];
 
     // 排序 SSOT：默认模式消费服务端 SortOrder，未设置时按自然标题兜底。
     const sortFn = (a: DocBrowserEntry, b: DocBrowserEntry) => compareDocBrowserEntries(a, b, {
@@ -2613,10 +2617,10 @@ export function DocBrowser({
     roots.sort(sortFn);
     for (const [, children] of cMap) children.sort(sortFn);
 
-    const fCount = entries.filter(e => !e.isFolder).length;
+    const fCount = entries.filter(e => !e.isFolder && e.sourceType !== 'github_directory').length;
 
     return { rootEntries: roots, childrenMap: cMap, fileCount: fCount };
-  }, [entries, primaryEntryId, pinnedSet, sortMode]);
+  }, [entries, navigationTree, primaryEntryId, pinnedSet, sortMode]);
 
   // 拖拽自定义排序：仅书籍顺序（消费 SortOrder 的模式）+ 非后端搜索态启用。
   // 时间排序下位置由时间决定，拖了也会弹回，不如不给放置目标（预期管理）。
@@ -2704,7 +2708,9 @@ export function DocBrowser({
       if (searchHit && tagHit && !e.isFolder) {
         matchIds.add(e.id);
         let cur = e;
-        while (cur.parentId) {
+        const visited = new Set<string>();
+        while (cur.parentId && !visited.has(cur.parentId)) {
+          visited.add(cur.parentId);
           matchIds.add(cur.parentId);
           const parent = entryMap.get(cur.parentId);
           if (!parent) break;
@@ -2789,10 +2795,11 @@ export function DocBrowser({
     return ids;
   }, [search, searchResults, filteredRoots, filteredChildrenMap, contentFirstLines]);
 
-  // 搜索处理（防抖 + 永远同时搜标题+内容，走后端；onSearch 内部会先 rebuildContentIndex）
+  // 搜索是只读路径；完整消费后端游标，旧响应由序号守卫丢弃。
   const handleSearchChange = useCallback((value: string) => {
     setSearch(value);
     setSearchResults(null);
+    setSearchFailed(false);
 
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
@@ -2808,9 +2815,11 @@ export function DocBrowser({
           // 仅当这仍是最新一次搜索才采纳，否则丢弃陈旧响应
           if (reqId !== searchSeqRef.current) return;
           setSearchResults(results);
+          setSearchFailed(results === null);
         } catch {
           if (reqId !== searchSeqRef.current) return;
           setSearchResults(null);
+          setSearchFailed(true);
         } finally {
           // 仅最新请求负责收起 spinner：陈旧响应不动它（更新的在途请求会收），
           // 但 onSearch 抛错时最新请求也必须解除 loading，避免 spinner 永久卡住。
@@ -2836,7 +2845,7 @@ export function DocBrowser({
   // 搜索时自动展开所有文件夹（后端结果为扁平列表时无需展开，但展开无副作用）
   useEffect(() => {
     if (search.trim()) {
-      const allFolderIds = entries.filter(e => e.isFolder).map(e => e.id);
+      const allFolderIds = entries.filter(e => e.isFolder || e.sourceType === 'github_directory').map(e => e.id);
       setExpandedFolders(new Set(allFolderIds));
     }
   }, [search, entries]);
@@ -2960,7 +2969,7 @@ export function DocBrowser({
       const entryMap = new Map(entries.map(e => [e.id, e]));
       const toExpand = new Set<string>();
       let cur = entryMap.get(entryId);
-      while (cur?.parentId) {
+      while (cur?.parentId && !toExpand.has(cur.parentId)) {
         toExpand.add(cur.parentId);
         cur = entryMap.get(cur.parentId);
       }
@@ -2977,7 +2986,7 @@ export function DocBrowser({
     // 书籍型知识库「第一章」在排序最前的文件夹里，不能被根级散文档抢先（Codex P2）
     const findFirstDoc = (list: DocBrowserEntry[]): DocBrowserEntry | undefined => {
       for (const e of list) {
-        if (!e.isFolder) return e;
+        if (!e.isFolder && e.sourceType !== 'github_directory') return e;
         const hit = findFirstDoc(childrenMap.get(e.id) ?? []);
         if (hit) return hit;
       }
@@ -3359,6 +3368,7 @@ export function DocBrowser({
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
               <input
                 value={search} onChange={e => handleSearchChange(e.target.value)}
+                aria-label="搜索标题或内容" aria-busy={searching}
                 placeholder="搜索标题或内容…"
                 className="h-8 w-full rounded-[9px] pl-8 pr-3 text-[11.5px] outline-none transition-colors"
                 style={{
@@ -3518,6 +3528,9 @@ export function DocBrowser({
           className="flex-1 py-1"
           style={{ minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}
         >
+          {searchFailed && <div role="alert" className="px-3 py-2 text-[11px] text-token-muted">
+            搜索未完成，请重新输入关键词重试。当前仅显示本地匹配。
+          </div>}
           {filteredRoots.length === 0 ? (
             <div className="px-3 py-10 flex flex-col items-center gap-3 text-center">
               {search ? (
@@ -3573,7 +3586,9 @@ export function DocBrowser({
                 </>
               )}
             </div>
-          ) : displayItems.map((item, idx) => (
+          ) : <EntryWindow key={`${search}:${sortMode}`} items={displayItems}
+            entryId={item => item.kind === 'header' ? undefined : item.entry.id}
+            focusIds={focusIds} scope="目录">{(item, idx) => (
             item.kind === 'header' ? (
               <div
                 key={`grp-${item.bucketKey}-${idx}`}
@@ -3593,8 +3608,8 @@ export function DocBrowser({
               /* layout="position"：拖拽换位 / 置顶 / 切排序时 FLIP 位移动画，行滑到新位置
                  而非瞬移（与列表页卡片同一套「看得见去哪了」反馈）。layout 动画单独给
                  无延迟的 spring——不能吃入场 stagger 的 delay，否则重排像多米诺 */
-              layout="position"
-              initial={{ opacity: 0, y: 6 }}
+              layout={entries.length > 200 ? false : 'position'}
+              initial={entries.length > 200 ? false : { opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{
                 duration: 0.28,
@@ -3605,6 +3620,7 @@ export function DocBrowser({
             >
             <TreeNode
               entry={item.entry}
+              focusIds={focusIds}
               childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() || selectedTags.size > 0 ? filteredChildrenMap : childrenMap)}
               depth={0}
               selectedEntryId={selectedEntryId}
@@ -3643,7 +3659,7 @@ export function DocBrowser({
             />
             </motion.div>
             )
-          ))}
+          )}</EntryWindow>}
         </div>
         {/* 根级放置区域 - 允许拖到根级别 */}
         {onMoveEntry && (

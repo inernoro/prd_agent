@@ -1,4 +1,5 @@
 import { apiRequest } from '@/services/real/apiClient';
+import { loadDocumentNavigation } from './documentNavigation';
 import { api } from '@/services/api';
 import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 import type {
@@ -147,10 +148,11 @@ export async function listKnowledgeEntriesPaged(storeId: string, q: KnowledgeEnt
 }
 
 /** 搜索文档条目（支持内容搜索） */
-export async function searchDocumentEntries(storeId: string, keyword: string, searchContent: boolean) {
-  let url = `${api.documentStore.entries.list(storeId)}?page=1&pageSize=200&all=true&keyword=${encodeURIComponent(keyword)}`;
-  if (searchContent) url += '&searchContent=true';
-  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(url, { method: 'GET' });
+export async function searchDocumentEntries(storeId: string, keyword: string, searchContent: boolean, signal?: AbortSignal) {
+  const result = await loadDocumentNavigation(storeId, { keyword, searchContent, signal });
+  return result.success
+    ? { ...result, data: { ...result.data, total: result.data.items.length } }
+    : result;
 }
 
 export const updateDocumentEntryReal: UpdateDocumentEntryContract = async (entryId, input) => {

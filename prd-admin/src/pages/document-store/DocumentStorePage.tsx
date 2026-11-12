@@ -71,6 +71,7 @@ import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { GitHubSyncWizard } from './GitHubSyncWizard';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
+import { loadDocumentNavigation } from '@/services/real/documentNavigation';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { ConnectAiDialog } from './ConnectAiDialog';
 import { describeShareScope, isLiveShareLink, pickScopeShareLinks, resolveInitialShareScope, shareLinkUrl, upsertShareLink, type ShareScope } from './shareScope';
@@ -134,7 +135,6 @@ import {
   getEntryVersion,
   restoreEntryVersion,
   setFolderPrimaryChild,
-  rebuildContentIndex,
   addDocumentEntry,
   updateDocumentEntry,
   updateDocumentStore,
@@ -1064,6 +1064,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const currentUserId = useAuthStore(state => state.user?.userId ?? null);
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
+  const documentEntryCount = useMemo(
+    () => entries.filter(e => !e.isFolder && e.sourceType !== 'github_directory').length,
+    [entries],
+  );
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
   /** 已被「单篇分享」的文档 id 集合（文件树标黄用） */
@@ -1079,8 +1083,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   })), [entries]);
   // 当前正在阅读的那一篇（目录不算）。分享与下载都以它作为「当前文章」范围的锚点，
   // 免得用户读着一篇却只能对整库操作。
-  // entries 只是首页 200 条：大库里「后端搜索命中」的条目不在其中，只能靠 DocBrowser 回传的
-  // 解析结果兜底，否则读着搜索结果点分享会静默回落到整库范围（Codex P1）。
+  // 搜索期间条目可能刚刚新增，保留 DocBrowser 回传的解析结果作为当前文章兜底。
   const [browserSelectedEntry, setBrowserSelectedEntry] = useState<{ id: string; title: string; isFolder?: boolean } | undefined>();
   const selectedDocEntry = useMemo(() => {
     const local = entries.find(e => e.id === selectedEntryId && !e.isFolder);
@@ -1446,15 +1449,28 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     if (res.success) setStore(res.data);
   }, [storeId]);
 
+  const entriesLoadRef = useRef<AbortController | null>(null);
+  const searchLoadRef = useRef<AbortController | null>(null);
+  const [entriesError, setEntriesError] = useState<string | null>(null);
   const loadEntries = useCallback(async () => {
+    entriesLoadRef.current?.abort();
+    const controller = new AbortController();
+    entriesLoadRef.current = controller;
     setLoading(true);
-    const res = await listDocumentEntries(storeId, 1, 200);
+    setEntriesError(null);
+    const res = await loadDocumentNavigation(storeId, { signal: controller.signal });
+    if (controller.signal.aborted) return;
     if (res.success) {
       setEntries(res.data.items);
       setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
+    } else {
+      setEntries([]);
+      setSharedEntryIds(new Set());
+      setEntriesError(res.error.message);
     }
     setLoading(false);
   }, [storeId]);
+  useEffect(() => () => { entriesLoadRef.current?.abort(); searchLoadRef.current?.abort(); }, [storeId]);
 
   const pendingRecordingArchiveSignature = useMemo(
     () => entries
@@ -1499,7 +1515,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       if (checking) return;
       checking = true;
       try {
-        const res = await listDocumentEntries(storeId, 1, 200);
+        const res = await loadDocumentNavigation(storeId);
         if (cancelled || !res.success) return;
         let nextEntries = res.data.items;
         const selectedPending = nextEntries.find(entry => (
@@ -2132,11 +2148,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   }, [initialAction, store, loading, handleCreateDocument, handleOpenVideoParser, onInitialActionConsumed]);
 
   const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
-    // 启用内容搜索时，先触发一次 ContentIndex 回填（后端对已有 ContentIndex 的条目会跳过）
-    if (contentSearch) {
-      await rebuildContentIndex(storeId);
-    }
-    const res = await searchDocumentEntries(storeId, keyword, contentSearch);
+    searchLoadRef.current?.abort();
+    const controller = new AbortController();
+    searchLoadRef.current = controller;
+    const res = await searchDocumentEntries(storeId, keyword, contentSearch, controller.signal);
     if (res.success) return res.data.items;
     return null;
   }, [storeId]);
@@ -2205,7 +2220,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         return;
       }
 
-      // ── 整库：分页拉全量条目（loadEntries 只取首页 200，大库会漏；这里按 total 翻页拉齐）──
+      // 整库下载按既有导出契约单独取得权威条目，不复用浏览中的展示状态。
       toast.info('正在准备下载…', '正在汇总知识库全部文档');
       const PAGE = 200;
       const allEntries: DocumentEntry[] = [];
@@ -2345,7 +2360,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             {!isMobile && <Library size={14} className="text-token-muted" />}
             <span className="text-[13px] font-semibold text-token-primary">{store.name}</span>
             <span className="text-[11px] text-token-muted tabular-nums">
-              <CountUp to={entries.filter(e => e.sourceType !== 'github_directory').length} from={0} duration={0.8} /> 个文档
+              <CountUp to={documentEntryCount} from={0} duration={0.8} /> 个文档
             </span>
             {/* refreshKey 含各 entry 的 updatedAt：编辑/恢复/替换会 bump updatedAt 但条目数不变，
                 只用 length 会让大小数字停留在旧值；带上 updatedAt 串内容变化即刷新（Codex P2）。 */}
@@ -2624,7 +2639,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-faint)' }}
                 title={store.name}
               >
-                {store.name} · {entries.filter(e => e.sourceType !== 'github_directory').length} 个文档
+                {store.name} · {documentEntryCount} 个文档
               </div>
               <button
                 type="button"
@@ -2811,7 +2826,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           sharedEntryIds={sharedEntryIds}
           loading={loading}
           emptyState={
-            <div className="flex-1 flex items-center justify-center">
+            entriesError ? <div role="alert" className="flex-1 flex flex-col items-center justify-center gap-3 text-token-muted">
+              <p>目录加载未完成：{entriesError}</p>
+              <Button onClick={() => { void loadEntries(); }}>重新加载</Button>
+            </div> : <div className="flex-1 flex items-center justify-center">
               <DocEmptyState
                 onCreateDocument={handleCreateDocument}
                 onUploadFile={() => fileInputRef.current?.click()}
