@@ -19,9 +19,9 @@ const annotations = (): HostedAnnotations => ({ ready: true, enabled: false, con
   preview: null, dismissPreview: vi.fn(), openThread: vi.fn(),
   draftAnchor: null, activeId: null, missingIds: [], threads: [], select, clearDraft: vi.fn(), focus: vi.fn(),
   notifyFrame: vi.fn(), setThreads: vi.fn(), setEnabled: vi.fn(), setActiveId: vi.fn() });
-async function mount(options: { ready?: boolean; review?: HostedReview } = {}) {
+async function mount(options: { ready?: boolean; review?: HostedReview; threadKind?: 'annotation' | 'discussion' } = {}) {
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
-  await act(async () => root.render(<CommentsSection mode="share" token="share" onLogin={login}
+  await act(async () => root.render(<CommentsSection mode="share" token="share" onLogin={login} threadKind={options.threadKind}
     annotations={{ ...annotations(), ready: options.ready ?? true }} review={options.review} />));
 }
 function button(text: string) {
@@ -173,4 +173,16 @@ describe('annotation entry availability', () => {
     expect(add).toHaveBeenCalledWith('share', 'current', undefined, expect.objectContaining({ revisionId: undefined, expectedContentVersion: '20000' }));
   });
 
+});
+
+
+describe('collection annotation and discussion tabs', () => {
+  it.each(['annotation', 'discussion'] as const)('only renders %s roots while retaining annotation markers', async kind => {
+    const annotation = { id: 'note', siteId: 'site', authorName: '作者', content: '正文定位批注', anchor: { kind: 'element', selector: 'p', quote: '正文' }, createdAt: new Date().toISOString(), isResolved: false };
+    const discussion = { ...annotation, id: 'discussion', content: '整篇讨论意见', anchor: null };
+    list.mockResolvedValue({ success: true, data: { comments: [annotation, discussion], commentsEnabled: true, canComment: false } });
+    await mount({ threadKind: kind });
+    expect(container.textContent).toContain(kind === 'annotation' ? '正文定位批注' : '整篇讨论意见');
+    expect(container.textContent).not.toContain(kind === 'annotation' ? '整篇讨论意见' : '正文定位批注');
+  });
 });

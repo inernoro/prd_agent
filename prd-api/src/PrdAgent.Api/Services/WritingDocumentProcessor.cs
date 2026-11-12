@@ -41,7 +41,7 @@ public class WritingDocumentProcessor(
         var template = WritingTemplateRegistry.Find(state.TemplateId) ?? throw new InvalidOperationException("模版不存在");
         var sourceText = new StringBuilder();
         var loaded = 0;
-        foreach (var source in state.Sources)
+        foreach (var source in state.Sources.Where(s => s.Status != "skipped"))
         {
             await Progress($"读取资料 · 已读取 {loaded} / {state.Sources.Count} 份 · {source.Title}", 5);
             var original = await db.DocumentEntries.Find(e => e.Id == source.EntryId && e.StoreId == entry.StoreId && !e.IsFolder).FirstOrDefaultAsync()
@@ -70,6 +70,7 @@ public class WritingDocumentProcessor(
             "每个src段落必须提供quotes对象，键为来源编号，值为可在原文中逐字定位的完整引用片段。src只用于对应来源确实支持的陈述；手动输入视为作者补充auth。没有证据的问题标ask；互相矛盾的资料标conf，不能按日期默选。" +
             "ask/conf段落必须有对应questions；所有段落编号唯一。问题只问真正缺少的内容，不重复提问。" +
             "角色可包含orderedSectionIds数组，按角色真实需要排列已存在的小节id；摘要和角色行动不得省略改变行动的限制；不清楚时保留空值，不用模板提示代替正文。" +
+            "小节可提供condition与detail（label、rows二维字符串表格），只在资料明确给出适用条件或字段表时填写。问题可提供choices（key、label、text）和evidence（sourceId、quote、location），quote必须逐字存在于对应原文。" +
             "模版为：" + JsonSerializer.Serialize(template, WritingDocumentPolicy.JsonOptions) +
             "。以这些小标题组织，不复制写作提示。返回结构：" + shape;
         var user = $"作者标题：{state.Title}\n作者必达要点：{string.Join("；", state.IntentPoints)}\n作者手动输入：\n{state.ManualInput}\n\n关联资料：\n{sourceText}";

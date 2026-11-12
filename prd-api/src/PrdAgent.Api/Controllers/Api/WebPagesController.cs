@@ -716,6 +716,13 @@ public partial class WebPagesController : ControllerBase
             req.SourceType ?? "api", req.SourceRef,
             req.Tags, req.Folder);
 
+        var documentInfo = CollectionDocumentText(req.HtmlContent);
+        site.DocumentHeadings = documentInfo.Headings; site.DocumentTextExcerpt = documentInfo.Excerpt;
+        site.WritingTemplateId = WritingTemplateRegistry.Find(req.WritingTemplateId ?? "")?.Id;
+        await _db.HostedSites.UpdateOneAsync(s => s.Id == site.Id && s.OwnerUserId == GetUserId(),
+            Builders<HostedSite>.Update.Set(s => s.DocumentHeadings, site.DocumentHeadings)
+                .Set(s => s.DocumentTextExcerpt, site.DocumentTextExcerpt).Set(s => s.WritingTemplateId, site.WritingTemplateId));
+
         return Ok(ApiResponse<object>.Ok(site));
     }
 
@@ -1649,7 +1656,9 @@ public partial class WebPagesController : ControllerBase
 
     /// <summary>创建分享链接</summary>
     [HttpPost("share")]
-    public async Task<IActionResult> CreateShare([FromBody] CreateWebPageShareRequest req)
+    public async Task<IActionResult> CreateShare([FromBody] CreateWebPageShareRequest req) => await CreateShareCore(req);
+
+    private async Task<IActionResult> CreateShareCore(CreateWebPageShareRequest req, HostedCollectionSnapshot? snapshot = null)
     {
         try
         {
@@ -1677,7 +1686,9 @@ public partial class WebPagesController : ControllerBase
                 if (refusal != null) return refusal;
             }
 
-            var share = await _siteService.CreateShareAsync(
+            var share = snapshot != null ? await _siteService.CreateCollectionShareAsync(
+                GetUserId(), await ResolveDisplayNameAsync(GetUserId()), snapshot, req.Title, req.Description,
+                req.Password, req.ExpiresInDays, visibility) : await _siteService.CreateShareAsync(
                 GetUserId(), await ResolveDisplayNameAsync(GetUserId()),
                 req.SiteId, req.SiteIds, req.ShareType ?? "single",
                 req.Title, req.Description,
@@ -2117,6 +2128,7 @@ public partial class WebPagesController : ControllerBase
 
 public class CreateFromContentRequest
 {
+    public string? WritingTemplateId { get; set; }
     public string HtmlContent { get; set; } = string.Empty;
     public string? Title { get; set; }
     public string? Description { get; set; }

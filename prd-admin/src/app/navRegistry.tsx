@@ -33,6 +33,10 @@ const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => (
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 const WritingWorkspacePage = lazy(() => import('@/pages/document-store/writing/WritingWorkspacePage'));
 const WritingCollectionPage = lazy(() => import('@/pages/document-store/writing/WritingCollectionPage'));
+const HostedTemplatePage = lazy(() => import('@/pages/hosted-collections/HostedTemplatePage'));
+const HostedCollectionsPage = lazy(() => import('@/pages/hosted-collections/HostedCollectionsPage'));
+const HostedCollectionPage = lazy(() => import('@/pages/hosted-collections/HostedCollectionPage'));
+const HostedCollectionSharePage = lazy(() => import('@/pages/hosted-collections/HostedCollectionSharePage'));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
 const RecordingResultPage = lazy(() => import('@/pages/document-store/RecordingResultPage').then(m => ({ default: m.RecordingResultPage })));
 const RecordingProcessingPage = lazy(() => import('@/pages/document-store/RecordingProcessingPage').then(m => ({ default: m.RecordingProcessingPage })));
@@ -1033,6 +1037,14 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       tags: ['工作流', '自动化', '编排'],
     },
   },
+  { path: '/web-pages/new-document', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedTemplatePage />) },
+  { path: '/web-pages/collections', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedCollectionsPage />) },
+  { path: '/web-pages/collections/:collectionId', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedCollectionPage />) },
+  { path: '/web-pages/collections/:collectionId/share', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedCollectionSharePage />) },
   {
     path: '/web-pages',
     permission: 'web-pages.read',

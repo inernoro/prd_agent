@@ -1,0 +1,94 @@
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { Copy, Plus } from 'lucide-react';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { runWithPrivateSourceGate } from '@/components/web-hosting/privateSourceConfirm';
+import { getSitesPrivateSources, revokeShare } from '@/services/real/webPages';
+import { createHostedCollectionShare, dissolveHostedCollection, findHostedCollectionMembers, getHostedCollection, getHostedCollectionPermissions, getHostedCollectionShares, restoreHostedCollection, stopHostedCollectionShares, syncHostedCollectionPermissions } from '@/services/real/hostedCollections';
+import type { HostedCollectionPermissions, HostedCollectionShare, HostedCollectionView } from '@/services/contracts/hostedCollections';
+import { CollectionShell, collectionDate } from './CollectionShell';
+import { HostedCollectionManage } from './HostedCollectionManage';
+
+const audienceLabels = ['组织内所有人', '指定成员', '获得链接的人'];
+const visibilityLabel = (value?: string, teamIds?: string[]) => value === 'public' ? '公开' : value === 'logged-in' ? '登录后可读' : teamIds?.length ? '团队内可读' : '仅自己';
+export default function HostedCollectionSharePage() {
+  const { collectionId = '' } = useParams();
+  const [data, setData] = useState<HostedCollectionView>();
+  const [links, setLinks] = useState<HostedCollectionShare[]>([]);
+  const [permissions, setPermissions] = useState<HostedCollectionPermissions>();
+  const [flow, setFlow] = useState(true);
+  const [step, setStep] = useState(1);
+  const [scope, setScope] = useState<'all' | 'primary' | 'selected'>('all');
+  const [selected, setSelected] = useState<string[]>([]);
+  const [audience, setAudience] = useState(0);
+  const [passwordOn, setPasswordOn] = useState(false);
+  const [password, setPassword] = useState('');
+  const [expires, setExpires] = useState(30);
+  const [excluded, setExcluded] = useState<string[]>([]);
+  const [syncIds, setSyncIds] = useState<string[]>([]);
+  const [memberQuery, setMemberQuery] = useState('');
+  const [directory, setDirectory] = useState<{id:string;name:string}[]>([]);
+  const [members, setMembers] = useState<{id:string;name:string}[]>([]);
+  const [syncResults, setSyncResults] = useState<{id:string;success:boolean;message:string}[]>([]);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState<string>();
+  const [matrix, setMatrix] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [dissolvedVersion, setDissolvedVersion] = useState<number>();
+  const [created, setCreated] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [manage, setManage] = useState(false);
+  const [reshare, setReshare] = useState<HostedCollectionShare>();
+  const inFlight = useRef(false);
+  const load = useCallback(async () => {
+    const [view, shares, rights] = await Promise.all([getHostedCollection(collectionId), getHostedCollectionShares(collectionId), getHostedCollectionPermissions(collectionId)]);
+    if (view.success) setData(view.data); else setError(view.error.message);
+    if (shares.success) setLinks(shares.data.items); else setError(shares.error.message);
+    if (rights.success) setPermissions(rights.data); else setError(rights.error.message);
+  }, [collectionId]);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { let current = true; const timer = setTimeout(() => { void findHostedCollectionMembers(memberQuery).then(r => { if (current && r.success) setDirectory(r.data.items); }); }, 250); return () => { current = false; clearTimeout(timer); }; }, [memberQuery]);
+  async function action(run: () => Promise<void>) { if (inFlight.current) return; inFlight.current = true; setBusy(true); setError(''); try { await run(); } catch (e) { setError(e instanceof Error ? e.message : '操作失败，请重试'); } finally { inFlight.current = false; setBusy(false); } }
+  async function copy(url: string) { try { await navigator.clipboard.writeText(new URL(url, location.origin).href); setCopied(true); } catch { setCopied(false); } }
+  async function stop(id?: string) { await action(async () => { const r = id ? await revokeShare(id, '作者停止合集分享') : await stopHostedCollectionShares(collectionId); if (!r.success) throw new Error(r.error.message); setConfirm(undefined); await load(); }); }
+  if (!data) return <CollectionShell mode="share" name="合集">{error ? <div className="hc-boundary" role="alert">{error}<button className="btn" onClick={() => void load()}>重试</button></div> : <MapSectionLoader text="正在核对分享权限…" />}</CollectionShell>;
+  const collection = data.collection;
+  const baseIds = scope === 'primary' ? [collection.mainSiteId] : scope === 'selected' ? selected : collection.siteIds;
+  const ids = baseIds.filter(id => !excluded.includes(id));
+  const diff = permissions?.items.filter(item => baseIds.includes(item.id)) ?? [];
+  const activeLinks = links.filter(link => !link.isRevoked && (!link.expiresAt || Date.parse(link.expiresAt) > Date.now()));
+  const currentSnapshot = (link: HostedCollectionShare) => link.snapshot.version === collection.version;
+  function start(link?: HostedCollectionShare) { setFlow(true); setStep(1); setCreated(''); setCopied(false); setReshare(link); setExcluded([]); setSyncIds([]); if (link) { setAudience(link.snapshot.accessUserIds?.length ? 1 : link.visibility === 'public' ? 2 : 0); setMembers([]); setScope('all'); setPasswordOn(false); setPassword(''); setExpires(link.expiresAt ? Math.max(1, Math.ceil((Date.parse(link.expiresAt) - Date.now()) / 86400000)) : 0); } }
+  async function next() {
+    if (step === 4) { setFlow(false); return; }
+    if (!ids.length) { setError('请至少选择1份文档'); return; }
+    if (step === 1 && audience === 1 && !members.length) { setError('请指定至少1位可访问的成员'); return; }
+    if (step === 1 && passwordOn && !password.trim()) { setError('请填写访问密码'); return; }
+    if (step === 1) { await action(async () => { const r = await getHostedCollectionPermissions(collectionId); if (!r.success) throw new Error(r.error.message); setPermissions(r.data); setStep(2); }); return; }
+    if (step === 2) { if (diff.some(item => ids.includes(item.id) && !item.canShare)) { setError('部分文档没有分享权限，请从本次分享中排除'); return; } setError(''); setStep(3); return; }
+    await action(async () => {
+      let fingerprint = permissions!.fingerprint;
+      if (syncIds.length) { const r = await syncHostedCollectionPermissions(collectionId, fingerprint, syncIds.filter(id => ids.includes(id))); if (!r.success) throw new Error(r.error.message); setSyncResults(r.data.results); fingerprint = r.data.fingerprint; const fresh = await getHostedCollectionPermissions(collectionId); if (fresh.success) setPermissions(fresh.data); setSyncIds([]); if (r.data.results.some(item => !item.success)) { setStep(2); throw new Error('部分文档权限同步未完成，请查看逐项结果并重新核对'); } }
+      const result = await runWithPrivateSourceGate({ actionLabel: '创建合集分享', inspect: () => getSitesPrivateSources(ids), run: confirmedPrivateSourceFingerprint => createHostedCollectionShare(collectionId, { version: collection.version, fingerprint, siteIds: ids, title: reshare?.title || collection.name, visibility: audience === 2 ? 'public' : 'logged-in', accessUserIds: audience === 1 ? members.map(m => m.id) : [], password: passwordOn ? password : undefined, expiresInDays: expires, confirmedPrivateSourceFingerprint }) });
+      if (result.status !== 'done') return;
+      if (!result.res.success) throw new Error(result.res.error.message);
+      setCreated(result.res.data.shareUrl); setStep(4); await copy(result.res.data.shareUrl); await load();
+    });
+  }
+  return <CollectionShell mode="share" name={collection.name} onManage={() => setManage(true)} backHref={`/web-pages/collections/${collectionId}`}>
+    {dissolvedVersion !== undefined ? <div className="hc-boundary"><span className="tag t-l">合集已解散</span><h1 className="serif">「{collection.name}」已解散</h1><p>合集页与目录已移除，分享链接已失效。{collection.siteIds.length} 份原文档、它们的权限、版本和批注都保持不变，你仍可在「网页托管」中找到它们。</p><div className="hc-tools"><button className="btn" disabled={busy} onClick={() => void action(async () => { const r = await restoreHostedCollection(collectionId, dissolvedVersion); if (!r.success) throw new Error(r.error.message); setData(r.data); setDissolvedVersion(undefined); setConfirm(undefined); await load(); })}>30 天内恢复合集</button><Link className="btn ghost" to="/web-pages">查看我的网页托管</Link></div>{error && <p role="alert">{error}</p>}</div> : <div className="hc-share-layout">
+      <div className="scroll hc-share-main"><div className="hc-share-title"><div><h1 className="serif">分享链接</h1><span>每条链接固定创建时的成员快照。当前合集共 {collection.siteIds.length} 份文档。</span></div><button className="btn pri" disabled={busy} onClick={() => start()}><Plus size={14} />新建分享</button></div>
+        {error && <div className="hc-error" role="alert">{error}</div>}{syncResults.length > 0 && <section className="panel hc-sync-results" aria-label="权限同步结果">{syncResults.map(result => <div key={result.id}><span>{data.items.find(item => item.id === result.id)?.title ?? '不可用文档'}</span><span className={`tag ${result.success ? 't-o' : 't-c'}`}>{result.message}</span></div>)}</section>}
+        <section className="panel hc-link-table"><div className="lrow mono hc-link-columns"><span>链接</span><span>访问对象</span><span>有效期</span><span>成员快照</span><span /></div>{!links.length && <p className="hc-empty-links">还没有分享链接。新建后可在这里查看和停止。</p>}{links.map(link => <Fragment key={link.id}><div className={`lrow ${link.isRevoked ? 'off' : ''}`}><span className="hc-stack"><span>{link.title}</span><span className="mono">{link.shareUrl} · {link.viewCount} 次访问</span></span><span className="hc-stack"><span>{link.snapshot.accessUserIds?.length ? `指定成员 · ${link.snapshot.accessUserIds.length} 人` : link.visibility === 'public' ? '获得链接的人' : '组织内所有人'}</span><span className="hc-secondary">{link.accessLevel === 'password' ? '密码 · 已设置' : '无密码'}</span></span><span>{link.expiresAt ? `${collectionDate(link.expiresAt)} 到期` : '永久'}</span><span className="hc-stack"><span className={`tag ${link.isRevoked ? 't-l' : currentSnapshot(link) ? 't-m' : 't-c'}`}>{link.isRevoked ? '已停止' : currentSnapshot(link) ? '当前成员' : `旧快照 · ${collectionDate(link.createdAt)}`}</span><span className="hc-secondary">{link.snapshot.siteIds.length} 份 · {currentSnapshot(link) ? '与合集一致' : '固定创建时的成员'}</span></span><span className="hc-link-actions">{!link.isRevoked && <>{!currentSnapshot(link) && <button className="btn sm" disabled={busy} onClick={() => start(link)}>按当前成员重新分享</button>}<button className="btn sm ghost" onClick={() => void copy(link.shareUrl)} aria-label={`复制${link.title}`}><Copy size={12} /></button><button className="btn sm ghost" onClick={() => setConfirm(link.id)}>停止</button></>}</span></div>{confirm === link.id && <div className="hc-inline-confirm"><span>停止后，持有这条链接的人将无法再打开。合集、其他链接和原文档都不受影响。</span><div className="hc-tools"><button className="btn sm ghost" disabled={busy} onClick={() => setConfirm(undefined)}>取消</button><button className="btn sm dgr" disabled={busy} onClick={() => void stop(link.id)}>停止此链接</button></div></div>}</Fragment>)}</section>
+        <section className="panel hc-danger"><div className="hc-between"><strong>停止与解散</strong><button className="btn sm ghost" aria-expanded={matrix} onClick={() => setMatrix(!matrix)}>这几个操作有什么区别</button></div>{matrix && <div className="mx" role="table" aria-label="操作影响范围">{[['操作','分享链接','本合集','原文档','其他合集'],['停止某条分享','该条失效','不变','不变','不变'],['停止全部分享','全部失效','保留，可再分享','不变','不变'],['移出文档','旧链接快照仍含它','目录少一份','不变','不变'],['解散合集','全部失效','移除（30 天可恢复）','不删除','不变']].flatMap((row,i) => row.map((text,j) => <div key={`${i}-${j}`}>{text}</div>))}</div>}<div className="hc-danger-grid"><div><div className="hc-between"><strong>停止全部分享</strong><span className="mono">{activeLinks.length} 条生效中</span></div>{confirm === 'all' ? <><p>以下链接会立即失效。合集本身保留，你之后仍可重新分享。</p><span className="mono">{activeLinks.map(l => l.title).join('、')}</span><div className="hc-tools"><button className="btn sm ghost" disabled={busy} onClick={() => setConfirm(undefined)}>取消</button><button className="btn sm dgr" disabled={busy} onClick={() => void stop()}>停止 {activeLinks.length} 条链接</button></div></> : <button className="btn sm dgo" disabled={busy || !activeLinks.length} onClick={() => setConfirm('all')}>停止全部分享…</button>}</div><div><div className="hc-between"><strong>解散合集</strong><span className="mono">不删除原文档</span></div>{confirm === 'dissolve' ? <><p>合集页与目录会移除，分享链接失效。原文档及其权限、批注保留；它们在其他合集中的位置不变。输入合集名称以确认。</p><input aria-label="输入合集名称确认" className="field" value={typed} onChange={e => setTyped(e.target.value)} placeholder={collection.name} /><div className="hc-tools"><button className="btn sm ghost" disabled={busy} onClick={() => setConfirm(undefined)}>取消</button><button className="btn sm dgr" disabled={busy || typed !== collection.name} onClick={() => void action(async () => { const r = await dissolveHostedCollection(collectionId, collection.version); if (!r.success) throw new Error(r.error.message); setDissolvedVersion(collection.version + 1); })}>解散合集</button></div></> : <button className="btn sm dgo" disabled={busy} onClick={() => setConfirm('dissolve')}>解散合集…</button>}</div></div></section>
+      </div>
+      {flow && <aside className="panel hc-share-flow" aria-label="新建分享"><header><div>{['范围与对象','权限差异','确认'].map((label,i) => <span key={label} className={`step ${step === i+1 ? 'on' : step > i+1 ? 'done' : ''}`}><b>{i+1}</b>{label}</span>)}</div><button className="btn sm ghost" disabled={busy} onClick={() => setFlow(false)}>关闭</button></header><div className="scroll hc-flow-body">
+        {step === 1 && <><section><div className="lbl">成员范围</div><div className="hc-scope-options">{([['all','全部成员',`合集内 ${collection.siteIds.length} 份文档，按当前顺序`],['primary','仅主文档','适合先分享总览'],['selected','选择部分文档','本次分享单独选择，不修改合集']] as const).map(([value,title,hint]) => <button className="opt" aria-pressed={scope === value} key={value} onClick={() => setScope(value)}><span className="dot" /><span><strong>{title}</strong><small>{hint}</small></span></button>)}</div>{scope === 'selected' && data.items.map(item => <label className="hc-choice" key={item.id}><input type="checkbox" checked={selected.includes(item.id)} onChange={e => setSelected(e.target.checked ? [...selected,item.id] : selected.filter(id => id !== item.id))} />{item.title}</label>)}</section><section><div className="lbl">访问对象</div><div className="seg">{audienceLabels.map((label,i) => <button key={label} aria-pressed={audience === i} onClick={() => setAudience(i)}>{label}</button>)}</div>{audience === 1 && <div className="hc-member-search"><input className="field" aria-label="查找指定成员" placeholder="输入姓名或账号，至少2个字" value={memberQuery} onChange={e => setMemberQuery(e.target.value)} />{directory.map(member => <button className="btn ghost" key={member.id} onClick={() => { if (!members.some(m => m.id === member.id)) setMembers([...members,member]); setMemberQuery(''); }}>{member.name}</button>)}<div>{members.map(member => <button className="chip" key={member.id} onClick={() => setMembers(members.filter(m => m.id !== member.id))}>{member.name} ×</button>)}</div></div>}</section><div className="hc-flow-two"><section><div className="lbl">访问密码</div><div className="seg"><button aria-pressed={!passwordOn} onClick={() => setPasswordOn(false)}>不设置</button><button aria-pressed={passwordOn} onClick={() => setPasswordOn(true)}>设置</button></div>{passwordOn && <input className="field" aria-label="访问密码" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} />}</section><section><div className="lbl">有效期</div><div className="seg">{[[7,'7 天'],[30,'30 天'],[0,'永久']].map(([value,label]) => <button key={value} aria-pressed={expires === value} onClick={() => setExpires(Number(value))}>{label}</button>)}</div></section></div></>}
+        {step === 2 && <><div className="hc-tags"><span className="tag t-o">{diff.filter(d => d.canShare).length} 份可分享</span><span className="tag t-m">{diff.filter(d => d.canSync && !d.matches).length} 份权限不同 · 我的文档</span><span className="tag t-c">{diff.filter(d => !d.canSync && !d.matches).length} 份他人文档</span></div><p className="hc-flow-copy">分享对象为「{audienceLabels[audience]}」。加入合集时没有改过任何文档的权限，以下是分享前需要处理的差异。</p><div><div className="drow mono"><span>文档</span><span>当前</span><span>分享需要</span><span>处理</span></div>{diff.map(item => <div className="drow" key={item.id}><span className="hc-ellipsis" title={item.title}>{item.title}</span><span className="hc-secondary">{visibilityLabel(item.visibility, item.sharedTeamIds)}</span><span>{item.canShare ? '可创建链接' : '作者授权'}</span><span>{item.canShare && (item.matches || !item.canSync) ? <span className="tag t-o">无需修改</span> : item.canShare && item.canSync ? <label className="hc-choice"><input type="checkbox" checked={syncIds.includes(item.id)} onChange={e => setSyncIds(e.target.checked ? [...syncIds,item.id] : syncIds.filter(id => id !== item.id))} />同步主文档权限</label> : <><span className="tag t-c">无分享权限</span><button className="btn sm ghost" onClick={() => setExcluded(excluded.includes(item.id) ? excluded.filter(id => id !== item.id) : [...excluded,item.id])}>{excluded.includes(item.id) ? '已排除 · 恢复' : '从本次分享中排除'}</button></>}</span></div>)}</div><div className="hc-flow-warning">权限同步只适用于你拥有的文档，且需明确勾选。他人文档无法代为修改：没有分享权限的文档请从本次分享中排除。</div></>}
+        {step === 3 && <><div className="hc-share-summary">{[['成员范围',`${ids.length} 份文档 · 当前成员快照`],['访问对象',audience === 1 ? members.map(m => m.name).join('、') : audienceLabels[audience]],['访问密码',passwordOn ? '已设置' : '无密码'],['有效期',expires ? `${expires} 天` : '永久'],['权限同步',`${syncIds.filter(id => ids.includes(id)).length} 份 · 显式勾选的我的文档`]].map(([key,value]) => <div key={key}><span>{key}</span><span>{value}</span></div>)}</div><p className="hc-flow-copy">此链接会固定当前的成员快照。之后调整合集成员，这条链接不会自动变化，可在列表中「按当前成员重新分享」。</p>{reshare && <p className="hc-flow-copy">旧链接仍保留。指定成员、密码需要重新确认，避免沿用不明的访问设置。</p>}</>}
+        {step === 4 && <div className="hc-share-success"><span className="tag t-o">{copied ? '链接已创建并复制' : '链接已创建'}</span><div className="mono">{new URL(created, location.origin).href}</div><p className="hc-flow-copy">访客打开后进入合集目录，从主文档开始阅读。</p>{!copied && <button className="btn" onClick={() => void copy(created)}>复制链接</button>}</div>}
+      </div><footer>{step > 1 && step < 4 ? <button className="btn ghost" disabled={busy} onClick={() => setStep(step-1)}>上一步</button> : <span />}<button className="btn pri" disabled={busy || !permissions} onClick={() => void next()}>{busy ? '正在处理…' : step === 3 ? '创建并复制链接' : step === 4 ? '完成' : '下一步'}</button></footer></aside>}
+    </div>}{manage && <HostedCollectionManage data={data} onClose={() => setManage(false)} onSaved={next => { setData(next); setManage(false); void load(); }} />}
+  </CollectionShell>;
+}

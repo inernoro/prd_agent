@@ -31,11 +31,18 @@ public partial class DocumentStoreController
         var (actorId, actorName) = await GetActorInfoAsync();
         var owner = await FindUserByAnyIdAsync(store!.OwnerId);
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == storeId && !e.IsFolder).SortBy(e => e.SortOrder).ToListAsync();
+        var myTeams = await _teams.GetMyTeamIdsAsync(GetUserId());
+        var teamNames = await _db.Teams.Find(t => store.SharedTeamIds.Contains(t.Id) && myTeams.Contains(t.Id)).Project(t => t.Name).ToListAsync();
+        var projectName = await IsPmProjectMemberAsync(store, GetUserId(), false)
+            ? (await _db.PmProjects.Find(p => p.Id == store.PmProjectId && !p.IsDeleted).FirstOrDefaultAsync())?.Title : null;
+        var creators = entries.Select(e => e.CreatedBy).Distinct().ToList();
+        var names = (await _db.Users.Find(u => creators.Contains(u.UserId)).Project(u => new { u.UserId, u.DisplayName, u.Username }).ToListAsync())
+            .ToDictionary(u => u.UserId, u => string.IsNullOrWhiteSpace(u.DisplayName) ? u.Username : u.DisplayName);
         return Ok(ApiResponse<object>.Ok(new {
-            store, actorId, actorName, reviewerId = store.OwnerId,
+            store, teamNames, projectName, actorId, actorName, reviewerId = store.OwnerId,
             reviewerName = owner?.DisplayName ?? owner?.Username ?? store.OwnerId,
             templates = WritingTemplateRegistry.All,
-            sources = entries.Select(e => new { e.Id, e.Title, e.Summary, e.ContentType, e.UpdatedAt, e.CreatedBy, e.FileSize,
+            sources = entries.Select(e => new { e.Id, e.Title, e.Summary, e.ContentType, e.UpdatedAt, e.CreatedBy, authorName = names.GetValueOrDefault(e.CreatedBy) ?? e.CreatedBy, e.FileSize,
                 e.SortOrder, e.Metadata, published = e.Writing?.Published != null })
         }));
     }
@@ -120,12 +127,23 @@ public partial class DocumentStoreController
             if (request.Sections.Count > 30 || request.Sections.Sum(s => s.Paragraphs.Count) > 300) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "正文超过小节或段落上限"));
             if (request.Sections.SelectMany(s => s.Paragraphs).Select(p => p.Id).Distinct().Count() != request.Sections.Sum(s => s.Paragraphs.Count))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "段落编号不能重复"));
+            if (request.Sections.Any(s => (s.Condition?.Length ?? 0) > 4000 || s.Detail?.Rows.Count > 100
+                || s.Detail?.Rows.Any(row => row.Count > 6 || row.Any(cell => cell.Length > 2000)) == true))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "小节条件或细节超过可编辑上限"));
+            var oldSections = state.Sections.ToDictionary(s => s.Id);
+            foreach (var section in request.Sections) {
+                section.MetadataConfirmed = oldSections.TryGetValue(section.Id, out var old)
+                    && old.Condition == section.Condition && System.Text.Json.JsonSerializer.Serialize(old.Detail) == System.Text.Json.JsonSerializer.Serialize(section.Detail)
+                    && old.MetadataConfirmed;
+            }
             var previous = state.Sections.SelectMany(s => s.Paragraphs).ToDictionary(p => p.Id);
             foreach (var p in request.Sections.SelectMany(s => s.Paragraphs)) {
                 if (!previous.TryGetValue(p.Id, out var before) || before.Text != p.Text) { p.Status = "auth"; p.Confirmed = false; p.Citations.Clear(); p.Quotes.Clear(); }
                 else { p.Status = before.Status; p.Citations = before.Citations; p.Quotes = before.Quotes; p.Confirmed = before.Confirmed; }
             }
             state.Sections = request.Sections;
+            var paragraphIds = state.Sections.SelectMany(s => s.Paragraphs).Select(p => p.Id).ToHashSet();
+            state.Questions.RemoveAll(q => !paragraphIds.Contains(q.ParagraphId));
             if (state.Stage == "published") state.Stage = "confirm";
         }
         if (request.IntentPoints != null) state.IntentPoints = request.IntentPoints.Where(x => !string.IsNullOrWhiteSpace(x)).Take(20).ToList();
@@ -137,6 +155,12 @@ public partial class DocumentStoreController
             if (request.Chapters.Count > 40 || request.Chapters.Any(c => c.Start < 0 || c.Steps.Any(s => s.At < c.Start)))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "章节和步骤时间必须非负，步骤不能早于章节"));
             state.Chapters = request.Chapters.OrderBy(c => c.Start).ToList();
+        }
+        if (request.Captions != null) {
+            if (request.Captions.Count > 2000 || request.Captions.Any(c => !double.IsFinite(c.At) || c.At < 0 || string.IsNullOrWhiteSpace(c.Id) || string.IsNullOrWhiteSpace(c.Text))
+                || request.Captions.Select(c => c.Id).Distinct().Count() != request.Captions.Count)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "字幕需有唯一标识、正文和非负时间，最多2000条"));
+            state.Captions = request.Captions.OrderBy(c => c.At).ToList();
         }
         if (request.VideoEntryId != null) {
             var media = string.IsNullOrEmpty(request.VideoEntryId) ? null : await _db.DocumentEntries.Find(e => e.Id == request.VideoEntryId && e.StoreId == entry.StoreId).FirstOrDefaultAsync();
@@ -155,7 +179,7 @@ public partial class DocumentStoreController
         var state = entry!.Writing;
         if (state == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "草稿不存在"));
         if (state.Revision != request.Revision || state.Stage is "generating" or "pending-review" or "publishing") return WritingConflict();
-        if (state.Sources.Count == 0 && string.IsNullOrWhiteSpace(state.ManualInput)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请关联资料或输入内容，也可以用空白模版开始"));
+        if (state.Sources.All(s => s.Status == "skipped") && string.IsNullOrWhiteSpace(state.ManualInput)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请关联资料或输入内容，也可以用空白模版开始"));
         var run = new DocumentStoreAgentRun { Kind = WritingDocumentPolicy.RunKind, SourceEntryId = entryId, StoreId = entry.StoreId,
             UserId = GetUserId(), OwnerInstanceId = InstanceIdentity.Get(_config), TaskPermitId = PrdAgent.Core.Security.TaskExecutionContext.Current?.PermitId,
             Status = DocumentStoreRunStatus.Queued, Phase = "等待读取资料" };
@@ -181,9 +205,12 @@ public partial class DocumentStoreController
                 && (r.Status == DocumentStoreRunStatus.Running || r.Status == DocumentStoreRunStatus.Queued),
                 Builders<DocumentStoreAgentRun>.Update.Set(r => r.Status, DocumentStoreRunStatus.Cancelled).Set(r => r.EndedAt, DateTime.UtcNow));
             if (cancelled.ModifiedCount != 1) return WritingConflict();
-            state.Sources.RemoveAll(s => s.Id == request.SourceId);
-            state.Stage = "failed"; state.Failure = "已跳过该资料。点击重试，继续处理其余资料。";
+            var skipped = state.Sources.Single(s => s.Id == request.SourceId);
+            skipped.Status = "skipped"; skipped.Content = ""; skipped.Hash = "";
+            state.Stage = "failed"; state.Failure = "已跳过该资料，原文与目录位置保留。";
             if (!await SaveWritingState(entry, state, request.Revision)) return WritingConflict();
+            if (state.Sources.Any(s => s.Status != "skipped") || !string.IsNullOrWhiteSpace(state.ManualInput))
+                return await GenerateWritingDraft(entryId, new WritingCommandRequest { Revision = state.Revision });
             return Ok(ApiResponse<object>.Ok(new { state }));
         }
         try {
@@ -192,6 +219,10 @@ public partial class DocumentStoreController
                 var template = WritingTemplateRegistry.Find(state.TemplateId)!;
                 state.Sections = template.Headings.Select((h, i) => new WritingSection { Id = $"s{i + 1}", Title = h.Title,
                     Paragraphs = new() { new() { Id = $"p{i + 1}", Status = "auth" } } }).ToList(); state.Stage = "confirm";
+            }
+            else if (request.Action == "confirm-section" && editable) {
+                var section = state.Sections.SingleOrDefault(s => s.Id == request.SectionId) ?? throw new InvalidOperationException("小节不存在");
+                section.MetadataConfirmed = request.Confirmed;
             }
             else if (request.Action == "answer" && editable) WritingDocumentPolicy.Answer(state, request.QuestionId ?? "", request.Text ?? "", request.Open);
             else if (request.Action == "confirm" && editable) {
@@ -325,6 +356,7 @@ public class WritingSaveRequest
     public List<string>? Conclusions { get; set; }
     public List<WritingSection>? Sections { get; set; }
     public List<WritingChapter>? Chapters { get; set; }
+    public List<WritingCaption>? Captions { get; set; }
     public List<WritingRole>? Roles { get; set; }
 }
 public class WritingCommandRequest
@@ -333,6 +365,7 @@ public class WritingCommandRequest
     public string Action { get; set; } = "";
     public string? QuestionId { get; set; }
     public string? ParagraphId { get; set; }
+    public string? SectionId { get; set; }
     public string? SourceId { get; set; }
     public string? Text { get; set; }
     public bool Open { get; set; }

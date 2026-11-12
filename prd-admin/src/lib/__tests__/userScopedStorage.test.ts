@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -91,5 +92,17 @@ describe('换号路径的清理', () => {
     const at = auth.indexOf('logout: () => {');
     expect(at).toBeGreaterThan(-1);
     expect(auth.slice(at, at + 300).includes('runUserScopedCleanup()')).toBe(true);
+  });
+});
+
+describe('写作草稿与阅读游标的换号清理', () => {
+  it('移除个人内容，保留主题与无关存储', async () => {
+    const { clearUserScopedStorage } = await import('../userScopedStorageKeys');
+    for (const key of ['hosted-template-draft:alice', 'map-writing-ui:alice:doc', 'map-learning:doc:v1', 'hosted-collection:last:id']) localStorage.setItem(key, 'private');
+    localStorage.setItem('theme', 'dark');
+    clearUserScopedStorage();
+    expect(Object.keys(localStorage).filter(key => key.startsWith('hosted-') || key.startsWith('map-writing') || key.startsWith('map-learning'))).toEqual([]);
+    expect(localStorage.getItem('theme')).toBe('dark');
+    localStorage.removeItem('theme');
   });
 });

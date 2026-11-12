@@ -15,6 +15,10 @@ namespace PrdAgent.Core.Models;
 [BsonIgnoreExtraElements]
 public class HostedSite
 {
+    public string? WritingTemplateId { get; set; }
+    public List<string> DocumentHeadings { get; set; } = new();
+    public string? DocumentTextExcerpt { get; set; }
+    public int DocumentCharacterCount { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>站点标题</summary>
@@ -345,6 +349,7 @@ public sealed record HostedSiteVerifiedFile(
 [BsonIgnoreExtraElements]
 public class WebPageShareLink
 {
+    public HostedCollectionSnapshot? CollectionSnapshot { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>短 Token（用于 URL）</summary>

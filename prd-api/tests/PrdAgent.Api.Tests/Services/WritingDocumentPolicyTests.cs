@@ -15,6 +15,19 @@ public class WritingDocumentPolicyTests
     }
 
     [Fact]
+    public void MarkdownPreservesReviewedConditionsAndDetailCells()
+    {
+        var state = Draft();
+        state.Sections[0].Condition = "仅限本部门，离岗后不能补办。";
+        state.Sections[0].Detail = new() { Label = "清单字段", Rows = new() { new() { "负责人", "必填", "唯一负责人" }, new() { "风险", "选填", "a|b\n不可省略" } } };
+        var markdown = WritingDocumentPolicy.Markdown(state);
+        Assert.Contains("仅限本部门，离岗后不能补办。", markdown);
+        Assert.Contains("清单字段", markdown);
+        Assert.Contains("| 负责人 | 必填 | 唯一负责人 |", markdown);
+        Assert.Contains("a\\|b<br>不可省略", markdown);
+    }
+
+    [Fact]
     public void MissingTitle_BlocksSubmission_ButLongTitleDoesNot()
     {
         var state = Draft();

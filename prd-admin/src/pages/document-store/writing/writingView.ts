@@ -1,4 +1,4 @@
-import type { WritingRole, WritingSection, WritingState } from '@/services/contracts/writing';
+import type { WritingRole, WritingSection, WritingState, WritingSource } from '@/services/contracts/writing';
 import { withDocumentStoreEntry } from '../documentStoreDeepLink';
 
 export const writingKnowledgeHref = (storeId: string, entryId?: string) => `/document-store${withDocumentStoreEntry('', storeId, entryId)}`;
@@ -24,5 +24,19 @@ export function writingSaveInput(state: WritingState) {
   return { revision: state.revision, templateId: state.templateId, title: state.title, summary: state.summary,
     manualInput: state.manualInput, sourceEntryIds: state.sources.map(s => s.entryId), sections: state.sections,
     intentPoints: state.intentPoints, conclusions: state.conclusions, scopeIn: state.scopeIn, scopeOut: state.scopeOut,
-    chapters: state.chapters, roles: state.roles, videoEntryId: state.videoEntryId ?? '' };
+    chapters: state.chapters, captions: state.captions, roles: state.roles, videoEntryId: state.videoEntryId ?? '' };
+}
+
+// Locations come from the stored source text; no generated location is invented.
+export function writingSourceBlocks(source: WritingSource) {
+  let location = '';
+  return source.content.split(/\n\s*\n/).flatMap((block, index) => {
+    const heading = block.match(/^#{1,6}\s+(.+)$/);
+    if (heading) { location = heading[1]; return []; }
+    return block.trim() ? [{ id: `${source.id}-${index}`, location, text: block.trim() }] : [];
+  });
+}
+export function writingCitationLocation(source: WritingSource | undefined, quote: string) {
+  if (!source || !quote) return '';
+  return writingSourceBlocks(source).find(block => block.text.includes(quote))?.location ?? '';
 }

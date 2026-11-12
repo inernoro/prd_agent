@@ -25,6 +25,7 @@ public class WritingDocumentState
     public List<WritingQuestion> Questions { get; set; } = new();
     public List<WritingRole> Roles { get; set; } = new();
     public List<WritingChapter> Chapters { get; set; } = new();
+    public List<WritingCaption> Captions { get; set; } = new();
     public string? VideoEntryId { get; set; }
     public string? ActiveRunId { get; set; }
     public string ActiveExecutionId { get; set; } = "";
@@ -49,6 +50,26 @@ public class WritingSection
     public string Id { get; set; } = "";
     public string Title { get; set; } = "";
     public List<WritingParagraph> Paragraphs { get; set; } = new();
+    public string Condition { get; set; } = "";
+    public WritingSectionDetail? Detail { get; set; }
+    public bool MetadataConfirmed { get; set; }
+}
+public class WritingSectionDetail
+{
+    public string Label { get; set; } = "";
+    public List<List<string>> Rows { get; set; } = new();
+}
+public class WritingAnswerChoice
+{
+    public string Key { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string Text { get; set; } = "";
+}
+public class WritingQuestionEvidence
+{
+    public string SourceId { get; set; } = "";
+    public string Quote { get; set; } = "";
+    public string Location { get; set; } = "";
 }
 public class WritingParagraph
 {
@@ -69,6 +90,8 @@ public class WritingQuestion
     public string Why { get; set; } = "";
     public List<string> Citations { get; set; } = new();
     public List<string> Options { get; set; } = new();
+    public List<WritingAnswerChoice> Choices { get; set; } = new();
+    public List<WritingQuestionEvidence> Evidence { get; set; } = new();
     public string Status { get; set; } = "pending";
     public string Answer { get; set; } = "";
 }
@@ -86,6 +109,12 @@ public class WritingChapter
     public string Title { get; set; } = "";
     public double Start { get; set; }
     public List<WritingTutorialStep> Steps { get; set; } = new();
+}
+public class WritingCaption
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Text { get; set; } = "";
+    public double At { get; set; }
 }
 public class WritingTutorialStep
 {
@@ -113,6 +142,7 @@ public class WritingPublication
     public List<WritingQuestion> OpenQuestions { get; set; } = new();
     public List<WritingRole> Roles { get; set; } = new();
     public List<WritingChapter> Chapters { get; set; } = new();
+    public List<WritingCaption> Captions { get; set; } = new();
     public string? VideoEntryId { get; set; }
 }
 
@@ -129,6 +159,8 @@ public static class WritingDocumentPolicy
         var sourceIds = state.Sources.Where(s => s.Status == "read").Select(s => s.Id).ToHashSet();
         if (state.Sections.SelectMany(s => s.Paragraphs).Any(p => p.Citations.Any(c => !sourceIds.Contains(c)))) problems.Add("存在失效的引用");
         if (state.Sections.SelectMany(s => s.Paragraphs).Any(p => p.Status is "auth" or "src" && !p.Confirmed)) problems.Add("还有正文段落未过目，请核对引用、数字与适用条件");
+        if (state.Sections.Any(s => (!string.IsNullOrWhiteSpace(s.Condition) || s.Detail?.Rows.Count > 0) && !s.MetadataConfirmed))
+            problems.Add("还有小节条件与细节未过目，请逐项核对");
         if (string.IsNullOrWhiteSpace(state.ReviewerId)) problems.Add("请设置审核人");
         return problems;
     }
@@ -141,7 +173,7 @@ public static class WritingDocumentPolicy
         if (p != null) { p.Text = open ? $"待确认：{q.Title}。{q.Answer}" : q.Answer; p.Status = "auth"; p.Citations.Clear(); p.Quotes.Clear(); p.Confirmed = false; }
         // 回答改变后的角色行动与摘要必须重新过目，不能让旧结论继续冒充已确认结果。
         state.Conclusions.Clear(); state.Roles.Clear(); state.Summary = "";
-        state.ScopeIn = ""; state.ScopeOut = ""; state.Chapters.Clear();
+        state.ScopeIn = ""; state.ScopeOut = ""; state.Chapters.Clear(); state.Captions.Clear();
         state.Stage = "confirm";
     }
     public static void ValidateGenerated(WritingDocumentState state)
@@ -166,11 +198,33 @@ public static class WritingDocumentPolicy
         if (state.Questions.Any(q => !paragraphs.Any(p => p.Id == q.ParagraphId))) throw new InvalidOperationException("确认事项未关联正文段落，请重试");
         if (paragraphs.Any(p => p.Status is "ask" or "conf" && !state.Questions.Any(q => q.ParagraphId == p.Id))) throw new InvalidOperationException("缺失或冲突段落没有对应确认事项，请重试");
         if (state.Questions.Select(q => q.Id).Distinct().Count() != state.Questions.Count) throw new InvalidOperationException("确认事项编号重复，请重试");
+        foreach (var section in state.Sections) section.MetadataConfirmed = false;
+        foreach (var question in state.Questions) {
+            if (question.Citations.Any(id => !sources.Contains(id))) throw new InvalidOperationException("确认事项引用了未读取的资料");
+            foreach (var evidence in question.Evidence)
+                if (!sources.Contains(evidence.SourceId) || string.IsNullOrWhiteSpace(evidence.Quote)
+                    || !state.Sources.Single(s => s.Id == evidence.SourceId).Content.Contains(evidence.Quote, StringComparison.Ordinal))
+                    throw new InvalidOperationException("问题原文片段无法定位到所选资料，请重试");
+        }
         foreach (var q in state.Questions) { q.Status = "pending"; q.Answer = ""; }
     }
     public static string Markdown(WritingDocumentState state)
     {
-        var parts = state.Sections.Select(s => $"## {s.Title}\n\n{string.Join("\n\n", s.Paragraphs.Select(p => p.Text))}").ToList();
+        static string Cell(string value) => System.Net.WebUtility.HtmlEncode(value)
+            .Replace("|", "\\|").Replace("\r\n", "\n").Replace("\n", "<br>");
+        var parts = state.Sections.Select(section => {
+            var content = new List<string> { $"## {section.Title}", string.Join("\n\n", section.Paragraphs.Select(p => p.Text)) };
+            if (!string.IsNullOrWhiteSpace(section.Condition))
+                content.Add("> 条件：" + section.Condition.Replace("\n", "\n> "));
+            if (section.Detail is { Rows.Count: > 0 } detail) {
+                content.Add($"### {detail.Label}");
+                var columns = detail.Rows.Max(row => row.Count);
+                var headers = Enumerable.Range(0, columns).Select(i => i < 3 ? new[] { "字段", "要求", "说明" }[i] : $"内容 {i + 1}");
+                content.Add("| " + string.Join(" | ", headers) + " |\n| " + string.Join(" | ", Enumerable.Repeat("---", columns)) + " |\n"
+                    + string.Join("\n", detail.Rows.Select(row => "| " + string.Join(" | ", Enumerable.Range(0, columns).Select(i => i < row.Count ? Cell(row[i]) : "")) + " |")));
+            }
+            return string.Join("\n\n", content);
+        }).ToList();
         var open = state.Questions.Where(q => q.Status == "open").ToList();
         if (open.Count > 0) parts.Add("## 待确认事项\n\n" + string.Join("\n", open.Select(q => $"- {q.Title}：{q.Answer}")));
         return $"# {state.Title}\n\n{state.Summary}\n\n" + string.Join("\n\n", parts);
@@ -182,7 +236,7 @@ public static class WritingDocumentPolicy
             TemplateId = state.TemplateId, TemplateVersion = state.TemplateVersion, AuthorName = state.AuthorName,
             ReviewerId = reviewerId, ReviewerName = reviewerName, PublishedAt = DateTime.UtcNow,
             Conclusions = state.Conclusions, ScopeIn = state.ScopeIn, ScopeOut = state.ScopeOut,
-            Sources = state.Sources, Sections = state.Sections, Roles = state.Roles, Chapters = state.Chapters,
+            Sources = state.Sources, Sections = state.Sections, Roles = state.Roles, Chapters = state.Chapters, Captions = state.Captions,
             VideoEntryId = state.VideoEntryId, OpenQuestions = state.Questions.Where(q => q.Status == "open").ToList()
         };
         return JsonSerializer.Deserialize<WritingPublication>(JsonSerializer.Serialize(publication, JsonOptions), JsonOptions)!;
