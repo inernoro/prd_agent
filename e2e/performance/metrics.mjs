@@ -41,15 +41,18 @@ export function calibrate(results) {
     const bound = key => {
       const values = rows.map(r => r[key].p95);
       const high = Math.max(...values), low = Math.min(...values);
-      return Math.max(high * 1.3, high + (high - low) * 3);
+      // A short baseline's p95 estimate must not discard tail latency already
+      // observed in those same baseline samples. This is an empirical jitter
+      // envelope, not a fixed millisecond allowance fitted to a candidate.
+      return Math.max(high * 1.3, high + (high - low) * 3, ...rows.map(r => r[key].p99));
     };
     limits[name] = { clientP95: bound('client'), appP95: transaction ? null : bound('app'),
       errorRate: 3 / rows.reduce((n, r) => n + r.attempts, 0),
       minThroughput: Math.min(...rows.map(r => r.throughput)) * .7 };
   }
-  return { schema: 1, commit: results[0].commit, contract, limits,
+  return { schema: 1, policyVersion: 2, commit: results[0].commit, contract, limits,
     sourceRuns: results.map(r => ({ environmentId: r.environmentId, commit: r.commit, startedAt: r.startedAt })),
-    policy: 'p95上限=max(三次最大值*1.3, 最大值+3*极差); 错误率上限=3/总样本数(零错误95%上界); 吞吐下限=最小值*0.7' };
+    policy: 'p95上限=max(三次p95最大值*1.3, p95最大值+3*极差, 基线p99最大值); 错误率上限=3/总样本数(零错误95%上界); 吞吐下限=最小值*0.7' };
 }
 export function compare(result, baseline) {
   const failures = [];

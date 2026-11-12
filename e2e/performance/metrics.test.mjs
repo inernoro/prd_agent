@@ -32,6 +32,16 @@ test('上游慢只增加客户端耗时，不伪装成应用耗时', () => {
   assert.equal(result.pass, false);
   assert.equal(result.failures.some(f => f.includes('app p95')), false);
 });
+test('短基线已出现的p99长尾进入噪声包络，大幅退化仍被拒绝', () => {
+  const bases = ['a', 'b', 'c'].map(id => run(id, 17));
+  bases[0].phases[0].metrics.home.client.p99 = 25;
+  const baseline = calibrate(bases);
+  const jitter = run('jitter', 23);
+  jitter.phases[0].metrics.home.app.p95 = 15;
+  assert.equal(baseline.limits.home.clientP95, 25);
+  assert.equal(compare(jitter, baseline).pass, true);
+  assert.equal(compare(run('regression', 350), baseline).pass, false);
+});
 test('容量阶段报告首个退化点并保留未测到边界的情况', () => {
   const normal = run('a').phases[0];
   const stage = (users, ms) => ({ ...run('x', ms).phases[0], name: `ramp-${users}`, users });
