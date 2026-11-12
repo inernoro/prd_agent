@@ -962,6 +962,16 @@ export function resolveApiLabel(method: string, path: string): string {
     // 取消在途发布（阶段一 · 止血）：路由与 label 同期落地，避免又漏一条。
     'POST /releases/runs/:id/cancel': '取消进行中发布',
     'GET /releases/runs/:id/stream': '订阅发布日志流',
+    'GET /releases/batches': '列出发布批次',
+    'GET /releases/batches/accepted-versions': '列出验收版本',
+    'POST /releases/batches': '创建发布批次',
+    'GET /releases/batches/:id': '查看发布批次',
+    'POST /releases/batches/:id/preflight': '批次发布预检',
+    'POST /releases/batches/:id/start': '执行发布批次',
+    'POST /releases/batches/:id/cancel': '取消发布批次',
+    'POST /releases/batches/:id/refresh': '核对批次版本',
+    'POST /releases/batches/:id/targets/:targetId/retry': '重试失败目标',
+    'POST /releases/batches/:id/targets/:targetId/rollback': '恢复目标原版',
     'GET /releases/center': '查看发布中心',
     'GET /deployment-runs': '列出部署运行',
     'GET /deployment-versions': '列出部署版本',
@@ -1244,6 +1254,13 @@ export function resolveApiLabel(method: string, path: string): string {
     // 原样比对）；真实调用带的是具体 id，必须靠这里的 pattern 才有 label，否则
     // Activity Monitor 上整条发布链路都是裸 URL。一律用 segment-safe `[^/]+`
     // （PR #522 的教训：贪婪 `(.+)` 会跨 `/` 把子路径截胡），子路径排在裸 id 之前。
+    [/^GET \/releases\/batches\/[^/]+$/, '查看发布批次'],
+    [/^POST \/releases\/batches\/[^/]+\/preflight$/, '批次发布预检'],
+    [/^POST \/releases\/batches\/[^/]+\/start$/, '执行发布批次'],
+    [/^POST \/releases\/batches\/[^/]+\/cancel$/, '取消发布批次'],
+    [/^POST \/releases\/batches\/[^/]+\/refresh$/, '核对批次版本'],
+    [/^POST \/releases\/batches\/[^/]+\/targets\/[^/]+\/retry$/, '重试失败目标'],
+    [/^POST \/releases\/batches\/[^/]+\/targets\/[^/]+\/rollback$/, '恢复目标原版'],
     [/^POST \/releases\/runs\/[^/]+\/rollback$/, '回滚发布记录'],
     [/^POST \/releases\/runs\/[^/]+\/retry$/, '重试发布记录'],
     [/^POST \/releases\/runs\/[^/]+\/cancel$/, '取消进行中发布'],

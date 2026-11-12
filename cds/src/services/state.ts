@@ -3312,6 +3312,24 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     return plan;
   }
 
+  getReleaseBatches(projectId?: string): import('../domain/release-batch.js').ReleaseBatch[] {
+    return Object.values(this.state.releaseBatches || {})
+      .filter(batch => !projectId || batch.projectId === projectId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map(batch => structuredClone(batch));
+  }
+
+  getReleaseBatch(id: string): import('../domain/release-batch.js').ReleaseBatch | undefined {
+    const batch = this.state.releaseBatches && Object.hasOwn(this.state.releaseBatches, id) ? this.state.releaseBatches[id] : undefined;
+    return batch ? structuredClone(batch) : undefined;
+  }
+
+  saveReleaseBatch(batch: import('../domain/release-batch.js').ReleaseBatch): void {
+    this.state.releaseBatches ||= {};
+    this.state.releaseBatches[batch.id] = structuredClone(batch);
+    this.save(HINT_GLOBAL);
+  }
+
   getReleaseRuns(filter: { projectId?: string; targetId?: string; branchId?: string } = {}): ReleaseRun[] {
     if (!this.state.releaseRuns) return [];
     return Object.values(this.state.releaseRuns)
@@ -3437,8 +3455,11 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const runs = Object.values(this.state.releaseRuns).filter((run) => run.targetId === targetId);
     const doomed = selectReleaseRunsToPrune({ runs, nowMs: Date.now() });
     if (doomed.length === 0) return;
-    for (const releaseId of doomed) delete this.state.releaseRuns[releaseId];
-    console.warn(`[release] 保留策略淘汰目标 ${targetId} 的 ${doomed.length} 条历史发布记录: ${doomed.join(', ')}`);
+    const batchReferences = new Set(this.getReleaseBatches().flatMap(batch => batch.targets.flatMap(row =>
+      [row.previousReleaseId, row.runId, row.rollbackRunId, ...row.attempts.map(attempt => attempt.runId)])));
+    const pruned = doomed.filter(releaseId => !batchReferences.has(releaseId));
+    for (const releaseId of pruned) delete this.state.releaseRuns[releaseId];
+    if (pruned.length) console.warn(`[release] 保留策略淘汰目标 ${targetId} 的 ${pruned.length} 条历史发布记录: ${pruned.join(', ')}`);
   }
 
   // ── 发布前检查结论（阶段三记账）──

@@ -2069,6 +2069,8 @@ export type ReleaseRunStatus =
   | 'rollback_failed';
 
 export interface ReleaseRun {
+  batchId?: string;
+  batchAttemptId?: string;
   releaseId: string;
   projectId: string;
   branchId: string;
@@ -2293,6 +2295,8 @@ export interface CdsState {
    * 否则 `Object.values(undefined)` 直接把 CDS 启动炸掉。
    */
   releasePreflights?: Record<string, ReleasePreflightRecord>;
+  /** Durable ordered batches, including request receipts; old state may omit it. */
+  releaseBatches?: Record<string, import('./domain/release-batch.js').ReleaseBatch>;
   /** Immutable release run records keyed by releaseId. */
   releaseRuns?: Record<string, ReleaseRun>;
   /** Per-branch append-only container log archives owned by CDS. */

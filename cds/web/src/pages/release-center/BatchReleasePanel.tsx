@@ -6,6 +6,7 @@ import { MotionLink } from '@/components/layout/RouteMotion';
 import { useNowTick } from '@/hooks/useNowTick';
 import { apiRequest } from '@/lib/api';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
+import { diagnoseReleaseFailure } from '@/lib/releaseDiagnosis';
 import { Chip, formatDateTime, type Tone } from './shared';
 import type { ReleaseRun, ReleaseTarget } from './types';
 
@@ -27,6 +28,7 @@ export interface BatchTarget {
   checks?: BatchCheck[];
   preflightId?: string;
   previousReleaseId?: string;
+  previousCommitSha?: string;
   runId?: string;
   rollbackRunId?: string;
   error?: string;
@@ -99,6 +101,7 @@ export function BatchReleasePanel({ projectId, targets, onOpenLogs }: {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [pending, setPending] = useState('');
+  const [cancelling, setCancelling] = useState(false);
   const [creating, setCreating] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState('');
   const [targetIds, setTargetIds] = useState<string[]>([]);
@@ -106,16 +109,25 @@ export function BatchReleasePanel({ projectId, targets, onOpenLogs }: {
   const [liveRuns, setLiveRuns] = useState<Record<string, ReleaseRun>>({});
   const alive = useRef(true);
   const mutationKeys = useRef(new Map<string, string>());
+  const cancellationRevision = useRef(0);
+  const cancelInFlight = useRef(false);
   const selected = batches.find((batch) => batch.id === selectedId);
   const selectedActive = Boolean(selected && isActive(selected));
   const eligibleTargets = targets.filter((target) => target.projectId === projectId && target.isEnabled && target.lifecycle !== 'archived');
   const selectedRelease = versions.find((version) => versionKey(version) === selectedVersion);
-  const busy = Boolean(pending) || selectedActive;
+  const pollingPending = Boolean(pending) || cancelling;
+  const busy = pollingPending || selectedActive;
+  const operationLabel = cancelling ? '正在取消批次'
+    : selected?.status === 'cancelled' && pending === '正在统一检查所有目标' ? '取消已受理，等待当前检查结束' : pending;
 
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const receive = useCallback((batch: ReleaseBatch): void => {
     if (!alive.current || batch.projectId !== projectId) return;
-    setBatches((current) => [batch, ...current.filter((item) => item.id !== batch.id)].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+    setBatches((current) => {
+      const previous = current.find((item) => item.id === batch.id);
+      if (previous && previous.updatedAt > batch.updatedAt) return current;
+      return [batch, ...current.filter((item) => item.id !== batch.id)].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    });
   }, [projectId]);
 
   const load = useCallback(async (): Promise<void> => {
@@ -155,7 +167,7 @@ export function BatchReleasePanel({ projectId, targets, onOpenLogs }: {
         const found: Record<string, ReleaseRun> = {};
         for (const result of runs) if (result.status === 'fulfilled') found[result.value.run.releaseId] = result.value.run;
         setLiveRuns(found);
-        if (isActive(batch)) timer = window.setTimeout(() => void poll(), 2_000);
+        if (isActive(batch) || pollingPending) timer = window.setTimeout(() => void poll(), 2_000);
       } catch (failure) {
         if (!disposed) {
           setError(`更新批次状态失败：${errorMessage(failure)}。保留上次结果，请刷新核对。`);
@@ -165,10 +177,11 @@ export function BatchReleasePanel({ projectId, targets, onOpenLogs }: {
     };
     void poll();
     return () => { disposed = true; window.clearTimeout(timer); };
-  }, [selectedId, selectedActive, receive]);
+  }, [selectedId, selectedActive, pollingPending, receive]);
 
   async function mutate(action: string, path: string, body: Record<string, unknown>, keyScope = action): Promise<void> {
-    if (pending) return;
+    if (pending || cancelling) return;
+    const cancellationAtStart = cancellationRevision.current;
     setPending(action);
     setError('');
     let idempotencyKey = mutationKeys.current.get(keyScope);
@@ -177,8 +190,14 @@ export function BatchReleasePanel({ projectId, targets, onOpenLogs }: {
       mutationKeys.current.set(keyScope, idempotencyKey);
     }
     try {
-      const { batch } = await apiRequest<{ batch: ReleaseBatch }>(path, { method: 'POST', body: { ...body, idempotencyKey } });
+      let { batch } = await apiRequest<{ batch: ReleaseBatch }>(path, { method: 'POST', body: { ...body, idempotencyKey } });
       if (!alive.current) return;
+      // A cancellation may overtake this response while a synchronous preflight
+      // probe is finishing. Read the authoritative state before showing it.
+      if (cancellationAtStart !== cancellationRevision.current) {
+        ({ batch } = await apiRequest<{ batch: ReleaseBatch }>(`/api/releases/batches/${encodeURIComponent(batch.id)}`));
+        if (!alive.current) return;
+      }
       mutationKeys.current.delete(keyScope);
       receive(batch);
       setSelectedId(batch.id);
@@ -195,6 +214,22 @@ export function BatchReleasePanel({ projectId, targets, onOpenLogs }: {
   };
   const targetAction = (targetId: string, action: 'retry' | 'rollback'): void => {
     batchAction(action === 'retry' ? '正在重试失败目标' : '正在恢复原版本', `/targets/${encodeURIComponent(targetId)}/${action}`);
+  };
+  const cancelBatch = async (): Promise<void> => {
+    if (!selected || cancelInFlight.current) return;
+    cancelInFlight.current = true;
+    cancellationRevision.current += 1;
+    setCancelling(true);
+    setError('');
+    try {
+      const { batch } = await apiRequest<{ batch: ReleaseBatch }>(`/api/releases/batches/${encodeURIComponent(selected.id)}/cancel`, { method: 'POST', body: {} });
+      receive(batch);
+    } catch (failure) {
+      if (alive.current) setError(`取消结果未确认：${errorMessage(failure)}。请刷新核对，可再次取消同一批次。`);
+    } finally {
+      cancelInFlight.current = false;
+      if (alive.current) setCancelling(false);
+    }
   };
   const showLogs = async (runId: string): Promise<void> => {
     try {
@@ -219,13 +254,13 @@ export function BatchReleasePanel({ projectId, targets, onOpenLogs }: {
         <p className="mt-1 text-xs text-muted-foreground">选择一个已验收版本，按指定顺序发布到多个目标。分支后续更新不会改变本批次版本。</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" disabled={Boolean(pending) || loading} onClick={() => void load()}><RefreshCw className={loading ? 'animate-spin' : ''} />刷新批次</Button>
-        <Button variant="outline" size="sm" disabled={Boolean(pending)} onClick={() => setCreating((value) => !value)} aria-expanded={creating}><Plus />新建批次</Button>
+        <Button variant="outline" size="sm" disabled={pollingPending || loading} onClick={() => void load()}><RefreshCw className={loading ? 'animate-spin' : ''} />刷新批次</Button>
+        <Button variant="outline" size="sm" disabled={pollingPending} onClick={() => setCreating((value) => !value)} aria-expanded={creating}><Plus />新建批次</Button>
       </div>
     </header>
     <div className="space-y-4 p-4">
       {error ? <div role="alert" className="rounded-md border border-destructive/30 bg-bad-soft p-3 text-sm text-bad">{error}</div> : null}
-      {pending ? <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><ContentLoading variant="inline" label={pending} />{pending}，请稍候</div> : null}
+      {operationLabel ? <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><ContentLoading variant="inline" label={operationLabel} />{operationLabel}，请稍候</div> : null}
       {loading && !batches.length ? <ContentLoading label="读取批次与已验收版本" variant="rows" /> : null}
       {creating ? <div className="space-y-4 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4">
         <label className="flex min-w-0 flex-col gap-2 text-sm font-medium">已验收版本
@@ -248,15 +283,15 @@ export function BatchReleasePanel({ projectId, targets, onOpenLogs }: {
         }}>固定版本并创建批次</Button><p className="text-xs text-muted-foreground">创建后先统一预检，确认后才开始发布。</p></div>
       </div> : null}
 
-      {batches.length ? <label className="flex flex-col gap-2 text-xs text-muted-foreground">批次记录（刷新页面后仍可查看）<select aria-label="批次记录" value={selectedId} className={`${selectClass} w-full`} onChange={(event) => { setSelectedId(event.target.value); setRollbackTargetId(''); }}>{batches.map((batch) => <option value={batch.id} key={batch.id}>{formatDateTime(batch.createdAt)} · {batch.commitSha.slice(0, 12)} · {batch.targets.length} 个目标 · {statusView(batch.status).label}</option>)}</select></label> : !loading ? <p className="text-sm text-muted-foreground">尚无批次发布。点击「新建批次」，选择已验收版本和多个目标。</p> : null}
+      {batches.length ? <label className="flex flex-col gap-2 text-xs text-muted-foreground">批次记录（刷新页面后仍可查看）<select aria-label="批次记录" disabled={pollingPending} value={selectedId} className={`${selectClass} w-full`} onChange={(event) => { setSelectedId(event.target.value); setRollbackTargetId(''); }}>{batches.map((batch) => <option value={batch.id} key={batch.id}>{formatDateTime(batch.createdAt)} · {batch.commitSha.slice(0, 12)} · {batch.targets.length} 个目标 · {statusView(batch.status).label}</option>)}</select></label> : !loading ? <p className="text-sm text-muted-foreground">尚无批次发布。点击「新建批次」，选择已验收版本和多个目标。</p> : null}
       {selected ? <>
         <BatchReleaseResult batch={selected} runs={liveRuns} busy={busy} rollbackTargetId={rollbackTargetId} onRetry={(id) => targetAction(id, 'retry')} onPrepareRollback={setRollbackTargetId} onRollback={(id) => targetAction(id, 'rollback')} onLogs={(id) => void showLogs(id)} />
         <MotionLink className="inline-block text-xs text-primary hover:underline" to={`/reports?project=${encodeURIComponent(projectId)}&report=${encodeURIComponent(selected.reportId)}`}>查看本批次验收依据</MotionLink>
         <div className="flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] pt-4">
           {['draft', 'blocked', 'ready'].includes(selected.status) ? <Button variant="outline" disabled={busy} onClick={() => batchAction('正在统一检查所有目标', '/preflight')}>{selected.status === 'draft' ? '统一发布前检查' : '重新检查所有目标'}</Button> : null}
           {selected.status === 'ready' ? <Button disabled={busy} onClick={() => batchAction('正在开始批次发布', '/start')}>确认发布到 {selected.targets.length} 个目标</Button> : null}
-          {isActive(selected) ? <Button variant="outline" disabled={Boolean(pending)} onClick={() => batchAction('正在取消批次', '/cancel')}><Square />取消批次</Button> : null}
-          <Button variant="outline" disabled={Boolean(pending)} onClick={() => batchAction('正在核对各目标实际运行版本', '/refresh')}><RefreshCw />核对实际运行版本</Button>
+          {isActive(selected) || pending === '正在统一检查所有目标' ? <Button variant="outline" disabled={cancelling} onClick={() => void cancelBatch()}><Square />取消批次</Button> : null}
+          <Button variant="outline" disabled={pollingPending} onClick={() => batchAction('正在核对各目标实际运行版本', '/refresh')}><RefreshCw />核对实际运行版本</Button>
           <span className="text-xs text-muted-foreground">更新于 {formatDateTime(selected.updatedAt)}</span>
         </div>
       </> : null}
@@ -278,9 +313,14 @@ export function BatchReleaseResult({ batch, runs, busy, rollbackTargetId, onRetr
   const now = useNowTick(active);
   const status = statusView(batch.status);
   const done = batch.targets.filter((target) => target.status === 'success').length;
+  const hasRollback = batch.targets.some((target) => target.rollbackRunId || target.attempts.some((attempt) => attempt.kind === 'rollback'));
+  const restored = batch.targets.filter((target) => {
+    const previousCommit = target.previousCommitSha || (target.previousReleaseId ? runs[target.previousReleaseId]?.commitSha : undefined);
+    return target.status === 'rolled_back' && previousCommit && target.observedCommitSha === previousCommit && !target.observationError;
+  }).length;
   return <div className="min-w-0 space-y-3">
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="min-w-0 space-y-1"><h3 className="text-sm font-semibold">{status.label} · {done}/{batch.targets.length} 个目标发布成功</h3><p className="break-all font-mono text-xs text-muted-foreground">本批次固定提交：{batch.commitSha}</p><p className="break-all text-xs text-muted-foreground">{batch.branchName} · 批次 {batch.id}</p></div><Chip tone={status.tone}>{status.label}</Chip>
+      <div className="min-w-0 space-y-1"><h3 className="text-sm font-semibold">{status.label} · {hasRollback ? `已恢复 ${restored}/${batch.targets.length} 个目标原版本` : `${done}/${batch.targets.length} 个目标发布成功`}</h3><p className="break-all font-mono text-xs text-muted-foreground">本批次固定提交：{batch.commitSha}</p><p className="break-all text-xs text-muted-foreground">{batch.branchName} · 批次 {batch.id}</p></div><Chip tone={status.tone}>{status.label}</Chip>
     </div>
     {active ? <p role="status" className="text-xs text-muted-foreground">正在执行，批次创建至今 {Math.max(0, Math.floor((now - Date.parse(batch.createdAt)) / 1000))} 秒；可离开页面，执行与证据保留在服务端。</p> : null}
     <ol aria-label="各目标发布结果" className="space-y-3">{batch.targets.map((target, index) => {
@@ -292,16 +332,22 @@ export function BatchReleaseResult({ batch, runs, busy, rollbackTargetId, onRetr
       const previousRun = target.previousReleaseId ? runs[target.previousReleaseId] : undefined;
       const progress = run ? resolveReleaseSteps(run) : undefined;
       const mismatched = Boolean(target.observedCommitSha && target.observedCommitSha !== batch.commitSha && target.status === 'success');
+      const failureHint = target.error && run ? diagnoseReleaseFailure(run.logs || []).humanHint : undefined;
+      const observedResult = target.observedCommitSha && target.observedCommitSha === target.previousCommitSha
+        ? '实际运行版本已核实为批次前版本。'
+        : target.observedCommitSha === batch.commitSha ? '实际运行版本已核实为本批次版本。'
+        : target.observedCommitSha ? '实际运行版本与本批次版本不同，请先核对现场。' : '实际运行版本尚未核实，请先核对现场。';
       return <li key={target.targetId} className="min-w-0 rounded-lg border border-[hsl(var(--hairline))] p-3">
         <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs text-muted-foreground">{index + 1}.</span><h4 className="min-w-0 flex-1 break-words text-sm font-semibold">{target.targetName}</h4><Chip tone={targetStatus.tone}>{targetStatus.label}</Chip></div>
         <div className="mt-3 grid min-w-0 gap-2 text-xs md:grid-cols-2">
           <p className="min-w-0 break-all"><span className="text-muted-foreground">实际运行提交：</span><code>{target.observedCommitSha || '未知，尚未核实'}</code>{mismatched ? <strong className="ml-2 text-bad">版本不一致</strong> : null}</p>
-          <p className="min-w-0 break-all text-muted-foreground" title={target.previousReleaseId}>批次前版本：{previousRun?.commitSha || target.previousReleaseId || '无可恢复的历史版本'}</p>
+          <p className="min-w-0 break-all text-muted-foreground" title={target.previousReleaseId}>批次前版本：{target.previousCommitSha || previousRun?.commitSha || target.previousReleaseId || '无可恢复的历史版本'}</p>
           {target.observedAt ? <p className="text-muted-foreground">现场核对时间：{formatDateTime(target.observedAt)}</p> : null}
           {progress ? <p className="text-muted-foreground">执行进度：{progress.currentIndex}/{progress.total} · {progress.currentLabel}</p> : null}
         </div>
-        {target.error ? <p role="alert" className="mt-2 whitespace-pre-wrap break-words text-xs text-bad">{target.error}</p> : null}
-        {target.observationError ? <p className="mt-2 break-words text-xs text-warn">现场版本未核实：{target.observationError}</p> : null}
+        {target.error ? <div role="alert" className="mt-2 space-y-1 text-xs"><p className="text-bad">{failureHint || (target.status === 'rollback_failed' ? '原版本恢复未完成，请查看诊断详情，处理原因后重新恢复此目标。' : '本次操作未完成，请查看诊断详情，处理原因后重试此目标。')}</p><p className="text-muted-foreground">{observedResult}</p></div> : null}
+        {target.observationError && !target.error ? <p className="mt-2 text-xs text-warn">现场版本尚未核实，请查看诊断详情后重新核对。</p> : null}
+        {target.error || target.observationError ? <details className="mt-3 text-xs"><summary className="cursor-pointer text-muted-foreground">诊断详情</summary><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-[hsl(var(--surface-sunken))] p-3 text-xs text-muted-foreground">{[target.error, target.observationError].filter(Boolean).join('\n\n')}</pre></details> : null}
         {target.checks?.length ? <details className="mt-3 text-xs"><summary className="cursor-pointer text-muted-foreground">发布前检查 · {target.checks.filter((check) => check.status === 'pass').length}/{target.checks.length} 项通过</summary><ul className="mt-2 space-y-2">{target.checks.map((check) => <li key={check.id} className="min-w-0 rounded-md bg-[hsl(var(--surface-sunken))] p-2"><span className={check.status === 'fail' ? 'font-medium text-bad' : check.status === 'warn' ? 'font-medium text-warn' : 'font-medium'}>{check.status === 'fail' ? (check.blocking ? '阻断' : '未通过') : check.status === 'warn' ? '提醒' : '通过'} · {check.label}</span><p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">{check.message}</p></li>)}</ul></details> : null}
         <div className="mt-3 flex flex-wrap gap-2">
           {runId ? <Button size="sm" variant="outline" onClick={() => onLogs(runId)}><ScrollText />发布日志</Button> : null}

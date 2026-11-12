@@ -77,13 +77,20 @@ describe('批次发布结果 · 保留各目标真实结果', () => {
 
   it('回滚失败保留失败原因和现场版本，不渲染成全部成功', () => {
     const html = render(batch([
-      target('A', 'rolled_back', { rollbackRunId: 'rollback-A', observedCommitSha: OTHER_COMMIT }),
+      target('A', 'rolled_back', { rollbackRunId: 'rollback-A', previousCommitSha: OTHER_COMMIT, observedCommitSha: OTHER_COMMIT }),
       target('B', 'rollback_failed', { rollbackRunId: 'rollback-B', error: '恢复原版本后的入口检查失败', observedCommitSha: COMMIT }),
     ], 'rollback_failed'));
     expect(html).toContain('回滚失败');
+    expect(html).toContain('已恢复 1/2 个目标原版本');
+    expect(html).not.toContain('0/2 个目标发布成功');
     expect(html).toContain('恢复原版本后的入口检查失败');
     expect(html).toContain(OTHER_COMMIT);
     expect(html).not.toContain('全部目标发布成功');
+    const unknown = render(batch([
+      target('A', 'rolled_back', { rollbackRunId: 'rollback-A', previousCommitSha: OTHER_COMMIT }),
+      target('B', 'rolled_back', { rollbackRunId: 'rollback-B', observedCommitSha: OTHER_COMMIT }),
+    ], 'inconsistent'));
+    expect(unknown).toContain('已恢复 0/2 个目标原版本');
   });
 
   it('回滚确认明确指向被选择目标及批次开始前版本', () => {

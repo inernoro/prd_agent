@@ -259,6 +259,7 @@ export function isDrainBlockedPath(method: string, pathname: string): boolean {
   if (/^\/projects\/[^/]+\/branches\/(lifecycle-cleanup|[^/]+\/restore-archive)\/?$/.test(pathname)) return true;
   // 分支构建/部署
   if (/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+)\/?$/.test(pathname)) return true;
+  if (/^\/releases\/batches\/[^/]+\/(start|targets\/[^/]+\/(retry|rollback))\/?$/.test(pathname)) return true;
   // 生产发布：发起 / 回滚 / 重试 —— 三个都会真的往目标机器跑 SSH
   if (/^\/releases\/branches\/[^/]+\/runs\/?$/.test(pathname)) return true;
   if (/^\/releases\/runs\/[^/]+\/(rollback|retry)\/?$/.test(pathname)) return true;

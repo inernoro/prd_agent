@@ -106,6 +106,11 @@ export interface ReleasePreflightResult {
 }
 
 export interface ReleaseStartInput {
+  /** Internal batch source: version selection is validated by ReleaseBatchService. */
+  batchSource?: import('../domain/release-batch.js').ReleaseBatchSource;
+  batchId?: string;
+  batchAttemptId?: string;
+  assertDispatchAllowed?: () => void;
   branchId: string;
   targetId: string;
   operator?: string;
@@ -507,10 +512,18 @@ export class ReleaseService {
     return this.stateService.getReleasePlans(projectId);
   }
 
+  private resolveSourceBranch(input: ReleaseStartInput): BranchEntry | undefined {
+    if (!input.batchSource) return this.stateService.getBranch(input.branchId);
+    const source = input.batchSource;
+    return { id: source.artifact.branchId, projectId: source.projectId,
+      branch: source.artifact.branchName, worktreePath: source.artifact.artifactPath,
+      pinnedCommit: source.artifact.commitSha, status: 'running', services: {} } as BranchEntry;
+  }
+
   async preflight(input: ReleaseStartInput): Promise<ReleasePreflightResult> {
     const checks: ReleasePreflightCheck[] = [];
     const push = (check: ReleasePreflightCheck): void => { checks.push(check); };
-    const branch = this.stateService.getBranch(input.branchId);
+    const branch = this.resolveSourceBranch(input);
     const target = this.stateService.getReleaseTarget(input.targetId);
     const projectMismatch = Boolean(branch && target && branch.projectId !== target.projectId);
     const projectId = branch?.projectId || target?.projectId || 'default';
@@ -520,6 +533,8 @@ export class ReleaseService {
 
     if (!branch) {
       push({ id: 'branch', label: '分支存在', status: 'fail', message: `分支不存在: ${input.branchId}`, blocking: true });
+    } else if (input.batchSource) {
+      push({ id: 'branch', label: '验收版本来源', status: 'pass', message: `${branch.branch} 的固定验收版本；后续分支运行态不影响本批次`, blocking: false });
     } else if (branch.status !== 'running') {
       push({ id: 'branch', label: '分支部署成功', status: 'fail', message: `当前状态是 ${branch.status}，只允许从成功运行的分支发布`, blocking: true });
     } else {
@@ -534,8 +549,8 @@ export class ReleaseService {
     }
 
     const previewUrl = input.previewUrl || '';
-    if (branch && commitSha && previewUrl) {
-      push({ id: 'artifact', label: '可发布产物', status: 'pass', message: 'branch-preview artifact 已就绪', blocking: false });
+    if (branch && commitSha && (previewUrl || input.batchSource)) {
+      push({ id: 'artifact', label: '可发布产物', status: 'pass', message: input.batchSource ? '已验收的固定部署版本已锁定' : 'branch-preview artifact 已就绪', blocking: false });
     } else {
       push({ id: 'artifact', label: '可发布产物', status: 'fail', message: '缺少预览地址或 commit，无法形成 ReleaseArtifact', blocking: true });
     }
@@ -836,7 +851,7 @@ export class ReleaseService {
    * 目标在这 2 分钟里被禁用、归档，或分支不再 running，一律回落重跑而不是盲信旧结论。
    */
   private findReusablePreflight(input: ReleaseStartInput): ReleasePreflightResult | undefined {
-    const branch = this.stateService.getBranch(input.branchId);
+    const branch = this.resolveSourceBranch(input);
     const key: ReleasePreflightReuseKey = {
       branchId: input.branchId,
       targetId: input.targetId,
@@ -906,11 +921,14 @@ export class ReleaseService {
     // 这道守卫是「卡死」的放大器：执行体随 CDS 重启消失后 run 永远停在 running，
     // 该目标从此发不出去。所以先做一次心跳收割，把已经死掉的 run 收敛掉再判定。
     this.reconcileInterruptedReleases();
+    input.assertDispatchAllowed?.();
     this.assertTargetFree(preflight.target.id, '发布');
     const releaseId = `rel_${crypto.randomBytes(8).toString('hex')}`;
     const startedAt = this.nowIso();
     const run: ReleaseRun = {
       releaseId,
+      batchId: input.batchId,
+      batchAttemptId: input.batchAttemptId,
       projectId: preflight.target.projectId,
       branchId: input.branchId,
       commitSha: preflight.artifact.commitSha,
@@ -950,11 +968,17 @@ export class ReleaseService {
         'queued',
       );
     }
+    if (input.batchId) {
+      await this.stateService.flush();
+      try { input.assertDispatchAllowed?.(); }
+      catch (error) { this.cancelRelease(releaseId, input.operator || 'user'); throw error; }
+    }
     void this.execute(releaseId, () => this.runRelease(releaseId), 'failed');
     return this.stateService.getReleaseRun(releaseId)!;
   }
 
-  async startRollback(releaseId: string, operator?: string, targetReleaseId?: string): Promise<ReleaseRun> {
+  async startRollback(releaseId: string, operator?: string, targetReleaseId?: string,
+    batch?: { id: string; attemptId: string; assertDispatchAllowed: () => void }): Promise<ReleaseRun> {
     const current = this.stateService.getReleaseRun(releaseId);
     if (!current) throw new Error(`ReleaseRun not found: ${releaseId}`);
     const target = this.stateService.getReleaseTarget(current.targetId);
@@ -976,12 +1000,15 @@ export class ReleaseService {
     // 此前这里一道闸都没有，取消后紧接着回滚会和尚未退出的老执行体并发写
     // （Codex PR #1273 P1）。先收一轮心跳过期的僵尸 run，免得闸门被死 run 卡住。
     this.reconcileInterruptedReleases();
+    batch?.assertDispatchAllowed();
     this.assertTargetFree(current.targetId, '回滚');
 
     const rollbackId = `rel_${crypto.randomBytes(8).toString('hex')}`;
     const rollbackStartedAt = this.nowIso();
     const run: ReleaseRun = {
       releaseId: rollbackId,
+      batchId: batch?.id,
+      batchAttemptId: batch?.attemptId,
       projectId: current.projectId,
       branchId: previous.branchId,
       commitSha: previous.commitSha,
@@ -1020,6 +1047,11 @@ export class ReleaseService {
     // （release-events 按 status 映射 + 去重），不另造事件类型。
     releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId: rollbackId, run: persisted } });
     this.emitLog(rollbackId, 'info', `rollback queued to ${previous.releaseId} via ${strategy}`, 'rollback');
+    if (batch) {
+      await this.stateService.flush();
+      try { batch.assertDispatchAllowed(); }
+      catch (error) { this.cancelRelease(rollbackId, operator || 'user'); throw error; }
+    }
     void this.execute(rollbackId, () => this.runRollback(rollbackId, target, previous), 'rollback_failed');
     return this.stateService.getReleaseRun(rollbackId)!;
   }

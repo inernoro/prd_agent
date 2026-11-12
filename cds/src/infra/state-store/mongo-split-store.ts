@@ -235,8 +235,10 @@ function compactReleaseRuns(
   runs: Record<string, ReleaseRun> | undefined,
   maxEntries: number,
   maxLogsPerRun: number,
+  protectedIds: Set<string> = new Set(),
 ): Record<string, ReleaseRun> {
-  const kept = takeLastRecordEntries(runs, maxEntries);
+  const kept = { ...takeLastRecordEntries(runs, maxEntries),
+    ...Object.fromEntries(Object.entries(runs || {}).filter(([id]) => protectedIds.has(id))) };
   return Object.fromEntries(Object.entries(kept).map(([id, run]) => [
     id,
     {
@@ -282,12 +284,16 @@ function compactGlobalRestToFit(restOfState: GlobalRest): GlobalRest {
   // These fields are diagnostic/history data. They must never make the
   // control-plane state unflushable; projects/branches already live in split
   // collections and stay intact.
+  // Batch request receipts and rollback evidence must survive diagnostic compaction.
+  const batchRunIds = new Set(Object.values(restOfState.releaseBatches || {}).flatMap(batch => batch.targets.flatMap(row =>
+    [row.previousReleaseId, row.runId, row.rollbackRunId, ...row.attempts.map(attempt => attempt.runId)]
+      .filter((id): id is string => Boolean(id)))));
   const retentionSteps = [200, 100, 50, 20, 10, 5, 0];
   for (const maxEntries of retentionSteps) {
     restOfState.logs = takeLastRecordEntries(restOfState.logs, maxEntries);
     restOfState.containerLogArchives = takeLastRecordEntries(restOfState.containerLogArchives, maxEntries);
     restOfState.serviceDeployments = takeLastRecordEntries(restOfState.serviceDeployments, maxEntries);
-    restOfState.releaseRuns = compactReleaseRuns(restOfState.releaseRuns, maxEntries, Math.min(20, Math.max(0, maxEntries)));
+    restOfState.releaseRuns = compactReleaseRuns(restOfState.releaseRuns, maxEntries, Math.min(20, Math.max(0, maxEntries)), batchRunIds);
     // 定时任务运行史同属「诊断/历史」，也整段嵌在 global 文档里。这道兜底此前对它
     // 视而不见——运行史一旦把文档顶过上限，compact 走完整条阶梯也压不下来，
     // global 文档就此写不进去，连分支/项目的后续变更一起丢（Codex #1471 P1）。
