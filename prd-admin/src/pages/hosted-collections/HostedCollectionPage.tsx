@@ -10,6 +10,11 @@ import { HostedCollectionDocument } from './HostedCollectionDocument';
 
 export default function HostedCollectionPage() {
   const { collectionId, token } = useParams();
+  return <HostedCollectionReader key={token ? `share:${token}` : `collection:${collectionId}`} />;
+}
+
+function HostedCollectionReader() {
+  const { collectionId, token } = useParams();
   const navigate = useNavigate();
   const [data, setData] = useState<HostedCollectionView>();
   const [error, setError] = useState('');
@@ -20,15 +25,22 @@ export default function HostedCollectionPage() {
   const [active, setActive] = useState<string>();
   const [last, setLast] = useState<string>();
   const [manage, setManage] = useState(false);
+  const loadGeneration = useRef(0);
   const main = useRef<HTMLElement>(null);
   const rail = useRef<HTMLElement>(null);
   const load = useCallback(async () => {
     if (!collectionId && !token) return;
+    const generation = ++loadGeneration.current;
     const result = token ? await readHostedCollectionShare(token, submittedPassword) : await getHostedCollection(collectionId!);
+    if (generation !== loadGeneration.current) return;
     if (result.success) { setData(result.data); setError(''); }
     else setError(result.error.message);
   }, [collectionId, token, submittedPassword]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const generations = loadGeneration;
+    void load();
+    return () => { generations.current++; };
+  }, [load]);
   useEffect(() => {
     if (!collectionId) return;
     try { setLast(localStorage.getItem(`hosted-collection:last:${collectionId}`) ?? undefined); } catch { /* 阅读仍可继续 */ }
@@ -50,8 +62,14 @@ export default function HostedCollectionPage() {
   const paginated = members.length >= 90 && !query;
   const visible = new Set((query ? hits : paginated ? other.slice(page * 30, (page + 1) * 30) : other).map(item => item.id));
   if (primary && matching(primary)) visible.add(primary.id);
-  const open = (id: string) => { setActive(id); setLast(id); try { localStorage.setItem(`hosted-collection:last:${collection.id}`, id); } catch { /* 阅读仍可继续 */ } main.current?.scrollTo(0, 0); };
-  const back = () => { setActive(undefined); main.current?.scrollTo(0, 0); requestAnimationFrame(() => rail.current?.querySelector(`[data-member="${CSS.escape(last ?? '')}"]`)?.scrollIntoView({ block: 'nearest' })); };
+  const locate = (id: string) => {
+    const index = other.findIndex(item => item.id === id);
+    if (members.length >= 90 && index >= 0) setPage(Math.floor(index / 30));
+    const item = byId.get(id);
+    if (item && !matching(item)) setQuery('');
+  };
+  const open = (id: string) => { setActive(id); setLast(id); locate(id); try { localStorage.setItem(`hosted-collection:last:${collection.id}`, id); } catch { /* 阅读仍可继续 */ } main.current?.scrollTo(0, 0); };
+  const back = () => { setActive(undefined); if (last) locate(last); main.current?.scrollTo(0, 0); requestAnimationFrame(() => rail.current?.querySelector(`[data-member="${CSS.escape(last ?? '')}"]`)?.scrollIntoView({ block: 'nearest' })); };
   const search = <label className="hc-search"><Search size={14} /><input aria-label="在合集中查找" placeholder="查找标题、作者、摘要" value={query} onChange={e => { setQuery(e.target.value); setPage(0); }} />{query && <button aria-label="清除查找" onClick={() => setQuery('')}><X size={12} /></button>}</label>;
   const row = (item: HostedCollectionItem, primaryRow = false) => <button key={item.id} data-member={item.id} className={`row ${primaryRow ? 'primary-row' : ''} ${active === item.id ? 'cur' : ''} ${item.unavailable ? 'gone' : ''} ${last === item.id ? 'last' : ''}`} onClick={() => open(item.id)} title={item.title}><span className="num">{primaryRow ? '主' : String(collection.siteIds.indexOf(item.id) + 1).padStart(2, '0')}</span><span><span className="tt">{item.title}</span><span className="sub">{item.author}{item.author && ' · '}{item.type}<span className="hc-row-date"> · {collectionDate(item.updatedAt)}</span></span></span><span>{primaryRow && <span className="tag t-m">主文档</span>}{item.unavailable && <span className="tag t-x">不可用</span>}{!primaryRow && last === item.id && <span className="tag t-m">刚读过</span>}</span></button>;
   const noHits = <div className="hc-no-hits"><strong>没有找到「{query}」</strong><p>已在本合集 {members.length} 份文档的标题、作者和摘要中查找。正文内容不在查找范围内。</p><div><button className="btn" onClick={() => setQuery('')}>清除查找</button><Link className="btn ghost" to={`/web-pages?keyword=${encodeURIComponent(query)}`}>在全部网页托管中查找</Link></div></div>;

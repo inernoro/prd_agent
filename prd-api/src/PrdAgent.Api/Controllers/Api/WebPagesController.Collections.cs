@@ -168,8 +168,14 @@ public partial class WebPagesController
         if (collection == null) return RelatedNotFound();
         var shares = await _db.WebPageShareLinks.Find(s => s.CollectionSnapshot != null && s.CollectionSnapshot.CollectionId == id && s.CreatedBy == GetUserId())
             .SortByDescending(s => s.CreatedAt).ToListAsync();
+        // 只为当前所有者已创建的名单补全显示名，不向匿名目录或其他合集暴露用户目录。
+        var memberIds = shares.SelectMany(s => s.CollectionSnapshot!.AccessUserIds).Distinct().ToList();
+        var members = await _db.Users.Find(u => memberIds.Contains(u.UserId))
+            .Project(u => new { u.UserId, u.DisplayName, u.Username }).ToListAsync();
+        var memberNames = members.ToDictionary(u => u.UserId, u => string.IsNullOrWhiteSpace(u.DisplayName) ? u.Username : u.DisplayName);
         return Ok(ApiResponse<object>.Ok(new { items = shares.Select(s => new { s.Id, s.Token, s.Title, s.Visibility,
             s.AccessLevel, s.ExpiresAt, s.CreatedAt, s.ViewCount, isRevoked = s.IsRevoked || s.CollectionSnapshot!.ShareGeneration != collection.ShareGeneration, snapshot = s.CollectionSnapshot,
+            accessMembers = s.CollectionSnapshot!.AccessUserIds.Select(memberId => new { id = memberId, name = memberNames.GetValueOrDefault(memberId) ?? memberId }),
             shareUrl = $"/s/collection/{Uri.EscapeDataString(s.Token)}" }) }));
     }
 
@@ -220,7 +226,7 @@ public partial class WebPagesController
         // 复用完整的既有分享权限、私有资料确认、密码及有效期规则，不创建绕过门禁的分享。
         var result = await CreateShareCore(new CreateWebPageShareRequest { SiteIds = snapshot.SiteIds, ShareType = "collection",
             Title = request.Title ?? collection.Name, Description = collection.Description, Password = request.Password,
-            ExpiresInDays = request.ExpiresInDays, Visibility = userIds.Count > 0 ? "logged-in" : request.Visibility, ForceNew = true,
+            ExpiresInDays = request.ExpiresInDays, Visibility = userIds.Count > 0 && request.Visibility != "owner-only" ? "logged-in" : request.Visibility, ForceNew = true,
             ConfirmedPrivateSourceFingerprint = request.ConfirmedPrivateSourceFingerprint }, snapshot);
         if (result is not OkObjectResult ok || ok.Value is not ApiResponse<object> response || response.Data == null) return result;
         var json = JsonSerializer.SerializeToElement(response.Data, new JsonSerializerOptions(JsonSerializerDefaults.Web));

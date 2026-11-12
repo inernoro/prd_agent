@@ -31,6 +31,7 @@ export interface HostedCollectionPermissions { fingerprint: string; items: Hoste
 export interface HostedCollectionShare {
   id: string; token: string; title: string; visibility: string; accessLevel: string; expiresAt?: string;
   createdAt: string; viewCount: number; isRevoked: boolean; shareUrl: string;
+  accessMembers?: { id: string; name: string }[];
   snapshot: { collectionId: string; version: number; name: string; description: string; siteIds: string[]; mainSiteId: string; sections: HostedCollectionSection[]; accessUserIds?: string[] };
 }
 export interface SaveHostedCollection { version?: number; name: string; description: string; siteIds: string[]; mainSiteId: string; sections: HostedCollectionSection[] }
