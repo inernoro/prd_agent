@@ -135,6 +135,7 @@ public sealed class ChatAgentService : IChatAgentService
 
         // 倒序取最近 N 条再翻回来，得到按 (CreatedAt, Ordinal) 升序的一页
         items.Reverse();
+
         return items.Select(ToView).ToList();
     }
 
@@ -263,11 +264,13 @@ public sealed class ChatAgentService : IChatAgentService
         long? inputTokens = null;
         long? outputTokens = null;
         var finished = false;
+        var toolNames = new Dictionary<string, string>(StringComparer.Ordinal);
 
         try
         {
             await foreach (var evt in _runtime.RunStreamAsync(request, ct))
             {
+                var eventTool = ChatAgentToolPresentation.TrackToolName(toolNames, evt.ToolName, evt.ToolUseId);
                 switch (evt.Type)
                 {
                     case SidecarEventType.TextDelta:
@@ -311,7 +314,7 @@ public sealed class ChatAgentService : IChatAgentService
                         break;
 
                     case SidecarEventType.ToolUse:
-                        var toolName = ChatAgentToolPresentation.NormalizeToolName(evt.ToolName);
+                        var toolName = eventTool;
                         await AppendEventAsync(sessionId, turnId, ChatAgentEventTypes.ToolStarted, new
                         {
                             toolUseId = evt.ToolUseId,
@@ -324,7 +327,7 @@ public sealed class ChatAgentService : IChatAgentService
                     case SidecarEventType.ToolResult:
                         await AppendEventAsync(sessionId, turnId, ChatAgentEventTypes.ToolFinished,
                             ChatAgentToolPresentation.BuildToolCardPayload(
-                                evt.ToolName, evt.ToolUseId, evt.Content, evt.IsError), ct);
+                                eventTool, evt.ToolUseId, evt.Content, evt.IsError), ct);
                         break;
 
                     case SidecarEventType.Keepalive:
@@ -516,11 +519,12 @@ public sealed class ChatAgentService : IChatAgentService
         // 工具回调只带 runId 回来。不登记这一笔，工具全都会因为「没有用户身份」而拒绝执行，
         // 表现成「说调了工具但什么也没发生」。
         _oneOffRuns.Register(runId, request.UserId);
+        var toolNames = new Dictionary<string, string>(StringComparer.Ordinal);
         try
         {
             await foreach (var evt in _runtime.RunStreamAsync(sidecarRequest, ct))
             {
-                var translated = TranslateOneOff(evt);
+                var translated = TranslateOneOff(evt, ChatAgentToolPresentation.TrackToolName(toolNames, evt.ToolName, evt.ToolUseId));
                 if (translated != null) yield return translated;
                 if (evt.Type is SidecarEventType.Done or SidecarEventType.Error) yield break;
             }
@@ -542,7 +546,7 @@ public sealed class ChatAgentService : IChatAgentService
     /// 运行时事件 → 对外事件。**刻意与会话路径共用同一套事件类型与载荷形状**，
     /// 否则前端要认两种协议，工具卡的判据也会分裂成两份各自漂移。
     /// </summary>
-    private static ChatAgentOneOffEvent? TranslateOneOff(SidecarEvent evt) => evt.Type switch
+    private static ChatAgentOneOffEvent? TranslateOneOff(SidecarEvent evt, string? toolName) => evt.Type switch
     {
         SidecarEventType.TextDelta when !string.IsNullOrEmpty(evt.Text) =>
             Event(ChatAgentEventTypes.TextDelta, new { text = evt.Text }),
@@ -553,14 +557,14 @@ public sealed class ChatAgentService : IChatAgentService
         SidecarEventType.ToolUse => Event(ChatAgentEventTypes.ToolStarted, new
         {
             toolUseId = evt.ToolUseId,
-            tool = ChatAgentToolPresentation.NormalizeToolName(evt.ToolName),
-            label = ChatAgentToolPresentation.ToolLabel(evt.ToolName),
-            steps = ChatAgentToolPresentation.ToolSteps(evt.ToolName),
+            tool = ChatAgentToolPresentation.NormalizeToolName(toolName),
+            label = ChatAgentToolPresentation.ToolLabel(toolName),
+            steps = ChatAgentToolPresentation.ToolSteps(toolName),
         }),
 
         SidecarEventType.ToolResult => Event(ChatAgentEventTypes.ToolFinished,
             ChatAgentToolPresentation.BuildToolCardPayload(
-                evt.ToolName, evt.ToolUseId, evt.Content, evt.IsError)),
+                toolName, evt.ToolUseId, evt.Content, evt.IsError)),
 
         SidecarEventType.Done => Event(ChatAgentEventTypes.Done, new { text = evt.FinalText }),
 
@@ -588,13 +592,27 @@ public sealed class ChatAgentService : IChatAgentService
 
         items.Reverse();
 
+        // 知识库权限可在两轮之间撤销。历史助手回答可能包含旧原文，即使历史里不重放
+        // tool result，也不能直接再送模型。知识会话只保留用户问题，每轮重新检索核权。
+        var usedKnowledge = await _db.ChatAgentEvents.Find(
+            Builders<ChatAgentEvent>.Filter.Eq(e => e.SessionId, sessionId)
+            & Builders<ChatAgentEvent>.Filter.Eq(e => e.Type, ChatAgentEventTypes.ToolStarted)
+            & Builders<ChatAgentEvent>.Filter.Regex(e => e.PayloadJson,
+                new MongoDB.Bson.BsonRegularExpression("\"tool\"\\s*:\\s*\"kb_(search|read|index)\"")))
+            .AnyAsync(ct);
+
         // 本轮的助手占位消息还是空的，带上去只会污染上下文；失败轮的空消息同理。
-        return items
+        return BuildCurrentHistory(items, turnId, usedKnowledge);
+    }
+
+    public static List<SidecarChatMessage> BuildCurrentHistory(
+        IEnumerable<ChatAgentMessage> items, string turnId, bool usedKnowledge)
+        => items
             .Where(m => m.Content.Length > 0)
+            .Where(m => !usedKnowledge || m.Role != ChatAgentRoles.Assistant)
             .Where(m => !(m.TurnId == turnId && m.Role == ChatAgentRoles.Assistant))
             .Select(m => new SidecarChatMessage { Role = m.Role, Content = m.Content })
             .ToList();
-    }
 
     /// <summary>
     /// 取号并落事件。序号来自会话文档的原子自增，保证同一会话内单调递增，

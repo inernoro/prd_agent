@@ -22,7 +22,36 @@ public static class ChatAgentToolPresentation
         string? EntryId,
         string? StoreName,
         string? Title,
-        string? OpenPath);
+        string? OpenPath,
+        KnowledgeRetrievalEvidence? RetrievalEvidence = null);
+
+    public sealed record KnowledgeRetrievalEvidence(
+        string? Mode, IReadOnlyList<string> RetrievedEntryIds,
+        IReadOnlyList<string> ContextEntryIds, double? RetrievalLatencyMs);
+
+    public static string? TrackToolName(Dictionary<string, string> names, string? tool, string? toolUseId)
+    {
+        var normalized = NormalizeToolName(tool);
+        if (!string.IsNullOrWhiteSpace(normalized) && !string.IsNullOrWhiteSpace(toolUseId))
+            names[toolUseId] = normalized;
+        return normalized ?? (toolUseId is null ? null : names.GetValueOrDefault(toolUseId));
+    }
+
+    public static string UnwrapToolText(string content)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(content);
+            if (document.RootElement.ValueKind == JsonValueKind.Array)
+                return string.Join("\n", document.RootElement.EnumerateArray()
+                    .Where(block => block.ValueKind == JsonValueKind.Object
+                        && block.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String && type.GetString() == "text"
+                        && block.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String)
+                    .Select(block => block.GetProperty("text").GetString()));
+        }
+        catch (JsonException) { }
+        return content;
+    }
 
     /// <summary>
     /// 官方 SDK 把我们注册的工具挂在内置 MCP server 下，模型看到的名字是
@@ -56,6 +85,7 @@ public static class ChatAgentToolPresentation
             "chat_save_note" => "写入知识库",
             "kb_search" => "检索知识库",
             "kb_read" => "读取知识库",
+            "kb_index" => "建立文档检索索引",
             var other => other ?? "工具",
         };
     }
@@ -74,6 +104,7 @@ public static class ChatAgentToolPresentation
             "chat_save_note" => new[] { "整理内容", "选定空间", "写入并建链接" },
             "kb_search" => new[] { "理解问题", "检索" },
             "kb_read" => new[] { "定位条目", "读取原文" },
+            "kb_index" => new[] { "读取文档", "建立检索索引" },
             _ => new[] { "执行" },
         };
     }
@@ -101,12 +132,13 @@ public static class ChatAgentToolPresentation
         string? imageUrl = null, entryId = null, storeName = null, openPath = null, title = null;
         var ok = true;
         string? message = null;
+        KnowledgeRetrievalEvidence? retrievalEvidence = null;
 
         if (!string.IsNullOrWhiteSpace(content))
         {
             try
             {
-                using var doc = JsonDocument.Parse(content!);
+                using var doc = JsonDocument.Parse(UnwrapToolText(content!));
                 var root = doc.RootElement;
                 if (root.ValueKind == JsonValueKind.Object)
                 {
@@ -120,8 +152,44 @@ public static class ChatAgentToolPresentation
                         openPath = op.GetString();
                     if (root.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String)
                         title = t.GetString();
+                    // 读取原文工具的来源是嵌套结构；直接展示服务端生成的知识库路径。
+                    if (tool is "kb_read" or "kb_index"
+                        && root.TryGetProperty("source", out var source)
+                        && source.ValueKind == JsonValueKind.Object)
+                    {
+                        if (source.TryGetProperty("openPath", out var path) && path.ValueKind == JsonValueKind.String
+                            && path.GetString() is { } value && value.StartsWith("/document-store?store=", StringComparison.Ordinal))
+                            openPath = value;
+                        if (source.TryGetProperty("entryId", out var id) && id.ValueKind == JsonValueKind.String)
+                            entryId = id.GetString();
+                        if (source.TryGetProperty("title", out var sourceTitle) && sourceTitle.ValueKind == JsonValueKind.String)
+                            title = sourceTitle.GetString();
+                    }
                     if (root.TryGetProperty("total", out var tot) && tot.ValueKind == JsonValueKind.Number)
                         message = $"命中 {tot.GetInt32()} 条";
+                    if (tool == "kb_search")
+                    {
+                        var retrieved = new List<string>();
+                        var contextIds = new List<string>();
+                        if (root.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
+                            foreach (var item in items.EnumerateArray())
+                                if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("entry", out var entry)
+                                    && entry.ValueKind == JsonValueKind.Object && entry.TryGetProperty("entryId", out var id)
+                                    && id.ValueKind == JsonValueKind.String && id.GetString() is { } value)
+                                    retrieved.Add(value);
+                        if (root.TryGetProperty("contextEntryIds", out var ids) && ids.ValueKind == JsonValueKind.Array)
+                            foreach (var id in ids.EnumerateArray())
+                                if (id.ValueKind == JsonValueKind.String && id.GetString() is { } value) contextIds.Add(value);
+                        retrievalEvidence = new KnowledgeRetrievalEvidence(
+                            root.TryGetProperty("mode", out var mode) && mode.ValueKind == JsonValueKind.String ? mode.GetString() : "literal",
+                            retrieved, contextIds,
+                            root.TryGetProperty("retrievalLatencyMs", out var latency) && latency.ValueKind == JsonValueKind.Number
+                                && latency.TryGetDouble(out var ms) ? ms : null);
+                    }
+                    if (tool == "kb_read")
+                        retrievalEvidence = new KnowledgeRetrievalEvidence("read", Array.Empty<string>(),
+                            root.TryGetProperty("hasContent", out var hasContent) && hasContent.ValueKind == JsonValueKind.True
+                                && entryId is not null ? new[] { entryId } : Array.Empty<string>(), null);
                     // 转派结果：把「这是谁做的」摆到卡上。用户没挑智能体，更要看得见是谁接的活。
                     if (root.TryGetProperty("agent", out var ag) && ag.ValueKind == JsonValueKind.String)
                         message = $"由「{ag.GetString()}」完成";
@@ -137,7 +205,7 @@ public static class ChatAgentToolPresentation
         {
             ok = false;
             // 失败时 content 就是那句人话原因，直接透出，别吞；过长的堆栈只留开头。
-            var reason = (content ?? string.Empty).Trim();
+            var reason = UnwrapToolText(content ?? string.Empty).Trim();
             message = reason.Length == 0 ? "这一步没成功"
                 : reason.Length > 200 ? reason[..200] + "…"
                 : reason;
@@ -145,6 +213,6 @@ public static class ChatAgentToolPresentation
 
         return new ToolCardPayload(
             toolUseId, tool, ToolLabel(tool), ok, message,
-            imageUrl, entryId, storeName, title, openPath);
+            imageUrl, entryId, storeName, title, openPath, retrievalEvidence);
     }
 }

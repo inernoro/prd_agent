@@ -111,7 +111,8 @@ public static class TaskAdmissionPolicies
         Add("ShituAgentController", "QaStream", new[] { "shitu-agent." });
         Add("ProjectRouteAgentController", "AnalyzePlanStream", new[] { "project-route-agent." });
         Add("ChannelTraceAgentController", "ImportKnowledge AskKnowledge ImportCases DiagnoseAsk CompareDiff", new[] { "channel-trace-agent." });
-        Add("ChatAgentController", "SendMessage", new[] { "chat-agent.", "visual-agent." });
+        Add("ChatAgentController", "SendMessage", new[] { "chat-agent.", "visual-agent.",
+            AppCallerRegistry.Admin.KnowledgeBase.Index, AppCallerRegistry.Admin.KnowledgeBase.Query });
         Add("InfraAgentSessionsController", "SendMessage Start", new[] { "infra-agent.", "chat-agent." });
         Add("InfraAgentRuntimeProfilesController", "Test", new[] { "infra-agent." });
         Add("ExchangeController", "TryModel TestExchange TestExchangeWithAudio TestStreamAsrSse", new[] { "prd-agent-web.lab::", "document-store.subtitle", "self-test." });

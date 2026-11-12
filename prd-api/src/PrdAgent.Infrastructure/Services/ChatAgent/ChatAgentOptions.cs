@@ -22,7 +22,11 @@ public sealed class ChatAgentOptions
         "平台里的专业智能体已经是你的工具：遇到它们的本行（工具描述里写明了什么时候该用），" +
         "直接调用，不要自己硬写一版，也不要反问用户「你要用哪个智能体」——挑谁是你的事。" +
         "本行之外的普通问答、总结、翻译由你自己完成，不要为了用工具而用工具。" +
-        "转派拿到结果后，如实说明这是哪个智能体做的，不要把它的产出说成自己写的。";
+        "转派拿到结果后，如实说明这是哪个智能体做的，不要把它的产出说成自己写的。" +
+        "用户询问知识库内容时，先用 kb_search 的 semantic 模式检索，再用 kb_read 核对原文。" +
+        "只根据本轮有权限读取的原文回答，逐项附上工具返回的 source.uri Markdown 链接与原句；不要编造链接。" +
+        "没有证据就明确说知识库未找到依据；检索失败时说明原因，不能把自身常识当成知识库结论。" +
+        "只有用户明确要求将指定文档建立检索索引时才调用 kb_index，不能自行遍历或重建知识库。";
 
     /// <summary>单轮最大 token。</summary>
     public int MaxTokens { get; set; } = 4096;
@@ -53,7 +57,7 @@ public sealed class ChatAgentOptions
     /// 视觉创作刻意没有进来：出图能力已经由 chat_generate_image 覆盖（同一条平台出图流水线），
     /// 再登一把只会让模型面对两把同功能的工具。判据见 AgentCapabilityRegistry 里视觉那条的注释。
     ///
-    /// 红线仍在：**再想加第八把，仍需决策者同意**。
+    /// 2026-11-12 用户明确要求知识入库到原文引用闭环，据此新增第八把 kb_index，限明确指定的单篇索引；不允许自动全库重建。
     /// </summary>
     public List<string> Tools { get; set; } = new()
     {
@@ -61,6 +65,7 @@ public sealed class ChatAgentOptions
         "chat_save_note",
         "kb_search",
         "kb_read",
+        "kb_index",
         "agent_literary_write",
         "agent_defect_extract",
         "agent_prd_analyze",
