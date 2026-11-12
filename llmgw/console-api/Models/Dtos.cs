@@ -372,6 +372,14 @@ public sealed class RouterTraceDto
 
 public sealed class ProviderAttemptDto
 {
+    public string? AttemptId { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public string? ProviderTaskId { get; set; }
+    public int? InputTokens { get; set; }
+    public int? OutputTokens { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+
     public int Order { get; set; }
     public string Stage { get; set; } = "send";
     public string? Provider { get; set; }

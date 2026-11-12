@@ -1821,7 +1821,7 @@ public class LlmGatewayTests
         };
         var http = new SequenceHttpClientFactory(
             (503, "{\"error\":{\"message\":\"provider a unavailable\"}}"),
-            (200, "{\"data\":[{\"url\":\"https://cdn.example.com/image-from-b.png\"}]}"));
+            (200, "{\"data\":[{\"url\":\"https://cdn.example.com/image-from-b.png\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3,\"cost\":0.04}}"));
         var logWriter = new CapturingLogWriter();
         var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), logWriter);
 
@@ -1853,6 +1853,13 @@ public class LlmGatewayTests
         Assert.Equal("succeeded", attempts[1].Status);
         Assert.Equal(200, attempts[1].StatusCode);
         Assert.True(attempts[1].ReachedProvider);
+        Assert.NotNull(attempts[0].AttemptId);
+        Assert.NotNull(attempts[1].AttemptId);
+        Assert.NotEqual(attempts[0].AttemptId, attempts[1].AttemptId);
+        Assert.Null(attempts[0].ProviderReportedCost);
+        Assert.Equal(0.04m, attempts[1].ProviderReportedCost);
+        Assert.Equal(5, attempts[1].InputTokens);
+        Assert.Equal(3, attempts[1].OutputTokens);
     }
 
     [Fact]

@@ -1943,6 +1943,18 @@ if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
     "        网关库是空的（第一次建）时集合还不存在，这时用环境变量点名：\n" +
     "        PRD_GATEWAY_DB=1 mongosh <uri>/<网关库名> scripts/mongodb-indexes.js")
 } else {
+  // 调用链查询只使用持久化编号；这些索引由 DBA 执行，应用启动只巡检。
+  for (const field of ["RequestId", "RunId", "LogicalRequestId"]) {
+    ensureCatalogIndex("llmrequestlogs",
+      { "TenantId": 1, [field]: 1, "StartedAt": 1, "_id": 1 },
+      { name: "idx_llmgw_trace_" + field })
+  }
+  ensureCatalogIndex("llmrequestlogs",
+    { "WriterInstanceId": 1, "Status": 1, "StartedAt": 1 },
+    { name: "idx_llmgw_logs_writer_lifecycle" })
+  ensureCatalogIndex("llmgw_log_writer_leases",
+    { "LastScannedAt": 1, "ExpiresAt": 1 },
+    { name: "idx_llmgw_writer_lease_scan" })
   // collection: llmgw_logical_models
   // 同一个租户、同一个用途下最多一个默认模型。
   ensureTightenedUniqueIndex("llmgw_logical_models",

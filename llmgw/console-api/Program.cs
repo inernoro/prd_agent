@@ -1,3 +1,4 @@
+using PrdAgent.LlmGw.Logs;
 using PrdAgent.LlmGw.ModelUpgrades;
 // AI 大模型网关 —— 独立观测/登录后端（与 MAP 物理隔离）。
 //
@@ -450,6 +451,9 @@ await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
         .Ascending("TenantId")
         .Ascending("ProviderTaskId"),
     new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_provider_task" }));
+foreach (var field in new[] { "RequestId", "RunId", "LogicalRequestId" })
+    await IndexAdvisory.ReportIfMissingAsync(logs, "idx_llmgw_trace_" + field,
+        "历史调用链查找可能扫描日志集合，需 DBA 执行 scripts/mongodb-indexes.js 的网关索引段");
 await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
 {
     new CreateIndexModel<BsonDocument>(
@@ -2736,6 +2740,8 @@ app.MapPost("/gw/members/{id}/invalidate-sessions", async (HttpContext http, str
 
 // ───────────────────────────── 日志列表（需鉴权）─────────────────────────────
 app.MapGatewayConsumptionAlerts(gatewayDatabase, jsonOptions);
+
+app.MapLogTraceEndpoints(logs, mapDatabase, MapListItem, MapProviderAttempts, jsonOptions, internalTenantId);
 
 app.MapGet("/gw/logs", async (
     HttpContext http,
@@ -8399,6 +8405,8 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         ? TenantAccess.Filter(http)
         : TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("ReleaseCommit", runtimeCommit),
+            Builders<BsonDocument>.Filter.Not(LogTraceQuery.LegacySummary),
+            Builders<BsonDocument>.Filter.Ne("IngressProtocol", BsonNull.Value),
             Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true)));
     var releaseLogTotal = runtimeCommit is null ? 0 : await logs.CountDocumentsAsync(logReleaseFilter);
     var httpTransportLogs = runtimeCommit is null
@@ -16852,6 +16860,7 @@ static FilterDefinition<BsonDocument> BuildFilter(
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
     {
+        fb.Not(LogTraceQuery.LegacySummary),
         fb.Gte("StartedAt", fromUtc),
         fb.Lt("StartedAt", toUtc),
     };
@@ -17469,6 +17478,13 @@ static List<ProviderAttemptDto> MapProviderAttempts(BsonDocument d)
             var doc = x.AsBsonDocument;
             return new ProviderAttemptDto
             {
+                AttemptId = doc.AsNullableString("AttemptId"),
+                ProviderRequestId = doc.AsNullableString("ProviderRequestId"),
+                ProviderTaskId = doc.AsNullableString("ProviderTaskId"),
+                InputTokens = doc.AsNullableInt("InputTokens"),
+                OutputTokens = doc.AsNullableInt("OutputTokens"),
+                ProviderReportedCost = doc.AsNullableDecimal("ProviderReportedCost"),
+                ProviderCostCurrency = doc.AsNullableString("ProviderCostCurrency"),
                 Order = doc.AsNullableInt("Order") ?? 0,
                 Stage = doc.AsNullableString("Stage") ?? "send",
                 Provider = doc.AsNullableString("Provider"),
@@ -17500,36 +17516,7 @@ static List<ProviderAttemptDto> MapProviderAttempts(BsonDocument d)
 }
 
 static List<ProviderAttemptDto> BuildFallbackProviderAttempts(BsonDocument d)
-{
-    var model = d.AsNullableString("Model");
-    var provider = d.AsNullableString("Provider");
-    if (string.IsNullOrWhiteSpace(model) && string.IsNullOrWhiteSpace(provider))
-        return new List<ProviderAttemptDto>();
-
-    return new List<ProviderAttemptDto>
-    {
-        new()
-        {
-            Order = 1,
-            Stage = "send",
-            Provider = provider,
-            PlatformId = d.AsNullableString("PlatformId"),
-            PlatformName = d.AsNullableString("PlatformName"),
-            Model = model,
-            ModelGroupId = d.AsNullableString("ModelGroupId") ?? d.AsNullableString("GroupId"),
-            ModelGroupName = d.AsNullableString("ModelGroupName"),
-            Protocol = d.AsNullableString("Protocol"),
-            Transport = d.AsNullableString("GatewayTransport"),
-            ReachedProvider = true,
-            Status = d.AsNullableString("Status") == "failed" ? "failed" : "sent",
-            Reason = d.AsNullableString("FallbackReason") ?? d.AsNullableString("ResolutionReason"),
-            StatusCode = d.AsNullableInt("StatusCode"),
-            DurationMs = d.AsNullableLong("DurationMs"),
-            Error = d.AsNullableString("Error"),
-            EndedAt = d.AsNullableUtcDateTime("EndedAt").ToIso(),
-        }
-    };
-}
+    => new();
 
 static string? NormalizeResolutionMode(string? raw, string? reason)
 {

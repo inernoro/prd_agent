@@ -298,3 +298,9 @@ PRD_GATEWAY_DB=1 mongosh "<connection-uri>/<网关库名>" scripts/mongodb-index
 ## 实现来源
 
 - [模型兼容命名空间维护脚本](../scripts/migrate-gateway-model-identities.js)
+
+## 调用链排查与写入实例租约（2026-11-12）
+
+调用链通过请求、业务运行和逻辑请求编号覆盖保留期内的日志。新增三条非唯一索引由网关索引清单统一维护：`idx_llmgw_trace_RequestId`、`idx_llmgw_trace_RunId`、`idx_llmgw_trace_LogicalRequestId`。控制台启动只巡检，缺失时查询仍可用，但可能扫描历史日志。
+
+serving 持久化写入实例租约。`idx_llmgw_logs_writer_lifecycle` 限定需收口的实例与进行中记录，`idx_llmgw_writer_lease_scan` 支持过期实例轮转扫描；均为非唯一索引，不修改日志或历史费用，不自动执行。租约不设 TTL，以保留收口依据。
