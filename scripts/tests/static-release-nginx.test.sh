@@ -42,16 +42,14 @@ chmod 600 "$static_root/index.html" "$static_root/assets/app.js" "$staging/index
 )
 
 nginx_conf="$tmp_root/default.conf"
-printf '%s\n' \
-  'server {' \
-  '  listen 80;' \
-  '  server_name _;' \
-  '  root /usr/share/nginx/html/current;' \
-  '  index index.html;' \
-  '  add_header Cache-Control no-cache;' \
-  '  location ^~ /assets/ { try_files $uri =404; }' \
-  '  location / { try_files $uri /index.html; }' \
-  '}' > "$nginx_conf"
+python3 - "$repo_root/deploy/nginx/conf.d/branches/_standalone.conf" "$nginx_conf" <<'PYCONF'
+import re
+import sys
+from pathlib import Path
+source = Path(sys.argv[1]).read_text().split('## 独立 LLM 网关前端站点')[0]
+source = re.sub(r'\b(?:api|llmgw|llmgw-serve|llmgw-serve-b):[0-9]+', '127.0.0.1:9', source)
+Path(sys.argv[2]).write_text(source)
+PYCONF
 chmod 644 "$nginx_conf"
 
 if [ "$runtime" = docker ]; then
@@ -67,7 +65,7 @@ else
   chmod 755 "$tmp_root"
   port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
   {
-    printf 'pid %s/nginx.pid;\nerror_log %s/error.log;\nevents {}\nhttp { access_log off;\n' "$tmp_root" "$tmp_root"
+    printf 'pid %s/nginx.pid;\nerror_log %s/error.log;\nevents {}\nhttp { access_log off; types { text/html html; application/javascript js; text/css css; }\n' "$tmp_root" "$tmp_root"
     sed -e "s/listen 80;/listen 127.0.0.1:$port;/" -e "s|/usr/share/nginx/html|$static_root|" "$nginx_conf"
     printf '}\n'
   } > "$tmp_root/nginx.conf"
@@ -90,8 +88,10 @@ test "$(curl -fsS "http://127.0.0.1:$port/assets/app.js")" = "new"
 # A/B differ only in content, not length or archive mtime. Confirm the fixture
 # would collide in nginx before exercising the release metadata refresh.
 for version in A B; do
-  mkdir -p "$static_root/.staging-cache-$version"
-  printf '<script src="/assets/%s.js"></script>\n' "$version" > "$static_root/.staging-cache-$version/index.html"
+  mkdir -p "$static_root/.staging-cache-$version/assets"
+  printf '<div id="root"></div><script type="module" src="/assets/%s.js"></script>\n' "$version" > "$static_root/.staging-cache-$version/index.html"
+  printf 'document.querySelector("#root").textContent="%s"; window.loadChunk=()=>import("./%s-chunk.js").then(m=>document.querySelector("#root").textContent=m.value);\n' "$version" "$version" > "$static_root/.staging-cache-$version/assets/$version.js"
+  printf 'export const value="%s chunk";\n' "$version" > "$static_root/.staging-cache-$version/assets/$version-chunk.js"
 done
 python3 - "$static_root" <<'PYFIXTURE'
 import os
@@ -132,6 +132,7 @@ expect_changed() {
 
 static_release_activate "$static_root/.staging-cache-A" "$static_root" cache-A >/dev/null
 entry_headers "$tmp_root/A.headers" "$tmp_root/A.html"
+test "$(header_value "$tmp_root/A.headers" Cache-Control)" = "no-cache, must-revalidate"
 test -n "$(header_value "$tmp_root/A.headers" ETag)"
 test -n "$(header_value "$tmp_root/A.headers" Last-Modified)"
 # A validator against unchanged A must really yield 304, not a cache bypass.
@@ -140,7 +141,16 @@ test "$(curl -sS -o /dev/null -w '%{http_code}' -H "If-Modified-Since: $(header_
 static_release_activate "$static_root/.staging-cache-B" "$static_root" cache-B >/dev/null
 entry_headers "$tmp_root/B.headers" "$tmp_root/B.html"
 expect_changed "$tmp_root/A.headers" B
+# Both original entry URLs and lazy chunks must survive the switch.
+for version in A B; do
+  curl -fsS "http://127.0.0.1:$port/assets/$version.js" > /dev/null
+  curl -fsS "http://127.0.0.1:$port/assets/$version-chunk.js" > /dev/null
+done
 static_release_rollback "$static_root" .releases/cache-A
+for version in A B; do
+  curl -fsS "http://127.0.0.1:$port/assets/$version.js" > /dev/null
+  curl -fsS "http://127.0.0.1:$port/assets/$version-chunk.js" > /dev/null
+done
 entry_headers "$tmp_root/rollback.headers" "$tmp_root/rollback.html"
 expect_changed "$tmp_root/B.headers" A
 expect_changed "$tmp_root/A.headers" A
@@ -154,5 +164,12 @@ for version in ['A', 'B']:
     assert deployed.stat().st_mode & 0o777 == 0o644
 assert (root / 'current/index.html').read_bytes() == (tmp / 'A.html').read_bytes()
 PYVERIFY
+
+test "$(curl -sS -D "$tmp_root/missing.headers" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/assets/does-not-exist.js")" = 404
+test "$(header_value "$tmp_root/missing.headers" Cache-Control)" = no-store
+
+if [ "${STATIC_RELEASE_BROWSER_TEST:-0}" = 1 ]; then
+  node "$repo_root/scripts/tests/static-release-browser.mjs" "$repo_root" "$static_root" "http://127.0.0.1:$port"
+fi
 
 echo "Static release nginx test: PASS ($runtime)"
