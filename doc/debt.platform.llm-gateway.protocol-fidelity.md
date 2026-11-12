@@ -75,3 +75,16 @@
 ## 范围外（更大的后续波次，非本债务）
 
 - gateway 物理独立成服务、观测性页面（Logs Generations/Upstream/Sessions）、池清理（IsMain/IsVision legacy 字段下线）、管理 UI OpenRouter 超集。
+
+### 发布前兼容回归（2026-11-12）
+
+固定请求已覆盖四入口到 OpenAI/Claude 真实适配器的流式/非流式文本与工具路径，以及两类推理参数的保留/拒绝。模拟和真实供应商报告分离；真实验证未配置或失败不能由模拟结果覆盖。能力适用矩阵和入口见 [LLMGW 协议兼容回归](../llmgw/docs/protocol-regression.md)。本次回放发现并修正 Gemini 流式工具参数分片被当成完整 JSON 输出的问题。
+
+| 未关闭项 | 当前边界 | 负责人及关闭条件 |
+|---|---|---|
+| 真实供应商验证 | 本次没有目标测试网关的合法 service key/任务许可；未运行，不以替身通过替代 | 网关维护者：用已有模型执行同一完整部署提交的 provider 报告，并逐项核对未验证范围 |
+| 非流式结束原因 | Native DTO 没有结束原因；兼容出口部分路径从工具存在性推断 stop/tool_calls，无法保证 length/safety 保真 | 网关维护者：携带原始结束原因并补所有出口的固定截断/过滤响应回归 |
+| Claude SSE 用量 | compatible SSE 当前只回吐 output usage；input/cache 不完整 | 网关维护者：保留开始及终止 usage，并补对应完整事件流断言 |
+| 旧入口严格参数合同 | Claude/Gemini compatible 仍默认 default-drop；任意参数没有通用 fail-closed 保证；Gemini ANY 仅验证单个 allowedFunctionNames | 网关维护者：逐项实现或拒绝未支持转换，补物理请求和拒绝断言后再声明严格支持 |
+| Responses 完整流式事件 | 复用既有原生/转换测试，未纳入本批 HTTP 语料与跨版本语义报告；转换路径工具 done 事件和原生语义不能等同 | 网关维护者：纳入完整固定事件序列、参数重组与真实模型配对验证后关闭 |
+| 流式组合扩展 | 单工具固定回放不证明并行交错、取消、所有缓存和推理用量细项保真 | 网关维护者：补代表性组合及相应故障注入后扩大矩阵声明 |
