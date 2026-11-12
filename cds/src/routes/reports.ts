@@ -32,6 +32,7 @@
 import { parseReportClassification, matchesClassification } from '../shared/notification-templates.js';
 import { Router, type Request, type Response, json as expressJson, text as expressText, raw as expressRaw } from 'express';
 import fs from 'node:fs';
+import { buildMarkdownReportDocument, enhanceHtmlReportDocument, buildPublicReportShell } from '../shared/report-document.js';
 import { createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
@@ -1141,19 +1142,27 @@ export function createPublicReportShareRouter(deps: ReportsRouterDeps): Router {
   const { stateService } = deps;
 
   router.get('/:token', async (req: Request, res: Response) => {
+    const theme = req.query.theme === 'dark' ? 'dark' : 'light';
+    const failure = (status: number, message: string) => {
+      res.status(status);
+      return sendReportContent(res, 'html', buildPublicReportShell(
+        buildMarkdownReportDocument(`# 报告暂时无法阅读\n\n${message}`, theme), '报告加载失败', theme));
+    };
     try {
       const meta = stateService.getReportByShareToken(req.params.token);
       if (!meta || !meta.shareToken) {
         // 不区分「token 错」与「已撤销」，统一 404，避免 token 探测。
-        return res.status(404).type('text/plain; charset=utf-8').send('链接不存在或已失效');
+        return failure(404, '链接不存在或已失效。请联系报告作者获取新的分享链接，或返回上一页。');
       }
       const content = await stateService.readAcceptanceReportContentAsync(meta.id);
       if (content === undefined) {
-        return res.status(404).type('text/plain; charset=utf-8').send('报告内容文件已丢失');
+        return failure(404, '报告内容文件已丢失。请联系报告作者重新上传，或返回上一页。');
       }
-      return sendReportContent(res, meta.format, content);
+      const document = meta.format === 'md' ? buildMarkdownReportDocument(content, theme) : enhanceHtmlReportDocument(content, theme);
+      const shell = buildPublicReportShell(document, meta.title, theme);
+      return sendReportContent(res, 'html', shell);
     } catch {
-      return res.status(500).type('text/plain; charset=utf-8').send('服务内部错误');
+      return failure(500, '报告服务暂时无法读取内容。请稍后重新加载，或返回上一页。');
     }
   });
 

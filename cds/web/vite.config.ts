@@ -14,6 +14,18 @@ import { parseInstanceCatalog } from '../src/shared/instance-catalog';
 export default defineConfig({
   base: '/',
   plugins: [react(), {
+    name: 'report-diagram-runtime',
+    configureServer(server) {
+      server.middlewares.use('/report-assets/mermaid.min.js', (_req, res) => {
+        res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+        res.end(fs.readFileSync(path.resolve(__dirname, 'node_modules/mermaid/dist/mermaid.min.js')));
+      });
+    },
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'report-assets/mermaid.min.js', source:
+        fs.readFileSync(path.resolve(__dirname, 'node_modules/mermaid/dist/mermaid.min.js')) });
+    },
+  }, {
     name: 'cds-instance-catalog',
     generateBundle() {
       // Keep the public catalog in the same prebuilt artifact as the control panel.
@@ -53,6 +65,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      '/r': { target: 'http://localhost:9900', changeOrigin: true },
       '/api': {
         target: 'http://localhost:9900',
         changeOrigin: true,

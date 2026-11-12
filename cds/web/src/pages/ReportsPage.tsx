@@ -11,7 +11,7 @@ import {
   GitBranch, GitCommitHorizontal, GitPullRequest, History, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Network, Pencil, Plus, RefreshCw, Save, Search, Share2, SlidersHorizontal, Trash2, Upload, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { buildMarkdownReportDocument } from '@/lib/report-document';
+import { buildMarkdownReportDocument, enhanceHtmlReportDocument } from '@/lib/report-document';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -2311,7 +2311,7 @@ function ReportViewer({
       .then((raw) => {
         if (reqRef.current !== token) return;
         if (report.format === 'html') {
-          setMdHtml(raw);
+          setMdHtml(enhanceHtmlReportDocument(raw, theme));
           return;
         }
         setMdHtml(buildMarkdownReportDocument(raw, theme));
@@ -2358,7 +2358,7 @@ function ReportViewer({
             </Button>
           ) : null}
           {report.verdict ? <VerdictBadge verdict={report.verdict} /> : null}
-          <span className="min-w-0 flex-1 break-words text-sm font-medium md:truncate" title={report.title}>{report.title}</span>
+          <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere] text-sm font-medium" title={report.title}>{report.title}</span>
           <FormatBadge format={report.format} />
           <span className="inline-flex basis-full items-center gap-1 text-[0.6875rem] text-muted-foreground md:basis-auto md:shrink-0" title={`报告时间：${formatTime(report.createdAt)}`}>
             <CalendarDays className="h-3.5 w-3.5" />报告时间 {formatTime(report.createdAt)}
@@ -2396,7 +2396,7 @@ function ReportViewer({
         ) : mdHtml === null ? (
           <div className="p-4"><LoadingBlock label="正在加载报告正文" /></div>
         ) : (
-          <iframe key={report.id} title={report.title} srcDoc={mdHtml} sandbox="allow-scripts" className="h-full w-full border-0" />
+          <iframe key={report.id} title={report.title} srcDoc={mdHtml} sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" className="h-full w-full border-0" />
         )}
       </div>
     </div>

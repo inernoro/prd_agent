@@ -5055,7 +5055,17 @@ public class ReportAgentController : ControllerBase
                 sections = r.Sections.Select(s => new
                 {
                     title = s.TemplateSection?.Title,
-                    templateSection = s.TemplateSection,
+                    templateSection = s.TemplateSection == null ? null : new
+                    {
+                        title = s.TemplateSection.Title,
+                        inputType = s.TemplateSection.InputType,
+                        isRequired = s.TemplateSection.IsRequired,
+                        sortOrder = s.TemplateSection.SortOrder,
+                        tableColumns = s.TemplateSection.TableColumns,
+                        tableColumnWidths = s.TemplateSection.TableColumnWidths,
+                        issueCategories = s.TemplateSection.IssueCategories,
+                        issueStatuses = s.TemplateSection.IssueStatuses,
+                    },
                     items = s.Items.Select(i => new
                     {
                         content = i.Content,

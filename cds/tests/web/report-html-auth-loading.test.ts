@@ -10,7 +10,7 @@ describe('authenticated report body rendering', () => {
     expect(viewer).toContain('fetchReportRaw(report.id)');
     expect(viewer).not.toContain("report.format !== 'md'");
     expect(viewer).toContain("if (report.format === 'html')");
-    expect(viewer).toContain('srcDoc={mdHtml} sandbox="allow-scripts"');
+    expect(viewer).toContain('srcDoc={mdHtml} sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"');
     expect(viewer).not.toContain('src={reportRawUrl');
     expect(viewer).not.toContain('allow-same-origin');
   });

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="240" viewBox="0 0 640 240" role="img" aria-label="Fixed report evidence sample">
+<rect width="640" height="240" rx="12" fill="#eff6ff"/>
+<text x="32" y="48" font-family="sans-serif" font-size="24" fill="#172554">CDS / LLMGW - fixed evidence sample</text>
+<text x="32" y="84" font-family="sans-serif" font-size="16" fill="#1e3a8a">Daily / weekly / monthly / acceptance</text>
+<path d="M40 190 L150 150 L260 166 L370 112 L480 126 L590 100" fill="none" stroke="#2563eb" stroke-width="5"/>
+<text x="32" y="222" font-family="sans-serif" font-size="14" fill="#172554">Synthetic fixture. All labels and the complete image remain visible.</text>
+</svg>
