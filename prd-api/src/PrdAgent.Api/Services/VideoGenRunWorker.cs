@@ -1580,13 +1580,17 @@ public partial class VideoGenRunWorker : BackgroundService
             for (var index = 0; index < selectedScenes.Count; index++)
             {
                 var inputFile = Path.Combine(tempDir, $"scene-{index:D3}.mp4");
-                await DownloadToFileAsync(httpClient, selectedScenes[index].Scene.VideoUrl!, inputFile, 1024L * 1024 * 1024, authorityToken);
+                var selectedScene = selectedScenes[index].Scene;
+                if (VideoSceneMedia.AssetSha(selectedScene) == null)
+                    await EnsurePublicHttpsUrlAsync(selectedScene.VideoUrl!);
+                await VideoSceneMedia.CopyToFileAsync(_assetStorage, httpClient, selectedScene, inputFile,
+                    1024L * 1024 * 1024, authorityToken, allowLegacyHttps: true);
                 var probe = await ProbeMediaAsync(inputFile, authorityToken);
                 var timelineClip = selectedScenes[index].Clip;
                 videoInputs.Add(new VideoExportClipSource(
                     inputFile,
                     probe.DurationSeconds > 0 ? probe.DurationSeconds : timelineClip.DurationSeconds,
-                    probe.HasAudio,
+                    probe.HasAudio && selectedScenes[index].Scene.Narration == null,
                     timelineClip.TrimStartSeconds,
                     timelineClip.TrimEndSeconds,
                     timelineClip.Transition));
@@ -1596,6 +1600,40 @@ public partial class VideoGenRunWorker : BackgroundService
             }
 
             var audioInputs = new List<VideoExportAudioSource>();
+            var narrationClips = VideoNarrationTimeline.BuildSubtitles(selectedScenes.Select((item, index) =>
+                (item.Scene, Math.Max(0.1, videoInputs[index].DurationSeconds - Math.Max(0, item.Clip.TrimStartSeconds)
+                    - Math.Max(0, item.Clip.TrimEndSeconds)))).ToList());
+            if (project?.TimelineTracks.FirstOrDefault(track => track.Type == VideoTrackType.Subtitle)?.Muted == true)
+                narrationClips = [];
+            var narrationMuted = project?.TimelineTracks.FirstOrDefault(track => track.Type == VideoTrackType.Voice)?.Muted == true;
+            double narrationCursor = 0;
+            for (var index = 0; index < selectedScenes.Count; index++)
+            {
+                var scene = selectedScenes[index].Scene;
+                var video = videoInputs[index];
+                var effectiveDuration = Math.Max(0.1, video.DurationSeconds - Math.Max(0, video.TrimStartSeconds) - Math.Max(0, video.TrimEndSeconds));
+                if (!narrationMuted && scene.Narration is { } narration)
+                {
+                    authorityToken.ThrowIfCancellationRequested();
+                    var speech = scope.ServiceProvider.GetRequiredService<Speech.SpeechGenerationService>();
+                    byte[] narrationBytes;
+                    try { narrationBytes = (await speech.ReadAudioAsync(run.OwnerAdminId, narration.SpeechRunId)).Bytes; }
+                    catch (PrdAgent.Core.Services.SpeechException ex)
+                    {
+                        throw new InvalidOperationException("已采用的配音暂不可用，请在制作台重新选择本人已完成的语音后导出。", ex);
+                    }
+                    var voiceFile = Path.Combine(tempDir, $"narration-{index:D3}.bin");
+                    await File.WriteAllBytesAsync(voiceFile, narrationBytes, authorityToken);
+                    var voiceProbe = await ProbeMediaAsync(voiceFile, authorityToken);
+                    if (!voiceProbe.HasAudio)
+                        throw new InvalidOperationException("已采用的配音没有有效音轨，请更换本段语音后重新导出。");
+                    VideoNarrationTimeline.ValidateDuration(voiceProbe.DurationSeconds, effectiveDuration);
+                    if (Math.Abs(voiceProbe.DurationSeconds - narration.DurationSeconds) > 0.04)
+                        throw new InvalidOperationException("已采用的配音时长发生变化，请重新采用本段语音后导出。");
+                    audioInputs.Add(new VideoExportAudioSource(voiceFile, narrationCursor, voiceProbe.DurationSeconds));
+                }
+                narrationCursor += effectiveDuration;
+            }
             var audioTimelineClips = project?.TimelineTracks
                 .Where(track => !track.Muted && track.Type is VideoTrackType.Voice or VideoTrackType.Music)
                 .SelectMany(track => track.Clips.Select(clip => (TrackType: track.Type, Clip: clip)))
@@ -1618,14 +1656,15 @@ public partial class VideoGenRunWorker : BackgroundService
                     item.TrackType == VideoTrackType.Music ? 0.35 : 1));
             }
 
-            var subtitleFile = await WriteSubtitleFileAsync(project, tempDir);
+            var subtitleFile = await WriteSubtitleFileAsync(project, tempDir, narrationClips);
             var outputFile = Path.Combine(tempDir, "export.mp4");
             var args = VideoExportCommandBuilder.Build(
                 videoInputs,
                 audioInputs,
                 subtitleFile,
                 outputFile,
-                run.DirectAspectRatio);
+                run.DirectAspectRatio,
+                fontDirectory: Path.Combine(AppContext.BaseDirectory, "Assets", "Fonts"));
             var startInfo = new ProcessStartInfo
             {
                 FileName = "ffmpeg",
@@ -1749,7 +1788,7 @@ public partial class VideoGenRunWorker : BackgroundService
         return new MediaProbeResult(duration, hasAudio);
     }
 
-    private static async Task<string?> WriteSubtitleFileAsync(VideoProject? project, string tempDir)
+    private static async Task<string?> WriteSubtitleFileAsync(VideoProject? project, string tempDir, IReadOnlyList<VideoTimelineClip>? narrationClips = null)
     {
         var track = project?.TimelineTracks.FirstOrDefault(item =>
             item.Type == VideoTrackType.Subtitle && !item.Muted);
@@ -1757,7 +1796,10 @@ public partial class VideoGenRunWorker : BackgroundService
             .Where(clip => !string.IsNullOrWhiteSpace(clip.Text) && clip.DurationSeconds > 0)
             .OrderBy(clip => clip.StartSeconds)
             .ToList();
-        if (clips == null || clips.Count == 0) return null;
+        clips ??= [];
+        if (narrationClips != null) clips.AddRange(narrationClips);
+        clips = clips.OrderBy(clip => clip.StartSeconds).ToList();
+        if (clips.Count == 0) return null;
         var content = new StringBuilder();
         for (var index = 0; index < clips.Count; index++)
         {

@@ -264,8 +264,19 @@ public class VideoGenScene : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     /// <summary>当前采用的视频版本 ID</summary>
     public string? ActiveVersionId { get; set; }
 
+    /// <summary>当前镜头采用的本人私有语音任务；重新导出只读取，不重新调用模型。</summary>
+    public VideoSceneNarration? Narration { get; set; }
+
     /// <summary>本镜历史生成版本，重新渲染不会覆盖旧产物</summary>
     public List<VideoGenSceneVersion> Versions { get; set; } = new();
+}
+
+/// <summary>与镜头一起持久化的配音采用记录。</summary>
+public sealed class VideoSceneNarration
+{
+    public string SpeechRunId { get; set; } = string.Empty;
+    public string Text { get; set; } = string.Empty;
+    public double DurationSeconds { get; set; }
 }
 
 /// <summary>单个分镜的一次生成结果</summary>
