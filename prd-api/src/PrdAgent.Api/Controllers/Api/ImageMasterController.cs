@@ -2824,6 +2824,7 @@ public class ImageMasterController : ControllerBase
         if (request.DraftText != null) { marker.DraftText = request.DraftText; fields["draftText"] = request.DraftText; }
         if (request.Status != null) { marker.Status = request.Status; fields["status"] = request.Status; }
         if (request.RunId != null) { marker.RunId = request.RunId; fields["runId"] = request.RunId; }
+        if (request.GenerationRequestId != null) { marker.GenerationRequestId = request.GenerationRequestId; fields["generationRequestId"] = request.GenerationRequestId; }
         if (request.ErrorMessage != null) { marker.ErrorMessage = request.ErrorMessage; fields["errorMessage"] = request.ErrorMessage; }
         if (request.Url != null) { marker.Url = request.Url; fields["url"] = request.Url; }  // 保存图片 URL
         ArticleIllustrationPlanItem? planItem = null;

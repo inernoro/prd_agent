@@ -300,6 +300,7 @@ services:
       - Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}
       - LlmGateway__ModelUpgrades__WorkerEnabled=${LLMGW_MODEL_UPGRADE_WORKER_ENABLED:-false}
       - LlmGateway__ModelUpgrades__WorkerDeployment=${LLMGW_MODEL_UPGRADE_WORKER_DEPLOYMENT:-}
+      - LlmGateway__ModelReferences__MapDeploymentIdentity=${LLMGW_MODEL_REFERENCE_MAP_DEPLOYMENT_IDENTITY:-prd-agent:production::main}
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__MongoConnectionString=${LLMGW_MONGO_CONNECTION_STRING:-}
