@@ -307,9 +307,12 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       else if (path.endsWith('/collection-contexts')) data = { items: [], total: 0, totalContexts: 0, page: 1, pageSize: 20 };
       else if (path.endsWith('/related-documents')) data = { version: 1, mainSiteId: 'source', canManage: false,
         hasPermissionDifferences: false, items: sites.map(site => ({ ...site, isMain: site.id === 'source',
+          // 访客引用同合集成员；账号态关联当前合集以外但本人可读的网页。
+          isManual: !(mode === 'guest-share' && site.id === 'target'),
+          mentions: mode === 'guest-share' && site.id === 'target' ? [{ commentId: 'source-comment', authorName: '引用者', sourceSiteId: 'source', sourceTitle: '来源文档', label: '来源文档中的评论引用' }] : [],
           preview: { ...site, useShareAccess: mode === 'guest-share' },
           href: mode === 'guest-share' ? `/s/wp/qa-related?siteId=${site.id}` : `/web-pages?openSite=${site.id}` })) };
-      else if (path === '/api/web-pages/shares/view/qa-related') data = { title: '来源分享', shareType: 'collection', sites };
+      else if (path === '/api/web-pages/shares/view/qa-related') data = { title: '来源分享', shareType: 'collection', sites: mode === 'account-share' ? [sites[0]] : sites };
       else if (path.endsWith('/content')) {
         const id = url.searchParams.get('siteId') || path.split('/')[3];
         data = { siteId: id, siteUrl: `https://hosting.example/${id}/index.html`, contentType: 'text/html',
@@ -328,10 +331,17 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       sourceFrame = page.locator('iframe[title="来源文档"]').contentFrame();
       await sourceFrame.getByLabel('保留输入').fill('原页面状态');
       await sourceFrame.locator('body').evaluate(el => { el.ownerDocument.defaultView!.scrollTo(0, 200); });
-      await page.locator('.share-topbar .related-trigger').click();
+      await expect(page.locator('.ledger-reader-content .share-topbar')).toHaveCount(0);
+      const frame = await page.locator('iframe[title="来源文档"]').elementHandle();
+      await expect(page.getByRole('tablist', { name: '阅读侧栏', exact: true }).getByRole('tab')).toHaveCount(3);
+      await page.getByRole('tab', { name: /^讨论/ }).click();
+      await page.getByRole('tab', { name: '关联', exact: true }).click();
+      expect(await page.locator('iframe[title="来源文档"]').evaluate((node, original) => node === original, frame)).toBe(true);
+      await expect(sourceFrame.getByLabel('保留输入')).toHaveValue('原页面状态');
     }
     const listReads = apiRequests.filter(path => path === '/api/web-pages').length;
-    await page.locator('.related-document-card').filter({ hasText: '关联目标' }).click();
+    if (mode === 'list') await page.locator('.related-document-card').filter({ hasText: '关联目标' }).click();
+    else await page.locator('.ledger-reader-relations').getByRole('link', { name: '关联目标', exact: true }).click();
     const modal = mode === 'guest-share' ? page.getByRole('dialog', { name: '关联文档预览', exact: true })
       : page.getByRole('dialog', { name: '关联目标', exact: true });
     await expect(modal).toBeVisible();

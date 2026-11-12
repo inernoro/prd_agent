@@ -1,0 +1,457 @@
+{
+  "design": "web-hosting-collection-reader",
+  "source": {
+    "file": "MAP 网页托管 · 合集.html",
+    "sha256": "a6813e8a8a04f183355e646e26e77b93748699be9cdc34cf9e408ae3743681fc",
+    "bytes": 3195978
+  },
+  "tool": {
+    "script": "spec-export.mjs",
+    "skillVersion": "2.3.0"
+  },
+  "extractedAt": "2026-11-12T09:11:20.985Z",
+  "minCount": 2,
+  "boards": [
+    {
+      "id": "reader",
+      "label": "合集阅读",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": ".r"
+      },
+      "elements": 136,
+      "scales": {
+        "dark": {
+          "color": [
+            {
+              "value": "rgb(233, 236, 241)",
+              "count": 70
+            },
+            {
+              "value": "rgb(138, 147, 161)",
+              "count": 37
+            },
+            {
+              "value": "rgb(179, 186, 198)",
+              "count": 22
+            },
+            {
+              "value": "rgb(142, 160, 255)",
+              "count": 4
+            },
+            {
+              "value": "rgb(229, 168, 75)",
+              "count": 3
+            }
+          ],
+          "background": [
+            {
+              "value": "rgb(20, 23, 29)",
+              "count": 6
+            },
+            {
+              "value": "rgb(46, 36, 20)",
+              "count": 3
+            },
+            {
+              "value": "rgb(30, 37, 80)",
+              "count": 3
+            },
+            {
+              "value": "rgb(26, 30, 37)",
+              "count": 3
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgb(53, 59, 70)",
+              "count": 4
+            },
+            {
+              "value": "rgb(38, 43, 52)",
+              "count": 4
+            },
+            {
+              "value": "rgba(0, 0, 0, 0)",
+              "count": 3
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 11
+            }
+          ],
+          "radius": [
+            {
+              "value": "4px",
+              "count": 7
+            },
+            {
+              "value": "6px",
+              "count": 7
+            },
+            {
+              "value": "10px",
+              "count": 4
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "13px",
+              "count": 50
+            },
+            {
+              "value": "11px",
+              "count": 28
+            },
+            {
+              "value": "16px",
+              "count": 27
+            },
+            {
+              "value": "12px",
+              "count": 18
+            },
+            {
+              "value": "12.5px",
+              "count": 5
+            },
+            {
+              "value": "13.5px",
+              "count": 4
+            },
+            {
+              "value": "26px",
+              "count": 2
+            },
+            {
+              "value": "18px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 85
+            },
+            {
+              "value": "500",
+              "count": 47
+            },
+            {
+              "value": "600",
+              "count": 4
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 97
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 31
+            },
+            {
+              "value": "Noto Serif SC",
+              "count": 8
+            }
+          ],
+          "letterSpacing": [
+            {
+              "value": "0.22px",
+              "count": 21
+            }
+          ],
+          "lineHeight": [
+            {
+              "value": "20.15px",
+              "count": 12
+            },
+            {
+              "value": "17.05px",
+              "count": 6
+            },
+            {
+              "value": "29.6px",
+              "count": 4
+            },
+            {
+              "value": "18.6px",
+              "count": 4
+            },
+            {
+              "value": "36.4px",
+              "count": 2
+            },
+            {
+              "value": "25.2px",
+              "count": 2
+            }
+          ],
+          "gap": [
+            {
+              "value": "4px",
+              "count": 9
+            },
+            {
+              "value": "8px",
+              "count": 7
+            },
+            {
+              "value": "6px",
+              "count": 6
+            },
+            {
+              "value": "10px",
+              "count": 2
+            },
+            {
+              "value": "24px",
+              "count": 2
+            }
+          ],
+          "padding": [
+            {
+              "value": "0px 6px 0px 6px",
+              "count": 7
+            },
+            {
+              "value": "0px 10px 0px 10px",
+              "count": 5
+            },
+            {
+              "value": "0px 12px 0px 12px",
+              "count": 5
+            },
+            {
+              "value": "0px 2px 0px 2px",
+              "count": 3
+            },
+            {
+              "value": "12px 14px 12px 14px",
+              "count": 2
+            }
+          ]
+        },
+        "light": {
+          "color": [
+            {
+              "value": "rgb(20, 23, 28)",
+              "count": 70
+            },
+            {
+              "value": "rgb(102, 112, 128)",
+              "count": 37
+            },
+            {
+              "value": "rgb(74, 82, 96)",
+              "count": 22
+            },
+            {
+              "value": "rgb(48, 70, 197)",
+              "count": 4
+            },
+            {
+              "value": "rgb(138, 82, 0)",
+              "count": 3
+            }
+          ],
+          "background": [
+            {
+              "value": "rgb(255, 255, 255)",
+              "count": 6
+            },
+            {
+              "value": "rgb(251, 240, 220)",
+              "count": 3
+            },
+            {
+              "value": "rgb(232, 235, 250)",
+              "count": 3
+            },
+            {
+              "value": "rgb(247, 248, 250)",
+              "count": 2
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgb(205, 210, 218)",
+              "count": 4
+            },
+            {
+              "value": "rgb(226, 229, 234)",
+              "count": 4
+            },
+            {
+              "value": "rgba(0, 0, 0, 0)",
+              "count": 3
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 11
+            }
+          ],
+          "radius": [
+            {
+              "value": "4px",
+              "count": 7
+            },
+            {
+              "value": "6px",
+              "count": 7
+            },
+            {
+              "value": "10px",
+              "count": 4
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "13px",
+              "count": 50
+            },
+            {
+              "value": "11px",
+              "count": 28
+            },
+            {
+              "value": "16px",
+              "count": 27
+            },
+            {
+              "value": "12px",
+              "count": 18
+            },
+            {
+              "value": "12.5px",
+              "count": 5
+            },
+            {
+              "value": "13.5px",
+              "count": 4
+            },
+            {
+              "value": "26px",
+              "count": 2
+            },
+            {
+              "value": "18px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 85
+            },
+            {
+              "value": "500",
+              "count": 47
+            },
+            {
+              "value": "600",
+              "count": 4
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 97
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 31
+            },
+            {
+              "value": "Noto Serif SC",
+              "count": 8
+            }
+          ],
+          "letterSpacing": [
+            {
+              "value": "0.22px",
+              "count": 21
+            }
+          ],
+          "lineHeight": [
+            {
+              "value": "20.15px",
+              "count": 12
+            },
+            {
+              "value": "17.05px",
+              "count": 6
+            },
+            {
+              "value": "29.6px",
+              "count": 4
+            },
+            {
+              "value": "18.6px",
+              "count": 4
+            },
+            {
+              "value": "36.4px",
+              "count": 2
+            },
+            {
+              "value": "25.2px",
+              "count": 2
+            }
+          ],
+          "gap": [
+            {
+              "value": "4px",
+              "count": 9
+            },
+            {
+              "value": "8px",
+              "count": 7
+            },
+            {
+              "value": "6px",
+              "count": 6
+            },
+            {
+              "value": "10px",
+              "count": 2
+            },
+            {
+              "value": "24px",
+              "count": 2
+            }
+          ],
+          "padding": [
+            {
+              "value": "0px 6px 0px 6px",
+              "count": 7
+            },
+            {
+              "value": "0px 10px 0px 10px",
+              "count": 5
+            },
+            {
+              "value": "0px 12px 0px 12px",
+              "count": 5
+            },
+            {
+              "value": "0px 2px 0px 2px",
+              "count": 3
+            },
+            {
+              "value": "12px 14px 12px 14px",
+              "count": 2
+            }
+          ]
+        }
+      },
+      "textCount": 68
+    }
+  ]
+}

@@ -16,6 +16,9 @@
   --hosting-danger: #F97066;
   --hosting-danger-soft: #3A1A17;
   --hosting-scrim: rgba(0, 0, 0, 0.55);
+  --hosting-ghost-border: rgba(0, 0, 0, 0);
+  --hosting-highlight: #4A3D12;
+  --hosting-font-serif: 'Noto Serif SC', 'Noto Serif CJK SC', 'Songti SC', STSong, serif;
 
   /* 让浏览器原生表单控件（select/option 等）按暗色方案渲染，避免出现“白底下拉 + 白字看不清” */
   color-scheme: dark;
@@ -847,6 +850,9 @@
   --hosting-danger: #B42318;
   --hosting-danger-soft: #FDECEA;
   --hosting-scrim: rgba(20, 23, 28, 0.32);
+  --hosting-ghost-border: rgba(0, 0, 0, 0);
+  --hosting-highlight: #FFF1B8;
+  --hosting-font-serif: 'Noto Serif SC', 'Noto Serif CJK SC', 'Songti SC', STSong, serif;
 
 
   /* ── 设计稿规格 token · 浅色档（暖纸）。与深色档同批双写，见 :root 同名注释 ── */

@@ -10,6 +10,29 @@ vi.mock('@/hooks/useDataTheme', () => ({ useDataTheme: () => 'dark' }));
 afterEach(() => vi.unstubAllGlobals());
 
 describe('合集成员沿用原分享的阅读骨架', () => {
+  it('真实阅读槽位使用同一正文卡和三页签，切换侧栏不重挂载文档', () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    const element = document.createElement('div'); document.body.append(element); const root = createRoot(element);
+    const scope = vi.fn(() => <p>原接口关联结果</p>);
+    try {
+      act(() => root.render(<HostedShareCollection data={{ title: '资料集', mainSiteId: 'a', sites: [{ id: 'a', title: '当前文档', siteUrl: '', entryFile: 'index.html', wrappedAssetType: 'pdf', entrySize: 1, fileCount: 1, totalSize: 1 }] }} collectionPath="/s/wp/original" selectedSiteId="a"
+        reader={render => render({ content: <iframe title="原文档" src="about:blank" />, controls: <button>原版本入口</button>,
+          comments: kind => <p>{kind === 'annotation' ? '位置批注' : '整页讨论'}</p>, related: scope })} />));
+      const frame = element.querySelector('iframe');
+      expect(element.querySelectorAll('.ledger-reading-article')).toHaveLength(1);
+      expect(element.querySelector('.ledger-reading-meta')?.textContent).toContain('PDF');
+      expect(element.querySelector('.share-topbar')).toBeNull();
+      expect(element.querySelectorAll('[role="tab"]')).toHaveLength(3);
+      expect(scope).toHaveBeenCalledWith({ memberIds: ['a'], collectionId: undefined });
+      const tabs = [...element.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+      act(() => tabs[0].click()); expect(element.querySelector('.ledger-reader-comments')?.textContent).toBe('位置批注');
+      act(() => tabs[1].click()); expect(element.querySelector('.ledger-reader-comments')?.textContent).toBe('整页讨论');
+      act(() => tabs[2].click()); expect(element.querySelector('.ledger-reader-comments')?.hasAttribute('hidden')).toBe(true);
+      expect(element.querySelector('iframe')).toBe(frame);
+      expect(element.querySelector('.ledger-reader-heading a')?.getAttribute('href')).toBe('/s/wp/original');
+    } finally { act(() => root.unmount()); element.remove(); }
+  });
   it('90 份目录分页、搜索和连续阅读保留原排序与分享凭证', () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));

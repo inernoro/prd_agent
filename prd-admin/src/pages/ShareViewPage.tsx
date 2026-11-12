@@ -1,5 +1,8 @@
 import { HostedCollectionEditor } from '@/components/web-hosting/HostedCollectionManager';
 import HostedShareCollection from '@/components/web-hosting/HostedShareCollection';
+import type { CollectionReaderRenderer } from '@/components/web-hosting/HostedCollectionReader';
+import { CollectionReaderRelations } from '@/components/web-hosting/CollectionReaderRelations';
+import { ReviewVersionBar } from '@/components/web-hosting/ReviewVersionBar';
 import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
 import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpener';
@@ -173,10 +176,11 @@ interface ShareViewPageProps {
   siteIdOverride?: string;
   passwordOverride?: string;
   embedded?: boolean;
+  renderCollectionReader?: CollectionReaderRenderer;
   onNavigateRelated?: (item: RelatedDocument) => void;
 }
 
-export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordOverride, embedded = false, onNavigateRelated }: ShareViewPageProps = {}) {
+export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordOverride, embedded = false, onNavigateRelated, renderCollectionReader }: ShareViewPageProps = {}) {
   const params = useParams<{ token: string }>();
   const token = tokenOverride ?? params.token;
   const navigate = useNavigate();
@@ -846,7 +850,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   // Keep the original share token: member pages use the same authorization scope.
   return <HostedShareCollection data={data} collectionPath={`/s/wp/${encodeURIComponent(token!)}`}
     selectedSiteId={requestedRelatedSiteId} onSelect={id => navigate(id ? `/s/wp/${encodeURIComponent(token!)}?${new URLSearchParams({ siteId: id })}` : `/s/wp/${encodeURIComponent(token!)}`)}
-    reader={requestedRelatedSiteId && data.sites.some(item => item.id === requestedRelatedSiteId) ? <ShareViewPage key={requestedRelatedSiteId} tokenOverride={token} siteIdOverride={requestedRelatedSiteId} passwordOverride={password} embedded /> : undefined}
+    reader={requestedRelatedSiteId && data.sites.some(item => item.id === requestedRelatedSiteId) ? render => <ShareViewPage key={requestedRelatedSiteId} tokenOverride={token} siteIdOverride={requestedRelatedSiteId} passwordOverride={password} embedded renderCollectionReader={render} /> : undefined}
     related={data.mainSiteId && token ? <RelatedDocumentsBar siteId={data.mainSiteId} source={{ token, password: password || undefined }} /> : undefined}
     action={isOwner ? <><button className="hosted-share-save" onClick={() => { setCollectionShareFirst(true); setCollectionManagerOpen(true); }}>分享</button><button className="hosted-share-save" onClick={() => { setCollectionShareFirst(false); setCollectionManagerOpen(true); }}>管理合集</button>
       {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}</> : <button className="hosted-share-save" onClick={handleSave} disabled={saving || saveStatus !== 'idle'}>
@@ -912,44 +916,15 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
         : isAuthenticated && downloadPlan.kind === 'unavailable'
           ? { text: downloadPlan.reason, tone: 'info', dismissible: false }
           : null;
-    return (
-      <div
-        ref={singleViewRef}
-        style={{
-          width: embedded ? '100%' : '100vw',
-          height: embedded && !pageFullscreen ? '100%' : pageFullscreen ? '100dvh' : '100vh',
-          minHeight: 0,
-          position: pageFullscreen ? 'fixed' : 'relative',
-          inset: pageFullscreen ? 0 : undefined,
-          zIndex: pageFullscreen ? 2147483000 : undefined,
-          display: 'grid',
-          gridTemplateRows: isFullscreen ? 'minmax(0, 1fr)' : 'auto minmax(0, 1fr)',
-          gridTemplateColumns: !isFullscreen && showComments && !isMobile ? 'minmax(0, 1fr) 380px' : 'minmax(0, 1fr)',
-          background: '#0a0a0a',
-          overflow: 'hidden',
-        }}
-      >
-        {/* Top bar —— 全屏演示时隐藏，让 PPT 占满整屏。
-            观感收在 styles/share-topbar.css：这条栏永远浮在访客上传的网页之上，所以带
-            surface-tone-dark 钉死深色，按钮一律走 token（admin-dual-theme）。原先四个按钮
-            各写一套内联 style、各自一个亮蓝、都没有 hover——顶栏比它托着的内容还抢眼。
-            现在只有「保存到我的托管」是实心主操作，其余一律安静。 */}
-        <div style={{ display: isFullscreen ? 'none' : 'block', gridColumn: '1 / -1' }}>
-          <div className="share-topbar surface-tone-dark border-b border-b-token-subtle">
-            {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
-            <div className="share-topbar-title">
-              <ShieldCheck size={14} color="var(--accent-fg-success)" style={{ flexShrink: 0 }} />
-              <SharePageTitle site={site} onRenamed={(title) => setData((current) => current ? {
+    const documentTitle = <SharePageTitle site={site} onRenamed={(title) => setData((current) => current ? {
                 ...current, sites: current.sites.map((item) => item.id === site.id ? { ...item, title } : item),
-              } : current)} />
-            </div>
-            {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
-            <div className="share-topbar-actions">
+              } : current)} />;
+    const documentTools = <div className="share-topbar-actions">
               {!embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>返回合集</a>}
               {!embedded && isOwner && data.shareType === 'collection' && <button className="share-topbar-btn" onClick={() => setCollectionManagerOpen(true)}>管理合集</button>}
               {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}
-              <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" source={{ token, password: password || undefined }}
-                onNavigate={openRelatedDocument} />
+              {!renderCollectionReader && <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" source={{ token, password: password || undefined }}
+                onNavigate={openRelatedDocument} />}
               {relatedAccountSite && <SitePreviewModal key={relatedAccountSite.id} site={relatedAccountSite}
                 canToggleComments={relatedAccountSite.ownerUserId === currentUserId}
                 onNavigateRelated={relatedPreview.open}
@@ -963,7 +938,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
               <Dialog open={!!relatedOpenError} onOpenChange={open => { if (!open) setRelatedOpenError(''); }}
                 title="无法打开关联文档" content={<p role="alert">{relatedOpenError}</p>} />
               {token && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
-                onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={!liveSite.wrappedAssetType}
+                onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={!liveSite.wrappedAssetType && !renderCollectionReader}
                 onBubbleMode={() => { if (isMobile) setShowComments(false); }} />}
               {token && !review.historical && <a className="share-topbar-btn share-topbar-icon" href={`/s/wp/${encodeURIComponent(token)}?siteId=${encodeURIComponent(liveSite.id)}`}
                 target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开当前文档" title="在新标签页打开当前文档"><ExternalLink size={13} /></a>}
@@ -1055,30 +1030,8 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
                 </a>
               </ShareMoreMenu>
 
-            </div>
-          </div>
-
-          {/* 一闪而过的 toast 读不完，所以两种说明都占一行。来源见 visibleNote 的注释。 */}
-          {visibleNote && (
-            <div
-              className={`share-topbar-note surface-tone-dark${visibleNote.tone === 'error' ? ' share-topbar-note--error' : ''}`}
-              role="status"
-            >
-              <span>
-                {visibleNote.text}
-                {visibleNote.detail && (
-                  <span className="share-topbar-note-detail">{visibleNote.detail}</span>
-                )}
-              </span>
-              {visibleNote.dismissible && (
-                <button onClick={() => setDownloadNote(null)} title="知道了" aria-label="关闭说明">
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-        <div style={{ position: 'relative', minHeight: 0, minWidth: 0, gridColumn: 1, gridRow: isFullscreen ? 1 : 2, background: '#fff', marginBottom: showComments && isMobile ? '55dvh' : 0 }}>
+            </div>;
+    const documentContent = <div ref={renderCollectionReader ? singleViewRef : undefined} className={renderCollectionReader ? 'collection-document-frame' : undefined} style={{ position: 'relative', minHeight: 0, minWidth: 0, gridColumn: 1, gridRow: isFullscreen ? 1 : 2, background: '#fff', marginBottom: showComments && isMobile && !renderCollectionReader ? '55dvh' : 0 }}>
           <AnnotationModeBar annotations={annotations} onCancel={() => setShowComments(true)} />
           {pageFullscreen && (
             <button
@@ -1196,37 +1149,8 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
               {embeddedHtmlError}
             </div>
           )}
-        </div>
-
-        {/* 评论：右侧滑出抽屉（由顶栏「评论」按钮打开）。不占页面布局、不盖 PPT 控件（token 必有） */}
-        {token && (
-          <>
-            {/* 右侧抽屉 */}
-            <aside
-              className="review-sidebar border-l border-l-token-subtle" style={{ position: isMobile ? 'fixed' : 'relative', right: 0, bottom: 0, zIndex: 61, gridColumn: isMobile ? 1 : 2, gridRow: 2, minHeight: 0, width: isMobile ? '100%' : 380, height: isMobile ? '55dvh' : '100%', display: showComments && !isFullscreen ? 'flex' : 'none', flexDirection: 'column', background: 'var(--bg-elevated)' }}
-            >
-              <div className="review-sidebar-heading">
-                <span>批注与讨论{commentCount != null && <small>{commentCount}</small>}</span>
-                <button
-                  onClick={() => setShowComments(false)}
-                  title="关闭"
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    width: 28, height: 28, borderRadius: 8, border: 'none', cursor: 'pointer',
-                    background: 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.7)',
-                  }}
-                >
-                  <X size={16} />
-                </button>
-              </div>
-              <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                <CommentsSection key={`${token}:${password}:${liveSite.id}`} mode="share" siteId={liveSite.id} token={token} password={password || undefined} onCountChange={setCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} />
-              </div>
-            </aside>
-          </>
-        )}
-
-        <ShareAssistantLauncher hidden={isFullscreen || showComments || review.historical || review.loading} isMobile={isMobile}>
+        </div>;
+    const documentAssistant = <ShareAssistantLauncher hidden={isFullscreen || showComments || review.historical || review.loading} isMobile={isMobile}>
         {/* 右下角「向我提问」。全屏演示态隐藏——PPT 放映时右下角是翻页控件的地盘。
             开场问题由后端算好（分享自选优先于站点题库），这里直接渲染。 */}
         {token && data.ask?.enabled && (
@@ -1257,7 +1181,107 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
             <PrivateSourceConfirmHost />
           </>
         )}
-        </ShareAssistantLauncher>
+        </ShareAssistantLauncher>;
+    if (renderCollectionReader) return <>{renderCollectionReader({
+      title: documentTitle,
+      content: <>{visibleNote && <div className="ledger-reader-note" role="status"><span>{visibleNote.text}{visibleNote.detail && ` ${visibleNote.detail}`}</span>
+        {visibleNote.dismissible && <button type="button" aria-label="关闭说明" onClick={() => setDownloadNote(null)}><X size={14} /></button>}</div>}{documentContent}</>,
+      controls: <>{token && !liveSite.wrappedAssetType && <div className="ledger-reader-version"><span>版本</span><ReviewVersionBar review={review} canUpload={liveSite.viewerCanEdit === true} /></div>}
+        <details className="ledger-document-tools"><summary>文档操作</summary>{documentTools}</details></>,
+      metadata: review.selected?.publishedAt ? <span>发布于 {new Date(review.selected.publishedAt).toLocaleDateString('zh-CN')}</span> : undefined,
+      comments: token ? (kind, onCounts) => <CommentsSection key={`${token}:${password}:${liveSite.id}`} mode="share" siteId={liveSite.id}
+        token={token} password={password || undefined} onCountChange={setCommentCount} onThreadCountsChange={onCounts} threadKind={kind}
+        annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} /> : undefined,
+      related: scope => <CollectionReaderRelations siteId={liveSite.id} token={token!} password={password || undefined} scope={scope}
+        canViewCollections={liveSite.viewerIsOwner === true} onNavigate={openRelatedDocument} />,
+      annotationsOpen: showComments,
+      onDismissAnnotations: () => { setShowComments(false); annotations.setEnabled(false); },
+      fullscreen: isFullscreen || pageFullscreen,
+    })}{documentAssistant}</>;
+    return (
+      <div
+        ref={singleViewRef}
+        style={{
+          width: embedded ? '100%' : '100vw',
+          height: embedded && !pageFullscreen ? '100%' : pageFullscreen ? '100dvh' : '100vh',
+          minHeight: 0,
+          position: pageFullscreen ? 'fixed' : 'relative',
+          inset: pageFullscreen ? 0 : undefined,
+          zIndex: pageFullscreen ? 2147483000 : undefined,
+          display: 'grid',
+          gridTemplateRows: isFullscreen ? 'minmax(0, 1fr)' : 'auto minmax(0, 1fr)',
+          gridTemplateColumns: !isFullscreen && showComments && !isMobile ? 'minmax(0, 1fr) 380px' : 'minmax(0, 1fr)',
+          background: '#0a0a0a',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Top bar —— 全屏演示时隐藏，让 PPT 占满整屏。
+            观感收在 styles/share-topbar.css：这条栏永远浮在访客上传的网页之上，所以带
+            surface-tone-dark 钉死深色，按钮一律走 token（admin-dual-theme）。原先四个按钮
+            各写一套内联 style、各自一个亮蓝、都没有 hover——顶栏比它托着的内容还抢眼。
+            现在只有「保存到我的托管」是实心主操作，其余一律安静。 */}
+        <div style={{ display: isFullscreen ? 'none' : 'block', gridColumn: '1 / -1' }}>
+          <div className="share-topbar surface-tone-dark border-b border-b-token-subtle">
+            {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
+            <div className="share-topbar-title">
+              <ShieldCheck size={14} color="var(--accent-fg-success)" style={{ flexShrink: 0 }} />
+              {documentTitle}
+            </div>
+            {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
+            {documentTools}
+          </div>
+
+          {/* 一闪而过的 toast 读不完，所以两种说明都占一行。来源见 visibleNote 的注释。 */}
+          {visibleNote && (
+            <div
+              className={`share-topbar-note surface-tone-dark${visibleNote.tone === 'error' ? ' share-topbar-note--error' : ''}`}
+              role="status"
+            >
+              <span>
+                {visibleNote.text}
+                {visibleNote.detail && (
+                  <span className="share-topbar-note-detail">{visibleNote.detail}</span>
+                )}
+              </span>
+              {visibleNote.dismissible && (
+                <button onClick={() => setDownloadNote(null)} title="知道了" aria-label="关闭说明">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        {documentContent}
+
+        {/* 评论：右侧滑出抽屉（由顶栏「评论」按钮打开）。不占页面布局、不盖 PPT 控件（token 必有） */}
+        {token && (
+          <>
+            {/* 右侧抽屉 */}
+            <aside
+              className="review-sidebar border-l border-l-token-subtle" style={{ position: isMobile ? 'fixed' : 'relative', right: 0, bottom: 0, zIndex: 61, gridColumn: isMobile ? 1 : 2, gridRow: 2, minHeight: 0, width: isMobile ? '100%' : 380, height: isMobile ? '55dvh' : '100%', display: showComments && !isFullscreen ? 'flex' : 'none', flexDirection: 'column', background: 'var(--bg-elevated)' }}
+            >
+              <div className="review-sidebar-heading">
+                <span>批注与讨论{commentCount != null && <small>{commentCount}</small>}</span>
+                <button
+                  onClick={() => setShowComments(false)}
+                  title="关闭"
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 28, height: 28, borderRadius: 8, border: 'none', cursor: 'pointer',
+                    background: 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.7)',
+                  }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <CommentsSection key={`${token}:${password}:${liveSite.id}`} mode="share" siteId={liveSite.id} token={token} password={password || undefined} onCountChange={setCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} />
+              </div>
+            </aside>
+          </>
+        )}
+
+        {documentAssistant}
       </div>
     );
   }

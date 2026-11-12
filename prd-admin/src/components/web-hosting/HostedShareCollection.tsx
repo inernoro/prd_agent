@@ -1,8 +1,9 @@
 import { Component, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Moon, Pause, Play, Search, Sun } from 'lucide-react';
+import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Moon, Search, Waves } from 'lucide-react';
 import Threads from '@/components/reactbits/Threads';
 import { useDataTheme } from '@/hooks/useDataTheme';
 import type { SharedSiteInfo, ShareViewData } from '@/services/real/webPages';
+import { HostedCollectionReader, type CollectionReaderParts, type CollectionReaderRenderer } from './HostedCollectionReader';
 import './HostedShareCollection.css';
 
 const THREAD_COLORS: Record<'light' | 'dark', [number, number, number]> = {
@@ -30,6 +31,7 @@ export function HostedShareBackground({ paused = false }: { paused?: boolean }) 
 export interface LedgerSite extends SharedSiteInfo {
   /** Presentation metadata supplied by a caller; production never fills missing fields with demo data. */
   displayMeta?: string;
+  documentTypeLabel?: string;
   section?: string;
   unavailable?: boolean;
   readingMeta?: string;
@@ -39,6 +41,7 @@ export interface LedgerCollectionData extends Pick<ShareViewData, 'title' | 'des
   sites: LedgerSite[];
   mainSiteId?: string;
   collectionNeedsUpdate?: boolean;
+  collectionId?: string;
   createdByName?: string;
   createdAt?: string;
   updatedLabel?: string;
@@ -51,7 +54,7 @@ export default function HostedShareCollection({ data, collectionPath, action, co
   selectedSiteId, onSelect, reader, related, sample = false }: {
   data: LedgerCollectionData; collectionPath: string; action?: ReactNode; controls?: ReactNode;
   paused?: boolean; footer?: ReactNode; selectedSiteId?: string | null;
-  onSelect?: (id: string | null) => void; reader?: ReactNode; related?: ReactNode; sample?: boolean;
+  onSelect?: (id: string | null) => void; reader?: ReactNode | ((render: CollectionReaderRenderer) => ReactNode); related?: ReactNode; sample?: boolean;
 }) {
   const theme = useDataTheme();
   const [paused, setPaused] = useState(initialPaused);
@@ -93,19 +96,27 @@ export default function HostedShareCollection({ data, collectionPath, action, co
       {!filtered.length && <div className="ledger-empty" role="status"><strong>没有找到匹配文档</strong><span>试试其他关键词，或清除查找。</span><button className="ledger-button" onClick={() => { setKeyword(''); setSection(''); setPage(1); }}>清除查找，回到目录</button></div>}
     </div>{pager}
   </aside>;
+  const renderReader = (parts: CollectionReaderParts) => <HostedCollectionReader title={selected?.title ?? ''}
+    heading={<div className="ledger-reader-heading"><a className="ledger-button is-ghost" href={collectionPath} onClick={event => navigate(event, null)}><ArrowLeft size={14} />返回目录 <span className="ledger-mono">{selected?.id === main?.id ? '主' : String(selected ? positions.get(selected.id) : '').padStart(2, '0')}</span></a>
+      <span className="ledger-mono ledger-reader-address" title={selected ? new URL(href(selected.id), window.location.origin).href : ''}>{selected ? new URL(href(selected.id), window.location.origin).href : ''}</span></div>}
+    metadata={<>{selected?.id === main?.id && <span className="ledger-tag">主文档</span>}<span>第 {selected ? positions.get(selected.id) : '—'} / {data.sites.length} 篇 · {selected?.documentTypeLabel ?? selected?.wrappedAssetType?.toUpperCase() ?? selected?.entryFile.split('.').pop()?.toUpperCase()}</span></>}
+    navigation={selected && <nav className="ledger-reading-pager" aria-label="连续阅读">{[-1, 1].map(step => { const target = data.sites[data.sites.findIndex(item => item.id === selected!.id) + step]; return target ? <a key={step} href={href(target.id)} onClick={event => navigate(event, target.id)}><span>{step < 0 ? '上一篇' : '下一篇'} {String(positions.get(target.id)).padStart(2, '0')}</span><strong>{target.title}</strong></a> : <span key={step} />; })}</nav>}
+    related={<><div className="ledger-relation-group"><h2>本合集</h2><a href={collectionPath} onClick={event => navigate(event, null)}><span className="ledger-tag">成员</span>第 {selected ? positions.get(selected.id) : '—'} / {data.sites.length} 篇 · 打开目录</a></div>
+      {parts.related ? parts.related({ memberIds: data.sites.map(site => site.id), collectionId: data.collectionId }) : related}</>}
+    mobileDirectory={<a href={collectionPath} onClick={event => navigate(event, null)}>目录</a>}
+    mobileNext={selected && data.sites[positions.get(selected.id)!] ? <a href={href(data.sites[positions.get(selected.id)!].id)} onClick={event => navigate(event, data.sites[positions.get(selected.id)!].id)}>下一篇 {String(positions.get(selected.id)! + 1).padStart(2, '0')}</a> : <span>已到最后一篇</span>}
+    parts={parts} />;
   const remainder = data.sites.filter(site => site.id !== main?.id);
   const groups = sections.length ? sections : ['文档目录'];
   return <main className={`hosted-share-collection hosted-ledger${large ? ' is-large' : ' is-small'}${selectedSiteId ? ' is-reading' : ''}${sample ? ' is-sample' : ''}`}>
     <HostedShareBackground paused={paused} />
     <header className="ledger-topbar"><div className="ledger-breadcrumb"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3" stroke="currentColor" strokeWidth="1.5" /><path d="M5 13V7l5 4 5-4v6" stroke="currentColor" strokeWidth="1.5" /></svg><span>网页托管</span><i>/</i><a href={collectionPath} onClick={event => navigate(event, null)}>合集</a><i>/</i><strong>{data.title || `${data.sites.length} 个站点合集`}</strong>{sample && <span className="ledger-tag is-reference">示例数据</span>}</div>
-      <div className="ledger-header-actions">{controls}<button className="ledger-button is-ghost ledger-motion-toggle" aria-pressed={paused} onClick={() => setPaused(!paused)}>{paused ? <Play size={15} /> : <Pause size={15} />}<span>{paused ? '静态' : '动态'}</span></button><button className="ledger-button is-ghost" aria-label={theme === 'light' ? '切换深色' : '切换浅色'} onClick={() => { document.documentElement.dataset.theme = theme === 'light' ? 'dark' : 'light'; }}>{theme === 'light' ? <Moon size={15} /> : <Sun size={15} />}<span>{theme === 'light' ? '浅色' : '深色'}</span></button>{action}</div>
+      <div className="ledger-header-actions">{controls}<button className="ledger-button is-ghost ledger-motion-toggle" aria-pressed={!paused} onClick={() => setPaused(!paused)}><Waves size={15} /><span>{paused ? '静止' : '动态'}</span></button><button className="ledger-button is-ghost" aria-label={theme === 'light' ? '切换深色' : '切换浅色'} onClick={() => { document.documentElement.dataset.theme = theme === 'light' ? 'dark' : 'light'; }}><Moon size={15} /><span>{theme === 'light' ? '浅色' : '深色'}</span></button>{action && <span className="ledger-header-divider" aria-hidden="true" />}{action}</div>
     </header>
     <div className="ledger-workspace">{large && directory}<div className="ledger-main" ref={mainRef}>
       {data.collectionNeedsUpdate && <p className="ledger-update-note" role="status">合集已有修改，本链接保留原成员快照。可在“管理合集”中重新生成分享，并停止旧链接。</p>}
-      {selectedSiteId ? <><div className="ledger-reader-heading"><a className="ledger-button is-ghost" href={collectionPath} onClick={event => navigate(event, null)}><ArrowLeft size={14} />返回目录</a><span className="ledger-mono">第 {selected ? positions.get(selected.id) : '—'} / {data.sites.length} 篇</span></div>
-        {selected && !selected.unavailable ? <><div className="ledger-reading-meta">{selected.id === main?.id && <span className="ledger-tag">主文档</span>}<span>{meta(selected)}</span></div><h1 className="ledger-document-title">{selected.title}</h1><div className="ledger-reader-content">{reader}</div>
-          <nav className="ledger-reading-pager" aria-label="连续阅读">{[-1, 1].map(step => { const target = data.sites[data.sites.findIndex(item => item.id === selected.id) + step]; return target ? <a key={step} href={href(target.id)} onClick={event => navigate(event, target.id)}><span>{step < 0 ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}{step < 0 ? '上一篇' : '下一篇'} {String(positions.get(target.id)).padStart(2, '0')}</span><strong>{target.title}</strong></a> : <span key={step} />; })}</nav></>
-          : <div className="ledger-empty" role="alert"><strong>{selected?.unavailable ? '文档暂不可用，请联系分享者' : '文档不存在或不在这条分享中'}</strong><a href={collectionPath} onClick={event => navigate(event, null)}>返回合集目录</a></div>}</>
+      {selectedSiteId ? selected && !selected.unavailable ? <>{typeof reader === 'function' ? reader(renderReader) : renderReader({ content: reader, metadata: meta(selected) })}</>
+          : <div className="ledger-empty" role="alert"><strong>{selected?.unavailable ? '文档暂不可用，请联系分享者' : '文档不存在或不在这条分享中'}</strong><a href={collectionPath} onClick={event => navigate(event, null)}>返回合集目录</a></div>
         : <><section className="ledger-intro"><div className="ledger-meta"><span>合集</span><span>{data.sites.length} 份文档</span>{data.createdByName && <span>作者 {data.createdByName}</span>}{data.updatedLabel ? <span>更新于 {data.updatedLabel}</span> : data.createdAt && <span>分享于 {new Date(data.createdAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}</span>}</div><h1>{data.title || `${data.sites.length} 个站点合集`}</h1>{data.description && <p className={data.mobileDescription ? 'ledger-desktop-description' : undefined}>{data.description}</p>}{data.mobileDescription && <p className="ledger-mobile-description">{data.mobileDescription}</p>}<div className="ledger-desktop-start">{mainLink}</div></section>
           {main ? <section className={`ledger-main-document${main.toc?.length ? ' has-toc' : ''}`} aria-label="主文档概览"><div><div className="ledger-reading-meta"><span className="ledger-tag">主文档</span><span>{meta(main)}</span></div><h2><a href={href(main.id)} onClick={event => navigate(event, main.id)}>{main.title}</a></h2>{main.description && <p>{main.description}</p>}{main.readingMeta && <div className="ledger-mono">{main.readingMeta}</div>}<div className="ledger-mobile-start">{mainLink}</div></div>{main.toc && <div className="ledger-main-toc"><span>主文档目录</span>{main.toc.map((title, index) => <a key={title} href={href(main.id)} onClick={event => navigate(event, main.id)}><span className="ledger-number">{String(index + 1).padStart(2, '0')}</span>{title}</a>)}</div>}</section>
             : <div className="ledger-unset-main"><BookOpen size={18} /><p>尚未指定可用的主文档，请按目录阅读；作者可在管理中设置。</p></div>}
@@ -116,6 +127,6 @@ export default function HostedShareCollection({ data, collectionPath, action, co
           </section>}{related && <section className="ledger-related"><div className="ledger-section-heading"><h2>{sample ? '合集之外的关联' : '关联与引用'}</h2><span>{sample ? '不属于本合集 · 仅供参考' : '按现有访问权限查看'}</span></div>{related}</section>}
           {!data.sites.length && <div className="ledger-empty"><BookOpen size={24} /><strong>还没有可阅读的文档</strong><span>请联系分享者补充内容。</span></div>}
         </>}{footer && <footer className="hosted-share-footer">{footer}</footer>}
-    </div>{selected && !large && <aside className="ledger-reader-outline" aria-label="阅读关联"><div className="ledger-section-heading"><h2>关联</h2></div><p>本合集</p><span className="ledger-mono">第 {positions.get(selected.id)} / {data.sites.length} 篇 · 按作者顺序</span>{data.sites.map(site => <a key={site.id} href={href(site.id)} onClick={event => navigate(event, site.id)} aria-current={site.id === selected.id ? 'page' : undefined}><span className="ledger-number">{site.id === main?.id ? '主' : String(positions.get(site.id)).padStart(2, '0')}</span>{site.title}</a>)}{related && <div className="ledger-reader-related"><p>关联与引用</p>{related}</div>}</aside>}</div>
+    </div></div>
   </main>;
 }

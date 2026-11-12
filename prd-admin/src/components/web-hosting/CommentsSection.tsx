@@ -12,6 +12,8 @@ const ELEMENT_LABELS: Record<string, string> = { button: '按钮', a: '链接', 
   h1: '标题', h2: '标题', h3: '标题', h4: '标题', section: '区块', div: '区块', li: '列表项', svg: '图标' };
 const elementLabel = (tag: string) => ELEMENT_LABELS[tag] ?? '页面元素';
 
+export interface CommentThreadCounts { annotations: number; discussions: number }
+
 type Props = (
   | { mode: 'share'; token: string; password?: string; siteId?: string }
   | { mode: 'site'; siteId: string; token?: never; password?: never }
@@ -22,6 +24,8 @@ type Props = (
   review?: HostedReview;
   onPickElement?: () => void;
   onLogin?: () => void;
+  threadKind?: 'annotation' | 'discussion';
+  onThreadCountsChange?: (counts: CommentThreadCounts) => void;
 };
 
 export default function CommentsSection(props: Props) {
@@ -44,6 +48,7 @@ export default function CommentsSection(props: Props) {
   const mounted = useRef(true);
   const callbacks = useRef(props); callbacks.current = props;
   const { mode, token, password, siteId, annotations, review } = props;
+  const draftAnchor = props.threadKind === 'discussion' ? null : annotations?.draftAnchor;
   const versionKey = review?.selected?.contentVersionKey;
   const versionPending = !!review?.loading;
   const canWrite = isAuthenticated && commentsEnabled && canComment && (!review || (!!review.selected && !review.loading));
@@ -53,12 +58,13 @@ export default function CommentsSection(props: Props) {
     if (loading) return '正在加载讨论权限…';
     if (error && !canComment) return '无法加载讨论权限，请重新加载后再试。';
     if (!commentsEnabled) return '该站点已关闭评论与批注。';
-    if (!isAuthenticated) return '登录后可选择网页元素或文字留下批注，并参与回复。';
+    if (!isAuthenticated) return props.threadKind === 'discussion' ? '登录后参与这份网页的讨论。' : '登录后可选择网页元素或文字留下批注，并参与回复。';
     if (!canComment) return '当前登录状态无法批注，请重新登录后再试。';
     if (review?.uploading) return '新版本正在上传，完成后即可批注。';
     if (versionPending) return review?.historical ? '正在切换网页版本，请稍候…' : '正在确认网页版本，请稍候…';
     if (review && !review.selected) return '无法确认网页版本，请在顶部重新加载版本。';
     if (submitting) return '正在发表批注，请稍候…';
+    if (props.threadKind === 'discussion') return '填写讨论内容，与其他读者交流。';
     if (!annotations?.ready) return annotations?.connectionChecked
       ? '此页面暂未连接批注层，仍可发表整页评论。' : '正在连接页面批注层…';
     return '先在网页上选择位置，意见就会留在那里。';
@@ -66,20 +72,27 @@ export default function CommentsSection(props: Props) {
   const identity = `${mode}:${token ?? ''}:${siteId ?? ''}:${password ?? ''}`;
   const confirmedDraftVersion = useRef({ identity, versionKey });
   const identityRef = useRef(identity); identityRef.current = identity;
-  const draftScope = `${identity}:${review?.selected?.id ?? ''}:${versionKey ?? ''}`;
-  const draftScopeRef = useRef({ key: draftScope, draft, replyTo, anchor: annotations?.draftAnchor });
+  const draftScope = `${identity}:${review?.selected?.id ?? ''}:${versionKey ?? ''}:${props.threadKind ?? 'all'}`;
+  const draftScopeRef = useRef({ key: draftScope, draft, replyTo, anchor: draftAnchor });
   const previousDraftScope = draftScopeRef.current;
   if (previousDraftScope.key !== draftScope || previousDraftScope.draft !== draft
-    || previousDraftScope.replyTo !== replyTo || previousDraftScope.anchor !== annotations?.draftAnchor)
-    draftScopeRef.current = { key: draftScope, draft, replyTo, anchor: annotations?.draftAnchor };
+    || previousDraftScope.replyTo !== replyTo || previousDraftScope.anchor !== draftAnchor)
+    draftScopeRef.current = { key: draftScope, draft, replyTo, anchor: draftAnchor };
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { setReplyTo(null); }, [props.threadKind]);
   const allRoots = comments.filter(c => !c.parentId);
   const versionRoots = review ? allRoots.filter(c => c.contentVersion === versionKey && !!versionKey) : allRoots;
   const outsideRoots = review ? allRoots.filter(c => c.contentVersion !== versionKey || !versionKey) : [];
-  const roots = otherVersions ? outsideRoots : versionRoots;
+  const scopedRoots = otherVersions ? outsideRoots : versionRoots;
+  const roots = scopedRoots.filter(comment => !props.threadKind || (props.threadKind === 'annotation' ? !!comment.anchor : !comment.anchor));
   const openCount = roots.filter(c => !c.isResolved).length;
   const resolvedCount = roots.length - openCount;
   useEffect(() => { callbacks.current.onCountChange?.(allRoots.length); }, [allRoots.length]);
+  const annotationCount = versionRoots.filter(comment => !!comment.anchor).length;
+  const discussionCount = versionRoots.length - annotationCount;
+  useEffect(() => {
+    if (!loading && !versionPending && !error) callbacks.current.onThreadCountsChange?.({ annotations: annotationCount, discussions: discussionCount });
+  }, [annotationCount, discussionCount, loading, versionPending, error]);
   useEffect(() => {
     const activeRoots = comments.filter(c => !c.parentId && (!callbacks.current.review || (!!versionKey && c.contentVersion === versionKey)));
     callbacks.current.annotations?.setThreads(activeRoots);
@@ -109,8 +122,8 @@ export default function CommentsSection(props: Props) {
   }, [mode, token, password, siteId]);
   useEffect(() => { void load(); }, [load, isAuthenticated, authToken]);
   useEffect(() => {
-    if (annotations?.draftAnchor) { setReplyTo(null); textareaRef.current?.focus(); }
-  }, [annotations?.draftAnchor]);
+    if (draftAnchor) { setReplyTo(null); textareaRef.current?.focus(); }
+  }, [draftAnchor]);
   useEffect(() => {
     const id = annotations?.activeId;
     if (!id) return;
@@ -124,7 +137,7 @@ export default function CommentsSection(props: Props) {
     if (!draft.trim() || submitting || !canWrite) return;
     const operationIdentity = identity;
     const operationDraftScope = draftScopeRef.current;
-    const options = replyTo ? { parentId: replyTo } : { anchor: annotations?.draftAnchor ?? undefined,
+    const options = replyTo ? { parentId: replyTo } : { anchor: draftAnchor ?? undefined,
       revisionId: review?.historical ? review.selected?.id : undefined, expectedContentVersion: versionKey };
     setSubmitting(true); setError(null);
     try {
@@ -136,7 +149,7 @@ export default function CommentsSection(props: Props) {
         window.dispatchEvent(new Event('hosted-comments-changed'));
         setComments(prev => prev.some(c => c.id === created.id) ? prev : [created, ...prev]);
         if (operationDraftScope === draftScopeRef.current) {
-          setDraft(''); setReplyTo(null); annotations?.clearDraft(); if (!replyTo) setFilter('open');
+          setDraft(''); setReplyTo(null); if (props.threadKind !== 'discussion') annotations?.clearDraft(); if (!replyTo) setFilter('open');
         }
         await load(true);
       } else if (operationDraftScope === draftScopeRef.current) setError(res.error?.message || '发表失败，草稿已保留');
@@ -173,7 +186,7 @@ export default function CommentsSection(props: Props) {
   const visible = roots.filter(c => filter === 'all' || (filter === 'resolved' ? c.isResolved : !c.isResolved));
   const startPicking = () => { setReplyTo(null); annotations?.select(); props.onPickElement?.(); };
   const replyTarget = roots.find(c => c.id === replyTo);
-  const pickEntry = annotations ? <button type="button" onClick={loginToAnnotate ? props.onLogin : startPicking}
+  const pickEntry = annotations && props.threadKind !== 'discussion' ? <button type="button" onClick={loginToAnnotate ? props.onLogin : startPicking}
     aria-label={loginToAnnotate ? (isAuthenticated ? '重新登录后批注' : '登录后批注') : '绑定页面元素 / 选中文字'}
     disabled={!loginToAnnotate && (loading || !canWrite || !annotations.ready || submitting || review?.uploading)}
     title={pickingHint} aria-describedby={pickingHintId} className={loginToAnnotate ? 'review-login-action' : 'review-pick-action'}>
@@ -199,8 +212,8 @@ export default function CommentsSection(props: Props) {
       <div className="review-thread-scroll">
         {loading || versionPending ? <MapSectionLoader text={versionPending ? '正在确认网页版本…' : '正在加载讨论…'} /> : <>
           {visible.length === 0 && !error && <div className="review-empty">
-            <MessageSquare size={23} /><strong>{filter === 'resolved' ? '还没有已解决的讨论' : filter === 'open' && resolvedCount ? '本版意见已全部处理' : '让意见留在对应的位置'}</strong>
-            <p>{otherVersions ? '其他版本的讨论会保留在这里。' : '选取一个元素或一段文字，开始第一条批注。'}</p>
+            <MessageSquare size={23} /><strong>{filter === 'resolved' ? '还没有已解决的讨论' : filter === 'open' && resolvedCount ? '本版意见已全部处理' : props.threadKind === 'discussion' ? '讨论这份文档' : '让意见留在对应的位置'}</strong>
+            <p>{otherVersions ? '其他版本的讨论会保留在这里。' : props.threadKind === 'discussion' ? '留下整页讨论，与其他读者交流。' : '选取一个元素或一段文字，开始第一条批注。'}</p>
           </div>}
           {visible.map((comment) => {
             const replies = comments.filter(c => c.parentId === comment.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -238,18 +251,18 @@ export default function CommentsSection(props: Props) {
         {!commentsEnabled || !canWrite ? <div className="review-composer-unavailable">
           {versionPending ? <MapSpinner size={19} /> : <Lock size={19} />}<strong>{!commentsEnabled ? '评论与批注已关闭' : !isAuthenticated ? '加入这份网页的讨论' : versionPending ? '正在确认网页版本' : '暂时无法开始批注'}</strong>
           <p id={pickingHintId}>{pickingHint}</p>{pickEntry}
-          {!annotations && !isAuthenticated && props.onLogin && <button type="button" className="review-login-action" onClick={props.onLogin}><LogIn size={15} />登录后评论</button>}
+          {(!annotations || props.threadKind === 'discussion') && !isAuthenticated && props.onLogin && <button type="button" className="review-login-action" onClick={props.onLogin}><LogIn size={15} />登录后评论</button>}
         </div> : otherVersions ? <div className="review-composer-unavailable"><History size={19} /><p>回到对应版本，继续那里的讨论。</p><button type="button" className="review-pick-action" onClick={() => setOtherVersions(false)}>返回本版发表评论</button></div> : <>
-          {annotations?.draftAnchor ? <div className="review-composer-anchor"><Link2 size={14} /><span><strong>已选中{annotations.draftAnchor.kind === 'text' ? '文字' : elementLabel(annotations.draftAnchor.tagName)}</strong><span>{annotations.draftAnchor.text || '无文字元素'}</span></span>
-            <button type="button" aria-label="取消位置绑定" disabled={submitting} onClick={annotations.clearDraft}><X size={14} /></button></div>
+          {draftAnchor ? <div className="review-composer-anchor"><Link2 size={14} /><span><strong>已选中{draftAnchor.kind === 'text' ? '文字' : elementLabel(draftAnchor.tagName)}</strong><span>{draftAnchor.text || '无文字元素'}</span></span>
+            <button type="button" aria-label="取消位置绑定" disabled={submitting} onClick={() => annotations?.clearDraft()}><X size={14} /></button></div>
             : replyTarget ? <div className="review-composer-anchor"><CornerDownRight size={14} /><span><strong>回复 {replyTarget.authorName}</strong><span>{replyTarget.content}</span></span><button type="button" aria-label="取消回复" disabled={submitting} onClick={() => setReplyTo(null)}><X size={14} /></button></div>
             : <div className="review-composer-label"><span>整页评论</span>{pickEntry}</div>}
-          <textarea ref={textareaRef} aria-label={replyTo ? '回复内容' : '批注内容'} value={draft} disabled={submitting}
+          <textarea ref={textareaRef} aria-label={replyTo ? '回复内容' : props.threadKind === 'discussion' ? '讨论内容' : '批注内容'} value={draft} disabled={submitting}
             onChange={e => setDraft(e.target.value)} maxLength={2000} rows={3}
             onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); void submit(); } }}
-            placeholder={replyTo ? '补充你的想法…' : annotations?.draftAnchor ? '这个位置需要怎样修改？' : '写下意见，或先选取网页上的位置…'} />
+            placeholder={replyTo ? '补充你的想法…' : draftAnchor ? '这个位置需要怎样修改？' : props.threadKind === 'discussion' ? '写下你对这份文档的看法…' : '写下意见，或先选取网页上的位置…'} />
           <div className="review-composer-footer"><span>{draft.length ? `${draft.length}/2000` : 'Ctrl / ⌘ + Enter 发送'}</span><button type="button" onClick={() => void submit()} disabled={!draft.trim() || submitting} className="review-send-action">
-            {submitting ? <MapSpinner size={14} /> : <Send size={14} />}{replyTo ? '发送回复' : '发送批注'}</button></div>
+            {submitting ? <MapSpinner size={14} /> : <Send size={14} />}{replyTo ? '发送回复' : props.threadKind === 'discussion' ? '发送讨论' : '发送批注'}</button></div>
           {annotations && !annotations.draftAnchor && <p id={pickingHintId} className="review-composer-hint">{pickingHint}</p>}
         </>}
       </div>
