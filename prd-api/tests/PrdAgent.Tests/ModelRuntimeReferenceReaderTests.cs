@@ -62,4 +62,20 @@ public sealed class ModelRuntimeReferenceReaderTests
     {
         Assert.False(Validate().Complete); var row = Row(DateTime.UtcNow); Assert.False(Validate(row, row).Complete);
     }
+    [Fact]
+    public void LegacyFallbackUsesActualUpstreamIdentityWhenPublicNameDiffers()
+    {
+        var row = Row(DateTime.UtcNow); row["LegacyFallbackAuthority"] = "legacy-fallback-permitted";
+        foreach (var key in new[] { "llm.environment-fallback", "llm.active-config" })
+        {
+            var entry = row["Entries"].AsBsonArray.Select(x => x.AsBsonDocument).Single(x => x["ConsumerKey"] == key);
+            entry["Value"] = "old-wire-model"; entry["State"] = "configured";
+        }
+        var snapshot = Validate(row); Assert.True(snapshot.Complete);
+        var identity = new ReferenceIdentity { PublicId = "stable-public-name", UpstreamModelId = "old-wire-model" };
+        Assert.Equal(2, snapshot.Items.Count(x => MongoRuntimeModelReferenceSnapshotProvider.Matches(identity, x)));
+        var oldKind = row["Entries"].AsBsonArray.Select(x => x.AsBsonDocument).Single(x => x["ConsumerKey"] == "llm.active-config");
+        oldKind["IdentityKind"] = "public-id";
+        Assert.False(Validate(row).Complete); // an old producer cannot masquerade as the corrected proof
+    }
 }

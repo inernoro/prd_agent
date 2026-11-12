@@ -89,6 +89,17 @@ public sealed class ModelRuntimeReferenceSnapshotTests
         Assert.Equal("env-model", snapshot.Entries.Single(x => x.ConsumerKey == "llm.environment-fallback").Value);
         Assert.Equal("gateway-only", snapshot.LegacyFallbackAuthority);
     }
+    [Fact]
+    public void LegacyFallbackValuesArePublishedAsUpstreamNamesRatherThanPublicAliases()
+    {
+        var snapshot = Build(Config(("LLM:Model", "old-upstream-model")),
+            database: new ModelRuntimeDatabaseReferences(true, [], [new("old-active-upstream")]), environment: _ => null);
+        Assert.Equal("legacy-fallback-permitted", snapshot.LegacyFallbackAuthority);
+        foreach (var key in new[] { "llm.environment-fallback", "llm.active-config" })
+            Assert.Equal("upstream-model-id", snapshot.Entries.Single(x => x.ConsumerKey == key).IdentityKind);
+        Assert.Equal("old-active-upstream", snapshot.Entries.Single(x => x.ConsumerKey == "llm.active-config").Value);
+        Assert.Null(ModelRuntimeReferenceSnapshotBuilder.ValidateCoverage(snapshot, Identity, Now));
+    }
 
     [Fact]
     public void MissingAndAmbiguousDatabaseStateCannotPretendToBeComplete()
