@@ -156,9 +156,9 @@ public class ProtocolCompatibilityReplayTests
                             """{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_fixture","name":"echo_city","input":{}}}""",
                             """{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":"}}""",
                             """{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"北京\"}"}}""",
-                            """{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"input_tokens":11,"output_tokens":7}}""" }
+                            """{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":7}}""" }
                           : new[] { """{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}""",
-                            """{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":11,"output_tokens":7}}""" })
+                            """{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}""" })
                         : (tool ? new[] {
                             """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_fixture","type":"function","function":{"name":"echo_city","arguments":"{\"city\":"}}]}}]}""",
                             """{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"北京\"}"}}]}}]}""",
@@ -166,6 +166,8 @@ public class ProtocolCompatibilityReplayTests
                             """{"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7}}""" }
                           : new[] { """{"choices":[{"delta":{"content":"O"}}]}""", """{"choices":[{"delta":{"content":"K"}}]}""",
                             """{"choices":[{"delta":{},"finish_reason":"stop"}]}""", """{"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7}}""" });
+                    if (claude)
+                        events = new[] { """{"type":"message_start","message":{"id":"msg_fixture","type":"message","role":"assistant","model":"compat-model","content":[],"usage":{"input_tokens":11,"output_tokens":0,"cache_creation_input_tokens":3,"cache_read_input_tokens":5}}}""" }.Concat(events).ToArray();
                     raw = string.Join("", events.Select(e => "data: " + e + "\n\n")) + (claude ? "" : "data: [DONE]\n\n");
                 }
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(raw, Encoding.UTF8, owner.Stream ? "text/event-stream" : "application/json") };

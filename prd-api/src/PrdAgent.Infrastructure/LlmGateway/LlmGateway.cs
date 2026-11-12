@@ -1226,7 +1226,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     if (chunk.TokenUsage != null)
                     {
-                        tokenUsage = chunk.TokenUsage;
+                        tokenUsage = MergeStreamUsage(tokenUsage, chunk.TokenUsage);
                         break;
                     }
                     continue;
@@ -1306,7 +1306,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 if (chunk.TokenUsage != null)
                 {
-                    tokenUsage = chunk.TokenUsage;
+                    tokenUsage = MergeStreamUsage(tokenUsage, chunk.TokenUsage);
                 }
 
                 // OpenAI 标准流会在 finish_reason 之后再发一条 choices=[] 的 usage 末帧；
@@ -1396,6 +1396,24 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (providerLease is not null)
                 await providerLease.DisposeAsync();
         }
+    }
+
+    private static GatewayTokenUsage MergeStreamUsage(GatewayTokenUsage? previous, GatewayTokenUsage next)
+    {
+        if (previous is null) return next;
+        // Counts are cumulative snapshots, not increments. A final Claude event
+        // omits input/cache counts supplied by message_start; retain those values.
+        return new GatewayTokenUsage
+        {
+            InputTokens = next.InputTokens ?? previous.InputTokens,
+            OutputTokens = next.OutputTokens ?? previous.OutputTokens,
+            ReasoningTokens = next.ReasoningTokens ?? previous.ReasoningTokens,
+            CacheCreationInputTokens = next.CacheCreationInputTokens ?? previous.CacheCreationInputTokens,
+            CacheReadInputTokens = next.CacheReadInputTokens ?? previous.CacheReadInputTokens,
+            CacheCreationCountedInsideInput = next.CacheCreationInputTokens.HasValue
+                ? next.CacheCreationCountedInsideInput : previous.CacheCreationCountedInsideInput,
+            Source = next.Source == "missing" ? previous.Source : next.Source,
+        };
     }
 
     private Task<GatewayProviderConcurrencyAdmission> AcquireProviderConcurrencyAsync(

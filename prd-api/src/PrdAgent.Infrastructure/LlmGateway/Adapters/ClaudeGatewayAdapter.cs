@@ -370,6 +370,20 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
 
             switch (eventType)
             {
+                case "message_start":
+                    if (root.TryGetProperty("message", out var message) &&
+                        message.TryGetProperty("usage", out var initialUsage) &&
+                        initialUsage.ValueKind == JsonValueKind.Object)
+                    {
+                        // Usage-only chunks are accumulated by the gateway; no finish reason yet.
+                        return new GatewayStreamChunk
+                        {
+                            Type = GatewayChunkType.Done,
+                            TokenUsage = ParseUsageElement(initialUsage)
+                        };
+                    }
+                    break;
+
                 case "content_block_start":
                     if (root.TryGetProperty("content_block", out var contentBlock) &&
                         contentBlock.ValueKind == JsonValueKind.Object &&
