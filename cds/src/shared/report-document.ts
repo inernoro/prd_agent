@@ -130,8 +130,8 @@ export function enhanceHtmlReportDocument(html: string, theme: 'light' | 'dark')
       h.childNodes = h.childNodes.filter(n => !('tagName' in n && n.tagName === 'meta' && n.attrs.some(a => a.name === 'http-equiv' && a.value.toLowerCase().trim() === 'refresh')));
     }
   }
-  const normalized = serialize(document);
-  return normalized.replace('</head>', `<meta name="viewport" content="width=device-width, initial-scale=1">${reportReadingStyle(theme)}</head>`)
+  const normalized = addHeadingIdsToReportHtml(serialize(document));
+  return normalized.replace('</head>', `<meta name="viewport" content="width=device-width, initial-scale=1">${reportReadingStyle(theme)}${INTERNAL_ANCHOR_SCRIPT}</head>`)
     .replace('</body>', `${reportReadingScript(theme)}</body>`);
 }
 
