@@ -1193,7 +1193,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
         token={token} password={password || undefined} onCountChange={setCommentCount} onThreadCountsChange={onCounts} threadKind={kind}
         annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} /> : undefined,
       related: scope => <CollectionReaderRelations siteId={liveSite.id} token={token!} password={password || undefined} scope={scope}
-        canViewCollections={liveSite.viewerIsOwner === true} onNavigate={openRelatedDocument} />,
+        canViewCollections={isAuthenticated && liveSite.viewerIsOwner === true} onNavigate={openRelatedDocument} />,
       annotationsOpen: showComments,
       onDismissAnnotations: () => { setShowComments(false); annotations.setEnabled(false); },
       fullscreen: isFullscreen || pageFullscreen,

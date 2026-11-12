@@ -4,7 +4,7 @@ import { getRelatedDocuments, type RelatedDocument, type RelatedDocuments } from
 import { getCollectionContexts, type CollectionContextPage } from '@/services/real/hostedCollections';
 import type { CollectionReaderScope } from './HostedCollectionReader';
 
-/** 沿用原分享鉴权读取关联，合集成员与引用来源分别展示。 */
+/** 作者按账号读取独立关系；访客沿用原分享鉴权，不将合集快照误作手动关联。 */
 export function CollectionReaderRelations({ siteId, token, password, scope, canViewCollections, onNavigate }: {
   siteId: string; token: string; password?: string; scope: CollectionReaderScope; canViewCollections: boolean;
   onNavigate: (item: RelatedDocument) => void;
@@ -23,13 +23,13 @@ export function CollectionReaderRelations({ siteId, token, password, scope, canV
   }, []);
   useEffect(() => {
     let alive = true; setLoading(true); setError('');
-    void getRelatedDocuments(siteId, { token, password }).then(result => {
+    void getRelatedDocuments(siteId, canViewCollections ? undefined : { token, password }).then(result => {
       if (!alive) return;
       if (result.success) setRelated(result.data); else setError(result.error?.message || '关联暂时无法读取，请重试。');
     }).catch(() => { if (alive) setError('关联暂时无法读取，请重试。'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [siteId, token, password, reload]);
+  }, [siteId, token, password, canViewCollections, reload]);
   useEffect(() => {
     if (!canViewCollections) return;
     let alive = true; setContextError('');
@@ -41,7 +41,9 @@ export function CollectionReaderRelations({ siteId, token, password, scope, canV
   }, [siteId, page, canViewCollections, reload]);
   const otherContexts = contexts?.items.filter(item => item.collectionId !== scope.collectionId
     && (!item.primaryLink || new URL(item.primaryLink.shareUrl, window.location.origin).pathname !== window.location.pathname)) ?? [];
-  const manual = related?.items.filter(item => item.id !== siteId && item.isManual !== false && !scope.memberIds.includes(item.id)) ?? [];
+  // 旧接口对命名合集返回授权快照；来源取自结构化合集身份，不解析展示文案。
+  const usesCollectionSnapshot = !canViewCollections && scope.collectionId != null;
+  const manual = usesCollectionSnapshot ? [] : related?.items.filter(item => item.id !== siteId && item.isManual !== false) ?? [];
   const citations = related?.items.filter(item => item.id !== siteId && (item.mentions?.length ?? 0) > 0) ?? [];
   const documentLink = (item: RelatedDocument) => <a href={item.href} onClick={event => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -63,7 +65,8 @@ export function CollectionReaderRelations({ siteId, token, password, scope, canV
     </section>}
     {loading ? <p role="status"><MapSpinner size={12} />正在读取关联…</p> : error ? <p role="alert">{error}<button type="button" onClick={() => setReload(value => value + 1)}>重试</button></p> : <>
       <section className="ledger-relation-group" aria-label="手动关联"><h2>手动关联</h2>
-        {manual.length ? manual.map(item => <div className="ledger-relation-item" key={item.id}><span className="ledger-tag is-manual">手动</span>{documentLink(item)}</div>) : <p>暂无合集之外的手动关联</p>}
+        {manual.length ? manual.map(item => <div className="ledger-relation-item" key={item.id}><span className="ledger-tag is-manual">手动</span>{documentLink(item)}</div>)
+          : <p>{usesCollectionSnapshot ? '当前分享未提供独立的手动关联' : '暂无手动关联'}</p>}
       </section>
       <section className="ledger-relation-group" aria-label="评论引用"><h2>评论引用</h2>
         {citations.length ? citations.map(item => <div className="ledger-relation-item" key={item.id}><div><span className="ledger-tag is-reference">引用</span>{documentLink(item)}</div>
