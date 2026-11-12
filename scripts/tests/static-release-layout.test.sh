@@ -205,6 +205,22 @@ stage.mkdir()
 result = subprocess.run(['sh', '-c', '. "$1/scripts/lib/static-release.sh"; static_release_activate "$2/.staging-D" "$2" D', 'test', str(repo), str(root)], capture_output=True)
 assert result.returncode != 0
 assert (root / 'current').readlink().as_posix() == '.releases/B'
+# Recovery must not be blocked by optional compatibility work. The target's
+# own files are already known-good and must remain intact.
+def recover(setup=''):
+    (root / 'current').unlink()
+    (root / 'current').symlink_to('.releases/C')
+    result = subprocess.run(['sh', '-eu', '-c', '. "$1/scripts/lib/static-release.sh"; ' + setup + '; static_release_rollback "$2" .releases/B', 'test', str(repo), str(root)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert (root / 'current').readlink().as_posix() == '.releases/B'
+    assert (root / 'previous').readlink().as_posix() == '.releases/C'
+    assert (root / 'current/index.html').read_text() == '<script src="/assets/B.js"></script>'
+    assert (root / 'current/assets/B.js').read_text() == 'B'
+    return result.stderr
+assert 'continuing rollback' in recover(':')
+(root / '.releases/C/assets/unsafe').unlink()
+assert 'continuing rollback' in recover('static_release_retain_assets() { return 1; }')
+assert 'continuing rollback' in recover('static_release_make_web_readable() { return 1; }')
 PYRETAIN
 
 python3 - "$repo_root/exec_dep.sh" <<'PY'

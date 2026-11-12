@@ -214,8 +214,11 @@ static_release_rollback() {
   fi
 
   failed_target="$(readlink "$static_root/current" 2>/dev/null || true)"
-  static_release_retain_assets "$rollback_path" "$static_root" || return 1
-  static_release_make_web_readable "$rollback_path" || return 1
+  # Compatibility work must never prevent restoring the known-good release.
+  # Keep failures visible, but preserve recovery when a historical tree is
+  # malformed or the filesystem cannot accept extra files/permission updates.
+  static_release_retain_assets "$rollback_path" "$static_root" || echo "WARNING: old-tab asset retention failed; continuing rollback to the known-good release" >&2
+  static_release_make_web_readable "$rollback_path" || echo "WARNING: retained asset permissions could not be normalized; continuing rollback to the known-good release" >&2
   static_release_refresh_entry_mtime "$rollback_path" "$static_root" || return 1
   static_release_atomic_link "$static_root/current" "$rollback_target"
   if [ -n "$failed_target" ]; then
