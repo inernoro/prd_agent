@@ -13,7 +13,7 @@ public sealed class MongoRuntimeModelReferenceSnapshotProvider(IMongoDatabase ma
     {
         "design-artifact.pool" => "pool-id",
         "llm.main-model" or "design-artifact.pinned-model" => "physical-pair",
-        "llm.environment-fallback" or "llm.active-config" or "design-artifact.model" => "public-id",
+        "design-artifact.model" => "public-id",
         _ => "upstream-model-id",
     };
     public static readonly string[] RequiredDefaultKeys = ["chat-agent.default", "claude-sidecar.default", "llm.environment-fallback", "sdk.openai.default", "sdk.claude.default"];

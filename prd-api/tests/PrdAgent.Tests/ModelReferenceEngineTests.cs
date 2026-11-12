@@ -191,7 +191,7 @@ public sealed class ModelReferenceEngineTests
         var prefs = s.Add("user_preferences", "{_id:'prefs',UserId:'owner',VisualAgentPreferences:{ModelAuto:false,ModelId:'pool_old-logical',Theme:'keep'},LiteraryAgentPreferences:{ImageModelId:'old-pool',ChatModelId:'old-fixed'}}");
         var policy = s.Add("appsettings", "{_id:'global',VisualModelPolicy:{Revision:3,DefaultModelId:'old-fixed',Models:[{ModelId:'old-fixed',DisplayName:'keep'}]}}");
         var key = s.Add("agent_api_keys", "{_id:'key',OwnerUserId:'owner',ApiKeyEncrypted:'secret-never-project',OpenApiChatModels:['other','old-fixed','new-fixed'],OpenApiImageModels:['old-alias'],McpLiteraryImageModelMode:1,McpLiteraryImageModelPublicId:'old-fixed'}");
-        var workflow = s.Add("workflows", "{_id:'workflow',CreatedBy:'owner',Nodes:[{NodeId:'n',NodeType:'claude-sdk',Config:{model:'old-fixed',prompt:'old-fixed should stay',apiKey:'do-not-read'}}]}");
+        var workflow = s.Add("workflows", "{_id:'workflow',CreatedBy:'owner',Nodes:[{NodeId:'n',NodeType:'cli-agent-executor',Config:{executorType:'claude-sdk',model:'old-fixed',prompt:'old-fixed should stay',apiKey:'do-not-read'}}]}");
         s.Add("video_projects", "{_id:'video',DefaultVideoModel:'old-fixed'}");
         s.Add("chat_agent_sessions", "{_id:'session',UserId:'owner',Model:'old-fixed'}");
         var history = s.Add("arena_battles", "{_id:'history',Responses:[{ModelId:'old-fixed'}]}").DeepClone();
@@ -205,6 +205,8 @@ public sealed class ModelReferenceEngineTests
         Assert.Equal(4, policy["VisualModelPolicy"]["Revision"].AsInt64);
         Assert.Equal(new BsonArray { "other", "new-fixed" }, key["OpenApiChatModels"]); Assert.Equal("secret-never-project", key["ApiKeyEncrypted"]);
         Assert.Equal("old-fixed should stay", workflow["Nodes"][0]["Config"]["prompt"]);
+        Assert.Equal("new-fixed", workflow["Nodes"][0]["Config"]["model"]);
+        Assert.Equal("claude-sdk", workflow["Nodes"][0]["Config"]["executorType"]);
         Assert.Equal(history, s.Data["arena_battles"][0]); Assert.DoesNotContain("arena_battles", s.Reads);
         Assert.True((await engine.VerifyAsync(plan.Id, "internal")).Verified);
         Assert.Equal(10, s.Writes);
@@ -279,8 +281,36 @@ public sealed class ModelReferenceEngineTests
     [Fact]
     public async Task WorkflowVariableAndUnknownRuntimeCannotBeSilentlySkipped()
     {
-        var s = new MemoryStore(); s.Add("workflows", "{_id:'w',Nodes:[{NodeType:'claude-sdk',Config:{model:'{{runtimeModel}}'}},{NodeType:'future-sdk',Config:{model:'old-fixed'}}]}");
+        var s = new MemoryStore(); s.Add("workflows", "{_id:'w',Nodes:[{NodeType:'cli-agent-executor',Config:{executorType:'claude-sdk',model:'{{runtimeModel}}'}},{NodeType:'future-sdk',Config:{model:'old-fixed'}}]}");
         var p = await Engine(s).PlanAsync(Mapping(), "admin"); Assert.Equal(1, p.Coverage.Unknown); Assert.Equal(1, p.Coverage.Blocked);
+    }
+    [Theory]
+    [InlineData("new-fixed")]
+    [InlineData("old-alias")]
+    public async Task VisualPolicyMigrationCannotCreateDuplicateTargetOrDiscardMetadata(string otherModel)
+    {
+        var s = new MemoryStore();
+        var policy = s.Add("appsettings", "{_id:'global',VisualModelPolicy:{Revision:3,DefaultModelId:'old-fixed',Models:[{ModelId:'old-fixed',DisplayName:'keep-source'},{ModelId:'" + otherModel + "',DisplayName:'keep-other'}]}}");
+        var before = policy.DeepClone(); var engine = Engine(s);
+        var plan = await engine.PlanAsync(Mapping(), "admin");
+        Assert.False(plan.Coverage.CanComplete); Assert.Empty(plan.Changes);
+        Assert.Contains(plan.Coverage.Items, x => x.Reason == "VISUAL_POLICY_TARGET_COLLISION_REQUIRES_EXPLICIT_RESOLUTION");
+        var result = await engine.ApplyAsync(plan.Id, "internal", plan.Revision);
+        Assert.Equal("blocked", result.Status); Assert.False(result.Coverage.Verified);
+        Assert.Equal(before, policy); Assert.Equal(0, s.Writes);
+    }
+    [Fact]
+    public async Task WorkflowExecutorChangeAfterApprovalCannotReuseClaudeSdkMapping()
+    {
+        var s = new MemoryStore();
+        var workflow = s.Add("workflows", "{_id:'w',Nodes:[{NodeId:'n',NodeType:'cli-agent-executor',Config:{executorType:'claude-sdk',model:'old-fixed'}}]}");
+        var engine = Engine(s); var plan = await engine.PlanAsync(Mapping(), "admin");
+        Assert.True(plan.Coverage.CanComplete);
+        Assert.Contains(plan.Changes.Single().Conditions, x => x.Path == "Nodes.0.Config.executorType" && x.Before == "claude-sdk");
+        workflow["Nodes"][0]["Config"]["executorType"] = "codex";
+        var result = await engine.ApplyAsync(plan.Id, "internal", plan.Revision);
+        Assert.False(result.Coverage.Verified); Assert.Equal("old-fixed", workflow["Nodes"][0]["Config"]["model"]);
+        Assert.Equal(0, s.Writes);
     }
     [Fact]
     public void MongoProjectionAndCasContainNoSecretFieldsAndBindArrayPositionAndTenant()

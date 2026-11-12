@@ -124,8 +124,16 @@ public static class ModelReferenceAnalysis
                 case "preferences":
                     Scalar("VisualAgentPreferences.ModelId"); Scalar("LiteraryAgentPreferences.ImageModelId"); Scalar("LiteraryAgentPreferences.ChatModelId"); break;
                 case "visual":
+                    var policyMembers = Members("VisualModelPolicy.Models").ToArray();
+                    var policyModels = policyMembers.Select(prefix => Text(doc, prefix + "ModelId")).ToArray();
+                    if (policyModels.Any(value => PublicMatch(m.Source, value) && !PublicMatch(m.Target, value))
+                        && policyModels.Count(value => PublicMatch(m.Source, value) || PublicMatch(m.Target, value)) > 1)
+                    {
+                        Finding("VisualModelPolicy.Models", "blocked", "VISUAL_POLICY_TARGET_COLLISION_REQUIRES_EXPLICIT_RESOLUTION");
+                        break;
+                    }
                     Scalar("VisualModelPolicy.DefaultModelId", true);
-                    foreach (var prefix in Members("VisualModelPolicy.Models")) Scalar(prefix + "ModelId", true);
+                    foreach (var prefix in policyMembers) Scalar(prefix + "ModelId", true);
                     if (change.Fields.Count > 0 && TryGet(doc, "VisualModelPolicy.Revision", out var rev) && rev.IsNumeric) Set("VisualModelPolicy.Revision", rev.ToInt64() + 1);
                     break;
                 case "keys":
@@ -152,7 +160,7 @@ public static class ModelReferenceAnalysis
                     {
                         var value = Text(doc, prefix + "Config.model"); var type = Text(doc, prefix + "NodeType");
                         if (value.Contains("{{", StringComparison.Ordinal) || value.Contains("${", StringComparison.Ordinal)) { Finding(prefix + "Config.model", "unknown", "VARIABLE_MODEL_REQUIRES_EXPLICIT_MAPPING"); continue; }
-                        if (type == "claude-sdk") Scalar(prefix + "Config.model", true);
+                        if (type == "cli-agent-executor" && Text(doc, prefix + "Config.executorType") == "claude-sdk") Scalar(prefix + "Config.model", true);
                         else if (PublicMatch(m.Source, value)) Finding(prefix + "Config.model", "blocked", "INDEPENDENT_OR_UNKNOWN_WORKFLOW_RUNTIME");
                     }
                     break;

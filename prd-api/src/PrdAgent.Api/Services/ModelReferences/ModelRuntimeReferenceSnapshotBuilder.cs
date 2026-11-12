@@ -56,11 +56,11 @@ public sealed class ModelRuntimeReferenceSnapshotBuilder(
         {
             Entry("chat-agent.default", "ChatAgent:Model", "upstream-model-id", chat.Model, required: true, state: configuration["ChatAgent:Model"] is null ? "default" : "configured"),
             Entry("claude-sidecar.default", "ClaudeSdkExecutor:DefaultModel", "upstream-model-id", sidecar.DefaultModel, required: true, state: configuration["ClaudeSdkExecutor:DefaultModel"] is null ? "default" : "configured"),
-            Entry("llm.environment-fallback", "LLM:Model", "public-id",
+            Entry("llm.environment-fallback", "LLM:Model", "upstream-model-id",
                 configuredFallback ?? "claude-3-5-sonnet-20241022", required: true,
                 state: configuredFallback is null ? "default" : "configured"),
             Stored("llm.main-model", "llmmodels[IsMain=true,Enabled=true]", "physical-pair", database.MainModels, database.Complete),
-            Stored("llm.active-config", "llmconfigs[IsActive=true].Model", "public-id", database.ActiveConfigs, database.Complete),
+            Stored("llm.active-config", "llmconfigs[IsActive=true].Model", "upstream-model-id", database.ActiveConfigs, database.Complete),
             Entry("sdk.openai.default", "OpenAIClient.constructor.model", "upstream-model-id", LlmTransportModelMetadata.OpenAiDefaultModel, required: true, state: "default"),
             Entry("sdk.claude.default", "ClaudeClient.constructor.model", "upstream-model-id", LlmTransportModelMetadata.ClaudeDefaultModel, required: true, state: "default"),
             Entry("design-artifact.model", "DesignArtifactRuntime:Model", "public-id", configuration["DesignArtifactRuntime:Model"]),
@@ -151,7 +151,7 @@ public sealed class ModelRuntimeReferenceSnapshotBuilder(
             {
                 "llm.main-model" or "design-artifact.pinned-model" => "physical-pair",
                 "design-artifact.pool" => "pool-id",
-                "llm.environment-fallback" or "llm.active-config" or "design-artifact.model" => "public-id",
+                "design-artifact.model" => "public-id",
                 _ => "upstream-model-id"
             };
             if (entry.IdentityKind != expectedKind || string.IsNullOrWhiteSpace(entry.Path)) return "consumer-identity-kind-mismatch";
