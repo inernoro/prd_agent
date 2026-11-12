@@ -181,6 +181,12 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
         setPending(nextLocator); pendingRef.current = nextLocator;
         await readPlan(nextLocator, key, epoch);
       } else {
+        // 此拒绝发生在端点创建持久计划之前，不存在需要恢复的未知写入。
+        if (!result.success && action === 'create' && result.error.code === 'REFERENCE_DEPLOYMENT_BLOCKED') {
+          setPending(null); pendingRef.current = null;
+          setError(result.error.message || '当前部署不允许修改模型配置，请切换到主环境后再试。');
+          return;
+        }
         if (!result.success && result.error.code === 'REFERENCE_PLAN_BUSY') { setPending(null); pendingRef.current = null; }
         setError('本次提交的结果尚未确认，正在查询原计划；请勿重复提交。');
         await readPlan(locator, key, epoch);
