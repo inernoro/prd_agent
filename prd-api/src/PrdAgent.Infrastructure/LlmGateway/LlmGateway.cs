@@ -4074,7 +4074,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     private static string NormalizeMultipartSendFieldName(string fieldName)
     {
-        if (string.Equals(fieldName, "image[]", StringComparison.Ordinal)
+        if (string.Equals(fieldName, "image", StringComparison.Ordinal)
+            || string.Equals(fieldName, "image[]", StringComparison.Ordinal)
             || IsIndexedMultipartArrayField(fieldName, "image"))
         {
             return "image[]";
