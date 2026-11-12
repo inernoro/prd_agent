@@ -70,6 +70,7 @@ import {
   strategyFromDraft,
 } from '@/pages/release-center/SiteWizardDialog';
 import { StartReleaseDialog, type StartReleaseIntent } from '@/pages/release-center/StartReleaseDialog';
+import { BatchReleasePanel } from '@/pages/release-center/BatchReleasePanel';
 import type {
   BranchOption,
   CenterResponse,
@@ -663,8 +664,7 @@ export function ReleaseCenterPage(): JSX.Element {
                 新建环境
               </Button>
               {/*
-                去发布控制台的主入口。发布中心不执行发布——所有「真的要发了」的动作
-                都在控制台完成，所以这个按钮是主按钮，不是一条不起眼的链接。
+                逐目标操作继续由发布控制台承接；批次入口在全环境矩阵中。
                 带上当前项目，进去不用重选。
               */}
               <Button size="sm" asChild>
@@ -797,6 +797,7 @@ export function ReleaseCenterPage(): JSX.Element {
                 </section>
 
                 {/* ══ 分区一：全环境矩阵 ══ */}
+                {section === 'fleet' ? <BatchReleasePanel key={projectId} projectId={projectId} targets={rows.map((row) => row.target)} onOpenLogs={setLogRun} /> : null}
                 {section === 'fleet' ? (
                   <FleetMatrix
                     envs={fleetEnvs}
