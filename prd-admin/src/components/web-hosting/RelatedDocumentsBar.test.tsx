@@ -147,6 +147,29 @@ describe('顶部关联文档', () => {
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/two');
     expect(document.querySelector('.collection-context-link-options')).toBeNull();
   });
+  it('预览归还焦点时底部按钮完成本次点击，返回可见页面仍刷新链接状态', async () => {
+    const context = makeContext('one', 1);
+    vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } }); vi.stubGlobal('isSecureContext', true);
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    const button = document.querySelector<HTMLButtonElement>('.collection-context-link-actions button')!;
+    const link = document.querySelector('.collection-context-link-actions a');
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(button.isConnected).toBe(true);
+    expect(document.querySelector('.collection-context-link-actions a')).toBe(link);
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); button.click();
+    });
+    expect(writeText).toHaveBeenCalledWith(window.location.origin + '/s/wp/one');
+    vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [{ ...context, primaryLink: { ...context.primaryLink!, isActive: false, statusLabel: '已撤销' } }], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+    expect(document.querySelector('.collection-context-link-actions a')).toBeNull();
+    expect([...document.querySelectorAll<HTMLButtonElement>('.collection-context-link-actions button')].find(item => item.textContent === '打开合集')?.disabled).toBe(true);
+  });
   it('合集搜索覆盖服务器全部记录，翻页稳定，筛成一项仍保留选择栏', async () => {
     vi.mocked(getCollectionContexts).mockImplementation(async (_site, page = 1, keyword = '') => ({ success: true, data: { items: keyword ? [makeContext('matched', 1)] : Array.from({ length: 20 }, (_, i) => makeContext(String((page - 1) * 20 + i), 1)), total: keyword ? 1 : 45, totalContexts: 45, page, pageSize: 20 }, error: null }));
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();

@@ -53,9 +53,11 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
   }, [siteId, page, keyword, reload]);
   useEffect(() => {
     const refresh = () => { if (document.visibilityState === 'visible') setReload(value => value + 1); };
-    window.addEventListener('focus', refresh); window.addEventListener('hosted-comments-changed', refresh);
+    // 预览 iframe 向按钮归还焦点也会触发 window.focus，点击中刷新会卸载按钮并吞掉 click。
+    // 返回页面时由 visibilitychange 重新读取，页内焦点移动保留当前操作。
+    window.addEventListener('hosted-comments-changed', refresh);
     document.addEventListener('visibilitychange', refresh);
-    return () => { window.removeEventListener('focus', refresh); window.removeEventListener('hosted-comments-changed', refresh); document.removeEventListener('visibilitychange', refresh); };
+    return () => { window.removeEventListener('hosted-comments-changed', refresh); document.removeEventListener('visibilitychange', refresh); };
   }, []);
   const selected = result?.items.find(item => item.id === selectedId);
   const split = (result?.totalContexts ?? 0) > 1;
