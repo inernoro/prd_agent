@@ -43,6 +43,7 @@ interface VideoProjectStudioProps {
   onSave: (input: VideoProjectInput) => Promise<VideoProject | null>;
   onAnalyze: (input: VideoProjectInput) => Promise<void>;
   onCreateDirect: (input: VideoProjectInput) => Promise<void>;
+  onImportClips?: (input: VideoProjectInput, files: File[]) => Promise<void>;
   onOpenRun: (runId: string) => void;
   onOpenDemo: () => void;
 }
@@ -153,6 +154,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   onSave,
   onAnalyze,
   onCreateDirect,
+  onImportClips,
   onOpenRun,
   onOpenDemo,
 }) => {
@@ -175,6 +177,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const [assetDescription, setAssetDescription] = useState('');
   const [activeSection, setActiveSection] = useState<'create' | 'works'>('create');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLElement>(null);
   const recentWorkRef = useRef<HTMLElement>(null);
   const selectedModel = models.find((item) => item.id === model);
@@ -300,6 +303,14 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
         <div className="video-create-nav-actions">
           <button className="video-create-text-button video-create-demo-button" onClick={onOpenDemo}><CirclePlay size={15} /> 体验 Demo</button>
           <button className="video-create-text-button" onClick={onNewProject}><Plus size={15} /> 新项目</button>
+          {onImportClips && <>
+            <input ref={videoInputRef} type="file" accept="video/mp4,video/webm,video/quicktime" multiple hidden aria-label="选择已有镜头素材" onChange={(event) => {
+              const files = Array.from(event.target.files ?? []);
+              event.target.value = '';
+              if (files.length) void onImportClips(input, files);
+            }} />
+            <button className="video-create-text-button" disabled={busy} onClick={() => videoInputRef.current?.click()}><Film size={15} /> 从已有视频开始</button>
+          </>}
           <button className="video-create-icon-button" onClick={() => void onSave(input)} disabled={busy} title="保存草稿"><Save size={16} /></button>
         </div>
       </header>

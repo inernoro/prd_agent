@@ -59,6 +59,7 @@ import {
   type VideoTimelineTrack,
 } from '@/services/contracts/videoAgent';
 import { resolveVideoTitle } from './titleUtils';
+import { VideoNarrationPanel } from './VideoNarrationPanel';
 import './videoConsole.css';
 
 export interface VideoStoryboardEditorProps {
@@ -175,6 +176,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const [previewMode, setPreviewMode] = useState<PreviewMode>('scene');
   const [compareVersionIds, setCompareVersionIds] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [narrationOpen, setNarrationOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [promptDraft, setPromptDraft] = useState('');
   const [topicDraft, setTopicDraft] = useState('');
@@ -569,7 +571,8 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
               <Layers3 size={14} /> 批量生成
             </Button>
           )}
-          <button className={`video-workbench__mode-button ${settingsOpen ? 'is-active' : ''}`} onClick={() => setSettingsOpen((value) => !value)}><PanelRightOpen size={15} /> 镜头设置</button>
+          <button className={`video-workbench__mode-button ${settingsOpen ? 'is-active' : ''}`} onClick={() => { setNarrationOpen(false); setSettingsOpen((value) => !value); }}><PanelRightOpen size={15} /> 镜头设置</button>
+          <button className={`video-workbench__mode-button ${narrationOpen ? 'is-active' : ''}`} onClick={() => { setSettingsOpen(false); setNarrationOpen(value => !value); }}>配音与字幕</button>
           <button className={`video-workbench__mode-button ${editMode ? 'is-active' : ''}`} onClick={() => setEditMode((value) => !value)} disabled={!allScenesReady} title={allScenesReady ? '打开成片剪辑' : '所有镜头生成后可进入剪辑'}><Scissors size={15} /> {editMode ? '退出剪辑' : '剪辑成片'}</button>
           {editMode && (
             <Button size="sm" variant="primary" onClick={exportRun} disabled={run.status !== 'Editing' || mutating === 'export'}>
@@ -592,7 +595,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
         </div>
       )}
 
-      <main className={`video-workbench__workspace ${settingsOpen ? 'has-inspector' : ''}`} data-testid="video-console-workspace">
+      <main className={`video-workbench__workspace ${settingsOpen || narrationOpen ? 'has-inspector' : ''}`} data-testid="video-console-workspace">
         <aside className="video-workbench__filmstrip" aria-label="分镜胶片带">
           <div className="video-workbench__filmstrip-heading"><Film size={14} /><span>镜头</span><strong>{run.scenes.length}</strong></div>
           <div className="video-workbench__filmstrip-scroll">
@@ -612,7 +615,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
           </div>
         </aside>
 
-        <section className="video-workbench__creative" aria-label="视频预览与生成">
+        <section className={`video-workbench__creative ${previewMode === 'export' ? 'is-export-preview' : ''}`} aria-label="视频预览与生成">
           <div className="video-workbench__viewer-toolbar">
             <div className="video-console__segmented" role="group" aria-label="预览模式">
               <button className={previewMode === 'scene' ? 'is-active' : ''} onClick={() => setPreviewMode('scene')}>当前镜头</button>
@@ -724,7 +727,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
             <button aria-label="适应画布" title="适应画布"><Maximize2 size={15} /></button>
           </div>
 
-          {selectedScene && (
+          {selectedScene && previewMode !== 'export' && (
             <section className="video-workbench__composer" aria-label="镜头生成">
               {selectedScene.status === 'Error' && (
                 <div className="video-workbench__scene-error" role="alert">
@@ -774,7 +777,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
             </section>
           )}
 
-          <section className="video-workbench__versions" aria-label="生成版本">
+          {previewMode !== 'export' && <section className="video-workbench__versions" aria-label="生成版本">
             <div className="video-workbench__versions-heading"><div><strong>生成版本</strong><span>{selectedScene?.versions.length ?? 0}</span></div><small>{compareVersionIds.length}/2 已选比较</small></div>
             <div className="video-workbench__version-strip">
               <VersionLibrary
@@ -790,9 +793,25 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                 onCompare={toggleCompareVersion}
               />
             </div>
-          </section>
+          </section>}
         </section>
 
+        {narrationOpen && <VideoNarrationPanel
+          key={`${runId}:${selectedSceneIndex}`}
+          runId={runId}
+          sceneIndex={selectedSceneIndex}
+          editable={selectedSceneEditable && !mutating}
+          onClose={() => setNarrationOpen(false)}
+          onAdopt={async () => {
+            setPreviewMode('scene');
+            await loadRun();
+            if (run.projectId) {
+              const response = await getVideoProjectReal(run.projectId);
+              if (response.success) setProject(response.data);
+            }
+            toast.success('配音与字幕已保存', '点击剪辑成片 → 导出，预览最新完整成片。');
+          }}
+        />}
         {settingsOpen && (
           <Inspector
             run={run}
@@ -1064,7 +1083,15 @@ const Timeline: React.FC<{
       {(['subtitle', 'voice', 'music'] as const).map((type) => {
         const track = tracks.find((item) => item.type === type);
         const label = type === 'subtitle' ? '字幕' : type === 'voice' ? '配音' : '音乐';
-        return <div className="video-console__track-row" key={type}><span className="video-console__track-label">{label}</span><div className="video-console__timeline-aux">{track?.clips.map((clip, index) => <div key={clip.id}><strong>{type === 'subtitle' ? clip.text || `字幕 ${index + 1}` : clip.assetUrl?.split('/').pop() || `${label} ${index + 1}`}</strong><span>{clip.startSeconds.toFixed(1)}s · {clip.durationSeconds.toFixed(1)}s</span></div>)}{!track?.clips.length && <span>未添加{label}片段</span>}</div></div>;
+        const narratedScenes = type === 'music' ? [] : run.scenes.filter(scene => scene.narration);
+        return <div className="video-console__track-row" key={type}><span className="video-console__track-label">{label}</span><div className="video-console__timeline-aux">
+          {narratedScenes.map(scene => <div key={`narration-${scene.index}`}>
+            <strong>{type === 'subtitle' ? scene.narration!.text : `镜头 ${scene.index + 1} 已采用配音`}</strong>
+            <span>{scene.narration!.durationSeconds.toFixed(2)}s · 跟随镜头同步</span>
+          </div>)}
+          {track?.clips.map((clip, index) => <div key={clip.id}><strong>{type === 'subtitle' ? clip.text || `字幕 ${index + 1}` : clip.assetUrl?.split('/').pop() || `${label} ${index + 1}`}</strong><span>{clip.startSeconds.toFixed(1)}s · {clip.durationSeconds.toFixed(1)}s</span></div>)}
+          {!track?.clips.length && !narratedScenes.length && <span>未添加{label}片段</span>}
+        </div></div>;
       })}
     </section>
   );
