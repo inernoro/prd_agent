@@ -1,4 +1,9 @@
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Services;
+using PrdAgent.Infrastructure.Database;
+using MongoDB.Driver;
+using System.Text.Json;
 using PrdAgent.Infrastructure.Services;
 using Xunit;
 
@@ -115,6 +120,97 @@ public sealed class KnowledgeRetrievalTests
         var row = Row(source);
         row.StoreId = "other-store";
         Assert.Empty(Rank(new[] { row }, new[] { source }));
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task LocalMongoIndexSearchUpdateDeleteAndPermissionPipeline()
+    {
+        // Explicit local-only fixture. CI excludes Integration; invoke this test by name with
+        // a disposable MongoDB listening on this loopback port. No production connection input.
+        const string connection = "mongodb://127.0.0.1:27029/?serverSelectionTimeoutMS=3000";
+        var databaseName = "codex_kb_retrieval_" + Guid.NewGuid().ToString("N");
+        var client = new MongoClient(connection);
+        var db = new MongoDbContext(connection, databaseName);
+        var context = new LLMRequestContextAccessor();
+        using var outer = context.BeginScope(new LlmRequestContext("integration", null, null, "owner", null,
+            null, null, null, TenantId: "verified-tenant"));
+        var embedding = new PipelineEmbedding(context);
+        var service = new KnowledgeRetrievalService(db, embedding, context);
+        try
+        {
+            var owned = Doc("own-entry", "owner", false, "报销额度五百元");
+            var secret = Doc("secret-entry", "other-user", false, "他人的保密预算");
+            foreach (var source in new[] { owned, secret })
+            {
+                source.Entry.DocumentId = "body-" + source.Entry.Id;
+                await db.DocumentStores.InsertOneAsync(source.Store);
+                await db.DocumentEntries.InsertOneAsync(source.Entry);
+                await db.Documents.InsertOneAsync(new ParsedPrd { Id = source.Entry.DocumentId, RawContent = source.Content });
+            }
+            Assert.True((await service.IndexEntryAsync(owned.Entry.Id, "owner", default)).Success);
+            var calls = embedding.EmbedCalls;
+            Assert.True((await service.IndexEntryAsync(owned.Entry.Id, "owner", default)).Success);
+            Assert.Equal(calls, embedding.EmbedCalls); // Unchanged body reuses persisted vectors.
+            Assert.False((await service.IndexEntryAsync(secret.Entry.Id, "owner", default)).Success);
+            Assert.Equal(calls, embedding.EmbedCalls); // Rejected before external calls.
+            Assert.True((await service.IndexEntryAsync(secret.Entry.Id, "other-user", default)).Success);
+            var found = await service.SearchAsync("报销额度", null, "owner", 5, default);
+            Assert.True(found.Success);
+            using (var json = JsonDocument.Parse(found.Content!))
+            {
+                Assert.Equal(1, json.RootElement.GetProperty("total").GetInt32());
+                Assert.Equal(owned.Entry.Id, json.RootElement.GetProperty("contextEntryIds")[0].GetString());
+                Assert.DoesNotContain(secret.Content, found.Content!);
+            }
+            await db.Documents.UpdateOneAsync(doc => doc.Id == owned.Entry.DocumentId,
+                Builders<ParsedPrd>.Update.Set(doc => doc.RawContent, "报销额度三百元"));
+            var stale = await service.SearchAsync("报销额度", owned.Store.Id, "owner", 5, default);
+            Assert.True(stale.Success);
+            using (var json = JsonDocument.Parse(stale.Content!))
+            {
+                Assert.Equal(0, json.RootElement.GetProperty("total").GetInt32());
+                Assert.Equal(1, json.RootElement.GetProperty("staleChunks").GetInt32());
+            }
+            Assert.True((await service.IndexEntryAsync(owned.Entry.Id, "owner", default)).Success);
+            var refreshed = await service.SearchAsync("报销额度", owned.Store.Id, "owner", 5, default);
+            Assert.Contains("三百元", JsonDocument.Parse(refreshed.Content!).RootElement
+                .GetProperty("items")[0].GetProperty("snippet").GetString());
+            await db.DocumentEntries.DeleteOneAsync(entry => entry.Id == owned.Entry.Id);
+            var deleted = await service.SearchAsync("报销额度", owned.Store.Id, "owner", 5, default);
+            using var deletedJson = JsonDocument.Parse(deleted.Content!);
+            Assert.Equal(0, deletedJson.RootElement.GetProperty("total").GetInt32());
+            Assert.Empty(deletedJson.RootElement.GetProperty("contextEntryIds").EnumerateArray());
+            Assert.All(embedding.Tenants, tenant => Assert.Equal("verified-tenant", tenant));
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName);
+        }
+    }
+
+    private sealed class PipelineEmbedding(ILLMRequestContextAccessor context) : IEmbeddingService
+    {
+        public int EmbedCalls { get; private set; }
+        public List<string?> Tenants { get; } = new();
+        public Task<string?> ResolveActiveModelAsync(string appCallerCode, CancellationToken ct = default)
+        {
+            Tenants.Add(context.Current?.TenantId);
+            return Task.FromResult<string?>(Model);
+        }
+        public Task<EmbeddingBatch> EmbedAsync(IReadOnlyList<string> texts, string appCallerCode,
+            string userId, CancellationToken ct = default)
+        {
+            Assert.Equal(userId, context.Current?.UserId);
+            Assert.False(ct.CanBeCanceled);
+            Tenants.Add(context.Current?.TenantId);
+            EmbedCalls++;
+            return Task.FromResult(new EmbeddingBatch
+            {
+                Success = true, Model = Model, Dimension = 2,
+                Vectors = texts.Select(_ => new float[] { 1, 0 }).ToList()
+            });
+        }
     }
 
     private static IReadOnlyList<KnowledgeRetrievalHit> Rank(IEnumerable<DocumentEmbedding> rows,
