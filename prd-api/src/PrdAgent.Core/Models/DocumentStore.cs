@@ -168,6 +168,13 @@ public class DocumentStore
     /// </summary>
     public string? ShituCategoryRef { get; set; }
 
+    /// <summary>回收状态；null 为正常数据，恢复时只解除此标记。</summary>
+    public DocumentTrashState? Trash { get; set; }
+
+    /// <summary>回收操作的跨实例互斥租约，不改变正常编辑权限。</summary>
+    public string? TrashLeaseToken { get; set; }
+    public DateTime? TrashLeaseUntil { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
