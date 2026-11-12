@@ -1,3 +1,4 @@
+import { AskKnowledgeScope } from './AskKnowledgeScope';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ChevronUp, Clock, Plus, Send, X } from 'lucide-react';
 import { MapMarkGlyph } from '@/components/ui/MapBrandMark';
@@ -78,7 +79,7 @@ export default function AskDock({
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const {
     messages, status, phaseMessage, elapsedSeconds, model, gateError,
-    clearGateError, isBusy, ask, cancel, rate,
+    clearGateError, isBusy, ask, cancel, rate, knowledgeStoreId, setKnowledgeStoreId,
   } = useAskStream(source);
 
   const [chatWidth, setChatWidth] = useAskWidth();
@@ -594,6 +595,7 @@ export default function AskDock({
             )}
           </div>
 
+          {source.mode === 'site' && isAuthenticated && <AskKnowledgeScope value={knowledgeStoreId} onChange={setKnowledgeStoreId} disabled={isBusy} />}
           <AskThread
             messages={messages}
         onRate={rate}

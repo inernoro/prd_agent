@@ -21,7 +21,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/web-pages")]
 [Authorize]
-public class WebPageAskController : ControllerBase
+public partial class WebPageAskController : ControllerBase
 {
     private readonly IHostedSiteService _siteService;
     private readonly ISiteContentSnapshotService _snapshots;
@@ -539,6 +539,12 @@ public class WebPageAskController : ControllerBase
             return;
         }
 
+        if (!string.IsNullOrWhiteSpace(req?.KnowledgeStoreId))
+        {
+            await RunKnowledgeAskAsync(site, req, userId, shareToken, decision);
+            return;
+        }
+
         // 正文快照也在写流之前取：读不到正文时要如实告诉用户，而不是让模型对着空气编。
         var snapshot = await _snapshots.GetAsync(site);
         if (snapshot.Unavailable != null)
@@ -882,7 +888,7 @@ public class WebPageAskController : ControllerBase
     ///
     /// 首字一到就停：答案开始流了，再推 phase 会把面板上的状态行反复覆盖。
     /// </summary>
-    private async Task RunHeartbeatAsync(DateTime startedAt, Func<bool> hasOutput, CancellationToken ct)
+    private async Task RunHeartbeatAsync(DateTime startedAt, Func<bool> hasOutput, CancellationToken ct, string waitingMessage = "模型正在思考")
     {
         try
         {
@@ -899,7 +905,7 @@ public class WebPageAskController : ControllerBase
                     await WriteSseAsync("phase", new
                     {
                         phase = "waiting",
-                        message = $"模型正在思考…已等待 {seconds} 秒",
+                        message = $"{waitingMessage}…已等待 {seconds} 秒",
                         elapsedSeconds = seconds,
                     });
                 }
@@ -939,6 +945,9 @@ public class AskConfigRequest
 
 public class AskStreamRequest
 {
+    /// <summary>仅站内已登录提问可选；不授予分享访客任何知识库权限。</summary>
+    public string? KnowledgeStoreId { get; set; }
+
     /// <summary>问题正文</summary>
     public string? Question { get; set; }
 

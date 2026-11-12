@@ -67,7 +67,8 @@ public static class TaskAdmissionPolicies
         Add("ShortVideoMaterialController", "CreateRun", new[] { "video-agent.", "workflow-agent.", "transcript-agent.", "document-store." });
         Add("DesignArtifactsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);
         Add("HostedSiteEditsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);
-        Add("WebPageAskController", "RegenerateAskQuestions AskStream AskStreamByShare", new[] { "prd-agent-web.web-hosting." });
+        Add("WebPageAskController", "RegenerateAskQuestions AskStreamByShare", new[] { "prd-agent-web.web-hosting." });
+        Add("WebPageAskController", "AskStream", new[] { "prd-agent-web.web-hosting.", "prd-agent-web.knowledge-base." }, maxCalls: 128, agentMaxCalls: 64);
         Add("WeeklyPosterController", "Autopilot AutopilotStream GeneratePageImage GenerateImagesRun", new[] { "report-agent.", "visual-agent." });
         Add("ReportAgentController", "GenerateReport GenerateTeamSummary ImportReportFromMarkdown PolishDailyLogItem RunTeamWorkflow", new[] { "report-agent.", "workflow-agent." });
         Add("ReportAgentController", "CreateReport", new[] { "report-agent.", "workflow-agent." },

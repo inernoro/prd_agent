@@ -55,6 +55,8 @@ public static class DocumentStoreRunFailureCopy
     /// </summary>
     public static Copy Resolve(DocumentStoreAgentRun run, Exception ex)
     {
+        if (run.Kind == DocumentStoreAgentRunKind.KnowledgeIndex && ex is KnowledgeRetrievalException)
+            return new Copy("KNOWLEDGE_UNAVAILABLE", ex.Message, AutomaticRetryAllowed: false);
         var routeFailureCode = ExtractRouteFailureCode(ex);
         if (GatewayRouteFailure.IsConfigurationFault(routeFailureCode)
             || (routeFailureCode == null && LooksLikeMissingModel(ex)))

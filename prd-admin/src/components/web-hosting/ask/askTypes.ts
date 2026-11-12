@@ -24,6 +24,7 @@ export interface AskMessage {
   messageId?: string;
   ratingToken?: string;
   rating?: number;
+  references?: { entryId: string; title: string; url: string; hash: string }[];
   /** 仅 assistant：失败原因 */
   error?: string;
 }

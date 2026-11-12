@@ -1,0 +1,360 @@
+{
+  "schemaVersion": 1,
+  "fixtureSha256": "72395900759eea55521ad82a711758050ab90bb82602146c076e0849fd0d46da",
+  "summary": {
+    "mode": "baseline",
+    "questions": 36,
+    "completedAnswers": 0,
+    "errors": 0,
+    "recallAt5": 0.0,
+    "recallDenominator": 28,
+    "citationCorrectness": null,
+    "citationDenominator": 0,
+    "ungroundedAnswerRate": null,
+    "ungroundedDenominator": 0,
+    "retrievalLatencyMs": {
+      "p50": null,
+      "p95": null
+    },
+    "forbiddenLeaks": null,
+    "failuresAreNotSuccessfulAbstentions": true
+  },
+  "categoryCounts": {
+    "direct": 12,
+    "synonym": 10,
+    "cross_document": 6,
+    "unanswerable": 4,
+    "forbidden": 4
+  },
+  "limits": [
+    "离线字面量重放不是线上API基线",
+    "原文API回读不代替浏览器登录导航及点击链接验收",
+    "引用内容是否充分回答问题仍需逐题人工复核；本工具先按固定相关文档标注计分"
+  ],
+  "rows": [
+    {
+      "id": "KB-001",
+      "category": "direct",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.05042500015406404,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-002",
+      "category": "direct",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.01495200012868736,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-003",
+      "category": "direct",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.013000000080864993,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-004",
+      "category": "direct",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.013179999996282277,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-005",
+      "category": "direct",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.012839000191888772,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-006",
+      "category": "direct",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.012838999964515097,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-007",
+      "category": "direct",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.05595300012828375,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-008",
+      "category": "direct",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.0120580000384507,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-009",
+      "category": "direct",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.011627999811025802,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-010",
+      "category": "direct",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.012228999821672915,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-011",
+      "category": "direct",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.010856000017156475,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-012",
+      "category": "direct",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.011196000059499056,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-013",
+      "category": "synonym",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.013480000006893533,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-014",
+      "category": "synonym",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.011416999996072263,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-015",
+      "category": "synonym",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.010696000117604854,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-016",
+      "category": "synonym",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.06006900002830662,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-017",
+      "category": "synonym",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.011667999842757126,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-018",
+      "category": "synonym",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.012047999916831031,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-019",
+      "category": "synonym",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.011948000064876396,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-020",
+      "category": "synonym",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.011757000038414844,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-021",
+      "category": "synonym",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.01081699997484975,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-022",
+      "category": "synonym",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.010486000064702239,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-023",
+      "category": "cross_document",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.01668499999141204,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-024",
+      "category": "cross_document",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.010946000202238793,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-025",
+      "category": "cross_document",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.010795999969559489,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-026",
+      "category": "cross_document",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.01254800008609891,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-027",
+      "category": "cross_document",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.012277999985599308,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-028",
+      "category": "cross_document",
+      "hits": [],
+      "recallAt5": 0.0,
+      "localLiteralReplayMs": 0.01318899990110367,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-029",
+      "category": "unanswerable",
+      "hits": [],
+      "recallAt5": null,
+      "localLiteralReplayMs": 0.011367000070094946,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-030",
+      "category": "unanswerable",
+      "hits": [],
+      "recallAt5": null,
+      "localLiteralReplayMs": 0.012108000191801693,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-031",
+      "category": "unanswerable",
+      "hits": [],
+      "recallAt5": null,
+      "localLiteralReplayMs": 0.013630000012199162,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-032",
+      "category": "unanswerable",
+      "hits": [],
+      "recallAt5": null,
+      "localLiteralReplayMs": 0.011598000128287822,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-033",
+      "category": "forbidden",
+      "hits": [],
+      "recallAt5": null,
+      "localLiteralReplayMs": 0.03561299990906264,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-034",
+      "category": "forbidden",
+      "hits": [],
+      "recallAt5": null,
+      "localLiteralReplayMs": 0.013529999932870851,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-035",
+      "category": "forbidden",
+      "hits": [],
+      "recallAt5": null,
+      "localLiteralReplayMs": 0.011977999974988052,
+      "retrievalMs": null,
+      "completed": false
+    },
+    {
+      "id": "KB-036",
+      "category": "forbidden",
+      "hits": [],
+      "recallAt5": null,
+      "localLiteralReplayMs": 0.012477999916882254,
+      "retrievalMs": null,
+      "completed": false
+    }
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "status": "implementation_and_local_contracts_verified_real_model_acceptance_blocked",
+  "baseCommit": "3035365def7b30a28309b89a21756717fda846dd",
+  "branch": "feat/kb-retrieval-evaluation",
+  "fixedQuestions": 36,
+  "offlineBaseline": {
+    "mode": "baseline",
+    "questions": 36,
+    "completedAnswers": 0,
+    "errors": 0,
+    "recallAt5": 0.0,
+    "recallDenominator": 28,
+    "citationCorrectness": null,
+    "citationDenominator": 0,
+    "ungroundedAnswerRate": null,
+    "ungroundedDenominator": 0,
+    "retrievalLatencyMs": {
+      "p50": null,
+      "p95": null
+    },
+    "forbiddenLeaks": null,
+    "failuresAreNotSuccessfulAbstentions": true
+  },
+  "realModelEvaluation": {
+    "status": "blocked",
+    "recallAt5": null,
+    "citationCorrectness": null,
+    "ungroundedAnswerRate": null,
+    "retrievalLatencyP50Ms": null,
+    "retrievalLatencyP95Ms": null,
+    "modelCredentialsVerified": false,
+    "reason": "MAP/CDS HTTP CONNECT rejected by current network policy (403); browser runtime failed before navigation. Historical provider debt is not proof of current credentials."
+  },
+  "localTests": {
+    "unitAndEmbedding": {
+      "total": "49",
+      "executed": "49",
+      "passed": "49",
+      "failed": "0",
+      "error": "0",
+      "timeout": "0",
+      "aborted": "0",
+      "inconclusive": "0",
+      "passedButRunAborted": "0",
+      "notRunnable": "0",
+      "notExecuted": "0",
+      "disconnected": "0",
+      "warning": "0",
+      "completed": "0",
+      "inProgress": "0",
+      "pending": "0"
+    },
+    "mongoWorkerAndAskRegressions": {
+      "total": "51",
+      "executed": "51",
+      "passed": "51",
+      "failed": "0",
+      "error": "0",
+      "timeout": "0",
+      "aborted": "0",
+      "inconclusive": "0",
+      "passedButRunAborted": "0",
+      "notRunnable": "0",
+      "notExecuted": "0",
+      "disconnected": "0",
+      "warning": "0",
+      "completed": "0",
+      "inProgress": "0",
+      "pending": "0"
+    },
+    "frontend": {
+      "files": 522,
+      "tests": 4569,
+      "failed": 0
+    },
+    "solutionBuildErrors": 0,
+    "typecheckErrors": 0,
+    "lintErrors": 0,
+    "lintWarnings": 270,
+    "newWarningsInChangedFiles": 0,
+    "documentRatchet": "passed"
+  },
+  "modelUsage": "Only deterministic test doubles in local tests; no production model quality claim",
+  "refreshPolicy": {
+    "scope": "explicitly selected one readable store",
+    "maxEntries": 100,
+    "maxChunks": 3000,
+    "maxChars": 1000000,
+    "taskObservationDeadlineSeconds": 120,
+    "freshness": "next query rereads canonical text and ACL; stale or unavailable sources fail closed; original and ACL checked before model context and answer output"
+  },
+  "deployment": {
+    "productionPublished": false,
+    "merged": false,
+    "prCreated": false,
+    "previewUrl": null,
+    "browserUserPathVerified": false,
+    "ciVerification": "pending remote checks"
+  },
+  "userPath": [
+    "正常登录",
+    "网页托管",
+    "打开本人网页预览",
+    "向我提问",
+    "回答依据选择可读库",
+    "自然语言提问",
+    "点击打开原文"
+  ],
+  "remaining": [
+    "真实模型固定评测与人工引用复核",
+    "分支预览的正常登录导航、双主题与引用点击",
+    "真实冷/热延迟和更新删除撤权时效",
+    "评测证据归档验收知识库",
+    "未解析正文覆盖提示、超过单库容量和跨库聚合均未实现"
+  ]
+}

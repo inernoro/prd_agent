@@ -21,6 +21,7 @@ import type { AskMessage, AskSource, AskStatus } from './askTypes';
  * AllowAnonymous 决定放不放行。
  */
 export function useAskStream(source: AskSource) {
+  const [knowledgeStoreId, updateKnowledgeStoreId] = useState('');
   const [messages, setMessages] = useState<AskMessage[]>([]);
   const [status, setStatus] = useState<AskStatus>('idle');
   const [phaseMessage, setPhaseMessage] = useState('');
@@ -61,6 +62,11 @@ export function useAskStream(source: AskSource) {
     setGateError(null);
     sessionIdRef.current = null;
   }, [abort]);
+
+  const setKnowledgeStoreId = useCallback((value: string) => {
+    reset();
+    updateKnowledgeStoreId(value);
+  }, [reset]);
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
@@ -134,7 +140,8 @@ export function useAskStream(source: AskSource) {
       const body: Record<string, unknown> = {
         question: q,
         sessionId: sessionIdRef.current,
-        history,
+        history: knowledgeStoreId ? [] : history,
+        ...(source.mode === 'site' && knowledgeStoreId ? { knowledgeStoreId } : {}),
       };
       if (source.mode === 'share') {
         if (source.siteId) body.siteId = source.siteId;
@@ -207,6 +214,14 @@ export function useAskStream(source: AskSource) {
                   platform: data.platform ? String(data.platform) : undefined,
                 });
                 break;
+              case 'reference':
+                if (Array.isArray(data.references)) {
+                  const references = data.references.filter((ref): ref is { entryId: string; title: string; url: string; hash: string } =>
+                    !!ref && typeof ref.entryId === 'string' && typeof ref.title === 'string' &&
+                    typeof ref.url === 'string' && typeof ref.hash === 'string');
+                  setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, references } : m));
+                }
+                break;
               case 'typing': {
                 const text = String(data.text ?? '');
                 if (!text) break;
@@ -262,7 +277,7 @@ export function useAskStream(source: AskSource) {
         setStatus('error');
       }
     },
-    [abort, messages, source, status],
+    [abort, messages, source, status, knowledgeStoreId],
   );
 
   const rate = useCallback(async (answerId: string, rating: number) => {
@@ -276,6 +291,7 @@ export function useAskStream(source: AskSource) {
   }, [messages]);
 
   return {
+    knowledgeStoreId, setKnowledgeStoreId,
     rate,
     messages,
     status,

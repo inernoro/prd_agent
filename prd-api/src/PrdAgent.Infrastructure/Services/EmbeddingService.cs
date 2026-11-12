@@ -21,11 +21,13 @@ public class EmbeddingService : IEmbeddingService
 
     private readonly ILlmGateway _gateway;
     private readonly ILogger<EmbeddingService> _logger;
+    private readonly ILLMRequestContextAccessor? _contexts;
 
-    public EmbeddingService(ILlmGateway gateway, ILogger<EmbeddingService> logger)
+    public EmbeddingService(ILlmGateway gateway, ILogger<EmbeddingService> logger, ILLMRequestContextAccessor? contexts = null)
     {
         _gateway = gateway;
         _logger = logger;
+        _contexts = contexts;
     }
 
     /// <remarks>
@@ -75,6 +77,13 @@ public class EmbeddingService : IEmbeddingService
         if (input.Count > MaxBatchSize)
             return EmbeddingBatch.Fail("EMPTY_INPUT", $"单批最多 {MaxBatchSize} 条，请分批调用");
 
+        var parentContext = _contexts?.Current;
+        var embeddingContext = parentContext is null
+            ? new LlmRequestContext(Guid.NewGuid().ToString("N"), null, null, userId, null,
+                input.Sum(x => x.Length), null, "knowledge-embedding", "embedding", appCallerCode)
+            : parentContext with { UserId = userId, RequestType = "embedding", AppCallerCode = appCallerCode };
+        using var contextScope = _contexts?.BeginScope(embeddingContext);
+
         // ── 算 ──
         //
         // 解析与发送都走 CancellationToken.None，不转发调用方的 ct。
@@ -108,6 +117,9 @@ public class EmbeddingService : IEmbeddingService
             {
                 RequestId = Guid.NewGuid().ToString("N"),
                 UserId = userId,
+                TenantId = embeddingContext.TenantId,
+                TeamId = embeddingContext.TeamId,
+                ServiceKeyId = embeddingContext.ServiceKeyId,
             },
             RequestBody = body,
         }, resolution, CancellationToken.None);

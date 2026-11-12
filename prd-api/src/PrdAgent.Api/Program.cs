@@ -324,6 +324,8 @@ builder.Services.AddSingleton(
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteOptimizationService, PrdAgent.Infrastructure.Services.HostedSiteOptimizationService>();
 // 文本向量化：走网关的 embedding 通路（换供应商 = 加一行平台配置，不动代码）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.Infrastructure.Services.EmbeddingService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreReadAccess>();
+builder.Services.AddScoped<PrdAgent.Api.Services.KnowledgeRetrievalService>();
 
 // 网页托管「向我提问」：站点正文快照（喂给模型的上下文）+ 配额闸（保护 owner 的 token 预算）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteContentSnapshotService, PrdAgent.Infrastructure.Services.SiteContentSnapshotService>();

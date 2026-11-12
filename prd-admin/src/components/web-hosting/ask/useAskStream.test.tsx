@@ -140,3 +140,30 @@ it.each(['site', 'share'] as const)('大量原文引用下连续追问保持正�
     expect(hook!.messages.at(-1)?.content).toBe(finalText);
   } finally { act(() => root.unmount()); vi.unstubAllGlobals(); }
 });
+
+it('选库清空旧上下文，引用事件与完成文本进入同一条回答，分享请求不携带知识库', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  const references = [{ entryId: 'entry', title: '原文', url: '/document-store?store=store&entry=entry', hash: 'hash' }];
+  const fetcher = vi.fn().mockImplementation(async () => new Response(
+    `event: reference\ndata: ${JSON.stringify({ references })}\n\nevent: done\ndata: {"text":"可核查的原文"}\n\n`));
+  vi.stubGlobal('fetch', fetcher);
+  let hook: ReturnType<typeof useAskStream>;
+  function Harness() { hook = useAskStream({ mode: 'site', siteId: 'site' }); return null; }
+  const root = createRoot(document.createElement('div'));
+  try {
+    act(() => root.render(<Harness />));
+    await act(async () => { await hook.ask('网页问题'); });
+    act(() => hook.setKnowledgeStoreId('store'));
+    expect(hook!.messages).toHaveLength(0);
+    await act(async () => { await hook.ask('知识库问题'); });
+    const body = JSON.parse(fetcher.mock.calls[1][1].body);
+    expect(body.knowledgeStoreId).toBe('store');
+    expect(body.history).toEqual([]);
+    expect(hook!.messages.at(-1)?.references).toEqual(references);
+    expect(hook!.messages.at(-1)?.content).toBe('可核查的原文');
+    act(() => hook.setKnowledgeStoreId(''));
+    expect(hook!.messages).toHaveLength(0);
+    await act(async () => { await hook.ask('回到网页'); });
+    expect(JSON.parse(fetcher.mock.calls[2][1].body).history).toEqual([]);
+  } finally { act(() => root.unmount()); vi.unstubAllGlobals(); }
+});

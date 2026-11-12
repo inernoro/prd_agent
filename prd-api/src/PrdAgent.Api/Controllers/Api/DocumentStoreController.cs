@@ -205,18 +205,8 @@ public class DocumentStoreController : ControllerBase
 
     /// <summary>可读：拥有者 或 公开 或 团队成员；项目库走项目成员判定（含观察者/干系人）；产品库走产品成员判定</summary>
     private async Task<bool> CanReadStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
-        => s.OwnerId == userId || s.IsPublic || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: false)
-           || await IsProductKnowledgeMemberAsync(s, userId)
-           || await IsShituKnowledgeReadableAsync(s);
-
-    private async Task<bool> IsShituKnowledgeReadableAsync(DocumentStore s)
-    {
-        if (string.IsNullOrEmpty(s.ShituCategoryRef)) return false;
-        var permissions = await GetEffectivePermissionsAsync();
-        return permissions.Contains(AdminPermissionCatalog.Super)
-               || permissions.Contains(AdminPermissionCatalog.ShituAgentUse)
-               || permissions.Contains(AdminPermissionCatalog.ShituAgentManage);
-    }
+        => DocumentStoreReadAccess.HasDirectAccess(s, userId, myTeamIds)
+           || await DocumentStoreReadAccess.CanReadAsync(_db, s, userId, myTeamIds, await GetEffectivePermissionsAsync());
 
     private async Task<bool> IsShituKnowledgeWritableAsync(DocumentStore s)
     {
@@ -6590,6 +6580,11 @@ public class DocumentStoreController : ControllerBase
         var run = await _db.DocumentStoreAgentRuns.Find(r => r.Id == runId && r.UserId == userId).FirstOrDefaultAsync();
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));
+        if (run.Kind == DocumentStoreAgentRunKind.KnowledgeIndex)
+        {
+            // 通用 Run 回读只暴露状态；原始候选不能绕过问答入口的实时 ACL 与正文复核。
+            run.GeneratedText = null;
+        }
         return Ok(ApiResponse<DocumentStoreAgentRun>.Ok(run));
     }
 

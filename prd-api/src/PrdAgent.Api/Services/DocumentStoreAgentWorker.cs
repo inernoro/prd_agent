@@ -520,7 +520,11 @@ public class DocumentStoreAgentWorker : BackgroundService
 
             await EmitEventAsync(runStore, kindForEvents, run.Id, "phase", new { phase = "started" });
 
-            if (run.Kind == DocumentStoreAgentRunKind.Subtitle)
+            if (run.Kind == DocumentStoreAgentRunKind.KnowledgeIndex)
+            {
+                await scope.ServiceProvider.GetRequiredService<KnowledgeRetrievalService>().IndexAsync(run);
+            }
+            else if (run.Kind == DocumentStoreAgentRunKind.Subtitle)
             {
                 var processor = scope.ServiceProvider.GetRequiredService<SubtitleGenerationProcessor>();
                 await processor.ProcessAsync(run, db, runStore);
@@ -595,7 +599,8 @@ public class DocumentStoreAgentWorker : BackgroundService
             await EmitEventAsync(runStore, kindForEvents, run.Id, "done", new
             {
                 outputEntryId = finalRun?.OutputEntryId,
-                generatedText = finalRun?.GeneratedText,
+                // 知识问答的原始候选片段只允许经实时权限/正文核验的问答入口读取。
+                generatedText = run.Kind == DocumentStoreAgentRunKind.KnowledgeIndex ? null : finalRun?.GeneratedText,
             });
 
             _logger.LogInformation("[doc-store-agent] Run {RunId} done", run.Id);
@@ -860,6 +865,7 @@ public class DocumentStoreAgentWorker : BackgroundService
     /// <summary>Run kind → IRunEventStore 事件 kind 的映射（Controller 的 SSE 端点用同一映射）。</summary>
     internal static string KindForEvents(string kind) => kind switch
     {
+        DocumentStoreAgentRunKind.KnowledgeIndex => DocumentStoreRunKinds.KnowledgeIndex,
         DocumentStoreAgentRunKind.Subtitle => DocumentStoreRunKinds.Subtitle,
         DocumentStoreAgentRunKind.AutoLink => DocumentStoreRunKinds.AutoLink,
         DocumentStoreAgentRunKind.Transcribe => DocumentStoreRunKinds.Transcribe,

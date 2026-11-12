@@ -19,6 +19,9 @@ public class DocumentEmbedding
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>所属知识库（检索的作用域过滤就打在这个字段上）</summary>
+    /// <summary>完整索引快照的 Run；查询不得混用两次快照。</summary>
+    public string? IndexRunId { get; set; }
+
     public string StoreId { get; set; } = string.Empty;
 
     /// <summary>所属文档</summary>

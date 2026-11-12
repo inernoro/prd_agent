@@ -1,3 +1,4 @@
+import { AskKnowledgeScope } from './AskKnowledgeScope';
 import { useCallback, useEffect, useState } from 'react';
 import { Send, Sparkles, X } from 'lucide-react';
 import { ASK_REFUSAL_REGISTRY, resolveAskRefusal } from './askRefusal';
@@ -46,7 +47,7 @@ export default function AskPanel({
   source, title, welcome, openingQuestions, allowAnonymous, onClose, isMobile, embedded, hidden,
 }: Props) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const { messages, status, phaseMessage, elapsedSeconds, model, gateError, isBusy, ask, cancel, rate } = useAskStream(source);
+  const { messages, status, phaseMessage, elapsedSeconds, model, gateError, isBusy, ask, cancel, rate, knowledgeStoreId, setKnowledgeStoreId } = useAskStream(source);
   const [chatWidth, setChatWidth] = useAskWidth();
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
   useEffect(() => {
@@ -172,7 +173,8 @@ export default function AskPanel({
       {/* 消息区由 AskThread 承担（浮层坞与嵌入面板共用同一份渲染）。
           minHeight:0 在它内部——flex 子元素默认 min-height 是 auto，内容一多就不肯收缩，
           overflow 没机会触发，输入区会被顶出面板（frontend-modal.md 第 3 条硬约束）。 */}
-      <AskThread
+      {source.mode === 'site' && isAuthenticated && <AskKnowledgeScope value={knowledgeStoreId} onChange={setKnowledgeStoreId} disabled={isBusy} />}
+          <AskThread
         messages={messages}
         onRate={rate}
         welcome={welcome}

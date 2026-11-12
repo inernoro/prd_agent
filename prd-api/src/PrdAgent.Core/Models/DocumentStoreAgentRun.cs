@@ -142,6 +142,7 @@ public class ReprocessChatMessage
 
 public static class DocumentStoreAgentRunKind
 {
+    public const string KnowledgeIndex = "knowledge-index";
     public const string Subtitle = "subtitle";
     public const string Reprocess = "reprocess";
 
@@ -166,6 +167,7 @@ public static class DocumentStoreRunStatus
 /// <summary>字幕生成 / 再加工 / 自动补链 / 录音转录 的 RunKinds（用于 IRunEventStore）</summary>
 public static class DocumentStoreRunKinds
 {
+    public const string KnowledgeIndex = "docStoreKnowledgeIndex";
     public const string Subtitle = "docStoreSubtitle";
     public const string Reprocess = "docStoreReprocess";
     public const string AutoLink = "docStoreAutoLink";
