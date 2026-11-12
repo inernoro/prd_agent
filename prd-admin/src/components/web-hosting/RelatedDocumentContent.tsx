@@ -5,10 +5,10 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { SitePreview } from '@/components/SitePreview';
 import type { RelatedDocument, RelatedDocuments, RelatedDocumentSource } from '@/services/real/relatedDocuments';
 
-export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, maxHeight, onReload, onManage, onPermissions, onTagEdit, onNavigate, onClose, heading = '关联文档', links }: {
+export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, maxHeight, onReload, onManage, onPermissions, onTagEdit, onNavigate, onClose, heading = '关联文档' }: {
   siteId: string; data: RelatedDocuments | null; error?: string; loading: boolean; source?: RelatedDocumentSource; compact?: boolean; maxHeight?: number;
   onReload: () => void; onManage: () => void; onPermissions: () => void; onTagEdit: (item: RelatedDocument) => void;
-  onNavigate?: (item: RelatedDocument) => void; onClose: () => void; heading?: string; links?: React.ReactNode;
+  onNavigate?: (item: RelatedDocument) => void; onClose: () => void; heading?: string;
 }) {
   const [page, setPage] = useState(0);
   const [tagFilter, setTagFilter] = useState('');
@@ -38,7 +38,6 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
         <button type="button" aria-label="列表视图" aria-pressed={view === 'list'} onClick={() => changeView('list')}><List size={15} /></button>
       </div>{data?.canManage && <button className="related-text-button" type="button" onClick={openManager}><FolderPlus size={14} />管理关联</button>}</div>
     </div>
-    {links}
         {compact && (main || (data?.canManage && data.version > 0)) && <div className="related-context-row">
           {main && <span className="related-main-label"><Star size={12} />主文档<span title={main.title}>{main.title}</span></span>}
           {data?.canManage && data.version > 0 && <button type="button" className={`related-permission-hint ${data.hasPermissionDifferences ? 'is-warning' : ''}`} onClick={openPermissions}>

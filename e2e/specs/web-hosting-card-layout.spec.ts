@@ -368,7 +368,7 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const)
       files: [], totalSize: 1024, ownerUserId: 'qa-context-user', visibility: 'private', viewCount: 0, tags: [], createdAt: date, updatedAt: date };
     const totalContexts = multiple ? 45 : 1;
     const link = (id: number, index = 0) => ({ id: `link-${id}-${index}`, title: `发布资料 ${id}`, shareUrl: `/s/wp/original-${id}-${index}`, createdAt: date, accessLevel: 'public', memberCount: 2, isActive: true, statusLabel: '有效' });
-    const context = (id: number) => ({ id: `collection:${id}`, title: `发布资料 ${id}`, memberCount: 2, updatedAt: date, collectionId: String(id), legacyShareId: null, shareCount: 3, primaryLink: link(id) });
+    const context = (id: number) => ({ id: `collection:${id}`, title: `发布资料 ${id}`, memberCount: multiple ? 12 : 2, updatedAt: date, collectionId: String(id), legacyShareId: null, shareCount: 3, primaryLink: link(id) });
     await page.addInitScript(() => {
       if (window.top !== window) return;
       localStorage.setItem('webpages.pref.viewMode', 'grid'); localStorage.setItem('webpages.pref.cardSize', 'medium');
@@ -399,7 +399,8 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const)
         const id = Number(path.match(/collection:(\d+)/)?.[1] || 0);
         data = { version: 0, mainSiteId: site.id, canManage: false, hasPermissionDifferences: false, contextLabel: '合集成员',
           items: [{ id: site.id, title: '发布指南', isMain: true, href: '/web-pages?openSite=context-source' },
-            { id: `target-${id}`, title: `关联目标 ${id}`, href: `/web-pages?openSite=target-${id}` }] };
+            { id: `target-${id}`, title: `关联目标 ${id}`, href: `/web-pages?openSite=target-${id}` },
+            ...(multiple ? Array.from({ length: 10 }, (_, i) => ({ id: `extra-${id}-${i}`, title: `补充文档 ${i}`, href: `/web-pages?openSite=extra-${id}-${i}` })) : [])] };
       } else if (path.endsWith('/links')) {
         const id = Number(path.match(/collection:(\d+)/)?.[1] || 0);
         data = { items: [0, 1, 2].map(index => link(id, index)), total: 3, page: 1, pageSize: 20 };
@@ -411,28 +412,40 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const)
     const trigger = page.locator('[data-hosted-site-id="context-source"] .related-trigger');
     await expect(trigger).toHaveCount(1); await trigger.click();
     const dialog = page.getByRole('dialog', { name: '关联文档', exact: true });
-    await expect(dialog.locator('.related-document-card')).toHaveCount(2);
+    await expect(dialog.locator('.related-document-card')).toHaveCount(multiple ? 9 : 2);
+    const footer = dialog.getByRole('region', { name: '合集链接操作', exact: true });
+    await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-0-0', page.url()).href);
+    await expect(footer.getByRole('button', { name: '复制合集链接', exact: true })).toBeEnabled();
     await expect(dialog.locator('[aria-label="文档关系类型"]')).toHaveCount(0);
-    await expect(dialog.locator('a[href="/s/wp/original-0-0"]')).toHaveAttribute('target', '_blank');
+    await expect(footer.getByRole('link', { name: '打开合集', exact: true })).toHaveAttribute('href', new URL('/s/wp/original-0-0', page.url()).href);
+    await expect(footer.getByRole('link', { name: '打开合集', exact: true })).toHaveAttribute('target', '_blank');
     const sidebar = dialog.getByRole('complementary', { name: '所属合集' });
     if (multiple) {
       await expect(sidebar).toBeVisible(); await expect(sidebar.locator('.collection-context-select')).toHaveCount(20);
       await sidebar.locator('.collection-context-select').nth(1).click();
       await expect(dialog.locator('.related-document-card').filter({ hasText: '关联目标 1' })).toBeVisible();
-      await sidebar.getByRole('button', { name: '查看全部 3 条链接', exact: true }).click();
-      await expect(sidebar.locator('.is-selected .collection-context-link')).toHaveCount(3);
+      await expect(sidebar.locator('a')).toHaveCount(0);
+      await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-1-0', page.url()).href);
+      await footer.getByRole('button', { name: '查看全部 3 条链接', exact: true }).click();
+      await expect(footer.locator('.collection-context-link-option')).toHaveCount(3);
+      await footer.locator('.collection-context-link-option').nth(2).click();
+      await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-1-2', page.url()).href);
+      await expect(footer.getByRole('link', { name: '打开合集', exact: true })).toHaveAttribute('href', new URL('/s/wp/original-1-2', page.url()).href);
       await sidebar.getByLabel('搜索所属合集', { exact: true }).fill('44');
       await expect(sidebar.locator('.collection-context-select')).toHaveCount(1);
       await expect(dialog.locator('.related-document-card').filter({ hasText: '关联目标 44' })).toBeVisible();
       await sidebar.getByRole('button', { name: '清除合集搜索' }).click();
       await expect(sidebar.locator('.collection-context-select')).toHaveCount(20);
       await sidebar.getByRole('navigation', { name: '合集分页', exact: true }).getByRole('button', { name: '下一页' }).click();
-      await expect(sidebar.locator('.collection-context-select').first()).toHaveText('发布资料 202 份文档');
+      await expect(sidebar.locator('.collection-context-select').first()).toHaveText('发布资料 2012 份文档');
+      await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-20-0', page.url()).href);
       const left = await sidebar.boundingBox(), right = await dialog.locator('.collection-context-documents').boundingBox();
       expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x + 1);
     } else {
       await expect(sidebar).toHaveCount(0); await dialog.getByRole('button', { name: '查看全部 3 条链接', exact: true }).click();
-      await expect(dialog.locator('.collection-context-link')).toHaveCount(3);
+      await expect(footer.locator('.collection-context-link-option')).toHaveCount(3);
+      await footer.locator('.collection-context-link-option').nth(1).click();
+      await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-0-1', page.url()).href);
       await expect(dialog.locator('[data-collection-layout="single"]')).toBeVisible();
     }
     await dialog.getByRole('button', { name: '列表视图', exact: true }).click();
@@ -441,6 +454,14 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const)
     const box = await dialog.boundingBox(); expect(box!.x).toBeGreaterThanOrEqual(0); expect(box!.x + box!.width).toBeLessThanOrEqual(width); expect(box!.y + box!.height).toBeLessThanOrEqual(960);
     const anchorBox = await trigger.boundingBox();
     expect(box!.y >= anchorBox!.y + anchorBox!.height || box!.y + box!.height <= anchorBox!.y).toBe(true);
+    const footerBefore = await footer.boundingBox();
+    expect(footerBefore!.y + footerBefore!.height).toBeCloseTo(box!.y + box!.height, 0);
+    expect(footerBefore!.width).toBeCloseTo(box!.width, 0);
+    await dialog.locator('.related-documents-scroll').evaluate(node => { node.scrollTop = node.scrollHeight; });
+    const footerAfter = await footer.boundingBox();
+    expect(footerAfter!.y).toBeCloseTo(footerBefore!.y, 0);
+    const actions = await footer.locator('.collection-context-link-actions').boundingBox();
+    expect(actions!.y + actions!.height).toBeLessThanOrEqual(footerAfter!.y + footerAfter!.height);
     const overflow = await dialog.evaluate(node => node.scrollWidth > node.clientWidth); expect(overflow).toBe(false);
     expect(errors).toEqual([]); expect(writes).toEqual([]);
     await testInfo.attach('sandbox-platform-diagnostics', { body: JSON.stringify(platformErrors), contentType: 'application/json' });
