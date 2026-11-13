@@ -26,8 +26,10 @@ public sealed class DocumentTrashService(MongoDbContext db)
                 throw new ConflictException("请从回收站恢复所属文件夹");
             var state = previous ?? new DocumentTrashState { DeletedBy = actorId, RootEntryId = entryId, Pending = true };
             var entries = await db.DocumentEntriesIncludingTrash.Find(x => x.StoreId == storeId).ToListAsync();
-            var targets = entryId == null ? entries.Where(x => x.Trash == null).Select(x => x.Id).ToHashSet()
+            var targets = entryId == null ? entries.Where(x => x.Trash == null || x.Trash.BatchId == state.BatchId).Select(x => x.Id).ToHashSet()
                 : CollectDescendants(entries, entryId);
+            state.DocumentCount ??= entries.Count(x => targets.Contains(x.Id)
+                && (x.Trash == null || x.Trash.BatchId == state.BatchId) && CountsAsDocument(x));
             var update = Builders<DocumentEntry>.Update.Set(x => x.Trash, state).Inc(x => x.LifecycleVersion, 1);
             if (entryId == null)
                 await db.DocumentStoresIncludingTrash.UpdateOneAsync(x => x.Id == storeId && x.Trash == null,
@@ -39,12 +41,21 @@ public sealed class DocumentTrashService(MongoDbContext db)
             await db.DocumentEntriesIncludingTrash.UpdateManyAsync(x => x.StoreId == storeId && targets.Contains(x.Id) && x.Trash == null,
                 update, cancellationToken: CancellationToken.None);
             await EnsureLeaseAsync(storeId, lease);
+            // 将批次减量持久化后再记账；重试只应用一次，不覆盖正常新增的 $inc。
+            if (entryId == null)
+                await db.DocumentStoresIncludingTrash.UpdateOneAsync(x => x.Id == storeId && x.Trash != null && x.Trash.BatchId == state.BatchId,
+                    Builders<StoreModel>.Update.Set("Trash.DocumentCount", state.DocumentCount), cancellationToken: CancellationToken.None);
+            else
+                await db.DocumentEntriesIncludingTrash.UpdateOneAsync(x => x.Id == entryId && x.Trash != null && x.Trash.BatchId == state.BatchId,
+                    Builders<DocumentEntry>.Update.Set("Trash.DocumentCount", state.DocumentCount), cancellationToken: CancellationToken.None);
+            var countReceipt = state.BatchId + ":delete";
+            await ApplyCountChangeAsync(storeId, countReceipt, -state.DocumentCount.Value);
             await db.DocumentEntriesIncludingTrash.UpdateManyAsync(x => x.StoreId == storeId && x.Trash != null && x.Trash.BatchId == state.BatchId,
                 Builders<DocumentEntry>.Update.Set("Trash.Pending", false), cancellationToken: CancellationToken.None);
             if (entryId == null)
                 await db.DocumentStoresIncludingTrash.UpdateOneAsync(x => x.Id == storeId && x.Trash != null && x.Trash.BatchId == state.BatchId,
                     Builders<StoreModel>.Update.Set("Trash.Pending", false), cancellationToken: CancellationToken.None);
-            await RefreshCountAsync(storeId);
+            await CompleteCountChangeAsync(storeId, countReceipt);
         }
         finally { await ReleaseAsync(storeId, lease); }
     }
@@ -63,9 +74,17 @@ public sealed class DocumentTrashService(MongoDbContext db)
             if (state == null) return; // 重复恢复无副作用
             if (state.RootEntryId != entryId) throw new ConflictException("请先恢复所属文件夹");
             if (!state.CanRestore(DateTime.UtcNow)) throw new ConflictException(state.Pending ? "删除尚未完成，请重试删除后恢复" : "已超过 30 天恢复期限");
-            if (root?.ParentId is { Length: > 0 } parent && !await db.DocumentEntries.Find(x => x.Id == parent && x.StoreId == storeId).AnyAsync())
-                throw new ConflictException("原目录已被删除，请先恢复原目录");
+            var parents = new[] { root?.ParentId, root?.Metadata.GetValueOrDefault("github_parent_id") }
+                .Where(x => !string.IsNullOrEmpty(x)).Distinct();
+            foreach (var parent in parents)
+                if (!await db.DocumentEntries.Find(x => x.Id == parent && x.StoreId == storeId).AnyAsync())
+                    throw new ConflictException("原目录已被删除，请先恢复原目录");
             await EnsureLeaseAsync(storeId, lease);
+            var restoredCount = state.DocumentCount ?? checked((int)await db.DocumentEntriesIncludingTrash.CountDocumentsAsync(
+                x => x.StoreId == storeId && x.Trash != null && x.Trash.BatchId == state.BatchId
+                    && !x.IsFolder && x.SourceType != DocumentSourceType.GithubDirectory));
+            var countReceipt = state.BatchId + ":restore";
+            await ApplyCountChangeAsync(storeId, countReceipt, restoredCount);
             // 根对象最后恢复，使部分完成的恢复可以从同一根对象重试。
             await db.DocumentEntriesIncludingTrash.UpdateManyAsync(x => x.StoreId == storeId && x.Id != entryId && x.Trash != null && x.Trash.BatchId == state.BatchId,
                 Builders<DocumentEntry>.Update.Set(x => x.Trash, null), cancellationToken: CancellationToken.None);
@@ -75,7 +94,7 @@ public sealed class DocumentTrashService(MongoDbContext db)
             else
                 await db.DocumentEntriesIncludingTrash.UpdateOneAsync(x => x.Id == entryId && x.Trash != null && x.Trash.BatchId == state.BatchId,
                     Builders<DocumentEntry>.Update.Set(x => x.Trash, null), cancellationToken: CancellationToken.None);
-            await RefreshCountAsync(storeId);
+            await CompleteCountChangeAsync(storeId, countReceipt);
         }
         finally { await ReleaseAsync(storeId, lease); }
     }
@@ -91,12 +110,21 @@ public sealed class DocumentTrashService(MongoDbContext db)
         return ids;
     }
 
-    private async Task RefreshCountAsync(string storeId)
+    private static bool CountsAsDocument(DocumentEntry entry) => !entry.IsFolder && entry.SourceType != DocumentSourceType.GithubDirectory;
+
+    private async Task ApplyCountChangeAsync(string storeId, string receipt, int delta)
     {
-        var count = await db.DocumentEntries.CountDocumentsAsync(x => x.StoreId == storeId && !x.IsFolder && x.SourceType != DocumentSourceType.GithubDirectory);
+        await db.DocumentStoresIncludingTrash.UpdateOneAsync(
+            Builders<StoreModel>.Filter.Eq(x => x.Id, storeId) & Builders<StoreModel>.Filter.Ne("TrashCountReceipts", receipt),
+            Builders<StoreModel>.Update.Inc(x => x.DocumentCount, delta).AddToSet(x => x.TrashCountReceipts, receipt)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: CancellationToken.None);
+        // 只修正存量异常负计数，不覆盖任何并发新增。
         await db.DocumentStoresIncludingTrash.UpdateOneAsync(x => x.Id == storeId,
-            Builders<StoreModel>.Update.Set(x => x.DocumentCount, checked((int)count)), cancellationToken: CancellationToken.None);
+            Builders<StoreModel>.Update.Max(x => x.DocumentCount, 0), cancellationToken: CancellationToken.None);
     }
+
+    private Task CompleteCountChangeAsync(string storeId, string receipt) => db.DocumentStoresIncludingTrash.UpdateOneAsync(
+        x => x.Id == storeId, Builders<StoreModel>.Update.Pull(x => x.TrashCountReceipts, receipt), cancellationToken: CancellationToken.None);
 
     private async Task<string> AcquireAsync(string storeId)
     {

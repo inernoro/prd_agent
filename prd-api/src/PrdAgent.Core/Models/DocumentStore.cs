@@ -174,6 +174,8 @@ public class DocumentStore
     /// <summary>回收操作的跨实例互斥租约，不改变正常编辑权限。</summary>
     public string? TrashLeaseToken { get; set; }
     public DateTime? TrashLeaseUntil { get; set; }
+    /// <summary>尚未完成的回收计数回执；与计数原子写入，完成后移除。</summary>
+    public List<string> TrashCountReceipts { get; set; } = new();
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

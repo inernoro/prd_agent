@@ -8159,7 +8159,10 @@ public partial class DocumentStoreController : ControllerBase
 
         limit = Math.Clamp(limit, 1, 200);
 
-        var filter = Builders<DocumentInlineComment>.Filter.Eq(c => c.StoreId, storeId);
+        // 先限定正常条目再分页，不能让保留的评论泄露回收正文，也不能挤占有效结果。
+        var activeEntryIds = await _db.DocumentEntries.Find(e => e.StoreId == storeId).Project(e => e.Id).ToListAsync();
+        var filter = Builders<DocumentInlineComment>.Filter.Eq(c => c.StoreId, storeId)
+            & Builders<DocumentInlineComment>.Filter.In(c => c.EntryId, activeEntryIds);
         if (!string.IsNullOrWhiteSpace(since)
             && DateTime.TryParse(since, System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.RoundtripKind, out var sinceUtc))
@@ -8182,7 +8185,7 @@ public partial class DocumentStoreController : ControllerBase
             : await _db.DocumentEntries.Find(e => entryIds.Contains(e.Id)).ToListAsync();
         var titleMap = entries.ToDictionary(e => e.Id, e => e.Title);
 
-        var items = comments.Select(c => new
+        var items = comments.Where(c => titleMap.ContainsKey(c.EntryId)).Select(c => new
         {
             id = c.Id,
             entryId = c.EntryId,
