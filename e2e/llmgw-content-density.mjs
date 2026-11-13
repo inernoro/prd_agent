@@ -202,8 +202,7 @@ try {
       const modelSearch = page.getByRole('searchbox', { name: '搜索模型名称或公开标识' });
       await modelSearch.waitFor();
       await page.locator('.lg-collection-scroll').first().evaluate(el => { el.scrollTop = el.scrollHeight; });
-      const loadMore = page.getByRole('button', { name: /继续加载/ });
-      if (await loadMore.count()) await loadMore.click();
+      // 滚动触发IntersectionObserver；不再与自动加载抢点会卸载的备用按钮。
       await expect(page.getByText('验收模型 31', { exact: true })).toHaveCount(1);
       await page.getByText('验收模型 31', { exact: true }).scrollIntoViewIfNeeded();
       await expect(page.getByText('验收模型 31', { exact: true })).toBeVisible();
