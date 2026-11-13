@@ -321,7 +321,7 @@ export function LogicalModelsPage() {
     if (!check.data.canDelete) { failNotice(`「${item.name}」已保留：${check.data.reasons.join('；')}`); return; }
     const typed = await promptText({
       title: `删除逻辑模型「${item.name}」`,
-      description: `${item.publicId}\n它名下 ${item.offerings.length} 条 Offering 会一并删除，无法撤销。`,
+      description: `${item.publicId}\n它名下全部 ${check.data.offerings} 条线路（包含已被替换的旧版线路）会一并删除，无法撤销。`,
       inputLabel: '确认请输入 publicId',
       requireExact: item.publicId,
       tone: 'danger',
@@ -345,19 +345,20 @@ export function LogicalModelsPage() {
     if (active.length) { failNotice(`先停用并转移默认或调用方认领：${active.map(item => item.name).join('、')}`); return; }
     setBusy('batch-check'); setBatchProgress(`正在检查 0/${selected.length} 项`);
     const eligible: LogicalModelItem[] = []; const blocked: string[] = [];
+    const offeringCounts = new Map<string, number>();
     try {
       for (const item of selected) {
         setBatchProgress(`正在检查 ${eligible.length + blocked.length + 1}/${selected.length} 项：${item.name}`);
         const result = await checkLogicalModelDeletion(item.id);
         if (!result.success) { failNotice('部分模型删除检查未完成，本次未删除，请刷新后重试。'); return; }
-        if (result.data.canDelete) eligible.push(item);
+        if (result.data.canDelete) { eligible.push(item); offeringCounts.set(item.id, result.data.offerings); }
         else blocked.push(`${item.name}：${result.data.reasons.join('；')}`);
       }
     } catch { failNotice('删除检查连接中断，本次未删除，请重试。'); return; }
     finally { setBusy(null); setBatchProgress(null); }
     if (!eligible.length) { failNotice(`所选模型均已保留：${blocked.join('；')}`); return; }
     const phrase = `删除 ${eligible.length} 个模型`;
-    const typed = await promptText({ title: '批量删除预检完成', description: eligible.map(item => `${item.name}（${item.publicId}）· ${item.offerings.length} 条线路`).join('\n') + '\n以上删除无法撤销。' + (blocked.length ? '\n以下项目被保护并保留：\n' + blocked.join('\n') : '') + '\n确认后仍会逐项重新检查依赖。', inputLabel: `请输入「${phrase}」`, requireExact: phrase, confirmLabel: '删除检查通过项', tone: 'danger' });
+    const typed = await promptText({ title: '批量删除预检完成', description: eligible.map(item => `${item.name}（${item.publicId}）· 全部 ${offeringCounts.get(item.id)} 条线路（含被替换的旧版）`).join('\n') + '\n以上删除无法撤销。' + (blocked.length ? '\n以下项目被保护并保留：\n' + blocked.join('\n') : '') + '\n确认后仍会逐项重新检查依赖。', inputLabel: `请输入「${phrase}」`, requireExact: phrase, confirmLabel: '删除检查通过项', tone: 'danger' });
     if (typed !== phrase) return;
     setBusy('batch-delete'); setNotice(null); setBatchProgress(`正在删除检查通过的 ${eligible.length} 项`);
     const removed: string[] = []; const failures: string[] = [];

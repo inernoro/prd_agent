@@ -37,7 +37,7 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
       if (id.endsWith('/src/lib/api.ts')) return apiNames.map(name => {
         if (name === 'getLogicalModels') return 'export async function getLogicalModels(){const f=globalThis.__offeringDeleteFixture;f.reads++;return {success:true,data:{items:structuredClone(f.items)}}}';
         if (name === 'getExchangeMeta') return 'export async function getExchangeMeta(){return {success:true,data:{modelTypes:[{value:"chat",label:"聊天"}]}}}';
-        if (name === 'checkLogicalModelDeletion') return 'export async function checkLogicalModelDeletion(id){const f=globalThis.__offeringDeleteFixture;f.checks.push(id);return {success:true,data:{canDelete:id!=="blocked-model",reasons:id==="blocked-model"?["仍有业务配置，请先迁移"]:[],offerings:0}}}';
+        if (name === 'checkLogicalModelDeletion') return 'export async function checkLogicalModelDeletion(id){const f=globalThis.__offeringDeleteFixture;f.checks.push(id);return {success:true,data:{canDelete:id!=="blocked-model",reasons:id==="blocked-model"?["仍有业务配置，请先迁移"]:[],offerings:17}}}';
         if (name === 'deleteLogicalModel') return 'export async function deleteLogicalModel(id){const f=globalThis.__offeringDeleteFixture;f.deleted.push(id);return {success:true,data:{offeringsDeleted:0}}}';
         if (name === 'deleteModelOffering') return 'export async function deleteModelOffering(logicalId,offeringId){const f=globalThis.__offeringDeleteFixture;f.calls.push({logicalId,offeringId});if(f.pending)return new Promise(resolve=>{f.complete=resolve});if(f.failure)return {success:false,error:{code:"OFFERING_IN_USE",message:f.failure}};f.items=f.items.map(x=>x.id===logicalId?{...x,offerings:x.offerings.filter(o=>o.id!==offeringId)}:x);return {success:true,data:{logicalModelId:logicalId,offeringId,removed:true}}}';
         return `export async function ${name}(){return {success:true,data:{items:[]}}}`;
@@ -94,6 +94,11 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
     fixture.typed = null; await click(buttons('删除所选')[0]);
     assert.deepEqual(fixture.deleted, [], '预检和取消确认不能执行删除');
     assert.deepEqual(fixture.checks, ['safe-model', 'blocked-model']);
+    assert.match(fixture.prompts.at(-1).description, /safe-model.*全部 17 条线路/, '确认数包含服务端返回的隐藏旧版线路，不能采用可见0条');
+    assert.match(fixture.prompts.at(-1).description, /含被替换的旧版/);
+    await act(async () => { const select = document.querySelector('select[aria-label="清单状态筛选"]'); select.value = 'disabled'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    await click(buttons('删除')[0]);
+    assert.match(fixture.prompts.at(-1).description, /全部 17 条线路/, '单项删除也使用服务端计数');
     fixture.typed = 'exact'; await click(buttons('删除所选')[0]);
     assert.deepEqual(fixture.deleted, ['safe-model'], '仅删除预检通过项，保留有引用模型');
     assert.match(fixture.prompts.at(-1).description, /blocked-model.*仍有业务配置/);
