@@ -54,7 +54,7 @@ public sealed class ModelRuntimeReferenceSnapshotBuilder(
         var configuredFallback = environment("LLM__Model") ?? configuration["LLM:Model"];
         var entries = new List<ModelRuntimeReferenceEntry>
         {
-            Entry("chat-agent.default", "ChatAgent:Model", "upstream-model-id", chat.Model, required: true, state: configuration["ChatAgent:Model"] is null ? "default" : "configured"),
+            Entry("chat-agent.default", "ChatAgent:Model", "public-id", chat.Model, required: true, state: configuration["ChatAgent:Model"] is null ? "default" : "configured"),
             Entry("claude-sidecar.default", "ClaudeSdkExecutor:DefaultModel", "upstream-model-id", sidecar.DefaultModel, required: true, state: configuration["ClaudeSdkExecutor:DefaultModel"] is null ? "default" : "configured"),
             Entry("llm.environment-fallback", "LLM:Model", "upstream-model-id",
                 configuredFallback ?? "claude-3-5-sonnet-20241022", required: true,
@@ -151,7 +151,7 @@ public sealed class ModelRuntimeReferenceSnapshotBuilder(
             {
                 "llm.main-model" or "design-artifact.pinned-model" => "physical-pair",
                 "design-artifact.pool" => "pool-id",
-                "design-artifact.model" => "public-id",
+                "chat-agent.default" or "design-artifact.model" => "public-id",
                 _ => "upstream-model-id"
             };
             if (entry.IdentityKind != expectedKind || string.IsNullOrWhiteSpace(entry.Path)) return "consumer-identity-kind-mismatch";
