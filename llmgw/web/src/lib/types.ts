@@ -1322,33 +1322,6 @@ export type ConfigAuthorityReportData = {
   gaps: ConfigAuthorityGapItem[];
 };
 
-export type RuntimeGateItem = {
-  id: string;
-  label: string;
-  status: string;
-  blocking: boolean;
-  detail: string;
-  evidence: string;
-  nextAction: string;
-  facts?: Record<string, string>;
-  links?: RuntimeGateLink[];
-};
-export type RuntimeGateLink = {
-  label: string;
-  to: string;
-};
-export type RuntimeGatesData = {
-  status: string;
-  releaseCommit?: string | null;
-  // 字段名沿用后端（发布脚本按名读取）；含义是「全部 blocking gate 均为 pass」。
-  readyForRelease: boolean;
-  passed: number;
-  blocked: number;
-  waiting: number;
-  generatedAt: string;
-  items: RuntimeGateItem[];
-};
-
 // ── GW appCaller 注册表（llm_gateway.llmgw_app_callers）──
 export type GatewayAppCaller = {
   id: string;

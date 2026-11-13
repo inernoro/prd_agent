@@ -83,7 +83,6 @@ import type {
   ConfigAuthorityReportData,
   BulkClaimConfigAuthorityRequest,
   BulkClaimConfigAuthorityResult,
-  RuntimeGatesData,
   ServiceKeyItem,
   CreateServiceKeyRequest,
   CreatedServiceKey,
@@ -704,9 +703,6 @@ export function getKeyHealth(): Promise<ApiResponse<KeyHealthData>> {
 }
 export function getConfigAuthorityReport(): Promise<ApiResponse<ConfigAuthorityReportData>> {
   return apiRequest<ConfigAuthorityReportData>('/config-authority/report');
-}
-export function getRuntimeGates(): Promise<ApiResponse<RuntimeGatesData>> {
-  return apiRequest<RuntimeGatesData>('/runtime-gates');
 }
 export function bulkClaimConfigAuthority(req: BulkClaimConfigAuthorityRequest): Promise<ApiResponse<BulkClaimConfigAuthorityResult>> {
   return apiRequest<BulkClaimConfigAuthorityResult>('/config-authority/bulk-claim', { method: 'POST', body: req });
