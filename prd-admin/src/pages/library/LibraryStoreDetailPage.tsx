@@ -1,3 +1,4 @@
+import { searchPublicStoreEntries } from '@/services/real/documentStore';
 /**
  * LibraryStoreDetailPage — 公开知识库详情页（claymorphism 风格）
  *
@@ -73,6 +74,12 @@ export function LibraryStoreDetailPage() {
       setLoading(false);
     });
     return () => { mounted = false; };
+  }, [storeId]);
+
+  const searchEntries = useCallback(async (keyword: string, cursor?: string) => {
+    const result = await searchPublicStoreEntries(storeId ?? '', keyword, cursor);
+    if (!result.success) throw new Error(result.error.message);
+    return result.data;
   }, [storeId]);
 
   const loadContent = useCallback(async (entryId: string): Promise<LibraryDocReaderPreview | null> => {
@@ -213,7 +220,7 @@ export function LibraryStoreDetailPage() {
                     className="text-[12px] font-bold"
                     style={{ color: '#475569' }}
                   >
-                    · {store.documentCount} 篇文档
+                    · {entries.filter(entry => !entry.isFolder && entry.sourceType !== 'github_directory').length} 篇文档
                   </span>
                 </div>
                 <h1
@@ -299,6 +306,7 @@ export function LibraryStoreDetailPage() {
         <div className="max-w-6xl mx-auto" style={{ height: 'calc(100vh - 320px)', minHeight: 560 }}>
           <LibraryDocReader
             entries={entries}
+            searchEntries={searchEntries}
             writingStoreId={store.id}
             primaryEntryId={store.primaryEntryId}
             pinnedEntryIds={store.pinnedEntryIds ?? []}

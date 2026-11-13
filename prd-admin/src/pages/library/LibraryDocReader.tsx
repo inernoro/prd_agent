@@ -1,3 +1,6 @@
+import { buildDocBrowserTree, docBrowserEntryPath } from '@/components/doc-browser/docBrowserTree';
+import { ProgressiveEntries } from '@/components/doc-browser/ProgressiveEntries';
+import type { DocumentEntryPage } from '@/services/real/documentEntryPages';
 import { WritingPublicationActions } from '../document-store/writing/WritingPublicationActions';
 /**
  * LibraryDocReader — 智识殿堂专属文档阅读器（claymorphism 风格）
@@ -178,6 +181,7 @@ type Props = {
   primaryEntryId?: string;
   pinnedEntryIds?: string[];
   loadContent: (entryId: string) => Promise<LibraryDocReaderPreview | null>;
+  searchEntries?: (keyword: string, cursor?: string) => Promise<DocumentEntryPage>;
 };
 
 export function LibraryDocReader({
@@ -186,6 +190,7 @@ export function LibraryDocReader({
   primaryEntryId,
   pinnedEntryIds = [],
   loadContent,
+  searchEntries,
 }: Props) {
   const navigate = useNavigate();
   const [selectedId, setSelectedId] = useState<string | undefined>(primaryEntryId);
@@ -194,6 +199,38 @@ export function LibraryDocReader({
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
+  const [searchPage, setSearchPage] = useState<DocumentEntryPage | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState(false);
+  const searchSequence = useRef(0);
+  useEffect(() => {
+    const sequence = ++searchSequence.current;
+    setSearchPage(null);
+    setSearchError(false);
+    if (!search.trim() || !searchEntries) { setSearchLoading(false); return; }
+    setSearchPage({ items: [], total: 0 });
+    setSearchLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await searchEntries(search.trim());
+        if (sequence === searchSequence.current) setSearchPage(result);
+      } catch { if (sequence === searchSequence.current) setSearchError(true); }
+      finally { if (sequence === searchSequence.current) setSearchLoading(false); }
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [search, searchEntries]);
+  const loadMoreSearch = async () => {
+    if (!searchEntries || !searchPage?.nextCursor || searchLoading) return;
+    const sequence = searchSequence.current;
+    setSearchLoading(true);
+    setSearchError(false);
+    try {
+      const result = await searchEntries(search.trim(), searchPage.nextCursor);
+      if (sequence === searchSequence.current) setSearchPage(previous => ({ ...result,
+        items: [...new Map([...(previous?.items ?? []), ...result.items].map(e => [e.id, e])).values()] }));
+    } catch { if (sequence === searchSequence.current) setSearchError(true); }
+    finally { if (sequence === searchSequence.current) setSearchLoading(false); }
+  };
   const [useContentTitle, setUseContentTitle] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const contentScrollRef = useRef<HTMLDivElement>(null);
@@ -254,19 +291,10 @@ export function LibraryDocReader({
   }, [fullscreen]);
 
   // 构建树（过滤掉 github_directory）
-  const { roots, childrenMap } = useMemo(() => {
-    const visible = entries.filter((e) => e.sourceType !== 'github_directory');
-    const cMap = new Map<string, DocumentEntry[]>();
-    const rs: DocumentEntry[] = [];
-    for (const e of visible) {
-      if (!e.parentId) {
-        rs.push(e);
-      } else {
-        const arr = cMap.get(e.parentId) ?? [];
-        arr.push(e);
-        cMap.set(e.parentId, arr);
-      }
-    }
+  const { roots, childrenMap, parentIds } = useMemo(() => {
+    const tree = buildDocBrowserTree(entries);
+    const rs = tree.rootEntries;
+    const cMap = tree.childrenMap;
     const sortFn = (a: DocumentEntry, b: DocumentEntry) => {
       if (a.id === primaryEntryId) return -1;
       if (b.id === primaryEntryId) return 1;
@@ -277,14 +305,15 @@ export function LibraryDocReader({
     };
     rs.sort(sortFn);
     for (const [, arr] of cMap) arr.sort(sortFn);
-    return { roots: rs, childrenMap: cMap };
+    return { roots: rs, childrenMap: cMap, parentIds: tree.parentIds };
   }, [entries, primaryEntryId, pinnedSet]);
+  const revealPath = useMemo(() => docBrowserEntryPath(parentIds, selectedId), [parentIds, selectedId]);
 
   // 搜索过滤：匹配标题 + 正文第一行（只隐藏未命中的文件，祖先文件夹保留）
   const { filteredRoots, filteredChildrenMap } = useMemo(() => {
+    if (searchPage) return { filteredRoots: searchPage.items, filteredChildrenMap: new Map<string, DocumentEntry[]>() };
     if (!search.trim()) return { filteredRoots: roots, filteredChildrenMap: childrenMap };
     const kw = search.toLowerCase();
-    const entryMap = new Map(entries.map((e) => [e.id, e]));
     const matchIds = new Set<string>();
     for (const e of entries) {
       if (e.sourceType === 'github_directory' || e.isFolder) continue;
@@ -292,12 +321,7 @@ export function LibraryDocReader({
       const firstLineMatch = contentFirstLines.get(e.id)?.toLowerCase().includes(kw) ?? false;
       const summaryMatch = e.summary?.toLowerCase().includes(kw) ?? false;
       if (titleMatch || firstLineMatch || summaryMatch) {
-        matchIds.add(e.id);
-        let cur = entryMap.get(e.parentId ?? '');
-        while (cur) {
-          matchIds.add(cur.id);
-          cur = entryMap.get(cur.parentId ?? '');
-        }
+        for (const id of docBrowserEntryPath(parentIds, e.id)) matchIds.add(id);
       }
     }
     const fRoots = roots.filter((e) => matchIds.has(e.id));
@@ -307,7 +331,7 @@ export function LibraryDocReader({
       if (kept.length > 0) fMap.set(parentId, kept);
     }
     return { filteredRoots: fRoots, filteredChildrenMap: fMap };
-  }, [search, roots, childrenMap, entries, contentFirstLines]);
+  }, [search, searchPage, roots, childrenMap, entries, contentFirstLines, parentIds]);
 
   // 初始默认展开根级所有文件夹 + 主文档的父链
   useEffect(() => {
@@ -318,12 +342,7 @@ export function LibraryDocReader({
     }
     // 展开主文档所在的祖先链
     if (primaryEntryId) {
-      const entryMap = new Map(entries.map((e) => [e.id, e]));
-      let cur = entryMap.get(primaryEntryId);
-      while (cur?.parentId) {
-        toOpen.add(cur.parentId);
-        cur = entryMap.get(cur.parentId);
-      }
+      for (const id of docBrowserEntryPath(parentIds, primaryEntryId)) if (id !== primaryEntryId) toOpen.add(id);
     }
     setExpanded(toOpen);
     if (primaryEntryId && !selectedId) setSelectedId(primaryEntryId);
@@ -513,7 +532,7 @@ export function LibraryDocReader({
             />
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { searchSequence.current++; setSearch(e.target.value); }}
               placeholder="搜索标题或正文..."
               className="w-full h-9 pl-8 pr-3 rounded-xl text-[12px] font-bold outline-none"
               style={{
@@ -531,14 +550,16 @@ export function LibraryDocReader({
         <div className="flex-1 overflow-y-auto py-3 px-2">
           {filteredRoots.length === 0 ? (
             <div className="px-3 py-6 text-center text-[12px] font-semibold" style={{ color: '#78350F' }}>
-              {search.trim() ? '没有找到匹配的文档' : '这本藏书还是空白的...'}
+              {searchLoading ? '搜索中…' : search.trim() ? '没有找到匹配的文档' : '这本藏书还是空白的...'}
             </div>
           ) : (
-            filteredRoots.map((entry) => (
+            <ProgressiveEntries key={search} items={filteredRoots} itemKey={entry => entry.id}
+              revealIndex={filteredRoots.findIndex(entry => revealPath.has(entry.id))} render={entry => (
               <TreeNode
                 key={entry.id}
                 entry={entry}
                 childrenMap={search.trim() ? filteredChildrenMap : childrenMap}
+                revealPath={revealPath}
                 depth={0}
                 selectedId={selectedId}
                 primaryEntryId={primaryEntryId}
@@ -548,8 +569,12 @@ export function LibraryDocReader({
                 onToggle={toggleFolder}
                 onSelect={handleSelectEntry}
               />
-            ))
+            )} />
           )}
+          {searchLoading && <div role="status" className="px-3 py-2 text-[12px]">搜索中…</div>}
+          {searchError && <div role="alert" className="px-3 py-2 text-[12px]">搜索未完成，请重试</div>}
+          {searchPage?.nextCursor && <button type="button" disabled={searchLoading} className="w-full px-3 py-2 text-[12px]"
+            onClick={() => void loadMoreSearch()}>加载更多搜索结果（{searchPage.items.length} / {searchPage.total}）</button>}
         </div>
       </div>
 
@@ -580,6 +605,7 @@ export function LibraryDocReader({
 function TreeNode({
   entry,
   childrenMap,
+  revealPath,
   depth,
   selectedId,
   primaryEntryId,
@@ -591,6 +617,7 @@ function TreeNode({
 }: {
   entry: DocumentEntry;
   childrenMap: Map<string, DocumentEntry[]>;
+  revealPath: ReadonlySet<string>;
   depth: number;
   selectedId?: string;
   primaryEntryId?: string;
@@ -687,11 +714,13 @@ function TreeNode({
       </button>
 
       {isFolder && isOpen &&
-        children.map((child) => (
+        <ProgressiveEntries items={children} itemKey={child => child.id}
+          revealIndex={children.findIndex(child => revealPath.has(child.id))} render={child => (
           <TreeNode
             key={child.id}
             entry={child}
             childrenMap={childrenMap}
+            revealPath={revealPath}
             depth={depth + 1}
             selectedId={selectedId}
             primaryEntryId={primaryEntryId}
@@ -701,7 +730,7 @@ function TreeNode({
             onToggle={onToggle}
             onSelect={onSelect}
           />
-        ))}
+        )} />}
     </>
   );
 }
