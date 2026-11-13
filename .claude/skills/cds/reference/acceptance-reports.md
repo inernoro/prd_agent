@@ -37,9 +37,10 @@
 标准归档脚本负责生成和写入报告；CDS CLI 用于查询归属和真实链接：
 
 ```bash
-python3 .claude/skills/cds/cli/cdscli.py report list --project <projectId>
-python3 .claude/skills/cds/cli/cdscli.py report-folder list --project <projectId>
-python3 .claude/skills/cds/cli/cdscli.py report deeplink <reportId>
+SKILLS_ROOT=$(for base in .claude .agents; do [ -d "$base/skills/cds" ] && { echo "$base/skills"; break; }; done)
+python3 "$SKILLS_ROOT/cds/cli/cdscli.py" report list --project <projectId>
+python3 "$SKILLS_ROOT/cds/cli/cdscli.py" report-folder list --project <projectId>
+python3 "$SKILLS_ROOT/cds/cli/cdscli.py" report deeplink <reportId>
 ```
 
 归档前从标准技能读取当前命令与必填参数，不复制维护另一条上传示例。报告按项目和文件夹归类；标题、Verdict、L0/L1/L2、分支与完整提交号采用标准技能要求。
@@ -62,4 +63,4 @@ CDS 直达深链默认为登录态门控。只有用户需要对外分享时才�
 
 ## 维护此适配说明
 
-本参考和 CDS 核心技能属于五技能分发包，编辑后运行 `python3 .claude/skills/cds/scripts/refresh_manifest.py` 刷新内容摘要清单，并通过 `CDS Skill` 的 CLI 与包一致性检查。文档改动也会改变分发包内容，不能沿用旧摘要。
+本参考和 CDS 核心技能属于五技能分发包，编辑后复用上面解析的技能根，运行 `python3 "$SKILLS_ROOT/cds/scripts/refresh_manifest.py"` 刷新内容摘要清单，并通过 `CDS Skill` 的 CLI 与包一致性检查。文档改动也会改变分发包内容，不能沿用旧摘要。
