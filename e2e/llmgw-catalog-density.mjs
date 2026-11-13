@@ -75,7 +75,22 @@ try {
         const r = el.getBoundingClientRect(); let scroll = el.parentElement;
         while (scroll && !['auto', 'scroll'].includes(getComputedStyle(scroll).overflowY)) scroll = scroll.parentElement;
         const last = el.closest('tbody')?.lastElementChild?.getBoundingClientRect();
-        return { y: r.y, height: r.height, font: getComputedStyle(el).fontSize, viewport: innerWidth, width: document.documentElement.scrollWidth, scrollTail: scroll && last ? scroll.getBoundingClientRect().bottom - last.bottom : null };
+        const area = selector => [...document.querySelectorAll(selector)].filter(node => { const box = node.getBoundingClientRect(); return box.height > 0 && box.bottom <= r.y + 1; }).reduce((sum, node) => sum + node.getBoundingClientRect().height, 0);
+        const coveragePadding = [];
+        for (const node of document.querySelectorAll('.lg-collection-key-overview > div, .lg-collection-key-legacy')) {
+          const box = node.getBoundingClientRect(), css = getComputedStyle(node);
+          if (box.height <= 0 || box.bottom > r.y) continue;
+          coveragePadding.push([box.top, box.top + parseFloat(css.paddingTop) + parseFloat(css.borderTopWidth)], [box.bottom - parseFloat(css.paddingBottom) - parseFloat(css.borderBottomWidth), box.bottom]);
+        }
+        coveragePadding.sort((a, b) => a[0] - b[0]);
+        let paddingHeight = 0, end = -Infinity;
+        for (const [start, bottom] of coveragePadding) { paddingHeight += Math.max(0, bottom - Math.max(start, end)); end = Math.max(end, bottom); }
+        const installer = document.querySelector('#image-layering > :last-child')?.getBoundingClientRect();
+        const source = [...document.querySelectorAll('.lg-entity-detail-facts > div')].find(node => node.querySelector('dt')?.textContent === '来源系统')?.getBoundingClientRect();
+        return { y: r.y, height: r.height, font: getComputedStyle(el).fontSize, viewport: innerWidth, width: document.documentElement.scrollWidth, scrollTail: scroll && last ? scroll.getBoundingClientRect().bottom - last.bottom : null,
+          firstRecordScroll: Math.max(0, r.bottom - innerHeight),
+          nonessentialBeforeData: { bulkMaintenance: [...document.querySelectorAll('summary')].filter(node => node.textContent.includes('高级：批量维护已有模型') && node.parentElement.getBoundingClientRect().bottom <= r.y).reduce((sum, node) => sum + node.parentElement.getBoundingClientRect().height, 0), coverageWrapperPadding: paddingHeight, genericAppIntroduction: area('.lg-app-detail-compact .lg-entity-detail-description, .lg-entity-detail-page:not(.lg-entity-detail-bounded) .lg-entity-detail-description'), installationForm: installer && installer.height > 0 && installer.bottom <= r.y ? installer.height : 0 },
+          sourceFactScroll: source ? Math.max(0, source.bottom - innerHeight) : null };
       });
       const name = `${narrow ? 'narrow' : 'desktop'}-${theme}-${id}`;
       await page.screenshot({ path: path.join(OUT, `${name}.png`) }); results.push({ id: name, provenance: 'deterministic-fixture', metrics });
