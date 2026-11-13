@@ -35,21 +35,38 @@ function reportAnchorPlugin(prefix: string) {
   return () => (tree: unknown) => {
     const slugger = new GithubSlugger();
     const text = (node: ReportMarkdownNode): string => node.value ?? (node.children ?? []).map(text).join('');
-    const visit = (node: ReportMarkdownNode) => {
-      if (/^h[1-6]$/.test(node.tagName ?? '')) {
+    const nodes: ReportMarkdownNode[] = [];
+    const collect = (node: ReportMarkdownNode) => { nodes.push(node); node.children?.forEach(collect); };
+    collect(tree as ReportMarkdownNode);
+    // GFM already emits footnote IDs and ARIA references; keep their graph intact when scoping it.
+    const targets = new Map<string, string>();
+    for (const node of nodes) {
+      const id = node.properties?.id;
+      if (typeof id === 'string' && id) targets.set(id, `${prefix}-${id}`);
+    }
+    for (const node of nodes) {
+      let id = typeof node.properties?.id === 'string' ? node.properties.id : undefined;
+      if (!id && /^h[1-6]$/.test(node.tagName ?? '')) {
         const slug = headingTextToSlug(text(node), slugger, { alreadyRendered: true }).id || slugger.slug('section');
-        node.properties = { ...node.properties, id: `${prefix}-${slug}` };
+        id = slug;
+        while (targets.has(id)) id = slugger.slug(slug);
+        targets.set(id, `${prefix}-${id}`);
       }
+      if (id) node.properties = { ...node.properties, id: targets.get(id)! };
+    }
+    for (const node of nodes) {
       const href = node.tagName === 'a' ? node.properties?.href : undefined;
       if (typeof href === 'string' && href.startsWith('#')) {
         try {
           const fragment = decodeURIComponent(href.slice(1));
-          node.properties!.href = '#' + encodeURIComponent(prefix + (fragment ? `-${fragment}` : ''));
+          const target = fragment ? targets.get(fragment) : prefix;
+          if (target) node.properties!.href = '#' + encodeURIComponent(target);
         } catch { /* Invalid fragments remain inert in the scoped click handler. */ }
       }
-      node.children?.forEach(visit);
-    };
-    visit(tree as ReportMarkdownNode);
+      const describedBy = node.properties?.ariaDescribedBy;
+      const references = Array.isArray(describedBy) ? describedBy : typeof describedBy === 'string' ? describedBy.split(/\s+/) : [];
+      if (references.length) node.properties!.ariaDescribedBy = references.map(id => targets.get(id) ?? id);
+    }
   };
 }
 
@@ -149,18 +166,18 @@ export function RichTextMarkdownContent({
   };
   return <>
     <div ref={reportRoot} id={anchorPrefix} className={`surface-inset rounded-xl p-3 ${className ?? ''}`.trim()}
-      style={{ minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', color: 'var(--text-primary)' }}>
+      style={{ position: 'relative', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', color: 'var(--text-primary)' }}>
       {showRealtimeLabel && <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>实时预览</div>}
       <div className="text-[14px] leading-relaxed text-left">
         <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[anchors]} components={{
           p: ({ children }) => <div className="my-2 whitespace-pre-wrap">{children}</div>,
           h1: ({ children, id }) => <h1 id={id} className="text-[20px] font-semibold mt-4 mb-2" style={{ ...serifStyle, scrollMarginTop: '1rem' }}>{children}</h1>,
-          h2: ({ children, id }) => <h2 id={id} className="text-[18px] font-semibold mt-4 mb-2" style={{ ...serifStyle, scrollMarginTop: '1rem' }}>{children}</h2>,
+          h2: ({ children, id, className }) => <h2 id={id} className={`text-[18px] font-semibold mt-4 mb-2 ${className ?? ''}`.trim()} style={{ ...serifStyle, scrollMarginTop: '1rem' }}>{children}</h2>,
           h3: ({ children, id }) => <h3 id={id} className="text-[16px] font-semibold mt-3 mb-2" style={{ ...serifStyle, scrollMarginTop: '1rem' }}>{children}</h3>,
           ul: ({ children }) => <ul className="list-disc pl-5 my-2">{children}</ul>,
           ol: ({ children }) => <ol className="list-decimal pl-5 my-2">{children}</ol>,
           blockquote: ({ children }) => <blockquote style={{ borderLeft: '3px solid var(--accent-claude)', paddingLeft: 12, margin: '12px 0', color: 'var(--text-secondary)' }}>{children}</blockquote>,
-          a: ({ href, children }) => <a href={href} onClick={event => followAnchor(event, href)} target={href?.startsWith('#') ? undefined : '_blank'} rel="noopener noreferrer"
+          a: ({ href, children, node: _node, ...props }) => <a {...props} href={href} onClick={event => followAnchor(event, href)} target={href?.startsWith('#') ? undefined : '_blank'} rel="noopener noreferrer"
             style={{ color: 'var(--accent-fg-info)', textDecoration: 'underline', textUnderlineOffset: 3 }}>{children}</a>,
           table: ({ children }) => <div role="region" aria-label="报告表格，可横向滚动查看全部列" tabIndex={0}
             style={{ overflowX: 'auto', maxWidth: '100%', margin: '12px 0' }}>
