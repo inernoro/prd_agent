@@ -94,6 +94,7 @@ import { createLlmGatewaySsoTicket, getAdminNotifications, uploadMyAvatar } from
 import type { AdminNotificationItem, GetAdminNotificationsResponse } from '@/services/contracts/notifications';
 import { NotificationFacts } from '@/components/notifications/NotificationFacts';
 import { useNotificationActions } from '@/components/notifications/useNotificationActions';
+import { useNotificationToast } from '@/components/notifications/useNotificationToast';
 import { notificationToastKey } from '@/lib/notificationPresentation';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
@@ -722,10 +723,17 @@ export default function AppShell() {
     const href = await resolveLlmGatewayHref(returnTo);
     if (href) window.location.assign(href);
   }, [resolveLlmGatewayHref]);
-  const toastNotification = useMemo(
-    () => activeNotifications.find((n) => !dismissedToastIds.has(notificationToastKey(n))),
-    [activeNotifications, dismissedToastIds]
-  );
+  const dismissToastKey = useCallback((key: string) => {
+    setDismissedToastIds(previous => {
+      const next = new Set(previous).add(key);
+      try { sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next))); } catch { /* noop */ }
+      return next;
+    });
+  }, []);
+  const pendingToastNotification = useNotificationToast({ notifications: activeNotifications, dismissed: dismissedToastIds,
+    paused: toastHovering, snoozed: isSnoozed, collapsed: toastCollapsed,
+    onDismiss: dismissToastKey, onCollapsedChange: setToastCollapsed });
+  const toastNotification = pendingToastNotification ?? (toastCollapsed ? activeNotifications[0] : undefined);
 
   const loadNotifications = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setNotificationsLoading(true);
@@ -757,6 +765,7 @@ export default function AppShell() {
 
   // 收起当前弹窗：不改变通知确认状态或故障状态
   const dismissAllToasts = useCallback(() => {
+    setToastCollapsed(true);
     setDismissedToastIds((prev) => {
       const next = new Set(prev);
       for (const n of activeNotifications) next.add(notificationToastKey(n));
@@ -768,6 +777,7 @@ export default function AppShell() {
   }, [activeNotifications]);
 
   const dismissToast = useCallback((id: string) => {
+    setToastCollapsed(true);
     setDismissedToastIds((prev) => {
       const next = new Set(prev);
       const item = activeNotifications.find(notification => notification.id === id);
@@ -781,31 +791,12 @@ export default function AppShell() {
     });
   }, [activeNotifications]);
 
-  // 自动消失逻辑：悬浮或收缩时暂停计时
-  // 关键修复：超时后一次性 dismiss 全部当前通知，防止逐条弹出形成无限循环
   useEffect(() => {
-    if (!toastNotification) return;
-    if (toastHovering || toastCollapsed || isSnoozed) return; // 免打扰时不静默清除,只暂停弹出
-    const timer = window.setTimeout(() => {
-      setDismissedToastIds((prev) => {
-        const next = new Set(prev);
-        for (const n of activeNotifications) next.add(notificationToastKey(n));
-        try {
-          sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next)));
-        } catch { /* noop */ }
-        return next;
-      });
-    }, 12000);
-    return () => window.clearTimeout(timer);
-  }, [toastNotification, toastHovering, toastCollapsed, isSnoozed, activeNotifications]);
+    if (activeNotifications.length > 0) return;
+    setToastCollapsed(false);
+    setToastHovering(false);
+  }, [activeNotifications.length]);
 
-  // 当通知消失时，重置收缩状态
-  useEffect(() => {
-    if (!toastNotification) {
-      setToastCollapsed(false);
-      setToastHovering(false);
-    }
-  }, [toastNotification]);
 
   useEffect(() => {
     if (!user?.userId) return;
@@ -864,16 +855,17 @@ export default function AppShell() {
                 }));
               }
               if (isSnoozed) clearSnooze(); // 点安静铃铛 = 立即结束免打扰并查看
-              setToastCollapsed(false);
+              if (pendingToastNotification) setToastCollapsed(false);
+              else setNotificationDialogOpen(true);
             }}
             onMouseEnter={() => setToastHovering(true)}
             onMouseLeave={() => setToastHovering(false)}
-            aria-label={isSnoozed ? '免打扰中,点击恢复通知' : '展开通知'}
-            title={isSnoozed ? '免打扰中,点击恢复通知' : '展开通知'}
+            aria-label={isSnoozed ? '免打扰中,点击恢复通知' : pendingToastNotification ? '展开通知' : '查看通知列表'}
+            title={isSnoozed ? '免打扰中,点击恢复通知' : pendingToastNotification ? '展开通知' : '查看通知列表'}
           >
             {isSnoozed
               ? <BellOff size={18} style={{ color: 'var(--text-muted)' }} />
-              : <TypeIcon size={18} style={{ color: variant.fg }} />}
+              : <Bell size={18} style={{ color: variant.fg }} />}
             {/* 未读数徽章 */}
             <span
               className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full flex items-center justify-center text-[10px] font-bold"

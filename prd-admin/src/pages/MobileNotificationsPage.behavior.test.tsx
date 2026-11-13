@@ -96,6 +96,7 @@ describe('通知动作与事实真实组件交互', () => {
 
   it.each([
     ['fallback_succeeded', '该次请求备用成功'],
+    ['request_succeeded', '该次请求成功'],
     ['all_failed', '该次请求已尝试线路均失败'],
     ['unknown', '该次请求结果未确认'],
   ])('直接展示服务端%s结果，不根据故障级别猜测请求结果', async (requestOutcome, expected) => {
