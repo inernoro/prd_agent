@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AlarmClock, ArrowDown, ArrowUp, CalendarClock, Globe2, Pencil, Play, Plus, RefreshCw, Rocket, Save, SlidersHorizontal, Terminal, Trash2, type LucideIcon } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -117,6 +117,21 @@ const RUN_FILTERS: { key: RunFilterKey; label: string }[] = [
 
 export function TaskSchedulePage(): JSX.Element {
   const location = useLocation();
+  const [selectionParams, setSelectionParams] = useSearchParams();
+  const selectedId = selectionParams.get('job') || '';
+  const setSelectedId = useCallback((id: string) => {
+    setSelectionParams(previous => {
+      const next = new URLSearchParams(previous);
+      if (id) next.set('job', id); else next.delete('job');
+      return next;
+    }, { replace: true });
+  }, [setSelectionParams]);
+  // 只改变任务选择不应重拉目录或重新展示整页加载器。
+  const projectSearch = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    params.delete('job');
+    return params.toString();
+  }, [location.search]);
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [runs, setRuns] = useState<ScheduledJobRun[]>([]);
@@ -137,7 +152,6 @@ export function TaskSchedulePage(): JSX.Element {
   const [selectedRuns, setSelectedRuns] = useState<{ jobId: string; runs: ScheduledJobRun[]; failed: boolean }>({ jobId: '', runs: [], failed: false });
   /** 完整史拉失败后的重试计数：进 effect 的依赖，加一次就重拉一次。 */
   const [historyRetry, setHistoryRetry] = useState(0);
-  const [selectedId, setSelectedId] = useState(() => new URLSearchParams(location.search).get('job') || '');
   const [form, setForm] = useState<FormState>(() => emptyForm());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -174,7 +188,7 @@ export function TaskSchedulePage(): JSX.Element {
         apiRequest<{ runs: ScheduledJobRun[] }>('/api/scheduled-jobs/runs?limit=400'),
       ]);
       const nextProjects = projectRes.projects || [];
-      const initialProjectId = resolveTaskScheduleProjectId(location.search, nextProjects);
+      const initialProjectId = resolveTaskScheduleProjectId(projectSearch, nextProjects);
       setProjects(nextProjects);
       setJobs(jobRes.jobs || []);
       setRuns(runRes.runs || []);
@@ -184,7 +198,7 @@ export function TaskSchedulePage(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [location.search]);
+  }, [projectSearch]);
 
   useEffect(() => {
     void load();
@@ -1567,6 +1581,10 @@ function RunRow({
             </div>
           ) : null}
           {run.scheduledFor ? <div className="mb-2 text-xs">应执行：{new Date(run.scheduledFor).toLocaleString()} · {run.failureKind || runStatusLabel(run.status)}</div> : null}
+          {run.recovery ? <div data-recovery-record className="mb-2 text-xs text-warn">
+            已核实已有产物：{new Date(run.recovery.verifiedAt).toLocaleString()}；原失败：{run.recovery.error || '执行失败，原因见原运行记录'}
+            {run.recovery.failedAt ? <span>（{new Date(run.recovery.failedAt).toLocaleString()}）</span> : null}
+          </div> : null}
           {run.artifacts?.map(artifact => <a key={artifact.reportId} className="mb-2 block text-xs underline" href={`/reports?report=${encodeURIComponent(artifact.reportId)}`}>已验证报告 · {artifact.sha256.slice(0, 12)} · {artifact.sizeBytes} 字节</a>)}
           {run.error ? <div className="mb-2 text-[0.7188rem] text-destructive">{run.error}</div> : null}
           {run.log ? (

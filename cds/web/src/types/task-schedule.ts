@@ -74,6 +74,7 @@ export interface ScheduledJobRun {
   status: RunStatus;
   scheduledFor?: string;
   failureKind?: string;
+  recovery?: { failureKind?: string; error?: string; failedAt?: string; verifiedAt: string };
   artifacts?: Array<{ reportId: string; sha256: string; sizeBytes: number }>;
   queuedAt: string;
   startedAt?: string;

@@ -17,6 +17,7 @@
     "smoke:mobile-layout": "node scripts/mobile-layout-smoke.mjs",
     "smoke:branch-lifecycle": "node scripts/branch-lifecycle-smoke.mjs",
     "smoke:mobile-layout:offline": "node scripts/mobile-layout-smoke.mjs --offline",
+    "smoke:task-health-recovery": "node scripts/task-health-recovery-smoke.mjs",
     "smoke:agent-starter-mobile": "node scripts/agent-starter-mobile-probe.mjs",
     "smoke:agent-setup-scope": "node scripts/agent-setup-scope-probe.mjs",
     "sync:skill-manifest": "tsx scripts/sync-cds-skill-manifest.ts",

@@ -130,6 +130,17 @@ jobs:
       - name: Install Chromium for layout probes
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Task health recovery diagnostic
+        run: pnpm run smoke:task-health-recovery
+
+      - name: Preserve task health recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-health-recovery-evidence
+          path: work/task-health-recovery/
+          if-no-files-found: ignore
+
       - name: Agent starter mobile reachability
         run: pnpm run smoke:agent-starter-mobile
 

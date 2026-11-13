@@ -2895,6 +2895,13 @@ export interface ScheduledJobRun {
   status: ScheduledJobRunStatus;
   scheduledFor?: string;
   failureKind?: ScheduledJobFailureKind;
+  /** 核实恢复不能抹掉原故障；同一运行保留首次失败与验证时刻。 */
+  recovery?: {
+    failureKind?: ScheduledJobFailureKind;
+    error?: string;
+    failedAt?: string;
+    verifiedAt: string;
+  };
   phase?: 'executing' | 'validating';
   actionCount?: number;
   deadlineAt?: string;

@@ -137,6 +137,28 @@ describe('自动化任务健康与安全恢复', () => {
     expect(recovered.status).toBe('success'); expect(shell.exec).toHaveBeenCalledTimes(1);
     expect(state.getScheduledJob(row.id)!.recoveryRequiredRunId).toBeUndefined();
   });
+  it('恢复后仍保留原失败种类、原因和时间，不能抹掉故障记录', async () => {
+    const row = job({ completion: { type: 'reports', minCount: 1 } });
+    const failed = await service.runJob(row.id, 'schedule', { scheduledFor: row.nextRunAt! });
+    const original = { failureKind: failed.failureKind, error: failed.error, failedAt: failed.finishedAt };
+    archive(failed);
+    const recovered = await service.recoverRun(row.id, failed.id);
+    expect(recovered.status).toBe('success');
+    expect(recovered.recovery).toMatchObject(original);
+    expect(recovered.recovery!.verifiedAt).toEqual(expect.any(String));
+    expect(state.getScheduledJob(row.id)!.lastScheduledRun).toMatchObject({ recovery: original });
+    await state.flush();
+    const reloaded = new StateService(path.join(dir, 'state.json'), dir); reloaded.load();
+    expect(reloaded.listScheduledJobRuns({ jobId: row.id })[0].recovery).toMatchObject(original);
+  });
+  it('漏跑不能凭人工补报告标记为定时成功', async () => {
+    const row = job({ nextRunAt: new Date(Date.now() - 300_000).toISOString(), completion: { type: 'reports', minCount: 1 } });
+    await service.tick(); const missed = state.listScheduledJobRuns({ jobId: row.id })[0];
+    archive(missed);
+    await expect(service.recoverRun(row.id, missed.id)).rejects.toThrow('漏跑');
+    expect(service.health(state.getScheduledJob(row.id)!).state).toBe('missed');
+    expect(shell.exec).not.toHaveBeenCalled();
+  });
   it('拒绝旧运行、跨项目、缺正文、空正文、不合格验收与非持久归档产物', async () => {
     const run: ScheduledJobRun = { id: 'sjr_fixture', jobId: 'report-job', projectId: 'project', trigger: 'schedule', status: 'running', queuedAt: new Date().toISOString(), completion: { type: 'reports', minCount: 1, allowedVerdicts: ['pass'] } };
     archive(run, { scheduledJobRunId: 'old-run' }); archive(run, { projectId: 'other' });

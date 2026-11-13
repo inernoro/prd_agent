@@ -250,13 +250,17 @@ export class ScheduledJobService {
     const run = this.deps.stateService.listScheduledJobRuns({ jobId, limit: 500 }).find(r => r.id === runId)
       || [job?.lastScheduledRun, job?.lastManualRequest].find(r => r?.id === runId);
     if (!job || !run || this.running.has(jobId) || run.status !== 'failed') throw new Error('运行不存在、未失败或仍在执行');
+    if (run.failureKind === 'missed') throw new Error('漏跑批次没有执行，不能通过补报告标记为定时成功');
     this.running.add(jobId);
     try {
       if (run.phase !== 'validating' && (run.actionCount || 1) > 1) throw new Error('多动作任务尚未确认全部执行完成，不能只凭部分产物宣告恢复成功');
       if (run.completion) run.artifacts = await withTaskDeadline(validateJobReports(this.deps.stateService, run), Math.max(1, job.timeoutSeconds) * 1000);
       else if (!run.releaseId || !this.deps.release.getRun(run.releaseId) || !isSuccessfulReleaseRun(this.deps.release.getRun(run.releaseId)!)) throw new Error('没有可验证的产物或成功发布；不会自动重放');
+      const verifiedAt = new Date().toISOString();
+      run.recovery = { failureKind: run.failureKind, error: run.error, failedAt: run.finishedAt, verifiedAt };
       run.status = 'success'; run.failureKind = undefined; run.error = undefined;
-      run.finishedAt = new Date().toISOString();
+      run.finishedAt = verifiedAt;
+      run.durationMs = Math.max(0, Date.parse(verifiedAt) - Date.parse(run.startedAt || run.queuedAt));
       this.deps.stateService.upsertScheduledJobRun(run);
       this.patchJobAfterRun(job, run);
       const latest = this.deps.stateService.getScheduledJob(jobId);
