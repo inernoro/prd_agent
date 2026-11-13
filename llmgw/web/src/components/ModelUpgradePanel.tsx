@@ -7,6 +7,7 @@ import { canUseCapability } from '@/lib/access';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { CollectionFacts, CollectionView } from '@/components/CollectionView';
 import { capabilityLabel } from '@/components/ProviderSetup';
+import { isReferenceCoverageVerified } from '@/components/ModelReferenceMigrationPanel';
 import { DetailsBlock, FormGrid } from '@/components/PageShell';
 import { Button, Chip, InlineAlert, ReadOnlyNotice, SectionLoader, Spinner } from '@/components/ui';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, SECTION_TITLE } from '@/lib/typography';
@@ -31,7 +32,7 @@ const BUSY_LABELS: Record<string, string> = { ...ACTIONS, save: '正在保存策
 const HISTORY_ACTIONS: Record<string, string> = { check: '检查版本', validate: '验证候选', promote: '采用候选', rollback: '回滚升级', policy: '更新策略', policy_update: '更新策略', 'policy.update': '更新策略' };
 const HISTORY_STATUS: Record<string, string> = { queued: '等待执行', running: '执行中', succeeded: '成功', success: '成功', completed: '已完成', failed: '未完成', blocked: '已阻止' };
 
-export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logicalModelId: string; onRoutingChanged?: () => void }) {
+export function ModelUpgradePanel({ logicalModelId, onRoutingChanged, onReferenceCoverage }: { logicalModelId: string; onRoutingChanged?: () => void; onReferenceCoverage?: () => void }) {
   const { tenant } = useAuth();
   const { confirm } = useDialogs();
   const [view, setView] = useState<ModelUpgradeView | null>(null);
@@ -47,6 +48,8 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
+  const [coverageNow, setCoverageNow] = useState(Date.now());
+  useEffect(() => { const timer = window.setInterval(() => setCoverageNow(Date.now()), 30000); return () => window.clearInterval(timer); }, []);
   const [evidenceRequestId, setEvidenceRequestId] = useState('');
   const [validationMode, setValidationMode] = useState<'evidence' | 'canary'>('evidence');
   const [modelLookupFailed, setModelLookupFailed] = useState(false);
@@ -199,6 +202,8 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
   }
 
   return <section data-testid="model-upgrade-panel" aria-label="升级策略" style={{ display: 'flex', flexDirection: 'column', gap: GAP.section, padding: 14, minWidth: 0 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>{onReferenceCoverage ? <Button size="sm" onClick={onReferenceCoverage}>全量使用位置</Button> : <Link to={`/logical-models?references=${encodeURIComponent(logicalModelId)}`}>全量使用位置</Link>}<span style={HINT_TEXT}>采用新版本时也需通过使用位置覆盖核验。</span></div>
+    {view?.referenceCoverage ? <InlineAlert tone={(!error && !loading && isReferenceCoverageVerified(view.referenceCoverage, coverageNow)) ? 'ok' : 'info'}>{(!error && !loading && isReferenceCoverageVerified(view.referenceCoverage, coverageNow)) ? '使用位置核验在有效期内' : '使用位置需重新核对'} · 阻断 {view.referenceCoverage.blocked} · 未确认 {view.referenceCoverage.unknown} · 残留 {view.referenceCoverage.residual}</InlineAlert> : null}
     {loading ? <SectionLoader text="正在读取升级策略" /> : null}
     {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
     {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}

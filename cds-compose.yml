@@ -448,6 +448,7 @@ services:
       mongodb: { condition: service_healthy }
     environment:
       ASPNETCORE_ENVIRONMENT: Production
+      LlmGateway__ModelReferences__MapDeploymentIdentity: "prd-agent:cds::${VITE_GIT_BRANCH}"
       # mongo 跑 --auth，只给地址会被拒（Unauthorized）。CDS_MONGODB_URL 由 CDS 从 mongo 容器自己的
       # MONGO_INITDB_ROOT_* 派生，userinfo 段已做百分号编码——别改回手拼 user:pass@host，
       # 口令里一个 @ 就能把主机名解析歪。

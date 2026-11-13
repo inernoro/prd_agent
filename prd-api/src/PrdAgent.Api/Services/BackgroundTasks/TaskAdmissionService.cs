@@ -153,7 +153,7 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
             MaxCalls = canaryBudget is not null ? 1 : origin == TaskExecutionOrigins.Interactive ? policy.InteractiveMaxCalls
                 : origin == TaskExecutionOrigins.Scheduled ? 8 : policy.AgentMaxCalls,
             MaxRuns = canaryBudget is not null ? 1 : origin == TaskExecutionOrigins.Interactive ? 16
-                : origin == TaskExecutionOrigins.Scheduled ? 1 : 2,
+                : origin == TaskExecutionOrigins.Scheduled ? 1 : intent.DeclaredRunCount ?? 2,
             CreatedAt = now,
             ExpiresAt = now + GatewayTaskPermitRecord.MaximumLifetime,
         };

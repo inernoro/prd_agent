@@ -21,7 +21,7 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
   const router = await import('react-router-dom');
   globalThis.__offeringDeleteRouter = { ...router.default, ...router };
   const offering = (id, enabled) => ({ id, targetKind: 'model', targetId: `model-${id}`, targetName: id, upstreamModelId: id, enabled, priority: 10, weight: 1, queuePosition: enabled ? 1 : 0, targetUsable: true, healthStatus: 0 });
-  const fixture = { role: 'admin', reads: 0, calls: [], prompts: [], typed: 'exact', failure: null, pending: false,
+  const fixture = { role: 'admin', reads: 0, calls: [], checks: [], deleted: [], prompts: [], typed: 'exact', failure: null, pending: false,
     items: [{ id: 'logical-quality', publicId: 'chat-quality', name: '公开聊天', identityKind: 'stable', aliases: ['legacy-chat'], modelType: 'chat', capabilities: ['chat'], allowedAppCallerCodes: ['arena.run'], defaultForAppCallerCodes: ['arena.run'], isDefaultForType: true, routingStrategy: 'priority', enabled: true,
       offerings: [offering('official-enabled', true), offering('legacy-disabled', false), offering('protected-disabled', false), offering('pending-disabled', false)] }],
   };
@@ -37,7 +37,9 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
       if (id.endsWith('/src/lib/api.ts')) return apiNames.map(name => {
         if (name === 'getLogicalModels') return 'export async function getLogicalModels(){const f=globalThis.__offeringDeleteFixture;f.reads++;return {success:true,data:{items:structuredClone(f.items)}}}';
         if (name === 'getExchangeMeta') return 'export async function getExchangeMeta(){return {success:true,data:{modelTypes:[{value:"chat",label:"聊天"}]}}}';
-        if (name === 'deleteModelOffering') return 'export async function deleteModelOffering(logicalId,offeringId){const f=globalThis.__offeringDeleteFixture;f.calls.push({logicalId,offeringId});if(f.pending)return new Promise(resolve=>{f.complete=resolve});if(f.failure)return {success:false,error:{code:"OFFERING_IN_USE",message:f.failure}};return {success:true,data:{logicalModelId:logicalId,offeringId,removed:true}}}';
+        if (name === 'checkLogicalModelDeletion') return 'export async function checkLogicalModelDeletion(id){const f=globalThis.__offeringDeleteFixture;f.checks.push(id);return {success:true,data:{canDelete:id!=="blocked-model",reasons:id==="blocked-model"?["仍有业务配置，请先迁移"]:[],offerings:17}}}';
+        if (name === 'deleteLogicalModel') return 'export async function deleteLogicalModel(id){const f=globalThis.__offeringDeleteFixture;f.deleted.push(id);return {success:true,data:{offeringsDeleted:0}}}';
+        if (name === 'deleteModelOffering') return 'export async function deleteModelOffering(logicalId,offeringId){const f=globalThis.__offeringDeleteFixture;f.calls.push({logicalId,offeringId});if(f.pending)return new Promise(resolve=>{f.complete=resolve});if(f.failure)return {success:false,error:{code:"OFFERING_IN_USE",message:f.failure}};f.items=f.items.map(x=>x.id===logicalId?{...x,offerings:x.offerings.filter(o=>o.id!==offeringId)}:x);return {success:true,data:{logicalModelId:logicalId,offeringId,removed:true}}}';
         return `export async function ${name}(){return {success:true,data:{items:[]}}}`;
       }).join('\n');
     } }],
@@ -51,7 +53,13 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
     const { LogicalModelsPage } = await server.ssrLoadModule('/src/pages/LogicalModelsPage.tsx');
     root = createRoot(document.getElementById('root'));
     const render = key => act(async () => root.render(React.createElement(globalThis.__offeringDeleteRouter.MemoryRouter, {}, React.createElement(LogicalModelsPage, { key }))));
-    await render('admin'); await click(buttons('查看')[0]);
+    await render('admin');
+    await click(buttons('绑定上游')[0]); assert.ok(buttons('保存绑定').length);
+    await click(document.querySelector('[aria-label="关闭详情"]'));
+    await click(buttons('测试')[0]);
+    assert.equal(buttons('保存绑定').length, 0, '行内测试不能带出前次关闭的空白绑定表单');
+    await click(document.querySelector('[aria-label="关闭详情"]'));
+    await click(buttons('查看')[0]);
     assert.equal(remove('official-enabled').disabled, true, '启用线路必须先停用');
     assert.equal(remove('legacy-disabled').disabled, false);
     fixture.typed = null; await click(remove('legacy-disabled'));
@@ -63,7 +71,7 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
     assert.deepEqual(fixture.calls[0], { logicalId: 'logical-quality', offeringId: 'legacy-disabled' });
     assert.equal(row('legacy-disabled'), undefined, '成功后从同一列表局部移除');
     assert.ok(row('official-enabled'), '兄弟官方线路保持');
-    assert.equal(fixture.reads, 1, '不重新加载整页或覆盖其他模型配置');
+    assert.equal(fixture.reads, 2, '删除后重新读取服务端权威线路状态');
     const prompt = fixture.prompts.at(-1);
     assert.equal(prompt.requireExact, 'legacy-disabled'); assert.equal(prompt.tone, 'danger');
     assert.match(prompt.description, /无法撤销/); assert.match(prompt.description, /公开模型、兼容标识及 MAP 配置会保留/);
@@ -77,6 +85,7 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
     assert.ok(buttons('删除线路').every(button => button.disabled), '确认或DELETE待返回时阻止第二次删除');
     await click(remove('protected-disabled'));
     assert.equal(fixture.calls.length, 3, 'busy期间不得重复提交');
+    fixture.items[0].offerings = fixture.items[0].offerings.filter(offering => offering.id !== 'pending-disabled');
     await act(async () => fixture.complete({ success: true, data: { logicalModelId: 'logical-quality', offeringId: 'pending-disabled', removed: true } }));
     assert.equal(row('pending-disabled'), undefined);
     assert.equal(remove('protected-disabled').disabled, false);
@@ -85,6 +94,22 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
     fixture.role = 'viewer'; await render('viewer'); await click(buttons('查看')[0]);
     assert.equal(buttons('删除线路').length, 0, '只读角色不可见写操作');
     assert.equal(fixture.calls.length, 3);
+    fixture.role = 'admin'; fixture.pending = false;
+    fixture.items = ['safe-model', 'blocked-model'].map(id => ({...fixture.items[0], id, publicId:id, name:id, enabled:false, isDefaultForType:false, defaultForAppCallerCodes:[], offerings:[]}));
+    await render('batch'); await click(buttons('选择已停用')[0]);
+    fixture.typed = null; await click(buttons('删除所选')[0]);
+    assert.deepEqual(fixture.deleted, [], '预检和取消确认不能执行删除');
+    assert.deepEqual(fixture.checks, ['safe-model', 'blocked-model']);
+    assert.match(fixture.prompts.at(-1).description, /safe-model.*全部 17 条线路/, '确认数包含服务端返回的隐藏旧版线路，不能采用可见0条');
+    assert.match(fixture.prompts.at(-1).description, /含被替换的旧版/);
+    await act(async () => { const select = document.querySelector('select[aria-label="清单状态筛选"]'); select.value = 'disabled'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    await click(buttons('删除')[0]);
+    assert.match(fixture.prompts.at(-1).description, /全部 17 条线路/, '单项删除也使用服务端计数');
+    fixture.typed = 'exact'; await click(buttons('删除所选')[0]);
+    assert.deepEqual(fixture.deleted, ['safe-model'], '仅删除预检通过项，保留有引用模型');
+    assert.match(fixture.prompts.at(-1).description, /blocked-model.*仍有业务配置/);
+    assert.match(document.body.textContent, /已删除 1\/2/);
+    assert.equal(buttons('下一页').length, 0);
   } finally {
     if (root) await act(async () => root.unmount());
     await server.close(); await rm(cacheDir, { recursive: true, force: true }); dom.window.close();

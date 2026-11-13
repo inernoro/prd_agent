@@ -690,6 +690,8 @@ export type UpsertPoolModelRequest = {
 
 // ── 平台（密钥明文永不下发；只有头尾打码的指纹）──
 export type PlatformItem = {
+  recentCallStatus?: 'quota_exhausted' | 'rate_limited' | 'rejected' | 'service_error' | 'succeeded' | 'failed' | null;
+  recentCallAt?: string | null;
   proxy?: UpstreamProxyView | null;
   id: string; name: string; platformType: string; providerId?: string | null; apiUrl?: string | null;
   enabled: boolean; maxConcurrency: number; remark?: string | null; hasKey: boolean;
@@ -1858,6 +1860,7 @@ export type ModelUpgradeView = {
   modelType: string;
   version: number;
   policy: ModelUpgradePolicy;
+  referenceCoverage?: ReferenceCoverage | null;
   phase: ModelUpgradePhase;
   message: string;
   current: { offeringId: string; modelId: string; providerId: string; upstreamModelId: string };
@@ -1874,3 +1877,23 @@ export type ModelUpgradeView = {
 export type UpdateModelUpgradePolicyRequest = ModelUpgradePolicy & { version: number };
 export type ModelUpgradeAction = 'check' | 'validate' | 'promote' | 'rollback';
 export type ModelUpgradeActionRequest = { version: number; requestId?: string; mode?: 'evidence' | 'canary' };
+
+export type ReferenceIdentity = {
+  logicalId?: string | null; publicId?: string | null; aliases: string[]; poolIds: string[];
+  providerId?: string | null; physicalModelId?: string | null; upstreamModelId?: string | null; offeringId?: string | null;
+};
+export type ReferenceCoverage = {
+  registryVersion: string; registryHash: string; canComplete: boolean; verified?: boolean; verifiedAt?: string | null; validUntil?: string | null;
+  affected: number; migrated: number; blocked: number; unknown: number; residual: number;
+  consumers: Array<{ key: string; label?: string; count: number; affected: number; migrated: number; blocked: number; unknown: number; residual: number; reasons: string[] }>;
+  items: Array<{ consumerKey: string; collection: string; recordId: string; ownerId?: string | null; path: string; status: string; reason?: string | null }>;
+};
+export type ReferenceMigrationPlan = {
+  id?: string; intentId: string; revision: number; tenantId: string; actorId: string;
+  mapping: { tenantId: string; source: ReferenceIdentity; target: ReferenceIdentity };
+  coverage: ReferenceCoverage; status: 'planned' | 'blocked' | 'applying' | 'conflict' | 'completed';
+  canResume?: boolean;
+  createdAt: string; updatedAt: string;
+};
+export type CreateReferenceMigrationPlanRequest = { sourceLogicalId: string; targetLogicalId: string; clientRequestId: string };
+export type RepairableModelUsage = { consumerKey: string; recordId: string; path: string; modelType: string; value: string; platformId?: string | null; logicalId?: string | null; status: 'available' | 'orphan' | 'unknown'; canConfirmPurpose?: boolean; fingerprint?: string | null };

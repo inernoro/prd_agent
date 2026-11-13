@@ -599,8 +599,8 @@ export function testPlatformConnection(id: string): Promise<ApiResponse<Platform
 export function getUpstreamModels(id: string): Promise<ApiResponse<UpstreamModelsData>> {
   return apiRequest<UpstreamModelsData>(`/platforms/${id}/upstream-models`);
 }
-export function importUpstreamModels(id: string, models: ImportUpstreamModelEntry[]): Promise<ApiResponse<ImportUpstreamModelsResult>> {
-  return apiRequest<ImportUpstreamModelsResult>(`/platforms/${id}/models/import`, { method: 'POST', body: { models } });
+export function importUpstreamModels(id: string, models: ImportUpstreamModelEntry[], options?: { publishToWhitelist?: boolean }): Promise<ApiResponse<ImportUpstreamModelsResult>> {
+  return apiRequest<ImportUpstreamModelsResult>(`/platforms/${id}/models/import`, { method: 'POST', body: { models, ...options } });
 }
 export function getModels(params?: { platformId?: string; enabled?: boolean }): Promise<ApiResponse<ModelsData>> {
   return apiRequest<ModelsData>('/models', {
@@ -1072,4 +1072,42 @@ export function saveModelUpgradePolicy(logicalModelId: string, body: import('./t
 }
 export function runModelUpgradeAction(logicalModelId: string, action: import('./types').ModelUpgradeAction, body: import('./types').ModelUpgradeActionRequest): Promise<ApiResponse<import('./types').ModelUpgradeView>> {
   return apiRequest<import('./types').ModelUpgradeView>(`/model-upgrades/${encodeURIComponent(logicalModelId)}/${action}`, { method: 'POST', body });
+}
+
+export function getModelReferenceCoverage(sourceLogicalId: string, targetLogicalId: string): Promise<ApiResponse<import('./types').ReferenceCoverage>> {
+  return apiRequest('/model-reference-migrations/coverage', { query: { sourceLogicalId, targetLogicalId } });
+}
+export function createModelReferenceMigrationPlan(body: import('./types').CreateReferenceMigrationPlanRequest): Promise<ApiResponse<import('./types').ReferenceMigrationPlan>> {
+  return apiRequest('/model-reference-migrations/plans', { method: 'POST', body });
+}
+export function getModelReferenceMigrationPlan(intentId: string): Promise<ApiResponse<import('./types').ReferenceMigrationPlan>> {
+  return apiRequest(`/model-reference-migrations/plans/${encodeURIComponent(intentId)}`);
+}
+export function getModelReferenceMigrationPlanByRequest(clientRequestId: string): Promise<ApiResponse<import('./types').ReferenceMigrationPlan>> {
+  return apiRequest(`/model-reference-migrations/plans/by-request/${encodeURIComponent(clientRequestId)}`);
+}
+export function runModelReferenceMigrationAction(intentId: string, action: 'apply' | 'verify', revision: number): Promise<ApiResponse<import('./types').ReferenceMigrationPlan>> {
+  return apiRequest(`/model-reference-migrations/plans/${encodeURIComponent(intentId)}/${action}`, { method: 'POST', body: { revision } });
+}
+
+export function getModelReferenceMigrationPlans(): Promise<ApiResponse<{ items: import('./types').ReferenceMigrationPlan[]; total?: number; unresolvedTotal?: number; hasMore?: boolean }>> {
+  return apiRequest('/model-reference-migrations/plans');
+}
+export function getRepairableModelUsages(): Promise<ApiResponse<{ items: import('./types').RepairableModelUsage[] }>> {
+  return apiRequest('/model-reference-migrations/repairable-usages');
+}
+export function createModelReferenceMigrationFromUsage(body: { consumerKey: string; recordId: string; path: string; targetLogicalId: string; clientRequestId: string; confirmedModelType?: string; expectedUsageFingerprint?: string }): Promise<ApiResponse<import('./types').ReferenceMigrationPlan>> {
+  return apiRequest('/model-reference-migrations/plans/from-usage', { method: 'POST', body });
+}
+
+export function checkLogicalModelDeletion(id: string): Promise<ApiResponse<{ canDelete: boolean; reasons: string[]; offerings: number }>> {
+  return apiRequest(`/logical-models/${encodeURIComponent(id)}/delete-check`);
+}
+
+export type ModelBindingProbeView = { requestId: string; status: string; message: string; offeringId?: string; upstreamModelId?: string; outputUrl?: string | null; httpStatus?: number | null; failureKind?: string | null; updatedAt?: string | null };
+export function getModelBindingProbe(logicalId: string, offeringId: string, requestId?: string): Promise<ApiResponse<ModelBindingProbeView>> {
+  return apiRequest(`/logical-models/${encodeURIComponent(logicalId)}/offerings/${encodeURIComponent(offeringId)}/test${requestId ? `/${encodeURIComponent(requestId)}` : ''}`);
+}
+export function startModelBindingProbe(logicalId: string, offeringId: string, body: { clientRequestId: string; appCallerCode: string; maxCostUsd: number }): Promise<ApiResponse<ModelBindingProbeView>> {
+  return apiRequest(`/logical-models/${encodeURIComponent(logicalId)}/offerings/${encodeURIComponent(offeringId)}/test`, { method: 'POST', body });
 }

@@ -908,10 +908,10 @@ public sealed class ShortVideoMaterialProcessor
                     Builders<DocumentStore>.Update.Set(x => x.PrimaryEntryId, replacement), cancellationToken: CancellationToken.None);
             }
             // 主表写入失败仍可能留下附件/正文；仅处理预先登记的本次 ID，其他条目仍引用则保留。
-            if (item.AttachmentId != null && await _db.DocumentEntries.CountDocumentsAsync(x => x.AttachmentId == item.AttachmentId) == 0)
+            if (item.AttachmentId != null && await _db.DocumentEntriesIncludingTrash.CountDocumentsAsync(x => x.AttachmentId == item.AttachmentId) == 0)
                 await _db.Attachments.DeleteOneAsync(x => x.AttachmentId == item.AttachmentId && x.UploaderId == identity.UserId, CancellationToken.None);
             if (item.DocumentCreatedNew && item.DocumentId != null && Guid.TryParse(item.DocumentId, out _)
-                && await _db.DocumentEntries.CountDocumentsAsync(x => x.DocumentId == item.DocumentId) == 0)
+                && await _db.DocumentEntriesIncludingTrash.CountDocumentsAsync(x => x.DocumentId == item.DocumentId) == 0)
             {
                 if (item.DocumentPublicationStarted) documentPending = true;
                 else
