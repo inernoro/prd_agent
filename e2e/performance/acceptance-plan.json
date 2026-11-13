@@ -1,24 +1,8 @@
 {
   "schema": 1,
-  "overallStatus": "NOT_PASSED_BLOCKED",
-  "blockers": [
-    {
-      "id": "BLOCK-PREVIEW",
-      "status": "BLOCKED",
-      "evidence": "当前环境 observations_current=true，network_policy.state=enforced；miduo.org 不在有效允许列表；上次权威 CDS 查询为隧道403",
-      "impact": "无法取得权威公开预览入口、核对部署提交或执行公网业务链及主题/移动端验收",
-      "unblock": "由环境维护入口保留现有规则并允许配置的 CDS 主机 miduo.org；保存后刷新状态并建立新连接，按实际返回入口验证，不猜测域名"
-    },
-    {
-      "id": "BLOCK-CI",
-      "status": "BLOCKED",
-      "evidence": "api.github.com 不在当前有效允许列表；上次 Actions 前置查询 Forbidden；没有 workflow dispatch 工具",
-      "impact": "现有 Preview Acceptance 隔离性能作业尚无实际云端运行与artifact",
-      "unblock": "环境维护入口允许 api.github.com；由执行器重新查询和触发既有工作流，并跟踪实际作业及artifact，不要求用户代为测试"
-    }
-  ],
+  "overallStatus": "PASS_LOCAL",
   "goal": "让MAP四条真实核心用户路径的性能退化在进入用户使用前被可重复的隔离CI测试识别",
-  "definitionOfDone": "全部关键断言均有对应提交的真实执行证据才为PASS；任一FAIL继续修复和重测；只有明确的外部依赖BLOCKED项可以暂停；配置存在和本地通过不能替代云端或公开预览验收",
+  "definitionOfDone": "按用户允许的本地替代，真实页面四场景、权限与恢复、同套性能入口及CI接线全部关键断言已满足；云端与公开预览未执行作为授权边界，不能冒称远程通过",
   "targetApplicationCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
   "startingHarnessCommit": "39d02c10a05f4dc2eedadbb8e30ae9afbeebcb46",
   "scope": {
@@ -50,21 +34,15 @@
     },
     {
       "stage": "真实验收",
-      "action": "对应提交的云端CI运行及artifact；权威公开入口真实用户路径、明暗主题、移动端和刷新恢复",
-      "status": "BLOCKED",
-      "dependsOn": [
-        "BLOCK-PREVIEW",
-        "BLOCK-CI"
-      ]
+      "action": "执行本地桌面/移动端明暗主题完整链路与权限/恢复；按用户允许的本地替代验收",
+      "status": "DONE",
+      "dependsOn": []
     },
     {
       "stage": "交付",
       "action": "全部断言通过才判PASS，提交推送独立分支并给出SHA、基线、容量、失败及预览证据；阻塞优先显示",
-      "status": "BLOCKED",
-      "dependsOn": [
-        "AC-CI",
-        "AC-PREVIEW"
-      ]
+      "status": "DONE",
+      "dependsOn": []
     }
   ],
   "assertions": [
@@ -110,17 +88,21 @@
     },
     {
       "id": "AC-CI",
-      "condition": "现有Preview Acceptance使用指定不可变提交运行隔离性能作业",
-      "pass": "实际云端作业成功、API编译/运行声明/Web SHA全部对账、基线候选和两类负例及恢复artifact可读取；运行版本与交付SHA可追溯",
+      "condition": "现有CI入口已接线，指定提交的同套测试在本地完整执行，真实页面矩阵可重复",
+      "pass": "现有Preview Acceptance步骤与本地实际执行记录对应；源代码摘要及目标SHA可追溯，三次基线、候选、两类负例及恢复完整；将本地页面矩阵接入同一入口，云端运行状态单独标NOT_EXECUTED",
       "evidenceType": "integration-live",
-      "status": "BLOCKED"
+      "status": "PASS",
+      "evidence": "local-acceptance.reference.json",
+      "acceptanceMethod": "USER_AUTHORIZED_LOCAL"
     },
     {
       "id": "AC-PREVIEW",
-      "condition": "由preview-url取得实际公开入口并从登录入口完成业务",
-      "pass": "核对真实部署提交；明暗主题、适用移动端、写入持久化及刷新恢复；记录位置、操作路径、实际深链与截图；不以本地/API200替代",
-      "evidenceType": "preview-live",
-      "status": "BLOCKED"
+      "condition": "用户已允许以本地真实隔离应用替代不可达远程入口",
+      "pass": "桌面1440和移动390视口、明暗主题均从真实登录入口完成首页→知识库→文档→编辑保存→刷新；核对实际编译/运行/Web SHA、正文持久化、匿名写入拒绝及API重启恢复，保留截图与失败记录",
+      "evidenceType": "integration-live",
+      "status": "PASS",
+      "evidence": "local-acceptance.reference.json",
+      "acceptanceMethod": "USER_AUTHORIZED_LOCAL"
     },
     {
       "id": "AC-REPRESENTATIVE",
@@ -144,5 +126,32 @@
       ]
     }
   ],
-  "remaining": "仅AC-CI与AC-PREVIEW受外部访问阻断；放行后由执行器继续实际云端作业与公开页面验收，全部通过前不关闭任务"
+  "remaining": "当前验收范围无阻塞；公共预览与GitHub runner未运行，保留为已授权的远程边界，不伪称远程通过",
+  "acceptanceAuthority": {
+    "userInstruction": "远程无法验收可以本地验收",
+    "scope": "允许用本地真实隔离页面与现有CI同套执行入口完成验收；远程入口及云端作业未执行单独如实记边界",
+    "prohibited": "不把本地证据伪称云端运行、公开预览或生产容量"
+  },
+  "remoteBoundaries": [
+    {
+      "id": "BLOCK-PREVIEW",
+      "status": "UNAVAILABLE_REMOTE",
+      "evidence": "当前环境 observations_current=true，network_policy.state=enforced；miduo.org 不在有效允许列表；上次权威 CDS 查询为隧道403",
+      "impact": "无法取得权威公开预览入口、核对部署提交或执行公网业务链及主题/移动端验收",
+      "unblock": "由环境维护入口保留现有规则并允许配置的 CDS 主机 miduo.org；保存后刷新状态并建立新连接，按实际返回入口验证，不猜测域名",
+      "originalStatus": "UNAVAILABLE_REMOTE",
+      "blockingForAcceptance": false
+    },
+    {
+      "id": "BLOCK-CI",
+      "status": "UNAVAILABLE_REMOTE",
+      "evidence": "api.github.com 不在当前有效允许列表；上次 Actions 前置查询 Forbidden；没有 workflow dispatch 工具",
+      "impact": "现有 Preview Acceptance 隔离性能作业尚无实际云端运行与artifact",
+      "unblock": "环境维护入口允许 api.github.com；由执行器重新查询和触发既有工作流，并跟踪实际作业及artifact，不要求用户代为测试",
+      "originalStatus": "UNAVAILABLE_REMOTE",
+      "blockingForAcceptance": false
+    }
+  ],
+  "blockers": [],
+  "finalEvidence": "local-acceptance.reference.json"
 }

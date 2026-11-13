@@ -101,6 +101,8 @@ jobs:
           node e2e/performance/prove-browser.mjs work/performance/injected-browser/result.json
       - name: Verify recovery without injected delay in a clean environment
         run: node e2e/performance/run.mjs --ref "$PERF_BASE_REF" --profile normal --baseline work/performance/baseline.json --out work/performance/recovered
+      - name: Accept real local pages across themes and mobile viewport
+        run: node e2e/performance/local-acceptance.mjs --prepared work/performance/candidate/result.json --out work/performance/local-acceptance
       - name: Upload performance evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -113,6 +115,7 @@ jobs:
             work/performance/*/requests.ndjson
             work/performance/*/fixture.json
             work/performance/*/browser-*.png
+            work/performance/local-acceptance/*.png
             work/performance/*/*-build.log
 
   smoke-preview:

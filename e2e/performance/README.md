@@ -1,6 +1,6 @@
 # MAP 隔离性能回归
 
-当前验收状态：**未通过，仅公开预览与云端 CI 受阻**。当前环境策略尚未允许 `miduo.org`、`api.github.com` 出站；GitHub 网页备用路径在进入页面前也因浏览器控制环境启动失败而阻断，未据此推断登录或服务权限。完整目标、六阶段计划、逐项通过门槛与解除条件见 [验收计划](acceptance-plan.json)；只有全部关键断言取得真实证据才标记通过。最新实测见文末合同3记录，历史失败保留。
+当前验收状态：**按用户允许的本地替代方式通过（PASS_LOCAL）**。真实隔离应用的桌面/移动端明暗主题、完整写入链路、刷新、匿名权限及API重启恢复已完成，三次全新实例通过相同场景。远程CDS与GitHub runner仍未执行，作为已授权的边界单独保留，不伪称远程通过。完整目标及断言见 [验收计划](acceptance-plan.json)，当前结果见 [本地验收证据](local-acceptance.reference.json)；以下历史失败和当时未通过的结论保留。
 
 从仓库根目录运行。复用 `e2e` 的 Playwright、锁文件和真实登录表单，API 使用指定 Git 提交的 Release 产物，Web 使用该提交的生产构建。无需 MAP/CDS/模型服务凭据，不向远端压测。
 
@@ -219,3 +219,36 @@ node e2e/performance/prove-browser.mjs e2e/performance/evidence/core-write/injec
 ```
 
 交叉验证覆盖同数据旧新判定、两类故障注入与新实例恢复、每VU独立写入和回读、原始请求/统计对账及实际构建版本数据流。16项判定与资源测试、真实Kestrel/HttpClient归因、现有E2E类型检查、工作流接线和文档检查均通过；重复writer及缺失原始记录的确定性反例均被拒绝。压力只在本地隔离实例执行，外部HTTP为零，没有付费模型调用，不购买资源、不合并、不发布生产。数据及角色仍限定为248篇文档和单管理员，120秒不证明小时级稳定。
+
+## 用户允许的本地真实验收
+
+用户明确允许「远程无法验收可以本地验收」。据此将真实页面和同套CI入口的本地执行证据作为本轮验收依据，保留远程未执行状态。性能采集代码未改，原基线、容量、两类注入、撤除恢复与跨提交记录的摘要均已复核；本轮没有把这些原测量伪称为重新采集。
+
+本轮冻结应用为 `dd992d7add2686a83841b0d7a78d3de32e84b85c`，通过实际API编译、运行声明与已托管Web构建逐一对账。功能页面复用既有成功运行的Release构建、SDK、镜像digest、测试探针和Nginx入口，每次重新创建内部网络及Mongo/Redis数据。功能fixture为6库120篇阅读文档，不改变248篇文档的性能负载合同。
+
+| 本地断言 | 实际结果 |
+|---|---|
+| 桌面1440×1000，明暗主题 | 均从公共首页的「登录 / 注册」进入真实登录，账号菜单选择外观，再完成首页→知识库→文档→编辑→保存→刷新；正文与主题保留 |
+| 移动390×844，明暗主题 | 从移动公共入口登录，使用移动首页实际主题按钮、导航抽屉和阅读页「更多操作→编辑文档」，完成相同业务链；文档宽度390，无页面水平溢出 |
+| 真实持久化 | 保存响应、刷新后的真实正文GET、可见唯一标记及独立服务端回读全部一致；没有手写token或注入storage代替登录 |
+| 权限 | 新匿名浏览器只能到公共入口及登录；实际匿名PUT返回401，写入前后正文未变 |
+| 恢复 | 真实API容器重启后，原移动端会话刷新仍取得实际正文请求并显示正确内容与主题；重启期间两条后台502单独记为计划内故障，稳态非预期HTTP错误为零 |
+| 重复与证据 | 三个全新实例均通过四场景、权限与重启恢复；最终运行附请求阶段、时间戳、实际页面截图与脚本摘要，源文件一致；初始四次验收脚本定位/主题假设失败完整保留 |
+
+新增验收步骤已接入现有 Preview Acceptance 的同一个隔离性能job，使用候选提交的准备结果，截图随既有artifact上传。工作流接线检查及本地执行通过；GitHub runner、Ubuntu/Node20运行结果仍为未执行，不用本地Node24结果冒充。
+
+干净环境的本地执行入口（同前文Linux、Docker、SDK与现有E2E依赖）：
+
+```bash
+TARGET=$(git rev-parse origin/main)
+node e2e/performance/run.mjs --ref "$TARGET" --profile normal --out work/performance/local-prepare
+node e2e/performance/local-acceptance.mjs --prepared work/performance/local-prepare/result.json --out work/performance/local-pages
+```
+
+SDK/Chromium不在默认位置时，沿用前文的 `DOTNET_BIN`、`PERF_CHROMIUM_PATH`。已有完整成功、未注入的同提交结果时，可直接用其 `result.json` 准备页面套件；不接受远端URL，拒绝work之外输出与覆盖旧结果。账号凭据随机生成且不入报告，API与数据库不发布端口，浏览器阻断非本地请求。成功与失败均销毁本轮容器、卷、网络及临时API目录，保留原始断言与截图。
+
+当前证据：[完整本地验收](local-acceptance.reference.json)、[最终原始页面记录](evidence/local-acceptance/matrix.result.json)、[桌面深色](evidence/local-acceptance/desktop-dark.png)、[桌面浅色](evidence/local-acceptance/desktop-light.png)、[移动深色](evidence/local-acceptance/mobile-dark.png)、[移动浅色](evidence/local-acceptance/mobile-light.png)、[重启恢复](evidence/local-acceptance/restart.png)。
+
+交接：入口与断言见本节及计划；产品API/存储契约未改；新增内容仅为验收脚本、现有CI接线、文档与证据；16项判定/资源测试、真实归因探针及E2E类型检查通过；测试数据和资源均清理，无付费模型调用；不创建PR、不合并、不发布生产。容量仍仅适用于原记录的资源、数据与角色，移动端结论限定为Chromium移动视口与触摸，不代表所有真机浏览器。
+
+【位置】本地隔离MAP公共入口与知识库；【操作路径】公共首页→登录 / 注册→登录→首页→知识库→文档→编辑保存→刷新；【本地深链】实际随机回环地址及各步路由保存在原始页面记录，验收后已清理，重跑会生成新入口；【远程预览】未取得，按用户授权以本地验收替代。

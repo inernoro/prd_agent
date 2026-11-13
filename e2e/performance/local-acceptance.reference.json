@@ -1,0 +1,552 @@
+{
+  "schema": 1,
+  "verdict": "PASS_LOCAL",
+  "authority": "用户明确允许“远程无法验收可以本地验收”",
+  "applicationCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+  "performance": {
+    "evidence": "evidence.core-write.reference.json",
+    "sourceCodeUnchanged": true,
+    "artifactHashesVerified": true,
+    "measuredAt": "2026-11-13T10:57:42.857Z",
+    "measurementsRerunThisTurn": false,
+    "interpretation": "保留原实测基线、容量与两类真实注入；本轮复核原始文件及当前判定器，新页面套件不改性能合同"
+  },
+  "realPages": {
+    "evidence": "evidence/local-acceptance/matrix.result.json",
+    "provenance": "integration-live",
+    "startedAt": "2026-11-13T21:03:38.249Z",
+    "finishedAt": "2026-11-13T21:04:48.955Z",
+    "buildIdentity": {
+      "api": {
+        "actualCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+        "expectedCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+        "commitMatch": "match"
+      },
+      "webEntries": [
+        "/assets/index-CqLXP3YQ-dd992d7add2686a83841b0d7a78d3de32e84b85c.js"
+      ]
+    },
+    "driverDigest": "546cd2f5a16fe0b09692db273fae3138cc47ee544f63950e9e13fc3bf8f5ce63",
+    "cases": [
+      {
+        "id": "desktop-dark",
+        "pass": true,
+        "viewport": {
+          "width": 1440,
+          "height": 1000
+        },
+        "theme": "dark",
+        "steps": [
+          {
+            "step": "home",
+            "url": "http://127.0.0.1:32775/",
+            "theme": "dark"
+          },
+          {
+            "step": "knowledge-list",
+            "url": "http://127.0.0.1:32775/document-store",
+            "theme": "dark"
+          },
+          {
+            "step": "document-open",
+            "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+            "theme": "dark"
+          },
+          {
+            "step": "saved-refresh",
+            "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+            "theme": "dark"
+          }
+        ],
+        "layout": {
+          "width": 1440,
+          "documentWidth": 1440,
+          "theme": "dark"
+        },
+        "persisted": true,
+        "pageErrors": [],
+        "unexpectedHttpErrors": [],
+        "screenshot": "evidence/local-acceptance/desktop-dark.png"
+      },
+      {
+        "id": "desktop-light",
+        "pass": true,
+        "viewport": {
+          "width": 1440,
+          "height": 1000
+        },
+        "theme": "light",
+        "steps": [
+          {
+            "step": "home",
+            "url": "http://127.0.0.1:32775/",
+            "theme": "light"
+          },
+          {
+            "step": "knowledge-list",
+            "url": "http://127.0.0.1:32775/document-store",
+            "theme": "light"
+          },
+          {
+            "step": "document-open",
+            "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+            "theme": "light"
+          },
+          {
+            "step": "saved-refresh",
+            "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+            "theme": "light"
+          }
+        ],
+        "layout": {
+          "width": 1440,
+          "documentWidth": 1440,
+          "theme": "light"
+        },
+        "persisted": true,
+        "pageErrors": [],
+        "unexpectedHttpErrors": [],
+        "screenshot": "evidence/local-acceptance/desktop-light.png"
+      },
+      {
+        "id": "mobile-dark",
+        "pass": true,
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "theme": "dark",
+        "steps": [
+          {
+            "step": "home",
+            "url": "http://127.0.0.1:32775/",
+            "theme": "dark"
+          },
+          {
+            "step": "knowledge-list",
+            "url": "http://127.0.0.1:32775/document-store",
+            "theme": "dark"
+          },
+          {
+            "step": "document-open",
+            "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+            "theme": "dark"
+          },
+          {
+            "step": "saved-refresh",
+            "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+            "theme": "dark"
+          }
+        ],
+        "layout": {
+          "width": 390,
+          "documentWidth": 390,
+          "theme": "dark"
+        },
+        "persisted": true,
+        "pageErrors": [],
+        "unexpectedHttpErrors": [],
+        "screenshot": "evidence/local-acceptance/mobile-dark.png"
+      },
+      {
+        "id": "mobile-light",
+        "pass": true,
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "theme": "light",
+        "steps": [
+          {
+            "step": "home",
+            "url": "http://127.0.0.1:32775/",
+            "theme": "light"
+          },
+          {
+            "step": "knowledge-list",
+            "url": "http://127.0.0.1:32775/document-store",
+            "theme": "light"
+          },
+          {
+            "step": "document-open",
+            "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+            "theme": "light"
+          },
+          {
+            "step": "saved-refresh",
+            "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+            "theme": "light"
+          },
+          {
+            "step": "server-restart",
+            "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+            "theme": "light"
+          }
+        ],
+        "layout": {
+          "width": 390,
+          "documentWidth": 390,
+          "theme": "light"
+        },
+        "persisted": true,
+        "pageErrors": [],
+        "unexpectedHttpErrors": [],
+        "screenshot": "evidence/local-acceptance/mobile-light.png"
+      }
+    ],
+    "anonymous": {
+      "pass": true,
+      "status": 401,
+      "publicRedirect": true,
+      "loginEntryAccessible": true,
+      "contentUnchanged": true
+    },
+    "restartRecovery": {
+      "pass": true,
+      "method": "重启真实API容器后在原浏览器会话刷新，正文与主题保留"
+    },
+    "plannedRestartResponses": [
+      {
+        "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/agent-runs/latest",
+        "status": 502,
+        "stage": "api-restart",
+        "at": "2026-11-13T21:04:28.937Z"
+      }
+    ],
+    "fixture": {
+      "stores": 6,
+      "readingDocuments": 120,
+      "contentBytes": 7237,
+      "purpose": "功能与主题验收；不替代248篇文档的性能容量合同"
+    },
+    "actualLocalAddress": "http://127.0.0.1:32775",
+    "addressAvailability": "验收时真实随机回环入口，结束后容器和数据库已清理；重新执行会生成新地址",
+    "publicPreviewUrl": null
+  },
+  "repetitions": [
+    {
+      "name": "repeat",
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "startedAt": "2026-11-13T20:52:53.203Z",
+      "finishedAt": "2026-11-13T20:53:50.687Z",
+      "cases": [
+        {
+          "id": "desktop-dark",
+          "pass": true,
+          "theme": "dark",
+          "layout": {
+            "width": 1440,
+            "documentWidth": 1440,
+            "theme": "dark"
+          }
+        },
+        {
+          "id": "desktop-light",
+          "pass": true,
+          "theme": "light",
+          "layout": {
+            "width": 1440,
+            "documentWidth": 1440,
+            "theme": "light"
+          }
+        },
+        {
+          "id": "mobile-dark",
+          "pass": true,
+          "theme": "dark",
+          "layout": {
+            "width": 390,
+            "documentWidth": 390,
+            "theme": "dark"
+          }
+        },
+        {
+          "id": "mobile-light",
+          "pass": true,
+          "theme": "light",
+          "layout": {
+            "width": 390,
+            "documentWidth": 390,
+            "theme": "light"
+          }
+        }
+      ],
+      "anonymous": {
+        "pass": true,
+        "status": 401,
+        "publicRedirect": true,
+        "loginEntryAccessible": true,
+        "contentUnchanged": true
+      },
+      "restartRecovery": {
+        "pass": true,
+        "method": "重启真实API容器后在原浏览器会话刷新，正文与主题保留"
+      },
+      "path": "work/local-acceptance/repeat/result.json",
+      "sha256": "83b09d64aeeb10d453eea2b51216896d33798ed1db7890d5231c11502d79b006"
+    },
+    {
+      "name": "final",
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "startedAt": "2026-11-13T20:54:14.121Z",
+      "finishedAt": "2026-11-13T20:55:27.058Z",
+      "cases": [
+        {
+          "id": "desktop-dark",
+          "pass": true,
+          "theme": "dark",
+          "layout": {
+            "width": 1440,
+            "documentWidth": 1440,
+            "theme": "dark"
+          }
+        },
+        {
+          "id": "desktop-light",
+          "pass": true,
+          "theme": "light",
+          "layout": {
+            "width": 1440,
+            "documentWidth": 1440,
+            "theme": "light"
+          }
+        },
+        {
+          "id": "mobile-dark",
+          "pass": true,
+          "theme": "dark",
+          "layout": {
+            "width": 390,
+            "documentWidth": 390,
+            "theme": "dark"
+          }
+        },
+        {
+          "id": "mobile-light",
+          "pass": true,
+          "theme": "light",
+          "layout": {
+            "width": 390,
+            "documentWidth": 390,
+            "theme": "light"
+          }
+        }
+      ],
+      "anonymous": {
+        "pass": true,
+        "status": 401,
+        "publicRedirect": true,
+        "loginEntryAccessible": true,
+        "contentUnchanged": true
+      },
+      "restartRecovery": {
+        "pass": true,
+        "method": "重启真实API容器后在原浏览器会话刷新，正文与主题保留"
+      },
+      "path": "work/local-acceptance/final/result.json",
+      "sha256": "74720ff8720adc225abad128a20f22a7d3545411625362bd360d6461b509c377"
+    },
+    {
+      "name": "verified",
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "startedAt": "2026-11-13T21:03:38.249Z",
+      "finishedAt": "2026-11-13T21:04:48.955Z",
+      "cases": [
+        {
+          "id": "desktop-dark",
+          "pass": true,
+          "theme": "dark",
+          "layout": {
+            "width": 1440,
+            "documentWidth": 1440,
+            "theme": "dark"
+          }
+        },
+        {
+          "id": "desktop-light",
+          "pass": true,
+          "theme": "light",
+          "layout": {
+            "width": 1440,
+            "documentWidth": 1440,
+            "theme": "light"
+          }
+        },
+        {
+          "id": "mobile-dark",
+          "pass": true,
+          "theme": "dark",
+          "layout": {
+            "width": 390,
+            "documentWidth": 390,
+            "theme": "dark"
+          }
+        },
+        {
+          "id": "mobile-light",
+          "pass": true,
+          "theme": "light",
+          "layout": {
+            "width": 390,
+            "documentWidth": 390,
+            "theme": "light"
+          }
+        }
+      ],
+      "anonymous": {
+        "pass": true,
+        "status": 401,
+        "publicRedirect": true,
+        "loginEntryAccessible": true,
+        "contentUnchanged": true
+      },
+      "restartRecovery": {
+        "pass": true,
+        "method": "重启真实API容器后在原浏览器会话刷新，正文与主题保留"
+      },
+      "path": "work/local-acceptance/verified/result.json",
+      "sha256": "e879ecb96cc0d17c940f9ce273740593933d3036b180f0d80d83958079858240"
+    }
+  ],
+  "retainedFailures": [
+    {
+      "attempt": 1,
+      "state": "failed",
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "failure": "expect(locator).toHaveAttribute(expected) failed\n\nLocator:  locator('html')\nExpected: \"dark\"\nReceived: \"\"\nTimeout:  5000ms\n\nCall log:\n  - Expect \"to.have.attribute.value\" with timeout 5000ms\n  - waiting for locator('html')\n    9 × locator resolved to <html lang=\"zh-CN\" data-theme-glow=\"off\" data-material=\"solid\" data-theme-depth=\"default\" data-theme-opacity=\"default\" data-perf-mode=\"performance\" data-theme-sidebar-glass=\"always\">…</html>\n      - unexpected value \"null\"\n",
+      "cases": [
+        {
+          "id": "desktop-dark",
+          "pass": false,
+          "error": "expect(locator).toHaveAttribute(expected) failed\n\nLocator:  locator('html')\nExpected: \"dark\"\nReceived: \"\"\nTimeout:  5000ms\n\nCall log:\n  - Expect \"to.have.attribute.value\" with timeout 5000ms\n  - waiting for locator('html')\n    9 × locator resolved to <html lang=\"zh-CN\" data-theme-glow=\"off\" data-material=\"solid\" data-theme-depth=\"default\" data-theme-opacity=\"default\" data-perf-mode=\"performance\" data-theme-sidebar-glass=\"always\">…</html>\n      - unexpected value \"null\"\n"
+        }
+      ],
+      "path": "work/local-acceptance/attempt-1/result.json",
+      "sha256": "54e59fa82f96b038e0793675a141a39328c6f11e736deba3ce0feea06c2177f4",
+      "classification": "验收脚本的主题/公共入口/移动端DOM与导航定位假设错误，依据真实页面修正；未修改产品业务"
+    },
+    {
+      "attempt": 2,
+      "state": "failed",
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "failure": "expect(locator).toBeVisible() failed\n\nLocator: locator('input[autocomplete=\"username\"]')\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n  - Expect \"to.be.visible\" with timeout 5000ms\n  - waiting for locator('input[autocomplete=\"username\"]')\n",
+      "cases": [
+        {
+          "id": "desktop-dark",
+          "pass": false,
+          "error": "expect(locator).toBeVisible() failed\n\nLocator: locator('input[autocomplete=\"username\"]')\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n  - Expect \"to.be.visible\" with timeout 5000ms\n  - waiting for locator('input[autocomplete=\"username\"]')\n"
+        }
+      ],
+      "path": "work/local-acceptance/attempt-2/result.json",
+      "sha256": "4a548c6ab5735bad39ed33e1d5bcb603558df9d8effc79375ab7870ead49d321",
+      "classification": "验收脚本的主题/公共入口/移动端DOM与导航定位假设错误，依据真实页面修正；未修改产品业务"
+    },
+    {
+      "attempt": 3,
+      "state": "failed",
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "failure": "expect(locator).toBeVisible() failed\n\nLocator: locator('[aria-labelledby=\"home-continue-heading\"] .home-desk-work-list button').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n  - Expect \"to.be.visible\" with timeout 5000ms\n  - waiting for locator('[aria-labelledby=\"home-continue-heading\"] .home-desk-work-list button').first()\n",
+      "cases": [
+        {
+          "id": "desktop-dark",
+          "pass": true
+        },
+        {
+          "id": "desktop-light",
+          "pass": true
+        },
+        {
+          "id": "mobile-dark",
+          "pass": false,
+          "error": "expect(locator).toBeVisible() failed\n\nLocator: locator('[aria-labelledby=\"home-continue-heading\"] .home-desk-work-list button').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n  - Expect \"to.be.visible\" with timeout 5000ms\n  - waiting for locator('[aria-labelledby=\"home-continue-heading\"] .home-desk-work-list button').first()\n",
+          "failureUrl": "http://127.0.0.1:32770/"
+        }
+      ],
+      "path": "work/local-acceptance/attempt-3/result.json",
+      "sha256": "9a0353c98b7d1e4c8f546f3cef07458da6cac2ca61243c77fa765bc4f1fd0a6c",
+      "classification": "验收脚本的主题/公共入口/移动端DOM与导航定位假设错误，依据真实页面修正；未修改产品业务"
+    },
+    {
+      "attempt": 4,
+      "state": "failed",
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "failure": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('知识库', { exact: true }).filter({ visible: true }).first()\u001b[22m\n\u001b[2m    - locator resolved to <span class=\"text-[10px] leading-none font-normal\">知识库</span>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div class=\"mt-auto px-4 py-4 flex flex-col gap-2\">…</div> from <div role=\"dialog\" tabindex=\"-1\" id=\"radix-:r4:\" data-state=\"open\" aria-labelledby=\"radix-:r5:\" class=\"surface-popover fixed top-0 bottom-0 z-210 flex flex-col outline-none prd-mobile-drawer-content\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div class=\"mt-auto px-4 py-4 flex flex-col gap-2\">…</div> from <div role=\"dialog\" tabindex=\"-1\" id=\"radix-:r4:\" data-state=\"open\" aria-labelledby=\"radix-:r5:\" class=\"surface-popover fixed top-0 bottom-0 z-210 flex flex-col outline-none prd-mobile-drawer-content\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    58 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is visible, enabled and stable\u001b[22m\n\u001b[2m       - scrolling into view if needed\u001b[22m\n\u001b[2m       - done scrolling\u001b[22m\n\u001b[2m       - <div class=\"mt-auto px-4 py-4 flex flex-col gap-2\">…</div> from <div role=\"dialog\" tabindex=\"-1\" id=\"radix-:r4:\" data-state=\"open\" aria-labelledby=\"radix-:r5:\" class=\"surface-popover fixed top-0 bottom-0 z-210 flex flex-col outline-none prd-mobile-drawer-content\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m     - retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n",
+      "cases": [
+        {
+          "id": "desktop-dark",
+          "pass": true
+        },
+        {
+          "id": "desktop-light",
+          "pass": true
+        },
+        {
+          "id": "mobile-dark",
+          "pass": false,
+          "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('知识库', { exact: true }).filter({ visible: true }).first()\u001b[22m\n\u001b[2m    - locator resolved to <span class=\"text-[10px] leading-none font-normal\">知识库</span>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div class=\"mt-auto px-4 py-4 flex flex-col gap-2\">…</div> from <div role=\"dialog\" tabindex=\"-1\" id=\"radix-:r4:\" data-state=\"open\" aria-labelledby=\"radix-:r5:\" class=\"surface-popover fixed top-0 bottom-0 z-210 flex flex-col outline-none prd-mobile-drawer-content\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div class=\"mt-auto px-4 py-4 flex flex-col gap-2\">…</div> from <div role=\"dialog\" tabindex=\"-1\" id=\"radix-:r4:\" data-state=\"open\" aria-labelledby=\"radix-:r5:\" class=\"surface-popover fixed top-0 bottom-0 z-210 flex flex-col outline-none prd-mobile-drawer-content\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    58 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is visible, enabled and stable\u001b[22m\n\u001b[2m       - scrolling into view if needed\u001b[22m\n\u001b[2m       - done scrolling\u001b[22m\n\u001b[2m       - <div class=\"mt-auto px-4 py-4 flex flex-col gap-2\">…</div> from <div role=\"dialog\" tabindex=\"-1\" id=\"radix-:r4:\" data-state=\"open\" aria-labelledby=\"radix-:r5:\" class=\"surface-popover fixed top-0 bottom-0 z-210 flex flex-col outline-none prd-mobile-drawer-content\">…</div> subtree intercepts pointer events\u001b[22m\n\u001b[2m     - retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n",
+          "failureUrl": "http://127.0.0.1:32771/"
+        }
+      ],
+      "path": "work/local-acceptance/attempt-4/result.json",
+      "sha256": "28972be508a5f8686fdc0309ef5e401026faecee7fe6f41e9a0abb521dc73fe3",
+      "classification": "验收脚本的主题/公共入口/移动端DOM与导航定位假设错误，依据真实页面修正；未修改产品业务"
+    }
+  ],
+  "localChecks": {
+    "unit.log": {
+      "path": "work/local-acceptance/checks/unit.log",
+      "sha256": "9ff4c15a689d609f9340ca60189bc3c295310eefc3a5e935176aa0617e7e04f8"
+    },
+    "probe.log": {
+      "path": "work/local-acceptance/checks/probe.log",
+      "sha256": "f5acfdc3779c8ef41171a1c8fa3bf646c02ae73eb1308d1d198ff404e33f8653"
+    },
+    "typecheck.log": {
+      "path": "work/local-acceptance/checks/typecheck.log",
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    "compare.json": {
+      "path": "work/local-acceptance/checks/compare.json",
+      "sha256": "0da0edb85ba846ea7385ba4e5147e60d0b2b6426c2082d9f6176c4f403abd669"
+    },
+    "app-proof.json": {
+      "path": "work/local-acceptance/checks/app-proof.json",
+      "sha256": "a691e7def14c56e98a7c1830d99a4452252c6a1d7bbe59d1bfd70f95f44dc015"
+    },
+    "browser-proof.json": {
+      "path": "work/local-acceptance/checks/browser-proof.json",
+      "sha256": "b9ec10028a6d7fe2d93e608b5c8ffd304ecc937eb4dcd3981a2210bdf82bc80b"
+    },
+    "write-proof.json": {
+      "path": "work/local-acceptance/checks/write-proof.json",
+      "sha256": "9d6f301055f67f636c8a9a0ecbd298d22e20e2fa06c13f19254745ac0fb6a6a7"
+    }
+  },
+  "ci": {
+    "entry": ".github/workflows/preview-acceptance.yml / performance-isolated",
+    "localCommandsVerified": true,
+    "matrixPreparedFrom": "work/performance/candidate/result.json",
+    "screenshotsUploaded": true,
+    "cloudRun": "NOT_EXECUTED",
+    "note": "现有入口的同套本地性能记录与当前源码/判定器一致；新增页面矩阵已真实执行并接入该入口，不声称GitHub runner通过"
+  },
+  "remote": {
+    "cds": "UNAVAILABLE_NETWORK_POLICY",
+    "actionsApi": "UNAVAILABLE_NETWORK_POLICY",
+    "nonBlockingByUserAuthorization": true
+  },
+  "scope": {
+    "noProductCodeChanges": true,
+    "noModelCalls": true,
+    "noProductionLoad": true,
+    "noMerge": true,
+    "noProductionRelease": true,
+    "performanceCapacity": "仅原共享4CPU/16GiB、248篇文档、单管理员的受控负载；功能页面使用6库120篇阅读文档；移动验证为Chromium 390px视口及触摸，不代表所有真机浏览器"
+  },
+  "cleanup": {
+    "freshDatabasesEachRun": true,
+    "containersRemoved": true,
+    "networksRemoved": true,
+    "apiDirectoryRemoved": true
+  }
+}
