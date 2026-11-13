@@ -291,7 +291,7 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
         token: 'qa-related-session', permissions: ['access', 'web-pages.read'], permissionsLoaded: true,
         isRoot: false, menuCatalog: [], menuCatalogLoaded: true }, version: 0,
     })); });
-    await page.route('**/api/**', async route => {
+    await page.context().route('**/api/**', async route => {
       const url = new URL(route.request().url()), path = url.pathname;
       apiRequests.push(path);
       if (path.endsWith('/annotation-runtime.js')) {
@@ -312,6 +312,8 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
           mentions: mode === 'guest-share' && site.id === 'target' ? [{ commentId: 'source-comment', authorName: '引用者', sourceSiteId: 'source', sourceTitle: '来源文档', label: '来源文档中的评论引用' }] : [],
           preview: { ...site, useShareAccess: mode === 'guest-share' },
           href: mode === 'guest-share' ? `/s/wp/qa-related?siteId=${site.id}` : `/web-pages?openSite=${site.id}` })) };
+      else if (path === '/api/web-pages/share') data = { token: 'qa-visit', shareUrl: '/s/wp/qa-visit' };
+      else if (path === '/api/web-pages/shares/view/qa-visit') data = { title: '关联目标', shareType: 'single', sites: [sites[1]] };
       else if (path === '/api/web-pages/shares/view/qa-related') data = { title: '来源分享', shareType: 'collection', sites: mode === 'account-share' ? [sites[0]] : sites };
       else if (path.endsWith('/content')) {
         const id = url.searchParams.get('siteId') || path.split('/')[3];
@@ -322,7 +324,8 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       else if (path === '/api/web-pages/target') data = sites[1];
       await route.fulfill({ json: { success: true, data, error: null } });
     });
-    await page.goto(mode === 'list' ? '/web-pages?keepFilter=1' : '/s/wp/qa-related?siteId=source');
+    await page.goto(mode === 'list' ? '/web-pages?keepFilter=1' : '/s/wp/qa-related');
+    if (mode !== 'list') await page.locator('.hosted-share-member').filter({ hasText: '来源文档' }).click();
     const originalUrl = page.url();
     let sourceFrame;
     if (mode === 'list') {
@@ -331,17 +334,15 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       sourceFrame = page.locator('iframe[title="来源文档"]').contentFrame();
       await sourceFrame.getByLabel('保留输入').fill('原页面状态');
       await sourceFrame.locator('body').evaluate(el => { el.ownerDocument.defaultView!.scrollTo(0, 200); });
-      await expect(page.locator('.ledger-reader-content .share-topbar')).toHaveCount(0);
+      await expect(page.locator('.share-topbar')).toBeVisible();
+      await expect(page.locator('.ledger-reading-article,.ledger-reading-sidebar,.hosted-ledger')).toHaveCount(0);
       const frame = await page.locator('iframe[title="来源文档"]').elementHandle();
-      await expect(page.getByRole('tablist', { name: '阅读侧栏', exact: true }).getByRole('tab')).toHaveCount(3);
-      await page.getByRole('tab', { name: /^讨论/ }).click();
-      await page.getByRole('tab', { name: '关联', exact: true }).click();
+      await page.locator('.share-topbar .related-trigger').click();
       expect(await page.locator('iframe[title="来源文档"]').evaluate((node, original) => node === original, frame)).toBe(true);
       await expect(sourceFrame.getByLabel('保留输入')).toHaveValue('原页面状态');
     }
     const listReads = apiRequests.filter(path => path === '/api/web-pages').length;
-    if (mode === 'list') await page.locator('.related-document-card').filter({ hasText: '关联目标' }).click();
-    else await page.locator('.ledger-reader-relations').getByRole('link', { name: '关联目标', exact: true }).click();
+    await page.locator('.related-document-card').filter({ hasText: '关联目标' }).click();
     const modal = mode === 'guest-share' ? page.getByRole('dialog', { name: '关联文档预览', exact: true })
       : page.getByRole('dialog', { name: '关联目标', exact: true });
     await expect(modal).toBeVisible();
@@ -350,6 +351,15 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
     expect(page.context().pages()).toHaveLength(1);
     expect(apiRequests.filter(path => path === '/api/web-pages')).toHaveLength(listReads);
     if (mode === 'guest-share') expect(apiRequests).not.toContain('/api/web-pages/target');
+    if (mode === 'list') {
+      const [external] = await Promise.all([page.context().waitForEvent('page'), modal.getByRole('button', { name: '新窗口打开', exact: true }).click()]);
+      await expect(external).toHaveURL(/\/s\/wp\/qa-visit$/);
+      await expect(external.locator('.share-topbar')).toBeVisible();
+      await expect(external.locator('.hosted-ledger,[role="dialog"]')).toHaveCount(0);
+      await expect(external.locator('iframe').contentFrame().getByRole('heading', { name: '目标正文' })).toBeVisible();
+      expect(apiRequests.filter(path => path === '/api/web-pages')).toHaveLength(listReads);
+      await external.close();
+    }
     // 原生和 Radix 阅读器都必须一次只关闭最上层，不丢失当前正文状态。
     await modal.locator('.related-trigger').click();
     await expect(page.getByRole('dialog', { name: '关联文档', exact: true })).toBeVisible();

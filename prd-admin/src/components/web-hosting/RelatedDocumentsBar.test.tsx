@@ -4,11 +4,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import RelatedDocumentsBar from './RelatedDocumentsBar';
 import { getCollectionContexts, getCollectionContextDocuments, getCollectionContextLinks, type CollectionContext } from '@/services/real/hostedCollections';
-import { updateSite } from '@/services/real/webPages';
+import { createShareLink, updateSite } from '@/services/real/webPages';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
   type RelatedDocuments, type RelatedPermissionPreview } from '@/services/real/relatedDocuments';
 
-vi.mock('@/services/real/webPages', () => ({ updateSite: vi.fn() }));
+vi.mock('@/services/real/webPages', () => ({ updateSite: vi.fn(), createShareLink: vi.fn() }));
 vi.mock('@/components/SitePreview', () => ({ SitePreview: ({ url }: { url: string }) => <div data-page-preview={url} /> }));
 vi.mock('@/services/real/relatedDocuments', async importOriginal => ({ ...await importOriginal<typeof import('@/services/real/relatedDocuments')>(), getRelatedCandidates: vi.fn(), getRelatedDocuments: vi.fn(), previewRelatedPermissions: vi.fn(), saveRelatedDocuments: vi.fn(), syncRelatedPermissions: vi.fn() }));
 vi.mock('@/stores/authStore', () => ({ useAuthStore: (selector: (value: { token: string }) => unknown) => selector({ token: 'session' }) }));
@@ -52,7 +52,7 @@ beforeEach(() => {
   vi.mocked(getRelatedCandidates).mockResolvedValue({ success: true, data: { items: [...data.items, { id: 'c', title: '测试方案' }] }, error: null });
   vi.mocked(previewRelatedPermissions).mockResolvedValue({ success: true, data: preview, error: null });
 });
-afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
+afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('顶部关联文档', () => {
   it('卡片只保留一个悬浮入口，没有合集时直接显示文档', async () => {
@@ -230,10 +230,18 @@ describe('顶部关联文档', () => {
     await open();
     expect(document.querySelector('.related-context-row')?.textContent).toContain('总体方案');
     expect(document.querySelector('.related-context-row')?.textContent).toContain('权限不一致');
-    const external = document.querySelector<HTMLAnchorElement>('[aria-label="在新标签页打开：技术设计"]')!;
-    expect(external.getAttribute('target')).toBe('_blank');
-    expect(external.getAttribute('href')).toBe('/web-pages?openSite=b');
-    expect(external.rel).toContain('noopener');
+    const external = document.querySelector<HTMLButtonElement>('[aria-label="在新标签页打开：技术设计"]')!;
+    const replace = vi.fn();
+    vi.spyOn(window, 'open').mockReturnValue({ opener: window, document: { title: '', body: { textContent: '' } }, location: { replace }, close: vi.fn() } as unknown as Window);
+    vi.mocked(createShareLink).mockResolvedValue({ success: true, data: { token: 'visit-token', shareUrl: '/s/wp/visit-token' }, error: null } as never);
+    await act(async () => external.click());
+    expect(createShareLink).toHaveBeenCalledWith({ siteId: 'b', shareType: 'single', expiresInDays: 0, purpose: 'visit' });
+    expect(replace).toHaveBeenCalledWith('/s/wp/visit-token');
+    expect(external.getAttribute('href')).toBeNull();
+    const mainCard = [...document.querySelectorAll<HTMLButtonElement>('button.related-document-card')].find(item => item.textContent?.includes('技术设计'))!;
+    await act(async () => { mainCard.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); });
+    expect(createShareLink).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('a[href*="openSite="]')).toBeNull();
     expect(external.closest('.related-document-card')).toBeNull();
     expect(navigate).not.toHaveBeenCalled();
   });
@@ -279,7 +287,7 @@ describe('顶部关联文档', () => {
     await open();
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
     expect(document.querySelector('[aria-current="page"]')?.textContent).toContain('总体方案');
-    await act(async () => document.querySelector<HTMLAnchorElement>('a[href="/web-pages?openSite=b"]')!.click());
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('button.related-document-card')].find(item => item.textContent?.includes('技术设计'))!.click());
     expect(navigate).toHaveBeenCalledWith(data.items[1]);
     expect(document.querySelector('.related-popover')).toBeNull();
   });
@@ -332,7 +340,7 @@ describe('顶部关联文档', () => {
       expect(document.body.textContent).toContain('测试方案：已无权限');
     } finally { window.removeEventListener(HOSTED_SITE_PERMISSIONS_CHANGED, changed); }
   });
-  it('超过九份分页，切页后卡片仍保留真实地址', async () => {
+  it('超过九份分页，切页后卡片不暴露资产列表外开地址', async () => {
     const items = Array.from({ length: 12 }, (_, index) => ({ id: `doc-${index}`, title: `文档 ${index}`, href: `/web-pages?openSite=doc-${index}` }));
     vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, items }, error: null });
     await act(async () => root.render(<RelatedDocumentsBar siteId="doc-0" />));
@@ -340,6 +348,7 @@ describe('顶部关联文档', () => {
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(9);
     await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="下一页"]')!.click());
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(3);
-    expect(document.querySelector('a[href="/web-pages?openSite=doc-11"]')).not.toBeNull();
+    expect([...document.querySelectorAll('button.related-document-card')].some(item => item.textContent?.includes('文档 11'))).toBe(true);
+    expect(document.querySelector('a[href*="openSite="]')).toBeNull();
   });
 });

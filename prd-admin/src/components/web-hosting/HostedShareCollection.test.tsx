@@ -9,8 +9,8 @@ vi.mock('@/hooks/useDataTheme', () => ({ useDataTheme: () => 'dark' }));
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe('合集成员沿用原分享的阅读骨架', () => {
-  it('真实阅读槽位使用同一正文卡和三页签，切换侧栏不重挂载文档', () => {
+describe('合集目录与设计样例', () => {
+  it('设计样例保留原稿阅读参考，切换侧栏不重挂载文档', () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
     const element = document.createElement('div'); document.body.append(element); const root = createRoot(element);
@@ -82,7 +82,7 @@ describe('合集成员沿用原分享的阅读骨架', () => {
       act(() => root.render(<HostedShareCollection data={data} collectionPath="/s/wp/original" onSelect={select} />));
       const field = element.querySelector<HTMLInputElement>('[aria-label="查找合集文档"]')!;
       act(() => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, '资料 90'); field.dispatchEvent(new Event('input', { bubbles: true })); });
-      act(() => element.querySelector<HTMLAnchorElement>('.ledger-directory .hosted-share-member')!.click());
+      act(() => element.querySelector<HTMLAnchorElement>('.ledger-board-members .hosted-share-member')!.click());
       expect(select).toHaveBeenCalledWith('90');
       act(() => root.render(<HostedShareCollection data={data} collectionPath="/s/wp/original" onSelect={select} selectedSiteId="90" reader={<p>第 90 篇正文</p>} />));
       expect(element.querySelector<HTMLInputElement>('[aria-label="查找合集文档"]')!.value).toBe('资料 90');

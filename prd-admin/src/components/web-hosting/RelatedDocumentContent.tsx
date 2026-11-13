@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, ExternalLink, FolderPlus, Grid2X2, Link2, Li
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { SitePreview } from '@/components/SitePreview';
+import { useHostedSiteWindow } from './useHostedSiteWindow';
 import type { RelatedDocument, RelatedDocuments, RelatedDocumentSource } from '@/services/real/relatedDocuments';
 
 export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, maxHeight, onReload, onManage, onPermissions, onTagEdit, onNavigate, onClose, heading = '关联文档' }: {
@@ -11,6 +12,7 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
   onNavigate?: (item: RelatedDocument) => void; onClose: () => void; heading?: string;
 }) {
   const [page, setPage] = useState(0);
+  const siteWindow = useHostedSiteWindow();
   const [tagFilter, setTagFilter] = useState('');
   const [referenceScope, setReferenceScope] = useState<'all' | 'members' | 'references'>('all');
   const [view, setView] = useState<'cards' | 'list'>(() => {
@@ -57,11 +59,14 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
           {error ? <div className="related-empty" role="alert">{error}<Button size="sm" onClick={() => { refresh(); }}>重新加载</Button></div>
             : loading ? <div className="related-empty"><MapSpinner size={20} />正在加载关联文档…</div>
               : <div className={`related-document-grid ${view === 'list' ? 'is-list' : ''}`}>
-                {displayed.slice(currentPage * 9, currentPage * 9 + 9).map((item, index) => <div key={item.id} className="related-item">
-                  <a href={item.href} className={`related-document-card ${item.id === siteId ? 'is-current' : ''}`} aria-current={item.id === siteId ? 'page' : undefined}
+                {displayed.slice(currentPage * 9, currentPage * 9 + 9).map((item, index) => { const Card = item.href?.startsWith('/s/') ? 'a' : 'button'; return <div key={item.id} className="related-item">
+                  <Card href={Card === 'a' ? item.href : undefined} type={Card === 'button' ? 'button' : undefined} className={`related-document-card ${item.id === siteId ? 'is-current' : ''}`} aria-current={item.id === siteId ? 'page' : undefined}
                     onClick={event => {
                       if (item.id === siteId) { event.preventDefault(); close(); return; }
-                      if (onNavigate && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); onNavigate(item); }
+                      const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+                      if (Card === 'a' && modified) return;
+                      if (onNavigate && !modified) { event.preventDefault(); onNavigate(item); }
+                      else if (Card === 'button') void siteWindow.open(item.id);
                       close();
                     }}>
                     <div className="related-card-preview">
@@ -77,12 +82,15 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
                       </div>
                       <span className="related-card-status">{item.id === siteId ? <><span className="related-current-dot" />当前文档</> : item.isMain ? '文档组的主要入口' : item.isManual === false ? '评论引用' : '关联文档'}</span>
                     </div>
-                  </a>
-                  <a className="related-open-new-tab" href={item.href} target="_blank" rel="noopener noreferrer" data-no-drag
+                  </Card>
+                  {item.href?.startsWith('/s/') ? <a className="related-open-new-tab" href={item.href} target="_blank" rel="noopener noreferrer" data-no-drag
                     aria-label={`在新标签页打开：${item.title}`} title="在新标签页打开" onClick={event => event.stopPropagation()}><ExternalLink size={12} /></a>
+                    : <button type="button" className="related-open-new-tab" data-no-drag disabled={siteWindow.opening}
+                      aria-label={`在新标签页打开：${item.title}`} title="在新标签页打开" onClick={event => { event.stopPropagation(); void siteWindow.open(item.id); }}>
+                      {siteWindow.opening ? <MapSpinner size={12} /> : <ExternalLink size={12} />}</button>}
                   {item.canEditTags && <button type="button" className="related-tag-edit" aria-label={`编辑标签：${item.title}`} title="编辑文档标签"
                     onClick={() => { close(); setTagTarget(item); }}><Tags size={13} /></button>}
-                </div>)}
+                </div>; })}
                 {!displayed.length && <p className="related-small-note">没有符合该标签的关联文档。</p>}
               </div>}
 

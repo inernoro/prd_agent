@@ -40,7 +40,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const close = useCallback(() => { setOpen(false); setPinned(false); }, []);
   const measureAvailableHeight = useCallback(() => {
     const bounds = anchor.current?.getBoundingClientRect();
-    return bounds ? Math.floor(Math.max(bounds.top - 14, window.innerHeight - bounds.bottom - 14)) : window.innerHeight - 40;
+    return Math.min(360, bounds ? Math.floor(Math.max(bounds.top - 14, window.innerHeight - bounds.bottom - 14)) : window.innerHeight - 40);
   }, []);
   useLayoutEffect(() => {
     if (!open) return;
@@ -114,7 +114,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
       {data.hasPermissionDifferences ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}<span>{data.hasPermissionDifferences ? '权限不一致' : '权限与分享'}</span>
     </button>}
     <AnchoredMenu open={open} onClose={close} anchorRef={anchor} align={compact ? 'right' : 'left'} gap={6} minWidth={280}
-      className={`related-popover ${token ? 'surface-tone-dark' : ''}`} style={{ width: collectionsEnabled && split ? 'min(1040px, calc(100vw - 24px))' : 'min(720px, calc(100vw - 24px))', maxHeight, padding: 0 }}>
+      className={`related-popover ${token ? 'surface-tone-dark' : ''}`} style={{ width: collectionsEnabled && split ? 'min(680px, calc(100vw - 24px))' : 'min(464px, calc(100vw - 24px))', maxHeight, padding: 0 }}>
       <div id={menuId} ref={panel} tabIndex={-1} role="dialog" aria-label="关联文档" onPointerDown={event => { event.stopPropagation(); setPinned(true); }} onPointerEnter={keepOpen} onPointerLeave={leave}
         onFocusCapture={keepOpen} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) leave(); }}>
         {collectionsEnabled ? <CollectionContextPanel key={siteId + authToken} siteId={siteId} maxHeight={maxHeight - 2} onSplitChange={setSplit} onClose={close} onNavigate={onNavigate}

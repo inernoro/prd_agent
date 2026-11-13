@@ -270,3 +270,48 @@
 .ledger-demo-version-menu { position:absolute; z-index:21; top:30px; left:0; width:240px; padding:6px; display:flex; flex-direction:column; border:1px solid var(--hosting-border); border-radius:var(--radius-field); background:var(--hosting-surface); box-shadow:var(--shadow-glass-dropdown); }
 .ledger-demo-version-menu>button { padding:8px; color:var(--hosting-text); background:transparent; text-align:left; font-size:12.5px; }
 .ledger-header-divider { flex-shrink:0; width:1px; height:20px; margin:0 2px; background:var(--hosting-border-strong); }
+
+/* 原稿 B“版面”：只负责合集目录；文档阅读复用 ShareViewPage 的原有骨架。 */
+.hosted-ledger.is-board .ledger-workspace { display:block; width:100%; max-width:1184px; margin:0 auto; padding:32px; overflow-y:auto; }
+.hosted-ledger.is-board .ledger-main { max-width:none; width:100%; margin:0; padding:0 0 24px; overflow:visible; }
+.hosted-ledger.is-board .ledger-main>* { max-width:none; }
+.is-board .ledger-intro { padding-bottom:24px; }
+.ledger-board-featured { display:grid; grid-template-columns:1.4fr 1fr; overflow:hidden; border:1px solid var(--hosting-border); border-radius:10px; background:var(--hosting-surface); }
+.ledger-board-primary { display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding:28px; color:var(--hosting-text); text-decoration:none; }
+.ledger-board-primary:hover { background:var(--hosting-inset); }
+.ledger-board-primary h2 { margin:0; font:600 24px/1.45 var(--hosting-font-serif); overflow-wrap:anywhere; }
+.ledger-board-primary p { margin:0; color:var(--hosting-secondary); font-size:14px; line-height:1.75; }
+.ledger-board-start { display:inline-flex; align-items:center; gap:8px; margin-top:8px; color:var(--hosting-accent); font-size:13px; font-weight:500; }
+.ledger-board-facts { display:flex; flex-direction:column; align-items:flex-start; gap:10px; justify-content:center; margin:24px 0; padding:0 28px; border-left:1px solid var(--hosting-border); color:var(--hosting-muted); font-size:12px; }
+.ledger-board-facts .ledger-mono { color:var(--hosting-accent); }
+.ledger-board-facts strong { color:var(--hosting-text); font-size:14px; }
+.ledger-board-facts p { max-width:260px; margin:0; line-height:1.7; }
+.ledger-board-catalog { margin-top:24px; }
+.ledger-board-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; }
+.ledger-board-toolbar .ledger-search { width:min(440px,100%); }
+.ledger-board-toolbar .related-view-switch { flex-shrink:0; }
+.ledger-board-members { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:12px; margin-top:16px; }
+.ledger-board-members .ledger-row { min-height:120px; grid-template-columns:24px minmax(0,1fr); padding:16px; border:1px solid var(--hosting-border); border-radius:8px; background:var(--hosting-surface); }
+.ledger-board-members .ledger-row>svg { display:none; }
+.ledger-board-members .ledger-row-title { min-height:40px; -webkit-line-clamp:3; font-size:14px; font-weight:550; }
+.ledger-board-members .ledger-row-description { margin-top:6px; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; font-size:12px; line-height:1.65; color:var(--hosting-secondary); }
+.ledger-board-members .ledger-row-meta { margin-top:12px; font-size:11px; }
+.ledger-board-members.is-list { grid-template-columns:1fr; gap:8px; }
+.ledger-board-members.is-list .ledger-row { min-height:0; grid-template-columns:28px minmax(0,1fr) auto; padding:14px 16px; }
+.ledger-board-members.is-list .ledger-row-title { min-height:0; }
+.ledger-board-members.is-list .ledger-row>svg { display:block; }
+.ledger-board-members.is-list .ledger-row-meta { margin-top:4px; }
+.is-board .ledger-pager { margin-top:16px; }
+@media (max-width:960px) { .ledger-board-members { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:600px) {
+ .hosted-ledger.is-board .ledger-workspace { padding:20px 16px; }
+ .ledger-board-featured { grid-template-columns:1fr; }
+ .ledger-board-primary { padding:20px; }
+ .ledger-board-primary h2 { font-size:21px; }
+ .ledger-board-facts { margin:0 20px 20px; padding:14px 0 0; border-left:0; border-top:1px solid var(--hosting-border); gap:6px; }
+ .ledger-board-facts p { display:none; }
+ .ledger-board-members { grid-template-columns:1fr; }
+ .ledger-board-members .ledger-row { min-height:0; padding:14px; }
+ .ledger-board-members .ledger-row-title { min-height:0; }
+ .ledger-board-toolbar { gap:8px; }
+}

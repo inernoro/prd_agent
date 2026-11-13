@@ -63,7 +63,7 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
   const split = (result?.totalContexts ?? 0) > 1;
   useEffect(() => { onSplitChange(split); }, [split, onSplitChange]);
   const pending = loading || search.trim() !== keyword;
-  const totalHeight = split ? Math.min(600, maxHeight) : maxHeight;
+  const totalHeight = split ? Math.min(360, maxHeight) : maxHeight;
   const contentHeight = Math.max(0, totalHeight - footerHeight);
   const clear = () => { setSearch(''); setKeyword(''); setPage(1); };
   if (error) return <div className="related-empty" role="alert">{error}<button type="button" onClick={() => setReload(value => value + 1)}>重试</button></div>;

@@ -1,4 +1,5 @@
 import RelatedDocumentsBar from './RelatedDocumentsBar';
+import { useHostedSiteWindow } from './useHostedSiteWindow';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDownload';
 import { useEffect, useRef, useState } from 'react';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
@@ -62,6 +63,7 @@ export default function SitePreviewModal({
   onSiteVersionChanged,
 }: Props) {
   const isMobile = useIsMobile();
+  const siteWindow = useHostedSiteWindow();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const review = useHostedReview(iframeRef, originalSite,
     originalSite.wrappedAssetType ? null : { mode: 'site', siteId: originalSite.id },
@@ -222,8 +224,9 @@ export default function SitePreviewModal({
   }, [site.siteUrl, review.loading]);
 
   const handleOpenExternal = () => {
-    // 当前版在独立阅读器打开；历史版保留已授权的原版本地址，避免跳回当前版。
-    if (previewSource.src) window.open(review.historical ? previewSource.src : `/web-pages?openSite=${encodeURIComponent(originalSite.id)}`, '_blank', 'noopener,noreferrer');
+    // 当前版复用“访问”的 /s/wp 阅读入口；历史版仍打开所选版本的原地址。
+    if (review.historical && previewSource.src) window.open(previewSource.src, '_blank', 'noopener,noreferrer');
+    else void siteWindow.open(originalSite.id);
   };
 
   const handleToggleCommentsEnabled = async () => {
@@ -255,7 +258,7 @@ export default function SitePreviewModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
-        <div className="flex shrink-0 flex-col gap-2 border-b border-token-subtle px-3 py-2 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-3">
+        <div className="flex shrink-0 flex-col gap-2 border-b border-token-subtle px-3 py-2 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-2">
           <div className="flex min-w-0 w-full flex-1 items-center gap-2 sm:w-auto">
             <div className="min-w-0 flex-1">
             <h3 id="site-preview-dialog-title" className="text-sm font-semibold text-token-primary truncate">{site.title}</h3>
@@ -264,7 +267,7 @@ export default function SitePreviewModal({
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:hidden"
+              className="inline-flex min-h-11 sm:min-h-7 min-w-11 sm:min-w-7 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:hidden"
               title="关闭"
               aria-label="关闭"
             >
@@ -282,7 +285,7 @@ export default function SitePreviewModal({
                   setAskEverOpened(true);
                   setRightPanel((p) => (p === 'ask' ? 'none' : 'ask'));
                 }}
-                className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                className={`flex min-h-11 sm:min-h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                   rightPanel === 'ask' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
                 }`}
               >
@@ -296,7 +299,7 @@ export default function SitePreviewModal({
                 onClick={onEditInWorkbench}
                 disabled={review.historical || review.loading}
                 title={review.historical ? '历史版本只读；请切回当前发布版修改' : '在工作台里说想改哪里，先出草稿再发布；历史版本也在那里'}
-                className="flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs font-semibold text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                className="flex min-h-11 sm:min-h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs font-semibold text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               >
                 <WandSparkles className="w-3.5 h-3.5" />
                 帮我修改
@@ -306,7 +309,7 @@ export default function SitePreviewModal({
               <button
                 type="button"
                 onClick={() => setShowAskConfig(true)}
-                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                className="inline-flex min-h-11 sm:min-h-7 min-w-11 sm:min-w-7 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 title="提问设置"
                 aria-label="提问设置"
               >
@@ -316,17 +319,17 @@ export default function SitePreviewModal({
             <button
               type="button"
               onClick={handleOpenExternal}
-              disabled={!previewSource.src}
+              disabled={siteWindow.opening || !previewSource.src}
               title={previewSource.src ? '新窗口打开' : '该历史快照仅支持页内预览'}
-              className="flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="flex min-h-11 sm:min-h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               <ExternalLink className="w-3.5 h-3.5" />
-              新窗口打开
+              {siteWindow.opening ? '正在打开…' : '新窗口打开'}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="hidden min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:inline-flex"
+              className="hidden min-h-11 sm:min-h-7 min-w-11 sm:min-w-7 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:inline-flex"
               title="关闭"
               aria-label="关闭"
             >
