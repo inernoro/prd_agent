@@ -39,7 +39,7 @@ export function CodeReviewsPage(): JSX.Element {
   const [search, setSearch] = useState(query), [refresh, setRefresh] = useState(0);
   const requestScope = useMemo(() => JSON.stringify({ projectId, source, status, query, page, history }), [projectId, source, status, query, page, history]);
   const cutoff = useRef<{ scope: string; snapshotAt?: string }>({ scope: requestScope, snapshotAt: locationState?.reviewRestore?.snapshotAt });
-  const alive = useRef(true), restored = useRef(''), dataProject = useRef(projectId);
+  const alive = useRef(true), restored = useRef(''), dataProject = useRef(projectId), hasListData = useRef(false);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     const controller = new AbortController(); setSetupError('');
@@ -66,7 +66,7 @@ export function CodeReviewsPage(): JSX.Element {
     else if (cutoff.current.scope !== requestScope) {
       cutoff.current = { scope: requestScope, snapshotAt: locationState?.reviewRestore?.snapshotAt };
       // Retain rows during same-project Ajax filtering; a project switch must clear the previous scope.
-      if (dataProject.current !== projectId) setData(null);
+      if (dataProject.current !== projectId) { hasListData.current = false; setData(null); }
     }
     const load = async (): Promise<void> => {
       try {
@@ -75,10 +75,10 @@ export function CodeReviewsPage(): JSX.Element {
           if (!controller.signal.aborted) setSelected(task);
         } else {
           const result = await listCodeReviewPage({ projectId, source, status, query, page, history, snapshotAt: cutoff.current.snapshotAt }, controller.signal);
-          if (!controller.signal.aborted) { cutoff.current = { scope: requestScope, snapshotAt: result.snapshotAt }; dataProject.current = projectId; setData(result); }
+          if (!controller.signal.aborted) { cutoff.current = { scope: requestScope, snapshotAt: result.snapshotAt }; dataProject.current = projectId; hasListData.current = true; setData(result); }
         }
         if (!controller.signal.aborted) setListError('');
-      } catch { if (!controller.signal.aborted) setListError(selectedId ? '任务暂时无法读取，或当前账号没有访问权限。' : '任务列表暂时无法刷新，已保留上次结果。'); }
+      } catch { if (!controller.signal.aborted) setListError(selectedId ? '任务暂时无法读取，或当前账号没有访问权限。' : hasListData.current ? '任务列表暂时无法刷新，已保留上次结果。' : '任务列表暂时无法读取，请重试。'); }
       finally { if (!controller.signal.aborted) { setLoading(false); timer = window.setTimeout(() => { void load(); }, 4000); } }
     };
     void load(); return () => { controller.abort(); window.clearTimeout(timer); };
@@ -147,7 +147,7 @@ export function CodeReviewsPage(): JSX.Element {
           <label className="cr-search cr-filter-query"><Search aria-hidden="true" /><span className="sr-only">搜索审查任务</span><input type="search" className="cr-input" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索报告、分支、SHA" maxLength={300} /></label>
           <ReviewButton tone="ghost" className="cr-end cr-desktop" onClick={() => updateList({ history: history ? undefined : '1' })}>{history ? '仅看最近审查' : '全部执行（含历史）'}</ReviewButton>
         </div>
-        {listError ? <div className="cr-row-inline"><ErrorNotice message={listError} /><ReviewButton onClick={requestRefresh}>重试读取</ReviewButton></div> : null}
+        {listError ? <div className="cr-row-inline"><ErrorNotice message={listError} title={data ? '任务列表暂时无法刷新' : '任务列表暂时无法读取'} /><ReviewButton onClick={requestRefresh}>重试读取</ReviewButton></div> : null}
         {data?.newCount ? <div className="cr-notice cr-row-inline" role="status">有 {data.newCount} 条新记录<ReviewButton tone="ghost" onClick={() => { cutoff.current = { scope: requestScope }; updateList({ page: '1' }); requestRefresh(); }}>显示</ReviewButton></div> : null}
         {history ? <p className="cr-form-note">历史执行保留各自的源码范围，不能将不同批次相加视为整仓完成。</p> : null}
         {!data && loading ? <CodeReviewsSkeleton /> : !data && listError ? null : <div className="cr-surface" aria-busy={loading}>

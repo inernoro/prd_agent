@@ -123,9 +123,20 @@ try {
     check(await pager.getByRole('navigation').count() === 0, `${width}/${theme}: single-page review has meaningless pagination`);
     if (width === 390) check((await page.locator('[data-code-review-mobile-row]').first().boundingBox()).y < 390, `${width}/${theme}: a low-frequency history control delays the first review row`);
     if (!layoutOnly) {
+      // A later polling failure must keep the successful snapshot, not use the effect's initial null data.
+      failed = true; await page.getByRole('button', { name: '重试读取', exact: true }).waitFor();
+      check(await page.getByText('任务列表暂时无法刷新', { exact: true }).isVisible(), `${width}/${theme}: refresh failure loses snapshot context`);
+      check(await page.locator(width === 390 ? '[data-code-review-mobile-row]' : '[data-code-review-row]').count() === 2, `${width}/${theme}: failed poll clears the last successful rows`);
+      await page.getByRole('alert').locator('summary').click();
+      check(await page.getByText('任务列表暂时无法刷新，已保留上次结果。', { exact: true }).isVisible(), `${width}/${theme}: stale polling closure misreports snapshot existence`);
+      failed = false; await page.getByRole('button', { name: '重试读取', exact: true }).click(); await page.getByRole('alert').waitFor({ state: 'hidden' });
       count = 25; await page.reload(); await page.getByRole('button', { name: '下一页任务', exact: true }).click(); await page.getByText('布局审查 11', { exact: true }).filter({ visible: true }).first().waitFor(); await page.getByRole('button', { name: '第 3 页', exact: true }).click(); await page.getByText('布局审查 25', { exact: true }).filter({ visible: true }).first().waitFor(); await save('code-reviews-many');
       count = 0; await page.reload(); await page.getByRole('heading', { name: '还没有代码审查记录', exact: true }).waitFor(); check(await page.getByRole('navigation', { name: '任务分页', exact: true }).count() === 0, `${width}/${theme}: empty review pagination`); await save('code-reviews-empty');
-      failed = true; await page.reload(); await page.getByRole('button', { name: '重试读取', exact: true }).waitFor(); check(await page.getByRole('alert').isVisible(), `${width}/${theme}: failure notice hidden`); check(await page.getByRole('heading', { name: '还没有代码审查记录', exact: true }).count() === 0, `${width}/${theme}: read failure is misrepresented as an empty collection`); await save('code-reviews-error'); failed = false; count = 2; await page.getByRole('button', { name: '重试读取', exact: true }).click(); await page.getByText('布局审查 1', { exact: true }).filter({ visible: true }).first().waitFor();
+      failed = true; await page.reload(); await page.getByRole('button', { name: '重试读取', exact: true }).waitFor(); check(await page.getByRole('alert').isVisible(), `${width}/${theme}: failure notice hidden`); check(await page.getByText('任务列表暂时无法读取', { exact: true }).isVisible(), `${width}/${theme}: first failure incorrectly claims a saved snapshot`); check(await page.getByRole('heading', { name: '还没有代码审查记录', exact: true }).count() === 0, `${width}/${theme}: read failure is misrepresented as an empty collection`); await save('code-reviews-error'); failed = false; count = 2; await page.getByRole('button', { name: '重试读取', exact: true }).click(); await page.getByText('布局审查 1', { exact: true }).filter({ visible: true }).first().waitFor();
+      failed = true; await page.getByLabel('筛选审查项目', { exact: true }).selectOption(project.id); await page.getByRole('button', { name: '重试读取', exact: true }).waitFor();
+      check(await page.getByText('任务列表暂时无法读取', { exact: true }).isVisible(), `${width}/${theme}: project switch retains the old snapshot claim`);
+      check(await page.locator(width === 390 ? '[data-code-review-mobile-row]' : '[data-code-review-row]').count() === 0, `${width}/${theme}: project switch shows rows from another scope`);
+      failed = false;
       owner = false; await page.goto(`${base}/branch-panel/${branch().id}`); await page.getByRole('button', { name: /^api/ }).first().waitFor(); await save('branch-detail-readonly');
     }
     owner = true;
@@ -153,6 +164,17 @@ try {
     measurements.push({ page: 'preview-preparing', width, theme, contextY: (await previewContext.boundingBox()).y });
     check(await page.getByText('68%', { exact: true }).count() === 0, `${width}/${theme}: preview transit presents fabricated progress`);
     check((await previewContext.boundingBox()).y < (width === 390 ? 400 : 350), `${width}/${theme}: repeated transit branding delays branch context`);
+    if (!layoutOnly) {
+      const longBranch = 'feature-layout-boundary-'.repeat(6), longStatus = '等待分支运行状态同步'.repeat(12);
+      await page.goto(`${base}/preview-preparing?branch=${encodeURIComponent(longBranch)}`, { waitUntil: 'domcontentloaded' });
+      await page.getByText(longBranch, { exact: true }).waitFor();
+      // The public route only accepts branch; inject status text solely as a deterministic CSS content boundary fixture.
+      const status = page.getByRole('status').filter({ hasText: longBranch }).locator(':scope > span').last();
+      await status.evaluate((element, value) => { element.textContent = value; }, longStatus);
+      await save('preview-preparing-long-content');
+      check(await status.evaluate(element => element.scrollWidth <= element.clientWidth + 1 && element.scrollHeight <= element.clientHeight + 1), `${width}/${theme}: long preparing status is clipped`);
+      check(await status.textContent() === longStatus, `${width}/${theme}: long preparing status loses content`);
+    }
     await context.close();
   }
 } catch (error) {
