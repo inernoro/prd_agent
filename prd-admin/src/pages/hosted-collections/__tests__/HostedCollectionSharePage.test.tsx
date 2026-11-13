@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from 'react';
+import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import HostedCollectionSharePage from '../HostedCollectionSharePage';
+import { CollectionShell } from '../CollectionShell';
 import type { HostedCollectionShare, HostedCollectionView } from '@/services/contracts/hostedCollections';
 
 const api = vi.hoisted(() => ({ view: vi.fn(), shares: vi.fn(), permissions: vi.fn(), members: vi.fn(), create: vi.fn(), sync: vi.fn() }));
@@ -12,7 +13,7 @@ vi.mock('@/services/real/hostedCollections', () => ({ getHostedCollection: api.v
   dissolveHostedCollection: vi.fn(), restoreHostedCollection: vi.fn(), stopHostedCollectionShares: vi.fn(), syncHostedCollectionPermissions: api.sync }));
 vi.mock('@/services/real/webPages', () => ({ getSitesPrivateSources: vi.fn(), revokeShare: vi.fn() }));
 vi.mock('@/components/web-hosting/privateSourceConfirm', () => ({ runWithPrivateSourceGate: async (options: { run: (fingerprint?: string) => Promise<unknown> }) => ({ status: 'done', res: await options.run() }) }));
-vi.mock('../CollectionShell', () => ({ CollectionShell: ({ children }: { children: ReactNode }) => <div>{children}</div>, collectionDate: () => '11-13' }));
+vi.mock('../../document-store/writing/WritingThreads', () => ({ WritingThreads: () => <canvas data-background="threads" /> }));
 vi.mock('../HostedCollectionManage', () => ({ HostedCollectionManage: () => null }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSectionLoader: () => <p>正在读取</p> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -35,6 +36,15 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('重新分享必须保留原有访问约束', () => {
+  it('分享页使用原稿纯底，阅读页仍保留动态背景及控制', async () => {
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root.render(<MemoryRouter><CollectionShell mode="share" name="分享资料"><p>分享内容</p></CollectionShell></MemoryRouter>));
+    expect(container.querySelector('[data-background="threads"]')).toBeNull();
+    expect(container.querySelector('[aria-label="动态背景"]')).toBeNull();
+    await act(async () => root.render(<MemoryRouter><CollectionShell mode="read" name="阅读资料"><p>阅读内容</p></CollectionShell></MemoryRouter>));
+    expect(container.querySelector('[data-background="threads"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="动态背景"]')).toBeTruthy();
+  });
   it('原密码链默认仍要求密码，未重新填写前不能进入下一步，也不回显旧密码', async () => {
     await mount();
     expect(button('设置').getAttribute('aria-pressed')).toBe('true');

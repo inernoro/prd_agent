@@ -39,6 +39,21 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); vi.unstubAllGlobals(); });
 
 describe('合集阅读游标必须跟随文档与路由', () => {
+  it.each(['NOT_FOUND', 'visibility_denied', 'expired', 'NETWORK_ERROR', 'RATE_LIMITED'])('匿名分享的 %s 不能暗示输入密码可以恢复', async code => {
+    api.share.mockResolvedValue({ success: false, error: { code, message: '访问边界错误' } });
+    await mount('/s/collection/token');
+    expect(container.textContent).toContain('访问边界错误');
+    expect(container.querySelector('input[type=password]')).toBeNull();
+    expect(container.querySelector('form')).toBeNull();
+    expect(container.textContent).not.toContain('打开合集');
+    expect(button('重试')).toBeTruthy();
+  });
+  it('实际密码门 UNAUTHORIZED 保留密码输入及重新提交能力', async () => {
+    api.share.mockResolvedValue({ success: false, error: { code: 'UNAUTHORIZED', message: '需要提供正确的访问密码' } });
+    await mount('/s/collection/token');
+    expect(container.querySelector('input[type=password]')).toBeTruthy();
+    expect(button('打开合集')).toBeTruthy();
+  });
   it('owner从不可用项可打开既有管理器，仍保留全部成员等待用户确认', async () => {
     const data = fixture('a', 3); data.items[1].unavailable = true; api.get.mockResolvedValue(ok(data));
     await mount(); await act(async () => (container.querySelector('[data-member="a-1"]') as HTMLButtonElement).click());
@@ -57,14 +72,14 @@ describe('合集阅读游标必须跟随文档与路由', () => {
   });
   it('连续提交访问密码时，旧失败不能覆盖较新的成功', async () => {
     const slow = deferred<{ success: false; error: { code: string; message: string } }>();
-    api.share.mockImplementation((_token, password) => password === 'bad' ? slow.promise : Promise.resolve(password === 'good' ? ok(fixture('shared', 3)) : { success: false, error: { code: 'PASSWORD_REQUIRED', message: '请提供密码' } }));
+    api.share.mockImplementation((_token, password) => password === 'bad' ? slow.promise : Promise.resolve(password === 'good' ? ok(fixture('shared', 3)) : { success: false, error: { code: 'UNAUTHORIZED', message: '请提供密码' } }));
     await mount('/s/collection/token');
     async function submit(value: string) {
       await act(async () => { const e = container.querySelector<HTMLInputElement>('input[type=password]')!; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(e, value); e.dispatchEvent(new Event('input', { bubbles: true })); });
       await act(async () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
     }
     await submit('bad'); await submit('good');
-    await act(async () => slow.resolve({ success: false, error: { code: 'PASSWORD_INVALID', message: '旧密码错误' } }));
+    await act(async () => slow.resolve({ success: false, error: { code: 'UNAUTHORIZED', message: '旧密码错误' } }));
     expect(container.textContent).toContain('shared合集');
     expect(container.textContent).not.toContain('旧密码错误');
   });

@@ -18,6 +18,7 @@ function HostedCollectionReader() {
   const navigate = useNavigate();
   const [data, setData] = useState<HostedCollectionView>();
   const [error, setError] = useState('');
+  const [passwordRequired, setPasswordRequired] = useState(false);
   const [password, setPassword] = useState('');
   const [submittedPassword, setSubmittedPassword] = useState('');
   const [query, setQuery] = useState('');
@@ -33,8 +34,8 @@ function HostedCollectionReader() {
     const generation = ++loadGeneration.current;
     const result = token ? await readHostedCollectionShare(token, submittedPassword) : await getHostedCollection(collectionId!);
     if (generation !== loadGeneration.current) return;
-    if (result.success) { setData(result.data); setError(''); }
-    else setError(result.error.message);
+    if (result.success) { setData(result.data); setError(''); setPasswordRequired(false); }
+    else { setError(result.error.message); setPasswordRequired(!!token && result.error.code === 'UNAUTHORIZED'); }
   }, [collectionId, token, submittedPassword]);
   useEffect(() => {
     const generations = loadGeneration;
@@ -45,7 +46,7 @@ function HostedCollectionReader() {
     if (!collectionId) return;
     try { setLast(localStorage.getItem(`hosted-collection:last:${collectionId}`) ?? undefined); } catch { /* 阅读仍可继续 */ }
   }, [collectionId]);
-  if (!data) return <CollectionShell name="合集">{error ? <div className="hc-boundary" role="alert"><h1>合集暂时无法打开</h1><p>{error}</p>{token && <form onSubmit={e => { e.preventDefault(); setSubmittedPassword(password); }}><label>访问密码<input className="field" type="password" value={password} onChange={e => setPassword(e.target.value)} /></label><button className="btn pri">打开合集</button></form>}<button className="btn" onClick={() => void load()}>重试</button><Link className="btn ghost" to="/web-pages">返回网页托管</Link></div> : <MapSectionLoader text="正在读取合集…" />}</CollectionShell>;
+  if (!data) return <CollectionShell name="合集">{error ? <div className="hc-boundary" role="alert"><h1>合集暂时无法打开</h1><p>{error}</p>{token && passwordRequired && <form onSubmit={e => { e.preventDefault(); setSubmittedPassword(password); }}><label>访问密码<input className="field" type="password" value={password} onChange={e => setPassword(e.target.value)} /></label><button className="btn pri">打开合集</button></form>}<button className="btn" onClick={() => void load()}>重试</button><Link className="btn ghost" to="/web-pages">返回网页托管</Link></div> : <MapSectionLoader text="正在读取合集…" />}</CollectionShell>;
   const collection = data.collection;
   const byId = new Map(data.items.map(item => [item.id, item]));
   const members = collection.siteIds.map(id => byId.get(id)).filter((item): item is HostedCollectionItem => !!item);
