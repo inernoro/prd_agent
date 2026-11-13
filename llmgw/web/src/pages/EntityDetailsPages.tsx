@@ -8,14 +8,13 @@ import { ArrowLeft, ArrowUpRight, Check, CircleDollarSign, Clock3, Gauge, KeyRou
 import { Link, useSearchParams } from 'react-router-dom';
 import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from '@/components/LogEntityIcon';
 import { Chip, SectionLoader } from '@/components/ui';
-import { getGatewayAppCallers, getLogicalModels, getLogs, getModels, getPlatforms, getPools } from '@/lib/api';
+import { getGatewayAppCallers, getLogicalModels, getLogs, getModels, getPlatforms } from '@/lib/api';
 import type {
   GatewayAppCaller,
   LlmLogListItem,
   LogicalModelItem,
   ModelItem,
   ModelOfferingItem,
-  ModelPool,
   PlatformItem,
 } from '@/lib/types';
 import { fmtCompact, fmtDate, fmtMs, statusBadgeStyle } from '@/lib/logsHelpers';
@@ -535,7 +534,6 @@ export function AppCallerDetailsPage() {
   const matchesRequested = (code?: string | null) => !!code && (code === requestedCode || code === legacyCode);
   const requestedId = params.get('id') || '';
   const [app, setApp] = useState<GatewayAppCaller | null>(null);
-  const [pool, setPool] = useState<ModelPool | null>(null);
   const [recent, setRecent] = useState<LlmLogListItem[]>([]);
   const [registered, setRegistered] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -549,12 +547,11 @@ export function AppCallerDetailsPage() {
       // search 用削过前缀的那个（更宽）：它同时能捞回 `foo` 与 `G-foo`，
       // 具体认哪一个交给下面的精确优先匹配，避免为两种写法各发一次请求。
       getGatewayAppCallers({ page: 1, pageSize: 50, search: legacyCode || requestedId }),
-      getPools(),
       requestedCode ? getLogs({ ...range, appCallerCode: requestedCode, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
-    ]).then(([appResult, poolResult, logResult]) => {
+    ]).then(([appResult, logResult]) => {
       if (!alive) return;
-      if (!appResult.success || !poolResult.success) {
-        setError(appResult.error?.message || poolResult.error?.message || 'App 详情加载失败');
+      if (!appResult.success) {
+        setError(appResult.error?.message || 'App 详情加载失败');
         setLoading(false);
         return;
       }
@@ -571,7 +568,6 @@ export function AppCallerDetailsPage() {
       const resolved = matched ?? (observed ? observedAppCaller(observed, requestedCode) : null);
       setRegistered(Boolean(matched));
       setApp(resolved);
-      setPool(poolResult.data.items.find((item) => item.id === resolved?.modelPoolId) ?? null);
       setRecent(recentItems);
       setLoading(false);
     });
@@ -630,25 +626,8 @@ export function AppCallerDetailsPage() {
           description: 'App 自己不维护上游连接，只声明模型策略；具体 Provider 选择由 Gateway 完成。',
           content: <Facts items={[
             { label: '模型策略', value: app.modelPolicy || 'auto' },
-            // 池已退场：这个字段是存量回执，不是可点进去的对象。
-            // 原先它链到池页并带一个 focus 参数，而那条路由整条 302 到对外模型列表、参数被丢掉——
-            // 点过去看不到这个池，也看不到这条绑定（第 71 轮 review）。
-            // 所以只把值原样摆出来，并说清它现在不参与路由、该去哪儿改。
-            {
-              label: '模型池（存量绑定）',
-              value: (
-                <span>
-                  {pool ? (pool.name || pool.code || pool.id) : (app.modelPoolId || '未绑定')}
-                  <span style={{ opacity: 0.7 }}>
-                    {' '}· 池已退场，这条绑定不参与路由；要改这个调用方落到哪个模型，去对外模型页设认领或用途默认
-                  </span>
-                </span>
-              ),
-            },
+            { label: '路由配置', value: <Link to="/logical-models">设置模型与用途默认项</Link> },
             { label: '参数策略', value: app.parameterPolicy || 'default-drop' },
-            { label: '模型池健康', value: pool?.health || '未解析' },
-            { label: '健康成员', value: pool ? `${pool.healthyMembers} / ${pool.models.length}` : '未解析' },
-            { label: '最近实际模型池', value: app.lastObservedModelPoolId || '未观察到' },
           ]} />,
         },
         {

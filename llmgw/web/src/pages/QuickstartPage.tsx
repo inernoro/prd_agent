@@ -911,7 +911,7 @@ export function QuickstartPage() {
         markRequestCompleted(tenant?.id);
         setTestResult({ ok: true, message: `${definition.label} 的 ${requestTypeLabel(target.requestType)}、团队边界和密钥鉴权均通过；已写入请求记录，未访问上游。`, requestId: actualRequestId });
       } else if (mode === 'safe') {
-        setTestResult({ ok: false, message: 'Gateway 未明确证明 upstreamCalled=false，本次结果不计为安全验收。', requestId: actualRequestId });
+        setTestResult({ ok: false, message: 'Gateway 未明确证明 upstreamCalled=false，无法确认安全试跑结果，请查看请求记录。', requestId: actualRequestId });
       } else {
         const actualModel = readActualModel(payload) || currentRoutePreview?.actualModel || '已解析模型';
         const provider = currentRoutePreview?.actualPlatformName || currentRoutePreview?.actualPlatformId || '已解析 Provider';
@@ -2450,7 +2450,7 @@ description: 通过团队 scoped key 使用 LLM Gateway 的 ${definition.label} 
 3. 固定发送 X-Gateway-Source: external 与 X-Gateway-App-Caller: \$LLMGW_APP_CALLER。
 4. ${mode === 'safe' ? '首次接入发送 X-Gateway-Dry-Run: quickstart；只有响应明确 upstreamCalled=false 才算安全测试通过。' : '当前示例为真实模型模式，不发送 X-Gateway-Dry-Run；执行前必须确认控制台路由预览中的 Provider 和模型。'}
 5. 保存响应头 X-Request-Id，并打开控制台 /logs?requestId={requestId} 核对团队、service key、client 和 environment。
-6. ${mode === 'safe' ? '正式调用时删除 X-Gateway-Dry-Run。' : '本示例已经是正式调用形状。'}同类真实协议验收最多一次，其余使用假上游。
+6. ${mode === 'safe' ? '正式调用时删除 X-Gateway-Dry-Run。' : '本示例已经是正式调用形状。'}真实调用可能产生费用，结果未知时先按 requestId 查询记录，避免重复发送。
 
 ## 安全边界
 
