@@ -12,7 +12,7 @@ const failures = [], measurements = [], unexpected = new Set();
 let browser;
 const check = (ok, message) => { if (!ok) failures.push(message); };
 try {
-  browser = await chromium.launch({ executablePath: process.env.CDS_CHROMIUM_PATH || '/usr/bin/chromium', args: ['--no-sandbox'] });
+  browser = await chromium.launch({ executablePath: process.env.CDS_CHROMIUM_PATH || (fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined), args: ['--no-sandbox'] });
   for (const width of [1440, 390]) for (const theme of ['light', 'dark']) {
     let variableCount = 3;
     const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 }, isMobile: width === 390, hasTouch: width === 390, colorScheme: theme, reducedMotion: 'reduce' });
