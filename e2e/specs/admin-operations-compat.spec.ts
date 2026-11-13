@@ -291,31 +291,67 @@ for (const theme of ["light", "dark"])
       page.getByRole("button", { name: "查看", exact: true }),
     ).toBeVisible();
   });
-test("320 CDS 双倍字号确认操作", async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 568 });
-  await installOperationsFixtures(page);
-  await page.goto("http://127.0.0.1:5273/project-list");
-  await page.getByLabel("打开导航菜单").click();
-  await page.getByRole("link", { name: "发布控制台", exact: true }).click();
-  await expect(page.getByLabel("要发布的版本")).toBeVisible();
-  await page.evaluate(() => {
-    document.documentElement.style.fontSize = "200%";
+for (const theme of ["light", "dark"]) {
+  test(`320 ${theme} CDS 双倍字号完整确认目标`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await installOperationsFixtures(page);
+    await page.addInitScript((t) => localStorage.setItem("cds_theme", t), theme);
+    await page.goto("http://127.0.0.1:5273/project-list");
+    await page.getByLabel("打开导航菜单").click();
+    await page.getByRole("link", { name: "发布控制台", exact: true }).click();
+    await expect(page.getByLabel("要发布的版本")).toBeVisible();
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+    });
+    await reachable(page.getByLabel("要发布的版本"));
+    await page.getByRole("button", { name: "开始发布", exact: true }).click();
+    const confirm = page.getByRole("button", {
+      name: `确认发布到 ${targetName}`,
+      exact: true,
+    });
+    const target = page.getByRole("region", { name: "本次发布目标", exact: true });
+    await expect(target).toHaveText(targetName);
+    await target.scrollIntoViewIfNeeded();
+    const targetLayout = await target.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+      return { width: el.clientWidth, height: el.clientHeight, bottom: el.scrollTop + el.clientHeight, fullHeight: el.scrollHeight, viewport: innerHeight };
+    });
+    expect(targetLayout.height).toBeLessThanOrEqual(targetLayout.viewport * 0.4 + 1);
+    expect(targetLayout.bottom).toBeGreaterThanOrEqual(targetLayout.fullHeight - 1);
+    await reachable(confirm);
+    const layout = await confirm.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      const label = el.querySelector("span")!;
+      const text = label.getBoundingClientRect();
+      return {
+        buttonHeight: rect.height,
+        textWidth: text.width,
+        fontSize: parseFloat(getComputedStyle(label).fontSize),
+        viewportHeight: innerHeight,
+      };
+    });
+    // 横向不溢出、trial click 成功仍可能是逐字竖排的多屏按钮。
+    expect(layout.buttonHeight).toBeLessThan(layout.viewportHeight - 32);
+    expect(layout.textWidth).toBeGreaterThanOrEqual(layout.fontSize * 4);
+    await testInfo.attach("大字确认布局", {
+      body: JSON.stringify(layout), contentType: "application/json",
+    });
+    expect(
+      await confirm.evaluate((el) => el.scrollWidth - el.clientWidth),
+    ).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: testInfo.outputPath("large-text-confirm.png") });
+    await testInfo.attach("完整确认目标", {
+      path: testInfo.outputPath("large-text-confirm.png"), contentType: "image/png",
+    });
+    await page.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "开始发布", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "开始发布", exact: true }).click();
+    await confirm.click();
+    await expect(page.getByText("隔离预检失败", { exact: false }).first()).toBeVisible();
   });
-  await reachable(page.getByLabel("要发布的版本"));
-  await page.getByRole("button", { name: "开始发布", exact: true }).click();
-  const confirm = page.getByRole("button", {
-    name: `确认发布到 ${targetName}`,
-    exact: true,
-  });
-  await reachable(confirm);
-  expect(
-    await confirm.evaluate((el) => el.scrollWidth - el.clientWidth),
-  ).toBeLessThanOrEqual(1);
-  await page.getByRole("button", { name: "取消", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "开始发布", exact: true }),
-  ).toBeVisible();
-});
+}
 test("390 隔离发布成功闭环", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const fixture = await installOperationsFixtures(page);

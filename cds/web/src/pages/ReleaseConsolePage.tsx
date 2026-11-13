@@ -850,7 +850,7 @@ export function ReleaseConsolePage(): JSX.Element {
               </div>
             ) : null}
 
-            <section className={`cds-surface-raised shrink-0 rounded-[0.875rem] border px-5 py-[1.125rem] ${toneRing}`}>
+            <section className={`cds-surface-raised shrink-0 rounded-[0.875rem] border px-3 py-[1.125rem] sm:px-5 ${toneRing}`}>
               <div className="flex flex-wrap items-center gap-[1.125rem]">
                 {/* 进行中时向外扩一圈光晕（参考稿 pulseRing）。终态静止。 */}
                 <div className={`flex h-[3.25rem] w-[3.25rem] shrink-0 items-center justify-center rounded-[0.875rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] ${running ? 'cds-status-pulse' : ''}`}>
@@ -953,11 +953,21 @@ export function ReleaseConsolePage(): JSX.Element {
                     </Button>
                   ) : null}
                   {awaitingConfirm ? (
-                    <Button variant="ghost" onClick={() => setConfirmTargetId(null)}>取消</Button>
+                    <>
+                      <div className="w-full min-w-0 rounded-md border border-warn/40 bg-warn-soft p-3">
+                        <p className="mb-1 text-xs text-muted-foreground">本次发布目标</p>
+                        <div id="release-confirm-target" role="region" aria-label="本次发布目标" tabIndex={0} className="max-h-[40dvh] overflow-y-auto break-all text-sm">
+                          {row?.target.name}
+                        </div>
+                      </div>
+                      <Button variant="ghost" onClick={() => setConfirmTargetId(null)}>取消</Button>
+                    </>
                   ) : null}
-                  {/* 受保护环境走两段式：第一下只是把按钮换成「确认发布到 X」，第二下才真发。
-                      不用 window.confirm —— 那东西在窄屏和无障碍上都不好使，也没法说清发的是哪一版。 */}
+                  {/* 受保护环境走两段式：第一下先展示完整目标供审阅，第二下才真发。
+                      完整目标放在上方有界滚动区，按钮不承担长文本；辅助技术仍读出完整目标。 */}
                   <Button
+                    aria-label={awaitingConfirm ? `确认发布到 ${row?.target.name}` : undefined}
+                    aria-describedby={awaitingConfirm ? 'release-confirm-target' : undefined}
                     onClick={() => {
                       if (!row) return;
                       if (isProtected && !awaitingConfirm) { setConfirmTargetId(row.target.id); return; }
@@ -965,12 +975,12 @@ export function ReleaseConsolePage(): JSX.Element {
                       void startRelease();
                     }}
                     disabled={!row || !branchId || running || blockedByOther || busy === 'deploy'}
-                    className={`h-auto min-h-10 max-w-full whitespace-normal break-words py-2 text-left ${awaitingConfirm ? 'ring-2 ring-bad/60' : ''}`}
+                    className={`h-auto min-h-10 w-full max-w-full whitespace-normal break-words px-2 py-2 text-left sm:w-auto sm:px-4 ${awaitingConfirm ? 'ring-2 ring-bad/60' : ''}`}
                   >
                     {busy === 'deploy' || running ? <Loader2 className="animate-spin" /> : <Rocket />}
-                    <span className="min-w-0 break-words">
+                    <span className="min-w-0 w-full break-words sm:w-auto">
                       {awaitingConfirm
-                        ? `确认发布到 ${row?.target.name}`
+                        ? '确认发布'
                         : busy === 'deploy' ? '检查并发布'
                         : stance.primaryLabel}
                     </span>

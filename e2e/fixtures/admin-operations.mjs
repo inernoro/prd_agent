@@ -63,6 +63,11 @@ export async function installOperationsFixtures(page) {
     if (req.resourceType() === "eventsource")
       return route.fulfill({
         contentType: "text/event-stream",
+        // WebKit 在跨应用导航取消重连时仍校验模拟 SSE 的 CORS，明确响应所属请求源。
+        headers: {
+          "access-control-allow-origin": req.headers().origin || new URL(req.url()).origin,
+          "access-control-allow-credentials": "true",
+        },
         body: ": fixture\n\n",
       });
     if (path.startsWith("/api/")) {
