@@ -228,6 +228,7 @@ export class ScheduledJobService {
 
   /** 重启后只标记未知结果，绝不重放可能已发生的外部副作用。 */
   private async reconcileInterruptedRuns(): Promise<void> {
+    let changed = false;
     for (const job of this.deps.stateService.listScheduledJobs()) {
       if (this.running.has(job.id)) continue;
       const rows = this.deps.stateService.listScheduledJobRuns({ jobId: job.id, limit: 500 });
@@ -239,9 +240,13 @@ export class ScheduledJobService {
         this.deps.stateService.upsertScheduledJobRun(run);
         this.patchJobAfterRun(job, run);
         this.deps.stateService.upsertScheduledJob({ ...this.deps.stateService.getScheduledJob(job.id)!, recoveryRequiredRunId: run.id });
-        await this.deps.stateService.flush();
-        this.publishHealthEvent(job, run);
+        changed = true;
       }
+    }
+    // 所有门先同步建立，再等待存储；首个慢写不能暴露后续任务的人工/事件执行窗口。
+    if (changed) {
+      await this.deps.stateService.flush();
+      this.publishHealthEvent();
     }
   }
 
@@ -324,7 +329,11 @@ export class ScheduledJobService {
       skipped.finishedAt = skipped.queuedAt;
       skipped.durationMs = 0;
       skipped.log = '上一次执行仍在运行，本次按并发策略跳过。';
-      this.deps.stateService.upsertScheduledJobRun(skipped);
+      if (trigger === 'schedule') {
+        skipped.requestKey = options.requestKey;
+        this.claimScheduledOccurrence(job, skipped, options.scheduledFor, options.now || new Date());
+        await this.deps.stateService.flush();
+      } else this.deps.stateService.upsertScheduledJobRun(skipped);
       return skipped;
     }
 
@@ -337,17 +346,13 @@ export class ScheduledJobService {
     run.deadlineAt = new Date(Date.now() + Math.max(1, job.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS) * 1000).toISOString();
     if (trigger === 'schedule') {
       const now = options.now || new Date();
-      run.scheduledFor = options.scheduledFor || job.nextRunAt || undefined;
-      if (!run.scheduledFor || run.scheduledFor !== job.nextRunAt || !isJobDue(job, now)) throw new Error('调度批次已认领或尚未到期');
-      // 先保存批次，再推进游标；写入异常时宁可阻塞，也不能丢批次后重放。
-      this.deps.stateService.upsertScheduledJobRun(run);
-      this.deps.stateService.upsertScheduledJob({ ...job, nextRunAt: this.computeNextRunAt(job.schedule, now), lastScheduledRun: { ...run } });
-      if (now.getTime() > Date.parse(run.scheduledFor) + scheduleGraceMs(job)) {
+      const scheduledFor = this.claimScheduledOccurrence(job, run, options.scheduledFor, now);
+      if (now.getTime() > Date.parse(scheduledFor) + scheduleGraceMs(job)) {
         run.status = 'failed'; run.failureKind = 'missed';
         run.error = '超过调度宽限时间，已记录漏跑；为避免重复副作用，不自动补跑。';
         run.finishedAt = now.toISOString();
         this.deps.stateService.upsertScheduledJobRun(run); this.patchJobAfterRun(job, run);
-        await this.deps.stateService.flush(); this.publishHealthEvent(job, run);
+        await this.deps.stateService.flush(); this.publishHealthEvent();
         return run;
       }
     }
@@ -426,7 +431,7 @@ export class ScheduledJobService {
         if (latest) this.deps.stateService.upsertScheduledJob({ ...latest, recoveryRequiredRunId: run.id });
       }
       await this.deps.stateService.flush();
-      if (run.status === 'failed') this.publishHealthEvent(job, run);
+      if (run.status === 'failed') this.publishHealthEvent();
     }
 
     return run;
@@ -638,10 +643,20 @@ export class ScheduledJobService {
     }
   }
 
-  private publishHealthEvent(job: ScheduledJob, run: ScheduledJobRun): void {
+  private publishHealthEvent(): void {
     try {
       if (this.deps.publishEvent) observeScheduledJobs(this.deps.stateService, this.deps.publishEvent);
     } catch (err) { console.warn('[scheduled-jobs] health event failed:', (err as Error).message); }
+  }
+
+  private claimScheduledOccurrence(job: ScheduledJob, run: ScheduledJobRun, scheduledFor: string | undefined, now: Date): string {
+    run.scheduledFor = scheduledFor || job.nextRunAt || undefined;
+    if (!run.scheduledFor || run.scheduledFor !== job.nextRunAt || !isJobDue(job, now)) throw new Error('调度批次已认领或尚未到期');
+    // 跳过也终结本批次，但不能用它覆盖仍在执行的结果及其后续失败。
+    this.deps.stateService.upsertScheduledJobRun(run);
+    this.deps.stateService.upsertScheduledJob({ ...job, nextRunAt: this.computeNextRunAt(job.schedule, now),
+      ...(run.status !== 'skipped' ? { lastScheduledRun: { ...run } } : {}) });
+    return run.scheduledFor;
   }
 
   private resolveNextRunAtAfterRun(job: ScheduledJob): string | null {

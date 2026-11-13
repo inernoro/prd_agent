@@ -92,6 +92,63 @@ describe('自动化任务健康与安全恢复', () => {
       vi.setSystemTime(startedAt + 180_000); finish(); await pending; vi.useRealTimers();
     }
   });
+  it('并发跳过认领并推进当前批次，原执行结束后不补跑已跳过的批次', async () => {
+    const startedAt = Date.now(); vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(startedAt);
+    let finish!: () => void; const completion = new Promise<void>(resolve => { finish = resolve; });
+    shell.exec.mockImplementationOnce(async () => { await completion; return { stdout: 'first', stderr: '', exitCode: 0 }; });
+    const row = job({ schedule: { type: 'interval', intervalMinutes: 1 }, timeoutSeconds: 600 });
+    const first = service.tick(new Date(startedAt));
+    try {
+      await vi.waitFor(() => expect(shell.exec).toHaveBeenCalledTimes(1));
+      vi.setSystemTime(startedAt + 60_000); await service.tick(new Date());
+      const skipped = state.listScheduledJobRuns({ jobId: row.id }).find(run => run.status === 'skipped')!;
+      expect(skipped).toMatchObject({ scheduledFor: new Date(startedAt + 60_000).toISOString(), requestKey: `schedule:${new Date(startedAt + 60_000).toISOString()}` });
+      expect(state.getScheduledJob(row.id)!.nextRunAt).toBe(new Date(startedAt + 120_000).toISOString());
+      expect((await service.runJob(row.id, 'schedule', { scheduledFor: skipped.scheduledFor })).id).toBe(skipped.id);
+      vi.setSystemTime(startedAt + 90_000); finish(); await first; await service.tick(new Date());
+      expect(shell.exec).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(startedAt + 120_000); await service.tick(new Date()); expect(shell.exec).toHaveBeenCalledTimes(2);
+      expect(events.filter(event => event.data.failureKind === 'missed')).toHaveLength(0);
+    } finally { finish(); await first; vi.useRealTimers(); }
+  });
+  it('在途占用超过宽限仍是并发跳过，不误报漏跑且保留原执行失败', async () => {
+    const startedAt = Date.now(); vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(startedAt);
+    let finish!: () => void; const completion = new Promise<void>(resolve => { finish = resolve; });
+    shell.exec.mockImplementation(async () => { await completion; return { stdout: '', stderr: 'isolated failure', exitCode: 1 }; });
+    const row = job({ schedule: { type: 'interval', intervalMinutes: 1 }, timeoutSeconds: 600 });
+    const first = service.tick(new Date());
+    try {
+      await vi.waitFor(() => expect(shell.exec).toHaveBeenCalledTimes(1));
+      const activeId = state.listScheduledJobRuns({ jobId: row.id })[0].id;
+      vi.setSystemTime(startedAt + 60_000); await service.tick(new Date());
+      vi.setSystemTime(startedAt + 300_000); await service.tick(new Date());
+      expect(state.getScheduledJob(row.id)!.nextRunAt).toBe(new Date(startedAt + 360_000).toISOString());
+      expect(state.listScheduledJobRuns({ jobId: row.id }).filter(run => run.status === 'skipped')).toHaveLength(2);
+      expect(events).toHaveLength(0); finish(); await first;
+      expect(state.getScheduledJob(row.id)!.lastScheduledRun).toMatchObject({ id: activeId, status: 'failed', failureKind: 'execution' });
+      expect(service.health(state.getScheduledJob(row.id)!).state).toBe('execution'); expect(shell.exec).toHaveBeenCalledTimes(1);
+      expect(events.filter(event => event.data.failureKind === 'missed')).toHaveLength(0);
+    } finally { finish(); await first; vi.useRealTimers(); }
+  });
+  it('启动首次落盘阻塞时也已封锁全部中断任务，后续任务人工请求不能重复调用', async () => {
+    for (const id of ['first-interrupted', 'later-interrupted']) {
+      const row = job({ id, nextRunAt: new Date(Date.now() + 3_600_000).toISOString() });
+      state.upsertScheduledJobRun({ id: `${id}-run`, jobId: row.id, projectId: row.projectId, trigger: 'schedule', status: 'running', queuedAt: new Date().toISOString() });
+    }
+    await state.flush();
+    let releaseFlush!: () => void; const receipt = new Promise<void>(resolve => { releaseFlush = resolve; });
+    const originalFlush = state.flush.bind(state); let firstFlush = true;
+    vi.spyOn(state, 'flush').mockImplementation(async () => {
+      if (firstFlush) { firstFlush = false; await receipt; }
+      await originalFlush();
+    });
+    service.start();
+    try {
+      const result = await service.runJob('later-interrupted', 'manual').then(run => ({ run, error: undefined }), error => ({ run: undefined, error }));
+      expect(shell.exec).not.toHaveBeenCalled(); expect(result.error?.message).toContain('结果未知');
+      for (const id of ['first-interrupted', 'later-interrupted']) expect(state.getScheduledJob(id)!.recoveryRequiredRunId).toBe(`${id}-run`);
+    } finally { releaseFlush(); service.stop(); await service.tick(); await state.flush(); }
+  });
   it('push 发布失败进入红色健康与原告警，手动成功和历史裁剪不能掩盖', async () => {
     const commitSha = 'a'.repeat(40);
     state.addBranch({ id: 'isolated-branch', projectId: 'project', branch: 'main', worktreePath: dir, services: {}, status: 'running', pinnedCommit: commitSha, createdAt: new Date().toISOString() } as any);
