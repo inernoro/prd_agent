@@ -12,6 +12,38 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class VideoClipImportTests
 {
     [Fact]
+    public async Task RemainingOutputBudget_StopsRealEncodingAndRemovesCopiedInput()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"video-import-budget-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var source = Path.Combine(directory, "source.mp4");
+            await MediaAsync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=blue:s=160x90:r=25", "-t", "2", "-c:v", "libx264", "-threads", "1", source]);
+            await using var stream = File.OpenRead(source);
+            var file = new FormFile(stream, 0, stream.Length, "files", "scene.mp4");
+            var error = await Should.ThrowAsync<InvalidDataException>(() =>
+                VideoAgentController.PrepareImportedClipAsync(file, directory, 0, maxOutputBytes: 512));
+            error.Message.ShouldContain("限制");
+            File.Exists(Path.Combine(directory, "input-00.bin")).ShouldBeFalse();
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public async Task RequestCancellation_StopsMediaChildProcessWithoutWaitingForTimeout()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var elapsed = Stopwatch.StartNew();
+        var work = VideoAgentController.RunImportProcessAsync("ffmpeg",
+            ["-v", "error", "-re", "-f", "lavfi", "-i", "color=s=160x90:d=30", "-f", "null", "-"], TimeSpan.FromMinutes(3), cancellation.Token);
+        await Task.Delay(200);
+        cancellation.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() => work);
+        elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task ImportedThreeClips_ShouldRemainDecodableAndKeepFractionalTimelineWithoutModelJobs()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"video-import-test-{Guid.NewGuid():N}");

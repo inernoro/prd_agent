@@ -18,6 +18,30 @@ namespace PrdAgent.Api.Tests.Services;
 
 public partial class VideoSceneConcurrencyTests
 {
+    [Fact]
+    public async Task ImportBusy_RejectsBeforeBufferingBodyAndReleasesSlotAfterFailure()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var controller = ImportController(test, test.OwnerId);
+        controller.Request.ContentType = "multipart/form-data; boundary=never-read";
+        var body = new Mock<Stream>();
+        body.SetupGet(stream => stream.CanRead).Returns(true);
+        body.Setup(stream => stream.ReadAsync(It.IsAny<Memory<byte>>(), It.IsAny<CancellationToken>()))
+            .Throws(new InvalidOperationException("请求体不应读取"));
+        controller.Request.Body = body.Object;
+        await VideoAgentController.ImportMediaSlots.WaitAsync();
+        try
+        {
+            var busy = await controller.ImportScenes("project");
+            ((ObjectResult)busy).StatusCode.ShouldBe(429);
+            body.Verify(stream => stream.ReadAsync(It.IsAny<Memory<byte>>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally { VideoAgentController.ImportMediaSlots.Release(); }
+        controller.Request.Form = new FormCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>());
+        (await controller.ImportScenes("project")).ShouldBeOfType<BadRequestObjectResult>();
+        VideoAgentController.ImportMediaSlots.CurrentCount.ShouldBe(1);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -95,7 +119,7 @@ public partial class VideoSceneConcurrencyTests
             using var first = new MemoryStream(bytes);
             using var second = new MemoryStream(bytes);
             using var third = new MemoryStream(bytes);
-            var result = await controller.ImportScenes(project.Id,
+            var result = await controller.ImportScenesCoreAsync(project.Id,
                 [new FormFile(first, 0, bytes.Length, "files", "第一镜.mp4"), new FormFile(second, 0, bytes.Length, "files", "第二镜.mp4"), new FormFile(third, 0, bytes.Length, "files", "第三镜.mp4")]);
             result.ShouldBeOfType<OkObjectResult>();
             var saved = await test.Context.VideoProjects.Find(item => item.Id == project.Id).SingleAsync();
@@ -137,7 +161,7 @@ public partial class VideoSceneConcurrencyTests
                 OwnerAdminId = test.OwnerId, Status = VideoExportTaskStatus.Processing });
         using var stream = new MemoryStream(new byte[12]);
         var result = await ImportController(test, variant == "foreign-owner" ? "different-owner" : test.OwnerId)
-            .ImportScenes(project.Id, [new FormFile(stream, 0, stream.Length, "files", "unread.mp4")]);
+            .ImportScenesCoreAsync(project.Id, [new FormFile(stream, 0, stream.Length, "files", "unread.mp4")]);
         ((ObjectResult)result).StatusCode.ShouldBe(expectedStatus);
         test.AssetStorage.Verify(storage => storage.SaveAsync(It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>()), Times.Never);
