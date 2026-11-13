@@ -16,9 +16,9 @@ import type { UpstreamProxyDraft, UpstreamProxyView } from '@/lib/types';
 //   - 本路由被 e2e/llmgw-layout-drift.mjs 监测：表单一律内联、DOM 保持扁平，
 //     不许把创建/编辑改成抽屉或对话框（EntityPreviewDrawer 是只读预览，另论）。
 import { useEffect, useState } from 'react';
-import { ArrowRight, AudioLines, CheckCircle2, Image, KeyRound, Layers3, Pencil, Plus, Route, Trash2, Video } from 'lucide-react';
+import { ArrowRight, AudioLines, CheckCircle2, ChevronDown, Image, KeyRound, Layers3, Pencil, Plus, Route, Trash2, Video } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import {
   bulkRotateApiKeys,
   claimExchangeToGateway,
@@ -160,6 +160,9 @@ export function ExchangesPage() {
   const [savedItem, setSavedItem] = useState<ExchangeItem | null>(null);
   const [layeringCapability, setLayeringCapability] = useState<ImageLayeringCapabilityStatus | null>(null);
   const [layeringApiKey, setLayeringApiKey] = useState('');
+  const location = useLocation();
+  const [layeringOpen, setLayeringOpen] = useState(() => location.hash === '#image-layering');
+  useEffect(() => { if (location.hash === '#image-layering') setLayeringOpen(true); }, [location.hash]);
 
   useEffect(() => {
     let alive = true;
@@ -460,8 +463,8 @@ export function ExchangesPage() {
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
 
-        <section id="image-layering" aria-labelledby="image-layering-title" style={capabilitySectionStyle}>
-          <div style={sectionHeaderStyle}>
+        <details id="image-layering" aria-labelledby="image-layering-title" open={layeringOpen} onToggle={(event) => setLayeringOpen(event.currentTarget.open)} style={capabilitySectionStyle}>
+          <summary style={{ ...sectionHeaderStyle, minHeight: 36, cursor: 'pointer' }}>
             <span style={sectionIconStyle}><Layers3 size={16} /></span>
             <strong id="image-layering-title" style={SECTION_TITLE}>fal.ai 图片分层</strong>
             <span style={{ marginLeft: 'auto', flexShrink: 0 }}>
@@ -477,9 +480,10 @@ export function ExchangesPage() {
                 bg={layeringCapability?.verified ? 'var(--ok-bg)' : layeringCapability?.installed ? 'var(--warn-bg)' : 'var(--bg-elevated)'}
               />
             </span>
-          </div>
+            <ChevronDown size={16} aria-hidden="true" />
+          </summary>
 
-          <Card style={CARD_BODY}>
+          <Card style={{ ...CARD_BODY, marginTop: GAP.normal }}>
             <div style={capabilityMetaStyle}>
               <span style={metaPairStyle}><span style={HINT_TEXT}>能力</span><code style={MONO_META}>{layeringCapability?.publicId || 'image-layering'}</code></span>
               <span style={metaPairStyle}><span style={HINT_TEXT}>模型</span><code style={MONO_META}>{layeringCapability?.modelId || 'fal-qwen-image-layered'}</code></span>
@@ -534,7 +538,7 @@ export function ExchangesPage() {
               </div>
             ) : null}
           </Card>
-        </section>
+        </details>
 
         {savedItem ? (
           <Card style={{ ...CARD_BODY, borderColor: 'color-mix(in srgb, var(--ok) 45%, var(--border-subtle))', background: 'var(--ok-bg)' }}>
@@ -923,11 +927,7 @@ const listStyle: React.CSSProperties = {
 
 // 不限宽：此前固定 840，而下方 Exchange 列表是撑满的，
 // 两个区块右边缘对不齐，一眼就是「这页没排过版」。
-const capabilitySectionStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: GAP.normal,
-  width: '100%',
-};
+const capabilitySectionStyle: React.CSSProperties = { flexShrink: 0, width: '100%' };
 
 const sectionHeaderStyle: React.CSSProperties = {
   display: 'flex',
