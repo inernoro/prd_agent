@@ -1,3 +1,4 @@
+import { searchDocStoreShareEntries } from '@/services/real/documentStore';
 /**
  * LibraryShareViewPage — 知识库 / 单篇文档「分享链接」公开展示页
  *
@@ -271,7 +272,8 @@ export function LibraryShareViewPage() {
   const activeView = parseLibraryShareViewMode(viewFromUrl, isSingleDoc);
   const title = isSingleDoc ? (view.entryTitle ?? store.name) : (view.title || store.name);
   const desc = view.description || store.description;
-  const hasMeta = Boolean(desc) || (!isSingleDoc && store.documentCount > 0) || store.viewCount > 0;
+  const documentCount = entries.filter(entry => !entry.isFolder && entry.sourceType !== 'github_directory').length;
+  const hasMeta = Boolean(desc) || (!isSingleDoc && documentCount > 0) || store.viewCount > 0;
   const knowledgeBaseReturnPath = resolveShareKnowledgeBaseReturnPath(store.id, canOpenStore);
   const knowledgeBaseReturnLabel = canOpenStore
     ? '返回知识库'
@@ -373,7 +375,7 @@ export function LibraryShareViewPage() {
               {desc}
             </span>
           )}
-          {!isSingleDoc && <span>{store.documentCount} 篇文档</span>}
+          {!isSingleDoc && <span>{documentCount} 篇文档</span>}
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <Eye size={12} /> {store.viewCount} 次浏览
           </span>
@@ -411,6 +413,11 @@ export function LibraryShareViewPage() {
         {activeView === 'read' && (
           <DocBrowser
             entries={browserEntries}
+            onSearch={async (keyword, _content, cursor) => {
+              const result = await searchDocStoreShareEntries(token ?? '', keyword, cursor);
+              if (!result.success) throw new Error(result.error.message);
+              return result.data;
+            }}
             immersiveOnMobile
             primaryEntryId={store.primaryEntryId}
             pinnedEntryIds={store.pinnedEntryIds ?? []}
