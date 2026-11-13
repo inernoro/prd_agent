@@ -582,7 +582,10 @@
   .video-create-reference-form .is-wide { grid-column: span 2; }
   .video-workbench__header { display: flex; min-height: auto; flex-wrap: wrap; padding: 9px; }
   .video-workbench__project { flex: 1; }
-  .video-workbench__actions { width: 100%; overflow-x: auto; }
+  .video-workbench__actions { width: 100%; flex-wrap: wrap; overflow: visible; }
+  .video-workbench__actions > button,
+  .video-workbench__actions > a { flex: 0 0 auto; min-height: 44px; white-space: nowrap; }
+  .video-workbench__actions svg { flex-shrink: 0; }
   .video-workbench__workspace,
   .video-workbench__workspace.has-inspector { display: flex; overflow-y: auto; flex-direction: column; }
   .video-workbench__filmstrip { flex: 0 0 auto; overflow: visible; }
