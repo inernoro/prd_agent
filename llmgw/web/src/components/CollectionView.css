@@ -19,10 +19,10 @@
 .lg-collection-pane-heading h2 { margin: 0; font-size: var(--fs-heading); overflow-wrap: anywhere; }
 .lg-collection-pane-heading code { display: block; overflow-wrap: anywhere; color: var(--text-muted); font-size: var(--fs-secondary); }
 .lg-collection-close { display: grid; place-items: center; width: 32px; height: 32px; background: transparent; color: var(--text-muted); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); cursor: pointer; }
-.lg-collection-pane-tabs { display: flex; gap: 8px; padding: 0 16px; flex-shrink: 0; border-bottom: 1px solid var(--border-subtle); }
+.lg-collection-pane-tabs { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 16px; flex-shrink: 0; border-bottom: 1px solid var(--border-subtle); }
 .lg-collection-pane-body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .lg-collection-pane-body > .lg-collection-view { min-height: 240px; }
-.lg-collection-pane .lg-logical-model-detail { padding: 0 !important; flex: 1; min-height: 0; }
+.lg-collection-pane .lg-logical-model-detail { padding: 0 !important; flex: 0 0 auto; min-height: 0; min-width: 0; }
 .lg-collection-pane .lg-logical-model-detail .lg-form-grid { grid-template-columns: minmax(0,1fr); }
 .lg-collection-pane .lg-logical-model-detail > .lg-collection-view { flex: 1; min-height: 240px; }
 .lg-collection-pane .lg-logical-model-route-detail { margin: 0 16px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
