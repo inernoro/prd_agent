@@ -4105,7 +4105,8 @@ function ResourceConsole({
         ) : null}
       </div>
 
-      <div className="min-h-[38.75rem] min-w-0">
+      {/* Scalar variable names do not need the working space reserved for logs and data tools. */}
+      <div className={detailTab === 'variables' ? 'min-w-0' : 'min-h-[38.75rem] min-w-0'}>
         {selectedResource ? (
           <>
             <div className="flex min-w-0 items-start justify-between gap-3 border-b border-[hsl(var(--hairline))] px-5 py-4">
