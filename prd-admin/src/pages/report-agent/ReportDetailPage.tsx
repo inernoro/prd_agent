@@ -307,8 +307,8 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   ];
 
   return (
-    // 高度约束只给 lg+：手机端三栏改上下堆叠靠页面自然滚动（定高会把堆叠内容压扁，同 team-activity 事故）
-    <div className="lg:h-full min-h-0 flex flex-col gap-4">
+    // 手机详情保持内容自然高度，避免嵌入团队flex容器时被互动区挤扁；lg+保留定高分栏。
+    <div className="shrink-0 lg:shrink lg:h-full min-h-0 flex flex-col gap-4">
       {/* Return Dialog */}
       {showReturnDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--modal-overlay)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}>

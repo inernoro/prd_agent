@@ -313,6 +313,7 @@ export function WeekNavRail({
             <button
               type="button"
               onClick={() => setMobileTreeOpen((v) => !v)}
+              aria-expanded={mobileTreeOpen}
               className="ml-auto inline-flex items-center gap-1 text-[11px] rounded-md px-2 py-1 surface-inset"
               style={{ color: 'var(--text-muted)', border: '1px solid var(--border-primary)' }}
             >
@@ -451,7 +452,10 @@ export function WeekNavRail({
                                   <button
                                     key={member.userId}
                                     type="button"
-                                    onClick={() => onSelectMember(member)}
+                                    onClick={() => {
+                                      onSelectMember(member);
+                                      if (isMobile) setMobileTreeOpen(false);
+                                    }}
                                     className="w-full flex items-start gap-1.5 px-2 py-1.5 rounded-lg text-left hover-bg-soft"
                                     style={{
                                       background: isMemberSelected ? (isLight ? 'rgba(126,34,206,.14)' : 'rgba(168,85,247,.14)') : 'transparent',
