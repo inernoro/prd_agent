@@ -163,7 +163,7 @@
 .writing-reader .role[aria-checked="true"]{border-color:var(--writing-ac);background:var(--writing-acs);color:var(--writing-ac)}
 .writing-reader .act{display:grid;grid-template-columns:84px minmax(0,1fr) auto;gap:4px 16px;align-items:start;padding:12px 14px;border-top:1px solid var(--writing-ln)}
 .writing-reader .act.on{background:var(--writing-sf2);box-shadow:inset 3px 0 0 var(--writing-ac)}
-.writing-reader .act .who{font-size:13.5px;font-weight:600;line-height:24px}
+.writing-reader .act .who{font-size:13.5px;font-weight:600;line-height:24px;padding:0;border:0;background:none;color:inherit;font-family:inherit;text-align:left;cursor:pointer}
 .writing-reader .act .what{font-size:14.5px;line-height:1.65}
 .writing-reader .cond{display:flex;gap:8px;align-items:flex-start;margin-top:4px;font-size:13px;line-height:1.65;color:var(--writing-am)}
 .writing-reader .cond .tag{height:19px;margin-top:1px}
@@ -332,3 +332,68 @@
 .writing-tutorial-steps>.writing-section-condition>.tag{flex-shrink:0}
 .writing-tutorial-steps>.writing-reader-detail{margin:12px 0;overflow:auto;max-width:100%}
 .writing-tutorial-steps>.writing-reader-detail td{overflow-wrap:anywhere}
+
+/* Reader 11/11b: preserve the original block flow and mobile navigation. */
+.writing-mobile-toc{display:none}
+.writing-reader:not(.writing-tutorial) .writing-scope-grid>div>.cap{display:block}
+@media(min-width:761px){
+  .writing-reader:not(.writing-tutorial) [data-section="top"]>.cap{font:600 11px/1.45 'Noto Serif SC',serif;margin-bottom:6px}
+  .writing-reader:not(.writing-tutorial) .writing-conclusions{margin-bottom:20px}
+  .writing-reader:not(.writing-tutorial) .writing-role-heading .hint{margin-right:2px}
+  .writing-reader:not(.writing-tutorial) .writing-reader-toc>.cap{padding-bottom:8px}
+  .writing-reader:not(.writing-tutorial) .toc button{padding:7px 10px}
+  .writing-reader:not(.writing-tutorial) .writing-reader-toc .writing-divided{margin:18px 10px 0;padding:14px 0 0}
+  .writing-reader:not(.writing-tutorial) .writing-reader-toc .writing-divided>.cap{margin-bottom:6px}
+  .writing-reader:not(.writing-tutorial) .writing-reader-toc .writing-divided>.btn{height:26px;min-height:26px;font-size:12px}
+  .writing-reader:not(.writing-tutorial) .writing-reader-toc .writing-divided>.btn+.btn{margin-top:6px}
+  .writing-reader:not(.writing-tutorial) .writing-reader-info .srow{padding:7px 0}
+}
+@media(max-width:760px){
+  .writing-reader:not(.writing-tutorial).writing-root{height:100dvh;min-height:0;overflow:hidden}
+  .writing-reader:not(.writing-tutorial) .writing-threads{display:none}
+  .writing-reader:not(.writing-tutorial) .writing-mobile-tabs{flex-shrink:0;padding:10px 16px;margin:0;border:0;border-radius:0;background:var(--writing-sf);border-bottom:1px solid var(--writing-ln)}
+  .writing-reader:not(.writing-tutorial) .writing-mobile-tabs>a{height:40px;padding:0;display:flex;align-items:center;justify-content:center;border:1px solid var(--writing-ln2);font:500 14px Inter,'Noto Sans SC',sans-serif;color:var(--writing-ink2)}
+  .writing-reader:not(.writing-tutorial) .writing-mobile-tabs>a:first-child{border-radius:8px 0 0 8px;border-right:0}
+  .writing-reader:not(.writing-tutorial) .writing-mobile-tabs>a:last-child{border-radius:0 8px 8px 0}
+  .writing-reader:not(.writing-tutorial) .writing-mobile-tabs>a.on{color:var(--writing-ac);background:var(--writing-acs)}
+  .writing-reader:not(.writing-tutorial) .writing-reader-layout{overflow-y:auto;scrollbar-width:none}
+  .writing-reader:not(.writing-tutorial) .writing-reader-body{flex-shrink:0;overflow:visible}
+  .writing-reader:not(.writing-tutorial) .art{padding:16px 16px 24px}
+  .writing-reader:not(.writing-tutorial) .writing-reader-meta{margin-bottom:8px}
+  .writing-reader:not(.writing-tutorial) .writing-reader-meta>.mono{font-size:11px}
+  .writing-reader:not(.writing-tutorial) .writing-reader-title{line-height:1.4}
+  .writing-reader:not(.writing-tutorial) [data-section="top"]>.cap{margin-bottom:4px}
+  .writing-reader:not(.writing-tutorial) .writing-role-heading{padding:12px 14px 10px}
+  .writing-reader:not(.writing-tutorial) .writing-role-heading>strong{font-size:15px}
+  .writing-reader:not(.writing-tutorial) .writing-role-heading>div{margin-right:-14px;padding-right:14px;overflow-x:auto;scrollbar-width:none}
+  .writing-reader:not(.writing-tutorial) .writing-role-heading>div>.role{flex-shrink:0;padding:0 13px}
+  .writing-reader:not(.writing-tutorial) .act,.writing-reader:not(.writing-tutorial) .act:not(.on){display:block;padding:12px 14px}
+  .writing-reader:not(.writing-tutorial) .act>button.who{display:block;grid-column:auto;min-height:0;height:auto;margin:0;font-size:13px;line-height:normal;color:var(--writing-ink2)}
+  .writing-reader:not(.writing-tutorial) .act>.what{font-size:15px;line-height:1.6;margin-top:2px}
+  .writing-reader:not(.writing-tutorial) .act .cond{gap:6px;margin-top:5px;line-height:1.6}
+  .writing-reader:not(.writing-tutorial) .act>button.btn{display:none}
+  .writing-reader:not(.writing-tutorial) .writing-reading-order{margin:12px 0 14px;gap:6px}
+  .writing-reader:not(.writing-tutorial) .writing-reading-order>.hint{flex-basis:100%;font-size:12.5px;line-height:1.6}
+  .writing-reader:not(.writing-tutorial) .writing-reading-order>.ord{height:36px;min-height:36px;padding:0 13px;border-radius:18px;gap:6px}
+  .writing-reader:not(.writing-tutorial) .writing-reading-order>.ord>.n{width:auto;height:auto;border-radius:0;background:none;color:var(--writing-ac);font:11px 'JetBrains Mono',monospace}
+  .writing-reader:not(.writing-tutorial) .writing-reading-order>.btn{display:none}
+  .writing-reader .writing-mobile-toc{display:block;margin-bottom:6px;border:1px solid var(--writing-ln);border-radius:10px;background:var(--writing-sf);overflow:hidden}
+  .writing-reader .writing-mobile-toc button{width:100%;border:0;background:none;color:var(--writing-ink);text-align:left;cursor:pointer}
+  .writing-reader .writing-mobile-toc>button{display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:48px;padding:8px 14px;font:500 14px Inter,'Noto Sans SC',sans-serif}
+  .writing-reader .writing-mobile-toc>button[aria-expanded=true]>svg{transform:rotate(180deg)}
+  .writing-reader .writing-mobile-toc [data-section-link]{display:grid;grid-template-columns:24px minmax(0,1fr);gap:8px;min-height:44px;align-items:center;padding:0 14px;border-top:1px solid var(--writing-ln);font:14px Inter,'Noto Sans SC',sans-serif}
+  .writing-reader .writing-mobile-toc [data-section-link]>.mono{color:var(--writing-ink3)}
+  .writing-reader .writing-mobile-toc [data-section-link]>span:last-child{display:flex;justify-content:space-between;align-items:center}
+  .writing-reader .writing-mobile-toc button:disabled{opacity:.5;cursor:wait}
+}
+
+/* Author mobile confirmation follows one page flow; desktop columns keep their own scrolling. */
+@media(max-width:760px){
+  .writing-author .writing-three-columns{flex:none;width:100%;padding:0;gap:10px}
+  .writing-author .writing-three-columns>.writing-document-column,
+  .writing-author .writing-three-columns>.writing-sources-column,
+  .writing-author .writing-three-columns>.writing-confirm-column:not(:has(.writing-question-detail)){
+    flex:none;min-height:auto;max-height:none;overflow:visible;border:0;border-radius:0
+  }
+  .writing-author .writing-three-columns>.writing-document-column{padding:16px}
+}

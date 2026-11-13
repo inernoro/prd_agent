@@ -1,5 +1,6 @@
 import { WritingLogo } from './WritingLogo';
 import { WritingSectionConstraints } from './WritingSectionConstraints';
+import { WritingMobileToc } from './WritingMobileToc';
 import { WritingThreads } from './WritingThreads';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -18,6 +19,8 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
   const [data, setData] = useState<WritingReader>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [bodyLoading, setBodyLoading] = useState(false);
+  const [bodyFailure, setBodyFailure] = useState('');
   const [role, setRole] = useState('');
   const [current, setCurrent] = useState('top');
   const [visited, setVisited] = useState<string[]>([]);
@@ -54,15 +57,32 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
   const defaultVideoId = data?.publication.videoEntryId;
   const selectedVideoId = mobileVideo && !preferDefaultVideo ? data?.publication.mobileVideoEntryId || defaultVideoId : defaultVideoId;
   const usingMobileVideo = !!selectedVideoId && selectedVideoId !== defaultVideoId;
+  const loadBody = useCallback(async (id: string, version: number, generation: number) => {
+    setBodyLoading(true); setBodyFailure('');
+    const result = await readWriting(id, { version });
+    if (generation !== readGeneration.current) return;
+    setBodyLoading(false);
+    if (result.success) {
+      if (result.data.publication.version !== version || result.data.bodyPending) {
+        setBodyFailure('正文版本与概要不一致，请重新加载文档');
+      } else setData(result.data);
+    } else if (['NETWORK_ERROR', 'SERVER_ERROR', 'SERVER_UNAVAILABLE', 'INTERNAL_ERROR'].includes(result.error.code)) {
+      setBodyFailure(result.error.message);
+    } else {
+      setData(undefined); setSource(undefined); setError(result.error.message);
+    }
+  }, []);
   const fetchData = useCallback(async () => {
     const generation = ++readGeneration.current;
     setLoading(true); setError(''); setData(undefined); setVideoUrl(''); setVideoFailure(''); setTime(0); setDuration(0); setPlaying(false); setStarted(false); setChapterIndex(0); setVisited([]); setSource(undefined);
-    const result = await readWriting(entryId);
+    setBodyLoading(false); setBodyFailure('');
+    const result = tutorial ? await readWriting(entryId) : await readWriting(entryId, { overview: true });
     if (generation !== readGeneration.current) return;
     if (result.success) { setData(result.data); setRole(result.data.publication.roles[0]?.label ?? ''); }
     else setError(result.error.message);
     setLoading(false);
-  }, [entryId]);
+    if (result.success && result.data.bodyPending) await loadBody(entryId, result.data.publication.version, generation);
+  }, [entryId, tutorial, loadBody]);
   useEffect(() => { const generation = readGeneration; void fetchData(); return () => { generation.current++; }; }, [fetchData]);
   useEffect(() => { setTime(0); setStarted(false); setPlaying(false); setChapterIndex(0); setDuration(0); setSpeed(1); }, [tutorial]);
   useEffect(() => {
@@ -110,7 +130,7 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
     } catch { setDoneSteps([]); }
   }, [entryId, data]);
   useEffect(() => {
-    if (!data || loading || tutorial) return;
+    if (!data || data.bodyPending || loading || tutorial) return;
     const media = window.matchMedia('(max-width: 760px)');
     let observer: IntersectionObserver;
     const install = () => {
@@ -134,8 +154,9 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
   if (loading) return <div className="writing-reader writing-root"><MapSectionLoader text="正在读取已发布文档…" /></div>;
   if (!data) return <div className="writing-reader writing-root"><div className="writing-error" role="alert"><h1>文档暂不可读</h1><p>{error}</p><button className="btn" onClick={() => void fetchData()}>重试</button><Link className="btn" to={writingKnowledgeHref(storeId)}>返回知识库</Link></div></div>;
   const doc = data.publication;
+  const bodyPending = !!data.bodyPending;
   const readingSections = roleReadingSections(doc.sections, doc.roles.find(r => r.label === role));
-  const go = (id: string) => { setCurrent(id); setVisited(v => v.includes(id) ? v : [...v, id]); textArea.current?.querySelector(`[data-section="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' }); };
+  const go = (id: string) => { if (bodyPending && id !== 'top') return; setCurrent(id); setVisited(v => v.includes(id) ? v : [...v, id]); textArea.current?.querySelector(`[data-section="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' }); };
   const openSource = (id: string, trigger: HTMLButtonElement, quote = '') => { setSourceQuote(quote); setSource(doc.sources.find(s => s.id === id)); closeTrigger.current = trigger; };
   const peers = data.entries; const index = peers.findIndex(e => e.id === entryId);
   const chapters = doc.chapters.length ? doc.chapters : doc.sections.map(s => ({ id: s.id, title: s.title, start: 0,
@@ -179,16 +200,22 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
     <div className="writing-mobile-tabs"><Link className={!tutorial ? 'on' : ''} to={`/document-store/${storeId}/write/${entryId}/read`}>阅读</Link><Link className={tutorial ? 'on' : ''} to={`/document-store/${storeId}/write/${entryId}/learn`}>教学{duration >= 60 ? ` · ${Math.floor(duration / 60)} 分钟` : ''}</Link></div>
     {data.affectedSources.length > 0 && <div className="writing-banner" role="status">引用资料有更新，待作者复核：{data.affectedSources.join('、')}。当前显示已发布的 v{doc.version}。</div>}
     {!tutorial ? <div className="writing-reader-layout">
-      <aside className="writing-reader-toc scroll"><div className="cap">目录 · 已读 {visited.filter(id => id !== 'top').length} / {doc.sections.length} 节</div><nav className="toc" aria-label="文档目录"><button className={current === 'top' ? 'cur' : ''} onClick={() => go('top')}><span className="mono">00</span>结论与下一步<span className="dot" /></button>{doc.sections.map((s, i) => <button className={current === s.id ? 'cur' : ''} onClick={() => go(s.id)} key={s.id}><span className="mono">{String(i + 1).padStart(2, '0')}</span>{s.title}<span className={`dot ${visited.includes(s.id) ? 'v' : ''}`} /></button>)}</nav>{role && <div className="writing-divided"><div className="cap">按角色 · {role}</div>{readingSections.map((s, i) => <button className="btn ghost" key={s.id} onClick={() => go(s.id)}><span className="mono">{i + 1}</span>{s.title}</button>)}</div>}</aside>
+      <aside className="writing-reader-toc scroll"><div className="cap">目录 · 已读 {visited.filter(id => id !== 'top').length} / {doc.sections.length} 节</div><nav className="toc" aria-label="文档目录"><button className={current === 'top' ? 'cur' : ''} onClick={() => go('top')}><span className="mono">00</span>结论与下一步<span className="dot" /></button>{doc.sections.map((s, i) => <button disabled={bodyPending} className={current === s.id ? 'cur' : ''} onClick={() => go(s.id)} key={s.id}><span className="mono">{String(i + 1).padStart(2, '0')}</span>{s.title}<span className={`dot ${visited.includes(s.id) ? 'v' : ''}`} /></button>)}</nav>{role && <div className="writing-divided"><div className="cap">按角色 · {role}</div>{readingSections.map((s, i) => <button className="btn ghost" disabled={bodyPending} key={s.id} onClick={() => go(s.id)}><span className="mono">{i + 1}</span>{s.title}</button>)}</div>}</aside>
       <main className="writing-reader-body scroll" ref={textArea} onScroll={() => {
         const parent = textArea.current; if (!parent) return;
         const hit = [...parent.querySelectorAll<HTMLElement>('[data-section]')].filter(el => el.getBoundingClientRect().top < parent.getBoundingClientRect().top + parent.clientHeight * .4).at(-1);
         const id = hit?.dataset.section; if (id && id !== current) { setCurrent(id); setVisited(v => v.includes(id) ? v : [...v, id]); }
-      }}><article className="art"><div data-section="top"><div className="writing-reader-meta"><span className="tag t-l">{data.template?.type ?? '文档'}</span><span className="mono">v{doc.version} · {doc.authorName} · {doc.reviewerName} 审核 · {new Date(doc.publishedAt).toLocaleDateString('zh-CN')}</span></div><h1 className="writing-reader-title">{doc.title}</h1><div className="cap writing-mb">结论</div>{doc.conclusions.length ? <ol className="writing-conclusions">{doc.conclusions.filter(Boolean).map((c, i) => <li key={i}>{c}</li>)}</ol> : <p>{doc.summary || '正文开头：' + (doc.sections[0]?.paragraphs[0]?.text.slice(0, 60) ?? '')}</p>}<div className="writing-scope-grid"><div className="writing-scope-in"><span className="cap">适用</span><div>{doc.scopeIn || '原文未单独说明，请结合正文判断。'}</div></div><div className="writing-scope-out"><span className="cap">不适用</span><div>{doc.scopeOut || '原文未单独说明。'}</div></div></div>{doc.roles.length > 0 && <section className="writing-actions-panel"><div className="writing-role-heading"><strong>下一步</strong><div role="radiogroup" aria-label="我是"><span className="hint">我是 </span>{doc.roles.map(r => <button className="role" role="radio" aria-checked={r.label === role} onClick={() => setRole(r.label)} key={r.label}>{r.label}</button>)}</div></div>{[...doc.roles].sort((a, b) => Number(b.label === role) - Number(a.label === role)).map(r => <div className={`act ${r.label === role ? 'on' : ''}`} key={r.label}><div className="who">{r.label}</div><div className="what">{r.action}{r.condition && <div className="cond"><span className="tag t-c">条件</span>{r.condition}</div>}</div><button className="btn ghost sm" onClick={() => go(r.sectionId)}>{doc.sections.find(s => s.id === r.sectionId)?.title}<ChevronRight size={12} /></button></div>)}</section>}<div className="writing-reading-order"><span className="hint">建议按这个顺序读</span>{readingSections.map((s, i) => <button className="ord" onClick={() => go(s.id)} key={s.id}><span className="n">{i + 1}</span>{s.title}</button>)}<Link className="btn ghost" to={`/document-store/${storeId}/write/${entryId}/learn`}>开始学习</Link></div></div>
+      }}><article className="art"><div data-section="top"><div className="writing-reader-meta"><span className="tag t-l">{data.template?.type ?? '文档'}</span><span className="mono">v{doc.version} · {doc.authorName} · {doc.reviewerName} 审核 · {new Date(doc.publishedAt).toLocaleDateString('zh-CN')}</span></div><h1 className="writing-reader-title">{doc.title}</h1><div className="cap writing-mb">结论</div>{doc.conclusions.length ? <ol className="writing-conclusions">{doc.conclusions.filter(Boolean).map((c, i) => <li key={i}>{c}</li>)}</ol> : <p>{doc.summary || '正文开头：' + (doc.sections[0]?.paragraphs[0]?.text.slice(0, 60) ?? '')}</p>}<div className="writing-scope-grid"><div className="writing-scope-in"><span className="cap">适用</span><div>{doc.scopeIn || '原文未单独说明，请结合正文判断。'}</div></div><div className="writing-scope-out"><span className="cap">不适用</span><div>{doc.scopeOut || '原文未单独说明。'}</div></div></div>{doc.roles.length > 0 && <section className="writing-actions-panel"><div className="writing-role-heading"><strong>下一步</strong><div role="radiogroup" aria-label="我是"><span className="hint">我是 </span>{doc.roles.map(r => <button className="role" role="radio" aria-checked={r.label === role} onClick={() => setRole(r.label)} key={r.label}>{r.label}</button>)}</div></div>{[...doc.roles].sort((a, b) => Number(b.label === role) - Number(a.label === role)).map(r => <div className={`act ${r.label === role ? 'on' : ''}`} key={r.label}><button className="who" disabled={bodyPending} aria-label={`跳转到${doc.sections.find(s => s.id === r.sectionId)?.title ?? '对应章节'}，${r.label}`} onClick={() => go(r.sectionId)}>{r.label}</button><div className="what">{r.action}{r.condition && <div className="cond"><span className="tag t-c">条件</span>{r.condition}</div>}</div><button className="btn ghost sm" disabled={bodyPending} onClick={() => go(r.sectionId)}>{doc.sections.find(s => s.id === r.sectionId)?.title}<ChevronRight size={12} /></button></div>)}</section>}<div className="writing-reading-order"><span className="hint">建议按这个顺序读</span>{readingSections.map((s, i) => <button className="ord" disabled={bodyPending} onClick={() => go(s.id)} key={s.id}><span className="n">{i + 1}</span>{s.title}</button>)}<Link className="btn ghost" to={`/document-store/${storeId}/write/${entryId}/learn`}>开始学习</Link></div></div>
+        <WritingMobileToc sections={doc.sections} visited={visited} onGo={go} disabled={bodyPending} />
+        {bodyPending ? <section className="sec" aria-label="正文加载状态">
+          {bodyLoading ? <MapSectionLoader text="正在加载正文与来源复核…" /> : <div className="writing-error" role="alert"><h2>正文暂未载入</h2><p>{bodyFailure}</p><p className="hint">以上概要来自已发布的 v{doc.version}；来源更新状态尚未复核。</p><button className="btn" onClick={() => void loadBody(entryId, doc.version, readGeneration.current)}>重试正文</button><button className="btn ghost" onClick={() => void fetchData()}>重新加载文档</button></div>}
+        </section> : <>
         {doc.sections.map((s, i) => <section className="sec" data-section={s.id} key={s.id}><h2><span className="mono">{String(i + 1).padStart(2, '0')}</span>{s.title}</h2>{s.paragraphs.map(p => <div key={p.id}><MarkdownViewer compact content={p.text} /></div>)}<WritingSectionConstraints section={s} /><div className="srcs">{[...new Set(s.paragraphs.flatMap(p => p.citations))].map(id => <button className="sc" key={id} onClick={e => openSource(id, e.currentTarget, s.paragraphs.find(p => p.quotes?.[id])?.quotes?.[id] ?? '')}>{id} · {doc.sources.find(source => source.id === id)?.title}</button>)}</div></section>)}
+        </>}
+
         {doc.openQuestions.length > 0 && <section className="sec"><h2>待确认事项</h2>{doc.openQuestions.map(q => <p key={q.id}>{q.title}：{q.answer}</p>)}</section>}
       </article></main>
-      <aside className="writing-reader-info scroll"><div><div className="cap writing-mb">这份文档</div><div className="kv"><span>版本</span><span>v{doc.version} · {new Date(doc.publishedAt).toLocaleDateString('zh-CN')} 发布</span><span>审核</span><span>{doc.reviewerName}</span><span>作者</span><span>{doc.authorName}</span><span>可见</span><span>沿用知识库权限</span></div></div><div><div className="cap">来源 · {doc.sources.length} 份</div>{doc.sources.map(s => <button className="srow" key={s.id} onClick={e => openSource(s.id, e.currentTarget)}><span className="sid">{s.id}</span><span><span className="cl1 writing-block">{s.title}</span><span className="hint">{writingSourceHasSnapshot(s) ? `${writingSourceSnapshotDate(s) ?? '更新时间未记录'} · 发布时快照` : '该版本未保存原文快照'}</span></span></button>)}</div><div className="panel writing-learning-card"><div className="cap">教学</div><strong>{doc.title}</strong><p className="hint">章节、操作步骤与字幕，适合培训和第一次操作。</p><Link className="btn pri sm" to={`/document-store/${storeId}/write/${entryId}/learn`}>开始学习</Link></div><div><div className="cap">合集 · {data.store.name} · {index + 1} / {peers.length}</div>{index > 0 && <Link className="btn ghost writing-block" to={`/document-store/${storeId}/write/${peers[index - 1].id}/read`}>上一篇 · {peers[index - 1].title}</Link>}{index >= 0 && index < peers.length - 1 && <Link className="btn ghost writing-block" to={`/document-store/${storeId}/write/${peers[index + 1].id}/read`}>下一篇 · {peers[index + 1].title}</Link>}</div></aside>
+      <aside className="writing-reader-info scroll"><div><div className="cap writing-mb">这份文档</div><div className="kv"><span>版本</span><span>v{doc.version} · {new Date(doc.publishedAt).toLocaleDateString('zh-CN')} 发布</span><span>审核</span><span>{doc.reviewerName}</span><span>作者</span><span>{doc.authorName}</span><span>可见</span><span>沿用知识库权限</span></div></div><div><div className="cap">来源 · {doc.sources.length} 份</div>{doc.sources.map(s => <button className="srow" disabled={bodyPending} key={s.id} onClick={e => openSource(s.id, e.currentTarget)}><span className="sid">{s.id}</span><span><span className="cl1 writing-block">{s.title}</span><span className="hint">{bodyPending ? '来源快照尚未载入' : writingSourceHasSnapshot(s) ? `${writingSourceSnapshotDate(s) ?? '更新时间未记录'} · 发布时快照` : '该版本未保存原文快照'}</span></span></button>)}</div><div className="panel writing-learning-card"><div className="cap">教学</div><strong>{doc.title}</strong><p className="hint">章节、操作步骤与字幕，适合培训和第一次操作。</p><Link className="btn pri sm" to={`/document-store/${storeId}/write/${entryId}/learn`}>开始学习</Link></div><div><div className="cap">合集 · {data.store.name} · {index + 1} / {peers.length}</div>{index > 0 && <Link className="btn ghost writing-block" to={`/document-store/${storeId}/write/${peers[index - 1].id}/read`}>上一篇 · {peers[index - 1].title}</Link>}{index >= 0 && index < peers.length - 1 && <Link className="btn ghost writing-block" to={`/document-store/${storeId}/write/${peers[index + 1].id}/read`}>下一篇 · {peers[index + 1].title}</Link>}</div></aside>
     </div> : <div className="writing-tutorial-layout"><main className="scroll writing-tutorial-body"><div className="writing-tutorial-heading"><div><div className="cap">第 {chapterIndex + 1} / {chapters.length} 章{chapter && selectedVideoId && ` · ${formatted(chapter.start)}–${formatted(chapters[chapterIndex + 1]?.start ?? duration)}`}</div><h1 className="writing-tutorial-title">{chapter?.title ?? doc.title}</h1></div><span className="hint">{doc.title}{selectedVideoId && <> · 共 {duration ? `${Math.floor(duration / 60)} 分 ${Math.floor(duration % 60)} 秒` : '—'}</>}</span></div><div className="player" tabIndex={selectedVideoId ? 0 : -1} aria-label={selectedVideoId ? '教学视频' : '图文教学'} onKeyDown={e => { if ((e.target as HTMLElement).closest('input,textarea,select')) return; if ([' ', 'k', 'K'].includes(e.key)) { e.preventDefault(); togglePlay(); } if (e.key === 'ArrowLeft') { e.preventDefault(); seek(time - 5); } if (e.key === 'ArrowRight') { e.preventDefault(); seek(time + 5); } if (e.key.toLowerCase() === 'c') setCaption(v => !v); const n = Number(e.key); if (n > 0 && n <= chapters.length) pickChapter(n - 1); }}>
       {videoUrl && !videoFailure ? <video ref={video} src={videoUrl} preload="metadata" playsInline onPlay={() => { setPlaying(true); setStarted(true); }} onPause={() => setPlaying(false)} onError={e => { const media = e.currentTarget; if (decodedGeneration.current === mediaGeneration.current) pendingPlayback.current = { time: media.currentTime, rate: media.playbackRate, playing: false, duration: media.duration }; setMediaReady(false); setVideoFailure('视频加载失败，可以继续查看图文步骤'); }} onLoadedMetadata={e => {
         const media = e.currentTarget; if (media !== video.current) return;

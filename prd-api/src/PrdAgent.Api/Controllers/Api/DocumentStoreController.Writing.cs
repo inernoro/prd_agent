@@ -308,7 +308,7 @@ public partial class DocumentStoreController
     }
 
     [HttpGet("entries/{entryId}/writing/published")]
-    public async Task<IActionResult> ReadWritingPublication(string entryId, [FromQuery] int? version = null)
+    public async Task<IActionResult> ReadWritingPublication(string entryId, [FromQuery] int? version = null, [FromQuery] bool overview = false)
     {
         var (entry, store, error) = await LoadReadableEntryAsync(entryId, GetUserId());
         if (error != null) return error;
@@ -319,17 +319,31 @@ public partial class DocumentStoreController
             .Find(r => r.EntryId == entryId && r.StoreId == entry.StoreId && r.Publication.Version == version.Value).FirstOrDefaultAsync())?.Publication;
         if (published == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "此文档尚未发布"));
         var affected = new List<string>();
-        foreach (var s in published.Sources) {
+        if (!overview) foreach (var s in published.Sources) {
             var current = await _db.DocumentEntries.Find(e => e.Id == s.EntryId && e.StoreId == entry.StoreId).FirstOrDefaultAsync();
             if (current == null) { affected.Add(s.Id); continue; }
             var (_, content) = await LoadEntryMarkdownAsync(current);
             if (WritingHash(content ?? "") != (s.ReviewedHash ?? s.Hash)) affected.Add(s.Id);
         }
         var peers = await _db.DocumentEntries.Find(e => e.StoreId == entry.StoreId && !e.IsFolder).SortBy(e => e.SortOrder).ToListAsync();
+        var entries = peers.Where(e => e.Writing?.Published != null).Select(e => new { e.Id, e.Title });
+        var canEdit = await CanWriteStoreAsync(store!, GetUserId(), await _teams.GetMyTeamIdsAsync(GetUserId()));
+        if (overview) return Ok(ApiResponse<object>.Ok(new { entryId, store, publication = WritingPublicationOverview(published),
+            template = WritingTemplateRegistry.Find(published.TemplateId), affectedSources = affected, bodyPending = true, entries, canEdit }));
         return Ok(ApiResponse<object>.Ok(new { entryId, store, publication = published, template = WritingTemplateRegistry.Find(published.TemplateId), affectedSources = affected,
-            entries = peers.Where(e => e.Writing?.Published != null).Select(e => new { e.Id, e.Title }),
-            canEdit = await CanWriteStoreAsync(store!, GetUserId(), await _teams.GetMyTeamIdsAsync(GetUserId())) }));
+            entries, canEdit }));
     }
+
+    private static WritingPublication WritingPublicationOverview(WritingPublication published) => new() {
+        Version = published.Version, Title = published.Title, Summary = published.Summary,
+        TemplateId = published.TemplateId, TemplateVersion = published.TemplateVersion,
+        AuthorName = published.AuthorName, ReviewerId = published.ReviewerId, ReviewerName = published.ReviewerName, PublishedAt = published.PublishedAt,
+        Conclusions = published.Conclusions, ScopeIn = published.ScopeIn, ScopeOut = published.ScopeOut, Roles = published.Roles,
+        Sections = published.Sections.Select(section => new WritingSection { Id = section.Id, Title = section.Title }).ToList(),
+        Sources = published.Sources.Select(source => new WritingSource { Id = source.Id, EntryId = source.EntryId, Title = source.Title,
+            UpdatedAt = source.UpdatedAt, Status = source.Status, Hash = source.Hash, ReviewedHash = source.ReviewedHash, Content = "" }).ToList(),
+        VideoEntryId = published.VideoEntryId, MobileVideoEntryId = published.MobileVideoEntryId,
+    };
 
     private async Task<bool> SaveWritingState(DocumentEntry entry, WritingDocumentState state, long expected)
     {

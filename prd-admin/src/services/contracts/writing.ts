@@ -24,4 +24,4 @@ export interface WritingContext {
   sources: { id: string; title: string; summary?: string; contentType: string; updatedAt: string; createdBy: string; authorName?: string; fileSize: number; sortOrder?: number; metadata: Record<string, string>; published: boolean }[];
 }
 export interface WritingDocument { entryId: string; store: DocumentStore; state: WritingState; canApprove: boolean; run?: { id: string; status: string; phase: string; progress: number; createdAt: string; startedAt?: string; generatedText?: string; errorMessage?: string } }
-export interface WritingReader { entryId: string; store: DocumentStore; publication: WritingPublication; template?: WritingTemplate; affectedSources: string[]; entries: { id: string; title: string }[]; canEdit: boolean }
+export interface WritingReader { entryId: string; store: DocumentStore; publication: WritingPublication; template?: WritingTemplate; affectedSources: string[]; entries: { id: string; title: string }[]; canEdit: boolean; bodyPending?: boolean }
