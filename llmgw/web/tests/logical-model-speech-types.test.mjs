@@ -18,7 +18,7 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
   const { createRoot } = await import('react-dom/client');
   const router = await import('react-router-dom');
   globalThis.__logicalSpeechRouter = { ...router.default, ...router };
-  const fixture = { metadataAvailable: true, items: [], calls: [],
+  const fixture = { metadataAvailable: true, items: [], calls: [], physicals: [],
     modelTypes: ['generation', 'vision', 'chat', 'code', 'video-gen', 'asr', 'tts', 'embedding', 'audio-gen', 'long-context'],
     exchange: { id: 'existing-speech-exchange', name: '已有豆包TTS', authority: 'llm_gateway', enabled: true,
       models: [{ modelId: 'doubao-tts-1.0', modelType: 'tts', enabled: true }] },
@@ -39,8 +39,12 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
           if (name === 'getLogicalModels') return 'export async function getLogicalModels(){return {success:true,data:{items:globalThis.__logicalSpeechFixture.items}}}';
           if (name === 'getExchanges') return 'export async function getExchanges(){return {success:true,data:{items:[globalThis.__logicalSpeechFixture.exchange]}}}';
           if (name === 'getExchangeMeta') return 'export async function getExchangeMeta(){const f=globalThis.__logicalSpeechFixture;return f.metadataAvailable?{success:true,data:{modelTypes:f.modelTypes.map(value=>({value,label:value==="tts"?"语音合成":value}))}}:{success:false,error:{message:"unavailable"}}}';
+          if (name === 'getPlatforms') return 'export async function getPlatforms(){return {success:true,data:{items:[{id:"provider-official",name:"官方上游",authority:"llm_gateway",enabled:true}]}}}';
+          if (name === 'getModels') return 'export async function getModels(){return {success:true,data:{items:globalThis.__logicalSpeechFixture.physicals}}}';
+          if (name === 'getUpstreamModels') return 'export async function getUpstreamModels(){return {success:true,data:{items:[{modelId:"future-text-v9",inCatalog:true,priceCurrency:"USD"}]}}}';
+          if (name === 'importUpstreamModels') return 'export async function importUpstreamModels(id,models,options){const f=globalThis.__logicalSpeechFixture;f.calls.push({operation:"import",id,models,options});f.physicals=[{id:"future-physical",modelName:models[0].modelId,platformId:id,authority:"llm_gateway",enabled:true}];return {success:true,data:{createdModelIds:["future-physical"]}}}';
           if (name === 'createLogicalModel') return 'export async function createLogicalModel(draft){const f=globalThis.__logicalSpeechFixture;f.calls.push({operation:"create",draft});const item={...draft,id:"logical-tts",enabled:true,isDefaultForType:false,defaultForAppCallerCodes:[],offerings:[]};f.items=[item];return {success:true,data:item}}';
-          if (name === 'createModelOffering') return 'export async function createModelOffering(id,draft){const f=globalThis.__logicalSpeechFixture;f.calls.push({operation:"offering",id,draft});const item={...draft,id:"offering-tts",enabled:true,targetUsable:true,targetName:f.exchange.name,healthStatus:0};return {success:true,data:item}}';
+          if (name === 'createModelOffering') return 'export async function createModelOffering(id,draft){const f=globalThis.__logicalSpeechFixture;f.calls.push({operation:"offering",id,draft});const item={...draft,id:"offering-tts",enabled:true,targetUsable:true,targetName:f.exchange.name,healthStatus:0};f.items=f.items.map(logical=>logical.id===id?{...logical,offerings:[...logical.offerings,item]}:logical);return {success:true,data:item}}';
           if (name === 'updateModelOffering') return 'export async function updateModelOffering(id,offeringId,draft){const f=globalThis.__logicalSpeechFixture;f.calls.push({operation:"edit",id,offeringId,draft});return {success:true,data:{...draft,id:offeringId,enabled:true,targetUsable:true,targetName:f.exchange.name,healthStatus:0}}}';
           return `export async function ${name}(){return {success:true,data:{items:[]}}}`;
         }).join('\n');
@@ -64,8 +68,8 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
     root = createRoot(document.getElementById('root'));
     const render = async key => act(async () => root.render(React.createElement(globalThis.__logicalSpeechRouter.MemoryRouter, {}, React.createElement(LogicalModelsPage, { key }))));
     await render('create');
-    await click('手动新建');
-    const types = field('模型类型', 'select');
+    await click('新建模型');
+    const types = field('模型用途', 'select');
     assert.deepEqual([...types.options].map(option => option.value), fixture.modelTypes);
     await fill(types, 'tts');
     assert.equal(field('能力，逗号分隔').value, '', 'TTS不能继承默认生图能力');
@@ -74,39 +78,62 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
     assert.equal(field('能力，逗号分隔').value, 'custom_capability', '切换用途应保留用户自定义能力');
     await fill(types, 'tts');
     await fill(field('能力，逗号分隔'), 'tts');
-    await fill(field('公开模型标识'), 'doubao-tts-1.0');
-    await fill(field('显示名称'), '豆包语音');
+    await fill(field('公开标识'), 'doubao-tts-1.0');
+    await fill(field('模型名称'), '豆包语音');
     await fill(field('允许的 appCaller'), 'mcp-speech.synthesize::tts');
-    await click('保存逻辑模型');
+    await click('创建并绑定上游');
     assert.equal(fixture.calls[0].draft.modelType, 'tts');
     assert.deepEqual(fixture.calls[0].draft.capabilities, ['tts']);
     assert.deepEqual(fixture.calls[0].draft.allowedAppCallerCodes, ['mcp-speech.synthesize::tts']);
     assert.equal(fixture.calls[0].draft.isDefaultForType, undefined);
-    await click('查看');
-    await click('模型配置');
-    await click('添加上游');
-    await fill(field('目标类型', 'select'), 'exchange');
-    assert.ok([...field('上游目标', 'select').options].some(option => option.value === fixture.exchange.id));
-    await fill(field('上游目标', 'select'), fixture.exchange.id);
+    await fill(field('上游类型', 'select'), 'exchange');
+    assert.ok([...field('上游及实际型号', 'select').options].some(option => option.value === fixture.exchange.id));
+    await fill(field('上游及实际型号', 'select'), fixture.exchange.id);
     await fill(field('上游模型标识'), 'doubao-tts-1.0');
-    await click('保存 Offering');
+    await click('保存绑定');
     assert.equal(fixture.calls[1].draft.targetId, fixture.exchange.id);
     assert.equal(fixture.calls[1].draft.targetKind, 'exchange');
     assert.equal(fixture.calls[1].draft.upstreamModelId, 'doubao-tts-1.0');
     await click('编辑');
     assert.equal(field('上游模型标识').value, 'doubao-tts-1.0');
-    assert.equal(field('上游目标', 'select').value, fixture.exchange.id);
+    assert.equal(field('上游及实际型号', 'select').value, fixture.exchange.id);
     await click('保存修改');
     assert.equal(fixture.calls[2].draft.upstreamModelId, 'doubao-tts-1.0');
     assert.equal(fixture.items[0].modelType, 'tts');
     fixture.metadataAvailable = false;
     await render('unavailable');
     assert.match(document.body.textContent, /豆包语音/);
-    await click('手动新建');
-    assert.equal(field('模型类型', 'select').disabled, true);
-    assert.equal(button('保存逻辑模型').disabled, true);
+    await click('新建模型');
+    assert.equal(field('模型用途', 'select').disabled, true);
+    assert.equal(button('创建并绑定上游').disabled, true);
     assert.match(document.body.textContent, /用途目录暂不可用/);
     assert.equal(fixture.calls.length, 3, '元数据失败不能回退为旧用途表或发起创建');
+    fixture.metadataAvailable = true;
+    await render('from-provider'); await click('新建模型'); await click('从上游登记');
+    await fill(field('选择上游', 'select'), 'platform:provider-official');
+    await click('读取上游型号');
+    await fill(field('模型名称'), '我命名的未来模型'); await fill(field('公开标识'), 'my-future-model');
+    await fill(field('上游实际型号'), 'future-text-v9'); await fill(field('模型用途', 'select'), 'chat');
+    await click('登记并绑定上游');
+    const imported = fixture.calls.find(call => call.operation === 'import');
+    assert.deepEqual(imported.options, { publishToWhitelist: false }, '登记物理型号不能额外自动创建同名公开模型');
+    const created = fixture.calls.filter(call => call.operation === 'create').at(-1);
+    assert.equal(created.draft.name, '我命名的未来模型'); assert.equal(created.draft.publicId, 'my-future-model');
+    const bound = fixture.calls.filter(call => call.operation === 'offering').at(-1);
+    assert.equal(bound.draft.targetId, 'future-physical'); assert.equal(bound.draft.upstreamModelId, 'future-text-v9');
+    assert.ok(document.body.textContent.includes('我命名的未来模型'), '同一入口创建并回到模型列表');
+    const sample = fixture.items[0];
+    fixture.items = Array.from({ length: 43 }, (_, index) => ({ ...sample, id: `continuous-${index}`, name: `连续模型${index}`, publicId: `continuous-model-${index}`, offerings: [] }));
+    await render('continuous');
+    assert.equal(document.querySelectorAll('.lg-logical-model-grid:not(.lg-logical-model-heading)').length, 20);
+    await click('继续加载 · 已显示 20 / 43'); await click('继续加载 · 已显示 40 / 43');
+    assert.equal(document.querySelectorAll('.lg-logical-model-grid:not(.lg-logical-model-heading)').length, 43);
+    assert.equal(button('下一页'), undefined, '模型主列表不应保留翻页栏');
+    await fill(document.querySelector('[aria-label="搜索模型名称或公开标识"]'), 'continuous-model-42');
+    assert.equal(document.querySelectorAll('.lg-logical-model-grid:not(.lg-logical-model-heading)').length, 1);
+    assert.match(document.body.textContent, /连续模型42/);
+
+
   } finally {
     if (root) await act(async () => root.unmount());
     await server.close();

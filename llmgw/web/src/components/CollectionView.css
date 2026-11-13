@@ -250,3 +250,4 @@
   .lg-console-body:has(.lg-collection-page, .lg-entity-detail-bounded) .lg-sidebar-footer svg { flex-shrink: 0; }
   .lg-console-body:has(.lg-collection-page, .lg-entity-detail-bounded) .lg-sidebar-footer kbd { font-size: var(--fs-micro); }
 }
+.lg-collection-load-more { display: flex; justify-content: center; padding: 10px; }
