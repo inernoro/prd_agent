@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calibrate, compare, capacity, summarize, stats } from './metrics.mjs';
+import { calibrate, compare, capacity, summarize, stats, workload } from './metrics.mjs';
 
 function run(id, ms = 20) {
   const samples = Array.from({ length: 100 }, () => ({ name: 'home', ok: true, ms, app: ms - 2, external: 0 }));
   return { environmentId: id, commit: 'base', contract: { schema: 1 }, startedAt: id,
+    finishedAt: '2026-11-13T00:00:00.000Z', execution: { profile: 'normal', state: 'complete' }, browser: { pass: true },
     phases: [{ name: 'normal', metrics: summarize(samples, 20) }] };
 }
 test('零错误、足量、三次独立运行才允许校准', () => {
@@ -12,6 +13,44 @@ test('零错误、足量、三次独立运行才允许校准', () => {
   assert.throws(() => calibrate([run('a'), run('a'), run('c')]));
   const bad = run('c'); bad.phases[0].metrics.home.errors = 1;
   assert.throws(() => calibrate([run('a'), run('b'), bad]));
+});
+test('运行快照不能复评通过，也不能进入三次基线', () => {
+  const complete = run('complete');
+  const baseline = calibrate([run('a'), run('b'), run('c')]);
+  const checkpoint = { ...complete, execution: { profile: 'all', state: 'running' } };
+  delete checkpoint.finishedAt;
+  assert.equal(compare(checkpoint, baseline).pass, false);
+  assert.throws(() => calibrate([checkpoint, run('b'), run('c')]), /基线执行不完整/);
+  const legacy = { ...complete }; delete legacy.execution;
+  assert.equal(compare(legacy, baseline).pass, false);
+});
+test('标为完成的all档位缺少持续运行或并发阶段仍拒绝', () => {
+  const baseline = calibrate([run('a'), run('b'), run('c')]);
+  const all = run('all'); all.execution.profile = 'all';
+  assert.equal(compare(all, baseline).pass, false);
+  const stage = name => ({ ...structuredClone(all.phases[0]), name });
+  all.phases.push(...workload.ramp.users.map(n => stage(`ramp-${n}`)), stage('soak'));
+  assert.equal(compare(all, baseline).pass, true);
+  all.phases.splice(2, 1);
+  assert.equal(compare(all, baseline).pass, false);
+});
+test('并发阶段仅达到既定错误率停止条件时允许提前结束，再执行恢复负载', () => {
+  const baseline = calibrate([run('a'), run('b'), run('c')]);
+  const all = run('all'); all.execution.profile = 'all';
+  const stage = name => ({ ...structuredClone(all.phases[0]), name });
+  all.phases.push(stage('ramp-2'), stage('soak'));
+  assert.equal(compare(all, baseline).pass, false);
+  all.phases[1].metrics.journey = { ...all.phases[1].metrics.home, errorRate: .2 };
+  assert.equal(compare(all, baseline).pass, true);
+});
+test('终态缺失、浏览器失败和执行失败都不能形成性能通过结论', () => {
+  const baseline = calibrate([run('a'), run('b'), run('c')]);
+  const failed = run('failed'); failed.execution.state = 'failed';
+  assert.equal(compare(failed, baseline).pass, false);
+  const browser = run('browser'); browser.browser.pass = false;
+  assert.equal(compare(browser, baseline).pass, false);
+  const missingTime = run('time'); delete missingTime.finishedAt;
+  assert.equal(compare(missingTime, baseline).pass, false);
 });
 test('实测基线接受同速运行，拒绝应用变慢、错误、吞吐下降和契约变化', () => {
   const baseline = calibrate([run('a', 20), run('b', 22), run('c', 21)]);

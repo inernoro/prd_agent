@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as pause } from 'node:timers/promises';
 import { chromium, expect } from '@playwright/test';
-import { workload, digest, summarize, compare, capacity } from './metrics.mjs';
+import { workload, digest, summarize, compare, capacity, executionErrors } from './metrics.mjs';
 import { readProcesses, processTree } from './resources.mjs';
 
 const exec = promisify(execFile);
@@ -53,7 +53,7 @@ const images = {
   web: 'nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10',
 };
 const limits = { api: ['1', '1024m'], mongo: ['1', '768m'], redis: ['0.5', '256m'], web: ['0.5', '256m'] };
-const contract = { schema: 1, workload, limits, images, sdkVersion,
+const contract = { schema: 2, workload, limits, images, sdkVersion,
   nodeMajor: process.versions.node.split('.')[0], arch: os.arch(), cpu: os.cpus()[0].model,
   probe: digest(await fs.readFile(path.join(here, 'probe/Probe.cs'), 'utf8')),
   metricsCode: digest(await fs.readFile(path.join(here, 'metrics.mjs'), 'utf8')),
@@ -61,8 +61,9 @@ const contract = { schema: 1, workload, limits, images, sdkVersion,
   proxyRecipe: digest(await fs.readFile(path.join(here, 'nginx.conf'), 'utf8')),
   runtimeRecipe: digest(await fs.readFile(path.join(here, 'runtime.Dockerfile'), 'utf8')),
   workloadCode: digest(await fs.readFile(fileURLToPath(import.meta.url), 'utf8')) };
-const result = { schema: 1, commit, harnessCommit: await command('git', ['rev-parse', 'HEAD']),
+const result = { schema: 2, commit, harnessCommit: await command('git', ['rev-parse', 'HEAD']),
   environmentId: runId, startedAt: new Date().toISOString(), contract,
+  execution: { profile: options.profile ?? 'all', state: 'running' },
   host: { cpus: os.cpus().length, memoryBytes: os.totalmem(), kernel: os.release() },
   injectionMs: Number(options['inject-ms'] ?? 0), phases: [], browser: {}, resources: [] };
 if (!Number.isInteger(result.injectionMs) || result.injectionMs < 0 || result.injectionMs > 2000)
@@ -81,6 +82,7 @@ const buildCommand = async (bin, args, cwd, logName) => {
 };
 let base, token, browser, sampling = false, monitor;
 const containers = [];
+const networks = [];
 const raw = createWriteStream(path.join(out, 'requests.ndjson'));
 let activePhase = 'setup';
 const sample = row => { raw.write(JSON.stringify({ ...row, phase: activePhase, at: new Date().toISOString() }) + '\n'); return row; };
@@ -304,9 +306,11 @@ try {
   await docker(['build', '-f', path.join(here, 'runtime.Dockerfile'), '-t', runtimeTag, here]);
   contract.runtimeImage = JSON.parse(await docker(['image', 'inspect', runtimeTag]))[0].Id;
   await docker(['network', 'create', '--internal', '--label', `map-perf=${runId}`, runId]);
+  networks.push(runId);
   // Docker 29 does not publish ports for a container with only internal networks.
   // Only the fixed-route static Web proxy joins this second, dedicated network.
   await docker(['network', 'create', '--label', `map-perf=${runId}`, `${runId}-ingress`]);
+  networks.push(`${runId}-ingress`);
   const network = JSON.parse(await docker(['network', 'inspect', runId]))[0];
   if (!network.Internal) throw new Error('测试网络未隔离');
   for (const [role, image] of [['mongo', images.mongo], ['redis', images.redis], ['api', runtimeTag], ['web', images.web]]) {
@@ -393,8 +397,7 @@ try {
     await phase('soak', workload.soak.users, workload.soak.seconds, workload.soak.intervalMs);
   }
   result.capacity = capacity(result.phases);
-  if (options.baseline) result.comparison = compare(result, JSON.parse(await fs.readFile(path.resolve(root, options.baseline), 'utf8')));
-  else if (result.phases.some(p => !p.name.startsWith('ramp-') && Object.values(p.metrics).some(m => m.errors)))
+  if (!options.baseline && result.phases.some(p => !p.name.startsWith('ramp-') && Object.values(p.metrics).some(m => m.errors)))
     throw new Error('正常负载或持续运行发生错误');
 } catch (error) {
   result.failure = error.stack;
@@ -409,13 +412,31 @@ try {
   }
   raw.end();
   await fs.writeFile(path.join(out, 'result.json'), JSON.stringify(result, null, 2) + '\n');
-  for (const name of containers.reverse()) await docker(['rm', '-f', '-v', name]).catch(() => {});
-  await docker(['network', 'rm', runId]).catch(() => {});
-  await docker(['network', 'rm', `${runId}-ingress`]).catch(() => {});
+  for (const name of containers.reverse()) await docker(['rm', '-f', '-v', name]).catch(() => {
+    result.failure ??= `本次测试容器清理失败: ${name}`;
+  });
+  for (const name of networks.reverse()) await docker(['network', 'rm', name]).catch(() => {
+    result.failure ??= `本次测试网络清理失败: ${name}`;
+  });
   // Do not leave binaries/logs with ephemeral secrets in report artifacts.
   await fs.rm(apiDirSafe(), { recursive: true, force: true }).catch(error => {
     result.failure ??= `清理构建目录失败: ${error.message}`;
   });
+  result.finishedAt = new Date().toISOString();
+  result.execution.state = result.failure ? 'failed' : 'complete';
+  const incomplete = executionErrors(result);
+  if (incomplete.length && !result.failure) {
+    result.failure = incomplete.join('; ');
+    result.execution.state = 'failed';
+  }
+  if (options.baseline) {
+    try {
+      result.comparison = compare(result, JSON.parse(await fs.readFile(path.resolve(root, options.baseline), 'utf8')));
+    } catch (error) {
+      result.failure ??= `读取或比较基线失败: ${error.message}`;
+      result.execution.state = 'failed';
+    }
+  }
   await fs.writeFile(path.join(out, 'result.json'), JSON.stringify(result, null, 2) + '\n');
 }
 function apiDirSafe() { return path.join(out, 'api'); }

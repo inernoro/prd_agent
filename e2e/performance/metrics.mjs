@@ -24,11 +24,35 @@ export function summarize(samples, seconds) {
       externalHttp: stats(ok.filter(s => s.external !== undefined).map(s => s.external)) }];
   }));
 }
+export function executionErrors(result) {
+  const failures = [];
+  const execution = result?.execution;
+  if (!['normal', 'all'].includes(execution?.profile)) failures.push('缺少有效执行档位，请重新执行测试');
+  if (execution?.state !== 'complete' || !Number.isFinite(Date.parse(result?.finishedAt)))
+    failures.push('测试尚未完成或缺少终态，阶段快照不能作为通过证据');
+  if (result?.browser?.pass !== true) failures.push('真实浏览器业务闭环未通过');
+  const phases = result?.phases ?? [];
+  const names = phases.map(p => p.name);
+  if (execution?.profile === 'normal' && (names.length !== 1 || names[0] !== 'normal'))
+    failures.push('normal档位阶段不完整');
+  if (execution?.profile === 'all') {
+    const ramps = phases.slice(1, -1);
+    const configured = result.contract?.workload?.ramp?.users ?? workload.ramp.users;
+    if (names[0] !== 'normal' || names.at(-1) !== 'soak' || !ramps.length
+        || ramps.length > configured.length || ramps.some((p, i) => p.name !== `ramp-${configured[i]}`))
+      failures.push('all档位必须包含正常负载、连续并发档位和持续运行阶段');
+    else if (ramps.length < configured.length && !(ramps.at(-1).metrics?.journey?.errorRate > .1))
+      failures.push('并发增长未达到配置上限，也未达到错误率停止条件');
+  }
+  return failures;
+}
 export function calibrate(results) {
   if (results.length < 3 || new Set(results.map(r => r.environmentId)).size !== results.length)
     throw new Error('基线需要至少三次独立干净环境的结果');
   const contract = results[0].contract;
   for (const r of results) {
+    const execution = executionErrors(r);
+    if (execution.length) throw new Error(`基线执行不完整: ${execution.join('; ')}`);
     if (r.failure || digest(r.contract) !== digest(contract)) throw new Error('基线结果失败或运行契约不一致');
     if (r.commit !== results[0].commit) throw new Error('基线提交必须一致');
   }
@@ -55,7 +79,8 @@ export function calibrate(results) {
     policy: 'p95上限=max(三次p95最大值*1.3, p95最大值+3*极差, 基线p99最大值); 错误率上限=3/总样本数(零错误95%上界); 吞吐下限=最小值*0.7' };
 }
 export function compare(result, baseline) {
-  const failures = [];
+  const failures = executionErrors(result);
+  if (failures.length) return { pass: false, failures };
   if (digest(result.contract) !== digest(baseline.contract)) return { pass: false, failures: ['运行契约不一致，须在同机重新校准'] };
   for (const phase of result.phases.filter(p => p.name === 'normal' || p.name === 'soak')) {
     for (const [name, limit] of Object.entries(baseline.limits)) {
