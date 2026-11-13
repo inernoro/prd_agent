@@ -127,6 +127,11 @@ try {
     const headerHeight = (await page.locator('.project-status-page > header').boundingBox()).height;
     measurements.push({ page: 'project-status', width, theme, headerHeight, firstCheckY: (await page.locator('#checks tbody tr').first().boundingBox()).y });
     check(headerHeight < (width === 390 ? 350 : 300), `${width}/${theme}: repeated status metric cards delay checks`);
+    await page.goto(`${base}/preview-preparing?branch=fixture-audit`, { waitUntil: 'domcontentloaded' });
+    const previewContext = page.getByText('fixture-audit', { exact: true }); await previewContext.waitFor(); await save('preview-preparing');
+    measurements.push({ page: 'preview-preparing', width, theme, contextY: (await previewContext.boundingBox()).y });
+    check(await page.getByText('68%', { exact: true }).count() === 0, `${width}/${theme}: preview transit presents fabricated progress`);
+    check((await previewContext.boundingBox()).y < (width === 390 ? 400 : 350), `${width}/${theme}: repeated transit branding delays branch context`);
     await context.close();
   }
 } finally { await browser.close(); }
