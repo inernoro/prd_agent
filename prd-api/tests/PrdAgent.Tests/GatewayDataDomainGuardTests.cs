@@ -2385,7 +2385,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("write_remote_container_snapshot", script);
         Assert.Contains("docker ps --format", script);
         Assert.Contains("env.snapshot.redacted", script);
-        Assert.Contains("gzip -t \"$backup_dir/$db.archive.gz\"", script);
+        Assert.Contains(". \"$script_dir/lib/backup-stream.sh\"", script);
+        Assert.Contains("cds_backup_stream \"$backup_dir/$db.archive.gz\" remote_mongo_dump \"$db\"", script);
+        Assert.Contains("gzip -t \"$stream_archive\"", ReadRepoFile("scripts/lib/backup-stream.sh"));
         Assert.Contains("SHA256SUMS", script);
         Assert.DoesNotContain("rm -", script);
         Assert.DoesNotContain("dropDatabase", script);
