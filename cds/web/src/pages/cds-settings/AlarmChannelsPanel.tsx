@@ -228,7 +228,7 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
         <span className="text-sm font-medium">{verdict.text}</span>
         <div className="flex-grow" />
         {draft === null ? (
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-1">
             {(['bark', 'webhook', 'map'] as ChannelKind[]).map((k) => (
               <Button key={k} size="sm" variant="outline" disabled={busy} onClick={() => { setDraft(emptyDraft(k)); setErr(null); }}>
                 <Plus className="mr-1" />{KIND_LABEL[k]}

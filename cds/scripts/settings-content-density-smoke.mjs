@@ -144,6 +144,10 @@ try {
         assert(await page.getByText('cdsg_fixture_not_a_credential', { exact: true }).isVisible(), '一次性明文不应随签发表单隐藏');
         await page.getByRole('button', { name: '我已保存,关闭提示', exact: true }).click();
       } else {
+        const mapAction = page.getByRole('button', { name: 'MAP 站内通知', exact: true });
+        const mapBox = await mapAction.boundingBox();
+        assert(mapBox.x >= 0 && mapBox.x + mapBox.width <= width, '添加MAP通道按钮被窄屏内容区裁切');
+        assert(await mapAction.evaluate(e => { const r = e.getBoundingClientRect(); const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return e.contains(hit); }), '添加MAP通道按钮被遮挡');
         const identity = await page.getByRole('heading', { name: '通知来源与头像', exact: true }).boundingBox();
         assert(identity.y > box.y, '低频通知身份配置不应把可用通道与演练挤出首屏');
         await page.getByRole('button', { name: '演练', exact: true }).first().click();
