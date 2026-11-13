@@ -669,6 +669,18 @@ export function buildWidgetScript(
     var maxX=right-r.width,maxY=bottom-r.height,midX=(left+maxX)/2,midY=(top+maxY)/2;
     // 有限候选：保留安全原位，其次同高两边、四角和四边中点，不猜某个应用的导航高度。
     var candidates=[[r.left,r.top],[left,r.top],[maxX,r.top],[left,top],[maxX,top],[left,maxY],[maxX,maxY],[left,midY],[maxX,midY],[midX,top],[midX,maxY]];
+    // 固定槽都被挡住时，再使用真实障碍边缘；最多追加64个候选，保留原有优先级。
+    var edgeCandidates=0;
+    function addEdgeCandidate(x,y){
+      if(edgeCandidates>=64||x<left||y<top||x>maxX||y>maxY)return;
+      if(candidates.some(function(candidate){return candidate[0]===x&&candidate[1]===y;}))return;
+      candidates.push([x,y]);edgeCandidates++;
+    }
+    for(var edge=0;edge<obstacles.length&&edgeCandidates<64;edge++){
+      var obstacle=obstacles[edge];
+      addEdgeCandidate(left,obstacle.top-r.height-8);addEdgeCandidate(maxX,obstacle.top-r.height-8);
+      addEdgeCandidate(left,obstacle.bottom+8);addEdgeCandidate(maxX,obstacle.bottom+8);
+    }
     var previous={x:pos.x,y:pos.y,left:root.style.left,bottom:root.style.bottom};
     root.setAttribute('data-cds-placement','blocked');
     for(var i=0;i<candidates.length;i++){

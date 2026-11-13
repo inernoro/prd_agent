@@ -281,6 +281,28 @@ try {
       `由顶部槽展开后，面板和关闭按钮仍须在实际上下安全区内：${JSON.stringify(bounds)}`);
     await page.locator('button[data-action="close-panel"]').click(); await settle(page);
   }, hosted);
+  await check('obstacle-edge-slot-stays-stable', async page => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 40, bottom: 34 } });
+    // 显式保留一个避开固定角点和中点的可用带，不依赖宿主中文字体行高。
+    await page.locator('h1').evaluate(el => { (el as HTMLElement).style.height = '56px'; });
+    await addFloat(page, 'status');
+    await page.locator('#fixture-status').evaluate(el => { (el as HTMLElement).style.cssText = 'position:fixed;left:0;right:0;top:168px;bottom:0;background:#fff;z-index:70'; });
+    await settle(page);
+    const placed = await geometry(page);
+    const band = await page.evaluate(() => ({ top: document.querySelector('h1')!.getBoundingClientRect().bottom + 8,
+      bottom: document.querySelector('#fixture-status')!.getBoundingClientRect().top - 8 }));
+    assert.equal(placed.placement, 'clear');
+    assert.equal(placed.overlap, false);
+    assert.ok(placed.y >= band.top && placed.y + placed.height <= band.bottom, '徽标须实际落入标题与浮层之间的完整可用带');
+    for (const value of ['first', 'second']) {
+      await page.locator('#fixture-status').evaluate((el, value) => { el.className = value; }, value);
+      await settle(page);
+      const after = await geometry(page);
+      assert.deepEqual([after.x, after.y], [placed.x, placed.y], '几何未变的重新测量保留安全原位，不能反复跳动');
+      assert.equal(after.placement, 'clear');
+    }
+  });
   for (const hosted of [false, true]) for (const resize of [false, true, 'native'] as const) await check(`filled-panel-safe-band-${hosted}-${resize}`, async page => {
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 40, bottom: 34 } });
