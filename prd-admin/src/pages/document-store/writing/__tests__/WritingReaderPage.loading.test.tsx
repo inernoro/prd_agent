@@ -33,11 +33,11 @@ describe('真实发布概要先达与正文隔离', () => {
     let finish!: (r: unknown) => void;
     api.read.mockImplementation((_id, opts) => opts?.overview ? Promise.resolve(ok(data(true))) : new Promise(resolve => { finish = resolve; }));
     await render(); expect(container.textContent).toContain('缩短交接周期'); expect(container.textContent).toContain('仅本部门'); expect(container.textContent).toContain('核对负责人和资料');
-    expect(container.textContent).toContain('正在加载正文与来源复核'); expect(container.querySelector<HTMLButtonElement>('.ord')?.disabled).toBe(true); expect(api.read).toHaveBeenLastCalledWith('entry', { version: 1 });
+    expect(container.textContent).toContain('正在加载正文与来源复核'); expect(container.querySelector('.writing-reader-body-state .sk')).toBeTruthy(); expect(container.querySelector<HTMLButtonElement>('.ord')?.disabled).toBe(true); expect(api.read).toHaveBeenLastCalledWith('entry', { version: 1 });
     await act(async () => finish(ok(data()))); expect(container.textContent).toContain('已发布完整正文v1'); expect(container.textContent).not.toContain('正在加载正文与来源复核');
   });
-  it('正文网络失败保留概要，重试只读同版正文并恢复', async () => {
-    api.read.mockResolvedValueOnce(ok(data(true))).mockResolvedValueOnce({ success: false, error: { code: 'NETWORK_ERROR', message: '网络中断' } }).mockResolvedValueOnce(ok(data()));
+  it.each(['NETWORK_ERROR', 'DISCONNECTED'])('正文%s失败保留概要，重试只读同版正文并恢复', async code => {
+    api.read.mockResolvedValueOnce(ok(data(true))).mockResolvedValueOnce({ success: false, error: { code, message: '网络中断' } }).mockResolvedValueOnce(ok(data()));
     await render(); expect(container.textContent).toContain('缩短交接周期'); expect(container.textContent).toContain('网络中断');
     const retry = [...container.querySelectorAll<HTMLButtonElement>('button')].find(e => e.textContent === '重试正文')!;
     expect(retry).toBeTruthy(); await act(async () => retry.click()); expect(api.read).toHaveBeenLastCalledWith('entry', { version: 1 }); expect(container.textContent).toContain('已发布完整正文v1');

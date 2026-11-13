@@ -359,6 +359,7 @@
   .writing-reader:not(.writing-tutorial) .writing-mobile-tabs>a.on{color:var(--writing-ac);background:var(--writing-acs)}
   .writing-reader:not(.writing-tutorial) .writing-reader-layout{overflow-y:auto;scrollbar-width:none}
   .writing-reader:not(.writing-tutorial) .writing-reader-body{flex-shrink:0;overflow:visible}
+  .writing-reader:not(.writing-tutorial) .writing-reader-info{flex-shrink:0;overflow:visible}
   .writing-reader:not(.writing-tutorial) .art{padding:16px 16px 24px}
   .writing-reader:not(.writing-tutorial) .writing-reader-meta{margin-bottom:8px}
   .writing-reader:not(.writing-tutorial) .writing-reader-meta>.mono{font-size:11px}
@@ -399,4 +400,18 @@
     flex:none;min-height:auto;max-height:none;overflow:visible;border:0;border-radius:0
   }
   .writing-author .writing-three-columns>.writing-document-column{padding:16px}
+}
+
+/* Published overview remains readable while the same-version body arrives. */
+.writing-reader .writing-reader-body-state>.hint{font-size:13px;margin:0 0 14px}
+.writing-reader .writing-reader-body-state .callout{background:var(--writing-dgs);color:var(--writing-dg)}
+.writing-reader .writing-body-retry{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.writing-reader .writing-body-skeleton-mobile{display:none}
+@media(max-width:760px){
+  .writing-reader .writing-reader-body-state.sec{padding:22px 0 8px;margin-top:4px}
+  .writing-reader .writing-reader-body-state>.hint{font-size:12.5px;line-height:1.6;margin-bottom:12px}
+  .writing-reader .writing-body-skeleton-desktop{display:none}
+  .writing-reader .writing-body-skeleton-mobile{display:block}
+  .writing-reader .writing-reader-body-state .callout{flex-direction:column;padding:10px 12px;gap:8px;margin-bottom:10px}
+  .writing-reader .writing-body-retry>.btn.sm{height:36px;padding:0 12px;font-size:13px}
 }
