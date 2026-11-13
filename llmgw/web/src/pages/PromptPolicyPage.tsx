@@ -22,6 +22,7 @@ import { rollbackPromptPolicy, getPromptPolicy, previewPromptPolicy, savePromptP
 import type { PromptPolicyData, PromptPolicyDraft, PromptPolicyPreview } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
+import { ActionFeedback } from '@/components/ActionFeedback';
 import { CARD_ACTIONS, CARD_BODY, GAP, INSET_BLOCK } from '@/lib/surface';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE, TABLE_CELL, TABLE_HEAD_CELL } from '@/lib/typography';
 import { useDialogs } from '@/components/ConfirmDialog';
@@ -96,7 +97,7 @@ export function PromptPolicyPage() {
 
       <PageBody>
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
-        {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
+        <ActionFeedback message={notice} transient onDismiss={() => setNotice(null)} />
 
         {!data ? (
           error ? null : <SectionLoader text="正在加载提示词策略…" />

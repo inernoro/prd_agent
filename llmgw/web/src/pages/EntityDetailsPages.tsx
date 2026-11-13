@@ -19,6 +19,7 @@ import type {
   PlatformItem,
 } from '@/lib/types';
 import { fmtCompact, fmtDate, fmtMs, statusBadgeStyle } from '@/lib/logsHelpers';
+import './CatalogDensity.css';
 
 type EntityKind = 'model' | 'provider' | 'app';
 
@@ -57,7 +58,7 @@ function EntityDetailsShell({
   management,
   connectionSummary,
 }: ShellProps) {
-  const descriptionContent = <p className="lg-entity-detail-description">{description}</p>;
+  const descriptionContent = description ? <p className="lg-entity-detail-description">{description}</p> : null;
   const statusContent = <div className="lg-entity-detail-status">
           {status.map((item) => <StatusPill key={item.label} label={item.label} tone={item.tone} />)}
         </div>;
@@ -71,13 +72,13 @@ function EntityDetailsShell({
         </div>;
   const bounded = kind === 'model' || kind === 'provider';
   return (
-    <div className={`lg-entity-detail-page${bounded ? ' lg-entity-detail-bounded' : ''}`}>
+    <div className={`lg-entity-detail-page${bounded ? ' lg-entity-detail-bounded' : ' lg-app-detail-compact'}`}>
       <div className="lg-entity-detail-content">
         <Link className="lg-entity-detail-back" to={backHref}><ArrowLeft size={15} />{backLabel}</Link>
         <header className="lg-entity-detail-hero">
           {!bounded ? <div className={`lg-entity-detail-brand lg-entity-detail-brand-${kind}`}>{icon}</div> : null}
           <div className="lg-entity-detail-heading">
-            {bounded ? <><h1>{title}</h1>{kind === 'model' ? <code title={identifier}>{identifier}</code> : null}{kind === 'provider' ? <span>{subtitle}</span> : null}</> : <><span>{subtitle}</span><h1>{title}</h1><code title={identifier}>{identifier}</code></>}
+            {bounded ? <><h1>{title}</h1>{kind === 'model' ? <code title={identifier}>{identifier}</code> : null}{kind === 'provider' ? <span>{subtitle}</span> : null}</> : <><span>{subtitle}</span><h1>{title}</h1>{title !== identifier ? <code title={identifier}>{identifier}</code> : null}</>}
           </div>
           <div className="lg-entity-detail-actions">
             <Link to={primaryHref}>{primaryLabel}<ArrowUpRight size={15} /></Link>
@@ -591,7 +592,7 @@ export function AppCallerDetailsPage() {
       identifier={displayCode}
       subtitle={`${app.sourceSystem || '未知来源'} · ${app.requestType || '未标注类型'}`}
       description={app.notes || (registered
-        ? 'App 表示发起 Gateway 请求的业务身份。页面汇总它的调用来源、模型路由、预算与速率治理以及最近请求，便于从一条日志继续定位完整业务上下文。'
+        ? ''
         : '该 App 已出现在请求日志中，但当前租户注册表尚无对应治理记录。这里先保留真实调用来源、路由与最近请求，不补造预算或速率配置。')}
       icon={<AppEntityIcon size="lg" />}
       status={[

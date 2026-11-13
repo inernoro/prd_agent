@@ -23,6 +23,7 @@ import { invalidateOnboardingCache } from '@/lib/onboarding';
 import type { CreatedServiceKey, LegacyKeyCutoverData, OrganizationData, ServiceKeyItem } from '@/lib/types';
 import { Button, Chip, InlineAlert, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
+import './CatalogDensity.css';
 import { canCreateWildcardServiceKey, canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP, INSET_PADDING } from '@/lib/surface';
 import { BODY_TEXT, FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE, TABLE_CELL, TABLE_HEAD_CELL } from '@/lib/typography';
@@ -407,20 +408,21 @@ export function ServiceKeysPage() {
 
   const selectedKey = items?.find((item) => item.id === selectedKeyId);
   const keyOverview = <>
-        {items ? <div className="lg-collection-key-overview" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: GAP.normal }}>
-          {isInternalTenant ? <div style={coverageCardStyle}>
+        <div className="lg-key-status-lines">
+        {items ? <>
+          {isInternalTenant ? <div className="lg-key-status-line">
             <strong style={SECTION_TITLE}>MAP 生产 key 覆盖</strong><HelpPopover label="MAP 生产 key 覆盖">runtime、release-gate、canary 各用一把 production scoped key。</HelpPopover>
-            <div style={chipRowStyle}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? 'var(--ok)' : 'var(--warn)'} bg={item.ready ? 'var(--ok-bg)' : 'var(--warn-bg)'} />)}</div>
+            <div>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? 'var(--ok)' : 'var(--warn)'} bg={item.ready ? 'var(--ok-bg)' : 'var(--warn-bg)'} />)}</div>
 
           </div> : null}
-          <div style={coverageCardStyle}>
+          <div className="lg-key-status-line">
             <strong style={SECTION_TITLE}>外部平台独立身份</strong><HelpPopover label="外部平台独立身份">每个 clientCode 与环境各一把 key，不跨 purpose 或 environment。</HelpPopover>
-            <div style={chipRowStyle}>{externalIdentities.length ? externalIdentities.map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={HINT_TEXT}>暂无外部平台 key</span>}</div>
+            {externalIdentities.length ? <details className="lg-key-identity-list"><summary>查看 {externalIdentities.length} 个身份</summary><div>{externalIdentities.map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />)}</div></details> : <span style={HINT_TEXT}>暂无外部平台 key</span>}
 
           </div>
-        </div> : null}
+        </> : null}
 
-        {legacy ? <details className="lg-collection-key-legacy" style={legacyBlockStyle}>
+        {legacy ? <details className="lg-collection-key-legacy">
           <summary style={legacySummaryStyle}>Legacy shared key 收口 · {legacy.status} · 后继观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}</summary>
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap', marginTop: GAP.section }}>
             <span style={HINT_TEXT}>
@@ -443,7 +445,7 @@ export function ServiceKeysPage() {
           </FormGrid>
           {legacy.usage.length ? <div style={{ overflowX: 'auto', marginTop: GAP.section }}><table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['来源', 'appCaller', '协议', '允许', '拒绝', '最后出现', '决定'].map((label) => <th key={label} style={th}>{label}</th>)}</tr></thead><tbody>{legacy.usage.map((item) => <tr key={`${item.sourceSystem}-${item.appCallerCode}-${item.ingressProtocol}`}><td style={td}>{item.sourceSystem}</td><td style={td}>{item.appCallerCode || '缺失'}</td><td style={td}>{item.ingressProtocol}</td><td style={td}>{item.allowedCount}</td><td style={td}>{item.rejectedCount}</td><td style={td}>{formatTime(item.lastSeenAt)}</td><td style={td}>{item.lastDecision}</td></tr>)}</tbody></table></div> : null}
         </details> : null}
-
+        </div>
   </>;
 
   const renderActions = (item: ServiceKeyItem) => item.enabled ? <div className="lg-service-key-actions">
@@ -755,16 +757,6 @@ const th: React.CSSProperties = TABLE_HEAD_CELL;
 const td: React.CSSProperties = { ...TABLE_CELL, maxWidth: 260, verticalAlign: 'top', wordBreak: 'break-word' };
 const mutedMono: React.CSSProperties = { ...MONO_META, marginTop: 3 };
 
-/** 卡片外观：内边距只允许 CARD_PADDING(14) 或 INSET_PADDING(10)，别再各拍一个数。 */
-const surfaceCardStyle: React.CSSProperties = {
-  ...CARD_BODY,
-  border: '1px solid var(--border-subtle)',
-  borderRadius: 'var(--radius)',
-  background: 'var(--bg-surface)',
-};
-const coverageCardStyle: React.CSSProperties = surfaceCardStyle;
-const legacyBlockStyle: React.CSSProperties = surfaceCardStyle;
-const chipRowStyle: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginTop: GAP.normal };
 const legacySummaryStyle: React.CSSProperties = {
   cursor: 'pointer',
   color: 'var(--text-primary)',

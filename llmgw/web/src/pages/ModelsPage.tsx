@@ -25,6 +25,7 @@ import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, cr
 import type { CreateModelRequest, ImageSizeControlMode, ImageSizeFieldFormat, ModelCapability, ModelItem, ParameterCapabilityTemplateItem, PlatformItem } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { FormGrid, HelpPopover, PageBody, PageHeader, PageShell } from '@/components/PageShell';
+import './CatalogDensity.css';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { ModelPricingDrawer, PRICE_SOURCE_LABELS } from '@/components/ModelPricingDrawer';
 import { boolChip } from '@/components/poolsHelpers';
@@ -356,7 +357,7 @@ export function ModelsPage() {
   const td = TABLE_CELL;
 
   return (
-    <PageShell>
+    <PageShell className={items && items.length <= 10 ? "lg-physical-models-page lg-physical-models-small" : "lg-physical-models-page"}>
       <PageHeader
         title="模型管理"
         subtitle="模型是 Provider 里可以实际调用的能力。选择用途后，系统只会把它追加到匹配的默认模型池。"
@@ -519,70 +520,10 @@ export function ModelsPage() {
           <span style={{ marginLeft: 'auto', ...countStyle }}>{items ? `${items.length} 个模型` : '加载中'}</span>
         </div>
 
-        {items && items.length > 0 && canWrite ? (
-          <details style={{ flexShrink: 0 }}>
-            <summary style={summaryStyle}>高级：批量维护已有模型</summary>
-            <div style={bulkStackStyle}>
-              <Card style={toolbarStyle}>
-                <span style={toolbarTitleStyle}>批量维护模型密钥</span>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={bulkKeyValue}
-                  onChange={(e) => setBulkKeyValue(e.target.value)}
-                  placeholder="新 apiKey"
-                  style={inputStyle}
-                />
-                <label style={checkStyle}>
-                  <input type="checkbox" checked={bulkOnlyMissing} onChange={(e) => setBulkOnlyMissing(e.target.checked)} />
-                  只补缺失
-                </label>
-                <label style={checkStyle}>
-                  <input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />
-                  确认应用到当前筛选模型
-                </label>
-                <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-api-key'} onClick={() => void applyBulkApiKey()}>
-                  {busyId === 'bulk-model-api-key' ? '处理中…' : '批量轮换密钥'}
-                </Button>
-              </Card>
-              <Card style={toolbarStyle}>
-                <span style={toolbarTitleStyle}>批量维护模型能力</span>
-                <select
-                  value=""
-                  onChange={(e) => applyCapabilityTemplate(e.target.value)}
-                  style={{ ...selectStyle, width: 180 }}
-                  aria-label="参数能力模板"
-                  title="按 provider 模板填充字段级参数能力"
-                >
-                  <option value="">选择模板</option>
-                  {capabilityTemplates.map((template) => (
-                    <option key={template.key} value={template.key}>{template.label}</option>
-                  ))}
-                </select>
-                <input
-                  value={capabilityText}
-                  onChange={(e) => setCapabilityText(e.target.value)}
-                  placeholder="vision, function_calling=false"
-                  style={{ ...inputStyle, flex: '1 1 260px' }}
-                />
-                <label style={checkStyle}>
-                  <input type="checkbox" checked={capabilityOnlyMissing} onChange={(e) => setCapabilityOnlyMissing(e.target.checked)} />
-                  只补缺失
-                </label>
-                <label style={checkStyle}>
-                  <input type="checkbox" checked={capabilityConfirm} onChange={(e) => setCapabilityConfirm(e.target.checked)} />
-                  确认应用到当前筛选模型
-                </label>
-                <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-capabilities'} onClick={() => void applyBulkCapabilities()}>
-                  {busyId === 'bulk-model-capabilities' ? '处理中…' : '批量维护能力'}
-                </Button>
-              </Card>
-            </div>
-          </details>
-        ) : null}
+
 
         {error ? null : !items ? <SectionLoader text="正在加载模型…" /> : items.length === 0 ? <Empty text={!canWrite ? '当前租户还没有模型。请联系 Owner 或 Admin 添加。' : ownedPlatforms.length === 0 ? '还没有可用 Provider。请先添加 Provider，再回到这里添加模型。' : '还没有模型。选择上方 Provider、上游模型标识和至少一种用途即可保存。'} /> : (
-          <div className="lg-config-table-shell" style={tableShellStyle}>
+          <div className="lg-config-table-shell" style={{ ...tableShellStyle, flex: items.length <= 10 ? '0 0 auto' : 1 }}>
             <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
                 <tr>
@@ -759,6 +700,67 @@ export function ModelsPage() {
             </table>
           </div>
         )}
+        {items && items.length > 0 && canWrite ? (
+          <details className="lg-model-maintenance">
+            <summary style={summaryStyle}>高级：批量维护已有模型</summary>
+            <div style={bulkStackStyle}>
+              <Card style={toolbarStyle}>
+                <span style={toolbarTitleStyle}>批量维护模型密钥</span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={bulkKeyValue}
+                  onChange={(e) => setBulkKeyValue(e.target.value)}
+                  placeholder="新 apiKey"
+                  style={inputStyle}
+                />
+                <label style={checkStyle}>
+                  <input type="checkbox" checked={bulkOnlyMissing} onChange={(e) => setBulkOnlyMissing(e.target.checked)} />
+                  只补缺失
+                </label>
+                <label style={checkStyle}>
+                  <input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />
+                  确认应用到当前筛选模型
+                </label>
+                <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-api-key'} onClick={() => void applyBulkApiKey()}>
+                  {busyId === 'bulk-model-api-key' ? '处理中…' : '批量轮换密钥'}
+                </Button>
+              </Card>
+              <Card style={toolbarStyle}>
+                <span style={toolbarTitleStyle}>批量维护模型能力</span>
+                <select
+                  value=""
+                  onChange={(e) => applyCapabilityTemplate(e.target.value)}
+                  style={{ ...selectStyle, width: 180 }}
+                  aria-label="参数能力模板"
+                  title="按 provider 模板填充字段级参数能力"
+                >
+                  <option value="">选择模板</option>
+                  {capabilityTemplates.map((template) => (
+                    <option key={template.key} value={template.key}>{template.label}</option>
+                  ))}
+                </select>
+                <input
+                  value={capabilityText}
+                  onChange={(e) => setCapabilityText(e.target.value)}
+                  placeholder="vision, function_calling=false"
+                  style={{ ...inputStyle, flex: '1 1 260px' }}
+                />
+                <label style={checkStyle}>
+                  <input type="checkbox" checked={capabilityOnlyMissing} onChange={(e) => setCapabilityOnlyMissing(e.target.checked)} />
+                  只补缺失
+                </label>
+                <label style={checkStyle}>
+                  <input type="checkbox" checked={capabilityConfirm} onChange={(e) => setCapabilityConfirm(e.target.checked)} />
+                  确认应用到当前筛选模型
+                </label>
+                <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-capabilities'} onClick={() => void applyBulkCapabilities()}>
+                  {busyId === 'bulk-model-capabilities' ? '处理中…' : '批量维护能力'}
+                </Button>
+              </Card>
+            </div>
+          </details>
+        ) : null}
       </PageBody>
       {editModel ? (
         <ModelPricingDrawer

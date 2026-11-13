@@ -1,0 +1,80 @@
+/* 状态保持可见；去掉少量事实外的重复卡片，保留既有字号和控件热区。 */
+.lg-key-status-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.lg-key-status-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lg-key-status-line > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lg-key-identity-list > summary {
+  min-height: 32px;
+  align-content: center;
+  cursor: pointer;
+}
+
+.lg-key-identity-list > div {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.lg-key-status-lines > details > summary {
+  min-height: 32px;
+  align-content: center;
+}
+
+/* 普通清单少量数据由内容决定；大集合与展开编辑器仍保留滚动空间。 */
+.lg-app-caller-page[data-size="small"] .lg-app-caller-table-wrap {
+  flex: 0 0 auto;
+}
+
+.lg-physical-models-page .lg-model-maintenance {
+  flex-shrink: 0;
+}
+
+.lg-app-caller-page[data-size="small"] {
+  overflow-y: auto;
+}
+
+.lg-physical-models-small .lg-page-body {
+  overflow-y: auto;
+}
+
+/* App 排障先看对象与事实；四条汇总无需各自占一个 112px 卡片。 */
+.lg-app-detail-compact .lg-entity-detail-brand {
+  width: 40px;
+  height: 40px;
+}
+
+.lg-app-detail-compact .lg-entity-detail-metrics {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.lg-app-detail-compact .lg-entity-detail-metrics article {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.lg-app-detail-compact .lg-entity-detail-layout {
+  margin-top: 12px;
+}

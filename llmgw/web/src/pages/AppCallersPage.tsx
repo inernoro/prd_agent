@@ -8,6 +8,7 @@ import { Button, Chip, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
+import './CatalogDensity.css';
 
 const PAGE_SIZE = 50;
 const STATUSES = ['discovered', 'configured', 'active', 'disabled', 'archived'];
@@ -319,7 +320,7 @@ export function AppCallersPage() {
   };
 
   return (
-    <div className="lg-app-caller-page">
+    <div className="lg-app-caller-page" data-size={data.total <= 10 && expandedId === null ? 'small' : 'large'}>
       <header className="lg-app-caller-header">
         <div><h1>appCaller</h1><p>查看每类业务为什么调用、会走哪个模型，以及预算和速率由谁负责。</p></div>
         <span>共 {data.total} 个</span>
@@ -436,11 +437,11 @@ export function AppCallersPage() {
         {data.items.length === 0 ? <EmptyBlock text="没有匹配的 appCaller" /> : null}
       </div>
 
-      <div className="lg-app-caller-pagination">
+      {pages > 1 ? <div className="lg-app-caller-pagination">
         <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>上一页</Button>
         <span>{page} / {pages}</span>
         <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => setPage((p) => Math.min(pages, p + 1))}>下一页</Button>
-      </div>
+      </div> : null}
     </div>
   );
 }
