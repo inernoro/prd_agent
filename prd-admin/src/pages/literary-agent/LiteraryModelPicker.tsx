@@ -6,7 +6,7 @@ import type { LiteraryModelOption } from './literaryModelOptions';
 const shortName = (name: string) => name.replace(/^[^/]+\//, '');
 
 /** 页面内展开模型列表；短型号与完整标识分层展示，请求身份保持不变。 */
-export function LiteraryModelPicker({ label, icon, model, options, open, onOpenChange, onSelect }: {
+export function LiteraryModelPicker({ label, icon, model, options, open, onOpenChange, onSelect, disabled = false }: {
   label: string;
   icon: ReactNode;
   model: LiteraryModelOption | null;
@@ -14,6 +14,7 @@ export function LiteraryModelPicker({ label, icon, model, options, open, onOpenC
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect: (id: string) => void;
+  disabled?: boolean;
 }) {
   const [query, setQuery] = useState('');
   const visibleOptions = useMemo(() => options.filter(option => option.name.toLowerCase().includes(query.trim().toLowerCase())), [options, query]);
@@ -46,7 +47,7 @@ export function LiteraryModelPicker({ label, icon, model, options, open, onOpenC
       onOpenChange={next => { if (!next) setQuery(''); onOpenChange(next); }}
       search={{ value: query, onChange: setQuery, placeholder: '搜索模型名称' }}
       trigger={
-        <button type="button" className="lit-model-trigger" title={`${title}：${model?.name || '尚未选择'}，点击切换`} aria-label={title}>
+        <button type="button" disabled={disabled} className="lit-model-trigger" title={`${title}：${model?.name || '尚未选择'}，点击切换`} aria-label={title}>
           {summary}<ChevronDown size={15} className="lit-settings-chevron" aria-hidden />
         </button>
       }
@@ -56,6 +57,7 @@ export function LiteraryModelPicker({ label, icon, model, options, open, onOpenC
           description={shortName(option.name) !== option.name ? option.name : undefined}
           trailing={option.isDefault ? '系统默认' : undefined}
           tabIndex={index === 0 ? 0 : -1}
+          disabled={disabled}
           selected={model?.id === option.id} onSelect={() => onSelect(option.id)} />
       ))}
     </QuickMenu>

@@ -65,6 +65,15 @@ describe('工作台紧凑模型选择', () => {
     expect(container.querySelector('[role="status"]')?.getAttribute('aria-label')).toContain(models[0].name);
   });
 
+  it('保存期间禁用触发器和已展开选项，避免再次提交', async () => {
+    const onSelect = await render({ disabled: true, open: true });
+    expect(container.querySelector<HTMLButtonElement>('button')?.disabled).toBe(true);
+    const item = container.querySelector<HTMLButtonElement>('[role="menuitemradio"]')!;
+    expect(item.disabled).toBe(true);
+    await act(async () => item.click());
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it('没有可选模型时，菜单显示空状态', async () => {
     await render({ model: null, options: [], open: true });
     expect(document.querySelector('[role="menu"]')?.textContent).toContain('暂无可用模型池');

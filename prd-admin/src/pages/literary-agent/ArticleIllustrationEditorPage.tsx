@@ -68,6 +68,8 @@ import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy,
 import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
 import { ArticleEditorToolbar } from './ArticleEditorToolbar';
 import { LiteraryModelPicker } from './LiteraryModelPicker';
+import { useLiterarySettingSave } from './useLiterarySettingSave';
+import type { LiteraryAgentPreferences } from '@/services/contracts/userPreferences';
 import { LiteraryInlineMenuGroup, LiterarySettingsRow } from './LiteraryInlineMenu';
 import { QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
 import type { WatermarkConfig } from '@/services/contracts/watermark';
@@ -485,6 +487,15 @@ const PanelCard = ({ className, children }: { className?: string; children: Reac
   </GlassCard>
 );
 
+function SettingSaveFeedback({ saving, error, retry }: { saving: boolean; error: string | null; retry: () => Promise<boolean> }) {
+  if (saving) return <div role="status" className="flex items-center gap-2 py-2 text-xs" style={{ color: 'var(--text-secondary)' }}><MapSpinner size={14} />正在保存设置…</div>;
+  if (!error) return null;
+  return <div role="alert" className="flex items-center justify-between gap-2 py-2 text-xs" style={{ color: 'var(--accent-fg-danger)' }}>
+    <span>{error}，当前设置保持不变。</span>
+    <Button size="xs" variant="secondary" onClick={() => void retry()}>重试</Button>
+  </div>;
+}
+
 export default function ArticleIllustrationEditorPage({ workspaceId }: { workspaceId: string }) {
   // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回文学创作
   const goBack = useSmartBack('/literary-agent');
@@ -642,6 +653,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [chatModelPrefOpen, setChatModelPrefOpen] = useState(false);
   const [chatModelPrefId, setChatModelPrefId] = useState<string>('');
   const [modelPrefReady, setModelPrefReady] = useState(false);
+  const literaryPreferencesRef = useRef<LiteraryAgentPreferences>({});
+  const [modelSettingsReload, setModelSettingsReload] = useState(0);
+  const [modelPrefLoadError, setModelPrefLoadError] = useState(false);
 
   // 生图模型池 → 可选择列表
   type PoolModel = LiteraryModelOption;
@@ -953,15 +967,28 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     };
   }, [paragraphCtxMenu.visible]);
 
-  // 选择/取消提示词时同步持久化到后端
-  const setSelectedPrompt = useCallback((prompt: PromptTemplate | null) => {
-    setSelectedPromptRaw(prompt);
-    // 异步持久化，不阻塞 UI
-    void updateVisualAgentWorkspace({
-      id: workspaceId,
-      selectedPromptId: prompt?.id ?? '',
-    }).catch((err) => console.error('Failed to persist selectedPromptId:', err));
-  }, [workspaceId]);
+  const promptSettingSave = useLiterarySettingSave<PromptTemplate | null>({
+    scopeKey: workspaceId,
+    save: (prompt) => updateVisualAgentWorkspace({ id: workspaceId, selectedPromptId: prompt?.id ?? '' }),
+    onSaved: setSelectedPromptRaw,
+    errorMessage: '提示词风格保存失败',
+  });
+  const setSelectedPrompt = promptSettingSave.run;
+
+  const modelSettingSave = useLiterarySettingSave<{ imageModelId: string; chatModelId: string }>({
+    scopeKey: userId,
+    save: (prefs) => updateLiteraryAgentPreferences({
+      ...literaryPreferencesRef.current,
+      imageModelId: prefs.imageModelId || undefined,
+      chatModelId: prefs.chatModelId || undefined,
+    }),
+    onSaved: (prefs) => {
+      literaryPreferencesRef.current = { ...literaryPreferencesRef.current, ...prefs };
+      setImageModelPrefId(prefs.imageModelId);
+      setChatModelPrefId(prefs.chatModelId);
+    },
+    errorMessage: '模型设置保存失败',
+  });
 
   // 所有提示词（只有用户模板）
   const allPrompts = userPrompts;
@@ -981,6 +1008,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     void (async () => {
       setImageGenModelError(null);
       setModelsLoading(true);
+      setModelPrefReady(false);
+      setModelPrefLoadError(false);
 
       const [imgPoolsRes, chatPoolsRes, prefsRes] = await Promise.all([
         getLiteraryAgentModels().catch(() => ({ success: false, data: null as LiteraryAgentModelPool[] | null })),
@@ -1000,30 +1029,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       }
 
       // 恢复用户模型偏好
+      literaryPreferencesRef.current = prefsRes.success ? prefsRes.data?.literaryAgentPreferences ?? {} : {};
       if (prefsRes.success && prefsRes.data?.literaryAgentPreferences) {
         const prefs = prefsRes.data.literaryAgentPreferences;
         setImageModelPrefId(prefs.imageModelId ?? '');
         setChatModelPrefId(prefs.chatModelId ?? '');
       }
-      setModelPrefReady(true);
+      setModelPrefReady(prefsRes.success);
+      setModelPrefLoadError(!prefsRes.success);
       setModelsLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  // 持久化模型偏好（debounce 500ms）
-  useEffect(() => {
-    if (!modelPrefReady || !userId) return;
-    const timeout = setTimeout(() => {
-      void updateLiteraryAgentPreferences({
-        imageModelId: imageModelPrefId || undefined,
-        chatModelId: chatModelPrefId || undefined,
-      }).catch(() => {});
-    }, 500);
-    return () => clearTimeout(timeout);
-  }, [imageModelPrefId, chatModelPrefId, modelPrefReady, userId]);
+  }, [modelSettingsReload, userId]);
 
   // 验证用户选择的模型是否仍在可用列表中
   useEffect(() => {
@@ -2446,7 +2465,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         setUserPrompts(updated);
 
         if (selectedPrompt?.id === editingPrompt.id) {
-          setSelectedPrompt({ ...selectedPrompt, title: editingPrompt.title, content: editingPrompt.content });
+          setSelectedPromptRaw({ ...selectedPrompt, title: res.data.prompt.title, content: res.data.prompt.content });
         }
 
         setEditingPrompt(null);
@@ -2519,15 +2538,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     try {
+      // 先持久化替代选择；保存失败时保留模板，避免页面继续使用已删除的风格。
+      if (selectedPrompt?.id === prompt.id) {
+        const replacement = userPrompts.find((p) => p.id !== prompt.id) ?? null;
+        if (!await setSelectedPrompt(replacement)) return;
+      }
       const res = await deleteLiteraryPrompt({ id: prompt.id });
 
       if (res.success) {
         const updated = userPrompts.filter((p) => p.id !== prompt.id);
         setUserPrompts(updated);
-
-        if (selectedPrompt?.id === prompt.id) {
-          setSelectedPrompt(updated.length > 0 ? updated[0] : null);
-        }
       } else {
         toast.error('删除失败', res.error?.message || '未知错误');
       }
@@ -3439,7 +3459,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               variant="primary"
               className="w-full"
               onClick={() => void activeButton.action()}
-              disabled={activeButton.disabled}
+              disabled={activeButton.disabled || promptSettingSave.saving || modelSettingSave.saving}
             >
               <activeButton.icon size={16} />
               {activeButton.label}
@@ -3463,7 +3483,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <LiterarySettingsRow
                       icon={<PenLine size={16} />}
                       label="提示词"
-                      value={selectedPrompt?.title || '自动推断'}
+                      value={promptSettingSave.saving ? '正在保存…' : selectedPrompt?.title || '自动推断'}
+                      disabled={promptSettingSave.saving}
                       title={`提示词风格：${selectedPrompt?.title || '自动（系统推断）'}`}
                       aria-label="提示词风格"
                     />
@@ -3473,18 +3494,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     label="自动"
                     description="由系统按文章内容推断风格"
                     selected={!selectedPrompt}
-                    onSelect={() => setSelectedPrompt(null)}
+                    disabled={promptSettingSave.saving}
+                    onSelect={() => void setSelectedPrompt(null)}
                   />
                   {userPrompts.map((p) => (
                     <QuickMenuItem
                       key={p.id}
                       label={p.title || '未命名'}
                       selected={selectedPrompt?.id === p.id}
-                      onSelect={() => setSelectedPrompt(p)}
+                      disabled={promptSettingSave.saving}
+                      onSelect={() => void setSelectedPrompt(p)}
                     />
                   ))}
                   <QuickMenuAction label="管理提示词…" onSelect={() => setPromptPreviewOpen(true)} />
                 </QuickMenu>
+                <SettingSaveFeedback {...promptSettingSave} />
 
                 <QuickMenu inline
                   title="风格参考图"
@@ -3653,25 +3677,32 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   icon={<PenLine size={16} />}
                   model={effectiveChatModel}
                   options={enabledChatModels}
+                  disabled={!modelPrefReady || !userId || modelSettingSave.saving}
                   open={chatModelPrefOpen}
                   onOpenChange={(open) => {
                     setChatModelPrefOpen(open);
                     if (open) setImageModelPrefOpen(false);
                   }}
-                  onSelect={setChatModelPrefId}
+                  onSelect={(id) => void modelSettingSave.run({ imageModelId: imageModelPrefId, chatModelId: id })}
                 />
                 <LiteraryModelPicker
                   label="配图"
                   icon={<ImageIcon size={16} />}
                   model={effectiveModel}
                   options={enabledImageModels}
+                  disabled={!modelPrefReady || !userId || modelSettingSave.saving}
                   open={imageModelPrefOpen}
                   onOpenChange={(open) => {
                     setImageModelPrefOpen(open);
                     if (open) setChatModelPrefOpen(false);
                   }}
-                  onSelect={setImageModelPrefId}
+                  onSelect={(id) => void modelSettingSave.run({ imageModelId: id, chatModelId: chatModelPrefId })}
                 />
+                <SettingSaveFeedback {...modelSettingSave} />
+                {modelPrefLoadError && <div role="alert" className="flex items-center justify-between gap-2 py-2 text-xs" style={{ color: 'var(--accent-fg-danger)' }}>
+                  <span>模型偏好读取失败，请重试后再切换模型。</span>
+                  <Button size="xs" variant="secondary" onClick={() => setModelSettingsReload((n) => n + 1)}>重新读取</Button>
+                </div>}
                 {imageGenModelError && enabledImageModels.length === 0 && !autoResolvedModel && (
                   <div className="mt-2 text-xs" style={{ color: 'var(--accent-fg-danger)' }}>
                     生图不可用
@@ -4608,7 +4639,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     border: isPromptSelected ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
                                     minWidth: 40,
                                   }}
-                                  onClick={() => setSelectedPrompt(isPromptSelected ? null : prompt)}
+                                  disabled={promptSettingSave.saving}
+                                  onClick={() => void setSelectedPrompt(isPromptSelected ? null : prompt)}
                                   title={isPromptSelected ? '取消选择（将使用系统推断风格）' : '选择此风格'}
                                 >
                                   <CheckCircle2 size={16} />
@@ -4621,6 +4653,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   className="p-1.5 rounded-md transition-all duration-200 hover-bg-soft"
                                   style={{ color: 'var(--text-muted)' }}
                                   onClick={() => handleEditPrompt(prompt)}
+                                  disabled={promptSettingSave.saving}
                                   title="编辑"
                                 >
                                   <Edit2 size={14} />
@@ -4630,6 +4663,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   className="p-1.5 rounded-md transition-all duration-200 hover:bg-red-500/10"
                                   style={{ color: 'rgba(239, 68, 68, 0.7)' }}
                                   onClick={() => void handleDeletePrompt(prompt)}
+                                  disabled={promptSettingSave.saving}
                                   title="删除"
                                 >
                                   <Trash2 size={14} />
