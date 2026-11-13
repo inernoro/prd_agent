@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 
 export const workload = {
-  version: 2, stores: 6, documentsPerStore: 20, writerDocuments: 128, contentBytes: 8192,
+  version: 3, stores: 6, documentsPerStore: 20, writerDocuments: 128, contentBytes: 8192,
   writeFlow: 'edit-existing-document',
   browserRepetitions: 3,
   rateLimit: { maxRequestsPerMinute: 100000, maxConcurrentRequests: 1024 },
-  normal: { users: 2, seconds: 20, intervalMs: 1000 },
+  warmup: { users: 2, iterationsPerUser: 20 },
+  normal: { users: 2, seconds: 60, intervalMs: 1000, minimumBaselineSamples: 100 },
   ramp: { users: [2, 4, 8, 16, 32, 64, 128], seconds: 15, intervalMs: 0 },
   soak: { users: 2, seconds: 120, intervalMs: 1000 },
 };
@@ -78,7 +79,8 @@ export function calibrate(results) {
   for (const [name] of Object.entries(results[0].phases.find(p => p.name === 'normal').metrics)) {
     const rows = results.map(r => r.phases.find(p => p.name === 'normal')?.metrics[name]);
     const transaction = ['journey', 'write'].includes(name);
-    if (rows.some(r => !r || r.attempts < 30 || r.errors || (!transaction && r.app.n < 30)))
+    const minimum = workload.normal.minimumBaselineSamples;
+    if (rows.some(r => !r || r.attempts < minimum || r.errors || (!transaction && r.app.n < minimum)))
       throw new Error(`基线场景样本不足或存在错误: ${name}`);
     const bound = key => {
       const values = rows.map(r => r[key].p95);

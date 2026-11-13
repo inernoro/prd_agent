@@ -8,7 +8,7 @@ const result = JSON.parse(fs.readFileSync(path.join(dir, 'result.json'), 'utf8')
 const fixture = JSON.parse(fs.readFileSync(path.join(dir, 'fixture.json'), 'utf8'));
 const workload = result.contract?.workload;
 const failures = executionErrors(result);
-if (workload?.version !== 2 || workload.writeFlow !== 'edit-existing-document')
+if (![2, 3].includes(workload?.version) || workload.writeFlow !== 'edit-existing-document')
   failures.push('核心写入必须对应实际页面的已有文档编辑保存');
 if (fixture.writers?.length !== workload?.writerDocuments
     || new Set(fixture.writers).size !== fixture.writers?.length

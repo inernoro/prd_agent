@@ -16,6 +16,12 @@ test('零错误、足量、三次独立运行才允许校准', () => {
   const bad = run('c'); bad.phases[0].metrics.home.errors = 1;
   assert.throws(() => calibrate([run('a'), run('b'), bad]));
 });
+test('短时40样本不能替代至少100样本的正常负载基线', () => {
+  const short = run('short');
+  short.phases[0].metrics.home.attempts = 40;
+  short.phases[0].metrics.home.app.n = 40;
+  assert.throws(() => calibrate([run('a'), run('b'), short]), /基线场景样本不足/);
+});
 test('运行快照不能复评通过，也不能进入三次基线', () => {
   const complete = run('complete');
   const baseline = calibrate([run('a'), run('b'), run('c')]);

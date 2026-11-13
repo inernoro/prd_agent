@@ -409,10 +409,12 @@ try {
   }
   result.browser.pass = true;
   activePhase = 'warmup';
-  for (let i = 0; i < 5; i++) {
-    const warmed = await journey(0, 'warmup', i);
-    if (warmed.some(row => !row.ok)) throw new Error(`预热路径失败: ${warmed.find(row => !row.ok).error}`);
-  }
+  await Promise.all(Array.from({ length: workload.warmup.users }, async (_, vu) => {
+    for (let iteration = 0; iteration < workload.warmup.iterationsPerUser; iteration++) {
+      const warmed = await journey(vu, 'warmup', iteration);
+      if (warmed.some(row => !row.ok)) throw new Error(`预热路径失败: ${warmed.find(row => !row.ok).error}`);
+    }
+  }));
   sampling = true;
   monitor = (async () => {
     const previous = new Map();
