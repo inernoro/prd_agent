@@ -1,5 +1,16 @@
 import assert from 'node:assert/strict';
 
+/** 同一不可变仓库内容跨 image store 恢复；本地 Id 仍由各自 daemon 独立绑定。 */
+export function assertPortableArtifactContents(original: {
+  RepoDigests: string[]; Config: Record<string, unknown>; RootFS: { Type: string; Layers: string[] }; Os: string; Architecture: string;
+}, recovered: typeof original, repositoryDigest: string): void {
+  assert.match(repositoryDigest, /@sha256:[a-f0-9]{64}$/);
+  assert.ok(original.RepoDigests.includes(repositoryDigest)); assert.ok(recovered.RepoDigests.includes(repositoryDigest));
+  assert.ok(original.RootFS.Layers.length > 0); assert.ok(original.Config);
+  assert.deepEqual(recovered.RootFS, original.RootFS); assert.deepEqual(recovered.Config, original.Config);
+  assert.equal(recovered.Os, original.Os); assert.equal(recovered.Architecture, original.Architecture);
+}
+
 export function fixtureContentReference(image: { sha: string; reference: string; repoDigests: string[] }): string {
   assert.match(image.sha, /^[a-f0-9]{40}$/); assert.ok(image.reference.endsWith(':sha-' + image.sha));
   const repository = image.reference.slice(0, -45);

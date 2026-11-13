@@ -5,9 +5,35 @@ import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 import { qualifyNativeSource } from '../../scripts/native-source-qualification.js';
-import { assertPinnedArtifactRuntime, fixtureContentReference } from '../../scripts/native-artifact-identity.js';
+import { assertPinnedArtifactRuntime, assertPortableArtifactContents, fixtureContentReference } from '../../scripts/native-artifact-identity.js';
+import { isOwnedRuntimeCleanup } from '../../scripts/owned-runtime-cleanup-guard.js';
 
 describe('原生候选的独立源码与镜像资格', () => {
+  it('清理复合命令只接受两个不同自有CID及原始存活保护，不接受追加命令', () => {
+    const required = '1'.repeat(64), target = '2'.repeat(64), foreign = '3'.repeat(64);
+    const ids = new Set([required, target]);
+    const command = `if [ "$(docker inspect --format '{{.Id}} {{.State.Running}}' '${required}' 2>/dev/null)" != '${required} true' ]; then printf '%s\\n' 'CDS_OLD_RUNTIME_UNAVAILABLE' >&2; exit 125; fi; docker stop ${target}`;
+    expect(isOwnedRuntimeCleanup(command, ids)).toBe(true);
+    expect(isOwnedRuntimeCleanup(command.replace(`docker stop ${target}`, `docker rm ${target}`), ids)).toBe(true);
+    for (const invalid of [command.replaceAll(required, foreign), command.replace(target, foreign),
+      command.replace(target, required), command + '; true', command.replace('exit 125', 'exit 0')]) {
+      expect(isOwnedRuntimeCleanup(invalid, ids)).toBe(false);
+    }
+  });
+  it('跨daemon恢复核同仓库内容的完整配置、层及平台，不能只看相同标签', () => {
+    const manifest = 'owned@sha256:' + 'a'.repeat(64);
+    const original = { RepoDigests: [manifest], Config: { Cmd: ['node', '/server.cjs'], Labels: { revision: 'fixed' } },
+      RootFS: { Type: 'layers', Layers: ['sha256:' + 'b'.repeat(64)] }, Os: 'linux', Architecture: 'amd64' };
+    expect(() => assertPortableArtifactContents(original, structuredClone(original), manifest)).not.toThrow();
+    for (const field of ['RepoDigests', 'Config', 'RootFS', 'Architecture'] as const) {
+      const changed = structuredClone(original);
+      if (field === 'RepoDigests') changed.RepoDigests = [];
+      if (field === 'Config') changed.Config.Cmd = ['node', '/foreign.cjs'];
+      if (field === 'RootFS') changed.RootFS.Layers = ['sha256:' + 'c'.repeat(64)];
+      if (field === 'Architecture') changed.Architecture = 'arm64';
+      expect(() => assertPortableArtifactContents(original, changed, manifest)).toThrow();
+    }
+  });
   it('隔离快照携带实际脚本的同目录直接依赖', async () => {
     const host = ts.createSourceFile('host.ts', await fs.readFile(new URL('../../scripts/application-docker-host-drill.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true);
     let copied: string[] = [];

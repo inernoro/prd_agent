@@ -15,8 +15,10 @@ import type { UptimeCustomMonitor } from '../../src/types.js';
 
 const servers: http.Server[] = [];
 const dirs: string[] = [];
+const monitors: UptimeMonitorService[] = [];
 afterEach(async () => {
   await Promise.all(servers.splice(0).map(s => new Promise<void>(r => { s.closeAllConnections(); s.close(() => r()); })));
+  await Promise.all(monitors.splice(0).map(service => service.stop()));
   dirs.splice(0).forEach(p => fs.rmSync(p, { recursive: true, force: true }));
 });
 async function listen(app: http.RequestListener): Promise<string> {
@@ -129,6 +131,7 @@ describe('incident snapshots and scoped notification landing', () => {
     const events: UptimeAlertEventData[] = [];
     const deps = { state: { getAllBranches: () => [], getUptimeMonitors: () => [mon] }, config, now: () => now, onAlert: (_t: unknown, data: UptimeAlertEventData) => events.push(data) };
     const service = new UptimeMonitorService(deps);
+    monitors.push(service);
     await service.runCycle(); const incident = service.getIncidents()[0];
     expect(events[0].incidentId).toBe(incident.id);
     for (let i = 1; i <= 22; i++) { now += 31 * 60_000; value++; await service.runCycle(); }
@@ -148,6 +151,7 @@ describe('incident snapshots and scoped notification landing', () => {
     expect(recovered.endedSample!.t).toBeLessThan(recovered.notificationSamples!.at(-1)!.t);
     await service.flush();
     const cold = new UptimeMonitorService({ ...deps, onAlert: undefined });
+    monitors.push(cold);
     expect(cold.getIncident(incident.id, 'p-a')?.notificationSamples).toEqual(recovered.notificationSamples);
     expect(cold.getIncident(incident.id, 'p-b')).toBeUndefined();
     const app = express();

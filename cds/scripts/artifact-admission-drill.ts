@@ -9,7 +9,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { BranchEntry, BuildProfile, CdsConfig } from '../src/types.js';
 import type { ArtifactAdmission } from '../src/services/artifact-admission.js';
-import { assertPinnedArtifactRuntime } from './native-artifact-identity.js';
+import { assertPinnedArtifactRuntime, assertPortableArtifactContents } from './native-artifact-identity.js';
 
 const value = (name: string): string => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] || '' : ''; };
 const modules = async () => ({
@@ -367,7 +367,10 @@ async function main(): Promise<void> {
     const [repositoryWithTag, contentDigest] = repositoryDigest.split('@');
     const canonicalRepositoryDigest = `${repositoryWithTag.replace(/:[^/:]+$/, '')}@${contentDigest}`;
     // Docker保留运行配置里的提交tag，但RepoDigests按仓库+内容digest登记，不含tag。
-    assert.equal(recoveredImage.Id, localPeerRuntime.Image); assert.ok(recoveredImage.RepoDigests.includes(canonicalRepositoryDigest));
+    assertPortableArtifactContents(expectedLocalImage, recoveredImage, canonicalRepositoryDigest);
+    report.crossDaemonContent = { primaryLocalId: expectedLocalImage.Id, recoveredLocalId: recoveredImage.Id,
+      canonicalRepositoryDigest, configSha256: createHash('sha256').update(JSON.stringify(expectedLocalImage.Config)).digest('hex'),
+      rootFs: expectedLocalImage.RootFS, sameConfigAndLayers: true };
     assert.equal(recoveredImage.Config.Labels['cds.acceptance.owner'], owner);
     assert.equal(recoveredImage.Config.Labels['org.opencontainers.image.revision'], head);
     assert.equal(recoveredImage.Os, 'linux'); assert.equal(recoveredImage.Architecture, JSON.parse(docker(['image', 'inspect', repositoryDigest]))[0].Architecture);

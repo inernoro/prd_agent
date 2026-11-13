@@ -227,8 +227,9 @@ export async function abortUnpublishedServiceReplacements(options: {
 
 function publicationIdentity(entry: BranchEntry): string {
   return JSON.stringify(Object.entries(entry.services).map(([id, service]) =>
-    [id, service.status, runtimeRef(service), service.servingRuntime, service.pendingRuntime]));
+    [id, runtimeRef(service), servingRuntime(service), service.pendingRuntime]));
 }
+const publicationQueue = new WeakMap<BranchEntry, Promise<void>>();
 
 async function runningConsumersDoNotReference(profileId: string, published: ReadonlyMap<string, ServiceRuntimeRef | null>,
   container: Pick<ContainerService, 'getEnv'>, aliases: Set<string>, check: (step: string) => void): Promise<boolean> {
@@ -310,6 +311,22 @@ export async function commitServiceReplacements(options: {
   assertCurrent?: (step: string) => void;
   onFailureDiagnostics?: (snapshots: OperationLogContainerSnapshot[]) => void;
 }): Promise<void> {
+  // 构建、启动和就绪仍并行；同分支的指针发布与历史回收必须使用一致快照。
+  const previous = publicationQueue.get(options.entry);
+  let release!: () => void;
+  const current = new Promise<void>(resolve => { release = resolve; });
+  publicationQueue.set(options.entry, current);
+  try {
+    await previous;
+    options.assertCurrent?.('runtime publication admission');
+    await commitServiceReplacementsUnlocked(options);
+  } finally {
+    release();
+    if (publicationQueue.get(options.entry) === current) publicationQueue.delete(options.entry);
+  }
+}
+
+async function commitServiceReplacementsUnlocked(options: Parameters<typeof commitServiceReplacements>[0]): Promise<void> {
   const { entry, profileIds, state, container, assertCurrent } = options;
   const selected = profileIds.map(id => entry.services[id]).filter((service): service is ServiceState => Boolean(service));
   if (selected.some(service => service.status !== 'running')) {

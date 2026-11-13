@@ -81,7 +81,9 @@ async function main(): Promise<void> {
     if (/^rm\b/.test(command)) assert.ok(command.includes(temp + path.sep));
     if (/^git\b/.test(command)) assert.ok(!command.includes('--global'));
     commands.push(command);
-    if (!held && /^docker run -d\b/.test(command)) { assert.ok(command.includes(owner)); held = true; await gate; }
+    if (!held && /^docker (?:run -d|create)\b/.test(command) && command.includes('--label cds.type=app')) {
+      assert.ok(command.includes(owner)); held = true; await gate;
+    }
     const result = await pool.exec(command, options);
     if (commandReceipts.length < 256) commandReceipts.push({ command, cwd: options?.cwd, exitCode: result.exitCode, stderrTail: result.exitCode ? result.stderr.slice(-1500) : undefined });
     return result;
