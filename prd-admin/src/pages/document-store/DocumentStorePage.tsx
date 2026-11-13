@@ -71,6 +71,7 @@ import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection'
 import { StoreSyncBadge, SyncManagerPanel } from './SyncManagerPanel';
 import { DocumentTrashButton } from './DocumentTrashButton';
 import { RecentEntriesList } from './RecentEntriesList';
+import { KnowledgeIndexStatus } from './KnowledgeIndexStatus';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { GitHubSyncWizard } from './GitHubSyncWizard';
@@ -1085,6 +1086,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(initialEntryId);
+  const [knowledgeIndexCheck, setKnowledgeIndexCheck] = useState<{ entryId: string; version: number }>();
   const [tutorialGraph, setTutorialGraph] = useState<TutorialLinkGraphSnapshot | null>(null);
   const [showTutorialGraph, setShowTutorialGraph] = useState(false);
   const isTutorialGraphStore = tutorialGraph?.exists === true;
@@ -2106,7 +2108,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           updatedBy: res.data.updatedBy ?? e.updatedBy,
           updatedByName: res.data.updatedByName ?? e.updatedByName,
         } : e));
-      toast.success('已保存');
+      // 搜索命中的条目可能不在 entries 的第一页；保存后同样重新观察服务端索引状态。
+      setKnowledgeIndexCheck(previous => ({ entryId, version: previous?.entryId === entryId ? previous.version + 1 : 1 }));
+      if (res.data.knowledgeIndex?.status === 'failed') {
+        toast.error('正文已保存，问答索引刷新未确认', res.data.knowledgeIndex.displayMessage);
+      } else {
+        toast.success('已保存');
+      }
       // 返回服务端最新 updatedAt：DocBrowser 用它推进 loadedContentKey，短路掉保存后的内容重拉
       return { updatedAt: res.data.updatedAt };
     } else {
@@ -2666,6 +2674,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       {/* 左右分栏文档浏览器 —— 与上方 TabBar 左右边缘对齐（不再额外 px-5 内缩，
           消除左上角空白竖条）；仅留 pt-3 作为与标题栏的视觉间距 */}
       <div className="flex-1 min-h-0 flex flex-col pt-3">
+        <KnowledgeIndexStatus
+          entryId={selectedDocEntry?.id}
+          revision={`${entries.find(entry => entry.id === selectedDocEntry?.id)?.updatedAt ?? ''}:${knowledgeIndexCheck?.entryId === selectedDocEntry?.id ? knowledgeIndexCheck?.version : ''}`}
+        />
         {backgroundTranscriptionBanner && !transcribeFlow && (
           <div
             role="status"

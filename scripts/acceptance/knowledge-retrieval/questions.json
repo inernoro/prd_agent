@@ -1,0 +1,493 @@
+{
+  "schemaVersion": 1,
+  "questions": [
+    {
+      "queryId": "KB-001",
+      "category": "synonym",
+      "query": "出差住酒店一晚最多能报多少钱？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "travel-policy"
+      ],
+      "expectedFacts": [
+        "住宿每晚报销上限为六百元"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-002",
+      "category": "synonym",
+      "query": "出门办公的申请需要提前多久交？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "travel-policy"
+      ],
+      "expectedFacts": [
+        "出发前三个工作日"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-003",
+      "category": "synonym",
+      "query": "电子票据一定要打成纸张吗？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "invoice-policy"
+      ],
+      "expectedFacts": [
+        "电子发票无需打印"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-004",
+      "category": "synonym",
+      "query": "财务固定星期几把钱打回来？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "invoice-policy"
+      ],
+      "expectedFacts": [
+        "每周四统一付款"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-005",
+      "category": "synonym",
+      "query": "休年假要提早多少天申请？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "leave-policy"
+      ],
+      "expectedFacts": [
+        "提前五个工作日"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-006",
+      "category": "synonym",
+      "query": "没用完的带薪假最迟能留到什么时候？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "leave-policy"
+      ],
+      "expectedFacts": [
+        "次年三月底失效"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-007",
+      "category": "synonym",
+      "query": "一星期能在家工作几天？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "remote-policy"
+      ],
+      "expectedFacts": [
+        "每周最多两天"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-008",
+      "category": "synonym",
+      "query": "正式版本通常在哪些晚上上线？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "release-policy"
+      ],
+      "expectedFacts": [
+        "每周二和周四晚上九点"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-009",
+      "category": "synonym",
+      "query": "最高级别事故出现后多久要叫值班人？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "incident-policy"
+      ],
+      "expectedFacts": [
+        "十分钟内通知值班负责人"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-010",
+      "category": "synonym",
+      "query": "临时开通的客户数据访问多久过期？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "data-policy"
+      ],
+      "expectedFacts": [
+        "二十四小时后"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-011",
+      "category": "synonym",
+      "query": "员工离开公司的最后一天何时关账号？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "account-policy"
+      ],
+      "expectedFacts": [
+        "最后工作日下午六点前"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-012",
+      "category": "synonym",
+      "query": "新人必须在到岗多久内学完安全课程？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "onboarding-policy"
+      ],
+      "expectedFacts": [
+        "到岗七天内"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-013",
+      "category": "cross_document",
+      "query": "出差申请提前几天交，报销发票的公司抬头是什么？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "travel-policy",
+        "invoice-policy"
+      ],
+      "expectedFacts": [
+        "出发前三个工作日",
+        "星河科技有限公司"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-014",
+      "category": "cross_document",
+      "query": "返程后多久提交报销，财务星期几付款？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "travel-policy",
+        "invoice-policy"
+      ],
+      "expectedFacts": [
+        "十个工作日内",
+        "每周四"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-015",
+      "category": "cross_document",
+      "query": "连续休假超过五天和每周远程办公分别由谁审批？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "leave-policy",
+        "remote-policy"
+      ],
+      "expectedFacts": [
+        "部门负责人",
+        "直属经理"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-016",
+      "category": "cross_document",
+      "query": "正式上线要谁审批，发生一级故障时多久通知谁？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "release-policy",
+        "incident-policy"
+      ],
+      "expectedFacts": [
+        "值班负责人审批",
+        "十分钟内通知值班负责人"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-017",
+      "category": "cross_document",
+      "query": "故障时能否正常发布，平常正式上线窗口是什么？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "incident-policy",
+        "release-policy"
+      ],
+      "expectedFacts": [
+        "暂停非紧急发布",
+        "周二和周四晚上九点"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-018",
+      "category": "cross_document",
+      "query": "在家处理客户信息使用什么设备，导出数据要谁批准？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "remote-policy",
+        "data-policy"
+      ],
+      "expectedFacts": [
+        "公司受控终端",
+        "安全负责人"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-019",
+      "category": "cross_document",
+      "query": "新人安全培训时限和离职账号停用时限分别是什么？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "onboarding-policy",
+        "account-policy"
+      ],
+      "expectedFacts": [
+        "到岗七天内",
+        "最后工作日下午六点前"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-020",
+      "category": "cross_document",
+      "query": "客户支持普通咨询首响多久，一级故障内部通知多久？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "support-policy",
+        "incident-policy"
+      ],
+      "expectedFacts": [
+        "四个工作小时",
+        "十分钟内"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-021",
+      "category": "no_answer",
+      "query": "出差餐补每天多少元？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-022",
+      "category": "no_answer",
+      "query": "员工生日礼金发多少钱？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-023",
+      "category": "no_answer",
+      "query": "公司今年总收入是多少？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-024",
+      "category": "no_answer",
+      "query": "年假是否可以折现？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-025",
+      "category": "no_answer",
+      "query": "生产数据库的具体密码是什么？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-026",
+      "category": "no_answer",
+      "query": "客户支持的电话号码是多少？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-027",
+      "category": "no_answer",
+      "query": "试用期一共几个月？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-028",
+      "category": "no_answer",
+      "query": "公司是否给远程办公补贴网费？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-029",
+      "category": "no_permission",
+      "query": "董事每月特别津贴是多少？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": [
+        "private-payroll"
+      ]
+    },
+    {
+      "queryId": "KB-030",
+      "category": "no_permission",
+      "query": "苍鹭计划每月付多少钱？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": [
+        "private-payroll"
+      ]
+    },
+    {
+      "queryId": "KB-031",
+      "category": "no_permission",
+      "query": "董事会批准了怎样的额外补助？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": [
+        "private-payroll"
+      ]
+    },
+    {
+      "queryId": "KB-032",
+      "category": "no_permission",
+      "query": "薪酬方案中的内部代号是什么？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": [
+        "private-payroll"
+      ]
+    },
+    {
+      "queryId": "KB-033",
+      "category": "no_permission",
+      "query": "银杉项目准备收购哪家公司？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": [
+        "private-acquisition"
+      ]
+    },
+    {
+      "queryId": "KB-034",
+      "category": "no_permission",
+      "query": "晴川数据的并购报价是多少？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": [
+        "private-acquisition"
+      ]
+    },
+    {
+      "queryId": "KB-035",
+      "category": "no_permission",
+      "query": "未公开收购交易多少钱？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": [
+        "private-acquisition"
+      ]
+    },
+    {
+      "queryId": "KB-036",
+      "category": "no_permission",
+      "query": "战略部门正在洽谈的收购对象是谁？",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [],
+      "expectedFacts": [],
+      "forbiddenEntryIds": [
+        "private-acquisition"
+      ]
+    },
+    {
+      "queryId": "KB-037",
+      "category": "literal_control",
+      "query": "住宿每晚报销上限",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "travel-policy"
+      ],
+      "expectedFacts": [
+        "六百元"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-038",
+      "category": "literal_control",
+      "query": "电子发票可直接上传",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "invoice-policy"
+      ],
+      "expectedFacts": [
+        "无需打印"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-039",
+      "category": "literal_control",
+      "query": "信息安全培训",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "onboarding-policy"
+      ],
+      "expectedFacts": [
+        "到岗七天内"
+      ],
+      "forbiddenEntryIds": []
+    },
+    {
+      "queryId": "KB-040",
+      "category": "literal_control",
+      "query": "普通咨询首响时限",
+      "userId": "evaluation-user",
+      "relevantEntryIds": [
+        "support-policy"
+      ],
+      "expectedFacts": [
+        "四个工作小时"
+      ],
+      "forbiddenEntryIds": []
+    }
+  ]
+}

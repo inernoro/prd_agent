@@ -5481,56 +5481,75 @@ public static class GatewayHttpEndpoints
         }
     }
 
-    private static IEnumerable<ClaudeStreamEvent> BuildClaudeToolUseStreamEvents(JsonArray toolCallDelta)
+    // OpenAI tool arguments are fragments, not independently complete calls. Keep request-local
+    // state until Done, then emit serial Claude blocks so an SDK never seals partial JSON.
+    private sealed class ClaudeToolUseStreamBuffer
     {
-        for (var i = 0; i < toolCallDelta.Count; i++)
+        private sealed class Tool
         {
-            if (toolCallDelta[i] is not JsonObject toolCall) continue;
+            public StringBuilder Id { get; } = new();
+            public StringBuilder Name { get; } = new();
+            public StringBuilder Arguments { get; } = new();
+        }
 
-            var rawIndex = ReadInt(toolCall, "index") ?? i;
-            var index = rawIndex <= 0 ? rawIndex + 1 : rawIndex;
-            var function = toolCall["function"] as JsonObject;
-            var id = ReadString(toolCall, "id") ?? $"toolu_{Guid.NewGuid():N}";
-            var name = function is null ? null : ReadString(function, "name");
-            var arguments = function is null ? string.Empty : ReadString(function, "arguments") ?? string.Empty;
+        private readonly SortedDictionary<int, Tool> _tools = new();
 
-            if (!string.IsNullOrWhiteSpace(name))
+        public void Append(JsonArray deltas)
+        {
+            for (var i = 0; i < deltas.Count; i++)
+            {
+                if (deltas[i] is not JsonObject delta) continue;
+                var rawIndex = ReadInt(delta, "index") ?? i;
+                if (!_tools.TryGetValue(rawIndex, out var tool))
+                    _tools.Add(rawIndex, tool = new Tool());
+                tool.Id.Append(ReadString(delta, "id"));
+                if (delta["function"] is not JsonObject function) continue;
+                tool.Name.Append(ReadString(function, "name"));
+                tool.Arguments.Append(ReadString(function, "arguments"));
+            }
+        }
+
+        public IEnumerable<ClaudeStreamEvent> Complete()
+        {
+            // Text owns index 0. Allocate unique sequential Claude indices independently of
+            // upstream indices (including parallel OpenAI tools 0 and 1).
+            var index = 1;
+            foreach (var tool in _tools.Values)
             {
                 yield return new ClaudeStreamEvent("content_block_start", new JsonObject
                 {
-                    ["type"] = "content_block_start",
-                    ["index"] = index,
+                    ["type"] = "content_block_start", ["index"] = index,
                     ["content_block"] = new JsonObject
                     {
-                        ["type"] = "tool_use",
-                        ["id"] = id,
-                        ["name"] = name,
-                        ["input"] = new JsonObject(),
+                        ["type"] = "tool_use", ["id"] = tool.Id.ToString(),
+                        ["name"] = tool.Name.ToString(), ["input"] = new JsonObject(),
                     },
                 });
-            }
-
-            if (!string.IsNullOrEmpty(arguments))
-            {
-                yield return new ClaudeStreamEvent("content_block_delta", new JsonObject
-                {
-                    ["type"] = "content_block_delta",
-                    ["index"] = index,
-                    ["delta"] = new JsonObject
+                if (tool.Arguments.Length > 0)
+                    yield return new ClaudeStreamEvent("content_block_delta", new JsonObject
                     {
-                        ["type"] = "input_json_delta",
-                        ["partial_json"] = arguments,
-                    },
-                });
-
+                        ["type"] = "content_block_delta", ["index"] = index,
+                        ["delta"] = new JsonObject
+                        {
+                            ["type"] = "input_json_delta", ["partial_json"] = tool.Arguments.ToString(),
+                        },
+                    });
                 yield return new ClaudeStreamEvent("content_block_stop", new JsonObject
                 {
-                    ["type"] = "content_block_stop",
-                    ["index"] = index,
+                    ["type"] = "content_block_stop", ["index"] = index,
                 });
+                index++;
             }
         }
     }
+
+    private static string ClaudeStopReason(string? finishReason) => finishReason switch
+    {
+        "tool_calls" or "function_call" => "tool_use",
+        "length" => "max_tokens",
+        "stop" or null => "end_turn",
+        _ => finishReason,
+    };
 
     private sealed record ClaudeStreamEvent(string Name, JsonObject Data);
 
@@ -5548,6 +5567,7 @@ public static class GatewayHttpEndpoints
 
         var model = requestedModel ?? "auto";
         var started = false;
+        var tools = new ClaudeToolUseStreamBuffer();
 
         async Task WriteEventAsync(string name, object data)
         {
@@ -5592,10 +5612,7 @@ public static class GatewayHttpEndpoints
                 }
                 else if (chunk.Type == GatewayChunkType.ToolCall && chunk.ToolCallDelta != null)
                 {
-                    foreach (var toolEvent in BuildClaudeToolUseStreamEvents(chunk.ToolCallDelta))
-                    {
-                        await WriteEventAsync(toolEvent.Name, toolEvent.Data);
-                    }
+                    tools.Append(chunk.ToolCallDelta);
                 }
                 else if (chunk.Type == GatewayChunkType.Error)
                 {
@@ -5605,17 +5622,12 @@ public static class GatewayHttpEndpoints
                 else if (chunk.Type == GatewayChunkType.Done)
                 {
                     await WriteEventAsync("content_block_stop", new { type = "content_block_stop", index = 0 });
+                    foreach (var toolEvent in tools.Complete())
+                        await WriteEventAsync(toolEvent.Name, toolEvent.Data);
                     await WriteEventAsync("message_delta", new
                     {
                         type = "message_delta",
-                        delta = new { stopReason = chunk.FinishReason switch
-                        {
-                            "stop" => "end_turn",
-                            "length" => "max_tokens",
-                            "tool_calls" or "function_call" => "tool_use",
-                            null => "end_turn",
-                            var reason => reason,
-                        } },
+                        delta = new { stopReason = ClaudeStopReason(chunk.FinishReason) },
                         usage = new { outputTokens = chunk.TokenUsage?.OutputTokens ?? 0 },
                     });
                     await WriteEventAsync("message_stop", new { type = "message_stop" });
