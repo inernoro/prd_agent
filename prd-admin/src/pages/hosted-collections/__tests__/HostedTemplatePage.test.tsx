@@ -107,4 +107,21 @@ describe('模版来源、字段映射与真实相邻预览', () => {
     expect(metadata?.textContent).not.toMatch(/v3|分钟|发布后生成/);
   });
 
+  it('桌面字段规则包含原稿五项，保留自动字段及完整显示和缺失规则', async () => {
+    await mount(); const rows = [...container.querySelectorAll('.ht-desktop-rules .ht-rule-row:not(.mono)')];
+    expect(rows.map(row => row.children[1].textContent)).toEqual(['文档类型', '标题', '摘要', '正文小标题', '自动字段']);
+    expect(rows[4].textContent).toContain('版本、作者、更新时间、批注与讨论数、阅读时长');
+    expect(rows[2].textContent).toContain('取正文开头 60 字并标注「正文开头」；小合集列表不显示');
+  });
+  it('手机规则完整呈现五张字段卡及限制/显示在/缺失时，关闭不会改写作者字段', async () => {
+    await mount(); await input('标题', '规则不改我的标题');
+    await act(async () => container.querySelector<HTMLButtonElement>('.ht-mobile-footer button')!.click());
+    const cards = [...container.querySelectorAll('[role="dialog"] .ht-rule-card')];
+    expect(cards).toHaveLength(5);
+    for (const card of cards) expect([...card.querySelectorAll('.ht-rule-key')].map(e => e.textContent)).toEqual(['限制', '显示在', '缺失时']);
+    expect(cards[0].textContent).toContain('类型标签、目录副标题、按类型筛选'); expect(cards[4].textContent).toContain('自动字段');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="关闭字段规则"]')!.click());
+    expect(container.querySelector('[role="dialog"]')).toBeNull(); expect(JSON.parse(localStorage.getItem('hosted-template-draft:author')!).title).toBe('规则不改我的标题'); expect(api.publish).not.toHaveBeenCalled();
+  });
+
 });

@@ -99,3 +99,9 @@
 
 .hcol-template .ht-primary-meta{font-size:11px;color:var(--writing-ink3)}
 @media(max-width:760px){.hcol-template .ht-primary-meta>.tg::after{display:none}}
+
+/* 07b 字段规则：640px 底部面板，五张卡片共用桌面规则。 */
+.hcol-template .ht-rules{display:flex;flex-direction:column;max-height:640px;padding:0;border:0;border-radius:14px 14px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.18)}
+.ht-rules-heading{display:flex;align-items:center;justify-content:space-between;padding:6px 4px 6px 16px;border-bottom:1px solid var(--writing-ln);flex-shrink:0}.ht-rules-heading>strong{font-size:15px;font-weight:600}.hcol-template .ht-rules-heading>.ib{width:44px;height:44px}
+.ht-rules-content{flex:1;min-height:0;padding:0 16px 20px}.ht-rule-card{display:flex;flex-direction:column;gap:4px;padding:12px 0;border-bottom:1px solid var(--writing-ln);font-size:13px;line-height:1.6;color:var(--writing-ink2)}
+.ht-rule-card>b{display:flex;gap:8px;align-items:center;color:var(--writing-ink);font-size:14px}.hcol-template .ht-rule-card .fk{position:static;flex-shrink:0}.hcol-template .ht-rule-card .hint{font-size:12px;font-weight:400}.ht-rule-card>div{display:flex}.ht-rule-key{color:var(--writing-ink3);display:inline-block;width:48px;flex-shrink:0}.ht-rule-card>div>span:last-child{min-width:0}

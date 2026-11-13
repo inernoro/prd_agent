@@ -14,6 +14,49 @@ import './template.css';
 
 type Draft = { templateId: string; type: string; title: string; summary: string; headings: string[]; body: string };
 const empty: Draft = { templateId: 'overview', type: '总览', title: '', summary: '', headings: [], body: '' };
+// 桌面与手机共用字段规则，避免说明缺项。
+const FIELD_RULES = [
+  [
+    "1",
+    "文档类型",
+    "选模版时确定，可改",
+    "7 种之一",
+    "类型标签、目录副标题、按类型筛选",
+    "显示「文档」，不参与筛选"
+  ],
+  [
+    "2",
+    "标题",
+    "必填",
+    "建议不超过 32 字",
+    "主文档卡、目录、继续阅读、阅读页、分享卡片",
+    "不能发布；过长时合集页截为两行，阅读页显示全文"
+  ],
+  [
+    "3",
+    "摘要",
+    "建议填写",
+    "1–3 句，不超过 120 字",
+    "主文档卡、小合集列表、搜索结果、阅读页导语",
+    "取正文开头 60 字并标注「正文开头」；小合集列表不显示"
+  ],
+  [
+    "4",
+    "正文小标题",
+    "建议 3–7 节",
+    "二级标题，单行",
+    "主文档目录、阅读页目录、批注定位",
+    "不显示目录，阅读页只能整篇滚动"
+  ],
+  [
+    "5",
+    "自动字段",
+    "不用填",
+    "—",
+    "版本、作者、更新时间、批注与讨论数、阅读时长",
+    "—"
+  ]
+] as const;
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 export default function HostedTemplatePage() {
@@ -80,7 +123,7 @@ function HostedTemplateEditor() {
         <div className={`ht-preview-secondary ht-preview-block ${preview === 'directory' ? 'current' : ''}`}><div><div className="pv-l">目录栏 · 相邻效果</div><div className="panel ht-directory-panel"><div className="ht-directory"><span className="mono">当前</span><div><div className={target('title','in')} data-k="2"><span className="cl2">{title}</span></div><span className="hint">{user?.displayName} · {draft.type} · 发布后更新</span></div></div><div className="ht-neighbor" aria-label="相邻文档预览">{neighbor ? <><span className="mono">相邻</span><div><div className="cl2" title={neighbor.title}>{neighbor.title}</div><div className="hint">{neighbor.author || '作者未提供'} · {neighbor.type || '类型未提供'} · {neighborDate}</div></div></> : <p className="hint">{neighborStatus === 'loading' ? '正在读取相邻资料…' : neighborStatus === 'failed' ? '相邻资料暂时无法读取，请刷新重试' : '暂无可用于相邻预览的可见文档'}</p>}</div></div></div><div><div className="pv-l">继续阅读 · 列表效果</div><div className="panel ht-directory"><span className="mono">当前</span><div><strong className={target('title','in')} data-k="2">{title}</strong><p className={target('sum','in')} data-k="3">{excerpt || '正文开头：尚未填写'}</p><span className="hint">{user?.displayName} · {draft.type}</span></div></div></div></div>
         <div className={`ht-preview-block ${preview === 'read' ? 'current' : ''}`}><div className="pv-l">阅读页 · 字段映射</div><div className="panel ht-read"><div className="ht-read-meta"><span className={`tag t-l ${target('type','in')}`} data-k="1">{draft.type}</span><span className={target('auto','in')} data-k="5"><span className="mono">版本、作者与更新时间由发布生成</span></span></div><h1 className={target('title')} data-k="2">{title}</h1><div className="rdA"><aside>{draft.headings.length > 0 && <><div className="hint">本文目录</div>{toc}</>}</aside><article><div className={`ht-read-lead ${target('sum')}`} data-k="3">{excerpt}</div>{!draft.headings.length && <div className="hint">{draft.body || '填写正文后预览内容。'}</div>}{draft.headings.map((h,i) => <section key={i}><h2 className={target('head')} data-k="4">{h}</h2>{i === 0 && <div className="ht-read-body">{draft.body || '填写正文后预览内容。'}</div>}</section>)}</article></div></div></div>
       </section>
-    </main><section className="ht-desktop-rules"><div className="lbl"><strong>字段规则</strong><span className="hint">所有模版共用 · 模版只决定默认类型和小标题</span></div><div className="ht-rule-row mono"><span>#</span><span>字段</span><span>填写</span><span>限制</span><span>显示在</span><span>缺失时</span></div>{[['1','文档类型','选模版时确定，可改','7 种之一','类型标签、目录副标题、按类型筛选','显示「文档」'],['2','标题','必填','建议不超过 32 字','主文档卡、目录、继续阅读、阅读页','不能发布；过长时合集页截为两行'],['3','摘要','选填','1–3 句，建议 120 字','主文档卡、小合集列表、阅读页导语','显示正文开头并标明「正文开头」'],['4','正文小标题','可编辑、添加、删除','建议 3–7 节','主文档目录、阅读页目录','不显示目录']].map(row => <div className="ht-rule-row" key={row[0]}>{row.map((cell,i) => <span key={i}>{cell}</span>)}</div>)}</section><footer className="ht-mobile-footer"><button className="btn" onClick={() => mobilePreview ? setMobilePreview(false) : setRules(true)}>{mobilePreview ? '返回填写' : '字段规则'}</button><button className="btn ht-primary-action" disabled={busy} onClick={() => mobilePreview ? void publish() : setMobilePreview(true)}>{mobilePreview ? busy ? '发布中…' : '发布' : '预览'}</button></footer>
-    {rules && <div className="ht-rules-scrim" onClick={() => setRules(false)}><section className="panel ht-rules" role="dialog" aria-modal="true" aria-label="字段规则" onClick={e => e.stopPropagation()}><div className="lbl"><strong>字段规则</strong><button className="ib" aria-label="关闭字段规则" onClick={() => setRules(false)}><X size={18} /></button></div><p>标题建议 32 字以内；摘要 1–3 句，建议 120 字以内；小标题建议 3–7 节。</p><p>无摘要时显示正文开头；无小标题时不显示目录。版本、作者、更新时间、批注、讨论和阅读时长由真实发布内容生成。</p></section></div>}
+    </main><section className="ht-desktop-rules"><div className="lbl"><strong>字段规则</strong><span className="hint">所有模版共用 · 模版只决定默认类型和小标题</span></div><div className="ht-rule-row mono"><span>#</span><span>字段</span><span>填写</span><span>限制</span><span>显示在</span><span>缺失时</span></div>{FIELD_RULES.map(row => <div className="ht-rule-row" key={row[0]}>{row.map((cell,i) => <span key={i}>{cell}</span>)}</div>)}</section><footer className="ht-mobile-footer"><button className="btn" onClick={() => mobilePreview ? setMobilePreview(false) : setRules(true)}>{mobilePreview ? '返回填写' : '字段规则'}</button><button className="btn ht-primary-action" disabled={busy} onClick={() => mobilePreview ? void publish() : setMobilePreview(true)}>{mobilePreview ? busy ? '发布中…' : '发布' : '预览'}</button></footer>
+    {rules && <div className="ht-rules-scrim" onClick={() => setRules(false)}><section className="panel ht-rules" role="dialog" aria-modal="true" aria-label="字段规则" onClick={e => e.stopPropagation()}><div className="ht-rules-heading"><strong>字段规则</strong><button className="ib" aria-label="关闭字段规则" onClick={() => setRules(false)}><X size={16} /></button></div><div className="scroll ht-rules-content">{FIELD_RULES.map(([number,name,fill,limit,shows,missing]) => <article className="ht-rule-card" key={number}><b><span className="fk">{number}</span>{name}<span className="hint">{fill}</span></b>{[['限制',limit],['显示在',shows],['缺失时',missing]].map(([label,value]) => <div key={label}><span className="ht-rule-key">{label}</span><span>{value}</span></div>)}</article>)}</div></section></div>}
   </div>;
 }
