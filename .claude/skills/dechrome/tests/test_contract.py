@@ -18,17 +18,108 @@ spec.loader.exec_module(checker)
 def ledger():
     states = sorted(checker.STATES)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "target_revision": "new",
         "scope": [{"id": "upstreams", "route": "/upstreams", "goal": "Find an upstream",
                    "frequency": "High; task-inferred", "core_action": "Open connection details",
                    "required_states": states}],
         "cases": [{"page": "upstreams", "state": state, "decision": "retained",
                    "reason": "Manually inspected: necessary status remains readable",
+                   "retention": {"task": "Read connection failures before changing a provider", "necessary_space_or_status": "Error and permission facts must stay readable in the detail workspace", "observation_reference": "evidence.png"},
                    "evidence": [{"provenance": "deterministic-fixture", "reference": "evidence.png", "revision": "new"}],
                    "checks": [{"assertion": "Connection details opens and Escape restores focus", "outcome": "pass"}]}
                   for state in states],
     }
+
+
+def fixed_ledger():
+    data = ledger()
+    case = data["cases"][0]
+    case["decision"] = "fixed"
+    before = {"revision": "old", "dataset": "two-rows-v1", "viewport": [390, 844],
+              "theme": "dark", "role": "owner", "state": "few-providers",
+              "scroll": {"document": [0, 0], "local": {"workspace": [0, 0]}},
+              "first_data_y": 509, "unnecessary_before_px": 80,
+              "task_scroll_px": 110, "task_steps": 3}
+    after = copy.deepcopy(before)
+    after.update(revision="new", first_data_y=406, unnecessary_before_px=0, task_scroll_px=0)
+    case["evidence"].append({"provenance": "deterministic-fixture", "reference": "before.png", "revision": "old"})
+    case["comparison"] = {"before": before, "after": after,
+                          "old_failure": "The same first-record visibility assertion fails on old build",
+                          "new_pass": "The same assertion passes on the new build",
+                          "nonessential_reason": "Duplicate setup delays finding the provider",
+                          "target": "First provider earlier, same type size and click target"}
+    case["verified_effect"] = {"type": "metric", "target": "first_content_y", "unit": "px", "direction": "decrease",
+                               "before": 509, "after": 406, "state": "few-providers",
+                               "assertion": "First record appears earlier with unchanged data and actions",
+                               "reference": "evidence.png", "task_benefit": "Locate the provider without crossing duplicate setup"}
+    return data
+
+
+class ImprovementProofTests(unittest.TestCase):
+    def test_legacy_fixed_is_not_silently_grandfathered(self):
+        data = fixed_ledger()
+        data["schema_version"] = 1
+        del data["cases"][0]["verified_effect"]
+        self.assertTrue(checker.validate(data)[0])
+        data["schema_version"] = 2
+        self.assertTrue(checker.validate(data)[0], "Changing schema number alone cannot validate historical fixed claims")
+
+    def test_same_values_do_not_prove_task_improvement(self):
+        data = fixed_ledger()
+        case = data["cases"][0]
+        case["comparison"]["after"] = dict(copy.deepcopy(case["comparison"]["before"]), revision="new")
+        case["verified_effect"]["after"] = 509
+        self.assertTrue(checker.validate(data)[0])
+
+    def test_class_only_change_is_not_an_observable_target(self):
+        data = fixed_ledger()
+        effect = data["cases"][0]["verified_effect"]
+        effect.update(type="boolean", target="css_class", before=False, after=True)
+        self.assertTrue(checker.validate(data)[0])
+        effect.update(type="metric", target="first_content_y", before="old-class", after="new-class")
+        self.assertTrue(checker.validate(data)[0])
+
+    def test_claim_must_match_measurement_direction_and_executed_reference(self):
+        data = fixed_ledger()
+        self.assertFalse(checker.validate(data)[0])
+        for field, value in [("before", 600), ("direction", "increase"), ("reference", "not-declared.png"), ("task_benefit", "")]:
+            changed = copy.deepcopy(data)
+            changed["cases"][0]["verified_effect"][field] = value
+            self.assertTrue(checker.validate(changed)[0], field)
+
+    def test_feedback_fix_uses_feedback_state_even_when_default_geometry_is_unchanged(self):
+        data = fixed_ledger()
+        case = data["cases"][0]
+        case["comparison"]["after"] = dict(copy.deepcopy(case["comparison"]["before"]), revision="new")
+        for side in ["before", "after"]:
+            case["comparison"][side]["state"] = "success-feedback-at-7s"
+        case["verified_effect"] = {"type": "boolean", "target": "transient_feedback_visible", "before": True, "after": False,
+                                   "state": "success-feedback-at-7s", "assertion": "Success feedback leaves after timeout while failures remain",
+                                   "reference": "evidence.png", "task_benefit": "Read the result without a stale full-width success banner"}
+        self.assertFalse(checker.validate(data)[0])
+        case["comparison"]["before"]["state"] = "default"
+        self.assertTrue(checker.validate(data)[0])
+        case["comparison"]["before"]["state"] = "success-feedback-at-7s"
+        case["verified_effect"]["before"] = False
+        self.assertTrue(checker.validate(data)[0])
+
+    def test_retention_needs_task_space_and_observed_evidence(self):
+        data = ledger()
+        case = data["cases"][0]
+        del case["retention"]
+        self.assertTrue(checker.validate(data)[0], "Opened or missing evidence is not a retention rationale")
+        case["retention"] = {"task": "", "necessary_space_or_status": "", "observation_reference": "source.tsx"}
+        self.assertTrue(checker.validate(data)[0])
+
+    def test_minor_change_is_recorded_without_counting_as_fixed_completion(self):
+        data = ledger()
+        data["cases"][0]["decision"] = "minor-change"
+        errors, counts = checker.validate(data)
+        self.assertFalse(errors)
+        self.assertEqual(counts["fixed"], 0)
+        self.assertEqual(counts["minor-change"], 1)
+        self.assertTrue(checker.validate(data, require_complete=True)[0])
 
 
 class EvidenceBoundaryTests(unittest.TestCase):
@@ -75,15 +166,16 @@ class EvidenceBoundaryTests(unittest.TestCase):
         case = data["cases"][0]
         case["decision"] = "fixed"
         before = {"revision": "old", "dataset": "two-rows-v1", "viewport": [390, 844],
-                  "theme": "dark", "role": "owner", "first_data_y": 509,
+                  "theme": "dark", "role": "owner", "state": "few-providers", "scroll": {"document": [0, 0], "local": {}}, "first_data_y": 509,
                   "unnecessary_before_px": 80, "task_scroll_px": 110, "task_steps": 3}
         after = dict(before, revision="new", first_data_y=406, unnecessary_before_px=0, task_scroll_px=0)
         case["evidence"].append({"provenance": "deterministic-fixture", "reference": "before.png", "revision": "old"})
+        case["verified_effect"] = {"type": "metric", "target": "first_content_y", "before": 509, "after": 406, "unit": "px", "direction": "decrease", "state": "few-providers", "assertion": "First provider appears earlier without smaller type", "reference": "evidence.png", "task_benefit": "Reach provider records without scrolling past duplicate setup"}
         case["comparison"] = {"before": before, "after": after,
                               "old_failure": "Same assertion fails on baseline", "new_pass": "Same assertion passes",
                               "nonessential_reason": "Duplicate maintenance notice delays records", "target": "Data appears at least 60px earlier"}
         self.assertFalse(checker.validate(data)[0])
-        for field, value in (("dataset", "other"), ("viewport", [1440, 900]), ("theme", "light"), ("role", "viewer")):
+        for field, value in (("dataset", "other"), ("viewport", [1440, 900]), ("theme", "light"), ("role", "viewer"), ("state", "success-feedback"), ("scroll", {"document": [0, 200], "local": {}})):
             changed = copy.deepcopy(data)
             changed["cases"][0]["comparison"]["after"][field] = value
             self.assertTrue(checker.validate(changed)[0], field)

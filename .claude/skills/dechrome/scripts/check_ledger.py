@@ -11,12 +11,39 @@ STATES = {
 }
 PROVENANCE = {"deterministic-fixture", "preview-live", "integration-live"}
 METRICS = ("first_data_y", "unnecessary_before_px", "task_scroll_px", "task_steps")
+METRIC_TARGETS = {
+    "first_content_y": ("px", "decrease", "first_data_y"),
+    "primary_action_y": ("px", "decrease", None),
+    "nonessential_before_px": ("px", "decrease", "unnecessary_before_px"),
+    "actual_task_scroll_px": ("px", "decrease", "task_scroll_px"),
+    "task_steps": ("steps", "decrease", "task_steps"),
+    "empty_scaffold_px": ("px", "decrease", None),
+    "usable_workspace_px": ("px", "increase", None),
+}
+BOOLEAN_TARGETS = {
+    "primary_action_visible": True, "key_content_visible": True,
+    "necessary_state_visible": True, "last_item_reachable": True,
+    "transient_feedback_visible": False, "content_obscured": False,
+    "content_overflow": False,
+}
+
+
+def finite_number(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def valid_scroll(value):
+    def point(pair):
+        return isinstance(pair, list) and len(pair) == 2 and all(finite_number(x) for x in pair)
+    return (isinstance(value, dict) and point(value.get("document"))
+            and isinstance(value.get("local"), dict)
+            and all(isinstance(k, str) and k.strip() and point(v) for k, v in value["local"].items()))
 
 
 def validate(ledger, require_live=False, require_complete=False):
     errors = []
     counts = {"pages": 0, "cases": 0, "fixed": 0, "retained": 0,
-              "blocked": 0, "not-applicable": 0, "failed_checks": 0}
+              "blocked": 0, "not-applicable": 0, "minor-change": 0, "failed_checks": 0}
 
     def issue(where, message):
         errors.append(f"{where}: {message}")
@@ -24,8 +51,8 @@ def validate(ledger, require_live=False, require_complete=False):
     def nonempty(value):
         return isinstance(value, str) and bool(value.strip())
 
-    if not isinstance(ledger, dict) or ledger.get("schema_version") != 1:
-        return ["ledger: expected object with schema_version 1"], counts
+    if not isinstance(ledger, dict) or type(ledger.get("schema_version")) is not int or ledger.get("schema_version") != 2:
+        return ["ledger: schema_version 2 required; v1 fixed decisions must be re-evidenced, not silently upgraded"], counts
     target_revision = ledger.get("target_revision")
     if require_live and not nonempty(target_revision):
         issue("ledger", "target_revision required for same-version real-preview acceptance")
@@ -80,7 +107,7 @@ def validate(ledger, require_live=False, require_complete=False):
         observed.add(pair)
         counts["cases"] += 1
         decision = case.get("decision")
-        if decision not in ("fixed", "retained", "blocked", "not-applicable"):
+        if decision not in ("fixed", "retained", "blocked", "not-applicable", "minor-change"):
             issue(where, "unknown decision")
             continue
         counts[decision] += 1
@@ -98,7 +125,7 @@ def validate(ledger, require_live=False, require_complete=False):
         if not isinstance(evidence, list) or not evidence:
             issue(where, "evidence array required")
             evidence = []
-        revisions, live = set(), False
+        revisions, references, live = set(), set(), False
         for ev in evidence:
             if not isinstance(ev, dict):
                 issue(where, "evidence must be objects")
@@ -113,6 +140,8 @@ def validate(ledger, require_live=False, require_complete=False):
                     issue(where, f"evidence {field} required")
             if isinstance(ev.get("revision"), str):
                 revisions.add(ev["revision"])
+            if isinstance(ev.get("reference"), str):
+                references.add(ev["reference"])
         if require_live and not live:
             issue(where, "same-target-revision real-preview evidence required; old previews and fixtures cannot substitute")
         checks = case.get("checks")
@@ -130,6 +159,18 @@ def validate(ledger, require_live=False, require_complete=False):
                 counts["failed_checks"] += 1
                 if require_complete:
                     issue(where, "failed/blocked check prevents complete acceptance")
+        if decision == "retained":
+            retention = case.get("retention")
+            if not isinstance(retention, dict):
+                issue(where, "retained requires concrete task, necessary space/status, and observed-page evidence")
+            else:
+                for field in ("task", "necessary_space_or_status", "observation_reference"):
+                    if not nonempty(retention.get(field)):
+                        issue(where, f"retention {field} required; opening alone is not a retention judgment")
+                if not isinstance(retention.get("observation_reference"), str) or retention.get("observation_reference") not in references:
+                    issue(where, "retention observation_reference must name declared page evidence")
+        if decision == "minor-change" and require_complete:
+            issue(where, "minor-change cannot substitute for verified task improvement or justified retention")
         if decision != "fixed":
             continue
         comparison = case.get("comparison")
@@ -144,11 +185,13 @@ def validate(ledger, require_live=False, require_complete=False):
             issue(where, "comparison before and after must be objects")
             continue
         for side in (before, after):
-            for field in ("revision", "dataset", "theme", "role"):
+            for field in ("revision", "dataset", "theme", "role", "state"):
                 if not nonempty(side.get(field)):
                     issue(where, f"comparison {field} required on both sides")
             if not isinstance(side.get("revision"), str) or side.get("revision") not in revisions:
                 issue(where, "both comparison revisions need referenced evidence")
+            if not valid_scroll(side.get("scroll")):
+                issue(where, "comparison scroll requires document [x,y] and local {name:[x,y]} positions")
             viewport = side.get("viewport")
             if (not isinstance(viewport, list) or len(viewport) != 2
                     or any(type(x) is not int or x <= 0 for x in viewport)):
@@ -157,9 +200,37 @@ def validate(ledger, require_live=False, require_complete=False):
                 value = side.get(field)
                 if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                     issue(where, f"comparison {field} requires finite nonnegative measurement")
-        for field in ("dataset", "viewport", "theme", "role"):
+        for field in ("dataset", "viewport", "theme", "role", "state", "scroll"):
             if before.get(field) != after.get(field):
                 issue(where, f"comparison {field} differs; cannot claim same-condition improvement")
+        effect = case.get("verified_effect")
+        if not isinstance(effect, dict):
+            issue(where, "fixed requires verified_effect; unchanged metrics or source edits alone are not improvement")
+        else:
+            for field in ("assertion", "reference", "task_benefit", "state"):
+                if not nonempty(effect.get(field)):
+                    issue(where, f"verified_effect {field} required")
+            if not isinstance(effect.get("reference"), str) or effect.get("reference") not in references:
+                issue(where, "verified_effect reference must name declared executed evidence")
+            if effect.get("state") != after.get("state"):
+                issue(where, "verified_effect must match the compared UI state, not an unrelated default screenshot")
+            target, kind = effect.get("target"), effect.get("type")
+            left, right = effect.get("before"), effect.get("after")
+            if kind == "metric" and isinstance(target, str) and target in METRIC_TARGETS:
+                unit, direction, compared_field = METRIC_TARGETS[target]
+                if effect.get("unit") != unit or effect.get("direction") != direction:
+                    issue(where, "verified_effect unit/direction must match observable target")
+                if not finite_number(left) or not finite_number(right) or left < 0 or right < 0:
+                    issue(where, "verified_effect metric requires finite nonnegative before/after numbers")
+                elif (direction == "decrease" and right >= left) or (direction == "increase" and right <= left):
+                    issue(where, "verified_effect must change target behavior in the claimed direction; equal values do not prove a fix")
+                if compared_field and (left != before.get(compared_field) or right != after.get(compared_field)):
+                    issue(where, "verified_effect contradicts the compared measurement")
+            elif kind == "boolean" and isinstance(target, str) and target in BOOLEAN_TARGETS:
+                if type(left) is not bool or type(right) is not bool or left == right or right != BOOLEAN_TARGETS[target]:
+                    issue(where, "verified_effect boolean requires an actual old/new transition to the target outcome")
+            else:
+                issue(where, "verified_effect requires a typed observable target; CSS classes and source diffs are not effects")
         if require_live and after.get("revision") != target_revision:
             issue(where, "comparison after revision must match target_revision")
     for page, required in pages.items():
@@ -180,8 +251,9 @@ def main():
         errors, counts = validate(ledger, args.require_live, args.require_complete)
     except (OSError, ValueError) as exc:
         parser.exit(1, f"Cannot read ledger: {type(exc).__name__}\n")
-    print(json.dumps({"coverage": counts, "structure_ok": not errors,
-                      "ux_verdict": "not-assigned", "errors": errors}, ensure_ascii=False, indent=2))
+    print(json.dumps({"schema_version": 2, "coverage": counts, "structure_ok": not errors,
+                      "ux_verdict": "not-assigned", "count_unit": "page-state cases, not completed pages",
+                      "completion_claim": "not-derived", "errors": errors}, ensure_ascii=False, indent=2))
     return 1 if errors else 0
 
 
