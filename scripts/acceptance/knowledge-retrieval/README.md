@@ -140,7 +140,7 @@ python3 scripts/acceptance/knowledge-retrieval/fixture.py plan --state work/kb-f
 python3 scripts/acceptance/knowledge-retrieval/fixture.py prepare --state work/kb-fixture/fixture-state.json --execute --create-secondary
 ```
 
-默认创建唯一用户名 `kb_eval_{runId}` 的一个 QA 第二账号；既有主账号只用于正常登录和创建自有临时库，不修改其权限。创建/授权需要当前正常管理员具备 `users.read`、`users.write`、`authz.manage`。新账号明确绑定 `none`，仅额外允许 `document-store.read`、`document-store.write`、`chat-agent.use`，不填邮箱/SSO、不发邀请、不加团队。需要复用已有专用账号时，在 plan 加 `--secondary-mode existing`；执行器不会修改该账号权限、重置其密码或在清理时禁用它。
+默认创建唯一用户名 `kb_eval_{runId}` 的一个 QA 第二账号；既有主账号只用于正常登录和创建自有临时库，不修改其权限。创建/授权需要当前正常管理员具备 `users.read`、`users.write`、`authz.manage`。新账号明确绑定 `none`，准入仅四项：必要基础 `access`，以及三项业务权限 `document-store.read`、`document-store.write`、`chat-agent.use`，不填邮箱/SSO、不发邀请、不加团队。仅有三项业务权限不足以访问正常 ChatAgent 管理端接口：`AdminPermissionMiddleware` 还要求 `access`；正常登录和 `authz/me` 成功也不能替代正常 `GET /api/chat-agent/sessions` 准入核查。需要复用已有专用账号时，在 plan 加 `--secondary-mode existing`；执行器不会修改该账号权限、重置其密码或在清理时禁用它。
 
 第二账号正常凭据从 `KB_FIXTURE_SECONDARY_USERNAME`（仅 existing 模式）、`KB_FIXTURE_SECONDARY_PASSWORD` 读取；新建账号还可用 `KB_FIXTURE_SECONDARY_INITIAL_PASSWORD` 指定初始密码。首次登录要求改密时，仅对本 run 创建的账号走正常本人重置接口。密码不得出现在参数、stdout、报告、fixture 账本或 Git；如需跨进程恢复，由执行者保存在本地 0600 非跟踪凭据文件，再注入环境。账本、映射及提示文件也是 0600，并采用原子替换写入。
 

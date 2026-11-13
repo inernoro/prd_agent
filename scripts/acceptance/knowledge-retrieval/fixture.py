@@ -19,7 +19,7 @@ import uuid
 from collect import Client, CollectionError
 
 ROOT = Path(__file__).resolve().parent
-PERMISSIONS = ['document-store.read', 'document-store.write', 'chat-agent.use']
+PERMISSIONS = ['access', 'document-store.read', 'document-store.write', 'chat-agent.use']
 
 
 def digest(value):

@@ -207,6 +207,15 @@ class FixtureTests(unittest.TestCase):
             self.assertNotIn(INITIAL, path.read_text())
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
+    def test_normal_admin_route_profile_requires_only_access_and_three_business_permissions(self):
+        self.assertEqual(set(module.PERMISSIONS), {'access', 'chat-agent.use', 'document-store.read', 'document-store.write'})
+        self.prepare()
+        grant = next(body for _, method, path, body, _ in self.server.calls if method == 'PUT' and path.startswith('/api/authz/users/'))
+        self.assertEqual(grant['systemRoleKey'], 'none')
+        self.assertEqual(grant['permDeny'], [])
+        self.assertEqual(set(grant['permAllow']), {'access', 'chat-agent.use', 'document-store.read', 'document-store.write'})
+        self.assertFalse(any(permission.startswith(('users.', 'authz.', 'llm-gateway.')) for permission in grant['permAllow']))
+
     def test_resuming_completed_fixture_does_not_rewrite_or_recreate(self):
         self.prepare()
         before = sum(method in ('POST', 'PUT') for _, method, _, _, _ in self.server.calls)

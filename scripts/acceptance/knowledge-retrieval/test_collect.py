@@ -239,6 +239,16 @@ class FakeServerTests(unittest.TestCase):
         self.assertEqual(journal[-1]['phase'], 'message_acceptance_unknown')
         self.assertEqual(sum(method == 'POST' and path.endswith('/messages') for method, path, _, _ in self.requests), 1)
 
+    def test_http_error_has_endpoint_path_but_no_query_credentials_or_response_body(self):
+        client = collect.Client(f'http://127.0.0.1:{self.server.server_port}', 'fake-private-token')
+        with self.assertRaises(collect.CollectionError) as captured:
+            client.json('POST', '/api/chat-agent/absent?token=fake-query-secret', {'password': 'fake-body-password'})
+        message = str(captured.exception)
+        self.assertIn('POST /api/chat-agent/absent', message)
+        self.assertTrue(message.endswith('HTTP 404'))
+        for secret in ('fake-private-token', 'fake-query-secret', 'fake-body-password', '?token='):
+            self.assertNotIn(secret, message)
+
     def test_redirect_and_credential_origins_are_rejected(self):
         with self.assertRaises(collect.CollectionError):
             collect.Client('https://token@example.test')

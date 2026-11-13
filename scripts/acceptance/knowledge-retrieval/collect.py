@@ -54,9 +54,10 @@ class Client:
         try:
             return self.opener.open(Request(self.base_url + path, data=data, headers=headers, method=method), timeout=self.timeout)
         except HTTPError as exc:
-            raise CollectionError(f'{method} request rejected: HTTP {exc.code}') from None
+            exc.close()
+            raise CollectionError(f'{method} {urlsplit(path).path} request rejected: HTTP {exc.code}') from None
         except (URLError, TimeoutError, OSError):
-            raise CollectionError(f'{method} request failed before a usable response') from None
+            raise CollectionError(f'{method} {urlsplit(path).path} request failed before a usable response') from None
 
     def json(self, method, path, body=None, idempotency_key=None):
         with self.open(method, path, body, idempotency_key=idempotency_key) as response:
