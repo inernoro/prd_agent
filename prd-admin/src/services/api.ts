@@ -607,6 +607,7 @@ export const api = {
       adapterInfo: (modelId: string) => `/api/literary-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
       runs: {
         create: () => '/api/literary-agent/image-gen/runs',
+        byRequest: (requestId: string) => `/api/literary-agent/image-gen/runs/by-request?requestId=${encodeURIComponent(requestId)}`,
         byId: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}`,
         stream: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}/stream`,
         cancel: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}/cancel`,
@@ -1389,6 +1390,10 @@ export const api = {
 
   // ============ Document Store 文档空间 ============
   documentStore: {
+    trash: {
+      list: () => '/api/document-store/stores/trash',
+      restore: (kind: 'entry' | 'store', id: string) => `/api/document-store/${kind === 'store' ? 'stores' : 'entries'}/${encodeURIComponent(id)}/restore`,
+    },
     stores: {
       list: () => '/api/document-store/stores',
       listWithPreview: () => '/api/document-store/stores/with-preview',

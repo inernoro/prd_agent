@@ -21,10 +21,17 @@ public sealed class KnowledgeIndexRefreshQueue(MongoDbContext db, IConfiguration
                 && row.DeploymentSlug == DeploymentScope.Current).AnyAsync(CancellationToken.None);
 
     public async Task<KnowledgeIndexRefreshStatus> EnqueueAsync(DocumentEntry entry, string documentId,
-        DateTime updatedAt, string content, string userId, string permitId)
+        DateTime updatedAt, string userId, string permitId)
     {
         if (string.IsNullOrWhiteSpace(permitId))
             throw new InvalidOperationException("索引刷新缺少本次保存的新任务许可");
+        // Bind the task to the saved immutable body, not the submitted text: parsing may
+        // canonicalize line endings before persistence. Read this save's exact document ID
+        // rather than a later entry revision that could consume the wrong save's permit.
+        var savedDocument = await db.Documents.Find(document => document.Id == documentId)
+            .FirstOrDefaultAsync(CancellationToken.None)
+            ?? throw new KnowledgeIndexRefreshException("KB_INDEX_SOURCE_MISSING", "已保存正文未确认，未创建索引刷新任务");
+        var content = savedDocument.RawContent;
         var run = new DocumentStoreAgentRun
         {
             Id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(permitId + "\0" + entry.Id)))[..32].ToLowerInvariant(),

@@ -93,21 +93,14 @@ describe('release site publishing UI contract', () => {
     );
   });
 
-  it('keeps branch release confirmation in user-facing site language', () => {
-    expect(branchListSource).toContain('从已验收预览分支发布到站点。');
-    expect(branchListSource).toContain('发布站点');
-    expect(branchListSource).toContain('发布确认');
-    expect(branchListSource).toContain('发布目标');
-    expect(branchListSource).toContain('服务器');
-    expect(branchListSource).toContain('目录');
-    expect(branchListSource).toContain('执行计划');
-    expect(branchListSource).toContain('动态执行');
-    expect(branchListSource).toContain('原子切换');
-    expect(branchListSource).toContain('发布脚本可执行');
-    expect(branchListSource).toContain('上线地址');
-    expect(branchListSource).toContain('开始发布');
-    expect(branchListSource).toContain('等待发布日志');
-    expect(branchListSource).toContain('calc(100vw - 2rem)');
+  it('keeps routine branch publishing to environment selection without server configuration', () => {
+    const dialog = branchListSource.slice(branchListSource.indexOf('function ReleaseBranchDialog('), branchListSource.indexOf('function ReleaseRunStepList('));
+    expect(dialog).toContain('选择一个环境，自动检查并发布当前分支。');
+    expect(dialog).toContain('发布到 ${target.name}');
+    expect(dialog).toContain('接入新环境');
+    expect(dialog).not.toContain('执行计划');
+    expect(dialog).not.toContain('selectedTarget.ssh.user');
+    expect(dialog).not.toContain('target.ssh?.appPath');
   });
 
   it('keeps the default release center entry clean while retaining project scoping', () => {
@@ -162,17 +155,15 @@ describe('release site publishing UI contract', () => {
     }
   });
 
-  it('splits the branch release dialog into wizard stages so live status is never buried', () => {
-    // 分阶段派生:一旦 run 存在就进入「发布」阶段,前序配置/预检收起,状态区不再被长滚动挤到底部。
-    expect(branchListSource).toContain("stage: 'config' | 'preflight' | 'releasing'");
-    expect(branchListSource).toContain('ReleaseWizardRail');
-    expect(branchListSource).toContain('ReleaseStageSummary');
-    expect(branchListSource).toContain('选择站点');
-    // 长脚本收进「查看脚本」折叠 + 自身横向滚动框,不再平铺撑破弹窗。
-    expect(branchListSource).toContain('查看脚本');
-    expect(branchListSource).toContain("check.id === 'deploy-command'");
-    // 主操作固定在底部 sticky footer,发布中/发布后始终可见。
-    expect(branchListSource).toContain('sticky bottom-0');
+  it('automatically checks before release and keeps running status separate from environment selection', () => {
+    const dialog = branchListSource.slice(branchListSource.indexOf('function ReleaseBranchDialog('), branchListSource.indexOf('function ReleaseRunStepList('));
+    expect(dialog.indexOf('/preflight`')).toBeLessThan(dialog.indexOf('/runs`'));
+    expect(dialog).toContain('if (!check.ok)');
+    expect(dialog).toContain('ctrl.signal.aborted');
+    expect(dialog).toContain('inFlight.current || hasRun.current');
+    expect(dialog).toContain('target.projectId === projectId');
+    expect(dialog).toContain('查看发布日志');
+    expect(dialog).not.toContain('ReleaseWizardRail');
   });
 
   it('keeps raw SSH target terminology out of visible branch release copy', () => {

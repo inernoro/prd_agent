@@ -28,11 +28,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle, Ban, Boxes, CheckCircle2, CircleDashed, Clipboard, Clock, Github, History, Loader2,
-  PauseCircle, Play, Plug, RefreshCw, Rocket, RotateCcw, Search, X, XCircle, Zap,
+  PauseCircle, Play, Plug, RefreshCw, Rocket, RotateCcw, Search, XCircle, Zap,
   type LucideIcon,
 } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogBody, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useNowTick } from '@/hooks/useNowTick';
 import { ApiError, apiRequest, apiUrl } from '@/lib/api';
 import { buildReleaseAgentTask } from '@/lib/releaseAgentTask';
@@ -77,8 +78,8 @@ function dedupeLogs(logs: ReleaseLogEntry[]): ReleaseLogEntry[] {
 /**
  * 全屏浮层。发布流水线和 Agent 任务文本都是「宽内容」——命令要横着读、
  * 任务文本要成段读，塞进 348px 的窄栏就是逼人在缝里看。
- * 结构与 shadcn Dialog 一致（遮罩 + 面板 + 头/体/脚），但这两处不需要
- * 表单语义，直接用 div 更轻；z-index 走 CDS 新栈的「全屏面板」档（100）。
+ * 复用共享 Dialog 的 Portal、焦点约束、关闭行为和可视区域尺寸，
+ * 内部保留头/体/脚，长输出只在主体中滚动。
  */
 function Sheet({ title, subtitle, onClose, foot, children }: {
   title: string;
@@ -87,41 +88,26 @@ function Sheet({ title, subtitle, onClose, foot, children }: {
   foot?: ReactNode;
   children: ReactNode;
 }): JSX.Element {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-0 sm:p-6" role="presentation" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onClick={(event) => event.stopPropagation()}
-        className="cds-surface-raised cds-hairline flex h-full w-full max-w-3xl flex-col overflow-hidden border shadow-2xl sm:h-[min(82vh,45rem)] sm:rounded-xl"
-      >
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent frame aria-describedby={undefined} className="cds-surface-raised cds-hairline max-w-3xl" style={{ width: 'calc(100% - 1rem)', height: 'min(82dvh, 45rem)' }}>
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3 pr-12">
           <div className="min-w-0">
-            <h3 className="truncate text-sm font-semibold">{title}</h3>
+            <DialogTitle className="break-words text-sm font-semibold">{title}</DialogTitle>
             {subtitle ? <p className="mt-0.5 truncate text-[0.7188rem] text-muted-foreground">{subtitle}</p> : null}
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose} aria-label="关闭">
-            <X />
-          </Button>
         </div>
         {/* 窄屏整体竖滚；桌面也是这一块滚，头脚不动 */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <DialogBody className="p-0">
           {children}
-        </div>
+        </DialogBody>
         {foot ? (
-          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] px-4 py-2.5">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] px-4 py-2.5">
             {foot}
           </div>
         ) : null}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -864,7 +850,7 @@ export function ReleaseConsolePage(): JSX.Element {
               </div>
             ) : null}
 
-            <section className={`cds-surface-raised shrink-0 rounded-[0.875rem] border px-5 py-[1.125rem] ${toneRing}`}>
+            <section className={`cds-surface-raised shrink-0 rounded-[0.875rem] border px-3 py-[1.125rem] sm:px-5 ${toneRing}`}>
               <div className="flex flex-wrap items-center gap-[1.125rem]">
                 {/* 进行中时向外扩一圈光晕（参考稿 pulseRing）。终态静止。 */}
                 <div className={`flex h-[3.25rem] w-[3.25rem] shrink-0 items-center justify-center rounded-[0.875rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] ${running ? 'cds-status-pulse' : ''}`}>
@@ -878,7 +864,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     min-width 兜住），不是 grow 之后的结果。1600 宽下内容行 764px，
                     52(图标) + 18 + 340 + 18 + 300(三个按钮) = 728，留得下一行。
                     版本选择挪进标题行之后操作组才收得到 300 —— 它在操作组里时是 480。 */}
-                <div className="min-w-[21.25rem] flex-1 basis-0">
+                <div className="min-w-0 flex-1 basis-[21.25rem]">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <h2 className={`text-xl font-bold ${failed ? 'text-bad' : running ? 'text-primary' : ''}`}>
                       {statusTitle}
@@ -922,7 +908,7 @@ export function ReleaseConsolePage(): JSX.Element {
                       onChange={(event) => { setBranchId(event.target.value); setConfirmTargetId(null); }}
                       title={previewUrl ? `来源 ${previewUrl}${sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}` : '取不到预览地址，发布前检查会拦下这一项'}
                       aria-label="要发布的版本"
-                      className="cds-ident h-7 max-w-[11.875rem] shrink-0 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-[0.6875rem] outline-none focus:border-[hsl(var(--hairline-strong))]"
+                      className="cds-ident h-7 min-w-0 max-w-full shrink-0 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-[0.6875rem] outline-none focus:border-[hsl(var(--hairline-strong))] sm:max-w-[11.875rem]"
                     >
                       {branches.length === 0 ? <option value="">没有可发布的分支</option> : null}
                       {branches.map((item) => (
@@ -959,7 +945,7 @@ export function ReleaseConsolePage(): JSX.Element {
 
                 {/* 顺序照用户 2026-08-14 定的：开始永远在最右，中止只在跑的时候出现。
                     「试跑」这个按钮删了——它现在是发布的第一步，不是一个并列选项。 */}
-                <div className="flex w-full flex-wrap items-center justify-end gap-2 [&_button]:h-10 sm:w-auto sm:shrink-0">
+                <div className="flex min-w-0 w-full max-w-full flex-wrap items-center justify-end gap-2 [&_button]:min-h-10 sm:w-auto sm:shrink-0">
                   {running ? (
                     <Button variant="outline" onClick={() => void cancelRun()} disabled={busy === 'cancel'}>
                       <Ban />
@@ -967,11 +953,21 @@ export function ReleaseConsolePage(): JSX.Element {
                     </Button>
                   ) : null}
                   {awaitingConfirm ? (
-                    <Button variant="ghost" onClick={() => setConfirmTargetId(null)}>取消</Button>
+                    <>
+                      <div className="w-full min-w-0 rounded-md border border-warn/40 bg-warn-soft p-3">
+                        <p className="mb-1 text-xs text-muted-foreground">本次发布目标</p>
+                        <div id="release-confirm-target" role="region" aria-label="本次发布目标" tabIndex={0} className="max-h-[40dvh] overflow-y-auto break-all text-sm">
+                          {row?.target.name}
+                        </div>
+                      </div>
+                      <Button variant="ghost" onClick={() => setConfirmTargetId(null)}>取消</Button>
+                    </>
                   ) : null}
-                  {/* 受保护环境走两段式：第一下只是把按钮换成「确认发布到 X」，第二下才真发。
-                      不用 window.confirm —— 那东西在窄屏和无障碍上都不好使，也没法说清发的是哪一版。 */}
+                  {/* 受保护环境走两段式：第一下先展示完整目标供审阅，第二下才真发。
+                      完整目标放在上方有界滚动区，按钮不承担长文本；辅助技术仍读出完整目标。 */}
                   <Button
+                    aria-label={awaitingConfirm ? `确认发布到 ${row?.target.name}` : undefined}
+                    aria-describedby={awaitingConfirm ? 'release-confirm-target' : undefined}
                     onClick={() => {
                       if (!row) return;
                       if (isProtected && !awaitingConfirm) { setConfirmTargetId(row.target.id); return; }
@@ -979,13 +975,15 @@ export function ReleaseConsolePage(): JSX.Element {
                       void startRelease();
                     }}
                     disabled={!row || !branchId || running || blockedByOther || busy === 'deploy'}
-                    className={awaitingConfirm ? 'ring-2 ring-bad/60' : undefined}
+                    className={`h-auto min-h-10 w-full max-w-full whitespace-normal break-words px-2 py-2 text-left sm:w-auto sm:px-4 ${awaitingConfirm ? 'ring-2 ring-bad/60' : ''}`}
                   >
                     {busy === 'deploy' || running ? <Loader2 className="animate-spin" /> : <Rocket />}
-                    {awaitingConfirm
-                      ? `确认发布到 ${row?.target.name}`
-                      : busy === 'deploy' ? '检查并发布'
-                      : stance.primaryLabel}
+                    <span className="min-w-0 w-full break-words sm:w-auto">
+                      {awaitingConfirm
+                        ? '确认发布'
+                        : busy === 'deploy' ? '检查并发布'
+                        : stance.primaryLabel}
+                    </span>
                   </Button>
                 </div>
               </div>
@@ -1205,7 +1203,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     <p className="text-muted-foreground">还没有输出。点「开始发布」后，这里会逐行滚动。</p>
                   ) : shownLogs.map((log) => (
                     <div key={log.seq} className="cds-log-line flex gap-2.5">
-                      <span className="shrink-0 text-muted-foreground/60">{formatClock(log.at)}</span>
+                      <span className="shrink-0 text-muted-foreground">{formatClock(log.at)}</span>
                       <span className={`min-w-0 whitespace-pre-wrap break-words ${LOG_TONE_CLASS[logLineTone(log.level, log.message)]}`}>
                         {log.message}
                       </span>
@@ -1223,7 +1221,7 @@ export function ReleaseConsolePage(): JSX.Element {
             {/* 参考稿是一条四格 tab（历史 / 失败 / 高级 / Agent），不是「左两个 tab
                 右两个链接」。后两个在这里打开全屏浮层——348px 的窄栏装不下流水线
                 与整段任务文本，这一条是对参考稿结构问题的有意修正，其余照抄。 */}
-            <div className="flex shrink-0 gap-0.5 border-b border-[hsl(var(--hairline))] px-2.5 pt-2.5">
+            <div className="flex shrink-0 flex-wrap gap-0.5 border-b border-[hsl(var(--hairline))] px-2.5 pt-2.5 [&>button]:shrink-0 [&>button]:whitespace-nowrap">
               {([['history', '历史发布'], ['failed', '失败']] as Array<[RailPane, string]>).map(([key, label]) => (
                 <button
                   key={key}

@@ -530,6 +530,11 @@ public class DocumentStoreAgentWorker : BackgroundService
                 var processor = scope.ServiceProvider.GetRequiredService<SubtitleGenerationProcessor>();
                 await processor.ProcessAsync(run, db, runStore);
             }
+            else if (run.Kind == WritingDocumentPolicy.RunKind)
+            {
+                var processor = scope.ServiceProvider.GetRequiredService<WritingDocumentProcessor>();
+                await processor.ProcessAsync(run, db, runStore);
+            }
             else if (run.Kind == DocumentStoreAgentRunKind.Reprocess)
             {
                 var processor = scope.ServiceProvider.GetRequiredService<ContentReprocessProcessor>();

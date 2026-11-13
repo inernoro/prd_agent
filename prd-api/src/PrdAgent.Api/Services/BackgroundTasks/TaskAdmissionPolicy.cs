@@ -66,7 +66,7 @@ public static class TaskAdmissionPolicies
         Register("DocumentStoreController", "UpdateEntryContent",
             new[] { AppCallerRegistry.Admin.KnowledgeBase.Index }, false, 1, 1,
             timing: TaskAdmissionTiming.AuthenticatedPaidBranch);
-        Add("DocumentStoreController", "CreativePublishEntry SelectionRewrite GenerateSubtitle TranscribeEntry RestyleTranscribeRun Reprocess SendReprocessChat StartRecordingUpload CompleteRecordingUpload RetryRecordingArchive LiveTranscription StartAutoLink", new[] { "document-store.", "transcript-agent.", "prd-agent-web.web-hosting.", "md-to-ppt-agent." });
+        Add("DocumentStoreController", "CreativePublishEntry SelectionRewrite GenerateSubtitle TranscribeEntry RestyleTranscribeRun Reprocess SendReprocessChat GenerateWritingDraft StartRecordingUpload CompleteRecordingUpload RetryRecordingArchive LiveTranscription StartAutoLink", new[] { "document-store.", "transcript-agent.", "prd-agent-web.web-hosting.", "md-to-ppt-agent." });
         Add("ShortVideoMaterialController", "CreateRun", new[] { "video-agent.", "workflow-agent.", "transcript-agent.", "document-store." });
         Add("DesignArtifactsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);
         Add("HostedSiteEditsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);

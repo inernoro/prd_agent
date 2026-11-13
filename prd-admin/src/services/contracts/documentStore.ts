@@ -18,6 +18,7 @@ export type KnowledgeIndexStatus = {
 // ── 数据类型 ──
 
 export type DocumentStore = {
+  pmProjectId?: string;
   id: string;
   name: string;
   description?: string;
@@ -130,6 +131,8 @@ export type DocStoreShareView = {
 };
 
 export type DocumentEntry = {
+  /** 已存在真实发布快照；编辑下一版草稿时仍为 true。 */
+  hasWritingPublication?: boolean;
   id: string;
   storeId: string;
   parentId?: string;
@@ -480,7 +483,7 @@ export type ListDocumentEntriesContract = (
   page?: number,
   pageSize?: number,
   keyword?: string,
-) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number; page: number; pageSize: number; sharedEntryIds?: string[] }>>;
+) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number; page: number; pageSize: number; sharedEntryIds?: string[]; canWrite?: boolean }>>;
 
 export type UpdateDocumentEntryContract = (
   entryId: string,

@@ -153,11 +153,12 @@ public sealed class KnowledgeIndexRefreshTests
         Assert.Equal(1, fixture.Embedding.Calls);
         Assert.Equal("ready", (await fixture.Queue.GetStatusAsync(saved, "owner")).Status);
         var reused = await fixture.Queue.EnqueueAsync(saved, saved.DocumentId!, saved.UpdatedAt.AddSeconds(1),
-            "更新后正文", "owner", run.TaskPermitId!);
+            "owner", run.TaskPermitId!);
         Assert.Equal("ready", reused.Status);
         Assert.Equal(1, await db.DocumentStoreAgentRuns.CountDocumentsAsync(FilterDefinition<DocumentStoreAgentRun>.Empty));
+        await db.Documents.InsertOneAsync(new ParsedPrd { Id = "other-save-body", RawContent = "不能借同许可替换正文" });
         await Assert.ThrowsAsync<KnowledgeIndexRefreshException>(() => fixture.Queue.EnqueueAsync(saved,
-            saved.DocumentId!, saved.UpdatedAt, "不能借同许可替换正文", "owner", run.TaskPermitId!));
+            "other-save-body", saved.UpdatedAt, "owner", run.TaskPermitId!));
         var active = Assert.IsType<OkObjectResult>(await fixture.Controller(fixture.NewHttp(entry.Id, "unused", "unused")).GetActiveReprocessRun(entry.Id));
         Assert.Null(((ApiResponse<DocumentStoreAgentRun?>)active.Value!).Data);
 
@@ -176,13 +177,84 @@ public sealed class KnowledgeIndexRefreshTests
         await fixture.SaveAsync(entry.Id, "并发保存前的正文", "indexed-save-3");
         fixture.Embedding.DuringCall = async () =>
         {
-            await db.Documents.UpdateOneAsync(d => d.Id == current.DocumentId, Builders<ParsedPrd>.Update.Set(d => d.RawContent, "并发更新后的正文"));
+            // Saves now publish immutable bodies, so emulate a concurrent save by moving
+            // the current entry pointer rather than mutating a previous save's body.
+            await db.Documents.InsertOneAsync(new ParsedPrd { Id = "concurrent-body", RawContent = "并发更新后的正文" });
+            await db.DocumentEntries.UpdateOneAsync(e => e.Id == entry.Id,
+                Builders<DocumentEntry>.Update.Set(e => e.DocumentId, "concurrent-body"));
         };
         await fixture.ProcessNextAsync();
         current = await db.DocumentEntries.Find(e => e.Id == entry.Id).SingleAsync();
         Assert.Equal("stale", (await fixture.Queue.GetStatusAsync(current, "owner")).Status);
         Assert.Equal(3, fixture.Embedding.Calls);
         Assert.Equal(3, await fixture.Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
+    }
+
+    [DesignScopeMongoFact]
+    [Trait("Category", "Integration")]
+    public async Task SavedCanonicalContentDrivesRefreshAfterCrLfInput()
+    {
+        await using var fixture = new RefreshFixture(Environment.GetEnvironmentVariable("DESIGN_RUN_MONGO_TEST_CONNECTION")!);
+        var store = new DocumentStore { Id = "store", OwnerId = "owner" };
+        var entry = new DocumentEntry { Id = "entry", StoreId = store.Id, DocumentId = "body" };
+        await fixture.Db.DocumentStores.InsertOneAsync(store);
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.Documents.InsertOneAsync(new ParsedPrd { Id = "body", RawContent = "原正文" });
+        await fixture.Db.DocumentEmbeddings.InsertOneAsync(new DocumentEmbedding
+        {
+            StoreId = store.Id, EntryId = entry.Id, Text = "原正文", Model = "fixture-embedding", Dimension = 2,
+            Vector = EmbeddingVector.Encode(new float[] { 1, 0 }), DeploymentSlug = DeploymentScope.Current,
+            ContentHash = DocumentChunker.ComputeHash("原正文", "fixture-embedding")
+        });
+
+        var saved = await fixture.SaveAsync(entry.Id, "新的第一行\r\n新的第二行", "canonical-save");
+        Assert.Equal("pending", saved.GetProperty("data").GetProperty("knowledgeIndex").GetProperty("status").GetString());
+        var current = await fixture.Db.DocumentEntries.Find(row => row.Id == entry.Id).SingleAsync();
+        var persisted = await fixture.Db.Documents.Find(row => row.Id == current.DocumentId).SingleAsync();
+        Assert.Equal("新的第一行\n新的第二行", persisted.RawContent);
+        await fixture.ProcessNextAsync();
+        Assert.Equal(1, fixture.Embedding.Calls);
+        Assert.Equal("ready", (await fixture.Queue.GetStatusAsync(current, "owner")).Status);
+    }
+
+    [DesignScopeMongoFact]
+    [Trait("Category", "Integration")]
+    public async Task ConcurrentTrashConflictDoesNotQueueIndexRefresh()
+    {
+        await using var fixture = new RefreshFixture(Environment.GetEnvironmentVariable("DESIGN_RUN_MONGO_TEST_CONNECTION")!);
+        var store = new DocumentStore { Id = "store", OwnerId = "owner" };
+        var entry = new DocumentEntry { Id = "entry", StoreId = store.Id, DocumentId = "body" };
+        await fixture.Db.DocumentStores.InsertOneAsync(store);
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.Documents.InsertOneAsync(new ParsedPrd { Id = "body", RawContent = "原正文" });
+        await fixture.Db.DocumentEmbeddings.InsertOneAsync(new DocumentEmbedding
+        {
+            StoreId = store.Id, EntryId = entry.Id, Text = "原正文", Model = "fixture-embedding", Dimension = 2,
+            Vector = EmbeddingVector.Encode(new float[] { 1, 0 }), DeploymentSlug = DeploymentScope.Current,
+            ContentHash = DocumentChunker.ComputeHash("原正文", "fixture-embedding")
+        });
+        fixture.BeforeDocumentSave = () => fixture.Db.DocumentEntriesIncludingTrash.UpdateOneAsync(
+            row => row.Id == entry.Id, Builders<DocumentEntry>.Update
+                .Set(row => row.Trash, new DocumentTrashState { DeletedBy = "owner" })
+                .Inc(row => row.LifecycleVersion, 1));
+
+        var http = fixture.NewHttp(entry.Id, "不应提交的新正文", "save-conflicted-by-trash");
+        var controller = fixture.Controller(http);
+        IActionResult? response = null;
+        await new TaskAdmissionMiddleware(async _ =>
+        {
+            var conflict = Assert.IsType<ConflictObjectResult>(await controller.UpdateEntryContent(
+                entry.Id, new UpdateEntryContentRequest { Content = "不应提交的新正文" }));
+            response = conflict;
+            http.Response.StatusCode = conflict.StatusCode!.Value;
+            await http.Response.WriteAsJsonAsync(conflict.Value);
+        }).InvokeAsync(http, fixture.Admission);
+
+        Assert.IsType<ConflictObjectResult>(response);
+        Assert.Equal(0, await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(FilterDefinition<DocumentStoreAgentRun>.Empty));
+        Assert.Equal(0, fixture.Embedding.Calls);
+        Assert.Equal("body", (await fixture.Db.DocumentEntriesIncludingTrash.Find(row => row.Id == entry.Id).SingleAsync()).DocumentId);
+        Assert.False(await fixture.Db.DocumentEntries.Find(row => row.Id == entry.Id).AnyAsync());
     }
 
     private sealed class RefreshFixture : IAsyncDisposable
@@ -199,7 +271,9 @@ public sealed class KnowledgeIndexRefreshTests
         internal RefreshEmbedding Embedding { get; } = new();
         internal KnowledgeRetrievalService Retrieval { get; }
         internal IMongoCollection<GatewayTaskPermitRecord> Permits => Db.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName);
+        internal TaskAdmissionService Admission => _admission;
         internal bool LastReplayed { get; private set; }
+        internal Func<Task>? BeforeDocumentSave { get; set; }
 
         internal RefreshFixture(string connection)
         {
@@ -251,8 +325,14 @@ public sealed class KnowledgeIndexRefreshTests
         {
             var storage = Mock.Of<IAssetStorage>();
             var documents = new Mock<IDocumentService>();
-            documents.Setup(d => d.ParseAsync(It.IsAny<string>())).ReturnsAsync((string text) => new ParsedPrd { RawContent = text });
-            documents.Setup(d => d.SaveAsync(It.IsAny<ParsedPrd>())).Returns(async (ParsedPrd doc) => { await Db.Documents.ReplaceOneAsync(d => d.Id == doc.Id, doc, new ReplaceOptions { IsUpsert = true }); return doc; });
+            var parser = new DocumentService(null!, new PrdAgent.Infrastructure.Markdown.MarkdownParser(), null!);
+            documents.Setup(d => d.ParseAsync(It.IsAny<string>())).Returns((string text) => parser.ParseAsync(text));
+            documents.Setup(d => d.SaveAsync(It.IsAny<ParsedPrd>())).Returns(async (ParsedPrd doc) =>
+            {
+                if (BeforeDocumentSave is not null) await BeforeDocumentSave();
+                await Db.Documents.ReplaceOneAsync(d => d.Id == doc.Id, doc, new ReplaceOptions { IsUpsert = true });
+                return doc;
+            });
             var teams = new Mock<ITeamService>();
             teams.Setup(t => t.GetMyTeamIdsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<string>());
             var mentions = new MentionService(Db);

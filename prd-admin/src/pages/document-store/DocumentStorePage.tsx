@@ -1,3 +1,4 @@
+import { WritingPublicationActions } from './writing/WritingPublicationActions';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   Library,
@@ -66,6 +67,7 @@ import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
 import { StoreSyncBadge, SyncManagerPanel } from './SyncManagerPanel';
+import { DocumentTrashButton } from './DocumentTrashButton';
 import { RecentEntriesList } from './RecentEntriesList';
 import { KnowledgeIndexStatus } from './KnowledgeIndexStatus';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
@@ -1063,7 +1065,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const readerImmersive = useReaderChromeStore((s) => !!s.override);
   const canManageTutorialGraph = useAuthStore(state => state.isRoot || state.user?.role === 'ADMIN');
   const currentUserId = useAuthStore(state => state.user?.userId ?? null);
+  const hasWritingPermission = useAuthStore(state => state.isRoot || state.permissions.includes('super') || state.permissions.includes('document-store.write'));
+  const [canWriteEntries, setCanWriteEntries] = useState(false);
   const [store, setStore] = useState<DocumentStore | null>(null);
+  const [storeLoadError, setStoreLoadError] = useState('');
+  const [entriesLoadError, setEntriesLoadError] = useState('');
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
@@ -1083,7 +1089,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   // 免得用户读着一篇却只能对整库操作。
   // entries 只是首页 200 条：大库里「后端搜索命中」的条目不在其中，只能靠 DocBrowser 回传的
   // 解析结果兜底，否则读着搜索结果点分享会静默回落到整库范围（Codex P1）。
-  const [browserSelectedEntry, setBrowserSelectedEntry] = useState<{ id: string; title: string; isFolder?: boolean } | undefined>();
+  const [browserSelectedEntry, setBrowserSelectedEntry] = useState<{ id: string; title: string; isFolder?: boolean; hasWritingPublication?: boolean; metadata?: Record<string, string> } | undefined>();
   const selectedDocEntry = useMemo(() => {
     const local = entries.find(e => e.id === selectedEntryId && !e.isFolder);
     if (local) return local;
@@ -1444,17 +1450,23 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   // 加载空间详情和条目
   const loadStore = useCallback(async () => {
+    setStoreLoadError('');
     const res = await getDocumentStore(storeId);
     if (res.success) setStore(res.data);
+    else setStoreLoadError(res.error?.message || '知识库加载失败，请稍后重试');
   }, [storeId]);
 
   const loadEntries = useCallback(async () => {
     setLoading(true);
+    setEntriesLoadError('');
+    setCanWriteEntries(false);
     const res = await listDocumentEntries(storeId, 1, 200);
     if (res.success) {
       setEntries(res.data.items);
+      setCanWriteEntries(res.data.canWrite === true);
       setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
     }
+    else setEntriesLoadError(res.error?.message || '知识库内容加载失败，请稍后重试');
     setLoading(false);
   }, [storeId]);
 
@@ -1974,13 +1986,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const handleDeleteEntry = useCallback(async (entryId: string) => {
     const res = await deleteDocumentEntry(entryId);
     if (res.success) {
-      setEntries(prev => prev.filter(e => e.id !== entryId));
-      if (selectedEntryId === entryId) setSelectedEntryId(undefined);
-      toast.success('已删除');
+      await loadEntries();
+      setSelectedEntryId(undefined);
+      toast.success('已移入回收站', '30 天内可在回收站恢复');
     } else {
       toast.error('删除失败', res.error?.message);
     }
-  }, [selectedEntryId]);
+  }, [loadEntries]);
 
   const handleUpdateEntryTags = useCallback(async (entryId: string, tags: string[]) => {
     const res = await updateDocumentEntry(entryId, { tags });
@@ -2280,10 +2292,19 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     }
   }, [store, storeId, selectedDocEntry]);
 
-  if (!store) {
+  if (!store || entriesLoadError) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 160px)' }}>
-        <MapSpinner size={16} />
+        {storeLoadError || entriesLoadError ? <div role="alert" className="flex flex-col items-center gap-3 px-5 text-center">
+          <AlertCircle size={24} style={{ color: 'var(--text-muted)' }} />
+          {store && <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>{store.name}</p>}
+          <p style={{ color: 'var(--text-primary)' }}>知识库暂时无法加载</p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{storeLoadError || entriesLoadError}</p>
+          <div className="flex items-center gap-2">
+            <Button variant="primary" onClick={() => { void loadStore(); void loadEntries(); }}>重试</Button>
+            <Button onClick={onBack}>返回知识库</Button>
+          </div>
+        </div> : <MapSpinner size={16} />}
       </div>
     );
   }
@@ -2399,6 +2420,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 <Share2 size={13} /> 分享
               </Button>
             </span>
+            <WritingPublicationActions storeId={storeId} entryId={selectedDocEntry?.id} hasPublication={selectedDocEntry?.hasWritingPublication} className="surface-action inline-flex h-7 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold text-token-primary" />
+            {canWriteEntries && hasWritingPermission && <Button variant="secondary" size="xs" onClick={() => navigate(`/document-store/${storeId}/write${entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? `/${selectedDocEntry?.id}` : ''}`)}><FilePlus size={13} />{entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? '继续成文' : '按模版成文'}</Button>}
             {selectedDocEntry && (
               <Button
                 variant="primary"
@@ -2562,6 +2585,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 }
               `}</style>
             </button>}
+            <DocumentTrashButton storeId={storeId} onRestored={async () => { await loadEntries(); await loadStore(); }} />
             {/* 更多：收纳低频管理动作（发布 / 关系图谱 / 统计 / 订阅），折叠屏只占一个位 */}
             <div className="relative" ref={moreRef}>
               <Button variant="secondary" size="xs" onClick={toggleMore} title="更多操作">
@@ -2638,6 +2662,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               >
                 {store.name} · {entries.filter(e => e.sourceType !== 'github_directory').length} 个文档
               </div>
+              <WritingPublicationActions storeId={storeId} entryId={selectedDocEntry?.id} hasPublication={selectedDocEntry?.hasWritingPublication} className="hover-bg-soft flex w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary" />
+              {canWriteEntries && hasWritingPermission && selectedDocEntry && <button type="button" onClick={() => navigate(`/document-store/${storeId}/write${entries.find(e => e.id === selectedDocEntry.id)?.metadata?.['writing_template'] ? `/${selectedDocEntry.id}` : ''}`)} className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary"><FilePlus size={13} />{entries.find(e => e.id === selectedDocEntry.id)?.metadata?.['writing_template'] ? '继续成文' : '按模版成文'}</button>}
               <button
                 type="button"
                 onClick={() => setShowShareDialog(true)}
@@ -2719,6 +2745,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
           onCreateDocument={handleCreateDocument}
+          onCreateWriting={() => navigate(`/document-store/${storeId}/write`)}
           onUploadFile={() => fileInputRef.current?.click()}
           onOpenVideoParser={handleOpenVideoParser}
           onSearch={handleSearch}
@@ -2826,6 +2853,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             <div className="flex-1 flex items-center justify-center">
               <DocEmptyState
                 onCreateDocument={handleCreateDocument}
+          onCreateWriting={() => navigate(`/document-store/${storeId}/write`)}
                 onUploadFile={() => fileInputRef.current?.click()}
                 onAddSubscription={() => setShowSubscribe(true)}
               />
@@ -3795,16 +3823,16 @@ export function DocumentStorePage() {
     const entryCount = s.documentCount ?? 0;
     const confirmed = await systemDialog.confirm({
       title: '确认删除知识库',
-      message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
+      message: `将「${s.name}」及 ${entryCount} 个条目移入回收站。正文、附件和历史记录保留，创建者可在 30 天内恢复。`,
       tone: 'danger',
-      confirmText: '永久删除',
+      confirmText: '移入回收站',
       cancelText: '取消',
     });
     if (!confirmed) return;
     const res = await deleteDocumentStore(s.id);
     if (res.success) {
       setStores(prev => prev.filter(x => x.id !== s.id));
-      toast.success('知识库已删除', '关联数据已全部清理');
+      toast.success('已移入回收站', '创建者可在 30 天内恢复');
     } else {
       toast.error('删除失败', res.error?.message);
     }
@@ -4272,6 +4300,7 @@ export function DocumentStorePage() {
               hideScopeToggle
             />
           )}
+          <DocumentTrashButton onRestored={() => loadStores(tab === 'team' ? 'team' : 'mine', teamScope.teamId)} />
           {/* 统计概览 */}
           {/* 功能区：库数 / 文章数（左侧） */}
           <span data-tour-id="library-stats" className={isMobile ? 'hidden' : 'text-[12px] tabular-nums whitespace-nowrap flex-none'} style={{ color: 'var(--text-muted)' }}>

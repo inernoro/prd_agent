@@ -1138,6 +1138,7 @@ export function LogsView() {
       <header className="lg-logs-heading">
         <div>
           <h1>Logs</h1>
+          <Link to="/logs/trace">按业务操作或请求编号排查</Link>
           {/* 汇总条：拿不到值的项**整条不渲染**，而不是渲染成「上游调用 —」。
               一排破折号既不承载信息，又和真实数字抢同样的横向位置，
               读起来是「这里坏了」而不是「这里没有」。过滤在 summaryFacts 里做。 */}
