@@ -97,7 +97,7 @@ try {
     await page.goto(`${base}/branch-panel/${branch().id}`, { waitUntil: 'domcontentloaded' });
     const service = page.getByRole('button', { name: /^api/ }).first(); await service.waitFor(); await save('branch-detail');
     const serviceBox = await service.boundingBox();
-    measurements.push({ page: 'branch-detail', width, theme, firstServiceY: serviceBox.y });
+    measurements.push({ page: 'branch-detail', width, theme, firstServiceY: serviceBox.y, targetHeight: serviceBox.height, minScrollToTarget: Math.max(0, serviceBox.y + serviceBox.height - (width === 390 ? 844 : 900)), labelFont: await service.evaluate(e => getComputedStyle(e.querySelector('.font-medium') || e).fontSize), optionalShaRegionHeight: (await page.getByText('提交一致性', { exact: true }).locator('..').boundingBox())?.height || 0 });
     check(serviceBox.y < (width === 390 ? 560 : 370), `${width}/${theme}: metadata delays first service`);
     if (!layoutOnly) {
       const consistency = page.locator('summary').filter({ hasText: '提交一致性' });
@@ -108,7 +108,7 @@ try {
     }
     await page.goto(`${base}/branch-topology?project=${project.id}`, { waitUntil: 'domcontentloaded' });
     const node = page.getByRole('button', { name: /^api/ }).first(); await node.waitFor(); await save('branch-topology');
-    const nodeBox = await node.boundingBox(); measurements.push({ page: 'branch-topology', width, theme, firstNodeY: nodeBox.y });
+    const nodeBox = await node.boundingBox(); measurements.push({ page: 'branch-topology', width, theme, firstNodeY: nodeBox.y, targetHeight: nodeBox.height, minScrollToTarget: Math.max(0, nodeBox.y + nodeBox.height - (width === 390 ? 844 : 900)), labelFont: await node.evaluate(e => getComputedStyle(e.querySelector('.text-sm') || e).fontSize) });
     check(nodeBox.y < (width === 390 ? 760 : 355), `${width}/${theme}: repeated summaries delay topology nodes`);
     if (!layoutOnly) {
       const select = page.locator('select').filter({ has: page.locator('option[value=""]', { hasText: '共享视图' }) }).first();
@@ -119,7 +119,7 @@ try {
     await page.goto(`${base}/code-reviews`, { waitUntil: 'domcontentloaded' });
     await page.getByText('布局审查 1', { exact: true }).filter({ visible: true }).first().waitFor(); await save('code-reviews-few');
     const pager = page.locator('.cr-pagination');
-    measurements.push({ page: 'code-reviews', width, theme, firstDataY: (await page.locator(width === 390 ? '[data-code-review-mobile-row]' : '[data-code-review-row]').first().boundingBox()).y, pagerHeight: (await pager.boundingBox()).height, pagerButtons: await pager.getByRole('button').count() });
+    measurements.push({ page: 'code-reviews', width, theme, firstDataY: (await page.locator(width === 390 ? '[data-code-review-mobile-row]' : '[data-code-review-row]').first().boundingBox()).y, pagerHeight: (await pager.boundingBox()).height, pagerButtons: await pager.getByRole('button').count(), labelFont: await page.locator(width === 390 ? '[data-code-review-mobile-row] .cr-row-name' : '[data-code-review-row] .cr-row-name').first().evaluate(e => getComputedStyle(e).fontSize) });
     check(await pager.getByRole('navigation').count() === 0, `${width}/${theme}: single-page review has meaningless pagination`);
     if (width === 390) check((await page.locator('[data-code-review-mobile-row]').first().boundingBox()).y < 390, `${width}/${theme}: a low-frequency history control delays the first review row`);
     if (!layoutOnly) {
@@ -143,7 +143,7 @@ try {
     await page.goto(`${base}/release-center?project=${project.id}`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: '环境与配置', exact: true }).click();
     await page.getByText('发布模式', { exact: true }).waitFor(); await save('release-center-config');
-    measurements.push({ page: 'release-center-config', width, theme, firstFieldY: (await page.getByText('发布模式', { exact: true }).boundingBox()).y });
+    measurements.push({ page: 'release-center-config', width, theme, firstFieldY: (await page.getByText('发布模式', { exact: true }).boundingBox()).y, optionalMetricsHeight: (await page.getByText('近 30 天发布', { exact: true }).locator('../..').boundingBox())?.height || 0 });
     check(!(await page.getByText('近 30 天发布', { exact: true }).isVisible()), `${width}/${theme}: low-frequency metrics crowd environment configuration`);
     if (!layoutOnly) {
       const metrics = page.locator('summary').filter({ hasText: '近 30 天发布指标' });
@@ -157,11 +157,12 @@ try {
     await page.goto(`${base}/status/${project.id}`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: '全部常设检查', exact: true }).waitFor(); await save('project-status');
     const headerHeight = (await page.locator('.project-status-page > header').boundingBox()).height;
-    measurements.push({ page: 'project-status', width, theme, headerHeight, firstCheckY: (await page.locator('#checks tbody tr').first().boundingBox()).y });
+    const issueAction = await page.locator('.project-status-issue a').first().boundingBox();
+    measurements.push({ page: 'project-status', width, theme, headerHeight, firstCheckY: (await page.locator('#checks tbody tr').first().boundingBox()).y, firstIssueY: (await page.locator('.project-status-issue').first().boundingBox()).y, minScrollToCoreAction: Math.max(0, issueAction.y + issueAction.height - (width === 390 ? 844 : 900)), statsFont: await page.locator('.project-status-stats strong').first().evaluate(e => getComputedStyle(e).fontSize) });
     check(headerHeight < (width === 390 ? 525 : 300), `${width}/${theme}: repeated status metric cards delay checks`);
     await page.goto(`${base}/preview-preparing?branch=fixture-audit`, { waitUntil: 'domcontentloaded' });
     const previewContext = page.getByText('fixture-audit', { exact: true }); await previewContext.waitFor(); await save('preview-preparing');
-    measurements.push({ page: 'preview-preparing', width, theme, contextY: (await previewContext.boundingBox()).y });
+    measurements.push({ page: 'preview-preparing', width, theme, contextY: (await previewContext.boundingBox()).y, contextFont: await previewContext.evaluate(e => getComputedStyle(e).fontSize), fixedStageTheme: await page.locator('main[data-theme]').first().getAttribute('data-theme') });
     check(await page.getByText('68%', { exact: true }).count() === 0, `${width}/${theme}: preview transit presents fabricated progress`);
     check((await previewContext.boundingBox()).y < (width === 390 ? 400 : 350), `${width}/${theme}: repeated transit branding delays branch context`);
     if (!layoutOnly) {
