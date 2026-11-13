@@ -8,8 +8,8 @@ public sealed class ChatAgentOptions
 {
     public const string SectionName = "ChatAgent";
 
-    /// <summary>平台默认模型。会话未指定 Model 时用它；值原样透传给运行时。</summary>
-    public string Model { get; set; } = "claude-opus-4-5";
+    /// <summary>统一网关的逻辑公开标识。会话未指定 Model 时使用，由网关按授权选择实际线路。</summary>
+    public string Model { get; set; } = "default-chat-curated";
 
     /// <summary>
     /// 系统提示词。仍然不预设人设——加的只有一段路由说明：
