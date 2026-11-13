@@ -30,6 +30,6 @@ python3 scripts/tests/test_product_report_evaluation.py
 
 ## 如何看数字
 
-独立人工标签放在 `scripts/tests/fixtures/report_product_generation/gold.json`；完整冻结输入、原真实请求响应和旧完整报告也保存在同一夹具目录。`retained-old-output.json` 是实际执行旧源的结果，`retained-evaluation.json` 保留逐条失败位置与原文，后续不能删除失败案例来换取通过。
+运行待测引擎前预先固定的独立来源标签放在 `scripts/tests/fixtures/report_product_generation/gold.json`；完整冻结输入、原真实请求响应和旧完整报告也保存在同一夹具目录。`retained-old-output.json` 是实际执行旧源的结果，`retained-evaluation.json` 保留逐条失败位置与原文，后续不能删除失败案例来换取通过。
 
-固定回放中，旧档遗漏 5、交付章节重复行 7、无证据断言 6、缺少直接来源引用 34；当前档四项均为 0。指标会重叠，不能相加为质量分。这证明本批输入的来源归属、阶段防错和完整正文行为；不等于模型线上改善率，也不声称已覆盖任意自然语言错误。未声明的自由语义仍需人工核对。
+固定回放中，旧档遗漏 5、交付章节重复行 7、无证据断言 6、缺少直接来源引用 34；当前档四项均为 0。指标会重叠，不能相加为质量分。这证明本批输入的来源归属、阶段防错和完整正文行为；不等于模型线上改善率，也不声称已覆盖任意自然语言错误。这些标签不是已完成的真人评审；未声明的自由语义仍需人工核对。
