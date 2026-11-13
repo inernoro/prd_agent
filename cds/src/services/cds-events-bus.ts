@@ -82,6 +82,8 @@ export type CdsEventType =
   // 2026-07-29:服务端通知账本记下一条新站内信。**必须 alert=false**,
   // 否则账本订阅到自己发的事件会无限递归记账。
   | 'scheduled-job.unhealthy'
+  | 'capacity.risk'
+  | 'capacity.recovered'
   | 'notice.created'
   | 'heartbeat';
 
@@ -108,6 +110,8 @@ export interface CdsEventEnvelope<T = unknown> {
  * 恰恰是最难被发现的缺陷 —— 没人会注意到「没有响过的铃」。
  */
 const CDS_EVENT_ALERT_CLASS: Record<CdsEventType, boolean> = {
+  'capacity.risk': true,
+  'capacity.recovered': false,
   'self.status': false,
   'self.refresh.started': false,
   'self.refresh.done': false,
@@ -191,6 +195,8 @@ export interface CdsEventNoticeCopy {
  * 「这条要不要进站内信」。null = 不进账本。
  */
 const CDS_EVENT_NOTICE_COPY: Record<CdsEventType, CdsEventNoticeCopy | null> = {
+  'capacity.risk': { title: '宿主容量与回收风险', source: 'system', level: 'warning', link: 'maintenance', actionLabel: '查看系统维护' },
+  'capacity.recovered': { title: '容量与回收检查恢复', source: 'system', level: 'info', link: 'maintenance', actionLabel: '查看系统维护' },
   'scheduled-job.unhealthy': { title: '自动化任务异常', source: 'system', level: 'warning', link: 'tasks', actionLabel: '查看任务与产物' },
   'self.status': null,
   'self.refresh.started': null,

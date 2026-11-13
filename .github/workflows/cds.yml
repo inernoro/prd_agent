@@ -110,6 +110,30 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      - name: Fourteen-day GiB retention drill (isolated files only)
+        env:
+          CAPACITY_DRILL_PAYLOAD_BYTES: '16777216'
+          CAPACITY_DRILL_EVIDENCE: ${{ runner.temp }}/capacity-gib.json
+        run: pnpm test --maxWorkers=1 --minWorkers=1 tests/services/capacity-growth-drill.test.ts
+
+      - name: Automatic capacity reclaim and notification drill (loopback only)
+        env:
+          CAPACITY_NATIVE_EVIDENCE: ${{ runner.temp }}/capacity-native.json
+        run: |
+          pnpm exec tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution bundler --esModuleInterop --skipLibCheck scripts/capacity-reclaim-drill.ts
+          pnpm exec tsx scripts/capacity-reclaim-drill.ts
+
+      - name: Preserve capacity protection and recovery receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capacity-reclaim-${{ github.sha }}
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/capacity-gib.json
+            ${{ runner.temp }}/capacity-native.json
+          if-no-files-found: warn
+
       - name: Scheduled jobs isolated recovery drill
         run: pnpm drill:scheduled-jobs
 

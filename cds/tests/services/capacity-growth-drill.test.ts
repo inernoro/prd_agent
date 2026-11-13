@@ -15,11 +15,19 @@ import { buildReleaseReclaimCommand, computeReleaseArtifactRetentionPlan, parseR
 import type { BranchEntry, ReleaseTarget, ReleaseStrategy } from '../../src/types.js';
 
 const scratch: string[] = [];
-const DAY = 86400_000, PAYLOAD = 64 * 1024;
+const DAY = 86400_000, PAYLOAD = Number(process.env.CAPACITY_DRILL_PAYLOAD_BYTES || 64 * 1024);
+if (!Number.isSafeInteger(PAYLOAD) || PAYLOAD < 64 * 1024 || PAYLOAD > 16 * 1024**2) {
+  throw new Error('isolated capacity payload must be64KiB..16MiB');
+}
 const start = Date.parse('2026-01-01T00:00:00Z');
 const sha = (n: number) => n.toString(16).padStart(40, '0');
 const image = (n: number) => `ghcr.io/capacity-fixture/api:sha-${sha(n)}`;
 const digest = (text: Buffer) => createHash('sha256').update(text).digest('hex');
+async function expectPayload(file: string, byte: number) {
+  const actual = await fs.readFile(file);
+  expect(actual.length).toBe(PAYLOAD);
+  expect(digest(actual)).toBe(digest(Buffer.alloc(PAYLOAD, byte)));
+}
 const evidence: Record<string, unknown> = {};
 
 afterEach(async () => {
@@ -74,7 +82,7 @@ describe('equivalent fourteen-day retention and recovery drill (isolated files o
     const sweep = () => reclaimDeploymentSources({ base, projectIds: ['project'], branches: () => refs, files, nowMs: now });
     const rows: unknown[] = [];
     const allocatedBytes = () => Number(execFileSync('du', ['-sx', '--block-size=1', '--', bucket], {encoding:'utf8'}).split(/\s+/)[0]);
-    let generated = 0, reclaimed = 0, reclaimedAllocatedBytes = 0, regenerationSha = '';
+    let generated = 0, reclaimed = 0, reclaimedAllocatedBytes = 0, cleanupMs = 0, regenerationSha = '';
     try {
       for (let day = 1; day <= 14; day++) {
         now = start + day * DAY;
@@ -84,6 +92,7 @@ describe('equivalent fourteen-day retention and recovery drill (isolated files o
         const added: string[] = [];
         for (let i = 0; i < 8; i++) { added.push(await make(now)); generated++; }
         const beforeBytes = allocatedBytes();
+        const cleanupStarted = performance.now();
         if (day === 3) { failPath = added[0]; failOnce = true; }
         if (day === 5) {
           // Run the actual deletion primitive in a separate Node process. Kill
@@ -115,6 +124,7 @@ describe('equivalent fourteen-day retention and recovery drill (isolated files o
           expect(await fs.stat(failPath)).toBeTruthy();
         }
         const retry = await sweep(); reclaimed += retry.removed.length;
+        cleanupMs += performance.now() - cleanupStarted;
         expect(retry.failed).toEqual([]);
         const remaining = await fs.readdir(bucket);
         expect(remaining).toHaveLength(4);
@@ -137,10 +147,10 @@ describe('equivalent fourteen-day retention and recovery drill (isolated files o
       expect(digest(await fs.readFile(path.join(rollback, 'source.bin')))).toBe(protectedHash);
       const regenerated = path.join(f.root, 'regenerated-cache');
       f.git('worktree', 'add', '--detach', regenerated, regenerationSha);
-      expect(await fs.readFile(path.join(regenerated, 'source.bin'))).toEqual(Buffer.alloc(PAYLOAD, 38));
+      await expectPayload(path.join(regenerated, 'source.bin'), 38);
       expect(execFileSync('git', ['-C', regenerated, 'rev-parse', 'HEAD'], {encoding:'utf8'}).trim()).toBe(regenerationSha);
       evidence.sources = { equivalentDays: 14, generated, reclaimed, generatedPayloadBytes: generated * PAYLOAD,
-        retainedPayloadBytes: 4 * PAYLOAD, reclaimedAllocatedBytes, protectedHash, rows, failureRetry: true, killedWorkerRetry: true,
+        retainedPayloadBytes: 4 * PAYLOAD, reclaimedAllocatedBytes, cleanupMs, payloadBytes: PAYLOAD, protectedHash, rows, failureRetry: true, killedWorkerRetry: true,
         rollbackReadVerified: true, deletedCacheRegenerated: true, regenerationSha,
         releasedReferencesReclaimed: 2, businessDataPreserved: true,
         accounting: 'payload and du allocated bytes reported separately; Git common-dir metadata excluded from source bucket' };
@@ -189,8 +199,8 @@ describe('equivalent fourteen-day retention and recovery drill (isolated files o
       if(command) {const outcome=parseRemoteReclaimOutcome(execFileSync('/bin/sh',['-c',command],{encoding:'utf8'}));
         expect(outcome.failedVersions).toEqual([]);expect(outcome.removedVersions).toEqual(plan.removeVersions);removed+=outcome.removedVersions.length;}
       const retained=await fs.readdir(versions);expect(retained.length).toBeLessThanOrEqual(day===4?9:5);
-      expect(await fs.readFile(path.join(publish,'current','index.html'))).toEqual(Buffer.alloc(PAYLOAD,1));
-      expect(await fs.readFile(path.join(publish,'previous','index.html'))).toEqual(Buffer.alloc(PAYLOAD,2));
+      await expectPayload(path.join(publish,'current','index.html'),1);
+      await expectPayload(path.join(publish,'previous','index.html'),2);
       rows.push({day,retained:retained.length,removed});
     }
     // Exercise a real pointer rollback and recovery after the growth window,
@@ -198,9 +208,9 @@ describe('equivalent fourteen-day retention and recovery drill (isolated files o
     const current = path.join(publish, 'current'), next = path.join(publish, '.current-next');
     await fs.symlink(await fs.readlink(path.join(publish, 'previous')), next);
     await fs.rename(next, current);
-    expect(await fs.readFile(path.join(current, 'index.html'))).toEqual(Buffer.alloc(PAYLOAD, 2));
+    await expectPayload(path.join(current, 'index.html'), 2);
     await fs.symlink(path.join(versions, id(1)), next); await fs.rename(next, current);
-    expect(await fs.readFile(path.join(current, 'index.html'))).toEqual(Buffer.alloc(PAYLOAD, 1));
+    await expectPayload(path.join(current, 'index.html'), 1);
     evidence.releases={equivalentDays:14,generated:56,removed,retained:5,retainedPayloadBytes:5*PAYLOAD,
       currentAndPreviousPreserved:true,rollbackSwitchAndRestoreVerified:true,inFlightSweepSkipped:true,rows,
       accounting:'real static payload files, production plan and shell command, isolated target'};

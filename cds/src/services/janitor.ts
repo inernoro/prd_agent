@@ -14,6 +14,7 @@ import {
 } from './orphan-worktree.js';
 import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
 import { reclaimLock, isReclaimSkip } from './reclaim-lock.js';
+import { cdsEventsBus } from './cds-events-bus.js';
 import { worktreePathActivity, readWorktreeDirectoryIdentity, sameWorktreeDirectoryIdentity,
   WorktreeClaimHeldError, type WorktreeDirectoryIdentity } from './worktree-path-activity.js';
 import {
@@ -534,6 +535,8 @@ export interface JanitorSnapshot {
   config: JanitorConfig;
   dryRun: { wouldRemove: string[]; wouldSkip: string[] };
   disk: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
+  /** Cache-only follow-ups must not erase the last full Docker/orphan failure receipt. */
+  lastFullSweep?: JanitorSnapshot['lastSweep'];
   /**
    * 最近一次 sweep 的结果摘要（2026-07-27 复盘）。此前回收结果只打进 console，
    * 外部无从确认「镜像回收到底有没有在跑、回收了多少、还欠多少」——这正是
@@ -565,6 +568,7 @@ export interface JanitorSnapshot {
       heldReasons?: Partial<Record<DeploymentSourceHoldReason, number>> };
     dockerPrune: string[] | null;
     errors: number;
+    capacity?: { reasons: string[]; sourceDeferred: number; followUpScheduled: boolean; followUpsRemaining: number };
   } | null;
 }
 
@@ -580,6 +584,9 @@ export interface JanitorClock {
 }
 
 export const systemJanitorClock: JanitorClock = { now: () => Date.now() };
+
+const SOURCE_FOLLOW_UP_DELAY_MS = 60_000;
+const SOURCE_FOLLOW_UPS_PER_CYCLE = 5;
 
 /**
  * Default disk usage implementation using `fs.statfsSync` (Node 18.15+).
@@ -625,7 +632,16 @@ export class JanitorService {
   private sweepHandle: NodeJS.Timeout | null = null;
   /** 启动后的首轮 sweep（延后 30s 避开开机高峰），与周期调度分开管理。 */
   private firstSweepHandle: NodeJS.Timeout | null = null;
+  private sourceFollowUpHandle: NodeJS.Timeout | null = null;
+  private sourceFollowUpsRemaining = 0;
+  private schedulingGeneration = 0;
+  private inFlightSourceOnly = false;
+  private lastCapacityRisk = '';
+  private lastCapacityAlertAt = 0;
+  private nonSourceReclaimFailed = false;
+  private sourceCleanupUnconfirmed = false;
   private lastSweepSummary: JanitorSnapshot['lastSweep'] = null;
+  private lastFullSweepSummary: JanitorSnapshot['lastSweep'] = null;
   private deploymentSourceCursor: string | undefined;
   /** 进行中的 sweep：并发调用合并到同一次，不叠加。 */
   private sweepInFlight: Promise<JanitorSweepReport> | null = null;
@@ -914,6 +930,8 @@ export class JanitorService {
   /** Start periodic sweeps. Safe to call multiple times. No-op when disabled. */
   start(): void {
     if (this.sweepHandle) return;
+    this.schedulingGeneration++;
+    this.sourceFollowUpsRemaining = SOURCE_FOLLOW_UPS_PER_CYCLE;
     // 调度不再受 `enabled` 门禁（2026-07-27 宕机复盘）：`enabled` 的语义一直是
     // 「是否允许**破坏性**地删过期分支」，sweep() 内部已按它单独 gate。但此前
     // start() 在 disabled 时直接 return，连带把磁盘检查、悬空镜像清理、per-SHA
@@ -921,6 +939,7 @@ export class JanitorService {
     //「与 enabled 解耦，默认就清」根本没有兑现过。
     const intervalMs = Math.max(60_000, (this.config.sweepIntervalSeconds || 3600) * 1000);
     this.sweepHandle = setInterval(() => {
+      this.sourceFollowUpsRemaining = SOURCE_FOLLOW_UPS_PER_CYCLE;
       this.sweep().catch((err) => {
         console.error('[janitor] sweep error:', (err as Error).message);
       });
@@ -944,6 +963,8 @@ export class JanitorService {
   }
 
   stop(): void {
+    this.schedulingGeneration++;
+    this.clearSourceFollowUp();
     if (this.firstSweepHandle) {
       clearTimeout(this.firstSweepHandle);
       this.firstSweepHandle = null;
@@ -972,10 +993,86 @@ export class JanitorService {
    *   放到外壳里，两条 return 路径都记得到。
    */
   async sweep(): Promise<JanitorSweepReport> {
+    // A manual/regular full sweep must not silently become a cache-only pass.
+    if (this.sweepInFlight && this.inFlightSourceOnly) {
+      await this.sweepInFlight;
+      return this.sweep();
+    }
+    return this.executeSweep(false);
+  }
+
+  private clearSourceFollowUp(): void {
+    if (this.sourceFollowUpHandle) clearTimeout(this.sourceFollowUpHandle);
+    this.sourceFollowUpHandle = null;
+    if (this.lastSweepSummary?.capacity) this.lastSweepSummary.capacity.followUpScheduled = false;
+  }
+
+  private recordCapacityRisk(reasons: string[], message: string): void {
+    const key = reasons.join(',');
+    if (key && (key !== this.lastCapacityRisk || this.clock.now() - this.lastCapacityAlertAt >= 3600_000)) {
+      cdsEventsBus.publish('capacity.risk', { targetId: 'janitor', message, reasons });
+      this.lastCapacityAlertAt = this.clock.now();
+    } else if (!key && this.lastCapacityRisk) {
+      cdsEventsBus.publish('capacity.recovered', { targetId: 'janitor', message: '本轮容量检查已确认，回收失败与待回收积压已解除',
+        autoRestoredAt: new Date(this.clock.now()).toISOString() });
+    }
+    this.lastCapacityRisk = key;
+  }
+
+  private updateCapacity(report: JanitorSweepReport, sourceOnly: boolean): NonNullable<NonNullable<JanitorSnapshot['lastSweep']>['capacity']> {
+    const sources = report.deploymentSources;
+    // The collector intentionally keeps this worker's claim for this process
+    // lifetime. Another successful path cannot prove its terminal state.
+    this.sourceCleanupUnconfirmed ||= Boolean(sources?.cleanupUnconfirmed);
+    const deferred = sources?.deferred ?? 0;
+    const progressing = Boolean(sources?.removed.length && deferred > 0);
+    if (!progressing) this.clearSourceFollowUp();
+    if (progressing && this.sweepHandle && !this.sourceFollowUpHandle && this.sourceFollowUpsRemaining > 0) {
+      const generation = this.schedulingGeneration;
+      this.sourceFollowUpHandle = setTimeout(() => {
+        this.sourceFollowUpHandle = null;
+        if (!this.sweepHandle || generation !== this.schedulingGeneration) return;
+        this.sourceFollowUpsRemaining--;
+        this.executeSweep(true).catch(error => console.error('[janitor] source follow-up failed:', (error as Error).message));
+      }, SOURCE_FOLLOW_UP_DELAY_MS);
+      this.sourceFollowUpHandle.unref?.();
+    }
+    // Cache-only confirmation cannot clear a failed Docker/orphan observation.
+    if (!sourceOnly) this.nonSourceReclaimFailed = Boolean(report.dockerPrune?.errors.length
+      || report.imageRetention?.failed.length || report.orphanWorktrees?.failed.length
+      || (report.errors.length && !sources?.failed.length));
+    const reasons: string[] = [];
+    const messages: string[] = [];
+    if (!report.disk) { reasons.push('disk-unconfirmed'); messages.push('磁盘余量未确认'); }
+    else if (report.diskWarning || report.diskTier !== 'ok') {
+      reasons.push('disk-pressure'); messages.push(`工作区磁盘已用${report.disk.usedPercent}%，宿主保护档位${report.diskTier}`);
+    }
+    if (sources?.failed.length || this.nonSourceReclaimFailed) {
+      reasons.push('reclaim-failed'); messages.push('回收存在失败，原记录已保留');
+    }
+    if (this.sourceCleanupUnconfirmed) {
+      reasons.push('source-cleanup-unconfirmed'); messages.push('源码回收进程收尾未确认，保持占用与保护，请核对受管进程及恢复记录');
+    }
+    const held = sources ? summarizeDeploymentSourceHolds(sources.held) : {};
+    if ((this.config.orphanWorktrees !== false && !sources) || held['filesystem-unknown']
+      || held['identity-unknown'] || held['identity-or-mount-unconfirmed']) {
+      reasons.push('source-unconfirmed'); messages.push('源码回收检查未确认，保护项未删除');
+    }
+    if (deferred > 0 && !this.sourceFollowUpHandle) {
+      reasons.push('source-backlog'); messages.push(`仍有${deferred}份源码待回收，本周期未继续派发，下一常规周期重试`);
+    }
+    this.recordCapacityRisk(reasons, messages.join('；'));
+    return { reasons, sourceDeferred: deferred, followUpScheduled: Boolean(this.sourceFollowUpHandle),
+      followUpsRemaining: this.sourceFollowUpsRemaining };
+  }
+
+  private async executeSweep(sourceOnly: boolean): Promise<JanitorSweepReport> {
     if (this.sweepInFlight) return this.sweepInFlight;
+    const generation = this.schedulingGeneration;
+    this.inFlightSourceOnly = sourceOnly;
     const run = (async () => {
       try {
-        const report = await this.runSweep();
+        const report = await this.runSweep(sourceOnly);
         this.lastSweepSummary = {
           at: report.timestamp,
           diskTier: report.diskTier,
@@ -1015,17 +1112,27 @@ export class JanitorService {
           } } : {}),
           dockerPrune: report.dockerPrune?.reclaimed ?? null,
           errors: report.errors.length,
+          ...(generation === this.schedulingGeneration ? { capacity: this.updateCapacity(report, sourceOnly) } : {}),
         };
+        if (!sourceOnly) this.lastFullSweepSummary = structuredClone(this.lastSweepSummary);
         return report;
+      } catch (error) {
+        if (generation === this.schedulingGeneration) {
+          this.clearSourceFollowUp();
+          this.nonSourceReclaimFailed = true;
+          this.recordCapacityRisk(['sweep-failed'], '容量与回收任务执行失败，本轮未确认完成，下一常规周期重试');
+        }
+        throw error;
       } finally {
         this.sweepInFlight = null;
+        this.inFlightSourceOnly = false;
       }
     })();
     this.sweepInFlight = run;
     return run;
   }
 
-  private async runSweep(): Promise<JanitorSweepReport> {
+  private async runSweep(sourceOnly = false): Promise<JanitorSweepReport> {
     const report: JanitorSweepReport = {
       timestamp: new Date(this.clock.now()).toISOString(),
       removedBranches: [],
@@ -1078,7 +1185,7 @@ export class JanitorService {
     //     注意这把锁管不到宿主上的人：人工 docker prune 仍会撞车，那要靠运维手册的
     //     安全命令 + cds.protected 标记来兜。
     const reclaimed = await reclaimLock.run('janitor.sweep', async () => {
-      await this.runReclaimSteps(report);
+      await this.runReclaimSteps(report, sourceOnly);
       return true;
     });
     if (isReclaimSkip(reclaimed)) {
@@ -1089,7 +1196,7 @@ export class JanitorService {
     }
 
     // 2. Worktree TTL cleanup (only when enabled — destructive)
-    if (!this.isEnabled()) return report;
+    if (sourceOnly || !this.isEnabled()) return report;
 
     const now = this.clock.now();
     const ttlMs = this.config.worktreeTTLDays * 24 * 60 * 60 * 1000;
@@ -1167,11 +1274,11 @@ export class JanitorService {
   }
 
   /** 回收三件套（悬空清理 / per-SHA 镜像回收 / 孤儿 worktree），由回收锁串起来。 */
-  private async runReclaimSteps(report: JanitorSweepReport): Promise<void> {
+  private async runReclaimSteps(report: JanitorSweepReport, sourceOnly = false): Promise<void> {
     // 1.5 Docker 垃圾清理(默认开，非破坏性——只清悬空镜像 + 构建缓存)。
     //     与 enabled(控制破坏性分支删除) 解耦：哪怕用户没开 TTL 清理，悬空层/构建
     //     缓存的堆积也是"构建越来越慢"的主因，故默认就清。config.dockerPrune=false 可关。
-    if (this.config.dockerPrune !== false) {
+    if (!sourceOnly && this.config.dockerPrune !== false) {
       try {
         report.dockerPrune = await this.dockerPrune();
         const summary = report.dockerPrune.reclaimed.join(' · ');
@@ -1186,7 +1293,7 @@ export class JanitorService {
     //     1.5 的 image prune 只清悬空镜像，而 CDS 自产的部署镜像永远带 tag——
     //     每小时跑一次也一个都清不掉，宿主实测攒到 5099 个 / 159GB。这里按
     //     「台账最近 N 代 + 在用镜像」双保险回收其余（安全边界见 image-retention.ts）。
-    if (this.config.imageRetention !== false) {
+    if (!sourceOnly && this.config.imageRetention !== false) {
       try {
         report.imageRetention = await this.runImageRetention(report.diskTier);
         const r = report.imageRetention;
@@ -1221,6 +1328,7 @@ export class JanitorService {
         this.deploymentSourceCursor = sources.lastAttemptedPath ?? sources.lastScannedPath ?? this.deploymentSourceCursor;
         if (sources.scanned || sources.failed.length || Object.keys(sources.held).length) console.log(`[janitor] 部署源码回收：扫描 ${sources.scanned}、删除 ${sources.removed.length}、保留 ${Object.keys(sources.held).length}、待下轮 ${sources.deferred}`);
         for (const f of sources.failed) report.errors.push(`deployment source: ${f.path}: ${f.error}`);
+        if (sourceOnly) return;
         report.orphanWorktrees = await this.runOrphanWorktreeReconcile();
         const o = report.orphanWorktrees;
         if (o.removed.length || o.deferred || o.failed.length) {
@@ -1235,6 +1343,8 @@ export class JanitorService {
         report.errors.push(`orphan worktree reconcile: ${(err as Error).message}`);
       }
     }
+
+    if (sourceOnly) return;
 
     // 1.7 孤儿 infra 容器对账(2026-07-09,debt.cds.performance 根因 #2 降级实施):
     //     不在 CDS 台账上的 infra 容器(历史遗留/手工启动)会长期吃 CPU/内存且无人知晓。
@@ -1298,6 +1408,7 @@ export class JanitorService {
       dryRun: this.dryRun(),
       disk,
       lastSweep: this.lastSweepSummary,
+      lastFullSweep: this.lastFullSweepSummary,
     };
   }
 }
