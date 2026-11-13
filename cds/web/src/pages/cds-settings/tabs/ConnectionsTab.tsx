@@ -277,13 +277,13 @@ function StatusLine({ icon, title, ready, detail }: { icon: JSX.Element; title: 
 
 function StatusBadge({ connection }: { connection: CdsConnectionView }): JSX.Element {
   if (connection.status === 'active') {
-    return <span className="inline-flex items-center gap-1 rounded-full bg-ok-soft px-2 py-0.5 text-xs font-medium text-ok"><CheckCircle2 className="h-3 w-3" />长期有效</span>;
+    return <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-ok-soft px-2 py-0.5 text-xs font-medium text-ok"><CheckCircle2 className="h-3 w-3" />长期有效</span>;
   }
   if (connection.status === 'pending-pairing') {
-    return <span className="inline-flex items-center gap-1 rounded-full bg-warn-soft px-2 py-0.5 text-xs font-medium text-warn"><Clock className="h-3 w-3" />旧版待配对</span>;
+    return <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-warn-soft px-2 py-0.5 text-xs font-medium text-warn"><Clock className="h-3 w-3" />旧版待配对</span>;
   }
   if (connection.status === 'revoked') {
-    return <span className="inline-flex items-center gap-1 rounded-full bg-bad-soft px-2 py-0.5 text-xs font-medium text-bad"><XCircle className="h-3 w-3" />已撤销</span>;
+    return <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-bad-soft px-2 py-0.5 text-xs font-medium text-bad"><XCircle className="h-3 w-3" />已撤销</span>;
   }
-  return <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"><X className="h-3 w-3" />未知</span>;
+  return <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-muted px-2 py-0.5 text-xs"><X className="h-3 w-3" />未知</span>;
 }
