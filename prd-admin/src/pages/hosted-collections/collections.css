@@ -169,3 +169,26 @@
 .hcol-manage .sub{display:inline}
 
 .hc-replace-options{display:flex;flex-direction:column;gap:0}.hc-replace-options .hc-ellipsis{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hc-replace-options input{flex-shrink:0}
+
+.hc-mobile-panel-header,.hc-mobile-read-tools,.hc-mobile-panel-scrim{display:none}
+.hc-mobile-header-tools{display:inline-flex;align-items:center;gap:0}
+.hc-mobile-actions{position:relative;display:inline-flex}
+.hc-mobile-action-list{position:absolute;right:0;top:46px;z-index:60;min-width:148px;padding:6px;display:flex;flex-direction:column;box-shadow:0 8px 24px var(--writing-ln2)}
+.hc-mobile-action-list>.btn{justify-content:flex-start;min-height:44px;height:44px;width:100%;color:var(--writing-ink)}
+@media(max-width:700px){
+  .hc-mobile-top>.mono{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .hc-mobile-header-tools>.btn,.hc-mobile-actions>.ib{width:44px;height:44px;padding:0;justify-content:center;flex-shrink:0}
+}
+@media(max-width:1100px){
+  .hc-doc-view{padding-bottom:64px}
+  .hc-mobile-read-tools{position:fixed;z-index:50;left:0;right:0;bottom:0;display:flex;padding-bottom:env(safe-area-inset-bottom);border-top:1px solid var(--writing-ln);background:var(--writing-sf)}
+  .hc-mobile-read-tools>button{flex:1;min-width:0;height:52px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:0;background:none;color:var(--writing-ink2);font-size:11px;cursor:pointer}
+  .hc-mobile-read-tools>button:last-child,.hc-mobile-read-tools>button[aria-expanded=true]{color:var(--writing-ac)}
+  .hc-mobile-read-tools>button:disabled{color:var(--writing-ink3);cursor:default}
+  .hc-mobile-panel-scrim:not([hidden]){display:block;position:fixed;inset:0;z-index:90;border:0;background:var(--writing-scrim);cursor:pointer}
+  .hc-doc-aside.hc-mobile-panel-open{display:flex;flex-direction:column;position:fixed;z-index:91;inset:auto 0 0;max-height:85dvh;min-height:260px;padding:0 16px max(16px,env(safe-area-inset-bottom));border-radius:12px 12px 0 0;background:var(--writing-sf);overflow:hidden}
+  .hc-mobile-panel-header{display:flex;align-items:center;justify-content:space-between;min-height:52px;flex-shrink:0;border-bottom:1px solid var(--writing-ln);font-size:14px}
+  .hc-mobile-panel-header>.ib{width:44px;height:44px}
+  .hc-doc-aside.hc-mobile-panel-open .hc-doc-tabs{flex-shrink:0;min-height:44px}
+  .hc-doc-panel-body{overflow-y:auto;min-height:0;flex:1}
+}

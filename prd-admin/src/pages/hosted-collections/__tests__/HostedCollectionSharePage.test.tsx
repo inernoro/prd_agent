@@ -6,10 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import HostedCollectionSharePage from '../HostedCollectionSharePage';
 import type { HostedCollectionShare, HostedCollectionView } from '@/services/contracts/hostedCollections';
 
-const api = vi.hoisted(() => ({ view: vi.fn(), shares: vi.fn(), permissions: vi.fn(), members: vi.fn(), create: vi.fn() }));
+const api = vi.hoisted(() => ({ view: vi.fn(), shares: vi.fn(), permissions: vi.fn(), members: vi.fn(), create: vi.fn(), sync: vi.fn() }));
 vi.mock('@/services/real/hostedCollections', () => ({ getHostedCollection: api.view, getHostedCollectionShares: api.shares,
   getHostedCollectionPermissions: api.permissions, findHostedCollectionMembers: api.members, createHostedCollectionShare: api.create,
-  dissolveHostedCollection: vi.fn(), restoreHostedCollection: vi.fn(), stopHostedCollectionShares: vi.fn(), syncHostedCollectionPermissions: vi.fn() }));
+  dissolveHostedCollection: vi.fn(), restoreHostedCollection: vi.fn(), stopHostedCollectionShares: vi.fn(), syncHostedCollectionPermissions: api.sync }));
 vi.mock('@/services/real/webPages', () => ({ getSitesPrivateSources: vi.fn(), revokeShare: vi.fn() }));
 vi.mock('@/components/web-hosting/privateSourceConfirm', () => ({ runWithPrivateSourceGate: async (options: { run: (fingerprint?: string) => Promise<unknown> }) => ({ status: 'done', res: await options.run() }) }));
 vi.mock('../CollectionShell', () => ({ CollectionShell: ({ children }: { children: ReactNode }) => <div>{children}</div>, collectionDate: () => '11-13' }));
@@ -66,5 +66,28 @@ describe('重新分享必须保留原有访问约束', () => {
     expect(button('不设置').getAttribute('aria-pressed')).toBe('true');
     await click('下一步');
     expect(container.textContent).not.toContain('请填写访问密码');
+  });
+  it('公开链接与原文权限比较明确分域，公开副文档同步到私有主文档时说明实际变化', async () => {
+    api.view.mockResolvedValue(ok({ ...view, collection: { ...view.collection, siteIds: ['doc', 'public'] }, items: [...view.items, { id: 'public', title: '公开副文档', canShare: true, canEdit: true }] }));
+    api.permissions.mockResolvedValue(ok({ fingerprint: 'rights', items: [{ id: 'doc', title: '私有主文档', visibility: 'private', canShare: true, canSync: true, matches: true }, { id: 'public', title: '公开副文档', visibility: 'public', canShare: true, canSync: true, matches: false, differences: ['关闭个人公开页展示'] }] }));
+    await mount(oldLink({ accessLevel: 'public' })); await click('下一步');
+    expect(container.textContent).toContain('本次链接按「获得链接的人」授权');
+    expect(container.textContent).toContain('表格仅比较原文与主文档的权限');
+    expect(container.textContent).toContain('比较基准：主文档「私有主文档」· 仅自己');
+    expect(container.querySelector('.drow.mono')?.textContent).not.toContain('分享需要');
+    expect(container.textContent).not.toContain('分享前需要处理');
+    expect(container.textContent).toContain('关闭个人公开页展示');
+    expect(container.querySelectorAll('.drow input:checked')).toHaveLength(0);
+    await click('下一步'); await click('创建并复制链接');
+    expect(api.sync).not.toHaveBeenCalled();
+    expect(api.create).toHaveBeenCalledWith('c', expect.objectContaining({ visibility: 'public', siteIds: ['doc', 'public'] }));
+  });
+  it('权限元数据不可读时不把未知原文权限显示为仅自己', async () => {
+    api.permissions.mockResolvedValue(ok({ fingerprint: 'rights', items: [{ id: 'doc', title: '不可用文档', canShare: false, canSync: false, matches: false }] }));
+    await mount(oldLink({ accessLevel: 'public' })); await click('下一步');
+    const row = container.querySelectorAll('.drow')[1];
+    expect(row.textContent).toContain('不可读取');
+    expect(row.textContent).not.toContain('仅自己');
+    expect(container.textContent).toContain('权限暂不可读');
   });
 });

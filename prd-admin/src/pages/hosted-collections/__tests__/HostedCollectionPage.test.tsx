@@ -9,9 +9,9 @@ import type { HostedCollectionItem, HostedCollectionView } from '@/services/cont
 const api = vi.hoisted(() => ({ get: vi.fn(), share: vi.fn() }));
 vi.mock('@/services/real/hostedCollections', () => ({ getHostedCollection: api.get, readHostedCollectionShare: api.share }));
 vi.mock('../CollectionShell', () => ({ CollectionShell: ({ children }: { children: ReactNode }) => <div>{children}</div>, collectionDate: () => '11-13' }));
-vi.mock('../HostedCollectionManage', () => ({ HostedCollectionManage: () => null }));
+vi.mock('../HostedCollectionManage', () => ({ HostedCollectionManage: ({ data, onSaved }: { data: HostedCollectionView; onSaved: (data: HostedCollectionView) => void }) => <div role="dialog" aria-label="管理合集">{data.collection.name}<button onClick={() => onSaved({ ...data, collection: { ...data.collection, siteIds: data.collection.siteIds.filter(id => !data.items.find(item => item.id === id)?.unavailable) }, items: data.items.filter(item => !item.unavailable) })}>保存移出不可用文档</button></div> }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSectionLoader: () => <p>正在读取</p> }));
-vi.mock('../HostedCollectionDocument', () => ({ HostedCollectionDocument: ({ item, items, onNavigate, onBack }: { item?: HostedCollectionItem; items: HostedCollectionItem[]; onNavigate: (id: string) => void; onBack: () => void }) => <div data-reading><p>{item?.title ?? '错误：继承了其他合集的文档'}</p><button onClick={() => { const i = items.findIndex(x => x.id === item?.id); if (items[i + 1]) onNavigate(items[i + 1].id); }}>下一篇</button><button onClick={onBack}>返回目录</button></div> }));
+vi.mock('../HostedCollectionDocument', () => ({ HostedCollectionDocument: ({ item, items, onNavigate, onBack, onManage }: { item?: HostedCollectionItem; items: HostedCollectionItem[]; onNavigate: (id: string) => void; onBack: () => void; onManage?: () => void }) => <div data-reading><p>{item?.title ?? '错误：继承了其他合集的文档'}</p>{item?.unavailable && onManage && <button onClick={onManage}>从合集移出</button>}<button onClick={() => { const i = items.findIndex(x => x.id === item?.id); if (items[i + 1]) onNavigate(items[i + 1].id); }}>下一篇</button><button onClick={onBack}>返回目录</button></div> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const ok = <T,>(data: T) => ({ success: true, data });
 function fixture(id = 'a', count = 90): HostedCollectionView {
@@ -39,6 +39,22 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); vi.unstubAllGlobals(); });
 
 describe('合集阅读游标必须跟随文档与路由', () => {
+  it('owner从不可用项可打开既有管理器，仍保留全部成员等待用户确认', async () => {
+    const data = fixture('a', 3); data.items[1].unavailable = true; api.get.mockResolvedValue(ok(data));
+    await mount(); await act(async () => (container.querySelector('[data-member="a-1"]') as HTMLButtonElement).click());
+    await click('从合集移出');
+    expect(container.querySelector('[role="dialog"][aria-label="管理合集"]')).toBeTruthy();
+    expect(data.collection.siteIds).toEqual(['a-0', 'a-1', 'a-2']);
+    await click('保存移出不可用文档');
+    expect(container.querySelector('[data-reading]')).toBeNull();
+    expect([...container.querySelectorAll('h1')].some(heading => heading.textContent === 'a合集')).toBe(true);
+  });
+  it('匿名分享的不可用项不提供作者移出入口', async () => {
+    const data = fixture('shared', 3); data.canManage = false; data.items[1].unavailable = true; api.share.mockResolvedValue(ok(data));
+    await mount('/s/collection/token'); await act(async () => (container.querySelector('[data-member="shared-1"]') as HTMLButtonElement).click());
+    expect(container.querySelector('[data-reading]')?.textContent).not.toContain('从合集移出');
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
   it('连续提交访问密码时，旧失败不能覆盖较新的成功', async () => {
     const slow = deferred<{ success: false; error: { code: string; message: string } }>();
     api.share.mockImplementation((_token, password) => password === 'bad' ? slow.promise : Promise.resolve(password === 'good' ? ok(fixture('shared', 3)) : { success: false, error: { code: 'PASSWORD_REQUIRED', message: '请提供密码' } }));
