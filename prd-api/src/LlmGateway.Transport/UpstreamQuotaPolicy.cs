@@ -20,7 +20,9 @@ public static class UpstreamQuotaPolicy
         if (m.Length == 0) return false;
 
         // 只认明确指向「额度/余额/账单/key 限额」的信号；裸 "limit exceeded" 不再单独判定为额度。
-        return m.Contains("quota is not enough")                    // APIyi 403：user quota is not enough
+        return m.Contains("no credits remaining")
+            || m.Contains("credit_balance_exhausted")
+            || m.Contains("quota is not enough")                    // APIyi 403：user quota is not enough
             || m.Contains("key limit")                                   // OpenRouter "Key limit exceeded"
             || m.Contains("credit limit")
             || (m.Contains("limit exceeded") && (m.Contains("credit") || m.Contains("quota") || m.Contains("balance") || m.Contains("key")))
