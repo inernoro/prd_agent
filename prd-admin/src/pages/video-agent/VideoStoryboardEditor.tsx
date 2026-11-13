@@ -171,6 +171,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const [run, setRun] = useState<VideoGenRun | null>(null);
   const [models, setModels] = useState<VideoModelOption[]>([]);
   const [project, setProject] = useState<VideoProject | null>(null);
+  const [timelineRevision, setTimelineRevision] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [selectedSceneIndex, setSelectedSceneIndex] = useState(0);
   const [previewMode, setPreviewMode] = useState<PreviewMode>('scene');
@@ -266,7 +267,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
         timelineTracks: Array.isArray(response.data.timelineTracks) ? response.data.timelineTracks : [],
       });
     });
-  }, [run?.projectId]);
+  }, [run?.projectId, timelineRevision]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -462,6 +463,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
       return false;
     }
     setSelectedSceneIndex(toIndex);
+    setTimelineRevision(revision => revision + 1);
     return true;
   }), [mutate, run, runId]);
 
@@ -1026,7 +1028,7 @@ const Inspector: React.FC<{
   );
 };
 
-const Timeline: React.FC<{
+export const Timeline: React.FC<{
   run: VideoGenRun;
   tracks: VideoTimelineTrack[];
   selectedSceneIndex: number;
@@ -1035,40 +1037,56 @@ const Timeline: React.FC<{
   disabled: boolean;
 }> = ({ run, tracks, selectedSceneIndex, onSelect, onReorder, disabled }) => {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const duration = Math.max(run.scenes.reduce((sum, scene) => sum + (scene.duration ?? run.directDuration ?? 5), 0), 1);
+  // 导出按视频轨数组顺序拼接，startSeconds 不参与视频定位；旁白跟随裁剪后的镜头起点。
+  const videoClips = tracks.find(track => track.type === 'video')?.clips
+    .filter(clip => clip.sceneIndex != null && run.scenes[clip.sceneIndex]);
+  let cursor = 0;
+  const scenes = (videoClips?.length ? videoClips : run.scenes.map((_, sceneIndex) => ({ sceneIndex })))
+    .map(clip => {
+      const sceneIndex = clip.sceneIndex!;
+      const scene = run.scenes[sceneIndex];
+      const trim = 'trimStartSeconds' in clip ? Math.max(0, clip.trimStartSeconds) + Math.max(0, clip.trimEndSeconds) : 0;
+      const clipDuration = Math.max(0.1, (scene.duration ?? run.directDuration ?? 5) - trim);
+      const item = { scene, sceneIndex, start: cursor, duration: clipDuration };
+      cursor += clipDuration;
+      return item;
+    });
+  const duration = Math.max(cursor, 1);
+  const timingStyle = (start: number, length: number) => ({ left: `${start / duration * 100}%`, width: `${length / duration * 100}%` });
+  const ticks = Array.from({ length: Math.floor(duration / 5) + 1 }, (_, index) => index * 5);
+  if (ticks[ticks.length - 1] !== duration) ticks.push(duration);
   return (
     <section className="video-console__timeline" aria-label="视频时间线">
       <div className="video-console__timeline-header">
         <div><Clock3 size={14} /> 时间线</div>
-        <span>{run.scenes.length} 个镜头 · {duration} 秒</span>
+        <span>{scenes.length} 个镜头 · {Number(duration.toFixed(2))} 秒</span>
       </div>
       <div className="video-console__ruler">
-        {Array.from({ length: Math.ceil(duration / 5) + 1 }, (_, index) => <span key={index}>{index * 5}s</span>)}
+        {ticks.map(time => <span key={time} style={{ left: `${time / duration * 100}%` }}>{Number(time.toFixed(2))}s</span>)}
       </div>
       <div className="video-console__track-row">
         <span className="video-console__track-label">视频</span>
         <div className="video-console__clips">
-          {run.scenes.map((scene, index) => {
-            const clipDuration = scene.duration ?? run.directDuration ?? 5;
+          {scenes.map(({ scene, sceneIndex, start, duration: clipDuration }, index) => {
             return (
               <button
-                key={scene.index}
-                className={`video-console__clip ${index === selectedSceneIndex ? 'is-active' : ''}`}
-                style={{ flexGrow: clipDuration }}
-                onClick={() => onSelect(index)}
+                key={`${sceneIndex}-${index}`}
+                className={`video-console__clip ${sceneIndex === selectedSceneIndex ? 'is-active' : ''}`}
+                style={timingStyle(start, clipDuration)}
+                onClick={() => onSelect(sceneIndex)}
                 draggable={!disabled}
-                onDragStart={() => setDragIndex(index)}
+                onDragStart={() => setDragIndex(sceneIndex)}
                 onDragOver={(event) => { if (!disabled) event.preventDefault(); }}
                 onDrop={(event) => {
                   event.preventDefault();
-                  if (dragIndex !== null) onReorder(dragIndex, index);
+                  if (dragIndex !== null) onReorder(dragIndex, sceneIndex);
                   setDragIndex(null);
                 }}
                 onDragEnd={() => setDragIndex(null)}
                 onKeyDown={(event) => {
                   if (disabled || !event.altKey) return;
-                  if (event.key === 'ArrowLeft' && index > 0) onReorder(index, index - 1);
-                  if (event.key === 'ArrowRight' && index < run.scenes.length - 1) onReorder(index, index + 1);
+                  if (event.key === 'ArrowLeft' && sceneIndex > 0) onReorder(sceneIndex, sceneIndex - 1);
+                  if (event.key === 'ArrowRight' && sceneIndex < run.scenes.length - 1) onReorder(sceneIndex, sceneIndex + 1);
                 }}
                 title="拖动排序，或按 Alt 加左右方向键移动"
               >
@@ -1083,14 +1101,32 @@ const Timeline: React.FC<{
       {(['subtitle', 'voice', 'music'] as const).map((type) => {
         const track = tracks.find((item) => item.type === type);
         const label = type === 'subtitle' ? '字幕' : type === 'voice' ? '配音' : '音乐';
-        const narratedScenes = type === 'music' ? [] : run.scenes.filter(scene => scene.narration);
-        return <div className="video-console__track-row" key={type}><span className="video-console__track-label">{label}</span><div className="video-console__timeline-aux">
-          {narratedScenes.map(scene => <div key={`narration-${scene.index}`}>
-            <strong>{type === 'subtitle' ? scene.narration!.text : `镜头 ${scene.index + 1} 已采用配音`}</strong>
-            <span>{scene.narration!.durationSeconds.toFixed(2)}s · 跟随镜头同步</span>
+        const items = [
+          ...(type === 'music' ? [] : scenes.filter(item => item.scene.narration).map(({ scene, start }, index) => ({
+            id: `narration-${index}`, start, duration: scene.narration!.durationSeconds,
+            text: type === 'subtitle' ? scene.narration!.text : `镜头 ${scene.index + 1} 已采用配音`, followsScene: true,
+          }))),
+          ...(track?.clips.map((clip, index) => ({
+            id: clip.id, start: Math.max(0, clip.startSeconds),
+            duration: type === 'subtitle' ? clip.durationSeconds
+              : Math.max(0, clip.durationSeconds - Math.max(0, clip.trimStartSeconds) - Math.max(0, clip.trimEndSeconds)),
+            text: type === 'subtitle' ? clip.text || `字幕 ${index + 1}` : clip.assetUrl?.split('/').pop() || `${label} ${index + 1}`,
+            followsScene: false,
+          })) ?? []),
+        ].sort((a, b) => a.start - b.start);
+        const laneEnds: number[] = [];
+        const positioned = items.map(item => {
+          let lane = laneEnds.findIndex(end => end <= item.start);
+          if (lane < 0) lane = laneEnds.length;
+          laneEnds[lane] = item.start + item.duration;
+          return { ...item, lane };
+        });
+        return <div className="video-console__track-row" key={type}><span className="video-console__track-label">{label}</span><div className="video-console__timeline-aux" style={{ minHeight: Math.max(38, laneEnds.length * 32 + 6) }}>
+          {positioned.map(item => <div key={item.id} style={{ ...timingStyle(item.start, Math.max(0, Math.min(item.duration, duration - item.start))), top: 3 + item.lane * 32 }} title={`${item.text} · ${item.start.toFixed(2)}s · ${item.duration.toFixed(2)}s`}>
+            <strong>{item.text}</strong>
+            <span>{item.start.toFixed(2)}s · {item.duration.toFixed(2)}s{item.followsScene ? ' · 跟随镜头同步' : ''}</span>
           </div>)}
-          {track?.clips.map((clip, index) => <div key={clip.id}><strong>{type === 'subtitle' ? clip.text || `字幕 ${index + 1}` : clip.assetUrl?.split('/').pop() || `${label} ${index + 1}`}</strong><span>{clip.startSeconds.toFixed(1)}s · {clip.durationSeconds.toFixed(1)}s</span></div>)}
-          {!track?.clips.length && !narratedScenes.length && <span>未添加{label}片段</span>}
+          {!items.length && <span>未添加{label}片段</span>}
         </div></div>;
       })}
     </section>

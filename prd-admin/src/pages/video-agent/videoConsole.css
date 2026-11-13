@@ -484,19 +484,23 @@
 .video-console__generation-info strong { color: #c6cdd4; }
 
 .video-console__timeline {
+  --video-timeline-bg: #111418;
   flex: 0 0 auto;
   max-height: 255px;
   overflow: auto;
   padding: 0 12px 12px;
-  background: #111418;
+  background: var(--video-timeline-bg);
 }
 .video-console__timeline-header { display: flex; min-height: 36px; align-items: center; justify-content: space-between; color: #84909a; font-size: 8px; }
 .video-console__timeline-header > div { gap: 6px; color: #c7ced4; font-weight: 650; }
-.video-console__ruler { display: flex; justify-content: space-between; margin-left: 66px; padding: 0 0 4px; color: #5e6872; font-size: 7px; }
+.video-console__ruler { position: relative; min-width: 754px; height: 16px; margin-left: 66px; color: #5e6872; font-size: 7px; }
+.video-console__ruler > span { position: absolute; transform: translateX(-50%); }
+.video-console__ruler > span:first-child { transform: none; }
+.video-console__ruler > span:last-child { transform: translateX(-100%); }
 .video-console__track-row { display: grid; min-width: 820px; grid-template-columns: 60px minmax(0, 1fr); gap: 6px; margin-bottom: 4px; }
 .video-console__track-label { display: flex; align-items: center; color: #77818b; font-size: 8px; }
-.video-console__clips { display: flex; min-height: 54px; gap: 3px; }
-.video-console__clip { position: relative; display: grid; min-width: 88px; grid-template-columns: 52px minmax(0, 1fr); gap: 6px; align-items: center; overflow: hidden; border-radius: 5px; background: #22282e; color: #b5bdc5; text-align: left; }
+.video-console__clips { position: relative; min-height: 54px; }
+.video-console__clip { position: absolute; height: 54px; display: grid; min-width: 0; grid-template-columns: 52px minmax(0, 1fr); gap: 6px; align-items: center; overflow: hidden; border-right: 3px solid var(--video-timeline-bg); border-radius: 5px; background: #22282e; color: #b5bdc5; text-align: left; }
 .video-console__clip.is-active { box-shadow: inset 0 0 0 1px var(--video-cyan); }
 .video-console__clip > video { width: 52px; height: 54px; object-fit: cover; }
 .video-console__clip > svg:not(.video-console__clip-grip) { margin-left: 18px; }
@@ -506,9 +510,9 @@
 .video-console__clip strong { font-size: 8px; }
 .video-console__clip span { margin-top: 3px; color: #75808a; font-size: 7px; }
 .video-console__clip-grip { position: absolute; top: 4px; right: 4px; color: #6c7680; }
-.video-console__timeline-aux { display: flex; min-height: 31px; align-items: center; gap: 4px; border-radius: 4px; background: #171b20; padding: 3px; }
-.video-console__timeline-aux > span { margin-left: 7px; color: #5f6973; font-size: 7px; }
-.video-console__timeline-aux > div { min-width: 130px; padding: 5px 7px; border-radius: 3px; background: #252b31; }
+.video-console__timeline-aux { --video-timeline-track-bg: #171b20; position: relative; overflow: hidden; border-radius: 4px; background: var(--video-timeline-track-bg); }
+.video-console__timeline-aux > span { display: block; margin: 10px; color: #5f6973; font-size: 7px; }
+.video-console__timeline-aux > div { position: absolute; height: 32px; min-width: 0; overflow: hidden; padding: 5px 7px; border-right: 3px solid var(--video-timeline-track-bg); border-radius: 3px; background: #252b31; }
 .video-console__timeline-aux strong,
 .video-console__timeline-aux div span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 7px; }
 .video-console__timeline-aux div span { margin-top: 2px; color: #727c86; }

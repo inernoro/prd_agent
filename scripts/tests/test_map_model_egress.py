@@ -12,6 +12,28 @@ SPEC.loader.exec_module(GUARD)
 
 
 class MapModelEgressTests(unittest.TestCase):
+    def test_video_media_audits_allow_only_reviewed_non_model_calls(self):
+        ledger = json.loads((ROOT / 'scripts/fixtures/map-model-egress-audit.json').read_text())
+        for relative in [
+            'Controllers/Api/VideoAgentController.Import.cs',
+            'Controllers/Api/VideoAgentController.Narration.cs',
+            'Services/VideoNarrationMedia.cs',
+            'Services/VideoSceneMedia.cs',
+        ]:
+            with self.subTest(path=relative):
+                path = 'prd-api/src/PrdAgent.Api/' + relative
+                source = (ROOT / path).read_text()
+                audit = ledger['files'].get(path, {})
+                self.assertTrue(audit.get('purpose'), '媒体出站须登记具体非模型用途')
+                self.assertEqual(audit['calls'], dict(GUARD.invocation_fingerprints(source)))
+                root, fixture_ledger = self.fixture(source, granted={
+                    'prd-api/src/PrdAgent.Api/FutureBusiness.cs': audit,
+                })
+                self.assertEqual([], GUARD.check(root, fixture_ledger))
+                future = root / 'prd-api/src/PrdAgent.Api/FutureBusiness.cs'
+                future.write_text(source + '\nvar unapproved = new HttpClient();\n')
+                self.assertTrue(any('新增或变更' in failure for failure in GUARD.check(root, fixture_ledger)))
+
     def test_production_notification_and_public_read_audits_reject_added_model_transport(self):
         ledger = json.loads((ROOT / 'scripts/fixtures/map-model-egress-audit.json').read_text())
         for name in ['ProductAnnouncementHttpAudit.cs', 'ProductScheduledNotificationWorker.cs']:
