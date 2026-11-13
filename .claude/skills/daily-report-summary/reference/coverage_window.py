@@ -38,6 +38,7 @@
   prevDate    上一期日报的 dailyDate
   gap         True 表示上期水位线之后有超过一天没报道（中断续上场景）
 """
+from pathlib import Path
 import argparse, json, os, subprocess, sys, time
 from datetime import datetime, timezone
 
@@ -109,6 +110,9 @@ def latest_daily_entry(base, H, store_id, kind, before_date=""):
         items = data.get("items") or []
         for it in items:
             md = it.get("metadata") or {}
+            if md.get("deliveryEvidenceStatus") == "pending":
+                continue  # 正文或台账尚未核验，不能让失败空壳成为下一期水位线。
+
             # 只认正牌日报条目：库里可能混入手工「新建文档」等无 metadata 的条目
             if (md.get("kind") or "") != kind:
                 continue
@@ -230,6 +234,19 @@ def main():
         prev_key, md, _eid = prev
         prev_date = prev_key[0]
         out["prevDate"] = prev_date
+        out["previousEntryId"] = _eid
+        raw_ledger = md.get("deliveryEvidenceLedger")
+        if raw_ledger:
+            ledger = json.loads(raw_ledger) if isinstance(raw_ledger, str) else raw_ledger
+            root = Path(__file__).resolve().parents[4]
+            sys.path.insert(0, str(root / "scripts/reporting"))
+            from evidence import normalize
+            out["deliveryEvidenceLedger"] = normalize(ledger)
+            out["evidenceHistoryAvailable"] = True
+        else:
+            out["evidenceHistoryAvailable"] = False
+            log("[事项证据] 上期未保存台账，旧正文只能作线索；新增成果覆盖尚未核实")
+
         last_sha = (md.get("lastCommit") or "").strip()
         cover_to = (md.get("coverTo") or "").strip()
         log(f"[水位线] 上一期：dailyDate={prev_date} lastCommit={last_sha[:12] or '(无)'} coverTo={cover_to or '(无)'}")

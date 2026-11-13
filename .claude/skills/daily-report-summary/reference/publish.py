@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""日报发布到知识库（文档空间），或 --local 落本地文件。
+r"""日报发布到知识库（文档空间），或 --local 落本地文件。
 
 find-or-create「日报知识库」→（有截图则先上传图、回填 {{IMG:}}/{{EVIDENCE}} 占位）→
 建条目 → 写正文（带 hasContent 校验 + 空壳兜底）→ 出分享链。
@@ -27,12 +27,13 @@ find-or-create「日报知识库」→（有截图则先上传图、回填 {{IMG
     --manifest /tmp/acc_shots/manifest.json
 """
 import argparse, json, os, subprocess, time, sys, re, shutil
+from pathlib import Path
 from html import unescape as html_unescape
 from html.parser import HTMLParser
 
 API = "/api/document-store"
 STORE_NAME = "日报知识库"
-STORE_DESC = "每日开发日报归档（今日大事早知道）。新增方向多讲，优化/修复次之，计划/遗留垫底。"
+STORE_DESC = "每日项目报告归档。按稳定事项引用交付、验证、上线、风险和下一步；缺证据不判断完成或效率。"
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 PLACEHOLDER_RE = re.compile(r"\{\{IMG:[^}]+\}\}|\{\{EVIDENCE\}\}")
 
@@ -674,7 +675,7 @@ def run_local(a, body, manifest, is_html):
         f.write(body)
     print(json.dumps({"mode": "local", "title": a.title, "reportPath": out,
                       "shots": len(name_to_md)}, ensure_ascii=False))
-    print(f"\n===== 日报已落本地 =====\n路径：{out}")
+    print(f"\n===== 技能刊物已落本地 =====\n路径：{out}")
 
 
 def main():
@@ -700,6 +701,8 @@ def main():
     ap.add_argument("--cover-to", default="", help="本期窗口终点（ISO 时间戳），SHA 不可达时的降级水位线")
     ap.add_argument("--replace-same-date", action="store_true",
                     help="同 dailyDate 已有条目时替换它（先建新条目并校验落库成功，再删旧条目）")
+    ap.add_argument("--evidence-bundle", default="", help="edition.py生成的完整事实/原模板刊物bundle，正式技能发布必传")
+    ap.add_argument("--legacy-unverified-reason", default="", help="仅重发历史原文时显式说明原因；不会标为已核查报告")
     a = ap.parse_args()
 
     # 日报联网发布必须带水位线：没有它，下一期读不到 lastCommit/coverTo 就会退化为
@@ -719,7 +722,7 @@ def main():
     is_html = bool(a.report_html)
 
     if is_html:
-        body = open(a.report_html, encoding="utf-8").read().lstrip()
+        body = Path(a.report_html).read_text(encoding="utf-8").lstrip()
         # 注释先剥掉再校验/发布：模板头注释里合法出现「data:image」等示例字样，
         # 不剥会误伤模板；后端正文守卫同为子串扫描，注释不剥也会被后端误拒（Codex P2）
         body = strip_html_comments(body)
@@ -732,9 +735,26 @@ def main():
             raise RuntimeError("HTML 报纸版校验未通过：\n  - " + "\n  - ".join(errs))
         assert_placeholder_standalone(body)
     else:
-        body = open(a.report_md, encoding="utf-8").read().lstrip()
+        body = Path(a.report_md).read_text(encoding="utf-8").lstrip()
         if not body.startswith("#"):
             body = f"# {a.title}\n\n" + body
+    evidence_meta = {}
+    if a.evidence_bundle:
+        root = Path(__file__).resolve().parents[4]
+        sys.path.insert(0, str(root / "scripts/reporting"))
+        from edition import verify_bundle, evidence_metadata
+        bundle, _ledger = verify_bundle(a.evidence_bundle)
+        if a.title != bundle["title"] or a.kind != bundle["kind"] or resolve_daily_date(a.daily_date, a.title) != bundle["end"]:
+            raise RuntimeError("刊物标题、周期或kind与证据bundle不一致，拒绝发布")
+        if not is_html or body != (Path(a.evidence_bundle).parent / "report.html").read_text():
+            raise RuntimeError("正文与已核查的技能刊物不一致，拒绝发布")
+        if a.last_commit != bundle.get("baselineSha", ""):
+            raise RuntimeError("发布水位线与证据bundle基线不一致，拒绝发布")
+        evidence_meta = evidence_metadata(a.evidence_bundle)
+    elif not a.local and a.kind in {"daily-report", "weekly-report", "project-monthly-report"}:
+        if not a.legacy_unverified_reason.strip():
+            raise RuntimeError("技能报告发布缺少--evidence-bundle；请先用edition.py build生成原模板刊物。历史原文重发须明确--legacy-unverified-reason，不会标为已核查。")
+        evidence_meta = {"evidenceVerification": "legacy-unverified", "evidenceVerificationReason": a.legacy_unverified_reason.strip()}
     manifest = load_manifest(a.manifest)
 
     if a.local:
@@ -824,6 +844,7 @@ def main():
 
     meta = {"kind": kind, "dailyDate": daily_date,
             "format": "html" if is_html else "md"}
+    meta.update(evidence_meta)
     # 水位线：写给下一期读（纪律 2）。缺 lastCommit 会让下期退化回当日口径并漏报，
     # 所以这里明确告警，不静默放过。
     if a.last_commit:
@@ -836,6 +857,8 @@ def main():
         meta["coverTo"] = a.cover_to
     # 身份字段（建条目时就要有，用于同日查重）与水位线字段（必须等正文验完才写）分开。
     meta_identity = {"kind": kind, "dailyDate": daily_date, "format": "html" if is_html else "md"}
+    if a.evidence_bundle:
+        meta_identity["deliveryEvidenceStatus"] = "pending"
     content_type = "text/html" if is_html else "text/markdown"
     tags = [t.strip() for t in (a.tags or "").split(",") if t.strip()] or ["日报", "今日大事"]
     try:
@@ -947,6 +970,9 @@ def main():
             f"正文写入结果未确认（PUT 未返回成功且验证接口不可达）。已保留条目 {eid} 避免误删，"
             "请稍后登录该库人工确认/重写，勿盲目重跑造成重复。")
 
+    if a.evidence_bundle and state is None:
+        raise RuntimeError("本次技能正文无法读回核验，未推进水位线和事项证据台账，请重试")
+
     # 正文已确认落库，这时才把 title / summary / metadata 更新到原地复用的那条上。
     # 顺序不可提前（见上文）：先改元数据后写正文，一旦正文失败就会留下
     #「新水位线 + 旧正文」的错配条目，而错配的水位线会让下一期从错误的位置续采。
@@ -958,20 +984,20 @@ def main():
     # 跳过水位线只会把「无法确认」升级成「确定漏报」。
     def watermark_persisted():
         """读回条目 metadata 确认水位线已落库。True/False/None(读不到)。"""
-        if not a.last_commit:
+        if not a.last_commit and not evidence_meta:
             return True                      # 没有水位线可写（已在上面告警）
         try:
             r = curl(H + [f"{base}/entries/{eid}"], retries=2)
             if not r.get("success"):
                 return None
             md = ((r.get("data") or {}).get("metadata")) or {}
-            return md.get("lastCommit") == a.last_commit
+            return (not a.last_commit or md.get("lastCommit") == a.last_commit) and all(md.get(k) == v for k, v in evidence_meta.items())
         except Exception:
             return None
 
     # 原地复用时先快照现有 metadata：一旦下面检出并发覆盖要中止，必须把本次写进去的
     # 水位线**回滚**，否则库里留下「他期正文 + 本期水位线」——中止了却把损坏留在原地。
-    prev_meta = None
+    prev_meta = dict(meta_identity) if a.evidence_bundle and not reuse_eid else None
     if reuse_eid and (state is True or (state is None and put_ok)):
         try:
             r0 = curl(H + [f"{base}/entries/{eid}"], retries=2)
@@ -990,8 +1016,11 @@ def main():
             print(f"  元数据更新异常：{str(e)[:100]}")
         print(f"  {'原地更新' if reuse_eid else '回写'}标题/标签/水位线 ok={ok}")
         if watermark_persisted() is not True:
+            if a.evidence_bundle:
+                rollback = prev_meta if prev_meta is not None else meta_identity
+                curl(HJ + ["-X", "PUT", "-d", json.dumps({"metadata": rollback}), f"{base}/entries/{eid}"])
             raise RuntimeError(
-                "水位线未确认落库：正文可能已发布，但 metadata.lastCommit 没写进去。"
+                "水位线或证据台账未确认落库：正文可能已发布，但连续采集元数据未核对成功。"
                 "就此收工的话，下一期读不到水位线会退化为当日口径、漏掉本期覆盖区间内的提交。"
                 "请重跑本命令（同日重跑是原地更新，幂等安全）。")
         # 正文与元数据是两次独立 PUT，中间可能被并发重跑覆盖正文。
@@ -999,7 +1028,7 @@ def main():
         # 下一期会从「本期正文其实没覆盖到」的位置续采，那段提交永久丢失。
         # 这是确定性的不一致，必须让本次发布失败，而不是发条分享链宣布完成。
         # （content_state() 返回 None 只是校验不可达，非确定性不一致，降为告警。）
-        recheck = content_state() if reuse_eid else True
+        recheck = content_state() if (reuse_eid or a.evidence_bundle) else True
         if recheck is False:
             # 先把元数据回滚回快照值，再抛。回滚后的组合有两种，都优于"他期正文 + 本期水位线"：
             #   - 快照取到的是对方刚写的元数据 -> 正文与水位线完全一致
@@ -1018,6 +1047,10 @@ def main():
             raise RuntimeError(
                 "元数据写入后检出正文已不是本次内容（并发重跑覆盖）：已回滚本次元数据并中止发布，"
                 "请重跑本命令恢复一致。")
+        if recheck is None and a.evidence_bundle:
+            rollback = prev_meta if prev_meta is not None else meta_identity
+            curl(HJ + ["-X", "PUT", "-d", json.dumps({"metadata": rollback}), f"{base}/entries/{eid}"])
+            raise RuntimeError("技能正文与台账的最终一致性无法核验，已回退采集水位线；请重试")
         if recheck is None:
             print("  [告警] 元数据写入后无法复核正文（校验接口不可达），"
                   "若同时有并发重跑请事后核对正文与水位线是否匹配")
