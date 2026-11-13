@@ -170,6 +170,8 @@ def normalize(case, status, content_type, raw, expected_usage=None):
     if case['kind'] == 'tools':
         assert normalized_tools == [{'name':'echo_city','arguments':{'city':'北京'}}], 'tool arguments/name changed'
         assert finish == 'tools', 'tool finish reason'
+        if 'expectedToolText' in case:
+            assert text.strip() == case['expectedToolText'], 'unexpected text in tool-only response'
     else:
         assert not normalized_tools, 'unexpected tool'
         expected_text = case.get('expectedText')

@@ -13,6 +13,18 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public class ThinkingProtocolContractTests
 {
+    [Fact]
+    public async Task Gateway_ToolOnlyResponseDoesNotExposeProtocolEnvelopeAsAssistantText()
+    {
+        var http = new ProtocolUpstream(false) { ToolOnly = true };
+        var (gateway, _) = CreateGateway(http, supportsThinking: true);
+        var response = await gateway.SendAsync(Request());
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Single(response.ToolCalls!);
+        Assert.Null(response.Content);
+        Assert.Contains("choices", response.RawResponseBody);
+    }
+
     [Theory]
     [InlineData("https://api.openai.com/v1/chat/completions", false)]
     [InlineData("https://openrouter.ai/api/v1/chat/completions", true)]
@@ -213,6 +225,7 @@ public class ThinkingProtocolContractTests
     // explicit extension is present. The same gateway path must satisfy both contracts.
     private sealed class ProtocolUpstream(bool openRouter) : IHttpClientFactory
     {
+        public bool ToolOnly { get; init; }
         internal bool OpenRouter => openRouter;
         internal int Calls;
         internal bool ExpectThinking = true;
@@ -248,7 +261,9 @@ public class ThinkingProtocolContractTests
                 if (body["stream"]?.GetValue<bool>() != true)
                     return new HttpResponseMessage(HttpStatusCode.OK)
                     {
-                        Content = new StringContent("{\"choices\":[{\"message\":{\"content\":\"结果\"}}]}")
+                        Content = new StringContent(owner.ToolOnly
+                            ? """{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call_one","type":"function","function":{"name":"echo_city","arguments":"{\"city\":\"北京\"}"}}]},"finish_reason":"tool_calls"}]}"""
+                            : "{\"choices\":[{\"message\":{\"content\":\"结果\"}}]}")
                     };
                 var reasoningField = owner.OpenRouter ? "reasoning" : "reasoning_content";
                 return new HttpResponseMessage(HttpStatusCode.OK)

@@ -7,3 +7,4 @@
 | test | llmgw | 真实报告分开统计成功调用与已验证拒绝；仅推理能力用例可声明精确拒绝，普通文本和工具失败不得改判通过 |
 | fix | llmgw | 原生 OpenAI 出站不再泄漏已被严格入口消费的 provider.require_parameters 控制字段；真实 OpenRouter 路由保持该扩展 |
 | test | llmgw | 固定应答提示明确禁止标点且保持精确 OK 断言，Native 批次标识同时写入 Context，确保真实调用审计可关联 |
+| fix | llmgw | 纯工具调用无正文时不再把整个上游响应包作为助手文本返回，原始响应继续保留用于审计 |

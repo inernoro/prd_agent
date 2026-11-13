@@ -770,13 +770,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 从原始响应中提取消息文本内容
+            // 纯工具响应允许没有正文；协议封套保留在 RawResponseBody，不伪造为助手文本。
             var messageContent = activeAdapter!.ParseMessageContent(responseBody);
 
             return new GatewayResponse
             {
                 Success = true,
                 StatusCode = (int)response.StatusCode,
-                Content = messageContent ?? responseBody,
+                Content = messageContent ?? (toolCalls is { Count: > 0 } ? null : responseBody),
                 RawResponseBody = responseBody,
                 ToolCalls = toolCalls,
                 Extensions = extensions,

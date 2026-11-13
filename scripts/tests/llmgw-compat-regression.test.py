@@ -29,6 +29,14 @@ def wire(frames):
  return ''.join('data: '+json.dumps(f,ensure_ascii=False)+'\n\n' for f in frames)+'data: [DONE]\n\n'
 
 class CompatibilityTests(unittest.TestCase):
+ def test_tool_only_contract_rejects_protocol_envelope_exposed_as_text(self):
+  case={'protocol':'openai','kind':'tools','stream':False,'expectedToolText':''}
+  payload={'model':'fixed','choices':[{'message':{'content':None,'tool_calls':[{'id':'call_one','function':{'name':'echo_city','arguments':'{"city":"北京"}'}}]},'finish_reason':'tool_calls'}],'usage':{'prompt_tokens':11,'completion_tokens':7}}
+  self.assertFalse(m.normalize(case,200,'application/json',json.dumps(payload))['textPresent'])
+  payload['choices'][0]['message']['content']=json.dumps(payload)
+  with self.assertRaisesRegex(AssertionError,'unexpected text in tool-only response'):
+   m.normalize(case,200,'application/json',json.dumps(payload))
+
  def test_declared_reasoning_rejection_is_counted_separately_and_requires_exact_error(self):
   with tempfile.TemporaryDirectory() as d,patch.dict('os.environ',{'COMPAT_TEST_KEY':'synthetic'}):
    target=Path(d)/'target.json';output=Path(d)/'provider.json'
