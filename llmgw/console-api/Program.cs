@@ -1,3 +1,4 @@
+using PrdAgent.LlmGw.Logs;
 using PrdAgent.LlmGw.ModelUpgrades;
 using PrdAgent.LlmGw.ModelReferences;
 // AI 大模型网关 —— 独立观测/登录后端（与 MAP 物理隔离）。
@@ -452,6 +453,10 @@ await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
         .Ascending("TenantId")
         .Ascending("ProviderTaskId"),
     new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_provider_task" }));
+foreach (var field in new[] { "RequestId", "RunId", "LogicalRequestId", "ProviderRequestId", "ProviderTaskId",
+    "ProviderAttempts.AttemptId", "ProviderAttempts.ProviderRequestId", "ProviderAttempts.ProviderTaskId" })
+    await IndexAdvisory.ReportIfMissingAsync(logs, "idx_llmgw_trace_" + field,
+        "历史调用链查找可能扫描日志集合，需 DBA 执行 scripts/mongodb-indexes.js 的网关索引段");
 await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
 {
     new CreateIndexModel<BsonDocument>(
@@ -2739,6 +2744,8 @@ app.MapPost("/gw/members/{id}/invalidate-sessions", async (HttpContext http, str
 // ───────────────────────────── 日志列表（需鉴权）─────────────────────────────
 app.MapGatewayConsumptionAlerts(gatewayDatabase, jsonOptions);
 
+app.MapLogTraceEndpoints(logs, mapDatabase, MapListItem, MapProviderAttempts, jsonOptions, internalTenantId);
+
 app.MapGet("/gw/logs", async (
     HttpContext http,
     int? page, int? pageSize, string? from, string? to, string? model, string? status,
@@ -3516,7 +3523,9 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
             .Include("AllowedModelPoolIds")
             .Include("DefaultModelPoolId"))
         .ToListAsync();
-    var logFilter = Builders<BsonDocument>.Filter.Gte("StartedAt", since);
+    var logFilter = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Not(LogTraceQuery.LegacySummary),
+        Builders<BsonDocument>.Filter.Gte("StartedAt", since));
     var logStatsDocs = await logs.Aggregate()
         .Match(TenantAccess.FilterTeamScope(http, logFilter))
         .Group(new BsonDocument
@@ -8467,6 +8476,8 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         ? TenantAccess.Filter(http)
         : TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("ReleaseCommit", runtimeCommit),
+            Builders<BsonDocument>.Filter.Not(LogTraceQuery.LegacySummary),
+            Builders<BsonDocument>.Filter.Ne("IngressProtocol", BsonNull.Value),
             Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true)));
     var releaseLogTotal = runtimeCommit is null ? 0 : await logs.CountDocumentsAsync(logReleaseFilter);
     var httpTransportLogs = runtimeCommit is null
@@ -12724,6 +12735,7 @@ app.MapGet("/gw/cost-reconciliations", async (HttpContext http, string? from, st
         .Sort(new BsonDocument("Count", -1))
         .ToListAsync();
     var logFilter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Not(LogTraceQuery.LegacySummary),
         Builders<BsonDocument>.Filter.Gte("StartedAt", range.From),
         Builders<BsonDocument>.Filter.Lt("StartedAt", range.To),
         Builders<BsonDocument>.Filter.Or(
@@ -16932,6 +16944,7 @@ static FilterDefinition<BsonDocument> BuildFilter(
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
     {
+        fb.Not(LogTraceQuery.LegacySummary),
         fb.Gte("StartedAt", fromUtc),
         fb.Lt("StartedAt", toUtc),
     };
@@ -16976,9 +16989,9 @@ static FilterDefinition<BsonDocument> BuildBusinessOperationFilter()
         fb.Or(
             fb.Ne("RequestType", "video-gen"),
             fb.Nin("HttpMethod", new[] { "GET", "DELETE" })));
-    return fb.Or(
+    return fb.And(fb.Not(LogTraceQuery.LegacySummary), fb.Or(
         fb.In("Operation", new[] { "invoke", "submit" }),
-        legacyBusiness);
+        legacyBusiness));
 }
 
 static FilterDefinition<BsonDocument> BuildOperationFilter(string operation)
@@ -17549,6 +17562,13 @@ static List<ProviderAttemptDto> MapProviderAttempts(BsonDocument d)
             var doc = x.AsBsonDocument;
             return new ProviderAttemptDto
             {
+                AttemptId = doc.AsNullableString("AttemptId"),
+                ProviderRequestId = doc.AsNullableString("ProviderRequestId"),
+                ProviderTaskId = doc.AsNullableString("ProviderTaskId"),
+                InputTokens = doc.AsNullableInt("InputTokens"),
+                OutputTokens = doc.AsNullableInt("OutputTokens"),
+                ProviderReportedCost = doc.AsNullableDecimal("ProviderReportedCost"),
+                ProviderCostCurrency = doc.AsNullableString("ProviderCostCurrency"),
                 Order = doc.AsNullableInt("Order") ?? 0,
                 Stage = doc.AsNullableString("Stage") ?? "send",
                 Provider = doc.AsNullableString("Provider"),
@@ -17580,36 +17600,7 @@ static List<ProviderAttemptDto> MapProviderAttempts(BsonDocument d)
 }
 
 static List<ProviderAttemptDto> BuildFallbackProviderAttempts(BsonDocument d)
-{
-    var model = d.AsNullableString("Model");
-    var provider = d.AsNullableString("Provider");
-    if (string.IsNullOrWhiteSpace(model) && string.IsNullOrWhiteSpace(provider))
-        return new List<ProviderAttemptDto>();
-
-    return new List<ProviderAttemptDto>
-    {
-        new()
-        {
-            Order = 1,
-            Stage = "send",
-            Provider = provider,
-            PlatformId = d.AsNullableString("PlatformId"),
-            PlatformName = d.AsNullableString("PlatformName"),
-            Model = model,
-            ModelGroupId = d.AsNullableString("ModelGroupId") ?? d.AsNullableString("GroupId"),
-            ModelGroupName = d.AsNullableString("ModelGroupName"),
-            Protocol = d.AsNullableString("Protocol"),
-            Transport = d.AsNullableString("GatewayTransport"),
-            ReachedProvider = true,
-            Status = d.AsNullableString("Status") == "failed" ? "failed" : "sent",
-            Reason = d.AsNullableString("FallbackReason") ?? d.AsNullableString("ResolutionReason"),
-            StatusCode = d.AsNullableInt("StatusCode"),
-            DurationMs = d.AsNullableLong("DurationMs"),
-            Error = d.AsNullableString("Error"),
-            EndedAt = d.AsNullableUtcDateTime("EndedAt").ToIso(),
-        }
-    };
-}
+    => new();
 
 static string? NormalizeResolutionMode(string? raw, string? reason)
 {

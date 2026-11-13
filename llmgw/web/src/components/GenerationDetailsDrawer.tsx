@@ -231,26 +231,12 @@ function RouterTracePanel({ detail }: { detail: LlmLogDetail }) {
 }
 
 function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
-  const attempts: NonNullable<LlmLogDetail['providerAttempts']> = detail.providerAttempts?.length
-    ? detail.providerAttempts
-    : [{
-        order: 1,
-        stage: 'provider',
-        status: detail.status,
-        statusCode: detail.statusCode,
-        provider: detail.provider,
-        platformName: detail.platformName,
-        platformId: detail.platformId,
-        model: detail.model,
-        durationMs: detail.durationMs,
-        transport: detail.transport,
-        error: detail.error,
-        reason: detail.resolutionReason,
-      }];
+  const attempts = detail.providerAttempts ?? [];
   const maxDuration = Math.max(1, ...attempts.map((attempt) => attempt.durationMs ?? 0));
   return (
     <section>
       <div style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>上游响应</div>
+      {!attempts.length ? <p>缺少逐次上游尝试证据</p> : null}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {attempts.map((attempt) => {
           const warning = attempt.status === 'skipped' || attempt.status === 'failed';
@@ -640,6 +626,7 @@ export function GenerationDetailsDrawer({
                     <Row k="状态" v={detail.statusCode == null ? detail.status : `${detail.status} · HTTP ${detail.statusCode}`} />
                     <Row k="结束原因" v={detail.finishReason} />
                   </section>
+                  <Link to={`/logs/trace?reference=${encodeURIComponent(detail.id)}`}>查看完整关联调用链</Link>
                   <ProviderResponses detail={detail} />
                   {detail.error ? (
                     <div className="lg-generation-error">
