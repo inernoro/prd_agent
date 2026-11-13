@@ -55,6 +55,8 @@ export function ChatPage() {
   const abortRef = useRef<AbortController | null>(null);
   const streamEndRef = useRef<HTMLDivElement | null>(null);
   const activeIdRef = useRef<string | null>(null);
+  // 发送新轮后，先前启动的历史快照不再拥有消息、运行态或订阅游标。
+  const historyVersionRef = useRef(0);
   /**
    * 刚由「发送」这一步新建出来的会话 id。切会话的副作用会清空消息再从服务端重拉，
    * 而这一步紧接着就要画上乐观气泡——不打这个标记的话，用户自己那句话会被副作用
@@ -102,10 +104,11 @@ export function ChatPage() {
     if (!activeId) return;
 
     let cancelled = false;
+    const historyVersion = ++historyVersionRef.current;
 
     void (async () => {
       const res = await listChatMessages(activeId);
-      if (cancelled || activeIdRef.current !== activeId) return;
+      if (cancelled || activeIdRef.current !== activeId || historyVersionRef.current !== historyVersion) return;
       if (!res.success) {
         setNotice(res.error?.message ?? '消息加载失败');
         return;
@@ -231,6 +234,8 @@ export function ChatPage() {
     const content = input.trim();
     if (!content || sending || running) return;
 
+    // 不能让这次提交之前的 GET 在接单后擦掉乐观消息，或重开旧游标中断本轮流。
+    historyVersionRef.current++;
     let sessionId = activeId;
     if (!sessionId) {
       const created = await createChatSession();
