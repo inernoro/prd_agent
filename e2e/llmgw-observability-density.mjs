@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.resolve(process.env.LLMGW_DIST || path.join(root, 'llmgw/web/dist'));
+if (!fs.existsSync(path.join(dist, 'index.html'))) throw new Error(`缺少构建产物：${dist}`);
 const out = process.env.LLMGW_OBSERVABILITY_DENSITY_OUT || path.join(os.tmpdir(), 'llmgw-observability-density');
 fs.mkdirSync(out, { recursive: true });
 const fixed = '2026-11-13T08:00:00Z';
