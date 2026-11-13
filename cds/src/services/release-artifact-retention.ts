@@ -43,6 +43,22 @@ import { isSuccessfulReleaseRun, KEEP_SUCCESSFUL_RELEASE_RUNS } from './release-
  */
 export const RELEASE_ARTIFACT_KEEP_RECENT = KEEP_SUCCESSFUL_RELEASE_RUNS;
 
+/** Restore directories are produced from the previous run's immutable commit.
+ * Existing structured attempt evidence supplies ownership; names alone never do.
+ * Native identity, Git, mounts and live references are still rechecked later. */
+export function releaseArtifactCommitProof(runs: readonly ReleaseRun[]): Record<string, string> {
+  const byId = new Map(runs.map(run => [run.releaseId, run]));
+  const proof = Object.fromEntries(runs.map(run => [run.releaseId, run.commitSha]));
+  for (const run of runs) {
+    const previous = run.previousReleaseId ? byId.get(run.previousReleaseId) : undefined;
+    if (!run.autoRestoreStartedAt || !Number.isFinite(Date.parse(run.autoRestoreStartedAt)) || !previous
+      || previous.targetId !== run.targetId || previous.projectId !== run.projectId
+      || !/^[a-f0-9]{40}$/.test(previous.commitSha)) continue;
+    proof[`${run.releaseId}-auto-restore`] = previous.commitSha;
+  }
+  return proof;
+}
+
 /**
  * CDS 自产发布产物的目录形状：`rel_` + 16 位十六进制，可带 `-auto-restore` 后缀。
  * 形状即归属 —— 不匹配的目录（运维手建、别的工具留下的）一个字节都不碰。

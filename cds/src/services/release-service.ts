@@ -47,6 +47,7 @@ import {
   isSameRemoteDirectory,
   parseRemoteReclaimOutcome,
   parseRemoteReleaseInventory,
+  releaseArtifactCommitProof,
   type ReleaseRemoteDrift,
   type RemoteReleaseInventory,
 } from './release-artifact-retention.js';
@@ -1292,7 +1293,7 @@ export class ReleaseService {
       dryRun: options.dryRun === true,
     };
     const command = buildReleaseReclaimCommand(target, strategy, plan, {
-      commits: Object.fromEntries(runs.map(run => [run.releaseId, run.commitSha])),
+      commits: releaseArtifactCommitProof(runs),
       identities: state.inventory?.worktreeIdentities,
       dryRun: options.dryRun === true,
     });

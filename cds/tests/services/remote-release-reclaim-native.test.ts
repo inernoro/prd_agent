@@ -1,7 +1,7 @@
 import {it,afterEach,expect} from 'vitest';
 import fs from 'node:fs';import path from 'node:path';import os from 'node:os';import {execFileSync} from 'node:child_process';import {randomUUID} from 'node:crypto';
-import {buildReleaseInventoryCommand,parseRemoteReleaseInventory,buildReleaseReclaimCommand,parseRemoteReclaimOutcome} from '../../src/services/release-artifact-retention.js';
-import type {ReleaseTarget,ReleaseStrategy} from '../../src/types.js';
+import {buildReleaseInventoryCommand,parseRemoteReleaseInventory,buildReleaseReclaimCommand,parseRemoteReclaimOutcome,releaseArtifactCommitProof} from '../../src/services/release-artifact-retention.js';
+import type {ReleaseTarget,ReleaseStrategy,ReleaseRun} from '../../src/types.js';
 const roots:string[]=[],containers:string[]=[];
 const execute=(command:string)=>execFileSync('bash',['-e','-c',command],{encoding:'utf8',stdio:['pipe','pipe','pipe']});
 const docker=(...args:string[])=>execFileSync('docker',args,{encoding:'utf8',stdio:['pipe','pipe','pipe']}).trim();
@@ -51,4 +51,15 @@ it('an active native release lock prevents reclamation until the physical holder
  const result=parseRemoteReclaimOutcome(output);
  expect(result.queryError).toBe('release-or-reclaim-in-progress');expect(fs.existsSync(f.old)).toBe(true);
  expect(f.run().removedWorktrees).toEqual([f.ids[2]]);
+});
+it('structured restore attempts prove the previous commit; missing or cross-target evidence preserves the real restore tree',()=>{
+ const f=fixture(),name=f.ids[2]+'-auto-restore',restore=f.old+'-auto-restore';f.git('worktree','add','--detach',restore,f.sha);
+ const previous={releaseId:f.ids[1],targetId:'target',projectId:'owned',commitSha:f.sha} as ReleaseRun;
+ const failed={releaseId:f.ids[2],targetId:'target',projectId:'owned',commitSha:'f'.repeat(40),previousReleaseId:previous.releaseId} as ReleaseRun;
+ const identities=parseRemoteReleaseInventory(execute(buildReleaseInventoryCommand(f.target,f.strategy)!)).worktreeIdentities;
+ const reclaim=(runs:ReleaseRun[])=>parseRemoteReclaimOutcome(execute(buildReleaseReclaimCommand(f.target,f.strategy,{removeWorktrees:[name],removeVersions:[]},{identities,commits:releaseArtifactCommitProof(runs)})!));
+ expect(reclaim([previous,failed]).heldReasons?.['worktree:'+name]).toBe('ledger-owner-unconfirmed');expect(fs.existsSync(restore)).toBe(true);
+ const attempt={...failed,autoRestoreStartedAt:new Date().toISOString()};
+ expect(reclaim([{...previous,targetId:'other'},attempt]).heldReasons?.['worktree:'+name]).toBe('ledger-owner-unconfirmed');
+ expect(reclaim([previous,attempt]).removedWorktrees).toEqual([name]);expect(fs.existsSync(restore)).toBe(false);
 });
