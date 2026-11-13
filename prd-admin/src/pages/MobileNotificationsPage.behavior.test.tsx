@@ -57,7 +57,7 @@ describe('通知动作与事实真实组件交互', () => {
     expect(host.textContent).toContain(other.title);
   });
 
-  it('单条确认保留故障仍在发生的事实，不把确认当恢复', async () => {
+  it('单条确认保留最近观测异常的事实，不把确认当恢复', async () => {
     api.batch.mockResolvedValue({ success: true, data: { requested: 1, handled: 1, failed: 0, results: [{ id: notice.id, handled: true }] } });
     api.list.mockResolvedValueOnce({ success: true, data: { items: [notice] } })
       .mockResolvedValue({ success: true, data: { items: [{ ...notice, status: 'handled' }] } });
@@ -65,7 +65,7 @@ describe('通知动作与事实真实组件交互', () => {
     const confirm = host.querySelector<HTMLButtonElement>(`[aria-label="确认通知：${notice.title}"]`)!;
     await act(async () => confirm.click());
     expect(api.batch).toHaveBeenCalledWith({ items: [{ id: notice.id, pushEpisode: 2, updatedAt: notice.updatedAt }] });
-    expect(host.textContent).toContain('故障仍在发生');
+    expect(host.textContent).toContain('最近观测异常，尚无恢复证据');
     expect(host.textContent).toContain('确认不代表故障已修复');
     expect(host.textContent).not.toContain('已有恢复证据');
   });
@@ -96,7 +96,7 @@ describe('通知动作与事实真实组件交互', () => {
 
   it.each([
     ['fallback_succeeded', '该次请求备用成功'],
-    ['all_failed', '该次请求全部线路失败'],
+    ['all_failed', '该次请求已尝试线路均失败'],
     ['unknown', '该次请求结果未确认'],
   ])('直接展示服务端%s结果，不根据故障级别猜测请求结果', async (requestOutcome, expected) => {
     api.list.mockResolvedValue({ success: true, data: { items: [{ ...notice, requestOutcome }] } });

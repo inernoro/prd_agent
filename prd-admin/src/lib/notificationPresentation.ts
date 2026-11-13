@@ -1,10 +1,10 @@
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 
 export const NOTIFICATION_INCIDENT_STATE: Record<string, string> = {
-  active: '故障仍在发生', recovered: '已有恢复证据', unknown: '当前状态未确认',
+  active: '最近观测异常，尚无恢复证据', recovered: '已有恢复证据', unknown: '当前状态未确认',
 };
 export const NOTIFICATION_REQUEST_OUTCOME: Record<string, string> = {
-  request_failed: '该次请求失败', fallback_succeeded: '该次请求备用成功', all_failed: '该次请求全部线路失败', unknown: '该次请求结果未确认',
+  request_failed: '该次请求失败', fallback_succeeded: '该次请求备用成功', all_failed: '该次请求已尝试线路均失败', unknown: '该次请求结果未确认',
 };
 
 /** 只屏蔽当前故障代次和严重程度；复发、升级和恢复均重新可见。 */

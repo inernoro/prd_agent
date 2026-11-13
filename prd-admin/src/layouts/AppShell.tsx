@@ -1108,6 +1108,7 @@ export default function AppShell() {
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-[9px] transition-all duration-100 hover:brightness-110 active:scale-[0.97] active:brightness-90 disabled:opacity-60 disabled:cursor-not-allowed"
                   style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
                   onClick={() => handleNotification(toastNotification.id)}
+                  title="仅确认通知，不会修复故障；共享通知的确认对所有有权查看者生效"
                 >
                   {handlingId === toastNotification.id ? <MapSpinner size={12} color="var(--accent-on-gold)" /> : null}
                   确认通知
