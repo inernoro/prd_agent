@@ -11,6 +11,7 @@ import { OnboardingChecklist } from '@/components/OnboardingChecklist';
 import { fmtCost, fmtMs, fmtShortTime, statusBadgeStyle } from '@/lib/logsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canAccessPage } from '@/lib/access';
+import './HomePage.css';
 
 const RANGE_OPTIONS = [
   { days: 1, label: '24 小时' },
@@ -91,13 +92,29 @@ export function OverviewPage() {
   const canManageKeys = canAccessPage(tenant, 'serviceKeys');
   const canOpenGovernance = canAccessPage(tenant, 'governance');
 
+  const quickstart = (
+    <Card className="lg-home-quickstart-card">
+      <div className="lg-card-kicker"><Rocket size={15} /> 快速接入</div>
+      {/* 新人轨：四步派生清单，四项全成立后整体消失（见 lib/onboarding.ts）。
+          此处原是一段静态的「三步完成第一条请求」说明——它对新人太抽象、对熟人是噪音。 */}
+      <OnboardingChecklist />
+      <div className="lg-protocol-list" aria-label="支持协议">
+        {['GW Native', 'OpenAI', 'Claude', 'Gemini'].map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />)}
+      </div>
+      <div className="lg-card-actions">
+        {canUseQuickstart ? <Link className="lg-primary-link" to="/quickstart"><Rocket size={14} /> {canManageKeys ? '开始接入' : '阅读接入教程'}</Link> : null}
+        <Link className="lg-secondary-link" to="/learn#first-request"><BookOpen size={14} /> 先了解链路</Link>
+      </div>
+    </Card>
+  );
+
   return (
     <div className="lg-home-page">
       <div className="lg-page-heading lg-home-heading">
         <div>
           <div className="lg-eyebrow">{tenant?.name ?? '当前租户'} · 工作区</div>
           <h1>概览</h1>
-          <p>查看当前租户的调用、用户、应用、模型、密钥和费用可信度。</p>
+          <p>当前租户的调用、用量与费用。</p>
         </div>
         <div className="lg-range-switch" aria-label="统计时间范围">
           {RANGE_OPTIONS.map((option) => (
@@ -117,7 +134,7 @@ export function OverviewPage() {
       {loading && overview ? <div className="lg-refreshing" role="status">正在刷新当前时间范围…</div> : null}
       {error ? <div className="lg-inline-alert" role="status">部分首页数据不可用：{error}</div> : null}
 
-      <div className="lg-home-primary-grid">
+      <div className={`lg-home-primary-grid${hasRequests ? ' is-established' : ''}`}>
         <Card className="lg-home-health-card">
           <div className="lg-card-kicker"><HeartPulse size={15} /> 健康状态</div>
           <div className="lg-health-value">
@@ -128,19 +145,7 @@ export function OverviewPage() {
           {canOpenGovernance ? <Link className="lg-secondary-link" to="/governance">打开系统运维</Link> : null}
         </Card>
 
-        <Card className="lg-home-quickstart-card">
-          <div className="lg-card-kicker"><Rocket size={15} /> 快速接入</div>
-          {/* 新人轨：四步派生清单，四项全成立后整体消失（见 lib/onboarding.ts）。
-              此处原是一段静态的「三步完成第一条请求」说明——它对新人太抽象、对熟人是噪音。 */}
-          <OnboardingChecklist />
-          <div className="lg-protocol-list" aria-label="支持协议">
-            {['GW Native', 'OpenAI', 'Claude', 'Gemini'].map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />)}
-          </div>
-          <div className="lg-card-actions">
-            {canUseQuickstart ? <Link className="lg-primary-link" to="/quickstart"><Rocket size={14} /> {canManageKeys ? '开始接入' : '阅读接入教程'}</Link> : null}
-            <Link className="lg-secondary-link" to="/learn#first-request"><BookOpen size={14} /> 先了解链路</Link>
-          </div>
-        </Card>
+        {!hasRequests ? quickstart : null}
 
         <Card className="lg-home-cost-card">
           <div className="lg-card-kicker"><CircleDollarSign size={15} /> 费用可信度</div>
@@ -233,6 +238,8 @@ export function OverviewPage() {
           </Card>
         </div>
       </section>
+
+      {hasRequests ? quickstart : null}
 
       <Card className="lg-learn-banner">
         <div><BookOpen size={19} /><span><strong>第一次使用 Gateway？</strong><small>学习中心用一条完整链路解释租户、团队、用户、appCaller、密钥、对外模型、Provider、请求记录与费用。</small></span></div>

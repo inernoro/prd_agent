@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { getLogTrace } from '@/lib/api';
 import type { LogTraceData } from '@/lib/types';
 import { Button, Card, Spinner } from '@/components/ui';
+import { DetailsBlock } from '@/components/PageShell';
 import { fmtCost, fmtDate } from '@/lib/logsHelpers';
 import './LogTracePage.css';
 
@@ -54,18 +55,16 @@ export function LogTracePage() {
       {data.hasMoreCandidates ? <p>仅显示前 100 个候选，请使用更明确的日志或业务操作编号。</p> : null}
     </Card> : null}
     {data && !data.ambiguous ? <>
-      <Card style={{ padding: 16 }}><p>共 {data.total} 条关联记录 · 第 {data.page} 页</p>
-        <p>每条记录代表一次网关请求；其下按顺序列出调度尝试。相似正文、同一模型和时间接近均不作为重试证据。</p>
-        <p>费用逐项保留来源，不累加作业回执或历史汇总。未返回的实际费用显示未知，估算与实际费用分别展示。</p>
+      <div className="lg-log-trace-summary"><p>共 {data.total} 条关联记录{data.total > data.pageSize ? ` · 第 ${data.page} 页` : ''}</p>
         {data.business ? <div><h2>MAP 视频业务结果</h2>
           <p>业务操作：{data.business.runId} · 状态：{data.business.status || '未知'}</p>
           <p>上游作业：{data.business.providerTaskId || '未记录'} · 上游状态：{data.business.upstreamStatus || '未知'}</p>
           <p style={{ overflowWrap: 'anywhere' }}>最终产物 SHA256：{data.business.artifactSha256 || '未记录，请用运行编号核对业务产物'}</p>
         </div> : <p>暂无授权范围内的 MAP 视频产物证据。</p>}
-      </Card>
+      </div>
       {data.items?.map(item => {
         const log = item.log;
-        return <Card key={log.id} style={{ padding: 16 }}>
+        return <Card key={log.id} className="lg-log-trace-record" style={{ padding: 16 }}>
           <h2>{operations[log.operation || 'invoke'] || log.operation} · {item.evidenceGap ? '结果待核实（历史 running）' : statuses[log.status] || log.status} <Link to={`/logs/${encodeURIComponent(log.id)}`}>查看详情</Link></h2>
           <p>{fmtDate(log.startedAt)} · {log.appCallerCodeDisplayName || log.appCallerCode || '调用用途未知'} · {log.model}</p>
           <p>用户 {log.userId || '未知'} · 团队 {log.teamId || '未知'} · 接入身份 {log.clientCode || log.serviceKeyPrefix || log.serviceKeyId || '未知'}</p>
@@ -89,8 +88,12 @@ export function LogTracePage() {
           {item.evidenceGap ? <p>{item.evidenceGap}</p> : null}
         </Card>;
       })}
-      <div style={{ display: 'flex', gap: 8 }}><Button disabled={busy || data.page === 1} onClick={() => selectPage(data.page - 1)}>上一页</Button>
-        <Button disabled={busy || data.page * data.pageSize >= data.total} onClick={() => selectPage(data.page + 1)}>下一页</Button></div>
+      {data.total > data.pageSize ? <div aria-label="调用链分页" style={{ display: 'flex', gap: 8 }}><Button disabled={busy || data.page === 1} onClick={() => selectPage(data.page - 1)}>上一页</Button>
+        <Button disabled={busy || data.page * data.pageSize >= data.total} onClick={() => selectPage(data.page + 1)}>下一页</Button></div> : null}
+      <DetailsBlock title="关联与费用口径">
+        <p>每条记录代表一次网关请求；其下按顺序列出调度尝试。相似正文、同一模型和时间接近均不作为重试证据。</p>
+        <p>费用逐项保留来源，不累加作业回执或历史汇总。未返回的实际费用显示未知，估算与实际费用分别展示。</p>
+      </DetailsBlock>
     </> : null}
   </div>;
 }

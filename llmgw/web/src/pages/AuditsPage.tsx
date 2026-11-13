@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { getOperationAudits } from '@/lib/api';
 import type { OperationAuditItem, OperationAuditsData } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
+import { DetailsBlock } from '@/components/PageShell';
 import { TABLE_CELL, TABLE_HEAD_CELL, TOOLBAR_CONTROL } from '@/lib/typography';
 
 const PAGE_SIZE = 50;
@@ -61,7 +62,7 @@ export function AuditsPage() {
       <header className="lg-page-heading">
         <div>
           <h1>操作审计</h1>
-          <p>这里记录谁在什么时间修改了租户配置，以及改的是哪个对象。请求内容和提示词正文不会出现在这里；提示词策略只记录策略 id、版本和 hash，其他配置只展示排查所需的状态差异。</p>
+          <p>追溯租户配置的修改与结果。</p>
         </div>
       </header>
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -71,26 +72,27 @@ export function AuditsPage() {
             setPage(1);
             setSearch(e.target.value);
           }}
+          aria-label="搜索操作审计"
           placeholder="搜索 action / target / actor"
           style={{ ...selectStyle, width: 260 }}
         />
         <FilterSelect label="全部动作" value={action} options={data?.actions ?? []} onChange={(v) => { setPage(1); setAction(v); }} />
         <FilterSelect label="全部对象" value={targetType} options={data?.targetTypes ?? []} onChange={(v) => { setPage(1); setTargetType(v); }} />
         <FilterSelect label="全部操作者" value={actor} options={data?.actors ?? []} onChange={(v) => { setPage(1); setActor(v); }} />
-        <select value={success} onChange={(e) => { setPage(1); setSuccess(e.target.value); }} style={selectStyle}>
+        <select aria-label="审计结果" value={success} onChange={(e) => { setPage(1); setSuccess(e.target.value); }} style={selectStyle}>
           <option value="">全部结果</option>
           <option value="true">成功</option>
           <option value="false">失败</option>
         </select>
-        <select value={sinceHours} onChange={(e) => { setPage(1); setSinceHours(e.target.value); }} style={selectStyle}>
+        <select aria-label="审计时间范围" value={sinceHours} onChange={(e) => { setPage(1); setSinceHours(e.target.value); }} style={selectStyle}>
           {SINCE_OPTIONS.map((x) => <option key={x.value || 'all'} value={x.value}>{x.label}</option>)}
         </select>
         <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>{data ? `共 ${data.total} 条` : '加载中'}</span>
       </div>
 
       {!data ? <SectionLoader text="正在加载操作审计…" /> : data.items.length === 0 ? <Empty text="暂无操作审计" /> : (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-          <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div data-audit-list style={{ flex: data.items.length >= PAGE_SIZE ? 1 : '0 1 auto', minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
+          <table className="lg-data-table" style={{ width: '100%', minWidth: 1080, borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
               <tr>
                 <th style={th}>时间</th>
@@ -117,11 +119,14 @@ export function AuditsPage() {
         </div>
       )}
 
-      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+      {pages > 1 ? <div aria-label="审计分页" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
         <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>上一页</Button>
         <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>{page} / {pages}</span>
         <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => setPage((p) => Math.min(pages, p + 1))}>下一页</Button>
-      </div>
+      </div> : null}
+      <DetailsBlock title="记录范围与隐私">
+        <p>记录操作者、时间、对象和配置状态差异，不含请求内容或提示词正文。提示词策略只记录策略 id、版本和 hash。</p>
+      </DetailsBlock>
     </div>
   );
 }
@@ -147,7 +152,7 @@ function AuditRow({ item, td, expanded, onToggle }: { item: OperationAuditItem; 
           </div>
         </td>
         <td style={td}>{item.actorUsername || item.actorUserId || '—'}</td>
-        <td style={td}><Chip label={result.label} color={result.color} bg={result.bg} /></td>
+        <td style={{ ...td, whiteSpace: 'nowrap' }}><Chip label={result.label} color={result.color} bg={result.bg} /></td>
         <td style={td}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 130 }}>
             <span>{item.remoteIp || '—'}</span>
@@ -155,7 +160,7 @@ function AuditRow({ item, td, expanded, onToggle }: { item: OperationAuditItem; 
           </div>
         </td>
         <td style={td}>
-          <Button size="sm" variant="ghost" onClick={onToggle}>{expanded ? '收起' : '查看'}</Button>
+          <Button size="sm" variant="ghost" style={{ whiteSpace: 'nowrap' }} aria-expanded={expanded} onClick={onToggle}>{expanded ? '收起' : '查看'}</Button>
         </td>
       </tr>
       {expanded ? (
@@ -218,7 +223,7 @@ function targetTypeLabel(value?: string | null) {
 
 function FilterSelect({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} style={selectStyle}>
+    <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} style={selectStyle}>
       <option value="">{label}</option>
       {options.map((x) => <option key={x} value={x}>{x}</option>)}
     </select>

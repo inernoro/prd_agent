@@ -1,0 +1,18 @@
+/* 已接入的租户先看运行数据；新手保留原接入顺序。 */
+.lg-home-primary-grid.is-established {
+  grid-template-columns: minmax(190px, 0.8fr) minmax(240px, 1fr);
+}
+
+.lg-home-primary-grid.is-established > .lg-home-cost-card {
+  grid-column: auto;
+}
+
+.lg-home-page > .lg-home-quickstart-card {
+  padding: 14px;
+}
+
+@media (max-width: 760px) {
+  .lg-home-primary-grid.is-established {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
