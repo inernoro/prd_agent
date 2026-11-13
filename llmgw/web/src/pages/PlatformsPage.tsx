@@ -1,6 +1,7 @@
 // Provider（模型供应方）：先完成单个 Provider 的可理解自助配置，再把批量维护收进高级区。
 // 密钥明文只随创建/轮换请求发送，永不回显；列表最多展示头尾打码的指纹（keyFingerprint），
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
+import { ActionFeedback } from '@/components/ActionFeedback';
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
 import { Link } from 'react-router-dom';
 import { ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
@@ -39,6 +40,8 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   const [bulkOnlyMissing, setBulkOnlyMissing] = useState(true);
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [transient, setTransient] = useState(false);
+  function notify(message: string | null, shortLived = false) { setToast(message); setTransient(shortLived); }
   const [showCreate, setShowCreate] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [draft, setDraft] = useState<CreatePlatformRequest>({
@@ -121,44 +124,44 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
 
   async function runTest(p: PlatformItem) {
     setBusyId(p.id);
-    setToast(null);
+    notify(null);
     const res = await testPlatformConnection(p.id);
     setBusyId(null);
     if (res.success) setTestResult((prev) => ({ ...prev, [p.id]: res.data }));
-    else setToast(res.error?.message || '测试失败');
+    else notify(res.error?.message || '测试失败');
   }
 
   async function openDiscovery(p: PlatformItem) {
     setBusyId(p.id);
-    setToast(null);
+    notify(null);
     const res = await getUpstreamModels(p.id);
     setBusyId(null);
     if (res.success) setDiscovery({ platformId: p.id, data: res.data });
-    else setToast(res.error?.message || '拉取模型清单失败');
+    else notify(res.error?.message || '拉取模型清单失败');
   }
 
   async function submitCreate(event: React.FormEvent) {
     event.preventDefault();
     setCreateBusy(true);
-    setToast(null);
+    notify(null);
     const res = await createPlatform(draft);
     setCreateBusy(false);
     if (!res.success) {
       setDraft((value) => ({ ...value, apiKey: '' }));
-      setToast(res.error?.message || '创建失败');
+      notify(res.error?.message || '创建失败');
       return;
     }
     setItems((prev) => [...(prev || []), res.data]);
     setDraft({ name: '', platformType: 'openai', apiUrl: '', apiKey: '', maxConcurrency: 20 });
     setPreset(null);
     setShowCreate(false);
-    setToast(`Provider「${res.data.name}」已保存。正在测试连接…`);
+    notify(`Provider「${res.data.name}」已保存。正在测试连接…`);
     // 保存完立刻自测一次：最小输入的连带义务是「当场知道对不对」，
     // 不能等到业务真去调模型时才发现密钥是错的。
     const test = await testPlatformConnection(res.data.id);
     if (test.success) {
       setTestResult((prev) => ({ ...prev, [res.data.id]: test.data }));
-      setToast(test.data.reachable
+      notify(test.data.reachable
         ? `Provider「${res.data.name}」已保存，连接正常，可以拉取模型清单了`
         : `Provider「${res.data.name}」已保存，但连接测试没通过，见下方提示`);
       // Claude 原生协议没有模型列表接口，后端对它一律 DISCOVERY_UNSUPPORTED——
@@ -166,13 +169,13 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       // 默认流程的最后一步给用户糊一个错误提示。判据跟着后端走，别让成功路径以报错收尾。
       if (test.data.reachable && res.data.platformType !== 'claude') await openDiscovery(res.data);
     } else {
-      setToast(`Provider「${res.data.name}」已保存（自动测试没跑起来，可在列表里手动点「测试连接」）`);
+      notify(`Provider「${res.data.name}」已保存（自动测试没跑起来，可在列表里手动点「测试连接」）`);
     }
   }
 
   async function runImport(platformId: string, selected: UpstreamModelsData['items']) {
     setBusyId(platformId);
-    setToast(null);
+    notify(null);
     const res = await importUpstreamModels(platformId, selected.map((m) => ({
       modelId: m.modelId,
       capabilities: m.inferredCapabilities,
@@ -186,7 +189,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     })));
     setBusyId(null);
     if (!res.success) {
-      setToast(res.error?.message || '导入失败');
+      notify(res.error?.message || '导入失败');
       return;
     }
     // 池同步失败时后端会如实回传：模型入库了但池路由选不到，不能报成全绿
@@ -203,7 +206,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       + (published ? `；${published}，调用方现在可以按公开模型名直接调` : '');
     // 池同步失败、名录拦下、白名单登记失败都要如实说，且都带可执行的下一步——后端的 message 已经写好了。
     const notes = [res.data.message, res.data.whitelistMessage].filter(Boolean).join(' ');
-    setToast(notes ? `${base}。${notes}` : base);
+    notify(notes ? `${base}。${notes}` : base);
     setDiscovery(null);
     // 导入完必须重新拉一次：不拉的话「名下模型」那一列还停在导入前的「2 个没登记」，
     // 用户刚登记完却看到没变，会以为这次登记没生效。
@@ -219,61 +222,61 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
 
   async function toggle(p: PlatformItem) {
     setBusyId(p.id);
-    setToast(null);
+    notify(null);
     const res = await setPlatformEnabled(p.id, !p.enabled);
     setBusyId(null);
     if (res.success) {
       setItems((prev) => (prev ? prev.map((x) => (x.id === p.id ? res.data : x)) : prev));
-      setToast(`已${res.data.enabled ? '启用' : '停用'}平台「${res.data.name}」`);
+      notify(`已${res.data.enabled ? '启用' : '停用'}平台「${res.data.name}」`, true);
     } else {
-      setToast(res.error?.message || '操作失败');
+      notify(res.error?.message || '操作失败');
     }
   }
 
   async function claimPlatform(p: PlatformItem) {
     setBusyId(p.id);
-    setToast(null);
+    notify(null);
     const res = await claimPlatformToGateway(p.id);
     setBusyId(null);
     if (res.success) {
       setItems((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
-      setToast(`已将「${res.data.name}」导入平台配置`);
+      notify(`已将「${res.data.name}」导入平台配置`, true);
     } else {
-      setToast(res.error?.message || '操作失败');
+      notify(res.error?.message || '操作失败');
     }
   }
 
   async function saveApiKey(p: PlatformItem) {
     const apiKey = keyValue.trim();
     if (!apiKey) {
-      setToast('apiKey 不能为空');
+      notify('apiKey 不能为空');
       return;
     }
     setBusyId(p.id);
-    setToast(null);
+    notify(null);
     const res = await rotatePlatformApiKey(p.id, apiKey);
     setBusyId(null);
     if (res.success) {
       setItems((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
       setKeyEditId(null);
       setKeyValue('');
-      setToast(`已更新「${res.data.name}」的 GW 平台密钥`);
+      notify(`已更新「${res.data.name}」的 GW 平台密钥`, true);
     } else {
-      setToast(res.error?.message || '操作失败');
+      notify(res.error?.message || '操作失败');
     }
   }
 
   async function clearApiKey(p: PlatformItem) {
     if (!await confirm({ title: `清除「${p.name}」的 GW 平台密钥？`, description: '清除后这条上游会退回「未配置密钥」，用它的模型将无法调用。', tone: 'danger', confirmLabel: '清除密钥' })) return;
     setBusyId(p.id);
-    setToast(null);
+    notify(null);
     const res = await deletePlatformApiKey(p.id);
     setBusyId(null);
     if (res.success) {
       setItems((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
-      setToast(`已清除「${res.data.name}」的 GW 平台密钥`);
+      notify(`已清除「${res.data.name}」的 GW 平台密钥`, true);
     } else {
-      setToast(res.error?.message || '操作失败');
+      notify(res.error?.message || '操作失败');
     }
   }
 
@@ -362,7 +365,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
 
   async function saveEdit(p: PlatformItem) {
     setBusyId(p.id);
-    setToast(null);
+    notify(null);
     // 类型没改就不提交这个字段：更新端点只收 openai / claude，而存量类型（openrouter / google 等）
     // 原样回传会被 INVALID_INPUT 挡下——用户只想改个名字，却被要求先把上游重新分类。
     // 端点把 null 当「这个字段不改」，所以省掉即可。
@@ -375,9 +378,9 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     if (res.success) {
       setItems((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
       setEditId(null);
-      setToast(`已保存「${res.data.name}」`);
+      notify(`已保存「${res.data.name}」`, true);
     } else {
-      setToast(res.error?.message || '保存失败');
+      notify(res.error?.message || '保存失败');
     }
   }
 
@@ -399,11 +402,11 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     });
     if (typed === null) return;
     if (typed.trim() !== p.name) {
-      setToast('输入的平台名不一致，已取消删除');
+      notify('输入的平台名不一致，已取消删除');
       return;
     }
     setBusyId(p.id);
-    setToast(null);
+    notify(null);
     const res = await deletePlatform(p.id);
     setBusyId(null);
     if (res.success) {
@@ -414,26 +417,26 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
         delete next[p.id];
         return next;
       });
-      setToast(`已删除上游「${p.name}」`);
+      notify(`已删除上游「${p.name}」`, true);
       return;
     }
-    setToast(res.error?.message || '删除失败');
+    notify(res.error?.message || '删除失败');
   }
 
   async function applyBulkApiKey() {
     const apiKey = bulkKeyValue.trim();
     if (!apiKey) {
-      setToast('apiKey 不能为空');
+      notify('apiKey 不能为空');
       return;
     }
     if (!bulkConfirm) {
-      setToast('请先勾选确认范围');
+      notify('请先勾选确认范围');
       return;
     }
     const scope = bulkOnlyMissing ? '缺失密钥的 GW 平台' : '全部 GW 平台';
     if (!await confirm({ title: `批量更新${scope}密钥？`, description: '这会覆盖范围内每一条的现有密钥。', tone: 'danger', confirmLabel: '批量更新' })) return;
     setBusyId('bulk-platform-api-key');
-    setToast(null);
+    notify(null);
     const res = await bulkRotateApiKeys({
       objectType: 'platform',
       apiKey,
@@ -447,9 +450,9 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       )) : prev));
       setBulkKeyValue('');
       setBulkConfirm(false);
-      setToast(`批量轮换完成：匹配 ${res.data.matchedCount}，更新 ${res.data.modifiedCount}，跳过 ${res.data.skippedCount}`);
+      notify(`批量轮换完成：匹配 ${res.data.matchedCount}，更新 ${res.data.modifiedCount}，跳过 ${res.data.skippedCount}`, true);
     } else {
-      setToast(res.error?.message || '操作失败');
+      notify(res.error?.message || '操作失败');
     }
   }
 
@@ -555,9 +558,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
         </section>
       ) : null}
       {!canWrite ? <ReadOnlyNotice /> : null}
-      {toast ? (
-        <div style={{ flexShrink: 0, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
-      ) : null}
+      <ActionFeedback message={toast} transient={transient} onDismiss={() => notify(null)} />
       {/* 自测结果与模型清单挂在表格上方：接完之后「通没通、上游有什么」必须看得见。 */}
       {Object.entries(testResult).map(([platformId, result]) => {
         const owner = providerItems.find((x) => x.id === platformId);
@@ -588,20 +589,6 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
             onRegistered={() => void openDiscovery(providerItems.find((x) => x.id === discovery.platformId)!)}
           />
         </section>
-      ) : null}
-      {providerItems.length > 0 && canWrite ? (
-        <details style={{ flexShrink: 0 }}>
-          <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量轮换已有 Provider 密钥</summary>
-          <div style={toolbarStyle}>
-            <span style={toolbarTitleStyle}>批量维护 Provider 密钥</span>
-            <input type="password" autoComplete="new-password" value={bulkKeyValue} onChange={(e) => setBulkKeyValue(e.target.value)} placeholder="新 apiKey" style={inputStyle} />
-            <label style={checkStyle}><input type="checkbox" checked={bulkOnlyMissing} onChange={(e) => setBulkOnlyMissing(e.target.checked)} />只补缺失</label>
-            <label style={checkStyle}><input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />确认应用到当前 Provider</label>
-            <Button size="sm" variant="ghost" disabled={busyId === 'bulk-platform-api-key'} onClick={() => void applyBulkApiKey()}>
-              {busyId === 'bulk-platform-api-key' ? '处理中…' : '批量轮换密钥'}
-            </Button>
-          </div>
-        </details>
       ) : null}
       {providerItems.length === 0 ? (
         <Empty text={canWrite ? '还没有 Provider。请填写上方 4 个必填项，保存后再去添加第一个模型。' : '当前租户还没有 Provider。请联系 Owner 或 Admin 添加。'} />
@@ -757,6 +744,20 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       </div>
       )}
 
+      {providerItems.length > 0 && canWrite ? (
+        <details className="lg-upstream-maintenance">
+          <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量轮换已有 Provider 密钥</summary>
+          <div style={toolbarStyle}>
+            <span style={toolbarTitleStyle}>批量维护 Provider 密钥</span>
+            <input type="password" autoComplete="new-password" value={bulkKeyValue} onChange={(e) => setBulkKeyValue(e.target.value)} placeholder="新 apiKey" style={inputStyle} />
+            <label style={checkStyle}><input type="checkbox" checked={bulkOnlyMissing} onChange={(e) => setBulkOnlyMissing(e.target.checked)} />只补缺失</label>
+            <label style={checkStyle}><input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />确认应用到当前 Provider</label>
+            <Button size="sm" variant="ghost" disabled={busyId === 'bulk-platform-api-key'} onClick={() => void applyBulkApiKey()}>
+              {busyId === 'bulk-platform-api-key' ? '处理中…' : '批量轮换密钥'}
+            </Button>
+          </div>
+        </details>
+      ) : null}
       </PageBody>
       ) : section === 'catalog' ? (
         <PageBody><ModelCatalogSection canWrite={canWrite} /></PageBody>

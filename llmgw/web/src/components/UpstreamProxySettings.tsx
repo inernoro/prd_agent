@@ -1,10 +1,11 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { ActionFeedback } from '@/components/ActionFeedback';
 import { getUpstreamProxy, saveUpstreamProxy, testUpstreamNetwork } from '@/lib/api';
 import type { UpstreamNetworkTestResult, UpstreamProxyDraft, UpstreamProxyView } from '@/lib/types';
 import { Button, Chip, InlineAlert, Spinner } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
-import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, SECTION_TITLE } from '@/lib/typography';
+import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT } from '@/lib/typography';
 
 const GlobalProxyContext = createContext<UpstreamProxyView | null>(null);
 
@@ -75,17 +76,17 @@ export function UpstreamProxyProvider({ children }: { children: ReactNode }) {
     } finally { setBusy(false); }
   }
   return <GlobalProxyContext.Provider value={saved}>
-    <details style={{ flexShrink: 0, border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '10px 12px', maxHeight: '55vh', overflow: 'auto' }}>
-      <summary style={{ ...SECTION_TITLE, cursor: 'pointer' }}>全局上游代理 · {saved === null ? '尚未加载' : saved.mode === 'custom' ? saved.address : saved.mode === 'inherit' ? '部署默认' : '强制直连'}</summary>
+    {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+    {children}
+    <details className="lg-upstream-proxy">
+      <summary>全局上游代理 · {saved === null ? '尚未加载' : saved.mode === 'custom' ? saved.address : saved.mode === 'inherit' ? '部署默认' : '强制直连'}</summary>
       <p style={HINT_TEXT}>应用于当前组织内所有跟随全局设置的上游，也包括之后新增的上游。部署默认保留服务器已有出口设置，强制直连会关闭代理；单个上游也可独立配置。</p>
-      {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
-      {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
+      <ActionFeedback message={notice} transient onDismiss={() => setNotice(null)} />
       {canWrite && loaded ? <div style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <ProxyFields value={draft} onChange={setDraft} stored={saved} global />
         <div><Button size="sm" variant="primary" disabled={busy} onClick={() => void save()}>{busy ? <Spinner size={14} /> : null}应用全局设置</Button></div>
       </div> : null}
     </details>
-    {children}
   </GlobalProxyContext.Provider>;
 }
 

@@ -11,7 +11,8 @@
     "test:ui": "playwright test --ui",
     "install-browsers": "playwright install --with-deps chromium",
     "codegen": "playwright codegen",
-    "audit:contrast": "node theme-contrast-audit.mjs"
+    "audit:contrast": "node theme-contrast-audit.mjs",
+    "test:content-density": "node llmgw-content-density.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0",

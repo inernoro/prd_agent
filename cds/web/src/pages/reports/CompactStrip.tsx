@@ -254,6 +254,20 @@ export const STRIP_CSS = `
   background:hsl(var(--surface-sunken));}
 .cs .sbar{display:block;height:100%;background:hsl(var(--hairline-strong));}
 
+/* 窄屏按内容组织：桌面宽度基准不能在纵向变成最低高度。 */
+@media (max-width:1023px){
+  .cs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}
+  .cs .z{flex:0 0 auto;max-width:none;}
+  .cs .z-total{order:0;}
+  .cs .z-verdict{order:0;}
+  .cs .z-stages{order:1;grid-column:1 / -1;}
+  .cs .z-proj{order:2;min-width:0;}
+  .cs .z-side{order:2;}
+  .cs .z > :last-child{margin-top:0.625rem;}
+  .cs .stagerow{flex:0 0 auto;}
+  .cs .stage{gap:0.625rem;}
+}
+
 @media (prefers-reduced-motion: no-preference){
   .cs[data-play="1"] .d{animation:cs-dot .26s ease-out backwards;animation-delay:var(--d,0ms);}
   .cs[data-play="1"] .rail span,.cs[data-play="1"] .vbar,.cs[data-play="1"] .sbar{
