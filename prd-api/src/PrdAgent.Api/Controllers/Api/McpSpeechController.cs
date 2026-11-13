@@ -115,10 +115,10 @@ public sealed class McpSpeechController(SpeechGenerationService speech, IAdminPe
     }
 
     [HttpGet("runs/{id}/audio")]
-    public async Task<IActionResult> Audio(string id)
+    public async Task<IActionResult> Audio(string id, [FromQuery] bool playable = false)
     {
         // 历史资产按归属访问；撤回生成权限不删除已拥有的成品。
-        var result = await speech.ReadAudioAsync(this.GetRequiredUserId(), id);
+        var result = await speech.ReadAudioAsync(this.GetRequiredUserId(), id, normalizeForMedia: playable);
         Response.Headers.CacheControl = "private, no-store";
         return File(result.Bytes, result.Mime, result.FileName, enableRangeProcessing: true);
     }

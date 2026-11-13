@@ -92,4 +92,17 @@ public sealed class SpeechCapabilityPolicyTests
     public void UnknownPublicOptionsCannotBeIgnored()
         => Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<SpeechCreateRequest>(
             "{\"Text\":\"原文\",\"UnrecognizedEmotionParameter\":\"happy\"}"));
+
+    [Theory]
+    [InlineData("openai")]
+    [InlineData("doubao-tts")]
+    public void PcmRequest_FixesDoubaoSampleRateWithoutAddingUnsupportedOpenAiParameter(string protocol)
+    {
+        var request = SpeechCapabilityPolicy.BuildRequestBody(new SpeechRun {
+            Text = "原始PCM", Format = "pcm", ProfileSnapshot = Profile(protocol),
+        });
+        Assert.Equal("pcm", request["response_format"]!.GetValue<string>());
+        if (protocol == "doubao-tts") Assert.Equal(24000, request["sample_rate"]!.GetValue<int>());
+        else Assert.False(request.ContainsKey("sample_rate"));
+    }
 }

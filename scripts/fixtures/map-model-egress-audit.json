@@ -149,6 +149,19 @@
       },
       "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
     },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/VideoAgentController.Import.cs": {
+      "calls": {
+        "new:ProcessStartInfo:b3459d6b6e5fc76d51c0c7fc": 1,
+        "static:Process.Start:5837e3d79eaf72047c9cdc4b": 1
+      },
+      "purpose": "本人上传视频的本地 ffprobe 探测与 ffmpeg 标准化；参数经 ArgumentList 传入，输入落临时文件，输入协议限 file,pipe，进程有超时；不访问模型或提交生成请求，新子进程调用仍须逐指纹审计。"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/VideoAgentController.Narration.cs": {
+      "calls": {
+        "call:CreateClient:b35a0daaa75c77fb3d7a0723": 1
+      },
+      "purpose": "采用配音前核对本人已采用视频的真实可用时长，仅创建受全 HttpClient 工厂出口守卫保护的 AssetStorageStream 客户端，交由 VideoSceneMedia 读取已有存储素材；不提交模型请求。"
+    },
     "prd-api/src/PrdAgent.Api/Controllers/Api/VideoAgentController.cs": {
       "calls": {
         "call:CreateClient:b35a0daaa75c77fb3d7a0723": 1
@@ -467,6 +480,19 @@
         "static:Process.Start:910bc708027ce74b617027a5": 2
       },
       "purpose": "既有附件/供应商已生成文件/字体下载或对象存储；原媒体下载只把 None 令牌改为持有者失效令牌，不新增请求或模型生成；保留既有 ffmpeg/ffprobe 媒体处理，新子进程用途须单独审计，进程网络仍需部署层隔离"
+    },
+    "prd-api/src/PrdAgent.Api/Services/VideoNarrationMedia.cs": {
+      "calls": {
+        "new:ProcessStartInfo:1344bf696a832f7814b1ee98": 1,
+        "static:Process.Start:5837e3d79eaf72047c9cdc4b": 1
+      },
+      "purpose": "本地 ffprobe 只探测已按归属读取并落盘的音视频，ArgumentList 不经 shell，30 秒超时并终止进程树；不向媒体进程传用户 URL，不调用模型；此登记仅覆盖当前进程构造和启动指纹。"
+    },
+    "prd-api/src/PrdAgent.Api/Services/VideoSceneMedia.cs": {
+      "calls": {
+        "call:GetAsync:766ac21c5f2969a173668008": 1
+      },
+      "purpose": "读取已采用视频：优先配置存储的完整摘要本地流，回退为存储按摘要生成的 HTTPS 地址；旧任务仅在调用方显式允许并校验后沿既有 HTTPS 路径读取；流式 GET 有大小上限并消费受出口守卫保护的客户端，不发送模型请求。"
     },
     "prd-api/src/PrdAgent.Api/Services/VideoToDocRunWorker.cs": {
       "calls": {

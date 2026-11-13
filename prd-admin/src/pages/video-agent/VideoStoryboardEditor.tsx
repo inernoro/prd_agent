@@ -17,9 +17,7 @@ import {
   Image as ImageIcon,
   Layers3,
   ListChecks,
-  Maximize2,
   PanelRightOpen,
-  Pause,
   Play,
   RefreshCw,
   Save,
@@ -59,6 +57,8 @@ import {
   type VideoTimelineTrack,
 } from '@/services/contracts/videoAgent';
 import { resolveVideoTitle } from './titleUtils';
+import { VideoNarrationPanel } from './VideoNarrationPanel';
+import { VideoPlaybackControls } from './VideoPlaybackControls';
 import './videoConsole.css';
 
 export interface VideoStoryboardEditorProps {
@@ -69,6 +69,31 @@ export interface VideoStoryboardEditorProps {
 type PreviewMode = 'scene' | 'compare' | 'export';
 type PlayerStatus = 'idle' | 'loading' | 'ready' | 'waiting' | 'playing' | 'error';
 export type StoryboardExperienceState = 'progress' | 'empty-error' | 'editor';
+
+function resolveVideoSceneTimings(run: VideoGenRun, tracks: VideoTimelineTrack[]) {
+  // 导出按视频轨数组顺序拼接，startSeconds 不参与视频定位；旁白跟随裁剪后的镜头起点。
+  const videoClips = tracks.find(track => track.type === 'video')?.clips
+    .filter(clip => clip.sceneIndex != null && run.scenes[clip.sceneIndex]);
+  let cursor = 0;
+  const scenes = (videoClips?.length ? videoClips : run.scenes.map((_, sceneIndex) => ({ sceneIndex })))
+    .map(clip => {
+      const sceneIndex = clip.sceneIndex!;
+      const scene = run.scenes[sceneIndex];
+      const trim = 'trimStartSeconds' in clip ? Math.max(0, clip.trimStartSeconds) + Math.max(0, clip.trimEndSeconds) : 0;
+      // 导入轨道保留探测得到的小数时长，scene.duration 是模型参数用的整数秒。
+      // 仅在轨道仍引用当前素材时复用；采用新版本后不能沿用旧素材长度。
+      const measuredDuration = 'assetUrl' in clip && clip.assetUrl && clip.assetUrl === scene.videoUrl
+        && Number.isFinite(clip.durationSeconds) && clip.durationSeconds > 0 ? clip.durationSeconds : undefined;
+      const clipDuration = Math.max(0.1, (measuredDuration ?? scene.duration ?? run.directDuration ?? 5) - trim);
+      const item = { scene, sceneIndex, start: cursor, duration: clipDuration };
+      cursor += clipDuration;
+      return item;
+    });
+  return scenes;
+}
+
+export const calculateVideoRunDuration = (run: VideoGenRun, tracks: VideoTimelineTrack[] = []): number =>
+  resolveVideoSceneTimings(run, tracks).reduce((sum, item) => sum + item.duration, 0);
 
 const DURATIONS = [5, 8, 10, 12, 15];
 const ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '9:21'];
@@ -170,11 +195,13 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const [run, setRun] = useState<VideoGenRun | null>(null);
   const [models, setModels] = useState<VideoModelOption[]>([]);
   const [project, setProject] = useState<VideoProject | null>(null);
+  const [timelineRevision, setTimelineRevision] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [selectedSceneIndex, setSelectedSceneIndex] = useState(0);
   const [previewMode, setPreviewMode] = useState<PreviewMode>('scene');
   const [compareVersionIds, setCompareVersionIds] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [narrationOpen, setNarrationOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [promptDraft, setPromptDraft] = useState('');
   const [topicDraft, setTopicDraft] = useState('');
@@ -182,6 +209,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const [mutating, setMutating] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
+  const [playbackDuration, setPlaybackDuration] = useState(0);
   const [playerStatus, setPlayerStatus] = useState<PlayerStatus>('idle');
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [previewVersionId, setPreviewVersionId] = useState<string | null>(null);
@@ -191,6 +219,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const keepPollingUntilRef = useRef(0);
   const loadRunRef = useRef<(() => Promise<void>) | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const playerFrameRef = useRef<HTMLDivElement | null>(null);
   const autoSelectedExportRef = useRef(false);
 
   const markServerSignal = useCallback((transport?: 'streaming' | 'polling') => {
@@ -264,7 +293,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
         timelineTracks: Array.isArray(response.data.timelineTracks) ? response.data.timelineTracks : [],
       });
     });
-  }, [run?.projectId]);
+  }, [run?.projectId, timelineRevision]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -302,8 +331,8 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     [run],
   );
   const totalDuration = useMemo(
-    () => run?.scenes.reduce((sum, scene) => sum + (scene.duration ?? run.directDuration ?? 5), 0) ?? 0,
-    [run],
+    () => run ? calculateVideoRunDuration(run, project?.timelineTracks ?? []) : 0,
+    [run, project?.timelineTracks],
   );
   const previewSceneUrl = selectedScene?.versions.find((version) => version.id === previewVersionId)?.videoUrl
     ?? selectedScene?.videoUrl;
@@ -460,6 +489,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
       return false;
     }
     setSelectedSceneIndex(toIndex);
+    setTimelineRevision(revision => revision + 1);
     return true;
   }), [mutate, run, runId]);
 
@@ -548,7 +578,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
           )}
           <div className="min-w-0">
             <div className="video-workbench__title">{resolveVideoTitle(run.articleTitle, run.createdAt, 56)}</div>
-            <div className="video-workbench__meta">{run.scenes.length} 个镜头 · {totalDuration} 秒 · 已记录成本 ${totalCost.toFixed(3)}</div>
+            <div className="video-workbench__meta">{run.scenes.length} 个镜头 · {Number(totalDuration.toFixed(2))} 秒 · 已记录成本 ${totalCost.toFixed(3)}</div>
           </div>
         </div>
 
@@ -569,7 +599,8 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
               <Layers3 size={14} /> 批量生成
             </Button>
           )}
-          <button className={`video-workbench__mode-button ${settingsOpen ? 'is-active' : ''}`} onClick={() => setSettingsOpen((value) => !value)}><PanelRightOpen size={15} /> 镜头设置</button>
+          <button className={`video-workbench__mode-button ${settingsOpen ? 'is-active' : ''}`} onClick={() => { setNarrationOpen(false); setSettingsOpen((value) => !value); }}><PanelRightOpen size={15} /> 镜头设置</button>
+          <button className={`video-workbench__mode-button ${narrationOpen ? 'is-active' : ''}`} onClick={() => { setSettingsOpen(false); setNarrationOpen(value => !value); }}>配音与字幕</button>
           <button className={`video-workbench__mode-button ${editMode ? 'is-active' : ''}`} onClick={() => setEditMode((value) => !value)} disabled={!allScenesReady} title={allScenesReady ? '打开成片剪辑' : '所有镜头生成后可进入剪辑'}><Scissors size={15} /> {editMode ? '退出剪辑' : '剪辑成片'}</button>
           {editMode && (
             <Button size="sm" variant="primary" onClick={exportRun} disabled={run.status !== 'Editing' || mutating === 'export'}>
@@ -592,7 +623,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
         </div>
       )}
 
-      <main className={`video-workbench__workspace ${settingsOpen ? 'has-inspector' : ''}`} data-testid="video-console-workspace">
+      <main className={`video-workbench__workspace ${settingsOpen || narrationOpen ? 'has-inspector' : ''}`} data-testid="video-console-workspace">
         <aside className="video-workbench__filmstrip" aria-label="分镜胶片带">
           <div className="video-workbench__filmstrip-heading"><Film size={14} /><span>镜头</span><strong>{run.scenes.length}</strong></div>
           <div className="video-workbench__filmstrip-scroll">
@@ -612,7 +643,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
           </div>
         </aside>
 
-        <section className="video-workbench__creative" aria-label="视频预览与生成">
+        <section className={`video-workbench__creative ${previewMode === 'export' ? 'is-export-preview' : ''}`} aria-label="视频预览与生成">
           <div className="video-workbench__viewer-toolbar">
             <div className="video-console__segmented" role="group" aria-label="预览模式">
               <button className={previewMode === 'scene' ? 'is-active' : ''} onClick={() => setPreviewMode('scene')}>当前镜头</button>
@@ -634,6 +665,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
             <span>{previewMode === 'scene' ? selectedScene?.topic : previewMode === 'compare' ? '版本并排比较' : '最终导出'}</span>
           </div>
 
+          <div className="video-workbench__player" ref={playerFrameRef}>
           <div className="video-workbench__viewer">
             {previewMode === 'compare' ? (
               compareVersions.length === 2 ? (
@@ -658,11 +690,10 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                   ref={videoRef}
                   src={previewUrl}
                   aria-label={previewMode === 'export' ? '完整成片预览' : `${selectedScene?.topic || '当前镜头'}预览`}
-                  controls
                   playsInline
                   preload="metadata"
-                  onLoadStart={() => setPlayerStatus('loading')}
-                  onLoadedMetadata={() => setPlayerStatus('ready')}
+                  onLoadStart={() => { setPlayerStatus('loading'); setPlayhead(0); setPlaybackDuration(0); }}
+                  onLoadedMetadata={(event) => { setPlayerStatus('ready'); setPlaybackDuration(event.currentTarget.duration); }}
                   onCanPlay={() => setPlayerStatus((status) => status === 'playing' ? status : 'ready')}
                   onPlay={() => { setIsPlaying(true); setPlayerStatus('playing'); }}
                   onPlaying={() => setPlayerStatus('playing')}
@@ -714,17 +745,16 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
             )}
           </div>
 
-          <div className="video-workbench__transport">
-            <button onClick={togglePlayback} disabled={!previewUrl || previewMode === 'compare'} aria-label={isPlaying ? '暂停' : '播放'}>
-              {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-            </button>
-            <span>{formatTime(playhead)}</span>
-            <div className="video-console__transport-line"><i style={{ width: `${getPlaybackPercent(videoRef.current)}%` }} /></div>
-            <span>{formatTime(videoRef.current?.duration || selectedScene?.duration || 0)}</span>
-            <button aria-label="适应画布" title="适应画布"><Maximize2 size={15} /></button>
+          <VideoPlaybackControls videoRef={videoRef} frameRef={playerFrameRef} playing={isPlaying}
+            currentTime={playhead} duration={playbackDuration} disabled={!previewUrl || previewMode === 'compare'}
+            onToggle={togglePlayback} onSeek={time => {
+              if (!videoRef.current) return;
+              videoRef.current.currentTime = time;
+              setPlayhead(time);
+            }} onError={message => toast.error(message)} />
           </div>
 
-          {selectedScene && (
+          {selectedScene && previewMode !== 'export' && (
             <section className="video-workbench__composer" aria-label="镜头生成">
               {selectedScene.status === 'Error' && (
                 <div className="video-workbench__scene-error" role="alert">
@@ -774,7 +804,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
             </section>
           )}
 
-          <section className="video-workbench__versions" aria-label="生成版本">
+          {previewMode !== 'export' && <section className="video-workbench__versions" aria-label="生成版本">
             <div className="video-workbench__versions-heading"><div><strong>生成版本</strong><span>{selectedScene?.versions.length ?? 0}</span></div><small>{compareVersionIds.length}/2 已选比较</small></div>
             <div className="video-workbench__version-strip">
               <VersionLibrary
@@ -790,9 +820,25 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                 onCompare={toggleCompareVersion}
               />
             </div>
-          </section>
+          </section>}
         </section>
 
+        {narrationOpen && <VideoNarrationPanel
+          key={`${runId}:${selectedSceneIndex}`}
+          runId={runId}
+          sceneIndex={selectedSceneIndex}
+          editable={selectedSceneEditable && !mutating}
+          onClose={() => setNarrationOpen(false)}
+          onAdopt={async () => {
+            setPreviewMode('scene');
+            await loadRun();
+            if (run.projectId) {
+              const response = await getVideoProjectReal(run.projectId);
+              if (response.success) setProject(response.data);
+            }
+            toast.success('配音与字幕已保存', '点击剪辑成片 → 导出，预览最新完整成片。');
+          }}
+        />}
         {settingsOpen && (
           <Inspector
             run={run}
@@ -1007,7 +1053,7 @@ const Inspector: React.FC<{
   );
 };
 
-const Timeline: React.FC<{
+export const Timeline: React.FC<{
   run: VideoGenRun;
   tracks: VideoTimelineTrack[];
   selectedSceneIndex: number;
@@ -1016,40 +1062,43 @@ const Timeline: React.FC<{
   disabled: boolean;
 }> = ({ run, tracks, selectedSceneIndex, onSelect, onReorder, disabled }) => {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const duration = Math.max(run.scenes.reduce((sum, scene) => sum + (scene.duration ?? run.directDuration ?? 5), 0), 1);
+  const scenes = resolveVideoSceneTimings(run, tracks);
+  const duration = scenes.reduce((sum, item) => sum + item.duration, 0) || 1;
+  const timingStyle = (start: number, length: number) => ({ left: `${start / duration * 100}%`, width: `${length / duration * 100}%` });
+  const ticks = Array.from({ length: Math.floor(duration / 5) + 1 }, (_, index) => index * 5);
+  if (ticks[ticks.length - 1] !== duration) ticks.push(duration);
   return (
     <section className="video-console__timeline" aria-label="视频时间线">
       <div className="video-console__timeline-header">
         <div><Clock3 size={14} /> 时间线</div>
-        <span>{run.scenes.length} 个镜头 · {duration} 秒</span>
+        <span>{scenes.length} 个镜头 · {Number(duration.toFixed(2))} 秒</span>
       </div>
       <div className="video-console__ruler">
-        {Array.from({ length: Math.ceil(duration / 5) + 1 }, (_, index) => <span key={index}>{index * 5}s</span>)}
+        {ticks.map(time => <span key={time} style={{ left: `${time / duration * 100}%` }}>{Number(time.toFixed(2))}s</span>)}
       </div>
       <div className="video-console__track-row">
         <span className="video-console__track-label">视频</span>
         <div className="video-console__clips">
-          {run.scenes.map((scene, index) => {
-            const clipDuration = scene.duration ?? run.directDuration ?? 5;
+          {scenes.map(({ scene, sceneIndex, start, duration: clipDuration }, index) => {
             return (
               <button
-                key={scene.index}
-                className={`video-console__clip ${index === selectedSceneIndex ? 'is-active' : ''}`}
-                style={{ flexGrow: clipDuration }}
-                onClick={() => onSelect(index)}
+                key={`${sceneIndex}-${index}`}
+                className={`video-console__clip ${sceneIndex === selectedSceneIndex ? 'is-active' : ''}`}
+                style={timingStyle(start, clipDuration)}
+                onClick={() => onSelect(sceneIndex)}
                 draggable={!disabled}
-                onDragStart={() => setDragIndex(index)}
+                onDragStart={() => setDragIndex(sceneIndex)}
                 onDragOver={(event) => { if (!disabled) event.preventDefault(); }}
                 onDrop={(event) => {
                   event.preventDefault();
-                  if (dragIndex !== null) onReorder(dragIndex, index);
+                  if (dragIndex !== null) onReorder(dragIndex, sceneIndex);
                   setDragIndex(null);
                 }}
                 onDragEnd={() => setDragIndex(null)}
                 onKeyDown={(event) => {
                   if (disabled || !event.altKey) return;
-                  if (event.key === 'ArrowLeft' && index > 0) onReorder(index, index - 1);
-                  if (event.key === 'ArrowRight' && index < run.scenes.length - 1) onReorder(index, index + 1);
+                  if (event.key === 'ArrowLeft' && sceneIndex > 0) onReorder(sceneIndex, sceneIndex - 1);
+                  if (event.key === 'ArrowRight' && sceneIndex < run.scenes.length - 1) onReorder(sceneIndex, sceneIndex + 1);
                 }}
                 title="拖动排序，或按 Alt 加左右方向键移动"
               >
@@ -1064,7 +1113,33 @@ const Timeline: React.FC<{
       {(['subtitle', 'voice', 'music'] as const).map((type) => {
         const track = tracks.find((item) => item.type === type);
         const label = type === 'subtitle' ? '字幕' : type === 'voice' ? '配音' : '音乐';
-        return <div className="video-console__track-row" key={type}><span className="video-console__track-label">{label}</span><div className="video-console__timeline-aux">{track?.clips.map((clip, index) => <div key={clip.id}><strong>{type === 'subtitle' ? clip.text || `字幕 ${index + 1}` : clip.assetUrl?.split('/').pop() || `${label} ${index + 1}`}</strong><span>{clip.startSeconds.toFixed(1)}s · {clip.durationSeconds.toFixed(1)}s</span></div>)}{!track?.clips.length && <span>未添加{label}片段</span>}</div></div>;
+        const items = [
+          ...(type === 'music' ? [] : scenes.filter(item => item.scene.narration).map(({ scene, start }, index) => ({
+            id: `narration-${index}`, start, duration: scene.narration!.durationSeconds,
+            text: type === 'subtitle' ? scene.narration!.text : `镜头 ${scene.index + 1} 已采用配音`, followsScene: true,
+          }))),
+          ...(track?.clips.map((clip, index) => ({
+            id: clip.id, start: Math.max(0, clip.startSeconds),
+            duration: type === 'subtitle' ? clip.durationSeconds
+              : Math.max(0, clip.durationSeconds - Math.max(0, clip.trimStartSeconds) - Math.max(0, clip.trimEndSeconds)),
+            text: type === 'subtitle' ? clip.text || `字幕 ${index + 1}` : clip.assetUrl?.split('/').pop() || `${label} ${index + 1}`,
+            followsScene: false,
+          })) ?? []),
+        ].sort((a, b) => a.start - b.start);
+        const laneEnds: number[] = [];
+        const positioned = items.map(item => {
+          let lane = laneEnds.findIndex(end => end <= item.start);
+          if (lane < 0) lane = laneEnds.length;
+          laneEnds[lane] = item.start + item.duration;
+          return { ...item, lane };
+        });
+        return <div className="video-console__track-row" key={type}><span className="video-console__track-label">{label}</span><div className="video-console__timeline-aux" style={{ minHeight: Math.max(46, laneEnds.length * 40 + 6) }}>
+          {positioned.map(item => <div key={item.id} style={{ ...timingStyle(item.start, Math.max(0, Math.min(item.duration, duration - item.start))), top: 3 + item.lane * 40 }} title={`${item.text} · ${item.start.toFixed(2)}s · ${item.duration.toFixed(2)}s`}>
+            <strong>{item.text}</strong>
+            <span>{item.start.toFixed(2)}s · {item.duration.toFixed(2)}s{item.followsScene ? ' · 跟随镜头同步' : ''}</span>
+          </div>)}
+          {!items.length && <span>未添加{label}片段</span>}
+        </div></div>;
       })}
     </section>
   );
@@ -1259,17 +1334,5 @@ const BatchRenderDialog: React.FC<{
   );
   return createPortal(modal, document.body);
 };
-
-function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
-  const minutes = Math.floor(seconds / 60);
-  const remainder = Math.floor(seconds % 60);
-  return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
-}
-
-function getPlaybackPercent(player: HTMLVideoElement | null): number {
-  if (!player || !Number.isFinite(player.duration) || player.duration <= 0) return 0;
-  return Math.min(100, Math.max(0, player.currentTime / player.duration * 100));
-}
 
 export default VideoStoryboardEditor;

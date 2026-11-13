@@ -108,6 +108,17 @@ public class OpenRouterVideoClientGatewayTests
             .ShouldContain("手动重试");
     }
 
+    [Theory]
+    [InlineData("配音超过镜头可用时长", "缩短配音")]
+    [InlineData("已采用的配音暂不可用", "重新采用语音")]
+    [InlineData("中文字幕字体不可用", "恢复字体")]
+    public void NarrationExportFailure_KeepsRecoveryActionAfterRepeatedSanitizing(string diagnostic, string recovery)
+    {
+        var message = VideoGenerationUserError.ForPersistence("EXPORT_FAILED", diagnostic);
+        message.ShouldContain(recovery);
+        VideoGenerationUserError.ForPersistence("EXPORT_FAILED", message).ShouldBe(message);
+    }
+
     [Fact]
     public void HistoricalErrorEvents_ShouldBeSanitizedDuringReplay()
     {
