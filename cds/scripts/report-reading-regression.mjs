@@ -68,6 +68,9 @@ for(const format of ['md','html'])for(const mobile of [false,true])for(const the
  const broken=shared.locator('.report-recovery').filter({hasText:'缺失截图应说明原因'});await broken.getByRole('button',{name:'重新加载图片',exact:true}).click();await broken.waitFor();
  await shared.getByRole('button',{name:'重新渲染图表',exact:true}).click();await shared.getByText(/图表未能渲染/).waitFor();
  await shared.getByText(/READING-END：/).scrollIntoViewIfNeeded();await share.screenshot({path:`${output}/share-${format}-${mobile?'mobile':'desktop'}-${theme}-end.png`});
+ // Theme changes must replace the current entry, so Back returns to the actual origin page.
+ await share.getByRole('link',{name:theme==='dark'?'浅色主题':'深色主题',exact:true}).click();
+ await share.frameLocator('iframe').locator('[data-report-diagram] svg').nth(1).waitFor();
  await share.getByRole('button',{name:'返回',exact:true}).click();await share.waitForURL(base+'/');
  assert.deepEqual(errors,[]);results.push({format,mobile,theme,width,svg:2,cells:16,return:true,link:true,imageRetry:true,diagramRetry:true,errors});await context.close();
 }
