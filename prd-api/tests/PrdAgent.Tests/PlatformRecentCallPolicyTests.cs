@@ -7,6 +7,8 @@ namespace PrdAgent.Tests;
 public sealed class PlatformRecentCallPolicyTests
 {
     [Theory]
+    [InlineData(429, "You have no credits remaining. Add credits to continue using the API.", "failed", "quota_exhausted")]
+    [InlineData(429, "credit_balance_exhausted", "failed", "quota_exhausted")]
     [InlineData(429, "insufficient_quota", "failed", "quota_exhausted")]
     [InlineData(429, "You exceeded your current quota", "failed", "quota_exhausted")]
     [InlineData(429, "Rate limit exceeded, requests per minute", "failed", "rate_limited")]
