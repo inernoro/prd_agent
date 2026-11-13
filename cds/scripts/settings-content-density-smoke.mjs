@@ -168,7 +168,7 @@ try {
       await page.getByText(/读取暂不可用/).first().waitFor();
       failRead = false; count = 2; await page.reload(); await page.getByText(surface.first, { exact: true }).first().waitFor();
     }
-    {
+    if (!process.env.CDS_SETTINGS_SURFACE || process.env.CDS_SETTINGS_SURFACE === 'project-env') {
       // The shared EnvEditor remains usable in project settings, including inheritance controls.
       await navigate(page, '/project-list');
       await page.locator('article[data-project-id] .cds-project-actions button').first().click();
