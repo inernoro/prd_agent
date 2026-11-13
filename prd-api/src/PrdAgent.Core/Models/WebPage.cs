@@ -16,6 +16,8 @@ namespace PrdAgent.Core.Models;
 public class HostedSite
 {
     public string? WritingTemplateId { get; set; }
+    /// <summary>作者选择的文档类型；旧数据为空时沿用来源写作模版的类型。</summary>
+    public string? DocumentType { get; set; }
     public List<string> DocumentHeadings { get; set; } = new();
     public string? DocumentTextExcerpt { get; set; }
     public int DocumentCharacterCount { get; set; }

@@ -926,6 +926,7 @@ export async function reuploadSite(
 
 export async function createFromContent(input: {
   writingTemplateId?: string;
+  documentType?: string;
   htmlContent: string;
   title?: string;
   description?: string;

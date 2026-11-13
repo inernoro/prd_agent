@@ -709,6 +709,9 @@ public partial class WebPagesController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(req.HtmlContent))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "htmlContent 不能为空"));
+        var documentType = string.IsNullOrWhiteSpace(req.DocumentType) ? null : req.DocumentType.Trim();
+        if (documentType != null && !WritingTemplateRegistry.All.Any(template => template.Type == documentType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择有效的文档类型"));
 
         var site = await _siteService.CreateFromContentAsync(
             GetUserId(), req.HtmlContent,
@@ -719,9 +722,11 @@ public partial class WebPagesController : ControllerBase
         var documentInfo = CollectionDocumentText(req.HtmlContent);
         site.DocumentHeadings = documentInfo.Headings; site.DocumentTextExcerpt = documentInfo.Excerpt;
         site.WritingTemplateId = WritingTemplateRegistry.Find(req.WritingTemplateId ?? "")?.Id;
+        site.DocumentType = documentType;
         await _db.HostedSites.UpdateOneAsync(s => s.Id == site.Id && s.OwnerUserId == GetUserId(),
             Builders<HostedSite>.Update.Set(s => s.DocumentHeadings, site.DocumentHeadings)
-                .Set(s => s.DocumentTextExcerpt, site.DocumentTextExcerpt).Set(s => s.WritingTemplateId, site.WritingTemplateId));
+                .Set(s => s.DocumentTextExcerpt, site.DocumentTextExcerpt).Set(s => s.WritingTemplateId, site.WritingTemplateId)
+                .Set(s => s.DocumentType, site.DocumentType));
 
         return Ok(ApiResponse<object>.Ok(site));
     }
@@ -2123,6 +2128,7 @@ public partial class WebPagesController : ControllerBase
 public class CreateFromContentRequest
 {
     public string? WritingTemplateId { get; set; }
+    public string? DocumentType { get; set; }
     public string HtmlContent { get; set; } = string.Empty;
     public string? Title { get; set; }
     public string? Description { get; set; }

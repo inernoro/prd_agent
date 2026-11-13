@@ -117,7 +117,7 @@ public partial class WebPagesController
         threads = threads.Where(c => HostedSiteCommentRules.CanViewReviewVersion(HostedSiteCommentRules.StoredVersion(c), site.ContentVersion, false)).ToList();
         return new { site.Id, site.Title, site.SiteUrl, site.EntryFile, site.WrappedAssetType, site.ContentShape, summary = site.Description, excerpt = site.DocumentTextExcerpt,
             headings = site.DocumentHeadings, templateId = site.WritingTemplateId,
-            type = WritingTemplateRegistry.Find(site.WritingTemplateId ?? "")?.Type ?? "文档",
+            type = CollectionDocumentType(site),
             ownerUserId = publicRead ? null : site.OwnerUserId, author = await ResolveDisplayNameAsync(site.OwnerUserId), site.UpdatedAt,
             characterCount = site.DocumentCharacterCount, commentCount = threads.Count,
             annotationCount = threads.Count(c => c.Anchor != null), discussionCount = threads.Count(c => c.Anchor == null),
@@ -135,11 +135,14 @@ public partial class WebPagesController
             var site = await _siteService.GetByIdAsync(id, GetUserId());
             if (site == null) { if (previousIds?.Contains(id) != true) return RelatedNotFound(); continue; }
             collection.MemberMetadata[id] = new HostedCollectionMemberMetadata { Title = site.Title,
-                Author = await ResolveDisplayNameAsync(site.OwnerUserId), Type = WritingTemplateRegistry.Find(site.WritingTemplateId ?? "")?.Type ?? "文档", UpdatedAt = site.UpdatedAt };
+                Author = await ResolveDisplayNameAsync(site.OwnerUserId), Type = CollectionDocumentType(site), UpdatedAt = site.UpdatedAt };
         }
         collection.MemberMetadata = collection.MemberMetadata.Where(pair => collection.SiteIds.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value);
         return null;
     }
+
+    private static string CollectionDocumentType(HostedSite site) => !string.IsNullOrWhiteSpace(site.DocumentType)
+        ? site.DocumentType : WritingTemplateRegistry.Find(site.WritingTemplateId ?? "")?.Type ?? "文档";
 
     [HttpPost("collections/{id}/dissolve")]
     public async Task<IActionResult> DissolveDocumentCollection(string id, [FromBody] CollectionVersionRequest request)
