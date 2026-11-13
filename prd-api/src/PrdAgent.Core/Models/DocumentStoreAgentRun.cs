@@ -8,8 +8,12 @@ namespace PrdAgent.Core.Models;
 /// - Worker 内使用 CancellationToken.None 写入 MongoDB
 /// - 事件通过 IRunEventStore 推送，SSE 支持 afterSeq 续传
 /// </summary>
-public class DocumentStoreAgentRun
+public class DocumentStoreAgentRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>类型：subtitle（字幕生成） / reprocess（文档再加工）</summary>

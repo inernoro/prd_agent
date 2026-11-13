@@ -26,6 +26,12 @@ python3 <当前项目技能根>/cds/cli/cdscli.py --human preview-url
 
 某个项目有多个入口时，标签展开成 `[项目名 · 入口名]`，避免同项目两行同名分不出该点哪个。
 
+## 主备实例选择
+
+存在主备 CDS 时，默认查询 `instance use` 选定的实例；临时查询可用
+`cdscli --human --instance <实例ID> preview-url`。地址只能来自该实例真实 API 响应，
+禁止把主用的预览域名、分支 ID 或已有地址替换域名后当作备用入口。
+
 ## 触发词
 
 - "预览地址" / "验收地址" / "preview url" / `/preview`

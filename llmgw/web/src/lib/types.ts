@@ -690,6 +690,9 @@ export type UpsertPoolModelRequest = {
 
 // ── 平台（密钥明文永不下发；只有头尾打码的指纹）──
 export type PlatformItem = {
+  recentCallStatus?: 'quota_exhausted' | 'rate_limited' | 'rejected' | 'service_error' | 'succeeded' | 'failed' | null;
+  recentCallAt?: string | null;
+  proxy?: UpstreamProxyView | null;
   id: string; name: string; platformType: string; providerId?: string | null; apiUrl?: string | null;
   enabled: boolean; maxConcurrency: number; remark?: string | null; hasKey: boolean;
   /** 密钥指纹（如 sk-or-…9c2a）。仅具备 config:write 时下发，其余为 null。永远不是完整密钥。 */
@@ -713,6 +716,7 @@ export type LogicalModelDeleteResult = { offeringsDeleted: number };
 export type AppCallerDeleteResult = { promptPolicyVersionsDeleted: number };
 /** 编辑上游：只改这几项，密钥走独立的轮换端点。 */
 export type UpdatePlatformRequest = {
+  proxy?: UpstreamProxyDraft;
   name?: string;
   platformType?: string;
   apiUrl?: string;
@@ -721,6 +725,7 @@ export type UpdatePlatformRequest = {
 };
 export type PlatformsData = { items: PlatformItem[]; total: number };
 export type CreatePlatformRequest = {
+  proxy?: UpstreamProxyDraft;
   name: string;
   platformType: 'openai' | 'claude';
   providerId?: string;
@@ -812,6 +817,8 @@ export type CatalogEntriesData = {
   builtin: CatalogEntryItem[];
   /** 运行时真正认的那几种用途。界面只让从这里挑，填别的当场拒。 */
   knownCapabilities: string[];
+  /** 服务端维护的有限历史能力别名；旧响应缺省时只接受规范能力。 */
+  legacyCapabilityAliases?: Record<string, string>;
 };
 
 export type UpsertCatalogEntryRequest = {
@@ -1100,6 +1107,8 @@ export type CallTraceData = {
   };
 };
 export type LogicalModelItem = {
+  identityKind?: 'fixed' | 'stable';
+  aliases?: string[];
   id: string;
   publicId: string;
   name: string;
@@ -1144,6 +1153,8 @@ export type LogicalModelUsageData = {
   items: LogicalModelUsageItem[];
 };
 export type CreateLogicalModelRequest = {
+  identityKind?: 'fixed' | 'stable';
+  aliases?: string[];
   publicId: string;
   name: string;
   modelType: string;
@@ -1156,7 +1167,7 @@ export type CreateLogicalModelRequest = {
   description?: string;
 };
 export type UpdateLogicalModelRequest =
-  Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType'>>
+  Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType' | 'identityKind'>>
   /** 设为 true 会顶掉同用途原来的那个默认，接口会把顶掉了谁回给你。 */
   & { isDefaultForType?: boolean };
 export type CreateModelOfferingRequest = {
@@ -1184,6 +1195,7 @@ export type ExchangeModelItem = {
   enabled: boolean;
 };
 export type ExchangeItem = {
+  proxy?: UpstreamProxyView | null;
   id: string;
   name: string;
   modelAlias: string;
@@ -1192,6 +1204,7 @@ export type ExchangeItem = {
   targetUrl: string;
   targetAuthScheme: string;
   transformerType: string;
+  resourceId?: string | null;
   enabled: boolean;
   description?: string | null;
   hasKey: boolean;
@@ -1217,12 +1230,14 @@ export type ExchangeModelWriteRequest = {
   enabled: boolean;
 };
 export type CreateExchangeRequest = {
+  proxy?: UpstreamProxyDraft;
   name: string;
   models: ExchangeModelWriteRequest[];
   targetUrl: string;
   apiKey: string;
   targetAuthScheme: string;
   transformerType: string;
+  resourceId?: string | null;
   enabled: boolean;
   description?: string | null;
 };
@@ -1782,3 +1797,103 @@ export type ImageGenSyncHost = {
 };
 
 export type UpsertImageGenConfigRequest = Partial<Omit<ImageGenConfigItem, 'id' | 'updatedAt'>>;
+
+export interface ConsumptionAlert {
+  metric?: string;
+  baselineAverage?: number | null;
+  baselineSamples?: number | null;
+  id: string;
+  appCallerCode: string;
+  requestType: string;
+  scope: string;
+  origin: string;
+  sourceDeployment?: string | null;
+  windowStart: string;
+  windowSeconds: number;
+  count: number;
+  limit: number;
+  kind: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type UpstreamProxyMode = 'inherit' | 'direct' | 'custom';
+export type UpstreamProxyView = { mode: UpstreamProxyMode; address?: string | null; username?: string | null; hasPassword: boolean };
+export type UpstreamProxyDraft = { mode: UpstreamProxyMode; address?: string; username?: string; password?: string; clearPassword?: boolean };
+export type UpstreamNetworkTestResult = {
+  route: string; probedUrl: string; sampleCount: number; successCount: number; successRate: number;
+  averageMs: number | null; minMs: number | null; maxMs: number | null; testedAt: string;
+  samples: Array<{ attempt: number; connected: boolean; httpStatus: number | null; elapsedMs: number; message: string }>;
+};
+
+// 稳定模型升级策略：身份与历史别名由服务端维护，UI只编辑受控策略。
+export type ModelUpgradeSuccessor = {
+  providerId: string;
+  fromModel: string;
+  toModel: string;
+  documentationUrl: string;
+  capabilities: string[];
+};
+export type ModelUpgradePolicy = {
+  enabled: boolean;
+  mode: 'manual' | 'auto';
+  autoValidate: boolean;
+  checkIntervalHours: number;
+  maxValidationCostUsd: number | null;
+  canaryUnitCostUpperBoundUsd: number | null;
+  maxDailyCostUsd: number | null;
+  maxPriceIncreasePercent: number | null;
+  validationAppCallerCode: string;
+  successors: ModelUpgradeSuccessor[];
+};
+export type ModelUpgradePhase = 'idle' | 'checking' | 'candidate' | 'validating' | 'validated' | 'blocked' | 'promoting' | 'promoted' | 'rolling_back' | 'rolled_back' | 'failed';
+export type ModelUpgradeView = {
+  validationMode: 'evidence' | 'canary';
+  validationModes: ('evidence' | 'canary')[];
+  validationStatus: 'not-run' | 'pending' | 'passed' | 'failed' | 'unknown';
+  discoveries: { providerId: string; upstreamModelId: string; status: 'unconfirmed'; message: string }[];
+  identityKind: 'fixed' | 'stable';
+  logicalModelId: string;
+  publicId: string;
+  name: string;
+  aliases: string[];
+  modelType: string;
+  version: number;
+  policy: ModelUpgradePolicy;
+  referenceCoverage?: ReferenceCoverage | null;
+  phase: ModelUpgradePhase;
+  message: string;
+  current: { offeringId: string; modelId: string; providerId: string; upstreamModelId: string };
+  candidate: null | { modelId: string; providerId: string; upstreamModelId: string; documentationUrl: string; discoveredAt: string; validationRequestId: string | null; validatedAt: string | null };
+  gates: { capabilities: boolean; price: boolean; budget: boolean; validation: boolean };
+  canPromote: boolean;
+  canRollback: boolean;
+  actionDisabledReason: string | null;
+  lastCheckedAt: string | null;
+  nextCheckAt: string | null;
+  updatedAt: string | null;
+  history: { id: string; action: string; status: string; message: string; requestId: string | null; createdAt: string }[];
+};
+export type UpdateModelUpgradePolicyRequest = ModelUpgradePolicy & { version: number };
+export type ModelUpgradeAction = 'check' | 'validate' | 'promote' | 'rollback';
+export type ModelUpgradeActionRequest = { version: number; requestId?: string; mode?: 'evidence' | 'canary' };
+
+export type ReferenceIdentity = {
+  logicalId?: string | null; publicId?: string | null; aliases: string[]; poolIds: string[];
+  providerId?: string | null; physicalModelId?: string | null; upstreamModelId?: string | null; offeringId?: string | null;
+};
+export type ReferenceCoverage = {
+  registryVersion: string; registryHash: string; canComplete: boolean; verified?: boolean; verifiedAt?: string | null; validUntil?: string | null;
+  affected: number; migrated: number; blocked: number; unknown: number; residual: number;
+  consumers: Array<{ key: string; label?: string; count: number; affected: number; migrated: number; blocked: number; unknown: number; residual: number; reasons: string[] }>;
+  items: Array<{ consumerKey: string; collection: string; recordId: string; ownerId?: string | null; path: string; status: string; reason?: string | null }>;
+};
+export type ReferenceMigrationPlan = {
+  id?: string; intentId: string; revision: number; tenantId: string; actorId: string;
+  mapping: { tenantId: string; source: ReferenceIdentity; target: ReferenceIdentity };
+  coverage: ReferenceCoverage; status: 'planned' | 'blocked' | 'applying' | 'conflict' | 'completed';
+  canResume?: boolean;
+  createdAt: string; updatedAt: string;
+};
+export type CreateReferenceMigrationPlanRequest = { sourceLogicalId: string; targetLogicalId: string; clientRequestId: string };
+export type RepairableModelUsage = { consumerKey: string; recordId: string; path: string; modelType: string; value: string; platformId?: string | null; logicalId?: string | null; status: 'available' | 'orphan' | 'unknown'; canConfirmPurpose?: boolean; fingerprint?: string | null };

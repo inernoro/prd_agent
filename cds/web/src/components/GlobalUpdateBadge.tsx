@@ -1,5 +1,7 @@
+import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
+import { InstanceSwitcher } from '@/components/InstanceSwitcher';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+
 import { AlertTriangle, ArrowUpCircle, CheckCircle2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiUrl } from '@/lib/api';
@@ -498,11 +500,12 @@ export function GlobalUpdateBadge({
     <div
       className="w-full max-w-full select-none"
       style={{ pointerEvents: 'auto' }}
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
     >
+      {expanded && state.kind === 'unreachable' ? <div className="mb-2"><InstanceSwitcher embedded /></div> : null}
       <div
         className={`flex w-full min-w-0 items-stretch gap-0 overflow-hidden rounded-md border shadow-sm transition-all duration-200 ${visual.borderClass} ${visual.bgClass} ${pinned ? 'ring-2 ring-warn/40' : ''} ${expanded ? '' : 'h-9'}`}
-        onMouseEnter={handleEnter}
-        onMouseLeave={handleLeave}
       >
         <button
           type="button"

@@ -11,7 +11,7 @@ namespace PrdAgent.Api.Services.Mcp;
 /// </summary>
 public static class McpArtifactExtractor
 {
-    public sealed record Artifact(string? Kind, string? Id, string? Url, string? Title);
+    public sealed record Artifact(string? Kind, string? Id, string? Url, string? Title, string? Status = null);
 
     private static readonly (string Key, string Kind)[] IdKeys =
     {
@@ -37,6 +37,14 @@ public static class McpArtifactExtractor
     {
         var data = ReadDataObject(responseBody);
         if (data == null) return new Artifact(null, null, null, null);
+        // 语音任务入口从提交时即可查看；查询单任务也能补齐异步生成后的产物。
+        if (toolName is "map_speech_generate" or "map_speech_get_run")
+        {
+            var speechRunId = ReadString(data, "runId");
+            if (!string.IsNullOrWhiteSpace(speechRunId))
+                return new Artifact("audio-run", speechRunId,
+                    $"/mcp-console?tab=speech&run={Uri.EscapeDataString(speechRunId)}", ReadString(data, "title"), ReadString(data, "status"));
+        }
 
         // `runId` 只对**视觉工具**意味着「一个还在跑的生图任务」。
         // 无条件把它映射成 image-run 会坑到登记的动态接口：一个技能执行接口回的是

@@ -1,21 +1,21 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
-import { Image, FileText, Paperclip, FolderOpen, Globe } from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
+import { Image, FolderOpen } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { SitePreview } from '@/components/SitePreview';
 import { getMobileAssets } from '@/services';
-import type { MobileAssetItem } from '@/services/contracts/mobile';
+import type { AssetCategory, MobileAssetItem } from '@/services/contracts/mobile';
 import { AS_FONT_FAMILY } from '@/lib/appStoreTokens';
 import { useAppStoreColors } from '@/hooks/useAppStoreColors';
+import { ASSET_CATEGORIES, ASSET_CATEGORY_REGISTRY, isAudioAsset } from '@/lib/assetCategories';
+import { AudioAssetPlayer } from '@/components/assets/AudioAssetPlayer';
 
 /* ── Tab 定义 ── */
-type AssetTab = 'all' | 'image' | 'document' | 'attachment' | 'webpage';
+type AssetTab = 'all' | AssetCategory;
 
 const TABS: { key: AssetTab; label: string; icon: typeof Image }[] = [
   { key: 'all',        label: '全部', icon: FolderOpen },
-  { key: 'image',      label: '图片', icon: Image },
-  { key: 'document',   label: '文档', icon: FileText },
-  { key: 'attachment', label: '附件', icon: Paperclip },
-  { key: 'webpage',    label: '网页', icon: Globe },
+  ...ASSET_CATEGORIES.map((key) => ({ key, label: ASSET_CATEGORY_REGISTRY[key].label, icon: ASSET_CATEGORY_REGISTRY[key].icon })),
 ];
 
 /**
@@ -25,53 +25,52 @@ const TABS: { key: AssetTab; label: string; icon: typeof Image }[] = [
  */
 export default function MobileAssetsPage() {
   const C = useAppStoreColors();
-  const [activeTab, setActiveTab] = useState<AssetTab>('all');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = TABS.find((tab) => tab.key === searchParams.get('tab'))?.key ?? 'all';
+  const setActiveTab = (tab: AssetTab) => {
+    const next = new URLSearchParams(searchParams);
+    if (tab === 'all') next.delete('tab'); else next.set('tab', tab);
+    setSearchParams(next, { replace: true });
+  };
   const [loading, setLoading] = useState(true);
   const [assets, setAssets] = useState<MobileAssetItem[]>([]);
-
-  const fetchAssets = useCallback(async (category?: AssetTab) => {
-    setLoading(true);
-    const res = await getMobileAssets({
-      category: category === 'all' ? undefined : category,
-      limit: 50,
-    });
-    if (res.success) {
-      setAssets(res.data.items ?? []);
-    }
-    setLoading(false);
-  }, []);
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    fetchAssets(activeTab);
-  }, [activeTab, fetchAssets]);
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void getMobileAssets({ category: activeTab === 'all' ? undefined : activeTab, limit: 50 })
+      .then((res) => {
+        if (cancelled) return;
+        if (res.success) setAssets(res.data.items ?? []);
+        else setError(res.error?.message || '资产加载失败，请重试。');
+      })
+      .catch(() => { if (!cancelled) setError('资产加载失败，请重试。'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeTab, retry]);
 
   const filtered = useMemo(() => {
     if (activeTab === 'all') return assets;
     return assets.filter((a) => a.type === activeTab);
   }, [assets, activeTab]);
 
-  // 类型徽章语义色（走 iOS 系统色，随双皮肤切换）。彩色档用 hex+alpha 底，附件用中性 pillBg。
-  const typeMeta = (t: string): { label: string; color: string; bg: string } => {
-    switch (t) {
-      case 'image': return { label: '图片', color: C.orange, bg: `${C.orange}26` };
-      case 'document': return { label: '文档', color: C.indigo, bg: `${C.indigo}26` };
-      case 'webpage': return { label: '网页', color: C.green, bg: `${C.green}26` };
-      default: return { label: '附件', color: C.labelSecondary, bg: C.pillBg };
-    }
-  };
-
   return (
     <div className="h-full min-h-0 flex flex-col" style={{ background: C.bg, fontFamily: AS_FONT_FAMILY }}>
       {/* ── Tab 栏 ── */}
-      <div className="flex items-center gap-1 px-4 pt-4 pb-2 shrink-0">
+      <div className="flex items-center gap-1 overflow-x-auto px-4 pt-4 pb-2 shrink-0" style={{ overscrollBehavior: 'contain' }}>
         {TABS.map((tab) => {
           const active = activeTab === tab.key;
           const TabIcon = tab.icon;
           return (
             <button
               key={tab.key}
+              type="button"
+              aria-pressed={active}
               onClick={() => setActiveTab(tab.key)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
               style={{
                 background: active ? C.pillBg : 'transparent',
                 color: active ? C.label : C.labelSecondary,
@@ -86,9 +85,14 @@ export default function MobileAssetsPage() {
       </div>
 
       {/* ── 内容区 ── */}
-      <div className="flex-1 min-h-0 overflow-auto px-4 pb-28">
+      <div className="flex-1 min-h-0 overflow-auto px-4 pb-28" style={{ overscrollBehavior: 'contain' }}>
         {loading ? (
           <MapSectionLoader />
+        ) : error ? (
+          <div role="alert" className="flex flex-col items-center gap-3 py-8" style={{ color: C.labelSecondary }}>
+            <p>{error}</p>
+            <button type="button" onClick={() => setRetry((value) => value + 1)}>重新加载</button>
+          </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 gap-2">
             <FolderOpen size={32} style={{ color: C.labelTertiary }} />
@@ -102,16 +106,18 @@ export default function MobileAssetsPage() {
         ) : (
           <div className="grid grid-cols-2 gap-3 pt-2">
             {filtered.map((asset) => {
-              const meta = typeMeta(asset.type);
+              const meta = ASSET_CATEGORY_REGISTRY[asset.type] ?? ASSET_CATEGORY_REGISTRY.attachment;
+              const AssetIcon = meta.icon;
+              const audio = isAudioAsset(asset);
               return (
               <div
                 key={asset.id}
-                className="flex flex-col rounded-xl overflow-hidden"
+                className={`flex flex-col rounded-xl overflow-hidden${audio ? ' col-span-2' : ''}`}
                 style={{ background: C.card, border: `1px solid ${C.hairline}` }}
               >
                 {/* 缩略图 */}
                 <div
-                  className="w-full aspect-[4/3] flex items-center justify-center"
+                  className={`w-full flex items-center justify-center${audio ? ' py-5' : ' aspect-[4/3]'}`}
                   style={{ background: C.surface }}
                 >
                   {asset.thumbnailUrl ? (
@@ -123,14 +129,8 @@ export default function MobileAssetsPage() {
                     />
                   ) : asset.type === 'webpage' && asset.url ? (
                     <SitePreview url={asset.url} className="w-full h-full" />
-                  ) : asset.type === 'image' ? (
-                    <Image size={24} style={{ color: C.labelTertiary }} />
-                  ) : asset.type === 'document' ? (
-                    <FileText size={24} style={{ color: C.labelTertiary }} />
-                  ) : asset.type === 'webpage' ? (
-                    <Globe size={24} style={{ color: C.labelTertiary }} />
                   ) : (
-                    <Paperclip size={24} style={{ color: C.labelTertiary }} />
+                    <AssetIcon size={24} style={{ color: C.labelTertiary }} />
                   )}
                 </div>
                 {/* 信息 */}
@@ -141,7 +141,7 @@ export default function MobileAssetsPage() {
                   <div className="flex items-center gap-1.5 mt-1">
                     <span
                       className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium"
-                      style={{ background: meta.bg, color: meta.color }}
+                      style={{ background: meta.bg, color: meta.text }}
                     >
                       {meta.label}
                     </span>
@@ -153,6 +153,13 @@ export default function MobileAssetsPage() {
                       </span>
                     )}
                   </div>
+                  {audio && (
+                    <div className="mt-2 space-y-2">
+                      {asset.source && <p className="text-[11px]" style={{ color: C.labelSecondary }}>{asset.source}</p>}
+                      {asset.summary && <p className="text-xs leading-relaxed" style={{ color: C.labelSecondary }}>{asset.summary}</p>}
+                      {asset.url && <AudioAssetPlayer url={asset.url} title={asset.title} />}
+                    </div>
+                  )}
                 </div>
               </div>
               );

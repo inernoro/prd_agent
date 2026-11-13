@@ -130,6 +130,7 @@ export function buildGeneratedArtifactFiles(
   let buttonCount = 0;
   let cssCharsRemaining = MAX_CSS_DERIVATION_CHARS;
   let cursor = 0;
+  const emptyAttributes = new Map<string, string>();
 
   const processCss = (rawCss: string): void => {
     if (cssCharsRemaining <= 0) return;
@@ -199,7 +200,7 @@ export function buildGeneratedArtifactFiles(
       || name === 'img'
       || /^h[1-6]$/.test(name)
       || /(?:^|\s)(?:hidden|aria-hidden|style)(?:\s|=|$)/i.test(tag.attributes);
-    const attributes = needsAttributes ? parseHtmlAttributes(tag.attributes) : new Map<string, string>();
+    const attributes = needsAttributes && tag.attributes.trim() ? parseHtmlAttributes(tag.attributes) : emptyAttributes;
     if (name === 'html' && !htmlLanguage) {
       htmlLanguage = decodeHtmlText(attributes.get('lang') || '').trim().slice(0, 80);
     }

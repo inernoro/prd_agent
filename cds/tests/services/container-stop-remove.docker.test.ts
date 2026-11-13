@@ -3,6 +3,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { execSync } from 'node:child_process';
 import { ContainerService } from '../../src/services/container.js';
 import { ShellExecutor } from '../../src/services/shell-executor.js';
+import { deploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
 import type { CdsConfig } from '../../src/types.js';
 
 /**
@@ -64,6 +65,7 @@ describe.skipIf(!TEST_IMAGE_OK)('ContainerService stop/remove against real docke
   const REASON = '集成测试停止（保留容器）';
 
   afterAll(() => {
+    deploymentPhaseBudget.releaseMemory(name);
     // 无论断言结果如何都清掉测试容器,绝不污染宿主。
     try {
       execSync(`docker rm -f ${name}`, { stdio: 'ignore', timeout: 15_000 });
@@ -80,7 +82,30 @@ describe.skipIf(!TEST_IMAGE_OK)('ContainerService stop/remove against real docke
       expect(run.exitCode, `docker run failed: ${run.stderr}`).toBe(0);
 
       // 1) stop() —— 仅 docker stop + 哨兵,不得 rm
-      await svc.stop(name, REASON);
+      const owner = { projectId: 'owned-native-stop', branchId: name, operationId: 'original-stop' };
+      const successor = { ...owner, operationId: 'successor-stop' };
+      deploymentPhaseBudget.reserveKnownMemory(name, 16, owner);
+      let installedSuccessor = false;
+      const fenced = new ContainerService({ exec: async (command, options) => {
+        const result = await shell.exec(command, options);
+        // 真实 daemon 已返回后、服务确认并结算之前安装同名后继预约。
+        if (command === `docker stop ${name}` && result.exitCode === 0) {
+          deploymentPhaseBudget.reserveKnownMemory(name, 32, successor); installedSuccessor = true;
+        }
+        return result;
+      } }, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
+      await fenced.stop(name, REASON, owner);
+      expect(installedSuccessor).toBe(true);
+      expect(deploymentPhaseBudget.memorySnapshot().find(row => row.key === name))
+        .toMatchObject({ memoryMB: 32, owner: successor });
+      const inspected = await shell.exec(`docker inspect ${name}`);
+      expect(inspected.exitCode).toBe(0);
+      const actual = JSON.parse(inspected.stdout)[0];
+      expect(actual.Id).toBe(run.stdout.trim());
+      expect(actual.State).toMatchObject({ Running: false, Pid: 0, OOMKilled: false });
+      console.info('::notice title=CDS native stop reservation::' + JSON.stringify({ nativeStopReservation: { containerId: actual.Id, pid: actual.State.Pid,
+        exitCode: actual.State.ExitCode, oomKilled: actual.State.OOMKilled, successorPreserved: true } }));
+      deploymentPhaseBudget.releaseMemory(name);
 
       const status = await shell.exec(`docker inspect -f "{{.State.Status}}" ${name}`);
       expect(status.exitCode, '容器在 stop 后必须仍然存在(未被 rm)').toBe(0);

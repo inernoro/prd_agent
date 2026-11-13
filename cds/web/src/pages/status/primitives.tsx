@@ -269,7 +269,7 @@ export function SegmentedControl<T extends string>({
 /** 加载骨架：横幅 + 左列表 + 右详情三块的形状，不是静止 spinner。 */
 export function MonitorCenterSkeleton(): JSX.Element {
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3" role="status" aria-label="正在读取监控数据">
+    <div className="relative flex h-full min-h-0 flex-col gap-3" role="status" aria-label="正在读取监控数据">
       <div className="cds-loading-skeleton-line h-20 w-full rounded-lg" />
       <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[21.25rem_minmax(0,1fr)]">
         <div className="flex flex-col gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3">

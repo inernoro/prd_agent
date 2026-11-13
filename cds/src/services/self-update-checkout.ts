@@ -34,7 +34,8 @@ export type SelfUpdateTransitionDecision =
         | 'invalid_transition_intent'
         | 'expected_from_sha_required'
         | 'expected_from_sha_mismatch'
-        | 'transition_reason_required';
+        | 'transition_reason_required'
+        | 'release_requires_inherited_revision';
       message: string;
     };
 
@@ -49,8 +50,8 @@ function shaMatches(expected: string, actual: string): boolean {
  * 共享 CDS 控制面的版本切换门禁。
  *
  * 旧客户端无需新增字段即可继续执行同 SHA 重启和快进更新。只有会丢掉当前
- * 已部署提交的非快进切换，才要求调用方显式声明 release/rollback、当前 SHA
- * 和原因。这样既阻断多 Agent 分支互相覆盖，也不会一次升级就让旧技能失效。
+ * 已部署提交的非快进切换只接受明确回滚；普通发布必须先继承当前提交。
+ * 手动强制更新仍保留独立逃生通道，不由本门禁封锁。
  */
 export function evaluateSelfUpdateTransition(
   input: SelfUpdateTransitionInput,
@@ -71,9 +72,9 @@ export function evaluateSelfUpdateTransition(
       // 过来的人会觉得自己刚刚已经声明过了——2026-07-30 用户原话「我都这么明显了好吧」。
       // 前端漏传字段是根因（已修），这句话是第二道保险：万一还有别的调用方漏传，
       // 至少告诉他缺哪三个字段。
-      message: '目标版本不包含当前 CDS 提交（非快进切换）。'
-        + '请在「CDS 系统设置 → 更新与重启 → 强制更新」里选择「发布新版本」或「回滚旧版本」并填写原因；'
-        + 'API 调用需同时提供 transitionIntent、expectedFromSha、transitionReason。',
+      message: '目标版本不包含当前 CDS 提交。发布新版本请先将当前提交合入目标分支并验证；'
+        + '确需回滚时，API 须提供 transitionIntent=rollback、expectedFromSha、transitionReason。'
+        + '人工强制更新仍可在「CDS 系统设置 → 更新与重启 → 强制更新」执行。',
     };
   }
   if (rawIntent !== 'release' && rawIntent !== 'rollback') {
@@ -104,6 +105,11 @@ export function evaluateSelfUpdateTransition(
       code: 'transition_reason_required',
       message: '非快进切换必须提供 8-300 字符且不含控制字符的原因。',
     };
+  }
+  if (rawIntent === 'release') {
+    return { allowed: false, code: 'release_requires_inherited_revision',
+      message: '发布目标未包含当前线上提交；release 声明和原因不能证明已有修复被保留。'
+        + '请先合入当前线上完整提交、验证整合结果，再按普通更新发布。' };
   }
   return {
     allowed: true,

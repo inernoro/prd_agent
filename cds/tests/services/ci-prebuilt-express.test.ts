@@ -313,6 +313,28 @@ describe('极速版 — dispatcher', () => {
     });
   }
 
+  it('归档期间新push与迟到CI完成都不自动重新部署', async () => {
+    const pushed = await pushOnce();
+    const branch = stateService.getBranch(pushed.branchId!)!;
+    branch.archive = { archivedAt: new Date().toISOString(), retireAt: '2026-12-09T00:00:00Z', reason: 'manual', actor: 'user' };
+    const completed = await dispatcher.handle('workflow_run', { action: 'completed',
+      workflow_run: { id: 90, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: FULL_SHA, head_branch: 'feature', conclusion: 'success' },
+      repository: { full_name: 'octocat/repo' } });
+    expect(completed.deployRequest).toBeUndefined();
+    const next = await pushOnce('a'.repeat(40)); expect(next.deployRequest).toBeUndefined();
+    expect(branch.archive).toBeTruthy(); expect(branch.ciTargetSha).toBe(FULL_SHA);
+  });
+
+  it.each(['2099-01-01T00:00:00Z', '2000-01-01T00:00:00Z'])('GitHub删除归档分支时保留数据，由生命周期决定到期回收：%s', async retireAt => {
+    const pushed = await pushOnce(), branch = stateService.getBranch(pushed.branchId!)!;
+    stateService.updateProject('p1', { githubEventPolicy: { delete: true } });
+    branch.archive = { archivedAt: new Date().toISOString(), retireAt, reason: 'manual', actor: 'user' };
+    const deleted = await dispatcher.handle('delete', { ref: 'feature', ref_type: 'branch', repository: { full_name: 'octocat/repo' } });
+    expect(deleted.action).toBe('ignored-event'); expect(deleted.branchDeleteRequest).toBeUndefined();
+    expect(deleted.stopRequest).toBeUndefined(); expect(deleted.tombstoneRequest).toBeUndefined();
+    expect(stateService.getBranch(branch.id)?.archive?.retireAt).toBe(retireAt);
+  });
+
   it.each([false, true])('失效项目默认模式在新 webhook 分支创建前拒绝，dryRun=%s', async dryRun => {
     stateService.updateProject('p1', { defaultDeployModes: { api: 'removed-express' } });
     const create = vi.spyOn(MockWorktree.prototype, 'create');

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="965" viewBox="0 0 600 965" role="img" aria-labelledby="title">
+  <title id="title">Visual creation: canvas variations and an AI designer, arranged vertically for mobile.</title>
+  <defs>
+    <clipPath id="frame">
+      <rect x="0" y="0" width="600" height="965" rx="16" />
+    </clipPath>
+    <pattern id="dots" width="18" height="18" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r=".75" fill="#D8D6CE" opacity=".24" />
+    </pattern>
+  </defs>
+  <rect x="0" y="0" width="600" height="965" rx="16" fill="#F5F3EE" />
+  <g clip-path="url(#frame)">
+    <rect x="0" y="0" width="600" height="965" rx="16" fill="#F5F3EE" />
+    <rect x="0" y="0" width="600" height="48" rx="8" fill="#FFFFFF" />
+    <path d="M0 48H600" fill="none" stroke="#D8D6CE" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
+    <text x="23" y="30" font-size="14" fill="#26322B" font-weight="600" font-family="Arial, Helvetica, sans-serif">01 / VISUAL CREATION</text>
+    <text x="577" y="29" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#59645B" letter-spacing="1.7" text-anchor="end">INTERFACE STUDY</text>
+    <rect x="0" y="48" width="600" height="450" rx="8" fill="url(#dots)" />
+    <rect x="227" y="65" width="140" height="28" rx="8" fill="#ECE9E2" />
+    <text x="240" y="84" font-size="13" fill="#26322B" font-weight="400" font-family="Arial, Helvetica, sans-serif">−    100%    +</text>
+    <svg x="24" y="122" width="260" height="200" viewBox="0 0 300 200" preserveAspectRatio="none">
+      <rect x="0" y="0" width="300" height="200" rx="8" fill="#E9E7E0" />
+      <circle cx="220" cy="42" r="57" fill="#FFFFFF" opacity=".14" />
+      <path d="M0 118L58 88L104 116L152 78L206 112L262 92L300 118V200H0Z" fill="#C5BDAF" stroke="none" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M0 146L64 128L128 150L196 130L262 152L300 138V200H0Z" fill="#9C8D7B" stroke="none" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+    <svg x="316" y="122" width="260" height="200" viewBox="0 0 300 200" preserveAspectRatio="none">
+      <rect x="0" y="0" width="300" height="200" rx="8" fill="#EAD4C5" />
+      <circle cx="220" cy="42" r="57" fill="#FFFFFF" opacity=".14" />
+      <path d="M0 118L58 88L104 116L152 78L206 112L262 92L300 118V200H0Z" fill="#C5A18A" stroke="none" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M0 146L64 128L128 150L196 130L262 152L300 138V200H0Z" fill="#906D55" stroke="none" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+    <text x="25" y="347" font-size="16" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">Draft</text>
+    <text x="317" y="347" font-size="16" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">Warm variant</text>
+    <svg x="24" y="372" width="260" height="170" viewBox="0 0 300 200" preserveAspectRatio="none">
+      <rect x="0" y="0" width="300" height="200" rx="8" fill="#DCD4C5" />
+      <circle cx="220" cy="42" r="57" fill="#FFFFFF" opacity=".14" />
+      <path d="M0 118L58 88L104 116L152 78L206 112L262 92L300 118V200H0Z" fill="#B8AB95" stroke="none" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M0 146L64 128L128 150L196 130L262 152L300 138V200H0Z" fill="#8D7B62" stroke="none" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M0 135Q70 104 148 139T300 133V200H0Z" fill="#DCD4C5" stroke="none" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+    <text x="314" y="429" font-size="18" fill="#26322B" font-weight="400" font-family="Arial, Helvetica, sans-serif">Upscale</text>
+    <text x="314" y="463" font-size="18" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">Inpaint</text>
+    <text x="314" y="497" font-size="18" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">AI layers</text>
+    <rect x="20" y="564" width="560" height="382" rx="8" fill="#FFFFFF" stroke="#D8D6CE" />
+    <rect x="40" y="586" width="29" height="29" rx="8" fill="#F0E2D8" />
+    <g transform="translate(46 592) scale(0.7083333333333334)">
+      <path d="M12 3l2.4 5.6L20 11l-5.6 2.4L12 19l-2.4-5.6L4 11l5.6-2.4z" fill="none" stroke="#A94F36" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+    </g>
+    <text x="81" y="607" font-size="18" fill="#26322B" font-weight="600" font-family="Arial, Helvetica, sans-serif">Your AI designer</text>
+    <text x="40" y="646" font-size="13" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">Describe it. Refine it. Keep creating.</text>
+    <path d="M40 667H560" fill="none" stroke="#D8D6CE" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
+    <text x="40" y="698" font-size="10" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif" letter-spacing="1.6">YOU</text>
+    <text x="40" y="724" font-size="15" fill="#26322B" font-weight="400" font-family="Arial, Helvetica, sans-serif">Make the key visual foggy.</text>
+    <text x="40" y="746" font-size="15" fill="#26322B" font-weight="400" font-family="Arial, Helvetica, sans-serif">Keep the ridgeline.</text>
+    <text x="40" y="786" font-size="10" fill="#A94F36" font-weight="400" font-family="Arial, Helvetica, sans-serif" letter-spacing="1.5">VISUAL AGENT</text>
+    <text x="40" y="813" font-size="15" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">The weather changes.</text>
+    <text x="40" y="835" font-size="15" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">The ridgeline stays.</text>
+    <rect x="36" y="849" width="528" height="80" rx="8" fill="#F5F3EE" stroke="#D8D6CE" />
+    <text x="50" y="878" font-size="13" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">Describe the next variation...</text>
+    <rect x="525" y="891" width="26" height="25" rx="8" fill="#A94F36" />
+    <g transform="translate(530 897) scale(0.6666666666666666)">
+      <path d="M12 19V5m-6 6 6-6 6 6" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+    </g>
+  </g>
+</svg>

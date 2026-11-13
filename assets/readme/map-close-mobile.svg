@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="320" viewBox="0 0 600 320" role="img" aria-labelledby="title">
+  <title id="title">Open MAP — Pick one agent. Finish one useful thing.</title>
+  <rect x="0" y="0" width="600" height="320" rx="16" fill="#F5F3EE" />
+  <text x="28" y="36" fill="#59645B" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="400" letter-spacing="1.6">START WITH ONE USEFUL THING</text>
+  <text x="28" y="95" fill="#26322B" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700">Pick one agent.</text>
+  <text x="28" y="139" fill="#26322B" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700">Finish one useful thing.</text>
+  <rect x="28" y="179" width="244" height="54" rx="8" fill="#A94F36" />
+  <text x="51" y="214" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700">Open MAP</text>
+  <path d="M228 206h17m-6-6 6 6-6 6" fill="none" stroke="#FFFFFF" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+  <text x="28" y="286" fill="#59645B" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" letter-spacing="1.5">MAP / CREATE, FREELY.</text>
+</svg>

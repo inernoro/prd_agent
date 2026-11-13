@@ -995,6 +995,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
         const epoch = this.deploymentRunConfirmationEpoch;
         try {
           // 单实体确认不受后续无关实体/全局状态失败影响，也不借整批成功推断自身成功。
+          // 显式操作期限优先于客户端CSOT；否则30秒默认会覆盖原5秒确认预算。
           await collection.replaceOne({ _id: id }, replacement, { upsert: true, writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 }, maxTimeMS: 5000, timeoutMS: 5000, ignoreUndefined: true });
         } catch (error) {
           // Mongo 可能已完成写入但确认连接中断；只接受主节点多数读到的精确配对记录。

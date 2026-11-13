@@ -77,10 +77,10 @@ describe('restartStatus 判定矩阵', () => {
 describe('等待文案：在等谁、等了多久、最多等多久', () => {
   it('排空阶段写出在途数量、已等秒数、上限，并说清超时会怎样', () => {
     const t = describeRestartWait(wait());
-    expect(t).toContain('2 个在途部署');
+    expect(t).toContain('2 个在途操作');
     expect(t).toContain('已等 65s');
     expect(t).toContain('最多 300s');
-    expect(t).toContain('超时会照常重启');
+    expect(t).toContain('超时将取消更新与重启');
   });
   it('落盘与换进程阶段各有自己的话', () => {
     expect(describeRestartWait(wait({ phase: 'flushing', waitedMs: 70_000 }))).toContain('落盘');
@@ -108,7 +108,7 @@ describe('接线守卫', () => {
 
   it('三条重启路由都把排空进度接到了 SSE（自更新 / 仅重启 / 强制同步）', () => {
     const sources = [...branches.matchAll(/source: '(api\.self-update|api\.self-restart|api\.self-force-sync)',\s*\n\s*onProgress:/g)].map((m) => m[1]);
-    expect(sources.sort()).toEqual(['api.self-force-sync', 'api.self-restart', 'api.self-update']);
+    expect([...new Set(sources)].sort()).toEqual(['api.self-force-sync', 'api.self-restart', 'api.self-update']);
   });
 
   it('排空每一轮都把等待状态写进单例，换进程前进入 spawning，重启没生效时清掉', () => {

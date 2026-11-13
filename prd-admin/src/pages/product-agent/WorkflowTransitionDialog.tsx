@@ -104,20 +104,27 @@ export function WorkflowTransitionDialog({
 
   const enrichedEntity = useMemo<WorkflowTransitionEntitySnapshot>(() => ({
     ...entity,
+    title,
+    grade,
     versionIds,
     hasApprovedInitiation: linkage.hasApprovedInitiation,
     hasCompletedRelease: linkage.hasCompletedRelease,
-  }), [entity, versionIds, linkage.hasApprovedInitiation, linkage.hasCompletedRelease]);
+  }), [entity, title, grade, versionIds, linkage.hasApprovedInitiation, linkage.hasCompletedRelease]);
 
+  // 用打开表单时缺少的内容确定编辑项；不能随着填写完成隐藏输入或丢掉请求字段。
   const fields = useMemo(() => {
     if (!tr) return [] as Array<'title' | 'grade' | 'assigneeId' | 'comment' | 'versionIds'>;
-    return missingTransitionFieldKeys(tr, enrichedEntity, comment, assigneeId, versionIds);
-  }, [tr, enrichedEntity, comment, assigneeId, versionIds]);
+    return missingTransitionFieldKeys(tr, entity);
+  }, [tr, entity]);
 
   const gateFields = useMemo(() => {
-    if (!tr) return [] as Array<'versionIds' | 'initiationId' | 'releaseId'>;
-    return missingRequirementGateFields(tr, enrichedEntity, versionIds, initiationId, releaseId);
-  }, [tr, enrichedEntity, versionIds, initiationId, releaseId]);
+    if (!tr || entityType !== 'requirement') return [] as Array<'versionIds' | 'initiationId' | 'releaseId'>;
+    return missingRequirementGateFields(tr, {
+      ...entity,
+      hasApprovedInitiation: linkage.hasApprovedInitiation,
+      hasCompletedRelease: linkage.hasCompletedRelease,
+    }, entity.versionIds ?? []);
+  }, [tr, entityType, entity, linkage.hasApprovedInitiation, linkage.hasCompletedRelease]);
 
   const toggleVersion = (id: string) => {
     setVersionIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -130,7 +137,9 @@ export function WorkflowTransitionDialog({
 
   const submit = async () => {
     const missingFields = missingTransitionFieldKeys(tr, enrichedEntity, comment, assigneeId, versionIds);
-    const missingGates = missingRequirementGateFields(tr, enrichedEntity, versionIds, initiationId, releaseId);
+    const missingGates = entityType === 'requirement'
+      ? missingRequirementGateFields(tr, enrichedEntity, versionIds, initiationId, releaseId)
+      : [];
     if (missingFields.length > 0 || missingGates.length > 0) {
       const labels = [
         ...missingFields.map((k) => WORKFLOW_TRANSITION_FIELD_LABELS[k]),

@@ -95,6 +95,7 @@ __pycache__/
 # so `git status` stays clean regardless of how exec_cds.sh is invoked.
 /.cds/
 /.cds-data/
+/.cds-static-previews/
 /.cds-cache/
 /.cds-worktrees/
 .cds/state.json

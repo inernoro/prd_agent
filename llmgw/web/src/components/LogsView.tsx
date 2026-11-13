@@ -12,6 +12,7 @@ import { GenerationDetailsDrawer } from './GenerationDetailsDrawer';
 import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityIcon';
 import { LogEntityHoverCard } from './LogEntityHoverCard';
 import { LogTableSettings } from './LogTableSettings';
+import { ConsumptionAlertsPanel } from './ConsumptionAlertsPanel';
 import {
   DASH,
   LOGS_SUBTABS,
@@ -158,6 +159,7 @@ function isExchangeProvider(item: Pick<LlmLogListItem, 'platformName' | 'provide
 
 function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platformName' | 'provider'>) {
   const query = new URLSearchParams();
+  if (item.platformId?.startsWith('user-key:')) return `/logs?serviceKeyId=${encodeURIComponent(item.platformId)}&clientCode=cds-user-key`;
   if (isExchangeProvider(item)) {
     if (item.platformId) query.set('exchangeId', item.platformId);
     if (item.platformName || item.provider) query.set('name', item.platformName || item.provider);
@@ -1132,6 +1134,7 @@ export function LogsView() {
 
   return (
     <div className="lg-logs-view" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <ConsumptionAlertsPanel refreshToken={refreshToken} />
       <header className="lg-logs-heading">
         <div>
           <h1>Logs</h1>

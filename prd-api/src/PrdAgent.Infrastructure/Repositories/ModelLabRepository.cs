@@ -62,10 +62,12 @@ public class ModelLabRepository : IModelLabRepository
             .ToListAsync();
     }
 
-    public async Task UpdateExperimentAsync(ModelLabExperiment experiment)
+    public async Task<bool> UpdateExperimentAsync(ModelLabExperiment experiment, DateTime expectedUpdatedAt)
     {
-        experiment.UpdatedAt = DateTime.UtcNow;
-        await _experiments.ReplaceOneAsync(x => x.Id == experiment.Id && x.OwnerAdminId == experiment.OwnerAdminId, experiment);
+        experiment.UpdatedAt = NextUpdatedAt(expectedUpdatedAt);
+        var result = await _experiments.ReplaceOneAsync(x => x.Id == experiment.Id && x.OwnerAdminId == experiment.OwnerAdminId
+            && x.UpdatedAt == expectedUpdatedAt, experiment);
+        return result.MatchedCount == 1;
     }
 
     public async Task<bool> DeleteExperimentAsync(string id, string ownerAdminId)
@@ -89,22 +91,17 @@ public class ModelLabRepository : IModelLabRepository
         return res.DeletedCount > 0;
     }
 
-    public async Task<ModelLabModelSet> UpsertModelSetAsync(ModelLabModelSet modelSet)
+    public async Task<ModelLabModelSet?> UpsertModelSetAsync(ModelLabModelSet modelSet, DateTime? expectedUpdatedAt)
     {
-        var now = DateTime.UtcNow;
-        if (string.IsNullOrWhiteSpace(modelSet.Id))
+        modelSet.UpdatedAt = NextUpdatedAt(expectedUpdatedAt);
+        if (expectedUpdatedAt is null)
         {
-            modelSet.Id = Guid.NewGuid().ToString();
+            try { await _modelSets.InsertOneAsync(modelSet); return modelSet; }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey) { return null; }
         }
-        if (modelSet.CreatedAt == default) modelSet.CreatedAt = now;
-        modelSet.UpdatedAt = now;
-
-        await _modelSets.ReplaceOneAsync(
-            x => x.Id == modelSet.Id && x.OwnerAdminId == modelSet.OwnerAdminId,
-            modelSet,
-            new ReplaceOptions { IsUpsert = true });
-
-        return modelSet;
+        var result = await _modelSets.ReplaceOneAsync(x => x.Id == modelSet.Id && x.OwnerAdminId == modelSet.OwnerAdminId
+            && x.UpdatedAt == expectedUpdatedAt.Value, modelSet);
+        return result.MatchedCount == 1 ? modelSet : null;
     }
 
     public async Task<List<ModelLabModelSet>> ListModelSetsAsync(string ownerAdminId, string? search, int limit)
@@ -128,22 +125,24 @@ public class ModelLabRepository : IModelLabRepository
         return await _modelSets.Find(x => x.Id == id && x.OwnerAdminId == ownerAdminId).FirstOrDefaultAsync();
     }
 
-    public async Task<ModelLabGroup> UpsertLabGroupAsync(ModelLabGroup group)
+    public async Task<ModelLabGroup?> UpsertLabGroupAsync(ModelLabGroup group, DateTime? expectedUpdatedAt)
+    {
+        group.UpdatedAt = NextUpdatedAt(expectedUpdatedAt);
+        if (expectedUpdatedAt is null)
+        {
+            await _labGroups.InsertOneAsync(group);
+            return group;
+        }
+        var result = await _labGroups.ReplaceOneAsync(x => x.Id == group.Id && x.OwnerAdminId == group.OwnerAdminId
+            && x.UpdatedAt == expectedUpdatedAt.Value, group);
+        return result.MatchedCount == 1 ? group : null;
+    }
+
+    private static DateTime NextUpdatedAt(DateTime? previous)
     {
         var now = DateTime.UtcNow;
-        if (string.IsNullOrWhiteSpace(group.Id))
-        {
-            group.Id = Guid.NewGuid().ToString();
-        }
-        if (group.CreatedAt == default) group.CreatedAt = now;
-        group.UpdatedAt = now;
-
-        await _labGroups.ReplaceOneAsync(
-            x => x.Id == group.Id && x.OwnerAdminId == group.OwnerAdminId,
-            group,
-            new ReplaceOptions { IsUpsert = true });
-
-        return group;
+        // Mongo 日期精度为毫秒，同毫秒更新也必须使 CAS 版本前进。
+        return previous is { } before && before.AddMilliseconds(1) > now ? before.AddMilliseconds(1) : now;
     }
 
     public async Task<List<ModelLabGroup>> ListLabGroupsAsync(string ownerAdminId, string? search, int limit)

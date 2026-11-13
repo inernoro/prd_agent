@@ -3,10 +3,11 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { parseProductVersionMessage } from '@/services/real/productAgent';
 import type { VersionRegistrationMessageParseResult } from '@/services/real/productVersionRegistry';
 
-export function ProductVersionMessagePaste({ kind, onParsed, getPlanNameEditVersion }: {
+export function ProductVersionMessagePaste({ kind, onParsed, getPlanNameEditVersion, prepareText }: {
   kind: 'internal' | 'formal';
   onParsed: (result: VersionRegistrationMessageParseResult, editVersion?: number) => void;
   getPlanNameEditVersion?: () => number;
+  prepareText?: (text: string) => { text: string; linkCount: number };
 }) {
   const [text, setText] = useState('');
   const [hint, setHint] = useState('');
@@ -15,6 +16,8 @@ export function ProductVersionMessagePaste({ kind, onParsed, getPlanNameEditVers
   const requestId = useRef(0);
   const latestOnParsed = useRef(onParsed);
   latestOnParsed.current = onParsed;
+  const latestPrepareText = useRef(prepareText);
+  latestPrepareText.current = prepareText;
 
   useEffect(() => {
     if (text.trim().length < 4) {
@@ -25,23 +28,30 @@ export function ProductVersionMessagePaste({ kind, onParsed, getPlanNameEditVers
     const currentId = ++requestId.current;
     const editVersion = getPlanNameEditVersion?.();
     const timer = window.setTimeout(async () => {
+      const prepared = latestPrepareText.current?.(text) ?? { text, linkCount: 0 };
+      const linkHint = prepared.linkCount ? `已识别 ${prepared.linkCount} 条 TAPD 链接` : '';
+      if (linkHint && prepared.text.trim().length < 4) {
+        setHint(`${linkHint}，请核对回填内容。`);
+        setBusy(false);
+        return;
+      }
       setBusy(true);
       try {
-        const response = await parseProductVersionMessage(kind, text);
+        const response = await parseProductVersionMessage(kind, prepared.text);
         if (requestId.current !== currentId) return;
         if (!response.success) {
-          setHint(response.error?.message ?? '识别失败，现有内容保持不变');
+          setHint(linkHint ? `${linkHint}，其他字段识别失败。` : response.error?.message ?? '识别失败，现有内容保持不变');
           return;
         }
         const result = response.data.result;
         if (result.matchedFields.length === 0) {
-          setHint('没有识别到可回填的字段，现有内容保持不变');
+          setHint(linkHint ? `${linkHint}，请核对回填内容。` : '没有识别到可回填的字段，现有内容保持不变');
           return;
         }
         latestOnParsed.current(result, editVersion);
-        setHint(`已识别 ${result.matchedFields.length} 项，请核对回填内容。`);
+        setHint(`已识别 ${result.matchedFields.length} 项${linkHint ? `和 ${prepared.linkCount} 条 TAPD 链接` : ''}，请核对回填内容。`);
       } catch {
-        if (requestId.current === currentId) setHint('暂时无法识别，现有内容保持不变');
+        if (requestId.current === currentId) setHint(linkHint ? `${linkHint}，其他字段暂时无法识别。` : '暂时无法识别，现有内容保持不变');
       } finally {
         if (requestId.current === currentId) setBusy(false);
       }

@@ -14,6 +14,81 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public sealed class CanonicalImageBoundaryTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void Seedream5UsesGenerationJsonForTextSingleAndMultipleReferenceImages(int imageCount)
+    {
+        const string image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+        var request = LlmGateway.RebuildCanonicalImageRequest(new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img,
+            ModelType = ModelTypes.ImageGen,
+            CanonicalImageRequest = new()
+            {
+                Prompt = "保留参考图商品", Size = "1024x1024", Count = 1,
+                Images = Enumerable.Repeat(image, imageCount).ToList(),
+            },
+        }, new ModelResolutionResult
+        {
+            ActualModel = "doubao-seedream-5-0-pro-260628",
+            ApiUrl = "https://ark.cn-beijing.volces.com/api/v3",
+            PlatformType = "openai", Protocol = "openai",
+        });
+
+        Assert.Equal("images/generations", request.EndpointPath);
+        Assert.False(request.IsMultipart);
+        var body = request.RequestBody!;
+        Assert.Equal("1024x1024", body["size"]!.GetValue<string>());
+        Assert.False(body.ContainsKey("n"));
+        Assert.False(body.ContainsKey("sequential_image_generation"));
+        Assert.False(body.ContainsKey("stream"));
+        if (imageCount == 0) Assert.False(body.ContainsKey("image"));
+        else if (imageCount == 1) Assert.Equal(image, body["image"]!.GetValue<string>());
+        else Assert.Equal(imageCount, body["image"]!.AsArray().Count);
+        var info = ImageGenModelAdapterRegistry.GetAdapterInfo("doubao-seedream-5-0-pro-260628");
+        Assert.NotNull(info);
+        Assert.NotEmpty(info.SizesByResolution["1k"]);
+        Assert.NotEmpty(info.SizesByResolution["2k"]);
+        Assert.Empty(info.SizesByResolution["4k"]);
+        Assert.NotNull(GatewayImageModelCatalog.ValidateSize("4096x4096", info));
+    }
+
+    [Fact]
+    public void CanaryFinalWire_PreservesPinnedOfferingAndLowQualityEnvelope()
+    {
+        var request = LlmGateway.RebuildCanonicalImageRequest(new GatewayRawRequest {
+            AppCallerCode=AppCallerRegistry.VisualAgent.Image.Text2Img,ModelType=ModelTypes.ImageGen,
+            RequiredLogicalModelPublicId="fixed-version",RequiredOfferingId="frozen-route",
+            Context=new GatewayRequestContext { SourceTask="ModelUpgradeCanaryWorker:request" },
+            CanonicalImageRequest=new() { Prompt="A blue circle.",Count=1,Size="1024x1024",Quality="low" }
+        }, new ModelResolutionResult { ActualModel="gpt-image-2",ApiUrl="https://api.openai.com/v1",PlatformType="openai",Protocol="openai" });
+        Assert.Equal("frozen-route",request.RequiredOfferingId);
+        Assert.Equal("low",request.RequestBody!["quality"]!.GetValue<string>());
+        Assert.Equal(1,request.RequestBody["n"]!.GetValue<int>());
+        Assert.Equal("1024x1024",request.RequestBody["size"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("high",1,"route")]
+    [InlineData("low",2,"route")]
+    [InlineData("low",1,"")]
+    public void CanaryFinalWire_RejectsExpandedEnvelope(string quality,int count,string route)
+        => Assert.Throws<InvalidOperationException>(()=>LlmGateway.RebuildCanonicalImageRequest(new GatewayRawRequest {
+            AppCallerCode=AppCallerRegistry.VisualAgent.Image.Text2Img,ModelType=ModelTypes.ImageGen,
+            RequiredLogicalModelPublicId="fixed-version",RequiredOfferingId=route,
+            Context=new GatewayRequestContext { SourceTask="ModelUpgradeCanaryWorker:request" },
+            CanonicalImageRequest=new() { Prompt="A blue circle.",Count=count,Size="1024x1024",Quality=quality }
+        },new ModelResolutionResult { ActualModel="gpt-image-2",ApiUrl="https://api.openai.com/v1",PlatformType="openai",Protocol="openai" }));
+
+    [Fact]
+    public void ExplicitQuality_OnUnsupportedAdapter_IsRejected()
+        => Assert.Throws<InvalidOperationException>(()=>LlmGateway.RebuildCanonicalImageRequest(new GatewayRawRequest {
+            AppCallerCode=AppCallerRegistry.VisualAgent.Image.Text2Img,ModelType=ModelTypes.ImageGen,
+            CanonicalImageRequest=new() { Prompt="A circle.",Quality="low" }
+        },new ModelResolutionResult { ActualModel="gemini-image",ApiUrl="https://example.test",PlatformType="google",Protocol="google" }));
+
     private sealed class Transport : HttpMessageHandler, IHttpClientFactory
     {
         public List<string> Paths { get; } = [];
@@ -31,7 +106,7 @@ public sealed class CanonicalImageBoundaryTests
     public async Task MapSendsOnlyCanonicalParameters_NoPreResolveOrWireParameters()
     {
         var transport = new Transport();
-        var client = new HttpLlmGatewayClient(transport, new ConfigurationBuilder().Build(), NullLogger<HttpLlmGatewayClient>.Instance);
+        var client = new HttpLlmGatewayClient(transport, new ConfigurationBuilder().Build(), NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: TransportTestTaskAuthorizer.Instance);
         var result = await client.GenerateImageAsync(new GatewayRawRequest
         {
             AppCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img, ModelType = ModelTypes.ImageGen,

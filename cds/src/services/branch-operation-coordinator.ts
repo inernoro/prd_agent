@@ -370,6 +370,20 @@ export class BranchOperationCoordinator {
     if (!this.deploymentInputs.has(key)) this.deploymentInputs.set(key, structuredClone(input));
   }
 
+  /** 原受理输入仍由协调器的既有终态负责释放；仅在进程内提取镜像引用。 */
+  getDeploymentImageReferences(resolve: (request: Readonly<BranchOperationRequest>, input: Readonly<DeploymentInputSnapshot>) => readonly string[]): string[] {
+    const owners = [...this.active.values(), ...this.pendingWebhookDeploys.values(), ...this.reservedContinuations.values(),
+      ...[...this.pendingReplayClaims.values()].map(claim => claim.pending)];
+    const seen = new Set<string>(), images = new Set<string>();
+    for (const owner of owners) {
+      const key = this.replayKey(owner), input = this.deploymentInputs.get(key);
+      if (!input || seen.has(key)) continue;
+      seen.add(key);
+      for (const image of resolve(owner.request, input)) if (image) images.add(image);
+    }
+    return [...images];
+  }
+
   /** HTTP 鉴权只读当前领取的公开身份；不暴露私有配置，begin 仍原子消费并复核。 */
   getClaimedPendingReplay(input: BranchOperationRequest['pendingReplay']): PendingWebhookDeploy | undefined {
     this.prunePendingReplayClaims();
@@ -434,7 +448,14 @@ export class BranchOperationCoordinator {
   }
 
 
-  begin(request: BranchOperationRequest, options: { waitForArtifacts?: boolean } = {}): BranchOperationDecision {
+  begin(request: BranchOperationRequest, options: { waitForArtifacts?: boolean; requireImmediate?: boolean } = {}): BranchOperationDecision {
+    if (options.requireImmediate) this.prunePendingReplayClaims();
+    // 实时快照不能在延迟重放中降级成普通人工意图；拒绝而非持久化半份条件。
+    if (options.requireImmediate && (options.waitForArtifacts || request.pendingReplay || this.findBlockingActive(request)
+      || this.findWaitingBarrier(request) || this.getUsableReservedContinuation(request.branchId, request))) {
+      return { status: 'rejected', operationId: this.createOperationId(), generation: this.currentGeneration(request.branchId),
+        reason: '本次实时快照条件不能排队或合并，请在产物齐备且分支空闲后重新规划' };
+    }
     if (options.waitForArtifacts && (request.versionId || request.hasOneShotOptions)) {
       return { status: 'rejected', operationId: this.createOperationId(), generation: this.currentGeneration(request.branchId),
         reason: '本次指定版本或一次性选项不能作为产物等待恢复，请在产物齐备后重试' };

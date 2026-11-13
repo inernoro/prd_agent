@@ -81,6 +81,38 @@ public sealed class DesignArtifactStage2ContractTests
         Assert.Equal(html, persistedHtml);
     }
 
+    [Fact]
+    public void OpenDesign受信Blob交互整包在MAP保存时保留原字节与旁挂文件()
+    {
+        var html = HostedSiteRevisionRules.HardenVerifiedPackageHtml(
+            "<!doctype html><html><head><title>报告</title></head><body><main>原始内容</main></body></html>",
+            new[] { "index.html", "assets/data.json" }).Replace("</body>",
+            "<script>const blobUrl = URL.createObjectURL(new Blob(['report'])); URL.revokeObjectURL(blobUrl);</script></body>",
+            StringComparison.Ordinal);
+        var bytes = Encoding.UTF8.GetBytes(html);
+        var sidecar = Encoding.UTF8.GetBytes("{\"retained\":true}");
+        var files = new[]
+        {
+            new DesignWorkspaceFile("index.html", Convert.ToBase64String(bytes),
+                Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), bytes.LongLength, "text/html; charset=utf-8"),
+            new DesignWorkspaceFile("assets/data.json", Convert.ToBase64String(sidecar),
+                Convert.ToHexString(SHA256.HashData(sidecar)).ToLowerInvariant(), sidecar.LongLength, "application/json"),
+        };
+        var output = new StringBuilder();
+        var run = new DesignArtifactRun { Runtime = DesignArtifactRuntimes.OpenDesign };
+
+        Assert.True(HostedSiteEditRunWorker.ConsumePrivateOpenDesignChunk(
+            run, new DesignArtifactExecutorChunk("delta", html, files), output));
+        var persistedHtml = HostedSiteEditRunWorker.HardenExecutorOutput(output.ToString(), files);
+        var persistedFiles = HostedSiteEditRunWorker.BuildVerifiedHostedSiteFiles(files, persistedHtml);
+
+        Assert.Equal(html, persistedHtml);
+        Assert.Equal(files.Length, persistedFiles.Count);
+        var savedSidecar = Assert.Single(persistedFiles, file => file.Path == "assets/data.json");
+        Assert.Equal(sidecar, savedSidecar.Content);
+        Assert.Equal(files[1].Sha256, savedSidecar.Sha256);
+    }
+
     [Theory]
     [InlineData("delta")]
     [InlineData("thinking")]

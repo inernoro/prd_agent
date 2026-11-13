@@ -16,6 +16,7 @@
  */
 
 import net from 'node:net';
+import { diagnosticUrl, diagnosticValue } from './monitor-evidence.js';
 import { maskSecrets } from './secret-masker.js';
 import { internalProbeHeaders } from './self-check-auth.js';
 import type { MonitorObservation, UptimeCustomMonitor, UptimeCustomMonitorKind } from '../types.js';
@@ -29,7 +30,8 @@ import {
   type AssertOp,
   type MonitorAssertion,
 } from './monitor-assertions.js';
-import type { UptimeSample } from './uptime-metrics.js';
+import type { UptimeMeasurement, UptimeSample } from './uptime-metrics.js';
+import { probeMcpMonitor } from './mcp-monitor.js';
 
 /**
  * 探测记录的命名空间前缀。与 release-probe-target 的 `release@` 同理：分支键
@@ -303,6 +305,7 @@ export function normalizeUptimeMonitorInput(
     id: str(input.id) || options.existing?.id || newMonitorId(),
     name: '',
     kind,
+    ...(kind === 'functional' && options.existing?.mcp ? { mcp: options.existing.mcp } : {}),
     enabled: input.enabled === undefined ? (options.existing?.enabled ?? true) : Boolean(input.enabled),
     createdAt: options.existing?.createdAt || new Date(options.now ? options.now() : Date.now()).toISOString(),
     updatedAt: new Date(options.now ? options.now() : Date.now()).toISOString(),
@@ -726,6 +729,26 @@ export type CustomProbeOutcome = Omit<UptimeSample, 't'> & {
   observation?: MonitorObservation;
 };
 
+/** Use the configured field and RFC health+json observedUnit only; never infer P95 from request duration. */
+function healthMeasurement(
+  body: string,
+  componentId: string,
+  field: HealthAssertField,
+  op: HealthAssertOp,
+  expected: string,
+): UptimeMeasurement | undefined {
+  let doc: unknown;
+  try { doc = JSON.parse(body); } catch { return undefined; }
+  const check = findHealthCheck(doc, componentId);
+  if (!check) return undefined;
+  const value = check[field];
+  if (value !== undefined && value !== null && typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return undefined;
+  if (typeof value === 'number' && !Number.isFinite(value)) return undefined;
+  const actual = typeof value === 'string' ? maskSecrets(value, { mask: true }).slice(0, 160) : value ?? null;
+  const unit = typeof check.observedUnit === 'string' ? maskSecrets(check.observedUnit, { mask: true }).slice(0, 24) : undefined;
+  return { name: componentId, field, op, expected, actual, ...(unit ? { unit } : {}) };
+}
+
 /**
  * 被动监控的样本量：这个窗口里到底有没有人用过。
  *
@@ -756,9 +779,10 @@ export function readSampleCount(
  * 「生图接口通、返回的却是 512×512」属于后者，两种都得有人盯。
  */
 async function functionalProbe(
-  monitor: Pick<UptimeCustomMonitor, 'url' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'observeMode' | 'sampleCountPath'>,
+  monitor: Pick<UptimeCustomMonitor, 'url' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'observeMode' | 'sampleCountPath' | 'mcp'>,
   timeoutMs: number,
 ): Promise<CustomProbeOutcome> {
+  if (monitor.mcp) return probeMcpMonitor(monitor.url || '', monitor.mcp, timeoutMs);
   const startedAt = Date.now();
   const method = monitor.requestMethod || 'POST';
   const requestBody = monitor.requestBody ? expandRequestTemplate(monitor.requestBody) : undefined;
@@ -874,8 +898,10 @@ async function readBodyPrefix(res: Response, limitBytes: number): Promise<string
 async function httpProbe(
   monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'observeMode' | 'sampleCountPath'>,
   timeoutMs: number,
-  snapshot?: { body: string; code: number },
+  snapshot?: { body: string; code: number; contentType?: string; requestMethod?: string },
 ): Promise<CustomProbeOutcome> {
+  const exchange: NonNullable<UptimeSample['exchange']> = { request: { method: snapshot?.requestMethod || monitor.method || 'GET', url: diagnosticUrl(monitor.url || '') }, note: '仅保留响应状态与本检查的脱敏指标摘录；未保留完整正文及请求头。' };
+  const run = async (): Promise<CustomProbeOutcome> => {
   const startedAt = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -889,6 +915,7 @@ async function httpProbe(
       headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true', ...internalProbeHeaders(monitor.url || '') },
     });
     const code = res.status;
+    exchange.response = { status: code, contentType: (snapshot ? snapshot.contentType || '' : res.headers.get('content-type') || '').slice(0, 100) };
     if (!statusMatches(code, monitor.expectedStatus)) {
       await res.body?.cancel().catch(() => undefined);
       return { up: false, ms: Date.now() - startedAt, code, err: `HTTP ${code}，不在期望范围 ${monitor.expectedStatus || DEFAULT_EXPECTED_STATUS}` };
@@ -900,6 +927,10 @@ async function httpProbe(
       }
     } else if (monitor.kind === 'health-json') {
       const body = await readBodyPrefix(res, HEALTH_BODY_LIMIT_BYTES);
+      try {
+        const check = findHealthCheck(JSON.parse(body), monitor.healthComponentId || '');
+        if (check) exchange.response!.excerpt = diagnosticValue({ componentId: monitor.healthComponentId, field: monitor.healthField || 'observedValue', observedValue: check[monitor.healthField || 'observedValue'], status: check.status });
+      } catch { exchange.note = '响应不是有效 JSON；未保留原始正文。'; }
       const field = monitor.healthField || 'observedValue';
       const op = monitor.healthOp || 'eq';
       const verdict = evaluateHealthJson(
@@ -909,6 +940,9 @@ async function httpProbe(
         op,
         monitor.healthValue || '',
       );
+      const measurement = healthMeasurement(body, monitor.healthComponentId || '', field, op, monitor.healthValue || '');
+      const safeObserved = verdict.observed === undefined ? undefined : maskSecrets(verdict.observed, { mask: true });
+      const safeError = verdict.err === undefined ? undefined : maskSecrets(verdict.err, { mask: true });
       // 被动监控要留证据：判据结论之外，还得带上这个窗口的样本量。
       // 判据通过 + 样本量为 0 不是「一切正常」，是「没人用过」——两件事，界面分开说。
       let observation: MonitorObservation | undefined;
@@ -925,9 +959,9 @@ async function httpProbe(
             path: `${monitor.healthComponentId || ''}.${field}`,
             op,
             expected: monitor.healthValue,
-            ...(verdict.observed === undefined ? {} : { actual: verdict.observed }),
+            ...(safeObserved === undefined ? {} : { actual: safeObserved }),
             ok: verdict.ok,
-            ...(verdict.ok || !verdict.err ? {} : { err: verdict.err }),
+            ...(verdict.ok || !safeError ? {} : { err: safeError }),
           }],
           ...(sampleCount === undefined ? {} : { sampleCount }),
         };
@@ -937,7 +971,7 @@ async function httpProbe(
         const doc = JSON.parse(body);
         if (findHealthCheck(doc, monitor.healthComponentId || '')) {
           return { up: false, noData: true, ms: Date.now() - startedAt, code,
-            err: '当前窗口没有观测样本，保持上一条有效结论', observation };
+            err: '当前窗口没有观测样本，保持上一条有效结论', observation, ...(measurement ? { measurement } : {}) };
         }
       }
       if (!verdict.ok) {
@@ -947,11 +981,12 @@ async function httpProbe(
           if (typeof value === 'string') publicMessage = maskSecrets(value, { mask: true }).replace(/https?:\/\/[^\s<>"']+/gi, '[详情中查看]').slice(0, 160);
         } catch { /* 非法文档由原判据记录，不生成通知说明。 */ }
         // 判据不成立时 HTTP 往往仍是 200——「接口通但结论是坏的」正是这类探测的存在意义。
-        return { up: false, ms: Date.now() - startedAt, code, err: verdict.err,
-          ...(verdict.observed !== undefined ? { finding: publicMessage || `当前读数 ${verdict.observed.slice(0, 80)}，应${({eq:'等于',ne:'不等于',lt:'低于',lte:'不高于',gt:'高于',gte:'不低于'} as Record<string,string>)[op]} ${String(monitor.healthValue).slice(0, 80)}。` } : {}),
+        return { up: false, ms: Date.now() - startedAt, code, err: safeError,
+          ...(measurement ? { measurement } : {}),
+          ...(safeObserved !== undefined ? { finding: publicMessage || `当前读数 ${safeObserved.slice(0, 80)}，应${({eq:'等于',ne:'不等于',lt:'低于',lte:'不高于',gt:'高于',gte:'不低于'} as Record<string,string>)[op]} ${String(monitor.healthValue).slice(0, 80)}。` } : {}),
           ...(observation ? { observation } : {}) };
       }
-      return { up: true, ms: Date.now() - startedAt, code, ...(observation ? { observation } : {}) };
+      return { up: true, ms: Date.now() - startedAt, code, ...(measurement ? { measurement } : {}), ...(observation ? { observation } : {}) };
     } else {
       await res.body?.cancel().catch(() => undefined);
     }
@@ -966,6 +1001,9 @@ async function httpProbe(
   } finally {
     clearTimeout(timer);
   }
+  };
+  const outcome = await run();
+  return { ...outcome, exchange };
 }
 
 /** 同一个自检端点只读取一次；采集失败与真实指标越界分别返回。 */
@@ -975,11 +1013,13 @@ export async function probeHealthJsonBatch(monitors: UptimeCustomMonitor[], time
   const started = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const exchange: NonNullable<UptimeSample['exchange']> = { request: { method: 'GET', url: diagnosticUrl(monitors[0]?.url || '') }, note: '共享采集请求；仅保留响应回执，完整正文未保留。' };
   try {
     const first = monitors[0];
     if (!first?.url || monitors.some(m => m.kind !== 'health-json' || m.url !== first.url)) throw new Error('自检分组配置不一致');
     const res = await fetch(first.url, { signal: ctrl.signal, redirect: 'manual',
       headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true', ...internalProbeHeaders(first.url) } });
+    exchange.response = { status: res.status, contentType: (res.headers.get('content-type') || '').slice(0, 100) };
     if (res.status < 200 || res.status >= 300) {
       await res.body?.cancel().catch(() => undefined);
       throw new Error(`自检接口返回 HTTP ${res.status}`);
@@ -989,23 +1029,23 @@ export async function probeHealthJsonBatch(monitors: UptimeCustomMonitor[], time
     if (!doc || typeof doc.checks !== 'object' || !doc.checks) throw new Error('自检响应缺少检查数据');
     const ms = Date.now() - started;
     const members = await Promise.all(monitors.map(async m => {
-      const outcome = await httpProbe(m, timeoutMs, { body, code: res.status });
+      const outcome = await httpProbe(m, timeoutMs, { body, code: res.status, contentType: res.headers.get('content-type') || undefined, requestMethod: 'GET' });
       const check = findHealthCheck(doc, m.healthComponentId || '');
       const value = check?.[m.healthField || 'observedValue'];
       return { ...outcome, ms, ...(value === undefined || value === null ? { up: false, noData: true } : {}) };
     }));
     const missing = monitors.filter((m, i) => { const value = findHealthCheck(doc, m.healthComponentId || '')?.[m.healthField || 'observedValue']; return members[i].observation?.sampleCount !== 0 && (value === undefined || value === null); }).length;
-    return { collection: missing ? { up: false, ms, code: res.status, err: `${missing} 项自检缺少读数，无法判断` } : { up: true, ms, code: res.status }, members };
+    return { collection: missing ? { up: false, ms, code: res.status, exchange, err: `${missing} 项自检缺少读数，无法判断` } : { up: true, ms, code: res.status, exchange }, members };
   } catch (error) {
     const err = ctrl.signal.aborted ? `自检数据读取超时（${timeoutMs}ms）` : '自检数据读取失败';
-    const collection = { up: false, ms: Date.now() - started, err };
+    const collection = { up: false, ms: Date.now() - started, err, exchange, ...(exchange.response ? { code: exchange.response.status } : {}) };
     return { collection, members: monitors.map(() => ({ ...collection, noData: true })) };
   } finally { clearTimeout(timer); }
 }
 
 /** 按监控定义发一次探测。timeoutMs 由调用方结算（监控自身 > 全局）。 */
 export async function probeCustomMonitor(
-  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'host' | 'port' | 'observeMode' | 'sampleCountPath'>,
+  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'host' | 'port' | 'observeMode' | 'sampleCountPath' | 'mcp'>,
   timeoutMs: number,
 ): Promise<CustomProbeOutcome> {
   if (monitor.kind === 'tcp') {

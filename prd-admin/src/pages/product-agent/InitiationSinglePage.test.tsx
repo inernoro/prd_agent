@@ -218,6 +218,21 @@ describe('内部立项单页来源与失败恢复', () => {
     expect(host.textContent).toContain('填写内容及本次评审记录已保存');
   });
 
+  it('评审流故障后同步原立项终态，不重复创建或错误发号', async () => {
+    const previous = seed({ status: 'review_pending', reviewPassed: null });
+    api.updateInitiation.mockResolvedValue({ success: true, data: previous });
+    api.syncInitiationReview.mockResolvedValueOnce({ success: true, data: previous })
+      .mockResolvedValueOnce({ success: true, data: { ...previous, status: 'review_failed' } });
+    api.stream.mockRejectedValueOnce(new Error('评审服务暂时不可用，请稍后从原记录继续。'));
+    await mount(previous); await selectFile(); await confirm();
+    expect(api.syncInitiationReview).toHaveBeenCalledTimes(2);
+    expect(api.syncInitiationReview).toHaveBeenLastCalledWith('initiation', 'new-review');
+    expect(api.createInitiation).not.toHaveBeenCalled();
+    expect(api.decideInitiation).not.toHaveBeenCalled();
+    expect(host.textContent).toContain('已保存填写内容，请从当前记录继续');
+    expect(field<HTMLInputElement>('方案名称 *').value).toBe(previous.planName);
+  });
+
   it('新文件评审通过后同一次确认自动决策，会议时间沿用计划日期', async () => {
     const previous = seed();
     api.updateInitiation.mockResolvedValue({ success: true, data: previous });

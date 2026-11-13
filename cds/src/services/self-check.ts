@@ -31,6 +31,7 @@ import type { selfStatusCache } from './self-status-cache.js';
 import { SELF_CHECK_PATH } from './self-check-path.js';
 import type { SchedulerService, PreviewActivityStatus } from './scheduler.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
+import type { HttpLogSink } from './http-log-store.js';
 
 export { SELF_CHECK_PATH };
 
@@ -119,7 +120,7 @@ export interface SelfCheckDeps {
   diskUsage: () => { totalBytes: number; freeBytes: number } | null;
   dockerPing: () => Promise<{ ok: boolean; ms: number; detail?: string }>;
   /** 最近一段时间主进程的请求统计。没有日志存储时返回 null。 */
-  httpStats: (sinceMs: number) => Promise<{ requests: number; serverErrors: number; branchesP95Ms: number | null; branchesRequests: number } | null>;
+  httpStats: (sinceMs: number) => Promise<{ requests: number; serverErrors: number; branchesP95Ms: number | null; branchesRequests: number; widgetStreamFailures?: number } | null>;
   /** 真的会响的通知通道数（与面板同一份判定）。 */
   liveAlarmChannels: () => number;
   /** `ready=false` 表示自身状态缓存还没算过一次——刚起来的进程会有几十秒这样。 */
@@ -127,6 +128,31 @@ export interface SelfCheckDeps {
   storeBackend: () => string;
   previewActivity?: (sinceMs: number) => Promise<{ current: PreviewActivityStatus | undefined;
     schedulerEnabled: boolean; recentUnknownCount: number | null }>;
+}
+
+/** 初始化未成功时真实日志类会返回空数组；必须保留未知，不能把不可读解释为零故障。 */
+export async function readHttpSelfCheckStats(store: HttpLogSink | null, initialized: boolean, sinceMs: number,
+  nowMs = Date.now()): Promise<Awaited<ReturnType<SelfCheckDeps['httpStats']>>> {
+  if (!initialized || !store?.findRecent) return null;
+  // 上限 5000 条：30 分钟里超过这个量的实例，统计会截到最近 5000 条，
+  // 比例仍然成立，只是样本量少报——宁可少报也不拉整个集合。
+  const rows = await store.findRecent({ layer: 'master', since: new Date(sinceMs), limit: 5000, sort: 'recent' });
+  // 恢复流可能给浏览器200，但原上游失败必须被常设监控读到；有限查询不扫描整个集合。
+  const streamErrors = await store.findRecent({ layer: 'forwarder', minStatus: 500,
+    pathContains: '/_cds/api/', since: new Date(nowMs - 6 * 60 * 60_000), limit: 5000, sort: 'recent' });
+  const branches = rows
+    .filter((r) => r.method === 'GET' && (r.path === '/api/branches' || r.path.startsWith('/api/branches?')))
+    .map((r) => r.durationMs)
+    .filter((ms) => Number.isFinite(ms));
+  const sorted = [...branches].sort((a, b) => a - b);
+  const p95 = sorted.length === 0 ? null : sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(0.95 * sorted.length) - 1))];
+  return {
+    requests: rows.length,
+    serverErrors: rows.filter((r) => r.status >= 500).length,
+    branchesP95Ms: p95,
+    branchesRequests: branches.length,
+    widgetStreamFailures: streamErrors.filter(r => /^\/_cds\/api\/(?:branches\/stream|activity-stream)(?:\?|$)/.test(r.path)).length,
+  };
 }
 
 /** index 与回归共用原事件sink接线，不另建持久库、通知通道或探测目标。 */
@@ -369,6 +395,19 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
     time,
   ));
   const errorRate = !http || requests === 0 ? 0 : Math.round((http.serverErrors / requests) * 100);
+  const streamFailures = http?.widgetStreamFailures ?? null;
+  checks.push(monitored(
+    {
+      componentId: 'api.widget-stream-failures-6h', componentType: 'http',
+      observedValue: streamFailures, observedUnit: 'failure',
+      status: streamFailures === null ? 'warn' : streamFailures === 0 ? 'pass' : 'fail',
+      output: streamFailures === null ? '挂件上游失败日志不可用，不能判断切换连续性'
+        : streamFailures > 0 ? `近 6 小时采样发现 ${streamFailures} 次挂件上游失败；检查控制面切换、恢复和鉴权，重连成功不能抹去失败`
+          : '近 6 小时采样未发现挂件上游失败',
+    },
+    { name: 'CDS · 挂件流上游失败', publicName: '预览状态连接连续性', op: 'lte', value: 0, failuresToAlarm: 1, severity: 'P1', intervalSeconds: 21600 },
+    time,
+  ));
   checks.push(monitored(
     {
       componentId: 'api.error-rate-30m', componentType: 'http',

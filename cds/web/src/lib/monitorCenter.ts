@@ -21,7 +21,21 @@ export type MonitorEnvironment = 'production' | 'staging' | 'other' | 'preview';
 /** 观测方式：主动自己发一次真请求 / 被动读真实流量的窗口统计。 */
 export type ObserveMode = 'active' | 'passive';
 
+/** A real health-check reading; round-trip latency is not a business metric. */
+export interface UptimeMeasurement {
+  name: string;
+  field: 'status' | 'observedValue';
+  actual: string | number | boolean | null;
+  expected: string;
+  op: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
+  unit?: string;
+}
+
 export interface UptimeSample {
+  exchange?: { request: { method: string; url: string }; response?: { status: number; contentType?: string; excerpt?: unknown }; note: string };
+
+  measurement?: UptimeMeasurement;
+  finding?: string;
   noData?: boolean;
   t: number;
   up: boolean;
@@ -31,6 +45,8 @@ export interface UptimeSample {
 }
 
 export interface UptimeBucket {
+  /** Same-metric numeric reading mean; unavailable/mixed-contract buckets omit it. */
+  measurement?: UptimeMeasurement & { aggregation: 'average'; sampleCount: number };
   from: number;
   to: number;
   up: number;
@@ -53,6 +69,9 @@ export interface UptimeBucketFailure {
 }
 
 export interface UptimeTargetSummary {
+  /** 服务端订阅关系；无字段的旧实例不推断为已订阅。 */
+  subscribed?: boolean;
+  overviewIncluded?: boolean;
   collectionTargetId?: string;
   collectionMembers?: Array<{ id: string; name: string }>;
   alarmIdentity?: {observer: {id:string;name:string;environment:string;location?:string};subject:{id:string;name:string;environment:string;location?:string}};
@@ -246,6 +265,11 @@ export interface UptimeIncidentView {
   endedAt: number | null;
   durationMs: number;
   cause: string;
+  /** Persisted samples at the incident transitions, absent for legacy records. */
+  startedSample?: UptimeSample;
+  endedSample?: UptimeSample;
+  /** Alert-trigger samples, not proof of successful notification delivery. */
+  notificationSamples?: UptimeSample[];
   ongoing: boolean;
   /** 疑似引入本次故障的发布（生产目标才有）。无归因时后端不下发。 */
   releaseId?: string;

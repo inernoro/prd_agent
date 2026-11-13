@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
-import { buildLiteraryModelOptions, selectLiteraryModelOption } from './literaryModelOptions';
+import { buildLiteraryModelOptions, selectLiteraryModelOption, selectFreshLiteraryModel } from './literaryModelOptions';
 
 function pool(overrides: Partial<LiteraryAgentModelPool> = {}): LiteraryAgentModelPool {
   return {
@@ -53,6 +53,28 @@ describe('buildLiteraryModelOptions', () => {
     expect(buildLiteraryModelOptions([pool(), duplicate])).toHaveLength(1);
   });
 
+  it('仍忽略没有成员的旧目录项', () => {
+    expect(buildLiteraryModelOptions([pool({ models: undefined! }), pool({ models: [] }), pool()])).toHaveLength(1);
+  });
+
+  it.each([
+    ['Healthy', 'Unavailable'], ['Healthy', 'Degraded'], ['Degraded', 'Unavailable'],
+    ['Healthy', 'Healthy'], ['Degraded', 'Degraded'], ['Unavailable', 'Unavailable'],
+  ])('重复型号按 %s 优于 %s、同级稳定 Id 选择，不依赖目录顺序', (betterHealth, worseHealth) => {
+    const entry = (id: string, healthStatus: string) => pool({
+      id, code: `public-${id}`,
+      models: [{ ...pool().models[0], healthStatus, isRecoveryProbeAvailable: true }],
+    });
+    const better = pool({ ...entry('a', betterHealth), isDefault: betterHealth === worseHealth });
+    const worse = entry('z', worseHealth);
+    const unrelated = pool({ id: 'other', code: 'other-public', isDefault: false, models: [{ ...pool().models[0], actualModelId: 'future-image-1699' }] });
+    for (const candidates of [[worse, unrelated, better], [better, unrelated, worse]]) {
+      const options = buildLiteraryModelOptions(candidates);
+      expect(options.map((model) => [model.modelName, model.isDefault])).toEqual([[better.code, true], [unrelated.code, false]]);
+      expect(selectLiteraryModelOption(options, 'pool_a')?.modelName).toBe(better.code);
+    }
+  });
+
   it('无用户偏好时使用显式默认，而不是目录第一项', () => {
     const options = buildLiteraryModelOptions([
       pool({ id: 'sunburst', code: 'gpt-image-2.5-sunburst', isDefault: false, models: [{ modelId: 'gpt-image-2.5-sunburst', actualModelId: 'gpt-image-2.5-sunburst', platformId: 'logical-model', actualPlatformId: 'openai', priority: 1, healthStatus: 'Healthy' }] }),
@@ -60,6 +82,19 @@ describe('buildLiteraryModelOptions', () => {
     ]);
 
     expect(selectLiteraryModelOption(options, '')?.modelName).toBe('gpt-image-2');
+  });
+
+  it.each(['Healthy', 'Degraded', 'Unavailable'])('同级 %s 去重保留较晚 Id 的显式默认，不依赖目录顺序', (healthStatus) => {
+    const earlier = pool({
+      id: 'a', code: 'earlier-public', isDefault: false,
+      models: [{ ...pool().models[0], healthStatus, isRecoveryProbeAvailable: true }],
+    });
+    const explicitDefault = pool({ ...earlier, id: 'z', code: 'default-public', isDefault: true });
+    for (const candidates of [[earlier, explicitDefault], [explicitDefault, earlier]]) {
+      const options = buildLiteraryModelOptions(candidates);
+      expect(options).toHaveLength(1);
+      expect.soft(selectLiteraryModelOption(options, '')?.modelName).toBe(explicitDefault.code);
+    }
   });
 
   it('用户显式偏好不被系统默认覆盖', () => {
@@ -72,16 +107,47 @@ describe('buildLiteraryModelOptions', () => {
   });
 });
 
-
 describe('恢复试探目录契约', () => {
-  it.each([false, true])('恢复资格为 %s 时按网关资格开放入口并保留请求身份', (available) => {
+  it.each([
+    { healthStatus: 'Healthy', isRecoveryProbeAvailable: false, enabled: true },
+    { healthStatus: 'Degraded', isRecoveryProbeAvailable: false, enabled: true },
+    { healthStatus: 'Unavailable', isRecoveryProbeAvailable: false, enabled: false },
+    { healthStatus: 'Unavailable', isRecoveryProbeAvailable: true, enabled: true },
+    { healthStatus: 'Unavailable', isRecoveryProbeAvailable: undefined, enabled: false },
+  ])('健康为 $healthStatus、恢复资格为 $isRecoveryProbeAvailable 时按权威快照保留选项', ({ enabled, ...state }) => {
     const entry = pool();
-    entry.models = entry.models.map((member) => ({
-      ...member, healthStatus: 'Unavailable' as typeof member.healthStatus,
-      isRecoveryProbeAvailable: available,
-    }));
+    entry.models = entry.models.map((member) => ({ ...member, ...state }));
+
     const options = buildLiteraryModelOptions([entry]);
-    expect(options).toHaveLength(available ? 1 : 0);
-    if (available) expect(options[0].modelName).toBe(entry.code);
+
+    expect(options).toHaveLength(enabled ? 1 : 0);
+    if (enabled) expect(options[0].modelName).toBe(entry.code);
   });
+});
+
+
+describe('提交前最新目录核验', () => {
+  it('旧页面仅按明确继承关系迁移，未知旧型号不会换成默认', () => {
+    const old = buildLiteraryModelOptions([pool({ code: 'old-image', id: 'old' })])[0];
+    const fresh = buildLiteraryModelOptions([pool({ code: 'image-sunlight', aliases: ['old-image'] })]);
+    expect(selectFreshLiteraryModel(fresh, old)?.modelName).toBe('image-sunlight');
+    expect(selectFreshLiteraryModel(buildLiteraryModelOptions([pool({ code: 'unrelated-default' })]), old)).toBeNull();
+  });
+  it('未点名时使用新目录默认，仍有效的显式选择继续保留', () => {
+    const options = buildLiteraryModelOptions([pool({ code: 'still-valid' })]);
+    expect(selectFreshLiteraryModel(options, options[0])).toBe(options[0]);
+    expect(selectFreshLiteraryModel(options, null)).toBe(options[0]);
+  });
+});
+
+
+it('失效偏好保持可见阻断，不静默切换成系统默认', () => {
+  const options = buildLiteraryModelOptions([pool({ code: 'current-default' })]);
+  expect(selectLiteraryModelOption(options, 'pool_retired-id')).toBeNull();
+});
+
+
+it('已登记的旧池标识仍指向当前逻辑模型，不误判为失效并改用其他默认', () => {
+  const options = buildLiteraryModelOptions([pool({ code: 'current-public', legacyPoolIds: ['old-pool'] })]);
+  expect(selectLiteraryModelOption(options, 'pool_old-pool')?.modelName).toBe('current-public');
 });

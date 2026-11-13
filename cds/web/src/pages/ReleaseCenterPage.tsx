@@ -1,3 +1,4 @@
+import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 import { ReleaseCenterSkeleton } from '@/components/skeletons/WorkspaceSkeletons';
 /**
  * 站点发布中心 v2 —— 环境是骨架，不是一堆等权重的配置方框。
@@ -18,7 +19,7 @@ import { ReleaseCenterSkeleton } from '@/components/skeletons/WorkspaceSkeletons
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { Plus, RefreshCw, Rocket } from 'lucide-react';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';

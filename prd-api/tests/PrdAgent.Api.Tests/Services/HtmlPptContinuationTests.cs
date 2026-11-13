@@ -1,3 +1,6 @@
+using PrdAgent.Api.Tests.Gateway;
+using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Security;
 using PrdAgent.Api.Controllers.Api;
 using System.Security.Cryptography;
 using System.Text;
@@ -461,7 +464,8 @@ public sealed class HtmlPptContinuationTests
         await store.Db.DesignArtifactRuns.InsertOneAsync(edit);
         var environment = new Mock<IHostEnvironment>();
         environment.SetupGet(x => x.EnvironmentName).Returns("Production");
-        var issuer = new DesignArtifactGatewayGrantService(gw, store.Db, config, environment.Object);
+        var issuer = new DesignArtifactGatewayGrantService(gw, store.Db, config, environment.Object,
+            new TaskExecutionAuthorizer(gw, config));
         var wrongRun = new DesignArtifactRun
         {
             Id="wrong-generation", UserId="owner", Operation=DesignArtifactOperations.Generate, ArtifactType="html-ppt",
@@ -469,9 +473,13 @@ public sealed class HtmlPptContinuationTests
         };
         await store.Db.MdToPptRuns.InsertOneAsync(new MdToPptRun
         { Id=wrongRun.Id, UserId="owner", ParentOutlineRunId="outline", SourcePlanJson=sourceJson, SourcePlanHash=sourceHash });
-        var denied = await Assert.ThrowsAsync<MdToPptSourcePlanException>(() =>
-            issuer.IssueAsync(wrongRun, DateTime.UtcNow.AddMinutes(5), CancellationToken.None));
+        MdToPptSourcePlanException denied;
+        using (TaskExecutionContext.Enter(await PlatformExecutionFixture.AdmitDesignRunAsync(gw, config, wrongRun)))
+            denied = await Assert.ThrowsAsync<MdToPptSourcePlanException>(() =>
+                issuer.IssueAsync(wrongRun, DateTime.UtcNow.AddMinutes(5), CancellationToken.None));
         Assert.Equal("task_budget_modification_binding_invalid", denied.Code);
+        using var editExecution = TaskExecutionContext.Enter(
+            await PlatformExecutionFixture.AdmitDesignRunAsync(gw, config, edit));
         var issued = await issuer.IssueAsync(edit, DateTime.UtcNow.AddMinutes(5), CancellationToken.None);
         var grant = await gw.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
             .Find(x => x.Id==issued.Id).SingleAsync();
@@ -547,6 +555,8 @@ public sealed class HtmlPptContinuationTests
         { Id=manual.Id,UserId="owner",Op="patch",ParentRunId=edit.Id,ParentHtmlHash=editHtmlHash,
           SourcePlanJson=sourceJson,SourcePlanHash=sourceHash });
         await store.Db.DesignArtifactRuns.InsertOneAsync(manual);
+        using var manualExecution = TaskExecutionContext.Enter(
+            await PlatformExecutionFixture.AdmitDesignRunAsync(gw, config, manual));
         var manualIssued=await issuer.IssueAsync(manual,DateTime.UtcNow.AddMinutes(5),CancellationToken.None);
         var manualGrant=await gw.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
             .Find(x=>x.Id==manualIssued.Id).SingleAsync();

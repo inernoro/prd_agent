@@ -374,6 +374,7 @@ import {
 } from '@/services/real/watermark';
 import { adminImpersonateReal } from '@/services/real/lab';
 import {
+  getModelLabModelOptionsReal,
   createModelLabExperimentReal,
   deleteModelLabExperimentReal,
   getModelLabExperimentReal,
@@ -383,6 +384,7 @@ import {
   updateModelLabExperimentReal,
   upsertModelLabModelSetReal,
 } from '@/services/real/modelLab';
+export const getModelLabModelOptions = withAuth(getModelLabModelOptionsReal);
 import {
   cancelImageGenRunReal,
   clarifyImageGenPromptReal,
@@ -526,6 +528,7 @@ import {
   getLiteraryAgentImageGenResolvedModelReal,
   getLiteraryAgentChatResolvedModelReal,
   createLiteraryAgentImageGenRunReal,
+  getLiteraryAgentRunByRequestReal,
   cancelLiteraryAgentImageGenRunReal,
   streamLiteraryAgentImageGenRunWithRetryReal,
   listReferenceImageConfigsMarketplaceReal,
@@ -1131,6 +1134,7 @@ export const getLiteraryAgentMainModel: GetLiteraryAgentMainModelContract = with
 export const getLiteraryAgentImageGenResolvedModel = getLiteraryAgentImageGenResolvedModelReal;
 export const getLiteraryAgentChatResolvedModel = getLiteraryAgentChatResolvedModelReal;
 export const createLiteraryAgentImageGenRun: CreateLiteraryAgentImageGenRunContract = withAuth(createLiteraryAgentImageGenRunReal);
+export const getLiteraryAgentRunByRequest = withAuth(getLiteraryAgentRunByRequestReal);
 export const cancelLiteraryAgentImageGenRun: CancelLiteraryAgentImageGenRunContract = withAuth(cancelLiteraryAgentImageGenRunReal);
 export const streamLiteraryAgentImageGenRunWithRetry: StreamLiteraryAgentImageGenRunWithRetryContract = withAuth(streamLiteraryAgentImageGenRunWithRetryReal);
 // Reference Image Configs 海鲜市场
@@ -1337,6 +1341,7 @@ export const viewTeamWeekShare = viewTeamWeekShareReal;
 
 // Arena 竞技场
 import {
+  getArenaModelOptionsReal,
   listArenaGroupsReal,
   createArenaGroupReal,
   updateArenaGroupReal,
@@ -1358,6 +1363,7 @@ import {
 } from '@/services/real/arena';
 export type { ArenaAttachmentInfo } from '@/services/real/arena';
 
+export const getArenaModelOptions = withAuth(getArenaModelOptionsReal);
 export const listArenaGroups = withAuth(listArenaGroupsReal);
 export const createArenaGroup = withAuth(createArenaGroupReal);
 export const updateArenaGroup = withAuth(updateArenaGroupReal);

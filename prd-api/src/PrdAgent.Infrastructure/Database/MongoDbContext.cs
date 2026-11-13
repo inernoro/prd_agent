@@ -40,7 +40,11 @@ public class MongoDbContext
         BsonClassMapRegistration.Register();
         
         var client = new MongoClient(connectionString);
-        _database = client.GetDatabase(databaseName);
+        var taskCoordinator = new Lazy<PrdAgent.Core.Interfaces.ITaskExecutionCoordinator>(() =>
+            new PrdAgent.Infrastructure.Security.TaskExecutionCoordinator(new LlmGatewayDataContext(
+                string.IsNullOrWhiteSpace(llmRequestLogConnectionString) ? connectionString : llmRequestLogConnectionString,
+                string.IsNullOrWhiteSpace(llmRequestLogDatabaseName) ? databaseName : llmRequestLogDatabaseName)));
+        _database = TaskLifecycleMongoDatabase.Wrap(client.GetDatabase(databaseName), () => taskCoordinator.Value, llmRequestLogTenantId);
         var logClient = string.IsNullOrWhiteSpace(llmRequestLogConnectionString)
                         || string.Equals(llmRequestLogConnectionString, connectionString, StringComparison.Ordinal)
             ? client
@@ -63,6 +67,10 @@ public class MongoDbContext
     }
 
     public IMongoCollection<User> Users => _database.GetCollection<User>("users");
+    public IMongoCollection<SpeechSettings> SpeechSettings => _database.GetCollection<SpeechSettings>("speech_settings");
+    public IMongoCollection<SpeechPreset> SpeechPresets => _database.GetCollection<SpeechPreset>("speech_presets");
+    public IMongoCollection<SpeechRun> SpeechRuns => _database.GetCollection<SpeechRun>("speech_runs");
+    public IMongoCollection<SpeechQuotaLedger> SpeechQuotaLedgers => _database.GetCollection<SpeechQuotaLedger>("speech_quota_ledgers");
     public IMongoCollection<ProductPermissionConfiguration> ProductPermissionConfigurations =>
         _database.GetCollection<ProductPermissionConfiguration>("product_permission_configurations");
     public IMongoCollection<BsonDocument> ConsoleSsoTickets =>
@@ -412,8 +420,14 @@ public class MongoDbContext
     public IMongoCollection<TranscriptTemplate> TranscriptTemplates => _database.GetCollection<TranscriptTemplate>("transcript_templates");
 
     // Document Store 文档空间
-    public IMongoCollection<DocumentStore> DocumentStores => _database.GetCollection<DocumentStore>("document_stores");
-    public IMongoCollection<DocumentEntry> DocumentEntries => _database.GetCollection<DocumentEntry>("document_entries");
+    // 正常业务统一屏蔽回收数据，包含条件写入，防止旧编辑请求复活已删除内容。
+    public IMongoCollection<DocumentStore> DocumentStores => new ScopedMongoCollection<DocumentStore>(
+        DocumentStoresIncludingTrash, Builders<DocumentStore>.Filter.Eq(x => x.Trash, null));
+    public IMongoCollection<DocumentStore> DocumentStoresIncludingTrash => _database.GetCollection<DocumentStore>("document_stores");
+    public IMongoCollection<DocumentEntry> DocumentEntries => new ScopedMongoCollection<DocumentEntry>(
+        DocumentEntriesIncludingTrash, Builders<DocumentEntry>.Filter.Eq(x => x.Trash, null));
+    // 仅回收恢复、资源引用和同步身份识别使用；不能用于普通读路径。
+    public IMongoCollection<DocumentEntry> DocumentEntriesIncludingTrash => _database.GetCollection<DocumentEntry>("document_entries");
     public IMongoCollection<DocumentStoreLike> DocumentStoreLikes => _database.GetCollection<DocumentStoreLike>("document_store_likes");
     public IMongoCollection<DocumentStoreFavorite> DocumentStoreFavorites => _database.GetCollection<DocumentStoreFavorite>("document_store_favorites");
     public IMongoCollection<DocumentStoreShareLink> DocumentStoreShareLinks => _database.GetCollection<DocumentStoreShareLink>("document_store_share_links");
@@ -541,6 +555,7 @@ public class MongoDbContext
     public IMongoCollection<ProductWorkflowDefinition> ProductWorkflowDefinitions => _database.GetCollection<ProductWorkflowDefinition>("product_workflow_definitions");
     public IMongoCollection<VersionUpgradeRequest> VersionUpgradeRequests => _database.GetCollection<VersionUpgradeRequest>("version_upgrade_requests");
     public IMongoCollection<ProductAgentSettings> ProductAgentSettings => _database.GetCollection<ProductAgentSettings>("product_agent_settings");
+    public IMongoCollection<ProductScheduledNotification> ProductScheduledNotifications => _database.GetCollection<ProductScheduledNotification>("product_scheduled_notifications");
 
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");

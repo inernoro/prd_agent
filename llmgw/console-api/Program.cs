@@ -1,3 +1,5 @@
+using PrdAgent.LlmGw.ModelUpgrades;
+using PrdAgent.LlmGw.ModelReferences;
 // AI 大模型网关 —— 独立观测/登录后端（与 MAP 物理隔离）。
 //
 // 设计意图（见 doc/design.platform.llm-gateway.physical-isolation.md）：
@@ -8,6 +10,7 @@
 //     数值/日期类型混存导致的反序列化异常，日志查询统一以 BsonDocument 读取并手动安全映射。
 
 using System.Text;
+using PrdAgent.GatewayTransport;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Net;
@@ -230,6 +233,9 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
 });
+
+builder.Services.AddModelReferences(gatewayDatabase, mapDatabase, config, internalTenantId);
+builder.Services.AddModelUpgrades(gatewayDatabase, mapDatabase, config, internalTenantId);
 
 var app = builder.Build();
 
@@ -2731,6 +2737,8 @@ app.MapPost("/gw/members/{id}/invalidate-sessions", async (HttpContext http, str
 }).RequireAuthorization("OrganizationWrite");
 
 // ───────────────────────────── 日志列表（需鉴权）─────────────────────────────
+app.MapGatewayConsumptionAlerts(gatewayDatabase, jsonOptions);
+
 app.MapGet("/gw/logs", async (
     HttpContext http,
     int? page, int? pageSize, string? from, string? to, string? model, string? status,
@@ -3597,6 +3605,11 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
 }).RequireAuthorization("LogsRead");
 
 // 平台列表（密钥字段绝不外泄，只回 hasKey）
+var upstreamProxies = new UpstreamProxyService(gatewayDatabase, config, internalTenantId);
+upstreamProxies.MapEndpoints(app, jsonOptions);
+app.MapModelUpgrades(jsonOptions);
+app.MapModelReferences(jsonOptions);
+
 app.MapGet("/gw/platforms", async (HttpContext http) =>
 {
     var mapDocs = TenantAccess.GetRequired(http).TenantId == internalTenantId
@@ -3613,6 +3626,33 @@ app.MapGet("/gw/platforms", async (HttpContext http) =>
         Items = docs.Select(d => MapPlatform(d, config, revealFingerprint)).ToList(),
         Total = docs.Count,
     };
+    foreach (var item in data.Items)
+    {
+        var lastCall = await logs.Find(TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("PlatformId", item.Id),
+                Builders<BsonDocument>.Filter.Gte("StartedAt", DateTime.UtcNow.AddDays(-7)),
+                Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true),
+                Builders<BsonDocument>.Filter.In("Status", new[] { "succeeded", "failed" }))))
+            .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt").Descending("_id"))
+            .Project(new BsonDocument
+            {
+                ["StartedAt"] = 1, ["EndedAt"] = 1, ["Status"] = 1, ["StatusCode"] = 1, ["Error"] = 1,
+                ["AnswerText"] = new BsonDocument("$cond", new BsonArray
+                {
+                    new BsonDocument("$and", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$Status", "failed" }),
+                        new BsonDocument("$eq", new BsonArray { new BsonDocument("$type", "$AnswerText"), "string" }),
+                    }),
+                    new BsonDocument("$substrCP", new BsonArray { "$AnswerText", 0, 16384 }), "",
+                }),
+            })
+            .FirstOrDefaultAsync();
+        var source = docs.First(x => x.GetStringOrEmpty("_id") == item.Id);
+        item.RecentCallStatus = PlatformRecentCallPolicy.Classify(lastCall, source.AsNullableUtcDateTime("UpdatedAt"));
+        if (item.RecentCallStatus is not null)
+            item.RecentCallAt = (lastCall!.AsNullableUtcDateTime("EndedAt") ?? lastCall.AsNullableUtcDateTime("StartedAt")).ToIso();
+    }
     return Json(ApiEnvelope<PlatformsData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
@@ -3805,6 +3845,7 @@ app.MapGet("/gw/catalog-entries", async (HttpContext http) =>
         }).ToList(),
         // 控制台只让填这些用途名；与运行时的能力词表同源（守卫钉住）。
         KnownCapabilities = [.. LogicalModelCapabilityPolicy.CanonicalCapabilities.OrderBy(x => x, StringComparer.Ordinal)],
+        LegacyCapabilityAliases = LogicalModelCapabilityPolicy.LegacyAliases,
     }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
@@ -5178,6 +5219,7 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                 {
                     { "_id", logicalId }, { "TenantId", tenantId },
                     { "PublicId", publicId }, { "PublicIdNormalized", normalized },
+                    { "IdentityKeys", new BsonArray { normalized, poolId.ToLowerInvariant() } },
                     { "Name", poolName }, { "ModelType", modelType },
                     // 能力必须从池成员的快照里取。传 null 进去得到的是空集合，而空能力的模型
                     // 能力门一律不放行——搬迁报成功、调用方却调不到它，请求默默回落到池。
@@ -5249,6 +5291,7 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                             fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
                             Builders<BsonDocument>.Update
                                 .AddToSet("MigratedFromPoolIds", poolId)
+                                .AddToSet("IdentityKeys", poolId.ToLowerInvariant())
                                 .Set("UpdatedAt", DateTime.UtcNow));
                     result.Skipped.Add(new PoolMigrationSkip
                     {
@@ -5458,6 +5501,7 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             // 被别人占着就已经降级成 false 并如实报进 Skipped，所以这里直接用它是安全的。
             var reuseUpdate = Builders<BsonDocument>.Update
                 .AddToSet("MigratedFromPoolIds", poolId)
+                                .AddToSet("IdentityKeys", poolId.ToLowerInvariant())
                 .Set("UpdatedAt", DateTime.UtcNow);
             if (entry.IsDefaultForType)
                 reuseUpdate = reuseUpdate.Set("IsDefaultForType", true);
@@ -6314,6 +6358,22 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     var normalized = publicId.ToLowerInvariant();
+    var identityKind = (body?.IdentityKind ?? "fixed").Trim().ToLowerInvariant();
+    var aliases = LogicalModelAliasPolicy.Normalize(body?.Aliases);
+    if (LogicalModelAliasPolicy.Validate(identityKind, publicId, aliases) is { } aliasError)
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_ALIAS", aliasError), jsonOptions, 400);
+    if (aliases.Count > 0)
+    {
+        using var indexCursor = await gwLogicalModels.Indexes.ListAsync();
+        if (!(await indexCursor.ToListAsync()).Any(x => x.GetValue("name", "").AsString == "uniq_llmgw_model_identity_namespace"))
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("IDENTITY_INDEX_REQUIRED",
+                "兼容标识尚未完成发布前命名空间维护，请管理员执行索引预检后重试。"), jsonOptions, 503);
+    }
+    var identityNamespace = await gwLogicalModels.Find(TenantAccess.Filter(http,
+        Builders<BsonDocument>.Filter.Eq("ModelType", modelType))).ToListAsync();
+    if (identityNamespace.Any(x => LogicalModelAliasPolicy.Conflicts(x, aliases.Append(publicId))))
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_IDENTITY_CONFLICT", "公开标识或兼容标识已被占用，请保留原模型身份并换一个标识。"), jsonOptions, 409);
+
     if (await gwLogicalModels.Find(Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
             Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", normalized))).AnyAsync())
@@ -6364,6 +6424,8 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
     var document = new BsonDocument
     {
         { "_id", id }, { "TenantId", tenantId }, { "PublicId", publicId }, { "PublicIdNormalized", normalized },
+        { "IdentityKind", identityKind }, { "Aliases", new BsonArray(aliases) },
+        { "IdentityKeys", new BsonArray(aliases.Append(normalized).Distinct()) }, { "AliasRevision", 0 },
         { "Name", name }, { "ModelType", modelType }, { "Capabilities", new BsonArray(capabilities) },
         // 写入即打契约版本：没有版本的文档一律被迁移当成存量重算，避免新写入的数据也要靠迁移兜底。
         { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
@@ -6388,6 +6450,9 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
     }
     catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
     {
+        if (ex.Message.Contains("uniq_llmgw_model_identity_namespace", StringComparison.Ordinal))
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_IDENTITY_CONFLICT",
+                "公开标识或兼容标识刚被占用，请刷新后重新选择。"), jsonOptions, 409);
         var claimRace = ex.Message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal);
         return Json(ApiEnvelope<LogicalModelItem>.Fail(
             claimRace ? "CLAIM_TAKEN" : "PUBLIC_ID_TAKEN",
@@ -6408,12 +6473,46 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
 
 // 删除逻辑模型。它名下的 offering 是从属子项——离开逻辑模型没有独立意义，
 // 留着就是一堆指向不存在父项的孤儿，所以跟着一起删，并把条数如实回报。
+// 删除预检只返回计数和恢复动作；执行删除仍重新运行原有保护，不把预检当授权令牌。
+app.MapGet("/gw/logical-models/{id}/delete-check", async (HttpContext http, string id) =>
+{
+    var doc = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id))).FirstOrDefaultAsync(http.RequestAborted);
+    if (doc is null) return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "模型已不存在，请刷新列表。"), jsonOptions, 404);
+    var reasons = new List<string>();
+    var coverage = await InspectModelRetirementAsync(http, id);
+    if (!coverage.CanComplete || coverage.Residual > 0)
+        reasons.Add($"使用位置检查：{coverage.Residual} 处残留、{coverage.Blocked} 处阻断、{coverage.Unknown} 处未确认；请先迁移并复核。");
+    if (doc.AsNullableBool("IsDefaultForType") == true) reasons.Add("仍是用途默认，请先更换默认模型。");
+    if (GetStringArray(doc, "DefaultForAppCallerCodes").Count > 0) reasons.Add("仍被调用方指定，请先转移调用方配置。");
+    var references = await CollectMapBusinessModelReferencesAsync(http, mapDatabase, internalTenantId, logicalModelId: id, publicId: doc.AsNullableString("PublicId"));
+    if (references.Count > 0) reasons.Add($"仍被 {string.Join("、", references)} 使用，请先改绑。");
+    var publicId = doc.AsNullableString("PublicId")?.Trim() ?? string.Empty;
+    if (publicId.Length > 0)
+    {
+        if (await mapAppSettings.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildVisualPolicyFilter(publicId), cancellationToken: http.RequestAborted) > 0) reasons.Add("视觉创作策略仍在使用，请先改绑。");
+        if (await mapAgentApiKeys.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildAgentApiKeyReferenceFilter(publicId), cancellationToken: http.RequestAborted) > 0) reasons.Add("接入密钥仍绑定此模型，请先改绑。");
+        if (await mapImageGenRuns.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildInFlightImageRunFilter(publicId), cancellationToken: http.RequestAborted) > 0) reasons.Add("存在未结束的生图任务，请等待结束或明确处理后重查。");
+    }
+    var children = await gwModelOfferings.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id))).Project(new BsonDocument("_id", 1)).ToListAsync(http.RequestAborted);
+    var ids = children.Select(child => child.GetStringOrEmpty("_id")).Where(value => value.Length > 0).ToList();
+    var video = OfferingReferencePolicy.BuildInFlightVideoRunFilter(ids);
+    var direct = OfferingReferencePolicy.BuildLiveDirectVideoJobFilter(ids, DateTime.UtcNow);
+    if (video is not null && await videoGenRuns.CountDocumentsAsync(video, cancellationToken: http.RequestAborted) > 0) reasons.Add("线路存在未结束的视频任务，请等待结束后重查。");
+    if (direct is not null && await directVideoJobOwnerships.CountDocumentsAsync(direct, cancellationToken: http.RequestAborted) > 0) reasons.Add("线路仍在直连视频任务保留期内，请等待保留期结束。");
+    return Json(ApiEnvelope<object>.Ok(new { canDelete = reasons.Count == 0, reasons, offerings = children.Count }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
 {
     var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var doc = await gwLogicalModels.Find(filter).FirstOrDefaultAsync();
     if (doc is null)
         return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail("NOT_FOUND", $"逻辑模型不存在：{id}"), jsonOptions, 404);
+
+    var fullRetirementCoverage = await InspectModelRetirementAsync(http, id);
+    if (!fullRetirementCoverage.CanComplete || fullRetirementCoverage.Residual > 0)
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail("MODEL_REFERENCE_COVERAGE_BLOCKED",
+            "完整使用位置检查仍有引用或未知项，请先在使用位置与升级中完成迁移并复核，再删除模型。"), jsonOptions, 409);
 
     /*
       还在接流量的模型不许直接删。
@@ -6445,13 +6544,19 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
             jsonOptions, 409);
     }
 
+    var businessReferences = await CollectMapBusinessModelReferencesAsync(
+        http, mapDatabase, internalTenantId, logicalModelId: id, publicId: doc.AsNullableString("PublicId"));
+    if (businessReferences.Count > 0)
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail("MODEL_REFERENCED_BY_MAP",
+            $"仍有 {string.Join("、", businessReferences)} 引用此逻辑模型。请先在对应业务配置中明确改绑或移除，再删除；不会自动替换固定版本。"), jsonOptions, 409);
+
     /*
       网关模型与 MAP 业务配置是跨库引用，没有 Mongo 外键。删除前统一检查所有仍会参与未来执行的
       PublicId 引用，避免只删目录、留下“默认但不可用”的业务配置。这里不自动替 MAP 换模型：
       自动替换会把用户选择的模型语义悄悄改掉，正确恢复动作是先在引用处明确迁移，再回来删除。
 
       三类引用分别覆盖：视觉创作开放策略、MCP/OpenAPI 模型绑定密钥、尚未终结的生图任务。
-      历史日志和用户最近选择不阻断，它们不会再发起调用。过滤器与 MAP 实体的镜像契约由
+      历史日志不改写；用户保存的模型选择会参与未来调用，由完整引用注册表保护。过滤器与 MAP 实体的镜像契约由
       MapLogicalModelReferencePolicyMirrorTests 守住。
     */
     var publicId = doc.AsNullableString("PublicId")?.Trim() ?? string.Empty;
@@ -6780,6 +6885,31 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     if (currentModel is null)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
 
+    if (body.Aliases is not null)
+    {
+        var aliases = LogicalModelAliasPolicy.Normalize(body.Aliases);
+        if (LogicalModelAliasPolicy.Validate(currentModel.AsNullableString("IdentityKind") ?? "fixed",
+            currentModel.GetStringOrEmpty("PublicId"), aliases) is { } aliasError)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_ALIAS", aliasError), jsonOptions, 400);
+        using var indexCursor = await gwLogicalModels.Indexes.ListAsync();
+        if (!(await indexCursor.ToListAsync()).Any(x => x.GetValue("name", "").AsString == "uniq_llmgw_model_identity_namespace"))
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("IDENTITY_INDEX_REQUIRED",
+                "兼容标识尚未完成命名空间维护，请管理员执行索引预检后重试。"), jsonOptions, 503);
+        var siblings = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Ne("_id", id),
+            Builders<BsonDocument>.Filter.Eq("ModelType", currentModel.GetStringOrEmpty("ModelType"))))).ToListAsync();
+        if (siblings.Any(x => LogicalModelAliasPolicy.Conflicts(x, aliases)))
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_IDENTITY_CONFLICT", "兼容标识已被其他模型占用，请先核对原模型身份。"), jsonOptions, 409);
+        updates.Add(Builders<BsonDocument>.Update.Set("Aliases", new BsonArray(aliases)));
+        updates.Add(Builders<BsonDocument>.Update.Set("IdentityKeys", new BsonArray(aliases
+            .Append(currentModel.GetStringOrEmpty("PublicId").ToLowerInvariant())
+            .Concat(currentModel.AsStringList("MigratedFromPoolIds").Select(x => x.ToLowerInvariant())).Distinct())));
+        updates.Add(Builders<BsonDocument>.Update.Inc("AliasRevision", 1));
+        await WriteOperationAuditAsync(operationAudits, http, "logical-model.aliases.intent", "llmgw_logical_model", id,
+            currentModel.GetStringOrEmpty("Name"), false, "validated-write-intent",
+            new BsonDocument { { "aliases", new BsonArray(aliases) } }, throwOnFailure: true);
+    }
+
     // 与创建那一侧同一份身份规则，理由见那里：控制面不许比运行时松。
     var normalizedClaims = body.DefaultForAppCallerCodes is null
         ? null
@@ -6966,8 +7096,16 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     BsonDocument? updated;
     try
     {
+        var writeFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
+        if (body.Aliases is not null)
+        {
+            var revision = currentModel.GetValue("AliasRevision", 0).ToInt64();
+            writeFilter &= revision == 0
+                ? Builders<BsonDocument>.Filter.Or(Builders<BsonDocument>.Filter.Exists("AliasRevision", false), Builders<BsonDocument>.Filter.Eq("AliasRevision", 0))
+                : Builders<BsonDocument>.Filter.Eq("AliasRevision", revision);
+        }
         updated = await gwLogicalModels.FindOneAndUpdateAsync(
-            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)),
+            TenantAccess.Filter(http, writeFilter),
             Builders<BsonDocument>.Update.Combine(updates),
             new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
     }
@@ -6986,7 +7124,11 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
           判据比它该管的范围窄，两种输入被压成一种）。
         */
         var claimRace = ex.Message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal);
-        await CompensateAsync(restoreDefaults: claimRace);
+        var identityRace = ex.Message.Contains("uniq_llmgw_model_identity_namespace", StringComparison.Ordinal);
+        await CompensateAsync(restoreDefaults: claimRace || identityRace);
+        if (identityRace)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_IDENTITY_CONFLICT",
+                WithCompensationNote("兼容标识刚被另一个模型占用，请刷新后重试。")), jsonOptions, 409);
         var conflictMessage = claimRace
             ? "这几个调用方里有一个刚刚被另一个模型认领了。刷新看一眼它现在归谁，确认之后再改。"
             : "这个用途刚刚被另一个人设了默认模型。刷新看一眼当前默认是谁，确认之后再改。";
@@ -7005,12 +7147,14 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
         // 目标在这中间被别人删了。这时「摘掉的默认」必须还回去：没有赢家，
         // 不还的话这个用途就此没有默认，而返回的只是一句「模型不存在」。
         await CompensateAsync(restoreDefaults: true);
-        return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", WithCompensationNote("逻辑模型不存在")), jsonOptions, 404);
+        return Json(ApiEnvelope<LogicalModelItem>.Fail(body.Aliases is null ? "NOT_FOUND" : "MODEL_IDENTITY_CHANGED",
+            WithCompensationNote(body.Aliases is null ? "逻辑模型不存在" : "模型兼容配置刚被修改，请刷新后重试。")), jsonOptions, body.Aliases is null ? 404 : 409);
     }
     await WriteOperationAuditAsync(operationAudits, http, "logical-model.update", "llmgw_logical_model", id, updated.GetStringOrEmpty("Name"), true, null,
         new BsonDocument
         {
             { "fieldCount", updates.Count - 1 },
+            { "aliases", body.Aliases is null ? BsonNull.Value : new BsonArray(LogicalModelAliasPolicy.Normalize(body.Aliases)) },
             // 换兜底模型是会改变线上行为的动作：日后排查「什么时候开始默认走它了」要查得到人
             { "isDefaultForType", body.IsDefaultForType.HasValue ? body.IsDefaultForType.Value : BsonNull.Value },
             { "displacedDefaults", new BsonArray(displacedDefaults) },
@@ -7570,6 +7714,18 @@ app.MapPut("/gw/logical-models/{id}/enabled", async (HttpContext http, string id
     var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var existing = await gwLogicalModels.Find(filter).FirstOrDefaultAsync();
     if (existing is null) return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+    if (!enabled)
+    {
+        var fullRetirementCoverage = await InspectModelRetirementAsync(http, id);
+        if (!fullRetirementCoverage.CanComplete || fullRetirementCoverage.Residual > 0)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_REFERENCE_COVERAGE_BLOCKED",
+                "完整使用位置检查仍有引用或未知项，请先完成迁移并复核；原模型保持启用。"), jsonOptions, 409);
+        var businessReferences = await CollectMapBusinessModelReferencesAsync(
+            http, mapDatabase, internalTenantId, logicalModelId: id, publicId: existing.AsNullableString("PublicId"));
+        if (businessReferences.Count > 0)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("MODEL_REFERENCED_BY_MAP",
+                $"仍有 {string.Join("、", businessReferences)} 引用此逻辑模型。请先在对应业务配置中明确改绑或移除，再停用；原模型保持不变。"), jsonOptions, 409);
+    }
     if (enabled && string.Equals(existing.GetStringOrEmpty("ModelType"), "asr", StringComparison.OrdinalIgnoreCase))
     {
         var enabledOfferings = await gwModelOfferings.Find(TenantAccess.Filter(http,
@@ -7607,6 +7763,87 @@ app.MapPut("/gw/logical-models/{id}/enabled", async (HttpContext http, string id
         Array.Empty<BsonDocument>(),
         Array.Empty<BsonDocument>(),
         Array.Empty<BsonDocument>())), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+async Task<(bool HasAlternative, bool ReferencedByMap)> CheckOfferingAlternativesAsync(
+    HttpContext http, BsonDocument logical, string offeringId)
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var logicalId = logical.GetStringOrEmpty("_id");
+    var publicId = logical.GetStringOrEmpty("PublicId");
+    var referencedByMap = tenantId == internalTenantId && publicId.Length > 0
+        && (await mapAppSettings.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildVisualPolicyFilter(publicId)) > 0
+            || await mapAgentApiKeys.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildAgentApiKeyReferenceFilter(publicId)) > 0);
+    var siblings = await gwModelOfferings.Find(TenantAccess.Filter(http, fb.Eq("LogicalModelId", logicalId))).ToListAsync();
+    var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
+    var platformDocs = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
+    var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
+    // ASR 协议契约也须成立，不能把仅“开关为启用”的坏配置当成幸存线路。
+    var validSiblings = siblings.Where(route =>
+    {
+        var kind = route.AsNullableString("TargetKind") ?? "model";
+        var target = (kind == "model" ? modelDocs : exchangeDocs).FirstOrDefault(x => x.GetStringOrEmpty("_id") == route.GetStringOrEmpty("TargetId"));
+        var platform = platformDocs.FirstOrDefault(x => x.GetStringOrEmpty("_id") == target?.AsNullableString("PlatformId"));
+        return ValidateAsrOfferingContract(logical, route, target, platform) is null;
+    }).ToList();
+    return (OfferingRemovalPolicy.HasUsableAlternative(offeringId, validSiblings, modelDocs, platformDocs, exchangeDocs), referencedByMap);
+}
+
+// 移除单条来源线路，不删除公开模型或 MAP 业务名称。跨集合引用检查仍非事务，运维迁移须串行执行。
+app.MapDelete("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpContext http, string logicalId, string offeringId) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, fb.Eq("_id", logicalId))).FirstOrDefaultAsync();
+    var offering = await gwModelOfferings.Find(TenantAccess.Filter(http,
+        fb.And(fb.Eq("_id", offeringId), fb.Eq("LogicalModelId", logicalId)))).FirstOrDefaultAsync();
+    if (logical is null || offering is null)
+        return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "公开模型或线路不存在，请刷新列表"), jsonOptions, 404);
+    var publicId = logical.GetStringOrEmpty("PublicId");
+    var inFlightVideo = OfferingReferencePolicy.BuildInFlightVideoRunFilter([offeringId]);
+    var liveDirectVideo = OfferingReferencePolicy.BuildLiveDirectVideoJobFilter([offeringId], DateTime.UtcNow);
+    var hasInFlightJobs = await videoGenRuns.CountDocumentsAsync(inFlightVideo!) > 0
+        || await directVideoJobOwnerships.CountDocumentsAsync(liveDirectVideo!) > 0
+        || tenantId == internalTenantId && publicId.Length > 0
+            && await mapImageGenRuns.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildInFlightImageRunFilter(publicId)) > 0;
+    var alternatives = await CheckOfferingAlternativesAsync(http, logical, offeringId);
+    var rejection = OfferingRemovalPolicy.Evaluate(logical, offering,
+        alternatives.HasAlternative, alternatives.ReferencedByMap, hasInFlightJobs);
+    if (rejection is { } blocked)
+        return Json(ApiEnvelope<object>.Fail(blocked.Code, blocked.Message), jsonOptions, 409);
+
+    string auditId;
+    try
+    {
+        auditId = await BeginRequiredOperationAuditAsync(operationAudits, http,
+            action: "offering.delete", targetType: "llmgw_model_offering", targetId: offeringId,
+            targetName: publicId, changes: new BsonDocument
+            {
+                { "logicalModelId", logicalId }, { "publicId", publicId },
+                { "targetKind", offering.AsNullableString("TargetKind") ?? "model" },
+                { "targetId", offering.GetStringOrEmpty("TargetId") },
+            });
+    }
+    catch
+    {
+        return Json(ApiEnvelope<object>.Fail("OFFERING_AUDIT_FAILED", "无法先建立线路移除审计，本次未修改配置"), jsonOptions, 503);
+    }
+    DeleteResult deleted;
+    try { deleted = await gwModelOfferings.DeleteOneAsync(OfferingRemovalPolicy.UnchangedDisabledFilter(offering), CancellationToken.None); }
+    catch
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, auditId, success: false, reason: "offering_delete_unknown");
+        return Json(ApiEnvelope<object>.Fail("OFFERING_DELETE_UNKNOWN", "线路移除结果尚未确认，请刷新列表核对；公开模型和 MAP 配置未删除"), jsonOptions, 503);
+    }
+    if (deleted.DeletedCount != 1)
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, auditId, success: false, reason: "offering_changed");
+        return Json(ApiEnvelope<object>.Fail("OFFERING_CONCURRENTLY_MODIFIED", "线路已被其他操作更新，本次未移除，请刷新后重试"), jsonOptions, 409);
+    }
+    try { await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, auditId, success: true, reason: null); }
+    catch { return Json(ApiEnvelope<object>.Fail("OFFERING_AUDIT_PENDING", "线路已移除，审计仍待收口；请刷新列表并检查审计"), jsonOptions, 503); }
+    return Json(ApiEnvelope<object>.Ok(new { logicalModelId = logicalId, offeringId, removed = true }), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}/enabled", async (HttpContext http, string logicalId, string offeringId, [FromBody] ToggleEnabledRequest? body) =>
@@ -7648,6 +7885,15 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}/enabled", asyn
             return Json(ApiEnvelope<ModelOfferingItem>.Fail(
                 AsrOfferingContractPolicy.ErrorCode,
                 contractError), jsonOptions, 409);
+    }
+    if (!enabled && existing.AsNullableBool("Enabled") != false)
+    {
+        // 先保护再停用；停用是 drain，不因已在途任务而阻止。删除仍单独等待任务结束。
+        var alternatives = await CheckOfferingAlternativesAsync(http, logical, offeringId);
+        var disableRejection = OfferingRemovalPolicy.EvaluateDeactivation(logical,
+            alternatives.HasAlternative, alternatives.ReferencedByMap);
+        if (disableRejection is { } blocked)
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(blocked.Code, blocked.Message), jsonOptions, 409);
     }
     var updated = await gwModelOfferings.FindOneAndUpdateAsync(filter,
         Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow),
@@ -12701,6 +12947,11 @@ app.MapPost("/gw/platforms", async (HttpContext http, [FromBody] CreatePlatformR
     var id = $"gw-platform-{Guid.NewGuid():N}";
     var now = DateTime.UtcNow;
     var document = GatewayConfigurationProvisioning.BuildPlatformDocument(draft, tenantId, id, encryptedApiKey, now);
+    if (body?.Proxy is { } proxyInput)
+    {
+        try { document[UpstreamProxy.Field] = await upstreamProxies.BuildAsync(http, proxyInput); }
+        catch (ArgumentException ex) { return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    }
     try
     {
         await gwPlatforms.InsertOneAsync(document);
@@ -12797,10 +13048,10 @@ var upstreamProbeHttp = new HttpClient(new SocketsHttpHandler
 ///
 /// 内部租户不受此限：本地上游预设（Ollama / vLLM）本来就要指向内网，
 /// 这条豁免与 Exchange 侧的既有策略同源，不是本次新开的口子。
-async Task<string?> ValidateProviderProbeTargetAsync(HttpContext http, string apiUrl, CancellationToken ct)
+async Task<string?> ValidateProviderProbeTargetAsync(HttpContext http, string apiUrl, ResolvedUpstreamProxy? proxy, CancellationToken ct)
 {
     if (TenantAccess.GetRequired(http).TenantId == internalTenantId) return null;
-    return await ValidateExternalExchangeTargetAsync(apiUrl, "openai", ct);
+    return await ValidateExternalExchangeTargetAsync(apiUrl, "openai", ct, proxy);
 }
 
 // 一次导入的模型数上限。聚合型上游（OpenRouter）能列出几百个模型，全勾下来会把
@@ -12855,7 +13106,14 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
             Message = "这个 Provider 没有配 API 地址", NextStep = "在高级选项里补上 API 地址后再测",
         }), jsonOptions);
 
-    var probeTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, http.RequestAborted);
+    var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, doc);
+    if (proxyError is not null)
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ProbedUrl = probeUrl, ElapsedMs = 0, FailureKind = "INVALID_PROXY",
+            Message = proxyError, NextStep = "检查代理配置；密码无法读取时重新填写后保存",
+        }), jsonOptions);
+    var probeTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, effectiveProxy, http.RequestAborted);
     if (probeTargetError is not null)
         return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
         {
@@ -12905,7 +13163,8 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
         // 上游先回头、再把 body 挂住慢慢流，下面这个读就没人管了，
         // 「保存后自动测一次」会挂死并占住一个控制台请求。
         using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        using var resp = await upstreamProbeHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, probeCts.Token);
+        using var proxyClient = upstreamProxies.CreateClient(http, effectiveProxy);
+        using var resp = await (proxyClient ?? upstreamProbeHttp).SendAsync(req, HttpCompletionOption.ResponseHeadersRead, probeCts.Token);
         sw.Stop();
         var status = (int)resp.StatusCode;
         int? modelCount = null;
@@ -13005,7 +13264,10 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
             "Claude 原生协议没有模型列表接口，请手动添加模型"), jsonOptions, 400);
 
     // 与「测试连接」同一道门：这条也会拿着用户填的地址向外发请求，不补上就等于留了个后门
-    var discoveryTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, http.RequestAborted);
+    var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, doc);
+    if (proxyError is not null)
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("INVALID_PROXY", proxyError), jsonOptions, 400);
+    var discoveryTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, effectiveProxy, http.RequestAborted);
     if (discoveryTargetError is not null)
         return Json(ApiEnvelope<UpstreamModelsData>.Fail("UNSAFE_TARGET_URL", discoveryTargetError), jsonOptions, 400);
 
@@ -13025,7 +13287,8 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         // 与「测试连接」同款：外部租户强制内网校验，整条请求（含读 body）共用一个 15 秒预算
         req.Options.Set(blockPrivateProbeTargets, TenantAccess.GetRequired(http).TenantId != internalTenantId);
         using var discoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        using var resp = await upstreamProbeHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, discoveryCts.Token);
+        using var proxyClient = upstreamProxies.CreateClient(http, effectiveProxy);
+        using var resp = await (proxyClient ?? upstreamProbeHttp).SendAsync(req, HttpCompletionOption.ResponseHeadersRead, discoveryCts.Token);
         if (!resp.IsSuccessStatusCode)
             return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_" + (int)resp.StatusCode,
                 $"上游返回 HTTP {(int)resp.StatusCode}，先点「测试连接」看具体原因"), jsonOptions, 502);
@@ -13794,6 +14057,17 @@ app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, Tog
         filter = sourceFilter;
     }
     if (doc is null) return Json(ApiEnvelope<PlatformItem>.Fail("NOT_FOUND", $"平台不存在：{id}"), jsonOptions, 404);
+    if (!enabled)
+    {
+        if (await IsPlatformReferenceCoverageBlockedAsync(http, gatewayDatabase, mapDatabase, internalTenantId, id))
+            return Json(ApiEnvelope<PlatformItem>.Fail("PLATFORM_REFERENCE_COVERAGE_BLOCKED",
+                "使用位置检查发现此上游仍被引用或状态未知，请先完成模型迁移并复核；上游保持启用。"), jsonOptions, 409);
+        var businessReferences = await CollectMapBusinessModelReferencesAsync(
+            http, mapDatabase, internalTenantId, platformId: id);
+        if (businessReferences.Count > 0)
+            return Json(ApiEnvelope<PlatformItem>.Fail("PLATFORM_REFERENCED_BY_MAP",
+                $"仍有 {string.Join("、", businessReferences)} 直接绑定此上游。请先在对应业务配置中明确迁移到可用逻辑模型或移除，再停用；原配置保持不变。"), jsonOptions, 409);
+    }
     if (enabled && targetAuthority == "llm_gateway")
     {
         var proposed = new BsonDocument(doc) { ["Enabled"] = true };
@@ -13805,22 +14079,67 @@ app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, Tog
                 contractError), jsonOptions, 409);
     }
     var update = Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow);
-    await targetPlatforms.UpdateOneAsync(filter, update);
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "platform.set_enabled",
-        targetType: targetAuthority == "llm_gateway" ? "llmgw_platform" : "llmplatform",
-        targetId: id,
-        targetName: doc.AsNullableString("Name"),
-        success: true,
-        reason: null,
-        changes: new BsonDocument
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    if (ProviderRemovalPolicy.ShouldDisableMapMirror(tenantId, internalTenantId, enabled))
+    {
+        // 即使 GW 已停用也重查镜像，重复 false 可以修复历史“只关 GW”的状态。
+        var mapDocument = targetAuthority == "map" ? doc : await platforms.Find(sourceFilter).FirstOrDefaultAsync();
+        string disableAudit;
+        try
         {
-            { "enabled", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableBool("Enabled")) }, { "to", enabled } } },
-            { "authority", targetAuthority },
-        });
+            disableAudit = await BeginRequiredOperationAuditAsync(operationAudits, http,
+                action: "platform.set_enabled", targetType: "llmgw_platform", targetId: id,
+                targetName: doc.AsNullableString("Name"), changes: new BsonDocument
+                {
+                    { "enabled", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableBool("Enabled")) }, { "to", false } } },
+                    { "mapMirror", mapDocument is not null }, { "authority", targetAuthority },
+                });
+        }
+        catch { return Json(ApiEnvelope<PlatformItem>.Fail("PLATFORM_AUDIT_FAILED", "无法先建立停用审计，本次未修改上游，请稍后重试"), jsonOptions, 503); }
+        try
+        {
+            // 先关闭会被 pinned fallback 读取的 MAP 镜像，再关闭 GW；不改镜像密钥或模型配置。
+            if (targetAuthority == "llm_gateway" && mapDocument is not null)
+            {
+                var mirrorResult = await platforms.UpdateOneAsync(ProviderRemovalPolicy.UnchangedFilter(mapDocument), update, cancellationToken: CancellationToken.None);
+                if (mirrorResult.MatchedCount == 0)
+                    throw new InvalidOperationException("map_platform_changed");
+            }
+            var targetResult = await targetPlatforms.UpdateOneAsync(
+                ProviderRemovalPolicy.UnchangedFilter(doc, targetAuthority == "llm_gateway" ? tenantId : null),
+                update, cancellationToken: CancellationToken.None);
+            if (targetResult.MatchedCount == 0)
+                throw new InvalidOperationException("platform_changed");
+        }
+        catch
+        {
+            await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, disableAudit, success: false, reason: "platform_copies_disable_incomplete");
+            return Json(ApiEnvelope<PlatformItem>.Fail("PLATFORM_DISABLE_INCOMPLETE", "上游及旧副本尚未全部确认停用，可能已有一侧停用。请刷新并检查审计，再次点击停用以完成同步。"), jsonOptions, 409);
+        }
+        try { await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, disableAudit, success: true, reason: null); }
+        catch { return Json(ApiEnvelope<PlatformItem>.Fail("PLATFORM_AUDIT_PENDING", "上游及旧副本已停用，审计仍待收口，请刷新列表并检查审计"), jsonOptions, 503); }
+    }
+    else
+    {
+        await targetPlatforms.UpdateOneAsync(filter, update);
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "platform.set_enabled",
+            targetType: targetAuthority == "llm_gateway" ? "llmgw_platform" : "llmplatform",
+            targetId: id,
+            targetName: doc.AsNullableString("Name"),
+            success: true,
+            reason: null,
+            changes: new BsonDocument
+            {
+                { "enabled", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableBool("Enabled")) }, { "to", enabled } } },
+                { "authority", targetAuthority },
+            });
+    }
     var fresh = await targetPlatforms.Find(filter).FirstOrDefaultAsync();
+    if (fresh is null)
+        return Json(ApiEnvelope<PlatformItem>.Fail("PLATFORM_READBACK_FAILED", "上游状态修改后未能读回，请刷新列表核对"), jsonOptions, 503);
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh, config, revealFingerprint: true)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
@@ -14316,6 +14635,17 @@ app.MapPut("/gw/platforms/{id}", async (HttpContext http, string id, [FromBody] 
 
     var updates = new List<UpdateDefinition<BsonDocument>>();
     var changes = new BsonDocument();
+    if (body.Proxy is { } proxyInput)
+    {
+        try
+        {
+            var proxy = await upstreamProxies.BuildAsync(http, proxyInput, UpstreamProxy.Read(doc));
+            updates.Add(Builders<BsonDocument>.Update.Set(UpstreamProxy.Field, proxy));
+            changes["proxyMode"] = UpstreamProxy.View(proxy).Mode;
+            changes["proxyAddress"] = (BsonValue?)UpstreamProxy.View(proxy).Address ?? BsonNull.Value;
+        }
+        catch (ArgumentException ex) { return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    }
 
     if (body.Name is not null)
     {
@@ -14459,17 +14789,91 @@ app.MapPut("/gw/platforms/{id}", async (HttpContext http, string id, [FromBody] 
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(updated, config, revealFingerprint: true)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
-// 删除上游平台：只删 GW 权威的，且必须先确认没人引用。
+// 删除上游平台：由 GW 控制面治理，内部租户同时清理同 ID 的 MAP 旧副本，且必须先确认没人引用。
 //
 // 为什么一定要挡引用：池成员是按 (modelId, platformId) 定位的，平台删了成员还在，
 // 池子看起来正常、实际解析不到上游——这类静默损坏最难查（本仓库刚为同类问题排查过一整轮）。
-// 所以宁可拒绝并列清单，让运维先把引用摘干净，也不做级联删除。
-app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
+// 所以先拒绝并列清单，让运维迁移并摘掉线路；不级联删除公开模型或 MAP 业务设置。
+app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id, bool? cleanupUnusedModels) =>
 {
     var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
-    var doc = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var isInternal = ProviderRemovalPolicy.MayRemoveMapMirror(tenantId, internalTenantId);
+    var gatewayDocument = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
+    var mapDocument = isInternal
+        ? await platforms.Find(Builders<BsonDocument>.Filter.Eq("_id", id)).FirstOrDefaultAsync()
+        : null;
+    var doc = ProviderRemovalPolicy.SelectSource(gatewayDocument, mapDocument, isInternal);
     if (doc is null)
-        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的平台；MAP 来源平台请先认领"), jsonOptions, 409);
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("NOT_FOUND", "上游不存在或不属于当前组织，请刷新列表"), jsonOptions, 404);
+
+    if (await IsPlatformReferenceCoverageBlockedAsync(http, gatewayDatabase, mapDatabase, internalTenantId, id))
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_REFERENCE_COVERAGE_BLOCKED",
+            "使用位置检查发现此上游仍被引用或状态未知，请先完成模型迁移并复核，再删除上游。"), jsonOptions, 409);
+
+    var businessReferences = await CollectMapBusinessModelReferencesAsync(
+        http, mapDatabase, internalTenantId, platformId: id);
+    if (businessReferences.Count > 0)
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_REFERENCED_BY_MAP",
+            $"仍有 {string.Join("、", businessReferences)} 直接绑定此上游。请先在对应业务配置中明确迁移到可用逻辑模型或移除，再删除；不会自动匹配同名模型。"), jsonOptions, 409);
+
+    if (cleanupUnusedModels == true)
+    {
+        var fb = Builders<BsonDocument>.Filter;
+        var platformModels = await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync();
+        var legacyModels = isInternal ? await models.Find(fb.Eq("PlatformId", id)).ToListAsync() : [];
+        var modelIds = platformModels.Concat(legacyModels).Select(x => x.GetStringOrEmpty("_id")).Distinct(StringComparer.Ordinal).ToList();
+        // 包括停用和历史线路：只要仍指向物理模型，就不能级联删掉目标。
+        var referenceFilter = TenantAccess.Filter(http, fb.And(fb.In("TargetId", modelIds),
+            fb.Or(fb.Eq("TargetKind", "model"), fb.Exists("TargetKind", false), fb.Eq("TargetKind", BsonNull.Value))));
+        if (modelIds.Count > 0 && await gwModelOfferings.Find(referenceFilter).AnyAsync())
+            return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_HAS_OFFERINGS",
+                "还有公开模型线路引用这个上游。请先为同一公开模型接入并验证替代线路，再停用和移除旧线路；画师、日光等公开模型与 MAP 设置应保留。",
+                await CollectPlatformDeleteBlockersAsync(http, id, gwModels, models, gwModelPools, modelGroups, internalTenantId)), jsonOptions, 409);
+        if (isInternal && await mapImageGenRuns.CountDocumentsAsync(fb.And(
+                fb.Eq(MapLogicalModelReferencePolicy.ImageRunPlatformField, id),
+                fb.Nin(MapLogicalModelReferencePolicy.ImageRunStatusField, MapLogicalModelReferencePolicy.TerminalImageRunStatuses))) > 0)
+            return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_HAS_INFLIGHT_JOBS",
+                "这个上游还有未结束的历史生图任务。请等待任务结束或取消后再清理，上游与模型配置已保留。"), jsonOptions, 409);
+        string cleanupAudit;
+        try
+        {
+            cleanupAudit = await BeginRequiredOperationAuditAsync(operationAudits, http,
+                action: "platform.cleanup_unused_models", targetType: "llmgw_platform", targetId: id,
+                targetName: doc.AsNullableString("Name"), changes: new BsonDocument
+                {
+                    { "modelIds", new BsonArray(modelIds) }, { "preservesLogicalModels", true }, { "preservesMapPolicy", true },
+                });
+        }
+        catch { return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_AUDIT_FAILED", "无法先建立清理审计，本次未修改配置"), jsonOptions, 503); }
+        try
+        {
+            // 清理旧池的派生成员，不删除池本身。平台最后删，失败重试可继续收敛。
+            var poolFilter = fb.ElemMatch<BsonDocument>("Models", fb.Eq("PlatformId", id));
+            var removeMembers = Builders<BsonDocument>.Update.PullFilter<BsonDocument>("Models", fb.Eq("PlatformId", id)).Set("UpdatedAt", DateTime.UtcNow).Inc("Version", 1);
+            await gwModelPools.UpdateManyAsync(TenantAccess.Filter(http, poolFilter), removeMembers, cancellationToken: CancellationToken.None);
+            if (isInternal) await modelGroups.UpdateManyAsync(poolFilter, removeMembers, cancellationToken: CancellationToken.None);
+            foreach (var (collection, model) in platformModels.Select(x => (gwModels, x)).Concat(legacyModels.Select(x => (models, x))))
+            {
+                if (await gwModelOfferings.Find(referenceFilter).AnyAsync())
+                    throw new InvalidOperationException("offering_added_during_cleanup");
+                var current = fb.And(fb.Eq("_id", model.GetStringOrEmpty("_id")), fb.Eq("PlatformId", id),
+                    model.Contains("UpdatedAt") ? fb.Eq("UpdatedAt", model["UpdatedAt"]) : fb.Exists("UpdatedAt", false));
+                if (collection == gwModels) current = TenantAccess.Filter(http, current);
+                var removed = await collection.DeleteOneAsync(current, CancellationToken.None);
+                if (removed.DeletedCount == 0 && await collection.Find(fb.Eq("_id", model.GetStringOrEmpty("_id"))).AnyAsync())
+                    throw new InvalidOperationException("model_changed_during_cleanup");
+            }
+        }
+        catch
+        {
+            await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, cleanupAudit, success: false, reason: "cleanup_incomplete");
+            return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_CLEANUP_INCOMPLETE",
+                "清理尚未完成，上游已保留；部分未使用模型或旧池成员可能已清理。请刷新并检查审计，确认没有新建线路后重试。"), jsonOptions, 409);
+        }
+        try { await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, cleanupAudit, success: true, reason: null); }
+        catch { return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_AUDIT_PENDING", "未使用模型已清理，上游仍保留，审计待收口；请刷新并检查审计后重试删除"), jsonOptions, 503); }
+    }
 
     var blockers = await CollectPlatformDeleteBlockersAsync(http, id, gwModels, models, gwModelPools, modelGroups, internalTenantId);
     if (blockers.TotalCount > 0)
@@ -14480,31 +14884,51 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
         return Json(
             ApiEnvelope<PlatformDeleteBlockers>.Fail(
                 "PLATFORM_IN_USE",
-                $"还有 {string.Join("；", parts)} 在用这条上游，先把它们改绑或删掉再删平台",
+                $"还有 {string.Join("；", parts)} 在用这条上游。请保留公开模型，先接入替代线路并移除旧线路；再选择清理未使用模型后删除上游。",
                 blockers),
             jsonOptions,
             409);
     }
 
-    await gwPlatforms.DeleteOneAsync(filter);
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "platform.delete",
-        targetType: "llmgw_platform",
-        targetId: id,
-        targetName: doc.AsNullableString("Name"),
-        success: true,
-        reason: null,
-        // 删掉之后文档就没了，快照留在审计里，方便事后核对删的是不是这一条
-        changes: new BsonDocument
+    string deleteAudit;
+    try
+    {
+        deleteAudit = await BeginRequiredOperationAuditAsync(operationAudits, http,
+            action: "platform.delete", targetType: "llmgw_platform", targetId: id,
+            targetName: doc.AsNullableString("Name"), changes: new BsonDocument
+            {
+                { "name", ToBsonAuditValue(doc.AsNullableString("Name")) },
+                { "gatewayCopy", gatewayDocument is not null }, { "mapMirror", mapDocument is not null },
+                { "hadKey", !string.IsNullOrEmpty(doc.AsNullableString("ApiKeyEncrypted")) },
+            });
+    }
+    catch { return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_AUDIT_FAILED", "无法先建立平台删除审计，平台副本已保留，请稍后重试"), jsonOptions, 503); }
+    try
+    {
+        // 先删同 ID 的 MAP 镜像，最后删 GW 权威副本，避免 GW 删除后旧镜像重新出现在列表。
+        // 任一侧条件冲突就保留其余副本；下一次删除可合法处理只剩 MAP 或只剩 GW 的状态。
+        if (isInternal && mapDocument is not null)
         {
-            { "name", ToBsonAuditValue(doc.AsNullableString("Name")) },
-            { "apiUrl", ToBsonAuditValue(doc.AsNullableString("ApiUrl")) },
-            { "platformType", ToBsonAuditValue(doc.AsNullableString("PlatformType")) },
-            { "hadKey", !string.IsNullOrEmpty(doc.AsNullableString("ApiKeyEncrypted")) },
-            { "authority", "llm_gateway" },
-        });
+            var removedMirror = await platforms.DeleteOneAsync(ProviderRemovalPolicy.UnchangedFilter(mapDocument), CancellationToken.None);
+            if (removedMirror.DeletedCount == 0
+                && await platforms.Find(Builders<BsonDocument>.Filter.Eq("_id", id)).AnyAsync())
+                throw new InvalidOperationException("map_platform_changed");
+        }
+        if (gatewayDocument is not null)
+        {
+            var removedGateway = await gwPlatforms.DeleteOneAsync(ProviderRemovalPolicy.UnchangedFilter(gatewayDocument, tenantId), CancellationToken.None);
+            if (removedGateway.DeletedCount == 0 && await gwPlatforms.Find(filter).AnyAsync())
+                throw new InvalidOperationException("gateway_platform_changed");
+        }
+    }
+    catch
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, deleteAudit, success: false, reason: "platform_copies_delete_incomplete");
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_DELETE_INCOMPLETE",
+            "上游副本清理尚未完成，可能已有一侧删除或被其他操作更新。请刷新并检查审计后重试；公开模型和 MAP 业务设置未删除。"), jsonOptions, 409);
+    }
+    try { await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, deleteAudit, success: true, reason: null); }
+    catch { return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_AUDIT_PENDING", "上游及旧副本已删除，审计仍待收口，请刷新列表并检查审计"), jsonOptions, 503); }
     return Json(ApiEnvelope<PlatformDeleteBlockers>.Ok(new PlatformDeleteBlockers()), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
@@ -14526,6 +14950,11 @@ app.MapDelete("/gw/models/{id}", async (HttpContext http, string id) =>
             return Json(ApiEnvelope<ModelDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型；MAP 来源模型请先认领"), jsonOptions, 409);
         isMapLegacy = true;
     }
+
+    var physicalRetirementCoverage = await InspectPhysicalModelRetirementAsync(http, doc);
+    if (!physicalRetirementCoverage.CanComplete || physicalRetirementCoverage.Residual > 0)
+        return Json(ApiEnvelope<ModelDeleteBlockers>.Fail("MODEL_REFERENCE_COVERAGE_BLOCKED",
+            "使用位置检查发现此物理型号仍被引用或状态未知，请先完成迁移并复核，再删除型号。"), jsonOptions, 409);
 
     var blockers = await CollectModelDeleteBlockersAsync(
         http, doc, gwModelPools, modelGroups, gwModelOfferings, gwLogicalModels, internalTenantId);
@@ -14846,9 +15275,20 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
         return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
+    BsonDocument? proxyDocument = null;
+    if (body?.Proxy is { } proxyInput)
+    {
+        try { proxyDocument = await upstreamProxies.BuildAsync(http, proxyInput); }
+        catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    }
     if (tenantId != internalTenantId)
     {
-        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted);
+        var pendingUpstream = new BsonDocument();
+        if (proxyDocument is not null) pendingUpstream[UpstreamProxy.Field] = proxyDocument;
+        var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, pendingUpstream);
+        if (proxyError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", proxyError), jsonOptions, 400);
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted, effectiveProxy);
         if (targetError is not null)
             return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
     }
@@ -14875,6 +15315,7 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
     var now = DateTime.UtcNow;
     var document = GatewayConfigurationProvisioning.BuildExchangeDocument(
         draft, tenantId, id, encryptedApiKey, now, TenantAccess.GetRequired(http).Username);
+    if (proxyDocument is not null) document[UpstreamProxy.Field] = proxyDocument;
     string requiredAuditId;
     try
     {
@@ -14891,6 +15332,7 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
                 { "modelIds", new BsonArray(draft.Models.Select(item => item.ModelId)) },
                 { "targetAuthScheme", draft.TargetAuthScheme },
                 { "transformerType", draft.TransformerType },
+                { "hasResourceId", draft.ResourceId is not null },
                 { "enabled", draft.Enabled },
                 { "hasKey", true },
                 { "authority", "llm_gateway" },
@@ -15001,6 +15443,67 @@ app.MapDelete("/gw/exchanges/{id}", async (HttpContext http, string id) =>
     return Json(ApiEnvelope<ExchangeDeleteBlockers>.Ok(new ExchangeDeleteBlockers()), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
+// 列表内修改代理只碰代理字段，不重写映射、认证、模型清单或密钥。
+app.MapPut("/gw/exchanges/{id}/proxy", async (HttpContext http, string id, [FromBody] UpdateExchangeProxyRequest? body) =>
+{
+    if (body?.Proxy is null || body.Version is null or < 0)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_INPUT", "请提供代理设置和当前配置版本，刷新列表后重试"), jsonOptions, 400);
+    var fb = Builders<BsonDocument>.Filter;
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var filter = TenantAccess.Filter(http, fb.Eq("_id", id));
+    var document = await gwModelExchanges.Find(filter).FirstOrDefaultAsync();
+    if (document is null)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("NOT_FOUND", "转接上游不存在或尚未认领到网关，请刷新列表"), jsonOptions, 404);
+    var version = document.AsNullableLong("Version") ?? 0;
+    if (body.Version != version)
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_CONCURRENTLY_MODIFIED", "转接上游已被其他操作修改，请刷新后重试"), jsonOptions, 409);
+    BsonDocument proxy;
+    try { proxy = await upstreamProxies.BuildAsync(http, body.Proxy, UpstreamProxy.Read(document)); }
+    catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    catch (InvalidOperationException) { return Json(ApiEnvelope<ExchangeItem>.Fail("PROXY_SECRET_UNAVAILABLE", "代理密码未能加密，本次未保存，请检查网关加密配置"), jsonOptions, 503); }
+    if (tenantId != internalTenantId)
+    {
+        // 本次热修保留正式基线既有的公网目标校验，不引入主干上的代理解析接口变更。
+        var targetError = await ValidateExternalExchangeTargetAsync(document.GetStringOrEmpty("TargetUrl"), document.GetStringOrEmpty("TransformerType"), http.RequestAborted);
+        if (targetError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
+    }
+    string auditId;
+    try
+    {
+        auditId = await BeginRequiredOperationAuditAsync(operationAudits, http,
+            action: "exchange.proxy.update", targetType: "llmgw_model_exchange", targetId: id,
+            targetName: document.AsNullableString("Name"), changes: new BsonDocument
+            {
+                { "mode", UpstreamProxy.View(proxy).Mode },
+                { "address", (BsonValue?)UpstreamProxy.View(proxy).Address ?? BsonNull.Value },
+                { "hasPassword", UpstreamProxy.View(proxy).HasPassword }, { "version", version + 1 },
+            });
+    }
+    catch { return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_AUDIT_FAILED", "无法先建立代理修改审计，本次未修改配置"), jsonOptions, 503); }
+    var versionFilter = document.Contains("Version") ? fb.Eq("Version", version) : fb.Exists("Version", false);
+    BsonDocument? updated;
+    try
+    {
+        updated = await gwModelExchanges.FindOneAndUpdateAsync(fb.And(filter, versionFilter),
+            Builders<BsonDocument>.Update.Set(UpstreamProxy.Field, proxy).Set("UpdatedAt", DateTime.UtcNow).Set("Version", version + 1),
+            new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After }, CancellationToken.None);
+    }
+    catch
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, auditId, success: false, reason: "proxy_write_unknown");
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_WRITE_UNKNOWN", "代理修改结果尚未确认，请刷新列表核对；模型映射和密钥未重写"), jsonOptions, 503);
+    }
+    if (updated is null)
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, auditId, success: false, reason: "version_conflict");
+        return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_CONCURRENTLY_MODIFIED", "转接上游已被其他操作修改，请刷新后重试"), jsonOptions, 409);
+    }
+    try { await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, auditId, success: true, reason: null); }
+    catch { return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_AUDIT_PENDING", "代理已修改，审计仍待收口；请刷新列表并检查审计"), jsonOptions, 503); }
+    return Json(ApiEnvelope<ExchangeItem>.Ok(MapExchange(updated)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] UpdateExchangeRequest? body) =>
 {
     if (!GatewayConfigurationProvisioning.TryNormalizeExchange(body, out var draft, out var error) || draft is null)
@@ -15008,17 +15511,27 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
 
     var fb = Builders<BsonDocument>.Filter;
     var tenantId = TenantAccess.GetRequired(http).TenantId;
-    if (tenantId != internalTenantId)
-    {
-        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted);
-        if (targetError is not null)
-            return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
-    }
     var tenantFilter = TenantAccess.Filter(http, fb.Eq("_id", id));
     var document = await gwModelExchanges.Find(tenantFilter).FirstOrDefaultAsync();
     if (document is null)
         return Json(ApiEnvelope<ExchangeItem>.Fail("NOT_FOUND", "Exchange 不存在或不属于当前租户"), jsonOptions, 404);
-
+    BsonDocument? proxyDocument = null;
+    if (body?.Proxy is { } proxyInput)
+    {
+        try { proxyDocument = await upstreamProxies.BuildAsync(http, proxyInput, UpstreamProxy.Read(document)); }
+        catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    }
+    if (tenantId != internalTenantId)
+    {
+        var pendingUpstream = document.DeepClone().AsBsonDocument;
+        if (proxyDocument is not null) pendingUpstream[UpstreamProxy.Field] = proxyDocument;
+        var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, pendingUpstream);
+        if (proxyError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", proxyError), jsonOptions, 400);
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted, effectiveProxy);
+        if (targetError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
+    }
     var currentVersion = document.AsNullableLong("Version") ?? 0;
     if (draft.Version != currentVersion)
         return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_CONCURRENTLY_MODIFIED", "Exchange 已被其他操作修改，请刷新后重试"), jsonOptions, 409);
@@ -15036,18 +15549,10 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
         ? fb.Eq("Version", currentVersion)
         : fb.Exists("Version", false);
     var nextVersion = currentVersion + 1;
-    var update = Builders<BsonDocument>.Update
-        .Set("Name", draft.Name)
-        .Set("NameNormalized", draft.NameNormalized)
-        .Set("Models", GatewayConfigurationProvisioning.BuildExchangeModels(
-            draft.Models, TenantAccess.GetRequired(http).Username, DateTime.UtcNow))
-        .Set("TargetUrl", draft.TargetUrl)
-        .Set("TargetAuthScheme", draft.TargetAuthScheme)
-        .Set("TransformerType", draft.TransformerType)
-        .Set("Enabled", draft.Enabled)
-        .Set("Description", ToBsonAuditValue(draft.Description))
-        .Set("UpdatedAt", DateTime.UtcNow)
-        .Set("Version", nextVersion);
+    var update = GatewayConfigurationProvisioning.BuildExchangeUpdate(
+        draft, document, TenantAccess.GetRequired(http).Username, DateTime.UtcNow, nextVersion);
+    if (proxyDocument is not null)
+        update = Builders<BsonDocument>.Update.Combine(update, Builders<BsonDocument>.Update.Set(UpstreamProxy.Field, proxyDocument));
     string requiredAuditId;
     try
     {
@@ -15066,6 +15571,7 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
                 { "targetUrlChanged", !string.Equals(document.AsNullableString("TargetUrl"), draft.TargetUrl, StringComparison.Ordinal) },
                 { "targetAuthScheme", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableString("TargetAuthScheme")) }, { "to", draft.TargetAuthScheme } } },
                 { "transformerType", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableString("TransformerType")) }, { "to", draft.TransformerType } } },
+                { "resourceIdChanged", draft.ResourceId is not null && !string.Equals(GatewayConfigurationProvisioning.ReadExchangeResourceId(document), draft.ResourceId, StringComparison.Ordinal) },
                 { "enabled", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableBool("Enabled")) }, { "to", draft.Enabled } } },
                 { "authority", "llm_gateway" },
             });
@@ -16131,11 +16637,13 @@ static async Task<string> ReadUpstreamBodyAsync(HttpResponseMessage resp, int ma
     return System.Text.Encoding.UTF8.GetString(ms.ToArray());
 }
 
-static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, string transformerType, CancellationToken ct)
+static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, string transformerType, CancellationToken ct, ResolvedUpstreamProxy? proxy = null)
 {
     var transportError = GatewayConfigurationProvisioning.ValidateExternalExchangeTransport(targetUrl, transformerType);
     if (transportError is not null)
         return transportError;
+    if (proxy?.Mode == "custom")
+        return UpstreamProxy.ValidateProxyTarget(targetUrl);
 
     if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri)
         || uri.Scheme is not ("http" or "https" or "wss"))
@@ -17680,6 +18188,14 @@ static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, 
             $"{publicId}（认不出它是哪种用途：这个模型没有可识别的能力声明）");
     }
 
+    var identityNamespace = await logicalModels.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("ModelType", modelType))).ToListAsync();
+    if (identityNamespace.Any(x => x.GetStringOrEmpty("_id") != logical?.GetStringOrEmpty("_id")
+        && LogicalModelAliasPolicy.Conflicts(x, [publicId])))
+        return (publicId, false, false, "identity-conflict",
+            $"{publicId}（标识已用于稳定模型兼容，物理模型已保存；请核对已有逻辑模型，不会自动挂入稳定线路）");
+
     string logicalId;
     var createdLogical = false;
     var linkedToExisting = false;
@@ -17690,6 +18206,7 @@ static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, 
         {
             { "_id", logicalId }, { "TenantId", tenantId },
             { "PublicId", publicId }, { "PublicIdNormalized", normalizedPublicId },
+            { "IdentityKind", "fixed" }, { "Aliases", new BsonArray() }, { "IdentityKeys", new BsonArray { normalizedPublicId } },
             { "Name", publicId }, { "ModelType", modelType },
             { "Capabilities", new BsonArray(LogicalModelCapabilityPolicy.NormalizeDetailed(modelType, capabilityCodes).Persisted) },
             // 能力口径的版本戳。漏了它，capability-audit 会把这条算成「未迁移」——
@@ -18122,6 +18639,72 @@ static async Task<List<string>> CollectOfferingHolderNamesAsync(
 /// （池成员是 (modelId, platformId) 复合定位，只查模型会漏掉「模型已删、池成员还挂着」的残留）。
 /// GW 与 MAP 两套集合都扫，内部租户才看得到 MAP 那一侧。
 /// </summary>
+// MAP 业务引用属于内部租户。配置写入与跨库检查没有事务：业务保存入口也必须校验目标，
+// 这里防止顺序管理操作制造悬空引用，不声称替代跨服务并发提交协议。
+static async Task<ReferenceCoverage> InspectModelRetirementAsync(HttpContext http, string logicalId)
+{
+    var catalog = http.RequestServices.GetRequiredService<ModelReferenceCatalog>();
+    var engine = http.RequestServices.GetRequiredService<ModelReferenceEngine>();
+    var mapping = await catalog.BuildRetirementAsync(TenantAccess.GetRequired(http).TenantId, logicalId, http.RequestAborted);
+    return await engine.FindDeleteBlockersAsync(mapping, http.RequestAborted);
+}
+
+static async Task<ReferenceCoverage> InspectPhysicalModelRetirementAsync(HttpContext http, BsonDocument model)
+{
+    var mapping = new ReferenceMigrationMapping { TenantId = TenantAccess.GetRequired(http).TenantId, Source = new()
+    {
+        PhysicalModelId = model.GetStringOrEmpty("_id"), ProviderId = model.AsNullableString("PlatformId"),
+        UpstreamModelId = model.AsNullableString("ModelName"),
+    } };
+    return await http.RequestServices.GetRequiredService<ModelReferenceEngine>().FindDeleteBlockersAsync(mapping, http.RequestAborted);
+}
+
+static async Task<bool> IsPlatformReferenceCoverageBlockedAsync(HttpContext http, IMongoDatabase gateway,
+    IMongoDatabase map, string internalTenantId, string platformId)
+{
+    var tenant = TenantAccess.GetRequired(http).TenantId;
+    var fb = Builders<BsonDocument>.Filter;
+    var projection = new BsonDocument { { "PlatformId", 1 }, { "ModelName", 1 } };
+    var physical = await gateway.GetCollection<BsonDocument>("llmgw_models")
+        .Find(fb.And(fb.Eq("TenantId", tenant), fb.Eq("PlatformId", platformId))).Project(projection).ToListAsync(http.RequestAborted);
+    if (tenant == internalTenantId) physical.AddRange(await map.GetCollection<BsonDocument>("llmmodels")
+        .Find(fb.Eq("PlatformId", platformId)).Project(projection).ToListAsync(http.RequestAborted));
+    foreach (var model in physical)
+    {
+        var coverage = await InspectPhysicalModelRetirementAsync(http, model);
+        if (!coverage.CanComplete || coverage.Residual > 0) return true;
+    }
+    // A pinned deployment may still reference an already removed physical catalog row.
+    if (tenant == internalTenantId)
+    {
+        var snapshot = await http.RequestServices.GetRequiredService<IRuntimeModelReferenceSnapshotProvider>()
+            .ReadAsync(new() { TenantId = tenant }, http.RequestAborted);
+        if (!snapshot.Complete || snapshot.Items.Any(x => x.IdentityKind == "physical-pair" && x.ProviderId == platformId)) return true;
+    }
+    return false;
+}
+
+static async Task<List<string>> CollectMapBusinessModelReferencesAsync(
+    HttpContext http,
+    IMongoDatabase mapDatabase,
+    string internalTenantId,
+    string? logicalModelId = null,
+    string? platformId = null,
+    string? publicId = null)
+{
+    if (TenantAccess.GetRequired(http).TenantId != internalTenantId) return new List<string>();
+    var queries = logicalModelId is not null
+        ? MapLogicalModelReferencePolicy.BuildBusinessLogicalModelQueries(logicalModelId, publicId)
+        : MapLogicalModelReferencePolicy.BuildLegacyPlatformQueries(platformId!);
+    var references = new List<string>();
+    foreach (var query in queries)
+    {
+        var count = await mapDatabase.GetCollection<BsonDocument>(query.CollectionName).CountDocumentsAsync(query.Filter);
+        if (count > 0) references.Add($"{query.Usage} {count} 项");
+    }
+    return references;
+}
+
 static async Task<PlatformDeleteBlockers> CollectPlatformDeleteBlockersAsync(
     HttpContext http,
     string platformId,
@@ -18184,6 +18767,7 @@ static PlatformItem MapPlatform(BsonDocument d, IConfiguration? keyConfig = null
 
     return new PlatformItem
     {
+        Proxy = UpstreamProxy.View(UpstreamProxy.Read(d)),
         Id = d.GetStringOrEmpty("_id"),
         Name = d.GetStringOrEmpty("Name"),
         PlatformType = d.GetStringOrEmpty("PlatformType"),
@@ -18642,6 +19226,8 @@ static LogicalModelItem MapLogicalModel(
     {
         Id = logicalId,
         PublicId = logical.GetStringOrEmpty("PublicId"),
+        IdentityKind = logical.AsNullableString("IdentityKind") ?? "fixed",
+        Aliases = logical.AsStringList("Aliases"),
         Name = logical.GetStringOrEmpty("Name"),
         ModelType = logical.GetStringOrEmpty("ModelType"),
         Capabilities = logical.AsStringList("Capabilities"),
@@ -18750,6 +19336,7 @@ static ExchangeItem MapExchange(BsonDocument d)
 
     return new ExchangeItem
     {
+        Proxy = UpstreamProxy.View(UpstreamProxy.Read(d)),
         Id = d.GetStringOrEmpty("_id"),
         Name = d.GetStringOrEmpty("Name"),
         ModelAlias = d.AsNullableString("ModelAlias") ?? string.Empty,
@@ -18758,6 +19345,7 @@ static ExchangeItem MapExchange(BsonDocument d)
         TargetUrl = d.GetStringOrEmpty("TargetUrl"),
         TargetAuthScheme = d.AsNullableString("TargetAuthScheme") ?? "Bearer",
         TransformerType = d.AsNullableString("TransformerType") ?? "passthrough",
+        ResourceId = GatewayConfigurationProvisioning.ReadExchangeResourceId(d),
         Enabled = d.AsNullableBool("Enabled") ?? true,
         Description = d.AsNullableString("Description"),
         HasKey = !string.IsNullOrEmpty(d.AsNullableString("TargetApiKeyEncrypted")),

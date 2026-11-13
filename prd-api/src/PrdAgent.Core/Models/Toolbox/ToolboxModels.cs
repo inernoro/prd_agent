@@ -186,8 +186,12 @@ public static class AgentRegistry
 /// <summary>
 /// 百宝箱运行记录
 /// </summary>
-public class ToolboxRun
+public class ToolboxRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     /// <summary>
     /// 运行 ID（MongoDB ObjectId 格式，由 Infrastructure 层生成）
     /// </summary>

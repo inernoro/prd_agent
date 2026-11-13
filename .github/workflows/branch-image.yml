@@ -74,6 +74,7 @@ jobs:
               - '.github/workflows/branch-image.yml'
             llmgw:
               - 'llmgw/console-api/**'
+              - 'prd-api/src/LlmGateway.Transport/**'
               - '.github/workflows/branch-image.yml'
             llmgw_web:
               - 'llmgw/web/**'
@@ -300,7 +301,7 @@ jobs:
         if: ${{ steps.probe.outputs.present == 'true' }}
         uses: docker/build-push-action@v5
         with:
-          context: ./llmgw/console-api
+          context: .
           file: ./llmgw/console-api/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}

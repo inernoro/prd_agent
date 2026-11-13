@@ -33,7 +33,10 @@ export interface VersionRegistration {
   contractParty?: string | null;
   developmentStatus?: string | null;
   remark?: string | null;
-  status: 'completed';
+  status: 'completed' | 'voided';
+  voidReason?: string | null;
+  voidedBy?: string | null;
+  voidedAt?: string | null;
   createdBy: string;
   createdByName?: string | null;
   sourceSnapshotId?: string | null;

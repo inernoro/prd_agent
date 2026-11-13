@@ -1,0 +1,65 @@
+# The project-script release path uses a private Compose network. The backend
+# has no published port; only the Basic-authenticated management UI is exposed.
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: deepaudit
+      POSTGRES_DB: deepaudit
+      POSTGRES_PASSWORD: ${DEEPAUDIT_POSTGRES_PASSWORD:?required}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U deepaudit]
+      interval: 5s
+      retries: 12
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, "yes", --requirepass, "${DEEPAUDIT_REDIS_PASSWORD:?required}"]
+    volumes: [redis-data:/data]
+  db-migrate:
+    image: ghcr.io/inernoro/deepaudit-cds-backend:sha-${CDS_COMMIT_SHA:?required}
+    command: [.venv/bin/alembic, upgrade, head]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://deepaudit:${DEEPAUDIT_POSTGRES_PASSWORD}@postgres:5432/deepaudit
+    depends_on:
+      postgres: {condition: service_healthy}
+    profiles: [maintenance]
+  backend:
+    image: ghcr.io/inernoro/deepaudit-cds-backend:sha-${CDS_COMMIT_SHA:?required}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://deepaudit:${DEEPAUDIT_POSTGRES_PASSWORD}@postgres:5432/deepaudit
+      REDIS_URL: redis://:${DEEPAUDIT_REDIS_PASSWORD}@redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:?required}
+      CDS_SERVICE_EMAIL: ${CDS_SERVICE_EMAIL:?required}
+      CDS_SERVICE_PASSWORD: ${CDS_SERVICE_PASSWORD:?required}
+      LLM_PROVIDER: openai
+      LLM_API_KEY: ${LLM_API_KEY:?required}
+      LLM_MODEL: ${LLM_MODEL:?required}
+      LLM_BASE_URL: ${LLM_BASE_URL:?required}
+      OUTPUT_LANGUAGE: zh-CN
+      MAX_ANALYZE_FILES: "0"
+    volumes: [backend-uploads:/app/uploads, backend-data:/app/data]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_started}
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://127.0.0.1:8000/health]
+      interval: 10s
+      start_period: 60s
+      retries: 12
+  frontend:
+    image: ghcr.io/inernoro/deepaudit-cds-frontend:sha-${CDS_COMMIT_SHA:?required}
+    restart: unless-stopped
+    ports: ["127.0.0.1:${DEEPAUDIT_ADMIN_PORT:-18090}:80"]
+    environment:
+      DEEPAUDIT_BACKEND_URL: http://backend:8000
+      DEEPAUDIT_ADMIN_USERNAME: ${DEEPAUDIT_ADMIN_USERNAME:?required}
+      DEEPAUDIT_ADMIN_PASSWORD_HASH: ${DEEPAUDIT_ADMIN_PASSWORD_HASH:?required}
+    depends_on:
+      backend: {condition: service_healthy}
+volumes:
+  postgres-data:
+  redis-data:
+  backend-uploads:
+  backend-data:

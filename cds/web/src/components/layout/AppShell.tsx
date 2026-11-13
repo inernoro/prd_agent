@@ -1,15 +1,18 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
+import { RouteMotion, RouteMotionCommit } from './RouteMotion';
+import { InstanceSwitcher } from '@/components/InstanceSwitcher';
 import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
 import { createContext, Suspense, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
-import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
+import { Outlet, useLocation } from 'react-router-dom';
+import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, SearchCode, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
-import { ProjectListSummarySkeleton, pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
+import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
 import { ListLoadingBoundary, ListLoadingFeedback } from '@/components/skeletons/ListLoadingBoundary';
 import {
   requestAgentAccess,
@@ -19,6 +22,10 @@ import { apiUrl, fetchInstanceMode, formatMirrorCapturedAt, isChildPreviewCdsIns
 import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
 import { UI_SCALE_PRESETS, useUiScale } from '@/lib/uiScale';
 import { cn } from '@/lib/utils';
+import { readStatusLocation } from '@/lib/statusHome';
+import { MonitorViewNav } from './MonitorViewNav';
+import '@/pages/status/monitor-frame.css';
+import { canReadApproval, type ApprovalCapabilities } from '@/hooks/approvalPolling';
 
 /*
  * AppShell — single source of layout truth.
@@ -115,6 +122,7 @@ export interface AppShellProps {
 }
 
 export type ShellAuthStatus = {
+  approvalCapabilities?: ApprovalCapabilities;
   enabled?: boolean;
   mode?: string;
   activeProvider?: string | null;
@@ -136,6 +144,11 @@ export function canManageSystemSettings(status: ShellAuthStatus | null): boolean
   return status !== null && (status.enabled === false || status.user?.isSystemOwner === true);
 }
 
+/** Loading contour only: verified ticket SSO manages projects without being a system owner. */
+export function canShowProjectActions(status: ShellAuthStatus | null): boolean {
+  return canManageSystemSettings(status) || status?.mode === 'sso';
+}
+
 export const MEMBER_PREVIEW_MODE_NOTICE = '当前预览模式暂不支持普通账号，请联系系统所有者切换为多域名预览。';
 
 /** Simple/port previews require owner routing writes; members retain multi-domain previews. */
@@ -154,10 +167,16 @@ export function useCanManageConsole(): boolean {
   return canManageSystemSettings(useContext(ConsoleAuthContext).status);
 }
 
+export function useCanShowProjectActions(): boolean {
+  return canShowProjectActions(useContext(ConsoleAuthContext).status);
+}
+
 /** Never mount owner pages (and their effects) for members or unresolved authentication. */
 export function OwnerConsoleRoute(): JSX.Element {
   const { status, pending, retry } = useContext(ConsoleAuthContext);
-  if (canManageSystemSettings(status)) return <Outlet />;
+  // Keep lazy owner pages inside their own boundary. Otherwise resolving auth
+  // suspends the outer tree and leaves a hidden copy of the auth skeleton behind.
+  if (canManageSystemSettings(status)) return <Suspense fallback={<ConsoleRouteFallback />}><Outlet /></Suspense>;
   if (pending) return <ConsoleRouteFallback />;
   return (
     <AppShell topbar={<TopBar left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '访问范围' }]} />} />}>
@@ -181,6 +200,7 @@ const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPag
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
 const preloadReleaseConsolePage = (): void => { void import('@/pages/ReleaseConsolePage'); };
 const preloadReportsPage = (): void => { void import('@/pages/ReportsPage'); };
+const preloadCodeReviewsPage = (): void => { void import('@/pages/CodeReviewsPage'); };
 const preloadTaskSchedulePage = (): void => { void import('@/pages/TaskSchedulePage'); };
 const preloadStatusPage = (): void => { void import('@/pages/StatusPage'); };
 
@@ -206,6 +226,7 @@ function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/release-center') || pathname.startsWith('/release-console')) return 'release-center';
   if (pathname.startsWith('/task-schedule')) return 'task-schedule';
   if (pathname.startsWith('/reports')) return 'reports';
+  if (pathname.startsWith('/code-reviews')) return 'code-reviews';
   if (pathname.startsWith('/status')) return 'status';
   if (pathname.startsWith('/overview')) return 'overview';
   return 'projects';
@@ -224,6 +245,7 @@ export function ConsoleLayout(): JSX.Element {
   return (
     <ShellFrameContext.Provider value={true}>
       <ShellChrome active={activeNavKeyFor(pathname)}>
+        <RouteMotion />
         <ListLoadingBoundary key={pathname} enabled={listPage}>
           <Suspense fallback={<ConsoleRouteFallback />}>
             <Outlet />
@@ -240,20 +262,22 @@ export function ConsoleLayout(): JSX.Element {
  * (artifact-is-experience: the wait state is the product's own silhouette).
  */
 function ConsoleRouteFallback(): JSX.Element {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const scene = loadingSceneForPath(pathname);
+  const monitoringHome = pathname === '/status' && readStatusLocation(new URLSearchParams(search)).view === 'home';
+  const workspace = monitoringHome ? 'bleed' : scene?.workspace;
+  const canManageProjects = useCanShowProjectActions();
   const projectList = pathname === '/project-list';
-  const consoleOwner = useCanManageConsole();
   const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
   const listPage = projectList || branchList;
   return (
     <>
-      {listPage ? <TopBar
-        centerWide={projectList}
+      {monitoringHome ? <TopBar
+        left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '监控中心' }]} />}
+        center={<MonitorViewNav />}
+      /> : listPage ? <TopBar
         left={<div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" aria-hidden />}
-        center={branchList || consoleOwner ? <div className="cds-loading-skeleton-line h-9 w-full" aria-hidden /> : (
-          <div className="flex h-9 min-w-0 items-center gap-3 text-sm text-muted-foreground"><ProjectListSummarySkeleton /></div>
-        )}
+        center={branchList ? <div className="cds-loading-skeleton-line h-9 w-full" aria-hidden /> : undefined}
       /> : <header className="cds-topbar" aria-hidden>
         <span className="cds-topbar-brand">
           <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" />
@@ -266,8 +290,10 @@ function ConsoleRouteFallback(): JSX.Element {
           chunk 到了、页面挂上、开始等数据——这三步之间轮廓不变，用户只看到一副骨架被填上。
           此前这里是固定的「标题 + 六块方块」，页面挂上后再换成卡片网格，就是被反馈的「两幅骨架」。
         */}
-        <div className={cn('cds-workspace cds-workspace--fluid', scene?.workspace === 'fill' && 'cds-workspace--fill', scene?.workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
-          {pageSkeletonForPath(pathname)}
+        <div className={cn('cds-workspace cds-workspace--fluid', scene?.kind === 'code-reviews' && 'cr-ui', workspace === 'fill' && 'cds-workspace--fill', workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
+          {monitoringHome ? <div className="monitor-page-shell flex min-h-0 flex-1 flex-col">
+            {pageSkeletonForPath(pathname, { canManageProjects, monitoringHome })}
+          </div> : pageSkeletonForPath(pathname, { canManageProjects })}
           <ListLoadingFeedback />
         </div>
       </main>
@@ -287,6 +313,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
       {topbar}
       <main className={cn('cds-main cds-page-enter', wide ? 'cds-main--wide' : null)}>
         {children}
+        <RouteMotionCommit />
       </main>
     </>
   );
@@ -311,6 +338,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   const [authPending, setAuthPending] = useState(true);
   const [authAttempt, setAuthAttempt] = useState(0);
   const canManageSettings = canManageSystemSettings(authStatus);
+  const canPollOperatorApprovals = canReadApproval(authStatus?.approvalCapabilities, 'operator');
+  const canReadAccessRequests = canReadApproval(authStatus?.approvalCapabilities, 'accessRequests');
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   const routerLocation = useLocation();
   const agentContext = resolveAgentPageContext(
@@ -476,10 +505,10 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {canManageSettings ? <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /> : null}
       {canManageSettings ? <BugReportDialog /> : null}
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
-      {canManageSettings ? <OperatorApprovalModal /> : null}
+      {canPollOperatorApprovals ? <OperatorApprovalModal /> : null}
       {/* 信息中心常驻在壳层，状态与 SSE 不随页面切换重建；视觉入口 portal 到
           当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
-      {canManageSettings ? <SiteNoticeInbox /> : null}
+      {canManageSettings ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} /> : null}
     </div>
     </MobileNavContext.Provider>
     </ConsoleAuthContext.Provider>
@@ -634,6 +663,20 @@ function RailNav({
           <span className="cds-rail-short">监控</span>
         </Link>
         </> : null}
+        <Link
+          to="/code-reviews"
+          className="cds-rail-item"
+          data-active={active === 'code-reviews' ? 'true' : 'false'}
+          aria-label="代码审查报告"
+          title="代码审查报告（上传 ZIP / GitHub 仓库审查）"
+          onClick={onNavigate}
+          onMouseEnter={preloadCodeReviewsPage}
+          onFocus={preloadCodeReviewsPage}
+        >
+          <SearchCode />
+          <span className="cds-rail-full">代码审查报告</span>
+          <span className="cds-rail-short">审查</span>
+        </Link>
       </div>
       {/*
        * 2026-09-08 用户拍板（方案 S1）：工具组（Agent / 缺陷 / 设置）沉回栏底、紧贴账号。
@@ -1142,6 +1185,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
             : null}
         </div>
       ) : null}
+      <InstanceSwitcher />
       <div id="cds-information-center-host" className="relative shrink-0" />
     </header>
   );
@@ -1178,7 +1222,9 @@ export function Crumb({ items }: CrumbProps): JSX.Element {
         return (
           <span key={`${item.label}-${idx}`} className="inline-flex items-center gap-1.5">
             {item.href && !isLast ? (
-              <a href={item.href} className={className}>
+              item.href.startsWith('/') && !item.href.startsWith('//') ? <Link to={item.href} className={className}>
+                {item.label}
+              </Link> : <a href={item.href} className={className}>
                 {item.label}
               </a>
             ) : (

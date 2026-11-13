@@ -1,0 +1,26 @@
+.project-status-page{height:100%;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:1.25rem;padding-bottom:2rem;scroll-behavior:smooth;scroll-padding-top:1rem}
+.project-status-page section,.project-status-page header{flex-shrink:0}
+.project-status-title{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+.project-status-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1rem;margin:1.5rem 0}
+.project-status-stats a{padding:1rem;border:1px solid hsl(var(--hairline));border-radius:.75rem;color:hsl(var(--muted-foreground))}
+.project-status-stats strong{display:block;font-size:1.8rem;color:hsl(var(--foreground))}
+.project-status-shortcuts{display:flex;gap:.75rem;flex-wrap:wrap}
+.project-status-shortcuts a{padding:.5rem .9rem;border-radius:.5rem;background:hsl(var(--surface-raised));border:1px solid hsl(var(--hairline))}
+.project-status-page a{color:hsl(var(--primary));text-decoration:underline;text-underline-offset:3px}
+.project-status-page a:hover{opacity:.8}
+.project-status-table-wrap{overflow-x:auto;margin-top:1rem}
+.project-status-page table{border-collapse:collapse;width:100%;min-width:46rem;text-align:left}
+.project-status-page th,.project-status-page td{border-bottom:1px solid hsl(var(--hairline));padding:1rem;vertical-align:top}
+.project-status-page th{color:hsl(var(--muted-foreground));font-weight:500;background:hsl(var(--surface-sunken))}
+.project-status-page td:first-child{width:43%}
+.project-status-page small{color:hsl(var(--muted-foreground));font-size:.9rem}
+.project-status-search{background:hsl(var(--surface-sunken));border:1px solid hsl(var(--hairline));border-radius:.5rem;padding:.7rem 1rem;width:min(100%,36rem);margin-top:1rem}
+.project-status-issue{display:flex;gap:.8rem;margin-top:1.25rem;padding-top:1rem;border-top:1px solid hsl(var(--hairline))}
+.project-status-inspection{margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid hsl(var(--hairline))}
+.project-status-check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr));gap:1rem;margin-top:1rem}
+.project-status-check{padding:1rem;border:1px solid hsl(var(--hairline));border-radius:.75rem;background:hsl(var(--surface-sunken));min-width:0}
+.project-status-check .status-home-badge{display:inline-block;margin:.5rem 0}
+.project-status-page details{margin-top:1rem}.project-status-page summary{cursor:pointer;color:hsl(var(--primary))}
+@media(max-width:700px){.project-status-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.project-status-page .status-home-panel{padding:1rem}.project-status-page h1{font-size:1.4rem}}
+
+.project-status-shortcuts{position:sticky;top:0;z-index:5;background:hsl(var(--background));padding:.5rem 0}.project-status-page{scroll-padding-top:4.5rem}.project-status-notice-summary{padding:.75rem 1rem;border-radius:.5rem;background:hsl(var(--surface-sunken))}.project-status-notice-summary a{margin-left:.75rem}@media(max-width:700px){.project-status-page{scroll-padding-top:8rem}}

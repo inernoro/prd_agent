@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { CdsConfig, ExecAssignment, IShellExecutor } from '../../src/types.js';
 import { createSelfUpdateCheckpoint, prepareDetachedCdsRestart } from '../../src/services/self-update-handoff.js';
@@ -33,8 +33,7 @@ function ownedPool() {
   const pool = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 1 });
   pools.push(pool); return pool;
 }
-function realCheckpointRuntime(root: string) {
-  const pool = ownedPool();
+function realCheckpointRuntime(root: string, pool = ownedPool()) {
   const dispatches: Array<{ action: string; ownerId: string; assignment: ExecAssignment }> = [];
   const shell: IShellExecutor = { exec: pool.exec.bind(pool), execOwnedOperation: (command, options) => {
     const input = /self-maintenance-files-process\.(ts|js)/.test(command)
@@ -193,6 +192,11 @@ describe('CDS 可撤销重启交接', () => {
       expect(failure).toContain(failureMode === 'drain-timeout' ? 'self_update_restart_cancelled' : 'CDS 重启未获可靠交接许可');
       expect(failure).not.toContain('event: done');
       await vi.waitFor(() => expect(runtime.observe()).toBeNull());
+      expect(state.getSelfUpdateHistory(20).filter(record => record.status === 'success'),
+        '保存或重启交接失败后不能留下同次更新的成功历史').toEqual([]);
+      await state.flush();
+      expect(JSON.parse(fs.readFileSync(stateFile, 'utf8')).selfUpdateHistory
+        .filter((record: { status: string }) => record.status === 'success')).toEqual([]);
       expect(isSelfUpdateDraining(Date.now())).toBe(false);
       expect(fs.readFileSync(path.join(root, 'cds/dist/index.js'), 'utf8')).toBe('old backend');
       expect(fs.readFileSync(path.join(root, 'cds/web/dist/index.html'), 'utf8')).toBe('old web');
@@ -414,6 +418,64 @@ describe('CDS 可撤销重启交接', () => {
     expect(fs.existsSync(record.slots[0].backup.path)).toBe(true);
   });
 
+  it.each([1, 20])('撤回待交接成功行在已有%i条历史时保留其它原件并真实落盘', async count => {
+    const root = ownedRoot(), stateFile = path.join(root, 'state.json');
+    const state = new StateService(stateFile, root); state.load();
+    const record = { ts: '2026-11-09T00:00:00.000Z', branch: 'main', fromSha: 'aaaaaaaa',
+      toSha: 'bbbbbbbb', trigger: 'manual' as const, status: 'success' as const, durationMs: 10 };
+    for (let i = 0; i < count; i++) state.recordSelfUpdate(record);
+    const others = state.getSelfUpdateHistory(20, { includeSteps: true });
+    const undo = state.recordProvisionalSelfUpdateSuccess(record);
+    expect(state.getSelfUpdateHistory(20)).toHaveLength(Math.min(count + 1, StateService.SELF_UPDATE_HISTORY_MAX));
+    undo(); undo();
+    expect(state.getSelfUpdateHistory(20, { includeSteps: true })).toEqual(others);
+    await state.flush();
+    const reopened = new StateService(stateFile, root); reopened.load();
+    expect(reopened.getSelfUpdateHistory(20, { includeSteps: true })).toEqual(others);
+  });
+
+  it('源码恢复点不能越过未知写者或被其它维护票借用', async () => {
+    const root = ownedRoot(); let dispatches = 0;
+    const shell: IShellExecutor = { exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      execOwnedOperation: async () => { dispatches++; throw new OperationExecutionError('cleanup'); } };
+    const runtime = maintenanceRuntime(shell, root);
+    const owner = runtime.acquire({ source: 'self-force-sync', actor: 'fixture-unknown-writer' })!;
+    const point = runtime.prepareSourceRecovery(owner, { sha: 'a'.repeat(40), branch: 'main' });
+    await expect(runtime.exec(owner, 'fixture-owned-operation')).rejects.toThrow('清理尚未确认');
+    await expect(runtime.restoreSourceRecovery(owner, point)).rejects.toThrow('维护写者尚未确认停止');
+    await expect(runtime.restoreSourceRecovery({ ...owner }, point)).rejects.toThrow('维护请求已失效');
+    expect(dispatches).toBe(1);
+    expect(runtime.finish(owner)).toBe(false);
+  });
+
+  it('延迟保存遇到旧恢复清单损坏时仍能恢复已记录的Git身份', async () => {
+    const { root, git, sha, oldFiles } = gitFixture(true);
+    const { runtime, dispatches } = realCheckpointRuntime(root);
+    expect(runtime.requiresSourceRecoveryProgram()).toBe(false);
+    const owner = runtime.acquire({ source: 'self-force-sync', actor: 'fixture-retention-before-source-rollback' })!;
+    const checkpoint = await createSelfUpdateCheckpoint(runtime, owner, root, { deferArtifacts: true });
+    const retentionFile = path.join(root, 'cds/.cds/checkpoint-retention.json');
+    fs.mkdirSync(path.dirname(retentionFile), { recursive: true });
+    const unknownRetention = 'unknown historical retention record\n';
+    fs.writeFileSync(retentionFile, unknownRetention, { mode: 0o600 });
+    git('checkout', '-b', 'after');
+    fs.writeFileSync(path.join(root, 'source.txt'), 'new source');
+    git('add', 'source.txt'); git('commit', '-m', '测试旧恢复清单失败前的源码切换');
+    expect(git('rev-parse', 'HEAD')).not.toBe(sha);
+    await expect(checkpoint.captureArtifacts()).rejects.toThrow();
+    expect(runtime.observe()).toMatchObject({ id: owner.id, activeJobCount: 0, unconfirmedJobCount: 1, jobs: [] });
+    await expect(runtime.exec(owner, 'printf unrelated-recovery', {}, true)).rejects.toThrow('维护写者尚未确认停止');
+    await expect(checkpoint.rollback()).resolves.toBeUndefined();
+    expect(git('rev-parse', 'HEAD')).toBe(sha);
+    expect(git('branch', '--show-current')).toBe('before');
+    expect(fs.readFileSync(path.join(root, 'source.txt'), 'utf8')).toBe('old source');
+    expect(fs.readFileSync(retentionFile, 'utf8')).toBe(unknownRetention);
+    for (const [file, content] of oldFiles) expect(fs.readFileSync(path.join(root, file), 'utf8')).toBe(content);
+    expect(dispatches).toEqual([]);
+    expect(runtime.finish(owner)).toBe(false);
+    expect(runtime.observe()).toMatchObject({ id: owner.id, unconfirmedJobCount: 1 });
+  });
+
   it('晚期真实复制拒绝后丢弃局部副本不结束源码保护，也不恢复未确认的五目录', async () => {
     const { root, git, sha, oldFiles } = gitFixture(true);
     const { runtime, dispatches } = realCheckpointRuntime(root);
@@ -458,9 +520,18 @@ describe('CDS 可撤销重启交接', () => {
     } finally { fs.rmSync(unreadable, { force: true }); observe.mockRestore(); }
   });
 
+  describe('原入口前置就绪与恢复重试分开计时', () => {
+    let prepared: ReturnType<typeof gitFixture>;
+    let readyPool: IsolatedShellExecutor;
+    beforeEach(async () => {
+      prepared = gitFixture(true); readyPool = ownedPool(); await readyPool.start();
+      expect(readyPool.getLifecycle().readyAt).toBeTruthy();
+      expect(readyPool.getStats().unavailable).toBe(false);
+      expect(readyPool.getStats().actors.some(actor => actor.pid > 0)).toBe(true);
+    });
   it.each(['git', 'nginx'] as const)('真实%s恢复失败后仍观察同票，二次确认不重复替换已恢复目录', async failure => {
-    const { root, git, sha, oldFiles } = gitFixture(true);
-    const { runtime, dispatches } = realCheckpointRuntime(root);
+    const { root, git, sha, oldFiles } = prepared;
+    const { runtime, dispatches } = realCheckpointRuntime(root, readyPool);
     const owner = runtime.acquire({ source: 'self-force-sync', actor: 'fixture-retry-restore' })!;
     const checkpoint = await createSelfUpdateCheckpoint(runtime, owner, root);
     const backupRoot = path.join(root, 'cds/.cds');
@@ -506,5 +577,6 @@ describe('CDS 可撤销重启交接', () => {
     } finally {
       if (fs.existsSync(blocker)) fs.unlinkSync(blocker);
     }
+  });
   });
 });

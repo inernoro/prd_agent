@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
-import {MockShellExecutor} from '../../src/services/shell-executor.js';
+import type {IShellExecutor} from '../../src/types.js';
 /** Synthetic Docker inventory for route fixtures. These projections never count as native evidence. */
-export function withStorageImages(mock:MockShellExecutor):MockShellExecutor {
+export function withStorageImages<T extends IShellExecutor>(mock:T, inventoryOptions:{freshCreatedProjection?:boolean}={}):T {
  const original=mock.exec.bind(mock),created=new Map<string,any>();
  mock.exec=async(command,options)=>{
   let result=await original(command,options);
@@ -30,9 +30,9 @@ export function withStorageImages(mock:MockShellExecutor):MockShellExecutor {
     return {...result,stdout:JSON.stringify([image?.startsWith('sha256:')?image:'sha256:'+'a'.repeat(64),null])};
    }
   }
-  if(command.startsWith('docker inspect ')&&command.includes('json .Mounts')&&result.exitCode===0){
+  if(command.startsWith('docker inspect ')&&command.includes('json .Mounts')&&(result.exitCode===0||inventoryOptions.freshCreatedProjection===true)){
    const id=command.match(/[a-f0-9]{64}/g)?.at(-1),row=id&&created.get(id);
-   if(row)return {...result,stdout:JSON.stringify(row)};
+   if(row)return {...result,exitCode:0,stderr:'',stdout:JSON.stringify(row)};
   }
   return result;
  };

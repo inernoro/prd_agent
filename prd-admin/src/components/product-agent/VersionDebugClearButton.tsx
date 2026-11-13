@@ -31,7 +31,7 @@ function VersionDebugClearDialog({ kind, onClose, onChanged }: {
     let active = true;
     void previewVersionDebugClear(kind).then((response) => {
       if (!active) return;
-      if (response.success && response.data.kind === kind) setPreview(response.data);
+      if (response.success && response.data.kind === kind && Number.isInteger(response.data.legacyRecordCount)) setPreview(response.data);
       else setError(response.error?.message ?? '清理范围未确认，请关闭后重试。');
     }).catch(() => { if (active) setError('清理范围读取失败，请关闭后重试。'); })
       .finally(() => { if (active) setLoading(false); });
@@ -52,18 +52,20 @@ function VersionDebugClearDialog({ kind, onClose, onChanged }: {
   return <Dialog open onOpenChange={(value) => { if (!value && !submitting.current) onClose(); }}
     title={`调试清空${code}记录`} tone="danger" maxWidth={560}
     content={<div className="space-y-3 text-sm text-token-secondary" style={{ minHeight: 0, maxHeight: '65vh', overflowY: 'auto', overscrollBehavior: 'contain' }}>
-      <p>这是临时调试功能。仅清空产品管理的{code}记录，包含草稿、历史导入和已申领记录；不受当前产品、人员或状态筛选影响。</p>
-      <p>另一类型版本、产品、需求、功能、评审及权限不清空。旧独立版本登记与历史备份保留；编号不会回收或从头重置。</p>
+      <p>这是临时调试功能。清空所有产品的{code}记录，包括草稿、历史导入、已申领记录及旧独立登记。不受当前产品、人员或状态筛选影响。</p>
+      <p>保留另一类型版本、产品、需求、功能、评审、权限及已有存档。后续按所属应用剩余有效记录发号。</p>
       {loading && <p className="flex items-center gap-2"><MapSpinner size={14} />正在核对清理范围…</p>}
       {preview && <>
-        <p>将清理：{preview.kindLabel} {preview.recordCount} 条。旧独立登记保留，可能仍显示在列表。</p>
-        <p>执行前保存独立备份；全局版本记录及对应申领关联会物理删除，正常查询不读取备份，编号不回收。</p>
+        <p>将清理{preview.kindLabel}共 {preview.recordCount} 条，其中旧独立登记 {preview.legacyRecordCount} 条。</p>
+        <p>执行前保存备份。清理后可重新导入该类型记录。</p>
         {!result && <label className="block"><span className="mb-2 block">输入“{preview.confirmPhrase}”以确认</span>
           <input aria-label="清理确认语" value={phrase} disabled={busy} onChange={(event) => setPhrase(event.target.value)}
             className="w-full rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-token-primary" autoComplete="off" /></label>}
       </>}
       {result && <div role="status"><p>已清理 {result.clearedCount} 条，跳过已变更记录 {result.skippedCount} 条。</p>
-        {result.backupId && <p className="break-all">备份编号：{result.backupId}</p>}</div>}
+        {result.remainingCount > 0 && <p>仍有 {result.remainingCount} 条记录，请关闭弹窗后重新预览。</p>}
+        {result.backupId && <p className="break-all">备份编号：{result.backupId}</p>}
+        {result.legacyBackupId && <p className="break-all">旧登记备份编号：{result.legacyBackupId}</p>}</div>}
       {error && <p role="alert">{error}</p>}
     </div>}
     actions={<>

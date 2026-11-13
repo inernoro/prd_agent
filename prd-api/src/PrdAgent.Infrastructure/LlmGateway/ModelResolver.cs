@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
+using PrdAgent.GatewayTransport;
 using MongoDB.Driver;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
@@ -89,8 +90,8 @@ public class ModelResolver : IModelResolver
         var resolved = await ResolveCoreAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
         // 钉了具体成员的请求不许在门内换人：用户点名要 A，给他 B 就是「选 A 给 B」，
         // 那是本仓库专门立过规矩要防的事（llm-gateway 规则 1/2）。宁可如实报这条钉住的用不了。
-        return await ApplyCatalogGateAsync(
-            resolved, appCallerCode, allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId), ct);
+        return await ApplyProxySettingsAsync(await ApplyCatalogGateAsync(
+            resolved, appCallerCode, allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId), ct), ct);
     }
 
     public async Task<ModelResolutionResult> ResolveMetadataAsync(
@@ -103,8 +104,47 @@ public class ModelResolver : IModelResolver
     {
         var resolved = await ResolveCoreAsync(
             appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct, readOnlyMetadata: true);
-        return await ApplyCatalogGateAsync(
-            resolved, appCallerCode, allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId), ct);
+        return await ApplyProxySettingsAsync(await ApplyCatalogGateAsync(
+            resolved, appCallerCode, allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId), ct), ct);
+    }
+
+    private async Task<ModelResolutionResult> ApplyProxySettingsAsync(ModelResolutionResult resolved, CancellationToken ct)
+    {
+        if (!resolved.Success || _gatewayDb is null) return resolved;
+        var fb = Builders<BsonDocument>.Filter;
+        var tenant = await _gatewayDb.Database.GetCollection<BsonDocument>("llmgw_tenants")
+            .Find(fb.Eq("_id", CurrentTenantId)).FirstOrDefaultAsync(ct);
+        var global = UpstreamProxy.Read(tenant);
+        var candidates = new[] { resolved }.Concat(resolved.RetryCandidates ?? new()).ToList();
+        var ids = candidates.Select(x => x.ActualPlatformId).Where(x => !string.IsNullOrEmpty(x)).Distinct().ToArray();
+        var filter = fb.And(fb.Eq("TenantId", CurrentTenantId), fb.In("_id", ids));
+        var platforms = await _gatewayDb.Database.GetCollection<BsonDocument>("llmgw_platforms").Find(filter).ToListAsync(ct);
+        var exchanges = await _gatewayDb.Database.GetCollection<BsonDocument>("llmgw_model_exchanges").Find(filter).ToListAsync(ct);
+        var docs = platforms.Concat(exchanges).ToDictionary(x => x["_id"].AsString);
+        ApplyProxySnapshots(resolved, docs, global,
+            encrypted => ApiKeyCryptoKeyRing.DecryptPlainOrNull(encrypted, _config),
+            (candidate, ex) => _logger.LogWarning(ex, "[ModelResolver] 跳过代理配置不可用的备用上游 {PlatformId}", candidate.ActualPlatformId));
+        return resolved;
+    }
+
+    internal static void ApplyProxySnapshots(ModelResolutionResult resolved, IReadOnlyDictionary<string, BsonDocument> docs,
+        BsonDocument? global, Func<string, string?> decrypt, Action<ModelResolutionResult, InvalidOperationException> invalidFallback)
+    {
+        void Apply(ModelResolutionResult candidate)
+        {
+            var local = candidate.ActualPlatformId is { } id && docs.TryGetValue(id, out var doc) ? UpstreamProxy.Read(doc) : null;
+            candidate.UpstreamProxy = UpstreamProxy.Resolve(local, global, decrypt);
+        }
+        // 主线路错误仍明确失败，不能悄悄变成直连；损坏的备用线路只从重试候选中移除。
+        Apply(resolved);
+        if (resolved.RetryCandidates is not { } retries) return;
+        var usable = new List<ModelResolutionResult>();
+        foreach (var candidate in retries)
+        {
+            try { Apply(candidate); usable.Add(candidate); }
+            catch (InvalidOperationException ex) { invalidFallback(candidate, ex); }
+        }
+        resolved.RetryCandidates = usable;
     }
 
     /// <summary>
@@ -603,7 +643,7 @@ public class ModelResolver : IModelResolver
     {
         var resolved = await ResolveOfferingCoreAsync(appCallerCode, modelType, offeringId, ct);
         // 调用方点名了某个 offering，门内不许换成别的：他要的就是这一个。
-        return await ApplyCatalogGateAsync(resolved, appCallerCode, allowPromotion: false, ct);
+        return await ApplyProxySettingsAsync(await ApplyCatalogGateAsync(resolved, appCallerCode, allowPromotion: false, ct), ct);
     }
 
     private async Task<ModelResolutionResult> ResolveOfferingCoreAsync(
@@ -1019,6 +1059,12 @@ public class ModelResolver : IModelResolver
             && string.Equals(member.PlatformId, resolution.ActualPlatformId, StringComparison.Ordinal)
             && string.Equals(member.ModelId, resolution.ActualModel, StringComparison.Ordinal)));
 
+    private async Task<bool> IsLogicalOfferingAllowedForRequestAsync(
+        ModelResolutionResult resolution, IReadOnlyCollection<ModelGroup>? allowedGroups, CancellationToken ct)
+        => IsLogicalOfferingAllowed(resolution, allowedGroups)
+            && (await JudgeAsync(resolution.ActualModel, resolution.ActualPlatformId, ct) != CatalogVerdict.Blocked
+                || !await CatalogGateEnforcesAsync(ct));
+
     private async Task<List<AvailableModelPool>> GetAvailableLogicalModelsAsPoolsAsync(
         string appCallerCode,
         string modelType,
@@ -1098,7 +1144,7 @@ public class ModelResolver : IModelResolver
             foreach (var offering in catalogOfferings)
             {
                 var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
-                if (candidate is null || !IsLogicalOfferingAllowed(candidate, allowedGroups)) continue;
+                if (candidate is null) continue;
                 // 名录门也要过一遍。
                 //
                 // 上面那句注释说的是「目录与执行链路采用同一规则」，但它只覆盖了「解析得出来」
@@ -1106,11 +1152,8 @@ public class ModelResolver : IModelResolver
                 // ApplyCatalogGateAsync 会拒掉。少了这一道，选择器里列出来的模型选中即失败
                 // （MODEL_NOT_IN_CATALOG），而用户没做错任何事。
                 // 对外的 /v1/models 上一轮已经补了这一道，应用侧这条清单是它的同类，一起补。
-                if (await JudgeAsync(candidate.ActualModel, candidate.ActualPlatformId, ct) == CatalogVerdict.Blocked
-                    && await CatalogGateEnforcesAsync(ct))
-                {
+                if (!await IsLogicalOfferingAllowedForRequestAsync(candidate, allowedGroups, ct))
                     continue;
-                }
                 catalogResolution = candidate;
                 catalogOffering = offering;
                 break;
@@ -1120,6 +1163,8 @@ public class ModelResolver : IModelResolver
                 Id = logical.Id,
                 Name = logical.Name,
                 Code = logical.PublicId,
+                Aliases = [.. logical.Aliases],
+                LegacyPoolIds = [.. logical.MigratedFromPoolIds],
                 Description = logical.Description,
                 Priority = logical.DisplayOrder,
                 ResolutionType = "LogicalModel",
@@ -1212,25 +1257,31 @@ public class ModelResolver : IModelResolver
         var key = expectedModel.Trim();
         var normalized = key.ToLowerInvariant();
         var logicalModels = _gatewayDb.Context.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models");
-        var logical = await logicalModels.Find(Builders<GatewayLogicalModel>.Filter.And(
+        var matches = await logicalModels.Find(Builders<GatewayLogicalModel>.Filter.And(
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, CurrentTenantId),
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.Enabled, true),
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType),
                 Builders<GatewayLogicalModel>.Filter.Or(
                     Builders<GatewayLogicalModel>.Filter.Eq(x => x.PublicIdNormalized, normalized),
                     Builders<GatewayLogicalModel>.Filter.Eq(x => x.PublicId, key),
+                    Builders<GatewayLogicalModel>.Filter.AnyEq(x => x.Aliases, normalized),
                     // 搬迁期的桥：`model_policy=pool` 这条契约还活着，serving 会把
                     // model_pool_id 塞进 expectedModel，而客户端存的是**池文档 ID**、
                     // 不是搬迁后的 PublicId。不认它的话这些请求一律查不到，又因为
                     // expectedModel 非空而跳过默认那一支，直接 MODEL_NOT_FOUND——
                     // 池退场把它们整条打断了。见 GatewayLogicalModel.MigratedFromPoolIds。
                     Builders<GatewayLogicalModel>.Filter.AnyEq(x => x.MigratedFromPoolIds, key))))
-            .FirstOrDefaultAsync(ct);
+            .Limit(2).ToListAsync(ct);
 
-        if (logical is null)
-            return null;
-
-        return await ResolveFromLogicalModelAsync(logical, appCallerCode, expectedModel, allowedGroups, ct, readOnlyMetadata);
+        if (matches.Count == 0) return null;
+        if (matches.Count != 1)
+            return ModelResolutionResult.NotFound(expectedModel,
+                "模型标识匹配多条配置，请管理员核对兼容别名；已拒绝任意代选。",
+                GatewayRouteFailure.RouteConfigIncompatible, "logical-model-alias", appCallerCode);
+        var logical = matches[0];
+        var resolution = await ResolveFromLogicalModelAsync(logical, appCallerCode, expectedModel, allowedGroups, ct, readOnlyMetadata);
+        if (resolution.Success) resolution.AcceptedModelAliases = [.. logical.Aliases];
+        return resolution;
     }
 
     /// <summary>
@@ -1350,12 +1401,20 @@ public class ModelResolver : IModelResolver
             var now = DateTime.UtcNow;
             var cutoff = now.AddSeconds(-GatewayCircuitBreakerPolicy.ResolveHalfOpenAfterSeconds(
                 _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenAfterSecondsKey)));
-            halfOpen = available.Where(x => x.Enabled && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+            halfOpen = null;
+            foreach (var offering in available.Where(x => x.Enabled && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
                     x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt, now, cutoff))
-                .OrderBy(x => x.Priority).FirstOrDefault();
+                .OrderBy(x => x.Priority).ThenBy(x => x.Id, StringComparer.Ordinal))
+            {
+                var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
+                if (candidate is null || !await IsLogicalOfferingAllowedForRequestAsync(candidate, allowedGroups, ct))
+                    continue;
+                halfOpen = offering;
+                break;
+            }
         }
         else
-            halfOpen = await TryClaimHalfOpenOfferingAsync(logical, ct);
+            halfOpen = await TryClaimHalfOpenOfferingAsync(logical, available, allowedGroups, ct);
         if (halfOpen is not null)
         {
             var probe = await TryBuildLogicalOfferingResolutionAsync(logical, halfOpen, expectedModel, ct);
@@ -1483,10 +1542,12 @@ public class ModelResolver : IModelResolver
                 return null;
             }
             var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(exchange.TargetApiKeyEncrypted, _config);
-            return ModelResolutionResult.FromExchangePool(
+            var exchangeResolution = ModelResolutionResult.FromExchangePool(
                 "LogicalModel", expectedModel, item, logicalGroup, exchange, apiKey,
                 logical.Id, logical.PublicId, offering.Id, "exchange",
                 offering.MaxConcurrency, offering.RateLimitPerMinute, offering.EndpointPath);
+            exchangeResolution.AcceptedModelAliases = [.. logical.Aliases];
+            return exchangeResolution;
         }
 
         var modelCollection = _gatewayDb!.Context.Database.GetCollection<LLMModel>("llmgw_models");
@@ -1551,10 +1612,12 @@ public class ModelResolver : IModelResolver
             ? platform.ApiKeyEncrypted
             : model.ApiKeyEncrypted;
         var apiKeyValue = ApiKeyCryptoKeyRing.DecryptPlainOrNull(encryptedKey, _config);
-        return ModelResolutionResult.FromPool(
+        var modelResolution = ModelResolutionResult.FromPool(
             "LogicalModel", expectedModel, item, logicalGroup, endpointPlatform, apiKeyValue, model,
             logical.Id, logical.PublicId, offering.Id, "model", offering.MaxConcurrency,
             offering.RateLimitPerMinute, offering.EndpointPath);
+        modelResolution.AcceptedModelAliases = [.. logical.Aliases];
+        return modelResolution;
     }
 
 
@@ -1786,6 +1849,8 @@ public class ModelResolver : IModelResolver
     /// </summary>
     private async Task<GatewayModelOffering?> TryClaimHalfOpenOfferingAsync(
         GatewayLogicalModel logical,
+        List<GatewayModelOffering> available,
+        IReadOnlyCollection<ModelGroup>? allowedGroups,
         CancellationToken ct)
     {
         if (_gatewayDb is null) return null;
@@ -1799,8 +1864,27 @@ public class ModelResolver : IModelResolver
 
         var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
         var fb = Builders<GatewayModelOffering>.Filter;
-        var claimed = await offerings.FindOneAndUpdateAsync(
+        foreach (var offering in available.Where(x => x.Enabled
+            && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+                x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt, now, cutoff))
+            .OrderBy(x => x.Priority).ThenBy(x => x.Id, StringComparer.Ordinal))
+        {
+            var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
+            if (candidate is null || !await IsLogicalOfferingAllowedForRequestAsync(candidate, allowedGroups, ct))
+                continue;
+            var claimed = await ClaimOfferingAsync(offering.Id);
+            if (claimed is null) continue;
+
+            _logger.LogInformation(
+                "[ModelResolver] 不可用 Offering 进入自动半开验证: LogicalModel={PublicId}, Offering={OfferingId}, LeaseSeconds={LeaseSeconds}",
+                logical.PublicId, claimed.Id, leaseSeconds);
+            return claimed;
+        }
+        return null;
+
+        Task<GatewayModelOffering> ClaimOfferingAsync(string offeringId) => offerings.FindOneAndUpdateAsync(
             fb.And(
+                fb.Eq(x => x.Id, offeringId),
                 fb.Eq(x => x.TenantId, CurrentTenantId),
                 fb.Eq(x => x.LogicalModelId, logical.Id),
                 fb.Eq(x => x.Enabled, true),
@@ -1819,15 +1903,9 @@ public class ModelResolver : IModelResolver
             new FindOneAndUpdateOptions<GatewayModelOffering>
             {
                 ReturnDocument = ReturnDocument.After,
-                Sort = Builders<GatewayModelOffering>.Sort.Ascending(x => x.Priority),
+                Sort = Builders<GatewayModelOffering>.Sort.Ascending(x => x.Priority).Ascending(x => x.Id),
             },
             ct);
-        if (claimed is null) return null;
-
-        _logger.LogInformation(
-            "[ModelResolver] 不可用 Offering 进入自动半开验证: LogicalModel={PublicId}, Offering={OfferingId}, LeaseSeconds={LeaseSeconds}",
-            logical.PublicId, claimed.Id, leaseSeconds);
-        return claimed;
     }
 
     /// <summary>

@@ -341,6 +341,7 @@ export class SchedulerService {
    * the LRU non-pinned branch first.
    */
   async wake(slug: string): Promise<void> {
+    if (this.stateService.getBranch(slug)?.archive) throw new Error('分支已归档，请先恢复后再启动');
     if (!this.isEnabled()) {
       if (this.wakeFn) await this.wakeFn(slug);
       return;

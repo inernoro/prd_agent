@@ -13,6 +13,14 @@ export function runningCommitSha(branch: BranchEntry, _version?: DeploymentVersi
   return commits.every(sha => sha && sha === commits[0]) ? commits[0] : undefined;
 }
 
+/** Git-source and immutable-image runtimes, with every serving profile agreeing. */
+export function confirmedRunningRevisionSha(branch: BranchEntry): string | undefined {
+  const running = Object.values(branch.services || {}).filter(service => service.status === 'running');
+  const revisions = running.map(service => service.deployedImage?.startsWith('cds-managed/') ? undefined
+    : runningCommitSha(branch, undefined, service.profileId) || service.sourceCommitSha);
+  return revisions.length && revisions.every(sha => sha && /^[a-f0-9]{40}$/i.test(sha) && sha === revisions[0]) ? revisions[0] : undefined;
+}
+
 export function branchVersionFacts(branch: BranchEntry, version?: DeploymentVersion) {
   return {
     runningCommitSha: runningCommitSha(branch, version) ?? null,

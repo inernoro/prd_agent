@@ -220,6 +220,10 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
       res.status(404).json({ error: 'project_not_found', message: `项目 ${projectId} 不存在` });
       return;
     }
+    const allowedProjects = stateService.getUserCredentials().find(c => c.id === principalId.credentialId)?.projectIds;
+    if (allowedProjects && !allowedProjects.includes(projectId)) {
+      res.status(403).json({ error: 'recovery_credential_project_only', message: '此恢复凭据只能补回原项目权限。' }); return;
+    }
     const principal = stateService.getPrincipal(principalId.principalId);
     const decision = decideProjectCredentialIssue(principal, stateService.getProjectGrants(), projectId);
     if (!decision.allowed) {
@@ -267,8 +271,9 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
     }
     const principal = stateService.getPrincipal(ctx.principalId);
     const names = projectNameMap();
+    const allowedProjects = stateService.getUserCredentials().find(c => c.id === ctx.credentialId)?.projectIds;
     const grants = stateService.getProjectGrants()
-      .filter((g) => g.principalId === ctx.principalId && !g.revokedAt)
+      .filter((g) => g.principalId === ctx.principalId && !g.revokedAt && (!allowedProjects || allowedProjects.includes(g.projectId)))
       .map((g) => ({ projectId: g.projectId, projectName: names[g.projectId], origin: g.origin }));
     res.json({ ok: true, principal, grants });
   });

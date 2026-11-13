@@ -140,6 +140,7 @@ public class VisualAgentVideoController : ControllerBase
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
+        await _videoGenService.PrepareGenerationRecoveryAsync(run, GetAdminId(), AppKey, ct);
         return Ok(ApiResponse<VideoGenRun>.Ok(VideoGenerationUserError.SanitizeForResponse(run)));
     }
 

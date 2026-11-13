@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
+import { load } from 'js-yaml';
 
 const repositoryRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const skillRoot = path.join(repositoryRoot, '.claude', 'skills');
@@ -43,7 +44,13 @@ describe('portable general skill packages', () => {
       const skillText = fs.readFileSync(skillFile, 'utf8');
 
       expect(skillText).toMatch(new RegExp(`^name: ${skillName}$`, 'm'));
-      expect(skillText).toMatch(/^version: 2\.0\.0$/m);
+      const header = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(skillText);
+      expect(header, `${skillName} must have YAML frontmatter`).not.toBeNull();
+      const manifest = load(header![1]) as { version?: unknown; metadata?: { version?: unknown } };
+      const versions = [manifest.version, manifest.metadata?.version].filter(value => value !== undefined);
+      expect(versions.length, `${skillName} must declare a version`).toBeGreaterThan(0);
+      // Metadata is the canonical location; legacy packages remain valid, and conflicting versions cannot hide.
+      for (const version of versions) expect(version).toBe('2.0.0');
 
       const files = listFiles(directory);
       expect(files.length).toBeGreaterThan(0);

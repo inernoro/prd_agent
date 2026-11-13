@@ -6,7 +6,7 @@ export type ProductMenuKey = typeof PRODUCT_MENU_KEYS[number];
 
 export function hasProductMenu(permissions: string[], menu: string, isRoot = false): boolean {
   if (isRoot || permissions.includes(PRODUCT_MAP_ADMIN)) return true;
-  if (permissions.includes(PRODUCT_MENU_SCOPED)) return permissions.includes(PRODUCT_MENU_PREFIX + menu);
+  if (permissions.includes(PRODUCT_MENU_SCOPED)) return permissions.includes(PRODUCT_MENU_PREFIX + (menu === 'notifications' ? 'settings' : menu));
   if (menu === 'review' && !permissions.includes('review-agent.use') && !permissions.includes('super')) return false;
   return permissions.includes('super') || permissions.includes('product-agent.use') || (menu === 'versions' && permissions.includes('product-agent.version-apply'));
 }

@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "initializeStorage": "new-only",
+  "backend": [
+    {"mountKey": "uploads", "containerPath": "/app/uploads", "purpose": "persistent"},
+    {"mountKey": "data", "containerPath": "/app/data", "purpose": "persistent"}
+  ]
+}

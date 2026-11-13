@@ -20,6 +20,7 @@ import { runningCommitSha } from '../../src/services/running-version.js';
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -196,7 +197,8 @@ describe('Executor /exec/deploy', () => {
     };
     containerService = new ContainerService(mock, config, undefined, eventSink, undefined, undefined, unitBindMountInspector);
     (containerService as any).waitForContainerAlive = async () => undefined;
-    (containerService as any).waitForReadiness = async () => true;
+    // 保留公共就绪方法的预约结算，仅替换实际网络探测。
+    (containerService as any).waitForReadinessUnbudgeted = async () => true;
 
     const app = express();
     app.use(express.json());
@@ -421,6 +423,8 @@ describe('Executor /exec/deploy', () => {
       RepoDigests: profiles.map(profile => `ghcr.io/owned/${profile.id}@${imageId}`), Os: 'linux', Architecture: 'amd64',
       Config: { Labels: { 'org.opencontainers.image.revision': target } } }]), stderr: '', exitCode: 0 }));
     const ensure = vi.spyOn(WorktreeService.prototype, 'ensureCommitAvailable');
+    // 过载时启动并发只有一个，已就绪角色必须真实归还启动预约才能启动下一个。
+    setBuildGateHostLoadProvider(() => ({ cores: 1, load1: 2 }));
     try {
       if (mode === 'preflight') {
         const result = await artifactPost({ profiles, commitSha: target, remainingMs: 120_000,
@@ -437,7 +441,7 @@ describe('Executor /exec/deploy', () => {
       }
       expect(ensure).not.toHaveBeenCalled();
       expect(mock.commands.some(command => /^git |^'git'/.test(command))).toBe(false);
-    } finally { ensure.mockRestore(); }
+    } finally { ensure.mockRestore(); setBuildGateHostLoadProvider(null); }
   });
 
   it.each(['preflight', 'deploy'])('executor %s跨项目归属在Docker及Git前拒绝，不能借默认项目仓库', async mode => {
@@ -535,7 +539,7 @@ describe('Executor /exec/deploy', () => {
     const version = versions.create({ projectId: 'default', branchId: f.entry.id, commitSha: f.target, configHash: 'c'.repeat(64),
       profiles: [profile], branch: stateService.getBranch(f.entry.id)!, createdByRunId: 'owned-portable-reference' });
     expect(version.profiles[0]).toMatchObject({ artifactKind: 'prebuilt-image', artifactImage: runtimeImage, reusable: true });
-    expect(versions.materializeProfiles(version, [profile])[0].dockerImage).toBe(runtimeImage);
+    expect(versions.materializeProfiles(version, [profile], f.entry)[0].dockerImage).toBe(runtimeImage);
     expect(runningCommitSha(stateService.getBranch(f.entry.id)!)).toBe(f.target);
   });
 
@@ -654,6 +658,63 @@ describe('Executor /exec/deploy', () => {
     expect(git(['rev-parse', 'HEAD'], current)).toBe(shaB);
     expect(stateService.getBranch('remote-source')?.services.api.sourceCommitSha).toBe(shaA);
   });
+
+  it.each(['managed-missing', 'managed-missing-git', 'managed-corrupt-git', 'external-missing', 'external-warm'] as const)(
+    '真实执行器入口仅恢复获准的托管缺失目录并保留原对象：%s', async scenario => {
+      const root = fs.realpathSync(tmpDir);
+      const git = (args: string[], cwd: string) => execFileSync('/usr/bin/git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      const remote = path.join(root, 'cold-remote.git'); fs.mkdirSync(remote); git(['init', '--bare'], remote);
+      const repo = path.join(root, 'cold-repo'); git(['clone', remote, repo], root); git(['switch', '-c', 'main'], repo);
+      git(['config', 'user.name', 'source-test'], repo); git(['config', 'user.email', 'source-test@example.invalid'], repo);
+      fs.writeFileSync(path.join(repo, 'version.txt'), 'A'); git(['add', '.'], repo); git(['commit', '-m', '版本A'], repo);
+      const shaA = git(['rev-parse', 'HEAD'], repo);
+      fs.writeFileSync(path.join(repo, 'version.txt'), 'B'); git(['commit', '-am', '版本B'], repo); git(['push', '-u', 'origin', 'main'], repo);
+      const shaB = git(['rev-parse', 'HEAD'], repo), branchId = 'cold-owned';
+      config.repoRoot = repo;
+      config.worktreeBase = scenario === 'managed-missing-git' ? path.join(repo, '.cds-worktrees') : path.join(root, 'worktrees');
+      const current = scenario.startsWith('managed-') ? WorktreeService.worktreePathFor(config.worktreeBase, 'default', branchId)
+        : path.join(root, 'external', branchId);
+      git(['worktree', 'add', '--detach', current, shaB], repo);
+      const marker = path.join(current, 'marker.txt'); fs.writeFileSync(marker, '必须保留的原目录');
+      if (scenario.endsWith('missing')) fs.rmSync(current, { recursive: true, force: true });
+      else if (scenario !== 'external-warm') {
+        fs.unlinkSync(path.join(current, '.git'));
+        if (scenario === 'managed-corrupt-git') fs.writeFileSync(path.join(current, '.git'), '损坏的登记文件');
+      }
+      stateService.addBranch({ id: branchId, projectId: 'default', branch: 'main', worktreePath: current,
+        status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      const shell = new ShellExecutor(), original = mock.exec.bind(mock), actualCommands: string[] = [], mounts: string[] = [];
+      mock.exec = async (command, options) => {
+        if (/^(git |test -d |rm -rf |mkdir -p )/.test(command)) {
+          actualCommands.push(command);
+          return shell.exec(command, { ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } });
+        }
+        if (/^docker (run|create) /.test(command)) {
+          const source = command.match(/--mount 'type=bind,src=([^,]+),dst=\/.__cds_source_ro,readonly'/)?.[1] ?? command.match(/-v '([^']+)':'\/app'/)?.[1];
+          if (source) mounts.push(fs.readFileSync(path.join(source, 'version.txt'), 'utf8'));
+        }
+        return original(command, options);
+      };
+      const result = await postSse(server, '/exec/deploy', { branchId, branchName: 'main', projectId: 'default', commitSha: shaA,
+        profiles: [{ id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 5000 }] });
+      const sourceOnly = scenario === 'external-missing';
+      const succeeds = scenario === 'managed-missing' || scenario === 'external-warm' || sourceOnly;
+      if (!scenario.endsWith('missing')) {
+        expect(fs.readFileSync(marker, 'utf8')).toBe('必须保留的原目录');
+        expect(fs.readFileSync(path.join(current, 'version.txt'), 'utf8')).toBe('B');
+      }
+      if (sourceOnly) {
+        expect(fs.existsSync(current)).toBe(false);
+        const source = stateService.getBranch(branchId)?.services.api.sourceCheckoutPath;
+        expect(source && path.dirname(source)).toBe(WorktreeService.deploymentSourceRootFor(current));
+        expect(actualCommands.some(command => /git worktree (add|prune)/.test(command) && command.includes(`'${current}'`))).toBe(false);
+      }
+      expect(result.events.some(event => event.event === 'error' || event.data?.status === 'error'), JSON.stringify({ events: result.events, actualCommands, mounts })).toBe(!succeeds);
+      expect(mounts).toEqual(succeeds ? ['A'] : []);
+      if (succeeds) expect(stateService.getBranch(branchId)?.services.api.sourceCommitSha).toBe(shaA);
+      else expect(actualCommands.some(command => /^(rm -rf|git worktree (add|prune))/.test(command))).toBe(false);
+    },
+  );
 
   it('stamps the master-supplied projectId on the new entry + scopes worktree dir by it', async () => {
     // Pre-create the project locally so resolveProjectForAutoBuild has

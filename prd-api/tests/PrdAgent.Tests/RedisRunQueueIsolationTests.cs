@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
 using StackExchange.Redis;
@@ -81,17 +82,21 @@ public sealed class RedisRunQueueIsolationTests : IAsyncLifetime
     }
 
     [DesignQueueRedisFact]
-    public async Task OtherKinds_KeepExistingKeysAndCrossScopeBehavior()
+    public async Task EveryOtherAndFutureKind_RejectsLegacyConsumers_AndIsolatesDeployments()
     {
-        using var a = Queue("project-a::branch-a::revision::revision-a");
-        using var b = Queue("project-b::branch-b::revision::revision-b");
+        using var a = new RedisRunQueue(_connection, TaskConfiguration("project-a", "branch-a", "revision-a"));
+        using var same = new RedisRunQueue(_connection, TaskConfiguration("project-a", "branch-a", "revision-b"));
+        using var b = new RedisRunQueue(_connection, TaskConfiguration("project-b", "branch-b", "revision-a"));
         foreach (var kind in typeof(RunKinds).GetFields().Where(field => field.IsLiteral)
-                     .Select(field => (string)field.GetRawConstantValue()!).Where(kind => kind != RunKinds.DesignArtifact))
+                     .Select(field => (string)field.GetRawConstantValue()!).Where(kind => kind != RunKinds.DesignArtifact).Append("future-unregistered-business"))
         {
             await a.EnqueueAsync($" {kind} ", "new-run");
-            Assert.Equal("new-run", (string?)await _redis!.GetDatabase().ListLeftPopAsync($"run:{kind}:queue"));
+            Assert.True((await _redis!.GetDatabase().ListLeftPopAsync($"run:{kind}:queue")).IsNull);
             await _redis.GetDatabase().ListRightPushAsync($"run:{kind}:queue", "legacy-run");
-            Assert.Equal("legacy-run", await b.DequeueAsync(kind, TimeSpan.Zero));
+            Assert.Null(await b.DequeueAsync(kind, TimeSpan.Zero));
+            Assert.Equal("new-run", await same.DequeueAsync(kind, TimeSpan.Zero));
+            Assert.Null(await a.DequeueAsync(kind, TimeSpan.Zero));
+            Assert.Equal("legacy-run", (string?)await _redis.GetDatabase().ListLeftPopAsync($"run:{kind}:queue"));
         }
     }
 
@@ -113,6 +118,11 @@ public sealed class RedisRunQueueIsolationTests : IAsyncLifetime
     }
 
     private RedisRunQueue Queue(string? scope) => new(_connection, () => scope);
+    private static IConfiguration TaskConfiguration(string project, string branch, string revision) =>
+        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["CDS_PROJECT_ID"] = project, ["VITE_GIT_BRANCH"] = branch, ["GIT_COMMIT"] = revision
+        }).Build();
 
     public async Task DisposeAsync()
     {
@@ -138,11 +148,17 @@ public sealed class RedisRunQueueKeyTests
     }
 
     [Fact]
-    public void OtherKinds_PreserveLegacyKeys()
+    public void EveryOtherAndFutureKind_UsesStableDeploymentNamespace()
     {
         foreach (var kind in typeof(RunKinds).GetFields().Where(field => field.IsLiteral)
-                     .Select(field => (string)field.GetRawConstantValue()!).Where(kind => kind != RunKinds.DesignArtifact))
-            Assert.Equal($"run:{kind}:queue", RedisRunQueue.BuildKey($" {kind} ", "project::branch::revision::one"));
+                     .Select(field => (string)field.GetRawConstantValue()!).Where(kind => kind != RunKinds.DesignArtifact).Append("future-unregistered-business"))
+        {
+            var key = RedisRunQueue.BuildKey($" {kind} ", "project::branch");
+            Assert.StartsWith($"run:v3:{kind}:", key);
+            Assert.NotEqual($"run:{kind}:queue", key);
+            Assert.NotEqual(key, RedisRunQueue.BuildKey(kind, "project::other-branch"));
+            Assert.Equal(key, RedisRunQueue.BuildKey(kind, "project::branch"));
+        }
     }
 }
 

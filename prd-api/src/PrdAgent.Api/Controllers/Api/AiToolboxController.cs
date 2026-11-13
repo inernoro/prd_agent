@@ -152,6 +152,7 @@ public class AiToolboxController : ControllerBase
         // Step 2: 创建运行记录
         var run = new ToolboxRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Id = ObjectId.GenerateNewId().ToString(),
             UserId = userId,
             SessionId = request.SessionId,

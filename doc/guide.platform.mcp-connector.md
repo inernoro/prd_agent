@@ -72,3 +72,9 @@ WorkBuddy 使用专用 ZIP 导入包。检查已导入技能详情中的版本�
 - [OpenAI MCP 文档](https://developers.openai.com/codex/mcp)
 - [WorkBuddy 连接器规范](https://open.workbuddy.cn/docs/connector)
 - [WorkBuddy 技能规范](https://open.workbuddy.cn/docs/skill)
+
+## 相关文件
+
+- [doc/design.platform.map-mcp-connector.md](./design.platform.map-mcp-connector.md) —— 设计与实施
+- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— AgentApiKey + AgentOpenEndpoint 上游设计
+- [借用法则](../.claude/rules/no-rootless-tree.md) —— 连接器借用约束（连接器借现成桩，不重建）

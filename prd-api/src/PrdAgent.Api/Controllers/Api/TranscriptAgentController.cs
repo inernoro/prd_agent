@@ -152,6 +152,7 @@ public class TranscriptAgentController : ControllerBase
         // 自动创建 ASR 转写任务
         var run = new TranscriptRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             ItemId = item.Id,
             WorkspaceId = workspaceId,
             OwnerUserId = userId,
@@ -259,6 +260,7 @@ public class TranscriptAgentController : ControllerBase
 
         var run = new TranscriptRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             ItemId = itemId,
             WorkspaceId = item.WorkspaceId,
             OwnerUserId = userId,

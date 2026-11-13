@@ -101,7 +101,7 @@ function outboundHint(notice: SiteNotice): string | null {
   return null;
 }
 
-export function SiteNoticeInbox(): JSX.Element {
+export function SiteNoticeInbox({ canReadAccessRequests = false }: { canReadAccessRequests?: boolean } = {}): JSX.Element {
   const host = useOverlayDock('#cds-information-center-host');
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -122,6 +122,7 @@ export function SiteNoticeInbox(): JSX.Element {
   const updateSourceCount = useCallback((source: keyof typeof sourceCounts, count: number): void => {
     setSourceCounts((current) => current[source] === count ? current : { ...current, [source]: count });
   }, []);
+  useEffect(() => { if (!canReadAccessRequests) updateSourceCount('access', 0); }, [canReadAccessRequests, updateSourceCount]);
   const handleAccessCount = useCallback((count: number) => updateSourceCount('access', count), [updateSourceCount]);
   const handleCommitCount = useCallback((count: number) => updateSourceCount('commit', count), [updateSourceCount]);
   const handleImportCount = useCallback((count: number) => updateSourceCount('import', count), [updateSourceCount]);
@@ -353,7 +354,7 @@ export function SiteNoticeInbox(): JSX.Element {
       </div>
 
       {/* 授权是需要立刻决策的高优先级消息：常驻右下角，同时仍保留在信息中心。 */}
-      <AccessRequestInbox placement="floating" onCountChange={handleAccessCount} />
+      {canReadAccessRequests ? <AccessRequestInbox placement="floating" onCountChange={handleAccessCount} /> : null}
 
       {open && panelPosition ? createPortal((
         <div
@@ -379,7 +380,7 @@ export function SiteNoticeInbox(): JSX.Element {
           ) : null}
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3" style={{ overscrollBehavior: 'contain' }}>
-            <AccessRequestInbox />
+            {canReadAccessRequests ? <AccessRequestInbox /> : null}
             <PendingImportInbox onCountChange={handleImportCount} />
             <GlobalUpdateBadge onCountChange={handleUpdateCount} />
             <CommitInbox onCountChange={handleCommitCount} />

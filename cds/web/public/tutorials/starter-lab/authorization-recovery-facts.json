@@ -1,0 +1,78 @@
+{
+  "at": "2026-10-14T12:54:00.354822+00:00",
+  "projectId": "8dbfa9eb0ea6",
+  "bootstrapRequest": "e7e3fb7705be",
+  "bootstrapKeyId": "8441b23d",
+  "target": {
+    "name": "小步清单 · 仓库绑定与凭据恢复（2026-10-14）",
+    "repository": "github.com/inernoro/cds-onboarding-receipt-lab"
+  },
+  "targetBound": true,
+  "bootstrapRevoked": true,
+  "lossAndRevocationRecoveredSameProject": true,
+  "recoveryRequests": [
+    "c5d89f11a375",
+    "be559be5b659"
+  ],
+  "checks": [
+    {
+      "path": "/api/projects/8dbfa9eb0ea6",
+      "status": 200
+    },
+    {
+      "path": "/api/projects/6fa7d576d84d",
+      "status": 403
+    },
+    {
+      "label": "旧撤销凭据恢复后仍被拒绝",
+      "status": 401
+    },
+    {
+      "label": "恢复后的项目凭据无建项目权",
+      "status": 403
+    }
+  ],
+  "newProcessesReusedWithoutApproval": true,
+  "credentials0600AndGitIgnored": true,
+  "noKeysInLogs": true,
+  "distinctProjectCredentials": true,
+  "passed": true,
+  "chapter": "第三章 · 仓库绑定与凭据恢复",
+  "video": {
+    "seconds": 51.9,
+    "frames": 45,
+    "segments": 15,
+    "sha256": "7f8f46f00a90d55df71c67fb319d2d95f63c5926266db6b6e9570ef9b2797821",
+    "kind": "真实浏览器采样帧，按实操顺序压缩等待，无音轨、无界面重绘；字幕用于说明步骤",
+    "recordingCommits": [
+      "ccc5dcae5bd1ceda070024d734de8615787efb3e",
+      "f26939fb4ecb9fa5286e2284f1bf2a75087e8d32",
+      "18b49cfc20b18e4d92b4a163575d94e4461dd8c7"
+    ]
+  },
+  "functionalCommit": "ccc5dcae5bd1ceda070024d734de8615787efb3e",
+  "preservedOnlineCommit": "cff921218470514dbabe5a991e9a433fa76b3cd4",
+  "scope": "项目凭据文件丢失、项目凭据撤销后的同项目批准恢复；不包括身份账户及项目Grant撤销",
+  "github": "https://github.com/inernoro/cds-onboarding-receipt-lab",
+  "cds": "https://cds.miduo.org/branches/8dbfa9eb0ea6",
+  "applicationDeployed": false,
+  "ci": "https://github.com/inernoro/prd_agent/actions/runs/38563402952",
+  "tests": {
+    "remoteCdsPassed": 9830,
+    "remoteCdsSkipped": 9,
+    "localCliPassed": 232
+  },
+  "finalClientVersion": "0.16.11",
+  "compatibilityRetest": {
+    "lossRequest": "06ed790621c8",
+    "revocationRequest": "92965128fefe",
+    "sameProjectId": "8dbfa9eb0ea6",
+    "newIntentAndDisplayRenameRegressionPassed": true
+  },
+  "sameGitHubPermissionBoundaryAcrossRecording": true,
+  "recordingClientVersions": [
+    "0.16.10",
+    "0.16.11"
+  ],
+  "recordingNote": "初始服务端修复及后续客户端兼容复验，画面均来自同一授权专项项目；新增目标与显示改名兼容修订不改变该项目的批准与恢复步骤。"
+}

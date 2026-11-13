@@ -20,6 +20,7 @@ import {
   BookOpen,
   Share2,
   Settings,
+  Bell,
   Upload,
   Download,
   ArrowLeft,
@@ -35,10 +36,12 @@ import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLa
 import { ProductsSection } from './ProductsSection';
 import { CustomerModule } from './CustomerModule';
 import { ProductSettingsHub } from './ProductSettingsHub';
+import { ScheduledNotifications } from './ScheduledNotifications';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
 import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
 import { VersionWorkflowTab } from './VersionWorkflowTab';
+import { VersionAppearance } from './VersionAppearance';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import { OverviewDataTable, TruncateCell } from './overviewDataTable';
 import { SelectionActionBar, useOverviewTableSelection } from './selectableList';
@@ -65,9 +68,9 @@ import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { ReviewAgentPage } from './review/ReviewAgentPage';
 import { hasProductMenu, hasProductReviewPermission, PRODUCT_MAP_ADMIN, PRODUCT_MENU_KEYS, PRODUCT_MENU_SCOPED } from './productPermissionAccess';
 
-type Section = 'dashboard' | 'products' | 'requirements' | 'review' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
+type Section = 'dashboard' | 'products' | 'requirements' | 'review' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'notifications' | 'settings';
 
-const SECTION_KEYS = new Set<Section>(['dashboard', 'products', 'requirements', 'review', 'features', 'defects', 'versions', 'customers', 'knowledge', 'graph', 'settings']);
+const SECTION_KEYS = new Set<Section>([...PRODUCT_MENU_KEYS, 'notifications']);
 
 function parseOverviewSection(value: string | null): Section {
   if (value && SECTION_KEYS.has(value as Section)) return value as Section;
@@ -136,6 +139,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
   }, [canUseProduct, loadStats, loadProducts, permissions, isRoot]);
 
   const isAdmin = isRoot || permissions.includes(PRODUCT_MAP_ADMIN) || (stats?.isAdmin ?? false);
+  const canManageNotifications = isAdmin || (permissions.includes(PRODUCT_MENU_SCOPED) && permissions.includes('product-agent.admin'));
 
   const navItems: NavItem<Section>[] = canUseProduct ? [
     { key: 'dashboard', label: '概览', icon: LayoutDashboard },
@@ -148,6 +152,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
     { key: 'customers', label: '客户', icon: Users },
     { key: 'knowledge', label: '知识库', icon: BookOpen },
     { key: 'graph', label: '图谱', icon: Share2 },
+    { key: 'notifications', label: '通知', icon: Bell, hidden: !canManageNotifications },
     { key: 'settings', label: '设置', icon: Settings, hidden: permissions.includes(PRODUCT_MENU_SCOPED) ? !hasProductMenu(permissions, 'settings', isRoot) : !isAdmin, dividerBefore: true },
   ] : [{ key: 'versions', label: '版本', icon: Boxes }];
 
@@ -208,7 +213,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
         </SectionShell>
       )}
       {active === 'versions' && (
-        <SectionShell title="版本">
+        <SectionShell title="版本" actions={<VersionAppearance />}>
           <VersionWorkflowTab isAdmin={isAdmin} />
         </SectionShell>
       )}
@@ -232,6 +237,9 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
             <ProductGraphCanvas overview />
           </div>
         </div>
+      )}
+      {active === 'notifications' && (
+        <SectionShell title="通知"><ScheduledNotifications /></SectionShell>
       )}
       {active === 'settings' && <ProductSettingsHub />}
       </>

@@ -6,6 +6,7 @@
     "tsBuildInfoFile": "../dist/.acceptance.tsbuildinfo"
   },
   "include": [
+    "widget-stream-recovery-fixture.ts",
     "deployment-recovery-drill.ts",
     "replica-confirmation-drill.ts",
     "actual-stop-drill.ts",
@@ -19,6 +20,8 @@
     "branch-claim-entry-drill.ts",
     "application-bootstrap-drill.ts",
     "application-docker-host-drill.ts",
-    "application-docker-inner-drill.ts"
+    "application-docker-inner-drill.ts",
+    "runtime-memory-stage-drill.ts",
+    "cpu-fairness-stop-drill.ts"
   ]
 }

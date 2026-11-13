@@ -15,6 +15,20 @@
 
 import { cleanDisplayTitle } from './visualAgentPromptUtils';
 
+export function visualUploadNotice(count: number, alongside = false) {
+  return alongside
+    ? `已在选中图旁新增 ${count} 张，原图已保留。点击图片可添加为参考图，再输入你想怎么修改。`
+    : `已把 ${count} 张图片加入画板。点击图片可添加为参考图，再输入你想怎么修改。`;
+}
+
+/** 仅适配产品曾写入的两种系统提示；不修改用户原话或历史存储。 */
+export function normalizeHistoricalVisualNotice(content: string) {
+  const uploaded = /^已把 (\d+) 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。$/.exec(content);
+  if (uploaded) return visualUploadNotice(Number(uploaded[1]));
+  const alongside = /^已在选中图旁新增 (\d+) 张（原图保留，不会被覆盖）。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。$/.exec(content);
+  return alongside ? visualUploadNotice(Number(alongside[1]), true) : content;
+}
+
 export interface ParsedVisualMessageDisplay {
   /** 清理后的展示文本（可能仍含内联 @imgN 标记，就地渲染为 chip） */
   text: string;

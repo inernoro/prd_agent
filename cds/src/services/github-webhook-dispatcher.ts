@@ -927,6 +927,10 @@ export class GitHubWebhookDispatcher {
       return { action: 'ignored-event', message: `branch deleted on GitHub but not tracked by CDS: ${canonicalId}` };
     }
     const branchId = entry.id;
+    if (entry.archive) {
+      return { action: 'ignored-event', branchId,
+        message: `GitHub分支已删除，CDS归档仍保留至 ${entry.archive.retireAt}；到期回收由分支生命周期处理。` };
+    }
     // 主干兜底（2026-07-27 P0：CDS 把 main 回收删掉）：GitHub 上删除主干是极端事件，
     // 更常见的是 webhook 误判（ref 实为 tag、分支名匹配错、仓库刚改过默认分支）。
     // 任何情况下都不允许由一条 webhook 自动删掉主干预览 —— 拒绝停容器 + 拒绝删 entry，
@@ -1147,7 +1151,7 @@ export class GitHubWebhookDispatcher {
     // ciTargetSha 可能还在,此时不该再认 CI 完成事件去自动重部署一个已退出极速版的分支。
     const wfProfiles = this.deps.stateService.getBuildProfilesForProject(project.id);
     const matchable = (b: BranchEntry): boolean =>
-      (b.ciImageStatus === 'waiting' || b.ciImageStatus === 'failed')
+      !b.archive && (b.ciImageStatus === 'waiting' || b.ciImageStatus === 'failed')
       && b.ciTargetSha === headSha
       && (!run.head_branch || b.branch === run.head_branch)
       && branchUsesPrebuiltMode(wfProfiles, b);
@@ -1584,6 +1588,8 @@ export class GitHubWebhookDispatcher {
       this.deps.stateService.findBranchByProjectAndName(project.id, branchName);
     const branchId = entry?.id ?? canonicalId;
     let created = false;
+    if (entry?.archive) return { action: 'ignored-event', branchId,
+      message: '分支已归档，忽略自动部署；请先从归档列表恢复，再推送或部署。' };
 
     // 项目构建配置（极速版判定 + created 分支默认对齐共用）。早算一次,供下面
     // docs-only / dry-run / express 分流复用,避免散落多处重复读取。

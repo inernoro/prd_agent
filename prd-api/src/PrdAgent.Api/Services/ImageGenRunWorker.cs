@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -21,6 +22,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class ImageGenRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly MongoDbContext _db;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ImageGenRunWorker> _logger;
@@ -82,8 +84,10 @@ public class ImageGenRunWorker : BackgroundService
         IRunEventStore runStore,
         ILogger<ImageGenRunWorker> logger,
         ILLMRequestContextAccessor llmRequestContext,
-        IConfiguration config)
+        IConfiguration config,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _db = db;
         _scopeFactory = scopeFactory;
         _runStore = runStore;
@@ -166,6 +170,11 @@ public class ImageGenRunWorker : BackgroundService
         {
             // app shutting down：尽量把 run 标记为失败/取消（避免永远 Running）
             await MarkRunFailedSafeAsync(run.Id, "WORKER_STOPPED", "服务正在停止", CancellationToken.None);
+        }
+        catch (PrdAgent.Core.Security.TaskExecutionAdmissionException ex)
+        {
+            // 未获得执行资格必须收尾；另有执行者的重复投递仍由 ShouldSkip 保护。
+            await MarkRunFailedSafeAsync(run.Id, ex.Code, ex.Message, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -263,6 +272,10 @@ public class ImageGenRunWorker : BackgroundService
         // 重新读取最新 run（避免 claim 返回的字段不完整/过旧）
         var run = await _db.ImageGenRuns.Find(x => x.Id == claimed.Id).FirstOrDefaultAsync(ct);
         if (run == null) return;
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
 
         // 若 ConfigModelId 存在且 run 未填平台信息，则尝试补齐（用于事件输出与后续查询）
         if (!string.IsNullOrWhiteSpace(run.ConfigModelId) && (string.IsNullOrWhiteSpace(run.PlatformId) || string.IsNullOrWhiteSpace(run.ModelId)))
@@ -895,7 +908,7 @@ public class ImageGenRunWorker : BackgroundService
                             run, curItemIndex, imageIndex, curPrompt, reqSize,
                             ImageGenRunItemStatus.Done, base64, url, revisedPrompt,
                             null, null, ct, effSize, sizeAdjusted, ratioAdjusted,
-                            displaySha256);
+                            displaySha256, actualModel: meta?.ActualModel);
                         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Done, 1), cancellationToken: ct);
                         // 服务器权威性：后端自动保存 Assistant 消息到 image_master_messages
                         var doneRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
@@ -984,7 +997,7 @@ public class ImageGenRunWorker : BackgroundService
             ? ImageGenRunStatus.Cancelled
             : (final.Failed > 0 ? ImageGenRunStatus.Failed : ImageGenRunStatus.Completed);
 
-        await PersistTerminalStateAsync(run, final, nextStatus, ct);
+        if (!await PersistTerminalStateAsync(run, final, nextStatus, ct)) return;
 
         // 兜底：失败/取消时把对应画布占位从 running 翻成 error（成功路径已由 TryPatchWorkspaceCanvasAsync 回填）。
         // 否则后端失败但画布元素永远停在 running，前端"预计 1024×1024"占位永久转圈，且看门狗/对账之外没有第二道闸。
@@ -1017,7 +1030,7 @@ public class ImageGenRunWorker : BackgroundService
                 string.IsNullOrWhiteSpace(firstErrorItem?.ErrorMessage) ? "生图失败，请重试。" : firstErrorItem.ErrorMessage)
             : new TerminalFailure(null, null);
 
-    internal async Task PersistTerminalStateAsync(
+    internal async Task<bool> PersistTerminalStateAsync(
         ImageGenRun run,
         ImageGenRun final,
         ImageGenRunStatus nextStatus,
@@ -1051,10 +1064,13 @@ public class ImageGenRunWorker : BackgroundService
                 .Unset(x => x.ErrorMessage);
         }
 
-        await _db.ImageGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        var persisted = await _db.ImageGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id && x.OwnerAdminId == run.OwnerAdminId && x.AppKey == run.AppKey
+                && x.WorkspaceId == run.WorkspaceId && x.TaskPermitId == run.TaskPermitId
+                && x.Status == ImageGenRunStatus.Running,
             terminalUpdate,
             cancellationToken: ct);
+        if (persisted.ModifiedCount == 0) return false;
 
         await AppendEventAsync(run, "run", new
         {
@@ -1068,6 +1084,7 @@ public class ImageGenRunWorker : BackgroundService
             errorMessage = terminalFailure.ErrorMessage,
             endedAt
         }, ct);
+        return true;
     }
 
     private static string ResolveSize(ImageGenRun run, ImageGenRunPlanItem planItem)
@@ -1247,7 +1264,7 @@ public class ImageGenRunWorker : BackgroundService
             await UpsertRunItemAsync(
                 run, itemIndex, i, prompt, requestedSize, ImageGenRunItemStatus.Done,
                 base64, url, image.RevisedPrompt, null, null, ct, effSize,
-                meta?.SizeAdjusted ?? false, meta?.RatioAdjusted ?? false, displaySha256);
+                meta?.SizeAdjusted ?? false, meta?.RatioAdjusted ?? false, displaySha256, actualModel: meta?.ActualModel);
             await _db.ImageGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
                 Builders<ImageGenRun>.Update.Inc(x => x.Done, 1),
@@ -1355,7 +1372,8 @@ public class ImageGenRunWorker : BackgroundService
         string? effectiveSize = null,
         bool? sizeAdjusted = null,
         bool? ratioAdjusted = null,
-        string? displaySha256 = null)
+        string? displaySha256 = null,
+        string? actualModel = null)
     {
         var now = DateTime.UtcNow;
         // 不依赖 unique 索引：以确定性 Id 防并发重复插入（仅依赖 _id 唯一）
@@ -1390,6 +1408,7 @@ public class ImageGenRunWorker : BackgroundService
         if (url != null) update = update.Set(x => x.Url, url);
         if (displaySha256 != null) update = update.Set(x => x.DisplaySha256, displaySha256);
         if (revisedPrompt != null) update = update.Set(x => x.RevisedPrompt, revisedPrompt);
+        if (actualModel != null) update = update.Set(x => x.ActualModel, actualModel);
 
         if (errorCode != null) update = update.Set(x => x.ErrorCode, errorCode);
         if (errorMessage != null) update = update.Set(x => x.ErrorMessage, errorMessage);
@@ -2094,7 +2113,7 @@ public class ImageGenRunWorker : BackgroundService
 
             // 传递用户期望的模型池 code
             var expectedModelCode = frontendExpectedModelId;
-            var resolved = await gateway.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct: ct);
+            var resolved = await gateway.ResolveModelMetadataAsync(appCallerCode, "generation", expectedModelCode, ct: ct);
 
             if (resolved is null || !resolved.Success)
             {
@@ -2185,7 +2204,7 @@ public class ImageGenRunWorker : BackgroundService
         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, updateDef, cancellationToken: ct);
     }
 
-    private async Task<bool> ResolveRunIsAdaptiveAsync(
+    internal async Task<bool> ResolveRunIsAdaptiveAsync(
         ImageGenRun run,
         string appCallerCode,
         CancellationToken ct)
@@ -2197,18 +2216,17 @@ public class ImageGenRunWorker : BackgroundService
             using var scope = _scopeFactory.CreateScope();
             var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
             var requiredLogicalModel = ResolveExplicitLogicalModelPublicId(run);
-            var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
-                ? await gateway.ResolveRequiredLogicalModelAsync(
-                    appCallerCode,
-                    "generation",
-                    requiredLogicalModel,
-                    ct)
-                : await gateway.ResolveModelAsync(
-                    appCallerCode,
-                    "generation",
-                    ResolveImageGenerationModelReference(run),
-                    ct: ct);
-            if (!resolution.Success) return fallback;
+            // 这里只读取 runStart 事件的尺寸提示。执行解析会提前认领半开租约，
+            // 随后的真实生图便被自己的租约挡住；租约必须留给 serving 的 raw 请求。
+            var resolution = await gateway.ResolveModelMetadataAsync(
+                appCallerCode,
+                "generation",
+                requiredLogicalModel ?? ResolveImageGenerationModelReference(run),
+                ct: ct);
+            if (!resolution.Success
+                || (!string.IsNullOrWhiteSpace(requiredLogicalModel)
+                    && !string.Equals(requiredLogicalModel, resolution.LogicalModelPublicId,
+                        StringComparison.OrdinalIgnoreCase))) return fallback;
 
             var resolvedFallback = ImageGenModelAdapterRegistry.TryMatch(
                     resolution.ActualModel ?? run.ModelId)?.SizeConstraintType

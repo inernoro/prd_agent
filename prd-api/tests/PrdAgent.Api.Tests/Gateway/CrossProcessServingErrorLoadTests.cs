@@ -52,6 +52,7 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
     [MemberData(nameof(GatewayMatrixCells.TransportIds), MemberType = typeof(GatewayMatrixCells))]
     public async Task TransportCell(string id)
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         var cell = GatewayMatrixCells.GetTransport(id);
         var baseUrl = _farm.BaseUrl(cell.Gateway);
         var client = BuildClient(baseUrl, cell.AuthOk ? TestKey : "WRONG-KEY");
@@ -194,7 +195,7 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
             ["LlmGateway:ServeBaseUrl"] = baseUrl,
             ["LlmGwServe:ApiKey"] = key,
         }).Build();
-        return new HttpLlmGatewayClient(SharedHttpFactory, config, NullLogger<HttpLlmGatewayClient>.Instance);
+        return new HttpLlmGatewayClient(SharedHttpFactory, config, NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: GatewayAuthorizedTaskFixture.Outbound);
     }
 
     // ─────────────────────── HostFarm：4 个 stub 上游各一个常驻 host ───────────────────────
@@ -228,6 +229,7 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
             builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
             builder.Services.AddSingleton(gateway);
             builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
+            GatewayAuthorizedTaskFixture.Register(builder.Services);
             var app = builder.Build();
             app.MapGatewayServingEndpoints(PascalJson, TestKey, "selftest-commit");
             await app.StartAsync();

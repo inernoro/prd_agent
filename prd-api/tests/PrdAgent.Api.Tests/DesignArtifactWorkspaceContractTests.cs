@@ -1,3 +1,4 @@
+using PrdAgent.Api.Tests.Gateway;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -44,6 +45,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         }).Build();
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         var inputs = new[]
         {
@@ -100,6 +102,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         }
         broker.Verify(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()), Times.Exactly(2));
         broker.Verify(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()), Times.Exactly(2));
+        broker.Verify(x => x.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()), Times.Exactly(2));
         broker.VerifyNoOtherCalls();
     }
 
@@ -146,6 +149,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var run = AbortFixtureRun();
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         var controller = BuildResponsesProxy(broker.Object, new AbortingStreamHandler(), GatewayConfiguration(),
             AbortFixtureBody);
@@ -165,6 +169,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var run = AbortFixtureRun();
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         var controller = BuildResponsesProxy(broker.Object, new AbortingStreamHandler(), GatewayConfiguration(),
             AbortFixtureBody);
@@ -187,6 +192,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var run = AbortFixtureRun();
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         var controller = BuildResponsesProxy(broker.Object, new AbortingStreamHandler(), GatewayConfiguration(),
             AbortFixtureBody);
@@ -302,7 +308,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         IDesignArtifactWorkspaceBroker broker, HttpMessageHandler handler, IConfiguration configuration, string requestBody)
     {
         var controller = new DesignArtifactRuntimeController(broker, new SingleClientFactory(handler), configuration,
-            NullLogger<DesignArtifactRuntimeController>.Instance)
+            NullLogger<DesignArtifactRuntimeController>.Instance, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
@@ -480,7 +486,7 @@ public sealed class DesignArtifactWorkspaceContractTests
             configuration["DesignArtifactRuntime:Model"] = "changed-again";
             var handler = new CapturingHandler();
             var proxy = new DesignArtifactRuntimeController(broker.Object, new SingleClientFactory(handler), configuration,
-                NullLogger<DesignArtifactRuntimeController>.Instance)
+                NullLogger<DesignArtifactRuntimeController>.Instance, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
                 { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
             var bytes = Encoding.UTF8.GetBytes("""{"model":"runtime","temperature":1.2,"top_p":0.2,"reasoning":{"effort":"high"},"reasoning_effort":"high","messages":[],"max_tokens":32768}""");
             proxy.Request.Body = new MemoryStream(bytes); proxy.Request.ContentLength = bytes.Length;
@@ -572,12 +578,14 @@ public sealed class DesignArtifactWorkspaceContractTests
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
+        broker.Setup(item => item.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(item => item.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
         var handler = new CapturingHandler();
         var proxy = new DesignArtifactRuntimeController(
             broker.Object, new SingleClientFactory(handler), configuration,
-            NullLogger<DesignArtifactRuntimeController>.Instance)
+            NullLogger<DesignArtifactRuntimeController>.Instance, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
@@ -762,6 +770,8 @@ public sealed class DesignArtifactWorkspaceContractTests
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
+        broker.Setup(item => item.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(item => item.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
         var handler = new CapturingHandler();
@@ -776,7 +786,7 @@ public sealed class DesignArtifactWorkspaceContractTests
             broker.Object,
             new SingleClientFactory(handler),
             configuration,
-            NullLogger<DesignArtifactRuntimeController>.Instance)
+            NullLogger<DesignArtifactRuntimeController>.Instance, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
@@ -814,6 +824,8 @@ public sealed class DesignArtifactWorkspaceContractTests
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
+        broker.Setup(item => item.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(item => item.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
         var handler = new CapturingHandler(
@@ -829,7 +841,7 @@ public sealed class DesignArtifactWorkspaceContractTests
             broker.Object,
             new SingleClientFactory(handler),
             configuration,
-            NullLogger<DesignArtifactRuntimeController>.Instance)
+            NullLogger<DesignArtifactRuntimeController>.Instance, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
@@ -927,6 +939,8 @@ public sealed class DesignArtifactWorkspaceContractTests
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
+        broker.Setup(item => item.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(item => item.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
         var handler = new CapturingHandler();
@@ -941,7 +955,7 @@ public sealed class DesignArtifactWorkspaceContractTests
             broker.Object,
             new SingleClientFactory(handler),
             configuration,
-            NullLogger<DesignArtifactRuntimeController>.Instance)
+            NullLogger<DesignArtifactRuntimeController>.Instance, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };

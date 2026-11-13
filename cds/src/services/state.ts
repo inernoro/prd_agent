@@ -6,10 +6,12 @@ import {validateBoundedStorageProof} from './bounded-storage-provider.js';
 import {withWritableSourceLayer} from './source-workspace.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { cdsEventsBus } from './cds-events-bus.js';
 import { identityChanged, identityRecord, importLegacyProjectSlug, projectIdentitySnapshot, type ProjectIdentityActor } from './project-identity-history.js';
 import fs from 'node:fs';
 import { worktreePathActivity } from './worktree-path-activity.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
+import { customProbeTargetId } from './uptime-custom-monitor.js';
 import type {
   DbLedgerEntry,
   CdsState,
@@ -32,6 +34,7 @@ import type {
   UserCredential,
   ProjectGrant,
   AccessRequest,
+  IdentityConnection,
   CustomEnvStore,
   ConfigSnapshot,
   DestructiveOperationLog,
@@ -1857,7 +1860,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const orphaned = Object.values(this.state.uptimeMonitors || {})
       .filter((monitor) => monitor.boundBranchId === id)
       .map((monitor) => monitor.id);
-    for (const mid of orphaned) delete this.state.uptimeMonitors?.[mid];
+    for (const mid of orphaned) this.deleteUptimeMonitorState(mid);
     if (orphaned.length > 0) {
       for (const listener of this.orphanedMonitorListeners) {
         // 各自 try/catch：一个观察者抛了不该让删分支这件事失败。
@@ -2669,6 +2672,12 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       grants: (this.state.projectGrants || []).filter(p => projectGrantsToRevoke.includes(p.id)),
       dbLedger: (this.state.dbLedger || []).filter(p => p.projectId === id),
       monitors: uptimeMonitorsToRemove.map(mid => this.state.uptimeMonitors![mid]),
+      monitorSubscriptions: uptimeMonitorsToRemove.map(mid => ({ targetId: customProbeTargetId({ id: mid }), value: this.state.monitorSubscriptions?.[customProbeTargetId({ id: mid })] })),
+      monitorNotifications: uptimeMonitorsToRemove.map(mid => {
+        const targetId = customProbeTargetId({ id: mid });
+        const settings = this.state.monitorNotifications;
+        return { targetId, override: settings?.overrides?.[targetId], mutedUntil: settings?.mutedUntil?.[targetId], acknowledgedAt: settings?.acknowledgedAt?.[targetId] };
+      }),
       customEnv: this.state.customEnv?.[id],
     });
     let restored = false;
@@ -2685,6 +2694,16 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       for (const b of snapshot.branches) this.state.branches[b.id] ??= b;
       for (const [bid, logs] of Object.entries(snapshot.logs)) this.state.logs[bid] ??= logs;
       for (const m of snapshot.monitors) (this.state.uptimeMonitors ??= {})[m.id] ??= m;
+      for (const previous of snapshot.monitorSubscriptions) {
+        if (previous.value) (this.state.monitorSubscriptions ??= {})[previous.targetId] ??= previous.value;
+      }
+      for (const previous of snapshot.monitorNotifications) {
+        if (previous.override === undefined && previous.mutedUntil === undefined && previous.acknowledgedAt === undefined) continue;
+        const settings = this.state.monitorNotifications ??= {};
+        if (previous.override !== undefined) (settings.overrides ??= {})[previous.targetId] ??= previous.override;
+        if (previous.mutedUntil !== undefined) (settings.mutedUntil ??= {})[previous.targetId] ??= previous.mutedUntil;
+        if (previous.acknowledgedAt !== undefined) (settings.acknowledgedAt ??= {})[previous.targetId] ??= previous.acknowledgedAt;
+      }
       if (snapshot.customEnv) this.state.customEnv[id] ??= snapshot.customEnv;
       for (const previous of snapshot.grants) {
         const current = this.state.projectGrants?.find(g => g.id === previous.id);
@@ -2741,7 +2760,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       if (this.state.dbLedger) {
         this.state.dbLedger = this.state.dbLedger.filter((e) => e.projectId !== id);
       }
-      for (const mid of uptimeMonitorsToRemove) delete this.state.uptimeMonitors?.[mid];
+      for (const mid of uptimeMonitorsToRemove) this.deleteUptimeMonitorState(mid);
 
       this.state.projects = this.state.projects.filter((p) => p.id !== id);
       this.save();
@@ -2773,6 +2792,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
         | 'aliasName'
         | 'previewAddresses'
         | 'previewAddressAudit'
+        | 'monitoringInspections'
         | 'slug'
         | 'description'
         | 'deliveryMode'
@@ -2958,6 +2978,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       ciWorkflowRunUrl?: string;
       ciWaitingSince?: string;
       ciImageError?: string;
+      ciDiagnosis?: BranchEntry['ciDiagnosis'];
     },
   ): void {
     const branch = this.state.branches[id];
@@ -2976,6 +2997,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     if ('githubPrNumber' in updates) branch.githubPrNumber = updates.githubPrNumber;
     if ('githubPreviewCommentId' in updates) branch.githubPreviewCommentId = updates.githubPreviewCommentId;
     if ('ciImageStatus' in updates) branch.ciImageStatus = updates.ciImageStatus;
+    if ('ciDiagnosis' in updates) branch.ciDiagnosis = updates.ciDiagnosis;
+    else if ('ciImageStatus' in updates || 'ciTargetSha' in updates) branch.ciDiagnosis = null;
     if ('ciTargetSha' in updates) branch.ciTargetSha = updates.ciTargetSha;
     if ('ciWorkflowConclusion' in updates) branch.ciWorkflowConclusion = updates.ciWorkflowConclusion;
     if ('ciWorkflowRunUrl' in updates) branch.ciWorkflowRunUrl = updates.ciWorkflowRunUrl;
@@ -3185,6 +3208,41 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     this.save();
   }
 
+  getMonitorSubscriptions(): NonNullable<CdsState['monitorSubscriptions']> {
+    let changed = false;
+    const subscriptions = this.state.monitorSubscriptions ??= {};
+    for (const monitor of this.listUptimeMonitors()) {
+      const id = customProbeTargetId(monitor);
+      if (!subscriptions[id]) { subscriptions[id] = { subscribed: monitor.enabled !== false, updatedBy: 'registered-monitor', updatedAt: monitor.createdAt }; changed = true; }
+    }
+    if (changed) this.save(HINT_GLOBAL);
+    return structuredClone(subscriptions);
+  }
+
+  setMonitorSubscription(targetId: string, subscribed: boolean, updatedBy: string): void {
+    (this.state.monitorSubscriptions ??= {})[targetId] = { subscribed, updatedBy, updatedAt: new Date().toISOString() };
+    this.save(HINT_GLOBAL);
+  }
+
+  getMonitorNotifications(): import('./alarm-route.js').MonitorNotificationSettings {
+    return structuredClone(this.state.monitorNotifications ?? {});
+  }
+
+  setMonitorNotifications(settings: import('./alarm-route.js').MonitorNotificationSettings): void {
+    this.state.monitorNotifications = structuredClone(settings);
+    this.save(HINT_GLOBAL);
+  }
+
+  async recordMcpMonitorAudit(evidence: import('./mcp-monitor.js').McpCallEvidence): Promise<void> {
+    this.state.mcpMonitorAudits = [evidence, ...(this.state.mcpMonitorAudits ?? [])].slice(0, 200);
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
+  listMcpMonitorAudits(): import('./mcp-monitor.js').McpCallEvidence[] {
+    return structuredClone(this.state.mcpMonitorAudits ?? []);
+  }
+
   getUptimeMonitor(id: string): UptimeCustomMonitor | undefined {
     return this.state.uptimeMonitors?.[id];
   }
@@ -3203,15 +3261,37 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       createdAt: existing?.createdAt || monitor.createdAt || now,
       updatedAt: now,
     };
+    // 新接入不能继承旧版本删除后残留的静默；正常编辑保留现有通知。
+    if (!existing) this.clearUptimeMonitorNotifications(monitor.id);
     this.state.uptimeMonitors[monitor.id] = saved;
+    if (!existing) (this.state.monitorSubscriptions ??= {})[customProbeTargetId(saved)] ??= {
+      subscribed: saved.enabled !== false, updatedAt: now, updatedBy: saved.createdBy || 'registered-monitor',
+    };
     this.save(HINT_GLOBAL);
     return saved;
   }
 
   removeUptimeMonitor(id: string): boolean {
+    if (!this.deleteUptimeMonitorState(id)) return false;
+    this.save(HINT_GLOBAL);
+    return true;
+  }
+
+  private clearUptimeMonitorNotifications(id: string): void {
+    const targetId = customProbeTargetId({ id });
+    const settings = this.state.monitorNotifications;
+    for (const entries of [settings?.overrides, settings?.mutedUntil, settings?.acknowledgedAt]) {
+      if (entries) delete entries[targetId];
+    }
+  }
+
+  /** 由单项、分支、项目删除共用；各调用者仍只提交自己的原子保存。 */
+  private deleteUptimeMonitorState(id: string): boolean {
     if (!this.state.uptimeMonitors?.[id]) return false;
     delete this.state.uptimeMonitors[id];
-    this.save(HINT_GLOBAL);
+    this.clearUptimeMonitorNotifications(id);
+    // Keep explicit opt-outs across discovery disappearance/reappearance of the stable id.
+    if (this.state.monitorSubscriptions?.[customProbeTargetId({ id })]?.subscribed) delete this.state.monitorSubscriptions[customProbeTargetId({ id })];
     return true;
   }
 
@@ -3810,10 +3890,54 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
 
   // ── 授权申请(Access Request)— 顶层队列,平行于 pendingImports ──
 
+  getIdentityConnections(): IdentityConnection[] {
+    return this.state.identityConnections || [];
+  }
+
+  addIdentityConnection(item: IdentityConnection): void {
+    const now = Date.now();
+    this.state.identityConnections = (this.state.identityConnections || []).filter(r => Date.parse(r.expiresAt) > now);
+    this.state.identityConnections.push(item);
+    this.save();
+  }
+
+  updateIdentityConnection(id: string, updates: Partial<IdentityConnection>): void {
+    const item = this.getIdentityConnections().find(r => r.id === id);
+    if (!item) throw new Error('接入申请不存在');
+    Object.assign(item, updates);
+    this.save();
+  }
+
   addAccessRequest(item: AccessRequest): void {
     if (!this.state.accessRequests) this.state.accessRequests = [];
     this.state.accessRequests.push(item);
     this.save();
+  }
+
+  /** 申请者离线后仍关闭过期审批与未领取的一次授权，清除待交付明文。 */
+  expireBootstrapAccessRequests(now = Date.now()): void {
+    const expiredIds: string[] = [];
+    for (const item of this.state.accessRequests || []) {
+      if (item.kind !== 'bootstrap' || item.createdProject
+        || !['pending', 'approved'].includes(item.status)) continue;
+      const key = (this.state.globalAgentKeys || []).find(k => k.id === item.issuedKeyId);
+      const requestDeadline = Date.parse(item.expiresAt || '') || Date.parse(item.createdAt) + 600_000;
+      const keyDeadline = Date.parse(key?.expiresAt || '');
+      const deadline = item.deliveredAt
+        ? keyDeadline || Date.parse(item.deliveredAt) + 300_000
+        : Math.min(requestDeadline, keyDeadline || Infinity);
+      if (deadline > now && !key?.revokedAt) continue;
+      if (key && !key.revokedAt) key.revokedAt = new Date(now).toISOString();
+      item.status = 'expired';
+      item.decidedAt = new Date(now).toISOString();
+      delete item.issuedKeyPlaintext;
+      expiredIds.push(item.id);
+    }
+    if (expiredIds.length) {
+      this.save();
+      const pendingCount = this.listAccessRequests().filter(item => item.status === 'pending').length;
+      for (const requestId of expiredIds) cdsEventsBus.publish('access-request.decided', { requestId, status: 'expired', pendingCount });
+    }
   }
 
   listAccessRequests(): AccessRequest[] {
@@ -3917,10 +4041,11 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    */
   findGlobalAgentKeyForAuth(plaintextKey: string): { keyId: string; access: AgentKeyAccess } | null {
     if (!plaintextKey || !plaintextKey.startsWith('cdsg_')) return null;
+    this.expireBootstrapAccessRequests();
     const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
     const hashBuf = Buffer.from(hash, 'hex');
     for (const entry of this.state.globalAgentKeys || []) {
-      if (entry.revokedAt) continue;
+      if (entry.revokedAt || (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now())) continue;
       try {
         const entryBuf = Buffer.from(entry.hash, 'hex');
         if (entryBuf.length !== hashBuf.length) continue;
@@ -5027,6 +5152,25 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     this.clearSelfUpdateActive();
   }
 
+  /** 仅撤回本次未交接成功；历史环已满时也恢复被临时挤出的原记录。 */
+  recordProvisionalSelfUpdateSuccess(record: import('../types.js').SelfUpdateRecord): () => void {
+    if (record.status !== 'success') throw new Error('CDS 临时成功记录状态无效。');
+    const originals = [...(this.state.selfUpdateHistory || [])];
+    this.recordSelfUpdate(record);
+    const pending = this.state.selfUpdateHistory?.at(-1);
+    let undone = false;
+    return () => {
+      const list = this.state.selfUpdateHistory || [];
+      const index = pending ? list.indexOf(pending) : -1;
+      if (undone || !pending || originals.includes(pending) || index < 0) return;
+      undone = true;
+      list.splice(index, 1);
+      this.state.selfUpdateHistory = [...originals.filter(row => !list.includes(row)), ...list]
+        .slice(-StateService.SELF_UPDATE_HISTORY_MAX);
+      this.save();
+    };
+  }
+
   getSelfUpdateHistory(
     limit = 10,
     opts: { includeSteps?: boolean } = {},
@@ -5266,6 +5410,15 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const next = list.filter((c) => c.id !== id);
     if (next.length === list.length) return false;
     this.state.alarmChannels = next;
+    const settings = this.state.monitorNotifications;
+    if (settings?.defaultChannelIds) settings.defaultChannelIds = settings.defaultChannelIds.filter(channelId => channelId !== id);
+    if (settings?.overrides) {
+      for (const [targetId, channelIds] of Object.entries(settings.overrides)) {
+        // Keep empty overrides explicit: removing their keys would subscribe
+        // these services to the default channels instead of leaving them off.
+        settings.overrides[targetId] = channelIds.filter(channelId => channelId !== id);
+      }
+    }
     this.save();
     return true;
   }
@@ -6188,6 +6341,36 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     return (this.state.acceptanceReports || []).find((r) => r.id === id);
   }
 
+  getCodeReviewSettings(): import('./code-review-settings.js').CodeReviewSettings | undefined {
+    return this.state.codeReviewSettings ? structuredClone(this.state.codeReviewSettings) : undefined;
+  }
+
+  async setCodeReviewSettings(settings: import('./code-review-settings.js').CodeReviewSettings): Promise<void> {
+    this.state.codeReviewSettings = structuredClone(settings);
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
+  listCodeReviewTasks(projectId?: string): import('../shared/code-review.js').CodeReviewTask[] {
+    return structuredClone((this.state.codeReviewTasks || [])
+      .filter((task) => !projectId || task.projectId === projectId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+  }
+
+  getCodeReviewTask(id: string): import('../shared/code-review.js').CodeReviewTask | undefined {
+    const task = (this.state.codeReviewTasks || []).find((row) => row.id === id);
+    return task ? structuredClone(task) : undefined;
+  }
+
+  async putCodeReviewTask(task: import('../shared/code-review.js').CodeReviewTask): Promise<void> {
+    const rows = this.state.codeReviewTasks ||= [];
+    const index = rows.findIndex((row) => row.id === task.id);
+    if (index < 0) rows.push(structuredClone(task));
+    else rows[index] = structuredClone(task);
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
   /** Read the raw content of a report from disk, or undefined if missing. */
   readAcceptanceReportContent(id: string): string | undefined {
     const meta = this.getAcceptanceReport(id);
@@ -6358,6 +6541,10 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * callers cannot collide. Returns the stored metadata.
    */
   createAcceptanceReport(input: {
+    classification?: import('../shared/notification-templates.js').ReportClassification;
+    monitorEvent?: import('./notification-report.js').ReportMonitorEvent;
+    reportType?: 'acceptance' | 'code-review';
+    reviewTaskId?: string;
     title: string;
     format: 'html' | 'md';
     content: string;
@@ -6473,6 +6660,10 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const folderId = folder && (folder.projectId || null) === (input.projectId ?? null) ? folder.id : null;
     return {
       id: crypto.randomUUID().replace(/-/g, ''),
+      classification: input.classification,
+      monitorEvent: input.monitorEvent,
+      reportType: input.reportType,
+      reviewTaskId: input.reviewTaskId,
       title: input.title,
       format: input.format,
       projectId: input.projectId ?? null,
@@ -6504,6 +6695,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   updateAcceptanceReport(
     id: string,
     updates: {
+      classification?: import('../shared/notification-templates.js').ReportClassification;
+      monitorEvent?: import('./notification-report.js').ReportMonitorEvent;
       title?: string;
       format?: 'html' | 'md';
       content?: string;
@@ -6645,6 +6838,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     meta: AcceptanceReportMeta,
     updates: Parameters<StateService['updateAcceptanceReport']>[1],
   ): void {
+    if (updates.classification !== undefined) meta.classification = updates.classification;
+    if (updates.monitorEvent !== undefined) meta.monitorEvent = updates.monitorEvent;
     if (updates.verdict !== undefined) meta.verdict = updates.verdict;
     if (updates.tier !== undefined) meta.tier = updates.tier;
     if (updates.defectCounts !== undefined) meta.defectCounts = updates.defectCounts;

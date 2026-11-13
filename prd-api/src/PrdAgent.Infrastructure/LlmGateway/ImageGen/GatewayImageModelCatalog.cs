@@ -14,6 +14,14 @@ public sealed class GatewayImageModel
 /// <summary>仅在 serving 执行。目录和请求适配共同使用同一模型能力注册表。</summary>
 public static class GatewayImageModelCatalog
 {
+    /// <summary>入队预检与执行端共用明确的兼容别名；未知或冲突身份不代选。</summary>
+    public static GatewayImageModel? Select(IReadOnlyList<GatewayImageModel> catalog, string? requested)
+    {
+        var matches = catalog.Where(x => string.IsNullOrWhiteSpace(requested) ? x.Model.IsDefault
+            : GatewayLogicalModelIdentity.Accepts(requested, x.Model.Code, x.Model.Aliases)).Take(2).ToList();
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
     public static string? ValidateRequest(GatewayCanonicalImageRequest request, GatewayModelResolution resolution)
     {
         if (string.IsNullOrWhiteSpace(request.Prompt)) return "请输入图片描述。";
@@ -62,6 +70,8 @@ public static class GatewayImageModelCatalog
                 Model = new AvailableModelPool
                 {
                     Id = model.Id, Name = model.Name, Code = model.Code, Description = model.Description,
+                    Aliases = [.. model.Aliases],
+                    LegacyPoolIds = [.. model.LegacyPoolIds],
                     Priority = model.Priority, ResolutionType = model.ResolutionType,
                     IsDefault = model.IsDefault, IsDefaultForType = model.IsDefaultForType,
                     IsDedicated = model.IsDedicated,

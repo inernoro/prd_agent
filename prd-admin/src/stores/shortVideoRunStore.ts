@@ -15,7 +15,18 @@ import { persist, createJSONStorage } from 'zustand/middleware';
  *   - 持久化到 sessionStorage（项目禁 localStorage，见 no-localstorage 规则）
  */
 
-export type ShortVideoRunStatus = 'running' | 'done' | 'failed';
+const SHORT_VIDEO_TERMINAL_STATES = ['done', 'failed', 'cancelled'] as const;
+const terminalStates: ReadonlySet<string> = new Set(SHORT_VIDEO_TERMINAL_STATES);
+export type ShortVideoRunStatus = 'running' | typeof SHORT_VIDEO_TERMINAL_STATES[number];
+
+/** 只映射后端已知终态；queued或未知状态继续作为处理中观察。 */
+export function normalizeShortVideoRunStatus(status: string): ShortVideoRunStatus {
+  return terminalStates.has(status) ? status as ShortVideoRunStatus : 'running';
+}
+
+export function isTerminalShortVideoRunStatus(status: string): boolean {
+  return terminalStates.has(status);
+}
 
 export interface ShortVideoRunRecord {
   runId: string;

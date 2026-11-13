@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { createHash, createDecipheriv } from 'node:crypto';
 import express from 'express';
 import * as sqlConsole from '../../src/services/sql-console-executor.js';
 import { createServer } from '../../src/server.js';
@@ -1011,6 +1012,75 @@ describe('human project grants through the production server', () => {
     }
   });
 
+  it.each(['account', 'grant'] as const)('keeps %s recovery bound to the original principal without anonymous requests or new keys', async (reason) => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const userKey = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
+    const key = (await credentialCall('POST', '/api/identity/project-credentials', userKey, { projectId: 'project-a' })).body.plaintext;
+    const keyCount = state.getProject('project-a')!.agentKeys!.length;
+    const requestCount = state.listAccessRequests().length;
+    if (reason === 'account') await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    else await grant([]);
+    for (const proof of [userKey, key]) {
+      const status = await credentialCall('GET', '/api/projects/project-a/access-status', proof);
+      expect(status).toMatchObject({ status: 200, body: { projectId: 'project-a', state: reason === 'account' ? 'account-disabled' : 'project-access-revoked' } });
+      expect(Object.keys(status.body).sort()).toEqual(['message', 'projectId', 'state']);
+      expect((await credentialCall('POST', '/api/projects/project-a/access-requests', proof, { agentName: 'recovery' })).status).toBe(403);
+      expect((await credentialCall('POST', '/api/identity/project-credentials', proof, { projectId: 'project-a' })).status).not.toBe(201);
+    }
+    expect(state.listAccessRequests()).toHaveLength(requestCount);
+    expect(state.getProject('project-a')!.agentKeys).toHaveLength(keyCount);
+    expect((await credentialCall('GET', '/api/projects/project-b/access-status', key)).status).toBe(401);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', 'cdsu_unknown')).status).toBe(401);
+    if (reason === 'account') await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    else await grant(['project-a']);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', key)).body.state).toBe('ready');
+    expect((await credentialCall('GET', '/api/projects/project-a', key)).status).toBe(200);
+    expect((await credentialCall('POST', '/api/identity/project-credentials', userKey, { projectId: 'project-a' })).status).toBe(201);
+  });
+
+  it('withholds pending approval and approved plaintext while the bound account is disabled, then resumes the same ticket', async () => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const userKey = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
+    const init = await credentialCall('POST', '/api/projects/project-a/access-requests', userKey, { agentName: 'recovery' });
+    expect(init.status).toBe(201);
+    const id = init.body.requestId;
+    const poll = async () => {
+      const res = await fetch(`${base}/api/projects/project-a/access-requests/${id}`, { headers: { 'X-Poll-Token': init.body.pollToken } });
+      return res.json();
+    };
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    expect((await call('POST', `/api/access-requests/${id}/approve`, owner, {})).status).toBe(409);
+    expect(await poll()).toMatchObject({ status: 'blocked', recoveryState: 'account-disabled' });
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    expect((await call('POST', `/api/access-requests/${id}/approve`, owner, {})).status).toBe(200);
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    expect(await poll()).not.toHaveProperty('authorizationKey');
+    expect(state.getAccessRequest(id)!.deliveredAt).toBeUndefined();
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    expect(await poll()).toMatchObject({ status: 'approved', authorizationKey: expect.stringMatching(/^cdsp_/) });
+    expect(await poll()).not.toHaveProperty('authorizationKey');
+  });
+
+  it('reports durable access updates without releasing the gate and never treats revoked identity as anonymous', async () => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const issued = await call('POST', '/api/identity/user-credentials', owner, { principalId });
+    const key = issued.body.plaintext;
+    const release = beginHumanProjectGrantUpdate(state, principalId)!;
+    try {
+      expect((await credentialCall('GET', '/api/projects/project-a/access-status', key)).body.state).toBe('access-update-pending');
+      expect((await credentialCall('POST', '/api/projects/project-a/access-requests', key, {})).status).toBe(409);
+      expect(state.listAccessRequests()).toHaveLength(0);
+    } finally { release(); }
+    const credential = state.findUserCredentialByPlaintext(key)!;
+    expect((await call('POST', `/api/identity/user-credentials/${credential.id}/revoke`, owner, {})).status).toBe(200);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', key)).body.state).toBe('credential-unusable');
+    expect((await credentialCall('POST', '/api/projects/project-a/access-requests', key, {})).status).toBe(401);
+    expect(state.listAccessRequests()).toHaveLength(0);
+  });
+
   it('disables linked user and project credentials with the account, preserving unrelated machines and restoring on enable', async () => {
     await grant(['project-a']);
     const principalId = humanPrincipalId(memberId);
@@ -1062,9 +1132,12 @@ describe('human project grants through the production server', () => {
     const key = (await call('POST', '/api/identity/user-credentials', owner, { principalId: humanPrincipalId(memberId) })).body.plaintext;
     const derived = (await credentialCall('POST', '/api/identity/project-credentials', key, { projectId: 'project-a' })).body.plaintext;
     expect((await credentialCall('GET', '/api/build-profiles?project=project-a', derived)).status).toBe(200);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', derived)).body.state).toBe('ready');
     expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' })).status).toBe(200);
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
     expect((await credentialCall('GET', '/api/build-profiles?project=project-a', derived)).status).toBe(401);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', derived)).body.state).toBe('account-disabled');
+    expect((await credentialCall('POST', '/api/projects/project-a/access-requests', derived, {})).status).toBe(403);
   });
 
   it('creates a disabled principal when granting an already-disabled account for the first time', async () => {
@@ -1251,4 +1324,165 @@ describe('human project grants through the production server', () => {
       expect(after).not.toContain('revoked');
     } finally { abort.abort(); await reader.cancel().catch(() => {}); }
   });
+  async function recoveryTicket() {
+    state.getProject('project-a')!.gitRepoUrl = 'https://github.com/test/original.git';
+    state.getProject('project-b')!.gitRepoUrl = 'https://github.com/test/other.git';
+    state.save();
+    const request = await call('POST', '/api/identity-connections', '', { repository: 'git@github.com:test/original.git', agentName: '原设备恢复' });
+    expect(request.status).toBe(201);
+    const { requestId, pollToken } = request.body;
+    const poll = async (suffix = '', method = 'GET') => {
+      const response = await fetch(base + `/api/identity-connections/${requestId}${suffix}`, {
+        method, headers: { 'X-Poll-Token': pollToken },
+      });
+      const body = await response.text();
+      return { status: response.status, body: response.headers.get('content-type')?.includes('application/json') ? JSON.parse(body) : body };
+    };
+    const approve = (projectId = 'project-a', userId = memberId) => call('POST', `/api/identity/connections/${requestId}/approve`, owner, { projectId, userId });
+    return { requestId, pollToken, poll, approve };
+  }
+
+  it('opens a fresh ordinary account with no project access, then hands over only its authorized original project', async () => {
+    expect((await call('GET', '/api/projects', member)).body.projects).toHaveLength(0);
+    const t = await recoveryTicket();
+    expect((await t.poll()).body).toEqual({ status: 'pending' });
+    expect((await t.approve()).status).toBe(409);
+    await grant(['project-a', 'project-b']);
+    expect((await t.approve('project-b')).status).toBe(409);
+    expect((await t.approve()).status).toBe(200);
+    const result = (await t.poll()).body;
+    expect(result).toMatchObject({ status: 'approved', projectId: 'project-a' });
+    expect((await credentialCall('GET', '/api/projects/project-a', result.authorizationKey)).status).toBe(200);
+    expect((await credentialCall('GET', '/api/projects/project-b', result.authorizationKey)).status).toBe(403);
+    expect((await credentialCall('GET', '/api/projects', result.userCredential)).body.projects.map((p: any) => p.id)).toEqual(['project-a']);
+    expect((await credentialCall('GET', '/api/identity/whoami', result.userCredential)).body.grants.map((g: any) => g.projectId)).toEqual(['project-a']);
+    expect((await credentialCall('POST', '/api/projects', result.userCredential, { name: '不应创建' })).status).toBe(403);
+    expect((await credentialCall('POST', '/api/identity/project-credentials', result.userCredential, { projectId: 'project-b' })).status).toBe(403);
+    expect((await credentialCall('POST', '/api/projects/project-b/access-requests', result.userCredential, {})).status).toBe(401);
+    const overview = await call('GET', '/api/identity/connections');
+    expect(JSON.stringify(overview.body)).not.toMatch(/pollToken|ciphertext|authorizationKey|userCredential/);
+    expect((await call('GET', '/api/identity/connections', member)).status).toBe(403);
+    expect((await credentialCall('GET', '/api/identity/connections', result.authorizationKey)).status).toBe(403);
+  });
+
+  it.each(['flush', 'save-and-compensation'] as const)('keeps approved recovery retryable and failed credentials revoked after %s fails', async failure => {
+    await grant(['project-a']); const t = await recoveryTicket(); await t.approve();
+    if (failure === 'flush') vi.spyOn(state, 'flush').mockRejectedValueOnce(new Error('fake delivery flush failure'));
+    else {
+      const fail = () => { throw new Error('fake delivery save failure'); };
+      vi.spyOn(state, 'save').mockImplementationOnce(fail).mockImplementationOnce(fail);
+    }
+    expect((await t.poll()).status).toBe(500);
+    const request = state.getIdentityConnections().find(r => r.id === t.requestId)!;
+    expect(request.status).toBe('approved');
+    expect(request.userCredentialId).toBeUndefined(); expect(request.projectCredentialId).toBeUndefined();
+    expect(request.envelope).toBeUndefined();
+    expect(state.getUserCredentials().every(c => Boolean(c.revokedAt))).toBe(true);
+    expect(state.getAgentKeys('project-a').every(k => Boolean(k.revokedAt))).toBe(true);
+    const retry = await t.poll();
+    expect(retry.status).toBe(200); expect(retry.body.status).toBe('approved');
+    expect(state.getUserCredentials().filter(c => !c.revokedAt)).toHaveLength(1);
+    expect(state.getAgentKeys('project-a').filter(k => !k.revokedAt)).toHaveLength(1);
+    expect((await credentialCall('GET', '/api/projects/project-a', retry.body.authorizationKey)).status).toBe(200);
+    expect((await credentialCall('GET', '/api/projects/project-b', retry.body.authorizationKey)).status).toBe(403);
+    await state.flush(); const restored = new StateService(path.join(dir, 'state.json'), dir); restored.load();
+    expect(restored.getIdentityConnections().find(r => r.id === t.requestId)?.status).toBe('approved');
+    expect(restored.getUserCredentials().filter(c => !c.revokedAt)).toHaveLength(1);
+  });
+
+  it('replays only the same encrypted credential pair until acknowledgement, with no plaintext or decryption key in saved state', async () => {
+    await grant(['project-a']); const t = await recoveryTicket(); await t.approve();
+    const first = (await t.poll()).body; const again = (await t.poll()).body;
+    expect(again).toEqual(first);
+    const r = state.getIdentityConnections().find(r => r.id === t.requestId)!;
+    const saved = fs.readFileSync(path.join(dir, 'state.json'), 'utf8');
+    expect(saved).not.toContain(first.userCredential); expect(saved).not.toContain(first.authorizationKey); expect(saved).not.toContain(t.pollToken);
+    const e = r.envelope!;
+    const decipher = createDecipheriv('aes-256-gcm', Buffer.from(r.pollTokenHash, 'hex'), Buffer.from(e.iv, 'hex'));
+    decipher.setAAD(Buffer.from(r.id)); decipher.setAuthTag(Buffer.from(e.tag, 'hex'));
+    expect(() => Buffer.concat([decipher.update(Buffer.from(e.ciphertext, 'hex')), decipher.final()])).toThrow();
+    const restored = new StateService(path.join(dir, 'state.json'), dir); restored.load();
+    expect(restored.getIdentityConnections().find(r => r.id === t.requestId)?.envelope).toEqual(e);
+    expect(resolveUserCredential(restored, first.userCredential)?.principalId).toBe(humanPrincipalId(memberId));
+    expect((await t.poll('/ack', 'POST')).body.delivered).toBe(true);
+    expect((await t.poll()).body.status).toBe('delivered');
+    expect(r.envelope).toBeUndefined();
+    expect(state.getUserCredentials().filter(c => c.principalId === humanPrincipalId(memberId))).toHaveLength(1);
+  });
+
+  it('cannot resurrect the encrypted envelope or issue a second pair when ACK races a retry poll', async () => {
+    await grant(['project-a']); const t = await recoveryTicket(); await t.approve(); await t.poll();
+    const original = store.findUserById.bind(store);
+    let release!: () => void; let entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    vi.spyOn(store, 'findUserById').mockImplementationOnce(async id => { entered(); await gate; return original(id); });
+    const pending = t.poll(); await waiting;
+    expect((await t.poll('/ack', 'POST')).body.delivered).toBe(true);
+    release(); expect((await pending).body.status).toBe('delivered');
+    expect(state.getUserCredentials()).toHaveLength(1); expect(state.getAgentKeys('project-a')).toHaveLength(1);
+    expect(state.getIdentityConnections().find(r => r.id === t.requestId)?.envelope).toBeUndefined();
+  });
+
+  it('rechecks account and complete project withdrawal before approving and delivering a recovery', async () => {
+    await grant(['project-a']); const t = await recoveryTicket(); await t.approve();
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    expect((await t.poll()).body.status).toBe('blocked'); expect(state.getUserCredentials()).toHaveLength(0);
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' }); await grant([]);
+    expect((await t.poll()).body.status).toBe('blocked'); expect(state.getAgentKeys('project-a')).toHaveLength(0);
+    await grant(['project-a']); const first = (await t.poll()).body;
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    expect((await t.poll()).body.status).toBe('blocked');
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    expect((await t.poll()).body.authorizationKey).toBe(first.authorizationKey);
+  });
+
+  it('rejects unknown poll tickets, expired requests, approval replay and approval by a member', async () => {
+    await grant(['project-a']); const t = await recoveryTicket();
+    expect((await call('GET', `/api/identity-connections/${t.requestId}`, '')).status).toBe(403);
+    expect((await call('POST', `/api/identity/connections/${t.requestId}/approve`, member, { projectId: 'project-a', userId: memberId })).status).toBe(403);
+    await t.approve(); expect((await t.approve()).status).toBe(409);
+    state.getIdentityConnections().find(r => r.id === t.requestId)!.expiresAt = new Date(0).toISOString();
+    expect((await t.poll()).status).toBe(410);
+  });
+
+  it.each(['permanent', 'finite'] as const)('preserves a claimed legacy key original %s expiry without issuing another credential', async expiry => {
+    await grant(['project-a']);
+    const plain = 'cdsp_projecta_claim-expiry';
+    const expiresAt = expiry === 'finite' ? new Date(Date.now() + 60 * 86_400_000).toISOString() : undefined;
+    const original = { id: 'legacy-expiry', hash: createHash('sha256').update(plain).digest('hex'), scope: 'rw' as const,
+      label: '原期限', createdAt: '2020-01-01T00:00:00.000Z', ...(expiresAt ? { expiresAt } : {}) };
+    state.addAgentKey('project-a', { ...original });
+    expect((await call('POST', '/api/identity/legacy-credentials/project-a/legacy-expiry/claim', owner, { userId: memberId })).status).toBe(200);
+    const claimed = state.getAgentKeys('project-a').find(k => k.id === original.id)!;
+    expect(claimed.expiresAt).toBe(expiresAt); expect(claimed).toMatchObject(original);
+    expect(state.getUserCredentials()).toHaveLength(0); expect(state.getAgentKeys('project-a')).toHaveLength(1);
+    await state.flush(); const restored = new StateService(path.join(dir, 'state.json'), dir); restored.load();
+    expect(restored.getAgentKeys('project-a')[0].expiresAt).toBe(expiresAt);
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31 * 86_400_000);
+    expect(restored.findAgentKeyForAuth(plain)).toEqual({ projectId: 'project-a', keyId: original.id });
+  });
+
+  it('binds only an explicitly selected unclaimed key, preserving scope, and account/project gates follow the claimed identity', async () => {
+    await grant(['project-a']); const plain = 'cdsp_projecta_only-this-unclaimed';
+    state.addAgentKey('project-a', { id: 'legacy-one', hash: createHash('sha256').update(plain).digest('hex'), scope: 'rw', label: '仅本次测试', createdAt: new Date().toISOString() });
+    state.addAgentKey('project-a', { id: 'legacy-other', hash: createHash('sha256').update('cdsp_other-legacy').digest('hex'), scope: 'rw', label: '其他凭据', createdAt: new Date().toISOString() });
+    const claim = () => call('POST', '/api/identity/legacy-credentials/project-a/legacy-one/claim', owner, { userId: memberId });
+    expect((await call('POST', '/api/identity/legacy-credentials/project-a/legacy-one/claim', member, { userId: memberId })).status).toBe(403);
+    expect((await claim()).status).toBe(200);
+    expect(state.getAgentKeys('project-a').find(k => k.id === 'legacy-one')).toMatchObject({ principalId: humanPrincipalId(memberId), scope: 'rw', claimedBy: 'owner' });
+    expect(state.getAgentKeys('project-a').find(k => k.id === 'legacy-other')?.principalId).toBeUndefined();
+    expect((await claim()).status).toBe(409);
+    expect((await credentialCall('GET', '/api/projects/project-a', plain)).status).toBe(200);
+    await grant([]); expect((await credentialCall('GET', '/api/projects/project-a', plain)).status).toBe(401);
+    await grant(['project-a']); expect((await credentialCall('GET', '/api/projects/project-a', plain)).status).toBe(200);
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    expect((await credentialCall('GET', '/api/projects/project-a', plain)).status).toBe(401);
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    state.revokeAgentKey('project-a', 'legacy-one'); expect((await claim()).status).toBe(409);
+    expect((await credentialCall('GET', '/api/projects/project-a', plain)).status).toBe(401);
+    await state.flush(); const restored = new StateService(path.join(dir, 'state.json'), dir); restored.load();
+    expect(restored.getAgentKeys('project-a').find(k => k.id === 'legacy-one')?.claimedBy).toBe('owner');
+  });
+
 });

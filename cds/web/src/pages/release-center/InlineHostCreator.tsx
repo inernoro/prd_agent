@@ -1,3 +1,4 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 /**
  * 就地添加服务器 —— 加环境的第一步不再把人踢去 CDS 系统设置。
  *
@@ -14,7 +15,7 @@
  */
 
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+
 import { Check, Copy, Loader2, Plus, ServerCog, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';

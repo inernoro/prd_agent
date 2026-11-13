@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 
 import { applyDocumentThemeMode } from '@/lib/themeTransition';
-import { useMobileThemeStore, useResolvedThemeMode } from '@/stores/mobileThemeStore';
+import { useMobileThemeStore, useResolvedThemeMode, type ResolvedThemeMode } from '@/stores/mobileThemeStore';
 
 /**
  * 把全局明暗偏好落到 <html data-theme> 上，并且**跟着系统变化重新落一次**。
@@ -17,12 +17,23 @@ import { useMobileThemeStore, useResolvedThemeMode } from '@/stores/mobileThemeS
  * 不要再自己写 applyDocumentThemeMode 的 effect（有守卫盯着，见
  * lib/__tests__/themeModeRegistry.test.ts）。
  */
-export function useApplyDocumentTheme(pathname: string): void {
-  const mode = useMobileThemeStore((state) => state.mode);
-  const resolved = useResolvedThemeMode();
+export function useApplyDocumentTheme(pathname: string, modeOverride?: ResolvedThemeMode): void {
+  const preference = useMobileThemeStore((state) => state.mode);
+  const resolvedPreference = useResolvedThemeMode();
+  const mode = modeOverride ?? preference;
+  const resolved = modeOverride ?? resolvedPreference;
 
   useEffect(() => {
-    applyDocumentThemeMode(mode, pathname);
+    const root = document.documentElement;
+    const previousTheme = root.getAttribute('data-theme');
+    const applied = applyDocumentThemeMode(mode, pathname);
+    if (!applied || !modeOverride) return;
+
+    // 页面有独立外观偏好时，离开该页面后还原原外观。
+    return () => {
+      if (previousTheme === null) root.removeAttribute('data-theme');
+      else root.setAttribute('data-theme', previousTheme);
+    };
     // resolved 必须在 deps 里：'system' 偏好下它是唯一会变的那个值。
-  }, [mode, resolved, pathname]);
+  }, [mode, resolved, pathname, modeOverride]);
 }

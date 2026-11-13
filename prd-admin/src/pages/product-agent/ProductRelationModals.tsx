@@ -111,6 +111,16 @@ export function RequirementRelationModal({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showLinker, setShowLinker] = useState(false);
+  const [versionLoadFailed, setVersionLoadFailed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const validVersionIds = new Set(versions.map((version) => version.id));
+  const versionChoices = [
+    ...versions.map((version) => ({ ...version, unavailable: false })),
+    ...requirement.versionIds.filter((id) => !validVersionIds.has(id)).map((id, index) => ({
+      id, versionName: `失效的版本关联 ${index + 1}`, unavailable: true,
+    })),
+  ];
 
   const reloadTraced = useCallback(async () => {
     const t = await listTracedDefects(productId, { requirementId: requirement.id });
@@ -119,9 +129,12 @@ export function RequirementRelationModal({
 
   const reload = useCallback(async () => {
     setLoading(true);
+    setError(null);
     const [c, v] = await Promise.all([listCustomers(), listVersions(productId)]);
     if (c.success) setCustomers(c.data.items);
     if (v.success) setVersions(v.data.items);
+    setVersionLoadFailed(!v.success);
+    if (!v.success) setError('版本列表未能加载，请重新加载后再保存。');
     await reloadTraced();
     setLoading(false);
   }, [productId, reloadTraced]);
@@ -138,14 +151,29 @@ export function RequirementRelationModal({
   };
 
   const save = async () => {
+    if (loading || versionLoadFailed) return;
+    if (Array.from(selectedVersions).some((id) => !validVersionIds.has(id))) {
+      setError('请取消勾选失效的版本关联，再选择本产品版本或留空保存。');
+      return;
+    }
     setSaving(true);
-    await updateRequirement(requirement.id, {
-      customerIds: Array.from(selectedCustomers),
-      versionIds: Array.from(selectedVersions),
-    });
-    setSaving(false);
-    onSaved();
-    onClose();
+    setError(null);
+    try {
+      const result = await updateRequirement(requirement.id, {
+        customerIds: Array.from(selectedCustomers),
+        versionIds: Array.from(selectedVersions),
+      });
+      if (!result.success) {
+        setError(result.error?.message ?? '保存未完成，请检查关联后重试。');
+        return;
+      }
+      onSaved();
+      onClose();
+    } catch {
+      setError('保存未完成，请稍后重试。');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -165,13 +193,18 @@ export function RequirementRelationModal({
             />
           </Section>
           <Section title="归属版本（这个需求在哪些版本交付）">
-            <CheckboxList
-              items={versions}
-              selected={selectedVersions}
-              toggle={(id) => toggle(selectedVersions, setSelectedVersions, id)}
-              label={(v) => v.versionName}
-              empty="该产品还没有版本，先去「版本」tab 新建。"
-            />
+            {versionLoadFailed ? (
+              <button onClick={() => void reload()} className="text-xs text-[color:var(--accent-fg-blue)]">重新加载版本</button>
+            ) : (
+              <CheckboxList
+                items={versionChoices}
+                selected={selectedVersions}
+                toggle={(id) => { toggle(selectedVersions, setSelectedVersions, id); setError(null); }}
+                label={(v) => v.versionName}
+                sub={(v) => v.unavailable ? '请取消勾选' : ''}
+                empty="该产品还没有版本，先去「版本」tab 新建。"
+              />
+            )}
           </Section>
           <Section title="追溯缺陷（追溯到本需求的缺陷）">
             <div className="flex justify-end mb-1.5">
@@ -207,13 +240,14 @@ export function RequirementRelationModal({
               </div>
             )}
           </Section>
+          {error && <div role="alert" className="text-xs text-red-300/85 mb-3">{error}</div>}
           <div className="flex justify-end gap-2 pt-2 border-t border-token-subtle">
             <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-token-secondary hover-bg-soft">
               取消
             </button>
             <button
               onClick={save}
-              disabled={saving}
+              disabled={saving || versionLoadFailed}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm disabled:opacity-50"
             >
               {saving ? <MapSpinner size={14} /> : <Link2 size={14} />} 保存关联

@@ -301,7 +301,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("new RegistryAssetStorage(inner, db, providerName, regLogger, \"llmgw_asset_registry\")", program);
         Assert.Contains("GetCollection<PrdAgent.Core.Models.LLMPlatform>(\"llmgw_platforms\")", program);
         Assert.DoesNotContain("AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>()", program);
-        Assert.Contains("AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>()", program);
+        Assert.Contains("AddScoped<PrdAgent.Infrastructure.LlmGateway.ModelResolver>()", program);
+        Assert.Contains("AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, CodeReviewUserKeyResolver>()", program);
     }
 
     [Fact]
@@ -670,7 +671,7 @@ public class GatewayDataDomainGuardTests
         // 上一版这里钉的是写死 false 的那种写法，等于反向锁死了缺陷：
         // 认领撞车时用途默认没有赢家，不还就把这个用途弄丢了。
         // 判据见 撞车补偿先分清撞的是哪条索引。
-        Assert.Contains("CompensateAsync(restoreDefaults: claimRace)", consoleProgram);
+        Assert.Contains("CompensateAsync(restoreDefaults: claimRace || identityRace)", consoleProgram);
 
         Assert.Contains("DefaultForAppCallerCodes", consoleProgram);
         Assert.Contains("claimedBy", consoleProgram);
@@ -1548,8 +1549,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Ascending(\"TenantId\").Ascending(\"NameNormalized\")", initializer);
         Assert.Contains("Filter.Type(\"TenantId\", BsonType.String)", initializer);
         Assert.Contains("body: req", api);
-        Assert.Contains("IsExternalTenant(tenantId)", gateway);
-        Assert.Contains("CreateClient(\"SafeOutbound\")", gateway);
+        Assert.Contains("new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId))", gateway);
+        Assert.Contains("CreateClient(\"SafeOutbound\")", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/UpstreamProxyClientScope.cs"));
         Assert.Contains("requirePublicPinnedWebSocket: externalTenant", gateway);
         Assert.Contains("AddHttpClient(\"SafeOutbound\")", serving);
         Assert.Contains("SafeOutboundHttpHandlerFactory", serving);
@@ -1573,7 +1574,8 @@ public class GatewayDataDomainGuardTests
         // 模式开关已删除：任何一份 compose 重新出现它，都意味着有人想把旧路径接回来。
         foreach (var compose in new[] { dockerCompose, cdsCompose, devCompose })
         {
-            Assert.DoesNotContain("LlmGateway__Mode", compose);
+            Assert.False(System.Text.RegularExpressions.Regex.IsMatch(compose, @"(?m)^\s*(?:-\s*)?LlmGateway__Mode\s*[:=]"),
+                "旧 Mode 配置不得重新引入；ModelUpgrades 是独立配置命名空间。");
             Assert.DoesNotContain("LlmGateway__HttpAppCallerAllowlist", compose);
             Assert.DoesNotContain("LlmGateway__ShadowFullSample", compose);
             Assert.DoesNotContain("LlmGateway__LogicalModelsRequireHttp", compose);
@@ -1695,6 +1697,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds: \"\"", cdsCompose);
         Assert.Contains("Deployment__LegacyOwnerCreatedBeforeUtc: \"\"", cdsCompose);
         Assert.Contains("Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}", productionCompose);
+        Assert.Contains("Deployment__SharedScheduledWorkEnabled=${SHARED_SCHEDULED_WORK_ENABLED:-true}", productionCompose);
+        Assert.DoesNotContain("Deployment__SharedScheduledWorkEnabled: \"true\"", cdsCompose);
         Assert.Contains("Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}", productionCompose);
         Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-main}", productionCompose);
         Assert.Contains("Deployment__LegacyOwnerCreatedBeforeUtc=${LEGACY_OWNER_CREATED_BEFORE_UTC:-2026-08-12T19:20:00Z}", productionCompose);
@@ -2763,6 +2767,22 @@ public class GatewayDataDomainGuardTests
             Assert.True(
                 body.Contains("ValidateProviderProbeTargetAsync", StringComparison.Ordinal),
                 $"{route} 会向用户填的地址发请求却没过内网校验");
+            Assert.Contains("upstreamProxies.TryResolveAsync(http, doc)", body);
+            Assert.Contains("INVALID_PROXY", body);
+            Assert.Contains("apiUrl, effectiveProxy, http.RequestAborted", body);
+            Assert.Contains("upstreamProxies.CreateClient(http, effectiveProxy)", body);
+        }
+        foreach (var route in new[] { "app.MapPost(\"/gw/exchanges\"", "app.MapPut(\"/gw/exchanges/{id}\"" })
+        {
+            var start = server.IndexOf(route, StringComparison.Ordinal);
+            Assert.True(start > 0);
+            var end = server.IndexOf("app.Map", start + route.Length, StringComparison.Ordinal);
+            var body = end > 0 ? server[start..end] : server[start..];
+            Assert.Contains("upstreamProxies.TryResolveAsync(http, pendingUpstream)", body);
+            Assert.Contains("INVALID_PROXY", body);
+            Assert.Contains("http.RequestAborted, effectiveProxy)", body);
+            Assert.True(body.IndexOf("upstreamProxies.BuildAsync", StringComparison.Ordinal)
+                < body.IndexOf("ValidateExternalExchangeTargetAsync", StringComparison.Ordinal));
         }
     }
 
@@ -4036,27 +4056,27 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void ModelLabAndArena_PinSelectedModelThroughGateway()
+    public void ModelLabAndArena_UseAuthorizedLogicalModelsWithoutPhysicalPins()
     {
         var modelLab = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ModelLabController.cs");
         var arenaWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ArenaRunWorker.cs");
-
+        var arenaController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ArenaController.cs");
         Assert.Contains("_gateway.CreateClient(", modelLab);
         Assert.Contains("Admin.ModelLab.Run", modelLab);
-        Assert.Contains("expectedModel: modelName", modelLab);
-        Assert.Contains("pinnedPlatformId: platform.Id", modelLab);
-        Assert.Contains("pinnedModelId: modelName", modelLab);
-        Assert.Contains("expectedModel: model.ModelName", modelLab);
-        Assert.Contains("pinnedPlatformId: resolvedPlatformId", modelLab);
-        Assert.Contains("pinnedModelId: model.ModelName", modelLab);
-        Assert.Contains("ModelResolutionType: ModelResolutionType.DirectModel", modelLab);
-
+        Assert.Contains("ModelLabModelReferences.TryNormalize", modelLab);
+        Assert.Contains("BusinessModelReferenceService.Resolve", ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ModelLabModelReferences.cs"));
+        Assert.DoesNotContain("pinnedPlatformId:", modelLab);
+        Assert.DoesNotContain("pinnedModelId:", modelLab);
         Assert.Contains("gateway.CreateClient(", arenaWorker);
         Assert.Contains("AppCallerRegistry.Desktop.Arena.BattleChat", arenaWorker);
-        Assert.Contains("expectedModel: slot.ModelId", arenaWorker);
-        Assert.Contains("pinnedPlatformId: platform.Id", arenaWorker);
-        Assert.Contains("pinnedModelId: slot.ModelId", arenaWorker);
-        Assert.Contains("ModelResolutionType: ModelResolutionType.DirectModel", arenaWorker);
+        Assert.Contains("expectedModel: reference.PublicId", arenaWorker);
+        Assert.Contains("BusinessModelReferenceService.Resolve", arenaWorker);
+        Assert.DoesNotContain("pinnedPlatformId:", arenaWorker);
+        Assert.DoesNotContain("pinnedModelId:", arenaWorker);
+        Assert.DoesNotContain("db.LLMPlatforms", arenaWorker);
+        Assert.Contains("ModelResolutionType: ModelResolutionType.LogicalModel", arenaWorker);
+        Assert.Contains("stored.LogicalModelId", arenaController);
+        Assert.Contains("MODEL_REFERENCE_UNAVAILABLE", arenaController);
     }
 
     [Fact]
@@ -4220,7 +4240,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("llmgw/serving/**", workflow);
         Assert.Contains("context: .", workflow);
         Assert.Contains("file: ./llmgw/serving/Dockerfile", workflow);
-        Assert.Contains("context: ./llmgw/console-api", devCompose);
+        Assert.Contains("context: .\n      dockerfile: llmgw/console-api/Dockerfile", devCompose);
+        Assert.Contains("COPY prd-api/src/LlmGateway.Transport/", ReadRepoFile("llmgw/console-api/Dockerfile"));
         Assert.Contains("context: ./llmgw/web", devCompose);
     }
 
@@ -4302,7 +4323,8 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("Channel.CreateBounded", liveEndpoint);
         Assert.DoesNotContain("TranscribeLivePcmAsync", liveEndpoint);
         Assert.DoesNotContain("LiveAsrBatchFallbackService", liveEndpoint);
-        Assert.Contains("AddScoped<LiveAsrSessionOrchestrator>", servingProgram);
+        Assert.Contains("AddScoped(sp => new LiveAsrSessionOrchestrator(", servingProgram);
+        Assert.Contains("GetRequiredService<IGatewayInvocationAuthority>()", servingProgram);
         Assert.True(
             liveEndpoint.IndexOf("AdmitSpecializedRequestAsync", StringComparison.Ordinal)
             < liveEndpoint.IndexOf("AcceptWebSocketAsync", StringComparison.Ordinal),
@@ -6287,10 +6309,12 @@ public class GatewayDataDomainGuardTests
         var program = ReadRepoFile("llmgw/console-api/Program.cs");
 
         var decideAt = program.IndexOf("var claimRace = ex.Message.Contains(", StringComparison.Ordinal);
-        var compensateAt = program.IndexOf("await CompensateAsync(restoreDefaults: claimRace);", StringComparison.Ordinal);
+        var compensateAt = program.IndexOf("await CompensateAsync(restoreDefaults: claimRace || identityRace);", StringComparison.Ordinal);
+        var identityAt = program.IndexOf("var identityRace = ex.Message.Contains(\"uniq_llmgw_model_identity_namespace\"", StringComparison.Ordinal);
+        Assert.True(identityAt >= 0 && identityAt < compensateAt, "兼容身份撞车也应在补偿前识别并恢复未竞争的默认");
         Assert.True(decideAt >= 0, "没找到判「撞的是哪条索引」那一句");
         Assert.True(compensateAt >= 0,
-            "补偿没有按撞车类型决定要不要还默认（应为 CompensateAsync(restoreDefaults: claimRace)）");
+            "补偿没有按撞车类型决定要不要还默认（应为 CompensateAsync(restoreDefaults: claimRace || identityRace)）");
         Assert.True(decideAt < compensateAt,
             "claimRace 算在补偿之后：那等于对两种撞车用同一个答案，认领撞车会把这个用途的默认弄丢");
 

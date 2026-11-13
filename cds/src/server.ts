@@ -1,3 +1,8 @@
+import type { BranchLifecycleService } from './services/branch-lifecycle.js';
+import { createBranchLifecycleRouter } from './routes/branch-lifecycle.js';
+import { lifecycleStopGate } from './services/branch-lifecycle.js';
+import { CodeReviewUserKeys } from './services/code-review-user-keys.js';
+import { createInstanceCatalogRouter } from './routes/instance-catalog.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
@@ -29,10 +34,13 @@ import { createPendingImportRouter } from './routes/pending-import.js';
 import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { isPublicAgentSetupRoute } from './shared/agent-setup.js';
+import { isMonitorOnboardingAgentRoute } from './shared/monitor-onboarding.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
+import { isHumanSystemOwner } from './services/human-auth.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
+import { createIdentityConnectionsRouter } from './routes/identity-connections.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
@@ -43,6 +51,11 @@ import { createDbLedgerRouter } from './routes/db-ledger.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
+import { createCodeReviewsRouter } from './routes/code-reviews.js';
+import { CodeReviewService } from './services/code-review.js';
+import { codeReviewRepositoryRoot } from './services/code-review-source.js';
+import { createCodeReviewInputs } from './services/code-review-inputs.js';
+import { createCodeReviewMail } from './services/code-review-mail.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
 import { createNoticesRouter } from './routes/notices.js';
 import { NoticeLedgerService, startNoticeLedger } from './services/notice-ledger.js';
@@ -247,7 +260,7 @@ function shouldAuditApiMutation(req: express.Request): boolean {
 function normalizeHttpLogPath(pathValue: string): string {
   const rawPath = (pathValue || '').split('?')[0] || '/';
   const segments = rawPath.split('/');
-  const staticBranchRoutes = new Set(['stream', 'state-audit', 'cleanup-damaged-containers', 'cleanup-orphan-containers']);
+  const staticBranchRoutes = new Set(['stream', 'state-audit', 'lifecycle-cleanup', 'cleanup-damaged-containers', 'cleanup-orphan-containers']);
   const staticExecutorRoutes = new Set(['register', 'capacity', 'dispatch']);
   return segments
     .map((segment, index) => {
@@ -531,6 +544,7 @@ async function collectActiveHttpRequests(
 }
 
 export interface ServerDeps {
+  branchLifecycleService?: BranchLifecycleService;
   stateService: StateService;
   worktreeService: WorktreeService;
   containerService: ContainerService;
@@ -876,6 +890,7 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Static exact matches
   const staticMap: Record<string, string> = {
+    'GET /code-reviews/branches': '列出审查分支',
     // shared 基础设施服务远程主机（系统级，2026-05-06）
     'GET /cds-system/remote-hosts': '列出远程主机',
     'POST /cds-system/remote-hosts': '登记远程主机',
@@ -887,6 +902,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 自建存活监控 / 状态页（2026-07-27）
     'GET /uptime/summary': '查看存活总览',
     'GET /uptime/incidents': '列出存活故障',
+    'GET /uptime/incidents/:id': '查看故障通知上下文',
     // 监控中心自定义监控（2026-09-08）
     'GET /uptime/monitors': '列出自定义监控',
     'POST /uptime/monitors': '新增自定义监控',
@@ -915,6 +931,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/integrations/bug-report/authorize': '接收 MAP 缺陷转发授权',
     'POST /cds-system/integrations/bug-report/test': '测试缺陷转发接入',
     'GET /cds-system/connections': '列出配对连接',
+    'GET /instance-catalog': '查看主备 CDS 实例目录',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/offsite-backup': '查询离机备份配置',
     'PUT /cds-system/offsite-backup': '保存离机备份配置',
@@ -1197,10 +1214,13 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/uptime\/incidents\/[^/]+$/, '查看故障通知上下文'],
+    [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
     [/^POST \/uptime\/targets\/(.+)\/probe$/, '立即探测目标'],
+    [/^PUT \/uptime\/targets\/[^/]+\/subscription$/, '调整监控总览订阅'],
     [/^PUT \/uptime\/monitors\/[^/]+$/, '修改自定义监控'],
     [/^DELETE \/uptime\/monitors\/[^/]+$/, '删除自定义监控'],
     [/^POST \/cds-system\/alarm-channels\/[^/]+\/drill$/, '演练通知通道'],
@@ -1311,6 +1331,12 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/(.+)\/migration\/config-preview$/, '预览可复刻配置'],
     [/^POST \/projects\/(.+)\/migration\/replicate-config$/, '推送配置到目标 CDS'],
     [/^POST \/projects\/(.+)\/migration\/data-plan$/, '扫描数据迁移计划'],
+    [/^GET \/projects\/([^/]+)\/migration\/fingerprint$/, '核对项目指纹'],
+    [/^GET \/projects\/([^/]+)\/migration\/standby$/, '读取分支同步策略'],
+    [/^PUT \/projects\/([^/]+)\/migration\/standby$/, '保存分支同步策略'],
+    [/^POST \/projects\/([^/]+)\/migration\/standby\/audit$/, '核对备用项目'],
+    [/^POST \/projects\/([^/]+)\/migration\/standby\/reconcile$/, '同步项目分支'],
+    [/^GET \/projects\/([^/]+)\/migration\/standby-health$/, '读取备用项目状态'],
     // CDS 配对连接 :id 路径
     [/^POST \/cds-system\/connections\/(.+)\/revoke$/, '撤销配对连接'],
     [/^GET \/cds-system\/connections\/(.+)$/, '查看配对连接'],
@@ -1323,6 +1349,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/prebuilt-image\/claim$/, '认领预构建镜像'],
     [/^POST \/branches\/(.+)\/database-init\/run$/, '执行数据库初始化命令'],
     [/^POST \/branches\/(.+)\/stop$/, '停止分支服务'],
+    [/^POST \/projects\/[^/]+\/branches\/lifecycle-cleanup$/, '归档清理分支'],
+    [/^POST \/projects\/[^/]+\/branches\/[^/]+\/restore-archive$/, '恢复归档分支'],
     [/^POST \/branches\/(.+)\/restart$/, '重新启动分支'],
     [/^GET \/branches\/(.+)\/activity-logs$/, '查看分支系统日志'],
     [/^POST \/branches\/(.+)\/set-default$/, '设为默认分支'],
@@ -1422,6 +1450,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/pending-imports\/(.+)$/, '查询待导入项目'],
     [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
+    [/^GET \/projects\/[^/]+\/access-status$/, '核对原项目访问恢复状态'],
     [/^POST \/projects\/[^/]+\/access-requests$/, '发起授权申请'],
     [/^GET \/projects\/[^/]+\/access-requests\/[^/]+$/, '轮询授权结果'],
     [/^POST \/bootstrap-access-requests$/, '发起新项目接入申请'],
@@ -1569,11 +1598,16 @@ function broadcastAiPairing(event: string, data: unknown) {
  * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
  */
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  if (isMonitorOnboardingAgentRoute(method, path)) return true;
+  if (method === 'POST' && path === '/api/identity-connections') return true;
+  if (method === 'GET' && /^\/api\/identity-connections\/[^/]+$/.test(path)) return true;
+  if (method === 'POST' && /^\/api\/identity-connections\/[^/]+\/ack$/.test(path)) return true;
   if (isPublicAgentSetupRoute(method, path)) return true;
+  if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-status$/.test(path)) return true;
   if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
   if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;
-  if (method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
+  if ((method === 'GET' || method === 'DELETE') && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
   // 构建队列健康探针（2026-07-16）：探针语义同 /healthz，供「任务调度」定时回归
   // 任务与外部监控免鉴权探测。端点响应已剥掉持有者身份 detail，只含结论与计数。
   if (method === 'GET' && path === '/api/cluster/build-gate/health') return true;
@@ -1927,6 +1961,11 @@ export function createServer(deps: ServerDeps): express.Express {
   // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
   const releaseService = new ReleaseService(deps.stateService, {
     verifyProjectCI: (branch, sha, strategy) => verifyProjectReleaseCI(deps.stateService.getProject(branch.projectId), githubAppClient, branch, sha, strategy),
+    resolveProjectRepository: (projectId) => {
+      const project = deps.stateService.getProject(projectId);
+      if (!project || (project.gitRepoUrl && !project.repoPath)) return undefined;
+      return deps.stateService.getProjectRepoRoot(projectId, deps.config.repoRoot);
+    },
   });
   const releaseReconciler: ReleaseRunReconciler = releaseService;
   startReleaseRunReaper({ service: releaseReconciler });
@@ -2047,6 +2086,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use((req, res, next) => {
     if (isSealedStorageRequest(req)) return next();
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
+    if (req.path === '/api/code-reviews' || req.path.startsWith('/api/code-reviews/')) return next();
     if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
     //   - 分组保存（PUT /api/projects/:id/branch-groups）：整份分组整体重发，上限内的合法配置
     //     可达数百 KB，路由自带更大上限的解析器（routes/projects.ts BRANCH_GROUPS_BODY_LIMIT）。
@@ -2065,6 +2105,8 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   // 无效的专用签名先拒绝，不能回落到 legacy 内部标记或用户会话。
   app.use(pendingReplayGate.gate);
+  const lifecycleGate = lifecycleStopGate(deps.stateService);
+  app.use(lifecycleGate.gate);
 
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
@@ -2770,7 +2812,8 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
-      isPendingReplay: pendingReplayGate.isTrusted,
+      isPendingReplay: req => pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req),
+      isPublicRequest: req => isPublicAccessRequestRoute(req.method, req.path),
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
       cookieSecure,
     }));
@@ -2821,7 +2864,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // When both basic auth and SSO are disabled the middleware is a no-op.
   if (authMode !== 'github') {
     app.use(async (req, res, next) => {
-      if (pendingReplayGate.isTrusted(req)) return next();
+      if (pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req)) return next();
       const ssoGateEnabled = publicTicketSsoConfig(resolveSsoConfig()).enabled;
       if (authMode === 'disabled' && !ssoGateEnabled) return next();
       if (req.path === '/') return next();
@@ -3487,6 +3530,10 @@ export function createServer(deps: ServerDeps): express.Express {
     }),
   );
 
+  // esbuild将发布入口扁平到dist，目录回退应与实际SPA产物同址。
+  app.use('/api', createInstanceCatalogRouter(deps.config.repoRoot,
+    path.resolve(__dirname, '..', 'web', 'dist', 'cds-instances.json')));
+
   app.use(createHumanProjectAccessMiddleware(deps.stateService));
   if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));
 
@@ -3580,6 +3627,10 @@ export function createServer(deps: ServerDeps): express.Express {
         ? { username: cdsUser, authProvider: 'legacy', isSystemOwner: true }
         : null;
     res.json({
+      approvalCapabilities: {
+        operator: isHumanSystemOwner(req),
+        accessRequests: authMode === 'disabled' || isHumanSystemOwner(req),
+      },
       mode: ssoIdentity ? 'sso' : authMode,
       enabled: authMode !== 'disabled' || Boolean(ssoIdentity),
       activeProvider,
@@ -4043,6 +4094,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // ── Activity stream SSE endpoint ──
   app.get('/api/activity-stream', (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
+    res.flushHeaders();
     activityClients.add(res);
     // Send buffered history
     const afterSeq = parseInt(req.query.afterSeq as string) || 0;
@@ -4594,6 +4646,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // 身份层：主体 / 用户级凭证 / 项目授权 / 权限总览。
   app.use('/api', createIdentityRouter({ stateService: deps.stateService, authService: authService ?? undefined }));
+  if (authService) app.use('/api', createIdentityConnectionsRouter({ stateService: deps.stateService, authService }));
   // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({
@@ -4640,6 +4693,7 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
     authMode,
+    serverEventLogStore: deps.serverEventLogStore,
   }));
   // 项目存储面板(infra named volume 大小/挂载关系，feature-emerge E7，2026-05-29)
   app.use('/api', createProjectStorageRouter({
@@ -4906,6 +4960,41 @@ export function createServer(deps: ServerDeps): express.Express {
   // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，CDS 登录态即可访问。
   // githubApp 用于 E4「验收回写 PR」（check-run / PR 评论）；未配置时回写端点返回 503。
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
+  const reviews = new CodeReviewService({
+    state: deps.stateService, inputs: createCodeReviewInputs(),
+    userKeys: new CodeReviewUserKeys(() => ({ ...process.env, ...deps.stateService.getCustomEnv('_global') })),
+    mail: createCodeReviewMail(() => ({ ...process.env, ...deps.stateService.getCustomEnv('_global') })),
+    publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL || deps.config.publicBaseUrl || 'http://localhost:9900',
+    ownerScope: process.env.CDS_CODE_REVIEW_OWNER || (process.env.CDS_PROJECT_ID
+      ? `${process.env.CDS_PROJECT_ID}::${process.env.VITE_GIT_BRANCH || 'default'}` : 'cds-master'),
+    githubToken: async (projectId, githubUrl) => {
+      const project = deps.stateService.getProject(projectId);
+      // Installation grants are project-bound; never borrow a different project's authorization.
+      if (!project?.githubInstallationId || !githubAppClient) return undefined;
+      const repo = new URL(githubUrl).pathname.replace(/^\//, '').replace(/\/$/, '').replace(/\.git$/, '');
+      if (project.githubRepoFullName?.toLowerCase() !== repo.toLowerCase()) return undefined;
+      return githubAppClient.getInstallationToken(project.githubInstallationId);
+    },
+    cdsSnapshot: async input => {
+      const project = deps.stateService.getProject(input.projectId);
+      const branch = deps.stateService.getBranch(input.branchId);
+      if (!project || !branch || branch.projectId !== project.id || branch.branch !== input.branchName || branch.deleting || branch.mirror || project.mirror) throw new Error('所选 CDS 项目或分支已变化，请重新选择');
+      const sourceRoot = (p: typeof project, b: typeof branch) => codeReviewRepositoryRoot(p, b, deps.config.repoRoot,
+        deps.stateService.resolveProjectForAutoBuild(deps.config.repoRoot)?.id);
+      const repoRoot = sourceRoot(project, branch), repository = project.githubRepoFullName;
+      const assertCurrent = () => {
+        const currentProject = deps.stateService.getProject(project.id), currentBranch = deps.stateService.getBranch(branch.id);
+        if (!currentProject || !currentBranch || currentProject.mirror || currentBranch.mirror || currentBranch.projectId !== project.id
+          || currentBranch.deleting || currentBranch.branch !== input.branchName || currentProject.githubRepoFullName !== repository
+          || sourceRoot(currentProject, currentBranch) !== repoRoot) throw new Error('所选项目或分支已变化，已停止获取源码');
+      };
+      const snapshot = await deps.worktreeService.exportCodeReviewSnapshot(repoRoot, branch.branch, input.excludePatterns, { signal: input.signal, assertCurrent });
+      assertCurrent();
+      return { ...snapshot, sourceName: `${project.name} · ${branch.branch}` };
+    },
+  });
+  app.use('/api', createCodeReviewsRouter({ state: deps.stateService, service: reviews }));
+  void reviews.start().catch((error: Error) => console.error('[code-review] recovery failed:', error.message));
 
   // 快捷提 bug（Ctrl+B）：转发凭据只在服务端读取，前端只调本端点。
   // 数据目录与验收报告同级（cache 的父目录），未配置转发时退化为本地留存。
@@ -5045,6 +5134,7 @@ export function createServer(deps: ServerDeps): express.Express {
     assertProjectAccess: assertProjectAccess as any,
   }));
 
+  if (deps.branchLifecycleService) app.use('/api', createBranchLifecycleRouter(deps.stateService, deps.branchLifecycleService));
   app.use('/api', createBranchRouter({
     selfMaintenanceRuntime: selfMaintenance,
     stateService: deps.stateService,

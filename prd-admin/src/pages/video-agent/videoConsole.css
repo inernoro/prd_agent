@@ -829,11 +829,13 @@
 .video-storyboard-empty { width: 100%; height: 100%; min-height: 0; background: var(--bg-base); color: var(--text-primary); }
 .video-storyboard-progress { display: flex; flex-direction: column; overflow: hidden; }
 .video-storyboard-progress > header { min-height: 68px; justify-content: space-between; gap: 16px; padding: 0 20px; border-bottom: 1px solid var(--border-faint); background: var(--bg-elevated); }
-.video-storyboard-progress > header > div { min-width: 0; gap: 10px; }
-.video-storyboard-progress > header button:first-child { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 10px; color: var(--text-secondary); }
-.video-storyboard-progress > header > div > span { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 10px; background: var(--text-primary); color: var(--bg-base); }
+.video-storyboard-progress > header > div { flex: 1; min-width: 0; gap: 10px; }
+.video-storyboard-progress > header > div > div { flex: 1; min-width: 0; }
+.video-storyboard-progress > header > button { flex-shrink: 0; white-space: nowrap; }
+.video-storyboard-progress > header > div > button:first-child { flex-shrink: 0; display: grid; width: 40px; height: 40px; place-items: center; border-radius: 10px; color: var(--text-secondary); }
+.video-storyboard-progress > header > div > span { flex-shrink: 0; display: grid; width: 38px; height: 38px; place-items: center; border-radius: 10px; background: var(--text-primary); color: var(--bg-base); }
 .video-storyboard-progress > header strong,
-.video-storyboard-progress > header small { display: block; }
+.video-storyboard-progress > header small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .video-storyboard-progress > header strong { font-size: 14px; }
 .video-storyboard-progress > header small { margin-top: 3px; color: var(--text-muted); font-size: 11px; }
 .video-storyboard-progress > main { display: grid; flex: 1; min-height: 0; grid-template-columns: minmax(320px, 0.82fr) minmax(420px, 1.18fr); gap: 18px; width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 32px 0; overflow-y: auto; }

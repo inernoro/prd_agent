@@ -31,6 +31,7 @@ import { projectResourceNamespace } from '../services/preview-slug.js';
  */
 
 import { Router } from 'express';
+import yaml from 'js-yaml';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { randomBytes } from 'node:crypto';
 import type { StateService } from '../services/state.js';
@@ -349,6 +350,39 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       return;
     }
 
+    // Partial profile imports must retain the complete project source. Opt in
+    // explicitly and compare the source version before any state mutation.
+    let composeSource = item.composeYaml;
+    if (req.body?.mergeSource === true) {
+      if (!project.composeYaml || req.body.expectedComposeVersion !== (project.composeVersion ?? 0)) {
+        res.status(409).json({ error: 'compose_source_version_conflict', message: '项目完整配置已变化或尚未保存，请重新读取后审查导入' });
+        return;
+      }
+      try {
+        const base = yaml.load(project.composeYaml) as Record<string, any>;
+        const patch = yaml.load(item.composeYaml) as Record<string, any>;
+        if (!base?.services || !patch?.services
+            || Object.keys(patch).some(key => !['services', 'x-cds-deploy-modes'].includes(key))
+            || Object.keys(patch.services).some(key => !Object.hasOwn(base.services, key))
+            || Object.keys(patch['x-cds-deploy-modes'] || {}).some(key => !Object.hasOwn(patch.services, key))) {
+          throw new Error('部分导入只允许更新完整配置中已有服务及其部署模式');
+        }
+        const modes = { ...base['x-cds-deploy-modes'] };
+        for (const [key, value] of Object.entries(patch['x-cds-deploy-modes'] || {})) {
+          modes[key] = { ...modes[key], ...(value as object) };
+        }
+        composeSource = yaml.dump({ ...base, services: { ...base.services, ...patch.services },
+          'x-cds-deploy-modes': modes }, { lineWidth: -1, noRefs: true });
+        const mergedLint = lintComposeYaml(composeSource);
+        if (!parseCdsCompose(composeSource) || (mergedLint && mergedLint.summary.errors > 0)) {
+          throw new Error('合并后的完整配置未通过解析或拓扑校验');
+        }
+      } catch {
+        res.status(409).json({ error: 'compose_source_merge_refused', message: '部分配置无法安全合并，请仅提交已有服务及其部署模式，并检查完整配置拓扑' });
+        return;
+      }
+    }
+
     // 体检 error 级阻断导入（已拍板：前缀冲突、探活前缀没有合法场景）。操作员可显式 force 放行。
     const lint = lintComposeYaml(item.composeYaml);
     const force = (req.body as { force?: boolean } | undefined)?.force === true;
@@ -375,10 +409,12 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     const idSuffix = project.legacyFlag ? '' : `-${projectResourceNamespace(project)}`;
     // depends_on / cds.calls 写的是 compose 服务名；id 加了项目后缀后由同一个助手对齐（与克隆导入、
     // Quickstart 同一份规则），否则 `web` 调 `api` 会落成 `web-foo` 调不存在的 `api`，边被丢、服务被判游离。
+    const approvedIds = new Set(parsed.buildProfiles.map(profile => `${profile.id}${idSuffix}`));
+    const profileSource = req.body?.mergeSource === true ? parseCdsCompose(composeSource)! : parsed;
     const scopedProfiles: BuildProfile[] = normalizeProjectProfileDependencies(
-      (parsed.buildProfiles as BuildProfile[]).map((profile) => ({ ...profile, id: `${profile.id}${idSuffix}`, projectId: project.id })),
+      (profileSource.buildProfiles as BuildProfile[]).map((profile) => ({ ...profile, id: `${profile.id}${idSuffix}`, projectId: project.id })),
       idSuffix,
-    );
+    ).filter(profile => approvedIds.has(profile.id));
     try {assertConfigOnlyInfraStorage(parsed.infraServices,new Set(stateService.getInfraServicesForProject(project.id).map(s=>s.id)));}
     catch(error){res.status(409).json({error:'storage-provision-new-only-required',message:(error as Error).message});return;}
     try { stateService.assertBuildProfileBatchStorageAllowed(scopedProfiles); }
@@ -459,7 +495,7 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     // 配置、也无从检测漂移。现在 approve 即固化。
     const composeVersion = stateService.setProjectCompose(
       project.id,
-      item.composeYaml,
+      composeSource,
       'import-approved',
     );
 
@@ -491,6 +527,7 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
 
     res.json({
       applied: true,
+      composeVersion,
       appliedProfiles,
       appliedInfra,
       appliedEnvKeys,

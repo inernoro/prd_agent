@@ -72,6 +72,9 @@ jobs:
           file: ./claude-sdk-sidecar/Dockerfile
           push: true
           tags: ${{ steps.image.outputs.image }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
           provenance: false
           sbom: false
           cache-from: type=gha,scope=cds-agent-sidecar

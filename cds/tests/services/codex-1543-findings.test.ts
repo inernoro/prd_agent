@@ -78,7 +78,8 @@ describe('P1 旧 MAP 通道凭据接口与演练同一道非作用域管理员�
   it('alarm-notify 读 / 写与演练都过 denySystemAlarmAccess，且不再只看项目 Key', () => {
     const uptime = codeOf(read('../../src/routes/uptime.ts'));
     expect(uptime).toContain("from '../services/unscoped-admin-guard.js'");
-    expect(uptime.split('denySystemAlarmAccess(req, res)').length - 1).toBe(3);
+    const drillRoute = uptime.slice(uptime.indexOf("router.post('/uptime/alarm-drill'"), uptime.indexOf("router.get('/cds-system/alarm-notify'"));
+    expect(drillRoute).toContain('if (denySystemAlarmAccess(req, res)) return;');
     expect(uptime).toMatch(/router\.get\('\/cds-system\/alarm-notify', \(req, res\) => \{\s*if \(denySystemAlarmAccess\(req, res\)\) return;/);
     expect(uptime).toMatch(/router\.put\('\/cds-system\/alarm-notify', \(req, res\) => \{\s*if \(denySystemAlarmAccess\(req, res\)\) return;/);
     expect(uptime).not.toContain("res.status(403).json({ error: '通知通道属于 CDS 系统设置，项目级 Key 不可读写' })");

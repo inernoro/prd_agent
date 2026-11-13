@@ -70,7 +70,7 @@ public class MiduoPlanetSsoControllerTests
         writer.Setup(x => x.BeginAsync(It.IsAny<ApiRequestLog>())).ReturnsAsync(true);
         writer.Setup(x => x.CompleteAsync(It.IsAny<ApiRequestLog>())).Callback<ApiRequestLog>(x => stored = x).ReturnsAsync(true);
         var handler = new AuditFailureHandler(scenario);
-        var (profile, error) = await ExchangeAsync(handler, writer.Object);
+        var (profile, error) = await ExchangeAsync(handler, writer.Object, timeoutScenario: scenario == "timeout");
         Assert.Null(profile);
         Assert.Equal("SSO_PROVIDER_UNAVAILABLE", error);
         Assert.NotNull(stored);
@@ -104,9 +104,10 @@ public class MiduoPlanetSsoControllerTests
         writer.Verify(x => x.CompleteAsync(It.IsAny<ApiRequestLog>()), begin ? Times.Once() : Times.Never());
     }
 
-    private static async Task<(object? Profile, string? Error)> ExchangeAsync(HttpMessageHandler handler, IMiduoPlanetSsoAuditWriter writer)
+    private static async Task<(object? Profile, string? Error)> ExchangeAsync(HttpMessageHandler handler, IMiduoPlanetSsoAuditWriter writer, bool timeoutScenario = false)
     {
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(100) };
+        // 只有超时反例使用短期限，内存响应的大小/解析/审计判据不能与调度延迟竞争。
+        using var client = new HttpClient(handler) { Timeout = timeoutScenario ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromSeconds(30) };
         var factory = new Mock<IHttpClientFactory>();
         factory.Setup(x => x.CreateClient("SafeOutbound")).Returns(client);
         var controller = new MiduoPlanetSsoController(null!, null!, null!, null!, null!, null!, factory.Object,

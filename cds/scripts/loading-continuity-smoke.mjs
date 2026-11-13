@@ -7,6 +7,8 @@ import { chromium } from 'playwright';
 import { verifyPublicLoading } from './loading-public-smoke.mjs';
 import { verifySettingsRefresh } from './project-settings-refresh-smoke.mjs';
 import { verifyLoadingRefresh } from './loading-refresh-smoke.mjs';
+import { verifyCodeReviewDocument } from './code-review-document-smoke.mjs';
+import { verifyMonitorWorkspaceNavigation, verifyMonitorOnboardingSessionCleanup } from './monitor-workspace-navigation-smoke.mjs';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +27,7 @@ const selectors = {
   'agent-table': '[data-agent-requests-skeleton]', 'topology': '[data-topology-page-skeleton]', 'release-center': '[data-release-center-skeleton]', monitor: '[aria-label="正在读取监控数据"]',
   settings: '[data-settings-content-skeleton]', 'project-settings': '[data-settings-page-skeleton]',
   'release-console': '[data-release-console-skeleton]', rows: '[role="status"][aria-busy="true"]',
+  'code-reviews': '[data-code-reviews-skeleton]',
 };
 const gate = () => { let release; const promise = new Promise(r => release = r); return { promise, release }; };
 const browser = await chromium.launch({ headless: true });
@@ -92,7 +95,7 @@ try {
       if (!before) {
         assert(result.sameShape, `${route}: code/data shape mismatch`);
         // 复杂页面内有固定筛选/说明区；这里只对整页专用轮廓断言无位移。
-        if (['settings', 'project-settings', 'release-console', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
+        if (['settings', 'project-settings', 'release-console', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail', 'code-reviews'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
       }
       if (!before) {
         await page.emulateMedia({reducedMotion:'reduce'});
@@ -109,6 +112,29 @@ try {
       data.release();
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
+      if (!before && scene.kind === 'code-reviews') {
+        result.documentScroll = await verifyCodeReviewDocument(browser, base, out);
+        await page.locator('.cr-ui h1').waitFor();
+        result.fontMatrix = [];
+        for (const density of ['80', '85', '100']) {
+          await page.evaluate(value => {
+            if (value === '85') delete document.documentElement.dataset.uiScale;
+            else document.documentElement.dataset.uiScale = value;
+          }, density);
+          for (const width of [1440, 1536, 1920, 2048]) {
+            await page.setViewportSize({ width, height: 940 });
+            result.fontMatrix.push(await page.evaluate(({ density, width }) => ({
+              density, width,
+              heading: getComputedStyle(document.querySelector('.cr-ui h1')).fontSize,
+              body: getComputedStyle(document.querySelector('.cr-ui')).fontSize,
+            }), { density, width }));
+          }
+          const sizes = result.fontMatrix.filter(item => item.density === density);
+          assert.equal(new Set(sizes.map(item => item.heading)).size, 1, `review heading changes with viewport at density ${density}`);
+          assert.equal(new Set(sizes.map(item => item.body)).size, 1, `review body changes with viewport at density ${density}`);
+        }
+        assert(parseFloat(result.fontMatrix.at(-1).body) > parseFloat(result.fontMatrix[0].body), 'the user density preference must still change text size');
+      }
       if (scene.kind === 'branch-detail') {
         await page.locator('summary').filter({hasText:'生效配置'}).click();
         await page.getByText('没有任何自定义环境变量层。',{exact:true}).waitFor();
@@ -129,6 +155,9 @@ try {
       const refresh = await verifyLoadingRefresh(browser, base, out);
       await fs.writeFile(path.join(out, 'refresh-result.json'), JSON.stringify(refresh,null,2));
       console.log('PASS refresh retains content/input/focus; failure/retry; navigate away and reopen');
+      await verifyMonitorWorkspaceNavigation(browser, base, path.join(out, 'monitor-navigation'));
+      console.log('PASS monitor navigation preserves location, selection and sidebar transitions');
+      await verifyMonitorOnboardingSessionCleanup(browser, base, path.join(out, 'monitor-onboarding-cleanup'));
     } catch(e) {results.push({route:'refresh-regression',failure:String(e)}); console.log('FAIL refresh-regression '+String(e));}
   }
 } finally { await browser.close(); }

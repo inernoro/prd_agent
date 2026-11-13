@@ -113,6 +113,7 @@ export type ListVisualAgentWorkspacesContract = (input?: { limit?: number; skip?
 export type CreateVisualAgentWorkspaceContract = (input: { title?: string; scenarioType?: string; idempotencyKey?: string }) => Promise<ApiResponse<{ workspace: VisualAgentWorkspace }>>;
 export type UpdateVisualAgentWorkspaceContract = (input: {
   id: string;
+  suppressAutoSubmit?: boolean;
   title?: string;
   memberUserIds?: string[];
   coverAssetId?: string | null;

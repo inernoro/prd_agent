@@ -113,7 +113,11 @@ public sealed record InfraAgentRuntimeJob(
     string MessageId,
     string Content,
     DateTime EnqueuedAt
-);
+)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; init; }
+}
 
 /// <summary>注入到 agent 工作区的单个文本文件。Path 为相对路径（如 input.md）。</summary>
 public sealed record InfraAgentWorkspaceFileInput(string Path, string Content);

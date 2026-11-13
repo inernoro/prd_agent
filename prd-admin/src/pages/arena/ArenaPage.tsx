@@ -18,7 +18,6 @@ import {
   createArenaGroup,
   updateArenaGroup,
   deleteArenaGroup,
-  createArenaSlot,
   deleteArenaSlot,
   toggleArenaSlot,
   createArenaRun,
@@ -30,7 +29,11 @@ import type { ArenaAttachmentInfo } from '@/services';
 import { api } from '@/services/api';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
-import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
+import { ArenaModelPickerDialog } from '@/components/model/ArenaModelPickerDialog';
+import { ArenaLineupNotice } from '@/components/model/ArenaLineupNotice';
+import { arenaLineupProblem, arenaUnavailableSlots } from '@/lib/arenaModelReferences';
+import { ModelReferenceStatus } from '@/components/model/ModelReferenceStatus';
+import type { ArenaSlot, ArenaGroup } from '@/services/contracts/arena';
 import type { Platform } from '@/types/admin';
 import {
   Eye, Send, Plus, Search, MessageSquare, Clock, Swords, ChevronDown, ChevronRight, Brain,
@@ -45,23 +48,6 @@ import { HERO_GRADIENT, HERO_GRADIENT_FG } from '@/pages/home/sections/HeroSecti
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-interface ArenaSlot {
-  id: string;
-  platformId: string;
-  modelId: string;
-  displayName?: string;
-  enabled?: boolean;
-}
-
-interface ArenaGroup {
-  id?: string;
-  key: string;
-  name: string;
-  description?: string;
-  sortOrder?: number;
-  slots: ArenaSlot[];
-}
 
 interface GroupForm {
   key: string;
@@ -277,6 +263,8 @@ export function ArenaPage() {
   const [groups, setGroups] = useState<ArenaGroup[]>([]);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string>('');
   const [lineupLoading, setLineupLoading] = useState(true);
+  const [checkingLineup, setCheckingLineup] = useState(false);
+  const lineupCheck = useRef(false);
   const [lineupError, setLineupError] = useState<string | null>(null);
   const [groupDropdownOpen, setGroupDropdownOpen] = useState(false);
 
@@ -319,6 +307,7 @@ export function ArenaPage() {
   const [groupSaving, setGroupSaving] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelPickerTargetGroup, setModelPickerTargetGroup] = useState('');
+  const [repairingSlot, setRepairingSlot] = useState<ArenaSlot | null>(null);
   const [adminLoading, setAdminLoading] = useState(false);
 
   const platformMap = useMemo(() => {
@@ -326,16 +315,6 @@ export function ArenaPage() {
     for (const p of platforms) map.set(p.id, p.name);
     return map;
   }, [platforms]);
-
-  const existingModelsForPicker = useMemo<SelectedModelItem[]>(() => {
-    const group = adminGroups.find((g) => g.key === modelPickerTargetGroup);
-    if (!group) return [];
-    return group.slots.map((s) => ({
-      platformId: s.platformId,
-      modelId: s.modelId,
-      name: s.displayName || s.modelId,
-    }));
-  }, [adminGroups, modelPickerTargetGroup]);
 
   // --- Refs ---
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -578,71 +557,8 @@ export function ArenaPage() {
 
   function openAddSlots(groupKey: string) {
     setModelPickerTargetGroup(groupKey);
+    setRepairingSlot(null);
     setModelPickerOpen(true);
-  }
-
-  async function handleModelPickerConfirm(models: SelectedModelItem[]) {
-    const group = adminGroups.find((g) => g.key === modelPickerTargetGroup);
-    const existingSlots = group?.slots ?? [];
-    const existingKeys = new Set(
-      existingSlots.map((s) => `${s.platformId}:${s.modelId}`.toLowerCase()),
-    );
-    const confirmedKeys = new Set(
-      models.map((m) => `${m.platformId}:${m.modelId}`.toLowerCase()),
-    );
-
-    // Find new models to add
-    const newModels = models.filter(
-      (m) => !existingKeys.has(`${m.platformId}:${m.modelId}`.toLowerCase()),
-    );
-    // Find existing slots to remove (were in existing but removed from confirmed list)
-    const slotsToRemove = existingSlots.filter(
-      (s) => !confirmedKeys.has(`${s.platformId}:${s.modelId}`.toLowerCase()),
-    );
-
-    if (newModels.length === 0 && slotsToRemove.length === 0) {
-      toast.info('没有变更');
-      return;
-    }
-
-    let addCount = 0;
-    let removeCount = 0;
-
-    // Delete removed slots
-    for (const slot of slotsToRemove) {
-      try {
-        const res = await deleteArenaSlot(slot.id);
-        if (res.success) removeCount++;
-      } catch {
-        // continue
-      }
-    }
-
-    // Add new slots
-    for (const m of newModels) {
-      try {
-        const res = await createArenaSlot({
-          displayName: m.name || m.modelName || m.modelId,
-          platformId: m.platformId,
-          modelId: m.modelId,
-          group: modelPickerTargetGroup,
-          enabled: true,
-        });
-        if (res.success) addCount++;
-      } catch {
-        // continue
-      }
-    }
-
-    if (addCount > 0 || removeCount > 0) {
-      const msgs: string[] = [];
-      if (addCount > 0) msgs.push(`添加 ${addCount} 个`);
-      if (removeCount > 0) msgs.push(`移除 ${removeCount} 个`);
-      toast.success(`模型已更新：${msgs.join('，')}`);
-      await loadAdminGroups();
-    } else {
-      toast.error('操作失败');
-    }
   }
 
   async function handleDeleteSlot(slotId: string) {
@@ -669,6 +585,7 @@ export function ArenaPage() {
   // --- Get selected group's slots ---
   const selectedGroup = groups.find((g) => g.key === selectedGroupKey);
   const slots = selectedGroup?.slots ?? [];
+  const lineupBlocked = lineupLoading || checkingLineup || !!lineupError || arenaUnavailableSlots(slots).length > 0;
 
   // --- Start a new battle ---
   function handleNewBattle() {
@@ -877,11 +794,27 @@ export function ArenaPage() {
 
   // --- Core battle launcher (shared by handleSend & handleRetry) ---
   async function launchBattle(question: string, sendAttachmentIds: string[] = []) {
-    const newLabelMap = assignLabels(slots);
-    const runSlots = slots.map((slot) => {
+    if (lineupCheck.current) return false;
+    lineupCheck.current = true; setCheckingLineup(true);
+    let latestGroup: ArenaGroup | undefined;
+    try {
+      const latest = await getArenaLineup();
+      if (!latest.success) throw new Error('阵容状态未确认，请重新读取后重试。');
+      setGroups(latest.data.items); setLineupError(null);
+      latestGroup = latest.data.items.find(group => group.key === selectedGroupKey);
+      const problem = arenaLineupProblem(selectedGroup, latestGroup);
+      if (problem) { toast.warning(problem); return false; }
+    } catch {
+      setLineupError('阵容状态未确认');
+      toast.error('阵容状态未确认，请重新读取后重试。');
+      return false;
+    } finally { lineupCheck.current = false; setCheckingLineup(false); }
+    const newLabelMap = assignLabels(latestGroup!.slots);
+    const runSlots = latestGroup!.slots.map((slot) => {
       const info = newLabelMap.get(slot.id) ?? { label: '助手 ?', index: 0 };
       return {
         slotId: slot.id,
+        logicalModelId: slot.logicalModelId,
         platformId: slot.platformId,
         modelId: slot.modelId,
         label: info.label,
@@ -935,6 +868,7 @@ export function ArenaPage() {
       }));
 
       await subscribeToRunStream(runId, 0);
+      return true;
     } catch (e: any) {
       if (e?.name === 'AbortError') return;
       toast.error('竞技场请求失败', e?.message ?? '网络错误');
@@ -948,6 +882,8 @@ export function ArenaPage() {
       setIsStreaming(false);
       sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
       setActiveRunId(null);
+      setPrompt(question);
+      return false;
     }
   }
 
@@ -967,9 +903,8 @@ export function ArenaPage() {
       fileName: a.fileName,
       mimeType: a.mimeType,
     })));
-    setAttachments([]);
-
-    await launchBattle(question, sendAttachmentIds);
+    const launched = await launchBattle(question, sendAttachmentIds);
+    if (launched) setAttachments([]);
   }, [prompt, isStreaming, slots, selectedGroupKey, attachments]);
 
   // --- Reveal models ---
@@ -1608,8 +1543,10 @@ export function ArenaPage() {
                                       {slot.displayName || slot.modelId}
                                     </div>
                                     <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
-                                      {platformMap.get(slot.platformId) || slot.platformId}
+                                      {slot.logicalModelId ? slot.modelId : platformMap.get(slot.platformId) || slot.platformId}
                                     </div>
+                                    <ModelReferenceStatus reference={slot} />
+                                    {slot.modelReferenceStatus !== 'available' ? <button className="text-xs underline mt-1" onClick={() => { setRepairingSlot(slot); setModelPickerTargetGroup(ag.key); setModelPickerOpen(true); }}>修复模型引用</button> : null}
                                   </div>
                                   <div className="flex items-center gap-0.5 flex-shrink-0">
                                     <button
@@ -1667,6 +1604,8 @@ export function ArenaPage() {
         </div>
 
         {/* ===================== Content ===================== */}
+        <ArenaLineupNotice slots={slots} error={lineupError} checking={checkingLineup} onRefresh={() => void loadLineup()} onRepair={() => { enterManageMode(); setGroupDropdownOpen(true); }} />
+
         {!hasBattle ? (
           /* Empty State — hero-style welcome with Reveal stagger */
           <div className="flex-1 flex flex-col items-center justify-center px-4" style={{ minHeight: 0 }}>
@@ -1890,7 +1829,7 @@ export function ArenaPage() {
                         <button
                           type="button"
                           onClick={handleSend}
-                          disabled={isStreaming || !prompt.trim() || slots.length === 0}
+                          disabled={isStreaming || lineupBlocked || !prompt.trim() || slots.length === 0}
                           className="group inline-flex items-center gap-1.5 h-9 px-5 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                           style={{
                             background: HERO_GRADIENT,
@@ -1964,6 +1903,7 @@ export function ArenaPage() {
                 </span>
                 {allDone && !isStreaming && (
                   <button
+                    disabled={lineupBlocked || isStreaming}
                     onClick={handleRetry}
                     className="flex items-center gap-1.5 px-3 h-7 rounded-full text-[11px] transition-colors hover-bg-soft flex-shrink-0 text-token-secondary"
                     style={{
@@ -2396,7 +2336,7 @@ export function ArenaPage() {
                     <button
                       type="button"
                       onClick={handleSend}
-                      disabled={isStreaming || !prompt.trim() || slots.length === 0}
+                      disabled={isStreaming || lineupBlocked || !prompt.trim() || slots.length === 0}
                       className="inline-flex items-center justify-center gap-1.5 h-9 min-w-[44px] px-4 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                       style={{
                         background: HERO_GRADIENT,
@@ -2479,15 +2419,9 @@ export function ArenaPage() {
       />
 
       {/* ===================== Model Picker Dialog ===================== */}
-      <ModelPoolPickerDialog
-        open={modelPickerOpen}
-        onOpenChange={setModelPickerOpen}
-        selectedModels={existingModelsForPicker}
-        platforms={platforms}
-        onConfirm={handleModelPickerConfirm}
-        confirmText="确认保存"
-        description="管理该分组的参战模型：添加新模型或从池中移除已有模型，确认后生效"
-      />
+      <ArenaModelPickerDialog open={modelPickerOpen} onOpenChange={setModelPickerOpen}
+        group={adminGroups.find(group => group.key === modelPickerTargetGroup)} repairingSlot={repairingSlot}
+        onSaved={async () => { await loadAdminGroups(); await loadLineup(); }} />
 
       {/* Scoped keyframes — Arena neon pulse on title */}
       <style>{`

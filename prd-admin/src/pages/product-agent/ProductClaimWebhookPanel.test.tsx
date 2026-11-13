@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProductClaimWebhookPanel } from './ProductClaimWebhookPanel';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const api = vi.hoisted(() => ({ getClaimWebhook: vi.fn(), getClaimNotices: vi.fn(), saveClaimWebhook: vi.fn(), retryClaimNotice: vi.fn() }));
+const api = vi.hoisted(() => ({ getClaimWebhook: vi.fn(), getClaimNotices: vi.fn(), saveClaimWebhook: vi.fn(), retryClaimNotice: vi.fn(), debugClaimNotice: vi.fn() }));
 vi.mock('@/services/real/productClaimWebhook', () => api);
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: () => <div>读取配置</div> }));
 const config = { enabled: true, notifyInternal: true, notifyFormal: true, configured: true, maskedUrl: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=********', canSend: true, identityReadyCount: 3, identityPendingCount: 1 };
@@ -21,6 +21,13 @@ beforeEach(async () => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 describe('Webhook可视化配置', () => {
+  it('管理员可开启调试模式并保存，保存开关本身不发送通知', async () => {
+    await act(async () => root.render(<ProductClaimWebhookPanel />)); await settle();
+    await act(async () => host.querySelectorAll<HTMLInputElement>('input[type=checkbox]')[1].click());
+    await act(async () => Array.from(host.querySelectorAll('button')).find(button => button.textContent === '保存配置')!.click());
+    expect(api.saveClaimWebhook).toHaveBeenCalledWith({ enabled: true, debugMode: true, notifyInternal: true, notifyFormal: true, url: undefined });
+    expect(api.debugClaimNotice).not.toHaveBeenCalled();
+  });
   it('只回显脱敏地址，留空保存保留配置，展示自动身份就绪信息', async () => {
     await act(async () => root.render(<ProductClaimWebhookPanel />)); await settle();
     expect(host.textContent).toContain('key=********');
@@ -30,9 +37,10 @@ describe('Webhook可视化配置', () => {
     expect(password.value).toBe('');
     await act(async () => Array.from(host.querySelectorAll('button')).find(button => button.textContent === '保存配置')!.click());
     await settle();
-    expect(api.saveClaimWebhook).toHaveBeenCalledWith({ enabled: true, notifyInternal: true, notifyFormal: true, url: undefined });
+    expect(api.saveClaimWebhook).toHaveBeenCalledWith({ enabled: true, debugMode: false, notifyInternal: true, notifyFormal: true, url: undefined });
     expect(password.value).toBe('');
     expect(host.textContent).toContain('配置已保存');
+    expect(host.textContent).toContain('调试模式（申领后手工推送）');
   });
   it('预览环境禁止保存，结果不明的通知不提供重试按钮', async () => {
     api.getClaimWebhook.mockResolvedValue({ success: true, data: { ...config, canSend: false } });

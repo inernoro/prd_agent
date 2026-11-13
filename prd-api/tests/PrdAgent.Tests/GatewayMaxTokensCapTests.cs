@@ -105,11 +105,25 @@ public class GatewayMaxTokensCapTests
         Assert.False(body.ContainsKey("max_tokens"));
     }
 
+    [Theory]
+    [InlineData("gpt-6.1-sol")]
+    [InlineData("openai/gpt-6.1-sol")]
+    public void ConfirmedGpt61SolBudgetKeepsSmallestCapAndRemovesLegacyFields(string model)
+    {
+        var body = new JsonObject { ["messages"] = new JsonArray(), ["max_tokens"] = 500,
+            ["max_completion_tokens"] = 300, ["max_output_tokens"] = 100 };
+        LlmGateway.ApplyResolvedMaxTokensCap(body, new ModelResolutionResult
+            { Success = true, ActualModel = model, Protocol = "openai", MaxTokens = 128 });
+        Assert.Equal(100, body["max_completion_tokens"]!.GetValue<int>());
+        Assert.False(body.ContainsKey("max_tokens")); Assert.False(body.ContainsKey("max_output_tokens"));
+    }
+
     // 反面：非 GPT-5 家族仍写 max_tokens，别把改名扩散到不需要的模型上。
     [Theory]
     [InlineData("gpt-4o")]
     [InlineData("gpt-4.1-mini")]
     [InlineData("gpt-50-imaginary")]
+    [InlineData("gpt-6.1-sol-future")]
     [InlineData("anthropic/claude-opus-5")]
     public void ApplyResolvedMaxTokensCap_KeepsMaxTokens_ForNonGpt5Models(string model)
     {
@@ -216,4 +230,55 @@ public class GatewayMaxTokensCapTests
         Assert.Equal(1024, body["max_tokens"]!.GetValue<int>());
         Assert.False(body.ContainsKey("max_completion_tokens"));
     }
+    [Theory]
+    [InlineData("o1")]
+    [InlineData("o1-mini")]
+    [InlineData("o1-preview-2024-09-12")]
+    [InlineData("o3")]
+    [InlineData("o3-mini-2025-01-31")]
+    [InlineData("openai/o4-mini-2025-04-16")]
+    public void KnownReasoningChat_UsesSmallestBudgetWithOrWithoutModelCap(string model)
+    {
+        foreach (var modelCap in new int?[] { null, 1024, 64 })
+        {
+            var body = ChatBody(128);
+            body["max_completion_tokens"] = 512;
+            body["max_output_tokens"] = 256;
+            LlmGateway.ApplyResolvedMaxTokensCap(body, Gpt5(model, modelCap));
+            Assert.Equal(Math.Min(128, modelCap ?? int.MaxValue), body["max_completion_tokens"]!.GetValue<int>());
+            Assert.False(body.ContainsKey("max_tokens"));
+            Assert.False(body.ContainsKey("max_output_tokens"));
+        }
+    }
+
+    [Theory]
+    [InlineData("o30")]
+    [InlineData("o3-future")]
+    [InlineData("o3-2025-02-30")]
+    [InlineData("o4")]
+    [InlineData("o4-mini-extra")]
+    [InlineData("other-reasoning")]
+    public void UnknownReasoningNames_AreNotGuessed(string model)
+    {
+        var body = ChatBody(128);
+        LlmGateway.ApplyResolvedMaxTokensCap(body, Gpt5(model));
+        Assert.Equal(128, body["max_tokens"]!.GetValue<int>());
+        Assert.False(body.ContainsKey("max_completion_tokens"));
+    }
+
+    [Fact]
+    public void ReasoningName_DoesNotRewriteOtherProtocolOrNonChatBody()
+    {
+        var body = ChatBody(128);
+        var resolution = new ModelResolutionResult
+        { Success = true, ActualModel = "o3", Protocol = "claude", MaxTokens = 1024 };
+        LlmGateway.ApplyResolvedMaxTokensCap(body, resolution);
+        Assert.Equal(128, body["max_tokens"]!.GetValue<int>());
+        Assert.False(body.ContainsKey("max_completion_tokens"));
+        body = new JsonObject { ["prompt"] = "synthetic", ["max_tokens"] = 128 };
+        LlmGateway.ApplyResolvedMaxTokensCap(body, Gpt5("o3"));
+        Assert.Equal(128, body["max_tokens"]!.GetValue<int>());
+        Assert.False(body.ContainsKey("max_completion_tokens"));
+    }
+
 }

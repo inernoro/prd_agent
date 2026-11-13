@@ -64,13 +64,13 @@ export interface BranchUpdatedPayload {
   projectId?: string;
   /** 变化后的关键可视字段(仅前端会展示的子集,避免把敏感 env 带出去) */
   patch: Partial<Pick<BranchEntry,
-    'branch' | 'services' | 'status' | 'errorMessage' |
+    'branch' | 'services' | 'status' | 'errorMessage' | 'archive' | 'incompleteSince' |
     'githubRepoFullName' | 'githubCommitSha' | 'lastPushAt' | 'githubSenderLogin' | 'githubSenderAvatarUrl' |
     'lastDeployDispatchAt' | 'lastDeployDispatchCommitSha' | 'lastDeployDispatchSource' | 'lastDeployDispatchStatus' | 'lastDeployDispatchError' |
     'githubPrNumber' | 'pinnedCommit' | 'tags' | 'notes' |
     'isFavorite' | 'isColorMarked' | 'subdomainAliases' |
     // 2026-06-23 极速版（CI 预构建）状态,前端分支卡/详情据此渲染「等待 CI / 构建失败」
-    'ciImageStatus' | 'ciTargetSha' | 'ciWorkflowConclusion' | 'ciWorkflowRunUrl' | 'ciWaitingSince' | 'ciImageError' |
+    'ciImageStatus' | 'ciTargetSha' | 'ciWorkflowConclusion' | 'ciWorkflowRunUrl' | 'ciWaitingSince' | 'ciImageError' | 'ciDiagnosis' |
     // 2026-07-09 构建排队可视化：分支卡「排队中 · 前面还有 N 个」chip + 耗时对比剔除排队
     'buildQueue' | 'lastDeployQueueWaitMs'>>;
   /** 部署跑完、容器已起来，但分支状态落盘失败：前端据此不播「部署成功」 */

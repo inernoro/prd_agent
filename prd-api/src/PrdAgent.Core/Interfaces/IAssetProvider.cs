@@ -23,7 +23,7 @@ public class UnifiedAsset
 {
     public string Id { get; set; } = string.Empty;
 
-    /// <summary>image | document | attachment</summary>
+    /// <summary>image | document | attachment | audio</summary>
     public string Type { get; set; } = string.Empty;
 
     public string Title { get; set; } = string.Empty;

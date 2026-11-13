@@ -212,16 +212,21 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await page.getByRole('status', {name:'页面加载中',exact:true}).waitFor();
-  assert.equal(await page.locator('.cds-topbar-center .h-4.w-44').count(),1,'member code wait uses summary silhouette');
-  assert.equal(await page.locator('.cds-topbar-center > .h-9.w-full').count(),0,'member code wait has no owner-only silhouette');
+  const memberHeader = async phase => {
+    assert.equal(await page.locator('.cds-project-inventory-heading').count(), 1, `member ${phase} uses the shared project heading`);
+    assert.equal(await page.locator('.cds-project-inventory-toolbar').count(), 1, `member ${phase} uses the shared project toolbar`);
+    assert.equal(await page.locator('.cds-project-inventory-actions').count(), 0, `member ${phase} has no manager-only actions`);
+    assert.equal(await page.locator('.cds-topbar-center').count(), 0, `member ${phase} has no duplicate topbar content`);
+  };
+  await memberHeader('code wait');
   await page.getByRole('status', {name:'页面加载中',exact:true}).waitFor({state:'hidden'});
-  assert.equal(await page.locator('.cds-topbar-center .h-4.w-44').count(),1,'member data wait uses the same summary silhouette');
-  assert.equal(await page.locator('.cds-topbar-center > .h-9.w-full').count(),0,'member data wait has no owner-only silhouette');
+  await memberHeader('data wait');
   await page.waitForSelector('[aria-busy="true"] .cds-card-grid article');
   const memberBefore = await geometry('[aria-busy="true"] .cds-card-grid article');
   assert.equal(await page.locator('#topbar-git-repo-url').count(), 0);
   releaseData();
   await page.waitForSelector('article a[href="/branches/fixture-project"]');
+  await memberHeader('ready');
   aligned('projects member390', memberBefore, await geometry('[data-list-loading-boundary] article'));
   assert.equal(await page.locator('#topbar-git-repo-url').count(), 0);
   await noEffect();

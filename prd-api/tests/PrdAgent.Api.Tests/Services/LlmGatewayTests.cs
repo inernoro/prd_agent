@@ -1556,6 +1556,55 @@ public class LlmGatewayTests
         Assert.True(attempts[1].ReachedProvider);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task StreamAsync_WhenConsumerStopsAtDone_ShouldAlreadyHaveTerminalCostEvidence(bool withUsage)
+    {
+        var usage = withUsage ? ",\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}" : "";
+        var upstream = "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"},\"finish_reason\":null}]}\n\n"
+            + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]" + usage + "}\n\n"
+            + "data: [DONE]\n\n";
+        var resolver = new Moq.Mock<IModelResolver>();
+        resolver.Setup(x => x.ResolveAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<string>(), Moq.It.IsAny<string?>(),
+                Moq.It.IsAny<string?>(), Moq.It.IsAny<string?>(), Moq.It.IsAny<CancellationToken>()))
+            .Returns(Task.FromResult(new ModelResolutionResult
+            {
+                Success = true, ActualModel = "synthetic-priced-model", ActualPlatformId = "synthetic-platform",
+                ActualPlatformName = "Synthetic", PlatformType = "openai", Protocol = "openai",
+                ApiUrl = "https://upstream.invalid", ApiKey = "synthetic", ResolutionType = "PinnedModel",
+                InputPricePerMillion = 1m, OutputPricePerMillion = 2m, PriceCurrency = "USD",
+            }));
+        var writer = new CapturingLogWriter();
+        var gateway = new LlmGateway(resolver.Object, new SequenceHttpClientFactory((200, upstream)),
+            new TestLogger<LlmGateway>(), writer);
+        var sawDone = false;
+
+        // Responses/Claude compatibility handlers return as soon as Done arrives.
+        await foreach (var chunk in gateway.StreamAsync(new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Admin.Lab.Chat, ModelType = ModelTypes.Chat,
+            RequestBody = new JsonObject { ["messages"] = new JsonArray() },
+        }))
+        {
+            if (chunk.Type != GatewayChunkType.Done) continue;
+            sawDone = true;
+            Assert.NotNull(writer.Done);
+            break;
+        }
+
+        Assert.True(sawDone);
+        Assert.Equal(1, writer.DoneCount);
+        Assert.Null(writer.Error);
+        Assert.Equal("succeeded", writer.Done!.Status);
+        Assert.Equal("OK", writer.Done.AnswerText);
+        Assert.Equal("stop", writer.Done.FinishReason);
+        Assert.Equal(withUsage ? 11 : null, writer.Done.InputTokens);
+        Assert.Equal(withUsage ? 7 : null, writer.Done.OutputTokens);
+        Assert.Equal(withUsage ? "priced" : "no_usage", writer.Done.CostStatus);
+        Assert.Equal(withUsage ? 0.000025m : null, writer.Done.EstimatedCostUsd);
+    }
+
     [Fact]
     public async Task StreamAsync_WhenUsageFollowsFinishReasonInSeparateFrame_ShouldPersistUsageOnce()
     {
@@ -1896,6 +1945,29 @@ public class LlmGatewayTests
         var attempt = Assert.Single(logWriter.Done!.ProviderAttempts!, a => a.Stage == "send");
         Assert.True(attempt.ReachedProvider);
         Assert.Equal("failed", attempt.Status);
+    }
+
+    [Theory]
+    [InlineData("gpt-5",false)]
+    [InlineData("gpt-5.6-terra",true)]
+    [InlineData("openai/gpt-5.6-terra",true)]
+    public async Task ModelUpgradeCanary_Gpt5FinalWireRetainsBoundedNormalizedParameters(string model,bool reasoningNone)
+    {
+        var http = new SequenceHttpClientFactory((200,"{\"choices\":[{\"message\":{\"content\":\"OK\"}}]}"));
+        var gateway = new LlmGateway(new InMemoryModelResolver(),http,new TestLogger<LlmGateway>());
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest {
+            AppCallerCode=AppCallerRegistry.System.HealthProbe.Chat,ModelType=ModelTypes.Chat,RequiredOfferingId="fixed-route",
+            Context=new GatewayRequestContext { SourceTask="ModelUpgradeCanaryWorker:bounded-request" },
+            RequestBody=new JsonObject { ["messages"]=new JsonArray(new JsonObject { ["role"]="user",["content"]="Reply OK." }),
+                ["max_tokens"]=16,["stream"]=false }
+        },new GatewayModelResolution { Success=true,ActualModel=model,ActualPlatformId="official",ActualPlatformName="OpenAI",
+            PlatformType="openai",Protocol="openai",ApiUrl="https://api.openai.com",ApiKey="test",OfferingId="fixed-route",MaxTokens=1024 });
+        Assert.True(response.Success,response.ErrorMessage);
+        var body=JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.Equal(16,(int?)body["max_completion_tokens"]);
+        Assert.False(body.ContainsKey("max_tokens"));
+        Assert.Equal(reasoningNone,body.ContainsKey("reasoning_effort"));
+        if(reasoningNone) Assert.Equal("none",(string?)body["reasoning_effort"]);
     }
 
     [Fact]

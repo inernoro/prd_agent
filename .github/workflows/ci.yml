@@ -62,6 +62,7 @@ jobs:
               - 'scripts/test-official-skill-bundles.mjs'
               - 'scripts/verify-dotnet-test-projects.sh'
               - 'scripts/tests/mongo-ci-contract.test.py'
+              - 'scripts/ci/normalize-ubuntu-apt-sources.py'
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'
@@ -70,9 +71,11 @@ jobs:
               # 而那正是它要防的场景（形状 7：守卫自己没接上线）。
               - 'doc/report.*.md'
               - 'e2e/**'
+              - 'scripts/ci/normalize-ubuntu-apt-sources.py'
               - '.github/workflows/ci.yml'
             desktop:
               - 'prd-desktop/**'
+              - 'scripts/ci/normalize-ubuntu-apt-sources.py'
               - '.github/workflows/ci.yml'
             # 设计执行服务（design-runtime/opendesign）：tsc + vitest。移植过来的纯函数测试读
             # 仓库根 scripts/fixtures 下的三份共享夹具，夹具改了也要跑。
@@ -118,12 +121,20 @@ jobs:
               - 'scripts/tests/test_skills_audit_contract.py'
               - '.github/workflows/ci.yml'
             release_scripts:
+              # 模型出口守卫读取所有 MAP 发送入口；漏登记新业务也必须触发构建检查。
+              - 'prd-api/src/**'
+              - 'llmgw/serving/**'
+              - 'scripts/check-map-model-egress.py'
+              - 'scripts/fixtures/map-model-egress-audit.json'
               - 'exec_dep.sh'
+              - '.github/workflows/web-latest-pages.yml'
+              - 'scripts/lib/release-artifacts.py'
               - 'scripts/lib/static-release.sh'
               - 'scripts/lib/gateway-bind-mount.sh'
               - 'scripts/prd-agent-public-surface-smoke.py'
               - 'scripts/prd-agent-release-evidence.py'
               - 'scripts/tests/static-release-*.test.sh'
+              - 'scripts/tests/static-release-browser.mjs'
               - 'scripts/tests/gateway-bind-mount-coherence.test.sh'
               - 'scripts/tests/public-surface-smoke.test.py'
               - 'scripts/tests/asset-storage-readiness-gate.test.py'
@@ -243,11 +254,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Ubuntu APT source and bounds contract
+        run: python3 scripts/tests/test_ci_ubuntu_apt.py
+
       - name: MongoDB CI compatibility contract
         run: python3 scripts/tests/mongo-ci-contract.test.py
 
       - name: Root layout contract
-        run: python3 scripts/tests/test_root_layout_contract.py
+        run: |
+          python3 scripts/tests/test_root_layout_contract.py
+          python3 scripts/tests/test_root_document_locations.py
 
       # 监控自发现的跨语言契约。挂在这个 job 是因为它无 needs、无 if，每次 CI 都跑——
       # 挂到带 path filter 的 job 上，只改自检端点的 PR 就会绕过守卫
@@ -325,7 +341,20 @@ jobs:
       - name: Static release layout
         run: sh scripts/tests/static-release-layout.test.sh
 
-      - name: Static release through nginx worker
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install browser regression dependencies
+        run: |
+          pnpm --dir cds install --frozen-lockfile
+          pnpm --dir cds exec playwright install --with-deps chromium
+
+      - name: Static release through nginx worker and browser
+        env:
+          STATIC_RELEASE_BROWSER_TEST: "1"
         run: sh scripts/tests/static-release-nginx.test.sh
 
       - name: Gateway bind mount coherence
@@ -356,6 +385,9 @@ jobs:
             echo "--- $t"
             python3 "$t"
           done
+
+      - name: MAP model egress guard
+        run: python3 scripts/check-map-model-egress.py
 
       - name: Prototype export audit tests
         run: python3 .agents/skills/prototype-export/tests/test_audit_prototype_package.py
@@ -433,11 +465,9 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Install video test dependencies
+        timeout-minutes: 10
         run: |
-          # Azure 镜像源曾连续两轮卡在 deb 下载；使用官方 HTTPS 源，保留包签名与完整依赖校验。
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
-          fi
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror canonical
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
@@ -599,8 +629,11 @@ jobs:
         run: pnpm typecheck
 
       - name: Install Chromium for recording acceptance
+        timeout-minutes: 10
         working-directory: ${{ github.workspace }}/e2e
-        run: pnpm exec playwright install --with-deps chromium
+        run: |
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror canonical
+          pnpm exec playwright install --with-deps chromium
 
       - name: Run focused browser acceptance
         working-directory: ${{ github.workspace }}/e2e
@@ -720,7 +753,9 @@ jobs:
           set -e
 
       - name: Install system dependencies (Linux)
+        timeout-minutes: 10
         run: |
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror canonical
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
@@ -770,7 +805,8 @@ jobs:
     name: CDS Build & Test
     needs: changes
     if: needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # Playwright 1.59 的系统依赖尚不支持 ubuntu-latest 正在迁移的 Ubuntu 26。
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: cds
@@ -815,6 +851,9 @@ jobs:
       - name: Install web dependencies
         run: pnpm run install:web
 
+      - name: Install design runtime test dependencies
+        run: pnpm -C ../design-runtime/opendesign install --frozen-lockfile
+
       - name: Type check
         run: pnpm exec tsc --noEmit
 
@@ -828,7 +867,11 @@ jobs:
     name: Design Runtime Test
     needs: changes
     if: needs.changes.outputs.design_runtime == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # 固定已验证的 LTS，避免 latest 切换后原有字体依赖在 26.04 缺失。
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble@sha256:57b65fdc9ceabe0ef613124c7bbe2babcf9362c4d85e382fe3b03604e84b428a
+      options: --init --shm-size=1g
     defaults:
       run:
         working-directory: design-runtime/opendesign
@@ -850,8 +893,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install isolated quality browser
-        run: pnpm exec playwright-core install --with-deps chromium
+      - name: Verify pinned quality browser
+        timeout-minutes: 10
+        run: pnpm exec playwright-core install chromium
 
       - name: Type check
         run: pnpm exec tsc --noEmit && pnpm run typecheck

@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Security;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.ClaudeSidecar;
@@ -105,6 +107,10 @@ public class AgentToolsController : ControllerBase
             CdsLongToken = cdsToken,
         };
 
+        var continuation = await HttpContext.RequestServices.GetRequiredService<TaskContinuationTokens>().ValidateAsync(
+            Request.Headers["X-Sidecar-Token"].ToString(), req.RunId ?? "", ctx.UserId);
+        if (continuation is null) return StatusCode(403, new { error = "任务工具授权已失效，未执行工具；请查看任务状态。" });
+        using var taskExecution = TaskExecutionContext.Enter(continuation);
         var approval = await ResolveToolApprovalAsync(req.RunId, req.ToolName, req.ApprovalId, TimeSpan.Zero, ct);
         if (!approval.Allowed)
         {
@@ -491,6 +497,13 @@ public class AgentToolsController : ControllerBase
             return false;
         }
 
+        if (TaskContinuationTokens.IsTaskToken(presented))
+        {
+            var valid = HttpContext.RequestServices.GetRequiredService<TaskContinuationTokens>()
+                .ValidateTokenAsync(presented).GetAwaiter().GetResult();
+            reason = valid ? "ok" : "task continuation expired";
+            return valid;
+        }
         var configured = _options.CurrentValue.Sidecars
             .Select(s =>
                 !string.IsNullOrWhiteSpace(s.Token)

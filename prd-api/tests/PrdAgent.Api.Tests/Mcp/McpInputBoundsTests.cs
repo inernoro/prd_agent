@@ -79,6 +79,7 @@ public class McpInputBoundsTests
         ["WriteContentRequest.ExpectedUpdatedAt"] = Bound.FiniteShape,
 
         ["GenerateImageRequest.Prompt"] = Bound.OwnContentCap,
+        ["GenerateImageRequest.ModelId"] = Bound.MustExist,
 
         // 文学配图：只改一张描述（4000 字上限，与标记描述同一上限）/ 从历史放回一张旧图
         ["UpdateIllustrationRequest.Prompt"] = Bound.OwnContentCap,

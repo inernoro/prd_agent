@@ -306,6 +306,36 @@ describe('结局判据（唯一一处，不挂在「多步」上）', () => {
   });
 });
 
+describe('语音历史地址与生成结果分开判断', () => {
+  const audio = { kind: 'audio-run', id: 'speech-run-1', url: '/mcp-console?tab=speech&run=speech-run-1', title: '语音任务' };
+
+  it.each([
+    ['queued', 'pending'], ['preparing', 'pending'], ['generating', 'pending'], ['saving', 'pending'],
+    ['completed', 'success'], ['failed', 'error'], ['unknown', 'error'],
+  ])('语音状态 %s 在分组与单条路径都展示为 %s', (status, expected) => {
+    const log = call({ toolName: 'map_speech_generate', isWrite: true, artifact: { ...audio, status } });
+    expect(groupCalls([log])[0].status).toBe(expected);
+    expect(soloGroup(log).status).toBe(expected);
+  });
+
+  it('只有历史地址、缺失业务状态时不能宣称已经生成语音', () => {
+    expect(soloGroup(call({ artifact: audio })).status).toBe('pending');
+    expect(soloGroup(call({ artifact: { ...audio, status: 'future-state' } })).status).toBe('pending');
+  });
+
+  it('后续查询的最新业务状态覆盖旧记录携带的排队状态，仍保留可打开的历史地址', () => {
+    const enqueue = call({ id: 'speech-enqueue', isWrite: true, createdAt: '2026-11-06T01:00:00Z', artifact: { ...audio, status: 'queued' } });
+    const poll = call({ id: 'speech-poll', isWrite: false, createdAt: '2026-11-06T01:00:10Z', artifact: { ...audio, url: null, status: 'completed' } });
+    const [group] = groupCalls([poll, enqueue]);
+    expect(group.status).toBe('success');
+    expect(group.artifact).toMatchObject({ url: audio.url, status: 'completed' });
+  });
+
+  it('请求被拒绝时不会因原语音任务已完成而隐藏本次调用失败', () => {
+    expect(soloGroup(call({ status: 'denied', artifact: { ...audio, status: 'completed' } })).status).toBe('denied');
+  });
+});
+
 describe('幂等命中的重试不算发起', () => {
   const art = { kind: 'image-run', id: 'run-7', url: null, title: null };
 
