@@ -150,7 +150,7 @@ export function CodeReviewsPage(): JSX.Element {
         {listError ? <div className="cr-row-inline"><ErrorNotice message={listError} /><ReviewButton onClick={requestRefresh}>重试读取</ReviewButton></div> : null}
         {data?.newCount ? <div className="cr-notice cr-row-inline" role="status">有 {data.newCount} 条新记录<ReviewButton tone="ghost" onClick={() => { cutoff.current = { scope: requestScope }; updateList({ page: '1' }); requestRefresh(); }}>显示</ReviewButton></div> : null}
         {history ? <p className="cr-form-note">历史执行保留各自的源码范围，不能将不同批次相加视为整仓完成。</p> : null}
-        {!data && loading ? <CodeReviewsSkeleton /> : <div className="cr-surface" aria-busy={loading}>
+        {!data && loading ? <CodeReviewsSkeleton /> : !data && listError ? null : <div className="cr-surface" aria-busy={loading}>
           {data?.tasks.length ? <ReviewTaskList items={data.tasks} selectedId="" projectName={projectName} onSelect={task => select(task)} hrefFor={rowHref} /> : <ReviewEmpty title={query || status !== 'all' ? '没有匹配的记录' : source === 'report' ? '还没有导入文档' : '还没有代码审查记录'} action={<ReviewButton onClick={() => { if (query || status !== 'all') updateList({ q: undefined, status: undefined }); else navigateView(source === 'report' ? 'import' : 'source'); }}>{query || status !== 'all' ? '清空筛选' : source === 'report' ? '导入报告' : '发起审查'}</ReviewButton>}>{query || status !== 'all' ? '调整筛选条件后重试。' : '上传源码，或直接选择平台已连接的项目和分支。'}</ReviewEmpty>}
           {data ? <ReviewPagination {...data.page} onOffset={offset => updateList({ page: String(offset / 10 + 1) })} /> : null}
         </div>}

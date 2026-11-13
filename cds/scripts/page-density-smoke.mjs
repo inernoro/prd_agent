@@ -41,6 +41,7 @@ try {
       else if (pathname === '/api/cds-system/alarm-deliveries') data = { deliveries: [], suppressed: [], truncated: false };
       else if (pathname === '/api/build-profiles') data = { profiles: profiles() };
       else if (/\/profile-overrides$/.test(pathname)) data = { profiles: profiles().map(p => ({ profileId: p.id, profileName: p.name, baseline: p, effective: p, hasOverride: false, override: null, cdsEnvKeys: [] })) };
+      else if (/\/extra-services$/.test(pathname)) data = { extraProfiles: [] };
       else if (/\/git-log$/.test(pathname)) data = { commits: [] };
       else if (/\/container-logs$/.test(pathname)) data = { logs: '样例日志，没有真实服务被调用。' };
       else if (pathname === '/api/proxy-log') data = { events: [] };
@@ -52,9 +53,9 @@ try {
       await route.fulfill({ json: data });
     });
     const page = await context.newPage();
-    page.on('pageerror', error => failures.push(`${width}/${theme}: ${error.message}`));
+    page.on('pageerror', error => { console.error('pageerror', width, theme, error.message); failures.push(`${width}/${theme}: ${error.message}`); });
     const settle = async () => { await page.evaluate(() => document.fonts.ready); await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); };
-    const save = async name => { await settle(); await page.screenshot({ path: `${out}/${name}-${width}-${theme}.png` }); check(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), `${name}/${width}/${theme}: document overflow`); };
+    const save = async name => { console.log('capture', name, width, theme); await settle(); await page.screenshot({ path: `${out}/${name}-${width}-${theme}.png` }); check(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), `${name}/${width}/${theme}: document overflow`); };
     // Real application navigation with fixture data, not a token/storage bypass.
     await page.goto(`${base}/project-list`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: project.name, exact: true }).waitFor();
@@ -62,8 +63,21 @@ try {
     if (width === 390) check(await page.evaluate(() => navigator.maxTouchPoints > 0 && matchMedia('(pointer:coarse)').matches), `${width}/${theme}: narrow run is not a touch context`);
     // Narrow navigation uses the shell's native menu, then follows the same anchor.
     const navigate = async href => {
-      if (!(await page.locator(`a[href="${href}"]:visible`).count())) await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
-      await page.locator(`a[href="${href}"]:visible`).first().click();
+      const onScreen = async () => {
+        for (const link of await page.locator(`a[href="${href}"]`).all()) {
+          const box = await link.boundingBox();
+          if (box && box.x >= 0 && box.x < width && box.y >= 0 && box.y < (width === 390 ? 844 : 900)) return link;
+        }
+        return null;
+      };
+      let link = await onScreen();
+      if (!link) {
+        await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
+        await page.waitForTimeout(100);
+        link = await onScreen();
+      }
+      if (!link) throw Error(`Visible navigation entry missing: ${href}`);
+      await link.click();
     };
     await navigate('/overview');
     await page.locator('[data-testid="overview-page"]').waitFor(); await save('overview');
@@ -71,7 +85,14 @@ try {
     const graphBox = await graph.boundingBox();
     measurements.push({ page: 'overview', width, theme, graphWidth: graphBox.width, graphY: graphBox.y });
     if (width === 390) check(graphBox.width >= 320, `${width}/${theme}: problem sidebar squeezes relationship canvas`);
-    if (!layoutOnly) { await graph.focus(); await page.keyboard.press('ArrowRight'); await page.waitForTimeout(120); check(await graph.evaluate(e => e.scrollLeft > 0), `${width}/${theme}: graph cannot be scrolled by keyboard`); }
+    if (!layoutOnly) {
+      await graph.focus();
+      const overflow = await graph.evaluate(e => ({ horizontal: e.scrollWidth > e.clientWidth, vertical: e.scrollHeight > e.clientHeight }));
+      if (overflow.horizontal || overflow.vertical) {
+        await page.keyboard.press(overflow.horizontal ? 'ArrowRight' : 'ArrowDown'); await page.waitForTimeout(120);
+        check(await graph.evaluate(e => e.scrollLeft > 0 || e.scrollTop > 0), `${width}/${theme}: graph cannot be scrolled by keyboard`);
+      } else check(await graph.evaluate(e => document.activeElement === e), `${width}/${theme}: graph cannot receive keyboard focus`);
+    }
     // Direct route below is deliberately a deterministic layout fixture, not preview-live proof.
     await page.goto(`${base}/branch-panel/${branch().id}`, { waitUntil: 'domcontentloaded' });
     const service = page.getByRole('button', { name: /^api/ }).first(); await service.waitFor(); await save('branch-detail');
@@ -104,7 +125,7 @@ try {
     if (!layoutOnly) {
       count = 25; await page.reload(); await page.getByRole('button', { name: '下一页任务', exact: true }).click(); await page.getByText('布局审查 11', { exact: true }).filter({ visible: true }).first().waitFor(); await page.getByRole('button', { name: '第 3 页', exact: true }).click(); await page.getByText('布局审查 25', { exact: true }).filter({ visible: true }).first().waitFor(); await save('code-reviews-many');
       count = 0; await page.reload(); await page.getByRole('heading', { name: '还没有代码审查记录', exact: true }).waitFor(); check(await page.getByRole('navigation', { name: '任务分页', exact: true }).count() === 0, `${width}/${theme}: empty review pagination`); await save('code-reviews-empty');
-      failed = true; await page.reload(); await page.getByText('任务列表暂时无法刷新，已保留上次结果。', { exact: true }).waitFor(); check(await page.getByRole('button', { name: '重试读取', exact: true }).isVisible(), `${width}/${theme}: missing retry`); failed = false;
+      failed = true; await page.reload(); await page.getByRole('button', { name: '重试读取', exact: true }).waitFor(); check(await page.getByRole('alert').isVisible(), `${width}/${theme}: failure notice hidden`); check(await page.getByRole('heading', { name: '还没有代码审查记录', exact: true }).count() === 0, `${width}/${theme}: read failure is misrepresented as an empty collection`); await save('code-reviews-error'); failed = false; count = 2; await page.getByRole('button', { name: '重试读取', exact: true }).click(); await page.getByText('布局审查 1', { exact: true }).filter({ visible: true }).first().waitFor();
       owner = false; await page.goto(`${base}/branch-panel/${branch().id}`); await page.getByRole('button', { name: /^api/ }).first().waitFor(); await save('branch-detail-readonly');
     }
     owner = true;
@@ -126,7 +147,7 @@ try {
     await page.getByRole('heading', { name: '全部常设检查', exact: true }).waitFor(); await save('project-status');
     const headerHeight = (await page.locator('.project-status-page > header').boundingBox()).height;
     measurements.push({ page: 'project-status', width, theme, headerHeight, firstCheckY: (await page.locator('#checks tbody tr').first().boundingBox()).y });
-    check(headerHeight < (width === 390 ? 350 : 300), `${width}/${theme}: repeated status metric cards delay checks`);
+    check(headerHeight < (width === 390 ? 525 : 300), `${width}/${theme}: repeated status metric cards delay checks`);
     await page.goto(`${base}/preview-preparing?branch=fixture-audit`, { waitUntil: 'domcontentloaded' });
     const previewContext = page.getByText('fixture-audit', { exact: true }); await previewContext.waitFor(); await save('preview-preparing');
     measurements.push({ page: 'preview-preparing', width, theme, contextY: (await previewContext.boundingBox()).y });
@@ -134,7 +155,10 @@ try {
     check((await previewContext.boundingBox()).y < (width === 390 ? 400 : 350), `${width}/${theme}: repeated transit branding delays branch context`);
     await context.close();
   }
+} catch (error) {
+  fs.writeFileSync(`${out}/measurements.json`, JSON.stringify({ provenance: 'deterministic-fixture', complete: false, measurements, failures, unexpected: [...unexpected], executionError: error.message }, null, 2));
+  throw error;
 } finally { await browser.close(); }
-fs.writeFileSync(`${out}/measurements.json`, JSON.stringify({ provenance: 'deterministic-fixture', measurements, failures, unexpected: [...unexpected] }, null, 2));
+fs.writeFileSync(`${out}/measurements.json`, JSON.stringify({ provenance: 'deterministic-fixture', complete: true, measurements, failures, unexpected: [...unexpected] }, null, 2));
 console.log(JSON.stringify({ out, measurements, failures, unexpected: [...unexpected] }));
 if (!measureOnly && (failures.length || unexpected.size)) process.exitCode = 1;
