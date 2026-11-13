@@ -1,3 +1,4 @@
+import { ReportDeliveryEvidencePanel } from '@/components/report/ReportDeliveryEvidencePanel';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Link2, Send, Trash2, AlertCircle, Eye } from 'lucide-react';
@@ -266,6 +267,12 @@ export default function MonthlyReportEditorPage() {
 
       <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
         <div className="max-w-[920px] mx-auto flex flex-col gap-4 pb-8">
+          {detail.deliveryEvidence && (
+            <div>
+              <p className="mb-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>以下为关联周报的只读事实参考，评价、认可和建议仍由本人表达；不会自动代填或提交。</p>
+              <ReportDeliveryEvidencePanel evidence={detail.deliveryEvidence} />
+            </div>
+          )}
           {isDraft && (
             <div
               className="rounded-xl px-4 py-3 text-[12px] flex items-start gap-2"
