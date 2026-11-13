@@ -2,6 +2,8 @@ import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import type {
   GetAdminNotificationsContract,
+  HandleBatchAdminNotificationsContract,
+  NotificationBatchResult,
   HandleAdminNotificationContract,
   HandleAllAdminNotificationsContract,
   GetAdminNotificationsResponse,
@@ -45,3 +47,5 @@ export const updateAdminPushProfileReal: UpdateAdminPushProfileContract = async 
 export const testAdminPushSubscriptionReal: TestAdminPushSubscriptionContract = async (topicKey, request) => {
   return await apiRequest<{ delivery: AdminPushDeliveryLog }>(api.dashboard.notifications.testSubscription(topicKey), { method: 'POST', body: request });
 };
+
+export const handleBatchAdminNotificationsReal: HandleBatchAdminNotificationsContract = async (request) => apiRequest<NotificationBatchResult>(api.dashboard.notifications.handleBatch(), { method: 'POST', body: request });

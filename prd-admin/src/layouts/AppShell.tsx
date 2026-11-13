@@ -90,8 +90,11 @@ import {
   AccountMenuRowBody,
   AccountMenuSectionLabel,
 } from '@/components/nav/AccountMenuRow';
-import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, uploadMyAvatar } from '@/services';
-import type { AdminNotificationItem } from '@/services/contracts/notifications';
+import { createLlmGatewaySsoTicket, getAdminNotifications, uploadMyAvatar } from '@/services';
+import type { AdminNotificationItem, GetAdminNotificationsResponse } from '@/services/contracts/notifications';
+import { NotificationFacts } from '@/components/notifications/NotificationFacts';
+import { useNotificationActions } from '@/components/notifications/useNotificationActions';
+import { notificationToastKey } from '@/lib/notificationPresentation';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
@@ -336,6 +339,8 @@ export default function AppShell() {
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notificationDialogTab, setNotificationDialogTab] = useState<'list' | 'subscriptions'>('list');
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
+  const [notificationSummary, setNotificationSummary] = useState<GetAdminNotificationsResponse['summary']>();
+  const [notificationsHaveMore, setNotificationsHaveMore] = useState(false);
   const [gatewayOpening, setGatewayOpening] = useState(false);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   useEffect(() => {
@@ -361,8 +366,6 @@ export default function AppShell() {
   });
   const [toastCollapsed, setToastCollapsed] = useState(false);
   const [toastHovering, setToastHovering] = useState(false);
-  const [handlingAll, setHandlingAll] = useState(false);
-  const [handlingId, setHandlingId] = useState<string | null>(null);
 
   // ── 免打扰(Do-Not-Disturb)防打扰机制 ──────────────────────
   // 业界通行做法:用户主动「免打扰 N 小时」后,通知不再自动弹出打断,只保留一个安静的
@@ -696,7 +699,8 @@ export default function AppShell() {
   );
 
   const resolveLlmGatewayHref = useCallback(async (returnTo?: string) => {
-    if (gatewayOpening || !hasLlmGatewayAccess) return null;
+    if (gatewayOpening) return null;
+    if (!hasLlmGatewayAccess) { toast.error('无权打开模型网关', '请联系管理员核对访问权限。'); return null; }
     setGatewayOpening(true);
     try {
       const result = await createLlmGatewaySsoTicket();
@@ -719,7 +723,7 @@ export default function AppShell() {
     if (href) window.location.assign(href);
   }, [resolveLlmGatewayHref]);
   const toastNotification = useMemo(
-    () => activeNotifications.find((n) => !dismissedToastIds.has(n.id)),
+    () => activeNotifications.find((n) => !dismissedToastIds.has(notificationToastKey(n))),
     [activeNotifications, dismissedToastIds]
   );
 
@@ -729,66 +733,33 @@ export default function AppShell() {
       const res = await getAdminNotifications();
       if (res.success) {
         setNotifications(res.data.items ?? []);
-      }
+        setNotificationSummary(res.data.summary);
+        setNotificationsHaveMore(Boolean(res.data.hasMore));
+      } else if (!opts?.silent) toast.error('通知读取失败', res.error?.message ?? '请稍后刷新重试。');
+    } catch {
+      if (!opts?.silent) toast.error('通知读取失败', '请稍后刷新重试，已有列表已保留。');
     } finally {
       if (!opts?.silent) setNotificationsLoading(false);
     }
   }, []);
 
-  const handleNotification = useCallback(async (id: string, actionUrl?: string | null, actionKind?: string | null) => {
-    const isLlmGatewayAction = actionKind === 'llm-gateway';
-    // 外部链接（绝对 URL）必须在用户点击的同步栈内打开，避免 await 之后丢失手势激活被浏览器拦截弹窗
-    const isExternal = !isLlmGatewayAction && !!actionUrl && /^https?:\/\//i.test(actionUrl);
-    if (isExternal) window.open(actionUrl!, '_blank', 'noopener,noreferrer');
-    setHandlingId(id);
-    try {
-      // 先签发并校验网关深链，再持久化“已处理”。票据或入口解析失败时保留原通知，用户可以重试。
-      const gatewayHref = isLlmGatewayAction && actionUrl
-        ? await resolveLlmGatewayHref(actionUrl)
-        : null;
-      if (isLlmGatewayAction && actionUrl && !gatewayHref) return;
-      const res = await handleAdminNotification(id);
-      if (!res.success) return;
-      setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, status: 'closed' as const } : n));
-      setDismissedToastIds((prev) => {
-        const next = new Set(prev);
-        next.add(id);
-        try { sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next))); } catch { /* noop */ }
-        return next;
-      });
-      // 站内路由跳转在 handle 成功后进行（SPA navigate 不受手势激活限制）
-      if (gatewayHref) {
-        window.location.assign(gatewayHref);
-      } else if (actionUrl && !isExternal) {
-        navigate(actionUrl);
-      }
-    } finally {
-      setHandlingId(null);
-      await loadNotifications({ silent: true });
-    }
-  }, [loadNotifications, navigate, resolveLlmGatewayHref]);
+  const refreshNotifications = useCallback(() => loadNotifications(), [loadNotifications]);
+  const { openNotification, confirmNotifications, handlingId, handlingAll } = useNotificationActions({
+    refresh: refreshNotifications, resolveGatewayHref: resolveLlmGatewayHref,
+  });
+  const handleNotification = useCallback(async (id: string, actionUrl?: string | null) => {
+    const item = activeNotifications.find(notification => notification.id === id);
+    if (!item) return;
+    if (actionUrl) await openNotification(item);
+    else await confirmNotifications([item], false);
+  }, [activeNotifications, confirmNotifications, openNotification]);
+  const handleAllNotifications = useCallback(() => confirmNotifications(activeNotifications, true), [activeNotifications, confirmNotifications]);
 
-  const handleAllNotifications = useCallback(async () => {
-    setHandlingAll(true);
-    // 乐观更新：立即清空本地
-    setNotifications((prev) => prev.map((n) => ({ ...n, status: 'closed' as const })));
-    setDismissedToastIds(new Set());
-    try {
-      sessionStorage.removeItem('dismissedToastIds');
-    } catch { /* noop */ }
-    try {
-      await handleAllAdminNotifications();
-    } finally {
-      setHandlingAll(false);
-      await loadNotifications({ silent: true });
-    }
-  }, [loadNotifications]);
-
-  // 一键已读：仅从视图隐藏，不标记已处理
+  // 收起当前弹窗：不改变通知确认状态或故障状态
   const dismissAllToasts = useCallback(() => {
     setDismissedToastIds((prev) => {
       const next = new Set(prev);
-      for (const n of activeNotifications) next.add(n.id);
+      for (const n of activeNotifications) next.add(notificationToastKey(n));
       try {
         sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next)));
       } catch { /* noop */ }
@@ -799,7 +770,8 @@ export default function AppShell() {
   const dismissToast = useCallback((id: string) => {
     setDismissedToastIds((prev) => {
       const next = new Set(prev);
-      next.add(id);
+      const item = activeNotifications.find(notification => notification.id === id);
+      if (item) next.add(notificationToastKey(item));
       try {
         sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next)));
       } catch {
@@ -807,7 +779,7 @@ export default function AppShell() {
       }
       return next;
     });
-  }, []);
+  }, [activeNotifications]);
 
   // 自动消失逻辑：悬浮或收缩时暂停计时
   // 关键修复：超时后一次性 dismiss 全部当前通知，防止逐条弹出形成无限循环
@@ -817,7 +789,7 @@ export default function AppShell() {
     const timer = window.setTimeout(() => {
       setDismissedToastIds((prev) => {
         const next = new Set(prev);
-        for (const n of activeNotifications) next.add(n.id);
+        for (const n of activeNotifications) next.add(notificationToastKey(n));
         try {
           sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next)));
         } catch { /* noop */ }
@@ -950,7 +922,7 @@ export default function AppShell() {
                   >
                     {variant.label}
                   </span>
-                  <span className="text-[13px] font-semibold leading-snug truncate" style={{ color: 'var(--text-primary)' }}>
+                  <span className="text-[13px] font-semibold leading-snug break-words" style={{ color: 'var(--text-primary)' }}>
                     {toastNotification.title}
                   </span>
                   {notificationCount > 0 && (
@@ -958,7 +930,7 @@ export default function AppShell() {
                       className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none"
                       style={{ background: tone.bg, color: tone.text }}
                     >
-                      {notificationCount > 999 ? '999+' : notificationCount} 条
+                      {notificationCount > 999 ? '999+' : notificationCount} 条通知
                     </span>
                   )}
                 </div>
@@ -980,8 +952,8 @@ export default function AppShell() {
                 className="h-7 w-7 shrink-0 inline-flex items-center justify-center rounded-full transition-colors hover-bg-soft"
                 style={{ color: 'var(--text-muted)' }}
                 onClick={() => dismissToast(toastNotification.id)}
-                aria-label="稍后提醒"
-                title="稍后提醒"
+                aria-label="收起本次弹窗"
+                title="仅收起本次弹窗；通知保留在列表中"
               >
                 <X size={14} />
               </button>
@@ -1038,27 +1010,29 @@ export default function AppShell() {
                 </div>
               )}
             </div>
+            <div className="pl-[58px] pr-4 mt-2"><NotificationFacts item={toastNotification} /></div>
             {/* 底部操作:两段式 —— 批量行(多条时) + 单条行,避免 4 个按钮挤在一行换行错乱 */}
             <div className="pl-[58px] pr-4 pt-2.5 pb-3.5 flex flex-col gap-2">
               {notificationCount > 1 && (
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    disabled={handlingAll}
+                    disabled={handlingAll || Boolean(handlingId)}
                     className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-[9px] transition-all duration-100 hover:brightness-110 active:scale-[0.97] active:brightness-90 disabled:opacity-60 disabled:cursor-not-allowed"
                     style={{ background: 'rgba(255,165,0,0.16)', color: 'var(--accent-gold)', border: '1px solid rgba(255,165,0,0.28)' }}
                     onClick={handleAllNotifications}
                   >
                     {handlingAll ? <MapSpinner size={12} /> : null}
-                    全部处理 ({notificationCount > 999 ? '999+' : notificationCount})
+                    确认当前 {notificationCount} 条通知
                   </button>
                   <button
                     type="button"
                     className="shrink-0 px-3 py-1.5 text-[12px] rounded-[9px] transition-all duration-100 hover-bg-soft active:scale-[0.97]"
                     style={{ background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
                     onClick={dismissAllToasts}
+                    title="仅收起当前列表中通知的弹窗，通知仍保留在列表；不会改变故障状态"
                   >
-                    全部忽略
+                    收起 {notificationCount} 条弹窗
                   </button>
                 </div>
               )}
@@ -1120,23 +1094,23 @@ export default function AppShell() {
                 {toastNotification.actionUrl && (
                   <button
                     type="button"
-                    disabled={handlingId === toastNotification.id}
+                    disabled={handlingAll || Boolean(handlingId)}
                     className="px-3 py-1.5 text-[12px] rounded-[9px] transition-all duration-100 hover-bg-soft active:scale-[0.97] disabled:opacity-60"
                     style={{ background: 'var(--nested-block-bg)', color: 'var(--text-primary)' }}
-                    onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl, toastNotification.actionKind)}
+                    onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl)}
                   >
-                    {toastNotification.actionLabel || '查看详情'}
+                    {toastNotification.actionLabel || '查看对应对象'}
                   </button>
                 )}
                 <button
                   type="button"
-                  disabled={handlingId === toastNotification.id}
+                  disabled={handlingAll || Boolean(handlingId)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-[9px] transition-all duration-100 hover:brightness-110 active:scale-[0.97] active:brightness-90 disabled:opacity-60 disabled:cursor-not-allowed"
                   style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
                   onClick={() => handleNotification(toastNotification.id)}
                 >
                   {handlingId === toastNotification.id ? <MapSpinner size={12} color="var(--accent-on-gold)" /> : null}
-                  标记已处理
+                  确认通知
                 </button>
               </div>
             </div>
@@ -1897,20 +1871,26 @@ export default function AppShell() {
                   <>
                 <div className="flex items-center justify-between">
                   <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                    {notificationsLoading ? '加载中...' : `未处理 ${notificationCount > 999 ? '999+' : notificationCount} 条`}
+                    {notificationsLoading ? '加载中...' : `待确认 ${notificationCount} 条通知`}
                   </div>
                   <button
                     type="button"
                     className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] transition-all hover-bg-soft active:scale-[0.97]"
                     style={{ background: 'var(--nested-block-bg)', color: 'var(--text-primary)' }}
                     onClick={() => handleAllNotifications()}
-                    disabled={notificationCount === 0}
+                    disabled={notificationCount === 0 || handlingAll || Boolean(handlingId)}
                   >
                     <CheckCircle2 size={14} />
-                    一键处理
+                    确认当前 {notificationCount} 条通知
                   </button>
                 </div>
 
+                <div className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  {notificationSummary && <div>{notificationSummary.independentIncidentCount} 个已识别独立故障 · {notificationSummary.unclassifiedCount} 条未分类通知</div>}
+                  <div>确认只更新通知处理状态，不代表故障已修复。共享通知的确认对所有有权查看者生效。</div>
+                  {notificationsHaveMore && <div>当前只显示最近一批通知；批量确认只作用于当前列表。</div>}
+                  <button type="button" className="mt-1 underline" disabled={notificationsLoading} onClick={() => void loadNotifications()}>刷新通知列表</button>
+                </div>
                 <div className="flex-1 overflow-auto pr-2 space-y-4">
                   {notificationSections.map((section) => (
                     <section key={section.key} className="space-y-2">
@@ -2021,7 +2001,7 @@ export default function AppShell() {
                                   </div>
                                 )}
                                 <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                  {new Date(item.createdAt).toLocaleString()}
+                                  <NotificationFacts item={item} />
                                 </div>
                               </div>
                               <div className="shrink-0 flex flex-row sm:flex-col items-stretch sm:items-end gap-2">
@@ -2030,9 +2010,9 @@ export default function AppShell() {
                                     type="button"
                                     className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover-bg-soft active:scale-[0.97]"
                                     style={{ background: 'var(--nested-block-bg)', color: 'var(--text-primary)' }}
-                                    onClick={() => handleNotification(item.id, item.actionUrl, item.actionKind)}
+                                    onClick={() => handleNotification(item.id, item.actionUrl)}
                                   >
-                                    {item.actionLabel || '去处理'}
+                                    {item.actionLabel || '查看对应对象'}
                                   </button>
                                 )}
                                 <button
@@ -2040,8 +2020,10 @@ export default function AppShell() {
                                   className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:brightness-110 active:scale-[0.97]"
                                   style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
                                   onClick={() => handleNotification(item.id)}
+                                  disabled={handlingAll || Boolean(handlingId)}
+                                  title="仅确认通知，不会修复故障；共享通知的确认对所有有权查看者生效"
                                 >
-                                  标记已处理
+                                  确认通知
                                 </button>
                               </div>
                             </div>

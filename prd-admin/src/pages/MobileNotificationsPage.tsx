@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Bell,
   CheckCircle2,
   Download,
   Paperclip,
 } from 'lucide-react';
-import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications } from '@/services';
+import { getAdminNotifications } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { AS_COLOR, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
 import { useAppStoreColors } from '@/hooks/useAppStoreColors';
-import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
+import { NotificationFacts } from '@/components/notifications/NotificationFacts';
+import { useNotificationActions } from '@/components/notifications/useNotificationActions';
+import type { GetAdminNotificationsResponse } from '@/services/contracts/notifications';
 import { toast } from '@/lib/toast';
 
 /* ── 通知色调背景（iOS 语义色轻底，双主题通用；卡片边框/徽章走 registry 的 accent） ── */
@@ -27,22 +28,29 @@ function getToneBg(level?: string) {
 }
 
 /**
- * 移动端系统通知页 — 展示全部通知，支持单条/一键处理。
+ * 移动端系统通知页 — 展示全部通知，支持单条/确认当前 {activeNotifications.length} 条通知。
  * App Store 设计系统：纯黑/白双皮肤 + iOS 系统色 + SF 字体。
  */
 export default function MobileNotificationsPage() {
   const C = useAppStoreColors();
-  const navigate = useNavigate();
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [handlingIds, setHandlingIds] = useState<Set<string>>(new Set());
+  const [summary, setSummary] = useState<GetAdminNotificationsResponse['summary']>();
+  const [hasMore, setHasMore] = useState(false);
 
   const loadNotifications = useCallback(async () => {
     setLoading(true);
-    const res = await getAdminNotifications({ includeHandled: true });
-    if (res.success) setNotifications(res.data.items ?? []);
-    setLoading(false);
+    try {
+      const res = await getAdminNotifications({ includeHandled: true });
+      if (res.success) {
+        setNotifications(res.data.items ?? []);
+        setSummary(res.data.summary);
+        setHasMore(Boolean(res.data.hasMore));
+      } else toast.error('通知读取失败', res.error?.message ?? '请稍后刷新重试。');
+    } catch { toast.error('通知读取失败', '请稍后刷新重试，已有列表已保留。'); }
+    finally { setLoading(false); }
   }, []);
+  const { openNotification, confirmNotifications, handlingId, handlingAll } = useNotificationActions({ refresh: loadNotifications });
 
   useEffect(() => { void loadNotifications(); }, [loadNotifications]);
 
@@ -68,66 +76,6 @@ export default function MobileNotificationsPage() {
     [visibleNotifications],
   );
 
-  const handleOne = useCallback(async (id: string) => {
-    setHandlingIds((s) => new Set(s).add(id));
-    const res = await handleAdminNotification(id);
-    if (res.success) {
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === id ? { ...n, status: 'handled' as const, handledAt: new Date().toISOString() } : n)),
-      );
-    }
-    setHandlingIds((s) => { const next = new Set(s); next.delete(id); return next; });
-  }, []);
-
-  // 点击通知本体：标记已处理后一键跳到目标页面（如缺陷解决通知 → 该缺陷本身）
-  const openNotification = useCallback(async (item: AdminNotificationItem) => {
-    const url = item.actionUrl;
-    if (!url) return;
-    const isLlmGatewayAction = item.actionKind === 'llm-gateway';
-    // 外部链接（actionKind=external 或绝对 URL）必须在用户点击的同步栈内打开，
-    // 否则 await 之后丢失用户手势激活，会被移动端浏览器拦截弹窗。
-    const isExternal = !isLlmGatewayAction && (item.actionKind === 'external' || /^https?:\/\//i.test(url));
-    if (isExternal) window.open(url, '_blank', 'noopener,noreferrer');
-    setHandlingIds((s) => new Set(s).add(item.id));
-    try {
-      // 先签发并校验网关深链，再持久化“已处理”。票据或入口解析失败时保留原通知，用户可以重试。
-      let gatewayHref: string | null = null;
-      if (isLlmGatewayAction) {
-        const ticket = await createLlmGatewaySsoTicket();
-        if (!ticket.success) {
-          toast.error('模型网关暂时无法打开', ticket.error?.message);
-          return;
-        }
-        const resolution = resolveLlmGatewaySso(ticket.data.code, ticket.data.console, url);
-        if (!resolution.ok) {
-          toast.error('模型网关暂时无法打开', resolution.message);
-          return;
-        }
-        gatewayHref = resolution.href;
-      }
-      const res = await handleAdminNotification(item.id);
-      if (!res.success) return;
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === item.id ? { ...n, status: 'handled' as const, handledAt: new Date().toISOString() } : n)),
-      );
-      if (gatewayHref) {
-        window.location.assign(gatewayHref);
-      } else if (!isExternal) {
-        navigate(url);
-      }
-    } finally {
-      setHandlingIds((s) => { const next = new Set(s); next.delete(item.id); return next; });
-    }
-  }, [navigate]);
-
-  const handleAll = useCallback(async () => {
-    const res = await handleAllAdminNotifications();
-    if (res.success) {
-      setNotifications((prev) =>
-        prev.map((n) => n.status === 'open' ? { ...n, status: 'handled' as const, handledAt: new Date().toISOString() } : n),
-      );
-    }
-  }, []);
 
   return (
     <div className="h-full min-h-0 overflow-auto" style={{ background: C.bg, fontFamily: AS_FONT_FAMILY }}>
@@ -136,28 +84,35 @@ export default function MobileNotificationsPage() {
         {/* ── 头部操作栏 ── */}
         <div className="flex items-center justify-between mb-4">
           <div className="text-xs" style={{ color: C.labelSecondary }}>
-            {loading ? '加载中...' : `${activeNotifications.length} 条未处理`}
+            {loading ? '加载中...' : `${activeNotifications.length} 条待确认通知`}
           </div>
           {activeNotifications.length > 0 && (
             <button
               type="button"
               className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-transform active:scale-95"
               style={{ background: C.pillBg, color: C.blue }}
-              onClick={handleAll}
+              onClick={() => void confirmNotifications(activeNotifications, true)}
+              disabled={handlingAll || Boolean(handlingId)}
             >
               <CheckCircle2 size={14} />
-              一键处理
+              确认当前 {activeNotifications.length} 条通知
             </button>
           )}
         </div>
 
+        <div className="mb-3 text-[11px] leading-relaxed" style={{ color: C.labelSecondary }}>
+          {summary && <div>{summary.independentIncidentCount} 个已识别独立故障 · {summary.unclassifiedCount} 条未分类通知</div>}
+          <div>确认只更新通知处理状态，不代表故障已修复。共享通知的确认对所有有权查看者生效。</div>
+          {hasMore && <div>当前仅显示最近一批通知；批量确认只作用于当前列表。</div>}
+          <button type="button" className="mt-1 underline" disabled={loading} onClick={() => void loadNotifications()}>刷新通知列表</button>
+        </div>
         {/* ── 未处理通知 ── */}
         {activeNotifications.length > 0 && (
           <div className="space-y-3 mb-6">
             {activeNotifications.map((item) => {
               const variant = getNotificationType(item);
               const ItemTypeIcon = variant.icon;
-              const isHandling = handlingIds.has(item.id);
+              const isHandling = handlingId === item.id || handlingAll;
               const clickable = !!item.actionUrl;
               return (
                 <div
@@ -212,16 +167,23 @@ export default function MobileNotificationsPage() {
                           ))}
                         </div>
                       )}
-                      <div className="mt-1.5 text-[10px]" style={{ color: C.labelTertiary }}>
-                        {new Date(item.createdAt).toLocaleString('zh-CN')}
-                      </div>
+                      <NotificationFacts item={item} />
+                      {item.actionUrl && <button
+                        type="button"
+                        className="mt-2 rounded-lg px-2 py-1.5 text-[11px]"
+                        style={{ background: C.surface, color: C.blue }}
+                        onClick={(event) => { event.stopPropagation(); void openNotification(item); }}
+                        disabled={handlingAll || Boolean(handlingId)}
+                      >{item.actionLabel || '查看对应对象'}</button>}
                     </div>
                     <button
                       type="button"
                       className="shrink-0 mt-0.5 rounded-lg p-1.5 transition-transform active:scale-90"
                       style={{ background: C.surface }}
-                      onClick={(e) => { e.stopPropagation(); void handleOne(item.id); }}
-                      disabled={isHandling}
+                      onClick={(e) => { e.stopPropagation(); void confirmNotifications([item], false); }}
+                      disabled={handlingAll || Boolean(handlingId)}
+                      aria-label={`确认通知：${item.title}`}
+                      title="仅确认此通知，不会修复故障；共享通知的确认对所有有权查看者生效"
                     >
                       {isHandling
                         ? <MapSpinner size={14} color={C.labelSecondary} />
@@ -247,16 +209,16 @@ export default function MobileNotificationsPage() {
         {handledNotifications.length > 0 && (
           <div>
             <div className="text-xs font-medium mb-3" style={{ color: C.labelSecondary }}>
-              已处理
+              已确认通知（不代表故障已修复）
             </div>
             <div className="space-y-2">
               {handledNotifications.slice(0, 20).map((item) => (
                 <div
                   key={item.id}
-                  className="rounded-xl px-4 py-3 opacity-60"
+                  className="rounded-xl px-4 py-3"
                   style={{ background: C.card, border: `1px solid ${C.hairline}` }}
                 >
-                  <div className="text-[12px] font-medium truncate" style={{ color: C.label }}>
+                  <div className="text-[12px] font-medium break-words" style={{ color: C.label }}>
                     {item.title}
                   </div>
                   {item.message && (
@@ -264,8 +226,10 @@ export default function MobileNotificationsPage() {
                       {item.message}
                     </div>
                   )}
+                  <NotificationFacts item={item} />
+                  {item.actionUrl && <button type="button" className="mt-2 text-[12px]" style={{ color: C.blue }} onClick={() => void openNotification(item)}>{item.actionLabel || '查看对应对象'}</button>}
                   <div className="mt-1 text-[10px]" style={{ color: C.labelTertiary }}>
-                    {item.handledAt ? `处理于 ${new Date(item.handledAt).toLocaleString('zh-CN')}` : '已处理'}
+                    {item.handledAt ? `确认于 ${new Date(item.handledAt).toLocaleString('zh-CN')}` : '已确认通知'}
                   </div>
                 </div>
               ))}
