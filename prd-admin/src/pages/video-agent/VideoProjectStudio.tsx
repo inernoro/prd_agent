@@ -459,7 +459,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
           {recentWorkCount > 0 ? (
             <div className="video-create-project-grid">
               {projects.slice(0, 6).map((item) => (
-                <button key={item.id} className={item.id === project?.id ? 'is-active' : ''} onClick={() => onSelectProject(item)}>
+                <button key={item.id} className={item.id === project?.id ? 'is-active' : ''} onClick={() => item.latestRunId ? onOpenRun(item.latestRunId) : onSelectProject(item)}>
                   <ProjectCover mediaUrl={coverForProject(item)} status={item.status} />
                   <span className="video-create-project-copy"><strong>{resolveVideoTitle(item.title, item.updatedAt, 28)}</strong><small>{new Date(item.updatedAt).toLocaleDateString('zh-CN')}</small></span>
                   <ArrowUpRight size={15} />
