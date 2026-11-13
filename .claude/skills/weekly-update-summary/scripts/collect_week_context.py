@@ -22,7 +22,7 @@ git 只能回答「改了什么代码」，回答不了老板/产品经理真正
   MAP 侧同 publish.py —— DAILY_DOC_STORE_KEY / MAP_DOC_STORE_KEY 优先，回退 AI_ACCESS_KEY + impersonate。
   CDS 侧一律走 cdscli（禁止手拼 URL / 自己 slugify，见 CLAUDE.md 规则 11）。
 """
-import argparse, contextlib, json, os, re, subprocess, sys, time
+import argparse, contextlib, hashlib, json, os, re, subprocess, sys, time
 from urllib.parse import quote as _urlquote
 
 API = "/api/document-store"
@@ -35,7 +35,7 @@ VERDICTS = ("pass", "conditional", "fail")
 def _curl(args, retries=3):
     last = ""
     for i in range(retries):
-        r = subprocess.run(["curl", "-s", "--max-time", "90"] + args,
+        r = subprocess.run(["curl", "-s", "-A", "Mozilla/5.0", "--max-time", "90"] + args,
                            capture_output=True, text=True)
         last = r.stdout
         try:
@@ -148,6 +148,8 @@ def _cds_api(path):
         raise RuntimeError(f"CDS {path} 网络不可达：{(body or {}).get('message') or (body or {}).get('error')}")
     if status != 200:
         raise RuntimeError(f"CDS {path} 返回 {status}")
+    if isinstance(body, dict):
+        body = {**body, "_sourceUrl": _CDSCLI_MOD._cds_base().rstrip("/") + path}
     return body
 
 
@@ -170,8 +172,18 @@ def _find_store(base, H, name):
 
 
 def _in_week(date_text, start, end):
-    """统一用日期文本比较（同 SKILL.md 纪律 1：不做时区换算）。"""
-    return bool(date_text) and start <= date_text[:10] <= end
+    """CDS/MAP时间戳按报告时区归桶；仅日期文本保持日期精度。Git另保留原提交时间。"""
+    if not date_text:
+        return False
+    day = date_text[:10]
+    if len(date_text) > 10:
+        import datetime as dt
+        from zoneinfo import ZoneInfo
+        value = dt.datetime.fromisoformat(date_text.replace("Z", "+00:00"))
+        if value.tzinfo is None:
+            raise ValueError("来源时间戳缺少时区，不能确定周期归属")
+        day = value.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    return start <= day <= end
 
 
 # ── 来源 1：日报知识库（本周逐日日报 + 可分享深链） ────────────────────────
@@ -188,12 +200,16 @@ def collect_daily_reports(base, H, start, end):
         res = _curl(H + [f"{base}{API}/stores/{sid}/entries?page={page}&pageSize=200&all=true&excludeFolders=true"])
         data = res.get("data") or {}
         items = data.get("items") or []
+        if not res.get("success"):
+            raise RuntimeError("列出日报失败，不能把来源故障当作本周没有日报")
         entries += items
-        if len(entries) >= (data.get("total") or 0) or not items:
+        if data.get("hasNextPage") is False or not items or (data.get("total") is not None and len(entries) >= data["total"]):
+            break
+        if data.get("hasNextPage") is None and data.get("total") is None and len(items) < 200:
             break
         page += 1
         if page > 50:
-            break
+            raise RuntimeError("日报条目分页未完成，不能认证本期日报集合完整")
 
     # entryId -> 分享 token，用于给非登录读者一个可点开的链接。
     # 必须同时排除已撤销与已过期：匿名端点对过期 token 直接 404，
@@ -211,8 +227,8 @@ def collect_daily_reports(base, H, start, end):
                 try:
                     if _dt.datetime.fromisoformat(exp.replace("Z", "+00:00")) <= now:
                         continue                    # 已过期，跳过
-                except Exception:
-                    pass                            # 解析不了就不当过期处理，交由读者实际点击暴露
+                except (ValueError, TypeError):
+                    continue                        # 到期时间无法核查，不把可能失效的分享链当可用来源
             tok.setdefault(l["entryId"], l.get("token"))
     except Exception:
         pass
@@ -227,17 +243,43 @@ def collect_daily_reports(base, H, start, end):
         if not _in_week(d, start, end):
             continue
         t = tok.get(e["id"])
+        content, content_reason = None, None
+        source_url = f"{base}{API}/entries/{e['id']}/content"
+        try:
+            response = _curl(H + [source_url])
+            if not response.get("success"):
+                raise RuntimeError("日报正文读取未成功")
+            content = (response.get("data") or {}).get("content")
+            if not isinstance(content, str):
+                raise ValueError("日报正文端点未返回原文")
+        except Exception as error:
+            content_reason = str(error)[:160]
         out.append({
-            "date": d,
-            "title": e.get("title"),
-            "entryId": e["id"],
+            "date": d, "title": e.get("title"), "entryId": e["id"],
+            "sourceUrl": source_url,
             "shareUrl": f"{base}/s/lib/{t}?entry={e['id']}" if t else None,
-            "summary": (e.get("summary") or "").strip()[:400] or None,
+            "summary": (e.get("summary") or "").strip() or None,
+            "content": content, "contentAvailable": content is not None,
+            "contentReason": content_reason,
+            "contentSha256": hashlib.sha256(content.encode()).hexdigest() if content is not None else None,
+            "createdAt": e.get("createdAt"), "updatedAt": e.get("updatedAt"),
+            "metadata": {key: md[key] for key in ("kind", "dailyDate", "format", "lastCommit", "coverFrom", "coverTo", "deliveryEvidenceLedger", "deliveryLedger", "evidenceLedger", "deliveryEvidenceDigest", "deliveryEvidenceStatus") if key in md},
         })
     out.sort(key=lambda x: x["date"])
     missing = [d for d in _date_range(start, end) if d not in {o["date"] for o in out}]
     return {"available": True, "storeId": sid, "items": out,
             "count": len(out), "missingDates": missing}
+
+
+def _source_day(value):
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+    if not value:
+        return None
+    timestamp = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if timestamp.tzinfo is None:
+        raise ValueError("来源时间戳缺少时区")
+    return timestamp.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
 
 
 def _date_range(start, end):
@@ -278,15 +320,20 @@ def collect_acceptance(project, start, end):
         items.append({
             "id": r.get("id"),
             "title": r.get("title"),
-            "date": (r.get("createdAt") or "")[:10],
+            "date": _source_day(r.get("createdAt")),
+            "createdAt": r.get("createdAt"), "updatedAt": r.get("updatedAt"),
             "verdict": (r.get("verdict") or "unknown").lower(),
             "category": classify_acceptance(r.get("title")),
             "tier": r.get("tier"),
             "prNumber": r.get("prNumber"),
             "branch": r.get("branch"),
-            "commitSha": (r.get("commitSha") or "")[:7] or None,
+            "commitSha": r.get("commitSha") or None,
             "projectSlug": r.get("projectSlug"),
-            "deeplink": None,   # 逐条取深链慢，--deeplinks 时回填
+            "scope": r.get("scope"), "workItemId": r.get("workItemId"),
+            "workItemIds": r.get("workItemIds"), "workItemTitle": r.get("workItemTitle"),
+            "occurredAt": r.get("occurredAt"), "timeBasis": r.get("timeBasis"),
+            "excerpt": r.get("excerpt") or json.dumps({key: r.get(key) for key in ("id", "title", "verdict", "commitSha", "createdAt", "scope", "prNumber")}, ensure_ascii=False),
+            "deeplink": acceptance_deeplink(r.get("id")),
         })
     items.sort(key=lambda x: (x["date"], x["title"] or ""))
     tally = {v: sum(1 for i in items if i["verdict"] == v) for v in VERDICTS}
@@ -311,7 +358,7 @@ def collect_acceptance(project, start, end):
         "featureCount": len(feat),
         "note": "verdict 口径：pass 通过 / conditional 有条件通过 / fail 未通过。"
                 "整体通过率含每日巡检（例行全量扫描，天然易红）；featurePassRate 只算功能验收，"
-                "更贴近『本周做的功能靠不靠谱』。",
+                "仅是按标题分类的报告通过率，不等于事项功能验证完成率。",
     }
 
 
@@ -583,25 +630,33 @@ def collect_releases(project, start, end):
     # 参数与 key 绑定的 projectId 精确比对，不一致直接 403 —— 而 403 会让 _cds_api 抛错、
     # 整个来源变不可用，连下面的回退都跑不到。
     scope_warn = None
+    release_source = None
+
+    def read_runs(path):
+        nonlocal release_source
+        response = _cds_api(path) or {}
+        release_source = response.get("_sourceUrl") or release_source
+        return response.get("runs") or []
+
     scope_key = canonical_id or project
     q = "/api/releases/runs"
     if project:
         q += "?project=" + _urlquote(str(scope_key))
     try:
-        runs = ((_cds_api(q) or {}).get("runs")) or []
+        runs = read_runs(q)
     except Exception as e:
         # 带 scope 的查询失败（403 / 端点不支持该参数 / 其它）不该拖垮整个来源：
         # 退回不带 scope 的全量查询 + 客户端匹配，并如实告警。
         scope_warn = (f"服务端 ?project={scope_key} 查询失败（{str(e)[:80]}），"
                       f"已回退到全量查询 + 客户端按标识匹配")
-        runs = [r for r in (((_cds_api("/api/releases/runs") or {}).get("runs")) or []) if _mine(r)]
+        runs = [r for r in read_runs("/api/releases/runs") if _mine(r)]
     if project and not runs and not scope_warn:
         # 空结果有两种可能：真的没发过，或**传进去的写法服务端不认**。
         # 实测该端点只认 run 里存的那个 projectId 字面量（本仓库是 slug `prd-agent`），
         # 传项目名 `MAP` 或 hex id 一律返回 0 —— 直接信这个 0 等于把静默错误从客户端
         # 搬到服务端。故再拉一次全量做交叉验证：全量里若有属于本项目标识的 run，
         # 说明刚才那个写法没被认出来，回退到客户端匹配并告警。
-        allruns = ((_cds_api("/api/releases/runs") or {}).get("runs")) or []
+        allruns = read_runs("/api/releases/runs")
         fallback = [r for r in allruns if _mine(r)]
         if fallback:
             runs = fallback
@@ -618,10 +673,14 @@ def collect_releases(project, start, end):
             continue
         sel.append({
             "releaseId": r.get("releaseId"),
-            "date": (r.get("startedAt") or "")[:10],
-            "status": r.get("status"),
-            "commitSha": (r.get("commitSha") or "")[:7] or None,
-            "projectId": r.get("projectId"),
+            "date": _source_day(r.get("startedAt")), "startedAt": r.get("startedAt"),
+            "finishedAt": r.get("finishedAt"), "status": r.get("status"),
+            "commitSha": r.get("commitSha") or None, "projectId": r.get("projectId"),
+            "targetId": r.get("targetId"), "rollbackOf": r.get("rollbackOf"),
+            "environment": r.get("environment"), "workItemIds": r.get("workItemIds"),
+            "workItemId": r.get("workItemId"), "workItemTitle": r.get("workItemTitle"),
+            "sourceUrl": r.get("sourceUrl") or release_source,
+            "excerpt": json.dumps({key: r.get(key) for key in ("releaseId", "status", "commitSha", "startedAt", "finishedAt", "targetId", "rollbackOf")}, ensure_ascii=False),
         })
     sel.sort(key=lambda x: x["date"])
 
@@ -696,16 +755,43 @@ def collect_preview_deploys(project, start, end):
 
 
 # ── 来源 5：上周周报（保证「上周方向落地对照」有据可依） ────────────────────
-def collect_prev_weekly(base, H, prev_title_hint):
+def collect_prev_weekly(base, H, prev_title_hint, before_date=""):
     store = _find_store(base, H, WEEKLY_STORE)
     if not store:
         return {"available": False, "reason": f"未找到「{WEEKLY_STORE}」"}
-    sid = store["id"]
-    res = _curl(H + [f"{base}{API}/stores/{sid}/entries?page=1&pageSize=200&excludeFolders=true"])
-    items = ((res.get("data") or {}).get("items")) or []
-    hit = next((e for e in items if prev_title_hint and prev_title_hint in (e.get("title") or "")), None)
-    return {"available": True, "storeId": sid,
-            "prevEntry": {"title": hit.get("title"), "entryId": hit.get("id")} if hit else None}
+    sid, entries, page = store["id"], [], 1
+    while True:
+        res = _curl(H + [f"{base}{API}/stores/{sid}/entries?page={page}&pageSize=200&all=true&excludeFolders=true"])
+        if not res.get("success"):
+            raise RuntimeError("读取上期/本期已发布周报失败，不能认证历史完整")
+        data = res.get("data") or {}
+        batch = data.get("items") or []
+        entries.extend(batch)
+        if data.get("hasNextPage") is False or not batch or (data.get("total") is not None and len(entries) >= data["total"]):
+            break
+        if data.get("hasNextPage") is None and data.get("total") is None and len(batch) < 200:
+            break
+        page += 1
+        if page > 200:
+            raise RuntimeError("周报条目分页未完成，不能认证历史完整")
+    def day(entry):
+        return ((entry.get("metadata") or {}).get("dailyDate") or "")[:10]
+    entries.sort(key=lambda entry: (day(entry), entry.get("updatedAt") or ""), reverse=True)
+    eligible = [entry for entry in entries if (entry.get("metadata") or {}).get("kind") == "weekly-report"]
+    hit = next((entry for entry in entries if prev_title_hint and prev_title_hint in (entry.get("title") or "")), None)
+    if hit is None and before_date:
+        hit = next((entry for entry in eligible if day(entry) and day(entry) < before_date), None)
+    current = next((entry for entry in eligible if before_date and day(entry) == before_date), None)
+    def snapshot(entry):
+        if not entry:
+            return None
+        return {"title": entry.get("title"), "entryId": entry.get("id"),
+                "sourceUrl": f"{base}{API}/entries/{entry['id']}/content",
+                "createdAt": entry.get("createdAt"), "updatedAt": entry.get("updatedAt"),
+                "metadata": {key: value for key, value in (entry.get("metadata") or {}).items()
+                             if key in ("kind", "dailyDate", "lastCommit", "coverFrom", "coverTo", "deliveryEvidenceLedger", "deliveryEvidenceDigest", "deliveryEvidenceStatus")}}
+    return {"available": True, "storeId": sid, "prevEntry": snapshot(hit), "currentEntry": snapshot(current)}
+
 
 
 def assert_not_shallow():
@@ -744,17 +830,35 @@ def assert_not_shallow():
     sys.exit(2)
 
 
-def collect_evidence_ledger(path, start, end):
-    """The shared ledger is a separate source; absence must never look like zero delivery."""
-    if not path:
-        return {"available": False, "reason": "未提供事项证据台账；不得由提交量推断成果、效率、工时或收益"}
-    import pathlib
-    import runpy
-    engine = pathlib.Path(__file__).resolve().parents[4] / "scripts/reporting/evidence.py"
-    api = runpy.run_path(str(engine))
-    with open(path, encoding="utf-8") as f:
-        ledger = json.load(f)
-    return {"available": True, "report": api["analyze"](ledger, start, end, "weekly")}
+def _delivery_module():
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location("skill_delivery_evidence", Path(__file__).with_name("delivery_evidence.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def update_delivery_evidence(context, args):
+    """每次正式采集都更新同一台账：旧期、本期和本次成功来源共同重建。"""
+    from pathlib import Path
+    module = _delivery_module()
+    ledger_path = Path(args.evidence_ledger) if args.evidence_ledger else module.default_ledger_path(args.repo, args.project)
+    destination = Path(args.ledger_out) if args.ledger_out else ledger_path
+    prior = module.read_ledger(ledger_path)
+    if destination.resolve() != ledger_path.resolve() and destination.exists():
+        prior = module.engine()["merge_ledgers"]([prior, module.read_ledger(destination)])
+    if args.evidence_input:
+        context["sourceEvidence"] = json.loads(Path(args.evidence_input).read_text())
+    prs = json.loads(Path(args.pull_requests).read_text()) if args.pull_requests else []
+    if isinstance(prs, dict):
+        prs = prs.get("items") or prs.get("pullRequests") or []
+    if not isinstance(prs, list):
+        raise ValueError("PR来源必须是原始PR对象数组")
+    ledger, coverage = module.collect_context_evidence(context, prior, args.repo, args.mainline, args.git_head, prs, getattr(args, "git_base", None))
+    report = module.engine()["analyze"](ledger, context["weekStart"], context["weekEnd"], args.cadence)
+    module.write_ledger(destination, ledger)
+    return {"available": True, "ledgerPath": str(destination.resolve()), "ledger": ledger, "report": report, "gitCoverage": coverage}
 
 
 def main():
@@ -769,7 +873,15 @@ def main():
     p.add_argument("--doc-dir", default="doc", help="周报底稿所在目录，采用度回溯要读它")
     p.add_argument("--adoption-lookback", type=int, default=4,
                    help="上线→采用回溯几周（默认 4：本周之前的 4 份周报）")
-    p.add_argument("--evidence-ledger", default="", help="跨周期事项证据台账 JSON，缺失时明确标记不可用")
+    p.add_argument("--evidence-ledger", default="", help="持久连续台账输入；默认git共用目录report-skills/<project-hash>.json，同路径续写")
+    p.add_argument("--ledger-out", default="", help="可选输出台账；已有本期输出也参与合并，避免重采退回上期")
+    p.add_argument("--evidence-input", default="", help="经来源核查的补充schemaVersion=1台账，不解析自然语言猜阶段")
+    p.add_argument("--repo", default=".")
+    p.add_argument("--mainline", default="", help="origin/<默认分支>，空时读取origin/HEAD")
+    p.add_argument("--git-head", default="", help="固定主干截止SHA；空时按截止日期选择主干提交")
+    p.add_argument("--git-base", default="", help="明确的上期SHA水位线，优先于台账head；须为head祖先，不因缺台账退回日历日")
+    p.add_argument("--pull-requests", default="", help="原始PR JSON数组，明确closing引用才跨PR归属事项")
+    p.add_argument("--cadence", choices=("daily", "weekly", "monthly"), default="weekly")
     p.add_argument("--out", default="")
     p.add_argument("--human", action="store_true")
     p.add_argument("--allow-shallow", action="store_true",
@@ -829,11 +941,6 @@ def main():
            "repoDepth": shallow_state}
 
     try:
-        ctx["deliveryEvidence"] = collect_evidence_ledger(a.evidence_ledger, start, end)
-    except (ValueError, OSError, KeyError) as e:
-        ctx["deliveryEvidence"] = {"available": False, "reason": str(e)}
-
-    try:
         H = _headers(a.impersonate)
     except Exception as e:
         H = None
@@ -842,7 +949,7 @@ def main():
     for name, fn in [
         ("dailyReports", lambda: collect_daily_reports(base, H, start, end)),
         ("defects",      lambda: collect_defects(base, H, start, end)),
-        ("prevWeekly",   lambda: collect_prev_weekly(base, H, a.prev_week_hint)),
+        ("prevWeekly",   lambda: collect_prev_weekly(base, H, a.prev_week_hint, start)),
         ("teamInsights", lambda: collect_team_insights(base, H, start, end)),
         ("adoption",     lambda: collect_adoption(base, H, start, end, a.doc_dir, a.adoption_lookback)),
     ]:
@@ -866,7 +973,14 @@ def main():
 
     if a.deeplinks and ctx.get("acceptance", {}).get("available"):
         for it in ctx["acceptance"]["items"]:
-            it["deeplink"] = acceptance_deeplink(it["id"])
+            if not it.get("deeplink"):
+                it["deeplink"] = acceptance_deeplink(it["id"])
+
+    try:
+        ctx["deliveryEvidence"] = update_delivery_evidence(ctx, a)
+    except (ValueError, OSError, KeyError, subprocess.CalledProcessError) as error:
+        ctx["deliveryEvidence"] = {"available": False, "reason": str(error), "preserved": True}
+        sys.stderr.write("[事项证据] 本次更新失败；原台账未改写，不能据此认定无交付或无风险。\n")
 
     blob = json.dumps(ctx, ensure_ascii=False, indent=2)
     if a.out:
@@ -875,6 +989,24 @@ def main():
 
     if a.human:
         print(f"===== 周报关联产物采集 {start} ~ {end} =====")
+        evidence = ctx.get("deliveryEvidence") or {}
+        if evidence.get("available"):
+            facts = evidence["report"]
+            labels = _delivery_module().engine()["LABELS"]
+            print(f"[事项连续跟踪] {len(facts['items'])} 个事项；台账 {evidence['ledgerPath']}")
+            if not facts.get("historyComplete"):
+                print("   历史覆盖尚未核实，本期新增成果数不可确认；不把首次采到的记录当新增。")
+            for item in facts["items"]:
+                current = item["current"]
+                print(f"   {item['workItemId']}  {item['title']}：功能{labels[current['code']]} / 验证{labels[current['validation']]} / 上线{labels[current['release']]}")
+                if current.get("blocked"):
+                    print("     阻塞：" + str(current.get("blockReason")))
+                if current.get("ciFailed"):
+                    print("     CI测试失败；不能据此替代功能验收结论。")
+            print(f"   未归属来源 {len(facts.get('unassignedEvidence', []))} 条；效率/工时/收益没有同口径来源时不可用。")
+        else:
+            print("[事项连续跟踪] 不可用：" + str(evidence.get("reason")))
+
         d = ctx.get("dailyReports", {})
         if d.get("available"):
             print(f"[日报] {d['count']} 篇" + (f"，缺 {', '.join(d['missingDates'])}" if d.get("missingDates") else "，逐日齐全"))
