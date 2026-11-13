@@ -27,7 +27,8 @@ public static class ChatAgentToolPresentation
 
     public sealed record KnowledgeRetrievalEvidence(
         string? Mode, IReadOnlyList<string> RetrievedEntryIds,
-        IReadOnlyList<string> ContextEntryIds, double? RetrievalLatencyMs);
+        IReadOnlyList<string> ContextEntryIds, double? RetrievalLatencyMs,
+        string? EmbeddingModel = null, int? EmbeddingDimension = null);
 
     public static string? TrackToolName(Dictionary<string, string> names, string? tool, string? toolUseId)
     {
@@ -184,7 +185,10 @@ public static class ChatAgentToolPresentation
                             root.TryGetProperty("mode", out var mode) && mode.ValueKind == JsonValueKind.String ? mode.GetString() : "literal",
                             retrieved, contextIds,
                             root.TryGetProperty("retrievalLatencyMs", out var latency) && latency.ValueKind == JsonValueKind.Number
-                                && latency.TryGetDouble(out var ms) ? ms : null);
+                                && latency.TryGetDouble(out var ms) ? ms : null,
+                            root.TryGetProperty("embeddingModel", out var model) && model.ValueKind == JsonValueKind.String ? model.GetString() : null,
+                            root.TryGetProperty("embeddingDimension", out var dimension) && dimension.ValueKind == JsonValueKind.Number
+                                && dimension.TryGetInt32(out var size) && size > 0 ? size : null);
                     }
                     if (tool == "kb_read")
                         retrievalEvidence = new KnowledgeRetrievalEvidence("read", Array.Empty<string>(),

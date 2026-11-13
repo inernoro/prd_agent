@@ -498,9 +498,19 @@ export async function moveDocumentEntry(entryId: string, parentId: string | null
 
 /** 更新文档内容（在线编辑） */
 export async function updateDocumentContent(entryId: string, content: string, contentType?: string) {
-  return await apiRequest<{ updated: boolean; updatedAt?: string; updatedBy?: string; updatedByName?: string }>(
+  return await apiRequest<{
+    updated: boolean; updatedAt?: string; updatedBy?: string; updatedByName?: string;
+    knowledgeIndex?: import('@/services/contracts/documentStore').KnowledgeIndexStatus | null;
+  }>(
     api.documentStore.entries.content(entryId),
     { method: 'PUT', body: contentType ? { content, contentType } : { content } },
+  );
+}
+
+/** 仅观察当前原文对应的索引状态，不重发索引或模型任务。 */
+export async function getKnowledgeIndexStatus(entryId: string, signal?: AbortSignal) {
+  return await apiRequest<import('@/services/contracts/documentStore').KnowledgeIndexStatus>(
+    api.documentStore.entries.knowledgeIndex(entryId), { method: 'GET', signal },
   );
 }
 

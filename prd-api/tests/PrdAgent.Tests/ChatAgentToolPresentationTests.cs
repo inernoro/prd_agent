@@ -34,10 +34,12 @@ public class ChatAgentToolPresentationTests
     public void SearchEvidencePreservesOrderAndActualContextIds()
     {
         var card = ChatAgentToolPresentation.BuildToolCardPayload("kb_search", "search-1",
-            """{"mode":"semantic","items":[{"entry":{"entryId":"b"}},{"entry":{"entryId":"a"}}],"contextEntryIds":["b","a"],"retrievalLatencyMs":123}""", false);
+            """{"mode":"semantic","items":[{"entry":{"entryId":"b"}},{"entry":{"entryId":"a"}}],"contextEntryIds":["b","a"],"retrievalLatencyMs":123,"embeddingModel":"actual-embedding","embeddingDimension":1536}""", false);
         Assert.Equal(new[] { "b", "a" }, card.RetrievalEvidence!.RetrievedEntryIds);
         Assert.Equal(new[] { "b", "a" }, card.RetrievalEvidence.ContextEntryIds);
         Assert.Equal(123, card.RetrievalEvidence.RetrievalLatencyMs);
+        Assert.Equal("actual-embedding", card.RetrievalEvidence.EmbeddingModel);
+        Assert.Equal(1536, card.RetrievalEvidence.EmbeddingDimension);
     }
 
     [Fact]
