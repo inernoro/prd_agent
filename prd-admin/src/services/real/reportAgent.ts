@@ -1,3 +1,4 @@
+import type { BindTeamWorkflowContract } from '@/services/contracts/reportAgent';
 import type { GetMyDailyDeliveryEvidenceContract } from '@/services/contracts/reportAgent';
 import type { ReportDeliverySnapshot } from '@/services/contracts/reportEvidence';
 import { apiRequest, tryRefreshAdminToken } from './apiClient';
@@ -928,6 +929,13 @@ export const getTeamWorkflowReal: GetTeamWorkflowContract = async (input) => {
   return await apiRequest<TeamWorkflowInfo>(
     api.reportAgent.teamWorkflow(encodeURIComponent(input.teamId)),
     { method: 'GET' }
+  );
+};
+
+export const bindTeamWorkflowReal: BindTeamWorkflowContract = async ({ teamId, workflowId }) => {
+  return await apiRequest<{ workflowId: string | null }>(
+    api.reportAgent.teamWorkflow(encodeURIComponent(teamId)),
+    { method: 'PUT', body: { workflowId } }
   );
 };
 

@@ -1259,21 +1259,35 @@ export const ReportEventLabels: Record<string, string> = {
 
 // --- Team Workflow ---
 export interface TeamWorkflowInfo {
-  workflowId?: string;
-  workflowName?: string;
+  /** Authority is computed by the team workflow endpoint. */
+  canManage: boolean;
+  workflow?: {
+    id: string;
+    name: string;
+    nodeCount: number;
+    isEnabled: boolean;
+    lastExecutedAt?: string;
+  } | null;
   templateKey?: string;
   lastExecution?: {
     id: string;
     status: string;
-    startedAt: string;
+    createdAt: string;
     completedAt?: string;
     durationMs?: number;
-  };
+    artifactCount?: number;
+    errorMessage?: string;
+  } | null;
 }
 
 export type GetTeamWorkflowContract = (input: {
   teamId: string;
 }) => Promise<ApiResponse<TeamWorkflowInfo>>;
+
+export type BindTeamWorkflowContract = (input: {
+  teamId: string;
+  workflowId: string | null;
+}) => Promise<ApiResponse<{ workflowId: string | null }>>;
 
 export type RunTeamWorkflowContract = (input: {
   teamId: string;

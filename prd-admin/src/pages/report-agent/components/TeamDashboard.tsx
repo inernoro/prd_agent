@@ -1,3 +1,4 @@
+import { TeamWorkflowPanel } from './TeamWorkflowPanel';
 import { ReportDeliveryEvidencePanel } from '@/components/report/ReportDeliveryEvidencePanel';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
@@ -835,6 +836,8 @@ export function TeamDashboard() {
           </div>
         </div>
       </GlassCard>
+
+      {selectedTeamId && canManageMembers && <TeamWorkflowPanel key={selectedTeamId} teamId={selectedTeamId} />}
 
       {selectedTeamId && selectedTeam && (
         <ShareTeamWeekDialog

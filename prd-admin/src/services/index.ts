@@ -1,3 +1,5 @@
+import type { BindTeamWorkflowContract } from '@/services/contracts/reportAgent';
+import { bindTeamWorkflowReal } from '@/services/real/reportAgent';
 import type { GetMyDailyDeliveryEvidenceContract } from '@/services/contracts/reportAgent';
 import { getMyDailyDeliveryEvidenceReal } from '@/services/real/reportAgent';
 // 生产环境：严禁 mock/假数据。此处只允许真实后端实现。
@@ -1327,6 +1329,7 @@ export const testPersonalSource: TestPersonalSourceContract = withAuth(testPerso
 export const syncPersonalSource: SyncPersonalSourceContract = withAuth(syncPersonalSourceReal);
 export const getPersonalStats: GetPersonalStatsContract = withAuth(getPersonalStatsReal);
 export const getTeamWorkflow: GetTeamWorkflowContract = withAuth(getTeamWorkflowReal);
+export const bindTeamWorkflow: BindTeamWorkflowContract = withAuth(bindTeamWorkflowReal);
 export const runTeamWorkflow: RunTeamWorkflowContract = withAuth(runTeamWorkflowReal);
 export const updateIdentityMappings: UpdateIdentityMappingsContract = withAuth(updateIdentityMappingsReal);
 export const seedSystemTemplates: SeedSystemTemplatesContract = withAuth(seedSystemTemplatesReal);

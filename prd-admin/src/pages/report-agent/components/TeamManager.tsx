@@ -1,3 +1,4 @@
+import { TeamWorkflowPanel } from './TeamWorkflowPanel';
 import { useState, useEffect } from 'react';
 import { Plus, Pencil, Trash2, Users, UserPlus } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -224,7 +225,7 @@ export function TeamManager() {
 
       {/* Right: Team detail / members */}
       <div className="flex-1 min-h-0">
-        {selectedTeamId && currentTeam ? (
+        {selectedTeamId && currentTeam?.id === selectedTeamId ? (
           <GlassCard variant="subtle" className="h-full p-0 flex flex-col">
             <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
               <div className="flex items-center gap-2">
@@ -238,6 +239,7 @@ export function TeamManager() {
               </Button>
             </div>
             <div className="flex-1 min-h-0 overflow-auto">
+              <div className="p-3"><TeamWorkflowPanel key={currentTeam.id} teamId={currentTeam.id} /></div>
               <div className="divide-y" style={{ borderColor: 'var(--border-primary)' }}>
                 {currentTeamMembers.map((m) => (
                   <div key={m.id} className="flex items-center justify-between px-4 py-3">
