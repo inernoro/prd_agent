@@ -29,6 +29,12 @@ public class ReportCommit
     /// <summary>提交消息</summary>
     public string Message { get; set; } = string.Empty;
 
+    /// <summary>明确关联的业务事项；不从提交文案猜测。</summary>
+    public string? WorkItemId { get; set; }
+
+    /// <summary>上游返回的原始提交地址。</summary>
+    public string? SourceUrl { get; set; }
+
     /// <summary>提交时间</summary>
     public DateTime CommittedAt { get; set; }
 

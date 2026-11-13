@@ -19,165 +19,232 @@ public interface IPersonalSourceConnector
 public class PersonalGitHubConnector : IPersonalSourceConnector
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
-    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
-
+    private readonly HttpClient _http;
     private readonly string _token;
     private readonly string _username;
     private readonly string? _repoUrl;
 
     public PersonalGitHubConnector(string token, string username, string? repoUrl)
+        : this(token, username, repoUrl, Http) { }
+
+    internal PersonalGitHubConnector(string token, string username, string? repoUrl, HttpClient http)
     {
         _token = token;
         _username = username;
         _repoUrl = repoUrl;
+        _http = http;
     }
 
     public async Task<bool> TestConnectionAsync(CancellationToken ct)
     {
         try
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/user");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
-            request.Headers.UserAgent.ParseAdd("PrdAgent/2.0");
-
-            var response = await Http.SendAsync(request, ct);
+            using var request = CreateRequest("https://api.github.com/user");
+            using var response = await _http.SendAsync(request, ct);
             return response.IsSuccessStatusCode;
         }
-        catch
-        {
-            return false;
-        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch { return false; }
     }
 
     public async Task<SourceStats> CollectStatsAsync(DateTime from, DateTime to, CancellationToken ct)
     {
-        var stats = new SourceStats
+        var stats = new SourceStats { SourceType = PersonalSourceType.GitHub, CollectedAt = DateTime.UtcNow };
+        try
         {
-            SourceType = PersonalSourceType.GitHub,
-            CollectedAt = DateTime.UtcNow
-        };
-
-        if (!string.IsNullOrEmpty(_repoUrl))
-        {
-            // 指定仓库模式：获取该仓库的 commits
-            await CollectRepoCommitsAsync(stats, from, to, ct);
+            if (!string.IsNullOrEmpty(_repoUrl))
+                await CollectRepoCommitsAsync(stats, from, to, ct);
+            else
+                await CollectUserEventsAsync(stats, from, to, ct);
         }
-        else
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or OperationCanceledException)
         {
-            // 全局模式：获取用户所有事件
-            await CollectUserEventsAsync(stats, from, to, ct);
+            stats.CollectionWarnings.Add("GitHub 来源采集未完成；已取得的明细只代表部分记录，不能据此判定无活动。");
         }
-
         return stats;
     }
 
     private async Task CollectRepoCommitsAsync(SourceStats stats, DateTime from, DateTime to, CancellationToken ct)
     {
-        // 从 repoUrl 解析 owner/repo
         var (owner, repo) = ParseRepoUrl(_repoUrl!);
-        if (owner == null || repo == null) return;
-
+        if (owner == null || repo == null)
+        {
+            stats.CollectionWarnings.Add("GitHub 仓库地址无效，未取得可用活动数据。");
+            return;
+        }
         var url = $"https://api.github.com/repos/{owner}/{repo}/commits?author={Uri.EscapeDataString(_username)}&since={from:yyyy-MM-ddTHH:mm:ssZ}&until={to:yyyy-MM-ddTHH:mm:ssZ}&per_page=100";
-
-        var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
-        request.Headers.UserAgent.ParseAdd("PrdAgent/2.0");
-
-        var response = await Http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode) return;
-
-        var json = await response.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(json);
-
-        int commitCount = 0;
+        using var request = CreateRequest(url);
+        using var response = await _http.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            AddRequestWarning(stats, response);
+            return;
+        }
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            stats.CollectionWarnings.Add("GitHub 来源返回的数据格式无效，不能判定提交数量。");
+            return;
+        }
+        if (doc.RootElement.GetArrayLength() >= 100)
+            stats.CollectionWarnings.Add("GitHub 提交采集触及单页 100 条上限，周期完整性未证实。");
         foreach (var item in doc.RootElement.EnumerateArray())
         {
-            commitCount++;
-            var sha = item.TryGetProperty("sha", out var s) ? s.GetString()?[..7] : null;
-            var message = item.TryGetProperty("commit", out var c) && c.TryGetProperty("message", out var m)
-                ? m.GetString()?.Split('\n')[0] ?? ""
-                : "";
-
-            stats.Details.Add(new StatsDetail
+            var sha = Text(item, "sha");
+            if (string.IsNullOrWhiteSpace(sha))
+            {
+                stats.CollectionWarnings.Add("GitHub 返回了缺少完整提交身份的记录，该记录未计数。");
+                continue;
+            }
+            var commit = Child(item, "commit");
+            // committer.date is the actual commit timestamp; collection time is never a fallback.
+            var timestamp = UtcDate(Text(Child(commit, "committer"), "date"));
+            if (!timestamp.HasValue)
+                stats.CollectionWarnings.Add("部分 GitHub 提交缺少提交时间，不按采集时间归入本期成果。");
+            AddCommit(stats, new StatsDetail
             {
                 Id = sha,
-                Title = message.Length > 100 ? message[..100] : message,
+                Revision = sha,
+                Title = Text(commit, "message")?.Split('\n')[0] ?? "",
                 Type = "commit",
+                EvidenceKind = "commit",
+                SourceUrl = Text(item, "html_url"),
                 Assignee = _username,
-                Timestamp = item.TryGetProperty("commit", out var cm) && cm.TryGetProperty("author", out var a)
-                    && a.TryGetProperty("date", out var d) && DateTime.TryParse(d.GetString(), out var dt)
-                    ? dt : null
+                Timestamp = timestamp,
+                TimeBasis = "occurred"
             });
         }
-
-        stats.Summary["commits"] = commitCount;
+        stats.Summary["commits"] = stats.Details.Count(d => d.Type == "commit");
     }
 
     private async Task CollectUserEventsAsync(SourceStats stats, DateTime from, DateTime to, CancellationToken ct)
     {
         var url = $"https://api.github.com/users/{Uri.EscapeDataString(_username)}/events?per_page=100";
-
-        var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
-        request.Headers.UserAgent.ParseAdd("PrdAgent/2.0");
-
-        var response = await Http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode) return;
-
-        var json = await response.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(json);
-
+        using var request = CreateRequest(url);
+        using var response = await _http.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            AddRequestWarning(stats, response);
+            return;
+        }
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            stats.CollectionWarnings.Add("GitHub 来源返回的数据格式无效，不能判定活动数量。");
+            return;
+        }
+        if (doc.RootElement.GetArrayLength() >= 100)
+            stats.CollectionWarnings.Add("GitHub 事件采集触及单页 100 条上限，周期完整性未证实。");
+        var eventDates = doc.RootElement.EnumerateArray().Select(e => UtcDate(Text(e, "created_at"))).Where(t => t.HasValue).Select(t => t!.Value).ToList();
+        if (eventDates.Count == 0 || eventDates.Min() > from)
+            stats.CollectionWarnings.Add("GitHub 最近事件未覆盖到请求周期起点，不能将未返回的历史活动记为零。");
+        var eventIds = new HashSet<string>(StringComparer.Ordinal);
         int pushCount = 0, prCount = 0;
         foreach (var ev in doc.RootElement.EnumerateArray())
         {
-            if (!ev.TryGetProperty("created_at", out var caProp)) continue;
-            if (!DateTime.TryParse(caProp.GetString(), out var created)) continue;
-            if (created < from || created > to) continue;
-
-            var evType = ev.TryGetProperty("type", out var tp) ? tp.GetString() : "";
-            switch (evType)
+            var eventId = Text(ev, "id");
+            if (eventId != null && !eventIds.Add(eventId)) continue;
+            var created = UtcDate(Text(ev, "created_at"));
+            if (!created.HasValue || created < from || created >= to) continue;
+            var payload = Child(ev, "payload");
+            switch (Text(ev, "type"))
             {
                 case "PushEvent":
                     pushCount++;
-                    if (ev.TryGetProperty("payload", out var payload) &&
-                        payload.TryGetProperty("commits", out var commits))
-                    {
+                    if (payload.TryGetProperty("commits", out var commits) && commits.ValueKind == JsonValueKind.Array)
                         foreach (var commit in commits.EnumerateArray())
                         {
-                            var msg = commit.TryGetProperty("message", out var msgProp) ? msgProp.GetString() ?? "" : "";
-                            stats.Details.Add(new StatsDetail
+                            var sha = Text(commit, "sha");
+                            if (string.IsNullOrWhiteSpace(sha)) continue;
+                            AddCommit(stats, new StatsDetail
                             {
-                                Id = commit.TryGetProperty("sha", out var sha) ? sha.GetString()?[..7] : null,
-                                Title = msg.Length > 100 ? msg[..100] : msg,
+                                Id = sha,
+                                Revision = sha,
+                                Title = Text(commit, "message") ?? "",
                                 Type = "commit",
+                                EvidenceKind = "commit",
                                 Assignee = _username,
-                                Timestamp = created
+                                SourceUrl = Text(commit, "url"),
+                                // Push time is observable; original commit time is not supplied by this endpoint.
+                                Timestamp = created,
+                                TimeBasis = "observed"
                             });
                         }
-                    }
                     break;
                 case "PullRequestEvent":
                     prCount++;
+                    var pr = Child(payload, "pull_request");
+                    var prUrl = Text(pr, "html_url");
+                    var merged = pr.TryGetProperty("merged", out var mergedValue) && mergedValue.ValueKind == JsonValueKind.True;
+                    var action = Text(payload, "action");
+                    var occurred = merged ? UtcDate(Text(pr, "merged_at")) : action == "opened" ? UtcDate(Text(pr, "created_at")) : created;
+                    if (!occurred.HasValue)
+                        stats.CollectionWarnings.Add("部分 GitHub PR 记录缺少事实发生时间，不能按采集时间认定本期进展。");
+                    stats.Details.Add(new StatsDetail
+                    {
+                        Id = eventId ?? prUrl,
+                        WorkItemId = prUrl,
+                        SourceUrl = prUrl,
+                        Title = Text(pr, "title") ?? "",
+                        Type = "pull_request",
+                        Status = merged ? "merged" : Text(pr, "state"),
+                        Revision = merged ? Text(pr, "merge_commit_sha") : Text(Child(pr, "head"), "sha"),
+                        EvidenceKind = merged ? "merged" : action == "opened" ? "started" : null,
+                        Assignee = _username,
+                        Timestamp = occurred,
+                        TimeBasis = merged || action == "opened" ? "occurred" : "observed"
+                    });
                     break;
             }
         }
-
-        stats.Summary["commits"] = stats.Details.Count;
+        stats.Summary["commits"] = stats.Details.Where(d => d.Type == "commit").Select(d => d.Revision).Distinct().Count();
         stats.Summary["push_events"] = pushCount;
         stats.Summary["pr_events"] = prCount;
+        stats.Summary["prs_merged"] = stats.Details.Where(d => d.Type == "pull_request" && d.Status == "merged" && d.WorkItemId != null).Select(d => d.WorkItemId).Distinct().Count();
+    }
+
+    private static void AddCommit(SourceStats stats, StatsDetail detail)
+    {
+        var existing = stats.Details.FindIndex(d => d.Type == "commit" && d.Revision == detail.Revision);
+        if (existing < 0) stats.Details.Add(detail);
+        else if (detail.Timestamp < stats.Details[existing].Timestamp) stats.Details[existing] = detail;
+    }
+
+    private HttpRequestMessage CreateRequest(string url)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+        request.Headers.UserAgent.ParseAdd("PrdAgent/2.0");
+        return request;
+    }
+
+    private static void AddRequestWarning(SourceStats stats, HttpResponseMessage response)
+        => stats.CollectionWarnings.Add($"GitHub 来源请求失败（HTTP {(int)response.StatusCode}），未取得可用活动数据。");
+
+    private static JsonElement Child(JsonElement item, string property)
+        => item.ValueKind == JsonValueKind.Object && item.TryGetProperty(property, out var child) && child.ValueKind == JsonValueKind.Object
+            ? child : EmptyObject;
+    private static readonly JsonElement EmptyObject = JsonDocument.Parse("{}").RootElement.Clone();
+    private static string? Text(JsonElement item, string property)
+        => item.ValueKind == JsonValueKind.Object && item.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+    private static DateTime? UtcDate(string? value)
+    {
+        var timeIndex = value?.IndexOf('T') ?? -1;
+        var hasOffset = timeIndex >= 0 && (value!.EndsWith("Z", StringComparison.OrdinalIgnoreCase)
+            || value.LastIndexOf('+') > timeIndex || value.LastIndexOf('-') > timeIndex);
+        return hasOffset && DateTimeOffset.TryParse(value, out var timestamp) ? timestamp.UtcDateTime : null;
     }
 
     private static (string? owner, string? repo) ParseRepoUrl(string url)
     {
-        // 支持 https://github.com/owner/repo 或 https://github.com/owner/repo.git
-        try
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps &&
+            uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) && string.IsNullOrEmpty(uri.UserInfo))
         {
-            var uri = new Uri(url.TrimEnd('/'));
             var parts = uri.AbsolutePath.Trim('/').Split('/');
-            if (parts.Length >= 2)
-                return (parts[0], parts[1].Replace(".git", ""));
+            if (parts.Length == 2)
+                return (parts[0], parts[1].EndsWith(".git", StringComparison.Ordinal) ? parts[1][..^4] : parts[1]);
         }
-        catch { }
         return (null, null);
     }
 }

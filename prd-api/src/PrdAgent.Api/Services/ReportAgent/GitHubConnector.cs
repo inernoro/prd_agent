@@ -73,8 +73,11 @@ public class GitHubConnector : ICodeSourceConnector
                     var authorName = author.GetProperty("name").GetString() ?? "";
                     var authorEmail = author.GetProperty("email").GetString() ?? "";
                     var message = commitData.GetProperty("message").GetString() ?? "";
-                    var dateStr = author.GetProperty("date").GetString();
-                    var committedAt = DateTime.TryParse(dateStr, out var d) ? d : DateTime.UtcNow;
+                    var dateStr = commitData.TryGetProperty("committer", out var committer)
+                        && committer.TryGetProperty("date", out var commitDate) ? commitDate.GetString() : null;
+                    if (!DateTimeOffset.TryParse(dateStr, out var occurred))
+                        throw new InvalidOperationException("GitHub 提交缺少可核查的提交时间，同步未完成。");
+                    var committedAt = occurred.UtcDateTime;
 
                     // 通过 UserMapping 映射用户
                     string? mappedUserId = null;
@@ -91,6 +94,7 @@ public class GitHubConnector : ICodeSourceConnector
                         AuthorEmail = authorEmail,
                         CommitHash = hash,
                         Message = message.Length > 500 ? message[..500] : message,
+                        SourceUrl = commitJson.TryGetProperty("html_url", out var htmlUrl) ? htmlUrl.GetString() : null,
                         CommittedAt = committedAt,
                         Branch = branch
                     };
@@ -98,10 +102,10 @@ public class GitHubConnector : ICodeSourceConnector
                     // Upsert（幂等：DataSourceId+CommitHash 唯一索引）
                     try
                     {
-                        await _db.ReportCommits.ReplaceOneAsync(
+                        await _db.ReportCommits.UpdateOneAsync(
                             c => c.DataSourceId == _source.Id && c.CommitHash == hash,
-                            commit,
-                            new ReplaceOptions { IsUpsert = true },
+                            BuildCommitRefresh(commit),
+                            new UpdateOptions { IsUpsert = true },
                             ct);
                         totalSynced++;
                     }
@@ -115,13 +119,29 @@ public class GitHubConnector : ICodeSourceConnector
                 page++;
 
                 // 安全限制：最多 2000 条/分支
-                if (page > 20) break;
+                if (page > 20 && hasMore)
+                    throw new InvalidOperationException("GitHub 同步触及每分支 2000 条上限，无法确认窗口完整性；同步水位线不得前移。");
 
             } while (hasMore);
         }
 
         return totalSynced;
     }
+
+    /// <summary>刷新上游事实不重建缓存身份，也不清空已有事项关联或额外统计。</summary>
+    internal static UpdateDefinition<ReportCommit> BuildCommitRefresh(ReportCommit commit)
+        => Builders<ReportCommit>.Update
+            .SetOnInsert(c => c.Id, commit.Id)
+            .Set(c => c.DataSourceId, commit.DataSourceId)
+            .Set(c => c.MappedUserId, commit.MappedUserId)
+            .Set(c => c.AuthorName, commit.AuthorName)
+            .Set(c => c.AuthorEmail, commit.AuthorEmail)
+            .Set(c => c.CommitHash, commit.CommitHash)
+            .Set(c => c.Message, commit.Message)
+            .Set(c => c.SourceUrl, commit.SourceUrl)
+            .Set(c => c.CommittedAt, commit.CommittedAt)
+            .Set(c => c.Branch, commit.Branch)
+            .Set(c => c.SyncedAt, commit.SyncedAt);
 
     private HttpRequestMessage CreateRequest(string url)
     {

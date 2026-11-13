@@ -27,7 +27,11 @@ public class ArtifactStatsParser
         foreach (var artifact in artifacts)
         {
             if (string.IsNullOrWhiteSpace(artifact.InlineContent))
+            {
+                if (artifact.MimeType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true)
+                    stats.CollectionWarnings.Add("工作流 JSON 产物缺少可读取正文，未取得该来源统计。");
                 continue;
+            }
 
             // 只处理 JSON 类型的 artifact
             if (artifact.MimeType != null &&
@@ -42,11 +46,13 @@ public class ArtifactStatsParser
                     var sourceStats = ConvertToSourceStats(entry);
                     if (sourceStats != null)
                         stats.Sources.Add(sourceStats);
+                    else
+                        stats.CollectionWarnings.Add("工作流 JSON 产物缺少有效的来源结构，不能按无活动处理。");
                 }
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
             {
-                // 无效 JSON，跳过
+                stats.CollectionWarnings.Add("工作流 JSON 产物无法解析，未取得完整来源统计；不能按无活动处理。");
             }
         }
 
@@ -64,13 +70,28 @@ public class ArtifactStatsParser
 
         foreach (var member in members)
         {
-            var memberStats = new MemberCollectedStats { UserId = member.UserId };
+            var memberStats = new MemberCollectedStats
+            {
+                UserId = member.UserId,
+                CollectionWarnings = new List<string>(teamStats.CollectionWarnings)
+            };
 
             foreach (var source in teamStats.Sources)
             {
                 // 查找该成员在此平台上的身份标识
                 if (!member.IdentityMappings.TryGetValue(source.SourceType, out var identity))
+                {
+                    memberStats.Sources.Add(new SourceStats
+                    {
+                        SourceType = source.SourceType,
+                        CollectedAt = source.CollectedAt,
+                        CollectionWarnings = source.CollectionWarnings.Concat(new[]
+                        {
+                            "团队来源未配置该成员的身份映射，未将团队总量归入个人。"
+                        }).ToList()
+                    });
                     continue;
+                }
 
                 // 过滤属于该成员的明细
                 var memberDetails = source.Details
@@ -78,17 +99,28 @@ public class ArtifactStatsParser
                     .ToList();
 
                 if (memberDetails.Count == 0)
+                {
+                    if (source.CollectionWarnings.Count > 0)
+                        memberStats.Sources.Add(new SourceStats
+                        {
+                            SourceType = source.SourceType,
+                            CollectedAt = source.CollectedAt,
+                            CollectionWarnings = new List<string>(source.CollectionWarnings)
+                        });
                     continue;
+                }
 
-                // 基于明细重新计算 summary（按类型计数）
-                var memberSummary = RecalculateSummary(source.Summary, source.Details, memberDetails);
+                // 只重算可核查的成员明细；团队总数不能按人数或明细比例分摊。
+                var warnings = new List<string>(source.CollectionWarnings);
+                var memberSummary = RecalculateSummary(source, memberDetails, warnings);
 
                 memberStats.Sources.Add(new SourceStats
                 {
                     SourceType = source.SourceType,
                     CollectedAt = source.CollectedAt,
                     Summary = memberSummary,
-                    Details = memberDetails
+                    Details = memberDetails,
+                    CollectionWarnings = warnings
                 });
             }
 
@@ -102,12 +134,12 @@ public class ArtifactStatsParser
 
     private static List<JsonElement> ParseJsonEntries(string json)
     {
-        var doc = JsonDocument.Parse(json);
+        using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
         return root.ValueKind == JsonValueKind.Array
-            ? root.EnumerateArray().ToList()
-            : new List<JsonElement> { root };
+            ? root.EnumerateArray().Select(e => e.Clone()).ToList()
+            : new List<JsonElement> { root.Clone() };
     }
 
     private static SourceStats? ConvertToSourceStats(JsonElement entry)
@@ -118,11 +150,15 @@ public class ArtifactStatsParser
         if (!entry.TryGetProperty("source", out var sourceProp))
             return null;
 
-        var sourceType = sourceProp.GetString();
+        var sourceType = sourceProp.ValueKind == JsonValueKind.String ? sourceProp.GetString() : null;
         if (string.IsNullOrEmpty(sourceType))
             return null;
 
         var stats = new SourceStats { SourceType = sourceType };
+        if (entry.TryGetProperty("collectionWarnings", out var collectionWarnings) && collectionWarnings.ValueKind == JsonValueKind.Array)
+            stats.CollectionWarnings = collectionWarnings.EnumerateArray()
+                .Where(v => v.ValueKind == JsonValueKind.String)
+                .Select(v => v.GetString()!).Where(v => !string.IsNullOrWhiteSpace(v)).ToList();
 
         // 解析 collectedAt
         if (entry.TryGetProperty("collectedAt", out var collectedAt) &&
@@ -148,19 +184,27 @@ public class ArtifactStatsParser
             {
                 var detail = new StatsDetail
                 {
-                    Id = item.TryGetProperty("id", out var id) ? id.GetString() : null,
-                    Title = item.TryGetProperty("title", out var title) ? title.GetString() ?? "" : "",
-                    Type = item.TryGetProperty("type", out var type) ? type.GetString() : null,
-                    Status = item.TryGetProperty("status", out var status) ? status.GetString() : null,
-                    Assignee = item.TryGetProperty("assignee", out var assignee) ? assignee.GetString() : null,
+                    Id = ReadIdentifier(item, "id"),
+                    Title = ReadString(item, "title") ?? "",
+                    Type = ReadString(item, "type"),
+                    Status = ReadString(item, "status"),
+                    Assignee = ReadString(item, "assignee"),
+                    WorkItemId = ReadString(item, "workItemId"),
+                    SourceUrl = ReadString(item, "sourceUrl") ?? ReadString(item, "url"),
+                    Revision = ReadString(item, "revision"),
+                    EvidenceKind = ReadString(item, "evidenceKind"),
+                    Scope = ReadString(item, "scope"),
+                    Environment = ReadString(item, "environment"),
+                    BlockReason = ReadString(item, "blockReason"),
+                    NextStep = ReadString(item, "nextStep"),
+                    TimeBasis = ReadString(item, "timeBasis")
                 };
 
-                if (item.TryGetProperty("closedAt", out var closedAt) &&
-                    DateTime.TryParse(closedAt.GetString(), out var closedDt))
-                    detail.Timestamp = closedDt;
-                else if (item.TryGetProperty("timestamp", out var ts) &&
-                         DateTime.TryParse(ts.GetString(), out var tsDt))
-                    detail.Timestamp = tsDt;
+                var timestamp = ReadString(item, "timestamp") ?? ReadString(item, "closedAt");
+                if (HasExplicitTimeZone(timestamp) && DateTimeOffset.TryParse(timestamp, out var occurred))
+                    detail.Timestamp = occurred.UtcDateTime;
+                else if (timestamp != null)
+                    stats.CollectionWarnings.Add("部分来源明细缺少明确时区的事实时间，不按服务器时区推定发生日期。");
 
                 stats.Details.Add(detail);
             }
@@ -169,28 +213,57 @@ public class ArtifactStatsParser
         return stats;
     }
 
-    /// <summary>
-    /// 基于成员的明细重新按比例计算 summary。
-    /// 策略：按 detail 数量占总 detail 数量的比例来分配 summary 中的计数。
-    /// </summary>
-    private static Dictionary<string, int> RecalculateSummary(
-        Dictionary<string, int> totalSummary,
-        List<StatsDetail> totalDetails,
-        List<StatsDetail> memberDetails)
+    private static bool HasExplicitTimeZone(string? value)
     {
-        if (totalDetails.Count == 0)
-            return new Dictionary<string, int>(totalSummary);
+        var timeIndex = value?.IndexOf('T') ?? -1;
+        return timeIndex >= 0 && (value!.EndsWith("Z", StringComparison.OrdinalIgnoreCase)
+            || value.LastIndexOf('+') > timeIndex || value.LastIndexOf('-') > timeIndex);
+    }
 
-        var ratio = (double)memberDetails.Count / totalDetails.Count;
+    private static string? ReadString(JsonElement item, string property)
+        => item.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() : null;
+
+    private static string? ReadIdentifier(JsonElement item, string property)
+        => item.TryGetProperty(property, out var value)
+            ? value.ValueKind == JsonValueKind.String ? value.GetString()
+                : value.ValueKind == JsonValueKind.Number ? value.GetRawText() : null
+            : null;
+
+    /// <summary>只认具有稳定身份、类型及所需状态的明细，不分摊团队汇总。</summary>
+    private static Dictionary<string, int> RecalculateSummary(
+        SourceStats source, List<StatsDetail> memberDetails, List<string> warnings)
+    {
         var result = new Dictionary<string, int>();
-
-        foreach (var kv in totalSummary)
+        foreach (var (metric, total) in source.Summary)
         {
-            result[kv.Key] = (int)Math.Round(kv.Value * ratio);
+            Func<StatsDetail, bool>? predicate = metric switch
+            {
+                "commits" => d => d.Type == "commit",
+                "prs_merged" => d => (d.Type is "pull_request" or "pr") && (d.Status == "merged" || d.EvidenceKind == "merged"),
+                "prs_open" => d => (d.Type is "pull_request" or "pr") && d.Status == "open",
+                "bugs_fixed" => d => d.Type == "bug" && d.Status is "fixed" or "resolved",
+                "stories_done" => d => d.Type == "story" && d.Status is "done" or "completed",
+                "tasks_done" => d => d.Type == "task" && d.Status is "done" or "completed",
+                "articles_published" => d => d.Type == "article_published",
+                "docs_updated" => d => d.Type == "article_updated",
+                _ => null
+            };
+            if (predicate == null || source.Details.Any(d => string.IsNullOrWhiteSpace(d.Type)) ||
+                source.Details.Where(predicate).Any(d => DetailIdentity(d) == null) ||
+                source.Details.Where(predicate).Select(DetailIdentity).Distinct().Count() != total)
+            {
+                warnings.Add($"成员指标 {metric} 未分配：团队汇总缺少完整、可核查的明细口径，不能按比例推算。");
+                continue;
+            }
+            result[metric] = memberDetails.Where(predicate).Select(DetailIdentity).Distinct().Count();
         }
-
         return result;
     }
+
+    private static string? DetailIdentity(StatsDetail detail)
+        => detail.Type == "commit" ? detail.Revision ?? detail.Id
+            : detail.WorkItemId ?? detail.SourceUrl ?? detail.Id;
 
     #endregion
 }

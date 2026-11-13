@@ -218,9 +218,9 @@ public class ReportAgentV2Tests
                     Summary = new Dictionary<string, int> { ["commits"] = 3 },
                     Details = new List<StatsDetail>
                     {
-                        new() { Id = "a1", Title = "fix A", Assignee = "zhangsan" },
-                        new() { Id = "a2", Title = "fix B", Assignee = "zhangsan" },
-                        new() { Id = "a3", Title = "fix C", Assignee = "lisi" }
+                        new() { Id = "a1", Title = "fix A", Type = "commit", Assignee = "zhangsan" },
+                        new() { Id = "a2", Title = "fix B", Type = "commit", Assignee = "zhangsan" },
+                        new() { Id = "a3", Title = "fix C", Type = "commit", Assignee = "lisi" }
                     }
                 },
                 new()
@@ -229,8 +229,8 @@ public class ReportAgentV2Tests
                     Summary = new Dictionary<string, int> { ["bugs_fixed"] = 2 },
                     Details = new List<StatsDetail>
                     {
-                        new() { Id = "t1", Title = "Bug 1", Assignee = "zhangsan@company.com" },
-                        new() { Id = "t2", Title = "Bug 2", Assignee = "lisi@company.com" }
+                        new() { Id = "t1", Title = "Bug 1", Type = "bug", Status = "resolved", Assignee = "zhangsan@company.com" },
+                        new() { Id = "t2", Title = "Bug 2", Type = "bug", Status = "resolved", Assignee = "lisi@company.com" }
                     }
                 }
             }
