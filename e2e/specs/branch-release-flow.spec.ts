@@ -67,10 +67,10 @@ test('Agent 接入环境后在原窗口出现，排除其他项目、停用与�
   await expect(dialog.getByText(/还没有发布环境/)).toBeVisible();
   // Agent 与 UI 共用同一个登记及列表合同；写入全部由测试夹具隔离。
   const registered = await page.evaluate(async () => {
-    const response = await fetch('/api/releases/targets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Agent 新接入环境', projectId: 'fixture-project', environment: 'staging', host: 'new.example.test', port: 22, user: 'deploy', privateKeyRef: 'test-key-reference', appPath: '/srv/example', strategy: 'project-script', healthcheckUrl: 'https://new.example.test' }) });
+    const response = await fetch('/api/releases/targets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Agent 新接入环境', projectId: 'fixture-project', environment: 'staging', isCanonical: false, host: 'new.example.test', port: 22, user: 'deploy', privateKeyRef: 'test-key-reference', appPath: '/srv/example', strategy: { mode: 'project-script', scriptFile: 'cds-release.sh' }, healthcheckUrl: 'https://new.example.test' }) });
     return response.status;
   });
-  expect(registered).toBe(200);
+  expect(registered).toBe(201);
   await expect(dialog.getByRole('button', { name: '发布到 Agent 新接入环境' })).toBeVisible({ timeout: 10000 });
   await expect(dialog.getByRole('button', { name: /发布到 (其他项目|停用环境|归档环境)/ })).toHaveCount(0);
   expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toHaveLength(0);

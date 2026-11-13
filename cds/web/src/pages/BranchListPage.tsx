@@ -5371,7 +5371,7 @@ function ReleaseBranchDialog({ branch, previewUrl, onClose, onToast }: {
   };
   return (
     <Dialog open={!!branch} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent frame className="max-w-none" style={{ width: 'min(40rem, calc(100vw - 16px))' }}>
+      <DialogContent frame className="max-w-none" style={{ width: 'min(40rem, calc(100vw - 1rem))' }}>
         <DialogHeader className="min-w-0 shrink-0 p-4 pr-12"><DialogTitle>{run ? releaseStatusLabel(run.status) : '发布到'}</DialogTitle>
           <DialogDescription className="truncate">{branch?.branch} · {branch ? shortCommitSha(branch) : ''}</DialogDescription>
         </DialogHeader>

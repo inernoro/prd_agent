@@ -96,7 +96,7 @@ export async function installOperationsFixtures(page) {
           if (body.projectId !== target.projectId) return route.fulfill({ status: 403, json: { error: "项目不一致" } });
           const registered = { ...body, id: body.id || "compat-new-environment", type: "ssh", isEnabled: true, lifecycle: "active", ssh: { healthcheckUrl: body.healthcheckUrl } };
           releaseTargets.push(registered);
-          return reply({ target: registered });
+          return route.fulfill({ status: 201, json: { target: registered } });
         }
         return reply({ targets: releaseTargets, archivedTargets: [], remoteHosts: [] });
       }
