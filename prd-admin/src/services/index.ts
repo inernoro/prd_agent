@@ -528,6 +528,7 @@ import {
   getLiteraryAgentImageGenResolvedModelReal,
   getLiteraryAgentChatResolvedModelReal,
   createLiteraryAgentImageGenRunReal,
+  getLiteraryAgentRunByRequestReal,
   cancelLiteraryAgentImageGenRunReal,
   streamLiteraryAgentImageGenRunWithRetryReal,
   listReferenceImageConfigsMarketplaceReal,
@@ -1133,6 +1134,7 @@ export const getLiteraryAgentMainModel: GetLiteraryAgentMainModelContract = with
 export const getLiteraryAgentImageGenResolvedModel = getLiteraryAgentImageGenResolvedModelReal;
 export const getLiteraryAgentChatResolvedModel = getLiteraryAgentChatResolvedModelReal;
 export const createLiteraryAgentImageGenRun: CreateLiteraryAgentImageGenRunContract = withAuth(createLiteraryAgentImageGenRunReal);
+export const getLiteraryAgentRunByRequest = withAuth(getLiteraryAgentRunByRequestReal);
 export const cancelLiteraryAgentImageGenRun: CancelLiteraryAgentImageGenRunContract = withAuth(cancelLiteraryAgentImageGenRunReal);
 export const streamLiteraryAgentImageGenRunWithRetry: StreamLiteraryAgentImageGenRunWithRetryContract = withAuth(streamLiteraryAgentImageGenRunWithRetryReal);
 // Reference Image Configs 海鲜市场
