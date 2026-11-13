@@ -162,7 +162,7 @@ export function RichTextMarkdownContent({
     try { id = decodeURIComponent(href.slice(1)); } catch { return; }
     const root = reportRoot.current;
     const target = id === anchorPrefix ? root : Array.from(root?.querySelectorAll<HTMLElement>('[id]') ?? []).find(node => node.id === id);
-    target?.scrollIntoView({ behavior: 'instant', block: 'start' });
+    target?.scrollIntoView({ behavior: 'instant', block: target === root ? 'start' : 'center' });
   };
   return <>
     <div ref={reportRoot} id={anchorPrefix} className={`surface-inset rounded-xl p-3 ${className ?? ''}`.trim()}

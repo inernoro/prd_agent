@@ -79,6 +79,7 @@ describe('报告助理共享阅读内容', () => {
           await act(async () => { links[index].dispatchEvent(event); });
           expect(event.defaultPrevented).toBe(true);
           expect(scroll.mock.instances.at(-1)).toBe(target);
+          expect(scroll.mock.calls.at(-1)).toEqual([{ behavior: 'instant', block: target === article.querySelector('.surface-inset') ? 'start' : 'center' }]);
         }
         expect(links[3].target).toBe('_blank');
         expect(decodeURIComponent(links[3].getAttribute('href')!)).toBe('https://example.com/#完整阅读终点');
@@ -120,6 +121,7 @@ describe('报告助理共享阅读内容', () => {
           await act(async () => { link.dispatchEvent(event); });
           expect(event.defaultPrevented).toBe(true);
           expect(scroll.mock.instances.at(-1)).toBe(destination);
+          expect(scroll.mock.calls.at(-1)).toEqual([{ behavior: 'instant', block: 'center' }]);
         }
         expect(article.querySelector<HTMLAnchorElement>('a[href="https://example.com"]')?.target).toBe('_blank');
       }
