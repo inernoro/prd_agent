@@ -185,3 +185,12 @@ for (const failInitialRead of [false,true]) test(`局部更新尚有全局残留
   assert.equal(h.f.calls.filter(x=>x.name==='getRepairableModelUsages').length,2);assert.equal(writes(),1);
   await h.click('继续查询原计划');assert.equal(h.f.calls.filter(x=>x.name==='getRepairableModelUsages').length,2);assert.equal(writes(),1);
 });
+
+test('原目录缺失时先由管理员明确用途再选择目标，声明随计划发送',async t=>{
+  const h=await setup(t);let finishFirstCatalog;let reads=0;h.f.override=name=>name==='getLogicalModels'&&reads++===0?new Promise(resolve=>{finishFirstCatalog=resolve;}):undefined;h.f.usages=[{consumerKey:'map.lab-experiments',recordId:'deleted-owner-experiment',path:'SelectedModels.0.ModelId',modelType:'',value:'missing-image',platformId:'deleted-provider',status:'unknown',canConfirmPurpose:true}];
+  await h.render(h.c.ModelReferenceUsageRepairPanel);await h.click('选择使用位置');assert.equal(h.button('生成修复计划').disabled,true);assert.equal(document.querySelector('option[value="image"]'),null);
+  await act(async()=>{const select=document.querySelector('[aria-label="明确确认原使用位置的用途"]');Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set.call(select,'generation');select.dispatchEvent(new window.Event('change',{bubbles:true}));});
+  await act(async()=>{finishFirstCatalog(ok({items:[],total:0}));});
+  assert.equal(document.querySelector('option[value="target"]'),null);await h.select('image');await h.click('生成修复计划');
+  const write=h.f.calls.find(x=>x.name==='createModelReferenceMigrationFromUsage').args[0];assert.equal(write.confirmedModelType,'generation');assert.equal(write.recordId,'deleted-owner-experiment');assert.equal(write.targetLogicalId,'image');
+});

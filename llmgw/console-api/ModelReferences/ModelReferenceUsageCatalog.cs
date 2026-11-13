@@ -5,8 +5,8 @@ using PrdAgent.LlmGw.Mongo;
 namespace PrdAgent.LlmGw.ModelReferences;
 
 public sealed record RepairableModelUsage(string ConsumerKey, string RecordId, string Path, string ModelType,
-    string Value, string? PlatformId, string? LogicalId, string Status);
-public sealed record ReferenceUsagePlanRequest(string ConsumerKey, string RecordId, string Path, string TargetLogicalId, string ClientRequestId);
+    string Value, string? PlatformId, string? LogicalId, string Status, bool CanConfirmPurpose = false);
+public sealed record ReferenceUsagePlanRequest(string ConsumerKey, string RecordId, string Path, string TargetLogicalId, string ClientRequestId, string? ConfirmedModelType = null);
 
 /// <summary>Repair sources are read from typed persisted configuration, never accepted as arbitrary client strings.</summary>
 public sealed class ModelReferenceUsageCatalog(IMongoDatabase gateway, IModelReferenceStore store,
@@ -28,7 +28,7 @@ public sealed class ModelReferenceUsageCatalog(IMongoDatabase gateway, IModelRef
             foreach (var doc in docs)
             {
                 var id = doc.GetStringOrEmpty("_id");
-                void Add(string path, string type, string? platform = null, string? logicalId = null)
+                void Add(string path, string type, string? platform = null, string? logicalId = null, bool allowPurposeConfirmation = false)
                 {
                     if (!ModelReferenceAnalysis.TryGet(doc, path, out var raw) || raw.IsBsonNull || raw.IsString && raw.AsString.Length == 0) return;
                     if (!raw.IsString) { result.Add(new(definition.Key, id, path, type, "", platform, logicalId, "unknown")); return; }
@@ -43,7 +43,7 @@ public sealed class ModelReferenceUsageCatalog(IMongoDatabase gateway, IModelRef
                     {
                         var types = matching.Select(x => x.GetStringOrEmpty("ModelType")).Distinct(StringComparer.Ordinal).ToArray();
                         if (types.Length != 1 || types[0] is not ("chat" or "generation"))
-                        { result.Add(new(definition.Key, id, path, "", value, platform, logicalId, "unknown")); return; }
+                        { result.Add(new(definition.Key, id, path, "", value, platform, logicalId, "unknown", allowPurposeConfirmation && matching.Count == 0 && !string.IsNullOrWhiteSpace(value))); return; }
                         type = types[0];
                     }
                     var matches = matching.Any(x => x.GetStringOrEmpty("ModelType") == type && x.GetValue("Enabled", false) == BsonBoolean.True);
@@ -63,7 +63,9 @@ public sealed class ModelReferenceUsageCatalog(IMongoDatabase gateway, IModelRef
                     for (var i = 0; i < members.Count; i++)
                     {
                         if (members[i] is not BsonDocument member) { result.Add(new(definition.Key, id, $"{arrayName}.{i}", "chat", "", null, null, "unknown")); continue; }
-                        Add($"{arrayName}.{i}.ModelId", "", member.AsNullableString("PlatformId"), member.AsNullableString("LogicalModelId"));
+                        var identityIsTyped = new[] { "PlatformId", "LogicalModelId", "ModelId" }
+                            .All(key => !member.TryGetValue(key, out var value) || value.IsBsonNull || value.IsString);
+                        Add($"{arrayName}.{i}.ModelId", "", member.AsNullableString("PlatformId"), member.AsNullableString("LogicalModelId"), identityIsTyped);
                     }
                 }
             }
@@ -74,9 +76,17 @@ public sealed class ModelReferenceUsageCatalog(IMongoDatabase gateway, IModelRef
     {
         var usage = (await ReadAsync(tenantId, ct)).SingleOrDefault(x => x.ConsumerKey == request.ConsumerKey && x.RecordId == request.RecordId && x.Path == request.Path)
             ?? throw new ModelReferenceException("REFERENCE_USAGE_NOT_FOUND", "该使用位置已变化或不支持直接迁移，请重新检查清单。");
-        if (usage.Status == "unknown") throw new ModelReferenceException("REFERENCE_USAGE_UNKNOWN", "该配置结构无法核对，请先修复结构再迁移。");
+        var modelType = usage.ModelType;
+        if (usage.Status == "unknown")
+        {
+            if (!usage.CanConfirmPurpose || request.ConfirmedModelType is not ("chat" or "generation"))
+                throw new ModelReferenceException("REFERENCE_USAGE_UNKNOWN", "原目录已不存在或配置结构无法核对；只有结构完整的实验模型引用，才可在明确确认用途后建立修复计划。");
+            modelType = request.ConfirmedModelType;
+        }
+        else if (request.ConfirmedModelType is not null && request.ConfirmedModelType != modelType)
+            throw new ModelReferenceException("REFERENCE_MODEL_TYPE_MISMATCH", "已知用途不能由人工确认改写，请按原用途迁移。");
         var target = await catalog.ReadIdentityAsync(tenantId, request.TargetLogicalId, ct);
-        if (target.ModelType != usage.ModelType) throw new ModelReferenceException("REFERENCE_MODEL_TYPE_MISMATCH", "目标模型不能承接这个使用位置的用途。");
+        if (target.ModelType != modelType) throw new ModelReferenceException("REFERENCE_MODEL_TYPE_MISMATCH", "目标模型不能承接这个使用位置的用途。");
         var source = new ReferenceIdentity();
         if (!string.IsNullOrEmpty(usage.LogicalId)) source.LogicalId = usage.LogicalId;
         else if (usage.PlatformId is not null && usage.PlatformId != "logical-model")
@@ -86,8 +96,8 @@ public sealed class ModelReferenceUsageCatalog(IMongoDatabase gateway, IModelRef
         if (!string.IsNullOrEmpty(source.LogicalId))
             source = await catalog.ReadKnownSourceAsync(tenantId, source.LogicalId, ct) ?? source;
         else if (!string.IsNullOrEmpty(source.PublicId))
-            source = await catalog.ReadKnownPublicSourceAsync(tenantId, source.PublicId, usage.ModelType, ct) ?? source;
-        return new() { TenantId = tenantId, Source = source, Target = target.Identity, ModelType = usage.ModelType,
+            source = await catalog.ReadKnownPublicSourceAsync(tenantId, source.PublicId, modelType, ct) ?? source;
+        return new() { TenantId = tenantId, Source = source, Target = target.Identity, ModelType = modelType,
             ScopeConsumerKey = usage.ConsumerKey, ScopeRecordId = usage.RecordId, ScopePath = usage.Path };
     }
 }

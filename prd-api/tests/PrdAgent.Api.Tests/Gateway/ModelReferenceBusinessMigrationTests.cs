@@ -137,6 +137,48 @@ public sealed class ModelReferenceBusinessMigrationTests
     }
 
     [Fact]
+    public async Task ExplicitPurposeRepairsOwnerlessLabTupleThroughJournalAndPreservesHistory()
+    {
+        await using var f = new Fixture();
+        await f.SeedAsync("generation", Fixture.VisualCallers, openVisualTarget: true);
+        var tuple = new BsonDocument { { "PlatformId", "deleted-provider" }, { "ModelId", "missing-image" } };
+        await f.PutAsync("model_lab_experiments", new() { { "_id", "orphan" }, { "OwnerAdminId", "deleted-user" },
+            { "SelectedModels", new BsonArray { tuple } }, { "PromptText", "preserve prompt" } });
+        await f.PutAsync("model_lab_runs", new() { { "_id", "history" }, { "ModelId", "missing-image" } });
+        var usage = (await f.Usages.ReadAsync(Fixture.Tenant, default)).Single();
+        Assert.True(usage.CanConfirmPurpose);
+        Assert.Equal("unknown", usage.Status);
+        var request = new ReferenceUsagePlanRequest("map.lab-experiments", "orphan", "SelectedModels.0.ModelId", "target", "explicit-purpose");
+        await Assert.ThrowsAsync<ModelReferenceException>(() => f.Usages.BuildAsync(Fixture.Tenant, request, default));
+        await Assert.ThrowsAsync<ModelReferenceException>(() => f.Usages.BuildAsync(Fixture.Tenant, request with { ConfirmedModelType = "chat" }, default));
+        var mapping = await f.Usages.BuildAsync(Fixture.Tenant, request with { ConfirmedModelType = "generation" }, default);
+        Assert.Equal("generation", mapping.ModelType);
+        Assert.Equal("deleted-provider", mapping.Source.ProviderId);
+        Assert.Equal("completed", (await f.ApplyAsync(mapping)).Status);
+        var stored = await f.GetAsync("model_lab_experiments", "orphan");
+        Assert.Equal("deleted-user", stored["OwnerAdminId"].AsString);
+        Assert.Equal("preserve prompt", stored["PromptText"].AsString);
+        Assert.Equal("target", stored["SelectedModels"][0]["LogicalModelId"].AsString);
+        Assert.Equal("missing-image", (await f.GetAsync("model_lab_runs", "history"))["ModelId"].AsString);
+    }
+
+    [Fact]
+    public async Task ExplicitPurposeCannotRepairMalformedIdentityOrOverrideKnownPurpose()
+    {
+        await using var f = new Fixture();
+        await f.SeedAsync("generation", Fixture.VisualCallers, openVisualTarget: true);
+        await f.PutAsync("model_lab_experiments", new() { { "_id", "malformed" }, { "SelectedModels", new BsonArray {
+            new BsonDocument { { "PlatformId", 17 }, { "ModelId", "missing-image" } } } } });
+        var usage = (await f.Usages.ReadAsync(Fixture.Tenant, default)).Single();
+        Assert.False(usage.CanConfirmPurpose);
+        await Assert.ThrowsAsync<ModelReferenceException>(() => f.Usages.BuildAsync(Fixture.Tenant,
+            new("map.lab-experiments", "malformed", "SelectedModels.0.ModelId", "target", "reject-malformed", "generation"), default));
+        await f.PutAsync("user_preferences", Preference("known", "old-image"));
+        await Assert.ThrowsAsync<ModelReferenceException>(() => f.Usages.BuildAsync(Fixture.Tenant,
+            new("map.preferences", "known", "VisualAgentPreferences.ModelId", "target", "reject-override", "chat"), default));
+    }
+
+    [Fact]
     public async Task LiteraryOnlyTargetCanRepairLiteraryWithoutGrantingVisualAccess()
     {
         await using var f = new Fixture();
