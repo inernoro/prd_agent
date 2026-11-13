@@ -37,7 +37,11 @@ function EvidenceSources({ sources }: { sources: ReportEvidenceCitation[] }) {
 
 /** Read-only facts are separate from editable report prose and personal monthly opinions. */
 export function ReportDeliveryEvidencePanel({ evidence, title = '交付事实与连续进展' }: { evidence?: ReportDeliverySnapshot; title?: string }) {
-  if (!evidence) return null;
+  if (!evidence) return (
+    <aside role="note" aria-label="来源快照尚未核查" className="mb-6 rounded-xl p-4 text-[12px] leading-relaxed" style={{ ...boxStyle, color: 'var(--text-secondary)' }}>
+      这份历史报告未保存事项级来源快照；正文保留原文，功能、验证、上线及指标尚未核查。
+    </aside>
+  );
   return (
     <section aria-label={title} className="mb-6 space-y-4 rounded-xl p-4" style={boxStyle}>
       <header className="space-y-1">

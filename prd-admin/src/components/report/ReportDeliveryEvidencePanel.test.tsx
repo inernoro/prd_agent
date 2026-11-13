@@ -46,7 +46,15 @@ describe('交付事实只读展示', () => {
     expect(container.textContent).toContain('未附可核查来源');
     expect(container.querySelector('a')).toBeNull();
     expect(container.querySelector('[data-report-section]')).toBeNull();
-    act(() => root.render(<ReportDeliveryEvidencePanel />));
-    expect(container.childElementCount).toBe(0);
   });
+  it('历史报告缺少事项快照时保留原文并说明阶段与指标尚未核查，不否定已有来源引用', () => {
+    act(() => root.render(<><ReportDeliveryEvidencePanel /><p>按计划推进，无阻塞。</p><a href="https://example.com/old-source">旧来源引用</a></>));
+    const note = container.querySelector('[role="note"]');
+    expect(note?.textContent).toBe('这份历史报告未保存事项级来源快照；正文保留原文，功能、验证、上线及指标尚未核查。');
+    expect(container.textContent).toContain('按计划推进，无阻塞。');
+    expect(container.querySelector('a')?.getAttribute('href')).toBe('https://example.com/old-source');
+    expect(container.querySelector('dl')).toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
 });
