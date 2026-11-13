@@ -275,6 +275,9 @@ def main(argv=None):
                     headers.update(json.loads(os.environ.get(target.get('headersEnv',''), '{}')))
                     assert all(v == target['appCallerCode'] for k,v in headers.items() if k.lower() == 'x-gateway-app-caller'), 'caller header differs from target contract'
                     assert not any(k.lower() == 'x-gateway-dry-run' for k in headers), 'dry-run forbidden in provider mode'
+                    if case['protocol'] == 'native':
+                        # Native tracing comes from Context, while compatible ingress reads headers.
+                        body.setdefault('Context', {})['RunId'] = {k.lower():v for k,v in headers.items()}['x-gateway-run-id']
                     headers.update({'Content-Type':'application/json', 'X-Gateway-Key':key})
                     url = target['base'].rstrip('/') + case['path'].replace('{model}', 'auto')
                     req = urllib.request.Request(url,data=json.dumps(body,ensure_ascii=False).encode(),headers=headers,method='POST')

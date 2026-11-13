@@ -16,6 +16,20 @@ public class ThinkingProtocolContractTests
     [Theory]
     [InlineData("https://api.openai.com/v1/chat/completions", false)]
     [InlineData("https://openrouter.ai/api/v1/chat/completions", true)]
+    [InlineData("https://openrouter.ai.evil.example/v1/chat/completions", false)]
+    public async Task Adapter_ConsumesGatewayStrictFlagWithoutLeakingProviderObject(string endpoint, bool openRouter)
+    {
+        var body = Body();
+        body["provider"] = new JsonObject { ["require_parameters"] = true };
+        using var request = new OpenAIGatewayAdapter().BuildHttpRequest(endpoint, "synthetic", body);
+        var wire = JsonNode.Parse(await request.Content!.ReadAsStringAsync())!;
+        Assert.Equal(openRouter, wire["provider"] is not null);
+        if (openRouter) Assert.True(wire["provider"]!["require_parameters"]!.GetValue<bool>());
+    }
+
+    [Theory]
+    [InlineData("https://api.openai.com/v1/chat/completions", false)]
+    [InlineData("https://openrouter.ai/api/v1/chat/completions", true)]
     [InlineData("https://openrouter.ai.evil.example/api/v1/chat/completions", false)]
     [InlineData("https://proxy.example/openrouter.ai/chat/completions", false)]
     [InlineData("http://openrouter.ai/api/v1/chat/completions", false)]

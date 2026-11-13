@@ -179,15 +179,16 @@ class CompatibilityTests(unittest.TestCase):
    response=io.BytesIO(json.dumps(native if request.full_url.endswith('/invoke') else openai).encode())
    response.code=200;response.headers={'Content-Type':'application/json'}
    return response
-  with tempfile.TemporaryDirectory() as d,patch.dict('os.environ',{'COMPAT_TEST_KEY':'synthetic'}):
+  with tempfile.TemporaryDirectory() as d,patch.dict('os.environ',{'COMPAT_TEST_KEY':'synthetic','COMPAT_TEST_HEADERS':json.dumps({'X-Gateway-Run-Id':'custom-batch'})}):
    target=Path(d)/'target.json';output=Path(d)/'provider.json'
-   target.write_text(json.dumps({'base':'https://gateway.invalid','model':'fixed','upstream':'openai','keyEnv':'COMPAT_TEST_KEY','appCallerCode':caller,'caseIds':['native-text-json','openai-text-json']}))
+   target.write_text(json.dumps({'base':'https://gateway.invalid','model':'fixed','upstream':'openai','keyEnv':'COMPAT_TEST_KEY','headersEnv':'COMPAT_TEST_HEADERS','appCallerCode':caller,'caseIds':['native-text-json','openai-text-json']}))
    with patch.object(m.CANARY,'_health_check',return_value=({'ok':True,'commit':'a'*40},[])),patch.object(m.urllib.request.OpenerDirector,'open',respond):
     self.assertEqual(0,m.main(['--mode','provider','--target',str(target),'--expected-commit','a'*40,'--output',str(output)]))
    self.assertEqual(2,len(sent))
    for request in sent:
     self.assertEqual(caller,{k.lower():v for k,v in request.header_items()}['x-gateway-app-caller'])
    self.assertEqual(caller,json.loads(sent[0].data)['AppCallerCode'])
+   self.assertEqual('custom-batch',json.loads(sent[0].data)['Context'].get('RunId'))
    self.assertEqual(caller,json.loads(output.read_text())['targetContract']['appCallerCode'])
    config=json.loads(target.read_text());config['headersEnv']='COMPAT_TEST_HEADERS';target.write_text(json.dumps(config))
    with patch.dict('os.environ',{'COMPAT_TEST_HEADERS':json.dumps({'X-Gateway-App-Caller':'other.identity::chat'})}),patch.object(m.CANARY,'_health_check',return_value=({'ok':True,'commit':'a'*40},[])),patch.object(m.urllib.request.OpenerDirector,'open',respond):

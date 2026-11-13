@@ -16,7 +16,7 @@
           "messages": [
             {
               "role": "user",
-              "content": "Reply exactly OK."
+              "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
             }
           ],
           "max_tokens": 128,
@@ -95,7 +95,7 @@
           "messages": [
             {
               "role": "user",
-              "content": "Reply exactly OK."
+              "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
             }
           ],
           "max_tokens": 128,
@@ -169,7 +169,7 @@
         "messages": [
           {
             "role": "user",
-            "content": "Reply exactly OK."
+            "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
           }
         ],
         "max_tokens": 128,
@@ -234,7 +234,7 @@
         "messages": [
           {
             "role": "user",
-            "content": "Reply exactly OK."
+            "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
           }
         ],
         "max_tokens": 128,
@@ -299,7 +299,7 @@
         "messages": [
           {
             "role": "user",
-            "content": "Reply exactly OK."
+            "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
           }
         ],
         "max_tokens": 128,
@@ -357,7 +357,7 @@
         "messages": [
           {
             "role": "user",
-            "content": "Reply exactly OK."
+            "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
           }
         ],
         "max_tokens": 128,
@@ -417,7 +417,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Reply exactly OK."
+                "text": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
               }
             ]
           }
@@ -494,7 +494,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Reply exactly OK."
+                "text": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
               }
             ]
           }
@@ -574,7 +574,7 @@
           "messages": [
             {
               "role": "user",
-              "content": "Reply exactly OK."
+              "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
             }
           ],
           "max_tokens": 128,
@@ -605,7 +605,7 @@
           "messages": [
             {
               "role": "user",
-              "content": "Reply exactly OK."
+              "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
             }
           ],
           "max_tokens": 128,
@@ -636,7 +636,7 @@
           "messages": [
             {
               "role": "user",
-              "content": "Reply exactly OK."
+              "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
             }
           ],
           "max_tokens": 128,
@@ -669,7 +669,7 @@
           "messages": [
             {
               "role": "user",
-              "content": "Reply exactly OK."
+              "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
             }
           ],
           "max_tokens": 128,
