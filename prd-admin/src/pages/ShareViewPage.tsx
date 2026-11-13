@@ -842,7 +842,6 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   // Keep the original share token: member pages use the same authorization scope.
   return <HostedShareCollection data={data} collectionPath={`/s/wp/${encodeURIComponent(token!)}`}
     selectedSiteId={requestedRelatedSiteId} onSelect={id => navigate(id ? `/s/wp/${encodeURIComponent(token!)}?${new URLSearchParams({ siteId: id })}` : `/s/wp/${encodeURIComponent(token!)}`)}
-    related={data.mainSiteId && token ? <RelatedDocumentsBar siteId={data.mainSiteId} source={{ token, password: password || undefined }} /> : undefined}
     action={isOwner ? <><button className="hosted-share-save" onClick={() => { setCollectionShareFirst(true); setCollectionManagerOpen(true); }}>分享</button><button className="hosted-share-save" onClick={() => { setCollectionShareFirst(false); setCollectionManagerOpen(true); }}>管理合集</button>
       {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}</> : <button className="hosted-share-save" onClick={handleSave} disabled={saving || saveStatus !== 'idle'}>
       {saving ? <><MapSpinner size={13} />保存中...</>

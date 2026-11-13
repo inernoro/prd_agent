@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, useState } from 'react';
+import { act, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CardMoreButton } from './SiteCardActions';
@@ -48,4 +48,32 @@ describe('CardMoreButton 分享入口', () => {
       await act(async () => root.unmount());
     }
   });
+  it('右键与更多共用操作，空白区域即使阻止冒泡也能关闭', async () => {
+    const action = vi.fn();
+    function Fixture() {
+      const target = useRef<HTMLDivElement>(null);
+      return <><div ref={target} data-card><CardMoreButton contextTargetRef={target} actions={[{ label: '编辑信息', icon: null, onClick: action }]} /></div>
+        <div data-blank onPointerDown={event => event.stopPropagation()}>空白</div></>;
+    }
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<Fixture />));
+      const card = container.querySelector('[data-card]')!;
+      await act(async () => card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 })));
+      expect(document.querySelector('[role="menuitem"]')?.textContent).toBe('编辑信息');
+      await act(async () => container.querySelector('[data-blank]')!.dispatchEvent(new Event('pointerdown', { bubbles: true })));
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+      const more = container.querySelector('button')!;
+      await act(async () => more.click());
+      expect(document.querySelector('[role="menuitem"]')?.textContent).toBe('编辑信息');
+      await act(async () => more.click());
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+      await act(async () => more.click());
+      await act(async () => document.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click());
+      expect(action).toHaveBeenCalledTimes(1);
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+    } finally { await act(async () => root.unmount()); }
+  });
+
 });

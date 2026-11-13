@@ -82,7 +82,7 @@ describe('合集目录与设计样例', () => {
       act(() => root.render(<HostedShareCollection data={data} collectionPath="/s/wp/original" onSelect={select} />));
       const field = element.querySelector<HTMLInputElement>('[aria-label="查找合集文档"]')!;
       act(() => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, '资料 90'); field.dispatchEvent(new Event('input', { bubbles: true })); });
-      act(() => element.querySelector<HTMLAnchorElement>('.ledger-board-members .hosted-share-member')!.click());
+      act(() => element.querySelector<HTMLAnchorElement>('.ledger-directory .hosted-share-member')!.click());
       expect(select).toHaveBeenCalledWith('90');
       act(() => root.render(<HostedShareCollection data={data} collectionPath="/s/wp/original" onSelect={select} selectedSiteId="90" reader={<p>第 90 篇正文</p>} />));
       expect(element.querySelector<HTMLInputElement>('[aria-label="查找合集文档"]')!.value).toBe('资料 90');

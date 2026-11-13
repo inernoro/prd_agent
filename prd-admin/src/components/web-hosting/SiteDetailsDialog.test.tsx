@@ -33,7 +33,7 @@ describe('网页详情的信息保留', () => {
         expect(container.textContent).not.toContain('987654321');
         expect(container.querySelector('[data-site-card-stats] [aria-label="全部访问（含作者）"]')?.textContent).toBe('7');
         expect(container.querySelector('[data-site-card-stats] [aria-label="全部访客"]')?.textContent).toBe('5');
-        expect(container.querySelector('[data-site-card-stats] [aria-label="有效分享链接"]')?.textContent).toBe('3');
+        expect(container.querySelector('[data-site-card-stats] [aria-label="有效分享链接"]')).toBeNull();
         expect(container.querySelector('[data-site-card-thumbnail] [data-site-edit-badge]')).toBeNull();
         await act(async () => trigger.click());
         const dialog = document.querySelector('[role="dialog"]')!;

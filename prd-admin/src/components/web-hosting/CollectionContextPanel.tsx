@@ -68,8 +68,8 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
   const clear = () => { setSearch(''); setKeyword(''); setPage(1); };
   if (error) return <div className="related-empty" role="alert">{error}<button type="button" onClick={() => setReload(value => value + 1)}>重试</button></div>;
   if (!result) return <div className="related-empty" role="status"><MapSpinner size={20} />正在读取文档所属合集…</div>;
-  return <div className="collection-context-panel" style={{ minHeight: 0, maxHeight, height: split ? totalHeight : undefined }}>
-    <div className={`collection-context-layout ${split ? 'is-split' : 'is-single'}`} data-collection-layout={split ? 'split' : 'single'} style={{ minHeight: 0, maxHeight: contentHeight, height: split ? contentHeight : undefined }}>
+  return <div className="collection-context-panel" style={{ minHeight: 0, maxHeight }}>
+    <div className={`collection-context-layout ${split ? 'is-split' : 'is-single'}`} data-collection-layout={split ? 'split' : 'single'} style={{ minHeight: 0, maxHeight: contentHeight }}>
     {split && <aside className="collection-context-sidebar" aria-label="所属合集">
       <header><strong>所属合集</strong><span>{result.totalContexts} 个</span></header>
       <label className="collection-context-search"><Search size={14} aria-hidden /><input aria-label="搜索所属合集" placeholder="搜索合集或链接尾码" maxLength={100} value={search} onChange={event => setSearch(event.target.value)} />
@@ -79,17 +79,15 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
         {pending ? <div className="related-empty" role="status"><MapSpinner size={16} />正在查找…</div>
           : result.items.map(context => <section className={`collection-context-entry ${context.id === selectedId ? 'is-selected' : ''}`} key={context.id}>
             <button type="button" className="collection-context-select" aria-pressed={context.id === selectedId} onClick={() => setSelectedId(context.id)}>
-              <strong title={context.title}>{context.title}</strong><span>{context.memberCount} 份文档{context.legacyShareId ? ' · 历史合集' : ''}</span>
+              <strong title={context.title}>{context.title}</strong>
             </button>
           </section>)}
         {!pending && !result.items.length && <div className="collection-context-empty">没有找到匹配合集。<button type="button" onClick={clear}>查看全部合集</button></div>}
       </nav>
-      <footer><span>{pending ? '正在查找…' : `共 ${result.total} 个合集`}</span>
-        {result.total > result.pageSize && <nav className="related-pagination" aria-label="合集分页">
+      {result.total > result.pageSize && <footer><nav className="related-pagination" aria-label="合集分页">
           <button type="button" disabled={pending || page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button><span>{page} / {Math.max(1, Math.ceil(result.total / result.pageSize))}</span>
           <button type="button" disabled={pending || page * result.pageSize >= result.total} onClick={() => setPage(value => value + 1)}>下一页</button>
-        </nav>}
-      </footer>
+        </nav></footer>}
     </aside>}
     <div className="collection-context-documents" style={{ minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
       {pending ? <div className="related-empty" role="status"><MapSpinner size={20} />正在读取合集…</div>
@@ -145,10 +143,6 @@ function CollectionLinks({ siteId, context, pending, maxListHeight }: { siteId: 
   const address = link ? new URL(link.shareUrl, window.location.origin).href : '';
   const copy = () => copyWithFeedback(address, { successMessage: '合集链接已复制', label: '合集链接' });
   return <div className="collection-context-links">
-    <div className="collection-context-link-label"><strong>合集地址</strong><span title={context?.title}>{pending ? '正在读取…' : context?.title ?? '当前文档暂无合集分享链接'}</span>
-      {link && <small>{link.statusLabel}{link.accessLevel === 'password' ? ' · 密码保护' : ''}</small>}
-      {context && context.shareCount > 1 && <button type="button" className="collection-context-more" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '收起链接' : `查看全部 ${context.shareCount} 条链接`}</button>}
-    </div>
     {expanded && <div className="collection-context-link-options" style={{ minHeight: 0, maxHeight: maxListHeight, overflowY: 'auto', overscrollBehavior: 'contain' }}>
       {loading ? <span role="status"><MapSpinner size={12} />正在读取链接…</span> : error ? <span role="alert">{error}<button type="button" onClick={() => setReload(value => value + 1)}>重试</button></span>
         : result?.items.map(item => <button key={item.id} type="button" className="collection-context-link-option" aria-pressed={item.id === link?.id} onClick={() => { setChosen(item); setExpanded(false); }}>
@@ -162,10 +156,12 @@ function CollectionLinks({ siteId, context, pending, maxListHeight }: { siteId: 
     <div className="collection-context-address-row">
       <input aria-label="合集完整地址" value={address} readOnly title={address} onFocus={event => event.currentTarget.select()}
         placeholder={pending ? '正在读取合集链接…' : context ? '该合集暂无包含此文档的分享链接' : '当前文档暂无合集分享链接'} />
+      {link && !link.isActive && <small className="collection-context-link-status" role="status">{link.statusLabel}</small>}
       <div className="collection-context-link-actions">
         <button type="button" disabled={!address || pending} onClick={() => void copy()}><Copy size={14} aria-hidden />复制合集链接</button>
         {link?.isActive && !pending ? <a href={address} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} aria-hidden />打开合集</a>
           : <button type="button" disabled title={link ? link.statusLabel : '暂无合集分享链接'}><ExternalLink size={14} aria-hidden />打开合集</button>}
+        {context && context.shareCount > 1 && <button type="button" className="collection-context-more" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '收起链接' : `查看全部 ${context.shareCount} 条链接`}</button>}
       </div>
     </div>
   </div>;

@@ -32,7 +32,7 @@
 .related-card-status { display:flex; align-items:center; gap:5px; font-size:10px; color:var(--text-muted); }
 .is-current .related-card-status { color:var(--accent-primary); }
 .related-current-dot { height:5px; width:5px; border-radius:50%; background:currentColor; }
-.related-panel-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 12px; border-top:1px solid var(--border-subtle); background:var(--bg-tertiary); }
+.related-panel-footer { display:flex; align-items:center; justify-content:flex-end; gap:12px; padding:8px 12px; border-top:1px solid var(--border-subtle); background:var(--bg-tertiary); }
 .related-panel-footer>span { display:flex; align-items:center; gap:6px; color:var(--text-muted); font-size:11px; }
 .related-pagination { display:flex; align-items:center; gap:10px; font-size:11px; color:var(--text-secondary); }
 .related-pagination button { padding:4px; border-radius:4px; }
@@ -225,3 +225,8 @@
  .related-context-row { padding:0 12px 12px; }
  .related-document-grid.is-list .related-open-new-tab { left:64px; }
 }
+
+.related-item.can-edit-tags .related-card-content { padding-right:30px; }
+.collection-context-link-status { flex-shrink:0; color:var(--text-muted); font-size:10px; }
+
+[data-site-card-badges] .related-badge-name { display:none; }

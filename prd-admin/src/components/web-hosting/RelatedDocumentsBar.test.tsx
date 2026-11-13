@@ -36,7 +36,7 @@ const preview: RelatedPermissionPreview = {
   ],
 };
 const clickText = async (text: string) => {
-  const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === text);
+  const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => (item.getAttribute('aria-label') || item.textContent) === text);
   expect(button, text).toBeDefined();
   await act(async () => button!.click());
 };
@@ -220,7 +220,7 @@ describe('顶部关联文档', () => {
     expect(getRelatedDocuments).toHaveBeenCalledTimes(1);
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
   });
-  it('紧凑工具栏把主文档和权限说明放进浮层，并提供独立标签页入口', async () => {
+  it('紧凑浮层删除重复说明，保留主文档角标、权限操作和外开入口', async () => {
     const navigate = vi.fn();
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" onNavigate={navigate} />));
     expect(container.querySelector('.related-main-label')).toBeNull();
@@ -228,8 +228,12 @@ describe('顶部关联文档', () => {
     expect(container.querySelector('[data-permission-warning]')).not.toBeNull();
     expect(container.querySelector('.related-trigger')?.getAttribute('title')).toContain('权限不一致');
     await open();
-    expect(document.querySelector('.related-context-row')?.textContent).toContain('总体方案');
-    expect(document.querySelector('.related-context-row')?.textContent).toContain('权限不一致');
+    expect(document.querySelector('.related-context-row')).toBeNull();
+    expect(document.querySelector('.related-main-badge')?.textContent).toContain('主文档');
+    expect(document.querySelector('[aria-label="权限不一致"]')).not.toBeNull();
+    expect(document.querySelector('.related-panel-heading')?.textContent).not.toContain('份可见文档');
+    expect(document.body.textContent).not.toContain('每份文档独立授权');
+    expect(document.body.textContent).not.toContain('打开查看文档内容');
     const external = document.querySelector<HTMLButtonElement>('[aria-label="在新标签页打开：技术设计"]')!;
     const replace = vi.fn();
     vi.spyOn(window, 'open').mockReturnValue({ opener: window, document: { title: '', body: { textContent: '' } }, location: { replace }, close: vi.fn() } as unknown as Window);
@@ -244,6 +248,9 @@ describe('顶部关联文档', () => {
     expect(document.querySelector('a[href*="openSite="]')).toBeNull();
     expect(external.closest('.related-document-card')).toBeNull();
     expect(navigate).not.toHaveBeenCalled();
+    await open();
+    await clickText('权限不一致');
+    expect(previewRelatedPermissions).toHaveBeenCalledWith('a');
   });
 
 
@@ -258,13 +265,14 @@ describe('顶部关联文档', () => {
     await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="卡片视图"]')!.click());
     expect(document.querySelector('.related-document-grid')?.classList.contains('is-list')).toBe(false);
   });
-  it('评论来源与自定义标签可见，自动引用不会被管理面板当作手动关联保存', async () => {
+  it('评论来源仍可筛选，自定义标签不占预览版面，自动引用不保存为手动组', async () => {
     const automatic = { id: 'c', title: '评论提到的方案', isManual: false, tags: ['设计'], mentions: [{ commentId: 'comment-1', authorName: '小林', sourceSiteId: 'a', sourceTitle: '总体方案', label: '评论区小林提到' }] };
     vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, items: [...data.items, automatic] }, error: null });
     vi.mocked(saveRelatedDocuments).mockResolvedValue({ success: true, data, error: null });
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" />));await open();
     expect(document.body.textContent).toContain('评论区小林提到');
-    await clickText('设计');
+    expect(document.querySelector('[aria-label="按标签筛选"]')).toBeNull();
+    await clickText('评论引用');
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(1);
     await clickText('管理关联');await clickText('保存关联');
     expect(saveRelatedDocuments).toHaveBeenCalledWith('a', { siteIds: ['a', 'b'], mainSiteId: 'a', version: 3 });

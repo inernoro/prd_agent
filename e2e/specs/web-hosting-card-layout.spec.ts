@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
+// 布局与阅读回归使用静止背景；动态画布单独由三档演示用例验证。
+test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
+
 // 验证真实列表路由的生产组件；API 使用隔离测试数据，不操作用户站点。
 for (const width of [390, 1440]) {
   for (const theme of ['light', 'dark'] as const) {
@@ -75,11 +78,11 @@ for (const width of [390, 1440]) {
           const badgeBounds = badge?.getBoundingClientRect();
           const slots = Array.from(stats.children).map(child => child.getBoundingClientRect()).filter(rect => rect.height > 0);
           return {
-            title: card.querySelector('h3')!.textContent, cardHeight: bounds.height,
+            title: card.querySelector('h3')!.textContent, cardTop: bounds.top, cardHeight: bounds.height, metaTop: meta.getBoundingClientRect().top - bounds.top,
             statsHeight: statsBounds.height, columns, metricCount: slots.length,
             editInFooter: !!editBounds && editBounds.top >= statsBounds.top && editBounds.bottom <= statsBounds.bottom && editBounds.top >= thumbBounds.bottom,
-            shareInBody: !sharedBounds || sharedBounds.top >= thumbBounds.bottom,
-            selectionAtTop: selectBounds.top <= thumbBounds.top + 2 && selectBounds.bottom <= thumbBounds.top + 44,
+            shareInThumbnail: !sharedBounds || sharedBounds.bottom <= thumbBounds.bottom,
+            selectionAtTop: selectBounds.top <= thumbBounds.top + 8 && selectBounds.bottom <= thumbBounds.top + 44,
             noThumbnailStrip: !card.querySelector('[data-site-thumbnail-meta]'),
             metaFits: meta.scrollWidth <= meta.clientWidth,
             overflow: slots.some(rect => rect.left < bounds.left || rect.right > bounds.right),
@@ -92,10 +95,10 @@ for (const width of [390, 1440]) {
         for (const metric of metrics) {
           expect(metric.overflow, JSON.stringify(metric)).toBe(false);
           expect(metric.wrapped, JSON.stringify(metric)).toBe(false);
-          expect(metric.metricCount).toBe(4);
-          expect(metric.statsHeight).toBeCloseTo(metric.columns === 4 ? 16 : 36, 0);
+          expect(metric.metricCount).toBe(3);
+          expect(metric.statsHeight).toBeCloseTo(16, 0);
           expect(metric.editInFooter).toBe(true);
-          expect(metric.shareInBody).toBe(true);
+          expect(metric.shareInThumbnail).toBe(true);
           expect(metric.selectionAtTop).toBe(true);
           expect(metric.noThumbnailStrip).toBe(true);
           expect(metric.metaFits, JSON.stringify(metric)).toBe(true);
@@ -108,7 +111,12 @@ for (const width of [390, 1440]) {
         }
         await expect(cards.locator('[data-site-edit-badge]')).toHaveCount(4);
         await expect(page.getByLabel('已编辑 0 次', { exact: true })).toHaveCount(2);
-        expect(Math.max(...metrics.map(m => m.cardHeight)) - Math.min(...metrics.map(m => m.cardHeight))).toBeLessThan(1);
+        // 同行卡片等高，统计相对位置一致；不同网格行不为缺失的长描述预留空白。
+        for (const top of new Set(metrics.map(metric => metric.cardTop))) {
+          const row = metrics.filter(metric => metric.cardTop === top);
+          expect(Math.max(...row.map(metric => metric.cardHeight)) - Math.min(...row.map(metric => metric.cardHeight))).toBeLessThan(1);
+        }
+        expect(Math.max(...metrics.map(metric => metric.metaTop)) - Math.min(...metrics.map(metric => metric.metaTop))).toBeLessThan(1);
         const shortTitle = cards.filter({ hasText: '活动指南' });
         await shortTitle.scrollIntoViewIfNeeded();
         const rightGap = await shortTitle.evaluate(card => card.getBoundingClientRect().right - card.querySelector('[aria-label="新创建，尚未打开"]')!.getBoundingClientRect().right);
@@ -129,11 +137,6 @@ for (const width of [390, 1440]) {
         await testInfo.attach(`真实列表-${width}-${theme}-${size}`, { body: image, contentType: 'image/png' });
         await testInfo.attach('布局测量', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });
         // 三档都提供常驻按钮，详情不折叠、不省略；查看详情不是打开网页，不写访问记录。
-        if (size === 'large') {
-          const lastAccess = cards.nth(3).locator('[title^="最近访问"]');
-          await expect(lastAccess).toContainText('刚刚');
-          await expect(cards.nth(3).getByLabel('有效分享链接', { exact: true })).toContainText('0');
-        }
         const visited: string[] = [];
         page.on('request', request => { if (request.url().includes('/record-view')) visited.push(request.url()); });
         const trigger = cards.nth(2).getByRole('button', { name: '查看网页详情' });
@@ -457,7 +460,7 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const)
       await sidebar.getByRole('button', { name: '清除合集搜索' }).click();
       await expect(sidebar.locator('.collection-context-select')).toHaveCount(20);
       await sidebar.getByRole('navigation', { name: '合集分页', exact: true }).getByRole('button', { name: '下一页' }).click();
-      await expect(sidebar.locator('.collection-context-select').first()).toHaveText('发布资料 2012 份文档');
+      await expect(sidebar.locator('.collection-context-select').first()).toHaveText('发布资料 20');
       await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-20-0', page.url()).href);
       const left = await sidebar.boundingBox(), right = await dialog.locator('.collection-context-documents').boundingBox();
       expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x + 1);

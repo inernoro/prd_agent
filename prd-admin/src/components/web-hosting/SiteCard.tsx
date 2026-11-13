@@ -1,8 +1,7 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import {
   BookOpen,
   Check,
-  Clock,
   Edit3,
   Eye,
   FolderInput,
@@ -17,6 +16,8 @@ import {
   Share2,
   Trash2,
   WandSparkles,
+  Users,
+  MoreHorizontal,
 } from 'lucide-react';
 import type { HostedSite, HostedSiteActivity, HostedSiteTraffic, SiteOwnerCard } from '@/services/real/webPages';
 import { SiteDetailsDialog } from './SiteDetailsDialog';
@@ -27,8 +28,8 @@ import { UserAvatar } from '@/components/ui/UserAvatar';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { useDockDrag } from '@/components/share-dock';
 import { CardIconAction, CardMoreButton, type CardMoreAction } from './SiteCardActions';
-import { resolveSiteForm, siteFormBadge, siteSourceLabel, SITE_FORM_REGISTRY } from './siteFormRegistry';
-import { fmtSize, relativeTime } from './siteFormat';
+import { resolveSiteForm, siteFormBadge, SITE_FORM_REGISTRY } from './siteFormRegistry';
+import { fmtSize } from './siteFormat';
 import RelatedDocumentsBar from './RelatedDocumentsBar';
 import { SiteCardMetrics } from './SiteCardMetrics';
 import type { RelatedSummary } from '@/services/real/relatedDocuments';
@@ -75,6 +76,8 @@ export interface SiteCardProps {
   shared?: boolean;
   shareStats?: SiteShareStats;
   relatedSummary?: RelatedSummary;
+  /** 可嵌入不访问业务接口的导航，例如独立组件演示。默认沿用真实关联导航。 */
+  relatedNavigation?: ReactNode;
   onNavigateRelated?: (id: string) => void;
   /** 后端统一口径的访问摘要；拿不到时三个访问指标均显示未知。 */
   traffic?: HostedSiteTraffic;
@@ -166,10 +169,8 @@ export function buildCardActionLayers(args: {
 /**
  * 站点卡片 —— 网页托管的原子。
  *
- * 分区规则（设计稿屏 2，两组永不混排）：
- * - **缩略图层**只回答「这是什么」：左上内容形态（HTML / ZIP 站 / PDF / 视频 / MD），右上来源。
- * - **信息层**只回答「它现在怎么样」：状态胶囊一行（已分享 N / 已公开 / 团队共享）+ 归属头像靠右。
- * 于是四种状态同时成立时也不会挤在同一角。
+ * 三档共用位置：缩略图左上关联与状态，右上格式与悬浮选择，右下操作。
+ * 标题下方仅一行文件大小与编辑、访问、访客；完整来源和标签进入详情。
  *
  * 操作分四层，按频次而不是按类型分：
  * - 常驻：预览、分享 / 管理分享·N、更多（kebab）。中卡以上一定可见。
@@ -187,6 +188,7 @@ export function SiteCard({
   shared,
   shareStats,
   relatedSummary,
+  relatedNavigation,
   onNavigateRelated,
   traffic,
   activity,
@@ -215,6 +217,7 @@ export function SiteCard({
   const [fileDragOver, setFileDragOver] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const detailsButton = useRef<HTMLButtonElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   // 拖卡片到 ShareDock 投放槽（把站点投给别的功能用）；与「拖文件进卡片替换内容」是两个方向，互不干扰
   const { onPointerDown } = useDockDrag({ mime: WEB_PAGE_MIME, id: site.id, label: site.title, icon: 'WEB' });
 
@@ -271,30 +274,16 @@ export function SiteCard({
     onAiEdit,
   });
 
-  // 状态胶囊（设计稿：10.5px / padding 2-6 / radius 5 / 同色系描边 + 淡底，胶囊内无图标）
-  const chip = (key: string, text: string, fg: string, bd: string, bg: string) => (
-    <span
-      key={key}
-      className="inline-flex shrink-0 items-center"
-      style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 'var(--radius-xs)', color: fg, border: `1px solid ${bd}`, background: bg }}
-    >
-      {text}
-    </span>
-  );
-
-  const statusChips = (
-    <>
-      {/* 「已公开」在设计稿里走强调色系（#E8A87C），不是警告黄——它不是一个警告 */}
-      {isPublic && chip('public', '已公开',
-        'var(--accent-gold-2)', 'rgba(var(--accent-primary-rgb), 0.4)', 'rgba(var(--accent-primary-rgb), 0.12)')}
-      {(site.sharedTeamIds?.length ?? 0) > 0 && chip('team', '团队共享',
-        'var(--accent-fg-blue)', 'var(--semantic-info-border)', 'var(--semantic-info-soft)')}
-    </>
-  );
+  const statusItems = [
+    ...(shared ? [{ label: '已分享', icon: <Share2 size={12} /> }] : []),
+    ...(isPublic ? [{ label: '已公开', icon: <Globe size={12} /> }] : []),
+    ...((site.sharedTeamIds?.length ?? 0) > 0 ? [{ label: '团队共享', icon: <Users size={12} /> }] : []),
+  ];
 
   return (
     <>
     <div
+      ref={cardRef}
       data-tour-id="webpages-card"
       data-card
       data-hosted-site-id={site.id}
@@ -373,47 +362,37 @@ export function SiteCard({
             <SitePreview site={site} url={site.siteUrl} className="h-full w-full" />
           )}
 
-          {/* 左上：内容形态 */}
-          <span
-            className="absolute left-9 top-2 z-20 inline-flex items-center gap-1 backdrop-blur-md"
-            style={{
-              height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
-              fontFamily: 'var(--font-code)', fontSize: 9.5, letterSpacing: 'var(--tracking-badge)',
-              background: 'var(--scrim-badge-bg)', color: 'var(--text-secondary)',
-              border: '1px solid var(--scrim-badge-border)', boxShadow: 'var(--scrim-badge-shadow)',
-            }}
-            title={formConfig.hint}
-          >
-            <FormIcon size={11} />
-            {formConfig.label}
-          </span>
-
-          {/* 右上：来源。小卡不渲染——176px 宽的缩略图顶部放两枚徽章就满了（设计稿小卡只有形态） */}
-          {!isSmall && (
-            <span
-              className="absolute right-2 top-2 z-20 inline-flex items-center gap-1 backdrop-blur-md [@media(hover:none)]:hidden"
-              style={{
-                height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
-                fontFamily: 'var(--font-code)', fontSize: 9, letterSpacing: 'var(--tracking-badge)',
-                background: 'var(--scrim-badge-bg)', color: 'var(--text-tertiary)',
-                border: '1px solid var(--scrim-badge-border)', boxShadow: 'var(--scrim-badge-shadow)',
-              }}
-            >
-              {siteSourceLabel(site.sourceType)}
-            </span>
-          )}
+          <div data-site-card-badges className="absolute left-2 top-2 z-20 inline-flex items-center gap-1" onClick={event => event.stopPropagation()}>
+            {relatedNavigation === undefined ? <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionNavigation variant="badge" summary={relatedSummary}
+              onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} /> : relatedNavigation}
+            {statusItems.length > 0 && <span data-site-shared-badge={shared ? '' : undefined} className="inline-flex items-center">
+              <span className="hidden items-center gap-1 @[235px]:inline-flex" aria-label={statusItems.map(item => item.label).join('、')}>
+                {statusItems.map(item => <span key={item.label} title={item.label} className="inline-flex h-4 w-4 items-center justify-center rounded" style={{ color: 'var(--text-secondary)', background: 'var(--scrim-badge-bg)' }}>{item.icon}</span>)}
+              </span>
+              <button type="button" data-no-drag className="inline-flex h-4 w-4 items-center justify-center rounded @[235px]:hidden"
+                aria-label={`查看状态：${statusItems.map(item => item.label).join('、')}`} title={statusItems.map(item => item.label).join('、')}
+                style={{ color: 'var(--text-secondary)', background: 'var(--scrim-badge-bg)' }} onClick={() => setDetailsOpen(true)}>
+                {statusItems.length > 1 ? <MoreHorizontal size={12} /> : statusItems[0].icon}
+              </button>
+            </span>}
+          </div>
+          {form !== 'html' && <span data-site-card-type
+            className={`absolute top-2 z-20 inline-flex items-center gap-[3px] backdrop-blur-md transition-[right] group-hover:right-11 group-focus-within:right-11 ${selected || selectionMode ? 'right-11' : 'right-2'}`}
+            style={{ height: 20, padding: '0 4px', borderRadius: 'var(--radius-chip)', fontFamily: 'var(--font-code)', fontSize: 9,
+              background: 'var(--scrim-badge-bg)', color: 'var(--text-secondary)', border: '1px solid var(--scrim-badge-border)' }}
+            title={[formConfig.hint, formBadge].filter(Boolean).join(' · ')}><FormIcon size={10} />{formConfig.label}</span>}
 
           {/* 触屏没有 hover：中卡和大卡必须另有常驻菜单入口，不能把唯一 kebab 藏在 hover 条里。 */}
           {!isSmall && (
             <div
-              className="absolute right-[7px] top-[7px] z-20 hidden [@media(hover:none)]:block"
+              className="absolute right-[7px] bottom-[7px] z-20 hidden [@media(hover:none)]:block"
               onClick={(e) => e.stopPropagation()}
             >
               <CardMoreButton actions={menuActions} touchActions={touchActions} onScrim />
             </div>
           )}
 
-          {/* 右上（小卡）：唯一一枚 kebab。小卡不渲染 hover 条，这颗就是全部操作入口。
+          {/* 右下（小卡）：唯一一枚 kebab。小卡不渲染 hover 条，这颗就是全部操作入口。
               必须**绝对定位压在缩略图上**：放进信息层的常规流会永久吃掉 28px 一行，而它平时
               是透明的，于是每张小卡的正文底下都挂着一截空白（用户原话「下巴」）。中/大卡的
               同一颗 kebab 本来就在 hover 条里绝对定位，这里是把小卡对齐到同一条规矩。
@@ -421,14 +400,14 @@ export function SiteCard({
               否则小卡在触屏上一个操作入口都没有。 */}
           {isSmall && (
             <div
-              className="absolute right-[7px] top-[7px] z-20 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+              className="absolute right-[7px] bottom-[7px] z-20 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
               onClick={(e) => e.stopPropagation()}
             >
-              <CardMoreButton actions={menuActions} touchActions={touchActions} onScrim />
+              <CardMoreButton actions={menuActions} touchActions={touchActions} onScrim contextTargetRef={cardRef} />
             </div>
           )}
 
-          {/* 左上：视觉勾选框保持 20×20，真实按钮热区为 44×44，触屏不用精准点中小方框。 */}
+          {/* 右上：视觉勾选框保持 20×20，真实按钮热区为 44×44，触屏不用精准点中小方框。 */}
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onSelect(); }}
@@ -437,7 +416,7 @@ export function SiteCard({
             data-no-drag
             data-site-select
             aria-pressed={selected}
-            className="absolute top-[-5px] left-[-5px] z-20 inline-flex h-11 w-11 items-center justify-center"
+            className={`absolute right-1 top-1 z-30 inline-flex h-7 w-7 items-center justify-center transition-opacity max-sm:right-[-4px] max-sm:top-[-4px] max-sm:h-11 max-sm:w-11 ${selected || selectionMode ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto'}`}
           >
             <span
               className="inline-flex h-5 w-5 items-center justify-center transition-opacity hover:!opacity-100 group-hover:opacity-100"
@@ -445,7 +424,7 @@ export function SiteCard({
                 borderRadius: 'var(--radius-chip)',
                 background: selected ? 'var(--accent-primary)' : 'var(--scrim-badge-bg)',
                 border: `1px solid ${selected ? 'var(--accent-primary)' : 'var(--border-strong)'}`,
-                opacity: selected ? 1 : 0.5,
+                opacity: 1,
               }}
             >
               {selected && <Check size={12} strokeWidth={2.8} style={{ color: 'var(--accent-on-primary)' }} />}
@@ -484,7 +463,7 @@ export function SiteCard({
                     <CardIconAction key={a.label} label={a.label} icon={a.icon} onClick={a.onClick} compact onScrim />
                   ))}
                 </div>
-                <CardMoreButton actions={menuActions} touchActions={touchActions} onScrim />
+                <CardMoreButton actions={menuActions} touchActions={touchActions} onScrim contextTargetRef={cardRef} />
               </div>
             </div>
           )}
@@ -492,20 +471,6 @@ export function SiteCard({
 
         {/* ── 信息层：只放「它现在怎么样」 ── */}
         <div className="flex flex-1 flex-col" style={{ padding: SPEC.pad, gap: SPEC.gap }}>
-          {!isSmall && (ownerCard || isPublic || (site.sharedTeamIds?.length ?? 0) > 0) && (
-            <div className="flex min-w-0 items-center gap-1" style={{ height: 20 }}>
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{statusChips}</div>
-              {ownerCard && (
-                <span className="shrink-0" title={ownerCard.displayName}>
-                  <UserAvatar
-                    src={resolveAvatarUrl({ avatarFileName: ownerCard.avatarFileName })}
-                    className="h-[18px] w-[18px] rounded-full"
-                  />
-                </span>
-              )}
-            </div>
-          )}
-
           {/* 标题恒定单行：多一行标题就把整行卡片撑高，短卡下面留出一截空白（用户原话「胡子太长」）。
               截断了也不丢信息——title 属性给全文，右栏「站点上下文」也显示完整标题。 */}
           <div data-site-card-title className="flex min-w-0 items-center gap-1.5" style={{ minHeight: 20 }}>
@@ -518,8 +483,7 @@ export function SiteCard({
               {site.title}
             </h3>
             <SiteNewBadge activity={activity} />
-            <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionNavigation variant="badge" summary={relatedSummary}
-              onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
+            {ownerCard && <span className="shrink-0" title={ownerCard.displayName}><UserAvatar src={resolveAvatarUrl({ avatarFileName: ownerCard.avatarFileName })} className="h-[18px] w-[18px] rounded-full" /></span>}
             <button ref={detailsButton} type="button" data-site-details-button data-no-drag
               aria-label="查看网页详情" aria-haspopup="dialog" aria-expanded={detailsOpen} title="查看完整信息"
               className="ml-auto inline-flex h-5 w-5 shrink-0 items-center justify-center rounded hover-bg-soft focus-visible:outline focus-visible:outline-2"
@@ -529,36 +493,11 @@ export function SiteCard({
             </button>
           </div>
 
-          {isLarge && (
-            <p className="line-clamp-2" style={{ minHeight: 38, fontSize: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
-              {site.description || formConfig.hint}
-            </p>
-          )}
-
           <div data-site-card-meta className="flex min-w-0 items-center gap-2" style={{ fontFamily: 'var(--font-code)', fontSize: 10, lineHeight: '16px', color: 'var(--text-tertiary)' }}>
             <span className="shrink-0" title={fmtSize(site.totalSize)}>{fmtSize(site.totalSize)}</span>
-            {shared && <span data-site-shared-badge aria-label="已分享" className="inline-flex shrink-0 items-center gap-1"
-              title={linkCount > 0 ? `已分享 ${linkCount} 条有效链接` : '已分享'} style={{ color: 'var(--semantic-success-text)' }}>
-              <Link2 size={10} aria-hidden /><span className="hidden @[220px]:inline">已分享</span>
-            </span>}
-            {formBadge && <span className="min-w-0 truncate" title={formBadge}>{formBadge}</span>}
-            {isLarge && <span className="ml-auto inline-flex min-w-0 items-center gap-1 truncate" title={traffic?.all.lastViewedAt ? `最近访问 ${new Date(traffic.all.lastViewedAt).toLocaleString()}` : '最近访问'}>
-              <Clock size={10} className="shrink-0" aria-hidden />{traffic?.all.lastViewedAt ? relativeTime(traffic.all.lastViewedAt) : traffic ? '暂无' : '—'}
-            </span>}
+            <SiteCardMetrics activity={activity} traffic={traffic} onViewers={onViewers} />
           </div>
-
-          {/* 标签摘要不预留空行；三种尺寸均可通过详情查看全部标签与明确的创建/更新时间。 */}
-          {!isSmall && site.tags.length > 0 && (
-            <div className="flex min-w-0 flex-wrap items-center gap-1">
-              {site.tags.slice(0, 3).map((tag) => <span key={tag} className="max-w-full truncate"
-                style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 'var(--radius-xs)', background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>
-                {tag}
-              </span>)}
-              {site.tags.length > 3 && <span style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>+{site.tags.length - 3}</span>}
-            </div>
-          )}
-
-          <SiteCardMetrics activity={activity} traffic={traffic} activeLinks={shareStats?.activeLinks} onViewers={onViewers} />
+          {isLarge && site.description && <p className="line-clamp-2" style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>{site.description}</p>}
 
         </div>
       </div>

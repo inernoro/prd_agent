@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { MoreHorizontal } from 'lucide-react';
-import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
+import ContextMenu, { type ContextMenuItem } from '@/components/ui/ContextMenu';
 
 export interface CardMoreAction {
   label: string;
@@ -98,54 +98,41 @@ export function CardIconAction({
  * 在菜单里仍然保留并置顶，触屏与键盘用户才有等价可达路径（设计稿屏 2 的操作分层要求）。
  * 置顶那几项与其余低频配置之间画一条分隔线，避免读成同一组。
  */
-export function CardMoreButton({ actions, touchActions = 0, onScrim }: { actions: CardMoreAction[]; touchActions?: number; onScrim?: boolean }) {
+export function CardMoreButton({ actions, touchActions = 0, onScrim, contextTargetRef }: {
+  actions: CardMoreAction[]; touchActions?: number; onScrim?: boolean; contextTargetRef?: RefObject<HTMLElement | null>;
+}) {
   const anchorRef = useRef<HTMLButtonElement | null>(null);
-  const [open, setOpen] = useState(false);
-
-  if (actions.length === 0) return null;
-
-  return (
-    <>
-      <button
-        ref={anchorRef}
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((v) => !v);
-        }}
-        className="pointer-events-auto inline-flex h-7 min-h-7 w-[26px] min-w-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover-bg-soft max-sm:h-11 max-sm:min-h-11 max-sm:w-11 max-sm:min-w-11"
-        title="更多设置"
-        aria-label="更多设置"
-        data-no-drag
-        style={onScrim
-          ? { color: 'var(--text-primary)', background: 'var(--scrim-button-bg)', border: '1px solid var(--border-strong)' }
-          : { color: 'var(--text-secondary)' }}
-      >
-        <MoreHorizontal size={14} />
-      </button>
-      {open && (
-        <AnchoredMenu open={open} onClose={() => setOpen(false)} anchorRef={anchorRef} minWidth={190} align="left" style={{ padding: 6 }}>
-          {actions.map((action, i) => (
-            <div key={action.label}>
-              {touchActions > 0 && i === touchActions && (
-                <div className="my-1 h-px" style={{ background: 'var(--border-subtle)' }} />
-              )}
-              <button
-                type="button"
-                className="flex h-8 min-h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-medium transition-colors hover-bg-soft max-sm:h-11 max-sm:min-h-11"
-                style={{ color: action.danger ? 'var(--semantic-danger-text)' : 'var(--text-secondary)' }}
-                onClick={() => {
-                  setOpen(false);
-                  if (anchorRef.current) action.onClick(anchorRef.current);
-                }}
-              >
-                <span className="inline-flex w-4 shrink-0 items-center justify-center">{action.icon}</span>
-                <span className="truncate">{action.label}</span>
-              </button>
-            </div>
-          ))}
-        </AnchoredMenu>
-      )}
-    </>
-  );
+  const [point, setPoint] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    const target = contextTargetRef?.current;
+    if (!target || !actions.length) return;
+    const open = (event: MouseEvent) => {
+      event.preventDefault(); event.stopPropagation();
+      setPoint({ x: event.clientX, y: event.clientY });
+    };
+    target.addEventListener('contextmenu', open);
+    return () => target.removeEventListener('contextmenu', open);
+  }, [contextTargetRef, actions.length]);
+  if (!actions.length) return null;
+  const items: ContextMenuItem[] = actions.flatMap((action, index) => [
+    ...(touchActions > 0 && index === touchActions ? [{ key: '__divider', label: '', divider: true }] : []),
+    { key: action.label, label: action.label, icon: action.icon, danger: action.danger, onClick: () => {
+      const anchor = anchorRef.current && (anchorRef.current.getClientRects().length || !contextTargetRef)
+        ? anchorRef.current : contextTargetRef?.current?.querySelector<HTMLElement>('[aria-label="更多设置"]') ?? contextTargetRef?.current;
+      if (anchor) action.onClick(anchor);
+    } },
+  ]);
+  return <>
+    <button ref={anchorRef} type="button" aria-label="更多设置" title="更多设置" aria-haspopup="menu" aria-expanded={!!point} data-no-drag
+      onClick={event => {
+        event.stopPropagation();
+        const rect = event.currentTarget.getBoundingClientRect();
+        setPoint(current => current ? null : { x: rect.left, y: rect.bottom + 4 });
+      }}
+      className="pointer-events-auto inline-flex h-7 min-h-7 w-[26px] min-w-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover-bg-soft max-sm:h-11 max-sm:min-h-11 max-sm:w-11 max-sm:min-w-11"
+      style={onScrim ? { color: 'var(--text-primary)', background: 'var(--scrim-button-bg)', border: '1px solid var(--border-strong)' } : { color: 'var(--text-secondary)' }}>
+      <MoreHorizontal size={14} />
+    </button>
+    {point && <ContextMenu items={items} x={point.x} y={point.y} anchorRef={anchorRef} minWidth={190} label="网页操作" onClose={() => setPoint(null)} />}
+  </>;
 }
