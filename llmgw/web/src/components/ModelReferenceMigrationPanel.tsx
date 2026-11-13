@@ -239,7 +239,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
 }
 
 
-export function ModelReferenceMigrationOverview({ onOpen }: { onOpen: (plan: ReferenceMigrationPlan) => void }) {
+export function ModelReferenceMigrationOverview({ onOpen, onStatus }: { onOpen: (plan: ReferenceMigrationPlan) => void; onStatus?: (value: { pending: number | null; failed: boolean }) => void }) {
   const { tenant } = useAuth();
   const [plans, setPlans] = useState<ReferenceMigrationPlan[]>([]);
   const [failed, setFailed] = useState(false);
@@ -269,6 +269,7 @@ export function ModelReferenceMigrationOverview({ onOpen }: { onOpen: (plan: Ref
   }, [tenant?.id]);
   const unresolved = plans.filter(plan => plan.status !== 'completed' || !isReferenceCoverageVerified(plan.coverage, now));
   const unresolvedCount = Math.max(unresolved.length, unresolvedTotal ?? 0);
+  useEffect(() => { onStatus?.({ pending: loaded ? unresolvedCount : null, failed }); }, [loaded, unresolvedCount, failed, onStatus]);
   return <div data-testid="model-reference-migration-overview" style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}><Button size="sm" variant="ghost" onClick={() => setOpen(value => !value)}>升级记录与遗漏</Button><span style={HINT_TEXT}>{failed ? '升级记录需重新核对' : !loaded ? '正在读取升级记录' : `显示 ${plans.length} 个计划 · 待处理 ${unresolvedCount}`}</span><Button size="sm" variant="ghost" onClick={() => void refresh()}>刷新升级记录</Button></div>
     {!loaded && !failed ? <Spinner size={14} /> : null}
