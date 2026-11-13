@@ -150,6 +150,7 @@ export async function sendAlarm(
   if (channel.kind === 'bark' && phoneQueue) return phoneQueue.enqueue({ channel, event, message, boardUrl: opts.boardUrl });
   const mapPayload = channel.kind === 'map' ? buildNotificationPayload({
     identity: event.identity, notificationFacts: event.notificationFacts,
+    eventId: event.eventId, firstOccurredAt: event.firstOccurredAt, lastOccurredAt: event.lastOccurredAt, occurrenceCount: event.occurrenceCount,
     urgency: event.drill ? 'normal' : event.urgency,
     finding: event.finding, assessment: event.assessment, affectedChecks: event.affectedChecks, environmentLabel: event.environmentLabel,
     type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
@@ -213,6 +214,7 @@ async function sendAlarmTransport(
     });
     return await notifier.send({
       identity: event.identity, notificationFacts: event.notificationFacts,
+    eventId: event.eventId, firstOccurredAt: event.firstOccurredAt, lastOccurredAt: event.lastOccurredAt, occurrenceCount: event.occurrenceCount,
       urgency: event.drill ? 'normal' : event.urgency,
       finding: event.finding, assessment: event.assessment, affectedChecks: event.affectedChecks, environmentLabel: event.environmentLabel,
       type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',

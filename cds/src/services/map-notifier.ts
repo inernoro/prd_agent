@@ -1,5 +1,6 @@
 import { type AlarmIdentity } from './alarm-identity.js';
 import { renderAlarmMessage } from './alarm-route.js';
+import { notificationFunction } from '../shared/notification-templates.js';
 /**
  * map-notifier — 把存活监控的状态翻转送进 MAP 站内通知。
  *
@@ -40,6 +41,10 @@ export interface MapNotifierConfig {
 }
 
 export interface MapNotifierAlert {
+  eventId?: string;
+  firstOccurredAt?: string;
+  lastOccurredAt?: string;
+  occurrenceCount?: number;
   notificationFacts?: import('../shared/notification-templates.js').NotificationFacts;
   urgency?: 'urgent' | 'normal';
   businessName?: string;
@@ -67,6 +72,13 @@ export interface MapNotificationPayload {
   level: string;
   section: string;
   dedupKey: string;
+  incidentId?: string;
+  incidentState?: 'active' | 'recovered' | 'unknown';
+  requestOutcome?: 'unknown';
+  firstOccurredAt?: string;
+  lastOccurredAt?: string;
+  recoveredAt?: string;
+  occurrenceCount?: number;
   actionLabel?: string;
   actionUrl?: string;
 }
@@ -114,13 +126,26 @@ export function signCanonical(privateKeyPem: string, canonical: string): string 
 export function buildNotificationPayload(alert: MapNotifierAlert): MapNotificationPayload {
   const down = alert.type === 'uptime.target.down';
   const message = renderAlarmMessage({ ...alert, projectId: alert.projectId || '', kind: down ? 'business-down' : 'business-recovered' }, { boardUrl: alert.boardUrl });
+  // 归档事件编号跨持续异常与恢复保持不变；缺少归档证据时保留旧幂等键，不猜生命周期。
+  const incidentId = alert.eventId && alert.firstOccurredAt && (down || alert.lastOccurredAt) ? `uptime:${crypto.createHash('sha256').update(JSON.stringify([
+    alert.identity?.observer.id, alert.projectId, alert.notificationFacts?.environment, alert.targetId,
+    alert.identity?.subject.id, alert.assessment || 'check-failed', alert.eventId,
+  ])).digest('hex')}` : undefined;
+  const objectName = notificationFunction(alert.targetName, 120);
+  const objectPrefix = objectName === '监控' || message.body.startsWith(objectName) ? '' : `${objectName} · `;
   return {
     source: 'uptime-alert',
-    title: message.title,
-    message: message.body,
+    title: `${objectPrefix}${message.body} · ${message.title}`,
+    message: down ? alert.assessment === 'observation-unavailable'
+      ? '监控读取中断，受影响服务的当前状态尚未确认。查看监控详情检查观测链路。'
+      : '该项检查未通过，业务请求的影响范围尚未确认。查看监控详情核对最近结果并检查对应服务。'
+      : '检查已满足恢复条件，故障期间的请求结果仍以各任务记录为准。查看监控详情核对恢复时间。',
+    ...(incidentId ? { incidentId, incidentState: down ? 'active' as const : 'recovered' as const, requestOutcome: 'unknown' as const,
+      firstOccurredAt: alert.firstOccurredAt, lastOccurredAt: alert.lastOccurredAt || alert.detectedAt,
+      occurrenceCount: alert.occurrenceCount ?? 1, ...(!down ? { recoveredAt: alert.detectedAt } : {}) } : {}),
     level: down ? alert.urgency === 'urgent' && alert.assessment !== 'observation-unavailable' ? 'error' : 'warning' : 'info',
     section: 'admin',
-    dedupKey: `uptime:${alert.identity ? `${alert.identity.observer.id}:${alert.identity.subject.id}:` : ''}${alert.targetId}:${down ? 'down' : 'recovered'}:${alert.detectedAt}`,
+    dedupKey: incidentId || `uptime:${alert.identity ? `${alert.identity.observer.id}:${alert.identity.subject.id}:` : ''}${alert.targetId}:${down ? 'down' : 'recovered'}:${alert.detectedAt}`,
     ...(alert.boardUrl ? { actionLabel: '查看问题与处理建议', actionUrl: alert.boardUrl } : alert.probeUrl ? { actionLabel: '打开被监控地址', actionUrl: alert.probeUrl } : {}),
   };
 }

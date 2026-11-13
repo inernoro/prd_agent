@@ -126,16 +126,19 @@ describe('通知载荷', () => {
     expect(p.source).toBe('uptime-alert');   // 必须与 MAP SourceCatalog 登记的一致
     expect(p.section).toBe('admin');
     expect(p.level).toBe('warning');
-    expect(p.message).toContain('检查异常');
-    expect(p.title).toBe('环境待确认 系统待确认');
+    expect(p.title).toContain('检查异常');
+    expect(p.message).toContain('影响范围尚未确认');
+    expect(p.message).toContain('查看监控详情');
+    expect(p.title).toBe('LLM Gateway serving · 监控检查异常，原因未明 · 环境待确认 系统待确认');
     expect(p.message).not.toContain('下一步');   // 症状 + 下一步，不是只报个错
-    expect(p.message).toContain('原因未明');
+    expect(p.title).toContain('原因未明');
   });
 
   it('恢复是 info 级，不带下一步', () => {
     const p = buildNotificationPayload({ ...base, type: 'uptime.target.recovered' });
     expect(p.level).toBe('info');
-    expect(p.message).toContain('已恢复');
+    expect(p.title).toContain('已恢复');
+    expect(p.message).toContain('已满足恢复条件');
     expect(p.message).not.toContain('下一步');
   });
 

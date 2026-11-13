@@ -9,7 +9,7 @@ import { NotificationReportRecorder } from '../../src/services/notification-repo
 import type { UptimeCustomMonitor } from '../../src/types.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 
-it('关闭发送通道仍在真实稳定10分钟后关闭原报告；冷却期间的新故障仍归档且不补发短信', async () => {
+it('关闭发送通道仍在真实稳定10分钟后关闭原报告；正式严重故障复发立即告警且不补造恢复通知', async () => {
   let failed = true, now = 1_700_000_000_000;
   const server = http.createServer((_req, res) => { res.statusCode = failed ? 503 : 200; res.end('fixture'); });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -38,7 +38,7 @@ it('关闭发送通道仍在真实稳定10分钟后关闭原报告；冷却期�
     expect(sent).toEqual(['uptime.target.down']); // No delivered down: never invent a recovery SMS.
     failed = true; await cycle();
     expect(state.listAcceptanceReports(null)).toHaveLength(2);
-    expect(sent).toEqual(['uptime.target.down']);
+    expect(sent).toEqual(['uptime.target.down', 'uptime.target.down']);
     const second = state.listAcceptanceReports(null).find(r => r.id !== original.id)!;
     expect(second.monitorEvent?.state).toBe('open');
     failed = false;
@@ -47,8 +47,8 @@ it('关闭发送通道仍在真实稳定10分钟后关闭原报告；冷却期�
     await cycle();
     expect(state.getAcceptanceReport(second.id)!.monitorEvent?.state).toBe('recovered');
     expect(state.getAcceptanceReport(second.id)!.monitorEvent?.snapshots).toHaveLength(2);
-    expect(sent).toEqual(['uptime.target.down']);
-    expect(service.getIncident(second.monitorEvent!.incidentId!)!.notificationSamples || []).toHaveLength(0);
+    expect(sent).toEqual(['uptime.target.down', 'uptime.target.down']);
+    expect(service.getIncident(second.monitorEvent!.incidentId!)!.notificationSamples || []).toHaveLength(1);
   } finally {
     await service.flush(); await flushAllJsonStateStores();
     await new Promise<void>(resolve => server.close(() => resolve())); fs.rmSync(dir, { recursive: true, force: true });

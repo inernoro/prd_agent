@@ -6306,7 +6306,6 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         .catch(() => console.warn('[alarm] 未发送通知的状态事实归档失败，请检查报告存储。'));
     },
     onAlert: async (type, data) => {
-      cdsEventsBus.publish(type, data);
       // 第三个出口：用户自己配的通知通道（Bark / Webhook / MAP）。
       // 同样不 await、不重试——理由与上面那条一致（探测轮次不该被投递拖住；
       // 上游已去抖，重试会把一次翻转变成多条通知）。
@@ -6316,8 +6315,14 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         const record = await notificationReports.record(event);
         event.reportId = record.reportId;
         event.eventId = record.eventId;
+        event.firstOccurredAt = record.firstOccurredAt;
+        event.lastOccurredAt = record.lastOccurredAt;
+        event.occurrenceCount = record.occurrenceCount;
+        // 已有更晚的失败事实时，保留迟到恢复记录，但不把它外发成当前恢复。
+        if (type === 'uptime.target.recovered' && Date.parse(record.lastOccurredAt) > Date.parse(data.detectedAt)) return;
         if (boardUrl) { boardUrl = monitorReportUrl(boardUrl, record.reportId); }
       } catch { console.warn('[alarm] 监控事件报告归档失败，通知继续发送，详情保留监控入口。'); }
+      cdsEventsBus.publish(type, data);
       // 第二个出口：站内通知。不 await——探测轮次不该被一次通知投递拖住；
       // 也不重试——上游已经去抖，只在真翻转时调一次，重试会把一次翻转变成多条通知。
       // 投递失败只留日志（MapNotifier 内部已把异常转成结果值，这里的 catch 是兜底）。
@@ -6332,6 +6337,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         probeUrl: data.probeUrl,
         boardUrl,
         notificationFacts: event.notificationFacts,
+        eventId: event.eventId, firstOccurredAt: event.firstOccurredAt, lastOccurredAt: event.lastOccurredAt, occurrenceCount: event.occurrenceCount,
         message: data.message,
         consecutiveFailures: data.consecutiveFailures,
         detectedAt: data.detectedAt,

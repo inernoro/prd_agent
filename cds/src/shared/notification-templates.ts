@@ -81,8 +81,8 @@ export function parseReportClassification(raw: unknown): ReportClassification {
 }
 
 const UNSAFE_NOTIFICATION_TEXT = /[\r\n<>]|https?:|sk-|bearer\s|api[_-]?key|[\u0000-\u001f]/i;
-export function notificationFunction(value: string | undefined): string {
-  return value && Array.from(value).length <= 8 && !UNSAFE_NOTIFICATION_TEXT.test(value) ? value : '监控';
+export function notificationFunction(value: string | undefined, maxCharacters = 8): string {
+  return value && Array.from(value).length <= maxCharacters && !UNSAFE_NOTIFICATION_TEXT.test(value) ? value : '监控';
 }
 
 /** 只接收已确认、脱敏后的短事实；拒绝长原文、地址和凭据，不截断型号或数字。 */
