@@ -1,5 +1,20 @@
 import type { ApiResponse } from '@/types/api';
 
+/** 后端核验当前文档版本后的问答索引状态，时间目标由服务端判定。 */
+export type KnowledgeIndexStatus = {
+  status: 'not_indexed' | 'stale' | 'pending' | 'ready' | 'failed';
+  displayMessage: string;
+  pollingRecommended: boolean;
+  runId?: string | null;
+  phase?: string | null;
+  sourceUpdatedAt?: string | null;
+  targetSeconds: number;
+  targetAt?: string | null;
+  delayed: boolean;
+  failureCode?: string | null;
+  errorMessage?: string | null;
+};
+
 // ── 数据类型 ──
 
 export type DocumentStore = {

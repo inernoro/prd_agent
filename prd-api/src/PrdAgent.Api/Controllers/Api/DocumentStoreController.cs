@@ -137,7 +137,8 @@ public partial class DocumentStoreController : ControllerBase
         DocumentAssetCleanupService documentAssetCleanup,
         EntryContentWriteService entryContentWriter,
         GitHubUserConnectionService githubConnections,
-        ILogger<DocumentStoreController> logger)
+        ILogger<DocumentStoreController> logger,
+        KnowledgeIndexRefreshQueue? knowledgeIndexRefresh = null)
     {
         _db = db;
         _assetStorage = assetStorage;
@@ -162,9 +163,11 @@ public partial class DocumentStoreController : ControllerBase
         _entryContentWriter = entryContentWriter;
         _githubConnections = githubConnections;
         _logger = logger;
+        _knowledgeIndexRefresh = knowledgeIndexRefresh ?? new KnowledgeIndexRefreshQueue(db, config);
     }
 
     private readonly EntryContentWriteService _entryContentWriter;
+    private readonly KnowledgeIndexRefreshQueue _knowledgeIndexRefresh;
 
     private readonly IConfiguration _config;
 
@@ -1175,6 +1178,12 @@ public partial class DocumentStoreController : ControllerBase
             contentCompliant = sectionProblems.Count == 0 && metaProblems.Count == 0;
         }
 
+        TaskExecutionIdentity? indexRefreshIdentity = null;
+        if (await _knowledgeIndexRefresh.ShouldRefreshAsync(entry, store, userId))
+            indexRefreshIdentity = await HttpContext.RequestServices
+                .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                .AdmitAuthenticatedPaidBranchAsync(HttpContext, CancellationToken.None);
+
         // 核心写入（ParsedPrd 内容寻址 + 摘要索引 + 重锚评论 + 重算双链 + 双版本快照）
         // 抽取到 EntryContentWriteService，与版本恢复 / 自动补链批处理共用同一条路径。
         var writeResult = await _entryContentWriter.WriteAsync(
@@ -1183,6 +1192,25 @@ public partial class DocumentStoreController : ControllerBase
 
         if (writeResult.Conflicted)
             return Conflict(ApiResponse<object>.Fail("DOCUMENT_TRASH_CONFLICT", "内容已被删除或发生变化，请刷新后重试"));
+
+        KnowledgeIndexRefreshStatus? knowledgeIndex = null;
+        if (indexRefreshIdentity is not null)
+        {
+            using var refreshScope = TaskExecutionContext.Enter(indexRefreshIdentity);
+            try
+            {
+                knowledgeIndex = await _knowledgeIndexRefresh.EnqueueAsync(entry, writeResult.DocumentId,
+                    writeResult.UpdatedAt, userId, indexRefreshIdentity.PermitId);
+            }
+            catch (Exception refreshError)
+            {
+                _logger.LogError(refreshError, "Knowledge index refresh queue failed entry={EntryId}", entryId);
+                knowledgeIndex = new KnowledgeIndexRefreshStatus("failed", null, writeResult.UpdatedAt,
+                    KnowledgeIndexRefreshQueue.TargetSeconds, null, false, "KB_INDEX_QUEUE_FAILED",
+                    "索引任务入队未确认，请核对状态后明确重新索引",
+                    "正文已保存，索引刷新入队未确认；旧内容已排除", false);
+            }
+        }
 
         // 模板库的人工写入：持久化合规标记，前端可据此提示「缺 需求一一对应表」
         if (contentCompliant.HasValue)
@@ -1198,12 +1226,24 @@ public partial class DocumentStoreController : ControllerBase
         {
             updated = true,
             updatedAt = writeResult.UpdatedAt,
+            knowledgeIndex,
             updatedBy = userId,
             updatedByName = userName,
             inlineCommentsRebound = writeResult.Rebound,
             inlineCommentsOrphaned = writeResult.Orphaned,
             mentionsWritten = writeResult.MentionsWritten,
         }));
+    }
+
+    /// <summary>当前正文索引状态；仅回读，不创建任务、许可或模型调用。</summary>
+    [HttpGet("entries/{entryId}/knowledge-index")]
+    public async Task<IActionResult> GetKnowledgeIndexStatus(string entryId)
+    {
+        var userId = GetUserId();
+        var (entry, _, error) = await LoadReadableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        return Ok(ApiResponse<KnowledgeIndexRefreshStatus>.Ok(await _knowledgeIndexRefresh.GetStatusAsync(entry, userId)));
     }
 
     // ───────────────────────── 知识库版本控制 ─────────────────────────
@@ -5952,7 +5992,8 @@ public partial class DocumentStoreController : ControllerBase
         if (!string.IsNullOrEmpty(runId))
         {
             run = await _db.DocumentStoreAgentRuns
-                .Find(r => r.Id == runId && r.UserId == userId && r.SourceEntryId == entryId)
+                .Find(r => r.Id == runId && r.UserId == userId && r.SourceEntryId == entryId
+                    && r.Kind == DocumentStoreAgentRunKind.Reprocess)
                 .FirstOrDefaultAsync();
             if (run == null)
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));

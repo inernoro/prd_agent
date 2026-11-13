@@ -42,8 +42,9 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
         Register(new RepoRunCommandTool(workspace));
         Register(new RepoCreatePullRequestTool(workspace));
         Register(new KbListTool(db));
-        Register(new KbSearchTool(db));
+        Register(new KbSearchTool(db, scopeFactory));
         Register(new KbReadTool(db));
+        Register(new KbIndexTool(db, scopeFactory));
         Register(new KbDraftCreateTool(db));
         Register(new KbDraftReadTool(db));
         Register(new KbDraftListTool(db));
