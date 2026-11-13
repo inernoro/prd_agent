@@ -58,7 +58,21 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const check = (name, ok, detail) => { if (!ok) errors.push({ name, detail }); };
 async function stable(page) { await page.evaluate(async () => { await document.fonts.ready;await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); }); }
-async function screenshot(page, id, metrics = {}) { await stable(page); const width = await page.evaluate(() => document.documentElement.scrollWidth); check(`${id}:无文档横溢出`, width <= page.viewportSize().width + 1, width); await page.screenshot({ path: path.join(OUT, `${id}.png`), animations: 'disabled' }); results.push({ id, provenance: 'deterministic-fixture', metrics: { ...metrics, documentWidth: width, bodyFont: await page.locator('body').evaluate(e => getComputedStyle(e).fontSize) } }); }
+async function screenshot(page, id, metrics = {}) {
+ await stable(page);
+ const taskGeometry = await page.evaluate(id => {
+  const rect = el => { if (!el) return null;const r = el.getBoundingClientRect();return { y: r.y, height: r.height, bottom: r.bottom }; };
+  let target, wrappers = [];
+  if (id.endsWith('-login')) { target = document.querySelector('.lg-login-submit');wrappers = [...document.querySelectorAll('.lg-login-capabilities')]; }
+  if (id.endsWith('-members-small')) { target = document.querySelector('tbody tr');wrappers = [...document.querySelectorAll('.lg-form-grid')]; }
+  if (id.endsWith('-usage')) { target = [...document.querySelectorAll('.lg-card-kicker')].find(el => /USD Gateway 估算/.test(el.textContent))?.parentElement;wrappers = [...document.querySelectorAll('[aria-labelledby="tenant-governance-title"] .lg-form-grid')]; }
+  if (id.endsWith('-settings')) { target = document.querySelector('[role=radio]');wrappers = [...document.querySelectorAll('.lg-eyebrow,.lg-settings-card > .lg-card-kicker')]; }
+  const core = rect(target);
+  const beforeTask = wrappers.map(rect).filter(r => r && r.height > 0 && core && r.bottom <= core.y);
+  return { core, nonessentialBeforeTaskHeight: beforeTask.reduce((sum, r) => sum + r.height, 0), minimumScrollToReadCore: core ? Math.max(0, core.bottom - innerHeight) : null };
+ }, id);
+ metrics = { ...metrics, ...taskGeometry };
+ const width = await page.evaluate(() => document.documentElement.scrollWidth); check(`${id}:无文档横溢出`, width <= page.viewportSize().width + 1, width); await page.screenshot({ path: path.join(OUT, `${id}.png`), animations: 'disabled' }); results.push({ id, provenance: 'deterministic-fixture', metrics: { ...metrics, documentWidth: width, bodyFont: await page.locator('body').evaluate(e => getComputedStyle(e).fontSize) } }); }
 async function nav(page, route) { const menu = page.getByRole('button', { name: '打开导航', exact: true }); if (await menu.isVisible()) await menu.click(); await page.locator(`aside a[href$="${route}"]`).last().click(); await stable(page); }
 async function login(page) { await page.goto(`${origin}/llmgw/organization`); await page.locator('#llmgw-username').fill('fixture-owner'); await page.locator('#llmgw-password').fill('fixture-only-password'); await page.getByRole('button', { name: '进入租户工作区', exact: true }).click(); await page.getByRole('heading', { name: '团队与成员', exact: true }).waitFor(); }
 let browser;
