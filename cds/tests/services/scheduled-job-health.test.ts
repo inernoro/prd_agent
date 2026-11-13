@@ -111,8 +111,10 @@ describe('自动化任务健康与安全恢复', () => {
     terminal = { ...terminal, releaseId: 'isolated-manual-success', status: 'success' };
     expect((await service.runJob(row.id, 'manual')).status).toBe('success');
     expect(service.health(state.getScheduledJob(row.id)!).state).toBe('execution');
-    (state.getState() as any).scheduledJobRuns = []; await state.flush();
+    (state.getState() as any).scheduledJobRuns = [];
+    state.upsertScheduledJob(state.getScheduledJob(row.id)!); await state.flush();
     state = new StateService(path.join(dir, 'state.json'), dir); state.load(); service = withRelease();
+    expect(state.listScheduledJobRuns({ jobId: row.id })).toHaveLength(0);
     expect(service.health(state.getScheduledJob(row.id)!).state).toBe('execution');
     observeScheduledJobs(state, publish); expect(events.filter(event => event.type === 'scheduled-job.unhealthy')).toHaveLength(1);
     const nextCommit = 'b'.repeat(40);
