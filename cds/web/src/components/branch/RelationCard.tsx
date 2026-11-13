@@ -102,50 +102,36 @@ export function FindingsList({ findings, onPick, onConfigure, layout = 'stack' }
   );
 }
 
-/**
- * 展开视图与全屏页共用的主体：问题带在上（横跨整宽、自适应多列），关系图在下填满剩余高度。
- * 此前问题栏是右侧 17.5rem 的窄列，和图抢宽度，两边都被挤坏。
- */
-function useNarrow(query = '(max-width: 639px)'): boolean {
-  const get = (): boolean => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches;
-  const [narrow, setNarrow] = useState(get);
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
-    const mq = window.matchMedia(query);
-    const on = (): void => setNarrow(mq.matches);
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
-  }, [query]);
-  return narrow;
-}
-
+/** 展开视图与全屏页共用：错误与警告默认可读，非阻断建议按需展开，关系图填满剩余高度。 */
 export function RelationWorkspace({ data, entryHost, onConfigure, onlyProblems = false }: { data: RelationPayload; entryHost?: string; onConfigure?: () => void; onlyProblems?: boolean }): JSX.Element {
   const [highlight, setHighlight] = useState<string[] | null>(null);
-  const [showAll, setShowAll] = useState(false);
-  const narrow = useNarrow();
-  const findings = onlyProblems ? data.lint.findings.filter((f) => f.severity !== 'info') : data.lint.findings;
-  // 计数按当前显示的这批算：「只看问题」滤掉建议之后，标题里不能还挂着「5 建议」（Codex P2，PR #1654）
-  const count = (sev: LintFindingView['severity']): number => findings.filter((f) => f.severity === sev).length;
-  // 手机上问题带只先放要处理的（错误 / 警告），建议收成一行，免得问题带吃掉整屏（设计稿 04）
-  const actionable = findings.filter((f) => f.severity !== 'info');
-  const folded = narrow && !showAll && actionable.length > 0 && actionable.length < findings.length;
-  const visible = folded ? actionable : findings;
-  const hidden = findings.filter((f) => !visible.includes(f));
+  const actionable = data.lint.findings.filter((f) => f.severity !== 'info');
+  const suggestions = onlyProblems ? [] : data.lint.findings.filter((f) => f.severity === 'info');
+  const count = (sev: LintFindingView['severity']): number => actionable.filter((f) => f.severity === sev).length;
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="relation-workspace">
       <div className="max-h-[45%] shrink-0 overflow-auto border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 sm:px-[1.375rem] sm:py-4">
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-[0.78rem] text-muted-foreground">
-          <b className="font-semibold text-foreground-muted">需要处理 · {findings.length} 条</b>
-          {(['error', 'warn', 'info'] as const).map((sev) => (count(sev) ? <span key={sev} className={`inline-flex h-[1.125rem] items-center rounded-full border px-1.5 text-[0.6875rem] font-semibold ${SEV_CLS[sev]}`}>{count(sev)} {SEV_LABEL[sev]}</span> : null))}
-          {findings.length > 0 ? <span className="ml-1 hidden sm:inline">悬停一条，图上点亮它涉及的服务</span> : null}
-        </div>
-        <FindingsList findings={visible} onPick={setHighlight} onConfigure={onConfigure} layout="grid" />
-        {folded ? (
-          <button type="button" className="mt-2.5 flex h-8 w-full items-center justify-between rounded-md px-1 text-[0.8125rem] text-foreground-muted transition-colors hover:text-foreground" onClick={() => setShowAll(true)} data-testid="relation-findings-more">
-            <span className="truncate">另有 {hidden.length} 条建议 · <span className="font-mono">{hidden.map((f) => f.rule).join(' / ')}</span></span>
-            <span className="shrink-0 text-muted-foreground">展开</span>
-          </button>
+        {actionable.length > 0 ? (
+          <>
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-[0.78rem] text-muted-foreground">
+              <b className="font-semibold text-foreground-muted">需要处理 · {actionable.length} 条</b>
+              {(['error', 'warn'] as const).map((sev) => (count(sev) ? <span key={sev} className={`inline-flex h-[1.125rem] items-center rounded-full border px-1.5 text-[0.6875rem] font-semibold ${SEV_CLS[sev]}`}>{count(sev)} {SEV_LABEL[sev]}</span> : null))}
+              <span className="ml-1 hidden sm:inline">悬停或聚焦一条，图上点亮它涉及的服务</span>
+            </div>
+            <FindingsList findings={actionable} onPick={setHighlight} onConfigure={onConfigure} layout="grid" />
+          </>
         ) : null}
+        {suggestions.length > 0 ? (
+          <details className={`group ${actionable.length ? 'mt-3' : ''}`} data-testid="relation-suggestions" onToggle={(event) => { if (!event.currentTarget.open) setHighlight(null); }}>
+            <summary className="flex min-h-8 cursor-pointer list-none flex-wrap items-center gap-2 rounded-sm text-[0.78rem] text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden" data-testid="relation-findings-more">
+              <b className="font-semibold text-foreground-muted">建议 · {suggestions.length} 条</b>
+              <span className="group-open:hidden">展开</span>
+              <span className="hidden group-open:inline">收起</span>
+            </summary>
+            <div className="pt-3"><FindingsList findings={suggestions} onPick={setHighlight} onConfigure={onConfigure} layout="grid" /></div>
+          </details>
+        ) : null}
+        {actionable.length === 0 && suggestions.length === 0 ? <p className="m-0 text-[0.78rem] text-muted-foreground">{onlyProblems ? '没有错误或警告。' : '体检无发现：关系清楚，配置没有冲突。'}</p> : null}
       </div>
       <RelationGraph payload={data} highlight={highlight} entryHost={entryHost} hideLegend className="min-h-0 flex-1" />
       <RelationLegend className="hidden h-10 shrink-0 border-t border-[hsl(var(--hairline))] px-[1.375rem] sm:flex" />

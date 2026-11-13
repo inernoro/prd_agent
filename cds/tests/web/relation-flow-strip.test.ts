@@ -331,9 +331,12 @@ describe('Codex 评审（PR #1654）', () => {
     p.lint.findings.push({ rule: 'role-by-name', severity: 'info', services: ['api'], message: '角色靠名字推断', fix: '写 cds.role' });
     const all = renderToStaticMarkup(createElement(RelationWorkspace, { data: p }));
     const only = renderToStaticMarkup(createElement(RelationWorkspace, { data: p, onlyProblems: true }));
-    expect(all).toContain('需要处理 · 2 条');
-    expect(all).toContain('>1 建议</span>');
+    expect(all).toContain('需要处理 · 1 条');
+    expect(all).toContain('建议 · 1 条');
+    expect(all).toContain('data-testid="relation-suggestions"');
+    expect(all).toContain('role-by-name');
     expect(only).toContain('需要处理 · 1 条');
-    expect(only).not.toContain(' 建议</span>');
+    expect(only).not.toContain('data-testid="relation-suggestions"');
+    expect(only).not.toContain('role-by-name');
   });
 });
