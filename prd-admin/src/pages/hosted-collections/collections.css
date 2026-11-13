@@ -194,3 +194,22 @@
   .hc-doc-aside.hc-mobile-panel-open .hc-doc-tabs{flex-shrink:0;min-height:44px}
   .hc-doc-panel-body{overflow-y:auto;min-height:0;flex:1}
 }
+
+/* Mobile reading owns its compact header; directory, desktop and share keep their shell. */
+.hc-mobile-doc-header,.hc-doc-position,.hc-doc-mobile-meta,.hc-mobile-panel-controls{display:none}
+@media(max-width:700px){
+  .hcol-read:has(.hc-doc-view)>.hc-mobile-top{display:none}
+  .hcol-read .hc-main:has(>.hc-doc-view){padding:0;background:var(--writing-sf)}
+  .hc-mobile-doc-header{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;height:52px;padding:0 4px;border-bottom:1px solid var(--writing-ln);background:var(--writing-bg)}
+  .hc-mobile-doc-header>.mono{color:var(--writing-ink3)}
+  .hcol-read .hc-mobile-doc-header>.ib,.hcol-read .hc-mobile-doc-header>.btn{width:44px;height:44px;padding:0;justify-content:center;flex-shrink:0}
+  .hc-mobile-doc-header .hc-theme-label{display:none}
+  .hc-mobile-doc-header>.btn>svg{width:18px;height:18px}
+  .hc-doc-view>.hc-doc-head{display:none}
+  .hcol-read .hc-doc-paper{border:0;border-radius:0;padding:18px 20px 24px;background:var(--writing-sf)}
+  .hc-doc-paper>.hc-doc-meta{display:none}
+  .hc-doc-position{display:flex;align-items:center;gap:8px;margin-bottom:8px;color:var(--writing-ink3)}
+  .hc-doc-paper>h1{margin:0 0 8px;font-size:21px;line-height:1.45;font-weight:600}
+  .hc-doc-mobile-meta{display:block;padding-bottom:14px;margin-bottom:18px;border-bottom:1px solid var(--writing-ln);font-size:12.5px;color:var(--writing-ink3)}
+  .hc-mobile-panel-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--writing-ln)}
+}

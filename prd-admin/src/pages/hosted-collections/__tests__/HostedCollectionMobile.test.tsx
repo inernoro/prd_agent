@@ -6,12 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CollectionShell } from '../CollectionShell';
 import { HostedCollectionDocument } from '../HostedCollectionDocument';
 
-const calls = vi.hoisted(() => ({ review: vi.fn(), comments: vi.fn(), clearDraft: vi.fn(), setEnabled: vi.fn() }));
+const calls = vi.hoisted(() => ({ review: vi.fn(), comments: vi.fn(), clearDraft: vi.fn(), setEnabled: vi.fn(), previewHtml: '<h1>真实文档</h1>' }));
 vi.mock('../../document-store/writing/WritingThreads', () => ({ WritingThreads: () => null }));
 vi.mock('@/components/web-hosting/useHostedReview', () => ({ useHostedReview: (...args: unknown[]) => {
   calls.review(...args); return { annotations: { clearDraft: calls.clearDraft, setEnabled: calls.setEnabled, notifyFrame: vi.fn(), select: vi.fn() } };
 } }));
-vi.mock('@/components/web-hosting/useSitePreviewHtml', () => ({ useSitePreviewHtml: () => ({ srcDoc: '<h1>真实文档</h1>' }) }));
+vi.mock('@/components/web-hosting/useSitePreviewHtml', () => ({ useSitePreviewHtml: () => ({ srcDoc: calls.previewHtml }) }));
 vi.mock('@/components/web-hosting/useHostedAnnotations', () => ({ withAnnotationRuntime: (html: string) => html }));
 vi.mock('@/components/web-hosting/ReviewToolbarControls', () => ({ ReviewToolbarControls: ({ onOpen, expanded }: { onOpen: () => void; expanded: boolean }) => <button aria-label="批注与讨论" aria-expanded={expanded} onClick={onOpen}>批注</button> }));
 vi.mock('@/components/web-hosting/CommentsSection', () => ({ default: (props: { threadKind: string; mode: string; token?: string; password?: string }) => {
@@ -30,7 +30,7 @@ async function click(selector: string) {
   await act(async () => button!.click());
 }
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.clearAllMocks(); calls.previewHtml = '<h1>真实文档</h1>';
   vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
 });
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); vi.unstubAllGlobals(); });
@@ -52,6 +52,55 @@ describe('手机合集控件必须通向可用内容', () => {
     container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
     await act(async () => root.render(<MemoryRouter initialEntries={['/web-pages/collections/c/share']}><Routes><Route path="/web-pages/collections/:collectionId/share" element={<CollectionShell mode="share" name="合集">正在核对分享权限</CollectionShell>} /></Routes></MemoryRouter>));
     expect(container.querySelector('.hc-mobile-top [aria-label="返回阅读页"]')?.getAttribute('href')).toBe('/web-pages/collections/c');
+  });
+  it('手机阅读提供当前文档返回头与真实位置版本，不依赖h2摘要猜测正文标题', async () => {
+    const back = vi.fn();
+    await mount(<HostedCollectionDocument item={{ ...items[0], author: '作者甲', versionNumber: 7, annotationCount: 3, discussionCount: 2, headings: ['正文小节'] }} items={items} collection={collection} onBack={back} onNavigate={vi.fn()} />);
+    expect(container.querySelector('.hc-mobile-doc-header')?.textContent).toContain('返回目录 · 主');
+    expect(container.querySelector('.hc-doc-position')?.textContent).toContain('第 1 / 2 篇 · v7');
+    expect(container.querySelector('.hc-doc-position')?.textContent).toContain('主文档');
+    expect(container.querySelector('.hc-doc-mobile-meta')?.textContent).toContain('作者甲');
+    expect(container.querySelector('.hc-doc-mobile-meta')?.textContent).toContain('批注 3 · 讨论 2');
+    // h2摘要不代表正文没有h1；框架标题与原HTML均保留，不做误判删除。
+    expect(container.querySelector('.hc-doc-paper > h1')?.textContent).toBe('主文档');
+    const frame = container.querySelector('iframe');
+    expect(frame?.getAttribute('srcdoc')).toBe('<h1>真实文档</h1>');
+    expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin');
+    await click('.hc-mobile-doc-header [aria-label="返回目录"]'); expect(back).toHaveBeenCalledOnce();
+  });
+  it('组合副本仅去重与外层标题严格匹配的首h1，保留原输入及后续标题且不执行parent脚本', async () => {
+    const original = '<!doctype html><html><head><script>window.__collectionScriptExecuted=true</script></head><body><h1 id="original-title" class="authored">  主文档  </h1><h1>后续标题</h1><h2>原小节</h2></body></html>';
+    calls.previewHtml = original;
+    await mount(<HostedCollectionDocument item={items[0]} items={items} collection={collection} onBack={vi.fn()} onNavigate={vi.fn()} />);
+    const rendered = container.querySelector('iframe')!.getAttribute('srcdoc')!;
+    const parsed = new DOMParser().parseFromString(rendered, 'text/html');
+    expect(parsed.querySelector('#original-title')?.hasAttribute('hidden')).toBe(true);
+    expect(parsed.querySelector('#original-title')?.getAttribute('aria-hidden')).toBe('true');
+    expect(parsed.querySelector('#original-title')?.className).toBe('authored');
+    expect(parsed.querySelectorAll('h1')[1].hasAttribute('hidden')).toBe(false);
+    expect(parsed.querySelector('h2')?.textContent).toBe('原小节');
+    expect(calls.previewHtml).toBe(original);
+    expect((window as Window & { __collectionScriptExecuted?: boolean }).__collectionScriptExecuted).toBeUndefined();
+    expect(container.querySelector('.hc-doc-paper > h1')?.textContent).toBe('主文档');
+  });
+  it('桌面阅读不应用手机标题去重', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    calls.previewHtml = '<h1>主文档</h1><p>原文</p>';
+    await mount(<HostedCollectionDocument item={items[0]} items={items} collection={collection} onBack={vi.fn()} onNavigate={vi.fn()} />);
+    expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toBe(calls.previewHtml);
+  });
+  it.each(['<h1>不同标题</h1><h1>主文档</h1>', '<h2>只有小节</h2>'])('非匹配首标题或无h1不改写正文：%s', async original => {
+    calls.previewHtml = original;
+    await mount(<HostedCollectionDocument item={items[0]} items={items} collection={collection} onBack={vi.fn()} onNavigate={vi.fn()} />);
+    expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toBe(original);
+  });
+  it('非主文档的紧凑header显示实际顺序，面板保留版本与独立打开入口', async () => {
+    await mount(<HostedCollectionDocument item={{ ...items[1], siteUrl: '/b.html', versionNumber: 2 }} items={items} collection={collection} onBack={vi.fn()} onNavigate={vi.fn()} />);
+    expect(container.querySelector('.hc-mobile-doc-header')?.textContent).toContain('返回目录 · 02');
+    expect(container.querySelector('.hc-doc-position .t-m')).toBeNull();
+    await click('.hc-mobile-read-tools [data-tool="notes"]');
+    expect(container.querySelector('[role="dialog"] .hc-mobile-panel-controls [aria-label="批注与讨论"]')).toBeTruthy();
+    expect(container.querySelector('[role="dialog"] .hc-mobile-panel-controls a')?.getAttribute('href')).toBe('/web-pages?openSite=b');
   });
   it('批注展开成可关闭的移动对话框，讨论和关联使用同一个真实内容区域', async () => {
     await mount(<HostedCollectionDocument item={items[0]} items={items} collection={collection} onBack={vi.fn()} onNavigate={vi.fn()} />);
