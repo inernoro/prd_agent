@@ -210,8 +210,6 @@ def context_ledger(context, prior):
     """原采集器真实响应的有限字段适配，不从标题、verdict总数或日报语言推交付。"""
     out = empty_ledger()
     fragments = [out]
-    items = {i['id']: i for i in prior.get('workItems', [])}
-    artifact_bindings = prior.get('artifactBindings') or {}
     for source_name in ('dailyReports', 'acceptance', 'releases', 'previewDeploys', 'defects', 'teamInsights', 'adoption'):
         source = context.get(source_name) or {}
         if not source.get('available'):
@@ -238,16 +236,21 @@ def context_ledger(context, prior):
     for source_name in ('dailyReports', 'acceptance', 'releases'):
         for row in (context.get(source_name) or {}).get('items') or []:
             metadata = row.get('metadata') or {}
-            if metadata.get('deliveryEvidenceStatus') == 'pending':
-                out['limitations'].append(f'{source_name}记录{row.get("entryId") or row.get("id")}仍为pending，正文与台账未核验，不当作成功发布。')
-                continue
+            if metadata.get('deliveryEvidenceStatus') == 'pending':continue
             for key in ('deliveryEvidenceLedger', 'deliveryLedger', 'evidenceLedger'):
                 if metadata.get(key):
                     typed = _typed_ledger(metadata[key])
-                    if typed:
-                        fragments.append(typed)
-                    else:
-                        out['limitations'].append(f'{source_name}中的{key}无法校验，未将旧正文或损坏元数据当作完成证据。')
+                    if typed:fragments.append(typed)
+                    else:out['limitations'].append(f'{source_name}中的{key}无法校验，未将旧正文或损坏元数据当作完成证据。')
+    known = engine()['merge_ledgers']([prior, *fragments])
+    items = {i['id']: i for i in known.get('workItems', [])}
+    artifact_bindings = known.get('artifactBindings') or {}
+    for source_name in ('dailyReports', 'acceptance', 'releases'):
+        for row in (context.get(source_name) or {}).get('items') or []:
+            metadata = row.get('metadata') or {}
+            if metadata.get('deliveryEvidenceStatus') == 'pending':
+                out['limitations'].append(f'{source_name}记录{row.get("entryId") or row.get("id")}仍为pending，正文与台账未核验，不当作成功发布。')
+                continue
             record_id = row.get('entryId') or row.get('id') or row.get('releaseId')
             source_uri = row.get('sourceUrl') or row.get('deeplink') or row.get('shareUrl')
             excerpt = row.get('excerpt') or row.get('content') or row.get('summary') or row.get('title')
@@ -297,9 +300,10 @@ def context_ledger(context, prior):
 
 
 def collect_context_evidence(context, prior, repo='.', mainline='', head=None, pull_requests=None, git_base=None):
-    parts = [prior, context_ledger(context, prior)]
+    known = engine()['merge_ledgers']([prior, context_ledger(context, prior)])
+    parts = [known]
     try:
-        git_data = collect_git_ledger(repo, mainline, head, context['weekStart'], context['weekEnd'], prior, pull_requests, git_base)
+        git_data = collect_git_ledger(repo, mainline, head, context['weekStart'], context['weekEnd'], known, pull_requests, git_base)
         parts.append(git_data)
         coverage = {'available': True, 'collection': git_data['collection']}
     except (ValueError, OSError, subprocess.CalledProcessError) as error:

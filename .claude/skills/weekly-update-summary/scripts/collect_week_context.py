@@ -313,9 +313,13 @@ def collect_acceptance(project, start, end):
     if not res.get("ok"):
         return {"available": False, "reason": "cdscli report list 返回 ok=false"}
     rows = res.get("data") or []
-    items = []
+    items, unclassified = [], []
     for r in rows:
         if not _in_week(r.get("createdAt") or "", start, end):
+            continue
+        # CDS同表还存监控通知、代码审查与原生刊物。未分类材料不充作功能验收。
+        if r.get("reportType") not in (None, "acceptance") or (not r.get("reportType") and (r.get("verdict") or "").lower() not in VERDICTS):
+            unclassified.append(r)
             continue
         items.append({
             "id": r.get("id"),
@@ -352,6 +356,8 @@ def collect_acceptance(project, start, end):
     feat_pass = sum(1 for i in feat if i["verdict"] == "pass")
     return {
         "available": True, "items": items, "count": total, "tally": tally,
+        "unclassifiedRecords": unclassified, "unclassifiedCount": len(unclassified),
+        "classificationLimit": "其他材料原始元数据保留在unclassifiedRecords，不按监控通知/代码审查推功能验收或交付。",
         "passRate": round(tally["pass"] * 100.0 / total, 1) if total else None,
         "byCategory": by_cat,
         "featurePassRate": round(feat_pass * 100.0 / len(feat), 1) if feat else None,

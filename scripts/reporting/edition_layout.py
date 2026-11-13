@@ -78,7 +78,15 @@ def _anchor(eid):
 
 def _links(ids, evidence):
     ids = list(dict.fromkeys(eid for eid in ids if eid in evidence))
-    return " · ".join('<a href="#' + _text(_anchor(eid)) + '">依据 ' + str(n + 1) + '</a>' for n, eid in enumerate(ids)) or "尚无直接阶段证据"
+    links = []
+    selected = list(enumerate(ids)) if len(ids) <= 3 else [(0, ids[0]), (len(ids)-2, ids[-2]), (len(ids)-1, ids[-1])]
+    for n, eid in selected:
+        source = evidence[eid].get("source") or {}
+        url = _url(source.get("uri"))
+        label = "依据 " + str(n + 1)
+        links.append(f'<a href="{_text(url)}" target="_blank" rel="noopener noreferrer" data-evidence-id="{_text(eid)}" title="{_text(source.get("excerpt", ""))}">{label}</a>' if url else f'<span>{label}（来源不可公开访问，见完整历史）</span>')
+    if len(ids) > 3:links.append(f'<span>另{len(ids)-3}条见文末完整历史</span>')
+    return " · ".join(links) or "尚无直接阶段证据"
 
 
 def _md_links(ids, evidence):
@@ -174,7 +182,7 @@ def render_edition(report, context=None, title=None):
     body.append(f'<section class="edition-summary"><h1>{_text(title)}</h1><p>{_text(summary)}</p><p>{_text(milestone)}</p></section>')
     md += [summary, "", milestone, ""]
     nav = [("risk", "风险与阻塞"), ("progress", "连续交付"), ("next", "下一步"), ("metrics", "效率与收益"), ("sources", "核查来源")]
-    body.append('<nav class="edition-nav" aria-label="刊物目录">' + ''.join(f'<a href="#{key}">{name}</a>' for key, name in nav) + '</nav>')
+    body.append('<p class="edition-nav">阅读顺序：' + ' · '.join(name for _, name in nav) + '。点击每项依据可在新窗口核查原始来源。</p>')
 
     def section(key, heading):
         body.append(f'<section class="edition-section" id="{key}"><h2>{heading}</h2>')
@@ -189,6 +197,18 @@ def render_edition(report, context=None, title=None):
         severity = " edition-failure" if item["current"].get("validation") == "failed" or item["current"].get("release") == "failed" or _ci_failure(item, evidence) else ""
         body.append(f'<article class="edition-warning{severity}"><b>{_text(item["title"])}</b><p>{_text("；".join(reasons))}</p><p>{_links(refs, evidence)}</p></article>')
         md += [f"- **{_md(item['title'])}**：{_md('；'.join(reasons))}。{_md_links(refs, evidence)}", ""]
+    # A failing report with missing scope/revision is still a management signal.
+    # It cannot become a feature failure, but must not disappear into an appendix.
+    for record in (context.get("acceptance") or {}).get("items", []):
+        verdict = record.get("verdict")
+        if verdict not in {"fail", "conditional"}:continue
+        url = _source_link(record)
+        label = "未通过" if verdict == "fail" else "有条件通过"
+        text = f"验收来源{label}：{record.get('title') or record.get('id') or '无标题'}"
+        explanation = "这是该报告的结论；事项、版本和验证范围仍须逐项核对，不据此扩大为整个功能失败或已完成。"
+        link = f'<a href="{_text(url)}" target="_blank" rel="noopener noreferrer">核查验收原文</a>' if url else "缺少可访问深链，需补来源"
+        body.append(f'<article class="edition-warning"><b>{_text(text)}</b><p>{explanation}</p><p>{link}</p></article>')
+        md += [f"- **{_md(text)}**：{explanation} " + (f"[核查验收原文]({url})" if url else "缺少可访问深链，需补来源"), ""]
     for event in report.get("unassignedRisks", []):
         kind = event.get("kind")
         if kind == "validation_failed":
@@ -280,6 +300,8 @@ def render_edition(report, context=None, title=None):
     for key, name in SOURCE_NAMES.items():
         source = context.get(key) or {}
         text = "可读取；仅作来源覆盖说明" if source.get("available") else "不可用：" + str(source.get("reason") or "未提供该来源")
+        if key == "acceptance" and source.get("unclassifiedCount"):
+            text += f'；另保留{source["unclassifiedCount"]}条未确认为功能验收的材料，不计入验收或成果。'
         body.append(f'<div><b>{name}</b><p>{_text(text)}</p></div>'); md.append(f"- {name}：{_md(text)}。")
     body.append('</div>')
     for key, name in {**SOURCE_NAMES, "previewDeploys": "分支预览部署（不是正式上线）"}.items():

@@ -79,7 +79,8 @@ class EditionLayoutTests(unittest.TestCase):
         links=Links();links.feed(out['html'])
         self.assertEqual(len(links.ids),len(set(links.ids)))
         self.assertTrue(set(links.hrefs)<=set(links.ids))
-        self.assertIn('e-ci-failed',links.hrefs)
+        self.assertIn('data-evidence-id="ci-failed"',out['html'])
+        self.assertEqual([],links.hrefs)
 
     def test_unassigned_failure_is_not_hidden_in_an_activity_counter(self):
         r=report();e={'id':'unassigned-ci','kind':'validation_failed','workItemId':None,'scope':'ci','revision':'b'*40,
@@ -87,7 +88,7 @@ class EditionLayoutTests(unittest.TestCase):
         r['evidence'][e['id']]=e;r['unassignedRisks']=[e]
         out=layout.render_edition(r)
         self.assertIn('未关联事项的CI 检查失败',out['markdown'])
-        self.assertIn('#e-unassigned-ci',out['html']);self.assertIn('尚不能判断影响哪个事项，不计成果',out['html'])
+        self.assertIn('data-evidence-id="unassigned-ci"',out['html']);self.assertIn('尚不能判断影响哪个事项，不计成果',out['html'])
         self.assertEqual(1,out['html'].count('data-work-item-id='))
 
     def test_missing_sources_remain_unavailable_and_week_has_seven_trace_days(self):
@@ -130,6 +131,13 @@ class EditionLayoutTests(unittest.TestCase):
         self.assertIn('不能仅据此归因于某项改动',out['html'])
         self.assertIn('工时：不可用',out['html'])
 
+    def test_failed_source_without_revision_is_visible_before_progress(self):
+        out=layout.render_edition(report(),{'acceptance':{'available':True,'items':[{'id':'raw-fail','title':'范围尚未提供的失败报告','verdict':'fail','deeplink':'https://example.test/report/raw-fail'}]}})
+        self.assertIn('验收来源未通过：范围尚未提供的失败报告',out['html'])
+        self.assertLess(out['html'].index('验收来源未通过'),out['html'].index('id="progress"'))
+        self.assertIn('不据此扩大为整个功能失败或已完成',out['html'])
+        self.assertIn('https://example.test/report/raw-fail',out['html'])
+
     def test_empty_report_does_not_invent_highlights_or_risk_free_status(self):
         r=analyze({'schemaVersion':1,'workItems':[],'events':[]},'2026-09-28','2026-10-04')
         out=layout.render_edition(r)
@@ -161,8 +169,20 @@ class EditionBrowserTests(unittest.TestCase):
                     page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)));page.goto(f'http://127.0.0.1:{server.server_port}/{cadence}.html')
                     width=page.evaluate('document.documentElement.scrollWidth');self.assertLessEqual(width,page.viewport_size['width'])
                     page.screenshot(path=str(out/f'{cadence}-{mode}-top.png'))
-                    page.get_by_role('link',name='核查来源',exact=True).click();self.assertEqual('#sources',page.evaluate('location.hash'))
-                    page.get_by_role('link',name='风险与阻塞',exact=True).click()
+                    # The real readers embed srcdoc. Relative #links navigate away from it.
+                    # Exercise that integration shape, not just a standalone document.
+                    source_html=artifact.read_text()
+                    page.set_content('<iframe title="原技能刊物" style="width:100%;height:900px"></iframe>')
+                    page.locator('iframe').evaluate('(el,body)=>el.srcdoc=body',source_html)
+                    frame=page.frame_locator('iframe')
+                    context.route('https://example.test/**',lambda route:route.fulfill(status=200,body='source record'))
+                    with page.expect_popup() as popup:
+                        frame.locator('a[data-evidence-id="ci-failed"]').first.click()
+                    popup.value.wait_for_load_state()
+                    self.assertEqual('https://example.test/ci/1',popup.value.url)
+                    self.assertEqual(1,frame.locator('.edition-summary').count())
+                    self.assertEqual(0,frame.locator('a[href^="#"]').count())
+                    popup.value.close()
                     page.screenshot(path=str(out/f'{cadence}-{mode}.png'))
                     self.assertEqual([],errors);results.append({'cadence':cadence,'mode':mode,'width':width,'touchPoints':page.evaluate('navigator.maxTouchPoints'),'errors':errors});context.close()
             browser.close();(out/'browser-results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2))

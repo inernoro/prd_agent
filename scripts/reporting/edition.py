@@ -123,7 +123,7 @@ def main():
             path=Path(a.out).with_suffix('.input-ledger.json');path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(json_bytes(merge_ledgers(prior)));command+=['--evidence-input',str(path)]
         for name,value in [('base',a.base),('mainline',a.mainline),('git-head',a.git_head or window.get('headSha')),('evidence-ledger',a.evidence_ledger),('ledger-out',a.ledger_out),('pull-requests',a.pull_requests)]:
             if value:command+=['--'+name,value]
-        subprocess.run(command,check=True,cwd=ROOT)
+        subprocess.run(command,check=True,cwd=ROOT,stdout=subprocess.DEVNULL)
         if window:
             path=Path(a.out);collected=json.loads(path.read_text());collected['coverageWindow']=window;path.write_bytes(json_bytes(collected))
     else:

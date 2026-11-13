@@ -315,3 +315,33 @@ def test_preview_keeps_full_revision_without_becoming_production(collector, monk
     result = collector.collect_preview_deploys('project', '2026-09-28', '2026-10-04')
     assert result['items'][0]['commitSha'] == 'a' * 40
     assert '不等于正式发布' in result['note']
+
+
+def test_monitoring_and_code_review_are_not_feature_acceptance(collector, monkeypatch):
+    records=[{'id':'notice','createdAt':'2026-10-03T10:00:00Z','title':'监控通知'},
+             {'id':'review','createdAt':'2026-10-03T10:00:00Z','reportType':'code-review','verdict':'fail'},
+             {'id':'legacy','createdAt':'2026-10-03T10:00:00Z','verdict':'fail','title':'旧验收'},
+             {'id':'typed','createdAt':'2026-10-03T10:00:00Z','reportType':'acceptance','verdict':'pass'}]
+    monkeypatch.setattr(collector,'_cdscli',lambda args:{'ok':True,'data':records})
+    calls=[]
+    monkeypatch.setattr(collector,'acceptance_deeplink',lambda rid:calls.append(rid) or 'https://example.test/'+rid)
+    result=collector.collect_acceptance('project','2026-09-28','2026-10-04')
+    assert result['count']==2 and result['tally']['fail']==1
+    assert set(calls)=={'legacy','typed'}
+    assert result['unclassifiedRecords']==records[:2]
+
+
+def test_same_run_source_binding_and_published_checkpoint_apply_before_git(adapter, repository):
+    repo, commit = repository
+    base = git(repo, 'rev-parse', 'HEAD')
+    sha = commit('repair without title inference', '2026-09-29')
+    seed = adapter.empty_ledger()
+    seed['workItems']=[{'id':'task','title':'同一事项'}]
+    seed['evidenceBindings']={sha:'task'}
+    seed['collection']={'head':base,'repository':'https://github.com/example/project','mainline':'origin/main'}
+    ctx=context(sourceEvidence=seed,prevWeekly={'available':True,'prevEntry':{'metadata':{'deliveryEvidenceStatus':'verified','deliveryEvidenceLedger':json.dumps(seed)}}})
+    result,coverage=adapter.collect_context_evidence(ctx,adapter.empty_ledger(),repo,'origin/main',sha)
+    event=next(e for e in result['events'] if e['id']=='git-'+sha)
+    assert event['workItemId']=='task'
+    assert coverage['collection']['base']==base
+    assert adapter.engine()['analyze'](result,'2026-09-28','2026-10-04')['items'][0]['current']['code']=='in_progress'
