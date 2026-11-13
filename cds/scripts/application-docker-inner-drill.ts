@@ -1607,7 +1607,25 @@ async function main(): Promise<void> {
       try { report.remainingContainersAfterCleanupFailure = await auditNamespace('after-cleanup-failure'); await eventSnapshot('after-cleanup-failure'); }
       catch (diagnosticError) { report.cleanupDiagnosticError = String(diagnosticError); }
     }
-    try { for (const id of images) { const view = JSON.parse(await docker(['image', 'inspect', id]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner); await docker(['image', 'rm', '-f', id]); } report.ownedImagesRemoved = true; }
+    try {
+      report.ownedImageCleanup = [];
+      const isMissingImage = (error: any, id: string) => error.code === 1
+        && String(error.stderr || '').trim() === `Error response from daemon: No such image: ${id}`;
+      for (const id of images) {
+        assert.match(id, /^sha256:[a-f0-9]{64}$/);
+        let view;
+        try { view = JSON.parse(await docker(['image', 'inspect', id]))[0]; }
+        catch (error) {
+          assert.ok(isMissingImage(error, id));
+          report.ownedImageCleanup.push({ id, outcome: 'already-absent' }); continue;
+        }
+        assert.equal(view.Id, id); assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner);
+        await docker(['image', 'rm', '-f', id]);
+        await assert.rejects(docker(['image', 'inspect', id]), error => isMissingImage(error, id));
+        report.ownedImageCleanup.push({ id, outcome: 'removed-and-absence-confirmed' });
+      }
+      assert.equal(report.ownedImageCleanup.length, images.size); report.ownedImagesRemoved = true;
+    }
     catch (error) { cleanupErrors.push(String(error)); }
     if (capabilityFixtureReference) {
       try {
