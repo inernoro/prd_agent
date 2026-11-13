@@ -3,7 +3,7 @@ import { getHeapStatistics } from 'node:v8';
 import { launchObservationProcess } from './observation-process-launcher.js';
 import { cleanObservationGroup } from './observation-process-group.js';
 
-interface Slot { index: number; child: ChildProcess; ready: boolean; registered: boolean; retiring: boolean; job?: any; started?: boolean; timer: NodeJS.Timeout; }
+interface Slot { index: number; child: ChildProcess; ready: boolean; registered: boolean; retiring: boolean; job?: any; started?: boolean; timer: NodeJS.Timeout; retireTimer?: NodeJS.Timeout; }
 function startObservationExecutorProcess(): void {
   if (!process.send || !process.connected) return;
   const slots = new Map<number, Slot>();
@@ -24,8 +24,15 @@ function startObservationExecutorProcess(): void {
     send({ type: 'fatal' });
   };
   const kill = (slot: Slot): void => {
+    if (slot.retiring) return;
     slot.retiring = true;
-    if (slot.child.pid) { try { process.kill(-slot.child.pid, 'SIGKILL'); } catch { /* exit 负责确认 */ } }
+    const force = (): void => {
+      if (slot.child.pid) { try { process.kill(-slot.child.pid, 'SIGKILL'); } catch { /* close 负责确认 */ } }
+    };
+    // 先让子进程回收 shell；IPC 或事件循环不响应时仍有有界进程组清理。
+    slot.retireTimer = setTimeout(force, 2000);
+    if (slot.child.connected) slot.child.send({ type: 'shutdown' }, error => { if (error) force(); });
+    else force();
   };
   const pump = (): void => {
     if (closing) return;
@@ -63,8 +70,8 @@ function startObservationExecutorProcess(): void {
       }
     });
     child.on('error', fatal);
-    child.on('exit', () => {
-      clearTimeout(slot.timer);
+    child.on('close', () => {
+      clearTimeout(slot.timer); clearTimeout(slot.retireTimer);
       const expected = slot.retiring;
       // 先确认整组没有可运行后代，再释放原任务和重建该槽位。
       void cleanObservationGroup(child.pid!).then(() => {
@@ -73,10 +80,18 @@ function startObservationExecutorProcess(): void {
         if (slot.job) send({ type: 'cancelled', id: slot.job.id });
         slots.delete(index);
         if (!closing) createSlot(index);
+        else if (!slots.size) process.exit(0);
       }, fatal);
     });
   };
+  const shutdown = (): void => {
+    if (closing) return;
+    closing = true;
+    for (const slot of slots.values()) kill(slot);
+    if (!slots.size) process.exit(0);
+  };
   process.on('message', (message: any) => {
+    if (message.type === 'shutdown') { shutdown(); return; }
     if (message.type === 'initialize' && !initialized) {
       if (!Number.isInteger(message.concurrency) || message.concurrency < 1 || message.concurrency > 16) { fatal(); return; }
       initialized = true;
@@ -113,11 +128,6 @@ function startObservationExecutorProcess(): void {
       } else if (slot) kill(slot);
     }
   });
-  process.on('disconnect', () => {
-    closing = true;
-    for (const slot of slots.values()) kill(slot);
-    // Actor IPC 断开也会清理自身组；factory 不再承接任何查询。
-    process.exit(0);
-  });
+  process.on('disconnect', shutdown);
 }
 startObservationExecutorProcess();

@@ -5,13 +5,23 @@ import { getHeapStatistics } from 'node:v8';
 function startObservationProcess(): void {
   // 模块巡检可以直接导入；没有私有 IPC 的进程不承接命令。
   if (!process.send || !process.connected || !/^cds-observation-[a-f0-9]{32}$/.test(process.argv[1] || '')) return;
+  let stopping = false;
   let active: { id: number; child?: ChildProcess; outstanding: number; lowWater: number } | undefined;
   const send = (message: unknown): void => { if (process.connected) process.send!(message as object); };
   const terminate = (): void => {
     try { process.kill(-process.pid, 'SIGKILL'); } catch { process.exit(1); }
   };
-  process.on('disconnect', terminate);
+  const shutdown = (): void => {
+    stopping = true;
+    if (!active) { process.exit(0); return; }
+    // actor 保持存活直到直接子进程被回收，避免宿主 init 不回收时留下孤儿僵尸。
+    active.child?.stdout?.resume(); active.child?.stderr?.resume();
+    try { active.child?.kill('SIGKILL'); } catch { /* close confirms exit */ }
+  };
+  process.on('disconnect', shutdown);
   process.on('message', (message: any) => {
+    if (message.type === 'shutdown') { shutdown(); return; }
+    if (stopping) return;
     if (message.type === 'ack' && active && active.id === message.id) {
       active.outstanding = Math.max(0, active.outstanding - message.bytes);
       if (active.outstanding < active.lowWater) { active.child?.stdout?.resume(); active.child?.stderr?.resume(); }
@@ -24,6 +34,7 @@ function startObservationProcess(): void {
     void executeShellCommand(command, {
       cwd: options.cwd, stdin: options.stdin, captureOutput: options.captureOutput,
       ...(options.stream ? { onData: (chunk: string, channel?: 'stdout' | 'stderr') => {
+        if (stopping) return;
         // 每帧最多8192字符；未确认帧只在有界IPC窗口内等待，不积累完整日志。
         for (let offset = 0; offset < chunk.length;) {
           let end = Math.min(offset + 8192, chunk.length);
@@ -40,9 +51,17 @@ function startObservationProcess(): void {
 
       } } : {}),
     }, {
-      env: options.env, cancelled: () => false, processGroup: process.pid,
+      env: options.env, cancelled: () => stopping, processGroup: process.pid,
       onSpawn: child => { job.child = child; },
-    }).then(result => { active = undefined; send({ type: 'result', id, result, metrics: metrics() }); }, () => terminate());
+    }).then(result => {
+      active = undefined;
+      if (stopping) process.exit(0);
+      else send({ type: 'result', id, result, metrics: metrics() });
+    }, () => {
+      active = undefined;
+      if (stopping) process.exit(0);
+      else terminate();
+    });
   });
   const metrics = (): object => ({ pid: process.pid, rss: process.memoryUsage().rss, heapLimit: getHeapStatistics().heap_size_limit });
   send({ type: 'ready', pid: process.pid, metrics: metrics() });

@@ -335,7 +335,19 @@ export class IsolatedShellExecutor implements IShellExecutor {
       const groups = new Set([...this.actors.values()].map(actor => actor.pid));
       if (this.factory?.pid) groups.add(this.factory.pid);
       if (this.factoryProcessPid) groups.add(this.factoryProcessPid);
-      for (const pid of groups) { try { process.kill(-pid, 'SIGKILL'); } catch { /* 下面确认清理 */ } }
+      let graceful = false;
+      if (this.factory?.connected && this.factoryExit) {
+        let timer: NodeJS.Timeout | undefined;
+        const settled = new Promise<boolean>(resolve => {
+          timer = setTimeout(() => resolve(false), 2000);
+          this.factory!.send({ type: 'shutdown' }, error => { if (error) resolve(false); });
+        });
+        graceful = await Promise.race([this.factoryExit.then(() => true), settled]);
+        clearTimeout(timer);
+      }
+      if (!graceful) {
+        for (const pid of groups) { try { process.kill(-pid, 'SIGKILL'); } catch { /* 下面确认清理 */ } }
+      }
       await this.factoryExit;
       // 创建回执尚未送达的启动进程不能承接任务；仍按私有归属找回并清理。
       for (let pass = 0; pass < 2; pass++) {

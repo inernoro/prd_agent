@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { randomBytes } from 'node:crypto';
 import * as childProcess from 'node:child_process';
 import { ShellExecutor } from '../../src/services/shell-executor.js';
 import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
@@ -659,6 +660,39 @@ describe('IsolatedShellExecutor 真实进程', () => {
     const result = await new ShellExecutor().exec(`${quote(process.execPath)} --eval ${quote(script)}`, { timeout: 10000 });
     expect(result.exitCode).toBe(0);
     expect(await readFile(receipt, 'utf8')).toBe('closed');
+  });
+
+  it('Master断连后监督进程仍停止暂停的工厂并回收直接子进程', async () => {
+    const supervisor = launchObservationProcess('observation-supervisor-process', `cds-observation-${randomBytes(16).toString('hex')}`);
+    const exited = new Promise<void>(resolve => supervisor.once('exit', () => resolve()));
+    let factoryPid = 0, ready = false;
+    const actors: number[] = [];
+    supervisor.on('message', (message: any) => {
+      if (message.type === 'factory-started') factoryPid = message.pid;
+      if (message.type === 'actor') {
+        actors.push(message.pid);
+        supervisor.send({ type: 'actor-registered', index: message.index, pid: message.pid });
+      }
+      if (message.type === 'ready') ready = true;
+    });
+    try {
+      supervisor.send({ type: 'initialize', concurrency: 1 });
+      await waitFor(() => ready);
+      expect(factoryPid).toBeGreaterThan(1);
+      process.kill(factoryPid, 'SIGSTOP');
+      supervisor.disconnect();
+      await exited;
+      expect(() => process.kill(factoryPid, 0)).toThrow();
+      expect(() => process.kill(supervisor.pid!, 0)).toThrow();
+      const remaining = await new ShellExecutor().exec(`ps -o stat= -p ${actors.join(',')}`);
+      expect(remaining.stdout.split('\n').map(line => line.trim()).filter(Boolean).every(state => state.startsWith('Z'))).toBe(true);
+    } finally {
+      const parents = supervisor.exitCode === null && supervisor.signalCode === null ? [supervisor.pid, factoryPid] : [];
+      for (const pid of [...parents, ...actors]) {
+        if (pid && pid > 1) { try { process.kill(-pid, 'SIGKILL'); } catch { /* 失败也不遗留真实进程 */ } }
+      }
+      await exited;
+    }
   });
 
   it('启动 PID 尚未登记时，工厂故障仍回收带私有归属的独立进程且不启动查询', async () => {

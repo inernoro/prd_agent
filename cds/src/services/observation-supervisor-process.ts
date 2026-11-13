@@ -69,7 +69,25 @@ function startSupervisor(): void {
       recovering = false; retry = setTimeout(launch, 0);
     } catch { fail(); }
   };
+  const shutdown = (): void => {
+    if (closing) return;
+    closing = true; clearTimeout(retry); clearTimeout(bootTimer);
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+      for (const pid of actors) kill(pid);
+      process.exit(0); return;
+    }
+    // 每级父进程先回收直接子进程，再退出；Master 意外断连时也有强杀兜底。
+    const current = child;
+    const timer = setTimeout(() => {
+      for (const pid of actors) kill(pid);
+      if (current.pid) kill(current.pid);
+    }, 2000);
+    current.once('close', () => { clearTimeout(timer); process.exit(0); });
+    if (current.connected) current.send({ type: 'shutdown' }, error => { if (error && current.pid) kill(current.pid); });
+    else if (current.pid) kill(current.pid);
+  };
   process.on('message', (message: any) => {
+    if (message.type === 'shutdown') { shutdown(); return; }
     if (message.type === 'initialize' && concurrency === undefined) {
       if (!Number.isSafeInteger(message.concurrency) || message.concurrency < 1 || message.concurrency > 16) { fail(); return; }
       concurrency = message.concurrency; launch(); return;
@@ -83,11 +101,6 @@ function startSupervisor(): void {
     if (closing || recovering || !child?.connected) return;
     child.send(message, error => { if (error && child) void recover(child); });
   });
-  process.on('disconnect', () => {
-    closing = true; clearTimeout(retry); clearTimeout(bootTimer);
-    if (child?.pid) kill(child.pid);
-    for (const pid of actors) kill(pid);
-    process.exit(0);
-  });
+  process.on('disconnect', shutdown);
 }
 startSupervisor();
