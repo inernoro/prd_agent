@@ -90,7 +90,7 @@ describe('通知动作与事实真实组件交互', () => {
     await click(/确认当前/);
     expect(api.batch).not.toHaveBeenCalled();
     expect(host.textContent).toContain('1 个已识别独立故障');
-    expect(host.textContent).toContain('同一故障发生 182 次');
+    expect(host.textContent).toContain('同一故障已记录 182 次');
     expect(host.textContent).not.toContain('182 个');
   });
 
@@ -119,6 +119,6 @@ describe('通知动作与事实真实组件交互', () => {
     await render();
     expect(host.textContent).toContain('当前状态未确认');
     expect(host.textContent).toContain('无法确认独立故障数或发生次数');
-    expect(host.textContent).not.toContain('同一故障发生');
+    expect(host.textContent).not.toContain('同一故障已记录');
   });
 });
