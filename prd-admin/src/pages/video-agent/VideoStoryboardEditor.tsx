@@ -17,9 +17,7 @@ import {
   Image as ImageIcon,
   Layers3,
   ListChecks,
-  Maximize2,
   PanelRightOpen,
-  Pause,
   Play,
   RefreshCw,
   Save,
@@ -60,6 +58,7 @@ import {
 } from '@/services/contracts/videoAgent';
 import { resolveVideoTitle } from './titleUtils';
 import { VideoNarrationPanel } from './VideoNarrationPanel';
+import { VideoPlaybackControls } from './VideoPlaybackControls';
 import './videoConsole.css';
 
 export interface VideoStoryboardEditorProps {
@@ -185,6 +184,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const [mutating, setMutating] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
+  const [playbackDuration, setPlaybackDuration] = useState(0);
   const [playerStatus, setPlayerStatus] = useState<PlayerStatus>('idle');
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [previewVersionId, setPreviewVersionId] = useState<string | null>(null);
@@ -194,6 +194,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const keepPollingUntilRef = useRef(0);
   const loadRunRef = useRef<(() => Promise<void>) | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const playerFrameRef = useRef<HTMLDivElement | null>(null);
   const autoSelectedExportRef = useRef(false);
 
   const markServerSignal = useCallback((transport?: 'streaming' | 'polling') => {
@@ -639,6 +640,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
             <span>{previewMode === 'scene' ? selectedScene?.topic : previewMode === 'compare' ? '版本并排比较' : '最终导出'}</span>
           </div>
 
+          <div className="video-workbench__player" ref={playerFrameRef}>
           <div className="video-workbench__viewer">
             {previewMode === 'compare' ? (
               compareVersions.length === 2 ? (
@@ -663,11 +665,10 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                   ref={videoRef}
                   src={previewUrl}
                   aria-label={previewMode === 'export' ? '完整成片预览' : `${selectedScene?.topic || '当前镜头'}预览`}
-                  controls
                   playsInline
                   preload="metadata"
-                  onLoadStart={() => setPlayerStatus('loading')}
-                  onLoadedMetadata={() => setPlayerStatus('ready')}
+                  onLoadStart={() => { setPlayerStatus('loading'); setPlayhead(0); setPlaybackDuration(0); }}
+                  onLoadedMetadata={(event) => { setPlayerStatus('ready'); setPlaybackDuration(event.currentTarget.duration); }}
                   onCanPlay={() => setPlayerStatus((status) => status === 'playing' ? status : 'ready')}
                   onPlay={() => { setIsPlaying(true); setPlayerStatus('playing'); }}
                   onPlaying={() => setPlayerStatus('playing')}
@@ -719,14 +720,13 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
             )}
           </div>
 
-          <div className="video-workbench__transport">
-            <button onClick={togglePlayback} disabled={!previewUrl || previewMode === 'compare'} aria-label={isPlaying ? '暂停' : '播放'}>
-              {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-            </button>
-            <span>{formatTime(playhead)}</span>
-            <div className="video-console__transport-line"><i style={{ width: `${getPlaybackPercent(videoRef.current)}%` }} /></div>
-            <span>{formatTime(videoRef.current?.duration || selectedScene?.duration || 0)}</span>
-            <button aria-label="适应画布" title="适应画布"><Maximize2 size={15} /></button>
+          <VideoPlaybackControls videoRef={videoRef} frameRef={playerFrameRef} playing={isPlaying}
+            currentTime={playhead} duration={playbackDuration} disabled={!previewUrl || previewMode === 'compare'}
+            onToggle={togglePlayback} onSeek={time => {
+              if (!videoRef.current) return;
+              videoRef.current.currentTime = time;
+              setPlayhead(time);
+            }} onError={message => toast.error(message)} />
           </div>
 
           {selectedScene && previewMode !== 'export' && (
@@ -1121,8 +1121,8 @@ export const Timeline: React.FC<{
           laneEnds[lane] = item.start + item.duration;
           return { ...item, lane };
         });
-        return <div className="video-console__track-row" key={type}><span className="video-console__track-label">{label}</span><div className="video-console__timeline-aux" style={{ minHeight: Math.max(38, laneEnds.length * 32 + 6) }}>
-          {positioned.map(item => <div key={item.id} style={{ ...timingStyle(item.start, Math.max(0, Math.min(item.duration, duration - item.start))), top: 3 + item.lane * 32 }} title={`${item.text} · ${item.start.toFixed(2)}s · ${item.duration.toFixed(2)}s`}>
+        return <div className="video-console__track-row" key={type}><span className="video-console__track-label">{label}</span><div className="video-console__timeline-aux" style={{ minHeight: Math.max(46, laneEnds.length * 40 + 6) }}>
+          {positioned.map(item => <div key={item.id} style={{ ...timingStyle(item.start, Math.max(0, Math.min(item.duration, duration - item.start))), top: 3 + item.lane * 40 }} title={`${item.text} · ${item.start.toFixed(2)}s · ${item.duration.toFixed(2)}s`}>
             <strong>{item.text}</strong>
             <span>{item.start.toFixed(2)}s · {item.duration.toFixed(2)}s{item.followsScene ? ' · 跟随镜头同步' : ''}</span>
           </div>)}
@@ -1322,17 +1322,5 @@ const BatchRenderDialog: React.FC<{
   );
   return createPortal(modal, document.body);
 };
-
-function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
-  const minutes = Math.floor(seconds / 60);
-  const remainder = Math.floor(seconds % 60);
-  return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
-}
-
-function getPlaybackPercent(player: HTMLVideoElement | null): number {
-  if (!player || !Number.isFinite(player.duration) || player.duration <= 0) return 0;
-  return Math.min(100, Math.max(0, player.currentTime / player.duration * 100));
-}
 
 export default VideoStoryboardEditor;
