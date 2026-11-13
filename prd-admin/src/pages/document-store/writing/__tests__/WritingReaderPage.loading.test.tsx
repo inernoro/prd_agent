@@ -27,14 +27,23 @@ beforeEach(() => {
   Object.defineProperty(globalThis, 'IntersectionObserver', { configurable: true, value: class { observe() {} disconnect() {} } });
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); });
 describe('真实发布概要先达与正文隔离', () => {
   it('正文尚未返回时结论、范围和下一步已可读，正文固定概要版本', async () => {
     let finish!: (r: unknown) => void;
     api.read.mockImplementation((_id, opts) => opts?.overview ? Promise.resolve(ok(data(true))) : new Promise(resolve => { finish = resolve; }));
     await render(); expect(container.textContent).toContain('缩短交接周期'); expect(container.textContent).toContain('仅本部门'); expect(container.textContent).toContain('核对负责人和资料');
-    expect(container.textContent).toContain('正在加载正文与来源复核'); expect(container.querySelector('.writing-reader-body-state .sk')).toBeTruthy(); expect(container.querySelector<HTMLButtonElement>('.ord')?.disabled).toBe(true); expect(api.read).toHaveBeenLastCalledWith('entry', { version: 1 });
-    await act(async () => finish(ok(data()))); expect(container.textContent).toContain('已发布完整正文v1'); expect(container.textContent).not.toContain('正在加载正文与来源复核');
+    expect(container.textContent).toContain('正文较长，仍在加载'); expect(container.querySelector('.writing-reader-body-state .sk')).toBeTruthy(); expect(container.querySelector<HTMLButtonElement>('.ord')?.disabled).toBe(true); expect(api.read).toHaveBeenLastCalledWith('entry', { version: 1 });
+    await act(async () => finish(ok(data()))); expect(container.textContent).toContain('已发布完整正文v1'); expect(container.textContent).not.toContain('正文较长，仍在加载');
+  });
+  it('等待秒数来自本次正文加载，完成后停止计时', async () => {
+    vi.useFakeTimers(); let finish!: (r: unknown) => void;
+    api.read.mockImplementation((_id, opts) => opts?.overview ? Promise.resolve(ok(data(true))) : new Promise(resolve => { finish = resolve; }));
+    await render(); expect(container.querySelector('.writing-body-desktop-hint')?.textContent).toContain('已等待 0 秒');
+    await act(async () => { vi.advanceTimersByTime(2100); });
+    expect(container.querySelector('.writing-body-desktop-hint')?.textContent).toContain('已等待 2 秒');
+    await act(async () => finish(ok(data()))); await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(container.querySelector('.writing-reader-body-state')).toBeNull(); expect(container.textContent).toContain('已发布完整正文v1');
   });
   it.each(['NETWORK_ERROR', 'DISCONNECTED'])('正文%s失败保留概要，重试只读同版正文并恢复', async code => {
     api.read.mockResolvedValueOnce(ok(data(true))).mockResolvedValueOnce({ success: false, error: { code, message: '网络中断' } }).mockResolvedValueOnce(ok(data()));

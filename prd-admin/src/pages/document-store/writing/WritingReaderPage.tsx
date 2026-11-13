@@ -21,6 +21,7 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
   const [error, setError] = useState('');
   const [bodyLoading, setBodyLoading] = useState(false);
   const [bodyFailure, setBodyFailure] = useState('');
+  const [bodySeconds, setBodySeconds] = useState(0);
   const [role, setRole] = useState('');
   const [current, setCurrent] = useState('top');
   const [visited, setVisited] = useState<string[]>([]);
@@ -85,6 +86,12 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
     if (result.success && result.data.bodyPending) await loadBody(entryId, result.data.publication.version, generation);
   }, [entryId, tutorial, loadBody]);
   useEffect(() => { const generation = readGeneration; void fetchData(); return () => { generation.current++; }; }, [fetchData]);
+  useEffect(() => {
+    if (!bodyLoading) return;
+    const start = Date.now(); setBodySeconds(0);
+    const timer = window.setInterval(() => setBodySeconds(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [bodyLoading]);
   useEffect(() => { setTime(0); setStarted(false); setPlaying(false); setChapterIndex(0); setDuration(0); setSpeed(1); }, [tutorial]);
   useEffect(() => {
     const query = window.matchMedia('(max-width: 760px)');
@@ -211,7 +218,7 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
         <WritingMobileToc sections={doc.sections} visited={visited} onGo={go} disabled={bodyPending} />
         {bodyPending ? <section className="sec writing-reader-body-state" aria-label="正文加载状态" role={bodyLoading ? 'status' : 'alert'} aria-live="polite" aria-busy={bodyLoading}>
           {bodyLoading ? <>
-            <p className="hint">正在加载正文与来源复核。上方的结论、适用范围和下一步已可阅读。</p>
+            <p className="hint writing-body-desktop-hint">正文较长，仍在加载（已等待 {bodySeconds} 秒）。结论、适用范围和下一步已经可以用。</p><p className="hint writing-body-mobile-hint">正文仍在加载（{bodySeconds} 秒）。结论和下一步已可用。</p>
             <div className="writing-body-skeleton-desktop" aria-hidden>{[[40, 20], [100, 14], [100, 14], [82, 14], [36, 20], [100, 14], [90, 14]].map(([width, height], i) => <div className="sk" key={i} style={{ width: `${width}%`, height, ...(i === 4 ? { marginTop: 26 } : {}) }} />)}</div>
             <div className="writing-body-skeleton-mobile" aria-hidden>{[[45, 18], [100, 14], [100, 14], [70, 14]].map(([width, height], i) => <div className="sk" key={i} style={{ width: `${width}%`, height }} />)}</div>
           </> : <div className="callout"><span>正文暂未载入。{bodyFailure} 以上概要来自已发布的 v{doc.version}；来源更新状态尚未复核。<span className="writing-body-retry"><button className="btn sm" onClick={() => void loadBody(entryId, doc.version, readGeneration.current)}>重试正文</button><button className="btn sm ghost" onClick={() => void fetchData()}>重新加载文档</button></span></span></div>}
