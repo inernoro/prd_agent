@@ -57,7 +57,7 @@ describe('报告入口内容一致性', () => {
           let theme = '';
           state.mermaid = { initialize: value => { theme = value.theme; }, render: async () => ({ svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 80" data-render-theme="${theme}"><text x="10" y="30">图表</text></svg>` }) };
         });
-        const original = `<style>body{background:${background};color:${foreground}}${authoredLink ? `a{color:${link}}` : ''}</style><main class="paper"><h1>报告纸面</h1><a id="paper-link" href="https://example.com">完整证据链接</a><pre class="mermaid">flowchart LR\n A[报告] --&gt; B[阅读]</pre><pre class="mermaid">timeline\n 2026-11-12 : 完成</pre></main>`;
+        const original = `<style>body{background:${background};color:${foreground}}${authoredLink ? `a{color:${link}}` : ''}pre.authored-code{background:#18353b;color:#d9f7f1}</style><main class="paper"><h1>报告纸面</h1><a id="paper-link" href="https://example.com">完整证据链接</a><pre id="plain-code"><code>REQUEST-CODE-END：完整代码必须可读</code></pre><pre id="authored-code" class="authored-code"><code>作者自带代码配色</code></pre><pre class="mermaid">flowchart LR\n A[报告] --&gt; B[阅读]</pre><pre class="mermaid">timeline\n 2026-11-12 : 完成</pre></main>`;
         await page.setContent(enhanceHtmlReportDocument(original, host));
         await page.locator('[data-report-diagram] svg').nth(1).waitFor();
         expect(await page.locator('[data-render-theme]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-render-theme')))).toEqual([paper === 'light' ? 'default' : 'dark', paper === 'light' ? 'default' : 'dark']);
@@ -68,14 +68,22 @@ describe('报告入口内容一致性', () => {
         }).reduce((sum, channel, index) => sum + channel * [.2126, .7152, .0722][index], 0);
         const first = luminance(actual.color), second = luminance(actual.background);
         expect((Math.max(first, second) + .05) / (Math.min(first, second) + .05)).toBeGreaterThanOrEqual(4.5);
+        const code = await page.locator('#plain-code').evaluate(node => ({ color: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor, overflow: getComputedStyle(node).overflowX, whiteSpace: getComputedStyle(node).whiteSpace }));
+        expect(code.background).toBe('rgba(0, 0, 0, 0)');
+        expect(code.color).toBe(paper === 'light' ? 'rgb(33, 29, 24)' : 'rgb(241, 245, 249)');
+        expect(code.overflow).toBe('auto'); expect(code.whiteSpace).toBe('pre');
+        const codeLuminance = luminance(code.color);
+        expect((Math.max(codeLuminance, second) + .05) / (Math.min(codeLuminance, second) + .05)).toBeGreaterThanOrEqual(4.5);
+        expect(await page.locator('#authored-code').evaluate(node => ({ color: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor }))).toEqual({ color: 'rgb(217, 247, 241)', background: 'rgb(24, 53, 59)' });
       } finally { await page.close(); }
     });
 
     it('Markdown链接仍跟随深色宿主题', async () => {
       const page = await browser.newPage();
       try {
-        await page.setContent(buildMarkdownReportDocument('[证据](https://example.com)', 'dark'));
+        await page.setContent(buildMarkdownReportDocument('[证据](https://example.com)\n\n```text\n完整代码\n```', 'dark'));
         expect(await page.locator('a').evaluate(node => getComputedStyle(node).color)).toBe('rgb(96, 165, 250)');
+        expect(await page.locator('pre').evaluate(node => getComputedStyle(node).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
       } finally { await page.close(); }
     });
   });
