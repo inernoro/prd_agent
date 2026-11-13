@@ -34,7 +34,9 @@ public sealed class GatewayLogLifecycleWorker(LlmGatewayDataContext data, LlmLog
         foreach (var lease in expired)
         {
             var id = lease["_id"].AsString;
-            var observedThrough = lease["ExpiresAt"].ToUniversalTime();
+            // 心跳中断后仍可能写入请求，随后进程崩溃。不能以旧租约到期时间截掉这批记录；
+            // 只处理本轮观察时已经开始的请求，仍以 running + 无结束回执作条件更新。
+            var observedThrough = now;
             // 重读确认，避免扫描后已经恢复心跳的实例被按旧快照收口。
             if (await leases.Find(new BsonDocument { { "_id", id }, { "ExpiresAt", new BsonDocument("$lt", DateTime.UtcNow) } }).AnyAsync(ct))
             {

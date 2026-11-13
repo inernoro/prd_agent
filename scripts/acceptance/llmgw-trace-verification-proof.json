@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "sourceBaseline": "c259f56268f97790be71ff568062174ec91a70d9",
+  "provenance": "deterministic-fixture with real isolated MongoDB; not an upstream production test",
+  "red": [
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ConcurrentReconciliationAndCompletion_PreserveConfirmedTerminalResults",
+      "outcome": "Passed",
+      "failure": null
+    },
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ExplicitDifferentRuns_AreNotMergedByReusedLogicalOrProviderTaskId",
+      "outcome": "Failed",
+      "failure": "Assert.Equal() Failure: Collections differ\n                     ↓ (pos 1)\nExpected: [\"anchor\", \"legacy-empty-run\", \"legacy-null-run\", \"same-run\"]\nActual:   [\"anchor\", \"independent-job\", \"independent-logical\", \"legacy-empty-run\", \"legacy-null-run\", ···]\n                     ↑ (pos 1)"
+    },
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.LostOwner_CallLoggedAfterLeaseExpiry_DoesNotRemainRunningForever",
+      "outcome": "Failed",
+      "failure": "Assert.Equal() Failure: Strings differ\n           ↓ (pos 0)\nExpected: \"unknown\"\nActual:   \"running\"\n           ↑ (pos 0)"
+    }
+  ],
+  "green": [
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ConcurrentReconciliationAndCompletion_PreserveConfirmedTerminalResults",
+      "outcome": "Passed",
+      "failure": null
+    },
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.LostOwner_CallLoggedAfterLeaseExpiry_DoesNotRemainRunningForever",
+      "outcome": "Passed",
+      "failure": null
+    },
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ExplicitDifferentRuns_AreNotMergedByReusedLogicalOrProviderTaskId",
+      "outcome": "Passed",
+      "failure": null
+    },
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.GatewayLogLifecycleTests.ExpiredOwner_ClosesOnlyItsUnfinishedCalls_WithoutInventingOutcomeOrCost",
+      "outcome": "Passed",
+      "failure": null
+    },
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Trace_PagesEveryAuthorizedCall_RejectsAmbiguity_AndWithholdsBodies",
+      "outcome": "Passed",
+      "failure": null
+    }
+  ],
+  "candidateSourceSha256": {
+    "llmgw/console-api/Logs/LogTraceQuery.cs": "f7a8658ce4f7e24d130c90e9b053dbcda36a905beaa34d960b5e97ed51c75d0f",
+    "llmgw/serving/GatewayLogLifecycleWorker.cs": "5a47ec442fe2a95bcc2b19a1b2beee13d0858f77ff2dfbbc994f61bfef5b7f2f",
+    "prd-api/tests/PrdAgent.Api.Tests/Gateway/LogTraceIsolationRecoveryProofTests.cs": "6ff028f1f32aeadf0746cc179056d72069844b298cd06df06434405576a9886b"
+  },
+  "reproduction": {
+    "old": "Use c259f5626 in an isolated snapshot and add only the same LogTraceIsolationRecoveryProofTests.cs; expected 2 failures and 1 pass.",
+    "new": "Run the same tests on this branch; expected 3 passes.",
+    "command": "LLMGW_TRACE_TEST_MONGO=mongodb://127.0.0.1:27021 dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter FullyQualifiedName~LogTraceIsolationRecoveryProofTests",
+    "safety": "Unique trace_proof_* databases are deleted in finally; no production records or supplier requests are modified."
+  },
+  "previewLive": "PENDING; prior deployment queued because image content did not match target revision",
+  "historicalEvidence": "No historical records, supplier bills or missing costs were fabricated.",
+  "originalHttpContrast": [
+    {
+      "version": "original3035365de",
+      "check": "all-physical-calls",
+      "status": 404,
+      "total": null,
+      "expectedTotal": 26,
+      "passed": false
+    },
+    {
+      "version": "original3035365de",
+      "check": "exclude-sdk-summary",
+      "status": 200,
+      "total": 2,
+      "expectedTotal": 1,
+      "passed": false
+    },
+    {
+      "version": "candidate",
+      "check": "all-physical-calls",
+      "status": 200,
+      "total": 26,
+      "expectedTotal": 26,
+      "passed": true
+    },
+    {
+      "version": "candidate",
+      "check": "exclude-sdk-summary",
+      "status": 200,
+      "total": 1,
+      "expectedTotal": 1,
+      "passed": true
+    }
+  ],
+  "originalSnapshotProgramSha256": "b72c65686b808b9500db2fb9c28f31bdd5179df0e6ac7315208213885796fde0",
+  "ciGuard": "Three isolation/recovery assertions run in the normal Server Build & Test suite using isolated MONGODB_TEST_CONNECTION; only their unique trace_proof_* databases are dropped.",
+  "verification": {
+    "build": "dotnet build prd-api/PrdAgent.sln --no-restore: 0 errors",
+    "targeted": "5 passed, 0 failed on real isolated MongoDB",
+    "web": "19 passed, 0 failed; production build passed",
+    "localUi": "Normal viewer login → request logs → trace: team/owner scope, ambiguous IDs, historical running and summary markers passed; diagnostic only, not live preview acceptance",
+    "fullRegression": "Category!=Integration&Category!=Manual: 8789 passed, 84 skipped, 0 failed (2645 + 6144)"
+  }
+}

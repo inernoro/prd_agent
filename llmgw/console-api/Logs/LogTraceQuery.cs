@@ -27,12 +27,23 @@ public static class LogTraceQuery
     public static FilterDefinition<BsonDocument> Related(BsonDocument anchor)
     {
         var filters = new List<FilterDefinition<BsonDocument>> { F.Eq("_id", anchor["_id"]) };
+        var runId = Text(anchor, "RunId");
+        var missingRun = F.Or(F.Eq("RunId", BsonNull.Value), F.Eq("RunId", ""));
         foreach (var field in new[] { "RunId", "LogicalRequestId" })
-            if (Text(anchor, field) is { Length: > 0 } value) filters.Add(F.Eq(field, value));
+            if (Text(anchor, field) is { Length: > 0 } value)
+            {
+                var identity = F.Eq(field, value);
+                // 已有明确业务运行时，复用逻辑编号不能把另一独立运行并入；无 RunId 的旧记录仍可关联。
+                filters.Add(field == "LogicalRequestId" && !string.IsNullOrEmpty(runId)
+                    ? F.And(missingRun, identity) : identity);
+            }
         // 作业编号只在同一上游线路内有意义，不能跨供应商撞号关联。
         if (Text(anchor, "ProviderTaskId") is { Length: > 0 } task
             && Text(anchor, "PlatformId") is { Length: > 0 } platform)
-            filters.Add(F.And(F.Eq("ProviderTaskId", task), F.Eq("PlatformId", platform)));
+        {
+            var taskIdentity = F.And(F.Eq("ProviderTaskId", task), F.Eq("PlatformId", platform));
+            filters.Add(!string.IsNullOrEmpty(runId) ? F.And(missingRun, taskIdentity) : taskIdentity);
+        }
         return F.Or(filters);
     }
 
