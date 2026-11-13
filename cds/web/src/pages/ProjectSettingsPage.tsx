@@ -2493,9 +2493,9 @@ function CommentTemplateTab({
         method: 'POST',
         body: { body: source },
       });
-      setState({ ...state, preview: result.rendered || '(空)' });
+      setState(current => current.status === 'ok' ? { ...current, preview: result.rendered || '(空)' } : current);
     } catch (err) {
-      setState({ ...state, preview: `预览失败：${messageFromError(err)}` });
+      setState(current => current.status === 'ok' ? { ...current, preview: `预览失败：${messageFromError(err)}` } : current);
     } finally {
       setPreviewing(false);
     }
@@ -2505,7 +2505,8 @@ function CommentTemplateTab({
   if (state.status === 'error') return <ErrorBlock message={state.message} />;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
+      <div className="grid gap-6 xl:grid-cols-2">
       <Section
         title="GitHub PR 预览评论模板"
         description="每当 PR 打开或部署完成时，CDS 会在 PR 下发或刷新预览评论。这里编辑当前项目的 Markdown 模板，留空保存会回到默认模板。"
@@ -2544,7 +2545,16 @@ function CommentTemplateTab({
         </div>
       </Section>
 
-      <Section title="可用变量" description="点击变量会插入到模板光标位置。未识别变量会原样保留，便于排查拼写。">
+      <Section title="示例预览" description="使用示例 PR 和分支数据渲染当前模板，保存前可先检查 Markdown 效果。">
+        <div role={state.preview.startsWith('预览失败：') ? 'alert' : undefined} className="min-h-32 whitespace-pre-wrap break-words cds-surface-raised cds-hairline px-4 py-4 font-mono text-sm leading-6">
+          {state.preview || '点击“预览”后显示渲染结果。'}
+        </div>
+      </Section>
+      </div>
+
+      <details className="border-t border-border pt-3">
+        <summary className="min-h-11 cursor-pointer py-2 text-base font-semibold">可用变量（{state.variables.length}）</summary>
+        <p className="mb-3 text-sm leading-5 text-muted-foreground">点击变量会插入到模板光标位置。未识别变量会原样保留，便于排查拼写。</p>
         <div className="grid gap-2">
           {state.variables.map((variable) => (
             <button
@@ -2559,13 +2569,7 @@ function CommentTemplateTab({
             </button>
           ))}
         </div>
-      </Section>
-
-      <Section title="示例预览" description="使用示例 PR 和分支数据渲染当前模板，保存前可先检查 Markdown 效果。">
-        <div className="min-h-32 whitespace-pre-wrap break-words cds-surface-raised cds-hairline px-4 py-4 font-mono text-sm leading-6">
-          {state.preview || '点击“预览”后显示渲染结果。'}
-        </div>
-      </Section>
+      </details>
     </div>
   );
 }
