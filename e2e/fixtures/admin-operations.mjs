@@ -170,6 +170,11 @@ export async function installOperationsFixtures(page) {
         data = { items: [model], total: 1 };
       } else if (api === "/logical-models/usage") data = { items: [] };
       else if (
+        api === "/logical-models/compat-model/delete-check" &&
+        req.method() === "GET"
+      )
+        data = { canDelete: true, reasons: [], offerings: model.offerings.length };
+      else if (
         api === "/logical-models/compat-model" &&
         req.method() === "PUT"
       ) {
