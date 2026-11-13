@@ -293,6 +293,13 @@ export type RouterTraceStep = {
 };
 
 export type ProviderAttempt = {
+  attemptId?: string | null;
+  providerRequestId?: string | null;
+  providerTaskId?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  providerReportedCost?: number | null;
+  providerCostCurrency?: string | null;
   order: number;
   stage: string;
   provider?: string | null;
@@ -1877,6 +1884,16 @@ export type ModelUpgradeView = {
 export type UpdateModelUpgradePolicyRequest = ModelUpgradePolicy & { version: number };
 export type ModelUpgradeAction = 'check' | 'validate' | 'promote' | 'rollback';
 export type ModelUpgradeActionRequest = { version: number; requestId?: string; mode?: 'evidence' | 'canary' };
+
+export type LogTraceData = {
+  ambiguous: boolean;
+  hasMoreCandidates?: boolean;
+  candidates?: { id: string; requestId?: string; runId?: string; logicalRequestId?: string }[];
+  reference: string; anchorId: string; total: number; page: number; pageSize: number;
+  business?: { runId: string; status?: string | null; providerTaskId?: string | null; upstreamStatus?: string | null; artifactSha256?: string | null } | null;
+  items?: { log: LlmLogListItem; recordKind: 'request' | 'legacy-summary'; sameReceiptRecords: number;
+    attempts: NonNullable<LlmLogDetail['providerAttempts']>; lifecycleReason?: string | null; evidenceGap?: string | null }[];
+};
 
 export type ReferenceIdentity = {
   logicalId?: string | null; publicId?: string | null; aliases: string[]; poolIds: string[];

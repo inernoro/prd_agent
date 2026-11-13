@@ -1,0 +1,44 @@
+.lg-log-trace p {
+  margin: 6px 0;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.lg-log-trace h2 {
+  margin: 4px 0 10px;
+  font-size: var(--fs-heading);
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.lg-log-trace a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.lg-log-trace a:hover {
+  text-decoration: underline;
+}
+
+.lg-log-trace input {
+  padding: 8px 12px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+
+.lg-log-trace ol {
+  margin: 10px 0;
+  padding-left: 24px;
+}
+
+.lg-log-trace li {
+  padding: 8px;
+  margin-top: 6px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}

@@ -35,6 +35,7 @@ import type {
   TimeseriesData,
   SessionsData,
   LlmLogDetail,
+  LogTraceData,
   PoolsData,
   PlatformsData,
   ModelsData,
@@ -574,6 +575,12 @@ export function getLogsTimeseries(params: LogsListParams): Promise<ApiResponse<T
 
 export function getLogsSessions(params: LogsListParams): Promise<ApiResponse<SessionsData>> {
   return apiRequest<SessionsData>('/logs/sessions', { query: { ...params } });
+}
+
+export function getLogTrace(reference: string, anchorId?: string, page = 1): Promise<ApiResponse<LogTraceData>> {
+  const query = new URLSearchParams({ reference, page: String(page) });
+  if (anchorId) query.set('anchorId', anchorId);
+  return apiRequest<LogTraceData>(`/logs/trace?${query}`);
 }
 
 export function getLogDetail(id: string): Promise<ApiResponse<LlmLogDetail>> {
