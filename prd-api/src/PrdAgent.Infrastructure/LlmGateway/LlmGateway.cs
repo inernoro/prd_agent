@@ -2888,6 +2888,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 (int)response.StatusCode,
                 submitDurationMs,
                 response.IsSuccessStatusCode ? null : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}");
+            CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(a => a.Stage == "send"), responseBody,
+                response.Headers.ToDictionary(h => h.Key, h => string.Join(", ", h.Value), StringComparer.OrdinalIgnoreCase),
+                request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
 
             for (var attemptIndex = 1;
                  !response.IsSuccessStatusCode
@@ -3038,6 +3041,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     (int)response.StatusCode,
                     submitDurationMs,
                     response.IsSuccessStatusCode ? null : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}");
+                CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(a => a.Stage == "send"), responseBody,
+                    response.Headers.ToDictionary(h => h.Key, h => string.Join(", ", h.Value), StringComparer.OrdinalIgnoreCase),
+                    request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
             }
 
             // 6.5 Exchange 异步轮询（submit+query 模式）
@@ -3151,6 +3157,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                                 durationMs: queryDurationMs,
                                 error: null,
                                 reason: $"exchange async poll attempt {pollAttempt} complete");
+                            CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(), responseBody, queryHeaders,
+                                request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
                             _logger.LogInformation(
                                 "[LlmGateway.Exchange.Async] 任务完成, Exchange={ExchangeName}, pollAttempts={Attempts}",
                                 resolution.ExchangeName, pollAttempt);
@@ -3170,6 +3178,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                                 durationMs: queryDurationMs,
                                 error: queryError,
                                 reason: $"exchange async poll attempt {pollAttempt} failed");
+                            CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(), responseBody, queryHeaders,
+                                request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
                             var endedNow = DateTime.UtcNow;
                             var dur = (long)(endedNow - startedAt).TotalMilliseconds;
                             await FinishRawLogAsync(
@@ -3188,6 +3198,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             error: null,
                             reason: $"exchange async poll attempt {pollAttempt} pending",
                             statusOverride: "pending");
+                        CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(), responseBody, queryHeaders,
+                            request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
 
                         if (pollAttempt % 10 == 0)
                         {
@@ -5465,6 +5477,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
                     ModelGroupName: resolution.ModelGroupName,
+                    ProviderTaskId: providerAttempts?.LastOrDefault(a => !string.IsNullOrWhiteSpace(a.ProviderTaskId))?.ProviderTaskId ?? request.Context?.ProviderTaskId,
                     ProviderReportedCost: rawUsage.ProviderReportedCost,
                     ProviderCostCurrency: rawUsage.ProviderCostCurrency,
                     OutputImagePayloads: rawUsage.OutputImages
@@ -5580,6 +5593,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         attempts.Add(new LlmProviderAttempt
         {
+            AttemptId = stage == "poll" ? Guid.NewGuid().ToString("N") : null,
             Order = attempts.Count + 1,
             Stage = stage,
             Provider = resolution.ExchangeName
@@ -5716,11 +5730,39 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             attempt.Reason = error;
     }
 
+    private static void CaptureRawAttemptEvidence(LlmProviderAttempt? attempt, string body,
+        Dictionary<string, string> headers, string? providerTaskId, bool video)
+    {
+        if (attempt is null || attempt.ReachedProvider != true) return;
+        attempt.AttemptId ??= Guid.NewGuid().ToString("N");
+        attempt.ProviderRequestId = LlmCostEvidence.ResolveProviderRequestId(headers);
+        var usage = RawGatewayUsageParser.Parse(body);
+        attempt.InputTokens = usage.InputTokens;
+        attempt.OutputTokens = usage.OutputTokens;
+        attempt.ProviderReportedCost = usage.ProviderReportedCost;
+        attempt.ProviderCostCurrency = usage.ProviderCostCurrency;
+        attempt.ProviderTaskId = providerTaskId;
+        if (video && providerTaskId is null && attempt.StatusCode is >= 200 and < 300)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                if (document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
+                    attempt.ProviderTaskId = id.GetString();
+            }
+            catch (JsonException) { /* 无结构化作业证据就留空 */ }
+        }
+    }
+
     private static void MarkLastSendAttemptReachedProvider(List<LlmProviderAttempt> attempts)
     {
         var attempt = attempts.LastOrDefault(x => string.Equals(x.Stage, "send", StringComparison.OrdinalIgnoreCase));
         if (attempt is not null)
+        {
+            attempt.AttemptId ??= Guid.NewGuid().ToString("N");
             attempt.ReachedProvider = true;
+        }
     }
 
     #endregion

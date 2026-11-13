@@ -105,6 +105,7 @@ import { matchPreviewHost } from './services/uptime-custom-monitor.js';
 import { createPublicStatusRouter, createStatusPageAdminRouter } from './routes/public-status.js';
 import { runMonitorDiscovery, type DiscoveryRunSummary } from './services/monitor-discovery-runner.js';
 import { customProbeTargetId } from './services/uptime-custom-monitor.js';
+import { observeScheduledJobs } from './services/scheduled-job-health.js';
 import { UptimeMonitorService, uptimeConfigFromEnv, type UptimeAlertEventType, type UptimeAlertEventData } from './services/uptime-monitor.js';
 import { cdsEventsBus } from './services/cds-events-bus.js';
 import { setReleaseHealthSource } from './services/release-health-snapshot.js';
@@ -6262,6 +6263,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   };
   const notificationReports = new NotificationReportRecorder(stateService);
   const uptimeMonitor = new UptimeMonitorService({
+    observeScheduledJobs: () => observeScheduledJobs(stateService, (type, data) => { cdsEventsBus.publish(type, data); }),
     state: {
       getAllBranches: () => stateService.getAllBranches(),
       getProject: (projectId: string) => stateService.getProject(projectId),

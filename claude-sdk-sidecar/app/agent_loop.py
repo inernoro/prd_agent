@@ -301,6 +301,8 @@ async def _run_openai_compatible(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "Accept": "text/event-stream",
+        "X-Gateway-Run-Id": req.gateway_run_id or req.run_id,
+        "X-Gateway-App-Caller": req.app_caller_code or "",
     }
     timeout = httpx.Timeout(req.timeout_seconds, connect=30.0)
 

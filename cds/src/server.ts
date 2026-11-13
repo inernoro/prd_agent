@@ -920,6 +920,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'PATCH /scheduled-jobs/:id': '更新定时任务',
     'DELETE /scheduled-jobs/:id': '删除定时任务',
     'POST /scheduled-jobs/:id/run': '立即执行任务',
+    'POST /scheduled-jobs/:id/recover': '核实任务产物',
     // 服务端站内信账本（2026-07-29）
     'GET /notices': '列出站内信',
     'POST /notices': '记录站内信',
@@ -1232,6 +1233,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 定时任务：staticMap 的 `:id` 条目只够 auditApiLabels 比对 express 路由原样，
     // 真实调用带的是具体 id，必须靠 pattern 才有 label。segment-safe `[^/]+`。
     [/^POST \/scheduled-jobs\/[^/]+\/run$/, '立即执行任务'],
+    [/^POST \/scheduled-jobs\/[^/]+\/recover$/, '核实任务产物'],
     [/^PATCH \/scheduled-jobs\/[^/]+$/, '更新定时任务'],
     [/^DELETE \/scheduled-jobs\/[^/]+$/, '删除定时任务'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis\/stream$/, '流式解释部署诊断'],
@@ -5498,6 +5500,8 @@ export function installSpaFallback(
       index: false,
       setHeaders: (res, filePath) => {
         if (filePath.endsWith('.html')) {
+          res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+          res.setHeader('X-Frame-Options', 'DENY');
           res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
           res.setHeader('Pragma', 'no-cache');
           res.setHeader('Expires', '0');
@@ -5527,6 +5531,9 @@ export function installSpaFallback(
       return null;
     };
     const sendReactIndex = (res: express.Response): void => {
+      // 管理操作不能被不可信预览页以透明 iframe 诱导点击；报告 raw 嵌入走独立 API。
+      res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+      res.setHeader('X-Frame-Options', 'DENY');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       const selectedIndex = resolveReactIndex();
       if (!selectedIndex) {

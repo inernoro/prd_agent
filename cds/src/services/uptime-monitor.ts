@@ -1246,6 +1246,7 @@ export class UptimeMonitorService {
        * 不接不报错，只是掉线永远没人被通知——所以有源码守卫钉住这行接线。
        */
       onAlarmSuppressed?: (data: { targetId: string; targetName: string; projectId: string; reason: string; at: number }) => void;
+      observeScheduledJobs?: () => void;
       onAlert?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void | Promise<void>;
       /** 状态事实与通知抑制独立：未投递过故障的稳定恢复也须关闭原报告。 */
       onReportEvent?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void | Promise<void>;
@@ -1398,6 +1399,8 @@ export class UptimeMonitorService {
     let customLane: Promise<number> = Promise.resolve(0);
     const cycleStartedAt = this.now();
     try {
+      try { this.deps.observeScheduledJobs?.(); }
+      catch (err) { this.deps.logger?.warn?.(`[uptime] 任务健康观测失败: ${(err as Error).message}`); }
       const now = cycleStartedAt;
       const targets = this.selectTargets();
       const liveIds = new Set(targets.map((t) => t.id));

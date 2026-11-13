@@ -77,6 +77,7 @@ test('稳定模型升级页签按真实状态保存策略、验证、采用与�
     await mount('owner');
     await openPolicy();
     const panel = () => document.querySelector('[data-testid="model-upgrade-panel"]');
+    assert.doesNotMatch(panel().textContent, /全量使用位置|使用位置覆盖核验|旧引用残留/);
     assert.match(panel().textContent, /image-quality/);
     assert.match(panel().textContent, /image-2-all/);
     assert.match(panel().textContent, /future-image-2/);
@@ -115,7 +116,7 @@ test('稳定模型升级页签按真实状态保存策略、验证、采用与�
     fixture.view.phase = 'candidate'; fixture.view.message = '已发现候选，等待真实验证'; fixture.view.version++;
     await tick(3000);
     assert.equal(fixture.calls.length, actionCount, '轮询只能读取状态，不得重复提交检查或付费验证');
-    await fill(document.querySelector('[aria-label="已有验收请求编号"]'), 'accepted-request');
+    await fill(document.querySelector('[aria-label="已有验证请求编号"]'), 'accepted-request');
     await click('验证候选版本');
     assert.equal(fixture.calls.at(-1).body.requestId, 'accepted-request');
     assert.match(fixture.confirmations.at(-1).description, /不重复发起付费验证/);
