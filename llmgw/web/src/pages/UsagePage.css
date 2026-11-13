@@ -1,0 +1,15 @@
+/* Current quota states stay visible; the edit form is available on demand. */
+.lg-quota-status {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.lg-quota-status > div { min-width: 0; }
+.lg-quota-status p {
+  margin: 0;
+  max-width: var(--measure);
+  color: var(--text-muted);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}

@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { getHealth } from '@/lib/api';
 import { resolveMapHomeHref, usePlatformMapHome } from '@/lib/mapNavigation';
 import { Button } from '@/components/ui';
+import './LoginPage.css';
 
 export { resolveMapHomeHref } from '@/lib/mapNavigation';
 
@@ -69,39 +70,11 @@ export function LoginPage() {
   return (
     <main className="lg-login-page">
       <section className="lg-login-shell" aria-labelledby="llmgw-login-title">
-        <div className="lg-login-intro">
-          <div className="lg-login-brand">
-            <span className="lg-login-brand-icon" aria-hidden="true"><Activity size={21} /></span>
-            <div>
-              <strong>LLM Gateway</strong>
-              <span>独立租户控制台</span>
-            </div>
-          </div>
-
-          <div className="lg-login-hero">
-            <div className={`lg-login-health is-${healthState}`} role="status" aria-live="polite">
-              <span className="lg-login-health-dot" />
-              {healthCopy}
-            </div>
-            <h1 id="llmgw-login-title">登录后，查看属于你的租户数据</h1>
-            <p>这里不是空白演示站。为了避免跨租户泄露，首页、请求、模型、密钥和费用只会在身份校验通过后出现。</p>
-          </div>
-
-          <div className="lg-login-capabilities" aria-label="登录后可用功能">
-            <div><Rocket size={18} /><span><strong>快速接入</strong><small>生成应用密钥，网页内直接测试四种协议</small></span></div>
-            <div><BarChart3 size={18} /><span><strong>使用与费用</strong><small>查看请求趋势、模型、用户和费用可信度</small></span></div>
-            <div><ShieldCheck size={18} /><span><strong>租户隔离</strong><small>只展示会话所属租户的配置、日志与审计</small></span></div>
-          </div>
-
-          <a href={resolveMapHomeHref()} className="lg-login-back-link">
-            <ArrowLeft size={15} />返回 MAP 首页
-          </a>
-        </div>
 
         <div className="lg-login-panel">
           <div className="lg-login-panel-heading">
             <span>租户工作区</span>
-            <h2>登录 Gateway 控制台</h2>
+            <h1 id="llmgw-login-title">登录 Gateway 控制台</h1>
             <p>使用租户管理员为你创建的控制台账号。</p>
           </div>
 
@@ -150,6 +123,35 @@ export function LoginPage() {
           </div>
           <p className="lg-login-security-note">MAP 账号与 Gateway 账号彼此独立。新环境首位管理员首次登录后需要设置自己的密码，请勿共享他人的账号或密钥。</p>
         </div>
+        <div className="lg-login-intro">
+          <div className="lg-login-brand">
+            <span className="lg-login-brand-icon" aria-hidden="true"><Activity size={21} /></span>
+            <div>
+              <strong>LLM Gateway</strong>
+              <span>独立租户控制台</span>
+            </div>
+          </div>
+
+          <div className="lg-login-hero">
+            <div className={`lg-login-health is-${healthState}`} role="status" aria-live="polite">
+              <span className="lg-login-health-dot" />
+              {healthCopy}
+            </div>
+            <h2>登录后，查看属于你的租户数据</h2>
+            <p>这里不是空白演示站。为了避免跨租户泄露，首页、请求、模型、密钥和费用只会在身份校验通过后出现。</p>
+          </div>
+
+          <div className="lg-login-capabilities" aria-label="登录后可用功能">
+            <div><Rocket size={18} /><span><strong>快速接入</strong><small>生成应用密钥，网页内直接测试四种协议</small></span></div>
+            <div><BarChart3 size={18} /><span><strong>使用与费用</strong><small>查看请求趋势、模型、用户和费用可信度</small></span></div>
+            <div><ShieldCheck size={18} /><span><strong>租户隔离</strong><small>只展示会话所属租户的配置、日志与审计</small></span></div>
+          </div>
+
+          <a href={resolveMapHomeHref()} className="lg-login-back-link">
+            <ArrowLeft size={15} />返回 MAP 首页
+          </a>
+        </div>
+
       </section>
     </main>
   );

@@ -1,0 +1,7 @@
+/* The three theme choices are the controls, so they need no enclosing card. */
+.lg-preferences-page .lg-theme-options {
+  width: min(100%, 620px);
+  margin: 0;
+}
+.lg-preferences-page .lg-theme-options button { min-height: 72px; }
+.lg-preferences-page .lg-theme-options small { font-size: var(--fs-body); }

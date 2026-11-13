@@ -1,5 +1,6 @@
 import { Monitor, Moon, Sun } from 'lucide-react';
-import { Card } from '@/components/ui';
+import { PageBody, PageHeader, PageShell, Prose } from '@/components/PageShell';
+import './SettingsPage.css';
 import { useThemePreference, type ThemePreference } from '@/lib/theme';
 
 const THEME_OPTIONS: { value: ThemePreference; label: string; description: string; icon: typeof Monitor }[] = [
@@ -11,10 +12,9 @@ const THEME_OPTIONS: { value: ThemePreference; label: string; description: strin
 export function SettingsPage() {
   const { preference, resolved, setPreference } = useThemePreference();
   return (
-    <div className="lg-simple-page">
-      <div className="lg-page-heading"><div><div className="lg-eyebrow">设置</div><h1>控制台设置</h1><p>选择清晰可见的界面外观；主题只影响当前浏览器。</p></div></div>
-      <Card className="lg-settings-card">
-        <div className="lg-card-kicker"><Monitor size={15} /> 外观</div>
+    <PageShell className="lg-preferences-page">
+      <PageHeader title="控制台设置" subtitle="选择界面外观；主题只影响当前浏览器。" />
+      <PageBody>
         <div className="lg-theme-options" role="radiogroup" aria-label="界面主题">
           {THEME_OPTIONS.map((option) => {
             const Icon = option.icon;
@@ -26,8 +26,8 @@ export function SettingsPage() {
             );
           })}
         </div>
-        <p>当前实际显示为{resolved === 'light' ? '浅色' : '深色'}。顶部用户菜单可一键切换；认证信息仍只保存在当前会话。</p>
-      </Card>
-    </div>
+        <Prose>当前实际显示为{resolved === 'light' ? '浅色' : '深色'}。顶部用户菜单可一键切换；认证信息仍只保存在当前会话。</Prose>
+      </PageBody>
+    </PageShell>
   );
 }

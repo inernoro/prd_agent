@@ -236,66 +236,10 @@ export function OrganizationPage() {
         {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
 
         {!data ? (
-          error
-            ? <Card style={CARD_BODY}><Prose>当前账号不能读取组织信息，请联系 Owner 调整角色。</Prose></Card>
-            : <SectionLoader text="正在加载组织" />
+          error ? null : <SectionLoader text="正在加载组织" />
         ) : (
           <>
-            <Card style={CARD_BODY}>
-              <div style={cardHeadStyle}>
-                <h2 style={SECTION_TITLE}>团队</h2>
-                <span style={countStyle}>{data.teams.length} 个</span>
-              </div>
-              {data.teams.length === 0 ? (
-                <Prose style={{ marginBottom: GAP.section }}>还没有团队。团队把成员、appCaller 和接入密钥放进同一工作范围。</Prose>
-              ) : (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginBottom: GAP.section }}>
-                  {data.teams.map((team) => {
-                    const chip = (
-                      <Chip
-                        label={team.status === 'active' ? team.name : `${team.name}（已停用）`}
-                        color={team.status === 'active' ? 'var(--accent)' : 'var(--text-muted)'}
-                        bg={team.status === 'active' ? 'var(--accent-soft)' : 'var(--bg-elevated)'}
-                      />
-                    );
-                    if (!canManage) return <span key={team.id}>{chip}</span>;
-                    return (
-                      <span key={team.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                        <button
-                          type="button"
-                          aria-label={`重命名团队 ${team.name}`}
-                          title="点击重命名"
-                          disabled={busy}
-                          onClick={() => void renameTeam(team)}
-                          style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', lineHeight: 0 }}
-                        >
-                          {chip}
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`删除团队 ${team.name}`}
-                          title="删除团队"
-                          disabled={busy}
-                          onClick={() => void removeTeam(team)}
-                          style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', lineHeight: 0, color: 'var(--text-muted)' }}
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-              {canManage ? (
-                <FormGrid>
-                  <label style={FIELD_LABEL}>
-                    <span>团队名称</span>
-                    <input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="客服组" style={FIELD_INPUT} />
-                  </label>
-                  <Button size="sm" disabled={busy || teamName.trim().length < 2} onClick={() => void addTeam()}>创建团队</Button>
-                </FormGrid>
-              ) : null}
-            </Card>
+
 
             <Card style={CARD_BODY}>
               <div style={cardHeadStyle}>
@@ -370,6 +314,64 @@ export function OrganizationPage() {
                   </tbody>
                 </table>
               </div>
+            </Card>
+
+            <Card style={CARD_BODY}>
+              <div style={cardHeadStyle}>
+                <h2 style={SECTION_TITLE}>团队</h2>
+                <span style={countStyle}>{data.teams.length} 个</span>
+              </div>
+              {data.teams.length === 0 ? (
+                <Prose style={{ marginBottom: GAP.section }}>还没有团队。团队把成员、appCaller 和接入密钥放进同一工作范围。</Prose>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginBottom: GAP.section }}>
+                  {data.teams.map((team) => {
+                    const chip = (
+                      <Chip
+                        label={team.status === 'active' ? team.name : `${team.name}（已停用）`}
+                        color={team.status === 'active' ? 'var(--accent)' : 'var(--text-muted)'}
+                        bg={team.status === 'active' ? 'var(--accent-soft)' : 'var(--bg-elevated)'}
+                      />
+                    );
+                    if (!canManage) return <span key={team.id}>{chip}</span>;
+                    return (
+                      <span key={team.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <button
+                          type="button"
+                          aria-label={`重命名团队 ${team.name}`}
+                          title="点击重命名"
+                          disabled={busy}
+                          onClick={() => void renameTeam(team)}
+                          style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', lineHeight: 0 }}
+                        >
+                          {chip}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`删除团队 ${team.name}`}
+                          title="删除团队"
+                          disabled={busy}
+                          onClick={() => void removeTeam(team)}
+                          style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', lineHeight: 0, color: 'var(--text-muted)' }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              {canManage ? (
+                <DetailsBlock title="创建团队">
+                <FormGrid>
+                  <label style={FIELD_LABEL}>
+                    <span>团队名称</span>
+                    <input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="客服组" style={FIELD_INPUT} />
+                  </label>
+                  <Button size="sm" disabled={busy || teamName.trim().length < 2} onClick={() => void addTeam()}>创建团队</Button>
+                </FormGrid>
+                </DetailsBlock>
+              ) : null}
             </Card>
 
             <DetailsBlock title="工作原理：租户、团队、角色的边界">

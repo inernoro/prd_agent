@@ -1,0 +1,20 @@
+/* Keep the form first in DOM/focus order; wide screens retain the two-column reference. */
+.lg-login-panel { grid-column: 2; grid-row: 1; }
+.lg-login-intro { grid-column: 1; grid-row: 1; }
+@media (max-width: 800px) {
+  .lg-login-panel,
+  .lg-login-intro { grid-column: auto; grid-row: auto; }
+}
+.lg-login-panel-heading h1 {
+  margin: 8px 0 7px;
+  color: var(--text-primary);
+  font-size: var(--fs-title);
+}
+.lg-login-hero h2 {
+  max-width: 500px;
+  margin: 22px 0 13px;
+  color: var(--text-primary);
+  font-size: var(--fs-display);
+  line-height: 1.16;
+  letter-spacing: -0.035em;
+}

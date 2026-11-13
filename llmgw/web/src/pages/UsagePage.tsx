@@ -18,6 +18,7 @@ import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP } from '@/lib/surface';
 import { FIELD_INPUT, FIELD_LABEL, SECTION_TITLE } from '@/lib/typography';
+import './UsagePage.css';
 
 export function UsagePage() {
   const { tenant } = useAuth();
@@ -143,6 +144,7 @@ export function UsagePage() {
     <>
       <span>请求 <strong>{fmtCompact(summary?.total)}</strong></span>
       <span>价格覆盖 <strong>{summary?.total ? `${summary.priceCoveragePercent}%` : '—'}</strong></span>
+      <span>Token <strong>{fmtCompact(summary?.totalTokens)}</strong></span>
       {/* 原来这一串是「对账覆盖」那段说明文字，其实全是派生数据——数据就该以指标呈现，
           而不是写成一句话让人读。 */}
       {reconciliation ? (
@@ -172,6 +174,18 @@ export function UsagePage() {
       />
       <PageBody>
       {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+
+      {(summary?.cacheSavingsUsd != null || (summary?.estimatedCosts.length ?? 0) > 0 || (reconciliation?.providerActualCosts.length ?? 0) > 0) ? <div className="lg-usage-grid">
+        {summary?.cacheSavingsUsd != null ? (
+          <Card>
+            <div className="lg-card-kicker">缓存节省</div>
+            <strong className="lg-large-value">{fmtCost(summary.cacheSavingsUsd, 'USD')}</strong>
+            <p>命中缓存的输入按缓存价计，比全价省下这些</p>
+          </Card>
+        ) : null}
+        {(summary?.estimatedCosts ?? []).map((item) => <Card key={item.currency}><div className="lg-card-kicker">{item.currency} Gateway 估算</div><strong className="lg-large-value">{fmtCost(item.amount, item.currency)}</strong><p>{fmtCompact(item.requests)} 个请求，未与其他币种相加</p></Card>)}
+        {(reconciliation?.providerActualCosts ?? []).map((item) => <Card key={`actual-${item.currency}`}><div className="lg-card-kicker">{item.currency} 供应商实际账单</div><strong className="lg-large-value">{fmtCost(item.amount, item.currency)}</strong><p>{fmtCompact(item.requests)} 条供应商账单记录</p></Card>)}
+      </div> : null}
       <Card style={CARD_BODY} aria-labelledby="tenant-governance-title">
         <div style={cardHeadStyle}>
           <h2 id="tenant-governance-title" style={SECTION_TITLE}>
@@ -184,33 +198,20 @@ export function UsagePage() {
           <span style={countStyle}>服务端原子预占</span>
         </div>
         {governanceError ? <InlineAlert tone="error">{governanceError}</InlineAlert> : null}
-        <div className="lg-usage-grid">
-          <Card><div className="lg-card-kicker">本月预算占用</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.monthlyBudgetUsd ? fmtCost(governance.spentUsd, 'USD') : '未设上限'}</strong><p>{governance?.monthlyBudgetUsd ? `Gateway 估算口径，剩余 ${fmtCost(governance.remainingBudgetUsd ?? 0, 'USD')}` : '不代表供应商实际结算，不影响 appCaller 自身预算'}</p></Card>
-          <Card><div className="lg-card-kicker">并发预占</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.monthlyBudgetUsd ? fmtCost(governance.reservedUsd, 'USD') : '未启用'}</strong><p>{governance?.budgetReservationUsd ? `每请求保守预占 ${fmtCost(governance.budgetReservationUsd, 'USD')}` : '设置总月预算时必须同时设置'}</p></Card>
-          <Card><div className="lg-card-kicker"><Gauge size={15} /> 当前分钟</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.rateLimitPerMinute ? `${fmtCompact(governance.currentMinuteCount)} / ${fmtCompact(governance.rateLimitPerMinute)}` : '未设上限'}</strong><p>所有实际调用合计，分钟窗口原子计数</p></Card>
+        <div className="lg-quota-status">
+          <div><div className="lg-card-kicker">本月预算占用</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.monthlyBudgetUsd ? fmtCost(governance.spentUsd, 'USD') : '未设上限'}</strong><p>{governance?.monthlyBudgetUsd ? `Gateway 估算口径，剩余 ${fmtCost(governance.remainingBudgetUsd ?? 0, 'USD')}` : '不代表供应商实际结算，不影响 appCaller 自身预算'}</p></div>
+          <div><div className="lg-card-kicker">并发预占</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.monthlyBudgetUsd ? fmtCost(governance.reservedUsd, 'USD') : '未启用'}</strong><p>{governance?.budgetReservationUsd ? `每请求保守预占 ${fmtCost(governance.budgetReservationUsd, 'USD')}` : '设置总月预算时必须同时设置'}</p></div>
+          <div><div className="lg-card-kicker"><Gauge size={15} /> 当前分钟</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.rateLimitPerMinute ? `${fmtCompact(governance.currentMinuteCount)} / ${fmtCompact(governance.rateLimitPerMinute)}` : '未设上限'}</strong><p>所有实际调用合计，分钟窗口原子计数</p></div>
         </div>
-        {canImportActual ? <div style={{ marginTop: GAP.section }}>
+        {canImportActual ? <DetailsBlock title="调整租户硬限制">
           <FormGrid>
             <label style={labelStyle}>租户总月预算（USD）<input type="number" min="0" step="any" value={monthlyBudget} onChange={(e) => setMonthlyBudget(e.target.value)} style={inputStyle} placeholder="留空表示不限制" /></label>
             <label style={labelStyle}>单请求原子预占（USD）<input type="number" min="0" step="any" value={budgetReservation} onChange={(e) => setBudgetReservation(e.target.value)} style={inputStyle} placeholder="总预算启用时必填" /></label>
             <label style={labelStyle}>租户每分钟总请求数<input type="number" min="0" step="1" value={tenantRateLimit} onChange={(e) => setTenantRateLimit(e.target.value)} style={inputStyle} placeholder="留空表示不限制" /></label>
             <Button variant="primary" size="sm" disabled={governanceSaving || (!!monthlyBudget !== !!budgetReservation)} onClick={() => void saveTenantGovernance()}>{governanceSaving ? '保存中' : '保存硬限制'}</Button>
           </FormGrid>
-        </div> : <div style={{ marginTop: GAP.section }}><ReadOnlyNotice>Owner 或 Admin 可修改租户总限制；当前角色仍可查看实时使用量。</ReadOnlyNotice></div>}
+        </DetailsBlock> : <div style={{ marginTop: GAP.section }}><ReadOnlyNotice>Owner 或 Admin 可修改租户总限制；当前角色仍可查看实时使用量。</ReadOnlyNotice></div>}
       </Card>
-      <div className="lg-usage-grid">
-        <Card><div className="lg-card-kicker"><CircleDollarSign size={15} /> 请求用量</div><strong className="lg-large-value">{fmtCompact(summary?.total)}</strong><p>{fmtCompact(summary?.totalTokens)} tokens</p></Card>
-        <Card><div className="lg-card-kicker">价格覆盖率</div><strong className="lg-large-value">{summary?.total ? `${summary.priceCoveragePercent}%` : '暂无请求'}</strong><p>{fmtCompact(summary?.pricedRequests)} 可估算 · {fmtCompact(summary?.unknownCostRequests)} 未知</p></Card>
-        {summary?.cacheSavingsUsd != null ? (
-          <Card>
-            <div className="lg-card-kicker">缓存节省</div>
-            <strong className="lg-large-value">{fmtCost(summary.cacheSavingsUsd, 'USD')}</strong>
-            <p>命中缓存的输入按缓存价计，比全价省下这些</p>
-          </Card>
-        ) : null}
-        {(summary?.estimatedCosts ?? []).map((item) => <Card key={item.currency}><div className="lg-card-kicker">{item.currency} Gateway 估算</div><strong className="lg-large-value">{fmtCost(item.amount, item.currency)}</strong><p>{fmtCompact(item.requests)} 个请求，未与其他币种相加</p></Card>)}
-        {(reconciliation?.providerActualCosts ?? []).map((item) => <Card key={`actual-${item.currency}`}><div className="lg-card-kicker">{item.currency} 供应商实际账单</div><strong className="lg-large-value">{fmtCost(item.amount, item.currency)}</strong><p>{fmtCompact(item.requests)} 条供应商账单记录</p></Card>)}
-      </div>
       <Card style={CARD_BODY} aria-labelledby="cost-state-title">
         <div style={cardHeadStyle}>
           <h2 id="cost-state-title" style={SECTION_TITLE}>
