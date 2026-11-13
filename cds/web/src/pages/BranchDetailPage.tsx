@@ -1398,7 +1398,7 @@ export function BranchDetailPage(): JSX.Element {
                     </div>
                   ) : null}
                   <details className="border-t border-border pt-3" open={state.branch.githubCommitSha && state.branch.commitSha && !sameCommit(state.branch.githubCommitSha, state.branch.commitSha) ? true : undefined}>
-                    <summary className="cursor-pointer text-xs font-medium text-muted-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">提交一致性{state.branch.githubCommitSha && state.branch.commitSha && !sameCommit(state.branch.githubCommitSha, state.branch.commitSha) ? ' · 当前运行与目标不一致' : ''}</summary>
+                    <summary className="cursor-pointer py-2 text-xs font-medium text-muted-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">提交一致性{state.branch.githubCommitSha && state.branch.commitSha && !sameCommit(state.branch.githubCommitSha, state.branch.commitSha) ? ' · 当前运行与目标不一致' : ''}</summary>
                     <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
                       <div className="min-w-0">
                         <div className="text-muted-foreground">当前运行</div>

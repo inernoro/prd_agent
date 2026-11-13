@@ -2,7 +2,7 @@
 .project-status-page section,.project-status-page header{flex-shrink:0}
 .project-status-title{display:flex;align-items:center;justify-content:space-between;gap:1rem}
 .project-status-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1rem;margin:.75rem 0}
-.project-status-stats a{display:flex;flex-wrap:wrap;align-items:baseline;gap:.5rem;color:hsl(var(--muted-foreground))}
+.project-status-stats a{display:flex;flex-wrap:wrap;align-items:baseline;gap:.5rem;min-height:2.75rem;padding:.25rem 0;color:hsl(var(--muted-foreground))}
 .project-status-stats strong{display:block;font-size:1.8rem;color:hsl(var(--foreground))}
 .project-status-shortcuts{display:flex;gap:.75rem;flex-wrap:wrap}
 .project-status-shortcuts a{padding:.5rem .9rem;border-radius:.5rem;background:hsl(var(--surface-raised));border:1px solid hsl(var(--hairline))}
