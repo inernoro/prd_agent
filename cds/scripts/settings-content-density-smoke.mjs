@@ -24,6 +24,9 @@ const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PAT
 const measurements = [];
 const assert = (ok, message) => { if (!ok) throw Error(message); };
 async function navigate(page, href) {
+  // The route may finish loading before the async session has mounted the shell.
+  // Use an attached marker (also present but CSS-hidden on desktop) before choosing navigation.
+  await page.locator('button[aria-label="打开导航菜单"]').waitFor({ state: 'attached' });
   const burger = page.getByRole('button', { name: '打开导航菜单', exact: true });
   if (await burger.isVisible()) {
     await burger.click();
@@ -44,6 +47,7 @@ try {
     await page.route('**/api/**', async route => {
       const request = route.request(), url = new URL(request.url()), pathname = url.pathname.replace(/^\/_cds/, '');
       if (isEventStream(pathname)) return route.fulfill({ contentType: 'text/event-stream', body: ': ready\n\n' });
+      if (pathname === '/api/auth/status' && !owner) await new Promise(resolve => setTimeout(resolve, 300));
       if (failRead && ['/api/env', '/api/auth/users', '/api/global-agent-keys', '/api/cds-system/alarm-channels'].includes(pathname)) return route.fulfill({ status: 503, json: { error: '读取暂不可用，请重试' } });
       if (failWrite && request.method() === 'POST' && ['/api/auth/users', '/api/global-agent-keys'].includes(pathname)) return route.fulfill({ status: 503, json: { error: '保存暂不可用，请重试' } });
       let data;
