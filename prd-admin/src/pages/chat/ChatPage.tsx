@@ -38,6 +38,7 @@ export function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -55,6 +56,8 @@ export function ChatPage() {
   const abortRef = useRef<AbortController | null>(null);
   const streamEndRef = useRef<HTMLDivElement | null>(null);
   const activeIdRef = useRef<string | null>(null);
+  // 发送新轮后，先前启动的历史快照不再拥有消息、运行态或订阅游标。
+  const historyVersionRef = useRef(0);
   /**
    * 刚由「发送」这一步新建出来的会话 id。切会话的副作用会清空消息再从服务端重拉，
    * 而这一步紧接着就要画上乐观气泡——不打这个标记的话，用户自己那句话会被副作用
@@ -91,6 +94,7 @@ export function ChatPage() {
     // 这里不要插手，否则等于把用户刚说的那句话擦掉。
     if (activeId && freshSessionRef.current === activeId) {
       freshSessionRef.current = null;
+      setHistoryLoading(false);
       return;
     }
     abortRef.current?.abort();
@@ -99,15 +103,18 @@ export function ChatPage() {
     setToolCards([]);
     setRunning(false);
     seqRef.current = 0;
+    setHistoryLoading(!!activeId);
     if (!activeId) return;
 
     let cancelled = false;
+    const historyVersion = ++historyVersionRef.current;
 
     void (async () => {
-      const res = await listChatMessages(activeId);
-      if (cancelled || activeIdRef.current !== activeId) return;
-      if (!res.success) {
-        setNotice(res.error?.message ?? '消息加载失败');
+      const res = await listChatMessages(activeId).catch(() => null);
+      if (cancelled || activeIdRef.current !== activeId || historyVersionRef.current !== historyVersion) return;
+      setHistoryLoading(false);
+      if (!res?.success) {
+        setNotice(res?.error?.message ?? '消息加载失败');
         return;
       }
       setMessages(res.data?.items ?? []);
@@ -229,8 +236,10 @@ export function ChatPage() {
 
   const handleSend = useCallback(async () => {
     const content = input.trim();
-    if (!content || sending || running) return;
+    if (!content || sending || running || historyLoading) return;
 
+    // 不能让这次提交之前的 GET 在接单后擦掉乐观消息，或重开旧游标中断本轮流。
+    historyVersionRef.current++;
     let sessionId = activeId;
     if (!sessionId) {
       const created = await createChatSession();
@@ -278,7 +287,7 @@ export function ChatPage() {
 
     // 会话标题可能被首条消息改写，顺手刷新一下列表
     void loadSessions(false);
-  }, [input, sending, running, activeId, loadSessions, openStream]);
+  }, [input, sending, running, historyLoading, activeId, loadSessions, openStream]);
 
   const handleDelete = useCallback(async (id: string) => {
     const res = await deleteChatSession(id);
@@ -383,7 +392,7 @@ export function ChatPage() {
         )}
 
         <div className="chat-stream">
-          {messages.length === 0 && !running && (
+          {messages.length === 0 && !running && !historyLoading && (
             <div className="chat-empty">
               <Sparkles size={22} />
               <b>在。想聊什么直接说。</b>
@@ -486,12 +495,18 @@ export function ChatPage() {
           <div ref={streamEndRef} />
         </div>
 
+        {historyLoading && (
+          <div className="chat-notice" role="status">
+            <span className="chat-dots" aria-hidden="true"><i /><i /><i /></span>
+            <span>正在加载历史消息，加载完成后可发送</span>
+          </div>
+        )}
         <div className="chat-composer">
           <textarea
             value={input}
-            placeholder={running ? '这一轮还没跑完，等它说完再发' : '说点什么，回车发送，Shift 加回车换行'}
+            placeholder={historyLoading ? '正在加载历史消息，加载完成后可发送' : running ? '这一轮还没跑完，等它说完再发' : '说点什么，回车发送，Shift 加回车换行'}
             rows={1}
-            disabled={running}
+            disabled={running || historyLoading}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -504,7 +519,7 @@ export function ChatPage() {
             type="button"
             className="chat-send"
             aria-label="发送"
-            disabled={running || sending || input.trim().length === 0}
+            disabled={running || sending || historyLoading || input.trim().length === 0}
             onClick={() => void handleSend()}
           >
             <Send size={15} />

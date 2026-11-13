@@ -12,6 +12,51 @@ namespace PrdAgent.Tests;
 /// </summary>
 public class ChatAgentToolPresentationTests
 {
+    [Fact]
+    public void KnowledgeReadCardOpensServerSource()
+    {
+        var card = ChatAgentToolPresentation.BuildToolCardPayload("kb_read", "read-1",
+            """{"source":{"entryId":"entry","title":"差旅制度","openPath":"/document-store?store=store&entry=entry"}}""", false);
+        Assert.Equal("/document-store?store=store&entry=entry", card.OpenPath);
+        Assert.Equal("entry", card.EntryId);
+        Assert.Equal("差旅制度", card.Title);
+    }
+
+    [Fact]
+    public void KnowledgeReadCardRejectsExternalSourcePath()
+    {
+        var card = ChatAgentToolPresentation.BuildToolCardPayload("kb_read", "read-1",
+            """{"source":{"openPath":"https://example.com"}}""", false);
+        Assert.Null(card.OpenPath);
+    }
+
+    [Fact]
+    public void SearchEvidencePreservesOrderAndActualContextIds()
+    {
+        var card = ChatAgentToolPresentation.BuildToolCardPayload("kb_search", "search-1",
+            """{"mode":"semantic","items":[{"entry":{"entryId":"b"}},{"entry":{"entryId":"a"}}],"contextEntryIds":["b","a"],"retrievalLatencyMs":123,"embeddingModel":"actual-embedding","embeddingDimension":1536}""", false);
+        Assert.Equal(new[] { "b", "a" }, card.RetrievalEvidence!.RetrievedEntryIds);
+        Assert.Equal(new[] { "b", "a" }, card.RetrievalEvidence.ContextEntryIds);
+        Assert.Equal(123, card.RetrievalEvidence.RetrievalLatencyMs);
+        Assert.Equal("actual-embedding", card.RetrievalEvidence.EmbeddingModel);
+        Assert.Equal(1536, card.RetrievalEvidence.EmbeddingDimension);
+    }
+
+    [Fact]
+    public void OfficialSdkToolResultUsesCallIdentityAndMcpTextBlocks()
+    {
+        var names = new Dictionary<string, string>();
+        ChatAgentToolPresentation.TrackToolName(names, "mcp__map__kb_read", "tool-1");
+        // Official SDK result blocks omit tool_name and carry an MCP content array.
+        var tool = ChatAgentToolPresentation.TrackToolName(names, null, "tool-1");
+        var content = System.Text.Json.JsonSerializer.Serialize(new[] { new { type = "text", text =
+            """{"hasContent":true,"source":{"entryId":"read-extra","title":"原文","openPath":"/document-store?store=store&entry=read-extra"}}""" } });
+        var card = ChatAgentToolPresentation.BuildToolCardPayload(tool, "tool-1", content, false);
+        Assert.Equal("kb_read", card.Tool);
+        Assert.Equal("/document-store?store=store&entry=read-extra", card.OpenPath);
+        Assert.Equal(new[] { "read-extra" }, card.RetrievalEvidence!.ContextEntryIds);
+        Assert.Empty(card.RetrievalEvidence.RetrievedEntryIds);
+    }
     /// <summary>
     /// 官方 SDK 通过内置 MCP server 暴露我们的工具，回传的名字带 mcp__map__ 前缀。
     /// 不剥前缀，标签与阶段就会全部落进兜底分支。
