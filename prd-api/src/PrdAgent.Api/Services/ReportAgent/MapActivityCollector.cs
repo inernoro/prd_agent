@@ -39,11 +39,11 @@ public class MapActivityCollector
             try
             {
                 var count = await _db.Sessions.Find(
-                    s => s.OwnerUserId == userId && s.CreatedAt >= periodStart && s.CreatedAt <= periodEnd
+                    s => s.OwnerUserId == userId && s.CreatedAt >= periodStart && s.CreatedAt < periodEnd
                 ).CountDocumentsAsync(ct);
                 result.PrdSessions = (int)count;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // 2. 缺陷 Agent：本周提交的缺陷数 + 详情统计
@@ -52,7 +52,7 @@ public class MapActivityCollector
             try
             {
                 var defects = await _db.DefectReports.Find(
-                    d => d.ReporterId == userId && d.CreatedAt >= periodStart && d.CreatedAt <= periodEnd
+                    d => d.ReporterId == userId && d.CreatedAt >= periodStart && d.CreatedAt < periodEnd
                 ).ToListAsync(ct);
                 result.DefectsSubmitted = defects.Count;
 
@@ -70,7 +70,7 @@ public class MapActivityCollector
                     AvgResolutionHours = Math.Round(avgHours, 1)
                 };
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // 3. 视觉创作：本周创作会话数
@@ -79,11 +79,11 @@ public class MapActivityCollector
             try
             {
                 var count = await _db.ImageMasterSessions.Find(
-                    s => s.OwnerUserId == userId && s.CreatedAt >= periodStart && s.CreatedAt <= periodEnd
+                    s => s.OwnerUserId == userId && s.CreatedAt >= periodStart && s.CreatedAt < periodEnd
                 ).CountDocumentsAsync(ct);
                 result.VisualSessions = (int)count;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // 4. LLM 调用次数
@@ -99,13 +99,13 @@ public class MapActivityCollector
                 var count = await _db.LlmRequestLogs.Find(
                     l => l.UserId == userId
                          && l.StartedAt >= periodStart
-                         && l.StartedAt <= periodEnd
+                         && l.StartedAt < periodEnd
                          && (l.AppCallerCode == null
                              || (!l.AppCallerCode.StartsWith("report-agent.")))
                 ).CountDocumentsAsync(ct);
                 result.LlmCalls = (int)count;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // 5. 每日打点
@@ -113,14 +113,15 @@ public class MapActivityCollector
         {
             try
             {
-                var startDate = periodStart.Date;
-                var endDate = periodEnd.Date;
+                var startDate = periodStart.AddHours(8).Date;
+                var endDate = periodEnd.AddTicks(-1).AddHours(8).Date;
                 var logs = await _db.ReportDailyLogs.Find(
-                    dl => dl.UserId == userId && dl.Date >= startDate && dl.Date <= endDate
+                    dl => dl.UserId == userId && ((dl.Date >= startDate && dl.Date <= endDate)
+                        || dl.Items.Any(i => i.Category == DailyLogCategory.Todo && i.CompletedAt >= periodStart && i.CompletedAt < periodEnd))
                 ).SortBy(dl => dl.Date).ToListAsync(ct);
                 result.DailyLogs = logs;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // 6. Git 提交记录
@@ -129,11 +130,11 @@ public class MapActivityCollector
             try
             {
                 var commits = await _db.ReportCommits.Find(
-                    c => c.MappedUserId == userId && c.CommittedAt >= periodStart && c.CommittedAt <= periodEnd
-                ).SortByDescending(c => c.CommittedAt).Limit(100).ToListAsync(ct);
+                    c => c.MappedUserId == userId && c.CommittedAt >= periodStart && c.CommittedAt < periodEnd
+                ).SortByDescending(c => c.CommittedAt).ToListAsync(ct);
                 result.Commits = commits;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // ====== Phase 0 新增数据流 ======
@@ -144,12 +145,12 @@ public class MapActivityCollector
             try
             {
                 var count = await _db.Messages.Find(
-                    m => m.SenderId == userId && m.Timestamp >= periodStart && m.Timestamp <= periodEnd
+                    m => m.SenderId == userId && m.Timestamp >= periodStart && m.Timestamp < periodEnd
                         && !m.IsDeleted
                 ).CountDocumentsAsync(ct);
                 result.PrdMessageCount = (int)count;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // 8. 图片生成完成数
@@ -158,12 +159,12 @@ public class MapActivityCollector
             try
             {
                 var count = await _db.ImageGenRuns.Find(
-                    r => r.OwnerAdminId == userId && r.CreatedAt >= periodStart && r.CreatedAt <= periodEnd
+                    r => r.OwnerAdminId == userId && r.CreatedAt >= periodStart && r.CreatedAt < periodEnd
                         && r.Status == ImageGenRunStatus.Completed
                 ).CountDocumentsAsync(ct);
                 result.ImageGenCompletedCount = (int)count;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // 9. 视频生成完成数
@@ -172,12 +173,12 @@ public class MapActivityCollector
             try
             {
                 var count = await _db.VideoGenRuns.Find(
-                    r => r.OwnerAdminId == userId && r.CreatedAt >= periodStart && r.CreatedAt <= periodEnd
+                    r => r.OwnerAdminId == userId && r.CreatedAt >= periodStart && r.CreatedAt < periodEnd
                         && r.Status == "Completed"
                 ).CountDocumentsAsync(ct);
                 result.VideoGenCompletedCount = (int)count;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // 10. PRD 项目创建（用户创建的 Group 数量，每个 Group 对应一个 PRD 文档）
@@ -187,11 +188,11 @@ public class MapActivityCollector
             try
             {
                 var count = await _db.Groups.Find(
-                    g => g.OwnerId == userId && g.CreatedAt >= periodStart && g.CreatedAt <= periodEnd
+                    g => g.OwnerId == userId && g.CreatedAt >= periodStart && g.CreatedAt < periodEnd
                 ).CountDocumentsAsync(ct);
                 result.DocumentEditCount = (int)count;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // 11. 工作流执行完成数
@@ -200,12 +201,12 @@ public class MapActivityCollector
             try
             {
                 var count = await _db.WorkflowExecutions.Find(
-                    w => w.TriggeredBy == userId && w.CreatedAt >= periodStart && w.CreatedAt <= periodEnd
+                    w => w.TriggeredBy == userId && w.CreatedAt >= periodStart && w.CreatedAt < periodEnd
                         && w.Status == "completed"
                 ).CountDocumentsAsync(ct);
                 result.WorkflowExecutionCount = (int)count;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // 12. 工具箱使用次数
@@ -214,11 +215,11 @@ public class MapActivityCollector
             try
             {
                 var count = await _db.ToolboxRuns.Find(
-                    t => t.UserId == userId && t.CreatedAt >= periodStart && t.CreatedAt <= periodEnd
+                    t => t.UserId == userId && t.CreatedAt >= periodStart && t.CreatedAt < periodEnd
                 ).CountDocumentsAsync(ct);
                 result.ToolboxRunCount = (int)count;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // 13. 网页发布/更新
@@ -227,11 +228,11 @@ public class MapActivityCollector
             try
             {
                 var count = await _db.HostedSites.Find(
-                    h => h.OwnerUserId == userId && h.UpdatedAt >= periodStart && h.UpdatedAt <= periodEnd
+                    h => h.OwnerUserId == userId && h.UpdatedAt >= periodStart && h.UpdatedAt < periodEnd
                 ).CountDocumentsAsync(ct);
                 result.WebPagePublishCount = (int)count;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         // 14. 附件上传数
@@ -240,11 +241,11 @@ public class MapActivityCollector
             try
             {
                 var count = await _db.Attachments.Find(
-                    a => a.UploaderId == userId && a.UploadedAt >= periodStart && a.UploadedAt <= periodEnd
+                    a => a.UploaderId == userId && a.UploadedAt >= periodStart && a.UploadedAt < periodEnd
                 ).CountDocumentsAsync(ct);
                 result.AttachmentUploadCount = (int)count;
             }
-            catch { /* 集合可能不存在 */ }
+            catch { lock (result.CollectionWarnings) result.CollectionWarnings.Add("部分平台来源采集失败，缺失记录不能当作零活动或没有风险。"); }
         }, ct));
 
         await Task.WhenAll(tasks);
@@ -273,6 +274,8 @@ public class MapActivityCollector
 public class CollectedActivity
 {
     public string UserId { get; set; } = string.Empty;
+    public List<string> CollectionWarnings { get; set; } = new();
+    public ReportEvidenceLedger? EvidenceLedger { get; set; }
     public DateTime PeriodStart { get; set; }
     public DateTime PeriodEnd { get; set; }
 

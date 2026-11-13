@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services.ReportAgent;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Core.LlmGateway;
@@ -44,7 +45,7 @@ public class TeamSummaryService
         var members = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId).ToListAsync(CancellationToken.None);
 
         // 获取该周已提交/已审阅的周报
-        var submittedStatuses = new[] { WeeklyReportStatus.Submitted, WeeklyReportStatus.Reviewed };
+        var submittedStatuses = new[] { WeeklyReportStatus.Submitted, WeeklyReportStatus.Reviewed, WeeklyReportStatus.Viewed };
         var reports = await _db.WeeklyReports.Find(
             r => r.TeamId == teamId
                  && r.WeekYear == weekYear
@@ -59,7 +60,13 @@ public class TeamSummaryService
         var customPrompt = NormalizeCustomPrompt(team.TeamSummaryPrompt);
         var effectivePrompt = customPrompt ?? ReportAgentPromptDefaults.TeamSummarySystemDefaultPrompt;
 
-        var userPrompt = BuildUserPrompt(reports, weekYear, weekNumber, effectivePrompt);
+        var monday = ISOWeek.ToDateTime(weekYear, weekNumber, DayOfWeek.Monday);
+        var sunday = monday.AddDays(6);
+        var evidenceLedger = ReportEvidenceEngine.Merge(reports.Select(r => r.EvidenceLedger));
+        if (reports.Any(r => r.EvidenceLedger == null))
+            evidenceLedger.Limitations.Add("部分成员旧周报没有事项级来源，不能把其文字重新确认为新成果、无风险或效率提升。");
+        var deliveryEvidence = ReportEvidenceEngine.Build(evidenceLedger, monday, sunday);
+        var userPrompt = ReportEvidenceService.BuildGroundedPrompt(deliveryEvidence, effectivePrompt);
 
         // 调用 LLM（CancellationToken.None — 服务器权威性）
         var request = new GatewayRequest
@@ -79,26 +86,16 @@ public class TeamSummaryService
             Context = new GatewayRequestContext { UserId = generatedByUserId }
         };
 
-        var response = await _gateway.SendAsync(request, CancellationToken.None);
+        var response = await ReportEvidenceService.RequestOrderAsync(_gateway, request, deliveryEvidence, _logger);
 
-        var sections = new List<TeamSummarySection>();
-
-        if (response.Success && !string.IsNullOrWhiteSpace(response.Content))
+        var order = response.Success ? ReportEvidenceService.ParseProposedOrder(response.Content, deliveryEvidence) : Array.Empty<string>();
+        var groundedTemplate = new ReportTemplate { Sections = new()
         {
-            sections = ParseSections(response.Content);
-        }
-
-        // 回退：空段落
-        if (sections.Count == 0)
-        {
-            _logger.LogWarning("AI 团队汇总解析失败，使用空结构。Response: {Content}",
-                response.Content?[..Math.Min(200, response.Content?.Length ?? 0)]);
-            sections = DefaultSections();
-        }
-
-        // 计算周期
-        var monday = ISOWeek.ToDateTime(weekYear, weekNumber, DayOfWeek.Monday);
-        var sunday = monday.AddDays(6).AddHours(23).AddMinutes(59).AddSeconds(59);
+            new() { Title = "本期交付进展" }, new() { Title = "风险与阻塞" },
+            new() { Title = "下周计划" }, new() { Title = "效率与工时", SectionType = ReportSectionType.AutoStats }
+        } };
+        var sections = ReportEvidenceEngine.BuildSections(groundedTemplate, deliveryEvidence, order)
+            .Select(section => new TeamSummarySection { Title = section.TemplateSection.Title, Items = section.Items.Select(i => i.Content).ToList() }).ToList();
 
         var summary = new TeamSummary
         {
@@ -109,6 +106,8 @@ public class TeamSummaryService
             PeriodStart = monday,
             PeriodEnd = sunday,
             Sections = sections,
+            EvidenceLedger = evidenceLedger,
+            DeliveryEvidence = deliveryEvidence,
             SourceReportIds = reports.Select(r => r.Id).ToList(),
             MemberCount = members.Count,
             SubmittedCount = reports.Count,

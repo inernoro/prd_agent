@@ -129,12 +129,35 @@ public class ReportAgentMonthlyController : ControllerBase
             .Select(e => new { chapter = e.Chapter, message = e.Message })
             .ToList();
 
+    private async Task<ReportDeliverySnapshot> BuildMonthlyEvidenceAsync(MonthlyReport report, ReportViewer viewer)
+    {
+        var start = new DateTime(report.Year, report.Month, 1);
+        var end = start.AddMonths(1).AddDays(-1);
+        var team = await _db.ReportTeams.Find(t => t.Id == report.TeamId).FirstOrDefaultAsync();
+        if (!ReportAccessPolicy.CanInteractWithWeekly(viewer, team?.ReportVisibility))
+        {
+            var unavailable = ReportEvidenceEngine.Build(new ReportEvidenceLedger(), start, end);
+            unavailable.Limitations.Add("关联周报的可见性受团队规则保护；不能经月报读取没有权限的周报来源。");
+            return unavailable;
+        }
+        var ids = report.WeeklyLinks.Select(l => l.WeeklyReportId).ToList();
+        var weeklies = ids.Count == 0 ? new List<WeeklyReport>() : await _db.WeeklyReports.Find(w => ids.Contains(w.Id)
+            && w.UserId == report.UserId && w.TeamId == report.TeamId
+            && (w.Status == WeeklyReportStatus.Submitted || w.Status == WeeklyReportStatus.Reviewed || w.Status == WeeklyReportStatus.Viewed)).ToListAsync();
+        var ledger = ReportEvidenceEngine.Merge(weeklies.Select(w => w.EvidenceLedger));
+        if (weeklies.Any(w => w.EvidenceLedger == null)) ledger.Limitations.Add("部分关联周报缺少事项证据，不能按周报篇数或旧正文重新计成果。");
+        ledger.Limitations.Add($"仅依据已关联且可见的 {weeklies.Count} 份周报；未覆盖的日期不能当作没有进展。");
+        ledger.Limitations.Add("此区仅为关联周报的管理事实参考；本人的评价、认可、建议和提交继续由本人完成。");
+        return ReportEvidenceEngine.Build(ledger, start, end);
+    }
+
     private async Task<object> BuildDetailPayloadAsync(MonthlyReport report, ReportViewer viewer)
     {
         return new
         {
             report,
             linkedWeeklies = await BuildLinkedWeekliesAsync(report),
+            deliveryEvidence = await BuildMonthlyEvidenceAsync(report, viewer),
             canEdit = viewer.IsOwner,
             submitIssues = viewer.IsOwner ? BuildSubmitIssues(report) : null,
             chapterTitles = MonthlyReportChapters.Titles

@@ -33,6 +33,9 @@ public class ReportDailyLog
 /// </summary>
 public class DailyLogItem
 {
+    /// <summary>明确关联的外部任务/PR标识；不按描述相似度推测。</summary>
+    public string? WorkItemId { get; set; }
+
     /// <summary>工作内容描述</summary>
     public string Content { get; set; } = string.Empty;
 

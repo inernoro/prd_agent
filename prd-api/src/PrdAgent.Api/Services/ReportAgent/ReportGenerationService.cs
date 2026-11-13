@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services.ReportAgent;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Core.LlmGateway;
@@ -22,6 +23,7 @@ public class ReportGenerationService
     private readonly IWorkflowExecutionService _workflowExecService;
     private readonly PersonalSourceService _personalSourceService;
     private readonly IMarkdownParser _markdownParser;
+    private readonly ReportEvidenceService _evidence;
 
     private const string GatewaySystemPrompt = """
         你是一位专业的周报撰写助手。
@@ -59,6 +61,7 @@ public class ReportGenerationService
         _workflowExecService = workflowExecService;
         _personalSourceService = personalSourceService;
         _markdownParser = markdownParser;
+        _evidence = new ReportEvidenceService(db);
     }
 
     /// <summary>
@@ -82,14 +85,45 @@ public class ReportGenerationService
         var promptPrefs = await LoadGenerationPromptPrefsAsync(userId, ct);
 
         // 3. 采集数据（使用 CancellationToken.None，服务器权威性）
-        var activity = await _collector.CollectAsync(userId, monday, sunday, CancellationToken.None);
+        var range = ReportEvidenceEngine.Bounds(monday, sunday);
+        var activity = await _collector.CollectAsync(userId, range.Start.UtcDateTime, range.End.UtcDateTime, CancellationToken.None);
         var activitySummary = BuildActivitySummary(activity, sourcePrefs, promptPrefs);
         _logger.LogInformation(
             "开始 AI 生成周报: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, data={ActivitySummary}",
             userId, teamId, weekYear, weekNumber, activitySummary);
 
         // 4. 构建 Prompt
-        var userPrompt = BuildUserPrompt(template, activity, weekYear, weekNumber, sourcePrefs, promptPrefs.EffectivePrompt);
+        var collectedSources = await _personalSourceService.CollectAllAsync(userId, range.Start.UtcDateTime, range.End.UtcDateTime, CancellationToken.None);
+        var collectionTeam = await _db.ReportTeams.Find(t => t.Id == teamId).FirstOrDefaultAsync(CancellationToken.None);
+        var collectionMember = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync(CancellationToken.None);
+        string? workflowExecutionId = null;
+        if (collectionTeam?.DataCollectionWorkflowId != null && collectionMember != null)
+        {
+            try
+            {
+                var run = await _workflowExecService.ExecuteInternalAsync(collectionTeam.DataCollectionWorkflowId,
+                    new Dictionary<string, string> { ["weekYear"] = weekYear.ToString(), ["weekNumber"] = weekNumber.ToString(),
+                        ["dateFrom"] = monday.ToString("yyyy-MM-dd"), ["dateTo"] = sunday.ToString("yyyy-MM-dd"), ["teamId"] = teamId },
+                    triggeredBy: "report-agent-generate", ct: CancellationToken.None);
+                var completed = await _workflowExecService.WaitForCompletionAsync(run.Id, TimeSpan.FromMinutes(5), CancellationToken.None);
+                workflowExecutionId = completed.Id;
+                var parsed = ArtifactStatsParser.Parse(completed.FinalArtifacts);
+                var split = ArtifactStatsParser.SplitByMember(parsed, new List<ReportTeamMember> { collectionMember }).Single();
+                collectedSources.AddRange(split.Sources);
+                activity.CollectionWarnings.AddRange(split.CollectionWarnings);
+                if (completed.Status != WorkflowExecutionStatus.Completed)
+                    activity.CollectionWarnings.Add("团队采集工作流未完成，请检查执行记录；来源缺失不等于没有工作。");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "报告来源采集失败: team={TeamId}, user={UserId}", teamId, userId);
+                activity.CollectionWarnings.Add("团队采集工作流本次失败，请修复并重新采集；未将缺失来源计为零。");
+            }
+        }
+        var evidenceLedger = await _evidence.CollectAsync(userId, teamId, activity, collectedSources,
+            dailyEnabled: sourcePrefs.DailyLogEnabled, mapEnabled: sourcePrefs.MapPlatformEnabled, reportStart: monday);
+        var deliveryEvidence = ReportEvidenceEngine.Build(evidenceLedger, monday, sunday);
+        var userPrompt = ReportEvidenceService.BuildGroundedPrompt(deliveryEvidence, promptPrefs.EffectivePrompt);
 
         // 5. 调用 LLM（非流式，CancellationToken.None）
         var request = new GatewayRequest
@@ -109,68 +143,12 @@ public class ReportGenerationService
             Context = new GatewayRequestContext { UserId = userId }
         };
 
-        var response = await _gateway.SendAsync(request, CancellationToken.None);
-        List<WeeklyReportSection>? generatedSections = null;
-        string? primaryFailureReason = null;
-        string? fallbackReasonCode = null;
-        var usedRuleFallback = false;
-
-        if (!response.Success)
-        {
-            fallbackReasonCode = ReportGenerationFallbackReason.UpstreamFailed;
-            primaryFailureReason = string.IsNullOrWhiteSpace(response.ErrorMessage)
-                ? "AI 生成失败，请稍后重试"
-                : $"AI 生成失败：{response.ErrorMessage}";
-            _logger.LogWarning(
-                "AI 生成周报失败，准备启用规则兜底: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, errorCode={ErrorCode}, error={ErrorMessage}, data={ActivitySummary}",
-                userId, teamId, weekYear, weekNumber, response.ErrorCode, response.ErrorMessage, activitySummary);
-        }
-        else if (string.IsNullOrWhiteSpace(response.Content))
-        {
-            fallbackReasonCode = ReportGenerationFallbackReason.EmptyResponse;
-            primaryFailureReason = "AI 返回空内容，未生成周报草稿";
-            _logger.LogWarning(
-                "AI 生成周报返回空内容，准备启用规则兜底: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, logId={LogId}, data={ActivitySummary}",
-                userId, teamId, weekYear, weekNumber, response.LogId, activitySummary);
-        }
-        else
-        {
-            generatedSections = ParseGeneratedSections(response.Content, template);
-            if (generatedSections == null)
-            {
-                fallbackReasonCode = ReportGenerationFallbackReason.InvalidResponse;
-                primaryFailureReason = "AI 返回格式异常，未生成有效周报内容";
-                _logger.LogWarning(
-                    "AI 生成周报解析失败，准备启用规则兜底: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, logId={LogId}, preview={Preview}, data={ActivitySummary}",
-                    userId, teamId, weekYear, weekNumber, response.LogId, Preview(response.Content), activitySummary);
-            }
-            else if (CountGeneratedItems(generatedSections) <= 0)
-            {
-                fallbackReasonCode = ReportGenerationFallbackReason.EmptyItems;
-                primaryFailureReason = "AI 未生成有效周报条目，请稍后重试";
-                _logger.LogWarning(
-                    "AI 生成周报无有效条目，准备启用规则兜底: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, logId={LogId}, preview={Preview}, data={ActivitySummary}",
-                    userId, teamId, weekYear, weekNumber, response.LogId, Preview(response.Content), activitySummary);
-                generatedSections = null;
-            }
-        }
-
-        if (generatedSections == null)
-        {
-            var fallbackSections = BuildRuleBasedSections(template, activity, sourcePrefs, weekYear, weekNumber);
-            if (fallbackSections != null && CountGeneratedItems(fallbackSections) > 0)
-            {
-                generatedSections = fallbackSections;
-                usedRuleFallback = true;
-                _logger.LogInformation(
-                    "AI 生成周报已切换规则兜底成功: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, reason={Reason}, data={ActivitySummary}",
-                    userId, teamId, weekYear, weekNumber, primaryFailureReason ?? "unknown", activitySummary);
-            }
-            else
-            {
-                throw new InvalidOperationException(primaryFailureReason ?? "AI 生成失败，请稍后重试");
-            }
-        }
+        var response = await ReportEvidenceService.RequestOrderAsync(_gateway, request, deliveryEvidence, _logger);
+        var proposedOrder = response.Success ? ReportEvidenceService.ParseProposedOrder(response.Content, deliveryEvidence) : Array.Empty<string>();
+        var generatedSections = ReportEvidenceEngine.BuildSections(template, deliveryEvidence, proposedOrder);
+        var fallbackReasonCode = !response.Success ? ReportGenerationFallbackReason.UpstreamFailed
+            : string.IsNullOrWhiteSpace(response.Content) ? ReportGenerationFallbackReason.EmptyResponse
+            : deliveryEvidence.Items.Count > 0 && !proposedOrder.Any() ? ReportGenerationFallbackReason.InvalidResponse : null;
 
         // 7. Upsert 周报
         var filter = Builders<WeeklyReport>.Filter.Eq(x => x.UserId, userId)
@@ -180,9 +158,9 @@ public class ReportGenerationService
 
         var existing = await _db.WeeklyReports.Find(filter).FirstOrDefaultAsync(CancellationToken.None);
         var generatedAt = DateTime.UtcNow;
-        var autoGeneratedBy = usedRuleFallback ? "rule-fallback" : "llm";
-        var autoGeneratedModelId = usedRuleFallback ? null : response.Resolution?.ActualModel;
-        var autoGeneratedPlatformId = usedRuleFallback ? null : response.Resolution?.ActualPlatformId;
+        const string autoGeneratedBy = "evidence";
+        var autoGeneratedModelId = !response.Success ? null : response.Resolution?.ActualModel;
+        var autoGeneratedPlatformId = !response.Success ? null : response.Resolution?.ActualPlatformId;
 
         if (existing != null)
         {
@@ -190,19 +168,25 @@ public class ReportGenerationService
             var update = Builders<WeeklyReport>.Update
                 .Set(x => x.Sections, generatedSections)
                 .Set(x => x.AutoGeneratedAt, generatedAt)
+                .Set(x => x.WorkflowExecutionId, workflowExecutionId)
+                .Set(x => x.EvidenceLedger, evidenceLedger)
+                .Set(x => x.DeliveryEvidence, deliveryEvidence)
                 .Set(x => x.AutoGeneratedBy, autoGeneratedBy)
                 .Set(x => x.AutoGeneratedModelId, autoGeneratedModelId)
                 .Set(x => x.AutoGeneratedPlatformId, autoGeneratedPlatformId)
-                .Set(x => x.AutoGenerationFallbackReason, usedRuleFallback ? fallbackReasonCode : null)
+                .Set(x => x.AutoGenerationFallbackReason, fallbackReasonCode)
                 .Set(x => x.UpdatedAt, generatedAt);
 
             await _db.WeeklyReports.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
             existing.Sections = generatedSections;
             existing.AutoGeneratedAt = generatedAt;
+            existing.WorkflowExecutionId = workflowExecutionId;
+            existing.EvidenceLedger = evidenceLedger;
+            existing.DeliveryEvidence = deliveryEvidence;
             existing.AutoGeneratedBy = autoGeneratedBy;
             existing.AutoGeneratedModelId = autoGeneratedModelId;
             existing.AutoGeneratedPlatformId = autoGeneratedPlatformId;
-            existing.AutoGenerationFallbackReason = usedRuleFallback ? fallbackReasonCode : null;
+            existing.AutoGenerationFallbackReason = fallbackReasonCode;
             return existing;
         }
         else
@@ -226,10 +210,13 @@ public class ReportGenerationService
                 Status = WeeklyReportStatus.Draft,
                 Sections = generatedSections,
                 AutoGeneratedAt = generatedAt,
+                WorkflowExecutionId = workflowExecutionId,
+                EvidenceLedger = evidenceLedger,
+                DeliveryEvidence = deliveryEvidence,
                 AutoGeneratedBy = autoGeneratedBy,
                 AutoGeneratedModelId = autoGeneratedModelId,
                 AutoGeneratedPlatformId = autoGeneratedPlatformId,
-                AutoGenerationFallbackReason = usedRuleFallback ? fallbackReasonCode : null
+                AutoGenerationFallbackReason = fallbackReasonCode
             };
 
             try
@@ -648,187 +635,6 @@ public class ReportGenerationService
         GenerationPromptPrefs promptPrefs)
         => $"dailyLogs={activity.DailyLogs.Count}, commits={activity.Commits.Count}, prdSessions={activity.PrdSessions}, prdMessages={activity.PrdMessageCount}, llmCalls={activity.LlmCalls}, mapEnabled={sourcePrefs.MapPlatformEnabled}, dailyEnabled={sourcePrefs.DailyLogEnabled}, promptCustomized={promptPrefs.IsCustom}";
 
-    private static List<WeeklyReportSection>? BuildRuleBasedSections(
-        ReportTemplate template,
-        CollectedActivity activity,
-        GenerationSourcePrefs sourcePrefs,
-        int weekYear,
-        int weekNumber)
-    {
-        var (targetPlanWeekYear, targetPlanWeekNumber) = GetNextIsoWeek(weekYear, weekNumber);
-        var todoPlanItems = BuildTodoPlanItemsForTargetWeek(activity, targetPlanWeekYear, targetPlanWeekNumber);
-        var completionPool = BuildCompletionPool(activity, sourcePrefs);
-        var hasStats = HasAnyActivity(activity, sourcePrefs);
-        if (completionPool.Count == 0 && !hasStats)
-            return null;
-
-        var sections = new List<WeeklyReportSection>();
-        var completionCursor = 0;
-
-        foreach (var section in template.Sections)
-        {
-            var sectionType = section.SectionType;
-            var normalizedKey = $"{section.Title} {section.Description}".Trim().ToLowerInvariant();
-            var maxItems = Math.Clamp(section.MaxItems ?? 5, 1, 8);
-            var items = new List<WeeklyReportItem>();
-
-            if (sectionType == ReportSectionType.ManualList || sectionType == ReportSectionType.FreeText)
-            {
-                sections.Add(new WeeklyReportSection
-                {
-                    TemplateSection = section,
-                    Items = items
-                });
-                continue;
-            }
-
-            if (normalizedKey.Contains("风险", StringComparison.Ordinal)
-                || normalizedKey.Contains("问题", StringComparison.Ordinal)
-                || normalizedKey.Contains("阻塞", StringComparison.Ordinal))
-            {
-                items.AddRange(BuildRiskItems(activity, sourcePrefs, maxItems));
-            }
-            else if (normalizedKey.Contains("计划", StringComparison.Ordinal)
-                || normalizedKey.Contains("下周", StringComparison.Ordinal)
-                || normalizedKey.Contains("待办", StringComparison.Ordinal))
-            {
-                items.AddRange(BuildPlanItems(todoPlanItems, completionPool, maxItems));
-            }
-            else if (normalizedKey.Contains("总结", StringComparison.Ordinal)
-                || normalizedKey.Contains("复盘", StringComparison.Ordinal)
-                || normalizedKey.Contains("思考", StringComparison.Ordinal))
-            {
-                items.AddRange(BuildSummaryItems(activity, sourcePrefs, maxItems));
-            }
-            else
-            {
-                while (items.Count < maxItems && completionCursor < completionPool.Count)
-                {
-                    items.Add(completionPool[completionCursor]);
-                    completionCursor++;
-                }
-            }
-
-            // 如果该章节未命中专用策略但整体有数据，至少补一条摘要，避免空章节。
-            if (items.Count == 0 && hasStats)
-            {
-                items.AddRange(BuildSummaryItems(activity, sourcePrefs, 1));
-            }
-
-            sections.Add(new WeeklyReportSection
-            {
-                TemplateSection = section,
-                Items = items
-            });
-        }
-
-        return sections;
-    }
-
-    private static List<WeeklyReportItem> BuildCompletionPool(CollectedActivity activity, GenerationSourcePrefs sourcePrefs)
-    {
-        var result = new List<WeeklyReportItem>();
-
-        if (sourcePrefs.DailyLogEnabled)
-        {
-            foreach (var log in activity.DailyLogs.OrderBy(x => x.Date))
-            {
-                foreach (var item in log.Items.Where(i => !string.IsNullOrWhiteSpace(i.Content)))
-                {
-                    var content = $"{log.Date:MM-dd} {item.Content.Trim()}";
-                    if (item.DurationMinutes is > 0)
-                        content += $"（约 {item.DurationMinutes} 分钟）";
-                    result.Add(new WeeklyReportItem
-                    {
-                        Content = content,
-                        Source = "daily-log"
-                    });
-                }
-            }
-        }
-
-        if (sourcePrefs.MapPlatformEnabled)
-        {
-            foreach (var commit in activity.Commits
-                         .Where(c => !string.IsNullOrWhiteSpace(c.Message))
-                         .OrderByDescending(c => c.CommittedAt)
-                         .Take(20))
-            {
-                result.Add(new WeeklyReportItem
-                {
-                    Content = $"代码提交：{commit.Message.Trim()}",
-                    Source = "map-platform"
-                });
-            }
-        }
-
-        return result;
-    }
-
-    private static List<WeeklyReportItem> BuildRiskItems(CollectedActivity activity, GenerationSourcePrefs sourcePrefs, int maxItems)
-    {
-        var items = new List<WeeklyReportItem>();
-
-        if (sourcePrefs.MapPlatformEnabled && activity.DefectsSubmitted > 0)
-        {
-            items.Add(new WeeklyReportItem
-            {
-                Content = $"本周提交缺陷 {activity.DefectsSubmitted} 个，重点跟进高优先级问题闭环。",
-                Source = "map-platform"
-            });
-        }
-
-        if (activity.DefectDetails is { Reopened: > 0 })
-        {
-            items.Add(new WeeklyReportItem
-            {
-                Content = $"存在 {activity.DefectDetails.Reopened} 个退回/重开问题，需提前补充验收标准。",
-                Source = "map-platform"
-            });
-        }
-
-        if (items.Count == 0)
-        {
-            items.Add(new WeeklyReportItem
-            {
-                Content = "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
-                Source = sourcePrefs.MapPlatformEnabled ? "map-platform" : "daily-log"
-            });
-        }
-
-        return items.Take(maxItems).ToList();
-    }
-
-    private static List<WeeklyReportItem> BuildPlanItems(
-        List<WeeklyReportItem> todoPlanItems,
-        List<WeeklyReportItem> completionPool,
-        int maxItems)
-    {
-        if (todoPlanItems.Count > 0)
-            return todoPlanItems.Take(maxItems).ToList();
-
-        var seed = completionPool
-            .Where(x => !string.IsNullOrWhiteSpace(x.Content))
-            .Take(maxItems)
-            .Select(x => new WeeklyReportItem
-            {
-                Content = $"继续推进：{x.Content}",
-                Source = x.Source
-            })
-            .ToList();
-
-        if (seed.Count == 0)
-        {
-            seed.Add(new WeeklyReportItem
-            {
-                Content = "下周聚焦核心目标拆解与交付节奏，按优先级推进并按日复盘。",
-                Source = "ai"
-            });
-        }
-
-        return seed;
-    }
-
     private static List<WeeklyReportItem> BuildTodoPlanItemsForTargetWeek(
         CollectedActivity activity,
         int targetWeekYear,
@@ -867,48 +673,6 @@ public class ReportGenerationService
         var targetDate = monday.AddDays(7);
         return (ISOWeek.GetYear(targetDate), ISOWeek.GetWeekOfYear(targetDate));
     }
-
-    private static List<WeeklyReportItem> BuildSummaryItems(CollectedActivity activity, GenerationSourcePrefs sourcePrefs, int maxItems)
-    {
-        var source = sourcePrefs.MapPlatformEnabled ? "map-platform" : "daily-log";
-        var summaries = new List<string>();
-
-        if (sourcePrefs.DailyLogEnabled && activity.DailyLogs.Count > 0)
-            summaries.Add($"本周累计记录 {activity.DailyLogs.Count} 天日常工作，执行节奏整体稳定。");
-        if (sourcePrefs.MapPlatformEnabled && activity.Commits.Count > 0)
-            summaries.Add($"本周完成 {activity.Commits.Count} 次代码提交，持续推进需求落地。");
-        if (sourcePrefs.MapPlatformEnabled && activity.PrdSessions > 0)
-            summaries.Add($"围绕需求与方案开展 {activity.PrdSessions} 次对话会话，协作沟通较充分。");
-        if (sourcePrefs.MapPlatformEnabled && activity.DefectsSubmitted > 0)
-            summaries.Add($"缺陷处理侧提交 {activity.DefectsSubmitted} 个问题，质量治理持续推进。");
-
-        if (summaries.Count == 0)
-        {
-            summaries.Add("本周工作按计划推进，建议下周继续围绕核心目标聚焦执行。");
-        }
-
-        return summaries.Take(maxItems)
-            .Select(s => new WeeklyReportItem { Content = s, Source = source })
-            .ToList();
-    }
-
-    private static bool HasAnyActivity(CollectedActivity activity, GenerationSourcePrefs sourcePrefs)
-    {
-        if (sourcePrefs.DailyLogEnabled && activity.DailyLogs.Count > 0)
-            return true;
-        if (sourcePrefs.MapPlatformEnabled &&
-            (activity.Commits.Count > 0
-             || activity.PrdSessions > 0
-             || activity.DefectsSubmitted > 0
-             || activity.LlmCalls > 0
-             || activity.PrdMessageCount > 0))
-            return true;
-        return false;
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // Markdown 导入 — 上传 .md → LLM 映射模板章节 → 规则兜底
-    // ═══════════════════════════════════════════════════════════════
 
     public sealed record ImportMarkdownResult(
         WeeklyReport? Report,
@@ -1043,8 +807,8 @@ public class ReportGenerationService
 
         // Upsert
         var generatedAt = DateTime.UtcNow;
-        var modelId = usedRuleFallback ? null : response.Resolution?.ActualModel;
-        var platformId = usedRuleFallback ? null : response.Resolution?.ActualPlatformId;
+        var modelId = !response.Success ? null : response.Resolution?.ActualModel;
+        var platformId = !response.Success ? null : response.Resolution?.ActualPlatformId;
         const string autoGeneratedBy = "markdown-import";
 
         if (existing != null)
@@ -1635,6 +1399,8 @@ public class ReportGenerationService
                     execution.Id, TimeSpan.FromMinutes(5), CancellationToken.None);
 
                 teamStats = ArtifactStatsParser.Parse(completed.FinalArtifacts);
+                if (completed.Status != WorkflowExecutionStatus.Completed)
+                    teamStats.CollectionWarnings.Add("团队采集工作流未完成，不能将缺失的来源当作没有工作。");
                 executionId = completed.Id;
 
                 _logger.LogInformation("[ReportGenV2] Workflow completed for team {TeamId}: {Sources} sources, {ArtifactCount} artifacts",
@@ -1643,6 +1409,7 @@ public class ReportGenerationService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "[ReportGenV2] Workflow execution failed for team {TeamId}, proceeding with personal sources only", teamId);
+                teamStats.CollectionWarnings.Add("团队采集工作流本次失败，请修复并重新采集；缺失来源不计为零。");
             }
         }
 
@@ -1684,14 +1451,21 @@ public class ReportGenerationService
             throw new InvalidOperationException($"找不到适用的模板（团队={team.Id}，岗位={member.JobTitle}）");
 
         // 合并个人数据源
-        var personalStats = await _personalSourceService.CollectAllAsync(member.UserId, monday, sunday, CancellationToken.None);
+        var sourceRange = ReportEvidenceEngine.Bounds(monday, sunday);
+        var personalStats = await _personalSourceService.CollectAllAsync(member.UserId, sourceRange.Start.UtcDateTime, sourceRange.End.UtcDateTime, CancellationToken.None);
 
         // 同时采集 v1.0 的系统活动数据
-        var activity = await _collector.CollectAsync(member.UserId, monday, sunday, CancellationToken.None);
+        var range = ReportEvidenceEngine.Bounds(monday, sunday);
+        var activity = await _collector.CollectAsync(member.UserId, range.Start.UtcDateTime, range.End.UtcDateTime, CancellationToken.None);
+        if (teamMemberStats != null) activity.CollectionWarnings.AddRange(teamMemberStats.CollectionWarnings);
 
         // 构建 v2.0 Prompt
         var promptPrefs = await LoadGenerationPromptPrefsAsync(member.UserId, ct);
-        var userPrompt = BuildUserPromptV2(template, teamMemberStats, personalStats, activity, weekYear, weekNumber, promptPrefs.EffectivePrompt);
+        var sourcePrefs = await LoadGenerationSourcePrefsAsync(member.UserId, ct);
+        var evidenceLedger = await _evidence.CollectAsync(member.UserId, team.Id, activity,
+            (teamMemberStats?.Sources ?? new List<SourceStats>()).Concat(personalStats), dailyEnabled: sourcePrefs.DailyLogEnabled, mapEnabled: sourcePrefs.MapPlatformEnabled, reportStart: monday);
+        var deliveryEvidence = ReportEvidenceEngine.Build(evidenceLedger, monday, sunday);
+        var userPrompt = ReportEvidenceService.BuildGroundedPrompt(deliveryEvidence, promptPrefs.EffectivePrompt);
 
         // 调用 LLM
         var request = new GatewayRequest
@@ -1711,24 +1485,13 @@ public class ReportGenerationService
             Context = new GatewayRequestContext { UserId = member.UserId }
         };
 
-        var response = await _gateway.SendAsync(request, CancellationToken.None);
+        var response = await ReportEvidenceService.RequestOrderAsync(_gateway, request, deliveryEvidence, _logger);
 
-        List<WeeklyReportSection>? generatedSections = null;
-        if (response.Success && !string.IsNullOrWhiteSpace(response.Content))
-            generatedSections = ParseGeneratedSections(response.Content, template);
-        var usedLlmResult = generatedSections != null && CountGeneratedItems(generatedSections) > 0;
-        var fallbackReasonCode = ResolveFallbackReasonCode(response, generatedSections);
-        if (!usedLlmResult)
-            generatedSections = null;
-
-        if (generatedSections == null)
-        {
-            generatedSections = template.Sections.Select(s => new WeeklyReportSection
-            {
-                TemplateSection = s,
-                Items = new()
-            }).ToList();
-        }
+        var proposedOrder = response.Success ? ReportEvidenceService.ParseProposedOrder(response.Content, deliveryEvidence) : Array.Empty<string>();
+        var generatedSections = ReportEvidenceEngine.BuildSections(template, deliveryEvidence, proposedOrder);
+        var fallbackReasonCode = !response.Success ? ReportGenerationFallbackReason.UpstreamFailed
+            : string.IsNullOrWhiteSpace(response.Content) ? ReportGenerationFallbackReason.EmptyResponse
+            : deliveryEvidence.Items.Count > 0 && !proposedOrder.Any() ? ReportGenerationFallbackReason.InvalidResponse : null;
 
         // 构建 StatsSnapshot
         var snapshot = teamMemberStats?.ToSnapshot() ?? new Dictionary<string, object>();
@@ -1752,23 +1515,27 @@ public class ReportGenerationService
             var update = Builders<WeeklyReport>.Update
                 .Set(x => x.Sections, generatedSections)
                 .Set(x => x.AutoGeneratedAt, generatedAt)
-                .Set(x => x.AutoGeneratedBy, usedLlmResult ? "llm" : "rule-fallback")
-                .Set(x => x.AutoGeneratedModelId, usedLlmResult ? response.Resolution?.ActualModel : null)
-                .Set(x => x.AutoGeneratedPlatformId, usedLlmResult ? response.Resolution?.ActualPlatformId : null)
-                .Set(x => x.AutoGenerationFallbackReason, usedLlmResult ? null : fallbackReasonCode)
+                .Set(x => x.AutoGeneratedBy, "evidence")
+                .Set(x => x.AutoGeneratedModelId, response.Success ? response.Resolution?.ActualModel : null)
+                .Set(x => x.AutoGeneratedPlatformId, response.Success ? response.Resolution?.ActualPlatformId : null)
+                .Set(x => x.AutoGenerationFallbackReason, fallbackReasonCode)
                 .Set(x => x.WorkflowExecutionId, executionId)
                 .Set(x => x.StatsSnapshot, snapshot)
+                .Set(x => x.EvidenceLedger, evidenceLedger)
+                .Set(x => x.DeliveryEvidence, deliveryEvidence)
                 .Set(x => x.UpdatedAt, generatedAt);
 
             await _db.WeeklyReports.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
             existing.Sections = generatedSections;
             existing.AutoGeneratedAt = generatedAt;
             existing.StatsSnapshot = snapshot;
+            existing.EvidenceLedger = evidenceLedger;
+            existing.DeliveryEvidence = deliveryEvidence;
             existing.WorkflowExecutionId = executionId;
-            existing.AutoGeneratedBy = usedLlmResult ? "llm" : "rule-fallback";
-            existing.AutoGeneratedModelId = usedLlmResult ? response.Resolution?.ActualModel : null;
-            existing.AutoGeneratedPlatformId = usedLlmResult ? response.Resolution?.ActualPlatformId : null;
-            existing.AutoGenerationFallbackReason = usedLlmResult ? null : fallbackReasonCode;
+            existing.AutoGeneratedBy = "evidence";
+            existing.AutoGeneratedModelId = response.Success ? response.Resolution?.ActualModel : null;
+            existing.AutoGeneratedPlatformId = response.Success ? response.Resolution?.ActualPlatformId : null;
+            existing.AutoGenerationFallbackReason = fallbackReasonCode;
             return existing;
         }
 
@@ -1789,12 +1556,14 @@ public class ReportGenerationService
             Status = WeeklyReportStatus.Draft,
             Sections = generatedSections,
             AutoGeneratedAt = generatedAt,
-            AutoGeneratedBy = usedLlmResult ? "llm" : "rule-fallback",
-            AutoGeneratedModelId = usedLlmResult ? response.Resolution?.ActualModel : null,
-            AutoGeneratedPlatformId = usedLlmResult ? response.Resolution?.ActualPlatformId : null,
-            AutoGenerationFallbackReason = usedLlmResult ? null : fallbackReasonCode,
+            AutoGeneratedBy = "evidence",
+            AutoGeneratedModelId = response.Success ? response.Resolution?.ActualModel : null,
+            AutoGeneratedPlatformId = response.Success ? response.Resolution?.ActualPlatformId : null,
+            AutoGenerationFallbackReason = fallbackReasonCode,
             WorkflowExecutionId = executionId,
-            StatsSnapshot = snapshot
+            StatsSnapshot = snapshot,
+            EvidenceLedger = evidenceLedger,
+            DeliveryEvidence = deliveryEvidence
         };
 
         try

@@ -830,8 +830,11 @@ public class ReportAgentController : ControllerBase
         if (team == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
 
+        var canManage = HasPermission(AdminPermissionCatalog.ReportAgentTeamManage) || await IsTeamLeaderOrDeputy(id, GetUserId());
+        if (!canManage && !await IsTeamMember(id, GetUserId()) && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看此团队的来源配置"));
         if (string.IsNullOrEmpty(team.DataCollectionWorkflowId))
-            return Ok(ApiResponse<object>.Ok(new { workflow = (object?)null, templateKey = team.WorkflowTemplateKey }));
+            return Ok(ApiResponse<object>.Ok(new { workflow = (object?)null, templateKey = team.WorkflowTemplateKey, canManage }));
 
         var workflow = await _db.Workflows.Find(w => w.Id == team.DataCollectionWorkflowId).FirstOrDefaultAsync();
         // 获取最近一次执行
@@ -851,6 +854,7 @@ public class ReportAgentController : ControllerBase
                 workflow.IsEnabled,
                 workflow.LastExecutedAt
             } : null,
+            canManage,
             templateKey = team.WorkflowTemplateKey,
             lastExecution = lastExecution != null ? new
             {
@@ -863,6 +867,33 @@ public class ReportAgentController : ControllerBase
                 lastExecution.ErrorMessage
             } : null
         }));
+    }
+
+    public sealed class BindTeamWorkflowRequest
+    {
+        public string? WorkflowId { get; set; }
+    }
+
+    /// <summary>绑定已有采集工作流，保持团队管理与工作流可见性的双重权限约束。</summary>
+    [HttpPut("teams/{id}/workflow")]
+    public async Task<IActionResult> BindTeamWorkflow(string id, [FromBody] BindTeamWorkflowRequest request)
+    {
+        var userId = GetUserId();
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentTeamManage) && !await IsTeamLeaderOrDeputy(id, userId))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只有团队负责人或团队管理员可以绑定采集工作流"));
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (team == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+        var workflowId = string.IsNullOrWhiteSpace(request.WorkflowId) ? null : request.WorkflowId.Trim();
+        if (workflowId != null)
+        {
+            var workflow = await _db.Workflows.Find(w => w.Id == workflowId).FirstOrDefaultAsync();
+            if (workflow == null) return BadRequest(ApiResponse<object>.Fail("NOT_FOUND", "工作流不存在"));
+            if (workflow.OwnerUserId != userId && workflow.CreatedBy != userId && !HasPermission(AdminPermissionCatalog.WorkflowAgentManage))
+                return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权使用此工作流，请选择本人可管理的工作流"));
+        }
+        await _db.ReportTeams.UpdateOneAsync(t => t.Id == id, Builders<ReportTeam>.Update
+            .Set(t => t.DataCollectionWorkflowId, workflowId).Set(t => t.UpdatedAt, DateTime.UtcNow), cancellationToken: CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { workflowId }));
     }
 
     /// <summary>
@@ -2310,6 +2341,7 @@ public class ReportAgentController : ControllerBase
 
     public class DailyLogItemInput
     {
+        public string? WorkItemId { get; set; }
         public string? Content { get; set; }
         public string? Category { get; set; }
         /// <summary>自定义标签列表</summary>
@@ -2401,6 +2433,7 @@ public class ReportAgentController : ControllerBase
 
             items.Add(new DailyLogItem
             {
+                WorkItemId = string.IsNullOrWhiteSpace(i.WorkItemId) ? null : i.WorkItemId.Trim(),
                 Content = i.Content ?? string.Empty,
                 Category = normalizedCategory,
                 Tags = normalizedTags,
@@ -2965,6 +2998,27 @@ public class ReportAgentController : ControllerBase
     }
 
     #endregion
+
+    /// <summary>当日交付事实只读预览；不调用模型、不代填打点或提交报告。</summary>
+    [HttpGet("my/delivery-evidence")]
+    public async Task<IActionResult> GetMyDeliveryEvidence([FromQuery] string? date)
+    {
+        var day = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, ChinaTimeZone).Date;
+        if (date != null && !DateTime.TryParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out day))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "日期格式需为 yyyy-MM-dd"));
+        var userId = GetUserId();
+        var weekStart = day.AddDays(-(((int)day.DayOfWeek + 6) % 7));
+        var bounds = ReportEvidenceEngine.Bounds(weekStart, day);
+        var activity = await _activityCollector.CollectAsync(userId, bounds.Start.UtcDateTime, bounds.End.UtcDateTime, CancellationToken.None);
+        var prefs = await _db.UserPreferences.Find(p => p.UserId == userId).FirstOrDefaultAsync(CancellationToken.None);
+        var current = ReportEvidenceService.FromActivity(activity, dailyEnabled: true,
+            mapEnabled: prefs?.ReportAgentPreferences?.MapPlatformSourceEnabled ?? true);
+        var prior = await _db.WeeklyReports.Find(r => r.UserId == userId && r.PeriodEnd < weekStart && r.EvidenceLedger != null)
+            .SortByDescending(r => r.PeriodEnd).ToListAsync(CancellationToken.None);
+        var latestPerTeam = prior.GroupBy(r => r.TeamId).Select(g => g.First().EvidenceLedger);
+        var ledger = ReportEvidenceEngine.Merge(latestPerTeam.Append(current));
+        return Ok(ApiResponse<ReportDeliverySnapshot>.Ok(ReportEvidenceEngine.Build(ledger, day, day)));
+    }
 
     #region My Daily Log Tags
 
@@ -3595,7 +3649,8 @@ public class ReportAgentController : ControllerBase
         var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
         var sunday = monday.AddDays(6).AddHours(23).AddMinutes(59).AddSeconds(59);
 
-        var activity = await _activityCollector.CollectAsync(userId, monday, sunday, CancellationToken.None);
+        var range = ReportEvidenceEngine.Bounds(monday, sunday);
+        var activity = await _activityCollector.CollectAsync(userId, range.Start.UtcDateTime, range.End.UtcDateTime, CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(activity));
     }
@@ -4516,6 +4571,7 @@ public class ReportAgentController : ControllerBase
         sb.AppendLine("---");
         sb.AppendLine();
 
+        sb.AppendLine(ReportEvidenceService.ToMarkdown(report.DeliveryEvidence));
         foreach (var section in report.Sections)
         {
             sb.AppendLine($"## {section.TemplateSection.Title}");
@@ -4538,6 +4594,7 @@ public class ReportAgentController : ControllerBase
                         {
                             hasRichTextContent = true;
                             sb.AppendLine(content);
+                            if (!string.IsNullOrWhiteSpace(item.SourceRef)) sb.AppendLine($"来源引用：{item.SourceRef}");
                             if (!string.IsNullOrWhiteSpace(source))
                                 sb.AppendLine(source);
                             sb.AppendLine();
@@ -4552,6 +4609,7 @@ public class ReportAgentController : ControllerBase
                     {
                         var source = item.Source != "manual" ? $" `[{item.Source}]`" : "";
                         sb.AppendLine($"- {item.Content}{source}");
+                        if (!string.IsNullOrWhiteSpace(item.SourceRef)) sb.AppendLine($"  来源引用：{item.SourceRef}");
                     }
                 }
             }
@@ -4576,6 +4634,7 @@ public class ReportAgentController : ControllerBase
         sb.AppendLine("---");
         sb.AppendLine();
 
+        sb.AppendLine(ReportEvidenceService.ToMarkdown(summary.DeliveryEvidence));
         foreach (var section in summary.Sections)
         {
             sb.AppendLine($"## {section.Title}");

@@ -151,17 +151,23 @@ public class PersonalSourceService
         var results = new List<SourceStats>();
         foreach (var source in sources)
         {
-            var connector = CreateConnector(source);
-            if (connector == null) continue;
-
             try
             {
+                var connector = CreateConnector(source);
+                if (connector == null)
+                {
+                    results.Add(new SourceStats { SourceType = source.SourceType,
+                        CollectionWarnings = new() { "个人来源连接不可用，请检查连接配置后重新采集；缺少记录不能当作零产出。" } });
+                    continue;
+                }
                 var stats = await connector.CollectStatsAsync(from, to, ct);
                 results.Add(stats);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "[PersonalSource] Collect failed for {SourceType}/{Id}", source.SourceType, source.Id);
+                results.Add(new SourceStats { SourceType = source.SourceType,
+                    CollectionWarnings = new() { "个人来源本次采集失败，请检查连接后重试；未将缺失数据计为零。" } });
             }
         }
 

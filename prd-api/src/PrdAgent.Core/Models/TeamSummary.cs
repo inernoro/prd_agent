@@ -47,6 +47,12 @@ public class TeamSummary
     public string? GeneratedByName { get; set; }
 
     public DateTime GeneratedAt { get; set; } = DateTime.UtcNow;
+    /// <summary>可核查的工作事项历史（周期之间连续保留）。</summary>
+    public ReportEvidenceLedger? EvidenceLedger { get; set; }
+
+    /// <summary>按当前周期重建的只读交付事实。</summary>
+    public ReportDeliverySnapshot? DeliveryEvidence { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 

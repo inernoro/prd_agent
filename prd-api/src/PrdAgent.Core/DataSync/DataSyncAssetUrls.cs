@@ -119,6 +119,7 @@ public static class DataSyncAssetUrls
             ["pr_review_items"] = "HtmlUrl 是 GitHub 上那个 PR 的页面地址。",
             ["report_data_sources"] = "RepoUrl 是 git 仓库地址。",
             ["requirements"] = "SourceUrl 是需求的外部来源。",
+            ["report_commits"] = "SourceUrl 是 GitHub 原始提交的可核查来源，必须保留上游地址；WorkItemId 同样是稳定外部事项身份，不改写为迁移目标地址。",
             ["product_initiations"] = "PlanUrl 是人手填的外部文档链接。",
             ["product_releases"] = "AnnouncementUrl / PlanUrl 同上，人手填的外部文档链接。",
             ["version_registrations"] = "PlanUrl 是版本立项或上线方案的外部文档链接。",
