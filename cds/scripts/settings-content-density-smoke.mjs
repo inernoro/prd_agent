@@ -23,13 +23,21 @@ const base = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || (fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined), args: ['--no-sandbox'] });
 const measurements = [];
 const assert = (ok, message) => { if (!ok) throw Error(message); };
+async function navigate(page, href) {
+  const burger = page.getByRole('button', { name: '打开导航菜单', exact: true });
+  if (await burger.isVisible()) {
+    await burger.click();
+    await page.locator(`.cds-mobile-drawer[aria-hidden="false"] a[href="${href}"]`).click();
+  } else await page.locator(`.cds-rail a[href="${href}"]`).first().click();
+}
+
 try {
-  for (const width of [1440, 390]) for (const theme of ['light', 'dark']) {
+  for (const width of (process.env.CDS_SETTINGS_WIDTH ? [Number(process.env.CDS_SETTINGS_WIDTH)] : [1440, 390])) for (const theme of ['light', 'dark']) {
     const page = await browser.newPage({ viewport: { width, height: width === 390 ? 844 : 900 }, isMobile: width === 390, hasTouch: width === 390, colorScheme: theme, reducedMotion: 'reduce' });
     await page.addInitScript(value => localStorage.setItem('cds_theme', value), theme);
     let count = 2, failRead = false, failWrite = false, owner = true;
     const errors = [], unexpected = new Set();
-    page.on('pageerror', error => errors.push(error.message));
+    page.on('pageerror', error => { errors.push(error.message); console.error('PAGEERROR', error.message); });
     const users = () => Array.from({ length: count }, (_, i) => ({ id: `user-${i}`, username: `user${String(i + 1).padStart(2, '0')}`, name: `样例账号 ${i + 1}`, authProvider: 'local', status: i % 2 ? 'disabled' : 'active', isSystemOwner: false }));
     const keys = () => Array.from({ length: count }, (_, i) => ({ id: `key-${i}`, label: `布局 Key ${String(i + 1).padStart(2, '0')}`, scope: 'global', access: { canCreateProjects: true, projects: [] }, createdAt: '2026-11-13T10:00:00Z' }));
     const env = () => Object.fromEntries(Array.from({ length: count }, (_, i) => [`CDS_SAMPLE_${String(i + 1).padStart(2, '0')}`, `样例变量 ${i + 1}`]));
@@ -52,18 +60,20 @@ try {
       else if (pathname === '/api/cds-system/alarm-relay') data = { enabled: true, receiverHealthy: true, pending: 0 };
       else if (/^\/api\/cds-system\/alarm-channels\/[^/]+\/drill$/.test(pathname)) data = { ok: true };
       else if (pathname === '/api/cds-system/alarm-channels') data = { channels: Array.from({ length: count }, (_, i) => ({ id: `channel-${i}`, name: `样例通道 ${String(i + 1).padStart(2, '0')}`, kind: 'bark', enabled: true, projects: [], events: ['business-down', 'business-recovered'], bark: { keySet: true, keyTail: 'test' } })), status: Array.from({ length: count }, (_, i) => ({ id: `channel-${i}`, name: '样例通道', status: 'healthy', kind: 'bark', enabled: true, projects: [], events: [] })) };
+      else if (/^\/api\/projects\/[^/]+\/identity-history$/.test(pathname)) data = { records: [], nextCursor: null, coverage: 'since-baseline' };
+      else if (/^\/api\/projects\/[^/]+\/recent-auto-deploys$/.test(pathname)) data = { items: [] };
       else if (pathname === '/api/env') data = { env: env(), inheritGlobal: false };
       else if (pathname === '/api/env/categorize') {
         assert(request.postDataJSON().dryRun === true, '整理预览不应绕过确认执行');
         data = { targetProjectId: 'fixture-project', groups: { duplicated: [], moved: ['SAMPLE_PROJECT'], globalOnly: ['CDS_SAMPLE_01'] }, summary: { changeCount: 1, movedCount: 1, globalOnlyCount: 1 } };
       } else {
         data = resolveFixture(pathname);
-        if (data === null) { unexpected.add(pathname); data = {}; }
+        if (data === null) { unexpected.add(pathname); console.error('UNREGISTERED', pathname); data = {}; }
       }
       await route.fulfill({ json: data });
     });
     await page.goto(`${base}/project-list`);
-    await page.locator('a[href="/cds-settings"]').first().click();
+    await navigate(page, '/cds-settings');
     const surfaces = [
       { tab: 'CDS 全局变量', id: 'global-vars', first: 'CDS_SAMPLE_01' },
       { tab: '用户管理', id: 'users', first: 'user01' },
@@ -156,7 +166,7 @@ try {
     }
     {
       // The shared EnvEditor remains usable in project settings, including inheritance controls.
-      await page.locator('a[href="/project-list"]').first().click();
+      await navigate(page, '/project-list');
       await page.locator('article[data-project-id] .cds-project-actions button').first().click();
       await page.locator('a[href^="/settings/"]').first().click();
       await page.getByRole('tab', { name: '项目环境变量', exact: true }).click();
@@ -172,7 +182,9 @@ try {
       await page.getByRole('dialog').getByRole('heading', { name: '配置项目环境变量', exact: true }).waitFor();
       await page.keyboard.press('Escape');
       owner = false; await page.reload();
-      await page.locator('a[href="/cds-settings"]').first().click();
+      await navigate(page, '/cds-settings#activity');
+      await page.getByRole('tab', { name: '用户痕迹', exact: true }).waitFor();
+      await page.getByText('暂无操作记录', { exact: true }).waitFor();
       assert(await page.getByRole('tab', { name: 'AI Access Key', exact: true }).count() === 0, '成员不应看到密钥管理入口');
       assert(await page.getByRole('tab', { name: '用户管理', exact: true }).count() === 0, '成员不应看到用户管理入口');
       }
