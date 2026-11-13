@@ -5,8 +5,8 @@ using PrdAgent.LlmGw.Mongo;
 namespace PrdAgent.LlmGw.ModelReferences;
 
 public sealed record RepairableModelUsage(string ConsumerKey, string RecordId, string Path, string ModelType,
-    string Value, string? PlatformId, string? LogicalId, string Status, bool CanConfirmPurpose = false);
-public sealed record ReferenceUsagePlanRequest(string ConsumerKey, string RecordId, string Path, string TargetLogicalId, string ClientRequestId, string? ConfirmedModelType = null);
+    string Value, string? PlatformId, string? LogicalId, string Status, bool CanConfirmPurpose = false, string? Fingerprint = null);
+public sealed record ReferenceUsagePlanRequest(string ConsumerKey, string RecordId, string Path, string TargetLogicalId, string ClientRequestId, string? ConfirmedModelType = null, string? ExpectedUsageFingerprint = null);
 
 /// <summary>Repair sources are read from typed persisted configuration, never accepted as arbitrary client strings.</summary>
 public sealed class ModelReferenceUsageCatalog(IMongoDatabase gateway, IModelReferenceStore store,
@@ -14,6 +14,10 @@ public sealed class ModelReferenceUsageCatalog(IMongoDatabase gateway, IModelRef
 {
     private static readonly IReadOnlySet<string> SupportedConsumers = new HashSet<string>(StringComparer.Ordinal)
     { "map.preferences", "map.arena-slots", "map.lab-experiments", "map.lab-modelsets", "map.lab-groups" };
+    private static string UsageFingerprint(string consumer, string id, string path, string value, string? platform, string? logical)
+        => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            System.Text.Json.JsonSerializer.Serialize(new[] { consumer, id, path, value, platform, logical })))).ToLowerInvariant();
+
     public async Task<IReadOnlyList<RepairableModelUsage>> ReadAsync(string tenantId, CancellationToken ct)
     {
         if (tenantId != internalTenantId) return [];
@@ -33,6 +37,7 @@ public sealed class ModelReferenceUsageCatalog(IMongoDatabase gateway, IModelRef
                     if (!ModelReferenceAnalysis.TryGet(doc, path, out var raw) || raw.IsBsonNull || raw.IsString && raw.AsString.Length == 0) return;
                     if (!raw.IsString) { result.Add(new(definition.Key, id, path, type, "", platform, logicalId, "unknown")); return; }
                     var value = raw.AsString;
+                    var fingerprint = UsageFingerprint(definition.Key, id, path, value, platform, logicalId);
                     var matching = logicals.Where(x =>
                         !string.IsNullOrEmpty(logicalId) ? x.GetStringOrEmpty("_id") == logicalId :
                         platform is not null && platform != "logical-model" ? false :
@@ -43,11 +48,11 @@ public sealed class ModelReferenceUsageCatalog(IMongoDatabase gateway, IModelRef
                     {
                         var types = matching.Select(x => x.GetStringOrEmpty("ModelType")).Distinct(StringComparer.Ordinal).ToArray();
                         if (types.Length != 1 || types[0] is not ("chat" or "generation"))
-                        { result.Add(new(definition.Key, id, path, "", value, platform, logicalId, "unknown", allowPurposeConfirmation && matching.Count == 0 && !string.IsNullOrWhiteSpace(value))); return; }
+                        { result.Add(new(definition.Key, id, path, "", value, platform, logicalId, "unknown", allowPurposeConfirmation && matching.Count == 0 && !string.IsNullOrWhiteSpace(value), fingerprint)); return; }
                         type = types[0];
                     }
                     var matches = matching.Any(x => x.GetStringOrEmpty("ModelType") == type && x.GetValue("Enabled", false) == BsonBoolean.True);
-                    result.Add(new(definition.Key, id, path, type, value, platform, logicalId, matches ? "available" : "orphan"));
+                    result.Add(new(definition.Key, id, path, type, value, platform, logicalId, matches ? "available" : "orphan", false, fingerprint));
                 }
                 if (definition.Key == "map.preferences")
                 {
@@ -76,11 +81,15 @@ public sealed class ModelReferenceUsageCatalog(IMongoDatabase gateway, IModelRef
     {
         var usage = (await ReadAsync(tenantId, ct)).SingleOrDefault(x => x.ConsumerKey == request.ConsumerKey && x.RecordId == request.RecordId && x.Path == request.Path)
             ?? throw new ModelReferenceException("REFERENCE_USAGE_NOT_FOUND", "该使用位置已变化或不支持直接迁移，请重新检查清单。");
+        if (request.ExpectedUsageFingerprint is not null && request.ExpectedUsageFingerprint != usage.Fingerprint)
+            throw new ModelReferenceException("REFERENCE_USAGE_CHANGED", "所选模型引用已变化，请重新读取原配置后再生成计划。");
         var modelType = usage.ModelType;
         if (usage.Status == "unknown")
         {
             if (!usage.CanConfirmPurpose || request.ConfirmedModelType is not ("chat" or "generation"))
                 throw new ModelReferenceException("REFERENCE_USAGE_UNKNOWN", "原目录已不存在或配置结构无法核对；只有结构完整的实验模型引用，才可在明确确认用途后建立修复计划。");
+            if (request.ExpectedUsageFingerprint is null)
+                throw new ModelReferenceException("REFERENCE_USAGE_CHANGED", "明确用途修复必须核对所选引用快照，请重新读取原配置。");
             modelType = request.ConfirmedModelType;
         }
         else if (request.ConfirmedModelType is not null && request.ConfirmedModelType != modelType)

@@ -43,7 +43,8 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
   const [catalogError, setCatalogError] = useState(false);
   const [targetId, setTargetId] = useState(initialPlan?.mapping.target.logicalId || '');
   const [confirmedPurpose, setConfirmedPurpose] = useState('');
-  const modelType = source.modelType || (usage?.canConfirmPurpose ? confirmedPurpose : '');
+  const canConfirmPurpose = Boolean(usage?.canConfirmPurpose && usage.fingerprint);
+  const modelType = source.modelType || (canConfirmPurpose ? confirmedPurpose : '');
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 30000); return () => window.clearInterval(timer); }, []);
   const [coverage, setCoverage] = useState<ReferenceCoverage | null>(null);
@@ -65,7 +66,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
   const notified = useRef('');
   const resumeAttemptedFor = useRef<string | null>(null);
   const target = models.find(item => item.id === targetId && item.modelType === modelType && item.enabled);
-  const validScope = Boolean(target && target.id !== source.id && !catalogError && (!usage || (usage.status === 'orphan' && usage.modelType) || (usage.status === 'unknown' && usage.canConfirmPurpose && confirmedPurpose)));
+  const validScope = Boolean(target && target.id !== source.id && !catalogError && (!usage || (usage.status === 'orphan' && usage.modelType) || (usage.status === 'unknown' && canConfirmPurpose && confirmedPurpose)));
   const observing = Boolean(pending || plan?.status === 'applying');
   const active = Boolean(busy || observing);
 
@@ -174,7 +175,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
     setError(null); setConfirmed(false);
     try {
       const result = action === 'create'
-        ? usage ? await createModelReferenceMigrationFromUsage({ consumerKey: usage.consumerKey, recordId: usage.recordId, path: usage.path, targetLogicalId: targetId, clientRequestId: locator.clientRequestId!, ...(usage.canConfirmPurpose ? { confirmedModelType: confirmedPurpose } : {}) })
+        ? usage ? await createModelReferenceMigrationFromUsage({ consumerKey: usage.consumerKey, recordId: usage.recordId, path: usage.path, targetLogicalId: targetId, clientRequestId: locator.clientRequestId!, ...(usage.fingerprint ? { expectedUsageFingerprint: usage.fingerprint } : {}), ...(canConfirmPurpose ? { confirmedModelType: confirmedPurpose } : {}) })
           : await createModelReferenceMigrationPlan({ sourceLogicalId: source.id, targetLogicalId: targetId, clientRequestId: locator.clientRequestId! })
         : await runModelReferenceMigrationAction(plan!.intentId, action, plan!.revision);
       if (key !== currentScope.current || epoch !== generation.current) return;
@@ -208,7 +209,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
     <h3 style={SECTION_TITLE}>全量使用位置</h3>
     <div style={HINT_TEXT}>仅更新活动使用配置，历史记录保持原样。阻断、未确认或未扫描的位置都会阻止完成。</div>
     <div style={HINT_TEXT}>已更新按配置记录计数，旧引用残留按使用位置计数。</div>
-    {usage && (usage.status === 'unknown' || !usage.modelType) ? usage.canConfirmPurpose ? <label style={FIELD_LABEL}>明确确认原使用位置的用途<select aria-label="明确确认原使用位置的用途" style={FIELD_INPUT} value={confirmedPurpose} disabled={!canWrite || active} onChange={event => { setConfirmedPurpose(event.target.value); setTargetId(''); }}><option value="">请选择已核实的用途，不按模型名称推断</option><option value="chat">对话</option><option value="generation">图片生成</option></select><span style={HINT_TEXT}>原目录已不存在。仅修复所选实验位置，保留所属信息与历史结果；仍须生成计划、核对影响并确认执行。</span></label> : <InlineAlert tone="error">此位置的结构或用途尚未确认，当前不能自动迁移；请先核对原配置。</InlineAlert> : null}
+    {usage && (usage.status === 'unknown' || !usage.modelType) ? canConfirmPurpose ? <label style={FIELD_LABEL}>明确确认原使用位置的用途<select aria-label="明确确认原使用位置的用途" style={FIELD_INPUT} value={confirmedPurpose} disabled={!canWrite || active} onChange={event => { setConfirmedPurpose(event.target.value); setTargetId(''); }}><option value="">请选择已核实的用途，不按模型名称推断</option><option value="chat">对话</option><option value="generation">图片生成</option></select><span style={HINT_TEXT}>原目录已不存在。仅修复所选实验位置，保留所属信息与历史结果；仍须生成计划、核对影响并确认执行。</span></label> : <InlineAlert tone="error">此位置的结构或用途尚未确认，当前不能自动迁移；请先核对原配置。</InlineAlert> : null}
     {usage ? <InlineAlert>只修改所选使用位置，不会更改同名的其他业务字段。生成计划后才核对完整覆盖范围。</InlineAlert> : null}
     {!canWrite ? <ReadOnlyNotice /> : null}
     <CollectionFacts items={[{ label: '当前模型', value: <>{source.name} <code>{source.publicId}</code>{sourceUnavailable ? ' · 目录身份失效' : !source.enabled && !usage && source.id ? ' · 已停用' : ''}</> }]} />
@@ -308,6 +309,6 @@ export function ModelReferenceUsageRepairPanel() {
     {loading ? <div style={HINT_TEXT}><Spinner size={14} /> 正在读取可修复位置</div> : null}
     {failed ? <InlineAlert tone="error">使用位置读取未完成，不能确认是否存在遗漏，请重新读取。</InlineAlert> : null}
     <CollectionView items={items.filter(item => item.status === 'orphan' || item.status === 'unknown')} searchText={item => `${item.consumerKey} ${item.recordId} ${item.path} ${item.value}`} placeholder="搜索失效使用位置" emptyText="当前候选清单没有失效项；这不代表全量核验通过。">{rows => <>{rows.map(item => <div key={`${item.consumerKey}:${item.recordId}:${item.path}`} style={{ padding: 8, display: 'flex', gap: GAP.normal, flexWrap: 'wrap', alignItems: 'center' }}><span>{USAGE_LABELS[item.status]} · {item.value}</span><span style={MONO_META}>{item.consumerKey} · {item.recordId} · {item.path}</span><Button size="sm" onClick={() => setSelected(item)}>选择使用位置</Button></div>)}</>}</CollectionView>
-    {selected ? <ModelReferenceMigrationPanel key={`${selected.consumerKey}:${selected.recordId}:${selected.path}`} usage={selected} source={{ id: selected.logicalId || '', publicId: selected.value, name: '所选使用位置', modelType: selected.modelType, enabled: false }} onChanged={() => void refresh()} /> : null}
+    {selected ? <ModelReferenceMigrationPanel key={`${selected.consumerKey}:${selected.recordId}:${selected.path}:${selected.fingerprint || selected.value}`} usage={selected} source={{ id: selected.logicalId || '', publicId: selected.value, name: '所选使用位置', modelType: selected.modelType, enabled: false }} onChanged={() => void refresh()} /> : null}
   </section>;
 }

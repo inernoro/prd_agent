@@ -150,8 +150,17 @@ public sealed class ModelReferenceBusinessMigrationTests
         Assert.Equal("unknown", usage.Status);
         var request = new ReferenceUsagePlanRequest("map.lab-experiments", "orphan", "SelectedModels.0.ModelId", "target", "explicit-purpose");
         await Assert.ThrowsAsync<ModelReferenceException>(() => f.Usages.BuildAsync(Fixture.Tenant, request, default));
-        await Assert.ThrowsAsync<ModelReferenceException>(() => f.Usages.BuildAsync(Fixture.Tenant, request with { ConfirmedModelType = "chat" }, default));
-        var mapping = await f.Usages.BuildAsync(Fixture.Tenant, request with { ConfirmedModelType = "generation" }, default);
+        await Assert.ThrowsAsync<ModelReferenceException>(() => f.Usages.BuildAsync(Fixture.Tenant, request with { ConfirmedModelType = "chat", ExpectedUsageFingerprint = usage.Fingerprint }, default));
+        await Assert.ThrowsAsync<ModelReferenceException>(() => f.Usages.BuildAsync(Fixture.Tenant,
+            request with { ConfirmedModelType = "generation" }, default));
+        await f.Db.GetCollection<BsonDocument>("model_lab_experiments").UpdateOneAsync(new BsonDocument("_id", "orphan"),
+            Builders<BsonDocument>.Update.Set("SelectedModels.0.PlatformId", "changed-provider"));
+        var stale = await Assert.ThrowsAsync<ModelReferenceException>(() => f.Usages.BuildAsync(Fixture.Tenant,
+            request with { ConfirmedModelType = "generation", ExpectedUsageFingerprint = usage.Fingerprint }, default));
+        Assert.Equal("REFERENCE_USAGE_CHANGED", stale.Code);
+        await f.Db.GetCollection<BsonDocument>("model_lab_experiments").UpdateOneAsync(new BsonDocument("_id", "orphan"),
+            Builders<BsonDocument>.Update.Set("SelectedModels.0.PlatformId", "deleted-provider"));
+        var mapping = await f.Usages.BuildAsync(Fixture.Tenant, request with { ConfirmedModelType = "generation", ExpectedUsageFingerprint = usage.Fingerprint }, default);
         Assert.Equal("generation", mapping.ModelType);
         Assert.Equal("deleted-provider", mapping.Source.ProviderId);
         Assert.Equal("completed", (await f.ApplyAsync(mapping)).Status);
