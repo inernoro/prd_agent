@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
-import { ChevronDown, Eye, ExternalLink, Loader2, Rocket } from 'lucide-react';
-import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
+import { ChevronDown, Eye, Loader2, Rocket } from 'lucide-react';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 
 type PreviewActionSplitButtonProps = {
@@ -35,36 +34,18 @@ export function PreviewActionSplitButton({
   onPreview,
   onRelease,
   releaseDisabled = false,
-  releaseLabel = '发布到目标',
+  releaseLabel = '发布到',
   className = '',
   icon,
   fill = false,
 }: PreviewActionSplitButtonProps): JSX.Element {
   const mainClassName = [
-    'inline-flex h-9 items-center justify-center rounded-l-md border border-ok/35 bg-ok-soft text-ok transition-colors',
+    'inline-flex h-9 items-center justify-center rounded-md border border-ok/35 bg-ok-soft text-ok transition-colors',
     fill ? 'min-w-0 flex-1 gap-2 px-3 text-sm font-medium' : 'w-10',
     'hover:border-ok/50 hover:bg-ok-soft hover:text-ok',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ok/35',
     disabled ? 'pointer-events-none opacity-50' : '',
   ].join(' ');
-  const menuTrigger = (
-    <button
-      type="button"
-      className={[
-        'inline-flex h-9 items-center justify-center rounded-r-md border border-l-0 border-ok/35 bg-ok-soft text-ok transition-colors',
-        fill ? 'w-10' : 'w-7',
-        'hover:border-ok/50 hover:bg-ok-soft hover:text-ok',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ok/35',
-        disabled ? 'pointer-events-none opacity-50' : '',
-      ].join(' ')}
-      disabled={disabled}
-      title="更多预览操作"
-      aria-label="更多预览操作"
-    >
-      <ChevronDown className="h-3.5 w-3.5" />
-    </button>
-  );
-
   const mainIcon = loading ? <Loader2 className="h-4 w-4 animate-spin" /> : icon || <Eye className="h-4 w-4" />;
 
   const mainButton = previewHref && !disabled ? (
@@ -109,27 +90,15 @@ export function PreviewActionSplitButton({
   ) : mainButton;
 
   return (
-    <span className={`${fill ? 'flex min-w-0' : 'inline-flex'} items-center ${className}`}>
+    <span className={`${fill ? 'flex min-w-0' : 'inline-flex'} flex-wrap items-center gap-2 ${className}`}>
       {mainAction}
-      <DropdownMenu trigger={menuTrigger} width={210}>
-        <DropdownLabel>预览操作</DropdownLabel>
-        {previewHref ? (
-          <DropdownItem onSelect={() => window.open(previewHref, '_blank', 'noopener,noreferrer')}>
-            <ExternalLink className="h-4 w-4" />
-            打开预览
-          </DropdownItem>
-        ) : (
-          <DropdownItem onSelect={onPreview} disabled={disabled || !onPreview}>
-            <Eye className="h-4 w-4" />
-            打开预览
-          </DropdownItem>
-        )}
-        <DropdownDivider />
-        <DropdownItem onSelect={onRelease} disabled={disabled || releaseDisabled || !onRelease}>
-          <Rocket className="h-4 w-4" />
-          {releaseLabel}
-        </DropdownItem>
-      </DropdownMenu>
+      {onRelease ? (
+        <button type="button" disabled={disabled || releaseDisabled}
+          className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-primary/35 bg-primary/10 px-3 text-sm font-medium text-primary transition-colors hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 disabled:opacity-50"
+          onClick={(event) => { event.stopPropagation(); onRelease(); }}>
+          <Rocket className="h-4 w-4" />{releaseLabel}<ChevronDown className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
     </span>
   );
 }

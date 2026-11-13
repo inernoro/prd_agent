@@ -398,6 +398,7 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
   const copy = cdsEventNoticeCopy(envelope.type);
   if (!copy) return null;
   const data = (envelope.data ?? {}) as {
+    jobId?: string;
     projectId?: string;
     projectName?: string;
     projectSlug?: string;
@@ -415,7 +416,7 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
 
   // 同一目标的同一类事件归成一条。targetId 优先（发布/存活都以目标为单位），
   // 没有目标的系统级事件（infra 熔断 / 自更新）退到项目或全局。
-  const scopeKey = data.targetId || data.branchId || data.projectId || 'system';
+  const scopeKey = data.jobId || data.targetId || data.branchId || data.projectId || 'system';
   const dedupeKey = `${envelope.type}:${scopeKey}`;
 
   // 结构化摘要优先于原始 stderr。原始发布日志可能有数百行，只能去发布记录展开。
@@ -436,6 +437,11 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     if (data.commitSha) params.set('commit', data.commitSha);
     const query = params.toString();
     href = query ? `/release-center?${query}` : '/release-center';
+  } else if (copy.link === 'tasks') {
+    const query = new URLSearchParams();
+    if (data.projectId) query.set('project', data.projectId);
+    if (data.jobId) query.set('job', data.jobId);
+    href = `/task-schedule?${query}`;
   } else if (copy.link === 'status') {
     href = monitorIncidentPath(data.targetId, data.incidentId, data.detectedAt);
   } else if (copy.link === 'maintenance') {

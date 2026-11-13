@@ -23,6 +23,9 @@ export const USER_SCOPED_STORAGE_KEYS = [
   'bookshelf-progress',
 ] as const;
 
+/** 本功能按用户/文档命名的草稿和阅读游标。 */
+export const USER_SCOPED_STORAGE_PREFIXES = ['map-writing-ui:', 'map-learning:', 'hosted-template-draft:', 'hosted-collection:last:'] as const;
+
 /**
  * 登出时清掉上面那些键。
  *
@@ -31,6 +34,11 @@ export const USER_SCOPED_STORAGE_KEYS = [
  * 那条管「这个标签页里的内存」，这条管「这台设备的盘」。
  */
 export function clearUserScopedStorage(): void {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (USER_SCOPED_STORAGE_PREFIXES.some(prefix => key.startsWith(prefix))) localStorage.removeItem(key);
+    }
+  } catch { /* 存储不可用不阻止登出 */ }
   for (const key of USER_SCOPED_STORAGE_KEYS) {
     try {
       localStorage.removeItem(key);

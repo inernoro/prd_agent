@@ -1,0 +1,79 @@
+{
+  "status": "READY",
+  "baseline": "c259f56268f97790be71ff568062174ec91a70d9",
+  "originalBaseline": "3035365de",
+  "claims": [
+    {
+      "id": "AC-01",
+      "assertion": "明确不同 RunId 的独立请求不能因复用逻辑编号或上游作业编号被并入同一业务操作",
+      "proof": "真实 Mongo 行为测试；对旧查询失败、修复后通过",
+      "provenance": "integration-live",
+      "priority": "P0"
+    },
+    {
+      "id": "AC-02",
+      "assertion": "过期实例的全部未完成记录可标记结果未知；包括租约过期后新写入、随后崩溃遗留的记录；不填费用或结束时间",
+      "proof": "隔离 Mongo 持久化状态前后对照",
+      "provenance": "integration-live",
+      "priority": "P0"
+    },
+    {
+      "id": "AC-03",
+      "assertion": "并发收口、完成回执与迟到回执最终保留终态；健康实例、无租约历史和明确零费用不被误改",
+      "proof": "并发 Tick 与终态更新；回读状态、费用、时间",
+      "provenance": "integration-live",
+      "priority": "P0"
+    },
+    {
+      "id": "AC-04",
+      "assertion": "相同固定案例的全部记录一致、分页无遗漏、历史汇总不计次数、未知费用仍为 null",
+      "proof": "旧接口断言失败、新接口断言通过；固定案例记录集合哈希匹配",
+      "provenance": "integration-live",
+      "priority": "P0"
+    },
+    {
+      "id": "AC-05",
+      "assertion": "匿名、billing、跨租户、跨团队和伪造锚点均不能取得越权记录，普通成员不能读取非本人业务产物",
+      "proof": "真实登录和真实端点；角色隔离负面断言",
+      "provenance": "integration-live",
+      "priority": "P0"
+    },
+    {
+      "id": "AC-06",
+      "assertion": "正常入口到调用链、失败原因、实际费用和业务结果可见；主题、移动端、刷新与返回保留编号",
+      "proof": "实际 CDS 预览正常登录导航；核对运行 SHA；截图与网络佐证",
+      "provenance": "preview-live",
+      "priority": "P0"
+    }
+  ],
+  "continuity": {
+    "normal": "一次提交显示关联结果",
+    "slow": "加载时可见进度且按钮防重复；不发生意外整页刷新",
+    "failure": "错误文案与重试入口可见",
+    "recovery": "刷新恢复 reference、anchor 与页码；终态不倒退",
+    "thresholds": {
+      "unexpectedDocumentBoots": 0,
+      "lostReference": 0,
+      "crossScopeRows": 0,
+      "missingRetainedRows": 0
+    }
+  },
+  "risks": [
+    "误合并导致错归属或重复费用判断",
+    "过期租约之后的记录永久 running",
+    "并发覆盖真实终态",
+    "历史无证据被猜测失败或免费",
+    "测试版本与预览运行提交不一致"
+  ],
+  "stopConditions": [
+    "不得在生产故意制造故障",
+    "不伪造历史、账单或供应商结果",
+    "不得删除其他分支或业务数据来解除部署阻塞",
+    "缺少真实预览或正确运行 SHA 时只能标未验收"
+  ],
+  "scope": "沿用现有调用链、日志、租约与页面，不建设计费系统；本轮新增测试与经复现确认的缺陷修复",
+  "evidence": {
+    "privateRaw": "work/llmgw-verify-20261113",
+    "public": "仅脱敏断言结果、版本与截图；不包含凭据、提示词或供应商账单"
+  }
+}

@@ -410,7 +410,7 @@ public class DocumentStoreSyncController : ControllerBase
         if (string.IsNullOrEmpty(oldDocId) || oldDocId == newDocId) return;
         try
         {
-            var stillReferenced = await _db.DocumentEntries
+            var stillReferenced = await _db.DocumentEntriesIncludingTrash
                 .Find(e => e.DocumentId == oldDocId && e.Id != keepEntryId)
                 .AnyAsync(CancellationToken.None);
             if (!stillReferenced)

@@ -709,12 +709,24 @@ public partial class WebPagesController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(req.HtmlContent))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "htmlContent 不能为空"));
+        var documentType = string.IsNullOrWhiteSpace(req.DocumentType) ? null : req.DocumentType.Trim();
+        if (documentType != null && !WritingTemplateRegistry.All.Any(template => template.Type == documentType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择有效的文档类型"));
 
         var site = await _siteService.CreateFromContentAsync(
             GetUserId(), req.HtmlContent,
             req.Title, req.Description,
             req.SourceType ?? "api", req.SourceRef,
             req.Tags, req.Folder);
+
+        var documentInfo = CollectionDocumentText(req.HtmlContent);
+        site.DocumentHeadings = documentInfo.Headings; site.DocumentTextExcerpt = documentInfo.Excerpt;
+        site.WritingTemplateId = WritingTemplateRegistry.Find(req.WritingTemplateId ?? "")?.Id;
+        site.DocumentType = documentType;
+        await _db.HostedSites.UpdateOneAsync(s => s.Id == site.Id && s.OwnerUserId == GetUserId(),
+            Builders<HostedSite>.Update.Set(s => s.DocumentHeadings, site.DocumentHeadings)
+                .Set(s => s.DocumentTextExcerpt, site.DocumentTextExcerpt).Set(s => s.WritingTemplateId, site.WritingTemplateId)
+                .Set(s => s.DocumentType, site.DocumentType));
 
         return Ok(ApiResponse<object>.Ok(site));
     }
@@ -1268,68 +1280,62 @@ public partial class WebPagesController : ControllerBase
         if (string.IsNullOrWhiteSpace(site.SiteUrl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点没有可读取的入口文件"));
 
-        const long maxBytes = 2L * 1024 * 1024; // 知识库正文按文本存储，2MB 足够覆盖单文件 HTML
         try
         {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            if (site.SiteUrl.StartsWith("/local-assets/", StringComparison.Ordinal))
+            {
+                // LocalAssetStorage 的地址是站内相对路径。按已授权站点清单中的 key 读取，
+                // 不拿客户端 Host 拼回环 HTTP，也不从 URL 反解任意磁盘路径。
+                var entry = site.Files.FirstOrDefault(file => string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+                var handle = entry == null || _reviewStorage == null ? null
+                    : await _reviewStorage.TryOpenReadByKeyAsync(entry.CosKey, cts.Token);
+                if (handle == null)
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件不存在或当前存储不支持读取"));
+                await using var local = handle.Content;
+                return await ReadSiteHtmlStreamAsync(site, local, handle.Length, cts.Token);
+            }
+            if (!Uri.TryCreate(site.SiteUrl, UriKind.Absolute, out var address)
+                || address.Scheme is not ("http" or "https"))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口地址无效"));
             var version = site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
             var url = $"{site.SiteUrl}{(site.SiteUrl.Contains('?') ? "&" : "?")}v={version.Ticks}";
             var http = _httpClientFactory.CreateClient();
             http.Timeout = TimeSpan.FromSeconds(20);
-
-            // 整个取回过程（含读 body）都必须有截止时间。
-            // HttpClient.Timeout 配 ResponseHeadersRead 只覆盖到「响应头到手」，之后读 body
-            // 是不设防的——对方慢慢滴数据就能把这个请求永久挂住。
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-
             using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             if (!resp.IsSuccessStatusCode)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"站点内容读取失败（HTTP {(int)resp.StatusCode}）"));
-            if (resp.Content.Headers.ContentLength is > maxBytes)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持读取"));
-
-            // 边读边卡上限，**不能**先 ReadAsStringAsync 再判长度。
-            //
-            // Content-Length 只是「对方自愿声明的」：缺头、chunked、或者声明一个压缩后的小尺寸，
-            // 上面那道判断就形同虚设，而托管上传允许到 500MB。这条路由是匿名可达的
-            // （拿着公开分享 token 就能打），先缓冲后判断等于把「一次请求分配几百 MB」
-            // 的开关交给外部——读满上限就立刻断，多一个字节都不收。
-            var over = false;
-            byte[] bytes;
-            await using (var stream = await resp.Content.ReadAsStreamAsync(cts.Token))
-            using (var buffered = new MemoryStream())
-            {
-                var chunk = new byte[8192];
-                while (true)
-                {
-                    var read = await stream.ReadAsync(chunk, cts.Token);
-                    if (read <= 0) break;
-                    if (buffered.Length + read > maxBytes) { over = true; break; }
-                    buffered.Write(chunk, 0, read);
-                }
-                bytes = buffered.ToArray();
-            }
-            if (over)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持读取"));
-
-            // 去掉 UTF-8 BOM，否则首字符是 \ufeff，注进 srcDoc 会在页面顶部留一个空白字符
-            var html = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
-                ? Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3)
-                : Encoding.UTF8.GetString(bytes);
-            return Ok(ApiResponse<object>.Ok(new
-            {
-                siteId = site.Id,
-                title = site.Title,
-                contentType = "text/html",
-                siteUrl = site.SiteUrl,
-                html,
-            }));
+            await using var remote = await resp.Content.ReadAsStreamAsync(cts.Token);
+            return await ReadSiteHtmlStreamAsync(site, remote, resp.Content.Headers.ContentLength, cts.Token);
         }
-        // OperationCanceledException 而不是 TaskCanceledException：显式 CancellationToken 触发时
-        // 抛的是前者，只写后者会漏掉「读 body 超时」这条新路径（TaskCanceled 是它的子类，写父类才全）。
-        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点内容读取超时或失败，请稍后重试"));
         }
+    }
+
+    private async Task<IActionResult> ReadSiteHtmlStreamAsync(HostedSite site, Stream stream, long? declaredLength, CancellationToken ct)
+    {
+        const long maxBytes = 2L * 1024 * 1024;
+        if (declaredLength is > maxBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持读取"));
+        // 清单 Size、远端 Content-Length 不能代替实际流上限。未知或偏小长度也逐块检查，
+        // 绝不先缓冲整个文件；本地 key、远端 HTTP 与分享读取共用这一条判据。
+        using var buffered = new MemoryStream();
+        var chunk = new byte[8192];
+        while (true)
+        {
+            var read = await stream.ReadAsync(chunk, ct);
+            if (read <= 0) break;
+            if (buffered.Length + read > maxBytes)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持读取"));
+            buffered.Write(chunk, 0, read);
+        }
+        var bytes = buffered.ToArray();
+        var html = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
+            ? Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3) : Encoding.UTF8.GetString(bytes);
+        return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, title = site.Title,
+            contentType = "text/html", siteUrl = site.SiteUrl, html }));
     }
 
     /// <summary>更新站点元信息</summary>
@@ -1649,7 +1655,9 @@ public partial class WebPagesController : ControllerBase
 
     /// <summary>创建分享链接</summary>
     [HttpPost("share")]
-    public async Task<IActionResult> CreateShare([FromBody] CreateWebPageShareRequest req)
+    public async Task<IActionResult> CreateShare([FromBody] CreateWebPageShareRequest req) => await CreateShareCore(req);
+
+    private async Task<IActionResult> CreateShareCore(CreateWebPageShareRequest req, HostedCollectionSnapshot? snapshot = null)
     {
         try
         {
@@ -1677,7 +1685,9 @@ public partial class WebPagesController : ControllerBase
                 if (refusal != null) return refusal;
             }
 
-            var share = await _siteService.CreateShareAsync(
+            var share = snapshot != null ? await _siteService.CreateCollectionShareAsync(
+                GetUserId(), await ResolveDisplayNameAsync(GetUserId()), snapshot, req.Title, req.Description,
+                req.Password, req.ExpiresInDays, visibility) : await _siteService.CreateShareAsync(
                 GetUserId(), await ResolveDisplayNameAsync(GetUserId()),
                 req.SiteId, req.SiteIds, req.ShareType ?? "single",
                 req.Title, req.Description,
@@ -2117,6 +2127,8 @@ public partial class WebPagesController : ControllerBase
 
 public class CreateFromContentRequest
 {
+    public string? WritingTemplateId { get; set; }
+    public string? DocumentType { get; set; }
     public string HtmlContent { get; set; } = string.Empty;
     public string? Title { get; set; }
     public string? Description { get; set; }

@@ -6,6 +6,40 @@ s=importlib.util.spec_from_file_location('monitor', Path(__file__).with_name('in
 m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
 
 class IndependentMonitorTest(unittest.TestCase):
+    def inspect_targets(self, targets, now=30000):
+        def read(url, *args, **kwargs):
+            return b'<html><script></script></html>' if url.endswith('/status') else m.json.dumps({'generatedAt': now * 1000, 'targets': targets}).encode()
+        with patch.object(m, 'read_url', side_effect=read):
+            return m.inspect({'cdsBase': 'https://example.test', 'headers': {}}, now)
+
+    def test_disabled_and_paused_targets_do_not_create_collection_failures(self):
+        targets = [
+            {'id': 'live', 'name': 'Live', 'projectId': 'cds-self-monitor', 'status': 'up', 'lastSample': {'t': 30000000}},
+            {'id': 'disabled', 'name': 'Disabled', 'projectId': 'cds-self-monitor', 'status': 'up', 'enabled': False, 'lastSample': {'t': 0}},
+            {'id': 'paused', 'name': 'Paused', 'projectId': 'cds-self-monitor', 'status': 'paused', 'lastSample': {'t': 0}},
+        ]
+        result = self.inspect_targets(targets)
+        self.assertTrue(result['dataOk']); self.assertFalse(result['notifyEligible'])
+        self.assertEqual([metric['id'] for metric in result['metrics']], ['live'])
+
+    def test_six_hour_sampling_is_not_stale_after_eleven_minutes(self):
+        target = {'id': 'slow', 'name': 'Slow', 'projectId': 'cds-self-monitor', 'status': 'up', 'intervalSeconds': 21600, 'timeoutMs': 15000, 'lastSample': {'t': (30000 - 1800) * 1000}}
+        result = self.inspect_targets([target])
+        self.assertTrue(result['dataOk']); self.assertFalse(result['notifyEligible'])
+        self.assertFalse(m.sample_expired(target, 30000 - 1800 + 21675))
+        self.assertTrue(m.sample_expired(target, 30000 - 1800 + 21676))
+
+    def test_actual_overdue_sampling_still_creates_collection_failure(self):
+        target = {'id': 'slow', 'name': 'Slow', 'projectId': 'cds-self-monitor', 'status': 'up', 'intervalSeconds': 21600, 'timeoutMs': 15000, 'lastSample': {'t': (30000 - 21676) * 1000}}
+        result = self.inspect_targets([target])
+        self.assertFalse(result['dataOk']); self.assertTrue(result['notifyEligible'])
+        self.assertEqual(result['reason'], 'collection')
+
+    def test_missing_or_invalid_intervals_keep_the_existing_stale_threshold(self):
+        for value in [None, '21600', -1, float('nan'), True]:
+            self.assertFalse(m.sample_expired({'intervalSeconds': value, 'lastSample': {'t': (30000 - 660) * 1000}}, 30000))
+            self.assertTrue(m.sample_expired({'intervalSeconds': value, 'lastSample': {'t': (30000 - 661) * 1000}}, 30000))
+
     def test_one_incident_during_outage_and_stable_recovery(self):
         state={}; bad={'reason':'collection','reachable':True,'dataOk':False}
         self.assertIsNone(m.advance(state,bad,1000));self.assertIsNone(m.advance(state,bad,1060))

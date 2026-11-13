@@ -72,6 +72,8 @@ public class ModelPoolQueryService : IModelPoolQueryService
             Id = pool.Id,
             Name = pool.Name,
             Code = pool.Code,
+            Aliases = [.. pool.Aliases],
+            LegacyPoolIds = [.. pool.LegacyPoolIds],
             Priority = pool.Priority,
             ModelType = modelType,
             IsDefaultForType = pool.IsDefaultForType,

@@ -2906,6 +2906,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 (int)response.StatusCode,
                 submitDurationMs,
                 response.IsSuccessStatusCode ? null : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}");
+            CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(a => a.Stage == "send"), responseBody,
+                response.Headers.ToDictionary(h => h.Key, h => string.Join(", ", h.Value), StringComparer.OrdinalIgnoreCase),
+                request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
 
             for (var attemptIndex = 1;
                  !response.IsSuccessStatusCode
@@ -3056,6 +3059,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     (int)response.StatusCode,
                     submitDurationMs,
                     response.IsSuccessStatusCode ? null : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}");
+                CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(a => a.Stage == "send"), responseBody,
+                    response.Headers.ToDictionary(h => h.Key, h => string.Join(", ", h.Value), StringComparer.OrdinalIgnoreCase),
+                    request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
             }
 
             // 6.5 Exchange 异步轮询（submit+query 模式）
@@ -3169,6 +3175,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                                 durationMs: queryDurationMs,
                                 error: null,
                                 reason: $"exchange async poll attempt {pollAttempt} complete");
+                            CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(), responseBody, queryHeaders,
+                                request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
                             _logger.LogInformation(
                                 "[LlmGateway.Exchange.Async] 任务完成, Exchange={ExchangeName}, pollAttempts={Attempts}",
                                 resolution.ExchangeName, pollAttempt);
@@ -3188,6 +3196,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                                 durationMs: queryDurationMs,
                                 error: queryError,
                                 reason: $"exchange async poll attempt {pollAttempt} failed");
+                            CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(), responseBody, queryHeaders,
+                                request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
                             var endedNow = DateTime.UtcNow;
                             var dur = (long)(endedNow - startedAt).TotalMilliseconds;
                             await FinishRawLogAsync(
@@ -3206,6 +3216,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             error: null,
                             reason: $"exchange async poll attempt {pollAttempt} pending",
                             statusOverride: "pending");
+                        CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(), responseBody, queryHeaders,
+                            request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
 
                         if (pollAttempt % 10 == 0)
                         {
@@ -3947,31 +3959,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// "insufficient credits/quota exceeded/billing" 等）。命中后走专门错误码 + 主动站内告警，便于及时提醒。
     /// </summary>
     private static bool IsQuotaExceeded(int statusCode, string? rawMessage)
-    {
-        var m = (rawMessage ?? string.Empty).ToLowerInvariant();
-
-        // 限流（节流）排除：只把「文本明确指向速率/每分钟请求数」的失败排除掉，不能用「429 一律 false」短路——
-        // 部分供应商（如 OpenAI insufficient_quota）也用 429 返回额度耗尽，需让后面的 quota/credit/balance 文本判定
-        // 继续生效，否则这些额度失败会走泛化 LLM_ERROR、漏掉额度告警（Codex review）。
-        // "Rate limit exceeded" 含 "limit exceeded" 子串，由下面的 rate-limit 文本判定先行排除，不会误判为额度。
-        if (m.Contains("rate limit") || m.Contains("rate-limit")
-            || m.Contains("requests per") || m.Contains("per minute")
-            || m.Contains("too many requests"))
-            return false;
-
-        if (statusCode == 402) return true; // Payment Required = 额度/账单
-        if (m.Length == 0) return false;
-
-        // 只认明确指向「额度/余额/账单/key 限额」的信号；裸 "limit exceeded" 不再单独判定为额度。
-        return m.Contains("quota is not enough")                    // APIyi 403：user quota is not enough
-            || m.Contains("key limit")                                   // OpenRouter "Key limit exceeded"
-            || m.Contains("credit limit")
-            || (m.Contains("limit exceeded") && (m.Contains("credit") || m.Contains("quota") || m.Contains("balance") || m.Contains("key")))
-            || (m.Contains("quota") && (m.Contains("exceed") || m.Contains("insufficient")))
-            || (m.Contains("insufficient") && (m.Contains("credit") || m.Contains("balance")))
-            || m.Contains("exceeded your current")
-            || (m.Contains("billing") && m.Contains("limit"));
-    }
+        => PrdAgent.GatewayTransport.UpstreamQuotaPolicy.IsExceeded(statusCode, rawMessage);
 
     /// <summary>
     /// 命中额度用尽时：发专门错误码 + 触发主动站内告警（去重，复用 IPoolFailoverNotifier）。
@@ -4236,7 +4224,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             foreach (var field in UnsupportedOSeriesParameters(resolution.ActualModel))
                 requestBody.Remove(field);
 
-        // GPT-5 和已确认的 o 系列均使用 max_completion_tokens。
+        // GPT-6.1 Sol 不支持 none，不能沿用 GPT-5.6 的默认推理设置。
+        // https://developers.openai.com/api/docs/guides/latest-model
+        if (IsGpt61SolModel(resolution.ActualModel) && !IsStrictParameterPolicy(context))
+            foreach (var field in Gpt61SolUnsupportedSamplingParameters)
+                requestBody.Remove(field);
+
+        // GPT-5、已确认的 GPT-6.1 Sol 与 o 系列使用 max_completion_tokens。
         // 走共用的那一份，别在这里再写一遍（两份必然漂移，而漂移的表现是上游 400）。
         NormalizeOpenAiChatTokenField(requestBody, resolution);
     }
@@ -4268,8 +4262,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
            && (normalized == "gpt-5" || normalized.StartsWith("gpt-5-", StringComparison.Ordinal)
                || normalized.StartsWith("gpt-5.", StringComparison.Ordinal));
 
+    private static bool IsGpt61SolModel(string? model)
+        => NormalizeModelLeaf(model) == "gpt-6.1-sol";
+
+    private static readonly string[] Gpt61SolUnsupportedSamplingParameters =
+        ["temperature", "top_p", "logprobs", "top_logprobs"];
+
     private static bool UsesCompletionTokenBudget(string? model)
-        => IsGpt5FamilyModel(model) || IsKnownOSeriesModel(model);
+        => IsGpt5FamilyModel(model) || IsKnownOSeriesModel(model) || IsGpt61SolModel(model);
 
     // 仅描述已确认型号的预算与采样规则，不承诺旧型号的 role/stream 等完整协议兼容。
     // 仅接受原名与合法日期快照，不能凭 o 前缀猜未来协议。
@@ -4348,6 +4348,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (TryBuildStrictParameterCapabilityFailure(request.Context, resolution, requestBody, out var parameterError))
         {
             error = parameterError;
+            return true;
+        }
+
+        if (UsesOpenAiProtocol(resolution) && IsGpt61SolModel(resolution.ActualModel) && RequestHasTools(requestBody))
+        {
+            error = GatewayResponse.Fail("GPT61_TOOLS_REQUIRE_RESPONSES",
+                "所选模型需要通过 Responses API 使用工具，请切换已配置的 Responses 线路。", 400);
             return true;
         }
 
@@ -4453,6 +4460,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (TryBuildStrictParameterCapabilityRawFailure(request.Context, resolution, requestBody, out var parameterError))
         {
             error = parameterError;
+            return true;
+        }
+
+        if (IsChatCompletionsEndpoint(request.EndpointPath) && requestBody is not null
+            && UsesOpenAiProtocol(resolution) && IsGpt61SolModel(resolution.ActualModel) && RequestHasTools(requestBody))
+        {
+            error = GatewayRawResponse.Fail("GPT61_TOOLS_REQUIRE_RESPONSES",
+                "所选模型需要通过 Responses API 使用工具，请切换已配置的 Responses 线路。", 400);
             return true;
         }
 
@@ -4622,6 +4637,17 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return false;
 
         var strict = IsStrictParameterPolicy(context);
+        if (UsesOpenAiProtocol(resolution) && requestBody["messages"] is JsonArray && IsGpt61SolModel(resolution.ActualModel))
+        {
+            var rejected = strict ? Gpt61SolUnsupportedSamplingParameters.FirstOrDefault(key => IsRequestedJsonParameter(requestBody, key)) : null;
+            if (rejected is not null || requestBody["reasoning_effort"] is JsonValue effort
+                && effort.TryGetValue<string>(out var effortText) && string.Equals(effortText, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                parameter = rejected ?? "reasoning_effort";
+                supported = false;
+                return true;
+            }
+        }
         if (strict && UsesOpenAiProtocol(resolution) && requestBody["messages"] is JsonArray
             && IsKnownOSeriesModel(resolution.ActualModel))
         {
@@ -5468,6 +5494,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
                     ModelGroupName: resolution.ModelGroupName,
+                    ProviderTaskId: providerAttempts?.LastOrDefault(a => !string.IsNullOrWhiteSpace(a.ProviderTaskId))?.ProviderTaskId ?? request.Context?.ProviderTaskId,
                     ProviderReportedCost: rawUsage.ProviderReportedCost,
                     ProviderCostCurrency: rawUsage.ProviderCostCurrency,
                     OutputImagePayloads: rawUsage.OutputImages
@@ -5583,6 +5610,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         attempts.Add(new LlmProviderAttempt
         {
+            AttemptId = stage == "poll" ? Guid.NewGuid().ToString("N") : null,
             Order = attempts.Count + 1,
             Stage = stage,
             Provider = resolution.ExchangeName
@@ -5719,11 +5747,39 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             attempt.Reason = error;
     }
 
+    private static void CaptureRawAttemptEvidence(LlmProviderAttempt? attempt, string body,
+        Dictionary<string, string> headers, string? providerTaskId, bool video)
+    {
+        if (attempt is null || attempt.ReachedProvider != true) return;
+        attempt.AttemptId ??= Guid.NewGuid().ToString("N");
+        attempt.ProviderRequestId = LlmCostEvidence.ResolveProviderRequestId(headers);
+        var usage = RawGatewayUsageParser.Parse(body);
+        attempt.InputTokens = usage.InputTokens;
+        attempt.OutputTokens = usage.OutputTokens;
+        attempt.ProviderReportedCost = usage.ProviderReportedCost;
+        attempt.ProviderCostCurrency = usage.ProviderCostCurrency;
+        attempt.ProviderTaskId = providerTaskId;
+        if (video && providerTaskId is null && attempt.StatusCode is >= 200 and < 300)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                if (document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
+                    attempt.ProviderTaskId = id.GetString();
+            }
+            catch (JsonException) { /* 无结构化作业证据就留空 */ }
+        }
+    }
+
     private static void MarkLastSendAttemptReachedProvider(List<LlmProviderAttempt> attempts)
     {
         var attempt = attempts.LastOrDefault(x => string.Equals(x.Stage, "send", StringComparison.OrdinalIgnoreCase));
         if (attempt is not null)
+        {
+            attempt.AttemptId ??= Guid.NewGuid().ToString("N");
             attempt.ReachedProvider = true;
+        }
     }
 
     #endregion
