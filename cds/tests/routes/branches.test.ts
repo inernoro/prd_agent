@@ -8090,9 +8090,14 @@ describe('Branch Routes', () => {
         status:'running',createdAt:new Date().toISOString(),services:{orphan:{profileId:'orphan',containerName:'old-orphan',hostPort:10010,status:'running'}}});
       mock.addResponsePattern(/docker image inspect.*json .Id/,()=>({exitCode:0,stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null]),stderr:''}));
       const preflight=vi.spyOn(containerService,'preflightProfileStorage');
-      const result=await request(server,'POST','/api/branches/storage-graph/deploy');
-      expect(result.status).toBe(200);
-      expect(String(result.body)).toContain('unsafe_deployment_storage');
+      const source=vi.spyOn(WorktreeService.prototype,'prepareDeploymentSource');
+      for (let retry=0;retry<3;retry++) {
+        const result=await request(server,'POST','/api/branches/storage-graph/deploy');
+        expect(result.status).toBe(200);
+        expect(String(result.body)).toContain('unsafe_deployment_storage');
+      }
+      expect(source).not.toHaveBeenCalled();
+      expect(fs.existsSync(WorktreeService.deploymentSourceRootFor(path.join(tmpDir,'worktrees','storage-graph')))).toBe(false);
       expect(preflight).not.toHaveBeenCalled();
       expect(mock.commands.some(c=>/^docker image inspect/.test(c))).toBe(false);
       expect(mock.commands.some(c=>/^docker (rm|stop|run|create|start) /.test(c))).toBe(false);

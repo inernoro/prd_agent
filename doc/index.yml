@@ -23,6 +23,7 @@ folders:
     name: 九、产品决策
 
 docs:
+  plan.cds.disk-governance-20261113: "CDS / LLMGW 磁盘治理与交接 · 计划"
   plan.web-hosting.related-documents: "网页托管关联文档 · 计划"
   guide.cds.release-scripts: "CDS 项目发布脚本 · 指南"
   # 一、产品规格

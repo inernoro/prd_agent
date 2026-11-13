@@ -160,7 +160,9 @@ if static_release_activate "$2/.staging-fail" "$2" fail; then exit 1; fi
 """)
 assert os.readlink(root / 'current') == '.releases/A'
 assert a.stat().st_mtime > b_time + 1
-assert not (root / '.releases/fail').exists()
+# A failure reported after the pointer briefly became visible is retained for
+# inspection. Recovery restores A without recursively deleting exposed bytes.
+assert (root / '.releases/fail/index.html').read_text() == '<div>C</div>\n'
 PYCACHE
 
 # Upgrade migration must retain more than just previous, preserve nested lazy

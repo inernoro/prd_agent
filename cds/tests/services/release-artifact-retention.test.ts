@@ -266,8 +266,8 @@ describe('远端命令', () => {
   });
 
   it('static 盘点额外取回成品目录，compose 不取', () => {
-    expect(buildReleaseInventoryCommand(target, staticStrategy)!).toContain('CDS_RELEASE_VERSION=');
-    expect(buildReleaseInventoryCommand(target, composeStrategy)!).not.toContain('CDS_RELEASE_VERSION=');
+    expect(buildReleaseInventoryCommand(target, staticStrategy)!).toContain('"$root/.releases"');
+    expect(buildReleaseInventoryCommand(target, composeStrategy)!).not.toContain('"$root/.releases"');
   });
 
   it('existing-script 模式不生成任何命令', () => {
@@ -287,8 +287,10 @@ describe('远端命令', () => {
 
     // 事故值：裸 rm -rf 会在 .git/worktrees/ 留孤儿元数据，之后 git worktree add 会因
     // 「已注册但目录不存在」直接失败。
-    expect(command).toContain('git -C "$repo" worktree remove --force');
-    expect(command).toContain('git -C "$repo" worktree prune');
+    expect(command).toContain("'worktree','remove'");
+    expect(command).not.toContain('worktree remove --force');
+    expect(command).not.toContain('|| rm -rf');
+    expect(command).not.toContain('worktree prune');
   });
 
   it('删除命令拒绝形状不合法的名字，且不会有未加引号的注入面', () => {
@@ -297,7 +299,7 @@ describe('远端命令', () => {
       removeVersions: [],
     })!;
 
-    expect(command).toContain(`'${RUN_A}'`);
+    expect(command).toContain('CDS_SAFE_RECLAIM_PY');
     expect(command).not.toContain('rm -rf /)');
     expect(command).not.toContain('../../etc');
   });

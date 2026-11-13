@@ -18,6 +18,8 @@
 
 ## 文档列表
 
+- [CDS / LLMGW 磁盘治理与交接 · 计划](./plan.cds.disk-governance-20261113.md) `plan.cds.disk-governance-20261113`
+
 - [网页托管关联文档 · 计划](./plan.web-hosting.related-documents.md) `plan.web-hosting.related-documents`
 
 - [CDS 骨架维护与验收 · 指南](./guide.cds.loading.md) `guide.cds.loading`

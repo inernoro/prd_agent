@@ -3,6 +3,48 @@
 STATIC_RELEASE_SWITCH_PERFORMED="${STATIC_RELEASE_SWITCH_PERFORMED:-0}"
 STATIC_RELEASE_TARGET="${STATIC_RELEASE_TARGET:-}"
 STATIC_RELEASE_ROLLBACK_TARGET="${STATIC_RELEASE_ROLLBACK_TARGET:-}"
+# Finite compatibility is opt-in and requires an independently approved rollout.
+# exec_dep.sh runs from the repository root; other callers may supply this path.
+STATIC_ASSET_RETENTION_SCRIPT="${STATIC_ASSET_RETENTION_SCRIPT:-$(pwd)/scripts/lib/static-asset-retention.py}"
+
+static_release_with_asset_lock() {
+  asset_operation="$1"
+  asset_root="$2"
+  shift 2
+  if [ -z "${STATIC_ASSET_COMPAT_DAYS:-}" ]; then
+    "$asset_operation" "$@"
+    return $?
+  fi
+  case "$STATIC_ASSET_COMPAT_DAYS" in
+    *[!0-9]*) echo 'ERROR: static asset compatibility days must be an integer' >&2; return 1 ;;
+  esac
+  if ! [ "$STATIC_ASSET_COMPAT_DAYS" -ge 30 ]; then
+    echo 'ERROR: static asset compatibility window must be at least 30 days' >&2
+    return 1
+  fi
+  mkdir -p "$asset_root" || return 1
+  if [ -L "$asset_root/.static-assets-retention.lock" ]; then
+    echo 'ERROR: static retention lock must not be a symbolic link' >&2
+    return 1
+  fi
+  # Append-open never truncates an existing object. The Python worker also
+  # verifies this inherited descriptor against the current lock identity.
+  exec 9>>"$asset_root/.static-assets-retention.lock"
+  if ! flock -x 9; then exec 9>&-; return 1; fi
+  STATIC_ASSET_LOCK_FD=9 "$asset_operation" "$@"
+  asset_operation_status=$?
+  flock -u 9
+  exec 9>&-
+  return "$asset_operation_status"
+}
+
+static_release_activate() {
+  static_release_with_asset_lock static_release_activate_impl "$2" "$@"
+}
+
+static_release_rollback() {
+  static_release_with_asset_lock static_release_rollback_impl "$1" "$@"
+}
 
 static_release_make_web_readable() {
   web_root="$1"
@@ -39,6 +81,11 @@ PYTIME
 # The destination's own files always win. Hard links retain bytes even if an old
 # release directory is later removed, without duplicating large bundles.
 static_release_retain_assets() {
+  if [ -n "${STATIC_ASSET_COMPAT_DAYS:-}" ]; then
+    python3 "$STATIC_ASSET_RETENTION_SCRIPT" --root "$2" --destination "$1" \
+      --release-id "${3:-}" --compat-days "$STATIC_ASSET_COMPAT_DAYS" --apply || return 1
+    return 0
+  fi
   python3 - "$1" "$2" <<'PYASSETS'
 import errno
 import os
@@ -87,7 +134,7 @@ os.replace(sys.argv[1], sys.argv[2])
 PY
 }
 
-static_release_activate() {
+static_release_activate_impl() {
   staging_dir="$1"
   static_root="$2"
   release_id="$3"
@@ -140,7 +187,7 @@ static_release_activate() {
     rollback_target="$legacy_target"
   fi
 
-  static_release_retain_assets "$staging_dir" "$static_root" || return 1
+  static_release_retain_assets "$staging_dir" "$static_root" "$release_id" || return 1
   mv "$staging_dir" "$release_dir"
   static_release_make_web_readable "$release_dir"
   static_release_refresh_entry_mtime "$release_dir" "$static_root" || return 1
@@ -182,21 +229,22 @@ static_release_activate() {
     else
       rm -f "$static_root/previous"
     fi
-    rm -rf "$release_dir"
-    if [ -n "$legacy_target" ]; then
-      rm -rf "$static_root/$legacy_target"
-    fi
+    echo "WARNING: failed preparation and legacy fallback are preserved for inspection: $release_dir" >&2
     STATIC_RELEASE_SWITCH_PERFORMED=0
     STATIC_RELEASE_TARGET=""
     STATIC_RELEASE_ROLLBACK_TARGET=""
     return 1
   fi
 
+  if [ -n "${STATIC_ASSET_COMPAT_DAYS:-}" ]; then
+    python3 "$STATIC_ASSET_RETENTION_SCRIPT" --root "$static_root" --versions \
+      --compat-days "$STATIC_ASSET_COMPAT_DAYS" --apply || echo 'WARNING: static retirement could not be confirmed; retained objects need inspection' >&2
+  fi
   printf 'STATIC_RELEASE_TARGET=%s\n' "$release_target"
   printf 'STATIC_RELEASE_ROLLBACK_TARGET=%s\n' "$rollback_target"
 }
 
-static_release_rollback() {
+static_release_rollback_impl() {
   static_root="$1"
   rollback_target="$2"
 

@@ -165,6 +165,8 @@ export interface ReleaseArtifactReclaimResult {
   skippedReason?: string;
   readError?: string;
   dryRun: boolean;
+  nativeCounts?: { succeeded: number; held: number; failed: number; pending: number };
+  filesystemNetAvailableChange?: number;
 }
 
 export interface ReleaseHealthProbe {
@@ -1289,12 +1291,15 @@ export class ReleaseService {
       readError: state.readError,
       dryRun: options.dryRun === true,
     };
-    const command = buildReleaseReclaimCommand(target, strategy, plan);
-    if (!command || options.dryRun) {
+    const command = buildReleaseReclaimCommand(target, strategy, plan, {
+      commits: Object.fromEntries(runs.map(run => [run.releaseId, run.commitSha])),
+      identities: state.inventory?.worktreeIdentities,
+      dryRun: options.dryRun === true,
+    });
+    if (!command) {
       return {
         ...base,
-        // dry-run 要让调用方看见「本来会删哪些」，否则预演毫无意义。
-        ...(options.dryRun ? { removedWorktrees: plan.removeWorktrees, removedVersions: plan.removeVersions } : {}),
+        nativeCounts: { succeeded: 0, held: 0, failed: 0, pending: plan.removeWorktrees.length + plan.removeVersions.length },
       };
     }
     try {
@@ -1307,13 +1312,22 @@ export class ReleaseService {
         ...base,
         removedWorktrees: outcome.removedWorktrees,
         removedVersions: outcome.removedVersions,
+        filesystemNetAvailableChange: outcome.filesystemNetAvailableChange,
+        keptReasons: { ...base.keptReasons, ...outcome.heldReasons },
+        nativeCounts: {
+          succeeded: options.dryRun ? 0 : outcome.removedWorktrees.length + outcome.removedVersions.length,
+          held: Object.keys(outcome.heldReasons || {}).length,
+          failed: failed.length,
+          pending: Math.max(0, plan.removeWorktrees.length + plan.removeVersions.length - outcome.removedWorktrees.length - outcome.removedVersions.length - Object.keys(outcome.heldReasons || {}).length - failed.length),
+        },
+        ...(outcome.queryError ? {readError: outcome.queryError, skippedReason: '原生引用查询未完整确认，相关对象继续保留'} : {}),
         ...(failed.length > 0
           ? { skippedReason: `${failed.length} 份产物删除失败仍留在盘上（${failed.slice(0, 5).join('、')}${failed.length > 5 ? ' 等' : ''}），下一轮重试` }
           : {}),
       };
     } catch (err) {
       // 删除失败不算事故：产物还在，下一轮再来。绝不能把异常抛出去打断整轮巡检。
-      return { ...base, skippedReason: `回收命令执行失败：${errorText(err)}` };
+      return { ...base, readError: errorText(err), nativeCounts: { succeeded: 0, held: 0, failed: 0, pending: plan.removeWorktrees.length + plan.removeVersions.length }, skippedReason: `回收命令未能确认，相关对象保留：${errorText(err)}` };
     }
   }
 

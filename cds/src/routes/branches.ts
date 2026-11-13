@@ -3,6 +3,7 @@ import {ProfileStorageProvisionService,profileStorageBranchIdentity} from '../se
 import { StorageProvisionService,storageProvisionDigest } from '../services/storage-provision.js';
 import {infraStoragePlan,stableStorageVolumeName} from '../services/deployment-storage-plan.js';
 import { UnsafeDeploymentStorageError } from '../services/deployment-storage-plan.js';
+import { assertProfileStorageBoundary } from '../services/deployment-storage-boundary.js';
 import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { normalizeRestrictedIpv4Allowlist } from '../services/restricted-ipv4-allowlist.js';
 import { createPreviewAddressRouter } from './preview-address.js';
@@ -13164,6 +13165,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         assertCurrent('manual migration after run');
         return result;
       };
+      assertProfileStorageBoundary(profile, entry.worktreePath);
       const result = deploymentNeedsSourceCheckout([profile])
         ? await worktreePathActivity.withClaim([entry.worktreePath, WorktreeService.deploymentSourceRootFor(entry.worktreePath)], async () => {
           assertCurrent('manual migration before local HEAD');
@@ -14014,6 +14016,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         force: true,
       });
       const deploymentRepoRoot = stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+      // Reject known-invalid declarations before any full source snapshot is allocated.
+      // Runtime preflight still revalidates native identity and current references.
+      for (const profile of profiles) assertProfileStorageBoundary(resolveEffectiveProfile(profile, inputBranch()), entry.worktreePath);
       let pullResult = selectedDeploymentVersion
         ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
         : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
@@ -15472,6 +15477,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
       const deploymentRepoRoot = stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+      assertProfileStorageBoundary(resolveEffectiveProfile(profile, inputBranch()), entry.worktreePath);
       let pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : deploymentNeedsSourceCheckout([resolveEffectiveProfile(profile, inputBranch())])
@@ -23200,8 +23206,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           owner.defaultDeployModes,
           stateService.getBuildProfilesForProject(owner.id),
         );
-        const needsSource = deploymentNeedsSourceCheckout(mergeBranchProfiles(
-          stateService.getBuildProfilesForProject(owner.id),entry).map(profile=>resolveEffectiveProfile(profile,entry!)));
+        const importCreationProfiles = mergeBranchProfiles(stateService.getBuildProfilesForProject(owner.id),entry)
+          .map(profile=>resolveEffectiveProfile(profile,entry!));
+        for (const profile of importCreationProfiles) assertProfileStorageBoundary(profile, entry.worktreePath);
+        const needsSource = deploymentNeedsSourceCheckout(importCreationProfiles);
         if (needsSource) {
           await worktreePathActivity.withClaim([worktreePath,WorktreeService.deploymentSourceRootFor(worktreePath)],async()=>{
             await worktreeService.create(config.repoRoot,mainBranch,worktreePath);stateService.addBranch(entry!);
@@ -23233,6 +23241,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         entry,
       );
       const importEffective = profiles.map(profile => resolveEffectiveProfile(profile, entry!));
+      for (const profile of importEffective) assertProfileStorageBoundary(profile, entry.worktreePath);
       const importNeedsSource = deploymentNeedsSourceCheckout(importEffective);
       const importTarget = await worktreeService.resolveDeploymentCommit(entry.branch,
         entry.worktreePath,undefined,config.repoRoot);

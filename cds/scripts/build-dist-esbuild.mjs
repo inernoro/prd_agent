@@ -66,7 +66,7 @@ await build({
 });
 
 // Assets read at runtime belong in the emitted tree, including source-free prebuilt installs.
-for (const relative of ['services/preview-demo-snapshot.json', 'shared/notification-templates.json']) {
+for (const relative of ['services/preview-demo-snapshot.json', 'shared/notification-templates.json', 'services/release-source-preparation.py', 'services/remote-release-reclaim.py']) {
   const destination = path.join(outDir, relative);
   await mkdir(path.dirname(destination), { recursive: true });
   await copyFile(path.join(srcDir, relative), destination);

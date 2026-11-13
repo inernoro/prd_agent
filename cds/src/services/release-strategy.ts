@@ -275,7 +275,7 @@ export function buildStrategyPreflightCommand(target: ReleaseTarget): string {
   const strategy = effectiveReleaseStrategy(target);
   if (strategy.mode === 'existing-script') return '';
   const repo = shellQuote(target.ssh.appPath);
-  const base = `test -d ${repo} && git -C ${repo} rev-parse --is-inside-work-tree >/dev/null && command -v base64 >/dev/null && command -v bash >/dev/null && command -v python3 >/dev/null`;
+  const base = `test -d ${repo} && git -C ${repo} rev-parse --is-inside-work-tree >/dev/null && command -v base64 >/dev/null && command -v bash >/dev/null && command -v python3 >/dev/null && command -v flock >/dev/null`;
   if (strategy.mode === 'project-script' || strategy.mode === 'managed-script') return base;
   if (strategy.mode === 'generated-compose') {
     return `${base} && command -v docker >/dev/null && docker compose version >/dev/null && test -f ${shellQuote(path.posix.join(target.ssh.appPath, strategy.composeFile!))}`;
@@ -294,6 +294,9 @@ repo_parent="$(dirname "$repo")"
 release_root="$repo_parent/.cds-releases/$CDS_TARGET_ID"
 worktree="$release_root/worktrees/$CDS_RELEASE_ID"
 mkdir -p "$release_root/worktrees"
+test ! -L "$release_root/.retention.lock"
+exec 8>>"$release_root/.retention.lock"
+flock -x 8
 git -C "$repo" fetch --all --prune
 git -C "$repo" cat-file -e "$CDS_COMMIT_SHA^{commit}"
 if [ ! -d "$worktree" ]; then git -C "$repo" worktree add --detach "$worktree" "$CDS_COMMIT_SHA"; fi
@@ -316,11 +319,15 @@ set -Eeuo pipefail
 repo="$PWD"
 publish_root=${shellQuote(strategy.publicDirectory!)}
 repo_parent="$(dirname "$repo")"
-worktree_root="$repo_parent/.cds-releases/$CDS_TARGET_ID/worktrees"
+release_root="$repo_parent/.cds-releases/$CDS_TARGET_ID"
+worktree_root="$release_root/worktrees"
 worktree="$worktree_root/$CDS_RELEASE_ID"
 version="$publish_root/.releases/$CDS_RELEASE_ID"
 mkdir -p "$worktree_root" "$publish_root/.releases"
 chmod 755 "$publish_root" "$publish_root/.releases"
+test ! -L "$release_root/.retention.lock"
+exec 8>>"$release_root/.retention.lock"
+flock -x 8
 git -C "$repo" fetch --all --prune
 git -C "$repo" cat-file -e "$CDS_COMMIT_SHA^{commit}"
 if [ ! -d "$worktree" ]; then git -C "$repo" worktree add --detach "$worktree" "$CDS_COMMIT_SHA"; fi
@@ -328,7 +335,10 @@ cd "$worktree"
 ${strategy.buildCommand}
 source_dir="$worktree/${strategy.artifactDirectory}"
 test -s "$source_dir/index.html"
-rm -rf "$version.tmp"
+if [ -e "$version.tmp" ] || [ -L "$version.tmp" ] || [ -e "$version" ] || [ -L "$version" ]; then
+  echo 'Static preparation or version already exists; preserved for inspection' >&2
+  exit 1
+fi
 mkdir -p "$version.tmp"
 cp -a "$source_dir/." "$version.tmp/"
 find "$version.tmp" -type d -exec chmod 755 {} +
@@ -351,8 +361,7 @@ for ref in refs:
     if not asset.is_file() or asset.stat().st_size == 0:
         raise SystemExit(f'entry asset missing or empty: {clean}')
 PY
-rm -rf "$version"
-mv "$version.tmp" "$version"
+mv -T "$version.tmp" "$version"
 ${preservePrevious ? '# auto-restore preserves the last known-good previous pointer' : 'if [ -L "$publish_root/current" ]; then ln -sfn "$(readlink "$publish_root/current")" "$publish_root/previous"; fi'}
 rm -f "$publish_root/current.next"
 ln -s "$version" "$publish_root/current.next"

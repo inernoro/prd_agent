@@ -29,15 +29,20 @@ async function visible(page, expected) {
   await page.waitForFunction(value => document.querySelector('#root')?.textContent === value, expected);
   assert.equal(await page.locator('#root').textContent(), expected);
 }
+async function color(page, expected) {
+  await page.waitForFunction(value => getComputedStyle(document.querySelector('#root')).color === value, expected);
+}
 try {
   const oldTab = await context.newPage();
   await oldTab.goto(`${base}/visual-agent`);
   await visible(oldTab, 'A');
+  await color(oldTab, 'rgb(10, 11, 12)');
   const cachedHtml = await oldTab.content();
   activate('B');
   // A page already running A can still import its lazy chunk after B goes live.
   await oldTab.evaluate(() => window.loadChunk());
   await visible(oldTab, 'A chunk');
+  await color(oldTab, 'rgb(110, 111, 112)');
   // Simulate a client still holding old HTML, with a fresh asset cache.
   const staleContext = await browser.newContext();
   try {
@@ -47,22 +52,26 @@ try {
     await visible(staleTab, 'A');
     await staleTab.evaluate(() => window.loadChunk());
     await visible(staleTab, 'A chunk');
+    await color(staleTab, 'rgb(110, 111, 112)');
   } finally {
     await staleContext.close();
   }
   const newTab = await context.newPage();
   await newTab.goto(`${base}/visual-agent`);
   await visible(newTab, 'B');
+  await color(newTab, 'rgb(20, 21, 22)');
   // Ordinary reload (cache enabled) must get B rather than stale cached A HTML.
   await oldTab.reload();
   await visible(oldTab, 'B');
   activate('A');
   await newTab.evaluate(() => window.loadChunk());
   await visible(newTab, 'B chunk');
+  await color(newTab, 'rgb(120, 121, 122)');
   await oldTab.reload();
   await visible(oldTab, 'A');
+  await color(oldTab, 'rgb(10, 11, 12)');
   assert.deepEqual(failures, []);
-  console.log('Static release browser test: PASS (cached reload, old tab lazy import, rollback, visible content, no resource errors)');
+  console.log('Static release browser test: PASS (cached reload, old tab lazy JS/CSS, rollback, visible content, no resource errors)');
 } finally {
   await context.close();
   await browser.close();

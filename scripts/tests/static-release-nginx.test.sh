@@ -89,9 +89,12 @@ test "$(curl -fsS "http://127.0.0.1:$port/assets/app.js")" = "new"
 # would collide in nginx before exercising the release metadata refresh.
 for version in A B; do
   mkdir -p "$static_root/.staging-cache-$version/assets"
-  printf '<div id="root"></div><script type="module" src="/assets/%s.js"></script>\n' "$version" > "$static_root/.staging-cache-$version/index.html"
-  printf 'document.querySelector("#root").textContent="%s"; window.loadChunk=()=>import("./%s-chunk.js").then(m=>document.querySelector("#root").textContent=m.value);\n' "$version" "$version" > "$static_root/.staging-cache-$version/assets/$version.js"
+  printf '<!doctype html><html><head><link rel="stylesheet" href="/assets/%s.css"></head><body><div id="root"></div><script type="module" src="/assets/%s.js"></script></body></html>\n' "$version" "$version" > "$static_root/.staging-cache-$version/index.html"
+  printf 'document.querySelector("#root").textContent="%s"; window.loadChunk=()=>import("./%s-chunk.js").then(m=>new Promise((resolve,reject)=>{const link=document.createElement("link");link.rel="stylesheet";link.href=new URL("./%s-lazy.css",import.meta.url).href;link.onload=()=>{document.querySelector("#root").textContent=m.value;resolve();};link.onerror=reject;document.head.append(link);}));\n' "$version" "$version" "$version" > "$static_root/.staging-cache-$version/assets/$version.js"
   printf 'export const value="%s chunk";\n' "$version" > "$static_root/.staging-cache-$version/assets/$version-chunk.js"
+  if [ "$version" = A ]; then initial_color='10,11,12'; lazy_color='110,111,112'; else initial_color='20,21,22'; lazy_color='120,121,122'; fi
+  printf '#root { color: rgb(%s); }\n' "$initial_color" > "$static_root/.staging-cache-$version/assets/$version.css"
+  printf '#root { color: rgb(%s); }\n' "$lazy_color" > "$static_root/.staging-cache-$version/assets/$version-lazy.css"
 done
 python3 - "$static_root" <<'PYFIXTURE'
 import os
@@ -145,11 +148,15 @@ expect_changed "$tmp_root/A.headers" B
 for version in A B; do
   curl -fsS "http://127.0.0.1:$port/assets/$version.js" > /dev/null
   curl -fsS "http://127.0.0.1:$port/assets/$version-chunk.js" > /dev/null
+  curl -fsS "http://127.0.0.1:$port/assets/$version.css" > /dev/null
+  curl -fsS "http://127.0.0.1:$port/assets/$version-lazy.css" > /dev/null
 done
 static_release_rollback "$static_root" .releases/cache-A
 for version in A B; do
   curl -fsS "http://127.0.0.1:$port/assets/$version.js" > /dev/null
   curl -fsS "http://127.0.0.1:$port/assets/$version-chunk.js" > /dev/null
+  curl -fsS "http://127.0.0.1:$port/assets/$version.css" > /dev/null
+  curl -fsS "http://127.0.0.1:$port/assets/$version-lazy.css" > /dev/null
 done
 entry_headers "$tmp_root/rollback.headers" "$tmp_root/rollback.html"
 expect_changed "$tmp_root/B.headers" A

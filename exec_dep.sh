@@ -18,6 +18,7 @@ set -eu
 #   SKIP_VERIFY=1 ./exec_dep.sh  # 同上，环境变量方式
 #
 # 可选环境变量：
+#   - PRD_AGENT_RELEASE_MIN_FREE_MB：新增发布写入前的最低余量，默认 4096 MiB（已有产物只读核验不受此门禁影响）
 #   - PRD_AGENT_RELEASE_REF：指定发布 ref（latest / sha-<commit> / <tag>）
 #   - PRD_AGENT_DEPLOY_COMMIT：指定 commit，等价于 PRD_AGENT_RELEASE_REF=sha-<commit>
 #   - PRD_AGENT_RELEASE_TAG：指定发布 tag，等价于 PRD_AGENT_RELEASE_REF=<tag>
@@ -274,6 +275,17 @@ if [ "$TAG" = "latest" ]; then
   echo "Deploy target: latest"
 else
   echo "Deploy target: immutable ref $TAG"
+fi
+
+# Reuse the existing disk admission helper before downloads, image pulls, or
+# configuration rewrites. Help and existing-artifact verification stay usable.
+if [ "$LLMGW_VERIFY_ONLY" != "1" ] || [ "$static_only_mode" = "1" ] || \
+   [ "${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" != "1" ] || [ "${SKIP_API_PULL:-0}" != "1" ]; then
+  if [ ! -f scripts/llmgw-disk-space-guard.sh ]; then
+    echo "ERROR: missing scripts/llmgw-disk-space-guard.sh" >&2
+    exit 1
+  fi
+  sh scripts/llmgw-disk-space-guard.sh "$PWD" "${PRD_AGENT_RELEASE_MIN_FREE_MB:-4096}" "production release"
 fi
 
 # 兼容两种方式传 repo：
