@@ -101,6 +101,7 @@ try {
   browser = await launch();
   for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) for (const theme of ['light', 'dark']) {
     const id = `${viewport.width}-${theme}`;
+    if (process.env.LLMGW_DENSITY_FILTER && !new RegExp(process.env.LLMGW_DENSITY_FILTER).test(id)) continue;
     const context = await browser.newContext({ viewport, colorScheme: theme });
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
@@ -229,7 +230,7 @@ try {
 } finally {
   await browser?.close();
   await new Promise(resolve => server.close(resolve));
-  fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ provenance: 'deterministic-fixture', dist: DIST, results, failures }, null, 2));
+  fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ provenance: 'deterministic-fixture', dist: DIST, filter: process.env.LLMGW_DENSITY_FILTER || null, results, failures }, null, 2));
 }
 console.log(JSON.stringify({ snapshots: results.length, failures, output: OUT }, null, 2));
 process.exitCode = failures.length ? 1 : 0;
