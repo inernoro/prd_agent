@@ -21,10 +21,19 @@ public class ReportEvidenceService
         IEnumerable<SourceStats>? sources = null, bool dailyEnabled = true, bool mapEnabled = true, DateTime? reportStart = null)
     {
         var start = (reportStart ?? activity.PeriodStart).Date;
-        var previous = await _db.WeeklyReports.Find(r => r.UserId == userId && r.TeamId == teamId
-            && r.PeriodEnd < start && r.EvidenceLedger != null)
-            .SortByDescending(r => r.PeriodEnd).FirstOrDefaultAsync(CancellationToken.None);
-        return ReportEvidenceEngine.Merge(new[] { previous?.EvidenceLedger, FromActivity(activity, sources, dailyEnabled, mapEnabled) });
+        var saved = await ReadSavedAsync(userId, start, teamId);
+        return ReportEvidenceEngine.Merge(saved.Append(FromActivity(activity, sources, dailyEnabled, mapEnabled)));
+    }
+
+    /// <summary>包含本期已存证据，采集中断不能让进度倒退；事件仍按展示日期过滤。</summary>
+    public async Task<List<ReportEvidenceLedger>> ReadSavedAsync(string userId, DateTime asOf, string? teamId = null)
+    {
+        var filter = Builders<WeeklyReport>.Filter.Where(r => r.UserId == userId
+            && r.PeriodStart <= asOf.Date && r.EvidenceLedger != null);
+        if (teamId != null) filter &= Builders<WeeklyReport>.Filter.Eq(r => r.TeamId, teamId);
+        var reports = await _db.WeeklyReports.Find(filter).SortByDescending(r => r.PeriodStart)
+            .Limit(teamId == null ? 0 : 1).ToListAsync(CancellationToken.None);
+        return reports.GroupBy(r => r.TeamId).Select(g => g.First().EvidenceLedger!).ToList();
     }
 
     private static string StableId(string prefix, string value)

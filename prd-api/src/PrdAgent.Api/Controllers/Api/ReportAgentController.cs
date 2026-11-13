@@ -3013,10 +3013,8 @@ public class ReportAgentController : ControllerBase
         var prefs = await _db.UserPreferences.Find(p => p.UserId == userId).FirstOrDefaultAsync(CancellationToken.None);
         var current = ReportEvidenceService.FromActivity(activity, dailyEnabled: true,
             mapEnabled: prefs?.ReportAgentPreferences?.MapPlatformSourceEnabled ?? true);
-        var prior = await _db.WeeklyReports.Find(r => r.UserId == userId && r.PeriodEnd < weekStart && r.EvidenceLedger != null)
-            .SortByDescending(r => r.PeriodEnd).ToListAsync(CancellationToken.None);
-        var latestPerTeam = prior.GroupBy(r => r.TeamId).Select(g => g.First().EvidenceLedger);
-        var ledger = ReportEvidenceEngine.Merge(latestPerTeam.Append(current));
+        var saved = await new ReportEvidenceService(_db).ReadSavedAsync(userId, day);
+        var ledger = ReportEvidenceEngine.Merge(saved.Append(current));
         return Ok(ApiResponse<ReportDeliverySnapshot>.Ok(ReportEvidenceEngine.Build(ledger, day, day)));
     }
 
