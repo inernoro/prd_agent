@@ -1,0 +1,1422 @@
+{
+  "schema": 1,
+  "verdict": "PARTIAL",
+  "verifiedDate": "2026-11-13 Asia/Shanghai",
+  "scope": "性能结果终态与被测提交对账；不修改产品业务API/UI、不合并、不发布生产、不购买资源、不对生产施压",
+  "applicationCommit": "4899254187060a5376a5d07a666fe5edd7150ded",
+  "collectorCommit": "d3d959d06c01e90a1347cebe15e42da23f7e275e",
+  "fixCommits": [
+    "fd1841d23970976c6ff97a0f577b2420f42b5fcd",
+    "d3d959d06c01e90a1347cebe15e42da23f7e275e"
+  ],
+  "confirmedIssues": [
+    {
+      "id": "PERF-CHECKPOINT",
+      "reproduced": true,
+      "condition": "all档位normal完成后真实SIGTERM，读取未完成快照",
+      "expected": "拒绝校准/比较通过",
+      "oldActual": "38a5abd27返回pass=true，代表性断言失败",
+      "fixedActual": "同一字节快照返回pass=false；完整恢复运行能通过",
+      "proof": {
+        "provenance": "integration-live",
+        "snapshotSha256": "016b643f91eb4ef78d60d69ca61aa1d488417e593a521bf1d1e4fee451e7e9af",
+        "oldJudge": "38a5abd27",
+        "newJudge": "d3d959d06",
+        "applicationCommit": "4899254187060a5376a5d07a666fe5edd7150ded",
+        "harnessCommit": "d3d959d06c01e90a1347cebe15e42da23f7e275e",
+        "execution": {
+          "profile": "all",
+          "state": "running"
+        },
+        "oldVerdict": {
+          "pass": true,
+          "failures": []
+        },
+        "newVerdict": {
+          "pass": false,
+          "failures": [
+            "测试尚未完成或缺少终态，阶段快照不能作为通过证据",
+            "all档位必须包含正常负载、连续并发档位和持续运行阶段"
+          ]
+        }
+      }
+    },
+    {
+      "id": "PERF-BUILD-IDENTITY",
+      "reproduced": true,
+      "condition": "指定489925418构建，归档目录嵌套在测试分支工作区",
+      "expected": "API编译实际SHA、运行声明SHA、Web构建SHA均为目标提交",
+      "oldActual": "[assembly: System.Reflection.AssemblyInformationalVersionAttribute(\"1.0.0+fd1841d23970976c6ff97a0f577b2420f42b5fcd\")]",
+      "fixedActual": {
+        "api": {
+          "actualCommit": "4899254187060a5376a5d07a666fe5edd7150ded",
+          "expectedCommit": "4899254187060a5376a5d07a666fe5edd7150ded",
+          "commitMatch": "match"
+        },
+        "webEntries": [
+          "/assets/index-JhnGOFhJ-4899254187060a5376a5d07a666fe5edd7150ded.js"
+        ]
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "id": "AC-PERF-01",
+      "status": "PASS",
+      "provenance": "integration-live",
+      "evidence": "三次独立数据库、完整normal终态、浏览器闭环与版本对账；可生成基线"
+    },
+    {
+      "id": "AC-PERF-02",
+      "status": "PASS",
+      "provenance": "integration-live",
+      "evidence": "真实中断文件在旧判定器通过、新判定器拒绝；未补写历史终态"
+    },
+    {
+      "id": "AC-PERF-03",
+      "status": "PASS",
+      "provenance": "integration-live",
+      "evidence": "350ms真实MAP控制器前延迟；执行complete、业务零错误、比较失败且app p95超限"
+    },
+    {
+      "id": "AC-PERF-04",
+      "status": "PASS",
+      "provenance": "integration-live",
+      "evidence": "中断资源精确清理4容器2网络；随后全新实例全量9阶段比较通过"
+    },
+    {
+      "id": "AC-PERF-05",
+      "status": "BLOCKED",
+      "provenance": "preview-live",
+      "evidence": "未取得公开入口；明暗主题、移动端与公开预览业务刷新闭环均未验收"
+    },
+    {
+      "id": "AC-PERF-06",
+      "status": "PASS",
+      "provenance": "integration-live",
+      "evidence": "真实/api/version的独立实际/声明SHA及实际HTML入口均等于指定提交"
+    }
+  ],
+  "baseline": {
+    "sourceRuns": [
+      {
+        "environmentId": "map-perf-7e775306d6d0",
+        "execution": {
+          "profile": "normal",
+          "state": "complete"
+        },
+        "finishedAt": "2026-11-13T02:40:37.165Z",
+        "versionMatches": "match",
+        "journeyP95": 154.99088100000517,
+        "errors": 0
+      },
+      {
+        "environmentId": "map-perf-4c967a88043b",
+        "execution": {
+          "profile": "normal",
+          "state": "complete"
+        },
+        "finishedAt": "2026-11-13T02:41:28.559Z",
+        "versionMatches": "match",
+        "journeyP95": 125.84880500000145,
+        "errors": 0
+      },
+      {
+        "environmentId": "map-perf-96c9c0d33024",
+        "execution": {
+          "profile": "normal",
+          "state": "complete"
+        },
+        "finishedAt": "2026-11-13T02:42:21.497Z",
+        "versionMatches": "match",
+        "journeyP95": 151.69990900000266,
+        "errors": 0
+      }
+    ],
+    "limits": {
+      "document-open": {
+        "clientP95": 118.70479199995316,
+        "appP95": 50.096,
+        "errorRate": 0.025,
+        "minThroughput": 1.3990003143867482
+      },
+      "home": {
+        "clientP95": 40.37854800000787,
+        "appP95": 31.473,
+        "errorRate": 0.025,
+        "minThroughput": 1.3990003143867482
+      },
+      "journey": {
+        "clientP95": 242.41710900001635,
+        "appP95": null,
+        "errorRate": 0.025,
+        "minThroughput": 1.3990003143867482
+      },
+      "knowledge-list": {
+        "clientP95": 114.48690599991824,
+        "appP95": 50.037000000000006,
+        "errorRate": 0.025,
+        "minThroughput": 1.3990003143867482
+      },
+      "write": {
+        "clientP95": 118.41853899999842,
+        "appP95": null,
+        "errorRate": 0.025,
+        "minThroughput": 1.3990003143867482
+      },
+      "write-create": {
+        "clientP95": 78.98925100002089,
+        "appP95": 50.747,
+        "errorRate": 0.025,
+        "minThroughput": 1.3990003143867482
+      },
+      "write-delete": {
+        "clientP95": 59.4237409999987,
+        "appP95": 47.866,
+        "errorRate": 0.025,
+        "minThroughput": 1.3990003143867482
+      },
+      "write-readback": {
+        "clientP95": 38.964663999999175,
+        "appP95": 30.114,
+        "errorRate": 0.025,
+        "minThroughput": 1.3990003143867482
+      },
+      "write-save": {
+        "clientP95": 64.84719899999618,
+        "appP95": 63.506,
+        "errorRate": 0.025,
+        "minThroughput": 1.3990003143867482
+      },
+      "write-versions": {
+        "clientP95": 32.187174999999115,
+        "appP95": 24.11,
+        "errorRate": 0.025,
+        "minThroughput": 1.3990003143867482
+      }
+    }
+  },
+  "interruption": {
+    "provenance": "integration-live",
+    "stoppedAtRampStart": true,
+    "timedOut": false,
+    "exit": {
+      "code": null,
+      "signal": "SIGTERM"
+    },
+    "applicationCommit": "4899254187060a5376a5d07a666fe5edd7150ded",
+    "harnessCommit": "d3d959d06c01e90a1347cebe15e42da23f7e275e",
+    "environmentId": "map-perf-be597f92404e",
+    "execution": {
+      "profile": "all",
+      "state": "running"
+    },
+    "finishedAt": null,
+    "buildIdentity": {
+      "api": {
+        "actualCommit": "4899254187060a5376a5d07a666fe5edd7150ded",
+        "expectedCommit": "4899254187060a5376a5d07a666fe5edd7150ded",
+        "commitMatch": "match"
+      },
+      "webEntries": [
+        "/assets/index-JhnGOFhJ-4899254187060a5376a5d07a666fe5edd7150ded.js"
+      ]
+    },
+    "phaseNames": [
+      "normal"
+    ],
+    "comparison": {
+      "pass": false,
+      "failures": [
+        "测试尚未完成或缺少终态，阶段快照不能作为通过证据",
+        "all档位必须包含正常负载、连续并发档位和持续运行阶段"
+      ]
+    },
+    "cleanup": {
+      "removedContainers": 4,
+      "removedNetworks": 2,
+      "remainingContainers": "",
+      "remainingNetworks": ""
+    },
+    "safety": "DOCKER_HOST故意指向不可达本地端口；执行器仍固定使用本地Unix socket。只按本次精确标签清理。"
+  },
+  "recovery": {
+    "environmentId": "map-perf-c053e9449818",
+    "execution": {
+      "profile": "all",
+      "state": "complete"
+    },
+    "finishedAt": "2026-11-13T02:48:27.805Z",
+    "browserPassed": true,
+    "comparison": {
+      "pass": true,
+      "failures": []
+    },
+    "capacity": {
+      "criterion": "任一场景错误率>1% 或 client p95>正常负载两倍；仅为本隔离配置的相对退化边界",
+      "firstDegradedUsers": 8,
+      "lastTestedUsers": 128,
+      "stages": [
+        {
+          "users": 2,
+          "journeyP95": 133.76717900000222,
+          "journeysPerSecond": 22.086890925929197,
+          "errorRate": 0
+        },
+        {
+          "users": 4,
+          "journeyP95": 146.66058900000644,
+          "journeysPerSecond": 35.6024830161895,
+          "errorRate": 0
+        },
+        {
+          "users": 8,
+          "journeyP95": 185.1109279999946,
+          "journeysPerSecond": 51.55189058452036,
+          "errorRate": 0
+        },
+        {
+          "users": 16,
+          "journeyP95": 333.28020500000275,
+          "journeysPerSecond": 56.17572300637703,
+          "errorRate": 0
+        },
+        {
+          "users": 32,
+          "journeyP95": 595.8637260000105,
+          "journeysPerSecond": 61.317889820008745,
+          "errorRate": 0
+        },
+        {
+          "users": 64,
+          "journeyP95": 1160.2930649999762,
+          "journeysPerSecond": 62.482704179565054,
+          "errorRate": 0
+        },
+        {
+          "users": 128,
+          "journeyP95": 2278.0860190000094,
+          "journeysPerSecond": 61.89794704655606,
+          "errorRate": 0
+        }
+      ]
+    },
+    "phases": [
+      {
+        "name": "normal",
+        "users": 2,
+        "seconds": 20.00673936,
+        "scenes": {
+          "document-open": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.999326291018368,
+            "clientP95": 11.698839000004227,
+            "appP95": 9.225,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.999326291018368,
+            "clientP95": 28.2561429999987,
+            "appP95": 22.128,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.999326291018368,
+            "clientP95": 141.42107699999906,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.999326291018368,
+            "clientP95": 16.72777700000006,
+            "appP95": 14.164,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.999326291018368,
+            "clientP95": 75.42602099999931,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.999326291018368,
+            "clientP95": 13.461578000002191,
+            "appP95": 10.818,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.999326291018368,
+            "clientP95": 29.50228899999638,
+            "appP95": 24.977,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.999326291018368,
+            "clientP95": 24.188206999999238,
+            "appP95": 8.628,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.999326291018368,
+            "clientP95": 38.43547100000433,
+            "appP95": 29.495,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.999326291018368,
+            "clientP95": 12.604999999995925,
+            "appP95": 10.832,
+            "externalHttpP95": 0
+          }
+        }
+      },
+      {
+        "name": "ramp-2",
+        "users": 2,
+        "seconds": 15.031540705000006,
+        "scenes": {
+          "document-open": {
+            "attempts": 332,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.086890925929197,
+            "clientP95": 11.46385200000077,
+            "appP95": 8.9,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 332,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.086890925929197,
+            "clientP95": 15.706524000001082,
+            "appP95": 14.07,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 332,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.086890925929197,
+            "clientP95": 133.76717900000222,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 332,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.086890925929197,
+            "clientP95": 13.639232000001357,
+            "appP95": 10.913,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 332,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.086890925929197,
+            "clientP95": 71.74968699998863,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 332,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.086890925929197,
+            "clientP95": 16.330568999997922,
+            "appP95": 13.555,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 332,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.086890925929197,
+            "clientP95": 26.765740999995614,
+            "appP95": 24.637,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 332,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.086890925929197,
+            "clientP95": 10.561666000001424,
+            "appP95": 8.829,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 332,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.086890925929197,
+            "clientP95": 26.772774999997637,
+            "appP95": 24.401,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 332,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.086890925929197,
+            "clientP95": 11.08937600000354,
+            "appP95": 9.648,
+            "externalHttpP95": 0
+          }
+        }
+      },
+      {
+        "name": "ramp-4",
+        "users": 4,
+        "seconds": 15.083217644000005,
+        "scenes": {
+          "document-open": {
+            "attempts": 537,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 35.6024830161895,
+            "clientP95": 15.567211000001407,
+            "appP95": 13.147,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 537,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 35.6024830161895,
+            "clientP95": 19.868350000004284,
+            "appP95": 16.886,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 537,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 35.6024830161895,
+            "clientP95": 146.66058900000644,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 537,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 35.6024830161895,
+            "clientP95": 18.960822000008193,
+            "appP95": 15.93,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 537,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 35.6024830161895,
+            "clientP95": 75.64365099999122,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 537,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 35.6024830161895,
+            "clientP95": 19.315952000004472,
+            "appP95": 16.649,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 537,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 35.6024830161895,
+            "clientP95": 40.79174299999431,
+            "appP95": 39.329,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 537,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 35.6024830161895,
+            "clientP95": 16.400593999991543,
+            "appP95": 13.743,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 537,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 35.6024830161895,
+            "clientP95": 32.31556699999783,
+            "appP95": 30.033,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 537,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 35.6024830161895,
+            "clientP95": 16.186467999999877,
+            "appP95": 13.595,
+            "externalHttpP95": 0
+          }
+        }
+      },
+      {
+        "name": "ramp-8",
+        "users": 8,
+        "seconds": 15.110987999999997,
+        "scenes": {
+          "document-open": {
+            "attempts": 779,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 51.55189058452036,
+            "clientP95": 24.040575000006356,
+            "appP95": 20.182,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 779,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 51.55189058452036,
+            "clientP95": 24.98486199999752,
+            "appP95": 21.607,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 779,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 51.55189058452036,
+            "clientP95": 185.1109279999946,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 779,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 51.55189058452036,
+            "clientP95": 25.517917000004672,
+            "appP95": 21.97,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 779,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 51.55189058452036,
+            "clientP95": 96.53630999999586,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 779,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 51.55189058452036,
+            "clientP95": 26.83597000000009,
+            "appP95": 22.188,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 779,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 51.55189058452036,
+            "clientP95": 52.437252000003355,
+            "appP95": 49.534,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 779,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 51.55189058452036,
+            "clientP95": 23.247154000011506,
+            "appP95": 19.997,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 779,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 51.55189058452036,
+            "clientP95": 40.22265900000639,
+            "appP95": 36.894,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 779,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 51.55189058452036,
+            "clientP95": 25.86956900000223,
+            "appP95": 22.337,
+            "externalHttpP95": 0
+          }
+        }
+      },
+      {
+        "name": "ramp-16",
+        "users": 16,
+        "seconds": 15.148892697000003,
+        "scenes": {
+          "document-open": {
+            "attempts": 851,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 56.17572300637703,
+            "clientP95": 42.80332800000906,
+            "appP95": 36.286,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 851,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 56.17572300637703,
+            "clientP95": 46.888812999997754,
+            "appP95": 41.614,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 851,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 56.17572300637703,
+            "clientP95": 333.28020500000275,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 851,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 56.17572300637703,
+            "clientP95": 46.6842200000101,
+            "appP95": 39.775,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 851,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 56.17572300637703,
+            "clientP95": 171.02386399998795,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 851,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 56.17572300637703,
+            "clientP95": 48.946286000005784,
+            "appP95": 42.433,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 851,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 56.17572300637703,
+            "clientP95": 87.54672699999355,
+            "appP95": 83.634,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 851,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 56.17572300637703,
+            "clientP95": 41.83830100001069,
+            "appP95": 36.151,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 851,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 56.17572300637703,
+            "clientP95": 71.9617819999985,
+            "appP95": 66.418,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 851,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 56.17572300637703,
+            "clientP95": 44.48695399999269,
+            "appP95": 38.445,
+            "externalHttpP95": 0
+          }
+        }
+      },
+      {
+        "name": "ramp-32",
+        "users": 32,
+        "seconds": 15.248404710999996,
+        "scenes": {
+          "document-open": {
+            "attempts": 935,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.317889820008745,
+            "clientP95": 72.03797400000622,
+            "appP95": 63.252,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 935,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.317889820008745,
+            "clientP95": 76.96924799999397,
+            "appP95": 67.698,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 935,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.317889820008745,
+            "clientP95": 595.8637260000105,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 935,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.317889820008745,
+            "clientP95": 79.13043000000471,
+            "appP95": 68.189,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 935,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.317889820008745,
+            "clientP95": 301.03707000000577,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 935,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.317889820008745,
+            "clientP95": 83.53030699999363,
+            "appP95": 74.262,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 935,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.317889820008745,
+            "clientP95": 159.9866949999996,
+            "appP95": 152.295,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 935,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.317889820008745,
+            "clientP95": 71.66655399999581,
+            "appP95": 63.001,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 935,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.317889820008745,
+            "clientP95": 124.0738810000039,
+            "appP95": 114.33,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 935,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.317889820008745,
+            "clientP95": 78.05832100000407,
+            "appP95": 68.671,
+            "externalHttpP95": 0
+          }
+        }
+      },
+      {
+        "name": "ramp-64",
+        "users": 64,
+        "seconds": 15.524296086999994,
+        "scenes": {
+          "document-open": {
+            "attempts": 970,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 62.482704179565054,
+            "clientP95": 137.7570790000027,
+            "appP95": 114.273,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 970,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 62.482704179565054,
+            "clientP95": 169.09119599999394,
+            "appP95": 144.607,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 970,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 62.482704179565054,
+            "clientP95": 1160.2930649999762,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 970,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 62.482704179565054,
+            "clientP95": 153.0884769999975,
+            "appP95": 127.876,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 970,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 62.482704179565054,
+            "clientP95": 569.3128529999813,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 970,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 62.482704179565054,
+            "clientP95": 154.29638000001432,
+            "appP95": 135.686,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 970,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 62.482704179565054,
+            "clientP95": 307.29308500001207,
+            "appP95": 290.304,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 970,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 62.482704179565054,
+            "clientP95": 138.5465780000086,
+            "appP95": 117.661,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 970,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 62.482704179565054,
+            "clientP95": 227.26062000001548,
+            "appP95": 207.559,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 970,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 62.482704179565054,
+            "clientP95": 143.4524959999835,
+            "appP95": 125.249,
+            "externalHttpP95": 0
+          }
+        }
+      },
+      {
+        "name": "ramp-128",
+        "users": 128,
+        "seconds": 16.478737158000005,
+        "scenes": {
+          "document-open": {
+            "attempts": 1020,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.89794704655606,
+            "clientP95": 249.7815549999941,
+            "appP95": 201.706,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 1020,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.89794704655606,
+            "clientP95": 319.54609299998265,
+            "appP95": 261.88,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 1020,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.89794704655606,
+            "clientP95": 2278.0860190000094,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 1020,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.89794704655606,
+            "clientP95": 277.70842800001265,
+            "appP95": 230.143,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 1020,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.89794704655606,
+            "clientP95": 1095.2882899999968,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 1020,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.89794704655606,
+            "clientP95": 286.58780199999455,
+            "appP95": 245.734,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 1020,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.89794704655606,
+            "clientP95": 604.6172110000043,
+            "appP95": 576.389,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 1020,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.89794704655606,
+            "clientP95": 238.9138410000014,
+            "appP95": 196.898,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 1020,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.89794704655606,
+            "clientP95": 413.83258999997634,
+            "appP95": 375.635,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 1020,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 61.89794704655606,
+            "clientP95": 264.8033460000006,
+            "appP95": 226.098,
+            "externalHttpP95": 0
+          }
+        }
+      },
+      {
+        "name": "soak",
+        "users": 2,
+        "seconds": 120.01371862999999,
+        "scenes": {
+          "document-open": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997713823026801,
+            "clientP95": 16.733626000001095,
+            "appP95": 12.416,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997713823026801,
+            "clientP95": 25.263171000027796,
+            "appP95": 16.836,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997713823026801,
+            "clientP95": 120.20167800001218,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997713823026801,
+            "clientP95": 20.931895000016084,
+            "appP95": 15.839,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997713823026801,
+            "clientP95": 65.3084969999909,
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997713823026801,
+            "clientP95": 16.074144999991404,
+            "appP95": 13.617,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997713823026801,
+            "clientP95": 23.846664000011515,
+            "appP95": 22.113,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997713823026801,
+            "clientP95": 13.065013000014005,
+            "appP95": 9.209,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997713823026801,
+            "clientP95": 25.98178500001086,
+            "appP95": 22.825,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997713823026801,
+            "clientP95": 10.004688999964856,
+            "appP95": 8.996,
+            "externalHttpP95": 0
+          }
+        }
+      }
+    ]
+  },
+  "injected": {
+    "environmentId": "map-perf-36e16bc5f8a2",
+    "injectionMs": 350,
+    "execution": {
+      "profile": "normal",
+      "state": "complete"
+    },
+    "finishedAt": "2026-11-13T02:50:17.997Z",
+    "failure": null,
+    "browserPassed": true,
+    "buildIdentity": {
+      "api": {
+        "actualCommit": "4899254187060a5376a5d07a666fe5edd7150ded",
+        "expectedCommit": "4899254187060a5376a5d07a666fe5edd7150ded",
+        "commitMatch": "match"
+      },
+      "webEntries": [
+        "/assets/index-JhnGOFhJ-4899254187060a5376a5d07a666fe5edd7150ded.js"
+      ]
+    },
+    "comparison": {
+      "pass": false,
+      "failures": [
+        "normal/document-open: client p95 394.33 > 118.70 ms",
+        "normal/document-open: app p95 379.34 > 50.10 ms",
+        "normal/journey: client p95 1337.58 > 242.42 ms",
+        "normal/write: client p95 933.61 > 118.42 ms",
+        "normal/write-readback: client p95 364.50 > 38.96 ms",
+        "normal/write-readback: app p95 361.95 > 30.11 ms",
+        "normal/write-save: client p95 559.85 > 64.85 ms",
+        "normal/write-save: app p95 558.42 > 63.51 ms"
+      ]
+    },
+    "phase": {
+      "name": "normal",
+      "users": 2,
+      "seconds": 20.995320582999994,
+      "scenes": {
+        "document-open": {
+          "attempts": 36,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.7146677926484897,
+          "clientP95": 394.3253660000046,
+          "appP95": 379.339,
+          "externalHttpP95": 0
+        },
+        "home": {
+          "attempts": 36,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.7146677926484897,
+          "clientP95": 17.566797999999835,
+          "appP95": 16.112,
+          "externalHttpP95": 0
+        },
+        "journey": {
+          "attempts": 36,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.7146677926484897,
+          "clientP95": 1337.5807059999934,
+          "appP95": 0,
+          "externalHttpP95": 0
+        },
+        "knowledge-list": {
+          "attempts": 36,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.7146677926484897,
+          "clientP95": 53.604690000007395,
+          "appP95": 26.965,
+          "externalHttpP95": 0
+        },
+        "write": {
+          "attempts": 36,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.7146677926484897,
+          "clientP95": 933.6067460000049,
+          "appP95": 0,
+          "externalHttpP95": 0
+        },
+        "write-create": {
+          "attempts": 36,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.7146677926484897,
+          "clientP95": 25.661848000003374,
+          "appP95": 20.09,
+          "externalHttpP95": 0
+        },
+        "write-delete": {
+          "attempts": 36,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.7146677926484897,
+          "clientP95": 24.712496000007377,
+          "appP95": 21.273,
+          "externalHttpP95": 0
+        },
+        "write-readback": {
+          "attempts": 36,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.7146677926484897,
+          "clientP95": 364.5002819999936,
+          "appP95": 361.952,
+          "externalHttpP95": 0
+        },
+        "write-save": {
+          "attempts": 36,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.7146677926484897,
+          "clientP95": 559.8531640000001,
+          "appP95": 558.42,
+          "externalHttpP95": 0
+        },
+        "write-versions": {
+          "attempts": 36,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.7146677926484897,
+          "clientP95": 20.56950900000811,
+          "appP95": 11.81,
+          "externalHttpP95": 0
+        }
+      }
+    }
+  },
+  "crossVerification": {
+    "methods": [
+      "状态机验证",
+      "旧新行为对比",
+      "版本数据流追踪",
+      "输入边界与隔离检查"
+    ],
+    "nodeTests": {
+      "total": 13,
+      "passed": 13,
+      "failed": 0
+    },
+    "timingProbe": "真实Kestrel/HttpClient并行依赖按时间并集计量，350ms应用延迟独立归因；控制台自测通过",
+    "typecheck": "现有E2E tsc通过",
+    "build": "目标489925418的API与Web Release构建通过；现有产品警告未作为本次修复",
+    "permissions": "拒绝远端目标参数；拒绝work外路径且未创建文件；即使DOCKER_HOST指向不可达端口仍固定本地socket",
+    "parallelism": "实际ramp-2到128独立文档写入、写后回读与版本检查零业务错误",
+    "coverageLimit": "普通角色权限矩阵和主题/移动端未因本地管理员桌面流程而算作通过"
+  },
+  "realAcceptance": {
+    "status": "NOT_ACCEPTED",
+    "authoritativeCommand": "python3 .claude/skills/cds/cli/cdscli.py --human preview-url",
+    "actual": "[warn] 调 /api/branches: HTTP 0 — 网络错误: Tunnel connection failed: 403 Forbidden\n[FAIL] CDS API 无法返回真实预览地址，拒绝本地推算。请检查 CDS 连接、鉴权和服务状态后重试。",
+    "layer": "network tunnel 403; 没有取得CDS应用响应或公开预览URL",
+    "location": "隔离测试执行器与GitHub Actions / Preview Acceptance",
+    "operationPath": "真实MAP目标路径：登录后首页→知识库→选择库→打开文档→编辑保存→刷新；本次仅隔离本地实例已执行",
+    "previewDeepLink": null,
+    "darkAndLightTheme": "NOT_ACCEPTED",
+    "mobile": "NOT_ACCEPTED"
+  },
+  "cloudCI": {
+    "status": "NOT_EXECUTED",
+    "attempt": "gh workflow run preview-acceptance.yml --ref perf/map-regression-isolated，perf_ref与perf_base_ref均为489925418，perf_profile=all",
+    "actual": "Get \"https://api.github.com/repos/inernoro/prd_agent/actions/workflows/preview-acceptance.yml\": Forbidden",
+    "reason": "GitHub API工作流查询返回Forbidden，dispatch未进入执行"
+  },
+  "residuals": [
+    "本地rootless Docker没有cgroup委派；容量只适用于记录的共享4 CPU/16 GiB；支持硬配额的云端CI尚未验证",
+    "持续120秒不证明小时级泄漏不存在；单管理员不代表多租户权限分布",
+    "隔离截图观察到知识库头部计数11、左栏20的显示差异；未定位根因，非本次测试终态/版本对账修复范围，未宣称修复"
+  ],
+  "artifacts": {
+    "checkpoint-reproduction.log": {
+      "sha256": "bb65b3d1cb4fc76b1f73fc2a3461e4d2565ed9302bbcebd382c1d24f06d96026",
+      "relativePath": "work/revalidation-20261113/checkpoint-reproduction.log"
+    },
+    "old-representative-test.log": {
+      "sha256": "6fdfdc5c09732441c04d7978e901fe2f41c37ac9729c1ca1356bb0c51b527b74",
+      "relativePath": "work/revalidation-20261113/old-representative-test.log"
+    },
+    "new-representative-test.log": {
+      "sha256": "33499bda71f710b3b390c6a9935fa32a1f85ef890dd3db3460fe6d89ce3cbed8",
+      "relativePath": "work/revalidation-20261113/new-representative-test.log"
+    },
+    "old-build-identity.log": {
+      "sha256": "233efa70a39038cd0588062737f77b7e5d2df726c065aaa763b6a566d3a5e5b5",
+      "relativePath": "work/revalidation-20261113/old-build-identity.log"
+    },
+    "actual-interruption-contrast.json": {
+      "sha256": "052e29adf4e2a38024dc127b739f77e680f187dbf2369daabe46da1c6bc62680",
+      "relativePath": "work/revalidation-20261113/actual-interruption-contrast.json"
+    },
+    "interrupt-evidence.json": {
+      "sha256": "08162dd5cd3f4572130dc29377bb6f79ca56437aae17529b6a741d4f0ac2a080",
+      "relativePath": "work/revalidation-20261113/interrupt-evidence.json"
+    },
+    "verified-baseline.json": {
+      "sha256": "58f5b3d725bf4edbafa1bd77c7612cf2a429d5899bf6c893092af03148f64055",
+      "relativePath": "work/revalidation-20261113/verified-baseline.json"
+    },
+    "candidate/result.json": {
+      "sha256": "194ed24738b5b6c5daa6bc5b9cf3a88ba5aadd3aaeca0735cedc4ca8bf9a885d",
+      "relativePath": "work/revalidation-20261113/candidate/result.json"
+    },
+    "candidate/requests.ndjson": {
+      "sha256": "a0a25f6c0a0704ec836fe5e5a198b29914ececbcb0c14fcb65f82eb9b91c85bb",
+      "relativePath": "work/revalidation-20261113/candidate/requests.ndjson"
+    },
+    "candidate/browser-write.png": {
+      "sha256": "178a5b56127106a9b207211aaaf49e3bfd36f09cf1c908252ec926ce3ee3ce7e",
+      "relativePath": "work/revalidation-20261113/candidate/browser-write.png"
+    },
+    "injected/result.json": {
+      "sha256": "8db8a308fe7467519eb783b887ef72605f46194a9140eafcc040e431b2b5e8ce",
+      "relativePath": "work/revalidation-20261113/injected/result.json"
+    },
+    "injected-proof.json": {
+      "sha256": "9aad028773117936d890c3002c6735e4e542a5fed12896246773734989692ab4",
+      "relativePath": "work/revalidation-20261113/injected-proof.json"
+    },
+    "final-unit-tests.log": {
+      "sha256": "9f26865d0b60aea1f11fe55756d0c9af536933c86ed3cbb74f93c4c3a774db14",
+      "relativePath": "work/revalidation-20261113/final-unit-tests.log"
+    },
+    "final-probe-test.log": {
+      "sha256": "52ea4b265baa0c96b928f01c3dc56beb3df66ebce5b36807624fb77898de4024",
+      "relativePath": "work/revalidation-20261113/final-probe-test.log"
+    },
+    "final-e2e-typecheck.log": {
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "relativePath": "work/revalidation-20261113/final-e2e-typecheck.log"
+    },
+    "final-preview-query.log": {
+      "sha256": "7d757e8a13833536bf2768f0e199e0fca633c5d33888762938216c2c7d6487b3",
+      "relativePath": "work/revalidation-20261113/final-preview-query.log"
+    },
+    "ci-dispatch.log": {
+      "sha256": "3354d0b1cade87357f4faa066f2fb2fed875686454341f256344ac1b56d1ca35",
+      "relativePath": "work/revalidation-20261113/ci-dispatch.log"
+    }
+  }
+}
