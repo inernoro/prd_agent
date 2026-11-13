@@ -3634,8 +3634,19 @@ app.MapGet("/gw/platforms", async (HttpContext http) =>
                 Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true),
                 Builders<BsonDocument>.Filter.In("Status", new[] { "succeeded", "failed" }))))
             .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt").Descending("_id"))
-            .Project(Builders<BsonDocument>.Projection.Include("StartedAt").Include("EndedAt")
-                .Include("Status").Include("StatusCode").Include("Error"))
+            .Project(new BsonDocument
+            {
+                ["StartedAt"] = 1, ["EndedAt"] = 1, ["Status"] = 1, ["StatusCode"] = 1, ["Error"] = 1,
+                ["AnswerText"] = new BsonDocument("$cond", new BsonArray
+                {
+                    new BsonDocument("$and", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$Status", "failed" }),
+                        new BsonDocument("$eq", new BsonArray { new BsonDocument("$type", "$AnswerText"), "string" }),
+                    }),
+                    new BsonDocument("$substrCP", new BsonArray { "$AnswerText", 0, 16384 }), "",
+                }),
+            })
             .FirstOrDefaultAsync();
         var source = docs.First(x => x.GetStringOrEmpty("_id") == item.Id);
         item.RecentCallStatus = PlatformRecentCallPolicy.Classify(lastCall, source.AsNullableUtcDateTime("UpdatedAt"));

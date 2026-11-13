@@ -22,6 +22,16 @@ public sealed class PlatformRecentCallPolicyTests
     }
 
     [Fact]
+    public void RawImageBillingErrorInAnswerTextIsRecognizedWithoutExposingResponse()
+    {
+        var log = Log(429, "", "failed");
+        log["AnswerText"] = "{\"error\":{\"code\":\"credit_balance_exhausted\",\"message\":\"quota depleted\"}}";
+        Assert.Equal("quota_exhausted", PlatformRecentCallPolicy.Classify(log, null));
+        log["AnswerText"] = "{\"userPrompt\":\"insufficient balance\",\"error\":{\"code\":\"rate_limit_exceeded\",\"message\":\"Rate limit exceeded\"}}";
+        Assert.Equal("rate_limited", PlatformRecentCallPolicy.Classify(log, null));
+    }
+
+    [Fact]
     public void OldFailureCannotDescribeTheCurrentCredentialAfterConfigurationChanges()
     {
         var log = Log(429, "insufficient_quota", "failed");
