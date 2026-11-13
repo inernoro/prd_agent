@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日报-2026-10-04-今日大事早知道</title>
+<style>
+  :root {
+    --paper: #f7f1e8;
+    --paper-2: #fffdf8;
+    --ink: #211d18;
+    --ink-2: rgba(33,29,24,0.74);
+    --ink-3: rgba(33,29,24,0.48);
+    --line: rgba(33,29,24,0.14);
+    --line-2: rgba(33,29,24,0.30);
+    --terra: #c05b3c;
+    --indigo: #4f46e5;
+    --serif: "Source Serif 4", "Songti SC", "Noto Serif SC", "STSong", Georgia, serif;
+    --sans: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    --mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper); color: var(--ink); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 40% at 50% -6%, rgba(192,91,60,0.05), transparent),
+      repeating-linear-gradient(0deg, rgba(33,29,24,0.016) 0 1px, transparent 1px 3px);
+    
+  }
+  .paper { max-width: 960px; margin: 0 auto; padding: 26px 34px 60px; }
+  @media (max-width: 640px) { .paper { padding: 18px 16px 44px; } }
+
+  /* ══ 报头 ══ */
+  .masthead { display: flex; align-items: center; gap: 16px; padding-bottom: 14px; border-bottom: 2.5px solid var(--ink); position: relative; }
+  /* 刊徽水印（衬字板式）：垫在右侧 mono 小字背后，只做刊物区分，不承载信息。
+     日报=月亮 / 周报=地球 / 月报=太阳 / 验收=北极星 / 巡检=彗星，见 .claude/rules/report-design-system.md。
+     right 负值不会撑出横向滚动条：.paper 左右 padding 34px（移动端 16px）都大于这里的偏移量。 */
+  .emblem { position: absolute; top: -14px; right: -8px; width: 92px; height: 92px;
+            color: var(--terra); opacity: 0.13; z-index: 0; pointer-events: none; }
+  .emblem svg { display: block; width: 100%; height: 100%; }
+  @media (max-width: 640px) { .emblem { width: 70px; height: 70px; top: -8px; right: -4px; } }
+  .masthead .t, .masthead .r, .masthead .stamp { position: relative; z-index: 1; }
+  .stamp {
+    width: 46px; height: 46px; flex-shrink: 0;
+    background: var(--terra); color: #fff7ee; border-radius: 4px;
+    display: grid; place-items: center;
+    font-family: var(--serif); font-weight: 700; font-size: 15px; letter-spacing: 0.04em;
+    box-shadow: 3px 3px 0 rgba(33,29,24,0.82);
+  }
+  .masthead .t b { font-family: var(--serif); font-size: 25px; font-weight: 700; letter-spacing: 0.02em; display: block; }
+  .masthead .t span { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.34em; }
+  .masthead .r { margin-left: auto; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.14em; line-height: 1.9; }
+  .dateline {
+    display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 9px 0; border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: 0.1em;
+  }
+  .dateline b { color: var(--terra); font-weight: 600; }
+
+  /* ══ 今日大事 ══ */
+  .tldr { margin-top: 26px; border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2); box-shadow: 5px 5px 0 rgba(33,29,24,0.12); }
+  .tldr .hd {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 13px 20px 11px; border-bottom: 1.5px solid var(--ink);
+  }
+  .tldr .hd h2 { font-family: var(--serif); font-size: 19px; font-weight: 700; }
+  .tldr .hd span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em; color: var(--terra); }
+  .tldr ol { list-style: none; counter-reset: n; padding: 6px 20px 12px; }
+  .tldr li { counter-increment: n; display: flex; gap: 14px; padding: 10px 0; border-bottom: 1px dotted var(--line); font-size: 14px; line-height: 1.75; color: var(--ink-2); }
+  .tldr li:last-child { border-bottom: none; }
+  .tldr li::before {
+    content: counter(n, decimal-leading-zero);
+    font-family: var(--mono); font-size: 11px; color: var(--terra); flex-shrink: 0; margin-top: 4px;
+  }
+  .tldr li b { color: var(--ink); font-weight: 600; }
+
+  /* ══ 栏目通用 ══ */
+  .col-head { display: flex; align-items: baseline; gap: 12px; margin: 40px 0 6px; padding-bottom: 10px; border-bottom: 2px solid var(--ink); }
+  .col-head h2 { font-family: var(--serif); font-size: 20px; font-weight: 700; }
+  .col-head span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em; color: var(--ink-3); }
+  .col-head .w { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--terra); letter-spacing: 0.1em; }
+
+  /* 头条 */
+  .lead-story { padding: 22px 0 8px; border-bottom: 1px solid var(--line); }
+  .kicker { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.22em; color: var(--indigo); margin-bottom: 10px; }
+  .lead-story h3 { font-family: var(--serif); font-size: clamp(24px, 3.6vw, 34px); font-weight: 650; line-height: 1.35; }
+  .lead-story h3 em { font-style: normal; position: relative; white-space: nowrap; }
+  .lead-story h3 em::after { content: ""; position: absolute; left: -1%; right: -1%; bottom: 7%; height: 0.3em; background: rgba(192,91,60,0.2); z-index: -1; transform: skewX(-8deg); }
+  .lead-story .prose { margin-top: 16px; font-size: 14.5px; line-height: 2.0; color: var(--ink-2); text-align: justify; }
+  .prose b { color: var(--ink); font-weight: 600; }
+  .prose .q { color: var(--terra); font-weight: 600; }
+  .howto {
+    margin-top: 14px; padding: 12px 16px; border-left: 3px solid var(--terra);
+    background: rgba(192,91,60,0.05); font-size: 13px; line-height: 1.9; color: var(--ink-2);
+  }
+  .howto b { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; color: var(--terra); display: block; margin-bottom: 3px; }
+
+  /* 次级文章 */
+  .story { padding: 20px 0; border-bottom: 1px solid var(--line); }
+  .story:last-child { border-bottom: none; }
+  .story h4 { font-family: var(--serif); font-size: 18.5px; font-weight: 650; line-height: 1.5; margin-top: 6px; }
+  .story .prose { margin-top: 10px; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); text-align: justify; }
+  /* 通用证据图规则（不限于 .story）：IMG 占位由 publish.py 展开成裸
+     <figure><img><figcaption></figure>，不带任何 class；若尺寸规则只挂在 .story 下，
+     （此处不能写出占位的字面写法：CSS 注释不会被剥掉，会被发布闸当成未替换的占位）
+     任何在 .story 之外插入的证据图（如附加章节里的走查截图）会拿不到 width:100%，
+     按截图的原始物理像素（deviceScaleFactor=2 时常是 2880x1800）平铺，撑破 960px 页面
+     产生巨幅横向溢出——2026-09-07 日报「视察评审」节实测踩中，故收窄为全局规则。 */
+  figure { margin: 14px 0 4px; }
+  figure img { width: 100%; max-width: 100%; height: auto; border: 1.5px solid var(--ink); border-radius: 3px; box-shadow: 4px 4px 0 rgba(33,29,24,0.10); display: block; }
+  figcaption { margin-top: 8px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  figcaption::before { content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--terra); border: 1px solid var(--terra); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em; }
+
+  /* 安全专栏印章感 */
+  .security { border: 1.5px solid var(--terra); border-radius: 3px; background: rgba(192,91,60,0.04); padding: 16px 18px; margin-top: 20px; }
+  .security .kicker { color: var(--terra); }
+  .security h4 { font-family: var(--serif); font-size: 17px; font-weight: 700; }
+  .security p { margin-top: 8px; font-size: 13px; line-height: 1.9; color: var(--ink-2); }
+
+  /* 双栏（优化 + 修复） */
+  .two-col { display: grid; grid-template-columns: 1fr 1.35fr; gap: 0; }
+  .two-col > section { min-width: 0; }
+  .two-col > section:first-child { border-right: 1px solid var(--line); padding-right: 26px; }
+  .two-col > section:last-child { padding-left: 26px; }
+  @media (max-width: 760px) {
+    .two-col { grid-template-columns: 1fr; }
+    .two-col > section:first-child { border-right: none; padding-right: 0; }
+    .two-col > section:last-child { padding-left: 0; }
+  }
+  .plain { padding: 16px 0; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); text-align: justify; }
+
+  .fix-cluster { list-style: none; padding-top: 6px; }
+  .fix-cluster li { padding: 12px 0; border-bottom: 1px dotted var(--line); }
+  .fix-cluster li:last-child { border-bottom: none; }
+  .fix-cluster .ct {
+    display: flex; align-items: baseline; gap: 10px; margin-bottom: 5px;
+  }
+  .fix-cluster .ct b { font-family: var(--serif); font-size: 14.5px; font-weight: 700; }
+  .fix-cluster .ct i {
+    font-style: normal; font-family: var(--mono); font-size: 10px; color: #fff7ee;
+    background: var(--ink); border-radius: 2px; padding: 2px 7px; letter-spacing: 0.08em;
+  }
+  .fix-cluster p { font-size: 12.5px; line-height: 1.85; color: var(--ink-2); }
+
+  /* 计划与遗留 */
+  .plan { border-top: 2px solid var(--ink); margin-top: 40px; }
+  .plan .col-head { border-bottom: 1px solid var(--line); margin-top: 18px; }
+  .plan ul { list-style: none; padding: 8px 0 0; }
+  .plan li { display: flex; gap: 12px; padding: 9px 0; font-size: 13px; line-height: 1.8; color: var(--ink-2); border-bottom: 1px dotted var(--line); }
+  .plan li:last-child { border-bottom: none; }
+  .plan li::before { content: "—"; color: var(--terra); flex-shrink: 0; }
+
+  /* 数据页脚 */
+  .stat-row { display: flex; margin-top: 34px; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; background: rgba(255,253,248,0.6); }
+  .stat-row div { flex: 1; padding: 14px 6px; text-align: center; border-right: 1px solid var(--line); }
+  .stat-row div:last-child { border-right: none; }
+  .stat-row b { font-family: var(--serif); font-size: 22px; font-weight: 700; display: block; }
+  .stat-row span { font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.04em; }
+  .colophon {
+    margin-top: 26px; padding-top: 12px; border-top: 2px solid var(--ink);
+    display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--ink-3);
+  }
+
+  /* 头条图文双栏 + 版画插图 */
+  .lead-grid h3 { font-size: clamp(21px, 2.9vw, 29px); text-wrap: balance; }
+  .lead-grid { display: grid; grid-template-columns: 1.12fr 0.88fr; gap: 28px; align-items: start; margin-top: 4px; }
+  @media (max-width: 760px) { .lead-grid { grid-template-columns: 1fr; } }
+  figure.art { margin: 0; }
+  figure.art .frame {
+    border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2);
+    box-shadow: 4px 4px 0 rgba(33,29,24,0.12); padding: 10px;
+  }
+  figure.art svg { display: block; width: 100%; height: auto; }
+  figure.art figcaption { margin-top: 9px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  figure.art figcaption::before {
+    content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--terra);
+    border: 1px solid var(--terra); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em;
+  }
+  .pull {
+    margin: 22px 0 6px; padding: 4px 0 14px 0; position: relative;
+    border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line);
+    font-family: var(--serif); font-size: 19px; font-weight: 600; line-height: 1.7; color: var(--ink);
+  }
+  .pull .qt::before { content: "「"; color: var(--terra); }
+  .pull .qt::after { content: "」"; color: var(--terra); }
+  .pull .by { display: block; margin-top: 6px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em; color: var(--ink-3); }
+
+  /* 数据版 */
+  .data-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 0; }
+  .data-grid > section { min-width: 0; padding: 18px 0 6px; }
+  .data-grid > section:first-child { border-right: 1px solid var(--line); padding-right: 26px; }
+  .data-grid > section:last-child { padding-left: 26px; }
+  @media (max-width: 760px) {
+    .data-grid { grid-template-columns: 1fr; }
+    .data-grid > section:first-child { border-right: none; padding-right: 0; }
+    .data-grid > section:last-child { padding-left: 0; }
+  }
+  .chart-title { font-family: var(--serif); font-size: 14.5px; font-weight: 700; margin-bottom: 4px; }
+  .chart-sub { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--ink-3); margin-bottom: 14px; }
+  .hbar { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+  .hbar .lb { flex: 0 0 108px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hbar .track { flex: 1; height: 14px; background: rgba(33,29,24,0.05); border: 1px solid var(--line); }
+  .hbar .track i { display: block; height: 100%; background: var(--ink); }
+  .hbar.hot .track i { background: var(--terra); }
+  .hbar .v { flex: 0 0 26px; font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .waffle { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; max-width: 300px; }
+  .waffle i { aspect-ratio: 1; border: 1px solid var(--line-2); }
+  .waffle .tfix { background: var(--ink); border-color: var(--ink); }
+  .waffle .tdoc { background: rgba(33,29,24,0.22); }
+  .waffle .tfeat { background: var(--terra); border-color: var(--terra); }
+  .waffle .tref { background: var(--indigo); border-color: var(--indigo); }
+  .waffle .tci { background: rgba(79,70,229,0.28); }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 10px; height: 10px; border: 1px solid var(--line-2); }
+  .byline-row { margin-top: 14px; padding-top: 10px; border-top: 1px dotted var(--line); font-size: 12px; color: var(--ink-3); }
+  .note { margin-top: 14px; font-size: 12px; color: var(--ink-3); line-height: 1.8; }
+  .note b { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--terra); }
+</style>
+</head>
+<body>
+<div class="paper">
+  <header class="masthead">
+    <div class="emblem"><svg viewBox="0 0 120 120" fill="none" data-emblem="moon" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><mask id="emb-moon-m"><rect width="120" height="120" fill="#000"/><circle cx="56" cy="60" r="44" fill="#fff"/><circle cx="84" cy="46" r="38" fill="#000"/></mask></defs><g mask="url(#emb-moon-m)"><circle cx="56" cy="60" r="44" fill="currentColor" fill-opacity="0.18"/><g stroke="currentColor" stroke-width="2" opacity="0.85"><path d="M6 44 L64 102 M6 62 L52 108 M6 80 L34 108 M14 30 L78 94 M26 18 L92 84"/></g><circle cx="56" cy="60" r="44" stroke="currentColor" stroke-width="3"/></g><g stroke="currentColor" stroke-width="2.2" opacity="0.9"><circle cx="38" cy="48" r="7"/><circle cx="30" cy="74" r="4.5"/><circle cx="48" cy="88" r="3.5"/></g></svg></div>
+    <div class="stamp">MAP</div>
+    <div class="t">
+      <b>米多智能体日报</b>
+      <span>MIDUO AGENT DAILY</span>
+    </div>
+    <div class="r">今日大事早知道<br>日报智能体 · 自动编印</div>
+  </header>
+  <div class="dateline">
+    <span>2026 年 10 月 4 日 · 星期日 · 第 <b>277</b> 期 · 补记 09-30 16:06 ~ 10-04 05:06</span>
+    <span>主干落地 <b>121</b> 次真实提交 · feat 11 / fix 85 / docs 10 / refactor 2 / test 2 / ci 1 · 2 个署名</span>
+  </div>
+
+  <section class="tldr">
+    <div class="hd"><h2>今日大事</h2><span>TL;DR</span></div>
+    <ol>
+      <li><b>本期是补记期</b>：上一期止于 09-30 凌晨，此后 5 天（09-30 至 10-04）的 10 条主干落地、121 个真实提交一并补记。</li>
+      <li><b>CDS 分支列表新增「按分组」视图</b>：按名字前缀一键建组、拖卡片钉入、规则实时预览命中，分组整个项目共享。</li>
+      <li><b>首页第一屏换成 52 秒片花与满屏循环</b>：画面与配乐由代码实时生成，片花按产品分幕，手机端也能完整观看。</li>
+      <li><b>每日关键功能验收扩到 16 条核心功能线</b>：每天输出一张红绿结果表，并当场揪出排行榜停更与浮窗遮挡两个真问题。</li>
+      <li><b>CDS 支持本地多用户账号</b>：不依赖 GitHub 登录也能多人使用，同时守住「系统所有者」的越权边界。</li>
+    </ol>
+  </section>
+
+  <div class="col-head"><h2>新增方向</h2><span>FEATURES</span><span class="w">本期 5 项 · 头条展开</span></div>
+
+  <article class="lead-story">
+    <div class="kicker">头条 · CDS 分支管理</div>
+    <div class="lead-grid">
+      <div>
+        <h3>分支一多就乱的老问题，<br>有了<em>按分组</em>的整理法。</h3>
+        <p class="prose" style="margin-top:14px">
+          <b>是什么：</b>分支列表新增「按分组」视图。分组按项目保存，项目里所有成员和 Agent 共享同一份；一个分支只归一组，认领顺序固定为「手动钉入、按规则、未归组」。
+          第一次切过来，系统按分支名前缀给出建组建议，只有一个分支的前缀默认不勾，组名当场可改。
+          <b>解决什么：</b>同一个项目里常有十几条 Agent 分支同时在跑，平铺的列表只能靠眼力找。分组后每组头上有一句话汇总（出错、在构建、排队、运行中、未运行），收起来也看得见。
+          <b>怎么用：</b>把卡片拖进组头即钉入（名字旁出现图钉），拖回未归组取消；键盘和触屏用卡片菜单「移到分组」。编辑分组时，规则命中哪些分支、哪些被上方分组先认领，实时可见。
+          多人同时改时，后保存的一方会收到冲突提示并载入最新版本，不会悄悄覆盖别人。
+        </p>
+      </div>
+      <figure class="art">
+        <div class="frame">
+        <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="分支分组版画示意">
+          <defs>
+            <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#211d18" stroke-width="1" opacity="0.35"/></pattern>
+            <pattern id="hatchT" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><line x1="0" y1="0" x2="0" y2="5" stroke="#c05b3c" stroke-width="1.2" opacity="0.55"/></pattern>
+          </defs>
+          <rect x="24" y="24" width="352" height="64" fill="#fffdf8" stroke="#211d18" stroke-width="2.5"/>
+          <rect x="24" y="24" width="352" height="18" fill="url(#hatch)" stroke="#211d18" stroke-width="2"/>
+          <text x="34" y="38" font-family="Consolas,monospace" font-size="9" fill="#211d18">GROUP A · claude/*</text>
+          <rect x="36" y="52" width="70" height="28" fill="#f7f1e8" stroke="#211d18" stroke-width="1.6"/>
+          <rect x="116" y="52" width="70" height="28" fill="#f7f1e8" stroke="#211d18" stroke-width="1.6"/>
+          <rect x="196" y="52" width="70" height="28" fill="url(#hatchT)" stroke="#c05b3c" stroke-width="1.8"/>
+          <circle cx="262" cy="56" r="4" fill="#c05b3c"/>
+          <rect x="24" y="108" width="352" height="64" fill="#fffdf8" stroke="#211d18" stroke-width="2.5"/>
+          <rect x="24" y="108" width="352" height="18" fill="url(#hatchT)" stroke="#211d18" stroke-width="2"/>
+          <text x="34" y="122" font-family="Consolas,monospace" font-size="9" fill="#211d18">GROUP B · cds-*</text>
+          <rect x="36" y="136" width="70" height="28" fill="#f7f1e8" stroke="#211d18" stroke-width="1.6"/>
+          <rect x="116" y="136" width="70" height="28" fill="#f7f1e8" stroke="#211d18" stroke-width="1.6"/>
+          <rect x="24" y="192" width="352" height="40" fill="none" stroke="#211d18" stroke-width="1.8" stroke-dasharray="6 4"/>
+          <text x="34" y="216" font-family="Consolas,monospace" font-size="9" fill="#211d18" opacity="0.6">UNGROUPED</text>
+          <rect x="250" y="198" width="70" height="28" fill="#fffdf8" stroke="#c05b3c" stroke-width="2"/>
+          <path d="M285 196 C 285 170, 240 150, 232 84" fill="none" stroke="#c05b3c" stroke-width="2.5" stroke-dasharray="5 4"/>
+          <path d="M226 92 L 232 80 L 240 92 Z" fill="#c05b3c"/>
+          <text x="200" y="262" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#211d18" opacity="0.55">DRAG TO PIN · RULES · SHARED PER PROJECT</text>
+        </svg>
+        </div>
+        <figcaption>版画示意：未归组的卡片被拖进 A 组头，红点即钉入标记；虚线为拖动轨迹。</figcaption>
+      </figure>
+    </div>
+    <blockquote class="pull"><span class="qt">放下不会生效时当场说明原因、不接受放下，而不是松手之后才告诉你没成。</span><span class="by">—— 本日头条要义</span></blockquote>
+    <div class="howto"><b>怎么用</b>打开 CDS 分支列表，切到「按分组」，按建议建组后拖卡片归类。</div>
+  </article>
+
+  <article class="story">
+    <div class="kicker">首页 · 品牌表达</div>
+    <h4>首页第一屏换成 52 秒片花与满屏无字循环，画面和配乐都由代码现场生成</h4>
+    <p class="prose">
+      是什么：首页新增一支 52 秒的片花，按产品分幕讲述，中间的知识星系重新绘制，配乐换成成品曲《Big Final Chord》的小节剪辑。第一屏改为满屏无字循环，第一次进入能看到星系「诞生」的入场；手机端作品居中、输入框贴底。
+      解决什么：此前首屏是静态介绍，进来的人要自己读懂这个产品是什么。现在不用读字，看一遍循环就有印象。
+      怎么用：片花有影院模式，可全屏、拖进度条、用键盘操作；首屏输入框按词折行，配色可换，便于出对比稿。同时修了 iOS 输入框自动放大、手机旋转后画面被甩出屏幕等一批真机问题。
+    </p>
+  </article>
+
+  <article class="story">
+    <div class="kicker">运维 · 每日验收</div>
+    <h4>每日关键功能验收从「只验网页托管」扩到业务功能台账的全部 16 条核心功能线</h4>
+    <p class="prose">
+      每天自动检查页面渲染、只读接口的业务断言、知识库新增入口、后端深度自检，以及 48 小时稳定冒烟有没有按时跑，最后出一张「核心功能一览」红绿表：异常置顶且必须带下一步，完整版含逐项明细与现场截图，归档到 CDS 验收中心。
+      被测环境不可达或登录失败时，整张表照样产出，未验的逐项标「未执行」并写明原因，不再一句话收工。上线当天就查出两个真问题：模型排行榜 agent 榜自 09-30 起停更（上游改了厂商格标记）、周报提醒等全局通知卡片盖住了知识库右下角「+」，均已修复。
+    </p>
+  </article>
+
+  <article class="story">
+    <div class="kicker">CDS · 账号体系</div>
+    <h4>CDS 本地多用户账号与 GitHub 登录解耦，原始账号密码登录继续保留</h4>
+    <p class="prose">
+      没有接 GitHub OAuth 的部署，现在也能开多个本地账号并使用用户管理与用户痕迹。同时把边界收紧：普通本地账号不能做项目迁移、不能拿到密钥、不能处理只属于系统所有者的授权与远程运行管理；本地账号、原始账号、GitHub OAuth、SSO 之间切换时，清理其他身份的会话 Cookie，避免旧身份回退。
+    </p>
+  </article>
+
+  <div class="security">
+    <div class="kicker">安全专栏 · SECURITY</div>
+    <h4>多用户账号落地的同时，越权口子被逐个堵上</h4>
+    <p>项目迁移仅系统所有者可执行，普通账号无法外泄密钥；分组的修改人只认服务端鉴权盖下的身份，已登录真人带 x-cds-trigger 或 x-ai-impersonate 请求头，也不能再伪造成系统或 AI。</p>
+  </div>
+
+  <div class="note"><b>取证说明</b> 本期无界面截图：本次无人值守运行环境没有分支预览，也没有登录 main 预览所需的验收账号口令，故未做真人路径取证。头条配版画示意图，数据版图表由 git 真实数据生成。下面的「视察评审」据此只能依据本期提交、变更说明与代码得出，没有逐页实操走查，读的时候请按这个口径。</div>
+
+  <div class="two-col">
+    <section>
+      <div class="col-head"><h2>优化</h2><span>REFINE</span></div>
+      <p class="plain">
+        <b>CDS 关系视图重设计</b>：关系图按站点分泳道、按容器宽度排版，半屏抽屉改为居中大浮层，手机上改为树状列表；走线重写为只走行间隙，不再穿卡。角色徽标与警告色改用专用色，暗色下对比度从 1.3 提到 5.3 以上。这套视图还配了几何判据与浏览器视觉审计（4 份样本 × 5 档视口 × 双主题，860 项判据），失败项在 CI 上直接写成注释。
+      </p>
+      <p class="plain" style="margin-top:10px">
+        <b>片花内部整理</b>：配乐的乐器发声与片花画面都改走注册表，默认导出页拒收非 1920x1080 尺寸，片花标题时长由时间轴推导，不再手写。
+      </p>
+    </section>
+    <section>
+      <div class="col-head"><h2>修复</h2><span>FIXES</span><span class="w">85 起 · 按主题聚类</span></div>
+      <ul class="fix-cluster">
+        <li><div class="ct"><b>CDS 分组保存与编辑</b><i>约 30 起</i></div>
+          <p>围绕「分组保存」把可靠性补齐：落盘确认后才回成功、失败回滚且不倒拨别人的时间戳、同内容重复提交不推进版本、成功响应丢失后原样重试不误判冲突；大请求体不再被全局 100kb 上限误拦。</p></li>
+        <li><div class="ct"><b>CDS 关系视图</b><i>约 25 起</i></div>
+          <p>走线穿卡、同侧出线叠成一段、流向条被裁、悬停提示悬停不到、按 Esc 连抽屉一起关掉，以及长服务名被截断，均已修复。</p></li>
+        <li><div class="ct"><b>首页片花与首屏</b><i>9 起</i></div>
+          <p>手机旋转后背景拉伸、加载中拖进度条被吞、后台标签页误开播、窄屏横放版式、输入框压住标语等真机问题。</p></li>
+        <li><div class="ct"><b>每日验收判据</b><i>6 起</i></div>
+          <p>按评审意见补齐四处判据缺陷：环境不可达时写实际没验成的条数、不再吞掉生图耗时超标、检查整体失败时不丢项、知识库「+」缺失时不再把遮挡记为正常。</p></li>
+        <li><div class="ct"><b>数据与权限类</b><i>点名</i></div>
+          <p>排行榜 agent 榜停更修复；分组修改人身份不可伪造；前缀线并入依赖时保留依赖的环境变量名。</p></li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="col-head"><h2>视察评审</h2><span>REVIEW</span><span class="w">依据提交与代码，非实操走查 · 好的少说，问题多讲</span></div>
+  <ul class="fix-cluster">
+    <li><div class="ct"><b>顺不顺：发现性与流程</b><i>问题</i></div>
+      <p>分组是一个能力很强的功能，但入口只在「切换视图」之后才出现，没切过的人不知道它存在。建组建议只在第一次切换时给，之后想重新建议没有入口。钉入、规则、顺序三套认领规则并存，用户很难回答「这个分支为什么在这一组」，卡片上没有看到来源说明（图钉只标手动钉入）。首页片花是 52 秒不可跳过的叙事，对回访用户是成本，需要确认有没有「跳过」或只在首次播放。</p></li>
+    <li><div class="ct"><b>连带影响：波及与一致性</b><i>问题</i></div>
+      <p>分组数据按项目存、全员共享，一个人的整理会直接改变所有人的视图，这是「公共账本」而不是个人偏好，需要像项目 env 一样警惕跨人互相改动（对照跨项目隔离规则通道 9 的教训）。分组保存为整体版本号，30 个分组上限和 4MB 请求体是并存的两套硬边界，上限一到就是用户可见的失败。CDS 现在有四种登录来源，会话 Cookie 互相清理，一旦哪个入口漏清，回退到旧身份就是权限问题。每日验收的 16 条台账与真实功能线会漂移，守卫只覆盖台账内已登记的线，新增功能不登记就是盲区。</p></li>
+    <li><div class="ct"><b>美观</b><i>少量问题</i></div>
+      <p>关系视图的做法值得肯定：几何判据加视觉审计，让「不穿卡、不叠线」变成可机器核对。问题在于首屏换成无字满屏循环后，品牌信息完全靠画面传达，弱网和低端手机下的首帧与动画降级是否同样好看，尚无证据；暗色对比度已补，亮色下的新分组色块也要同样量一遍。</p></li>
+    <li><div class="ct"><b>产品设计思维</b><i>好坏各半</i></div>
+      <p>好的一面：「放下不会生效就当场说明原因」「冲突时载入最新并说明这次没保存」，都是把失败前移、把原因说清的做法。需要追问的是：分组、关系视图、片花、每日验收是四条互不相干的线，同一天里都在做「更完整」，却没有一条回答「用户今天最痛的那件事」。85 个修复里近九成集中在 CDS 两个新功能上，说明功能上线后才暴露的边界很多，评审应该前移到设计期。</p></li>
+  </ul>
+
+  <div class="col-head"><h2>改进方向</h2><span>EMERGE</span><span class="w">模块砖块 × 横向能力 · 独特性 × 可落地性</span></div>
+  <article class="story">
+    <div class="kicker">第一波 · 立即可做（复用现有砖块，几乎不加数据模型）</div>
+    <h4>分组 × ILlmGateway：让 AI 来起组名与归组</h4>
+    <p class="prose">现在的建组建议只会按名字前缀切。把分支名、最近提交说明交给网关，就能按「在做什么」归组并写出一句话组摘要；规则预览与冲突提示是现成的，AI 只负责给初稿，用户仍可当场改。</p>
+    <h4>每日验收 × Webhook：红绿表直接推到群里</h4>
+    <p class="prose">验收表已经按「异常置顶且带下一步」结构化，把异常行用 Webhook 推到飞书或钉钉，把「有人去看表」变成「表来找人」。再配权限，只推给对应功能线的负责人。</p>
+  </article>
+  <article class="story">
+    <div class="kicker">第二波 · 下一迭代</div>
+    <h4>分组 × ShareLink：把一组分支作为「验收包」分享</h4>
+    <p class="prose">分组天然就是一个验收范围。给一组分支生成只读分享链，外部同事打开就能看到这一组每条分支的状态与预览入口，并配合权限控制谁能看；比逐条发预览地址省很多步。</p>
+    <h4>关系视图 × Run-Worker：问题带的修法一键执行</h4>
+    <p class="prose">关系视图的问题卡已经写明「规则名、涉及服务、修法」，把修法做成可异步执行的任务，进度走 SSE，结果落回问题卡。从「看懂问题」走到「点一下解决」。</p>
+  </article>
+  <article class="story">
+    <div class="kicker">第三波 · 差异化加分项</div>
+    <h4>片花 × Attachment：用户上传自己的素材生成「我的产品片花」</h4>
+    <p class="prose">片花由代码生成、注册表驱动，这意味着换素材就能换内容。接上附件提取的文字，让每个团队生成自己的 52 秒介绍，再用分享链外发。这是别人抄不走的组合，但要先确认首页片花的稳定性与导出链路，因此放在最后。</p>
+    <p class="plain" style="margin-top:8px">评分口径：独特性取决于复用 ILlmGateway、Run-Worker、ShareLink 的程度，可落地性取决于是否需要新增数据模型。第一波两项均不需要。</p>
+  </article>
+
+  <div class="col-head"><h2>数据版</h2><span>BY THE NUMBERS</span><span class="w">全部来自 git 主干</span></div>
+  <div class="data-grid">
+    <section>
+      <div class="chart-title">本期战场</div>
+      <div class="chart-sub">TOP 6 目录 · 按文件变更次数</div>
+      <div class="hbar hot"><span class="lb">prd-admin/src</span><span class="track"><i style="width:100%"></i></span><span class="v">32</span></div>
+      <div class="hbar hot"><span class="lb">cds/tests</span><span class="track"><i style="width:75%"></i></span><span class="v">24</span></div>
+      <div class="hbar hot"><span class="lb">cds/web</span><span class="track"><i style="width:63%"></i></span><span class="v">20</span></div>
+      <div class="hbar hot"><span class="lb">cds/src</span><span class="track"><i style="width:63%"></i></span><span class="v">20</span></div>
+      <div class="hbar"><span class="lb">changelogs</span><span class="track"><i style="width:34%"></i></span><span class="v">11</span></div>
+      <div class="hbar"><span class="lb">doc</span><span class="track"><i style="width:28%"></i></span><span class="v">9</span></div>
+      <p class="byline-row">红色为本期主战场：CDS 前端、后端与测试合计 64 次文件变更，另有首页片花在 prd-admin 一侧。共 139 个文件、新增 17577 行、删除 1548 行。</p>
+    </section>
+    <section>
+      <div class="chart-title">一百二十一格铅字</div>
+      <div class="chart-sub">每格一个提交 · 按类型着色</div>
+      <div class="waffle">
+<i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i>
+<i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i>
+<i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i>
+<i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i>
+<i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i>
+<i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i>
+<i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i>
+<i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i>
+<i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfeat"></i><i class="tfeat"></i><i class="tfeat"></i><i class="tfeat"></i><i class="tfeat"></i>
+<i class="tfeat"></i><i class="tfeat"></i><i class="tfeat"></i><i class="tfeat"></i><i class="tfeat"></i><i class="tfeat"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i>
+<i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i>
+<i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tref"></i><i class="tref"></i>
+<i class="tci"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--ink)"></i>fix 85</span>
+        <span><i style="background:var(--terra)"></i>feat 11</span>
+        <span><i style="background:rgba(33,29,24,0.22)"></i>docs 10 / test 2 / 其他 10</span>
+        <span><i style="background:var(--indigo)"></i>refactor 2</span>
+        <span><i style="background:rgba(79,70,229,0.28)"></i>ci 1</span>
+      </div>
+      <p class="byline-row">署名：Claude 116 · InerNoro 5</p>
+    </section>
+  </div>
+
+  <section class="plan">
+    <div class="col-head"><h2>计划与遗留</h2><span>NEXT &amp; DEBT</span></div>
+    <ul>
+      <li>首页片花的已知边界、片花知识星系快照与 doc 的漂移，已登记进前端债务台账；main 镜像尚未发布时的借用窗口登记进极速版债务台账。</li>
+      <li>CDS 分组保存落盘期间的读可见性、耗时样本归桶、部署方式快照缺口、构建槽指示只在排队时出现这四条，均已记入 CDS 债务台账，尚未处理。</li>
+      <li>每日验收需要持续核对台账与真实功能线是否一致，新增功能线必须登记或写明豁免理由。</li>
+      <li>每日熵减计划 2026-W40：D6 阶段已补文档并登记 changelog 共 10 条。</li>
+    </ul>
+  </section>
+
+  <div class="stat-row">
+    <div><b>121</b><span>真实提交</span></div>
+    <div><b>11</b><span>新增</span></div>
+    <div><b>85</b><span>修复</span></div>
+    <div><b>139</b><span>变更文件</span></div>
+    <div><b>5</b><span>补记天数</span></div>
+  </div>
+
+  <footer class="colophon">
+    <span>米多智能体日报 · 数据来自 git 主干上期水位线之后的落地提交</span>
+    <span>MAP DAILY · 2026-10-04 · NO.277</span>
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "artifacts": [
+    {
+      "path": "archive/report.2026-W38.md",
+      "originalPath": "doc/report.2026-W38.md",
+      "gitRef": "3035365def7b30a28309b89a21756717fda846dd",
+      "sha256": "d4f004203d7827e225f3f354a939779c2777aa9af2469abffa2178c2078f5c15",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/doc/report.2026-W38.md",
+      "captureMode": "immutable-git-file"
+    },
+    {
+      "path": "archive/report.2026-W38.html",
+      "originalPath": "doc/report.2026-W38.html",
+      "gitRef": "3035365def7b30a28309b89a21756717fda846dd",
+      "sha256": "cae5f209fe49f3c77982a1678a2da33a29f0b705b61ef4e76ff80d2ddd8e77fd",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/doc/report.2026-W38.html",
+      "captureMode": "immutable-git-file"
+    },
+    {
+      "path": "archive/report.2026-W39.md",
+      "originalPath": "doc/report.2026-W39.md",
+      "gitRef": "3035365def7b30a28309b89a21756717fda846dd",
+      "sha256": "a8c9c2bf8d15883bec21901e3dd9549a1df769890e89ffcefa56bc8734e22a1f",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/doc/report.2026-W39.md",
+      "captureMode": "immutable-git-file"
+    },
+    {
+      "path": "archive/report.2026-W40.md",
+      "originalPath": "doc/report.2026-W40.md",
+      "gitRef": "3035365def7b30a28309b89a21756717fda846dd",
+      "sha256": "293a53f90143e0d6541be8b72648272fc5338d6534f0b6f35109e62e51ce2399",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/doc/report.2026-W40.md",
+      "captureMode": "immutable-git-file"
+    },
+    {
+      "path": "archive/old-daily-template.md",
+      "originalPath": ".claude/skills/daily-report-summary/reference/report-template.md",
+      "gitRef": "3035365def7b30a28309b89a21756717fda846dd",
+      "sha256": "722ddc579aada4dd464d5ff3f2eeb8736e1e1950b8711df53cbe3ae339c3796e",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/.claude/skills/daily-report-summary/reference/report-template.md",
+      "captureMode": "immutable-git-file"
+    },
+    {
+      "path": "archive/old-daily-template.html",
+      "originalPath": ".claude/skills/daily-report-summary/reference/report-template-html.html",
+      "gitRef": "3035365def7b30a28309b89a21756717fda846dd",
+      "sha256": "679ddcdd875e4bd0326a73b4cdd4103f878cfc1c9f6f00a796be1304a9cd076e",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/.claude/skills/daily-report-summary/reference/report-template-html.html",
+      "captureMode": "immutable-git-file"
+    },
+    {
+      "path": "archive/old-weekly-template.md",
+      "originalPath": ".claude/skills/weekly-update-summary/reference/report-template.md",
+      "gitRef": "3035365def7b30a28309b89a21756717fda846dd",
+      "sha256": "4e261c9b03b6c85c5b9ccd23337e31cdf3aa087e41bb3269aa7234e4693602f4",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/.claude/skills/weekly-update-summary/reference/report-template.md",
+      "captureMode": "immutable-git-file"
+    },
+    {
+      "path": "archive/old-weekly-template.html",
+      "originalPath": ".claude/skills/weekly-update-summary/reference/report-template-html.html",
+      "gitRef": "3035365def7b30a28309b89a21756717fda846dd",
+      "sha256": "b467c90e1cdf717c2f0a8f1c48c109180b7379fd61136be9f3eb0f6069c2d090",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/.claude/skills/weekly-update-summary/reference/report-template-html.html",
+      "captureMode": "immutable-git-file"
+    },
+    {
+      "path": "archive/old-collect-week-context.py",
+      "originalPath": ".claude/skills/weekly-update-summary/scripts/collect_week_context.py",
+      "gitRef": "3035365def7b30a28309b89a21756717fda846dd",
+      "sha256": "d483ff6547698d6bb065e75e93cfeaa69e6564f2e016787b579119051ad8b596",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/.claude/skills/weekly-update-summary/scripts/collect_week_context.py",
+      "captureMode": "immutable-git-file"
+    },
+    {
+      "path": "archive/external-blocker-original.md",
+      "originalPath": "doc/debt.knowledge-base.md",
+      "gitRef": "01388f59f73ae6d19d6db5d238731ca8445da8c6",
+      "sha256": "f727da3cc82cbf027cb8f424425f15e71e056e56623b43205f2432a9012e078f",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/01388f59f73ae6d19d6db5d238731ca8445da8c6/doc/debt.knowledge-base.md",
+      "captureMode": "immutable-git-file"
+    },
+    {
+      "path": "archive/daily-2026-09-28.html",
+      "entryId": "99e14fc985684f649c754a8ea2c2208e",
+      "sourceUrl": "https://main-prd-agent.miduo.org/api/document-store/public/share/uEvTcdwGA_1R/entries/99e14fc985684f649c754a8ea2c2208e/content",
+      "shareUrl": "https://main-prd-agent.miduo.org/s/lib/uEvTcdwGA_1R?entry=99e14fc985684f649c754a8ea2c2208e",
+      "capturedAt": "2026-11-13T11:13:26.000241+00:00",
+      "sha256": "228770d089b4a1f65de68bd18a0bdaa835ca6d067e762fce833acde95b8d7f85",
+      "captureMode": "historical-stored-content-read-only",
+      "warning": "本次只读抓取的历史存量正文，不声称是最初发布时未被编辑过的初版，也没有取得当次LLM提示词与响应。"
+    },
+    {
+      "path": "archive/daily-2026-09-29.html",
+      "entryId": "f474bb5761ba4a3088aa9f5da504f5aa",
+      "sourceUrl": "https://main-prd-agent.miduo.org/api/document-store/public/share/vC7BYSyg9Xx9/entries/f474bb5761ba4a3088aa9f5da504f5aa/content",
+      "shareUrl": "https://main-prd-agent.miduo.org/s/lib/vC7BYSyg9Xx9?entry=f474bb5761ba4a3088aa9f5da504f5aa",
+      "capturedAt": "2026-11-13T11:13:16.515084+00:00",
+      "sha256": "9cb671ec58a09fe059ba75353ca787e785ba51c99170878f0776b91ed479d38e",
+      "captureMode": "historical-stored-content-read-only",
+      "warning": "本次只读抓取的历史存量正文，不声称是最初发布时未被编辑过的初版，也没有取得当次LLM提示词与响应。"
+    },
+    {
+      "path": "archive/daily-2026-10-04.html",
+      "entryId": "4f1389f38cf84cb4a2cfb8ca49a2e9b4",
+      "sourceUrl": "https://main-prd-agent.miduo.org/api/document-store/public/share/fHZAtEn8OnOj/entries/4f1389f38cf84cb4a2cfb8ca49a2e9b4/content",
+      "shareUrl": "https://main-prd-agent.miduo.org/s/lib/fHZAtEn8OnOj?entry=4f1389f38cf84cb4a2cfb8ca49a2e9b4",
+      "capturedAt": "2026-11-13T11:13:26.183885+00:00",
+      "sha256": "d2b1ced6189262a86fd0ccc05dcfbd86a7fd91396db3a588db242d5a59ea374f",
+      "captureMode": "historical-stored-content-read-only",
+      "warning": "本次只读抓取的历史存量正文，不声称是最初发布时未被编辑过的初版，也没有取得当次LLM提示词与响应。"
+    }
+  ],
+  "accessNotes": [
+    {
+      "host": "main-prd-agent.miduo.org",
+      "firstAttempt": "Python默认User-Agent返回Cloudflare1010/403",
+      "retry": "标准Mozilla User-Agent正常只读取得正文",
+      "productConclusion": "只是读取链路差异，不据此判旧日报不存在。"
+    },
+    {
+      "host": "map.ebcone.net",
+      "result": "同分享token返回404，属于另一个部署，未用此结果否定CDS main历史产物。"
+    }
+  ]
+}

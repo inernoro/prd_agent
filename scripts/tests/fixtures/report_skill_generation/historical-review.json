@@ -1,0 +1,79 @@
+{
+  "method": "真实日报/周报完整原文的预先声明片段复核；不是重跑旧LLM，不是完整语义自动判卷，标签未经真人审核。",
+  "findings": [
+    {
+      "id": "w40-commit-volume-to-work-rhythm",
+      "artifact": "archive/report.2026-W40.md",
+      "span": "10-01 到 10-02 近乎停摆",
+      "category": "unsupportedWorkRhythmConclusion",
+      "reason": "提交量少不能证明团队工作近乎停摆；缺少计划、工作记录和同口径效率测量。",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/doc/report.2026-W40.md#L81",
+      "scored": true
+    },
+    {
+      "id": "w40-missing-continued-kb-validation",
+      "artifact": "archive/report.2026-W40.md",
+      "span": "本周没有一条大的新能力",
+      "absenceAliases": [
+        "私有仓目录同步",
+        "#1528",
+        "#1534"
+      ],
+      "category": "knownItemOmission",
+      "workItemId": "kb-sync",
+      "reason": "选定样本中的知识库私有仓同步在W38已有明确未验后续修复；W40没有继续跟踪该已知未闭环事项。仅为此三事项样本中的遗漏，不宣称整个周报遗漏率。",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/doc/report.2026-W40.md#L42",
+      "scored": true
+    },
+    {
+      "id": "w40-acceptance-citations-local-only",
+      "artifact": "archive/report.2026-W40.md",
+      "span": "详见采集输出 `/tmp/week-context-2026-W40.json`",
+      "category": "missingDirectImportantSource",
+      "reason": "质量闸重要结论把深链留在临时文件，读者无法从已交付底稿直接定位验收原文；旧技能采集器--deeplinks本身可取得链接，问题在最终产物。",
+      "sourceUrl": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/doc/report.2026-W40.md#L135",
+      "scored": true
+    },
+    {
+      "id": "daily1004-completion-stage-ambiguous",
+      "artifact": "archive/daily-2026-10-04.html",
+      "span": "均已修复",
+      "category": "completionStageNeedsClarification",
+      "reason": "旧日报同时明确未做真人路径取证；“修复”未区分功能完成、验证完成与正式上线，只列为需要澄清，不能据此判该修复事实为假。",
+      "sourceUrl": "https://main-prd-agent.miduo.org/s/lib/fHZAtEn8OnOj?entry=4f1389f38cf84cb4a2cfb8ca49a2e9b4",
+      "scored": false
+    }
+  ],
+  "positiveControls": [
+    {
+      "id": "w38-correctly-excludes-later-fixes",
+      "artifact": "archive/report.2026-W38.md",
+      "span": "没有被它覆盖",
+      "category": "correctValidationScope",
+      "reason": "真实旧报告已经正确限定旧分支验收范围，不能在新评测里把它当作错误结论。",
+      "scored": false
+    },
+    {
+      "id": "daily0929-explicitly-unverified",
+      "artifact": "archive/daily-2026-09-29.html",
+      "span": "属于未验收状态",
+      "category": "correctEvidenceGap",
+      "reason": "真实旧日报已经披露缺少双主题与窄屏实拍，保留这一正例。",
+      "scored": false
+    },
+    {
+      "id": "w40-release-attempts-not-preview",
+      "artifact": "archive/report.2026-W40.md",
+      "span": "尝试 3 / 成功 1 / 失败 2",
+      "category": "historicalReleaseRecordMustNotBeNegatedByCurrentEmptyQuery",
+      "reason": "旧报告记载真实正式发布与失败；现今台账保留期之外空列表不能否定当时发生过。",
+      "scored": false
+    }
+  ],
+  "limits": [
+    "没有旧日报/周报生成时完整提示词、输入全集与模型响应，不宣称严格同输入LLM重跑或线上改善率。",
+    "重复引用风险、计划或附录不算重复成果；旧W40将#1635/#1636归为一条能力的正确归并不能判重。",
+    "缺少旧管理月报产物，不把“未取得”编码为0；旧月报改善项保持不可比。",
+    "只有预先声明片段和已知事项可按本协议核查；其余自由语义需要人工评审。"
+  ]
+}

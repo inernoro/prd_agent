@@ -1,0 +1,204 @@
+{
+  "labelMethod": "运行当前引擎前固定的独立来源预标注；未经真人审核，不是线上模型准确率。",
+  "cases": [
+    {
+      "id": "weekly-w40",
+      "expectedItems": {
+        "core-smoke": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        },
+        "kb-sync": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        },
+        "web-redeploy": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        }
+      },
+      "metricsAvailable": false,
+      "newMilestones": {
+        "code": null,
+        "validation": null,
+        "release": null
+      },
+      "requiresFailedObservation": false,
+      "requiresNoPeriodEvent": false
+    },
+    {
+      "id": "daily-cross-day",
+      "expectedItems": {
+        "core-smoke": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        },
+        "kb-sync": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        },
+        "web-redeploy": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        }
+      },
+      "metricsAvailable": false,
+      "newMilestones": {
+        "code": null,
+        "validation": null,
+        "release": null
+      },
+      "requiresFailedObservation": false,
+      "requiresNoPeriodEvent": false
+    },
+    {
+      "id": "daily-repeated-fixes",
+      "expectedItems": {
+        "core-smoke": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        },
+        "kb-sync": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        },
+        "web-redeploy": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        }
+      },
+      "metricsAvailable": false,
+      "newMilestones": {
+        "code": null,
+        "validation": null,
+        "release": null
+      },
+      "requiresFailedObservation": false,
+      "requiresNoPeriodEvent": false
+    },
+    {
+      "id": "weekly-old-validation",
+      "expectedItems": {
+        "core-smoke": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        },
+        "kb-sync": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        }
+      },
+      "metricsAvailable": false,
+      "newMilestones": {
+        "code": null,
+        "validation": null,
+        "release": null
+      },
+      "requiresFailedObservation": false,
+      "requiresNoPeriodEvent": false
+    },
+    {
+      "id": "daily-observed-failed-validation",
+      "expectedItems": {
+        "core-smoke": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        },
+        "kb-sync": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        },
+        "web-redeploy": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        }
+      },
+      "metricsAvailable": false,
+      "newMilestones": {
+        "code": null,
+        "validation": null,
+        "release": null
+      },
+      "requiresFailedObservation": true,
+      "requiresNoPeriodEvent": false
+    },
+    {
+      "id": "monthly-cross-month",
+      "expectedItems": {
+        "core-smoke": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        },
+        "kb-sync": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        },
+        "web-redeploy": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown",
+          "blocked": false
+        }
+      },
+      "metricsAvailable": false,
+      "newMilestones": {
+        "code": null,
+        "validation": null,
+        "release": null
+      },
+      "requiresFailedObservation": false,
+      "requiresNoPeriodEvent": false
+    },
+    {
+      "id": "weekly-external-blocker",
+      "expectedItems": {
+        "embedding-provider": {
+          "code": "unknown",
+          "validation": "unknown",
+          "release": "unknown",
+          "blocked": true
+        }
+      },
+      "metricsAvailable": false,
+      "newMilestones": {
+        "code": null,
+        "validation": null,
+        "release": null
+      },
+      "requiresFailedObservation": false,
+      "requiresNoPeriodEvent": true
+    }
+  ]
+}

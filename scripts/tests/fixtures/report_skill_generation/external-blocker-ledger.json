@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "historyComplete": false,
+  "sampleType": "historical-debt-source-projection",
+  "workItems": [
+    {
+      "id": "embedding-provider",
+      "title": "知识库语义检索所需外部模型与凭据",
+      "nextStep": {
+        "action": "取得明确的embedding模型和供应商凭据后再复核配置；负责人和期限尚未确认。"
+      }
+    }
+  ],
+  "events": [
+    {
+      "id": "external-k2-01388f59",
+      "workItemId": "embedding-provider",
+      "kind": "blocked",
+      "occurredAt": "2026-08-11T21:47:54+08:00",
+      "timeBasis": "observed",
+      "reason": "已配置平台没有embedding模型，需新接供应商并提供key，属外部输入。",
+      "source": {
+        "uri": "https://github.com/inernoro/prd_agent/blob/01388f59f73ae6d19d6db5d238731ca8445da8c6/doc/debt.knowledge-base.md#L35",
+        "excerpt": "本部署已配置的两个平台里没有任何 embedding 模型；需要新接一个供应商并提供 key（属外部输入，工程侧造不出来）。"
+      }
+    }
+  ],
+  "limitations": [
+    "阻塞依据为真实债务台账在固定Git提交的原文；提交时间只是该事实的观测时间，不是阻塞开始时间。",
+    "未取得解除外部依赖的独立来源，不能因本期没有提交就删除阻塞。"
+  ]
+}

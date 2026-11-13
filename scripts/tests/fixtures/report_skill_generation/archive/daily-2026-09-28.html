@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日报-2026-09-28-今日大事早知道</title>
+<style>
+  :root {
+    --paper: #f7f1e8;
+    --paper-2: #fffdf8;
+    --ink: #211d18;
+    --ink-2: rgba(33,29,24,0.74);
+    --ink-3: rgba(33,29,24,0.48);
+    --line: rgba(33,29,24,0.14);
+    --line-2: rgba(33,29,24,0.30);
+    --terra: #c05b3c;
+    --indigo: #4f46e5;
+    --serif: "Source Serif 4", "Songti SC", "Noto Serif SC", "STSong", Georgia, serif;
+    --sans: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    --mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper); color: var(--ink); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 40% at 50% -6%, rgba(192,91,60,0.05), transparent),
+      repeating-linear-gradient(0deg, rgba(33,29,24,0.016) 0 1px, transparent 1px 3px);
+  }
+  .paper { max-width: 960px; margin: 0 auto; padding: 26px 34px 60px; }
+  @media (max-width: 640px) { .paper { padding: 18px 16px 44px; } }
+
+  .masthead { display: flex; align-items: center; gap: 16px; padding-bottom: 14px; border-bottom: 2.5px solid var(--ink); position: relative; }
+  .emblem { position: absolute; top: -14px; right: -8px; width: 92px; height: 92px;
+            color: var(--terra); opacity: 0.13; z-index: 0; pointer-events: none; }
+  .emblem svg { display: block; width: 100%; height: 100%; }
+  @media (max-width: 640px) { .emblem { width: 70px; height: 70px; top: -8px; right: -4px; } }
+  .masthead .t, .masthead .r, .masthead .stamp { position: relative; z-index: 1; }
+  .stamp {
+    width: 46px; height: 46px; flex-shrink: 0;
+    background: var(--terra); color: #fff7ee; border-radius: 4px;
+    display: grid; place-items: center;
+    font-family: var(--serif); font-weight: 700; font-size: 15px; letter-spacing: 0.04em;
+    box-shadow: 3px 3px 0 rgba(33,29,24,0.82);
+  }
+  .masthead .t b { font-family: var(--serif); font-size: 25px; font-weight: 700; letter-spacing: 0.02em; display: block; }
+  .masthead .t span { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.34em; }
+  .masthead .r { margin-left: auto; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.14em; line-height: 1.9; }
+  .dateline {
+    display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 9px 0; border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: 0.1em;
+  }
+  .dateline b { color: var(--terra); font-weight: 600; }
+
+  .tldr { margin-top: 26px; border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2); box-shadow: 5px 5px 0 rgba(33,29,24,0.12); }
+  .tldr .hd { display: flex; align-items: baseline; gap: 12px; padding: 13px 20px 11px; border-bottom: 1.5px solid var(--ink); }
+  .tldr .hd h2 { font-family: var(--serif); font-size: 19px; font-weight: 700; }
+  .tldr .hd span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em; color: var(--terra); }
+  .tldr ol { list-style: none; counter-reset: n; padding: 6px 20px 12px; }
+  .tldr li { counter-increment: n; display: flex; gap: 14px; padding: 10px 0; border-bottom: 1px dotted var(--line); font-size: 14px; line-height: 1.75; color: var(--ink-2); }
+  .tldr li:last-child { border-bottom: none; }
+  .tldr li::before { content: counter(n, decimal-leading-zero); font-family: var(--mono); font-size: 11px; color: var(--terra); flex-shrink: 0; margin-top: 4px; }
+  .tldr li b { color: var(--ink); font-weight: 600; }
+
+  .col-head { display: flex; align-items: baseline; gap: 12px; margin: 40px 0 6px; padding-bottom: 10px; border-bottom: 2px solid var(--ink); }
+  .col-head h2 { font-family: var(--serif); font-size: 20px; font-weight: 700; }
+  .col-head span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em; color: var(--ink-3); }
+  .col-head .w { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--terra); letter-spacing: 0.1em; }
+
+  .lead-story { padding: 22px 0 8px; border-bottom: 1px solid var(--line); }
+  .kicker { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.22em; color: var(--indigo); margin-bottom: 10px; }
+  .lead-story h3 { font-family: var(--serif); font-size: clamp(22px, 3.2vw, 30px); font-weight: 650; line-height: 1.35; }
+  .lead-story h3 em { font-style: normal; position: relative; white-space: nowrap; }
+  .lead-story h3 em::after { content: ""; position: absolute; left: -1%; right: -1%; bottom: 7%; height: 0.3em; background: rgba(192,91,60,0.2); z-index: -1; transform: skewX(-8deg); }
+  .lead-story .prose { margin-top: 16px; font-size: 14.5px; line-height: 2.0; color: var(--ink-2); text-align: justify; }
+  .prose b { color: var(--ink); font-weight: 600; }
+  .prose .q { color: var(--terra); font-weight: 600; }
+  .howto { margin-top: 14px; padding: 12px 16px; border-left: 3px solid var(--terra); background: rgba(192,91,60,0.05); font-size: 13px; line-height: 1.9; color: var(--ink-2); }
+  .howto b { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; color: var(--terra); display: block; margin-bottom: 3px; }
+
+  .story { padding: 20px 0; border-bottom: 1px solid var(--line); }
+  .story:last-child { border-bottom: none; }
+  .story h4 { font-family: var(--serif); font-size: 18.5px; font-weight: 650; line-height: 1.5; margin-top: 6px; }
+  .story .prose { margin-top: 10px; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); text-align: justify; }
+  figure { margin: 14px 0 4px; }
+  figure img { width: 100%; max-width: 100%; height: auto; border: 1.5px solid var(--ink); border-radius: 3px; box-shadow: 4px 4px 0 rgba(33,29,24,0.10); display: block; }
+  figcaption { margin-top: 8px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  figcaption::before { content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--terra); border: 1px solid var(--terra); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em; }
+
+  .security { border: 1.5px solid var(--terra); border-radius: 3px; background: rgba(192,91,60,0.04); padding: 16px 18px; margin-top: 20px; }
+  .security .kicker { color: var(--terra); }
+  .security h4 { font-family: var(--serif); font-size: 17px; font-weight: 700; }
+  .security p { margin-top: 8px; font-size: 13px; line-height: 1.9; color: var(--ink-2); }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1.35fr; gap: 0; }
+  .two-col > section { min-width: 0; }
+  .two-col > section:first-child { border-right: 1px solid var(--line); padding-right: 26px; }
+  .two-col > section:last-child { padding-left: 26px; }
+  @media (max-width: 760px) {
+    .two-col { grid-template-columns: 1fr; }
+    .two-col > section:first-child { border-right: none; padding-right: 0; }
+    .two-col > section:last-child { padding-left: 0; }
+  }
+  .plain { padding: 16px 0; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); text-align: justify; }
+
+  .fix-cluster { list-style: none; padding-top: 6px; }
+  .fix-cluster li { padding: 12px 0; border-bottom: 1px dotted var(--line); }
+  .fix-cluster li:last-child { border-bottom: none; }
+  .fix-cluster .ct { display: flex; align-items: baseline; gap: 10px; margin-bottom: 5px; }
+  .fix-cluster .ct b { font-family: var(--serif); font-size: 14.5px; font-weight: 700; }
+  .fix-cluster .ct i { font-style: normal; font-family: var(--mono); font-size: 10px; color: #fff7ee; background: var(--ink); border-radius: 2px; padding: 2px 7px; letter-spacing: 0.08em; }
+  .fix-cluster p { font-size: 12.5px; line-height: 1.85; color: var(--ink-2); }
+
+  .plan { border-top: 2px solid var(--ink); margin-top: 40px; }
+  .plan .col-head { border-bottom: 1px solid var(--line); margin-top: 18px; }
+  .plan ul { list-style: none; padding: 8px 0 0; }
+  .plan li { display: flex; gap: 12px; padding: 9px 0; font-size: 13px; line-height: 1.8; color: var(--ink-2); border-bottom: 1px dotted var(--line); }
+  .plan li:last-child { border-bottom: none; }
+  .plan li::before { content: "—"; color: var(--terra); flex-shrink: 0; }
+
+  .stat-row { display: flex; margin-top: 34px; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; background: rgba(255,253,248,0.6); }
+  .stat-row div { flex: 1; padding: 14px 6px; text-align: center; border-right: 1px solid var(--line); }
+  .stat-row div:last-child { border-right: none; }
+  .stat-row b { font-family: var(--serif); font-size: 22px; font-weight: 700; display: block; }
+  .stat-row span { font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.04em; }
+  .colophon { margin-top: 26px; padding-top: 12px; border-top: 2px solid var(--ink); display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--ink-3); }
+
+  .lead-grid h3 { font-size: clamp(20px, 2.6vw, 27px); text-wrap: balance; }
+  .lead-grid { display: grid; grid-template-columns: 1.12fr 0.88fr; gap: 28px; align-items: start; margin-top: 4px; }
+  @media (max-width: 760px) { .lead-grid { grid-template-columns: 1fr; } }
+  figure.art { margin: 0; }
+  figure.art .frame { border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2); box-shadow: 4px 4px 0 rgba(33,29,24,0.12); padding: 10px; }
+  figure.art svg { display: block; width: 100%; height: auto; }
+  figure.art figcaption { margin-top: 9px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  figure.art figcaption::before { content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--terra); border: 1px solid var(--terra); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em; }
+  .pull { margin: 22px 0 6px; padding: 4px 0 14px 0; position: relative; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); font-family: var(--serif); font-size: 18px; font-weight: 600; line-height: 1.7; color: var(--ink); }
+  .pull .qt::before { content: "「"; color: var(--terra); }
+  .pull .qt::after { content: "」"; color: var(--terra); }
+  .pull .by { display: block; margin-top: 6px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em; color: var(--ink-3); }
+
+  .data-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 0; }
+  .data-grid > section { min-width: 0; padding: 18px 0 6px; }
+  .data-grid > section:first-child { border-right: 1px solid var(--line); padding-right: 26px; }
+  .data-grid > section:last-child { padding-left: 26px; }
+  @media (max-width: 760px) {
+    .data-grid { grid-template-columns: 1fr; }
+    .data-grid > section:first-child { border-right: none; padding-right: 0; }
+    .data-grid > section:last-child { padding-left: 0; }
+  }
+  .chart-title { font-family: var(--serif); font-size: 14.5px; font-weight: 700; margin-bottom: 4px; }
+  .chart-sub { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--ink-3); margin-bottom: 14px; }
+  .hbar { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+  .hbar .lb { flex: 0 0 108px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hbar .track { flex: 1; height: 14px; background: rgba(33,29,24,0.05); border: 1px solid var(--line); }
+  .hbar .track i { display: block; height: 100%; background: var(--ink); }
+  .hbar.hot .track i { background: var(--terra); }
+  .hbar .v { flex: 0 0 26px; font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .waffle { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; max-width: 300px; }
+  .waffle i { aspect-ratio: 1; border: 1px solid var(--line-2); }
+  .waffle .tfix { background: var(--ink); border-color: var(--ink); }
+  .waffle .tdoc { background: rgba(33,29,24,0.22); }
+  .waffle .tfeat { background: var(--terra); border-color: var(--terra); }
+  .waffle .tref { background: var(--indigo); border-color: var(--indigo); }
+  .waffle .tci { background: rgba(79,70,229,0.28); }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 10px; height: 10px; border: 1px solid var(--line-2); }
+  .byline-row { margin-top: 14px; padding-top: 10px; border-top: 1px dotted var(--line); font-size: 12px; color: var(--ink-3); }
+  .note { margin-top: 14px; font-size: 12px; color: var(--ink-3); line-height: 1.8; }
+  .note b { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--terra); }
+
+  .review-item { padding: 14px 16px; margin-top: 14px; border: 1px solid var(--line); border-radius: 3px; background: var(--paper-2); }
+  .review-item .rt { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+  .review-item .rt b { font-family: var(--serif); font-size: 15px; font-weight: 700; }
+  .review-item .rt i { font-style: normal; font-family: var(--mono); font-size: 9.5px; color: var(--terra); border: 1px solid var(--terra); border-radius: 2px; padding: 1px 6px; letter-spacing: 0.08em; }
+  .review-item dl { display: grid; grid-template-columns: 84px 1fr; gap: 4px 10px; font-size: 12.5px; line-height: 1.8; color: var(--ink-2); margin-top: 6px; }
+  .review-item dt { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.06em; }
+  .wave { padding: 14px 16px; margin-top: 12px; border-left: 3px solid var(--indigo); background: rgba(79,70,229,0.045); border-radius: 0 3px 3px 0; }
+  .wave b { font-family: var(--serif); font-size: 14.5px; }
+  .wave .tag { font-family: var(--mono); font-size: 9.5px; color: var(--indigo); letter-spacing: 0.1em; margin-left: 8px; }
+  .wave p { margin-top: 6px; font-size: 12.5px; line-height: 1.85; color: var(--ink-2); }
+</style>
+</head>
+<body>
+<div class="paper">
+
+  <header class="masthead">
+    <div class="emblem"><svg viewBox="0 0 120 120" fill="none" data-emblem="moon" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><mask id="emb-moon-m"><rect width="120" height="120" fill="#000"/><circle cx="56" cy="60" r="44" fill="#fff"/><circle cx="84" cy="46" r="38" fill="#000"/></mask></defs><g mask="url(#emb-moon-m)"><circle cx="56" cy="60" r="44" fill="currentColor" fill-opacity="0.18"/><g stroke="currentColor" stroke-width="2" opacity="0.85"><path d="M6 44 L64 102 M6 62 L52 108 M6 80 L34 108 M14 30 L78 94 M26 18 L92 84"/></g><circle cx="56" cy="60" r="44" stroke="currentColor" stroke-width="3"/></g><g stroke="currentColor" stroke-width="2.2" opacity="0.9"><circle cx="38" cy="48" r="7"/><circle cx="30" cy="74" r="4.5"/><circle cx="48" cy="88" r="3.5"/></g></svg></div>
+    <div class="stamp">MAP</div>
+    <div class="t">
+      <b>米多智能体日报</b>
+      <span>MIDUO AGENT DAILY</span>
+    </div>
+
+    <div class="r">今日大事早知道<br>日报智能体 · 自动编印</div>
+  </header>
+  <div class="dateline">
+    <span>2026 年 9 月 28 日 · 星期一 · 第 <b>271</b> 期</span>
+    <span>主干落地 <b>14</b> 次真实提交（跨 2 个自然日窗口）· docs 11 / fix 2 / chore 1 · 2 个署名</span>
+  </div>
+
+  <section class="tldr">
+    <div class="hd"><h2>今日大事</h2><span>TL;DR</span></div>
+    <ol>
+      <li><b>主干本期窗口 14 个提交，零业务代码改动</b>：全部服务于同一件事——生成 2026-W39 周报并归档 58 个 changelog 碎片，是一次纯粹的「工程自我校对」窗口。</li>
+      <li><b>周报生成触发了 CLAUDE.md 5.5 范围熔断，且是它上线以来第一次在真实场景里被真正踩到</b>：8 轮评审修复后主动宣布收口，但之后又追加 4 次「跨文档数字打架」的窄范围修正，直到第 9 轮才真正合并——详见文末「视察评审」。</li>
+      <li><b>CI 用量口径守卫的解析 bug 被连续误判根因一次后才修对</b>：`AdoptionToken.ParseList` 只按逗号切分、不按空格，此前一版「根因找到了」的判断说早了。</li>
+      <li><b>完成 09-27 每日熵减计划（D6）</b>：changelog→doc 覆盖补齐 5 条，readability ratchet 六项欠账未上升、无死链。</li>
+      <li><b>视察走查连续三次访问首页，同一账号看到两种迥异的呈现</b>：一次是纯品牌水印的空壳页，一次是带问候语与快捷入口的完整仪表盘——但仪表盘上「手边的活儿」「我的动态」两张卡片永久停在「正在读取…」。三次访问都伴随大量脚本与接口请求失败，成因更可能在网络层，但「失败后没有任何提示或重试入口」是应用层该补的一条真实缺口，详见文末。</li>
+    </ol>
+  </section>
+
+  <div class="col-head"><h2>新增方向</h2><span>FEATURES</span><span class="w">本日 0 项</span></div>
+  <div class="plain">
+    今日主干未落地任何新功能或用户可见的能力变更（连续第 2 个 0 新增方向日，昨天同样为 0）。
+    本期窗口的 14 个提交全部服务于同一件事：<b>2026-W39 周报</b>的自动生成、归档 58 个历史 changelog 碎片，
+    以及围绕这份周报展开的多轮事实校正；外加一条独立的每日熵减维护提交。这不是产品功能延迟上线，
+    是这个窗口里唯一在跑的工作类型——工程自身的文档治理与自我校对。
+  </div>
+
+  <div class="col-head"><h2>优化 / 修复</h2><span>REFINE &amp; FIXES</span><span class="w">本日 12 起 · 按主题聚类</span></div>
+  <ul class="fix-cluster" style="padding-top:6px;">
+    <li>
+      <div class="ct"><b>CI 用量口径守卫解析</b><i>2 起</i></div>
+      <p>
+        <code>AdoptionTokenGuardTests</code> 会扫 <code>doc/report.*.md</code> 里每一条「用量口径」token 并校验它能解析到目标能力条目。
+        第一次修复去掉了一个未注册的 <code>design-artifact</code> 口径，CI 仍然红；第二次才找到真正根因——
+        <code>AdoptionToken.ParseList</code> 只按逗号切分、不按空格，同一行里用空格分隔的多个 token 会被当成一个整体解析失败。
+        改成每个 token 独立反引号包裹后，守卫才真正读对。「上一个提交说根因找到了，说早了」——这句诚实的自我纠正写进了第二次的提交信息里。
+      </p>
+    </li>
+    <li>
+      <div class="ct"><b>周报数字与结论口径修正</b><i>10 起</i></div>
+      <p>
+        围绕同一份 <code>doc/report.2026-W39.md</code>，连续 6 轮评审共提出 14 条 P2、逐条修正：
+        存量缺陷「32」与团队洞察「33」两个数字看似矛盾，补口径说明（前者排除已软删、后者不排除）；
+        提交类型分布求和 280 对不上主干提交总数 356，标注「未归类 76」并写明成因；
+        撤掉「通过率下跌是因为终于在验了」这类站不住的因果断言，改为如实陈述「两周分母不同质，比不了」；
+        撤回一处凭空多算的 8% 假分母；补齐 PR 验收真实覆盖率仅 7/54 的披露；修正一处标题与正文结论相反的措辞。
+        全部 14 条均属「可证明违反本 PR 目标——周报数字与结论必须准确」的 A 类问题，没有一条引入新语义或扩大范围。
+      </p>
+    </li>
+  </ul>
+
+  <div class="col-head"><h2>数据版</h2><span>BY THE NUMBERS</span><span class="w">全部来自 git 主干</span></div>
+  <div class="data-grid">
+    <section>
+      <div class="chart-title">今日战场</div>
+      <div class="chart-sub">按文件变更次数（本期仅 3 个模块）</div>
+      <div class="hbar hot"><span class="lb">changelogs</span><span class="track"><i style="width:100%"></i></span><span class="v">61</span></div>
+      <div class="hbar"><span class="lb">doc</span><span class="track"><i style="width:7%"></i></span><span class="v">4</span></div>
+      <div class="hbar"><span class="lb">CHANGELOG.md</span><span class="track"><i style="width:2%"></i></span><span class="v">1</span></div>
+      <p class="byline-row">61 次改动几乎全是「删除已归档的 changelog 碎片」——58 个历史碎片被周报生成流程收进 doc/report.2026-W39.md 后清空，属正常归档行为，不是业务代码改动。</p>
+    </section>
+    <section>
+      <div class="chart-title">十四格铅字</div>
+      <div class="chart-sub">每格一个提交 · 按类型着色</div>
+      <div class="waffle">
+        <i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i>
+        <i class="tdoc"></i><i class="tfix"></i><i class="tfix"></i><i class="tdoc"></i><i style="visibility:hidden"></i><i style="visibility:hidden"></i><i style="visibility:hidden"></i><i style="visibility:hidden"></i><i style="visibility:hidden"></i><i style="visibility:hidden"></i>
+      </div>
+      <div class="legend">
+        <span><i style="background:rgba(33,29,24,0.22)"></i>docs/chore 12</span>
+        <span><i class="tfix" style="background:var(--ink)"></i>fix 2</span>
+      </div>
+      <p class="byline-row">署名：Claude 13 · InerNoro 1（周报生成为定时任务自动模式，熵减提交为 Claude 协作会话代笔执行）</p>
+    </section>
+  </div>
+
+  <section>
+    <div class="col-head"><h2>视察评审</h2><span>WALKTHROUGH</span><span class="w">真人路径 · 挑剔视角</span></div>
+    <div class="lead-story" style="border-bottom:none; padding-bottom:0;">
+      <div class="kicker">延续昨日发现 · 但今天多访问几次之后，故事变复杂了</div>
+      <h3>首页这次露出了真面目——一个带问候语的完整仪表盘，只是它的两张卡片永远在「正在读取…」。</h3>
+      <p class="prose">
+        今日主干同样没有新功能可验收，视察对象延续昨天的登录后首页，走的仍是真实用户路径
+        （表单登录 → 观察落地页），分支预览域名本次执行环境不可用，按规则改用 <b>main 发布 base 域名</b>
+        （main-prd-agent.miduo.org）取证。昨天的报告把首页点名为「几乎完全空白，只剩品牌水印」；今天同一账号、
+        同一条真人路径<b>连续访问三次</b>，却看到了两种完全不同的呈现——头两次与昨天一致，是纯品牌水印的空壳页；
+        第三次却渲染出一个带时间感知问候语（「夜深了，蒋云峰」）、搜索框、四个快捷入口、外加「手边的活儿」
+        「我的动态」两张卡片的完整仪表盘。<b>这不是同一个页面在两天里没变，是同一个页面在几分钟内就不一样。</b>
+      </p>
+      <blockquote class="pull"><span class="qt">同一条登录路径、前后相隔十几分钟，一次只剩一个品牌字，一次是完整的问候语仪表盘——而这一次，仪表盘上该显示数据的两张卡片，从渲染出来那一刻起就没有跳出过「正在读取…」。</span><span class="by">—— 视察评审 · 第一印象</span></blockquote>
+    </div>
+
+    <div class="review-item">
+      <div class="rt"><b>发现一 · 首页渲染不稳定，同一账号连续访问出现两种结构完全不同的呈现</b><i>P2 · 成因待定</i></div>
+      <figure><img src="https://cfi.miduo.org/data/prd-agent/doc/xei75ueve5oisfp4nwg5i7tcw4.png" alt="真人路径·登录后首页（09-28 复测）：主内容区仍仅剩「MAP」水印，右下角悬浮通知显示「周报草稿已生成」需处理 12 条"><figcaption>真人路径·登录后首页（09-28 复测）：主内容区仍仅剩「MAP」水印，右下角悬浮通知显示「周报草稿已生成」需处理 12 条</figcaption></figure>
+      <dl>
+        <dt>顺不顺</dt><dd>本图是第三次访问的结果，能看到问候语、搜索框、四个快捷入口都到位——但「手边的活儿」「我的动态」两张卡片停在「正在读取你的…」，直到截图那一刻都没有变化。更值得记录的是：前两次访问同一路径，连问候语和这两张卡片所在的整个区域都没有出现，只剩一个居中的「MAP」水印（即昨天报告点名的状态）。同一账号在几分钟内看到结构完全不同的首页，用户没有任何心理预期可言。</dd>
+        <dt>连带影响</dt><dd>三次访问期间浏览器控制台都出现大量 <code>ERR_TOO_MANY_RETRIES</code>，覆盖多个前端 JS 分包与后端接口（含这次「我的动态」依赖的 <code>activity-stream</code> 接口本身）；直连 curl 同一批资源多数返回 200。这与昨天报告点名的「本次沙箱代理对长连接/流式请求不友好」是同一类现象，<b>按先说外因、不确定就不下结论的原则，无法排除这次结构性差异主要来自本次取证环境的网络不稳定，而非应用本身必然如此</b>。但不论根因落在网络层还是应用层，「同一次会话里页面结构本身会不会跳变」都值得在稳定网络环境下专门复测一次，确认这不是一次真实的竞态或缓存问题。</dd>
+        <dt>美观</dt><dd>抛开加载问题，问候语仪表盘本身的设计是到位的——个性化文案、清晰的四宫格快捷入口、内容分区明确，比昨天点名的纯水印页判若两个产品。这也是为什么两种呈现的落差格外扎眼。</dd>
+        <dt>产品设计</dt><dd>如果这是首页真正设计的样子，那么昨天报告对「首页信息量为零」的批评需要部分收回——问题不在设计缺席，而在这个设计能不能稳定地端到用户面前。</dd>
+      </dl>
+    </div>
+
+    <div class="review-item">
+      <div class="rt"><b>发现二 · 数据卡片加载失败没有任何提示或重试入口，只有一个不会说话的「正在读取…」</b><i>P1</i></div>
+      <dl>
+        <dt>顺不顺</dt><dd>本次截图捕获的同一时刻，`/_cds/api/activity-stream` 请求明确失败（`ERR_TOO_MANY_RETRIES`）——这正是「我的动态」卡片要读的数据。用户看到的不是「加载失败，点此重试」，而是一句永远不会变化的「正在读取你的动态…」，只能靠自己判断这是「还在等」还是「已经坏了」。</dd>
+        <dt>连带影响</dt><dd>这正撞上仓库自己的 <b>degradation-must-alarm.md</b>（降级必须响铃）——凡是有降级/加载态兜底的地方，必须有机读判据 + 用户可见的失败反馈，不能是一段只对程序员友好的静默转圈。同样的问题此前在昨天报告里以「分支徽标网络失败」的形式出现过一次；今天在首页核心卡片上又出现一次，说明这不是孤立事件，是这条前端在「请求失败后怎么给用户交代」这件事上普遍没有兜底。</dd>
+        <dt>美观</dt><dd>无独立视觉问题，但「一直转圈」本身会被用户读成「卡住了」，比一句明确的错误提示更影响观感。</dd>
+        <dt>产品设计</dt><dd>不论今天的网络失败最终是取证环境的问题还是真实环境也会发生，「请求失败时该怎么呈现」都是产品必须回答、且现在没有答案的问题——这一条不因为根因待定而降级为存疑，因为前端此刻的行为（无提示、无重试）在任何网络环境下都是同一个结果。文末「改进方向」第一波直接针对这个缺口。</dd>
+      </dl>
+    </div>
+
+    <div class="review-item" style="border-style:dashed;">
+      <div class="rt"><b>顺带一提 · 知识库列表页同样疑似受网络波动影响，未能得出确定结论</b><i>存疑，不计入统计</i></div>
+      <dl>
+        <dt>观察</dt><dd>点击侧边栏「知识库」后地址栏切到 <code>/document-store</code>、导航项正确高亮，但主内容区当时仍显示与首页相同的空白画面；同一批次里登录表单本身也出现过 20 秒未渲染的情况。与本节的整体结论一致：这批现象更像是本次取证环境对并发/长连接请求不友好，而非确定性的产品缺陷，留待稳定网络环境下复测确认，不计入 P1/P2 统计。</dd>
+      </dl>
+    </div>
+
+    <div class="note"><b>取证说明</b> 本分支无 CDS 预览部署，截图取自 main 发布 base 域名（main-prd-agent.miduo.org）的真人登录路径，连续尝试三次后取得一张可用证据；受限于本次执行沙箱对浏览器长连接的网络限制，昨天报告点名的「纯水印空壳页」状态今天同样复现过，但截图未能留存，相关描述引自当次浏览器观察与昨日已发布报告的记录，未作为独立截图证据计入本期。</div>
+  </section>
+
+  <section>
+    <div class="col-head"><h2>改进方向</h2><span>EMERGE</span><span class="w">模块 × 系统能力，按独特性 × 可落地性收敛</span></div>
+    <div class="plain" style="padding-top:6px;">
+      沿用 <code>/feature-emerge</code> 的思路，把「视察评审」发现的首页加载失败无提示问题、以及今天真实发生的
+      「周报自我校对耗费 9 轮评审」这件事，同本系统已具备的横向能力
+      （ILlmGateway 摘要/审阅生成、Run-Worker 异步聚合、ShareLink 分享链、Webhook、权限分层、Attachment 附件）相乘，
+      收敛出以下三波建议：
+    </div>
+    <div class="wave">
+      <b>第一波 · 先把首页现有卡片的失败态补上</b><span class="tag">独特性低 · 可落地性高（地基性修复，今天证据直接支撑）</span>
+      <p>
+        今天的证据显示，首页仪表盘本身（问候语 + 快捷入口 + 「手边的活儿」/「我的动态」卡片）其实已经在建、
+        结构已经存在，缺的是「请求失败之后怎么办」——现在的答案是一句永远不变的「正在读取…」。
+        这一步不需要新功能，只需要给这两张卡片补上标准的失败态：请求失败时显示「加载失败，点此重试」而不是无限期占位，
+        呼应仓库自己的 <b>degradation-must-alarm.md</b>。这是后面两波的地基——卡片连自己的数据都读不稳，
+        往里面塞新内容只是多一张会转圈的卡片。
+      </p>
+    </div>
+    <div class="wave">
+      <b>第二波 · 把日报/周报摘要接进「我的动态」</b><span class="tag">独特性中 · 可落地性中（依赖第一波先落地）</span>
+      <p>
+        首页已经有「我的动态」这张卡片的位置，只是目前接的数据源（activity-stream）今天连读都没读出来。
+        待第一波稳住失败态之后，用 <b>ILlmGateway</b> 把最新一期日报/周报摘要成 3-5 条要点 + 关键数字，
+        作为「我的动态」里的一类条目呈现，点击走既有的 <b>ShareLink</b> 分享链直达知识库原文。
+        比起新建一张卡片，这条路线复用了已经在建的信息架构，只是多接一路数据源。
+      </p>
+    </div>
+    <div class="wave">
+      <b>第三波 · 周报生成的口径自检闭环</b><span class="tag">独特性高 · 可落地性中（源自今天的真实事件，与首页问题相互独立）</span>
+      <p>
+        今天的周报生成从落地到收口经历了 9 轮评审、14 条 P2，多数是「同一份文档里两处数字或结论互相打架」这类
+        可机械核对的问题（求和对不上总数、两周口径不一致、标题与正文结论相反）。这类校验不必依赖人工/Agent
+        反复通读全文才发现——可以用 <b>Run-Worker</b> 在发布前跑一轮结构化自检（数据页脚求和 vs 表格总数、
+        跨章节同名指标一致性），再用 <b>ILlmGateway</b> 承担「只挑数字与结论矛盾」的窄职责审阅角色（而非通用评审），
+        把本可结构化核对的那部分问题挡在发布之前，减少像今天这样连续 9 轮才收口的往返成本。
+        这与仓库自己的 <code>predicate-and-wiring-discipline.md</code>（能用类型/结构化校验的，不该退化成靠人工反复读）
+        同一个判断方向，只是把它落到报告生成这个具体模块上。
+      </p>
+    </div>
+    <div class="plain" style="padding-top:14px;">
+      按「独特性 × 可落地性」排序：第一波优先且必须先做（不解决失败态，后面接再多数据源也只是多一张会转圈的卡片）；
+      第二波次之，直接复用第一波稳住的地基；第三波与前两波相互独立，可并行推进，直接命中今天暴露的真实瓶颈。
+    </div>
+  </section>
+
+  <section class="plan">
+    <div class="col-head"><h2>计划与遗留</h2><span>NEXT &amp; DEBT</span></div>
+    <ul>
+      <li>首页在同一账号连续访问中出现两种结构完全不同的呈现（品牌水印空壳页 / 完整问候语仪表盘），根因待定（更像本次取证环境的网络限制，但不能排除真实竞态），建议在稳定网络环境下专门复测一次以排除或坐实。</li>
+      <li>「手边的活儿」「我的动态」卡片在请求失败后没有错误提示或重试入口，只会无限期停在「正在读取…」——无论首页结构问题的根因如何，这一条错误处理都值得独立排期，已写入本期「改进方向」第一波。</li>
+      <li>知识库列表页取证结果存疑（疑似取证环境网络限制），留待下次在稳定网络环境下复测确认，不构成本期结论。</li>
+      <li>本次周报（2026-W39）本身披露的遗留项，延续到本期：OpenDesign A3 端到端验收仍为 fail、尚待复验；核心业务稳定冒烟连续两周未通过且发生第 3 次重复归档；PR 验收覆盖率仅 13%（54 个落地 PR 里 47 个无专属归档验收）；存量未关缺陷 32 个连续第三周数字未动；09-17 认证迁移到期线连续第四周零动作，需先决定它还算不算一件事。</li>
+      <li>每日熵减计划 D1-D7 本期核对均无新增欠账，readability ratchet 六项欠账未上升、无死链；下一期（2026-09-29）按序继续执行。</li>
+    </ul>
+  </section>
+
+  <div class="stat-row">
+    <div><b>14</b><span>真实提交</span></div>
+    <div><b>0</b><span>新增方向</span></div>
+    <div><b>12</b><span>修复/校正</span></div>
+    <div><b>2</b><span>视察发现</span></div>
+    <div><b>3</b><span>改进波次建议</span></div>
+  </div>
+
+  <footer class="colophon">
+    <span>米多智能体日报 · 数据来自 git 主干当日落地提交</span>
+    <span>MAP DAILY · 2026-09-28 · NO.271</span>
+  </footer>
+</div>
+</body>
+</html>

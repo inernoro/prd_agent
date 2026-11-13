@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日报-2026-09-29-今日大事早知道</title>
+<style>
+  :root {
+    --paper: #f7f1e8;
+    --paper-2: #fffdf8;
+    --ink: #211d18;
+    --ink-2: rgba(33,29,24,0.74);
+    --ink-3: rgba(33,29,24,0.48);
+    --line: rgba(33,29,24,0.14);
+    --line-2: rgba(33,29,24,0.30);
+    --terra: #c05b3c;
+    --indigo: #4f46e5;
+    --serif: "Source Serif 4", "Songti SC", "Noto Serif SC", "STSong", Georgia, serif;
+    --sans: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    --mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper); color: var(--ink); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 40% at 50% -6%, rgba(192,91,60,0.05), transparent),
+      repeating-linear-gradient(0deg, rgba(33,29,24,0.016) 0 1px, transparent 1px 3px);
+    
+  }
+  .paper { max-width: 960px; margin: 0 auto; padding: 26px 34px 60px; }
+  @media (max-width: 640px) { .paper { padding: 18px 16px 44px; } }
+
+  /* ══ 报头 ══ */
+  .masthead { display: flex; align-items: center; gap: 16px; padding-bottom: 14px; border-bottom: 2.5px solid var(--ink); position: relative; }
+  /* 刊徽水印（衬字板式）：垫在右侧 mono 小字背后，只做刊物区分，不承载信息。
+     日报=月亮 / 周报=地球 / 月报=太阳 / 验收=北极星 / 巡检=彗星，见 .claude/rules/report-design-system.md。
+     right 负值不会撑出横向滚动条：.paper 左右 padding 34px（移动端 16px）都大于这里的偏移量。 */
+  .emblem { position: absolute; top: -14px; right: -8px; width: 92px; height: 92px;
+            color: var(--terra); opacity: 0.13; z-index: 0; pointer-events: none; }
+  .emblem svg { display: block; width: 100%; height: 100%; }
+  @media (max-width: 640px) { .emblem { width: 70px; height: 70px; top: -8px; right: -4px; } }
+  .masthead .t, .masthead .r, .masthead .stamp { position: relative; z-index: 1; }
+  .stamp {
+    width: 46px; height: 46px; flex-shrink: 0;
+    background: var(--terra); color: #fff7ee; border-radius: 4px;
+    display: grid; place-items: center;
+    font-family: var(--serif); font-weight: 700; font-size: 15px; letter-spacing: 0.04em;
+    box-shadow: 3px 3px 0 rgba(33,29,24,0.82);
+  }
+  .masthead .t b { font-family: var(--serif); font-size: 25px; font-weight: 700; letter-spacing: 0.02em; display: block; }
+  .masthead .t span { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.34em; }
+  .masthead .r { margin-left: auto; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.14em; line-height: 1.9; }
+  .dateline {
+    display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 9px 0; border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: 0.1em;
+  }
+  .dateline b { color: var(--terra); font-weight: 600; }
+
+  /* ══ 今日大事 ══ */
+  .tldr { margin-top: 26px; border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2); box-shadow: 5px 5px 0 rgba(33,29,24,0.12); }
+  .tldr .hd {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 13px 20px 11px; border-bottom: 1.5px solid var(--ink);
+  }
+  .tldr .hd h2 { font-family: var(--serif); font-size: 19px; font-weight: 700; }
+  .tldr .hd span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em; color: var(--terra); }
+  .tldr ol { list-style: none; counter-reset: n; padding: 6px 20px 12px; }
+  .tldr li { counter-increment: n; display: flex; gap: 14px; padding: 10px 0; border-bottom: 1px dotted var(--line); font-size: 14px; line-height: 1.75; color: var(--ink-2); }
+  .tldr li:last-child { border-bottom: none; }
+  .tldr li::before {
+    content: counter(n, decimal-leading-zero);
+    font-family: var(--mono); font-size: 11px; color: var(--terra); flex-shrink: 0; margin-top: 4px;
+  }
+  .tldr li b { color: var(--ink); font-weight: 600; }
+
+  /* ══ 栏目通用 ══ */
+  .col-head { display: flex; align-items: baseline; gap: 12px; margin: 40px 0 6px; padding-bottom: 10px; border-bottom: 2px solid var(--ink); }
+  .col-head h2 { font-family: var(--serif); font-size: 20px; font-weight: 700; }
+  .col-head span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em; color: var(--ink-3); }
+  .col-head .w { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--terra); letter-spacing: 0.1em; }
+
+  /* 头条 */
+  .lead-story { padding: 22px 0 8px; border-bottom: 1px solid var(--line); }
+  .kicker { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.22em; color: var(--indigo); margin-bottom: 10px; }
+  .lead-story h3 { font-family: var(--serif); font-size: clamp(24px, 3.6vw, 34px); font-weight: 650; line-height: 1.35; }
+  .lead-story h3 em { font-style: normal; position: relative; white-space: nowrap; }
+  .lead-story h3 em::after { content: ""; position: absolute; left: -1%; right: -1%; bottom: 7%; height: 0.3em; background: rgba(192,91,60,0.2); z-index: -1; transform: skewX(-8deg); }
+  .lead-story .prose { margin-top: 16px; font-size: 14.5px; line-height: 2.0; color: var(--ink-2); text-align: justify; }
+  .prose b { color: var(--ink); font-weight: 600; }
+  .prose .q { color: var(--terra); font-weight: 600; }
+  .howto {
+    margin-top: 14px; padding: 12px 16px; border-left: 3px solid var(--terra);
+    background: rgba(192,91,60,0.05); font-size: 13px; line-height: 1.9; color: var(--ink-2);
+  }
+  .howto b { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; color: var(--terra); display: block; margin-bottom: 3px; }
+
+  /* 次级文章 */
+  .story { padding: 20px 0; border-bottom: 1px solid var(--line); }
+  .story:last-child { border-bottom: none; }
+  .story h4 { font-family: var(--serif); font-size: 18.5px; font-weight: 650; line-height: 1.5; margin-top: 6px; }
+  .story .prose { margin-top: 10px; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); text-align: justify; }
+  /* 通用证据图规则（不限于 .story）：IMG 占位由 publish.py 展开成裸
+     <figure><img><figcaption></figure>，不带任何 class；若尺寸规则只挂在 .story 下，
+     （此处不能写出占位的字面写法：CSS 注释不会被剥掉，会被发布闸当成未替换的占位）
+     任何在 .story 之外插入的证据图（如附加章节里的走查截图）会拿不到 width:100%，
+     按截图的原始物理像素（deviceScaleFactor=2 时常是 2880x1800）平铺，撑破 960px 页面
+     产生巨幅横向溢出——2026-09-07 日报「视察评审」节实测踩中，故收窄为全局规则。 */
+  figure { margin: 14px 0 4px; }
+  figure img { width: 100%; max-width: 100%; height: auto; border: 1.5px solid var(--ink); border-radius: 3px; box-shadow: 4px 4px 0 rgba(33,29,24,0.10); display: block; }
+  figcaption { margin-top: 8px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  figcaption::before { content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--terra); border: 1px solid var(--terra); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em; }
+
+  /* 安全专栏印章感 */
+  .security { border: 1.5px solid var(--terra); border-radius: 3px; background: rgba(192,91,60,0.04); padding: 16px 18px; margin-top: 20px; }
+  .security .kicker { color: var(--terra); }
+  .security h4 { font-family: var(--serif); font-size: 17px; font-weight: 700; }
+  .security p { margin-top: 8px; font-size: 13px; line-height: 1.9; color: var(--ink-2); }
+
+  /* 双栏（优化 + 修复） */
+  .two-col { display: grid; grid-template-columns: 1fr 1.35fr; gap: 0; }
+  .two-col > section { min-width: 0; }
+  .two-col > section:first-child { border-right: 1px solid var(--line); padding-right: 26px; }
+  .two-col > section:last-child { padding-left: 26px; }
+  @media (max-width: 760px) {
+    .two-col { grid-template-columns: 1fr; }
+    .two-col > section:first-child { border-right: none; padding-right: 0; }
+    .two-col > section:last-child { padding-left: 0; }
+  }
+  .plain { padding: 16px 0; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); text-align: justify; }
+
+  .fix-cluster { list-style: none; padding-top: 6px; }
+  .fix-cluster li { padding: 12px 0; border-bottom: 1px dotted var(--line); }
+  .fix-cluster li:last-child { border-bottom: none; }
+  .fix-cluster .ct {
+    display: flex; align-items: baseline; gap: 10px; margin-bottom: 5px;
+  }
+  .fix-cluster .ct b { font-family: var(--serif); font-size: 14.5px; font-weight: 700; }
+  .fix-cluster .ct i {
+    font-style: normal; font-family: var(--mono); font-size: 10px; color: #fff7ee;
+    background: var(--ink); border-radius: 2px; padding: 2px 7px; letter-spacing: 0.08em;
+  }
+  .fix-cluster p { font-size: 12.5px; line-height: 1.85; color: var(--ink-2); }
+
+  /* 计划与遗留 */
+  .plan { border-top: 2px solid var(--ink); margin-top: 40px; }
+  .plan .col-head { border-bottom: 1px solid var(--line); margin-top: 18px; }
+  .plan ul { list-style: none; padding: 8px 0 0; }
+  .plan li { display: flex; gap: 12px; padding: 9px 0; font-size: 13px; line-height: 1.8; color: var(--ink-2); border-bottom: 1px dotted var(--line); }
+  .plan li:last-child { border-bottom: none; }
+  .plan li::before { content: "—"; color: var(--terra); flex-shrink: 0; }
+
+  /* 数据页脚 */
+  .stat-row { display: flex; margin-top: 34px; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; background: rgba(255,253,248,0.6); }
+  .stat-row div { flex: 1; padding: 14px 6px; text-align: center; border-right: 1px solid var(--line); }
+  .stat-row div:last-child { border-right: none; }
+  .stat-row b { font-family: var(--serif); font-size: 22px; font-weight: 700; display: block; }
+  .stat-row span { font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.04em; }
+  .colophon {
+    margin-top: 26px; padding-top: 12px; border-top: 2px solid var(--ink);
+    display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--ink-3);
+  }
+
+  /* 头条图文双栏 + 版画插图 */
+  .lead-grid h3 { font-size: clamp(21px, 2.9vw, 29px); text-wrap: balance; }
+  .lead-grid { display: grid; grid-template-columns: 1.12fr 0.88fr; gap: 28px; align-items: start; margin-top: 4px; }
+  @media (max-width: 760px) { .lead-grid { grid-template-columns: 1fr; } }
+  figure.art { margin: 0; }
+  figure.art .frame {
+    border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2);
+    box-shadow: 4px 4px 0 rgba(33,29,24,0.12); padding: 10px;
+  }
+  figure.art svg { display: block; width: 100%; height: auto; }
+  figure.art figcaption { margin-top: 9px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  figure.art figcaption::before {
+    content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--terra);
+    border: 1px solid var(--terra); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em;
+  }
+  .pull {
+    margin: 22px 0 6px; padding: 4px 0 14px 0; position: relative;
+    border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line);
+    font-family: var(--serif); font-size: 19px; font-weight: 600; line-height: 1.7; color: var(--ink);
+  }
+  .pull .qt::before { content: "「"; color: var(--terra); }
+  .pull .qt::after { content: "」"; color: var(--terra); }
+  .pull .by { display: block; margin-top: 6px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em; color: var(--ink-3); }
+
+  /* 数据版 */
+  .data-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 0; }
+  .data-grid > section { min-width: 0; padding: 18px 0 6px; }
+  .data-grid > section:first-child { border-right: 1px solid var(--line); padding-right: 26px; }
+  .data-grid > section:last-child { padding-left: 26px; }
+  @media (max-width: 760px) {
+    .data-grid { grid-template-columns: 1fr; }
+    .data-grid > section:first-child { border-right: none; padding-right: 0; }
+    .data-grid > section:last-child { padding-left: 0; }
+  }
+  .chart-title { font-family: var(--serif); font-size: 14.5px; font-weight: 700; margin-bottom: 4px; }
+  .chart-sub { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--ink-3); margin-bottom: 14px; }
+  .hbar { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+  .hbar .lb { flex: 0 0 108px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hbar .track { flex: 1; height: 14px; background: rgba(33,29,24,0.05); border: 1px solid var(--line); }
+  .hbar .track i { display: block; height: 100%; background: var(--ink); }
+  .hbar.hot .track i { background: var(--terra); }
+  .hbar .v { flex: 0 0 26px; font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .waffle { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; max-width: 300px; }
+  .waffle i { aspect-ratio: 1; border: 1px solid var(--line-2); }
+  .waffle .tfix { background: var(--ink); border-color: var(--ink); }
+  .waffle .tdoc { background: rgba(33,29,24,0.22); }
+  .waffle .tfeat { background: var(--terra); border-color: var(--terra); }
+  .waffle .tref { background: var(--indigo); border-color: var(--indigo); }
+  .waffle .tci { background: rgba(79,70,229,0.28); }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 10px; height: 10px; border: 1px solid var(--line-2); }
+  .byline-row { margin-top: 14px; padding-top: 10px; border-top: 1px dotted var(--line); font-size: 12px; color: var(--ink-3); }
+  .note { margin-top: 14px; font-size: 12px; color: var(--ink-3); line-height: 1.8; }
+  .note b { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--terra); }
+</style>
+</head>
+<body>
+<div class="paper">
+
+  
+  <header class="masthead">
+    <div class="emblem"><svg viewBox="0 0 120 120" fill="none" data-emblem="moon" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><mask id="emb-moon-m"><rect width="120" height="120" fill="#000"/><circle cx="56" cy="60" r="44" fill="#fff"/><circle cx="84" cy="46" r="38" fill="#000"/></mask></defs><g mask="url(#emb-moon-m)"><circle cx="56" cy="60" r="44" fill="currentColor" fill-opacity="0.18"/><g stroke="currentColor" stroke-width="2" opacity="0.85"><path d="M6 44 L64 102 M6 62 L52 108 M6 80 L34 108 M14 30 L78 94 M26 18 L92 84"/></g><circle cx="56" cy="60" r="44" stroke="currentColor" stroke-width="3"/></g><g stroke="currentColor" stroke-width="2.2" opacity="0.9"><circle cx="38" cy="48" r="7"/><circle cx="30" cy="74" r="4.5"/><circle cx="48" cy="88" r="3.5"/></g></svg></div>
+    <div class="stamp">MAP</div>
+    <div class="t">
+      <b>米多智能体日报</b>
+      <span>MIDUO AGENT DAILY</span>
+    </div>
+    <div class="r">今日大事早知道<br>日报智能体 · 自动编印</div>
+  </header>
+  <div class="dateline">
+    <span>2026 年 9 月 29 日 · 星期二 · 第 <b>272</b> 期 · 补记 09-28 14:45 ~ 09-29 05:08</span>
+    <span>主干落地 <b>17</b> 次真实提交 · fix 10 / docs 5 / polish 1 / 其他 1 · 2 个署名</span>
+  </div>
+
+  <section class="tldr">
+    <div class="hd"><h2>今日大事</h2><span>TL;DR</span></div>
+    <ol>
+      <li><b>本期为跨日补记期</b>：覆盖 09-28 中午至 09-29 凌晨，共 6 个主干条目、17 个真实提交；本期没有新增功能，全部是打磨、修复与台账。</li>
+      <li><b>网页托管工作台输入区改成一体式卡片</b>：输入框、附件、发送并入同一张卡片，改动最大的一处界面变化。</li>
+      <li><b>设计任务不再在重新部署后「凭空消失」</b>：分支重新部署后遗留的任务会被接管并明确标为失败，点停止不再回「不存在」。</li>
+      <li><b>网站修订的数值核对不再误判</b>：相邻两行的数字不会被拼成一个数、时刻也不再被当成数值陈述。</li>
+      <li><b>网关控制台上游列表能正常滚动</b>：模型目录与生图契约收敛成单表 Tab，不再撑破页面。</li>
+    </ol>
+  </section>
+
+  <div class="col-head"><h2>新增方向</h2><span>FEATURES</span><span class="w">本期 0 项 · 头条取最大的体验重做</span></div>
+
+  <article class="lead-story">
+    <div class="kicker">头条 · 网页托管工作台（体验重做）</div>
+    <div class="lead-grid">
+      <div>
+        <h3>工作台输入区从「散落的几块」<br>合并成<em>一张卡片</em>。</h3>
+        <p class="prose" style="margin-top:14px">
+          <b>是什么：</b>网页托管工作台底部的输入区（WorkbenchComposer）整体重排，输入框、附件、发送按钮收进同一张卡片，改动约 270 行、并补了 118 行组件测试。
+          <b>解决什么：</b>此前说明行重复按钮文字、耗时提示出现多次；现在说明行不再重复按钮上已有的字，耗时只说一次。输入框宽度变化（窗口缩放、侧栏展开）时会重算高度，不再出现文字被裁一截。
+          <b>怎么用：</b>无需任何操作，进入网页托管的工作台即可看到新的输入卡片。
+        </p>
+      </div>
+      <figure class="art">
+        <div class="frame">
+        <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="输入卡片示意">
+          <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#211d18" stroke-width="1" opacity="0.35"/></pattern></defs>
+          <rect x="30" y="40" width="340" height="90" fill="url(#hatch)" stroke="#211d18" stroke-width="2"/>
+          <text x="200" y="92" text-anchor="middle" font-family="Consolas,monospace" font-size="11" fill="#211d18" opacity="0.6">WORKBENCH PREVIEW</text>
+          <rect x="30" y="160" width="340" height="100" rx="10" fill="#fffdf8" stroke="#211d18" stroke-width="2.5"/>
+          <line x1="48" y1="184" x2="250" y2="184" stroke="#211d18" stroke-width="2" opacity="0.5"/>
+          <line x1="48" y1="202" x2="200" y2="202" stroke="#211d18" stroke-width="2" opacity="0.3"/>
+          <circle cx="56" cy="240" r="9" fill="none" stroke="#211d18" stroke-width="1.8"/>
+          <rect x="300" y="228" width="56" height="24" rx="12" fill="#c05b3c" stroke="#211d18" stroke-width="1.8"/>
+        </svg>
+        </div>
+        <figcaption>版画示意：输入、附件、发送同处一张卡片（红色为发送）。</figcaption>
+      </figure>
+    </div>
+    <blockquote class="pull"><span class="qt">说明行不再重复按钮文字，耗时只说一次。</span><span class="by">—— 本期头条要义</span></blockquote>
+  </article>
+
+  <div class="note"><b>取证说明</b> 本期未取真实界面截图，原因：本次运行环境没有配置浏览器登录口令（MAP_AI_USER / MAP_ACCEPT_PASS），也没有分支预览可用；头条配版画示意图代替。下方「视察评审」因此基于代码差异与既有界面推断，并非逐页实测，请以此为准阅读。</div>
+
+  <div class="two-col">
+    <section>
+      <div class="col-head"><h2>优化</h2><span>REFINE</span></div>
+      <p class="plain">
+        <b>网关控制台上游列表</b>：模型目录、生图契约、平台与上游三处列表收敛为「单表 + Tab」，列表容器改为可滚动，并给版式漂移的端到端脚本补了 111 行断言，防止再次撑破页面。
+      </p>
+      <p class="plain">
+        <b>工作台输入区</b>：见头条，属于体验打磨而非新功能。
+      </p>
+    </section>
+    <section>
+      <div class="col-head"><h2>修复</h2><span>FIXES</span><span class="w">10 起 · 按主题聚类</span></div>
+      <ul class="fix-cluster">
+        <li>
+          <div class="ct"><b>孤儿设计任务接管</b><i>4 起</i></div>
+          <p>分支重新部署后，旧版本遗留的设计任务改为收敛成「失败」并记下重新部署原因，停止接口不再回「不存在」；接管时补齐租约，扫描改为给已落定任务打标记，保证每轮读取量有上限。数据类修复，影响正在跑任务的用户。</p>
+        </li>
+        <li>
+          <div class="ct"><b>数值核对误判</b><i>4 起</i></div>
+          <p>相邻两行的数字不再被拼成一个数；源码换行、隐藏的换行与块级元素不算行界；时刻标记改用私用区字符，且时刻不当作数值陈述。</p>
+        </li>
+        <li>
+          <div class="ct"><b>界面细节</b><i>2 起</i></div>
+          <p>工作台说明行不再重复按钮文字；输入框宽度变化时重算高度。</p>
+        </li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="col-head"><h2>视察评审</h2><span>PRODUCT REVIEW</span><span class="w">挑剔视角 · 问题多讲</span></div>
+  <section class="plan">
+    <ul>
+      <li><b>顺不顺（发现性 / 流程）</b>：孤儿任务被标为「失败」是诚实的，但用户看到的只是失败，怎么办没有指引。重新部署是系统动作，用户并没有做错事，失败文案应先说「因为分支刚重新部署」，再给「一键重跑」，而不是让人自己找入口。数值核对的误拒同理：拒了要说清是哪一行、哪个数。</li>
+      <li><b>连带影响</b>：接管逻辑同时改了设计产物与网站编辑两个控制器和一个后台 worker，两条链路共用「重新部署原因」字段，其他同样带租约的长任务（生图、周报等）是否存在同类孤儿风险没有被扫过；数值核对的「行界」定义改了，凡是复用这条规则的校验都会随之变化，需确认没有别处依赖旧口径。网关列表改为单表 Tab 后，其它页面（模型池、影子对比）的列表交互仍是旧式，同一个控制台里出现两套列表手感。</li>
+      <li><b>美观</b>：一体式卡片方向对，但输入区改动只有示意与单元测试佐证，双主题、窄屏下的表现本期没有实拍证据，属于未验收状态。</li>
+      <li><b>产品设计思维</b>：本期修复偏多、新增为零，且 5 个提交是台账文档，说明团队正在还债；债务台账里 #135 一度关闭又退回待验收、再关闭，反映「验收标准」摇摆，应先固定判据再关单。</li>
+      <li><b>连带风险</b>：孤儿收敛为失败是不可逆的状态改写，若接管判据误伤仍在正常运行的旧版本任务，会出现「任务被误杀」，目前仅有单元测试覆盖，缺真实重新部署的端到端证据（台账 #135 正是在等这个证据）。</li>
+    </ul>
+  </section>
+
+  <div class="col-head"><h2>改进方向</h2><span>NEXT WAVES</span><span class="w">砖块 × 横向能力 · 独特性 × 可落地性</span></div>
+  <section class="plan">
+    <ul>
+      <li><b>第一波（最可落地）：任务失败可自愈</b>。砖块「孤儿任务接管」x Run-Worker x 权限：失败任务附「一键在新版本重跑」，由 Worker 带原参数重新入队并沿用原发起人权限。独特性中等，落地成本最低，直接消化本期评审的第一条。</li>
+      <li><b>第二波：核对结果可解释、可分享</b>。砖块「数值核对」x ILlmGateway x ShareLink x Attachment：拒绝时由网关模型用一句人话指出是哪一行哪个数有问题并附原文截取，生成可分享的核对报告链接给评审人。独特性高（把校验从黑盒变成证据），落地需要先把行界口径固定。</li>
+      <li><b>第三波：托管站点变更通知</b>。砖块「工作台任务状态」x Webhook x 权限：任务成功、失败、被接管时向项目 Webhook 推事件，外部系统据此触发下游动作。独特性高，但依赖前两波把状态语义收稳，宜放最后。</li>
+    </ul>
+  </section>
+
+  <div class="col-head"><h2>数据版</h2><span>BY THE NUMBERS</span><span class="w">全部来自 git 主干</span></div>
+  <div class="data-grid">
+    <section>
+      <div class="chart-title">本期战场</div>
+      <div class="chart-sub">TOP 6 模块 · 按文件变更次数</div>
+      <div class="hbar hot"><span class="lb">prd-api/src</span><span class="track"><i style="width:100%"></i></span><span class="v">6</span></div><div class="hbar"><span class="lb">changelogs</span><span class="track"><i style="width:100%"></i></span><span class="v">6</span></div><div class="hbar hot"><span class="lb">llmgw/web</span><span class="track"><i style="width:83%"></i></span><span class="v">5</span></div><div class="hbar"><span class="lb">prd-api/tests</span><span class="track"><i style="width:50%"></i></span><span class="v">3</span></div><div class="hbar"><span class="lb">prd-admin/src</span><span class="track"><i style="width:33%"></i></span><span class="v">2</span></div><div class="hbar"><span class="lb">doc</span><span class="track"><i style="width:33%"></i></span><span class="v">2</span></div>
+      <p class="byline-row">红色为本期主战场：后端接管与核对规则、网关前端列表。</p>
+    </section>
+    <section>
+      <div class="chart-title">十七格铅字</div>
+      <div class="chart-sub">每格一个提交 · 按类型着色</div>
+      <div class="waffle"><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfix"></i><i class="tfeat"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i><i class="tdoc" style="visibility:hidden"></i></div>
+      <div class="legend">
+        <span><i class="tfix" style="background:var(--ink)"></i>fix 10</span>
+        <span><i style="background:rgba(33,29,24,0.22)"></i>docs 5</span>
+        <span><i style="background:var(--terra)"></i>polish 1</span>
+      </div>
+      <p class="byline-row">署名：Claude 15 · InerNoro 2</p>
+    </section>
+  </div>
+
+  <section class="plan">
+    <div class="col-head"><h2>计划与遗留</h2><span>NEXT &amp; DEBT</span></div>
+    <ul>
+      <li>网页托管债务台账：本期关闭 #149，新增 #152 至 #158；#135（重新部署后的收敛）在真实重新部署证据出现前保持待验收，且已去掉无法保证的收敛上界，另登记 #156。</li>
+      <li>#153：样式表中的隐藏数字曾造成误拒，已补记，待后续规则收口。</li>
+      <li>工作台输入卡片的双主题、窄屏实拍验收尚未做。</li>
+      <li>每日熵减计划 2026-W40（D6）：changelog 覆盖 5 条补录进设计运行时文档。</li>
+    </ul>
+  </section>
+
+  <div class="stat-row">
+    <div><b>17</b><span>真实提交</span></div>
+    <div><b>0</b><span>新增方向</span></div>
+    <div><b>10</b><span>修复</span></div>
+    <div><b>5</b><span>台账文档</span></div>
+    <div><b>1</b><span>体验重做</span></div>
+  </div>
+
+  <footer class="colophon">
+    <span>米多智能体日报 · 数据来自 git 主干落地提交</span>
+    <span>MAP DAILY · 2026-09-29 · NO.272</span>
+  </footer>
+</div>
+</body>
+</html>

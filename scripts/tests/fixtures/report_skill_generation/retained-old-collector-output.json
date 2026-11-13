@@ -1,0 +1,151 @@
+{
+  "baselineRef": "3035365def7b30a28309b89a21756717fda846dd",
+  "method": "真实旧采集器原函数对冻结真实记录执行，不是旧LLM重跑。",
+  "output": {
+    "dailyReports": {
+      "available": true,
+      "storeId": "115bc3ab603444d38066585852ef3d6d",
+      "items": [
+        {
+          "date": "2026-09-28",
+          "title": "日报-2026-09-28-今日大事早知道",
+          "entryId": "99e14fc985684f649c754a8ea2c2208e",
+          "shareUrl": "https://main-prd-agent.miduo.org/s/lib/uEvTcdwGA_1R?entry=99e14fc985684f649c754a8ea2c2208e",
+          "summary": "日报-2026-09-28-今日大事早知道 MAP 米多智能体日报 MIDUO AGENT DAILY 今日大事早知道 日报智能体 · 自动编印 2026 年 9 月 28 日 · 星期一 · 第 271 期 主干落地 14 次真实提交（跨 2 个自然日窗口）· docs 11 / fix 2 / chore 1 · 2 个署名 今日大事 TL;DR 主干本期窗口 14 个提交，零业务代码改动 ："
+        },
+        {
+          "date": "2026-09-29",
+          "title": "日报-2026-09-29-今日大事早知道",
+          "entryId": "f474bb5761ba4a3088aa9f5da504f5aa",
+          "shareUrl": "https://main-prd-agent.miduo.org/s/lib/vC7BYSyg9Xx9?entry=f474bb5761ba4a3088aa9f5da504f5aa",
+          "summary": "日报-2026-09-29-今日大事早知道 MAP 米多智能体日报 MIDUO AGENT DAILY 今日大事早知道 日报智能体 · 自动编印 2026 年 9 月 29 日 · 星期二 · 第 272 期 · 补记 09-28 14:45 ~ 09-29 05:08 主干落地 17 次真实提交 · fix 10 / docs 5 / polish 1 / 其他 1 · 2 个署名 今日大事 T"
+        },
+        {
+          "date": "2026-10-04",
+          "title": "日报-2026-10-04-今日大事早知道",
+          "entryId": "4f1389f38cf84cb4a2cfb8ca49a2e9b4",
+          "shareUrl": "https://main-prd-agent.miduo.org/s/lib/fHZAtEn8OnOj?entry=4f1389f38cf84cb4a2cfb8ca49a2e9b4",
+          "summary": "日报-2026-10-04-今日大事早知道 MAP 米多智能体日报 MIDUO AGENT DAILY 今日大事早知道 日报智能体 · 自动编印 2026 年 10 月 4 日 · 星期日 · 第 277 期 · 补记 09-30 16:06 ~ 10-04 05:06 主干落地 121 次真实提交 · feat 11 / fix 85 / docs 10 / refactor 2 / test"
+        }
+      ],
+      "count": 3,
+      "missingDates": [
+        "2026-09-30",
+        "2026-10-01",
+        "2026-10-02",
+        "2026-10-03"
+      ]
+    },
+    "acceptance": {
+      "available": true,
+      "items": [
+        {
+          "id": "e649910df13d4e57b454a7de279e94a3",
+          "title": "分支验收 · 网页托管 / main 精细生成端到端补验（#149 / #135） · 2026-09-28",
+          "date": "2026-09-28",
+          "verdict": "pass",
+          "category": "PR 验收",
+          "tier": "L2",
+          "prNumber": 1635,
+          "branch": "main",
+          "commitSha": "952bc64",
+          "projectSlug": null,
+          "deeplink": "https://miduo.org/reports?project=prd-agent&folder=94b981552e5b45ea87698fc208022577&report=e649910df13d4e57b454a7de279e94a3"
+        },
+        {
+          "id": "7bf0d83c50c94cee89607736a6e2183e",
+          "title": "缺陷复测 · 网页托管 / #135 精细生成遇分支重新部署的真实 revision 切换复现 · 2026-09-28",
+          "date": "2026-09-28",
+          "verdict": "pass",
+          "category": "缺陷复测",
+          "tier": "L1",
+          "prNumber": 1635,
+          "branch": "claude/dazzling-lovelace-o1yxic-verify-135",
+          "commitSha": "ed85c57",
+          "projectSlug": null,
+          "deeplink": "https://miduo.org/reports?project=prd-agent&folder=94b981552e5b45ea87698fc208022577&report=7bf0d83c50c94cee89607736a6e2183e"
+        },
+        {
+          "id": "b1a2cbf7c85c4c0bb16accb0258587cf",
+          "title": "功能验收 · 核心业务 / 稳定冒烟修复复测业务结论验后回填 · 2026-10-05",
+          "date": "2026-10-04",
+          "verdict": "fail",
+          "category": "功能验收",
+          "tier": "L2",
+          "prNumber": null,
+          "branch": "codex/stable-smoke-repair-20261005",
+          "commitSha": "ee905ed",
+          "projectSlug": null,
+          "deeplink": "https://miduo.org/reports?project=prd-agent&folder=e525bc9663c8449793b950808860982e&report=b1a2cbf7c85c4c0bb16accb0258587cf"
+        }
+      ],
+      "count": 3,
+      "tally": {
+        "pass": 2,
+        "conditional": 0,
+        "fail": 1,
+        "unknown": 0
+      },
+      "passRate": 66.7,
+      "byCategory": {
+        "PR 验收": {
+          "pass": 1,
+          "conditional": 0,
+          "fail": 0,
+          "total": 1
+        },
+        "缺陷复测": {
+          "pass": 1,
+          "conditional": 0,
+          "fail": 0,
+          "total": 1
+        },
+        "功能验收": {
+          "pass": 0,
+          "conditional": 0,
+          "fail": 1,
+          "total": 1
+        }
+      },
+      "featurePassRate": 0.0,
+      "featureCount": 1,
+      "note": "verdict 口径：pass 通过 / conditional 有条件通过 / fail 未通过。整体通过率含每日巡检（例行全量扫描，天然易红）；featurePassRate 只算功能验收，更贴近『本周做的功能靠不靠谱』。"
+    },
+    "transportCalls": [
+      "https://main-prd-agent.miduo.org/api/document-store/stores/115bc3ab603444d38066585852ef3d6d/entries?page=1&pageSize=200&all=true&excludeFolders=true",
+      "https://main-prd-agent.miduo.org/api/document-store/stores/115bc3ab603444d38066585852ef3d6d/share-links",
+      "cdscli report list --project prd-agent",
+      "cdscli report deeplink e649910df13d4e57b454a7de279e94a3",
+      "cdscli report deeplink 7bf0d83c50c94cee89607736a6e2183e",
+      "cdscli report deeplink b1a2cbf7c85c4c0bb16accb0258587cf"
+    ],
+    "metrics": {
+      "missingFullRevision": 2,
+      "wrongObservationDateBucket": 1,
+      "missingDailyBody": 3,
+      "missingDailyWatermark": 3,
+      "missingDirectAcceptanceLink": 0
+    },
+    "retainedFailures": [
+      {
+        "field": "commitSha",
+        "id": "7bf0d83c50c94cee89607736a6e2183e",
+        "actual": "ed85c57",
+        "expected": "ed85c573d2f84d6cc6c8c94966170854ef1b5de7"
+      },
+      {
+        "field": "commitSha",
+        "id": "b1a2cbf7c85c4c0bb16accb0258587cf",
+        "actual": "ee905ed",
+        "expected": "ee905ed82803423f8136d96e787d0a0bb96b77e5"
+      },
+      {
+        "field": "observationDate",
+        "id": "b1a2cbf7c85c4c0bb16accb0258587cf",
+        "actual": "2026-10-04",
+        "expected": "2026-10-05",
+        "warning": "createdAt仅为报告创建/观测时间，不能升级为实际测试执行时间。"
+      }
+    ]
+  }
+}
