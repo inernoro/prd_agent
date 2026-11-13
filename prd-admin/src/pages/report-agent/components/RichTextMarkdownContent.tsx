@@ -178,7 +178,7 @@ export function RichTextMarkdownContent({
           ol: ({ children }) => <ol className="list-decimal pl-5 my-2">{children}</ol>,
           blockquote: ({ children }) => <blockquote style={{ borderLeft: '3px solid var(--accent-claude)', paddingLeft: 12, margin: '12px 0', color: 'var(--text-secondary)' }}>{children}</blockquote>,
           a: ({ href, children, node: _node, ...props }) => <a {...props} href={href} onClick={event => followAnchor(event, href)} target={href?.startsWith('#') ? undefined : '_blank'} rel="noopener noreferrer"
-            style={{ color: 'var(--accent-fg-info)', textDecoration: 'underline', textUnderlineOffset: 3 }}>{children}</a>,
+            style={{ color: 'var(--accent-fg-blue)', textDecoration: 'underline', textUnderlineOffset: 3 }}>{children}</a>,
           table: ({ children }) => <div role="region" aria-label="报告表格，可横向滚动查看全部列" tabIndex={0}
             style={{ overflowX: 'auto', maxWidth: '100%', margin: '12px 0' }}>
             <table style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%', fontSize: 'inherit' }}>{children}</table>

@@ -2,7 +2,7 @@
 export const REPORT_WIDGET_DOCK_STYLE = `
 [data-report-widget-slot]:empty{display:none}
 [data-report-widget-slot]:not(:empty){display:flex;align-items:center;flex:0 1 auto;min-width:44px;min-height:44px;max-width:100%}
-[data-report-widget-slot]>#cds-widget:not(:has(.cds-panel)){position:relative!important;inset:auto!important;max-width:100%}
+[data-report-widget-slot]>#cds-widget:not(:has(.cds-panel)){position:relative!important;inset:auto!important;z-index:auto!important;max-width:100%}
 `;
 
 /** Self-contained so the anonymous server shell can run this same helper without a bundle. */
