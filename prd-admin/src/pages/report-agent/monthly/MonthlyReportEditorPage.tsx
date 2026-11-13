@@ -225,7 +225,7 @@ export default function MonthlyReportEditorPage() {
           <Button variant="ghost" size="sm" onClick={handleBack} aria-label="返回">
             <ArrowLeft size={16} />
           </Button>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 basis-[220px] sm:basis-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[18px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                 {formatYearMonth(report.year, report.month)}月报
@@ -237,13 +237,13 @@ export default function MonthlyReportEditorPage() {
                 {statusMeta.label}
               </span>
             </div>
-            <div className="text-[12px] mt-0.5 flex items-center gap-1.5" style={{ color: saveState === 'error' ? 'var(--accent-fg-error)' : 'var(--text-muted)' }}>
+            <div className="text-[12px] mt-0.5 flex flex-wrap items-center gap-1.5" style={{ color: saveState === 'error' ? 'var(--accent-fg-error)' : 'var(--text-muted)' }}>
               {report.teamName} ·
               {saveState === 'saving' && <MapSpinner size={11} />}
               <span data-testid="monthly-save-state">{saveLabel[saveState]}</span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {isDraft ? (
               <Button variant="ghost" size="sm" onClick={handleDelete} disabled={deleting}>
                 <Trash2 size={13} /> 删除草稿
