@@ -83,3 +83,50 @@ python3 scripts/acceptance/knowledge-retrieval/evaluate.py --corpus work/runtime
 - 回答支持关系须逐题裁定，尤其是跨文档问题。没有答案时应明确拒答，无权限文档必须真实存在于另一位临时用户的私库与索引中，不能用“根本没入库”代替隔离测试。完成后核对两位用户的临时数据清理回执。
 
 单篇大于六十四块或检索作用域超过五千个历史块时明确拒绝，不自动分批遍历全库。模型绑定变化须显式重新索引所选文档；默认相似度阈值尚未校准，不能作为达标证据。
+
+## 通过现有 ChatAgent 采集真实观察
+
+`collect.py` 只走正常登录、创建对话会话、发送问题、订阅 SSE 及回读最终消息的接口。它不直调网关，不伪造任务许可，不导入/索引/修改/删除知识库文档，也不自动清理取证会话。运行会触发已配置模型的正常调用；先以一题确认目标与凭据，再显式执行完整 40 题。REST/SSE 观察属于真实服务诊断，不能替代浏览器从导航进入、点击引用的用户路径验收。
+
+先按固定语料准备两个隔离临时库和两个普通账号：一个库归评测账号，另一个私有库归另一账号，并且确实存有对应私有文档和索引。准备 `work/kb-runtime-mapping.json`：
+
+```json
+{
+  "temporaryFixturesConfirmed": true,
+  "users": {"evaluation-user": "实际评测用户ID", "other-user": "另一用户ID"},
+  "entries": {
+    "travel-policy": {"entryId": "实际文档ID", "storeId": "实际临时库ID"}
+  }
+}
+```
+
+`entries` 必须补全 `corpus.json` 的全部 12 个固定文档标识；同一固定库映射到同一个实际库，可读库与私有库必须保持不同。映射只存标识，不存凭据。脚本会通过 `/api/authz/me` 核对实际登录身份，并产出使用实际 ID 的 `runtime-corpus.json` 和 `runtime-questions.json`，不改固定题目正文、标准事实或原始引用 URL。
+
+认证从环境变量 `KB_EVAL_TOKEN` 读取正常访问令牌；未提供令牌时使用 `KB_EVAL_USERNAME` / `KB_EVAL_PASSWORD`（也接受现有 `MAP_USERNAME` / `MAP_PASSWORD`）调用正常账号密码登录。不要把凭据写进参数、映射、仓库或报告。脚本不输出凭据，不跟随 HTTP 重定向，非本机目标强制 HTTPS；证据文件按仅当前用户可读写创建。
+
+```bash
+python3 scripts/acceptance/knowledge-retrieval/collect.py run --base-url '<实际预览源站>' --mapping work/kb-runtime-mapping.json --question-id KB-001 --output-dir work/kb-real-one
+python3 scripts/acceptance/knowledge-retrieval/collect.py run --base-url '<实际预览源站>' --mapping work/kb-runtime-mapping.json --output-dir work/kb-real-full
+python3 scripts/acceptance/knowledge-retrieval/evaluate.py --corpus work/kb-real-full/runtime-corpus.json --questions work/kb-real-full/runtime-questions.json --observations work/kb-real-full/observations.jsonl --output work/kb-real-full/unreviewed-report.json
+```
+
+源站地址从本仓库权威预览查询取得，不能猜测。输出目录必须为空，避免覆盖旧证据。单题采集不会被当成完整 40 题结果；评分器仍以全部固定题为分母，缺题保持阻塞。采集与未裁定评分退出码 `2` 表示证据尚不完整，不代表质量达标。
+
+采集口径固定如下：
+
+- 主 recall@5 样本取每题**首个成功且具备完整证据的 semantic 搜索调用**，严格保留该次检索原序及重复项；实际程序遇到任何知识工具失败或上下文缺失会阻塞本题，而不会用后一次成功调用补分。只有 literal 调用时主样本为空值，不能以字面结果冒充语义效果。
+- `latencyMs` 只取该主 semantic 调用的 `retrievalLatencyMs`。所有 `searchCalls` 分别保留模式、原始列表和耗时，不串接后冒充统一排序，也不把可能并行的耗时相加。`turnElapsedMs` 另记从创建会话到终态回读的总观察耗时。
+- `contextEntryIds` 按整轮所有搜索和读取工具结果做有序去重并集；它与主检索列表是不同口径。任一知识工具缺结果、缺上下文证据、终态失败或 SSE 尾部缺失时，正式字段保持空值；部分已知上下文仍在 `contextEntryIdsObserved` 留供审计。
+- 每题保存逐事件证据与会话/轮次/最终消息标识。SSE 断线只按最后序号重新订阅，不再次 POST 问题；重复事件去重，序号缺口不当成完整证据。消息提交回执未知时先保留已创建会话标识，禁止直接重跑造成重复模型调用，须先查明该会话任务状态。
+- 最终回答来自匹配本轮助手消息的服务端回读。Markdown 链接仅作为结构化引用候选，原文精确引句、打开状态和支持性均不自动判真。非知识库链接也保留，不能为提高引用正确率静默删除坏引用。引用解析支持内联 Markdown 链接；引用式 Markdown、HTML 链接等格式须对照完整回答人工补充独立复核记录，不得宣称解析全面。
+
+采集默认写 `answerStatus=pending_review`，不按“未找到”等词语猜拒答，也不按标准答案关键词自动填 `answerSupported`。`review-template.json` 需要复核人员逐题判定 `answered` / `abstained`、支持性、精确原句及证据路径，并以同一个普通用户在浏览器逐一点击打开引用。空值表示未验证，不能改成通过来消除阻塞。
+
+```bash
+python3 scripts/acceptance/knowledge-retrieval/collect.py apply-review --observations work/kb-real-full/observations.jsonl --review work/kb-real-full/review-completed.json --output work/kb-real-full/reviewed-observations.jsonl
+python3 scripts/acceptance/knowledge-retrieval/evaluate.py --corpus work/kb-real-full/runtime-corpus.json --questions work/kb-real-full/runtime-questions.json --observations work/kb-real-full/reviewed-observations.jsonl --output work/kb-real-full/reviewed-report.json
+```
+
+复核合并只写新观察文件，保留原始观察。它禁止重写已观察到的引用身份或 URL，禁止删掉失败引用，也不允许把采集未完成的题目标为已完成。证据文件是否真实存在、是否证明对应断言仍须在归档 CDS `/reports` 前核对；脚本不会把填写了一个路径当成浏览器验证。
+
+确定性测试使用本机 fake HTTP/SSE，不访问真实网关或模型。它们只证明协议采集与证据阻塞逻辑，不证明检索质量、引用正确或生产可用。
