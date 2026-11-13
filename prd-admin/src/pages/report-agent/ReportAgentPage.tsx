@@ -1,3 +1,4 @@
+import { ReportWidgetDock } from './components/ReportWidgetDock';
 import { useEffect, useMemo, useState } from 'react';
 import { FileText, Users, Settings, RefreshCw, CalendarCheck, CalendarRange } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -170,6 +171,8 @@ export default function ReportAgentPage() {
         }}
         actions={isMobile ? undefined : usageGuideActions}
       />
+
+      <ReportWidgetDock />
 
       {error && (
         <GlassCard glow className="py-2 px-3">

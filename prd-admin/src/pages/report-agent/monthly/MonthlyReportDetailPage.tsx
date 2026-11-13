@@ -1,3 +1,4 @@
+import { ReportWidgetDock } from '../components/ReportWidgetDock';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertCircle, Pencil } from 'lucide-react';
@@ -163,6 +164,7 @@ export default function MonthlyReportDetailPage(props: MonthlyReportDetailPagePr
 
   return (
     <div className="lg:h-full min-h-0 flex flex-col gap-4" data-testid="monthly-report-detail">
+      <ReportWidgetDock />
       <GlassCard variant="subtle" className="px-4 sm:px-5 py-3 shrink-0">
         <div className="flex items-center gap-3 flex-wrap">
           <Button variant="ghost" size="sm" onClick={goBack} aria-label="返回">

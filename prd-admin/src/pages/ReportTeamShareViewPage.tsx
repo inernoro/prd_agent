@@ -1,3 +1,4 @@
+import { ReportWidgetDock } from './report-agent/components/ReportWidgetDock';
 import { SharedReportSection } from './report-agent/components/SharedReportSection';
 import { RichTextMarkdownContent } from './report-agent/components/RichTextMarkdownContent';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -260,6 +261,7 @@ export default function ReportTeamShareViewPage() {
   // ── Success: render team-week aggregate view ──
   return (
     <div style={pageStyles.successRoot}>
+      <ReportWidgetDock />
       <div style={pageStyles.topBar}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button type="button" onClick={goBack} style={pageStyles.backBtn} aria-label="返回上一页">

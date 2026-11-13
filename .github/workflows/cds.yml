@@ -2,7 +2,7 @@ name: CDS CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, fix/report-reading-parity]
   pull_request:
     branches: [main, develop]
   workflow_dispatch:

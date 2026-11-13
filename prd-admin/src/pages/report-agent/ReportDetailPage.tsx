@@ -1,3 +1,4 @@
+import { ReportWidgetDock } from './components/ReportWidgetDock';
 import { useSmartBack } from '@/hooks/useSmartBack';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { formatWeekDateRange } from './utils/weekRange';
@@ -309,6 +310,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   return (
     // 手机详情保持内容自然高度，避免嵌入团队flex容器时被互动区挤扁；lg+保留定高分栏。
     <div className="shrink-0 lg:shrink lg:h-full min-h-0 flex flex-col gap-4">
+      <ReportWidgetDock />
       {/* Return Dialog */}
       {showReturnDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--modal-overlay)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}>

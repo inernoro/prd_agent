@@ -1,6 +1,7 @@
 import { ClassificationFilters, ClassificationSummary, NotificationTemplateCatalog, type ClassificationSelection } from '@/components/ReportClassification';
 import { matchesClassification } from '../../../src/shared/notification-templates';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { dockReportWidget, REPORT_WIDGET_DOCK_STYLE } from '../../../src/shared/report-widget-dock';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
@@ -2296,6 +2297,10 @@ function ReportViewer({
   const [expanded, setExpanded] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const reqRef = useRef(0);
+  const widgetSlot = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (report && widgetSlot.current) return dockReportWidget(widgetSlot.current);
+  }, [report?.id]);
   // iframe 是 no-same-origin sandbox，感知不到应用的 data-theme——
   // 旧写法 color-scheme: light dark 只跟 OS 配色，用户在 CDS 里切主题时
   // 报告区不跟随（暗 UI 嵌白报告或反之），链接色 #2563eb 在深底上也难读。
@@ -2365,6 +2370,7 @@ function ReportViewer({
           </span>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-2 md:shrink-0">
+          <style>{REPORT_WIDGET_DOCK_STYLE}</style>
           {report.prNumber && report.verdict ? <PushToPrControl report={report} /> : null}
           <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[0.6875rem]" onClick={() => onSync(report)} title="使用 MAP 当前登录账号保存到我的验收知识库">
             <Save />保存到 MAP
@@ -2384,6 +2390,7 @@ function ReportViewer({
           >
             {expanded ? <Minimize2 /> : <Maximize2 />}
           </Button>
+          <div ref={widgetSlot} data-report-widget-slot="" />
         </div>
       </div>
       <ClassificationSummary report={report} onSaved={onClassified} />
