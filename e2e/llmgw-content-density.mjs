@@ -22,6 +22,7 @@ const server = http.createServer((req, res) => {
   if (/^\/(llmgw\/)?gw\//.test(pathname)) {
     const api = pathname.replace(/^\/(llmgw\/)?gw/, '');
     if (api === '/auth/login') return json(res, { token: 'deterministic-fixture-session', username: 'density-fixture', displayName: '密度验收', expiresAt: '2099-11-13T08:00:00Z', mustChangePassword: false, tenant: { id: 'density-fixture', name: '布局验收组织', isInternal: false, role: scenarios.role, teamIds: [] } });
+    if (api === '/auth/account') return json(res, { username: 'density-fixture', usernameIsGenerated: false, identityProvider: 'local', hasPassword: true, requiresOldPassword: true, minPasswordLength: 12, tenant: { name: '布局验收组织', role: scenarios.role } });
     if (api === '/platforms') return scenarios.failure ? json(res, '供应方加载失败，请刷新后重试', false) : json(res, { items: Array.from({ length: scenarios.count }, (_, i) => provider(i)), total: scenarios.count });
     if (api === '/upstream-proxy' && req.method === 'PUT' && scenarios.proxyFailure) return json(res, '代理保存失败，请检查配置后重试', false);
     if (api === '/upstream-proxy') return json(res, { mode: 'inherit', effectiveMode: 'direct', effectiveSource: 'deployment' });
@@ -111,6 +112,15 @@ try {
     try {
       await login(page);
       await page.locator('tbody tr').first().waitFor();
+      // 从真实菜单入口换页，旧菜单不能长期遮住新页面的内容与操作。
+      await page.getByLabel('打开用户菜单', { exact: true }).click();
+      await page.getByRole('link', { name: '账号与安全', exact: true }).click();
+      await page.getByRole('heading', { name: '账号与安全', exact: true }).waitFor();
+      check(`${id}:换页后用户菜单退场`, !await page.locator('.lg-user-menu').evaluate(el => el.open), '导航后的常驻菜单会覆盖新页内容');
+      await snapshot(page, `${id}-account-menu-closed`);
+      await page.goBack({ waitUntil: 'domcontentloaded' });
+      if (await page.locator('.lg-user-menu').evaluate(el => el.open)) await page.getByLabel('打开用户菜单', { exact: true }).click();
+      await page.locator('tbody tr').first().waitFor();
       for (const [tab, heading] of [['模型名录', '模型名录'], ['生图契约', '生图契约'], ['转接上游', 'Exchange 映射'], ['Provider', 'Provider（模型供应方）']]) {
         const control = page.getByRole('tab', { name: tab, exact: true });
         check(`${id}:页签${tab}可见无遮挡`, await visibleAndUncovered(control), '导航不能因内容前置被裁剪或挤出视口');
@@ -159,7 +169,7 @@ try {
       await expect(page.getByText('代理保存失败，请检查配置后重试', { exact: true })).toBeVisible();
       scenarios.proxyFailure = false;
       scenarios.count = 31;
-      await page.reload();
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await expect(page.locator('tbody tr')).toHaveCount(10);
       await snapshot(page, `${id}-many`);
       for (let i = 0; i < 3; i++) await page.getByRole('button', { name: '下一页', exact: true }).click();
@@ -171,18 +181,18 @@ try {
       await expect(page.locator('tbody tr').first()).toContainText('供应方 01');
       check(`${id}:检索后单页不残留翻页`, await page.getByRole('button', { name: '上一页', exact: true }).count() === 0, '从第4页搜索一条结果应自然展示');
       scenarios.count = 0;
-      await page.reload();
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await page.getByRole('button', { name: '保存并测试连接', exact: true }).waitFor();
       await snapshot(page, `${id}-empty`);
       check(`${id}:空态有新增入口`, await page.getByRole('button', { name: '保存并测试连接', exact: true }).count() > 0, '首次使用自动打开添加表单');
       scenarios.failure = true;
-      await page.reload();
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await expect(page.getByText('供应方加载失败，请刷新后重试', { exact: true })).toBeVisible();
       await snapshot(page, `${id}-error`);
       await page.waitForTimeout(500);
       await expect(page.getByText('供应方加载失败，请刷新后重试', { exact: true })).toBeVisible();
       scenarios.failure = false; scenarios.count = 2;
-      await page.reload();
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await expect(page.locator('tbody tr')).toHaveCount(2);
       // 共享CollectionView：密钥既有安全范围可读，窄屏卡片与桌面表格均可打开详情。
       async function navigateTo(label) {
@@ -213,6 +223,7 @@ try {
       await expect(page.getByRole('complementary', { name: '清单详情' })).toBeVisible();
       await snapshot(page, `${id}-model-detail`);
       await page.getByRole('button', { name: '关闭详情', exact: true }).click();
+
     } catch (error) { failures.push({ name: `${id}:交互路径`, detail: error.message }); console.error(`${id}: ${error.message}`); await page.screenshot({ path: path.join(OUT, `${id}-failure.png`) }).catch(() => {}); }
     await context.close();
     scenarios.role = 'viewer'; scenarios.count = 2; scenarios.failure = false;

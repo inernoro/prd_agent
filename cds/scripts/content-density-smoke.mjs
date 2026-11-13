@@ -11,10 +11,14 @@ const out = path.resolve(process.env.CDS_DENSITY_EVIDENCE || path.join(os.tmpdir
 fs.mkdirSync(out, { recursive: true });
 const b = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || (fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined), args: ['--no-sandbox'] });
 const result = [];
+const settle = async page => page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+});
 try {
     for (const width of (process.env.DENSITY_WIDTH ? [Number(process.env.DENSITY_WIDTH)] : [1440, 390]))
         for (const theme of ['light', 'dark']) {
-            const p = await b.newPage({ viewport: { width, height: width === 390 ? 844 : 900 }, colorScheme: theme, reducedMotion: 'reduce' });
+            const p = await b.newPage({ viewport: { width, height: width === 390 ? 844 : 900 }, isMobile: width < 700, hasTouch: width < 700, colorScheme: theme, reducedMotion: 'reduce' });
             let count = 2, connectionCount = 2, configured = true, fail = false;
             const unexpected = new Set();
             const errors = [];
@@ -59,13 +63,17 @@ try {
             console.log('begin', label, width, theme);
             await p.goto(`${base}/reports`, { waitUntil: 'domcontentloaded' });
             await p.locator('#reports-ledger tbody tr').first().waitFor();
+            await settle(p);
             const ledger = await p.locator('#reports-ledger tbody tr').first().boundingBox();
-            const reportMetrics = { surface: 'reports', width, theme, y: ledger.y, rowHeight: ledger.height, pagination: await p.getByRole('button', { name: '下一页', exact: true }).count(), overflow: await p.evaluate(() => document.documentElement.scrollWidth > innerWidth) };
+            const viewport = await p.evaluate(() => ({ width: innerWidth, touch: navigator.maxTouchPoints, coarse: matchMedia('(pointer: coarse)').matches }));
+            const reportMetrics = { surface: 'reports', width, theme, y: ledger.y, rowHeight: ledger.height, viewport, pagination: await p.getByRole('button', { name: '下一页', exact: true }).count(), overflow: await p.evaluate(() => document.documentElement.scrollWidth > innerWidth) };
             await p.screenshot({ path: `${out}/${label}-reports-${width}-${theme}.png` });
             result.push(reportMetrics);
             fs.writeFileSync(`${out}/${label}-measure.json`, JSON.stringify(result, null, 2));
             console.log('report-measure', reportMetrics);
             if (verify) {
+                if (viewport.width !== width || (width < 700 && (!viewport.touch || !viewport.coarse)))
+                    throw Error('窄屏验收缺少真实触控视口或发生自动缩放');
                 if (ledger.y > (width === 1440 ? 500 : 800))
                     throw Error('报告台账首条数据被前置包装挤出目标位置');
                 if (reportMetrics.pagination !== 0)
@@ -107,6 +115,7 @@ try {
             await p.goto(`${base}/cds-settings#connections`, { waitUntil: 'domcontentloaded' });
             await p.getByRole('heading', { name: '连接记录', exact: true }).waitFor();
             await p.locator('table tbody tr').first().waitFor();
+            await settle(p);
             const row = await p.locator('table tbody tr').first().boundingBox();
             const cm = { surface: 'connections', width, theme, y: row.y, rowHeight: row.height, overflow: await p.evaluate(() => document.documentElement.scrollWidth > innerWidth) };
             result.push(cm);

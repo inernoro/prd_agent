@@ -174,7 +174,7 @@ export function ConsoleLayout() {
           ) : null}
           {canOpenMapTutorials ? <a className="lg-header-link" href={mapTutorialHref}><BookOpen size={15} /><span>相关教程</span><ExternalLink size={12} /></a> : null}
           <NavLink className="lg-header-link" to="/learn"><BookOpen size={15} /><span>文档</span></NavLink>
-          <details className="lg-user-menu">
+          <details key={location.key} className="lg-user-menu">
             <summary aria-label="打开用户菜单"><span>{who.slice(0, 1).toUpperCase()}</span><strong>{who}</strong><ChevronDown size={13} /></summary>
             <div className="lg-user-popover">
               <div><strong>{who}</strong><small>{tenant?.name ?? '当前租户'} · {tenant?.role ?? 'member'}</small></div>
