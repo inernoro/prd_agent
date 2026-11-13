@@ -375,10 +375,11 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
                         message.TryGetProperty("usage", out var initialUsage) &&
                         initialUsage.ValueKind == JsonValueKind.Object)
                     {
-                        // Usage-only chunks are accumulated by the gateway; no finish reason yet.
+                        // Opening usage is nonterminal metadata. An empty text chunk is
+                        // accumulated without completing the protocol or first-output wait.
                         return new GatewayStreamChunk
                         {
-                            Type = GatewayChunkType.Done,
+                            Type = GatewayChunkType.Text,
                             TokenUsage = ParseUsageElement(initialUsage)
                         };
                     }

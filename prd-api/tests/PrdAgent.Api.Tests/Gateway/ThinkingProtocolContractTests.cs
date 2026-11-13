@@ -1,10 +1,13 @@
 using System.Net;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Adapters;
 using Xunit;
@@ -13,6 +16,38 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public class ThinkingProtocolContractTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClaudeOpeningUsage_WithoutCompletionFailsAndNeverLogsSuccess(bool partialText)
+    {
+        var http = new ProtocolUpstream(false) { ClaudeOpeningOnly = true, PartialText = partialText };
+        var log = new Mock<ILlmRequestLogWriter>();
+        log.Setup(x => x.StartAsync(It.IsAny<LlmLogStart>(), It.IsAny<CancellationToken>())).ReturnsAsync("opening-test");
+        var (gateway, _) = CreateGateway(http, true, log.Object);
+        var chunks = await Collect(gateway.StreamAsync(Request(includeThinking: false)));
+        Assert.DoesNotContain(chunks, c => c.Type == GatewayChunkType.Done);
+        Assert.Equal("UPSTREAM_OUTCOME_UNKNOWN", Assert.Single(chunks, c => c.Type == GatewayChunkType.Error).ErrorCode);
+        Assert.Equal(partialText ? "partial" : "", string.Concat(chunks.Where(c => c.Type == GatewayChunkType.Text).Select(c => c.Content)));
+        log.Verify(x => x.MarkDone("opening-test", It.Is<LlmLogDone>(d => d.Status == "failed")), Times.Once);
+        log.Verify(x => x.MarkFirstByte("opening-test", It.IsAny<DateTime>()), partialText ? Times.Once() : Times.Never());
+        Assert.Equal(1, http.Calls);
+    }
+
+    [Fact]
+    public async Task ClaudeOpeningUsage_CannotDisableFirstOutputDeadline()
+    {
+        var http = new ProtocolUpstream(false) { ClaudeOpeningOnly = true, StallAfterOpening = true };
+        var (gateway, _) = CreateGateway(http, true, firstByteTimeout: 1);
+        var watch = Stopwatch.StartNew();
+        var chunks = await Collect(gateway.StreamAsync(Request(includeThinking: false, timeoutSeconds: 4)))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.DoesNotContain(chunks, c => c.Type == GatewayChunkType.Done);
+        Assert.Equal("UPSTREAM_OUTCOME_UNKNOWN", Assert.Single(chunks, c => c.Type == GatewayChunkType.Error).ErrorCode);
+        Assert.InRange(watch.Elapsed.TotalSeconds, 0.7, 2.5);
+        Assert.Equal(1, http.Calls);
+    }
+
     [Fact]
     public async Task Gateway_ToolOnlyResponseDoesNotExposeProtocolEnvelopeAsAssistantText()
     {
@@ -189,17 +224,19 @@ public class ThinkingProtocolContractTests
         ["temperature"] = 0.5,
     };
 
-    private static GatewayRequest Request(JsonObject? body = null, bool strict = false, bool includeThinking = true)
+    private static GatewayRequest Request(JsonObject? body = null, bool strict = false, bool includeThinking = true, int timeoutSeconds = 120)
         => new()
         {
             AppCallerCode = AppCallerRegistry.ReportAgent.Polish.ItemRefine,
             ModelType = "chat",
             IncludeThinking = includeThinking,
+            TimeoutSeconds = timeoutSeconds,
             RequestBody = body ?? Body(),
             Context = new GatewayRequestContext { ParameterPolicy = strict ? "strict-require" : null },
         };
 
-    private static (LlmGateway, Mock<IModelResolver>) CreateGateway(ProtocolUpstream http, bool? supportsThinking)
+    private static (LlmGateway, Mock<IModelResolver>) CreateGateway(ProtocolUpstream http, bool? supportsThinking,
+        ILlmRequestLogWriter? log = null, int firstByteTimeout = 30)
     {
         var resolver = new Mock<IModelResolver>();
         resolver.Setup(r => r.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
@@ -207,12 +244,15 @@ public class ThinkingProtocolContractTests
             .ReturnsAsync(new ModelResolutionResult
             {
                 Success = true, ActualModel = "contract-model", ResolutionType = "Pinned",
-                ActualPlatformId = "contract-platform", PlatformType = "openai", Protocol = "openai",
+                ActualPlatformId = "contract-platform", PlatformType = http.ClaudeOpeningOnly ? "claude" : "openai",
+                Protocol = http.ClaudeOpeningOnly ? "claude" : "openai",
                 ApiUrl = http.OpenRouter ? "https://openrouter.ai/api/v1" : "https://api.openai.com/v1",
                 ApiKey = "test", SupportsThinking = supportsThinking,
                 ParameterCapabilities = new() { ["temperature"] = true },
             });
-        return (new LlmGateway(resolver.Object, http, NullLogger<LlmGateway>.Instance), resolver);
+        return (new LlmGateway(resolver.Object, http, NullLogger<LlmGateway>.Instance, log,
+            configuration: new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["LlmGateway:FirstByteTimeoutSeconds"] = firstByteTimeout.ToString() }).Build()), resolver);
     }
 
     private static async Task<List<GatewayStreamChunk>> Collect(IAsyncEnumerable<GatewayStreamChunk> stream)
@@ -227,6 +267,9 @@ public class ThinkingProtocolContractTests
     private sealed class ProtocolUpstream(bool openRouter) : IHttpClientFactory
     {
         public bool ToolOnly { get; init; }
+        public bool ClaudeOpeningOnly { get; init; }
+        public bool PartialText { get; init; }
+        public bool StallAfterOpening { get; init; }
         internal bool OpenRouter => openRouter;
         internal int Calls;
         internal bool ExpectThinking = true;
@@ -242,6 +285,17 @@ public class ThinkingProtocolContractTests
                 if (owner.TransportFailure is { } failureException) throw failureException;
                 var body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
                 Assert.Equal("contract-model", body["model"]!.GetValue<string>());
+                if (owner.ClaudeOpeningOnly)
+                {
+                    var opening = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":11,\"output_tokens\":0}}}\n\n";
+                    if (owner.PartialText) opening += "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n";
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = owner.StallAfterOpening
+                            ? new StreamContent(new OpeningThenStallStream(Encoding.UTF8.GetBytes(opening)))
+                            : new StringContent(opening, Encoding.UTF8, "text/event-stream")
+                    };
+                }
                 if (!owner.OpenRouter)
                 {
                     var allowed = new[] { "model", "messages", "temperature", "stream", "stream_options" };
@@ -284,6 +338,17 @@ public class ThinkingProtocolContractTests
                     ["error"] = new JsonObject { ["message"] = message }
                 }.ToJsonString())
             };
+        }
+    }
+
+    private sealed class OpeningThenStallStream(byte[] opening) : MemoryStream(opening)
+    {
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var count = await base.ReadAsync(buffer, cancellationToken);
+            if (count > 0) return count;
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return 0;
         }
     }
 }

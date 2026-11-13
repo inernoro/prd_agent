@@ -8,3 +8,4 @@
 | fix | llmgw | 原生 OpenAI 出站不再泄漏已被严格入口消费的 provider.require_parameters 控制字段；真实 OpenRouter 路由保持该扩展 |
 | test | llmgw | 固定应答提示明确禁止标点且保持精确 OK 断言，Native 批次标识同时写入 Context，确保真实调用审计可关联 |
 | fix | llmgw | 纯工具调用无正文时不再把整个上游响应包作为助手文本返回，原始响应继续保留用于审计 |
+| fix | llmgw | Claude 开头用量帧作为非终止元数据累积，提前断流保持失败且不能解除首个可用输出的超时限制 |

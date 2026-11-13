@@ -20,7 +20,7 @@
 | 工具调用 | 名称、id、参数结构、choice 与 schema | 分片重组、结束原因 | 固定单工具；Claude 多轮翻译复用旧测试。并行交错、多模态工具、流式取消没有新增完整组合覆盖 |
 | 结束原因 | 适配器/既有测试 | 适配器枚举与四入口正常/tool 终止 | 先按出口校验合法枚举，再对 stop/end_turn、tool_calls/tool_use、FUNCTION_CALL 做语义归一；length/max_tokens、safety/content_filter 在适配器夹具中覆盖，兼容出口可能归一或覆盖，不能宣称全链路保真 |
 | 用量 | 固定 input=11、output=7 | 固定计数、OpenAI 末帧 usage 及 Claude 开始/终止分帧合并 | 模拟严格校验值；真实结果校验字段/类型/非负，比较时忽略数值波动；Claude SSE input 缺失是显式债务；cache/reasoning 细项由既有适配器/原生 Responses 测试局部覆盖 |
-| HTTP/SSE 错误 | 复用 LlmGateway/Thinking/NativeResponses 错误测试 | SSE 错误不能算成功、截断原生 Responses 不得成功 | 覆盖 400/401/503、网络/超时、原生截断及失败事件；没有对真实供应商人为制造限流/超时 |
+| HTTP/SSE 错误 | 复用 LlmGateway/Thinking/NativeResponses 错误测试 | SSE 错误不能算成功、截断原生 Responses 不得成功 | 覆盖 400/401/503、网络/超时、原生截断及失败事件；Claude 开头用量后空/部分内容断流必须失败，元数据不能解除首字超时；没有对真实供应商人为制造限流/超时 |
 | `reasoning_effort` / `reasoning` | 固定请求核对物理字段 | 同一参数核对物理字段 | OpenAI + 模型精确能力声明 + strict-require；Claude 转换尚未实现，固定请求要求 PARAMETER_PROTOCOL_UNSUPPORTED 且零上游调用 |
 | IncludeThinking | 复用 ThinkingProtocolContractTests | reasoning_content/reasoning 不混入正文 | OpenRouter 扩展仅向精确 OpenRouter 目标编码；原生 OpenAI 不附带这些扩展；没有以无思考文本推断模型内部未推理 |
 | 推理模型预算与采样 | 复用 ReasoningChatBudgetCompatibilityTests | 同左 | o 系列输出预算别名、采样去除、严格策略拒绝与 gpt-5.6 工具 reasoning_effort:none 继续使用已有合同 |
