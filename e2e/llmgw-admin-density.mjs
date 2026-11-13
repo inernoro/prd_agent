@@ -47,7 +47,7 @@ const server = http.createServer((req, res) => {
   if (api === '/teams') { if (state.teamFailure) return json(res, '团队创建失败，未写入', false);state.createdTeam = true;return json(res, { id: 'team-new', name: '边界验收团队', status: 'active' }); }
   if (api === '/system-settings') return json(res, { modelSource: 'auto', modelGroupId: null, modelName: null, teamId: 'system', teamName: '系统内部', teamIsSystemOwned: true, servingBaseUrl: 'https://serving.example.test', servingReachable: true, appCallerCode: 'gateway.internal::chat', credentialState: 'ready', credentialPrefix: 'gwk_fixture', credentialIssuedAt: TIME, pools: [{ id: 'pool-a', name: '验收池', isDefault: true }], models: [{ id: 'model-a', publicId: 'fixture-chat', name: '验收模型' }], modelQuery: '', modelTotal: 1, modelPageSize: 200, consumers: [{ feature: '用途推导', appCallerCode: 'gateway.intent::chat' }] });
   if (api === '/runtime-gates') return json(res, { status: 'blocked', readyForRelease: false, passed: 0, blocked: 1, waiting: 0, generatedAt: TIME, items: [{ id: 'fixture-gate', label: '验收阻塞项', status: 'blocked', blocking: true, detail: '尚缺本次提交的真实调用证据', evidence: 'fixture-only', nextAction: '查看请求记录补齐证据', links: [{ label: '查看请求记录', to: '/logs' }] }] });
-  if (api === '/protocol-coverage') return json(res, { sinceHours: 24, generatedAt: TIME, totalLogRequests: 0, totalRegisteredAppCallers: 0, totalActiveAppCallers: 0, coveredProtocols: 0, missingRuntimeProtocols: 0, items: [] });
+  if (api === '/protocol-coverage') return json(res, { sinceHours: 24, generatedAt: TIME, totalLogRequests: 0, totalRegisteredAppCallers: 0, totalActiveAppCallers: 0, coveredProtocols: 0, missingRuntimeProtocols: 0, items: [{ ingressProtocol: 'openai-compatible', label: 'OpenAI-compatible', logRequests: 0, httpRequests: 0, failedRequests: 0, droppedParameterRequests: 0, requestTypes: [], logsLink: '/logs?ingressProtocol=openai-compatible', appCallersLink: '/app-callers' }] });
   if (api === '/key-health') return json(res, { summary: { primaryConfigured: true, total: 2, ok: 2, missing: 0, unreadable: 0, status: 'ok' }, items: [] });
   if (api === '/config-authority/report') return json(res, { summary: { mapOnlyPools: 0, mapOnlyPlatforms: 0, mapOnlyModels: 0, mapOnlyExchanges: 0, activeMissingGatewayPool: 0, activeBoundPoolWithoutUsableMember: 0, activeAppCallerMapFallbackReady: true, mapFallbackObjectsRemaining: 0, readinessPercent: 100, status: 'ready' }, gaps: [] });
   if (['/platforms', '/models', '/exchanges', '/app-callers', '/logical-models'].includes(api)) return json(res, { items: [], total: 0 });
@@ -149,7 +149,19 @@ try {
    for (const [route, heading] of [['/learn', '学习中心'], ['/gateway-settings', '服务网关设置'], ['/governance', '系统运维'], ['/quickstart', 'Quickstart']]) {
     await nav(page, route);await page.getByRole('heading', { name: heading, exact: true }).waitFor();await screenshot(page, `${id}-${route.slice(1)}`);
     if (route === '/gateway-settings') for (const label of ['钉一个模型池', '钉一个模型', '交给网关挑']) { await page.getByRole('radio', { name: new RegExp(`^${label}\\s`) }).click(); }
-    if (route === '/governance') { await expect(page.getByText('验收阻塞项', { exact: true })).toBeVisible();await page.locator('summary').filter({ hasText: /容器拓扑/ }).click();await expect(page.getByText('llmgw-serve', { exact: true })).toBeVisible(); }
+    if (route === '/governance') {
+     // 主干已将内部交付记录移出产品页；验证当前运维状态，不能恢复过时的验收展示凑绿。
+     await expect(page.getByRole('heading', { name: '协议请求', exact: true })).toBeVisible();
+     await expect(page.getByText('暂无请求', { exact: true })).toBeVisible();
+     await expect(page.getByText('0 个活跃调用方尚无可用模型', { exact: true })).toBeVisible();
+     await expect(page.getByText(/验收阻塞项|容器拓扑|发布 Gate/)).toHaveCount(0);
+     state.failure = '/config-authority/report'; await page.reload();
+     await expect(page.getByText('调用方路由状态暂不可用', { exact: true })).toBeVisible();
+     await expect(page.getByText('0 个活跃调用方尚无可用模型', { exact: true })).toHaveCount(0);
+     await expect(page.getByText(/部分接口加载失败，计数可能不完整/)).toBeVisible();
+     await screenshot(page, `${id}-governance-authority-error`); state.failure = ''; await page.reload();
+     await expect(page.getByText('0 个活跃调用方尚无可用模型', { exact: true })).toBeVisible();
+    }
     if (route === '/learn') { check(`${id}:概念索引完整`, await page.locator('.lg-topic-grid > *').count() === 10, null); }
     if (route === '/quickstart') {
      await page.getByRole('textbox', { name: '我想做什么', exact: true }).fill('为客服助手接入文字对话');await page.getByRole('button', { name: '准备接入', exact: true }).click();await page.getByRole('button', { name: '下一步', exact: true }).waitFor();await screenshot(page, `${id}-quickstart-draft`);
