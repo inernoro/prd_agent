@@ -4869,7 +4869,14 @@ public static class GatewayHttpEndpoints
                         @object = "chat.completion.chunk",
                         created,
                         model,
-                        choices = new[] { new { index = 0, delta = new { }, finishReason = chunk.FinishReason ?? "stop" } },
+                        choices = new[] { new { index = 0, delta = new { }, finishReason = chunk.FinishReason switch
+                        {
+                            "end_turn" or "stop_sequence" => "stop",
+                            "max_tokens" => "length",
+                            "tool_use" => "tool_calls",
+                            null => "stop",
+                            var reason => reason,
+                        } } },
                         usage = new { promptTokens, completionTokens, totalTokens = promptTokens + completionTokens },
                     });
                     await SendDoneAsync();
@@ -5702,6 +5709,9 @@ public static class GatewayHttpEndpoints
         http.Response.Headers["X-Accel-Buffering"] = "no";
 
         var model = requestedModel ?? "auto";
+        // Gemini functionCall requires a complete arguments object. OpenAI/Claude
+        // tool deltas may split JSON at any byte; buffer by call index until Done.
+        var toolCalls = new SortedDictionary<int, JsonObject>();
 
         async Task WriteDataAsync(JsonObject data)
         {
@@ -5729,12 +5739,23 @@ public static class GatewayHttpEndpoints
                 }
                 else if (chunk.Type == GatewayChunkType.ToolCall && chunk.ToolCallDelta != null)
                 {
-                    await WriteDataAsync(BuildGeminiResponseObject(
-                        requestId,
-                        model,
-                        BuildGeminiParts(string.Empty, chunk.ToolCallDelta),
-                        "FUNCTION_CALL",
-                        null));
+                    foreach (var node in chunk.ToolCallDelta)
+                    {
+                        if (node is not JsonObject delta) continue;
+                        var index = delta["index"]?.GetValue<int>() ?? 0;
+                        if (!toolCalls.TryGetValue(index, out var call))
+                        {
+                            call = new JsonObject { ["function"] = new JsonObject { ["name"] = "", ["arguments"] = "" } };
+                            toolCalls[index] = call;
+                        }
+                        var function = call["function"]!.AsObject();
+                        if (delta["function"] is JsonObject fragment)
+                        {
+                            foreach (var key in new[] { "name", "arguments" })
+                                if (fragment[key] is JsonValue value && value.TryGetValue<string>(out var text))
+                                    function[key] = (function[key]?.GetValue<string>() ?? "") + text;
+                        }
+                    }
                 }
                 else if (chunk.Type == GatewayChunkType.Error)
                 {
@@ -5754,10 +5775,10 @@ public static class GatewayHttpEndpoints
                     await WriteDataAsync(BuildGeminiResponseObject(
                         requestId,
                         model,
-                        new JsonArray(),
-                        string.Equals(chunk.FinishReason, "tool_calls", StringComparison.OrdinalIgnoreCase)
-                            ? "FUNCTION_CALL"
-                            : "STOP",
+                        toolCalls.Count > 0
+                            ? BuildGeminiParts(string.Empty, new JsonArray(toolCalls.Values.Select(c => (JsonNode)c).ToArray()))
+                            : new JsonArray(),
+                        toolCalls.Count > 0 ? "FUNCTION_CALL" : "STOP",
                         chunk.TokenUsage));
                     return;
                 }
