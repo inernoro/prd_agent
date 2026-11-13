@@ -1,0 +1,67 @@
+{
+  "snapshotAt": "2026-11-12T10:07:55.640055+00:00",
+  "acceptance": [
+    {
+      "id": "b1a2cbf7c85c4c0bb16accb0258587cf",
+      "title": "功能验收 · 核心业务 / 稳定冒烟修复复测业务结论验后回填 · 2026-10-05",
+      "createdAt": "2026-10-04T22:08:14.766Z",
+      "verdict": "fail",
+      "commitSha": "ee905ed82803423f8136d96e787d0a0bb96b77e5",
+      "prNumber": null,
+      "branch": "codex/stable-smoke-repair-20261005",
+      "tier": "L2",
+      "deeplink": "https://miduo.org/reports?project=prd-agent&folder=e525bc9663c8449793b950808860982e&report=b1a2cbf7c85c4c0bb16accb0258587cf"
+    },
+    {
+      "id": "7bf0d83c50c94cee89607736a6e2183e",
+      "title": "缺陷复测 · 网页托管 / #135 精细生成遇分支重新部署的真实 revision 切换复现 · 2026-09-28",
+      "createdAt": "2026-09-28T08:16:14.018Z",
+      "verdict": "pass",
+      "commitSha": "ed85c573d2f84d6cc6c8c94966170854ef1b5de7",
+      "prNumber": 1635,
+      "branch": "claude/dazzling-lovelace-o1yxic-verify-135",
+      "tier": "L1",
+      "deeplink": "https://miduo.org/reports?project=prd-agent&folder=94b981552e5b45ea87698fc208022577&report=7bf0d83c50c94cee89607736a6e2183e"
+    },
+    {
+      "id": "e649910df13d4e57b454a7de279e94a3",
+      "title": "分支验收 · 网页托管 / main 精细生成端到端补验（#149 / #135） · 2026-09-28",
+      "createdAt": "2026-09-28T07:24:38.097Z",
+      "verdict": "pass",
+      "commitSha": "952bc64f6",
+      "prNumber": 1635,
+      "branch": "main",
+      "tier": "L2",
+      "deeplink": "https://miduo.org/reports?project=prd-agent&folder=94b981552e5b45ea87698fc208022577&report=e649910df13d4e57b454a7de279e94a3"
+    },
+    {
+      "id": "97105d54be19450fa67b682fee77006b",
+      "title": "缺陷复测 · 知识库 / GitHub 私有仓目录同步 · 2026-09-14",
+      "createdAt": "2026-09-14T07:36:38.270Z",
+      "verdict": "pass",
+      "commitSha": "673b31cccb5e346ce3354a9d216e61bd96655c64",
+      "prNumber": null,
+      "branch": "claude/knowledge-base-github-sync-76rjsp",
+      "tier": "L2",
+      "deeplink": "https://miduo.org/reports?project=prd-agent&folder=0864ccf0981547eb8af54b4470634dd7&report=97105d54be19450fa67b682fee77006b"
+    },
+    {
+      "id": "c52f7ee05482477e84d9aa29fb862c60",
+      "title": "功能验收 · 核心业务稳定冒烟失败取证 · 2026-09-14",
+      "createdAt": "2026-09-14T03:09:14.710Z",
+      "verdict": "fail",
+      "commitSha": "3a6f06305a7668033a8c6cd7ea7a21a78a4f4e7a",
+      "prNumber": null,
+      "branch": "main",
+      "tier": "L1",
+      "deeplink": "https://miduo.org/reports?project=prd-agent&folder=e5a9f42a570d4c93969c7a8e3d3e4eb3&report=c52f7ee05482477e84d9aa29fb862c60"
+    }
+  ],
+  "releaseQuery": {
+    "windowStart": "2026-09-28",
+    "windowEnd": "2026-10-04",
+    "currentResultCount": 0,
+    "oldestRetainedDate": "2026-11-03",
+    "interpretation": "与旧周报不同；不可用空列表否定历史发布"
+  }
+}

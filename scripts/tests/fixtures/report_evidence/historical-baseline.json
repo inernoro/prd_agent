@@ -1,0 +1,26 @@
+{
+  "method": "真实仓库历史报告原文，未改写；与人工旧模板复演的计分分开。",
+  "baselineCommit": "3035365def7b30a28309b89a21756717fda846dd",
+  "excerpts": [
+    {
+      "uri": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/doc/report.2026-W38.md#L47",
+      "excerpt": "后者要加一句限定：它跑在 `claude/knowledge-base-github-sync-76rjsp` 分支 **09-14 的状态**上，而 #1528 与 #1534 都是 09-15 才落地的，**#1534 那批后续修复（删除对账、授权撤销、不可变引用、失败态）在那次复测之后才加进来，没有被它覆盖**。所以严格说是「#1528 那一档的行为验过了」，不是「这条链路整个验过了」。"
+    },
+    {
+      "uri": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/doc/report.2026-W38.md#L93",
+      "excerpt": "**证据**：**通过**（09-14 缺陷复测，私有仓实拉 53 篇文档，P0/P1/P2/P3 全零）——这是**本报告这八条能力里**唯一一条拿到「通过」背书的。"
+    },
+    {
+      "uri": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/doc/report.2026-W38.md#L94",
+      "excerpt": "**但这份背书只覆盖到一半**：复测跑在分支 09-14 的状态上，而 #1528、#1534 都是 09-15 才落地，**#1534 那批后续修复（删除对账、授权撤销、不可变引用、失败态）在复测之后才加进来，没被验过**。"
+    },
+    {
+      "uri": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/doc/report.2026-W40.md#L22",
+      "excerpt": "| 正式发布 | 尝试 3 / 成功 1 / 失败 2，成功率 **33.3%** | 失败的两次发生在 09-29，成功的一次在 10-03（提交 acfabb2） |"
+    },
+    {
+      "uri": "https://github.com/inernoro/prd_agent/blob/3035365def7b30a28309b89a21756717fda846dd/doc/report.2026-W40.md#L48",
+      "excerpt": "3. **网页托管：分支重新部署后，卡住的设计任务不再回「不存在」**（#1635、#1636）。受益：内部团队与未来对外用户。任务被重新部署打断后会明确收敛为失败并给出原因，而不是让人反复刷新看到「不存在」。验收背书：通过（分支重新部署真实切换复现）。用量口径：`route:/web-pages`"
+    }
+  ]
+}

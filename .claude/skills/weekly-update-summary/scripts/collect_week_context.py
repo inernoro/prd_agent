@@ -744,6 +744,19 @@ def assert_not_shallow():
     sys.exit(2)
 
 
+def collect_evidence_ledger(path, start, end):
+    """The shared ledger is a separate source; absence must never look like zero delivery."""
+    if not path:
+        return {"available": False, "reason": "未提供事项证据台账；不得由提交量推断成果、效率、工时或收益"}
+    import pathlib
+    import runpy
+    engine = pathlib.Path(__file__).resolve().parents[4] / "scripts/reporting/evidence.py"
+    api = runpy.run_path(str(engine))
+    with open(path, encoding="utf-8") as f:
+        ledger = json.load(f)
+    return {"available": True, "report": api["analyze"](ledger, start, end, "weekly")}
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--week-start")
@@ -756,6 +769,7 @@ def main():
     p.add_argument("--doc-dir", default="doc", help="周报底稿所在目录，采用度回溯要读它")
     p.add_argument("--adoption-lookback", type=int, default=4,
                    help="上线→采用回溯几周（默认 4：本周之前的 4 份周报）")
+    p.add_argument("--evidence-ledger", default="", help="跨周期事项证据台账 JSON，缺失时明确标记不可用")
     p.add_argument("--out", default="")
     p.add_argument("--human", action="store_true")
     p.add_argument("--allow-shallow", action="store_true",
@@ -813,6 +827,11 @@ def main():
     base, start, end = a.base.rstrip("/"), a.week_start, a.week_end
     ctx = {"weekStart": start, "weekEnd": end, "base": base, "project": a.project,
            "repoDepth": shallow_state}
+
+    try:
+        ctx["deliveryEvidence"] = collect_evidence_ledger(a.evidence_ledger, start, end)
+    except (ValueError, OSError, KeyError) as e:
+        ctx["deliveryEvidence"] = {"available": False, "reason": str(e)}
 
     try:
         H = _headers(a.impersonate)
