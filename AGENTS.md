@@ -131,7 +131,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 声称完成前必须全部满足：后端编译零错误（判据见 `cds-first-verification.md` 的权威位置表：Branch Image 绿 = API 编得出来，CI 的 `Server Build & Test` 绿 = sln 零 error + 非集成非手工 xUnit；CDS 只负责运行、不负责编译）／前端页面能通过预览地址打开并正常渲染／核心业务流程端到端跑通（不是只有 CRUD）／直连预览域名测试（container-exec 是诊断工具不是验收工具）／依赖的外部服务已确认可用。
 
-禁止：骨架完成就报「已实现」；绕过真实访问路径测试；不主动查系统能力。
+**验收技能自动触发**：用户要求「页面验收、功能验收、回归验收、验收报告」或交付需要这些产物时，即使未写斜杠命令，也必须读取 [create-visual-test-to-kb](.claude/skills/create-visual-test-to-kb/SKILL.md)，按其前置要求执行 [acceptance-test-design](.claude/skills/acceptance-test-design/SKILL.md) → [acceptance-scenario-orchestrator](.claude/skills/acceptance-scenario-orchestrator/SKILL.md) → 取证归档。宿主未列出技能时按这些仓库路径读取；`human-verify`、`/uat`、交接清单和 CDS 上传回执均不能替代。执行类验收报告必须经标准 `archive_report.py` 生成、准入校验和 `verify-open.mjs`；缺步骤保持验收未完成，不得手写 HTML、改档位或补模板标记绕过。禁止：骨架完成就报「已实现」；绕过真实访问路径测试；不主动查系统能力。
 
 **8.1 自测优先——不得把校验责任先交还给用户。** 提交前必须至少跑通一条自测路径，并在交付消息里**写明走了哪条、断言了什么**：
 
@@ -269,7 +269,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **issues-autofix** | `/issues-autofix` | 无人值守日常 issue 维护 Agent。批跑 open issue，按分类规则自动答复/修复/升级，绝不反向询问。完全跳过 `visual-test:*` / `discussion` / 其他 Agent 领地（详见 `doc/rule.skill.issues-system.md` §3） |
 | **issues-visual-create** | `/issues-visual-create` | 创建一条视觉验收子 issue。输入"测什么"(PR#/commit/页面)，按 #605 模板 v0.x 生成 `[visual-test]` issue，挂 `visual-test:pending` 等执行者接单 |
 | **issues-visual-run** | `/issues-visual-run` | 24h 视觉测试执行者 Agent 逻辑。拉 `visual-test:pending` 队列，按矩阵跑用例(双主题强制)，回评论失败清单(P0-P3) 或 `/visual-pass`。完全不开新 issue |
-| **create-visual-test-to-kb** | `/验收` | 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）。三段不可分：标准/模板 → 模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图）→ 报告归档进知识库出分享链。归档前强制准入校验（目标/档位/Verdict/截图数/证据完整性不达标直接拒收）。项目无关，改 `acceptance.config.json` 跨仓库复用 |
+| **create-visual-test-to-kb** | `/验收`、页面/功能/回归验收、验收报告、开发交付收尾 | 标准取证与 manifest → `archive_report.py` 生成并校验 → CDS 按项目归档 → `verify-open.mjs`；复杂场景先设计、再编排。不能以通用 HTML 上传或交接报告代替 |
 | **weekly-update-summary** | `/weekly` | 输入时间范围 → 四源聚合（git 提交与 PR + 日报知识库 + CDS 验收中心 + 缺陷台账/发布版本）→ 输出**面向老板/产品经理**的业务周报：质量闸（验收通过率 + 未通过清单）→ 业务价值看板（谁能多做什么）→ 逐日脉络挂日报深链 → 落地对照 → 下周优先级 → 术语表，技术细节降到附录 |
 | **daily-report-summary** | `/daily` | 输入目标日期 → 从 git 历史按单日提交收集改动，按「新增多讲 → 优化/修复次之 → 计划/遗留垫底」分层写日报，find-or-create「日报知识库」发布并出分享链 |
 
@@ -343,4 +343,4 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 10. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
 11. **迁移/重构后** → `/hygiene`
 -->
-生命周期主线（按顺序取用）：需求 `/validate` → 方案 `/plan-first` → 风险 `/risk` → 链路 `/trace` → 实现 → 交叉验证 `/verify` → 边界 `/scope-check` → 部署 `/cds-deploy` → 冒烟 `/smoke` → 预览 `/preview` → 验收 `/uat`（复杂场景先 `/验收场景` 再 `/验收`）→ 交接 `/handoff` → 周报 `/weekly`。常用辅助：`/resolve` 预合并解冲突、`/doc` 写文档、`/doc-sync` 对齐索引、`/entropy` 清理一致性欠债、`/hygiene` 清技术债、`/llm-trace` 排查模型调用不符、`/laowang` 卡住时强制拆解；首次开发 Agent 走 `/help`。
+生命周期主线（按顺序取用）：需求 `/validate` → 方案 `/plan-first` → 风险 `/risk` → 链路 `/trace` → 实现 → 交叉验证 `/verify` → 边界 `/scope-check` → 部署 `/cds-deploy` → 冒烟 `/smoke` → 预览 `/preview` → `/uat`（仅执行前清单）→ `/验收`（复杂场景先 `/验收设计` → `/验收场景`，标准生成、准入与线上打开验证不可省）→ 交接 `/handoff` → 周报 `/weekly`。常用辅助：`/resolve` 预合并解冲突、`/doc` 写文档、`/doc-sync` 对齐索引、`/entropy` 清理一致性欠债、`/hygiene` 清技术债、`/llm-trace` 排查模型调用不符、`/laowang` 卡住时强制拆解；首次开发 Agent 走 `/help`。

@@ -1,0 +1,69 @@
+name: CDS Batch Acceptance Script CI
+
+on:
+  push:
+    branches:
+      - feat/cds-release-batches
+      - acceptance/cds-batch-*
+    paths:
+      - acceptance/cds-batch/**
+      - .github/workflows/cds-batch-acceptance.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  project-release-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 同提交脚本语法与 check
+        env:
+          CDS_COMMIT_SHA: ${{ github.sha }}
+          CDS_TARGET_ID: ci-site-a
+          CDS_RELEASE_ID: ci-release-a
+        run: |
+          bash -n acceptance/cds-batch/cds-release.sh
+          bash acceptance/cds-batch/cds-release.sh check
+          test "$(git rev-parse HEAD)" = "$CDS_COMMIT_SHA"
+      - name: 两个隔离目标真实执行、失败单独恢复与入口断言
+        env:
+          CDS_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          export CDS_BATCH_SITE_ROOT="$RUNNER_TEMP/cds-batch-sites"
+          export CDS_TARGET_ID=ci-site-a CDS_RELEASE_ID=ci-release-a
+          bash acceptance/cds-batch/cds-release.sh deploy
+          export CDS_TARGET_ID=ci-site-b CDS_RELEASE_ID=ci-release-b-fail
+          mkdir -p "$CDS_BATCH_SITE_ROOT/$CDS_TARGET_ID"
+          printf '%s' "$CDS_COMMIT_SHA" > "$CDS_BATCH_SITE_ROOT/$CDS_TARGET_ID/fail-sha"
+          set +e
+          bash acceptance/cds-batch/cds-release.sh deploy
+          result=$?
+          set -e
+          test "$result" = 17
+          test ! -e "$CDS_BATCH_SITE_ROOT/$CDS_TARGET_ID/current"
+          rm "$CDS_BATCH_SITE_ROOT/$CDS_TARGET_ID/fail-sha"
+          export CDS_RELEASE_ID=ci-release-b-retry
+          bash acceptance/cds-batch/cds-release.sh deploy
+          test "$(wc -l < "$CDS_BATCH_SITE_ROOT/ci-site-a/attempts")" = 1
+          test "$(wc -l < "$CDS_BATCH_SITE_ROOT/ci-site-b/attempts")" = 2
+          for target in ci-site-a ci-site-b; do
+            grep -q "$CDS_COMMIT_SHA" "$CDS_BATCH_SITE_ROOT/$target/current/index.html"
+            grep -q "$CDS_COMMIT_SHA" "$CDS_BATCH_SITE_ROOT/$target/current/entry.js"
+            test "$(cat "$CDS_BATCH_SITE_ROOT/$target/running")" = "$CDS_COMMIT_SHA"
+          done
+      - name: 拒绝工作树与目标提交不一致
+        env:
+          CDS_COMMIT_SHA: '0000000000000000000000000000000000000000'
+          CDS_TARGET_ID: ci-site-a
+          CDS_RELEASE_ID: ci-wrong-sha
+        run: |
+          if bash acceptance/cds-batch/cds-release.sh check; then
+            echo '错误提交不得通过 check' >&2
+            exit 1
+          fi
