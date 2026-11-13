@@ -44,6 +44,9 @@
 .writing-tutorial.writing-root .writing-chapter-list>.writing-learning-card>p{margin:0 0 10px;font-size:12.5px}
 .writing-tutorial.writing-root .writing-chapter>.mono{color:var(--writing-ink3)}
 .writing-tutorial.writing-root .writing-chapter{grid-template-columns:22px minmax(0,1fr) auto;padding:11px 14px;gap:10px;border:0;border-top:1px solid var(--writing-ln);font:inherit}
+/* Source 12 uses a block title followed by an inline chapter hint. */
+.writing-tutorial.writing-root .writing-chapter>span:nth-child(2)>strong{display:block}
+.writing-tutorial.writing-root .writing-chapter>span:nth-child(2)>.hint{display:inline}
 @media(max-width:760px){
   .writing-tutorial.writing-root .writing-desktop-step-count{display:none}
   .writing-tutorial.writing-root .writing-step-actions>.writing-step-time{background:var(--writing-sf);border-color:var(--writing-ln2);color:var(--writing-ink);padding:0 12px}
@@ -100,3 +103,10 @@
   .writing-tutorial.writing-root .writing-play-overlay{gap:12px;padding:0 16px;font:14px/1.7 Inter,'Noto Sans SC',sans-serif}
   .writing-tutorial.writing-root .writing-play-circle{height:48px;width:48px}
 }
+
+/* With no associated media, put the published steps and constraints before an empty player. */
+.writing-graphic-tutorial.writing-root .player{aspect-ratio:auto;height:auto;min-height:0;margin-bottom:12px;padding:14px;border:1px solid var(--writing-ln);background:var(--writing-sf2);color:var(--writing-ink)}
+.writing-graphic-tutorial.writing-root .player>.ov{position:static;display:grid;grid-template-columns:24px minmax(0,1fr);gap:4px 10px;align-items:start;padding:0;background:none;color:var(--writing-ink);text-align:left}
+.writing-graphic-tutorial.writing-root .player>.ov>svg{grid-column:1;grid-row:1 / span 2;width:22px;height:22px}
+.writing-graphic-tutorial.writing-root .player>.ov>strong{grid-column:2;grid-row:1;font-size:14px}
+.writing-graphic-tutorial.writing-root .player>.ov>p{grid-column:2;grid-row:2;margin:0;font-size:13px;line-height:1.65;color:var(--writing-ink2)}

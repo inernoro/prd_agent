@@ -24,7 +24,8 @@ export function writingSaveInput(state: WritingState) {
   return { revision: state.revision, templateId: state.templateId, title: state.title, summary: state.summary,
     manualInput: state.manualInput, sourceEntryIds: state.sources.map(s => s.entryId), sections: state.sections,
     intentPoints: state.intentPoints, conclusions: state.conclusions, scopeIn: state.scopeIn, scopeOut: state.scopeOut,
-    chapters: state.chapters, captions: state.captions, roles: state.roles, videoEntryId: state.videoEntryId ?? '' };
+    chapters: state.chapters, captions: state.captions, roles: state.roles, videoEntryId: state.videoEntryId ?? '',
+    mobileVideoEntryId: state.mobileVideoEntryId ?? '' };
 }
 
 // Locations come from the stored source text; no generated location is invented.
@@ -39,4 +40,14 @@ export function writingSourceBlocks(source: WritingSource) {
 export function writingCitationLocation(source: WritingSource | undefined, quote: string) {
   if (!source || !quote) return '';
   return writingSourceBlocks(source).find(block => block.text.includes(quote))?.location ?? '';
+}
+
+export function writingSourceHasSnapshot(source: WritingSource) {
+  return source.status === 'read' && !!source.content.trim();
+}
+
+export function writingSourceSnapshotDate(source: WritingSource) {
+  if (!writingSourceHasSnapshot(source) || !source.updatedAt || source.updatedAt.startsWith('0001-01-01')) return null;
+  const date = new Date(source.updatedAt);
+  return Number.isFinite(date.getTime()) ? date.toLocaleDateString('zh-CN') : null;
 }

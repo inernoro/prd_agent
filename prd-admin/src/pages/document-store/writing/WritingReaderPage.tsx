@@ -10,7 +10,7 @@ import { readWriting } from '@/services/real/writing';
 import { getDocumentContent } from '@/services/real/documentStore';
 import type { WritingReader, WritingSource } from '@/services/contracts/writing';
 import { WritingThemeButton } from './WritingWorkspacePage';
-import { roleReadingSections, writingKnowledgeHref } from './writingView';
+import { roleReadingSections, writingKnowledgeHref, writingSourceHasSnapshot, writingSourceSnapshotDate } from './writingView';
 import './writingTutorial.css';
 
 export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: string; entryId: string; tutorial: boolean }) {
@@ -25,12 +25,15 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
   const [sourceQuote, setSourceQuote] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
   const [videoFailure, setVideoFailure] = useState('');
+  const [mediaReady, setMediaReady] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [speed, setSpeed] = useState(1);
   const [playing, setPlaying] = useState(false);
   const [started, setStarted] = useState(false);
   const [videoAttempt, setVideoAttempt] = useState(0);
+  const [mobileVideo, setMobileVideo] = useState(() => window.matchMedia('(max-width: 760px)').matches);
+  const [preferDefaultVideo, setPreferDefaultVideo] = useState(false);
   const [caption, setCaption] = useState(true);
   const [subtitleTab, setSubtitleTab] = useState(false);
   const [followCaption, setFollowCaption] = useState(true);
@@ -43,6 +46,14 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
   const readGeneration = useRef(0);
   const captionsRef = useRef<HTMLElement>(null);
   const stepsRef = useRef<HTMLElement>(null);
+  const previousMedia = useRef<{ publication: string; id?: string }>({ publication: '' });
+  const pendingPlayback = useRef<{ time: number; rate: number; playing: boolean; duration: number }>();
+  const mediaGeneration = useRef(0);
+  const decodedGeneration = useRef(-1);
+  const publicationKey = data ? `${entryId}:v${data.publication.version}` : '';
+  const defaultVideoId = data?.publication.videoEntryId;
+  const selectedVideoId = mobileVideo && !preferDefaultVideo ? data?.publication.mobileVideoEntryId || defaultVideoId : defaultVideoId;
+  const usingMobileVideo = !!selectedVideoId && selectedVideoId !== defaultVideoId;
   const fetchData = useCallback(async () => {
     const generation = ++readGeneration.current;
     setLoading(true); setError(''); setData(undefined); setVideoUrl(''); setVideoFailure(''); setTime(0); setDuration(0); setPlaying(false); setStarted(false); setChapterIndex(0); setVisited([]); setSource(undefined);
@@ -55,17 +66,34 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
   useEffect(() => { const generation = readGeneration; void fetchData(); return () => { generation.current++; }; }, [fetchData]);
   useEffect(() => { setTime(0); setStarted(false); setPlaying(false); setChapterIndex(0); setDuration(0); setSpeed(1); }, [tutorial]);
   useEffect(() => {
-    const videoId = data?.publication.videoEntryId;
+    const query = window.matchMedia('(max-width: 760px)');
+    const changed = (event: MediaQueryListEvent) => setMobileVideo(event.matches);
+    query.addEventListener('change', changed);
+    return () => query.removeEventListener('change', changed);
+  }, []);
+  useEffect(() => { setPreferDefaultVideo(false); }, [mobileVideo, entryId, data?.publication.version]);
+  useEffect(() => {
+    const previous = previousMedia.current;
+    const media = video.current;
+    const decoded = decodedGeneration.current === mediaGeneration.current && media && Number.isFinite(media.duration);
+    mediaGeneration.current++;
+    const switching = previous.publication === publicationKey && previous.id && selectedVideoId && previous.id !== selectedVideoId;
+    pendingPlayback.current = switching
+      ? decoded ? { time: media.currentTime, rate: media.playbackRate, playing: !media.paused, duration: media.duration } : pendingPlayback.current
+      : undefined;
+    previousMedia.current = { publication: publicationKey, id: selectedVideoId };
     setVideoUrl(''); setVideoFailure('');
-    if (!videoId) return;
+    setMediaReady(false);
+    setPlaying(false);
+    if (!selectedVideoId) return;
     let disposed = false;
-    void getDocumentContent(videoId).then(result => {
+    void getDocumentContent(selectedVideoId).then(result => {
       if (disposed) return;
       if (result.success && result.data.fileUrl) setVideoUrl(result.data.fileUrl);
       else setVideoFailure(result.success ? '视频文件暂不可用' : result.error.message);
     });
     return () => { disposed = true; };
-  }, [data?.publication.videoEntryId, videoAttempt]);
+  }, [selectedVideoId, publicationKey, videoAttempt]);
   useEffect(() => {
     if (!source) return;
     dialog.current?.focus();
@@ -115,15 +143,29 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
   const chapter = chapters[Math.min(chapterIndex, chapters.length - 1)];
   // Only derived chapters have an exact source section. Custom chapters have no section mapping.
   const chapterSection = !doc.chapters.length ? doc.sections.find(section => section.id === chapter?.id) : undefined;
-  const currentStepIndex = doc.chapters.length && videoUrl && !videoFailure
+  const currentStepIndex = doc.chapters.length && videoUrl && mediaReady && !videoFailure
     ? chapter?.steps.reduce((last, step, i) => time >= step.at ? i : last, 0) ?? 0 : -1;
-  const mediaLoading = !!doc.videoEntryId && !videoUrl && !videoFailure;
+  const mediaLoading = !!selectedVideoId && !videoUrl && !videoFailure;
   const allSteps = chapters.flatMap(c => c.steps);
   const allCaptions = doc.captions?.length ? doc.captions : allSteps;
-  const togglePlay = () => { if (!video.current) return; if (video.current.paused) void video.current.play().catch(() => setVideoFailure('视频播放失败，可以继续查看图文步骤')); else video.current.pause(); };
+  const hasTranscript = !!doc.captions?.length || !!selectedVideoId;
+  const playMedia = (media: HTMLVideoElement) => {
+    const generation = mediaGeneration.current;
+    void media.play().catch(error => {
+      if (generation !== mediaGeneration.current || media !== video.current || error?.name === 'AbortError') return;
+      pendingPlayback.current = { time: media.currentTime, rate: media.playbackRate, playing: false, duration: media.duration };
+      setVideoFailure('视频播放失败，可以重试或继续查看图文步骤');
+    });
+  };
+  const togglePlay = () => { if (!video.current || !mediaReady) return; if (video.current.paused) playMedia(video.current); else video.current.pause(); };
   const seek = (value: number) => {
-    if (!video.current || !Number.isFinite(value)) return;
+    if (!selectedVideoId || videoFailure || !Number.isFinite(value)) return;
     setStarted(true);
+    if (!video.current || !mediaReady) {
+      const resume = pendingPlayback.current;
+      pendingPlayback.current = { time: Math.max(0, value), rate: resume?.rate ?? speed, playing: resume?.playing ?? false, duration: resume?.duration ?? 0 };
+      setTime(Math.max(0, value)); return;
+    }
     video.current.currentTime = Math.max(0, Math.min(value, duration || value));
   };
   const pickChapter = (i: number) => { setChapterIndex(i); if (doc.chapters.length) seek(chapters[i].start); };
@@ -132,8 +174,8 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
     try { localStorage.setItem(`map-learning:${entryId}:v${doc.version}`, JSON.stringify(next)); } catch { /* 阅读仍可继续 */ }
   };
   const formatted = (n: number) => `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(Math.floor(n % 60)).padStart(2, '0')}`;
-  return <div className={`${tutorial ? 'writing-tutorial' : 'writing-reader'} writing-root`} data-writing-page={tutorial ? 'tutorial' : 'reader'}><WritingThreads />
-    <header className="writing-mobile-header"><Link to={writingKnowledgeHref(storeId)} aria-label="返回知识库"><ChevronLeft size={20} /></Link><div><strong>{tutorial ? '教学' : data.template?.type ?? '文档'}</strong><span>合集 · {data.store.name} · {index + 1} / {peers.length}</span></div><WritingThemeButton /></header><header className="writing-top writing-desktop-top"><div className="writing-breadcrumb"><Link to={writingKnowledgeHref(storeId)}><WritingLogo /></Link><Link to="/document-store">团队知识库</Link><span>/</span><Link to={writingKnowledgeHref(storeId)}>合集 · {data.store.name}</Link><span>/</span><span>{tutorial ? '教学' : doc.title}</span></div><div className="writing-actions"><span className="mono">版本 v{doc.version}</span>{data.canEdit && <Link className="btn ghost" to={`/document-store/${storeId}/write/${entryId}`}>作者工作区</Link>}<WritingThemeButton /><button className="btn" onClick={() => navigate(writingKnowledgeHref(storeId, entryId))}>打开原文 <ExternalLink size={12} /></button></div></header>
+  return <div className={`${tutorial ? 'writing-tutorial' : 'writing-reader'} writing-root${tutorial && !selectedVideoId ? ' writing-graphic-tutorial' : ''}`} data-writing-page={tutorial ? 'tutorial' : 'reader'}><WritingThreads />
+    <header className="writing-mobile-header"><Link to={writingKnowledgeHref(storeId)} aria-label="返回知识库"><ChevronLeft size={20} /></Link><div><strong>{tutorial ? '教学' : data.template?.type ?? '文档'}</strong><span>合集 · {data.store.name} · {index + 1} / {peers.length}</span></div><WritingThemeButton /></header><header className="writing-top writing-desktop-top"><div className="writing-breadcrumb"><Link to={writingKnowledgeHref(storeId)}><WritingLogo /></Link><Link to="/document-store">团队知识库</Link><span>/</span><Link to={writingKnowledgeHref(storeId)}>合集 · {data.store.name}</Link><span>/</span><span>{tutorial ? '教学' : doc.title}</span></div><div className="writing-actions">{tutorial ? <><Link className="btn ghost" to={writingKnowledgeHref(storeId, entryId)}>打开需求说明原文</Link><WritingThemeButton /></> : <><span className="mono">版本 v{doc.version}</span>{data.canEdit && <Link className="btn ghost" to={`/document-store/${storeId}/write/${entryId}`}>作者工作区</Link>}<WritingThemeButton /><button className="btn" onClick={() => navigate(writingKnowledgeHref(storeId, entryId))}>打开原文 <ExternalLink size={12} /></button></>}</div></header>
     <div className="writing-mobile-tabs"><Link className={!tutorial ? 'on' : ''} to={`/document-store/${storeId}/write/${entryId}/read`}>阅读</Link><Link className={tutorial ? 'on' : ''} to={`/document-store/${storeId}/write/${entryId}/learn`}>教学{duration >= 60 ? ` · ${Math.floor(duration / 60)} 分钟` : ''}</Link></div>
     {data.affectedSources.length > 0 && <div className="writing-banner" role="status">引用资料有更新，待作者复核：{data.affectedSources.join('、')}。当前显示已发布的 v{doc.version}。</div>}
     {!tutorial ? <div className="writing-reader-layout">
@@ -146,30 +188,47 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
         {doc.sections.map((s, i) => <section className="sec" data-section={s.id} key={s.id}><h2><span className="mono">{String(i + 1).padStart(2, '0')}</span>{s.title}</h2>{s.paragraphs.map(p => <div key={p.id}><MarkdownViewer compact content={p.text} /></div>)}<WritingSectionConstraints section={s} /><div className="srcs">{[...new Set(s.paragraphs.flatMap(p => p.citations))].map(id => <button className="sc" key={id} onClick={e => openSource(id, e.currentTarget, s.paragraphs.find(p => p.quotes?.[id])?.quotes?.[id] ?? '')}>{id} · {doc.sources.find(source => source.id === id)?.title}</button>)}</div></section>)}
         {doc.openQuestions.length > 0 && <section className="sec"><h2>待确认事项</h2>{doc.openQuestions.map(q => <p key={q.id}>{q.title}：{q.answer}</p>)}</section>}
       </article></main>
-      <aside className="writing-reader-info scroll"><div><div className="cap writing-mb">这份文档</div><div className="kv"><span>版本</span><span>v{doc.version} · {new Date(doc.publishedAt).toLocaleDateString('zh-CN')} 发布</span><span>审核</span><span>{doc.reviewerName}</span><span>作者</span><span>{doc.authorName}</span><span>可见</span><span>沿用知识库权限</span></div></div><div><div className="cap">来源 · {doc.sources.length} 份</div>{doc.sources.map(s => <button className="srow" key={s.id} onClick={e => openSource(s.id, e.currentTarget)}><span className="sid">{s.id}</span><span><span className="cl1 writing-block">{s.title}</span><span className="hint">{new Date(s.updatedAt).toLocaleDateString('zh-CN')} · 发布时快照</span></span></button>)}</div><div className="panel writing-learning-card"><div className="cap">教学</div><strong>{doc.title}</strong><p className="hint">章节、操作步骤与字幕，适合培训和第一次操作。</p><Link className="btn pri sm" to={`/document-store/${storeId}/write/${entryId}/learn`}>开始学习</Link></div><div><div className="cap">合集 · {data.store.name} · {index + 1} / {peers.length}</div>{index > 0 && <Link className="btn ghost writing-block" to={`/document-store/${storeId}/write/${peers[index - 1].id}/read`}>上一篇 · {peers[index - 1].title}</Link>}{index >= 0 && index < peers.length - 1 && <Link className="btn ghost writing-block" to={`/document-store/${storeId}/write/${peers[index + 1].id}/read`}>下一篇 · {peers[index + 1].title}</Link>}</div></aside>
-    </div> : <div className="writing-tutorial-layout"><main className="scroll writing-tutorial-body"><div className="writing-tutorial-heading"><div><div className="cap">第 {chapterIndex + 1} / {chapters.length} 章{chapter && ` · ${formatted(chapter.start)}–${formatted(chapters[chapterIndex + 1]?.start ?? duration)}`}</div><h1 className="writing-tutorial-title">{chapter?.title ?? doc.title}</h1></div><span className="hint">{doc.title} · 共 {duration ? `${Math.floor(duration / 60)} 分 ${Math.floor(duration % 60)} 秒` : '—'}</span></div><div className="player" tabIndex={0} aria-label="教学视频" onKeyDown={e => { if ((e.target as HTMLElement).closest('input,textarea,select')) return; if ([' ', 'k', 'K'].includes(e.key)) { e.preventDefault(); togglePlay(); } if (e.key === 'ArrowLeft') { e.preventDefault(); seek(time - 5); } if (e.key === 'ArrowRight') { e.preventDefault(); seek(time + 5); } if (e.key.toLowerCase() === 'c') setCaption(v => !v); const n = Number(e.key); if (n > 0 && n <= chapters.length) pickChapter(n - 1); }}>
-      {videoUrl && !videoFailure ? <video ref={video} src={videoUrl} preload="metadata" playsInline onPlay={() => { setPlaying(true); setStarted(true); }} onPause={() => setPlaying(false)} onError={() => setVideoFailure('视频加载失败，可以继续查看图文步骤')} onLoadedMetadata={e => { setDuration(e.currentTarget.duration); e.currentTarget.playbackRate = speed; }} onTimeUpdate={e => { const at = e.currentTarget.currentTime; setTime(at); if (at > 0) setStarted(true); if (doc.chapters.length) { const i = chapters.reduce((last, c, i) => c.start <= at ? i : last, -1); if (i >= 0) setChapterIndex(i); } }} /> : <div className="ov"><BookOpen size={34} />{mediaLoading ? <MapSectionLoader text="正在加载教学视频…" /> : <><strong>{videoFailure || '此文档尚未关联教学视频'}</strong><p>图文步骤仍可查看，完成后勾选「我做完了」。</p>{videoFailure && <div className="writing-video-recovery"><button className="btn" onClick={() => { setTime(0); setChapterIndex(0); setStarted(false); setPlaying(false); setVideoAttempt(value => value + 1); }}>重试视频</button><button className="btn ghost" onClick={() => stepsRef.current?.scrollIntoView({ block: 'start' })}>继续查看图文步骤</button></div>}</>}</div>}
-      {videoUrl && !started && !videoFailure && <button className="writing-play-overlay" onClick={togglePlay} aria-label="播放教学视频"><span className="writing-play-circle"><Play size={22} fill="currentColor" /></span><span>播放{duration ? ` · ${Math.floor(duration / 60)} 分 ${Math.floor(duration % 60)} 秒` : ''}，默认显示字幕</span></button>}{caption && started && videoUrl && !videoFailure && <div className="capbox">{allCaptions.filter(s => s.at <= time).at(-1)?.text}</div>}</div>
-<div className="writing-player-controls">
-  <button className="btn pri writing-control-play" disabled={!videoUrl || !!videoFailure} aria-label={playing ? '暂停' : '播放'} onClick={togglePlay}>{playing ? <Pause size={14} /> : <Play size={14} fill="currentColor" />}</button>
-  <button className="btn writing-control-back" disabled={!videoUrl || !!videoFailure} aria-label="后退5秒" onClick={() => seek(time - 5)}><RotateCcw size={15} /></button>
-  <button className="btn writing-control-forward" disabled={!videoUrl || !!videoFailure} aria-label="前进5秒" onClick={() => seek(time + 5)}><RotateCw size={15} /></button>
+      <aside className="writing-reader-info scroll"><div><div className="cap writing-mb">这份文档</div><div className="kv"><span>版本</span><span>v{doc.version} · {new Date(doc.publishedAt).toLocaleDateString('zh-CN')} 发布</span><span>审核</span><span>{doc.reviewerName}</span><span>作者</span><span>{doc.authorName}</span><span>可见</span><span>沿用知识库权限</span></div></div><div><div className="cap">来源 · {doc.sources.length} 份</div>{doc.sources.map(s => <button className="srow" key={s.id} onClick={e => openSource(s.id, e.currentTarget)}><span className="sid">{s.id}</span><span><span className="cl1 writing-block">{s.title}</span><span className="hint">{writingSourceHasSnapshot(s) ? `${writingSourceSnapshotDate(s) ?? '更新时间未记录'} · 发布时快照` : '该版本未保存原文快照'}</span></span></button>)}</div><div className="panel writing-learning-card"><div className="cap">教学</div><strong>{doc.title}</strong><p className="hint">章节、操作步骤与字幕，适合培训和第一次操作。</p><Link className="btn pri sm" to={`/document-store/${storeId}/write/${entryId}/learn`}>开始学习</Link></div><div><div className="cap">合集 · {data.store.name} · {index + 1} / {peers.length}</div>{index > 0 && <Link className="btn ghost writing-block" to={`/document-store/${storeId}/write/${peers[index - 1].id}/read`}>上一篇 · {peers[index - 1].title}</Link>}{index >= 0 && index < peers.length - 1 && <Link className="btn ghost writing-block" to={`/document-store/${storeId}/write/${peers[index + 1].id}/read`}>下一篇 · {peers[index + 1].title}</Link>}</div></aside>
+    </div> : <div className="writing-tutorial-layout"><main className="scroll writing-tutorial-body"><div className="writing-tutorial-heading"><div><div className="cap">第 {chapterIndex + 1} / {chapters.length} 章{chapter && selectedVideoId && ` · ${formatted(chapter.start)}–${formatted(chapters[chapterIndex + 1]?.start ?? duration)}`}</div><h1 className="writing-tutorial-title">{chapter?.title ?? doc.title}</h1></div><span className="hint">{doc.title}{selectedVideoId && <> · 共 {duration ? `${Math.floor(duration / 60)} 分 ${Math.floor(duration % 60)} 秒` : '—'}</>}</span></div><div className="player" tabIndex={selectedVideoId ? 0 : -1} aria-label={selectedVideoId ? '教学视频' : '图文教学'} onKeyDown={e => { if ((e.target as HTMLElement).closest('input,textarea,select')) return; if ([' ', 'k', 'K'].includes(e.key)) { e.preventDefault(); togglePlay(); } if (e.key === 'ArrowLeft') { e.preventDefault(); seek(time - 5); } if (e.key === 'ArrowRight') { e.preventDefault(); seek(time + 5); } if (e.key.toLowerCase() === 'c') setCaption(v => !v); const n = Number(e.key); if (n > 0 && n <= chapters.length) pickChapter(n - 1); }}>
+      {videoUrl && !videoFailure ? <video ref={video} src={videoUrl} preload="metadata" playsInline onPlay={() => { setPlaying(true); setStarted(true); }} onPause={() => setPlaying(false)} onError={e => { const media = e.currentTarget; if (decodedGeneration.current === mediaGeneration.current) pendingPlayback.current = { time: media.currentTime, rate: media.playbackRate, playing: false, duration: media.duration }; setMediaReady(false); setVideoFailure('视频加载失败，可以继续查看图文步骤'); }} onLoadedMetadata={e => {
+        const media = e.currentTarget; if (media !== video.current) return;
+        const resume = pendingPlayback.current;
+        const lastChapterAt = doc.chapters.reduce((last, chapter) => chapter.steps.reduce((at, step) => Math.max(at, step.at), Math.max(last, chapter.start)), 0);
+        const lastAt = allCaptions.reduce((last, caption) => Math.max(last, caption.at), lastChapterAt);
+        if (!Number.isFinite(media.duration) || media.duration <= 0) { setVideoFailure('视频文件没有可用时长，可以重试或查看图文步骤'); return; }
+        if (usingMobileVideo && resume && resume.duration > 0 && Number.isFinite(resume.duration) && Math.abs(media.duration - resume.duration) > .5) {
+          setVideoFailure('手机视频与默认视频时长不一致，请改用默认视频或核对课程时间轴'); return;
+        }
+        if (lastAt > media.duration + .5) { setVideoFailure('教学素材时长不一致：无法覆盖已发布的章节、步骤与字幕'); return; }
+        decodedGeneration.current = mediaGeneration.current; setMediaReady(true);
+        setDuration(media.duration); media.playbackRate = resume?.rate ?? speed;
+        if (resume) {
+          media.currentTime = Math.max(0, Math.min(resume.time, media.duration)); setTime(media.currentTime); setSpeed(resume.rate);
+          pendingPlayback.current = undefined;
+          if (resume.playing) playMedia(media);
+        }
+      }} onTimeUpdate={e => { const at = e.currentTarget.currentTime; setTime(at); if (at > 0) setStarted(true); if (doc.chapters.length) { const i = chapters.reduce((last, c, i) => c.start <= at ? i : last, -1); if (i >= 0) setChapterIndex(i); } }} /> : <div className="ov"><BookOpen size={34} />{mediaLoading ? <MapSectionLoader text="正在加载教学视频…" /> : <><strong>{videoFailure || '图文教学 · 当前屏幕未关联视频'}</strong><p>图文步骤仍可查看，完成后勾选「我做完了」。</p>{videoFailure && <div className="writing-video-recovery"><button className="btn" onClick={() => { setTime(0); setChapterIndex(0); setStarted(false); setPlaying(false); setVideoAttempt(value => value + 1); }}>重试视频</button>{usingMobileVideo && defaultVideoId && <button className="btn" onClick={() => setPreferDefaultVideo(true)}>使用默认视频</button>}<button className="btn ghost" onClick={() => stepsRef.current?.scrollIntoView({ block: 'start' })}>继续查看图文步骤</button></div>}</>}</div>}
+      {videoUrl && !mediaReady && !videoFailure && <div className="ov" role="status"><MapSectionLoader text="正在读取视频信息…" /></div>}{videoUrl && mediaReady && !started && !videoFailure && <button className="writing-play-overlay" onClick={togglePlay} aria-label="播放教学视频"><span className="writing-play-circle"><Play size={22} fill="currentColor" /></span><span>播放{duration ? ` · ${Math.floor(duration / 60)} 分 ${Math.floor(duration % 60)} 秒` : ''}，默认显示字幕</span></button>}{caption && started && videoUrl && mediaReady && !videoFailure && <div className="capbox">{allCaptions.filter(s => s.at <= time).at(-1)?.text}</div>}</div>
+{selectedVideoId && <><div className="writing-player-controls">
+  <button className="btn pri writing-control-play" disabled={!videoUrl || !mediaReady || !!videoFailure} aria-label={playing ? '暂停' : '播放'} onClick={togglePlay}>{playing ? <Pause size={14} /> : <Play size={14} fill="currentColor" />}</button>
+  <button className="btn writing-control-back" disabled={!videoUrl || !mediaReady || !!videoFailure} aria-label="后退5秒" onClick={() => seek(time - 5)}><RotateCcw size={15} /></button>
+  <button className="btn writing-control-forward" disabled={!videoUrl || !mediaReady || !!videoFailure} aria-label="前进5秒" onClick={() => seek(time + 5)}><RotateCw size={15} /></button>
   <span className="mono writing-player-time">{formatted(time)} / {duration ? formatted(duration) : '—'}</span>
   <div className="writing-player-progress">
-    <input className="writing-accessible-seek" type="range" aria-label="播放进度" min="0" max={duration || 1} step=".1" value={time} disabled={!videoUrl || !!videoFailure} onChange={e => seek(Number(e.target.value))} />
-    <div className="tl writing-timeline" role="group" aria-label="按章节播放进度">{chapters.map((c, i) => { const end = chapters[i + 1]?.start ?? duration; const length = Math.max(0, end - c.start); const percent = length ? Math.max(0, Math.min(100, (time - c.start) / length * 100)) : 0; return <button key={c.id} disabled={!videoUrl || !!videoFailure || !duration || c.start >= duration} aria-label={`跳到${c.title}`} title={c.title} style={{ flex: length || 1 }} onClick={() => seek(c.start)}><svg width="100%" height="8" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect className="fill" width={percent} height="8" /></svg></button>; })}</div>
+    <input className="writing-accessible-seek" type="range" aria-label="播放进度" min="0" max={duration || 1} step=".1" value={time} disabled={!videoUrl || !mediaReady || !!videoFailure} onChange={e => seek(Number(e.target.value))} />
+    <div className="tl writing-timeline" role="group" aria-label="按章节播放进度">{chapters.map((c, i) => { const end = chapters[i + 1]?.start ?? duration; const length = Math.max(0, end - c.start); const percent = length ? Math.max(0, Math.min(100, (time - c.start) / length * 100)) : 0; return <button key={c.id} disabled={!videoUrl || !mediaReady || !!videoFailure || !duration || c.start >= duration} aria-label={`跳到${c.title}`} title={c.title} style={{ flex: length || 1 }} onClick={() => seek(c.start)}><svg width="100%" height="8" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect className="fill" width={percent} height="8" /></svg></button>; })}</div>
   </div>
   <button className="btn sm writing-control-captions" aria-pressed={caption} onClick={() => setCaption(value => !value)}>字幕</button>
-  <div className="seg writing-control-speed" role="group" aria-label="播放倍速">{[1, 1.25, 1.5].map(rate => <button key={rate} aria-pressed={speed === rate} disabled={!videoUrl || !!videoFailure} onClick={() => { setSpeed(rate); if (video.current) video.current.playbackRate = rate; }}>{rate}×</button>)}</div>
+  <div className="seg writing-control-speed" role="group" aria-label="播放倍速">{[1, 1.25, 1.5].map(rate => <button key={rate} aria-pressed={speed === rate} disabled={!videoUrl || !mediaReady || !!videoFailure} onClick={() => { setSpeed(rate); if (video.current) video.current.playbackRate = rate; }}>{rate}×</button>)}</div>
 </div>
 <div className="mono writing-player-meta">{formatted(time)} / {duration ? formatted(duration) : '—'} · 键盘：空格 播放，← → 5 秒，C 字幕</div>
-<div className="hint writing-keyboard-hint"><span>键盘（先聚焦视频）</span><span><kbd>空格</kbd> 播放 / 暂停</span><span><kbd>←</kbd> <kbd>→</kbd> 后退 / 前进 5 秒</span><span><kbd>C</kbd> 字幕</span><span><kbd>1</kbd>–<kbd>{chapters.length}</kbd> 跳到章节</span></div>
+<div className="hint writing-keyboard-hint"><span>键盘（先聚焦视频）</span><span><kbd>空格</kbd> 播放 / 暂停</span><span><kbd>←</kbd> <kbd>→</kbd> 后退 / 前进 5 秒</span><span><kbd>C</kbd> 字幕</span><span><kbd>1</kbd>–<kbd>{chapters.length}</kbd> 跳到章节</span></div></>}
       <nav className="writing-mobile-chapters" aria-label="教学章节">{chapters.map((c, i) => <button className="role" aria-pressed={i === chapterIndex} key={c.id} onClick={() => pickChapter(i)}><span className="mono">{String(i + 1).padStart(2, '0')}</span><span title={c.title}>{c.title.split('：')[0]}</span></button>)}</nav><section className="panel writing-tutorial-steps" ref={stepsRef}><div className="writing-step-heading"><strong>操作步骤<span className="writing-desktop-step-count"> · 本章 {chapter?.steps.length ?? 0} 步</span></strong><span className="cap">已完成 {allSteps.filter(s => doneSteps.includes(s.id)).length} / {allSteps.length}</span></div>{chapterSection && <WritingSectionConstraints key={chapterSection.id} section={chapterSection} />}{chapter?.steps.map((s, i) => <div className={`writing-tutorial-step ${i === currentStepIndex ? 'current' : ''}`} aria-current={i === currentStepIndex ? 'step' : undefined} key={s.id}>
   <span className={`sid ${doneSteps.includes(s.id) ? 'done' : i === currentStepIndex ? 'current' : ''}`}>{i + 1}</span>
   <div className="writing-step-content"><p>{s.text}</p>{s.condition && <div className="cond"><span className="tag t-c">条件</span><span>{s.condition}</span></div>}</div>
-  <div className="writing-step-actions">{doc.chapters.length > 0 && <button className="btn sm writing-step-time" disabled={!videoUrl || !!videoFailure} onClick={() => seek(s.at)}><span>{formatted(s.at)}</span><span>处</span></button>}<button className="btn sm writing-done-step" role="checkbox" aria-checked={doneSteps.includes(s.id)} onClick={() => toggleDone(s.id)}><span className={`ck ${doneSteps.includes(s.id) ? 'on' : ''}`}>{doneSteps.includes(s.id) && <Check size={10} />}</span>我做完了</button></div>
-</div>)}</section><details className="panel writing-mobile-transcript" open={subtitleTab} onToggle={e => setSubtitleTab(e.currentTarget.open)}><summary><span>字幕全文 · {allCaptions.length} 句</span><ChevronDown size={14} /></summary>{allCaptions.map(s => <button className="writing-caption-row" aria-current={allCaptions.filter(x => x.at <= time).at(-1)?.id === s.id ? 'true' : undefined} key={s.id} onClick={() => seek(s.at)}><span className="mono">{formatted(s.at)}</span><span>{s.text}</span></button>)}</details>
-      </main><aside className="panel scroll writing-chapter-list" ref={captionsRef}><div className="writing-step-heading"><div className="seg"><button aria-pressed={!subtitleTab} onClick={() => setSubtitleTab(false)}>章节</button><button aria-pressed={subtitleTab} onClick={() => setSubtitleTab(true)}>字幕全文</button></div>{subtitleTab && <button className="btn ghost sm" aria-pressed={followCaption} onClick={() => setFollowCaption(v => !v)}>跟随播放</button>}</div>{!subtitleTab ? chapters.map((c, i) => <button className={`writing-chapter ${i === chapterIndex ? 'on' : ''}`} key={c.id} onClick={() => pickChapter(i)}><span className="mono">{String(i + 1).padStart(2, '0')}</span><span><strong>{c.title}</strong><span className="hint writing-block">{doc.chapters.length ? `${formatted(c.start)}–${chapters[i + 1]?.start ? formatted(chapters[i + 1].start) : duration > c.start ? formatted(duration) : '—'} · ` : ''}{c.steps.length} 步</span></span><span className={`tag ${doc.chapters.length > 0 && duration > 0 && time >= (chapters[i + 1]?.start ?? duration) ? 't-o' : i === chapterIndex ? 't-m' : 't-l'}`}>{doc.chapters.length > 0 && duration > 0 && time >= (chapters[i + 1]?.start ?? duration) ? '已看完' : i === chapterIndex ? '正在看' : '未看'}</span></button>) : allCaptions.map(s => <button className="writing-caption-row" data-step-id={s.id} aria-current={allCaptions.filter(x => x.at <= time).at(-1)?.id === s.id ? 'true' : undefined} key={s.id} onClick={() => doc.chapters.length && seek(s.at)}>{doc.chapters.length > 0 && <span className="mono">{formatted(s.at)}</span>}<span>{s.text}</span></button>)}<div className="writing-learning-card"><div className="cap">看完以后</div><p className="hint">教学只讲操作。适用范围和例外以已发布原文为准：{doc.scopeIn || '请结合正文判断。'}</p><Link className="btn sm" to={`/document-store/${storeId}/write/${entryId}/read`}>打开需求说明 · 下一步</Link></div></aside></div>}
-    {source && <div className="writing-dialog-scrim" onClick={() => setSource(undefined)}><aside className="writing-source-dialog panel scroll" role="dialog" aria-modal="true" aria-label="来源原文" tabIndex={-1} ref={dialog} onClick={e => e.stopPropagation()}><div className="writing-section-heading"><h2>{source.id} · {source.title}</h2><button className="btn ghost" aria-label="关闭来源原文" onClick={() => { setSource(undefined); closeTrigger.current?.focus(); }}><X size={16} /></button></div><p className="hint">发布时的原文快照 · {new Date(source.updatedAt).toLocaleDateString('zh-CN')}</p>{sourceQuote && source.content.includes(sourceQuote) ? <div className="writing-quoted-source">{source.content.slice(0, source.content.indexOf(sourceQuote))}<mark>{sourceQuote}</mark>{source.content.slice(source.content.indexOf(sourceQuote) + sourceQuote.length)}</div> : <MarkdownViewer content={source.content} />}<Link className="btn" target="_blank" to={writingKnowledgeHref(storeId, source.entryId)}>打开当前原文 <ExternalLink size={13} /></Link></aside></div>}
+  <div className="writing-step-actions">{selectedVideoId && doc.chapters.length > 0 && <button className="btn sm writing-step-time" disabled={!videoUrl || !mediaReady || !!videoFailure} onClick={() => seek(s.at)}><span>{formatted(s.at)}</span><span>处</span></button>}<button className="btn sm writing-done-step" role="checkbox" aria-checked={doneSteps.includes(s.id)} onClick={() => toggleDone(s.id)}><span className={`ck ${doneSteps.includes(s.id) ? 'on' : ''}`}>{doneSteps.includes(s.id) && <Check size={10} />}</span>我做完了</button></div>
+</div>)}</section>{hasTranscript && <details className="panel writing-mobile-transcript" open={subtitleTab} onToggle={e => setSubtitleTab(e.currentTarget.open)}><summary><span>字幕全文 · {allCaptions.length} 句</span><ChevronDown size={14} /></summary>{allCaptions.map(s => <button className="writing-caption-row" aria-current={allCaptions.filter(x => x.at <= time).at(-1)?.id === s.id ? 'true' : undefined} key={s.id} onClick={() => seek(s.at)}><span className="mono">{formatted(s.at)}</span><span>{s.text}</span></button>)}</details>}
+      </main><aside className="panel scroll writing-chapter-list" ref={captionsRef}><div className="writing-step-heading"><div className="seg"><button aria-pressed={!subtitleTab} onClick={() => setSubtitleTab(false)}>章节</button>{hasTranscript && <button aria-pressed={subtitleTab} onClick={() => setSubtitleTab(true)}>字幕全文</button>}</div>{hasTranscript && subtitleTab && <button className="btn ghost sm" aria-pressed={followCaption} onClick={() => setFollowCaption(v => !v)}>跟随播放</button>}</div>{!subtitleTab || !hasTranscript ? chapters.map((c, i) => <button className={`writing-chapter ${i === chapterIndex ? 'on' : ''}`} key={c.id} onClick={() => pickChapter(i)}><span className="mono">{String(i + 1).padStart(2, '0')}</span><span><strong>{c.title}</strong><span className="hint writing-block">{selectedVideoId && doc.chapters.length ? `${formatted(c.start)}–${chapters[i + 1]?.start ? formatted(chapters[i + 1].start) : duration > c.start ? formatted(duration) : '—'} · ` : ''}{c.steps.length} 步</span></span><span className={`tag ${doc.chapters.length > 0 && duration > 0 && time >= (chapters[i + 1]?.start ?? duration) ? 't-o' : i === chapterIndex ? 't-m' : 't-l'}`}>{!selectedVideoId ? i === chapterIndex ? '当前章节' : '图文步骤' : doc.chapters.length > 0 && duration > 0 && time >= (chapters[i + 1]?.start ?? duration) ? '已看完' : i === chapterIndex ? '正在看' : '未看'}</span></button>) : allCaptions.map(s => <button className="writing-caption-row" data-step-id={s.id} aria-current={allCaptions.filter(x => x.at <= time).at(-1)?.id === s.id ? 'true' : undefined} key={s.id} onClick={() => doc.chapters.length && seek(s.at)}>{doc.chapters.length > 0 && <span className="mono">{formatted(s.at)}</span>}<span>{s.text}</span></button>)}<div className="writing-learning-card"><div className="cap">看完以后</div><p className="hint">教学只讲操作。适用范围和例外以已发布原文为准：{doc.scopeIn || '请结合正文判断。'}</p><Link className="btn sm" to={`/document-store/${storeId}/write/${entryId}/read`}>打开需求说明 · 下一步</Link></div></aside></div>}
+    {source && <div className="writing-dialog-scrim" onClick={() => setSource(undefined)}><aside className="writing-source-dialog panel scroll" role="dialog" aria-modal="true" aria-label="来源原文" tabIndex={-1} ref={dialog} onClick={e => e.stopPropagation()}><div className="writing-section-heading"><h2>{source.id} · {source.title}</h2><button className="btn ghost" aria-label="关闭来源原文" onClick={() => { setSource(undefined); closeTrigger.current?.focus(); }}><X size={16} /></button></div><p className="hint">{writingSourceHasSnapshot(source) ? `发布时的原文快照 · ${writingSourceSnapshotDate(source) ?? '更新时间未记录'}` : '该版本未保存原文快照'}</p>{!writingSourceHasSnapshot(source) ? <p role="status">该版本没有可核对的来源正文，请打开当前原文核对；当前内容可能与发布时不同。</p> : sourceQuote && source.content.includes(sourceQuote) ? <div className="writing-quoted-source">{source.content.slice(0, source.content.indexOf(sourceQuote))}<mark>{sourceQuote}</mark>{source.content.slice(source.content.indexOf(sourceQuote) + sourceQuote.length)}</div> : <MarkdownViewer content={source.content} />}<Link className="btn" target="_blank" to={writingKnowledgeHref(storeId, source.entryId)}>打开当前原文 <ExternalLink size={13} /></Link></aside></div>}
   </div>;
 }

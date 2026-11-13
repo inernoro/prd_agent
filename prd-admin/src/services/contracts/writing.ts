@@ -11,13 +11,13 @@ export interface WritingChapter { id: string; title: string; start: number; step
 export interface WritingPublication {
   version: number; title: string; summary: string; templateId: string; templateVersion: string;
   authorName: string; reviewerName: string; publishedAt: string; conclusions: string[]; scopeIn: string; scopeOut: string;
-  sections: WritingSection[]; sources: WritingSource[]; roles: WritingRole[]; openQuestions: WritingQuestion[]; chapters: WritingChapter[]; captions?: WritingCaption[]; videoEntryId?: string;
+  sections: WritingSection[]; sources: WritingSource[]; roles: WritingRole[]; openQuestions: WritingQuestion[]; chapters: WritingChapter[]; captions?: WritingCaption[]; videoEntryId?: string; mobileVideoEntryId?: string | null;
 }
 export interface WritingState {
   revision: number; stage: string; templateId: string; templateVersion: string; title: string; summary: string; manualInput: string;
   authorId: string; authorName: string; reviewerId: string; reviewerName: string; scopeIn: string; scopeOut: string;
   conclusions: string[]; intentPoints: string[]; sources: WritingSource[]; sections: WritingSection[]; questions: WritingQuestion[];
-  roles: WritingRole[]; chapters: WritingChapter[]; captions?: WritingCaption[]; videoEntryId?: string; activeRunId?: string; failure?: string; updatedAt: string; published?: WritingPublication;
+  roles: WritingRole[]; chapters: WritingChapter[]; captions?: WritingCaption[]; videoEntryId?: string; mobileVideoEntryId?: string | null; activeRunId?: string; failure?: string; updatedAt: string; published?: WritingPublication;
 }
 export interface WritingContext {
   store: DocumentStore; teamNames?: string[]; projectName?: string; actorId: string; actorName: string; reviewerId: string; reviewerName: string; templates: WritingTemplate[];

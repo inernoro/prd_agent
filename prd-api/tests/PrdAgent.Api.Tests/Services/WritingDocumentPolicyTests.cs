@@ -1,10 +1,138 @@
+using System.Security.Claims;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Driver;
+using Moq;
+using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
 
 public class WritingDocumentPolicyTests
 {
+    [Fact]
+    public void SaveRequestJsonPreservesBothVideoAssociations()
+    {
+        var request = JsonSerializer.Deserialize<WritingSaveRequest>(
+            """{"revision":1,"videoEntryId":"desktop-video","mobileVideoEntryId":"mobile-video"}""", WritingDocumentPolicy.JsonOptions)!;
+        var json = JsonSerializer.SerializeToElement(request, WritingDocumentPolicy.JsonOptions);
+        Assert.Equal("desktop-video", json.GetProperty("videoEntryId").GetString());
+        Assert.True(json.TryGetProperty("mobileVideoEntryId", out var mobile), "保存入参不能静默丢弃手机视频关联");
+        Assert.Equal("mobile-video", mobile.GetString());
+    }
+
+    [Fact]
+    public void PublishedSnapshotJsonPreservesMobileVideoIndependentlyFromNextDraft()
+    {
+        var state = JsonSerializer.Deserialize<WritingDocumentState>(
+            """{"videoEntryId":"desktop-video","mobileVideoEntryId":"mobile-video"}""", WritingDocumentPolicy.JsonOptions)!;
+        var published = WritingDocumentPolicy.Snapshot(state, "reviewer", "审阅人");
+        var json = JsonSerializer.SerializeToElement(published, WritingDocumentPolicy.JsonOptions);
+        Assert.Equal("desktop-video", json.GetProperty("videoEntryId").GetString());
+        Assert.True(json.TryGetProperty("mobileVideoEntryId", out var mobile), "发布快照不能静默丢弃手机视频关联");
+        Assert.Equal("mobile-video", mobile.GetString());
+        state.Published = published;
+        var nextDraft = JsonSerializer.SerializeToNode(state, WritingDocumentPolicy.JsonOptions)!;
+        nextDraft["mobileVideoEntryId"] = "next-mobile-video";
+        state = JsonSerializer.Deserialize<WritingDocumentState>(nextDraft, WritingDocumentPolicy.JsonOptions)!;
+        var next = WritingDocumentPolicy.Snapshot(state, "reviewer", "审阅人");
+        Assert.Equal("next-mobile-video", JsonSerializer.SerializeToElement(next, WritingDocumentPolicy.JsonOptions).GetProperty("mobileVideoEntryId").GetString());
+        Assert.Equal("mobile-video", JsonSerializer.SerializeToElement(state.Published, WritingDocumentPolicy.JsonOptions).GetProperty("mobileVideoEntryId").GetString());
+    }
+
+    [Fact]
+    public void LegacyVideoWithoutMobileAssociationStillPublishes()
+    {
+        var state = JsonSerializer.Deserialize<WritingDocumentState>("""{"videoEntryId":"legacy-video"}""", WritingDocumentPolicy.JsonOptions)!;
+        var published = WritingDocumentPolicy.Snapshot(state, "reviewer", "审阅人");
+        Assert.Equal("legacy-video", published.VideoEntryId);
+        Assert.Null(published.MobileVideoEntryId);
+    }
+
+    [Theory]
+    [Trait("Category", TestCategories.Integration)]
+    [InlineData("videoEntryId", "desktop-original")]
+    [InlineData("mobileVideoEntryId", "mobile-original")]
+    public async Task VideoAssociationSaveValidatesSameStoreAndPreservesPublishedVersion(string field, string original)
+    {
+        var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+            ?? throw new InvalidOperationException("Explicit isolated MONGODB_TEST_CONNECTION required");
+        var databaseName = "map_v6_backend_tests_" + Guid.NewGuid().ToString("N");
+        var db = new MongoDbContext(connection, databaseName);
+        try
+        {
+            var store = new DocumentStore { Id = "store", OwnerId = "owner", Name = "独立测试库" };
+            await db.DocumentStores.InsertOneAsync(store);
+            var state = Draft();
+            state.VideoEntryId = "desktop-original"; state.MobileVideoEntryId = "mobile-original";
+            state.Published = WritingDocumentPolicy.Snapshot(state, "reviewer", "审阅人"); state.Stage = "published";
+            var entry = new DocumentEntry { Id = "writing", StoreId = store.Id, Writing = state };
+            await db.DocumentEntries.InsertManyAsync(new[] {
+                entry,
+                new DocumentEntry { Id = "video-next", StoreId = store.Id, ContentType = "video/mp4" },
+                new DocumentEntry { Id = "desktop-original", StoreId = store.Id, ContentType = "video/mp4" },
+                new DocumentEntry { Id = "mobile-original", StoreId = store.Id, ContentType = "video/mp4" },
+                new DocumentEntry { Id = "foreign-video", StoreId = "other-store", ContentType = "video/mp4" },
+                new DocumentEntry { Id = "plain-text", StoreId = store.Id, ContentType = "text/plain" },
+                new DocumentEntry { Id = "folder", StoreId = store.Id, ContentType = "video/mp4", IsFolder = true },
+            });
+            var controller = SaveController(db);
+            async Task<WritingDocumentState> Stored() => (await db.DocumentEntries.Find(e => e.Id == entry.Id).SingleAsync()).Writing!;
+            WritingSaveRequest Request(string? value, long revision)
+                => JsonSerializer.Deserialize<WritingSaveRequest>(new JsonObject { ["revision"] = revision, [field] = value }, WritingDocumentPolicy.JsonOptions)!;
+            string? Video(WritingDocumentState value) => JsonSerializer.SerializeToElement(value, WritingDocumentPolicy.JsonOptions).GetProperty(field).GetString();
+
+            Assert.IsType<OkObjectResult>(await controller.SaveWritingDocument(entry.Id, Request("video-next", state.Revision)));
+            state = await Stored();
+            Assert.Equal("video-next", Video(state));
+            Assert.Equal(field == "videoEntryId" ? "mobile-original" : "desktop-original",
+                field == "videoEntryId" ? state.MobileVideoEntryId : state.VideoEntryId);
+            var publishedResult = Assert.IsType<OkObjectResult>(await controller.ReadWritingPublication(entry.Id));
+            Assert.Equal(original, JsonSerializer.SerializeToElement(publishedResult.Value, WritingDocumentPolicy.JsonOptions)
+                .GetProperty("data").GetProperty("publication").GetProperty(field).GetString());
+
+            // JSON null/omitted leaves the association unchanged; an explicit empty string clears it.
+            Assert.IsType<OkObjectResult>(await controller.SaveWritingDocument(entry.Id, Request(null, state.Revision)));
+            state = await Stored(); Assert.Equal("video-next", Video(state));
+            Assert.IsType<OkObjectResult>(await controller.SaveWritingDocument(entry.Id, new WritingSaveRequest { Revision = state.Revision }));
+            state = await Stored(); Assert.Equal("video-next", Video(state));
+            Assert.IsType<OkObjectResult>(await controller.SaveWritingDocument(entry.Id, Request("", state.Revision)));
+            state = await Stored(); Assert.Null(Video(state));
+            Assert.Equal(original, JsonSerializer.SerializeToElement(state.Published, WritingDocumentPolicy.JsonOptions).GetProperty(field).GetString());
+
+            foreach (var invalid in new[] { "missing-video", "foreign-video", "plain-text", "folder" })
+            {
+                Assert.IsType<BadRequestObjectResult>(await controller.SaveWritingDocument(entry.Id, Request(invalid, state.Revision)));
+                var unchanged = await Stored();
+                Assert.Equal(state.Revision, unchanged.Revision); Assert.Null(Video(unchanged));
+                Assert.Equal(original, JsonSerializer.SerializeToElement(unchanged.Published, WritingDocumentPolicy.JsonOptions).GetProperty(field).GetString());
+            }
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(databaseName); }
+    }
+
+    private static DocumentStoreController SaveController(MongoDbContext db)
+    {
+        var teams = new Mock<ITeamService>();
+        teams.Setup(t => t.GetMyTeamIdsAsync("owner", It.IsAny<CancellationToken>())).ReturnsAsync(new List<string>());
+        // Save/read-publication do not use asset, generation, or body-writing dependencies.
+        return new DocumentStoreController(db, null!, null!, null!, null!, null!, null!, teams.Object,
+            null!, null!, null!, null!, null!, null!, null!, null!, new ConfigurationBuilder().Build(),
+            null!, null!, null!, null!, null!, NullLogger<DocumentStoreController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext {
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", "owner") }, "test"))
+            } }
+        };
+    }
+
     [Fact]
     public void Templates_PreserveUploadedIdentity_AndNeverIncludeExamples()
     {

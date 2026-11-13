@@ -27,6 +27,7 @@ public class WritingDocumentState
     public List<WritingChapter> Chapters { get; set; } = new();
     public List<WritingCaption> Captions { get; set; } = new();
     public string? VideoEntryId { get; set; }
+    public string? MobileVideoEntryId { get; set; }
     public string? ActiveRunId { get; set; }
     public string ActiveExecutionId { get; set; } = "";
     public string? Failure { get; set; }
@@ -144,6 +145,7 @@ public class WritingPublication
     public List<WritingChapter> Chapters { get; set; } = new();
     public List<WritingCaption> Captions { get; set; } = new();
     public string? VideoEntryId { get; set; }
+    public string? MobileVideoEntryId { get; set; }
 }
 
 public static class WritingDocumentPolicy
@@ -237,7 +239,8 @@ public static class WritingDocumentPolicy
             ReviewerId = reviewerId, ReviewerName = reviewerName, PublishedAt = DateTime.UtcNow,
             Conclusions = state.Conclusions, ScopeIn = state.ScopeIn, ScopeOut = state.ScopeOut,
             Sources = state.Sources, Sections = state.Sections, Roles = state.Roles, Chapters = state.Chapters, Captions = state.Captions,
-            VideoEntryId = state.VideoEntryId, OpenQuestions = state.Questions.Where(q => q.Status == "open").ToList()
+            VideoEntryId = state.VideoEntryId, MobileVideoEntryId = state.MobileVideoEntryId,
+            OpenQuestions = state.Questions.Where(q => q.Status == "open").ToList()
         };
         return JsonSerializer.Deserialize<WritingPublication>(JsonSerializer.Serialize(publication, JsonOptions), JsonOptions)!;
     }

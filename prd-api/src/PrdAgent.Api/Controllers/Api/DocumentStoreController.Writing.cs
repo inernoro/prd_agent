@@ -163,9 +163,14 @@ public partial class DocumentStoreController
             state.Captions = request.Captions.OrderBy(c => c.At).ToList();
         }
         if (request.VideoEntryId != null) {
-            var media = string.IsNullOrEmpty(request.VideoEntryId) ? null : await _db.DocumentEntries.Find(e => e.Id == request.VideoEntryId && e.StoreId == entry.StoreId).FirstOrDefaultAsync();
+            var media = string.IsNullOrEmpty(request.VideoEntryId) ? null : await _db.DocumentEntries.Find(e => e.Id == request.VideoEntryId && e.StoreId == entry.StoreId && !e.IsFolder).FirstOrDefaultAsync();
             if (!string.IsNullOrEmpty(request.VideoEntryId) && (media == null || !media.ContentType.StartsWith("video/"))) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择当前知识库中的视频"));
             state.VideoEntryId = string.IsNullOrEmpty(request.VideoEntryId) ? null : request.VideoEntryId;
+        }
+        if (request.MobileVideoEntryId != null) {
+            var media = string.IsNullOrEmpty(request.MobileVideoEntryId) ? null : await _db.DocumentEntries.Find(e => e.Id == request.MobileVideoEntryId && e.StoreId == entry.StoreId && !e.IsFolder).FirstOrDefaultAsync();
+            if (!string.IsNullOrEmpty(request.MobileVideoEntryId) && (media == null || !media.ContentType.StartsWith("video/"))) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择当前知识库中的手机视频"));
+            state.MobileVideoEntryId = string.IsNullOrEmpty(request.MobileVideoEntryId) ? null : request.MobileVideoEntryId;
         }
         if (!await SaveWritingState(entry, state, request.Revision)) return WritingConflict();
         return Ok(ApiResponse<object>.Ok(new { state }));
@@ -351,6 +356,7 @@ public class WritingSaveRequest
     public string? ScopeIn { get; set; }
     public string? ScopeOut { get; set; }
     public string? VideoEntryId { get; set; }
+    public string? MobileVideoEntryId { get; set; }
     public List<string>? SourceEntryIds { get; set; }
     public List<string>? IntentPoints { get; set; }
     public List<string>? Conclusions { get; set; }
