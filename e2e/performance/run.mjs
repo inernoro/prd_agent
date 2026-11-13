@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as pause } from 'node:timers/promises';
 import { chromium, expect } from '@playwright/test';
-import { workload, digest, summarize, compare, capacity, executionErrors } from './metrics.mjs';
+import { workload, digest, summarize, compare, capacity, executionErrors, buildIdentityErrors } from './metrics.mjs';
 import { readProcesses, processTree } from './resources.mjs';
 
 const exec = promisify(execFile);
@@ -53,7 +53,7 @@ const images = {
   web: 'nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10',
 };
 const limits = { api: ['1', '1024m'], mongo: ['1', '768m'], redis: ['0.5', '256m'], web: ['0.5', '256m'] };
-const contract = { schema: 2, workload, limits, images, sdkVersion,
+const contract = { schema: 2, buildMetadataVersion: 2, workload, limits, images, sdkVersion,
   nodeMajor: process.versions.node.split('.')[0], arch: os.arch(), cpu: os.cpus()[0].model,
   probe: digest(await fs.readFile(path.join(here, 'probe/Probe.cs'), 'utf8')),
   metricsCode: digest(await fs.readFile(path.join(here, 'metrics.mjs'), 'utf8')),
@@ -69,11 +69,11 @@ const result = { schema: 2, commit, harnessCommit: await command('git', ['rev-pa
 if (!Number.isInteger(result.injectionMs) || result.injectionMs < 0 || result.injectionMs > 2000)
   throw new Error('注入延迟必须为0到2000毫秒');
 const log = text => console.log(`[${new Date().toISOString()}] ${text}`);
-const buildKey = digest({ commit, sdkVersion, arch: os.arch() }).slice(0, 20);
+const buildKey = digest({ commit, sdkVersion, arch: os.arch(), buildMetadataVersion: 2 }).slice(0, 20);
 const build = path.join(root, 'work/performance', `build-${buildKey}`);
 const buildCommand = async (bin, args, cwd, logName) => {
   const stream = createWriteStream(path.join(out, logName));
-  const child = spawn(bin, args, { cwd, env: { ...process.env, CI: 'true' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(bin, args, { cwd, env: { ...process.env, CI: 'true', GITHUB_SHA: commit, VITE_BUILD_ID: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.pipe(stream); child.stderr.pipe(stream);
   await new Promise((resolve, reject) => {
     child.on('error', reject);
@@ -288,7 +288,7 @@ try {
     const archive = path.join(build, 'source.tar');
     await command('git', ['archive', '--format=tar', `--output=${archive}`, commit]);
     await command('tar', ['-xf', archive, '-C', build]);
-    await buildCommand(dotnet, ['publish', 'prd-api/src/PrdAgent.Api/PrdAgent.Api.csproj', '-c', 'Release', '-o', path.join(build, 'api')], build, 'api-build.log');
+    await buildCommand(dotnet, ['publish', 'prd-api/src/PrdAgent.Api/PrdAgent.Api.csproj', '-c', 'Release', `-p:SourceRevisionId=${commit}`, '-o', path.join(build, 'api')], build, 'api-build.log');
     await buildCommand('pnpm', ['install', '--frozen-lockfile'], path.join(build, 'prd-admin'), 'web-install.log');
     await buildCommand('pnpm', ['build'], path.join(build, 'prd-admin'), 'web-build.log');
     await fs.writeFile(path.join(build, 'complete'), commit);
@@ -320,7 +320,7 @@ try {
       '-e', 'HTTP_PROXY=', '-e', 'HTTPS_PROXY=', '-e', 'ALL_PROXY=', '-e', 'http_proxy=', '-e', 'https_proxy=', '-e', 'all_proxy='];
     if (role === 'api') args.push('--user', `${process.getuid()}:${process.getgid()}`, '--entrypoint', '/dotnet/dotnet', '-w', '/app',
       '-v', `${sdkRoot}:/dotnet:ro`, '-v', `${apiDir}:/app`, '-e', 'DOTNET_ROOT=/dotnet',
-      '-e', 'ASPNETCORE_URLS=http://+:8080', '-e', 'ASPNETCORE_ENVIRONMENT=Testing',
+      '-e', 'ASPNETCORE_URLS=http://+:8080', '-e', 'ASPNETCORE_ENVIRONMENT=Testing', '-e', `GIT_COMMIT=${commit}`,
       '-e', 'MongoDB__ConnectionString=mongodb://mongo:27017', '-e', 'MongoDB__DatabaseName=map_performance',
       '-e', 'LlmGateway__MongoConnectionString=mongodb://mongo:27017', '-e', 'LlmGateway__DatabaseName=perf_gateway',
       '-e', 'Redis__ConnectionString=redis:6379', '-e', 'MAP_INITIAL_ADMIN_USERNAME=perfadmin', '-e', `MAP_INITIAL_ADMIN_PASSWORD=${password}`,
@@ -357,6 +357,17 @@ try {
   if (!result.resourceAccounting.requestedLimitsEnforced)
     log('Docker未实施声明的容器配额；使用独立进程树资源统计，容量仅适用于记录的共享cgroup');
   await ready(); log('真实登录、知识库接口就绪，准备固定数据');
+  const versionResponse = await fetch(`${base}/api/version`, { signal: AbortSignal.timeout(30_000), redirect: 'error' });
+  if (!versionResponse.ok) throw new Error(`API版本对账接口失败: HTTP ${versionResponse.status}`);
+  const version = await versionResponse.json();
+  const indexResponse = await fetch(`${base}/`, { signal: AbortSignal.timeout(30_000), redirect: 'error' });
+  if (!indexResponse.ok) throw new Error(`Web版本对账页面失败: HTTP ${indexResponse.status}`);
+  const indexHtml = await indexResponse.text();
+  result.buildIdentity = { api: { actualCommit: version.actualCommit, expectedCommit: version.expectedCommit, commitMatch: version.commitMatch },
+    webEntries: [...indexHtml.matchAll(/<script[^>]+src="([^"]+\.js)"/g)].map(match => match[1]) };
+  const identityErrors = buildIdentityErrors(commit, result.buildIdentity);
+  if (identityErrors.length) throw new Error(identityErrors.join('; '));
+  log(`API实际编译SHA、运行声明SHA与Web构建SHA已对账: ${commit.slice(0, 12)}`);
   // All VUs share this isolated account. Keep the actual Redis admission path,
   // but raise only this disposable instance's limits through the supported API
   // so fixture creation and a shared identity do not masquerade as CPU capacity.

@@ -5,6 +5,7 @@ import { calibrate, compare, capacity, summarize, stats, workload } from './metr
 function run(id, ms = 20) {
   const samples = Array.from({ length: 100 }, () => ({ name: 'home', ok: true, ms, app: ms - 2, external: 0 }));
   return { environmentId: id, commit: 'base', contract: { schema: 1 }, startedAt: id,
+    buildIdentity: { api: { actualCommit: 'base', expectedCommit: 'base', commitMatch: 'match' }, webEntries: ['/assets/index-base.js'] },
     finishedAt: '2026-11-13T00:00:00.000Z', execution: { profile: 'normal', state: 'complete' }, browser: { pass: true },
     phases: [{ name: 'normal', metrics: summarize(samples, 20) }] };
 }
@@ -51,6 +52,14 @@ test('终态缺失、浏览器失败和执行失败都不能形成性能通过�
   assert.equal(compare(browser, baseline).pass, false);
   const missingTime = run('time'); delete missingTime.finishedAt;
   assert.equal(compare(missingTime, baseline).pass, false);
+});
+test('声明SHA不能替代API编译SHA，Web也必须是同一目标提交', () => {
+  const baseline = calibrate([run('a'), run('b'), run('c')]);
+  const wrongApi = run('api'); wrongApi.buildIdentity.api.actualCommit = 'harness';
+  assert.equal(compare(wrongApi, baseline).pass, false);
+  const wrongWeb = run('web'); wrongWeb.buildIdentity.webEntries = ['/assets/index-harness.js'];
+  assert.equal(compare(wrongWeb, baseline).pass, false);
+  assert.throws(() => calibrate([wrongApi, run('b'), run('c')]), /编译实际SHA/);
 });
 test('实测基线接受同速运行，拒绝应用变慢、错误、吞吐下降和契约变化', () => {
   const baseline = calibrate([run('a', 20), run('b', 22), run('c', 21)]);

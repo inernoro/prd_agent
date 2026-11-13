@@ -24,6 +24,14 @@ export function summarize(samples, seconds) {
       externalHttp: stats(ok.filter(s => s.external !== undefined).map(s => s.external)) }];
   }));
 }
+export function buildIdentityErrors(commit, identity) {
+  const errors = [];
+  if (identity?.api?.actualCommit !== commit || identity?.api?.expectedCommit !== commit
+      || identity?.api?.commitMatch !== 'match') errors.push('API编译实际SHA与指定提交未完成独立对账');
+  if (!identity?.webEntries?.length || identity.webEntries.some(entry => !entry.endsWith(`-${commit}.js`)))
+    errors.push('Web构建入口SHA与指定提交不一致');
+  return errors;
+}
 export function executionErrors(result) {
   const failures = [];
   const execution = result?.execution;
@@ -31,6 +39,7 @@ export function executionErrors(result) {
   if (execution?.state !== 'complete' || !Number.isFinite(Date.parse(result?.finishedAt)))
     failures.push('测试尚未完成或缺少终态，阶段快照不能作为通过证据');
   if (result?.browser?.pass !== true) failures.push('真实浏览器业务闭环未通过');
+  failures.push(...buildIdentityErrors(result?.commit, result?.buildIdentity));
   const phases = result?.phases ?? [];
   const names = phases.map(p => p.name);
   if (execution?.profile === 'normal' && (names.length !== 1 || names[0] !== 'normal'))
