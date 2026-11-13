@@ -481,6 +481,9 @@
   min-height: 3.382353rem;
   flex-wrap: wrap;
 }
+.cr-pagination-single {
+  min-height: 0;
+}
 .cr-pagination>nav,.cr-page-slot {
   display: flex;
   align-items: center;

@@ -616,6 +616,36 @@ export function ReleaseCenterPage(): JSX.Element {
     navigate(consoleHref(envId, action.kind === 'navigate' ? action.intent : undefined));
   };
 
+  const fleetMetrics = (
+    <div className="flex flex-wrap gap-2 max-lg:basis-full">
+      {metrics.map((metric) => (
+        <div
+          key={metric.key}
+          className="min-w-[8.25rem] flex-1 rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 max-lg:basis-[7.5rem]"
+        >
+          <div className="text-[0.6562rem] text-muted-foreground">{metric.label}</div>
+          <div className={`cds-ident text-base font-bold ${
+            metric.tone === 'bad' ? 'text-bad'
+              : metric.tone === 'warn' ? 'text-warn' : ''
+          }`}>
+            {metric.value}
+          </div>
+          {/* 名字可截、数字不可截：省略号从尾巴吃起，先吃掉的会是
+              「占 25 次」这半句——而那才是归因句里唯一有信息的部分。 */}
+          <div
+            className="flex items-baseline gap-1 text-[0.6562rem] text-muted-foreground"
+            title={`${metric.attributionName} ${metric.attributionDetail}`.trim()}
+          >
+            <span className="min-w-0 truncate">{metric.attributionName}</span>
+            {metric.attributionDetail
+              ? <span className="shrink-0">{metric.attributionDetail}</span>
+              : null}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <AppShell
       active="release-center"
@@ -755,34 +785,11 @@ export function ReleaseCenterPage(): JSX.Element {
                   </div>
 
                   {/* 四个归因指标。算不出的那一块不会出现在数组里，这里不占位。 */}
-                  {metrics.length > 0 ? (
-                    <div className="flex flex-wrap gap-2 max-lg:basis-full">
-                      {metrics.map((metric) => (
-                        <div
-                          key={metric.key}
-                          className="min-w-[8.25rem] flex-1 rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 max-lg:basis-[7.5rem]"
-                        >
-                          <div className="text-[0.6562rem] text-muted-foreground">{metric.label}</div>
-                          <div className={`cds-ident text-base font-bold ${
-                            metric.tone === 'bad' ? 'text-bad'
-                              : metric.tone === 'warn' ? 'text-warn' : ''
-                          }`}>
-                            {metric.value}
-                          </div>
-                          {/* 名字可截、数字不可截：省略号从尾巴吃起，先吃掉的会是
-                              「占 25 次」这半句——而那才是归因句里唯一有信息的部分。 */}
-                          <div
-                            className="flex items-baseline gap-1 text-[0.6562rem] text-muted-foreground"
-                            title={`${metric.attributionName} ${metric.attributionDetail}`.trim()}
-                          >
-                            <span className="min-w-0 truncate">{metric.attributionName}</span>
-                            {metric.attributionDetail
-                              ? <span className="shrink-0">{metric.attributionDetail}</span>
-                              : null}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                  {metrics.length > 0 ? section === 'fleet' ? fleetMetrics : (
+                    <details className="max-lg:basis-full">
+                      <summary className="cursor-pointer py-2 text-xs text-muted-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">近 30 天发布指标</summary>
+                      {fleetMetrics}
+                    </details>
                   ) : null}
 
                   {verdict.actionEnvId ? (

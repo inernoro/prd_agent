@@ -86,8 +86,8 @@ export function OverviewPage(): JSX.Element {
         {state.status === 'loading' ? <ContentLoading label="读取项目关系总览" variant="panel" /> : null}
         {state.status === 'error' ? <div className="p-6 text-xs text-destructive">读取失败：{state.message}</div> : null}
         {data && layout ? (
-          <div className="flex h-full min-h-0 gap-3" data-testid="overview-page">
-            <div className="cds-surface-sunken cds-hairline relative min-w-0 flex-1 overflow-auto rounded-lg" style={{ backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '1.625rem 1.625rem' }}>
+          <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto lg:flex-row lg:overflow-visible" data-testid="overview-page">
+            <div className="cds-surface-sunken cds-hairline relative h-[26rem] min-w-0 shrink-0 overflow-auto rounded-lg lg:h-auto lg:flex-1 lg:shrink" tabIndex={0} aria-label="项目关系画布，可滚动查看" style={{ backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '1.625rem 1.625rem' }}>
               <div style={{ position: 'relative', width: layout.width, height: layout.height }}>
                 <svg width={layout.width} height={layout.height} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
                   <defs>
@@ -138,7 +138,7 @@ export function OverviewPage(): JSX.Element {
               </div>
               <div className="cds-surface-raised cds-hairline sticky bottom-2 left-2 inline-flex items-center gap-4 rounded-md px-3 py-1.5 text-[0.625rem] text-muted-foreground"><span className="text-info">蓝线 = 跨项目引用</span><span className="text-destructive">红线 = 目标没在跑</span><span>卡片边框颜色 = 该项目最严重的问题</span><span>被引用的项目在右列</span></div>
             </div>
-            <div className="w-[20rem] shrink-0 overflow-auto rounded-lg border border-[hsl(var(--hairline))] p-3">
+            <div className="w-full shrink-0 rounded-lg border border-[hsl(var(--hairline))] p-3 lg:w-[20rem] lg:overflow-auto">
               <div className="mb-2 text-[0.6875rem] font-bold text-muted-foreground">需要处理 · 按严重度</div>
               {problems.length === 0 ? <div className="rounded-md border border-ok/40 bg-ok-soft p-3 text-xs text-ok">所有项目体检无错误与警告。</div> : (
                 <div className="flex flex-col gap-2">

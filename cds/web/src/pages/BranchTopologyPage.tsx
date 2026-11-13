@@ -710,7 +710,7 @@ export function BranchTopologyPage(): JSX.Element {
       <Workspace fluid>
         {state.status === 'loading' ? <TopologyPageSkeleton /> : <>
         <div className="cds-surface-raised cds-hairline mb-4 overflow-hidden">
-          <div className="grid gap-3 px-4 py-4 md:grid-cols-2 xl:grid-cols-5">
+          <div className="flex flex-wrap gap-x-6 gap-y-2 px-4 py-3" aria-label="拓扑摘要">
             <TopologyMetric label="应用服务" value={totalProfiles} detail={`${runningServices} 个运行实例`} icon={<Cloud className="h-4 w-4" />} />
             <TopologyMetric label="基础设施" value={totalInfra} detail="项目共享容器" icon={<Database className="h-4 w-4" />} />
             <TopologyMetric label="运行分支" value={`${runningBranches}/${totalBranches}`} detail={errorBranches ? `${errorBranches} 个异常` : '状态正常'} icon={<GitBranch className="h-4 w-4" />} tone={errorBranches ? 'warning' : 'default'} />
@@ -779,11 +779,7 @@ export function BranchTopologyPage(): JSX.Element {
                     <div className="text-xs text-muted-foreground lg:col-start-2 lg:col-span-2">
                       没有匹配的已跟踪分支，可直接粘贴分支名预览，或回分支列表处理批量运维。
                     </div>
-                  ) : (
-                    <div className="text-xs text-muted-foreground lg:col-start-2 lg:col-span-2">
-                      {activeBranch ? `当前分支：${activeBranch.branch}` : '共享视图：按所有分支聚合'}
-                    </div>
-                  )}
+                  ) : null}
                 </div>
                 <TopologyContextBar
                   projectId={projectId}
@@ -1200,21 +1196,10 @@ function TopologyMetric({
   tone?: 'default' | 'warning';
 }): JSX.Element {
   return (
-    <div className="rounded-md border border-border bg-background px-3 py-3">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
-        <span
-          className={
-            tone === 'warning'
-              ? 'inline-flex h-7 w-7 items-center justify-center rounded-md border border-warn/30 bg-warn-soft text-warn'
-              : 'inline-flex h-7 w-7 items-center justify-center cds-surface-sunken cds-hairline text-muted-foreground'
-          }
-        >
-          {icon}
-        </span>
-      </div>
-      <div className="truncate text-lg font-semibold">{value}</div>
-      <div className="mt-1 truncate text-xs text-muted-foreground">{detail}</div>
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><span aria-hidden="true" className={tone === 'warning' ? 'text-warn' : ''}>{icon}</span>{label}</span>
+      <span className="text-lg font-semibold">{value}</span>
+      <span className="text-xs text-muted-foreground">{detail}</span>
     </div>
   );
 }
@@ -1236,10 +1221,9 @@ function TopologyContextBar({
 }): JSX.Element {
   if (!activeBranch) {
     return (
-      <div className="flex flex-col gap-3 rounded-md border border-border bg-background px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <div className="font-medium">共享视图</div>
-          <div className="mt-1 text-xs text-muted-foreground">
+          <div className="text-xs text-muted-foreground">
             聚合 {totalBranches} 个分支的部署覆盖，适合检查服务与基础设施关系。
           </div>
         </div>
@@ -1254,7 +1238,7 @@ function TopologyContextBar({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-md border border-border bg-background px-3 py-3 text-sm xl:flex-row xl:items-center xl:justify-between">
+    <div className="flex flex-col gap-2 text-sm xl:flex-row xl:items-center xl:justify-between">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="font-medium">{activeBranch.branch}</span>
         <span className={`rounded-md border px-2 py-1 text-xs ${statusTone(activeBranch.status)}`}>

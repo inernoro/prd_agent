@@ -1355,13 +1355,15 @@ export function BranchDetailPage(): JSX.Element {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4 p-5 pt-0">
-                  <p className="text-sm leading-6 text-muted-foreground">{state.branch.subject || '暂无提交摘要'}</p>
-                  <div className="grid gap-3 md:grid-cols-4">
-                    <MetricTile label="服务数" value={services.length} />
-                    <MetricTile label="部署次数" value={state.branch.deployCount || 0} />
-                    <MetricTile label="最近推送" value={formatDate(state.branch.lastPushAt)} />
-                    <MetricTile label="最近部署" value={formatDate(state.branch.lastDeployAt)} />
-                  </div>
+                  {state.branch.subject ? <p className="text-sm leading-6 text-muted-foreground">{state.branch.subject}</p> : null}
+                  <dl className="flex flex-wrap gap-x-6 gap-y-2" aria-label="分支摘要">
+                    {[
+                      ['服务数', services.length],
+                      ['部署次数', state.branch.deployCount || 0],
+                      ['最近推送', formatDate(state.branch.lastPushAt)],
+                      ['最近部署', formatDate(state.branch.lastDeployAt)],
+                    ].map(([label, value]) => <div key={label} className="flex flex-wrap items-baseline gap-2"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="text-sm font-semibold">{value}</dd></div>)}
+                  </dl>
                   {/*
                     2026-05-14 Cursor Bugbot Medium：lastStoppedAt 为历史戳，
                     stop 后又被 deploy/auto-build/调度器唤醒重新 running 时
@@ -1395,9 +1397,9 @@ export function BranchDetailPage(): JSX.Element {
                       <div className="opacity-95">{state.branch.lastStopReason || '原因未记录'}</div>
                     </div>
                   ) : null}
-                  <div className="rounded-md border border-border bg-muted/30 p-3">
-                    <div className="mb-2 text-xs font-medium text-muted-foreground">提交一致性</div>
-                    <div className="grid gap-2 text-xs md:grid-cols-2">
+                  <details className="border-t border-border pt-3" open={state.branch.githubCommitSha && state.branch.commitSha && !sameCommit(state.branch.githubCommitSha, state.branch.commitSha) ? true : undefined}>
+                    <summary className="cursor-pointer text-xs font-medium text-muted-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">提交一致性{state.branch.githubCommitSha && state.branch.commitSha && !sameCommit(state.branch.githubCommitSha, state.branch.commitSha) ? ' · 当前运行与目标不一致' : ''}</summary>
+                    <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
                       <div className="min-w-0">
                         <div className="text-muted-foreground">当前运行</div>
                         <code className="mt-1 block truncate font-mono text-foreground" title={state.branch.commitSha || ''}>
@@ -1428,7 +1430,7 @@ export function BranchDetailPage(): JSX.Element {
                         当前运行提交与 GitHub 目标提交不一致，请重新部署并观察构建日志中的拉取前后版本。
                       </div>
                     ) : null}
-                  </div>
+                  </details>
                   {state.branch.errorMessage ? (
                     <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                       {state.branch.errorMessage}
