@@ -65,7 +65,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/r': { target: 'http://localhost:9900', changeOrigin: true },
+      // Vite prefix matching would also proxy /reports and /release-center.
+      '^/r/': { target: 'http://localhost:9900', changeOrigin: true },
       '/api': {
         target: 'http://localhost:9900',
         changeOrigin: true,
