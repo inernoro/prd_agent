@@ -1,3 +1,5 @@
+import type { GetMyDailyDeliveryEvidenceContract } from '@/services/contracts/reportAgent';
+import { getMyDailyDeliveryEvidenceReal } from '@/services/real/reportAgent';
 // 生产环境：严禁 mock/假数据。此处只允许真实后端实现。
 
 import type {
@@ -1249,6 +1251,8 @@ export const getTeamDashboard: GetTeamDashboardContract = withAuth(getTeamDashbo
 // Report Agent Phase 2: Daily Logs + Data Sources + AI Generation
 export const saveDailyLog: SaveDailyLogContract = withAuth(saveDailyLogReal);
 export const listDailyLogs: ListDailyLogsContract = withAuth(listDailyLogsReal);
+export const getMyDailyDeliveryEvidence: GetMyDailyDeliveryEvidenceContract = withAuth(getMyDailyDeliveryEvidenceReal);
+
 export const getDailyLog: GetDailyLogContract = withAuth(getDailyLogReal);
 export const deleteDailyLog: DeleteDailyLogContract = withAuth(deleteDailyLogReal);
 export const listDataSources: ListDataSourcesContract = withAuth(listDataSourcesReal);

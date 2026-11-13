@@ -695,6 +695,7 @@ export const api = {
 
   // ============ Report Agent 周报管理 ============
   reportAgent: {
+    myDeliveryEvidence: () => '/api/report-agent/my/delivery-evidence',
     teams: {
       list: () => '/api/report-agent/teams',
       byId: (id: string) => `/api/report-agent/teams/${id}`,

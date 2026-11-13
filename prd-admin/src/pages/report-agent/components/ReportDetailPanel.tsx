@@ -1,6 +1,8 @@
+import { ReportDeliveryEvidencePanel } from '@/components/report/ReportDeliveryEvidencePanel';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { X, MessageSquare, CornerDownRight, Trash2, GitCompare } from 'lucide-react';
 import { formatWeekDateRange } from '../utils/weekRange';
+import { ReportSourceReferences } from '@/components/report/ReportSourceReferences';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -209,6 +211,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
           {activeTab === 'content' && (
             // relative：划词评论层（下划线/角标/评论按钮）的定位坐标系
             <div ref={contentRef} className="relative">
+              <ReportDeliveryEvidencePanel evidence={report.deliveryEvidence} />
               {report.sections.map((section, idx) => {
                 const sectionComments = commentsBySection[idx] || [];
                 const topLevel = sectionComments.filter((c) => !c.parentCommentId);
@@ -325,6 +328,8 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                       </ul>
                     )}
                     </div>
+
+                    <ReportSourceReferences items={section.items} />
 
                     {/* Section comments */}
                     {topLevel.length > 0 && (

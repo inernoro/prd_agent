@@ -1,3 +1,4 @@
+import { ReportDeliveryEvidencePanel } from '@/components/report/ReportDeliveryEvidencePanel';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertCircle, Pencil } from 'lucide-react';
@@ -198,6 +199,12 @@ export default function MonthlyReportDetailPage(props: MonthlyReportDetailPagePr
         <div className="flex-1 min-w-0 min-h-0 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
           {/* relative：划词评论层（下划线 / 角标 / 评论按钮）的定位坐标系 */}
           <div ref={contentRef} className="relative flex flex-col gap-4 pb-8">
+            {detail.deliveryEvidence && (
+              <div>
+                <p className="mb-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>以下为关联周报的事实参考，评价、认可和建议仍由本人表达。</p>
+                <ReportDeliveryEvidencePanel evidence={detail.deliveryEvidence} />
+              </div>
+            )}
             {titles.map((title, idx) => (
               <MonthlyChapterShell key={idx} index={idx} title={title}>
                 {/* data-report-section：划词评论的章节锚定根 */}

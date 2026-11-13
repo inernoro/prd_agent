@@ -105,7 +105,7 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
         {
           key: 'report-member-write',
           title: '写周报',
-          desc: '按模板快速生成并完善周报内容。',
+          desc: '按来源快照归纳交付事实，再由本人完善内容。',
           actionLabel: '去写周报',
           icon: FileText,
           action: onCreateReport,
@@ -199,7 +199,7 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
         {
           key: 'settings-manager-source',
           title: '数据源与提示词',
-          desc: '统一管理数据源与 AI Prompt。',
+          desc: '管理数据来源与阅读排序偏好。',
           actionLabel: '去设置',
           icon: Settings,
           action: () => onSwitchTab('settings'),
@@ -218,8 +218,8 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
       },
       {
         key: 'settings-member-prompt',
-        title: '个人 Prompt',
-        desc: '微调生成风格，提升周报质量。',
+        title: '阅读排序偏好',
+        desc: '调整阅读顺序，交付状态与指标由来源证据决定。',
         actionLabel: '去设置',
         icon: Sparkles,
         action: () => onSwitchTab('settings'),
@@ -247,8 +247,8 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
         : '推荐流程：查看团队状态 → 响应反馈 → 回周报修订';
     }
     return role === 'manager'
-      ? '推荐流程：团队管理 → 模板管理 → 数据源与 Prompt 配置'
-      : '推荐流程：个人数据源配置 → Prompt 调整 → 开始写周报';
+      ? '推荐流程：团队管理 → 模板管理 → 数据源与阅读排序偏好'
+      : '推荐流程：个人数据源配置 → 阅读排序偏好 → 开始写周报';
   }, [moduleKey, role]);
 
   return (

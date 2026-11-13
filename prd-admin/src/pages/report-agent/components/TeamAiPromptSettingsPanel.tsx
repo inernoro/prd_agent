@@ -65,7 +65,7 @@ export function TeamAiPromptSettingsPanel() {
     const res = await getTeamAiSummaryPrompt({ teamId });
     setLoadingPrompt(false);
     if (!res.success || !res.data) {
-      toast.error(res.error?.message || '加载团队 Prompt 失败');
+      toast.error(res.error?.message || '加载团队阅读排序偏好失败');
       return;
     }
     setSystemDefaultPrompt(res.data.systemDefaultPrompt || '');
@@ -92,11 +92,11 @@ export function TeamAiPromptSettingsPanel() {
 
     const normalized = draftPrompt.trim();
     if (!normalized) {
-      toast.error('请先输入自定义 Prompt');
+      toast.error('请先输入阅读排序偏好');
       return;
     }
     if (normalized.length > maxLen) {
-      toast.error(`Prompt 不能超过 ${maxLen} 字符`);
+      toast.error(`阅读排序偏好不能超过 ${maxLen} 字符`);
       return;
     }
 
@@ -113,7 +113,7 @@ export function TeamAiPromptSettingsPanel() {
     setDraftPrompt(res.data.customPrompt || '');
     setUsingSystemDefault(!!res.data.usingSystemDefault);
     setMaxLen(res.data.maxCustomPromptLength || maxLen);
-    toast.success('已保存团队 AI 分析 Prompt');
+    toast.success('已保存团队阅读排序偏好');
   }, [draftPrompt, maxLen, selectedTeamId]);
 
   const handleReset = useCallback(async () => {
@@ -123,8 +123,8 @@ export function TeamAiPromptSettingsPanel() {
     }
 
     const ok = await systemDialog.confirm({
-      title: '确认恢复默认 Prompt？',
-      message: `恢复后「${selectedTeam?.name || '当前团队'}」将使用系统默认 Prompt 进行团队周报AI分析。`,
+      title: '确认恢复默认排序偏好？',
+      message: `恢复后「${selectedTeam?.name || '当前团队'}」将使用系统默认阅读顺序；交付状态与指标仍由来源证据决定。`,
       confirmText: '恢复默认',
       cancelText: '取消',
     });
@@ -143,7 +143,7 @@ export function TeamAiPromptSettingsPanel() {
     setDraftPrompt(res.data.customPrompt || '');
     setUsingSystemDefault(!!res.data.usingSystemDefault);
     setMaxLen(res.data.maxCustomPromptLength || maxLen);
-    toast.success('已恢复团队系统默认 Prompt');
+    toast.success('已恢复团队系统默认排序偏好');
   }, [maxLen, selectedTeam?.name, selectedTeamId]);
 
   if (loadingTeams) {
@@ -161,7 +161,7 @@ export function TeamAiPromptSettingsPanel() {
     return (
       <GlassCard className="p-4">
         <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-          暂无可管理团队，暂不能配置“团队周报AI分析Prompt”。
+          暂无可管理团队，暂不能配置“团队阅读排序偏好”。
         </div>
       </GlassCard>
     );
@@ -172,7 +172,7 @@ export function TeamAiPromptSettingsPanel() {
       <GlassCard className="p-4">
         <div className="text-[12px] flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
           <MapSpinner size={12} />
-          加载团队 Prompt 配置中...
+          加载团队阅读排序偏好中...
         </div>
       </GlassCard>
     );
@@ -186,10 +186,10 @@ export function TeamAiPromptSettingsPanel() {
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              团队周报AI分析Prompt
+              团队阅读排序偏好
             </div>
             <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
-              团队周报 AI 分析时会按“团队已提交周报 + 该 Prompt”生成管理汇总。你可以基于系统默认进行团队级定制。
+              这里设置的是团队阅读排序偏好。交付状态、指标和来源由证据决定，不能通过提示词改写。
             </div>
           </div>
           <span
@@ -200,7 +200,7 @@ export function TeamAiPromptSettingsPanel() {
               border: `1px solid ${usingSystemDefault ? 'rgba(59,130,246,0.28)' : 'rgba(168,85,247,0.28)'}`,
             }}
           >
-            {usingSystemDefault ? '当前使用系统默认' : '当前使用自定义 Prompt'}
+            {usingSystemDefault ? '当前使用系统默认' : '当前使用自定义偏好'}
           </span>
         </div>
 
@@ -229,7 +229,7 @@ export function TeamAiPromptSettingsPanel() {
 
       <GlassCard className="p-4">
         <div className="text-[12px] font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
-          系统默认 Prompt（只读）
+          系统默认阅读排序偏好（只读）
         </div>
         <textarea
           value={systemDefaultPrompt}
@@ -247,12 +247,12 @@ export function TeamAiPromptSettingsPanel() {
 
       <GlassCard className="p-4">
         <div className="text-[12px] font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
-          自定义 Prompt（可编辑）
+          自定义阅读排序偏好（可编辑）
         </div>
         <textarea
           value={draftPrompt}
           onChange={(e) => setDraftPrompt(e.target.value)}
-          placeholder="请输入团队周报AI分析 Prompt..."
+          placeholder="例如：先展示跨成员的共同阻塞，再展示各事项进展。"
           rows={12}
           className="w-full px-3 py-2 rounded-xl text-[12px] leading-6 resize-y transition-colors"
           style={{
@@ -263,7 +263,7 @@ export function TeamAiPromptSettingsPanel() {
           }}
         />
         <div className="mt-2 flex items-center justify-between text-[11px]" style={{ color: 'var(--text-muted)' }}>
-          <span>保存后会立即用于“团队周报AI分析”的生成汇总与重新生成</span>
+          <span>保存后用于下次团队汇总的阅读顺序，不改变交付事实。</span>
           <span style={{ color: currentLength > maxLen ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)' }}>
             {currentLength}/{maxLen}
           </span>
@@ -271,7 +271,7 @@ export function TeamAiPromptSettingsPanel() {
 
         <div className="mt-3 flex items-center gap-2">
           <Button variant="primary" size="sm" onClick={() => { void handleSave(); }} disabled={saving || resetting}>
-            {saving ? <><MapSpinner size={12} /> 保存中...</> : <><Sparkles size={12} /> 保存团队自定义 Prompt</>}
+            {saving ? <><MapSpinner size={12} /> 保存中...</> : <><Sparkles size={12} /> 保存团队自定义偏好</>}
           </Button>
           <Button
             variant="secondary"

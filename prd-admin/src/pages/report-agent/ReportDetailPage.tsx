@@ -1,9 +1,11 @@
+import { ReportDeliveryEvidencePanel } from '@/components/report/ReportDeliveryEvidencePanel';
 import { useSmartBack } from '@/hooks/useSmartBack';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { formatWeekDateRange } from './utils/weekRange';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, GitCompare, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
+import { ReportSourceReferences } from '@/components/report/ReportSourceReferences';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -424,6 +426,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
           <GlassCard variant="subtle" className="p-6">
             {/* relative：划词评论层（下划线/角标/评论按钮）的定位坐标系 */}
             <div ref={contentRef} className="relative">
+            <ReportDeliveryEvidencePanel evidence={report.deliveryEvidence} />
             {report.sections.map((section, idx) => {
               const sectionComments = commentsBySection[idx] || [];
               const accentColor = sectionColors[idx % sectionColors.length];
@@ -547,6 +550,8 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                     </ul>
                   )}
                   </div>
+
+                  <ReportSourceReferences items={section.items} />
 
                   <ReportSectionComments
                     reportId={reportId ?? ''}

@@ -47,7 +47,7 @@ export function AiPromptSettingsPanel() {
       return;
     }
     if (normalized.length > maxLen) {
-      toast.error(`Prompt 不能超过 ${maxLen} 字符`);
+      toast.error(`阅读排序偏好不能超过 ${maxLen} 字符`);
       return;
     }
 
@@ -63,13 +63,13 @@ export function AiPromptSettingsPanel() {
     setDraftPrompt(res.data.customPrompt || '');
     setUsingSystemDefault(!!res.data.usingSystemDefault);
     setMaxLen(res.data.maxCustomPromptLength || maxLen);
-    toast.success('已保存 AI 生成周报 Prompt');
+    toast.success('已保存阅读排序偏好');
   }, [draftPrompt, maxLen]);
 
   const handleReset = useCallback(async () => {
     const ok = await systemDialog.confirm({
-      title: '确认恢复默认 Prompt？',
-      message: '恢复后将使用系统默认 Prompt 进行 AI 周报生成。',
+      title: '确认恢复默认排序偏好？',
+      message: '恢复后将使用系统默认阅读顺序；交付状态与指标仍由来源证据决定。',
       confirmText: '恢复默认',
       cancelText: '取消',
     });
@@ -87,7 +87,7 @@ export function AiPromptSettingsPanel() {
     setDraftPrompt(res.data.customPrompt || '');
     setUsingSystemDefault(!!res.data.usingSystemDefault);
     setMaxLen(res.data.maxCustomPromptLength || maxLen);
-    toast.success('已恢复系统默认 Prompt');
+    toast.success('已恢复系统默认排序偏好');
   }, [maxLen]);
 
   if (loading) {
@@ -95,7 +95,7 @@ export function AiPromptSettingsPanel() {
       <GlassCard className="p-4">
         <div className="text-[12px] flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
           <MapSpinner size={12} />
-          加载 Prompt 配置中...
+          加载阅读排序偏好中...
         </div>
       </GlassCard>
     );
@@ -109,10 +109,10 @@ export function AiPromptSettingsPanel() {
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              AI生成周报Prompt
+              个人阅读排序偏好
             </div>
             <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
-              AI 生成时会按“数据源 + 该 Prompt + 模板要求”组合生成草稿。你可以在系统默认基础上进行个性化调整。
+              这里设置的是阅读排序偏好。交付状态、指标和来源由证据决定，不能通过提示词改写。
             </div>
           </div>
           <span
@@ -123,14 +123,14 @@ export function AiPromptSettingsPanel() {
               border: `1px solid ${usingSystemDefault ? 'rgba(59,130,246,0.28)' : 'rgba(168,85,247,0.28)'}`,
             }}
           >
-            {usingSystemDefault ? '当前使用系统默认' : '当前使用自定义 Prompt'}
+            {usingSystemDefault ? '当前使用系统默认' : '当前使用自定义偏好'}
           </span>
         </div>
       </GlassCard>
 
       <GlassCard className="p-4">
         <div className="text-[12px] font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
-          系统默认 Prompt（只读）
+          系统默认阅读排序偏好（只读）
         </div>
         <textarea
           value={systemDefaultPrompt}
@@ -148,12 +148,12 @@ export function AiPromptSettingsPanel() {
 
       <GlassCard className="p-4">
         <div className="text-[12px] font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
-          自定义 Prompt（可编辑）
+          自定义阅读排序偏好（可编辑）
         </div>
         <textarea
           value={draftPrompt}
           onChange={(e) => setDraftPrompt(e.target.value)}
-          placeholder="请输入你的周报生成 Prompt..."
+          placeholder="例如：先展示风险与阻塞，再展示已验证的进展。"
           rows={12}
           className="w-full px-3 py-2 rounded-xl text-[12px] leading-6 resize-y transition-colors"
           style={{
@@ -164,7 +164,7 @@ export function AiPromptSettingsPanel() {
           }}
         />
         <div className="mt-2 flex items-center justify-between text-[11px]" style={{ color: 'var(--text-muted)' }}>
-          <span>保存后会立即用于“AI生成周报草稿 / AI重新生成草稿”</span>
+          <span>保存后用于下次生成时的阅读顺序，不改变交付事实。</span>
           <span style={{ color: currentLength > maxLen ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)' }}>
             {currentLength}/{maxLen}
           </span>
@@ -172,7 +172,7 @@ export function AiPromptSettingsPanel() {
 
         <div className="mt-3 flex items-center gap-2">
           <Button variant="primary" size="sm" onClick={() => { void handleSave(); }} disabled={saving || resetting}>
-            {saving ? <><MapSpinner size={12} /> 保存中...</> : <><Sparkles size={12} /> 保存自定义 Prompt</>}
+            {saving ? <><MapSpinner size={12} /> 保存中...</> : <><Sparkles size={12} /> 保存自定义偏好</>}
           </Button>
           <Button variant="secondary" size="sm" onClick={() => { void handleReset(); }} disabled={saving || resetting || (!customPrompt && usingSystemDefault)}>
             {resetting ? '恢复中...' : '恢复系统默认'}

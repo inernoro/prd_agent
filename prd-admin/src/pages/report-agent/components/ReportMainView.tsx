@@ -1125,7 +1125,7 @@ function OnboardingGuide({ hasTeam, hasTemplate }: { hasTeam: boolean; hasTempla
           快速开始
         </div>
         <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
-          3 步完成设置，让 AI 帮你写周报
+          3 步完成设置，按来源证据归纳周报
         </div>
       </div>
 

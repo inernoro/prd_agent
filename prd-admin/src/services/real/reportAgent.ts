@@ -1,3 +1,5 @@
+import type { GetMyDailyDeliveryEvidenceContract } from '@/services/contracts/reportAgent';
+import type { ReportDeliverySnapshot } from '@/services/contracts/reportEvidence';
 import { apiRequest, tryRefreshAdminToken } from './apiClient';
 import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
@@ -484,6 +486,11 @@ export const listDailyLogsReal: ListDailyLogsContract = async (input) => {
     `${api.reportAgent.dailyLogs.list()}${q ? `?${q}` : ''}`,
     { method: 'GET' }
   );
+};
+
+export const getMyDailyDeliveryEvidenceReal: GetMyDailyDeliveryEvidenceContract = async (input) => {
+  const query = new URLSearchParams({ date: input.date });
+  return await apiRequest<ReportDeliverySnapshot>(`${api.reportAgent.myDeliveryEvidence()}?${query}`, { method: 'GET' });
 };
 
 export const getDailyLogReal: GetDailyLogContract = async (input) => {

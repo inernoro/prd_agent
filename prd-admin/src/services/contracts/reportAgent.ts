@@ -1,3 +1,4 @@
+import type { ReportDeliverySnapshot } from './reportEvidence';
 import type { ApiResponse } from '@/types/api';
 
 // ========== Data Models ==========
@@ -138,6 +139,8 @@ export interface WeeklyReport {
   workflowExecutionId?: string;
   /** v2.0 提交时快照的统计数据 */
   statsSnapshot?: Record<string, unknown>;
+  /** Server-owned cross-period delivery facts and citations. */
+  deliveryEvidence?: ReportDeliverySnapshot;
   /** 状态变更版本记录（仅时间和事件类型） */
   versionHistory?: ReportVersionEntry[];
   createdAt: string;
@@ -223,6 +226,8 @@ export interface DailyLog {
 }
 
 export interface DailyLogItem {
+  /** Explicit cross-day business identity; never inferred from similar wording. */
+  workItemId?: string;
   content: string;
   category: string;
   /** 自定义标签列表 */
@@ -623,6 +628,7 @@ export type GetTeamDashboardContract = (input: {
 export type SaveDailyLogContract = (input: {
   date: string;
   items: {
+    workItemId?: string;
     content: string;
     category: string;
     tags?: string[];
@@ -654,6 +660,8 @@ export type ListDailyLogsContract = (input?: {
   pageSize?: number;
   hasMore?: boolean;
 }>>;
+
+export type GetMyDailyDeliveryEvidenceContract = (input: { date: string }) => Promise<ApiResponse<ReportDeliverySnapshot>>;
 
 export type GetDailyLogContract = (input: { date: string }) => Promise<ApiResponse<DailyLog>>;
 
@@ -846,6 +854,7 @@ export type GetPlanComparisonContract = (input: {
 // ========== Phase 3: Team Summary ==========
 
 export interface TeamSummary {
+  deliveryEvidence?: ReportDeliverySnapshot;
   id: string;
   teamId: string;
   teamName: string;

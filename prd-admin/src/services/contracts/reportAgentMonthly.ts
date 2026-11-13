@@ -1,3 +1,4 @@
+import type { ReportDeliverySnapshot } from './reportEvidence';
 import type { ReportVersionEntry } from './reportAgent';
 
 /** 月报状态：草稿 → 已提交 → 已查看（负责人打开后自动标记） */
@@ -56,6 +57,8 @@ export interface MonthlySubmitIssue {
 }
 
 export interface MonthlyReportDetail {
+  /** Read-only facts derived from linked weeklies; never fills personal chapters. */
+  deliveryEvidence?: ReportDeliverySnapshot;
   report: MonthlyReport;
   linkedWeeklies: MonthlyLinkedWeekly[];
   canEdit: boolean;

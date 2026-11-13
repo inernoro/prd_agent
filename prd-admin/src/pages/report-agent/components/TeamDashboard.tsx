@@ -1,3 +1,4 @@
+import { ReportDeliveryEvidencePanel } from '@/components/report/ReportDeliveryEvidencePanel';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -1068,6 +1069,7 @@ export function TeamDashboard() {
                     {summaryView.message}
                   </div>
                 )}
+                <ReportDeliveryEvidencePanel evidence={summaryView.summary.deliveryEvidence} />
                 {summaryView.summary.sections.map((section, idx) => (
                   <div key={idx} className="surface-inset rounded-xl p-3">
                     <div className="flex items-center gap-2.5 mb-2">

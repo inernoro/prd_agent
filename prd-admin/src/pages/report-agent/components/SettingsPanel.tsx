@@ -47,7 +47,7 @@ const SECTIONS: SectionDef[] = [
   },
   {
     key: 'ai-prompt',
-    label: 'AI生成周报Prompt',
+    label: '个人阅读排序偏好',
     desc: '配置 AI 生成周报时的系统默认与个人自定义 Prompt',
     icon: Sparkles,
     color: 'rgba(168, 85, 247, 0.85)',
@@ -64,7 +64,7 @@ const SECTIONS: SectionDef[] = [
   },
   {
     key: 'team-ai-prompt',
-    label: '团队周报AI分析Prompt',
+    label: '团队阅读排序偏好',
     desc: '配置团队周报AI分析汇总使用的系统默认与团队自定义 Prompt',
     icon: Sparkles,
     color: 'rgba(14, 165, 233, 0.9)',

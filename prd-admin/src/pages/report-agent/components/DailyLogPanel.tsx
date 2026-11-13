@@ -1,3 +1,4 @@
+import { DailyDeliveryEvidencePanel } from './DailyDeliveryEvidencePanel';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect, useCallback, useRef, useMemo, type ClipboardEvent } from 'react';
 import {
@@ -144,6 +145,7 @@ function normalizeCustomTag(tag: string): string {
 }
 
 interface LogItemInput {
+  workItemId?: string;
   content: string;
   category: string;
   tags?: string[];
@@ -293,6 +295,7 @@ export function DailyLogPanel() {
       setExistingLog(res.data);
       setItems(
         res.data.items.map((i: DailyLogItem) => ({
+          workItemId: i.workItemId,
           content: i.content,
           category: i.category,
           tags: i.tags,
@@ -441,6 +444,7 @@ export function DailyLogPanel() {
   );
 
   const buildSavePayload = (i: LogItemInput) => ({
+    workItemId: i.workItemId,
     content: i.content.trim(),
     category: i.category,
     tags: i.tags && i.tags.length > 0 ? i.tags : undefined,
@@ -943,6 +947,7 @@ export function DailyLogPanel() {
     const newItems = items.map((item, i) =>
       i === editingIdx
         ? {
+            ...item,
             content: editContent,
             category: primaryCategory,
             tags,
@@ -1106,6 +1111,7 @@ export function DailyLogPanel() {
     if (!log) return;
     const nowIso = new Date().toISOString();
     const newItems: LogItemInput[] = log.items.map((it, idx) => ({
+      workItemId: it.workItemId,
       content: it.content,
       category: it.category,
       tags: it.tags,
@@ -1127,6 +1133,7 @@ export function DailyLogPanel() {
     const newItems: LogItemInput[] = log.items
       .filter((_, idx) => idx !== todo.itemIndex)
       .map((it) => ({
+        workItemId: it.workItemId,
         content: it.content,
         category: it.category,
         tags: it.tags,
@@ -1281,6 +1288,8 @@ export function DailyLogPanel() {
           </div>
         </div>
       </GlassCard>
+
+      {loaded && <DailyDeliveryEvidencePanel date={selectedDate} refreshKey={existingLog?.updatedAt} />}
 
       {/* ── Main two-column layout ── */}
       <div className="flex gap-4" style={{ minHeight: 'calc(100vh - 240px)' }}>
