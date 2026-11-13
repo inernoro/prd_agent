@@ -556,6 +556,12 @@ export function GenerationDetailsDrawer({
 
               {viewTab === 'overview' ? (
                 <div className="lg-generation-tab-panel" role="tabpanel">
+                  {detail.error ? (
+                    <div className="lg-generation-error" role="alert" aria-label="请求失败原因">
+                      <div>错误</div>
+                      <pre>{detail.error}</pre>
+                    </div>
+                  ) : null}
                   <div className="lg-generation-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 7 }}>
                     <MetricCard title="上游耗时" value={fmtMs(detail.durationMs)} icon={<Clock3 size={15} aria-hidden="true" />} />
                     <MetricCard title="首字节" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} icon={<Timer size={15} aria-hidden="true" />} />
@@ -628,12 +634,6 @@ export function GenerationDetailsDrawer({
                   </section>
                   <Link to={`/logs/trace?reference=${encodeURIComponent(detail.id)}`}>查看完整关联调用链</Link>
                   <ProviderResponses detail={detail} />
-                  {detail.error ? (
-                    <div className="lg-generation-error">
-                      <div>错误</div>
-                      <pre>{detail.error}</pre>
-                    </div>
-                  ) : null}
                 </div>
               ) : null}
 

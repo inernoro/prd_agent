@@ -13,6 +13,7 @@ import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityI
 import { LogEntityHoverCard } from './LogEntityHoverCard';
 import { LogTableSettings } from './LogTableSettings';
 import { ConsumptionAlertsPanel } from './ConsumptionAlertsPanel';
+import './LogsView.css';
 import {
   DASH,
   LOGS_SUBTABS,
@@ -288,8 +289,8 @@ export function LogTable<T>({
   const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
 
   return (
-    <div className="lg-log-table-scroll">
-      <div className="lg-log-table" data-density={preferences.density} style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: tableMinWidth || undefined }}>
+    <div className="lg-log-table-scroll" role="region" aria-label="日志表格，可横向滚动" tabIndex={isNarrowViewport ? 0 : undefined}>
+      <div className="lg-log-table" data-table={tableKey} data-density={preferences.density} style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: tableMinWidth || undefined }}>
         <div
           className="lg-log-table-head"
           style={{
@@ -302,6 +303,7 @@ export function LogTable<T>({
           {visibleColumns.map((c) => (
             <div
               key={c.key}
+              data-column={c.key}
               title={c.tip}
               style={{ textAlign: alignOf(c.align) }}
             >
@@ -348,7 +350,7 @@ export function LogTable<T>({
                   }}
                 >
                   {visibleColumns.map((c) => (
-                    <div key={c.key} style={{ minWidth: 0, textAlign: alignOf(c.align) }}>
+                    <div key={c.key} data-column={c.key} style={{ minWidth: 0, textAlign: alignOf(c.align) }}>
                       {render(c, t)}
                     </div>
                   ))}
@@ -414,7 +416,9 @@ export function LogsView() {
   const location = useLocation();
   const navigate = useNavigate();
   const [subtab, setSubtab] = useState<LogsSubTab>('generations');
-  const [trendOpen, setTrendOpen] = useState(true);
+  const [trendOpen, setTrendOpen] = useState(() => (
+    typeof window === 'undefined' || !window.matchMedia('(max-width: 680px)').matches
+  ));
   const [presetKey, setPresetKey] = useState('30d');
   const [filterModel, setFilterModel] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -508,9 +512,17 @@ export function LogsView() {
     window.localStorage.setItem(TABLE_PREFERENCES_KEY, JSON.stringify(tablePreferences));
   }, [tablePreferences]);
 
-  useEffect(() => {
+  // 打开/关闭详情只改变 transaction，不应抹掉用户刚选的本地筛选。
+  const filterSearch = useMemo(() => {
     const query = new URLSearchParams(location.search);
-    setSelectedLogId(query.get('transaction'));
+    query.delete('transaction');
+    return query.toString();
+  }, [location.search]);
+  useEffect(() => {
+    setSelectedLogId(new URLSearchParams(location.search).get('transaction'));
+  }, [location.search]);
+  useEffect(() => {
+    const query = new URLSearchParams(filterSearch);
     setFilterSourceSystem(query.get('sourceSystem') ?? '');
     setFilterIngressProtocol(query.get('ingressProtocol') ?? '');
     setFilterModelPolicy(query.get('modelPolicy') ?? '');
@@ -525,7 +537,7 @@ export function LogsView() {
     setFilterServiceKeyId(query.get('serviceKeyId') ?? '');
     setFilterClientCode(query.get('clientCode') ?? '');
     setFilterEnvironment(query.get('environment') ?? '');
-  }, [location.search]);
+  }, [filterSearch]);
 
   const openLogDetail = useCallback((id: string) => {
     const query = new URLSearchParams(location.search);
@@ -1118,6 +1130,10 @@ export function LogsView() {
     void loadSessions(loadedSessPage.current + 1);
   }, [loadSessions]);
 
+  const finiteSmallResult = subtab === 'sessions'
+    ? sessions.length > 0 && sessTotal <= PAGE_SIZE && !hasMoreSessions
+    : rows.length > 0 && total <= PAGE_SIZE && !hasMoreRows;
+
   const successRate = summary?.total
     ? `${Math.round((summary.succeeded / summary.total) * 1000) / 10}%`
     : DASH;
@@ -1137,8 +1153,8 @@ export function LogsView() {
       <ConsumptionAlertsPanel refreshToken={refreshToken} />
       <header className="lg-logs-heading">
         <div>
-          <h1>Logs</h1>
-          <Link to="/logs/trace">按业务操作或请求编号排查</Link>
+          <div className="lg-logs-title-line"><h1>Logs</h1>
+          <Link to="/logs/trace">按业务操作或请求编号排查</Link></div>
           {/* 汇总条：拿不到值的项**整条不渲染**，而不是渲染成「上游调用 —」。
               一排破折号既不承载信息，又和真实数字抢同样的横向位置，
               读起来是「这里坏了」而不是「这里没有」。过滤在 summaryFacts 里做。 */}
@@ -1157,7 +1173,10 @@ export function LogsView() {
             {loading || sessLoading ? <Spinner size={15} /> : <RefreshCw size={15} />}
           </Button>
           <details className="lg-log-filters lg-log-filter-menu">
-            <summary aria-label="筛选日志" title="筛选日志">
+            <summary aria-label="筛选日志" title="筛选日志" onClick={(event) => {
+              const trigger = event.currentTarget;
+              trigger.closest('details')?.style.setProperty('--lg-log-filter-top', `${Math.min(trigger.getBoundingClientRect().bottom + 8, window.innerHeight - 80)}px`);
+            }}>
               <SlidersHorizontal size={16} aria-hidden="true" />
               {activeFilterCount > 0 ? <span className="lg-log-filter-count">{activeFilterCount}</span> : null}
             </summary>
@@ -1274,7 +1293,7 @@ export function LogsView() {
         </div>
       ) : null}
 
-      <Card className="lg-log-table-card" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
+      <Card className={`lg-log-table-card${finiteSmallResult ? ' is-finite-small' : ''}`} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
         {subtab === 'generations' && (
           <>
             {/* 趋势是余光信息：无边框、无标题、无坐标轴，直接坐在表头上方，可折叠。
@@ -1289,6 +1308,7 @@ export function LogsView() {
                 title={trendOpen ? '收起趋势' : '展开趋势'}
                 onClick={() => setTrendOpen((v) => !v)}
               >
+                <span className="lg-log-trend-label">请求趋势</span>
                 <ChevronUp size={15} style={{ transform: trendOpen ? 'none' : 'rotate(180deg)', transition: 'transform .18s ease' }} />
               </button>
             </div>

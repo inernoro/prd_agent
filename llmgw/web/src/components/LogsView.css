@@ -1,0 +1,110 @@
+/* 有限历史结果不是持续日志流：结果读完即能看到完成回执。
+   空态仍留引导空间，大集合仍使用原来的完整滚动工作区。 */
+.lg-log-table-card.is-finite-small {
+  flex: 0 1 auto !important;
+}
+
+.lg-log-table-card.is-finite-small .lg-log-table-scroll {
+  flex: 0 1 auto;
+}
+
+.lg-log-table-card.is-finite-small .lg-log-table {
+  height: auto !important;
+}
+
+.lg-log-table-card.is-finite-small .lg-log-table-body {
+  flex: 0 1 auto !important;
+}
+
+.lg-logs-title-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.lg-logs-title-line > a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+.lg-log-trend-label {
+  display: none;
+}
+
+.lg-logs-view .lg-log-table-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+@media (max-width: 680px) {
+  /* 同一条控制行保留刷新、筛选、时间与计数，不缩点击热区。 */
+  .lg-logs-view .lg-log-page-actions {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .lg-logs-view .lg-log-page-actions > button,
+  .lg-logs-view .lg-log-page-actions > details {
+    flex: 0 0 44px;
+  }
+
+  .lg-logs-view .lg-log-page-actions > select {
+    flex: 1 1 120px;
+    width: auto;
+    min-width: 0;
+    order: 2;
+  }
+
+  .lg-logs-view .lg-log-page-actions > span {
+    flex-shrink: 0;
+    order: 3;
+  }
+
+  .lg-logs-title-line > a {
+    min-height: 44px;
+  }
+
+  .lg-logs-view .lg-log-filter-menu > div {
+    top: var(--lg-log-filter-top, 112px);
+    max-height: calc(100dvh - var(--lg-log-filter-top, 112px) - 12px);
+  }
+
+  /* 默认先读记录；趋势仍可直接展开，而非删除数据或缩小图表。 */
+  .lg-logs-view .lg-log-trend {
+    padding: 0;
+  }
+
+  .lg-logs-view .lg-log-trend.is-collapsed {
+    min-height: 44px;
+  }
+
+  .lg-logs-view .lg-log-trend-toggle {
+    position: static;
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    height: 44px;
+    padding: 0 12px;
+  }
+
+  .lg-log-trend-label {
+    display: inline;
+  }
+
+  .lg-logs-view .lg-log-table-row > span:last-child {
+    align-self: stretch;
+  }
+
+  /* 识别失败先于横向比较。状态与时间同时固定，其它列完整保留可横滚。 */
+  .lg-logs-view [data-column='status'] {
+    position: sticky;
+    right: 42px;
+    z-index: 3;
+    background: var(--bg-surface);
+    box-shadow: -8px 0 10px color-mix(in srgb, var(--bg-surface) 88%, transparent);
+  }
+}
