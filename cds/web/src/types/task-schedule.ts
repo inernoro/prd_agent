@@ -48,6 +48,7 @@ export interface ScheduledJob {
   recoveryRequiredRunId?: string;
   health?: { state: string; message: string; recoveryRequired: boolean };
   lastScheduledRun?: ScheduledJobRun;
+  lastPushRun?: ScheduledJobRun;
   /** 服务端投影的后续触发时刻。前端不自己按 schedule 推算，避免复制一份到期判定。 */
   nextRuns?: string[];
   consecutiveFailureCount?: number;

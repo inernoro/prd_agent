@@ -6,7 +6,7 @@ import http from 'node:http';
 import { StateService } from '../../src/services/state.js';
 import { ScheduledJobService, type ScheduledJobReleasePort } from '../../src/services/scheduled-job-service.js';
 import { observeScheduledJobs, validateJobReports } from '../../src/services/scheduled-job-health.js';
-import { buildOverview, groupKeyOf } from '../../web/src/lib/task-schedule-view.js';
+import { buildOverview, groupKeyOf, taskHealthTone } from '../../web/src/lib/task-schedule-view.js';
 import type { ScheduledJob, ScheduledJobRun, IShellExecutor } from '../../src/types.js';
 
 const release: ScheduledJobReleasePort = {
@@ -71,6 +71,65 @@ describe('自动化任务健康与安全恢复', () => {
     job({ nextRunAt: new Date(Date.now() - 300_000).toISOString() });
     observeScheduledJobs(state, publish); observeScheduledJobs(state, publish);
     expect(events).toHaveLength(1); expect(events[0].data.failureKind).toBe('missed');
+    expect(shell.exec).not.toHaveBeenCalled();
+  });
+  it('同刻到期的六个长任务先分别认领，不因等待别的任务超过宽限而漏跑', async () => {
+    const startedAt = Date.now();
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(startedAt);
+    let finish!: () => void;
+    const completion = new Promise<void>(resolve => { finish = resolve; });
+    shell.exec.mockImplementation(async () => { await completion; return { stdout: 'isolated long job', stderr: '', exitCode: 0 }; });
+    for (let i = 0; i < 6; i++) job({ id: `simultaneous-${i}`, schedule: { type: 'interval', intervalMinutes: 60 }, timeoutSeconds: 600 });
+    const pending = service.tick();
+    try {
+      await vi.waitFor(() => expect(shell.exec).toHaveBeenCalledTimes(6), { timeout: 500, interval: 5 });
+      await service.tick(); expect(shell.exec).toHaveBeenCalledTimes(6);
+      vi.setSystemTime(startedAt + 180_000); finish(); await pending;
+      expect(state.listScheduledJobRuns()).toHaveLength(6);
+      expect(state.listScheduledJobRuns().every(run => run.status === 'success')).toBe(true);
+      expect(events.filter(event => event.data.failureKind === 'missed')).toHaveLength(0);
+    } finally {
+      vi.setSystemTime(startedAt + 180_000); finish(); await pending; vi.useRealTimers();
+    }
+  });
+  it('push 发布失败进入红色健康与原告警，手动成功和历史裁剪不能掩盖', async () => {
+    const commitSha = 'a'.repeat(40);
+    state.addBranch({ id: 'isolated-branch', projectId: 'project', branch: 'main', worktreePath: dir, services: {}, status: 'running', pinnedCommit: commitSha, createdAt: new Date().toISOString() } as any);
+    state.upsertReleaseTarget({ id: 'isolated-target', projectId: 'project', name: '隔离发布目标', type: 'ssh', isEnabled: true, createdAt: new Date().toISOString() } as any);
+    let terminal: any = { releaseId: 'isolated-release-failed', projectId: 'project', branchId: 'isolated-branch', targetId: 'isolated-target', commitSha, status: 'failed', errorMessage: '隔离依赖失败' };
+    const startRelease = vi.fn(async () => terminal);
+    const withRelease = () => new ScheduledJobService({ stateService: state, shell, release: { ...release, startRelease, getRun: () => terminal }, publishEvent: publish, config: { masterPort: 9900, repoRoot: dir } });
+    service = withRelease();
+    const row = job({ schedule: { type: 'push', event: 'push', branchPattern: 'main' }, nextRunAt: null, timeoutSeconds: 60,
+      target: { type: 'release', targetId: 'isolated-target', source: { kind: 'branch', branchId: 'isolated-branch' } } });
+    const failed = await service.runJob(row.id, 'push', { overrideBranchId: 'isolated-branch', overrideCommitSha: commitSha });
+    expect(failed.failureKind).toBe('execution'); expect(state.getScheduledJob(row.id)!.recoveryRequiredRunId).toBeUndefined();
+    const current = state.getScheduledJob(row.id)!;
+    expect(service.health(current).state).toBe('execution');
+    expect(taskHealthTone({ ...current, health: service.health(current) } as any)).toBe('bg-bad');
+    expect(events.filter(event => event.type === 'scheduled-job.unhealthy')).toHaveLength(1);
+    terminal = { ...terminal, releaseId: 'isolated-manual-success', status: 'success' };
+    expect((await service.runJob(row.id, 'manual')).status).toBe('success');
+    expect(service.health(state.getScheduledJob(row.id)!).state).toBe('execution');
+    (state.getState() as any).scheduledJobRuns = []; await state.flush();
+    state = new StateService(path.join(dir, 'state.json'), dir); state.load(); service = withRelease();
+    expect(service.health(state.getScheduledJob(row.id)!).state).toBe('execution');
+    observeScheduledJobs(state, publish); expect(events.filter(event => event.type === 'scheduled-job.unhealthy')).toHaveLength(1);
+    const nextCommit = 'b'.repeat(40);
+    state.getBranch('isolated-branch')!.pinnedCommit = nextCommit;
+    terminal = { ...terminal, releaseId: 'isolated-later-push', commitSha: nextCommit, status: 'success' };
+    expect((await service.runJob(row.id, 'push', { overrideBranchId: 'isolated-branch', overrideCommitSha: nextCommit })).status).toBe('success');
+    expect(service.health(state.getScheduledJob(row.id)!).state).toBe('event-driven');
+    observeScheduledJobs(state, publish); expect(state.getScheduledJob(row.id)!.healthAlertKey).toBeUndefined();
+    expect(startRelease).toHaveBeenCalledTimes(3);
+  });
+  it('恢复旧 push 的已有报告不能把较新 push 的执行失败变绿', async () => {
+    const row = job({ schedule: { type: 'push', event: 'push', branchPattern: 'main' }, nextRunAt: null });
+    const old: ScheduledJobRun = { id: 'older-push', jobId: row.id, projectId: row.projectId, trigger: 'push', status: 'failed', failureKind: 'artifact-invalid', phase: 'validating', queuedAt: new Date(Date.now() - 10_000).toISOString(), completion: { type: 'reports', minCount: 1 } };
+    const latest: ScheduledJobRun = { id: 'latest-push', jobId: row.id, projectId: row.projectId, trigger: 'push', status: 'failed', failureKind: 'execution', queuedAt: new Date().toISOString() };
+    state.upsertScheduledJobRun(old); state.upsertScheduledJobRun(latest); archive(old);
+    expect((await service.recoverRun(row.id, old.id)).status).toBe('success');
+    expect(service.health(state.getScheduledJob(row.id)!)).toMatchObject({ state: 'execution', runId: latest.id });
     expect(shell.exec).not.toHaveBeenCalled();
   });
   it('并发重复触发同一应执行批次只调用一次，历史裁剪后仍保留批次凭据', async () => {

@@ -380,12 +380,13 @@ describe('ScheduledJobService', () => {
     expect(runs[0].status).toBe('success');
   });
 
-  it('does not run a due job that is disabled while an earlier due job is running', async () => {
+  it('does not execute a due job paused at its durability barrier while another job runs', async () => {
     let releaseExec: ((result: ExecResult) => void) | null = null;
     const blockingShell: IShellExecutor & { commands: string[] } = {
       commands: [],
       exec(command: string, _options?: ExecOptions): Promise<ExecResult> {
         this.commands.push(command);
+        if (!command.includes('first-slow')) return Promise.resolve({ stdout: 'unexpected\n', stderr: '', exitCode: 0 });
         return new Promise((resolve) => {
           releaseExec = resolve;
         });
@@ -425,15 +426,29 @@ describe('ScheduledJobService', () => {
     stateService.upsertScheduledJob({ ...firstJob, nextRunAt: '2026-01-01T00:00:00.000Z' });
     stateService.upsertScheduledJob({ ...disabledDuringTick, nextRunAt: '2026-01-01T00:00:00.000Z' });
 
+    // 不同任务不再串行等待；把存储回执延迟在第二个任务自身的外部动作之前。
+    let resumeClaim!: () => void;
+    const claimReceipt = new Promise<void>(resolve => { resumeClaim = resolve; });
+    let claimHeld = false;
+    const originalFlush = stateService.flush.bind(stateService);
+    vi.spyOn(stateService, 'flush').mockImplementation(async () => {
+      if (!claimHeld && stateService.listScheduledJobRuns({ jobId: disabledDuringTick.id }).some(run => run.status === 'running')) {
+        claimHeld = true; await claimReceipt;
+      }
+      await originalFlush();
+    });
     const tick = service.tick(new Date('2026-01-01T00:00:00.000Z'));
-    await vi.waitFor(() => expect(blockingShell.commands.length).toBeGreaterThan(0));
-    stateService.upsertScheduledJob({ ...stateService.getScheduledJob(disabledDuringTick.id)!, enabled: false, nextRunAt: null });
-    releaseExec?.({ stdout: 'done\n', stderr: '', exitCode: 0 });
-    await tick;
-
-    expect(blockingShell.commands).toHaveLength(1);
-    expect(blockingShell.commands[0]).toContain('first-slow');
-    expect(stateService.listScheduledJobRuns({ jobId: disabledDuringTick.id })).toHaveLength(0);
+    try {
+      await vi.waitFor(() => { expect(blockingShell.commands).toHaveLength(1); expect(claimHeld).toBe(true); });
+      stateService.upsertScheduledJob({ ...stateService.getScheduledJob(disabledDuringTick.id)!, enabled: false, nextRunAt: null });
+      resumeClaim(); releaseExec?.({ stdout: 'done\n', stderr: '', exitCode: 0 }); await tick;
+      expect(blockingShell.commands).toHaveLength(1);
+      expect(blockingShell.commands[0]).toContain('first-slow');
+      expect(stateService.listScheduledJobRuns({ jobId: disabledDuringTick.id })).toMatchObject([{ status: 'skipped' }]);
+      expect(stateService.getScheduledJob(disabledDuringTick.id)).toMatchObject({ enabled: false, nextRunAt: null });
+    } finally {
+      resumeClaim(); releaseExec?.({ stdout: 'done\n', stderr: '', exitCode: 0 }); await tick;
+    }
   });
 
   it('does not run a stale due snapshot that another tick already claimed', async () => {

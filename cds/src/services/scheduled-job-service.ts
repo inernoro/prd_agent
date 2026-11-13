@@ -215,14 +215,15 @@ export class ScheduledJobService {
     await this.reconcileInterruptedRuns();
     const due = this.deps.stateService.listScheduledJobs()
       .filter(job => job.enabled && isTimerDrivenSchedule(job.schedule) && !job.recoveryRequiredRunId && isJobDue(job, observedAt));
-    for (const job of due) {
+    // 不同任务先各自认领，再等待完成；不能把其他长任务的排队时间算成漏跑。
+    await Promise.all(due.map(async job => {
       try {
         const latest = this.deps.stateService.getScheduledJob(job.id);
         const attemptAt = now || new Date();
-        if (!latest?.enabled || latest.recoveryRequiredRunId || latest.nextRunAt !== job.nextRunAt || !isJobDue(latest, attemptAt)) continue;
+        if (!latest?.enabled || latest.recoveryRequiredRunId || latest.nextRunAt !== job.nextRunAt || !isJobDue(latest, attemptAt)) return;
         await this.runJob(job.id, 'schedule', { scheduledFor: job.nextRunAt!, now: attemptAt });
       } catch (err) { console.error('[scheduled-jobs] job tick failed:', job.id, (err as Error).message); }
-    }
+    }));
   }
 
   /** 重启后只标记未知结果，绝不重放可能已发生的外部副作用。 */
@@ -230,7 +231,7 @@ export class ScheduledJobService {
     for (const job of this.deps.stateService.listScheduledJobs()) {
       if (this.running.has(job.id)) continue;
       const rows = this.deps.stateService.listScheduledJobRuns({ jobId: job.id, limit: 500 });
-      const runs = [...new Map([job.lastScheduledRun, job.lastManualRequest, ...rows].filter((r): r is ScheduledJobRun => Boolean(r)).map(r => [r.id, r])).values()];
+      const runs = [...new Map([job.lastScheduledRun, job.lastManualRequest, job.lastPushRun, ...rows].filter((r): r is ScheduledJobRun => Boolean(r)).map(r => [r.id, r])).values()];
       for (const run of runs.filter(r => r.status === 'running' || r.status === 'queued')) {
         run.status = 'failed'; run.failureKind = 'interrupted';
         run.error = '进程重启，外部执行结果未知；仅允许核实已有产物，禁止自动重放。';
@@ -248,7 +249,7 @@ export class ScheduledJobService {
   async recoverRun(jobId: string, runId: string): Promise<ScheduledJobRun> {
     const job = this.deps.stateService.getScheduledJob(jobId);
     const run = this.deps.stateService.listScheduledJobRuns({ jobId, limit: 500 }).find(r => r.id === runId)
-      || [job?.lastScheduledRun, job?.lastManualRequest].find(r => r?.id === runId);
+      || [job?.lastScheduledRun, job?.lastManualRequest, job?.lastPushRun].find(r => r?.id === runId);
     if (!job || !run || this.running.has(jobId) || run.status !== 'failed') throw new Error('运行不存在、未失败或仍在执行');
     if (run.failureKind === 'missed') throw new Error('漏跑批次没有执行，不能通过补报告标记为定时成功');
     this.running.add(jobId);
@@ -354,10 +355,10 @@ export class ScheduledJobService {
     this.deps.stateService.upsertScheduledJobRun(run);
     this.running.add(job.id);
     if (trigger === 'manual' && options.requestKey) this.deps.stateService.upsertScheduledJob({ ...job, lastManualRequest: { ...run } });
-    if (trigger === 'push' && options.overrideBranchId && options.overrideCommitSha) {
+    if (trigger === 'push') {
       const receipts = { ...job.lastPushCommits };
-      receipts[options.overrideBranchId] = options.overrideCommitSha;
-      this.deps.stateService.upsertScheduledJob({ ...job, lastPushCommits: receipts });
+      if (options.overrideBranchId && options.overrideCommitSha) receipts[options.overrideBranchId] = options.overrideCommitSha;
+      this.deps.stateService.upsertScheduledJob({ ...job, lastPushRun: { ...run }, lastPushCommits: receipts });
     }
 
     try {
@@ -561,6 +562,8 @@ export class ScheduledJobService {
   private patchJobAfterRun(job: ScheduledJob, run: ScheduledJobRun): void {
     const latest = this.deps.stateService.getScheduledJob(job.id);
     if (!latest) return;
+    const latestPush = latest.lastPushRun || (run.trigger === 'push'
+      ? this.deps.stateService.listScheduledJobRuns({ jobId: job.id, limit: 500 }).find(row => row.trigger === 'push') : undefined);
     // 连续失败棘轮：只对含 release 动作的任务生效，成功或跳过即清零。
     const guardsRelease = normalizeActions(latest.actions, latest.target).some((action) => action.type === 'release');
     const failures = run.status === 'failed'
@@ -573,6 +576,8 @@ export class ScheduledJobService {
       ...(latest.lastManualRequest?.id === run.id ? { lastManualRequest: { ...run, log: undefined, steps: undefined } } : {}),
       ...(run.trigger === 'schedule' && (!latest.lastScheduledRun?.scheduledFor || !run.scheduledFor || run.scheduledFor >= latest.lastScheduledRun.scheduledFor)
         ? { lastScheduledRun: { ...run, log: undefined, steps: undefined } } : {}),
+      ...(run.trigger === 'push' && (!latestPush || latestPush.id === run.id)
+        ? { lastPushRun: { ...run, log: undefined, steps: undefined } } : {}),
       lastRunAt: run.finishedAt || run.startedAt || run.queuedAt,
       lastRunStatus: run.status,
       lastRunId: run.id,

@@ -2841,6 +2841,8 @@ export interface ScheduledJob {
   scheduleGraceSeconds?: number;
   /** 独立于手动运行，且不受运行历史裁剪影响。 */
   lastScheduledRun?: ScheduledJobRun;
+  /** 最近 push 运行独立于手动执行，且不随历史裁剪丢失健康依据。 */
+  lastPushRun?: ScheduledJobRun;
   recoveryRequiredRunId?: string;
   healthAlertKey?: string;
   /** 旧幂等键拒绝重放，最新请求保留结果，不依赖运行史保留时长。 */

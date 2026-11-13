@@ -20,8 +20,10 @@ export function scheduleGraceMs(job: ScheduledJob): number {
   return Math.max(1, job.scheduleGraceSeconds ?? DEFAULT_SCHEDULE_GRACE_SECONDS) * 1000;
 }
 export function scheduledJobHealth(job: ScheduledJob, runs: ScheduledJobRun[], now = new Date()): TaskHealth {
-  const latest = job.lastScheduledRun || runs.find(r => r.trigger === 'schedule');
-  const recovery = runs.find(r => r.id === job.recoveryRequiredRunId) || [job.lastScheduledRun, job.lastManualRequest].find(r => r?.id === job.recoveryRequiredRunId);
+  const latest = job.schedule.type === 'push'
+    ? job.lastPushRun || runs.find(r => r.trigger === 'push')
+    : job.lastScheduledRun || runs.find(r => r.trigger === 'schedule');
+  const recovery = runs.find(r => r.id === job.recoveryRequiredRunId) || [job.lastScheduledRun, job.lastManualRequest, job.lastPushRun].find(r => r?.id === job.recoveryRequiredRunId);
   const active = runs.find(r => r.status === 'running' || r.status === 'queued');
   const due = Date.parse(job.nextRunAt || '');
   const timer = job.schedule.type === 'daily' || job.schedule.type === 'interval';
