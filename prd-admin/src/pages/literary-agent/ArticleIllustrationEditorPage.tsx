@@ -64,9 +64,10 @@ import { fitLiteraryImageSize, imageRunFailure } from './literaryImageRunContrac
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, ChevronsUpDown, SlidersHorizontal, History, AlertTriangle } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, PenLine, SlidersHorizontal, History, AlertTriangle } from 'lucide-react';
 import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
-import { ArticleEditorToolbar, ArticleEditorModelField } from './ArticleEditorToolbar';
+import { ArticleEditorToolbar } from './ArticleEditorToolbar';
+import { LiteraryModelPicker } from './LiteraryModelPicker';
 import { PopupButton, QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
 import type { WatermarkConfig } from '@/services/contracts/watermark';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -2840,142 +2841,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <TipsEntryButton compact />
               </>
             }
-          >
-            <ArticleEditorModelField label="写作模型">
-              {effectiveChatModel?.isAutoResolved ? (
-                <span
-                  className="inline-flex items-center gap-1 min-w-0 w-full rounded-lg px-2 h-8 text-xs font-medium"
-                  style={{
-                    background: 'rgba(99, 102, 241, 0.08)',
-                    color: 'var(--accent-fg-blue)',
-                  }}
-                  title={`自动调度: ${effectiveChatModel.name}`}
-                >
-                  <Sparkles size={11} className="shrink-0" />
-                  <span className="min-w-0 flex-1 truncate text-left">自动: {effectiveChatModel.name}</span>
-                </span>
-              ) : (
-                <QuickMenu
-                  title="写作模型"
-                  width={280}
-                  open={chatModelPrefOpen}
-                  onOpenChange={(open) => {
-                    setChatModelPrefOpen(open);
-                    if (open) setImageModelPrefOpen(false);
-                  }}
-                  trigger={
-                    <button
-                      type="button"
-                      aria-label="写作模型"
-                      className="inline-flex items-center gap-1 min-w-0 w-full rounded-lg pl-2 pr-1.5 h-8 text-xs font-medium cursor-pointer transition-colors"
-                      style={{
-                        background: effectiveChatModel ? 'rgba(99, 102, 241, 0.12)' : 'rgba(239, 68, 68, 0.10)',
-                        color: effectiveChatModel ? 'var(--accent-fg-blue)' : 'var(--accent-fg-danger)',
-                      }}
-                      title={effectiveChatModel ? `${effectiveChatModel.name} - 点击切换提示词模型` : '选择提示词模型'}
-                    >
-                      <Sparkles size={11} className="shrink-0" />
-                      <span className="min-w-0 flex-1 truncate text-left">{effectiveChatModel?.name || '选择模型'}</span>
-                      <ChevronsUpDown size={11} className="shrink-0" style={{ opacity: 0.7 }} />
-                    </button>
-                  }
-                >
-                  {enabledChatModels.length === 0 ? (
-                    <QuickMenuEmpty>暂无可用模型池</QuickMenuEmpty>
-                  ) : (
-                    enabledChatModels.map((m) => (
-                      <QuickMenuItem
-                        key={m.id}
-                        label={
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            <span className="truncate">{m.name}</span>
-                            {m.isDefault && (
-                              <span className="shrink-0 rounded px-1 text-[11px]" style={{ color: 'var(--text-muted)', background: 'var(--bg-input-hover)' }}>
-                                默认模型
-                              </span>
-                            )}
-                          </span>
-                        }
-                        selected={effectiveChatModel?.id === m.id}
-                        onSelect={() => setChatModelPrefId(m.id)}
-                      />
-                    ))
-                  )}
-                </QuickMenu>
-              )}
-            </ArticleEditorModelField>
-            <ArticleEditorModelField label="配图模型">
-              {effectiveModel?.isAutoResolved ? (
-                // 自动解析模型：只读显示，无下拉（Worker 自行 resolve，不需用户选择）
-                <div
-                  className="inline-flex items-center gap-1 min-w-0 w-full rounded-lg px-2 h-8 text-xs font-medium"
-                  style={{
-                    background: 'rgba(34, 197, 94, 0.08)',
-                    color: 'var(--accent-fg-success)',
-                  }}
-                  title={`自动调度: ${effectiveModel.name}（无专属模型池时 Gateway 自动选择）`}
-                >
-                  <Sparkles size={11} className="shrink-0" />
-                  <span className="min-w-0 flex-1 truncate text-left">自动: {effectiveModel.name}</span>
-                </div>
-              ) : (
-                <QuickMenu
-                  title="配图模型"
-                  width={280}
-                  open={imageModelPrefOpen}
-                  onOpenChange={(open) => {
-                    setImageModelPrefOpen(open);
-                    if (open) setChatModelPrefOpen(false);
-                  }}
-                  trigger={
-                    <button
-                      type="button"
-                      aria-label="配图模型"
-                      className="inline-flex items-center gap-1 min-w-0 w-full rounded-lg pl-2 pr-1.5 h-8 text-xs font-medium cursor-pointer transition-colors"
-                      style={{
-                        background: effectiveModel ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.10)',
-                        color: effectiveModel ? 'var(--accent-fg-success)' : 'var(--accent-fg-danger)',
-                      }}
-                      title={effectiveModel ? `${effectiveModel.name} - 点击切换生图模型` : '选择生图模型'}
-                    >
-                      <Sparkles size={11} className="shrink-0" />
-                      <span className="min-w-0 flex-1 truncate text-left">{effectiveModel?.name || '选择模型'}</span>
-                      <ChevronsUpDown size={11} className="shrink-0" style={{ opacity: 0.7 }} />
-                    </button>
-                  }
-                >
-                  {enabledImageModels.length === 0 ? (
-                    <QuickMenuEmpty>暂无可用模型池</QuickMenuEmpty>
-                  ) : (
-                    enabledImageModels.map((m) => (
-                      <QuickMenuItem
-                        key={m.id}
-                        label={
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            <span className="truncate">{m.name}</span>
-                            {m.isDefault && (
-                              <span className="shrink-0 rounded px-1 text-[11px]" style={{ color: 'var(--text-muted)', background: 'var(--bg-input-hover)' }}>
-                                默认模型
-                              </span>
-                            )}
-                          </span>
-                        }
-                        selected={effectiveModel?.id === m.id}
-                        onSelect={() => setImageModelPrefId(m.id)}
-                      />
-                    ))
-                  )}
-                </QuickMenu>
-              )}
-
-              {/* 生图错误提示（无池且未能预解析时才显示） */}
-              {imageGenModelError && enabledImageModels.length === 0 && !autoResolvedModel && (
-                <div className="text-[10px] px-1.5 py-0.5 rounded text-red-400 bg-red-500/10">
-                  生图不可用
-                </div>
-              )}
-            </ArticleEditorModelField>
-          </ArticleEditorToolbar>
+          />
 
           <div
             ref={articlePreviewRef}
@@ -3586,7 +3452,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             style={{ borderColor: 'var(--border-subtle)' }}
             data-testid="literary-generation-settings"
           >
-            {/* 两行两列：右栏只有三百来像素，四个挤一行时风格、水印的名字被截成「全域…」「水印…」，
+            {/* 两列配置：右栏只有三百来像素，四个挤一行时风格、水印的名字被截成「全域…」「水印…」，
                 看不出用的是哪一套。「这是本文自己的设定」由悬停说明与菜单说明交代，不占按钮文字 */}
             <div className="grid grid-cols-2 gap-1.5 flex-1 min-w-0">
               <QuickMenu
@@ -3777,6 +3643,44 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   />
                 ))}
               </QuickMenu>
+
+              <div
+                className="col-span-2 grid min-w-0 grid-cols-2 gap-1.5 border-t pt-2 mt-0.5"
+                style={{ borderColor: 'var(--border-subtle)' }}
+                role="group"
+                aria-label="模型选择"
+                data-testid="literary-model-settings"
+              >
+                <LiteraryModelPicker
+                  label="写作"
+                  icon={<PenLine size={12} style={{ color: 'var(--accent-fg-blue)' }} />}
+                  model={effectiveChatModel}
+                  options={enabledChatModels}
+                  open={chatModelPrefOpen}
+                  onOpenChange={(open) => {
+                    setChatModelPrefOpen(open);
+                    if (open) setImageModelPrefOpen(false);
+                  }}
+                  onSelect={setChatModelPrefId}
+                />
+                <LiteraryModelPicker
+                  label="配图"
+                  icon={<ImageIcon size={12} style={{ color: 'var(--accent-fg-success)' }} />}
+                  model={effectiveModel}
+                  options={enabledImageModels}
+                  open={imageModelPrefOpen}
+                  onOpenChange={(open) => {
+                    setImageModelPrefOpen(open);
+                    if (open) setChatModelPrefOpen(false);
+                  }}
+                  onSelect={setImageModelPrefId}
+                />
+                {imageGenModelError && enabledImageModels.length === 0 && !autoResolvedModel && (
+                  <div className="col-span-2 text-[10px]" style={{ color: 'var(--accent-fg-danger)' }}>
+                    生图不可用
+                  </div>
+                )}
+              </div>
             </div>
 
             <button
