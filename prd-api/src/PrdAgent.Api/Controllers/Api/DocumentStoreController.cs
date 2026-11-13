@@ -341,7 +341,7 @@ public partial class DocumentStoreController : ControllerBase
         return (entry, store, null);
     }
 
-    /// <summary>加载条目 + 其所属空间并校验可读（拥有者/公开/团队成员）。无权返回错误 IActionResult</summary>
+    /// <summary>加载可读条目；未发布写作草稿仅对知识库可写成员可见。</summary>
     private async Task<(DocumentEntry? entry, DocumentStore? store, IActionResult? error)> LoadReadableEntryAsync(string entryId, string userId)
     {
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
@@ -352,6 +352,8 @@ public partial class DocumentStoreController : ControllerBase
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
         if (!await CanReadStoreAsync(store, userId, myTeamIds))
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
+        if (entry.Writing != null && entry.Writing.Published == null && !await CanWriteStoreAsync(store, userId, myTeamIds))
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
         return (entry, store, null);
     }
@@ -906,11 +908,14 @@ public partial class DocumentStoreController : ControllerBase
         if (!await CanReadStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
+        var canWrite = await CanWriteStoreAsync(store, userId, myTeamIds);
         pageSize = Math.Clamp(pageSize, 1, 500);
         page = Math.Max(1, page);
 
         var filterBuilder = Builders<DocumentEntry>.Filter;
         var filter = filterBuilder.Eq(e => e.StoreId, storeId);
+        if (!canWrite)
+            filter &= filterBuilder.Where(e => e.Writing == null || e.Writing.Published != null);
 
         // 按层级过滤：all=true 返回全部，否则按 parentId 过滤
         if (!all && string.IsNullOrWhiteSpace(keyword))
@@ -992,7 +997,7 @@ public partial class DocumentStoreController : ControllerBase
             .Distinct()
             .ToList();
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds, canWrite }));
     }
 
     /// <summary>

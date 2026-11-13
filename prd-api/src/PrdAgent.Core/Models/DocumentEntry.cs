@@ -8,6 +8,10 @@ public class DocumentEntry
     [System.Text.Json.Serialization.JsonIgnore]
     public WritingDocumentState? Writing { get; set; }
 
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
+    [System.Text.Json.Serialization.JsonPropertyName("hasWritingPublication")]
+    public bool HasWritingPublication => Writing?.Published != null;
+
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 

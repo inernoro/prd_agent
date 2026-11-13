@@ -1,3 +1,4 @@
+import { WritingPublicationActions } from './writing/WritingPublicationActions';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   Library,
@@ -1062,6 +1063,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const readerImmersive = useReaderChromeStore((s) => !!s.override);
   const canManageTutorialGraph = useAuthStore(state => state.isRoot || state.user?.role === 'ADMIN');
   const currentUserId = useAuthStore(state => state.user?.userId ?? null);
+  const hasWritingPermission = useAuthStore(state => state.isRoot || state.permissions.includes('super') || state.permissions.includes('document-store.write'));
+  const [canWriteEntries, setCanWriteEntries] = useState(false);
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const entriesRef = useRef(entries);
@@ -1081,7 +1084,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   // 免得用户读着一篇却只能对整库操作。
   // entries 只是首页 200 条：大库里「后端搜索命中」的条目不在其中，只能靠 DocBrowser 回传的
   // 解析结果兜底，否则读着搜索结果点分享会静默回落到整库范围（Codex P1）。
-  const [browserSelectedEntry, setBrowserSelectedEntry] = useState<{ id: string; title: string; isFolder?: boolean } | undefined>();
+  const [browserSelectedEntry, setBrowserSelectedEntry] = useState<{ id: string; title: string; isFolder?: boolean; hasWritingPublication?: boolean; metadata?: Record<string, string> } | undefined>();
   const selectedDocEntry = useMemo(() => {
     const local = entries.find(e => e.id === selectedEntryId && !e.isFolder);
     if (local) return local;
@@ -1448,9 +1451,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   const loadEntries = useCallback(async () => {
     setLoading(true);
+    setCanWriteEntries(false);
     const res = await listDocumentEntries(storeId, 1, 200);
     if (res.success) {
       setEntries(res.data.items);
+      setCanWriteEntries(res.data.canWrite === true);
       setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
     }
     setLoading(false);
@@ -2391,8 +2396,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 <Share2 size={13} /> 分享
               </Button>
             </span>
-            <Button variant="secondary" size="xs" onClick={() => navigate(`/document-store/${storeId}/collection`)}><BookOpen size={13} /> 合集阅读</Button>
-            <Button variant="secondary" size="xs" onClick={() => navigate(`/document-store/${storeId}/write${entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? `/${selectedDocEntry?.id}` : ''}`)}><FilePlus size={13} />{entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? '继续成文' : '按模版成文'}</Button>
+            <WritingPublicationActions storeId={storeId} entryId={selectedDocEntry?.id} hasPublication={selectedDocEntry?.hasWritingPublication} className="surface-action inline-flex h-7 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold text-token-primary" />
+            {canWriteEntries && hasWritingPermission && <Button variant="secondary" size="xs" onClick={() => navigate(`/document-store/${storeId}/write${entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? `/${selectedDocEntry?.id}` : ''}`)}><FilePlus size={13} />{entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? '继续成文' : '按模版成文'}</Button>}
             {selectedDocEntry && (
               <Button
                 variant="primary"
@@ -2628,6 +2633,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               >
                 {store.name} · {entries.filter(e => e.sourceType !== 'github_directory').length} 个文档
               </div>
+              <WritingPublicationActions storeId={storeId} entryId={selectedDocEntry?.id} hasPublication={selectedDocEntry?.hasWritingPublication} className="hover-bg-soft flex w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary" />
+              {canWriteEntries && hasWritingPermission && selectedDocEntry && <button type="button" onClick={() => navigate(`/document-store/${storeId}/write${entries.find(e => e.id === selectedDocEntry.id)?.metadata?.['writing_template'] ? `/${selectedDocEntry.id}` : ''}`)} className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary"><FilePlus size={13} />{entries.find(e => e.id === selectedDocEntry.id)?.metadata?.['writing_template'] ? '继续成文' : '按模版成文'}</button>}
               <button
                 type="button"
                 onClick={() => setShowShareDialog(true)}
