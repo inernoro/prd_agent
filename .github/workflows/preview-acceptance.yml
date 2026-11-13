@@ -97,6 +97,8 @@ jobs:
           set -e
           test "$status" -eq 1
           node e2e/performance/prove-browser.mjs work/performance/injected-browser/result.json
+      - name: Verify recovery without injected delay in a clean environment
+        run: node e2e/performance/run.mjs --ref "$PERF_BASE_REF" --profile normal --baseline work/performance/baseline.json --out work/performance/recovered
       - name: Upload performance evidence
         if: always()
         uses: actions/upload-artifact@v4

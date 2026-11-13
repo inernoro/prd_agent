@@ -52,7 +52,7 @@ node e2e/performance/run.mjs --ref "$BASE" --profile normal --inject-browser-ms 
 node e2e/performance/prove-browser.mjs work/performance/injected-browser/result.json
 ```
 
-该负例预期返回 1；证明器要求三个上下文都实际命中首页资产、页面业务最终完成、API 应用耗时没有超限，并且 `browser/home` 用户可用时间被拒绝。没有命中脚本或仅基础设施失败不算退化识别。撤除注入后必须以新实例恢复通过，保留负例原始结果。
+该负例预期返回 1；证明器要求三个上下文都实际命中首页资产、页面业务最终完成、全部 API 门禁正常，并且 `browser/home` 用户可用时间被拒绝。没有命中脚本或仅基础设施失败不算退化识别。撤除注入后必须以新实例恢复通过，CI 同样执行这一恢复步骤，保留负例原始结果。
 
 ## 场景与数据
 
@@ -136,3 +136,50 @@ node e2e/performance/prove-browser.mjs work/performance/injected-browser/result.
 交接边界：产品 API/UI 与权限模型未改；只测试本地临时管理员，未覆盖普通角色矩阵。中断验证仅清理本次 4 个容器、2 个网络，后续完整运行和退化运行自行清理结束。原始 JSON/请求/截图/日志留在 `work/revalidation-20261113/`，历史失败不覆盖。隔离截图另观察到知识库头部与左栏计数显示不同，未定位根因，不在本次判定器及版本对账修复范围内。
 
 维护者后续需恢复 CDS 与 GitHub Actions API 的允许访问，再由执行器完成公开预览与云端验证；不要求用户接手手工自测。取不到地址时不推算预览域名，也不将本轮 PARTIAL 改写为整体完成。
+
+## 2026-11-13 核心用户性能目标验收
+
+本轮固定最新被测应用 `ce1f0e71bad04a4dfec8f9bed08bae199fac6208`，采集代码为 `05bbf04af`。三次干净环境重新校准，未沿用历史阈值。当前总体状态为 **部分完成**：隔离能力和两类受控退化证明通过，云端 CI 与公开预览尚未验收。
+
+| 阶段 | 可验证结论与证据 |
+|---|---|
+| 确认问题 | 旧判定器记录浏览器耗时却不参与门禁；同一份真实首页脚本延迟负例，旧判定器放行，新判定器拒绝。没有声称正式页面当前慢 10 秒 |
+| 定义成功标准 | 修改前固定 CORE-01 至 CORE-06；见 [断言与实测证据](evidence.user-path.reference.json) 的 `acceptance` |
+| 实施 | 四条真实页面路径各采三次，首页等待实际工作卡片；正常/持续阶段的 API 指标和浏览器可用耗时共同门禁；CI 增加首页负例及新实例恢复 |
+| 证明有效 | 真实首页脚本延迟 10 秒后 p95 10923.55ms，超过基线 2811.60ms；所有 API 门禁正常。应用 350ms 注入使文档打开 app p95 361.51ms、外部 HTTP 为零。两种负例均返回 1，证明器均通过 |
+| 真实验收 | 本地浏览器从登录入口到保存、刷新、持久化回读已通过并截图。公开预览未验收：权威查询被网络隧道 403 阻断，未取得深链；明暗主题、移动端和普通角色矩阵未验收 |
+| 交付 | 独立分支 `perf/map-regression-isolated`；执行入口、基线、原始负例、截图、资源及容量结论已入库。不创建 PR、不合并、不发布生产 |
+
+| 当前隔离实测 | 结果 |
+|---|---|
+| 正常负载 | 40 次事务零错误；首页/列表/正文/写入客户端 p95 33.30/30.39/13.66/90.99ms；完整事务 p95 246.63ms，约 2 事务/秒 |
+| 并发增长 | 4 VU 零错误、30.92 事务/秒；8 VU 首次退化，90/594 事务的删除步骤返回 409，错误率 15.15%，按规则停止继续加压。创建、保存、回读与版本检查未出现错误 |
+| 边界归因 | 8 VU 复用 6 个库时，回收服务的库级租约拒绝同时删除不同文档。未忽略错误或加入自动重试；这是含回收的事务边界，不能用作纯写入吞吐上限 |
+| 资源 | 8 VU 阶段 API 峰值约 218% CPU / 469MiB RSS，Mongo 133% / 357MiB；100% CPU 表示一核。实际共享 4 CPU/16GiB，声明容器配额未实施；RSS 为进程和，不是 PSS |
+| 持续与恢复 | 恢复 2 VU 持续 120 秒，240 次事务零错误，事务 p95 174.47ms。撤除两类注入后再建新实例，四条页面路径与 40 次事务均通过，事务 p95 156.75ms |
+
+精确阈值及比较契约见 [本轮基线](baseline.user-path.reference.json)。完整分位数、应用/外部耗时、资源、失败及原始文件哈希见 [本轮证据](evidence.user-path.reference.json)。页面证据：[首页](evidence/user-path/home.png)、[知识库](evidence/user-path/knowledge-list.png)、[正文](evidence/user-path/document-open.png)、[保存刷新](evidence/user-path/write.png)。可独立审查 [旧新同数据对照](evidence/user-path/old-new-contrast.json) 和 [409 服务端记录](evidence/user-path/capacity-409.log)。
+
+两类负例的原始 `result.json` 已保留，可直接复核证明器；下面两条都应返回 0，原始比较失败仍保留在结果中：
+
+```bash
+node e2e/performance/prove-browser.mjs e2e/performance/evidence/user-path/injected-browser.result.json
+node e2e/performance/prove.mjs e2e/performance/evidence/user-path/injected-app.result.json
+```
+
+交叉验证采用同数据旧新对照、实际故障注入与撤除恢复、8 VU 独立文档并发、实际构建 SHA 数据流核对。15 项判定/资源测试、真实 Kestrel/HttpClient 归因自测及现有 E2E TypeScript 检查通过。数据规模和角色仍为受控 fixture，未证明代表实际用户分布；120 秒也不足以证明长时稳定性。
+
+交接八维检查：
+
+| 维度 | 状态与依据 |
+|---|---|
+| 入口 | `run.mjs --ref <提交> --profile normal/all`；用户路径为登录→首页→知识库→文档→编辑保存→刷新 |
+| 文档与决策 | 本节、基线、证据与 `doc/debt.acceptance.system.md` 同步；历史失败未覆盖 |
+| 契约与数据 | 浏览器样本和阈值纳入策略 3，旧基线需要重新校准；产品 API/存储未变 |
+| 测试 | 基线三次、全负载、两类负例与新实例恢复已执行；云端 CI 未执行 |
+| 发布与运维 | 既有 Preview Acceptance job 接线完成；每轮独立容器、网络与数据，退出后无本轮残留；无生产部署 |
+| 安全与隐私 | 压力仅本地隔离网络，种子账号随机凭据不入库，浏览器阻断非本地请求，无付费模型调用 |
+| 已知风险 | 同库回收冲突、共享资源、短持续测试、数据代表性与公开验收边界已记债务 |
+| 后续依赖 | 环境维护入口放行现有 CDS 主机 `miduo.org` 与 Actions API `api.github.com`；由执行器继续取得真实预览深链、核对版本并完成页面与云端作业验收，不转交用户自测 |
+
+【位置】MAP 登录后首页和知识库；【操作路径】登录→首页工作卡片→知识库→选择文档→编辑保存→刷新；【预览深链】未取得，CDS 网络隧道 403。环境最新策略仍为 restricted/enforced，两个所需主机均未列入允许范围；没有实际 CI 运行链接或 artifact，不能将工作流语法检查算作云端通过。

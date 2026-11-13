@@ -1,0 +1,2776 @@
+{
+  "schema": 2,
+  "commit": "ce1f0e71bad04a4dfec8f9bed08bae199fac6208",
+  "harnessCommit": "05bbf04af70a3579f918b1227f83fab2e0e4bd06",
+  "environmentId": "map-perf-50eb6257f20d",
+  "startedAt": "2026-11-13T09:00:49.280Z",
+  "contract": {
+    "schema": 3,
+    "buildMetadataVersion": 2,
+    "workload": {
+      "version": 1,
+      "stores": 6,
+      "documentsPerStore": 20,
+      "contentBytes": 8192,
+      "browserRepetitions": 3,
+      "rateLimit": {
+        "maxRequestsPerMinute": 100000,
+        "maxConcurrentRequests": 1024
+      },
+      "normal": {
+        "users": 2,
+        "seconds": 20,
+        "intervalMs": 1000
+      },
+      "ramp": {
+        "users": [
+          2,
+          4,
+          8,
+          16,
+          32,
+          64,
+          128
+        ],
+        "seconds": 15,
+        "intervalMs": 0
+      },
+      "soak": {
+        "users": 2,
+        "seconds": 120,
+        "intervalMs": 1000
+      }
+    },
+    "limits": {
+      "api": [
+        "1",
+        "1024m"
+      ],
+      "mongo": [
+        "1",
+        "768m"
+      ],
+      "redis": [
+        "0.5",
+        "256m"
+      ],
+      "web": [
+        "0.5",
+        "256m"
+      ]
+    },
+    "images": {
+      "mongo": "mongo:7@sha256:9896df581dfd0718b7abe112f4c37598d0986c54060e4ec1384997e6503c8c71",
+      "redis": "redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe",
+      "web": "nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+    },
+    "sdkVersion": "8.0.428",
+    "nodeMajor": "24",
+    "arch": "x64",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "probe": "43fd9c42cf07260e756ddd05d9934b44877683b2c912d76b54aed752f27be4a1",
+    "metricsCode": "f25d81a1d2741d3365d505d78907879987170370e6b410be4133148d04f9d022",
+    "resourcesCode": "d09b742e3507553867cd95be3c292878e33bda00e63f0cf781c63d0c338ab8a2",
+    "proxyRecipe": "10d5e9c006998dfa4a31e7df68be23caeb48914142c850d345354cd87b50331c",
+    "runtimeRecipe": "11532728d000073bf127740721b67165239f114fa52e9ebe59aec972b133c7cb",
+    "workloadCode": "0b3eb11f90c36acb2ce4b9a6369a6c645c1dc13ed0fa94d1f58693299da34150",
+    "runtimeImage": "sha256:2102ef7b75ceb93d1a9c5f207cf5c9052571214a8eeb0420b9f74f8fbcc18f71",
+    "effectiveCgroups": {
+      "mongo": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      },
+      "redis": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      },
+      "api": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      },
+      "web": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      }
+    },
+    "browserVersion": "156.0.8078.79"
+  },
+  "execution": {
+    "profile": "normal",
+    "state": "complete"
+  },
+  "host": {
+    "cpus": 5,
+    "memoryBytes": 18882662400,
+    "kernel": "6.18.57"
+  },
+  "injectionMs": 0,
+  "phases": [
+    {
+      "name": "normal",
+      "users": 2,
+      "seconds": 20.010602151000015,
+      "metrics": {
+        "document-open": {
+          "attempts": 40,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989403466302502,
+          "client": {
+            "n": 40,
+            "p50": 7.501728999995976,
+            "p95": 11.028852000003099,
+            "p99": 15.184985999992932,
+            "max": 15.184985999992932,
+            "mean": 8.05050847500097
+          },
+          "app": {
+            "n": 40,
+            "p50": 5.947,
+            "p95": 9.146,
+            "p99": 11.944,
+            "max": 11.944,
+            "mean": 6.3215499999999984
+          },
+          "externalHttp": {
+            "n": 40,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "home": {
+          "attempts": 40,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989403466302502,
+          "client": {
+            "n": 40,
+            "p50": 13.042174000001978,
+            "p95": 39.8902689999959,
+            "p99": 81.60096500000509,
+            "max": 81.60096500000509,
+            "mean": 18.467105975000596
+          },
+          "app": {
+            "n": 40,
+            "p50": 10.135,
+            "p95": 16.647,
+            "p99": 19.637,
+            "max": 19.637,
+            "mean": 11.034924999999998
+          },
+          "externalHttp": {
+            "n": 40,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "journey": {
+          "attempts": 40,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989403466302502,
+          "client": {
+            "n": 40,
+            "p50": 106.7773029999953,
+            "p95": 181.50478600000497,
+            "p99": 191.83909599999606,
+            "max": 191.83909599999606,
+            "mean": 116.3552023749995
+          },
+          "app": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "externalHttp": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "knowledge-list": {
+          "attempts": 40,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989403466302502,
+          "client": {
+            "n": 40,
+            "p50": 10.98660899999959,
+            "p95": 22.9956119999988,
+            "p99": 25.304942000002484,
+            "max": 25.304942000002484,
+            "mean": 12.870534775000488
+          },
+          "app": {
+            "n": 40,
+            "p50": 9.391,
+            "p95": 19.949,
+            "p99": 21.593,
+            "max": 21.593,
+            "mean": 10.751974999999998
+          },
+          "externalHttp": {
+            "n": 40,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "write": {
+          "attempts": 40,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989403466302502,
+          "client": {
+            "n": 40,
+            "p50": 46.5133569999889,
+            "p95": 78.16083999999682,
+            "p99": 106.00528400001349,
+            "max": 106.00528400001349,
+            "mean": 53.32699407499858
+          },
+          "app": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "externalHttp": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "write-create": {
+          "attempts": 40,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989403466302502,
+          "client": {
+            "n": 40,
+            "p50": 10.419730000008713,
+            "p95": 35.63598099999945,
+            "p99": 36.703701999998884,
+            "max": 36.703701999998884,
+            "mean": 15.141885325001567
+          },
+          "app": {
+            "n": 40,
+            "p50": 8.387,
+            "p95": 29.81,
+            "p99": 30.238,
+            "max": 30.238,
+            "mean": 12.137425000000004
+          },
+          "externalHttp": {
+            "n": 40,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "write-delete": {
+          "attempts": 40,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989403466302502,
+          "client": {
+            "n": 40,
+            "p50": 21.69796900000074,
+            "p95": 33.427560000011,
+            "p99": 36.26160700000764,
+            "max": 36.26160700000764,
+            "mean": 23.31104230000019
+          },
+          "app": {
+            "n": 40,
+            "p50": 19.962,
+            "p95": 26.994,
+            "p99": 32.512,
+            "max": 32.512,
+            "mean": 21.447500000000005
+          },
+          "externalHttp": {
+            "n": 40,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "write-readback": {
+          "attempts": 40,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989403466302502,
+          "client": {
+            "n": 40,
+            "p50": 7.829784000001382,
+            "p95": 10.662679999993998,
+            "p99": 13.283871000006911,
+            "max": 13.283871000006911,
+            "mean": 8.015165299999717
+          },
+          "app": {
+            "n": 40,
+            "p50": 5.88,
+            "p95": 8.042,
+            "p99": 8.553,
+            "max": 8.553,
+            "mean": 6.167750000000001
+          },
+          "externalHttp": {
+            "n": 40,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "write-save": {
+          "attempts": 40,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989403466302502,
+          "client": {
+            "n": 40,
+            "p50": 17.93168299998797,
+            "p95": 25.199520000009215,
+            "p99": 27.65055899998697,
+            "max": 27.65055899998697,
+            "mean": 18.7712917249999
+          },
+          "app": {
+            "n": 40,
+            "p50": 15.554,
+            "p95": 21.008,
+            "p99": 21.39,
+            "max": 21.39,
+            "mean": 16.074724999999997
+          },
+          "externalHttp": {
+            "n": 40,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "write-versions": {
+          "attempts": 40,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989403466302502,
+          "client": {
+            "n": 40,
+            "p50": 7.786569999996573,
+            "p95": 11.400090000010096,
+            "p99": 68.6399539999984,
+            "max": 68.6399539999984,
+            "mean": 11.138051250000718
+          },
+          "app": {
+            "n": 40,
+            "p50": 6.353,
+            "p95": 8.27,
+            "p99": 9.684,
+            "max": 9.684,
+            "mean": 6.6518500000000005
+          },
+          "externalHttp": {
+            "n": 40,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        }
+      },
+      "resourceSampleStart": 0,
+      "resourceSampleEnd": 20
+    }
+  ],
+  "browser": {
+    "samples": {
+      "home": [
+        10917.146590000004,
+        10766.574084,
+        10923.545537999998
+      ],
+      "knowledge-list": [
+        149.29600600000413,
+        145.9718939999948,
+        140.8517439999996
+      ],
+      "document-open": [
+        970.3837399999975,
+        551.9044530000028,
+        577.1583030000038
+      ],
+      "write": [
+        1262.8655719999952,
+        1255.7108520000038,
+        1624.0638950000139
+      ]
+    },
+    "home": 10923.545537999998,
+    "knowledge-list": 149.29600600000413,
+    "document-open": 970.3837399999975,
+    "write": 1624.0638950000139,
+    "requests": [
+      {
+        "path": "/api/v1/auth/miduo-planet/options",
+        "status": 200,
+        "stage": "login",
+        "round": 1
+      },
+      {
+        "path": "/api/v1/auth/login",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/authz/menu-catalog",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/visible",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/notifications",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/mobile/feed",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/model-leaderboard/top",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/ai-toolbox/items",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/submissions/public",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/submissions/public/creators",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/mobile/stats",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/ai-toolbox/marketplace",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/weekly-posters/current",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/home/recent-work",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/submissions/public/creators",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/submissions/public",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/seed-document-store-page-guide/track",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/analytics-summary",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/with-preview",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/2a78503cd11047a890a3cc387477a632/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/9217d1826fbf4a37a97ffbad3b1ee62a/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/1ada450a4e7d4512bae06a9fd4134685/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/a7c16b2d7e544c7985fa8d634170747c/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/ff7b49fb0bb44b28ad5a3a619a79e1e4/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/seed-document-store-page-guide/mark-learned",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/entries",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/tutorial-link-graph",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/peer-sync/runs",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/transcribe-styles",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/sync",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/85a0eb0a91be4928b87feed7ac135f8d/agent-runs/latest",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/85a0eb0a91be4928b87feed7ac135f8d/content",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/85a0eb0a91be4928b87feed7ac135f8d/inline-comments",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/85a0eb0a91be4928b87feed7ac135f8d/view",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/85a0eb0a91be4928b87feed7ac135f8d/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/85a0eb0a91be4928b87feed7ac135f8d/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/inline-comments",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/view",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/agent-runs/latest",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/content",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/view-events/be4b39cf078940189e07e0fd9bb99a1b/leave",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/content",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/notifications",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/visible",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/tutorial-link-graph",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/agent-runs/latest",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/peer-sync/runs",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/entries",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/analytics-summary",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/with-preview",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/sync",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/transcribe-styles",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/inline-comments",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/content",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/view",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/v1/auth/miduo-planet/options",
+        "status": 200,
+        "stage": "login",
+        "round": 2
+      },
+      {
+        "path": "/api/v1/auth/login",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/authz/menu-catalog",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/daily-tips/visible",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/notifications",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/model-leaderboard/top",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/submissions/public/creators",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/mobile/feed",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/submissions/public",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/ai-toolbox/marketplace",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/ai-toolbox/items",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/mobile/stats",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/home/recent-work",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/weekly-posters/current",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/submissions/public",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/submissions/public/creators",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/analytics-summary",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/with-preview",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/a7c16b2d7e544c7985fa8d634170747c/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/1ada450a4e7d4512bae06a9fd4134685/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/9217d1826fbf4a37a97ffbad3b1ee62a/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/ff7b49fb0bb44b28ad5a3a619a79e1e4/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/2a78503cd11047a890a3cc387477a632/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/tutorial-link-graph",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/entries",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/peer-sync/runs",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/transcribe-styles",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/sync",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/85a0eb0a91be4928b87feed7ac135f8d/inline-comments",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/85a0eb0a91be4928b87feed7ac135f8d/agent-runs/latest",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/85a0eb0a91be4928b87feed7ac135f8d/content",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/85a0eb0a91be4928b87feed7ac135f8d/view",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/85a0eb0a91be4928b87feed7ac135f8d/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/85a0eb0a91be4928b87feed7ac135f8d/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/inline-comments",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/agent-runs/latest",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/view-events/be4b39cf078940189e07e0fd9bb99a1b/leave",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/content",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/view",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/content",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/notifications",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/daily-tips/visible",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/tutorial-link-graph",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/agent-runs/latest",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/peer-sync/runs",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/entries",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/analytics-summary",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/with-preview",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/transcribe-styles",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/sync",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/content",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/inline-comments",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/view",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/v1/auth/miduo-planet/options",
+        "status": 200,
+        "stage": "login",
+        "round": 3
+      },
+      {
+        "path": "/api/v1/auth/login",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/daily-tips/visible",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/authz/menu-catalog",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/notifications",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/ai-toolbox/items",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/model-leaderboard/top",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/mobile/feed",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/submissions/public",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/submissions/public/creators",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/mobile/stats",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/ai-toolbox/marketplace",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/weekly-posters/current",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/home/recent-work",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/submissions/public/creators",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/submissions/public",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/analytics-summary",
+        "status": 200,
+        "stage": "knowledge-list",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "knowledge-list",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/with-preview",
+        "status": 200,
+        "stage": "knowledge-list",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/1ada450a4e7d4512bae06a9fd4134685/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/2a78503cd11047a890a3cc387477a632/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/a7c16b2d7e544c7985fa8d634170747c/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/9217d1826fbf4a37a97ffbad3b1ee62a/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/ff7b49fb0bb44b28ad5a3a619a79e1e4/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/tutorial-link-graph",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/peer-sync/runs",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/entries",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/transcribe-styles",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/sync",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/85a0eb0a91be4928b87feed7ac135f8d/agent-runs/latest",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/85a0eb0a91be4928b87feed7ac135f8d/inline-comments",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/85a0eb0a91be4928b87feed7ac135f8d/content",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/85a0eb0a91be4928b87feed7ac135f8d/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/85a0eb0a91be4928b87feed7ac135f8d/view",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/85a0eb0a91be4928b87feed7ac135f8d/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/view-events/be4b39cf078940189e07e0fd9bb99a1b/leave",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/inline-comments",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/agent-runs/latest",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/view",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/content",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/content",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/notifications",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/daily-tips/visible",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/agent-runs/latest",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/tutorial-link-graph",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/entries",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/peer-sync/runs",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/analytics-summary",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/with-preview",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/sync",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/transcribe-styles",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/inline-comments",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/view",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/9341d3da74fa40358fce806e5d43c46f/content",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/09b4956b1c1d48ab9cadfbad00702ac3/size",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/9341d3da74fa40358fce806e5d43c46f/links",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      }
+    ],
+    "pass": true
+  },
+  "resources": [
+    {
+      "at": "2026-11-13T09:02:06.549Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": null,
+          "rssBytes": 186380288,
+          "cpuSeconds": 2.96,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": null,
+          "rssBytes": 12009472,
+          "cpuSeconds": 0.65,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": null,
+          "rssBytes": 888619008,
+          "cpuSeconds": 21.62,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": null,
+          "rssBytes": 9519104,
+          "cpuSeconds": 0.33,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:07.565Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 5.906943058675606,
+          "rssBytes": 186773504,
+          "cpuSeconds": 3.02,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 12009472,
+          "cpuSeconds": 0.65,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 37.41063937161217,
+          "rssBytes": 902402048,
+          "cpuSeconds": 22,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9519104,
+          "cpuSeconds": 0.33,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:08.579Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 5.9135702378430945,
+          "rssBytes": 187428864,
+          "cpuSeconds": 3.08,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 1.9711900792810315,
+          "rssBytes": 12009472,
+          "cpuSeconds": 0.67,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 26.611066070293926,
+          "rssBytes": 920358912,
+          "cpuSeconds": 22.27,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9855950396405158,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.34,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:09.593Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.935272899004427,
+          "rssBytes": 189243392,
+          "cpuSeconds": 3.13,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9870545798008853,
+          "rssBytes": 12009472,
+          "cpuSeconds": 0.68,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 20.72814617581859,
+          "rssBytes": 931106816,
+          "cpuSeconds": 22.48,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.34,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:10.664Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 5.600312830487882,
+          "rssBytes": 189636608,
+          "cpuSeconds": 3.19,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9333854717479803,
+          "rssBytes": 12271616,
+          "cpuSeconds": 0.69,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 26.134793208943453,
+          "rssBytes": 952995840,
+          "cpuSeconds": 22.76,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.34,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:11.682Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 6.876549393410465,
+          "rssBytes": 190291968,
+          "cpuSeconds": 3.26,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9823641990586378,
+          "rssBytes": 12271616,
+          "cpuSeconds": 0.7,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 26.523833374583223,
+          "rssBytes": 968855552,
+          "cpuSeconds": 23.03,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9823641990586378,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.35,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:12.694Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.937347323766442,
+          "rssBytes": 191340544,
+          "cpuSeconds": 3.31,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9874694647532885,
+          "rssBytes": 12402688,
+          "cpuSeconds": 0.71,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 19.749389295065768,
+          "rssBytes": 982880256,
+          "cpuSeconds": 23.23,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9874694647532885,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.36,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:13.710Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.923571309022193,
+          "rssBytes": 191471616,
+          "cpuSeconds": 3.36,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9847142618044387,
+          "rssBytes": 12402688,
+          "cpuSeconds": 0.72,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 14.770713927066579,
+          "rssBytes": 995856384,
+          "cpuSeconds": 23.38,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.36,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:14.722Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 7.908734977821331,
+          "rssBytes": 192389120,
+          "cpuSeconds": 3.44,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 12533760,
+          "cpuSeconds": 0.72,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 40.53226676133433,
+          "rssBytes": 1013424128,
+          "cpuSeconds": 23.79,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9885918722276664,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.37,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:15.734Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.952221358859473,
+          "rssBytes": 192389120,
+          "cpuSeconds": 3.48,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9880553397148683,
+          "rssBytes": 12664832,
+          "cpuSeconds": 0.73,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 24.701383492871706,
+          "rssBytes": 1026793472,
+          "cpuSeconds": 24.04,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.37,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:16.773Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 8.662682648223955,
+          "rssBytes": 192782336,
+          "cpuSeconds": 3.57,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 1.9250405884942121,
+          "rssBytes": 12664832,
+          "cpuSeconds": 0.75,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 35.613250887142925,
+          "rssBytes": 1041211392,
+          "cpuSeconds": 24.41,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.37,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:17.786Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.932813370211534,
+          "rssBytes": 193437696,
+          "cpuSeconds": 3.62,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9865626740423066,
+          "rssBytes": 12664832,
+          "cpuSeconds": 0.76,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 23.677504177015358,
+          "rssBytes": 1054318592,
+          "cpuSeconds": 24.65,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9865626740423066,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.38,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:18.814Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 5.839116192073855,
+          "rssBytes": 194093056,
+          "cpuSeconds": 3.68,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9731860320123094,
+          "rssBytes": 12664832,
+          "cpuSeconds": 0.77,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 116.78232384147711,
+          "rssBytes": 1071988736,
+          "cpuSeconds": 25.85,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.38,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:19.825Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.9546166727427856,
+          "rssBytes": 194224128,
+          "cpuSeconds": 3.72,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9886541681856964,
+          "rssBytes": 12795904,
+          "cpuSeconds": 0.78,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 17.795775027342533,
+          "rssBytes": 1071988736,
+          "cpuSeconds": 26.03,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9886541681856964,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.39,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:20.838Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 5.921942397580147,
+          "rssBytes": 195272704,
+          "cpuSeconds": 3.78,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9869903995966912,
+          "rssBytes": 12795904,
+          "cpuSeconds": 0.79,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 18.752817592337134,
+          "rssBytes": 1072250880,
+          "cpuSeconds": 26.22,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.39,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:21.851Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 5.928050457241672,
+          "rssBytes": 195272704,
+          "cpuSeconds": 3.84,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9880084095402787,
+          "rssBytes": 12795904,
+          "cpuSeconds": 0.8,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 22.72419341942641,
+          "rssBytes": 1072381952,
+          "cpuSeconds": 26.45,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9880084095402787,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.4,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:22.867Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.9212867352204395,
+          "rssBytes": 195534848,
+          "cpuSeconds": 3.89,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9842573470440877,
+          "rssBytes": 12795904,
+          "cpuSeconds": 0.81,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 14.763860205661317,
+          "rssBytes": 1072513024,
+          "cpuSeconds": 26.6,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.4,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:23.883Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.935949738866445,
+          "rssBytes": 196321280,
+          "cpuSeconds": 3.93,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 12795904,
+          "cpuSeconds": 0.81,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 13.775824086032557,
+          "rssBytes": 1072513024,
+          "cpuSeconds": 26.74,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.4,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:24.894Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.942463629297314,
+          "rssBytes": 196583424,
+          "cpuSeconds": 3.98,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9884927258594627,
+          "rssBytes": 12795904,
+          "cpuSeconds": 0.82,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 15.815883613751403,
+          "rssBytes": 1072513024,
+          "cpuSeconds": 26.9,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9884927258594627,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.41,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T09:02:25.908Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.94755192897736,
+          "rssBytes": 196714496,
+          "cpuSeconds": 4.02,
+          "pids": [
+            23553
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.98688798224434,
+          "rssBytes": 12795904,
+          "cpuSeconds": 0.83,
+          "pids": [
+            23693
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 12.829543769176421,
+          "rssBytes": 1072644096,
+          "cpuSeconds": 27.03,
+          "pids": [
+            23773
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9650176,
+          "cpuSeconds": 0.41,
+          "pids": [
+            23873,
+            23970
+          ]
+        }
+      ]
+    }
+  ],
+  "browserInjection": {
+    "delayMs": 10000,
+    "applied": [
+      {
+        "round": 1,
+        "stage": "home",
+        "asset": "/assets/AgentLauncherPage-CTIr0dUh-ce1f0e71bad04a4dfec8f9bed08bae199fac6208.js",
+        "delayMs": 10000
+      },
+      {
+        "round": 2,
+        "stage": "home",
+        "asset": "/assets/AgentLauncherPage-CTIr0dUh-ce1f0e71bad04a4dfec8f9bed08bae199fac6208.js",
+        "delayMs": 10000
+      },
+      {
+        "round": 3,
+        "stage": "home",
+        "asset": "/assets/AgentLauncherPage-CTIr0dUh-ce1f0e71bad04a4dfec8f9bed08bae199fac6208.js",
+        "delayMs": 10000
+      }
+    ]
+  },
+  "isolation": {
+    "networkInternal": true,
+    "publishedAddress": "http://127.0.0.1:32781",
+    "freshDatabases": true,
+    "persistentVolumes": false
+  },
+  "resourceAccounting": {
+    "source": "Linux /proc process tree; CPU ticks and summed RSS",
+    "requestedLimitsEnforced": false,
+    "clockTicksPerSecond": 100,
+    "pageBytes": 4096
+  },
+  "buildIdentity": {
+    "api": {
+      "actualCommit": "ce1f0e71bad04a4dfec8f9bed08bae199fac6208",
+      "expectedCommit": "ce1f0e71bad04a4dfec8f9bed08bae199fac6208",
+      "commitMatch": "match"
+    },
+    "webEntries": [
+      "/assets/index-Dku6RxxU-ce1f0e71bad04a4dfec8f9bed08bae199fac6208.js"
+    ]
+  },
+  "admission": {
+    "original": {
+      "maxRequestsPerMinute": 600,
+      "maxConcurrentRequests": 100
+    },
+    "applied": {
+      "maxRequestsPerMinute": 100000,
+      "maxConcurrentRequests": 1024
+    }
+  },
+  "capacity": {
+    "criterion": "任一场景错误率>1% 或 client p95>正常负载两倍；仅为本隔离配置的相对退化边界",
+    "firstDegradedUsers": null,
+    "lastTestedUsers": null,
+    "stages": []
+  },
+  "finishedAt": "2026-11-13T09:02:29.055Z",
+  "comparison": {
+    "pass": false,
+    "failures": [
+      "browser/home: ready p95 10923.55 > 2811.60 ms"
+    ]
+  }
+}

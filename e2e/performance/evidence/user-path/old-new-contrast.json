@@ -1,0 +1,12 @@
+{
+  "old": {
+    "pass": true,
+    "failures": []
+  },
+  "current": {
+    "pass": false,
+    "failures": [
+      "browser/home: ready p95 10923.55 > 2811.60 ms"
+    ]
+  }
+}
