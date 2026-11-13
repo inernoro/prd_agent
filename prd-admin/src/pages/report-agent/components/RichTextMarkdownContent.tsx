@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import GithubSlugger from 'github-slugger';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { MermaidDiagram } from '@/components/ui/MermaidDiagram';
 import { useDataTheme } from '../hooks/useDataTheme';
+import { headingTextToSlug } from '@/lib/markdownToc';
 
 interface RichTextMarkdownContentProps {
   content: string;
@@ -20,6 +22,36 @@ type PreviewImage = {
 };
 
 const MARKDOWN_IMAGE_REGEX = /!\[[^\]]*]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+
+interface ReportMarkdownNode {
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: ReportMarkdownNode[];
+}
+
+/** Slugs restart for each document render; the component prefix isolates reports shown together. */
+function reportAnchorPlugin(prefix: string) {
+  return () => (tree: unknown) => {
+    const slugger = new GithubSlugger();
+    const text = (node: ReportMarkdownNode): string => node.value ?? (node.children ?? []).map(text).join('');
+    const visit = (node: ReportMarkdownNode) => {
+      if (/^h[1-6]$/.test(node.tagName ?? '')) {
+        const slug = headingTextToSlug(text(node), slugger, { alreadyRendered: true }).id || slugger.slug('section');
+        node.properties = { ...node.properties, id: `${prefix}-${slug}` };
+      }
+      const href = node.tagName === 'a' ? node.properties?.href : undefined;
+      if (typeof href === 'string' && href.startsWith('#')) {
+        try {
+          const fragment = decodeURIComponent(href.slice(1));
+          node.properties!.href = '#' + encodeURIComponent(prefix + (fragment ? `-${fragment}` : ''));
+        } catch { /* Invalid fragments remain inert in the scoped click handler. */ }
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree as ReportMarkdownNode);
+  };
+}
 
 function extractMarkdownImages(content: string): PreviewImage[] {
   const text = content ?? '';
@@ -92,6 +124,9 @@ export function RichTextMarkdownContent({
   imageUrls,
   className,
 }: RichTextMarkdownContentProps) {
+  const anchorPrefix = `report-${useId().replace(/:/g, '')}`;
+  const reportRoot = useRef<HTMLDivElement>(null);
+  const anchors = useMemo(() => reportAnchorPlugin(anchorPrefix), [anchorPrefix]);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
   const images = useMemo(() => [...extractMarkdownImages(content), ...(imageUrls ?? []).map(url => ({ url, alt: '报告附件图片' }))], [content, imageUrls]);
@@ -103,20 +138,29 @@ export function RichTextMarkdownContent({
     border: '1px solid var(--border-default)', padding: '8px 12px', minWidth: 120,
     textAlign: 'left', verticalAlign: 'top', overflowWrap: 'anywhere',
   };
+  const followAnchor = (event: MouseEvent<HTMLAnchorElement>, href?: string) => {
+    if (event.defaultPrevented || !href?.startsWith('#') || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    let id: string;
+    try { id = decodeURIComponent(href.slice(1)); } catch { return; }
+    const root = reportRoot.current;
+    const target = id === anchorPrefix ? root : Array.from(root?.querySelectorAll<HTMLElement>('[id]') ?? []).find(node => node.id === id);
+    target?.scrollIntoView({ behavior: 'instant', block: 'start' });
+  };
   return <>
-    <div className={`surface-inset rounded-xl p-3 ${className ?? ''}`.trim()}
+    <div ref={reportRoot} id={anchorPrefix} className={`surface-inset rounded-xl p-3 ${className ?? ''}`.trim()}
       style={{ minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', color: 'var(--text-primary)' }}>
       {showRealtimeLabel && <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>实时预览</div>}
       <div className="text-[14px] leading-relaxed text-left">
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={{
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[anchors]} components={{
           p: ({ children }) => <div className="my-2 whitespace-pre-wrap">{children}</div>,
-          h1: ({ children }) => <h1 className="text-[20px] font-semibold mt-4 mb-2" style={serifStyle}>{children}</h1>,
-          h2: ({ children }) => <h2 className="text-[18px] font-semibold mt-4 mb-2" style={serifStyle}>{children}</h2>,
-          h3: ({ children }) => <h3 className="text-[16px] font-semibold mt-3 mb-2" style={serifStyle}>{children}</h3>,
+          h1: ({ children, id }) => <h1 id={id} className="text-[20px] font-semibold mt-4 mb-2" style={{ ...serifStyle, scrollMarginTop: '1rem' }}>{children}</h1>,
+          h2: ({ children, id }) => <h2 id={id} className="text-[18px] font-semibold mt-4 mb-2" style={{ ...serifStyle, scrollMarginTop: '1rem' }}>{children}</h2>,
+          h3: ({ children, id }) => <h3 id={id} className="text-[16px] font-semibold mt-3 mb-2" style={{ ...serifStyle, scrollMarginTop: '1rem' }}>{children}</h3>,
           ul: ({ children }) => <ul className="list-disc pl-5 my-2">{children}</ul>,
           ol: ({ children }) => <ol className="list-decimal pl-5 my-2">{children}</ol>,
           blockquote: ({ children }) => <blockquote style={{ borderLeft: '3px solid var(--accent-claude)', paddingLeft: 12, margin: '12px 0', color: 'var(--text-secondary)' }}>{children}</blockquote>,
-          a: ({ href, children }) => <a href={href} target={href?.startsWith('#') ? undefined : '_blank'} rel="noopener noreferrer"
+          a: ({ href, children }) => <a href={href} onClick={event => followAnchor(event, href)} target={href?.startsWith('#') ? undefined : '_blank'} rel="noopener noreferrer"
             style={{ color: 'var(--accent-fg-info)', textDecoration: 'underline', textUnderlineOffset: 3 }}>{children}</a>,
           table: ({ children }) => <div role="region" aria-label="报告表格，可横向滚动查看全部列" tabIndex={0}
             style={{ overflowX: 'auto', maxWidth: '100%', margin: '12px 0' }}>

@@ -57,6 +57,41 @@ describe('报告助理共享阅读内容', () => {
     expect(node.querySelector('[role="region"]')?.getAttribute('tabindex')).toBe('0');
   });
 
+  it('正文锚点仅滚动本报告并阻止hash导航，重复标题和多份报告的目标各自唯一', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const scroll = vi.fn();
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scroll });
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    const content = '[跳到末尾](#完整阅读终点)\n\n[第二处重复标题](#重复标题-1)\n\n[回到本报告顶部](#)\n\n[外部](https://example.com/#完整阅读终点)\n\n## 重复标题\n\n## **完整阅读终点**\n\n## 重复标题';
+    try {
+      await act(async () => root.render(<><article data-owner="甲"><RichTextMarkdownContent content={content} /></article><article data-owner="乙"><RichTextMarkdownContent content={content} /></article></>));
+      const headings = Array.from(container.querySelectorAll('h2'));
+      expect(new Set(headings.map(heading => heading.id)).size).toBe(6);
+      expect(headings.every(heading => heading.id)).toBe(true);
+      const originalHash = window.location.hash, originalHistory = window.history.length;
+      for (const article of Array.from(container.querySelectorAll('article'))) {
+        const ownHeadings = Array.from(article.querySelectorAll('h2'));
+        const links = Array.from(article.querySelectorAll('a'));
+        for (const [index, target] of [[0, ownHeadings[1]], [1, ownHeadings[2]], [2, article.querySelector('.surface-inset')]] as const) {
+          const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+          await act(async () => { links[index].dispatchEvent(event); });
+          expect(event.defaultPrevented).toBe(true);
+          expect(scroll.mock.instances.at(-1)).toBe(target);
+        }
+        expect(links[3].target).toBe('_blank');
+        expect(decodeURIComponent(links[3].getAttribute('href')!)).toBe('https://example.com/#完整阅读终点');
+      }
+      expect(window.location.hash).toBe(originalHash);
+      expect(window.history.length).toBe(originalHistory);
+    } finally {
+      await act(async () => root.unmount());
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', descriptor);
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+    }
+  });
+
   it('团队分享按原表格结构渲染并保留超出历史列定义的单元格', () => {
     const html = renderToStaticMarkup(<SharedReportSection section={{
       templateSection: { title: '宽表', isRequired: false, sortOrder: 0, inputType: ReportInputType.Table, tableColumns: ['内容', '进度'] },
