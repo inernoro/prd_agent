@@ -36,44 +36,11 @@ public class ReportAgentController : ControllerBase
     private static readonly TimeZoneInfo ChinaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
 
     /// <summary>
-    /// 把团队的 WeeklyDeadline 字符串(如 "sunday-23:59",UTC+8)解析为本周对应的 UTC 截止时间。
-    /// monday: 该周星期一(本地时间,Unspecified Kind),按 ISOWeek.ToDateTime 取得。
-    /// schedule 缺失或非法时回退到 sunday-23:59。
+    /// 某周的提交截止时间(UTC)。唯一判定源在 WeeklyReportSubmissionRules.ResolveWeekDeadline：
+    /// 统一规则生效周起为「该周结束后的周一 24:00」,之前的周按团队 WeeklyDeadline(既往不咎)。
     /// </summary>
-    private static DateTime ResolveWeekDeadline(DateTime monday, string? schedule)
-    {
-        int dayOffset = 6;
-        int hour = 23;
-        int minute = 59;
-        if (!string.IsNullOrWhiteSpace(schedule))
-        {
-            var parts = schedule!.Split('-', 2);
-            if (parts.Length == 2)
-            {
-                var dayName = parts[0].Trim().ToLowerInvariant();
-                dayOffset = dayName switch
-                {
-                    "monday" => 0,
-                    "tuesday" => 1,
-                    "wednesday" => 2,
-                    "thursday" => 3,
-                    "friday" => 4,
-                    "saturday" => 5,
-                    "sunday" => 6,
-                    _ => 6,
-                };
-                if (TimeSpan.TryParse(parts[1].Trim(), out var ts))
-                {
-                    hour = ts.Hours;
-                    minute = ts.Minutes;
-                }
-            }
-        }
-        var deadlineLocal = DateTime.SpecifyKind(
-            monday.Date.AddDays(dayOffset).AddHours(hour).AddMinutes(minute).AddSeconds(59),
-            DateTimeKind.Unspecified);
-        return TimeZoneInfo.ConvertTimeToUtc(deadlineLocal, ChinaTimeZone);
-    }
+    private static DateTime ResolveWeekDeadline(int weekYear, int weekNumber, string? schedule)
+        => WeeklyReportSubmissionRules.ResolveWeekDeadline(weekYear, weekNumber, schedule);
 
     private static readonly string[] EditableReportStatuses =
     {
@@ -1461,7 +1428,18 @@ public class ReportAgentController : ControllerBase
         // 每用户「最近打开」台账（首页继续上次）
         await RecentOpenTracker.TouchAsync(_db, userId, "report-agent", report.Id);
 
-        return Ok(ApiResponse<object>.Ok(new { report, canReview }));
+        // 超时提交：首次提交晚于该周截止时间（准时不标）；免提交成员不标
+        var reportTeam = await _db.ReportTeams.Find(t => t.Id == report.TeamId).FirstOrDefaultAsync();
+        var authorMembership = await _db.ReportTeamMembers.Find(
+            m => m.TeamId == report.TeamId && m.UserId == report.UserId).FirstOrDefaultAsync();
+        var submissionDeadline = ResolveWeekDeadline(report.WeekYear, report.WeekNumber, reportTeam?.WeeklyDeadline);
+        var firstSubmittedAt = WeeklyReportSubmissionRules.GetFirstSubmittedAt(report);
+        var authorExempt = authorMembership != null && WeeklyReportSubmissionRules.IsExempt(authorMembership);
+        var isLateSubmission = !authorExempt
+            && firstSubmittedAt.HasValue
+            && firstSubmittedAt.Value > submissionDeadline;
+
+        return Ok(ApiResponse<object>.Ok(new { report, canReview, isLateSubmission, submissionDeadline, firstSubmittedAt }));
     }
 
     /// <summary>
@@ -1897,9 +1875,10 @@ public class ReportAgentController : ControllerBase
             }
         }
 
+        var submitNow = DateTime.UtcNow;
         var update = Builders<WeeklyReport>.Update
             .Set(r => r.Status, WeeklyReportStatus.Submitted)
-            .Set(r => r.SubmittedAt, DateTime.UtcNow)
+            .Set(r => r.SubmittedAt, submitNow)
             .Set(r => r.ReturnReason, null as string)
             .Set(r => r.ReturnedBy, null as string)
             .Set(r => r.ReturnedByName, null as string)
@@ -1913,6 +1892,11 @@ public class ReportAgentController : ControllerBase
 
         if (snapshot.Count > 0)
             update = update.Set(r => r.StatsSnapshot, snapshot);
+
+        // 首次提交时间只写一次：退回后再提交不覆盖，超时判定只认它
+        var firstSubmittedAt = WeeklyReportSubmissionRules.ResolveFirstSubmittedAtToStamp(report, submitNow);
+        if (firstSubmittedAt.HasValue)
+            update = update.Set(r => r.FirstSubmittedAt, firstSubmittedAt);
 
         await _db.WeeklyReports.UpdateOneAsync(r => r.Id == id, update);
 
@@ -4017,7 +4001,7 @@ public class ReportAgentController : ControllerBase
         var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
         var sunday = monday.AddDays(6);
         // 截止时间：按团队 WeeklyDeadline 配置(默认 "sunday-23:59" UTC+8)解析
-        var weekDeadline = ResolveWeekDeadline(monday, team.WeeklyDeadline);
+        var weekDeadline = ResolveWeekDeadline(wy, wn, team.WeeklyDeadline);
         var isPastDeadline = now > weekDeadline;
 
         var allMembers = await _db.ReportTeamMembers.Find(m => m.TeamId == id).ToListAsync();
@@ -4040,8 +4024,17 @@ public class ReportAgentController : ControllerBase
         }
         // 仅活跃成员的周报计入「已提交」/「待提交」统计;Leader/Excused 自己提交的不参与
         var activeWeekReports = weekReports.Where(r => activeUserIds.Contains(r.UserId)).ToList();
-        var submittedCount = activeWeekReports.Count(r => submittedStatuses.Contains(r.Status));
-        var pendingCount = Math.Max(0, activeMembers.Count - submittedCount);
+        // 同一成员同一周理论上只有一份周报；防御性去重，取最近更新的那份
+        var reportByUserId = weekReports
+            .GroupBy(r => r.UserId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(r => r.UpdatedAt).First());
+        // 应交 / 已提交 / 待提交 / 超时 统一走 WeeklyReportSubmissionRules（分享页同口径）
+        var submissionStats = WeeklyReportSubmissionRules.Compute(allMembers, reportByUserId, weekDeadline, now);
+        bool MemberIsOverdue(ReportTeamMember m) =>
+            !WeeklyReportSubmissionRules.IsExempt(m)
+            && WeeklyReportSubmissionRules.IsOverdue(reportByUserId.GetValueOrDefault(m.UserId), weekDeadline, now);
+        DateTime? MemberFirstSubmittedAt(string memberUserId) =>
+            WeeklyReportSubmissionRules.GetFirstSubmittedAt(reportByUserId.GetValueOrDefault(memberUserId));
 
         string? message = null;
         List<object> items;
@@ -4086,7 +4079,10 @@ public class ReportAgentController : ControllerBase
                     : (m.Role == ReportTeamRole.Leader || m.IsExcused
                         ? WeeklyReportStatus.NotStarted
                         : (isPastDeadline ? WeeklyReportStatus.Overdue : WeeklyReportStatus.NotStarted)),
-                submittedAt = reportMap.TryGetValue(m.UserId, out var rpt3) ? rpt3.SubmittedAt : null
+                submittedAt = reportMap.TryGetValue(m.UserId, out var rpt3) ? rpt3.SubmittedAt : null,
+                // 超时是历史事实：截止前没完成首次提交即为 true，补交后仍保持（免提交成员恒 false）
+                isOverdue = MemberIsOverdue(m),
+                firstSubmittedAt = MemberFirstSubmittedAt(m.UserId)
             }).Cast<object>().ToList();
         }
         else
@@ -4139,7 +4135,10 @@ public class ReportAgentController : ControllerBase
                     isExcused = selfIsExcused,
                     reportId = selfReportForStatus?.Id,
                     reportStatus = selfEffective,
-                    submittedAt = selfReportForStatus?.SubmittedAt
+                    submittedAt = selfReportForStatus?.SubmittedAt,
+                    isOverdue = !(selfRole == ReportTeamRole.Leader || selfIsExcused)
+                        && WeeklyReportSubmissionRules.IsOverdue(selfReportForStatus, weekDeadline, now),
+                    firstSubmittedAt = WeeklyReportSubmissionRules.GetFirstSubmittedAt(selfReportForStatus)
                 }
             };
         }
@@ -4156,10 +4155,13 @@ public class ReportAgentController : ControllerBase
             visibilityScope = canViewAllReports ? "full_team" : "self_only",
             stats = new
             {
-                // 团队人数包含负责人与免提交成员;已提交/待提交仅算活跃成员(非 Leader 且非 Excused)
+                // 团队人数含负责人与免提交成员;应交 = 剔除免提交;已提交/待提交/超时只算应交成员
                 totalMembers = allMembers.Count,
-                submittedCount,
-                pendingCount
+                expectedCount = submissionStats.ExpectedCount,
+                submittedCount = submissionStats.SubmittedCount,
+                pendingCount = submissionStats.PendingCount,
+                // 超时不随补交归 0：截止前没完成首次提交的应交成员数
+                overdueCount = submissionStats.OverdueCount
             },
             items,
             members,
@@ -5036,8 +5038,13 @@ public class ReportAgentController : ControllerBase
             WeeklyReportStatus.Viewed,
             WeeklyReportStatus.Returned
         };
-        var submittedCount = weekReports.Count(r => submittedStatuses.Contains(r.Status));
-        var pendingCount = Math.Max(0, allMembers.Count - submittedCount);
+        // 统计口径与团队周报视图一致（WeeklyReportSubmissionRules）：应交剔除免提交，超时不随补交归 0
+        var shareNow = DateTime.UtcNow;
+        var shareDeadline = ResolveWeekDeadline(wy, wn, team.WeeklyDeadline);
+        var shareReportByUserId = weekReports
+            .GroupBy(r => r.UserId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(r => r.UpdatedAt).First());
+        var shareStats = WeeklyReportSubmissionRules.Compute(allMembers, shareReportByUserId, shareDeadline, shareNow);
 
         var reportMap = weekReports.ToDictionary(r => r.UserId);
         var items = weekReports
@@ -5079,11 +5086,15 @@ public class ReportAgentController : ControllerBase
             weekNumber = wn,
             periodStart = monday,
             periodEnd = sunday,
+            submissionDeadline = shareDeadline,
+            isPastDeadline = shareNow > shareDeadline,
             stats = new
             {
                 totalMembers = allMembers.Count,
-                submittedCount,
-                pendingCount,
+                expectedCount = shareStats.ExpectedCount,
+                submittedCount = shareStats.SubmittedCount,
+                pendingCount = shareStats.PendingCount,
+                overdueCount = shareStats.OverdueCount,
             },
             items,
             summary,
