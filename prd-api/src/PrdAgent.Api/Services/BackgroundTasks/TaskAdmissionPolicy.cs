@@ -63,6 +63,9 @@ public static class TaskAdmissionPolicies
         Add("VideoAgentController", "VideoGenDirect CreateRun", new[] { "video-agent.", "visual-agent.", "workflow-agent." }, agentMaxCalls: 128);
         Add("VideoAgentController", "RegenerateScene RenderScene RenderScenes CreateV2dRun", new[] { "video-agent.", "visual-agent.", "workflow-agent." });
         Add("TranscriptAgentController", "UploadItem CreateCopywriteRun", new[] { "transcript-agent." });
+        Register("DocumentStoreController", "UpdateEntryContent",
+            new[] { AppCallerRegistry.Admin.KnowledgeBase.Index }, false, 1, 1,
+            timing: TaskAdmissionTiming.AuthenticatedPaidBranch);
         Add("DocumentStoreController", "CreativePublishEntry SelectionRewrite GenerateSubtitle TranscribeEntry RestyleTranscribeRun Reprocess SendReprocessChat GenerateWritingDraft StartRecordingUpload CompleteRecordingUpload RetryRecordingArchive LiveTranscription StartAutoLink", new[] { "document-store.", "transcript-agent.", "prd-agent-web.web-hosting.", "md-to-ppt-agent." });
         Add("ShortVideoMaterialController", "CreateRun", new[] { "video-agent.", "workflow-agent.", "transcript-agent.", "document-store." });
         Add("DesignArtifactsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);
@@ -111,7 +114,8 @@ public static class TaskAdmissionPolicies
         Add("ShituAgentController", "QaStream", new[] { "shitu-agent." });
         Add("ProjectRouteAgentController", "AnalyzePlanStream", new[] { "project-route-agent." });
         Add("ChannelTraceAgentController", "ImportKnowledge AskKnowledge ImportCases DiagnoseAsk CompareDiff", new[] { "channel-trace-agent." });
-        Add("ChatAgentController", "SendMessage", new[] { "chat-agent.", "visual-agent." });
+        Add("ChatAgentController", "SendMessage", new[] { "chat-agent.", "visual-agent.",
+            AppCallerRegistry.Admin.KnowledgeBase.Index, AppCallerRegistry.Admin.KnowledgeBase.Query });
         Add("InfraAgentSessionsController", "SendMessage Start", new[] { "infra-agent.", "chat-agent." });
         Add("InfraAgentRuntimeProfilesController", "Test", new[] { "infra-agent." });
         Add("ExchangeController", "TryModel TestExchange TestExchangeWithAudio TestStreamAsrSse", new[] { "prd-agent-web.lab::", "document-store.subtitle", "self-test." });
