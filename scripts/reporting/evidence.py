@@ -15,7 +15,7 @@ import subprocess
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-KINDS = {"commit", "merged", "started", "code_complete", "validation_passed",
+KINDS = {"observation", "commit", "merged", "started", "code_complete", "validation_passed",
          "validation_failed", "release_succeeded", "release_failed", "blocked", "unblocked"}
 METRICS = {"efficiency": "效率", "hours": "工时", "benefit": "收益"}
 LABELS = {"unknown": "未证实", "in_progress": "推进中", "complete": "完成",
@@ -90,9 +90,43 @@ def normalize(ledger):
     return result
 
 
+
+def merge_ledgers(ledgers):
+    """Append immutable evidence; current-period and prior facts survive source outages."""
+    inputs = [normalize(x) for x in ledgers if x is not None]
+    merged = {"schemaVersion": 1, "historyComplete": bool(inputs) and all(x.get("historyComplete") is True for x in inputs),
+              "workItems": [], "events": [], "measurements": [], "limitations": [], "evidenceBindings": {}}
+    items, events, measurements = {}, {}, {}
+    for data in inputs:
+        for item in data.get("workItems", []):
+            previous = items.get(item["id"], {})
+            items[item["id"]] = {**previous, **{k: deepcopy(v) for k, v in item.items() if v is not None}}
+        for event in data.get("events", []):
+            if event["id"] in events and events[event["id"]] != event:
+                raise ValueError("相同事件 ID 的内容冲突，拒绝静默覆盖")
+            events[event["id"]] = deepcopy(event)
+        for measurement in data.get("measurements", []):
+            key = tuple(measurement[k] for k in ("metric", "start", "end", "unit", "method", "population"))
+            if key in measurements and measurements[key] != measurement:
+                raise ValueError("同一测量来源出现冲突，请核对原始记录")
+            measurements[key] = deepcopy(measurement)
+        for key, value in data.get("evidenceBindings", {}).items():
+            if key in merged["evidenceBindings"] and merged["evidenceBindings"][key] != value:
+                raise ValueError("同一来源的事项归属冲突")
+            merged["evidenceBindings"][key] = value
+        merged["limitations"].extend(data.get("limitations", []))
+        if data.get("collection"):
+            merged["collection"] = deepcopy(data["collection"])
+    merged["workItems"] = list(items.values())
+    merged["events"] = list(events.values())
+    merged["measurements"] = list(measurements.values())
+    merged["limitations"] = list(dict.fromkeys(merged["limitations"]))
+    return normalize(merged)
+
+
 def state(events):
     s = {"code": "unknown", "validation": "unknown", "release": "unknown", "revision": None,
-         "releasedRevision": None, "lastValidation": None, "blocked": False, "blockReason": None,
+         "releasedRevision": None, "lastValidation": None, "ciFailed": False, "ciEvidence": [], "blocked": False, "blockReason": None,
          "evidence": {"code": [], "validation": [], "release": [], "blocker": []}}
     first = {}
     for e in events:
@@ -104,6 +138,7 @@ def state(events):
         if k in {"commit", "merged", "code_complete"}:
             if rev != s["revision"]:
                 s["revision"] = rev
+                s["ciFailed"], s["ciEvidence"] = False, []
                 s["code"] = "in_progress"
                 s["validation"] = "stale" if s["validation"] != "unknown" else "unknown"
                 if s["validation"] == "stale":
@@ -119,6 +154,9 @@ def state(events):
             if s["code"] == "unknown":
                 s["code"] = "in_progress"
                 s["evidence"]["code"] = [eid]
+        elif k.startswith("validation_") and e["scope"] == "ci" and rev == s["revision"]:
+            s["ciFailed"] = k == "validation_failed"
+            s["ciEvidence"] = [eid]
         elif k.startswith("validation_") and e["scope"] == "feature" and rev == s["revision"]:
             s["validation"] = "passed" if k == "validation_passed" else "failed"
             s["evidence"]["validation"] = [eid]
@@ -155,7 +193,7 @@ def analyze(ledger, start, end, cadence="weekly", timezone="Asia/Shanghai"):
         current, first = state(history)
         previous, _ = state([e for e in history if stamp(e["occurredAt"]) < lo])
         period = [e for e in history if lo <= stamp(e["occurredAt"])]
-        finished = current["code"] == "complete" and current["validation"] == "passed" and current["release"] == "released" and not current["blocked"]
+        finished = current["code"] == "complete" and current["validation"] == "passed" and current["release"] == "released" and not current["blocked"] and not current["ciFailed"]
         if not period and finished:
             continue
         milestones = [k for k, e in first.items() if lo <= stamp(e["occurredAt"]) < hi and e.get("timeBasis", "occurred") == "occurred"]
@@ -173,7 +211,7 @@ def analyze(ledger, start, end, cadence="weekly", timezone="Asia/Shanghai"):
         claims.append({"workItemId": item["id"], "field": "blocked", "value": current["blocked"],
                        "sources": current["evidence"]["blocker"], "basis": row["historyEvidence"]})
     # Risks first, then movement. Never force a fixed number of positive highlights.
-    rows.sort(key=lambda r: (not (r["current"]["blocked"] or r["current"]["validation"] == "failed" or r["current"]["release"] == "failed"), r["workItemId"]))
+    rows.sort(key=lambda r: (not (r["current"]["blocked"] or r["current"].get("ciFailed") or r["current"]["validation"] == "failed" or r["current"]["release"] == "failed"), r["workItemId"]))
     metrics = {}
     for key in METRICS:
         matches = [m for m in data.get("measurements", []) if m["metric"] == key and m["start"] == start and m["end"] == end]
@@ -208,7 +246,7 @@ def render_markdown(report):
 
     def source_link(eid):
         e = report["evidence"][eid]
-        labels = {"commit":"开发记录", "merged":"合并记录", "started":"启动记录", "code_complete":"功能完成依据",
+        labels = {"observation":"原始线索", "commit":"开发记录", "merged":"合并记录", "started":"启动记录", "code_complete":"功能完成依据",
                   "validation_passed":"验证通过依据", "validation_failed":"验证失败依据",
                   "release_succeeded":"发布记录", "release_failed":"发布失败依据", "blocked":"阻塞依据", "unblocked":"解除阻塞依据"}
         return f'[{labels[e["kind"]]}](#e-{eid})'
@@ -234,6 +272,9 @@ def render_markdown(report):
         relevant = [refs[-1] for refs in s["evidence"].values() if refs]
         if s["lastValidation"]:
             relevant.append(s["lastValidation"]["evidence"])
+        if s.get("ciFailed"):
+            lines.append("- 构建检查：当前版本 CI 失败；功能验收与正式上线仍须独立证据。")
+            relevant.extend(s["ciEvidence"])
         # Keep current supporting records in the management view; full history is in the source index.
         relevant = list(dict.fromkeys(relevant))[-5:]
         lines += [f'- 下一步：{n.get("action") or "待负责人确认"}；执行人：{n.get("owner") or "待指定"}；期限：{n.get("due") or "待确认"}。',
