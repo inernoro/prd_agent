@@ -22,7 +22,7 @@ export async function verifyComparisonLayout(surface,keyboard){
  for(const i of sample){
   const trigger=pairs.nth(i).locator('figure[data-phase="after"] button');await trigger.click({trial:true});await trigger.focus();
   if(i===0)await trigger.click();else await trigger.press('Enter');
-  const dialog=surface.getByRole('dialog');await dialog.waitFor({state:'visible'});const img=dialog.locator('img');
+  const dialog=surface.getByRole('dialog');await dialog.waitFor({state:'visible'});const close=dialog.getByRole('button',{name:'关闭原图',exact:true});const closeText=await close.evaluate(e=>{const r=e.ownerDocument.createRange();r.selectNodeContents(e);return {lines:new Set([...r.getClientRects()].map(x=>Math.round(x.top))).size,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height}});assert(closeText.lines===1&&closeText.width>=44&&closeText.height>=44,'原图关闭按钮文字竖排或点击热区不足');const img=dialog.locator('img');
   await img.evaluate(e=>e.decode());const dimensions=await img.evaluate(e=>({source:e.naturalWidth,shown:e.getBoundingClientRect().width}));
   assert(dimensions.source===dimensions.shown,'一次激活没有直接显示100%原图');
   await keyboard.press('Shift+Tab');assert(await dialog.evaluate(e=>e.contains(e.ownerDocument.activeElement)),'原图弹层键盘焦点逸出');
@@ -36,7 +36,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  const target=process.argv[2];if(!target)throw Error('Usage: node report_layout_smoke.mjs URL');
  const {chromium}=await import(process.env.DECHROME_PLAYWRIGHT_MODULE||'playwright');
  const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH,args:['--no-sandbox']});
- try{for(const width of [1440,390]){
+ try{for(const width of [1440,390,351]){
   const page=await browser.newPage({viewport:{width,height:width===390?844:900},reducedMotion:'reduce'});await page.goto(target);
   await page.locator('body').evaluate(async()=>{for(const i of document.querySelectorAll('figure img'))i.loading='eager';await Promise.all([...document.querySelectorAll('figure img')].map(i=>i.decode()));await document.fonts.ready});
   console.log(JSON.stringify({width,...await verifyComparisonLayout(page,page.keyboard)}));await page.close();
