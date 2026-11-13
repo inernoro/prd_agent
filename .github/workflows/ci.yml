@@ -854,6 +854,10 @@ jobs:
       - name: Install design runtime test dependencies
         run: pnpm -C ../design-runtime/opendesign install --frozen-lockfile
 
+      # 配色浏览器回归与布局检查使用 Playwright 配套 Chromium，不依赖 runner 的系统 Chrome。
+      - name: Install Chromium for report rendering tests
+        run: pnpm exec playwright install --with-deps chromium
+
       - name: Type check
         run: pnpm exec tsc --noEmit
 

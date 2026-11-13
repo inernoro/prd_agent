@@ -101,18 +101,6 @@ jobs:
       - name: Code review MCP stdio integration
         run: pnpm --dir mcp test && pnpm --dir mcp check
 
-      - name: Type check
-        run: pnpm build
-
-      - name: CDS UI regression audit
-        run: pnpm run audit:ui
-
-      - name: Run tests
-        run: pnpm test
-
-      - name: Agent setup CLI HTTP integration
-        run: python3 -m unittest discover -s ../.claude/skills/cds/tests -p 'test_cdscli_setup_check.py'
-
       # 上手向导的窄屏可达性只有真浏览器量得出来：源码守卫能证明主按钮写在
       # JSX 里，证明不了它在 390px 的手机上够不够得着。2026-09-03 那次
       # 「步骤 03 没有下一步、也滑不动」编译、类型、单测、源码守卫全绿。
@@ -126,6 +114,19 @@ jobs:
 
       - name: Install Chromium for layout probes
         run: pnpm exec playwright install --with-deps chromium
+
+      # 报告配色回归也运行真实 Chromium，必须先完成相同浏览器前置。
+      - name: Type check
+        run: pnpm build
+
+      - name: CDS UI regression audit
+        run: pnpm run audit:ui
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Agent setup CLI HTTP integration
+        run: python3 -m unittest discover -s ../.claude/skills/cds/tests -p 'test_cdscli_setup_check.py'
 
       - name: Agent starter mobile reachability
         run: pnpm run smoke:agent-starter-mobile
