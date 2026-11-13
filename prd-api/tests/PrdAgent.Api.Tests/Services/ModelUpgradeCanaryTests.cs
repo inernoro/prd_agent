@@ -50,6 +50,14 @@ public sealed class ModelUpgradeCanaryTests
                 ("llmgw_console_users", new BsonDocument { { "_id", "console-user" }, { "IsActive", true }, { "IdentityProvider", "map" }, { "ExternalSubjectId", "map:probe-user" } }),
                 ("llmgw_memberships", new BsonDocument { { "_id", "member" }, { "TenantId", "internal" }, { "UserId", "console-user" }, { "Status", "active" }, { "Role", "admin" } }) })
                 await data.Database.GetCollection<BsonDocument>(pair.Item1).InsertOneAsync(pair.Item2);
+            var queue = data.Database.GetCollection<BsonDocument>("llmgw_model_upgrade_validation_runs");
+            var pending = job.DeepClone().AsBsonDocument; pending["Status"] = "pending"; pending["TargetDeployment"] = "project::main";
+            await queue.InsertOneAsync(pending);
+            var claim = ModelUpgradeCanaryWorker.PendingClaimFilter("internal", DateTime.UtcNow, false, "project::main");
+            Assert.Equal(1, await queue.CountDocumentsAsync(claim));
+            Assert.Equal(0, await queue.CountDocumentsAsync(ModelUpgradeCanaryWorker.PendingClaimFilter("internal", DateTime.UtcNow, false, "production")));
+            await queue.UpdateManyAsync(new BsonDocument(), new BsonDocument("$unset", new BsonDocument("TargetDeployment", "")));
+            Assert.Equal(0, await queue.CountDocumentsAsync(claim));
             var validated = await ModelUpgradeCanaryWorker.ValidateAsync(data, map, job, "internal", default)
                 ?? throw new Xunit.Sdk.XunitException("当前有效身份和受限线路应通过发送前检查。");
             Assert.Equal(256, validated.Budget.MaxOutputTokens);
@@ -206,7 +214,9 @@ public sealed class ModelUpgradeCanaryTests
     public void PendingClaim_ExcludesExpiredJobsAndKeepsScheduledOptIn()
     {
         var now = new DateTime(2026,11,11,10,0,0,DateTimeKind.Utc);
-        var filter = ModelUpgradeCanaryWorker.PendingClaimFilter("tenant",now,false);
+        var filter = ModelUpgradeCanaryWorker.PendingClaimFilter("tenant",now,false,"project::main");
+        Assert.Equal("project::main", filter["$or"][1]["TargetDeployment"].AsString);
+        Assert.Equal("binding-test", filter["$or"][0]["Operation"]["$ne"].AsString);
         Assert.Equal(now,filter["ExpiresAt"]["$gt"].ToUniversalTime());
         Assert.Equal("pending",filter["Status"].AsString);
         Assert.Equal("manual",filter["ExecutionRequestedBy"].AsString);

@@ -34,7 +34,11 @@ public sealed class ModelBindingProbeMongoTests
         var provider = Doc("provider"); provider["Name"] = "Official"; provider["PlatformType"] = "openai"; provider["ApiKeyEncrypted"] = "sentinel-key-never-return";
         var offering = Doc("offering"); offering["LogicalModelId"] = "logical"; offering["TargetKind"] = "model"; offering["TargetId"] = "model";
         var actor = new TenantAccessContext("internal", "Internal", true, "console-admin", "admin", "membership", 1, "admin", [], "map-user");
-        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> { ["LlmGateway:ModelUpgrades:CanaryEnabled"] = "true" }).Build();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> { ["LlmGateway:ModelUpgrades:CanaryEnabled"] = "true",
+            [ModelUpgradeDeploymentAuthority.WorkerEnabledKey] = "true",
+            [ModelUpgradeDeploymentAuthority.WorkerDeploymentKey] = "project::main",
+            ["LlmGateway:ModelUpgrades:CanaryDeployment"] = "project::main",
+            ["CDS_PROJECT_ID"] = "project", ["VITE_GIT_BRANCH"] = "main" }).Build();
         var service = new ModelBindingProbeService(db, config, "internal");
         var queue = db.GetCollection<BsonDocument>(ModelUpgradeService.ValidationCollectionName);
         try
@@ -42,11 +46,22 @@ public sealed class ModelBindingProbeMongoTests
             foreach (var pair in new[] { ("llmgw_logical_models", logical), ("llmgw_models", model), ("llmgw_platforms", provider), ("llmgw_model_offerings", offering) })
                 await db.GetCollection<BsonDocument>(pair.Item1).InsertOneAsync(pair.Item2);
             var request = new ModelBindingProbeWrite(Guid.NewGuid().ToString(), "arena.run::chat", .1m);
+            config["VITE_GIT_BRANCH"] = "feature";
+            var blocked = await Assert.ThrowsAsync<ModelUpgradeException>(() => service.StartAsync(actor, "logical", "offering", request, default));
+            Assert.Equal("PROBE_DEPLOYMENT_BLOCKED", blocked.Code);
+            Assert.Equal(0, await queue.CountDocumentsAsync(new BsonDocument()));
+            config["VITE_GIT_BRANCH"] = "main";
+            config["LlmGateway:ModelUpgrades:CanaryDeployment"] = "other::main";
+            blocked = await Assert.ThrowsAsync<ModelUpgradeException>(() => service.StartAsync(actor, "logical", "offering", request, default));
+            Assert.Equal("PROBE_DEPLOYMENT_BLOCKED", blocked.Code);
+            Assert.Equal(0, await queue.CountDocumentsAsync(new BsonDocument()));
+            config["LlmGateway:ModelUpgrades:CanaryDeployment"] = "project::main";
             var first = await service.StartAsync(actor, "logical", "offering", request, default);
             var second = await service.StartAsync(actor, "logical", "offering", request, default);
             Assert.Equal(System.Text.Json.JsonSerializer.Serialize(first), System.Text.Json.JsonSerializer.Serialize(second));
             Assert.Equal(1, await queue.CountDocumentsAsync(new BsonDocument()));
             var job = await queue.Find(new BsonDocument()).SingleAsync();
+            Assert.Equal("project::main", job["TargetDeployment"].AsString);
             Assert.Equal("offering", job["CandidateOfferingId"].AsString); Assert.Equal("map-user", job["ActorUserId"].AsString);
             Assert.Equal("manual", job["ExecutionRequestedBy"].AsString); Assert.Equal("binding-test", job["Operation"].AsString);
             Assert.Equal(ModelUpgradeWire.Fingerprint(offering), job["OfferingVersion"].AsString);
