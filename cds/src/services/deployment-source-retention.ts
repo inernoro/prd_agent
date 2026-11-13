@@ -4,15 +4,19 @@ import type { BranchEntry } from '../types.js';
 import type { OrphanWorktreeFs } from './janitor.js';
 import { WorktreeService } from './worktree.js';
 import { worktreePathActivity, sameWorktreeDirectoryIdentity, WorktreeClaimHeldError, type WorktreeDirectoryIdentity } from './worktree-path-activity.js';
+import { inspectDeploymentSource, SourceInspectionHeldError, SOURCE_HOLD_REASONS, type SourceHoldReason } from './deployment-source-inspection.js';
 
 export interface DeploymentSourceRetentionReport {
   scanned: number; attempted: number; removed: string[]; held: Record<string, string>;
   failed: Array<{ path: string; error: string }>; deferred: number;
   lastAttemptedPath?: string;
   lastScannedPath?: string;
+  preview?: Array<{ path: string; allocatedBytes: number }>;
+  cancelled?: boolean;
+  filesystem?: { beforeAvailableBytes: number | null; afterAvailableBytes: number | null; netAvailableBytesDelta: number | null; measurement: 'filesystem-net-change' };
 }
 export type DeploymentSourceHoldReason = 'filesystem-unknown' | 'identity-unknown' | 'age-or-claim-unconfirmed'
-  | 'container-mounted' | 'in-use' | 'identity-or-mount-unconfirmed' | 'protected-or-unconfirmed';
+  | 'container-mounted' | 'in-use' | 'identity-or-mount-unconfirmed' | 'protected-or-unconfirmed' | SourceHoldReason;
 
 /** Public counters only: never copy host paths or worker error text into the snapshot. */
 export function summarizeDeploymentSourceHolds(held: Record<string, string>): Partial<Record<DeploymentSourceHoldReason, number>> {
@@ -31,7 +35,8 @@ export function summarizeDeploymentSourceHolds(held: Record<string, string>): Pa
   ]);
   const counts: Partial<Record<DeploymentSourceHoldReason, number>> = {};
   for (const reason of Object.values(held)) {
-    const code = known.get(reason) ?? 'protected-or-unconfirmed';
+    const code = SOURCE_HOLD_REASONS.includes(reason as SourceHoldReason) ? reason as SourceHoldReason
+      : known.get(reason) ?? 'protected-or-unconfirmed';
     counts[code] = (counts[code] || 0) + 1;
   }
   return counts;
@@ -45,9 +50,13 @@ const BUSY = new Set(['building', 'starting', 'stopping', 'restarting', 'prepari
 export async function reclaimDeploymentSources(input: {
   base: string; projectIds: string[]; branches: () => BranchEntry[];
   files: OrphanWorktreeFs; nowMs: number; maxRemovals?: number; minAgeMs?: number; afterPath?: string;
+  dryRun?: boolean; signal?: AbortSignal;
 }): Promise<DeploymentSourceRetentionReport> {
   const report: DeploymentSourceRetentionReport = { scanned: 0, attempted: 0, removed: [], held: {}, failed: [], deferred: 0 };
-  const max = input.maxRemovals ?? 20, minAge = input.minAgeMs ?? 2 * 3600_000;
+  const requested = input.maxRemovals ?? 20;
+  const max = Number.isSafeInteger(requested) ? Math.max(1, Math.min(20, requested)) : 20;
+  const minAge = input.minAgeMs ?? 2 * 3600_000;
+  if (input.dryRun) report.preview = [];
   const isClaimed = (dir: string) => input.branches().some(b =>
     (BUSY.has(b.status) && b.worktreePath && related(dir, WorktreeService.deploymentSourceRootFor(b.worktreePath)))
     || Object.values(b.services || {}).some(s => s.sourceCheckoutPath && related(dir, path.resolve(s.sourceCheckoutPath))));
@@ -58,7 +67,11 @@ export async function reclaimDeploymentSources(input: {
   });
   if (!realBase) return report;
   const isDirectory = async (dir: string): Promise<boolean> => {
-    try { return (await fs.lstat(dir)).isDirectory(); }
+    try {
+      const stat = await fs.lstat(dir);
+      if (!stat.isDirectory()) report.held[dir] = '目录归属无法确认';
+      return stat.isDirectory();
+    }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') report.held[dir] = '无法确认部署源码目录，本轮保留';
       return false;
@@ -74,12 +87,13 @@ export async function reclaimDeploymentSources(input: {
     const roots = await fs.readdir(root, { withFileTypes: true }).catch(() => null);
     if (!roots) { report.held[root] = '无法完整读取部署源码桶'; continue; }
     for (const bucket of roots) {
-      if (!bucket.isDirectory()) continue;
+      if (!bucket.isDirectory()) { if (bucket.isSymbolicLink()) report.held[path.join(root, bucket.name)] = '目录归属无法确认'; continue; }
       const bucketPath = path.join(root, bucket.name);
       const leaves = await fs.readdir(bucketPath, { withFileTypes: true }).catch(() => null);
       if (!leaves) { report.held[bucketPath] = '无法读取部署源码目录'; continue; }
       for (const leaf of leaves) {
-        if (!leaf.isDirectory() || !UUID.test(leaf.name)) continue;
+        if (!UUID.test(leaf.name)) continue;
+        if (!leaf.isDirectory()) { report.held[path.join(bucketPath, leaf.name)] = '目录归属无法确认'; continue; }
         sourceDirs.push(path.join(bucketPath, leaf.name));
       }
     }
@@ -88,7 +102,8 @@ export async function reclaimDeploymentSources(input: {
   const next = input.afterPath ? sourceDirs.findIndex(dir => dir > input.afterPath!) : 0;
   const start = next < 0 ? 0 : next;
   const scanOrder = [...sourceDirs.slice(start), ...sourceDirs.slice(0, start)];
-  for (const dir of scanOrder) {
+  for (const [index, dir] of scanOrder.entries()) {
+    if (input.signal?.aborted) { report.cancelled = true; report.deferred += scanOrder.length - index; break; }
     if (report.scanned >= 1024) { report.deferred++; continue; }
     report.scanned++; report.lastScannedPath = dir;
     const identity = await input.files.readDirectoryIdentity?.(dir);
@@ -105,9 +120,16 @@ export async function reclaimDeploymentSources(input: {
   if (mounted === null) { report.held[input.base] = '容器挂载枚举未完整确认，本轮不回收部署源码'; return report; }
   // Preserve the scan order. Resuming after the last dispatch keeps the 20-removal
   // budget and 1024-leaf window on one cursor, including worker-held leaves.
-  for (const {dir, identity} of candidates) {
+  let previewed = 0;
+  const available = async () => {
+    try { const device = (await fs.stat(input.base)).dev, s = await fs.statfs(input.base);
+      return { device, bytes: s.bavail * s.bsize }; } catch { return null; }
+  };
+  const before = await available();
+  for (const [index, {dir, identity}] of candidates.entries()) {
+    if (input.signal?.aborted) { report.cancelled = true; report.deferred += candidates.length - index; break; }
     if (isMounted(dir, mounted)) { report.held[dir] = '运行或停止的容器仍挂载该目录'; continue; }
-    if (report.attempted >= max) { report.deferred++; continue; }
+    if ((input.dryRun ? previewed : report.attempted) >= max) { report.deferred++; continue; }
     const activity = worktreePathActivity.tryAcquire([dir]);
     if (!activity) { report.held[dir] = '源码正在准备、使用或回收'; continue; }
     let uncertain = false;
@@ -117,6 +139,13 @@ export async function reclaimDeploymentSources(input: {
       const current = await input.files.readDirectoryIdentity?.(dir);
       if (freshMounts === null || isMounted(dir, freshMounts) || isClaimed(dir)
         || !current || !sameWorktreeDirectoryIdentity(identity, current)) { report.held[dir] = '临删挂载、归属或目录身份未确认'; continue; }
+      if (input.dryRun) {
+        previewed++;
+        const proof = await inspectDeploymentSource(dir, identity, true, input.signal);
+        if (proof.reason || proof.allocatedBytes === undefined) report.held[dir] = proof.reason ?? 'size-query-failed';
+        else report.preview!.push({ path: dir, allocatedBytes: proof.allocatedBytes });
+        continue;
+      }
       report.attempted++;
       report.lastAttemptedPath = dir;
       const error = await input.files.removeDir(dir, { identity, allowedBase: input.base, entryOnly: false,
@@ -127,8 +156,13 @@ export async function reclaimDeploymentSources(input: {
     } catch (error) {
       uncertain = (error as {code?:string})?.code === 'cleanup';
       if (uncertain) activity.markUncertain();
-      report.held[dir] = '源码回收未确认，保留目录与占用';
+      report.held[dir] = error instanceof SourceInspectionHeldError ? error.reason : '源码回收未确认，保留目录与占用';
     } finally { if (!uncertain) activity.release(); }
   }
+  const after = await available();
+  if (input.signal?.aborted) report.cancelled = true;
+  report.filesystem = { beforeAvailableBytes: before?.bytes ?? null, afterAvailableBytes: after?.bytes ?? null,
+    netAvailableBytesDelta: !before || !after || before.device !== after.device ? null : after.bytes - before.bytes,
+    measurement: 'filesystem-net-change' };
   return report;
 }

@@ -1,4 +1,5 @@
 import { WorktreeService } from './worktree.js';
+import { SourceInspectionHeldError, sourceHoldReason } from './deployment-source-inspection.js';
 import { reclaimDeploymentSources, summarizeDeploymentSourceHolds, type DeploymentSourceHoldReason, type DeploymentSourceRetentionReport } from './deployment-source-retention.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -438,7 +439,14 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
     options?.beforeStart();
     if (options?.sourceOnly && options.identity) {
       const { removeOwnedDirectory } = await import('./worktree-directory-removal-process.js');
-      if (await removeOwnedDirectory({ ...options, dir, identity: options.identity }) !== 'removed') throw new WorktreeClaimHeldError();
+      let reason: unknown;
+      let status: 'removed' | 'held';
+      try { status = await removeOwnedDirectory({ ...options, dir, identity: options.identity }, value => { reason = value; }); }
+      catch { return 'Git 源码回收执行失败，未确认释放结果。'; }
+      if (status !== 'removed') {
+        const code = sourceHoldReason(reason);
+        throw code ? new SourceInspectionHeldError(code) : new WorktreeClaimHeldError();
+      }
       return null;
     }
     try {
@@ -519,9 +527,12 @@ export function createJanitorDockerAdapters(shell: IShellExecutor): {
           stdin: JSON.stringify({ dir, allowedBase: options.allowedBase, identity: options.identity, entryOnly: options.entryOnly, sourceOnly: options.sourceOnly }),
         });
         if (result.exitCode !== 0) return '目录回收执行失败，已保留本轮回收记录。';
-        let status: unknown;
-        try { status = JSON.parse(result.stdout).status; } catch { return '目录回收回执未确认，请核对实际状态。'; }
-        if (status === 'held') throw new WorktreeClaimHeldError();
+        let status: unknown, reason: unknown;
+        try { const receipt = JSON.parse(result.stdout); status = receipt.status; reason = receipt.reason; } catch { return '目录回收回执未确认，请核对实际状态。'; }
+        if (status === 'held') {
+          const code = sourceHoldReason(reason);
+          throw code ? new SourceInspectionHeldError(code) : new WorktreeClaimHeldError();
+        }
         return status === 'removed' ? null : '目录回收回执未确认，请核对实际状态。';
       } } };
 }
@@ -562,7 +573,7 @@ export interface JanitorSnapshot {
     /** 孤儿 worktree 对账摘要。null = 本次未执行。 */
     orphanWorktrees: { removed: number; failed: number; deferred: number } | null;
     deploymentSources?: { scanned: number; attempted: number; removed: number; failed: number; held: number; deferred: number;
-      heldReasons?: Partial<Record<DeploymentSourceHoldReason, number>> };
+      heldReasons?: Partial<Record<DeploymentSourceHoldReason, number>>; filesystem?: DeploymentSourceRetentionReport['filesystem'] };
     dockerPrune: string[] | null;
     errors: number;
   } | null;
@@ -627,6 +638,7 @@ export class JanitorService {
   private firstSweepHandle: NodeJS.Timeout | null = null;
   private lastSweepSummary: JanitorSnapshot['lastSweep'] = null;
   private deploymentSourceCursor: string | undefined;
+  private sourcePreviewActive = false;
   /** 进行中的 sweep：并发调用合并到同一次，不叠加。 */
   private sweepInFlight: Promise<JanitorSweepReport> | null = null;
   private removeFn: RemoveBranchFn | null = null;
@@ -1012,6 +1024,7 @@ export class JanitorService {
             held: Object.keys(report.deploymentSources.held).length,
             ...(Object.keys(report.deploymentSources.held).length ? { heldReasons: summarizeDeploymentSourceHolds(report.deploymentSources.held) } : {}),
             deferred: report.deploymentSources.deferred,
+            filesystem: report.deploymentSources.filesystem,
           } } : {}),
           dockerPrune: report.dockerPrune?.reclaimed ?? null,
           errors: report.errors.length,
@@ -1280,6 +1293,32 @@ export class JanitorService {
     // extensions (e.g. per-project worktree root globbing).
     void path;
     return { wouldRemove, wouldSkip };
+  }
+
+  async previewDeploymentSources(projectId?: string, signal?: AbortSignal) {
+    if (this.sourcePreviewActive) throw new Error('源码预览正在执行，请稍后重试。');
+    this.sourcePreviewActive = true;
+    try {
+    const known = [...this.stateService.getProjects().map(p => p.id),
+      ...this.stateService.getDeletedProjectWorktreeBuckets().map(p => p.projectId)];
+    const report = await reclaimDeploymentSources({ base: this.worktreeBase,
+      projectIds: projectId ? known.filter(id => id === projectId) : known,
+      branches: () => this.stateService.getAllBranches(), files: this.orphanWorktreeFs,
+      nowMs: this.clock.now(), dryRun: true, signal });
+    // Only owned relative identities reach the page; never disclose host paths or raw Git errors.
+    const relative = (p: string) => path.relative(this.worktreeBase, p) || '.';
+    const confirmedHolds = new Set(['persistent-data', '目录过新、正在部署、台账引用或容器挂载',
+      '运行或停止的容器仍挂载该目录', '源码正在准备、使用或回收']);
+    const partial = report.cancelled || report.deferred > 0 || report.failed.length > 0
+      || Object.values(report.held).some(reason => !confirmedHolds.has(reason));
+    return { generatedAt: new Date(this.clock.now()).toISOString(), dryRun: true,
+      scanStatus: partial ? 'partial' as const : 'complete' as const,
+      scanned: report.scanned, deferred: report.deferred, cancelled: report.cancelled ?? false,
+      candidates: (report.preview || []).map(item => ({ identity: relative(item.path), allocatedBytesEstimate: item.allocatedBytes })),
+      held: Object.entries(report.held).map(([p, reason]) => ({ identity: relative(p), reason })),
+      failures: report.failed.length,
+      estimateNotice: '候选大小是分配块估计，不能相加作为实际收益；硬链接、共享层、打开的文件及并发写入会影响实际释放。执行仍由现有 Janitor 独立复核。' };
+    } finally { this.sourcePreviewActive = false; }
   }
 
   getSnapshot(): JanitorSnapshot {

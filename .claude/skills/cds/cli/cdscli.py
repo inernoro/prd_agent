@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.20.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.20.7"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -687,6 +687,19 @@ def ok(data: Any = None, *, note: str | None = None, code: int = 0) -> None:
 
 
 # ── Commands ───────────────────────────────────────────────────────
+
+def cmd_disk(args: argparse.Namespace) -> None:
+    paths = {"state": "/api/janitor/state", "sources": "/api/janitor/deployment-sources"}
+    path = paths.get(args.sub)
+    if args.sub == "target":
+        path = f"/api/releases/targets/{urllib.parse.quote(args.id, safe='')}/disk-diagnosis"
+    body = _call("GET", path, timeout=120)
+    if not isinstance(body, dict):
+        die("磁盘观测响应未确认，不能据此判断零占用", code=3)
+    if args.sub == "sources" and body.get("scanStatus") != "complete":
+        die("源码盘点未完整确认，相关对象保持保护；请查看保护原因与待处理项", code=3, extra={"data": body})
+    ok(body, note="只读磁盘观测；候选预览不授权删除，估计大小不代表实际释放")
+
 
 def cmd_health(args: argparse.Namespace) -> None:
     status, body, _ = _request("GET", "/healthz", timeout=5)
@@ -10543,6 +10556,12 @@ def _build_parser() -> argparse.ArgumentParser:
     item.set_defaults(func=cmd_instance_connect)
 
     sub.add_parser("health", help="CDS /healthz").set_defaults(func=cmd_health)
+    disk = sub.add_parser("disk", help="只读磁盘治理观测与候选预览").add_subparsers(dest="sub", required=True)
+    disk.add_parser("state", help="磁盘档位、Janitor 与回收结果").set_defaults(func=cmd_disk)
+    disk.add_parser("sources", help="预览源码候选、估计大小与保护原因，不执行删除").set_defaults(func=cmd_disk)
+    disk_target = disk.add_parser("target", help="读取指定发布目标的真实主机磁盘诊断")
+    disk_target.add_argument("id", help="ReleaseTarget ID，须从目标清单读取")
+    disk_target.set_defaults(func=cmd_disk)
 
     setup_check = sub.add_parser("setup-check", help="只读验证技能、凭据、目标项目与真实接入")
     setup_check.add_argument("--host", required=True, help="接入页面指定的 CDS 主机")

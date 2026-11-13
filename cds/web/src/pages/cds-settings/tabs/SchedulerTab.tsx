@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, Field, LoadingBlock, Section } from '../components';
 import type { LoadState } from '../types';
+import { SourceRetentionPreview } from '../components/SourceRetentionPreview';
 
 interface SchedulerConfig {
   enabled: boolean;
@@ -35,6 +36,9 @@ interface JanitorSnapshot {
   config?: JanitorConfig | null;
   dryRun?: { wouldRemove: string[]; wouldSkip: string[] };
   disk?: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
+  lastSweep?: { at: string; deploymentSources?: { filesystem?: {
+    beforeAvailableBytes: number | null; afterAvailableBytes: number | null; netAvailableBytesDelta: number | null;
+  } } } | null;
 }
 
 interface RuntimePolicyState {
@@ -263,6 +267,16 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
           <div className="mt-1.5 text-xs text-muted-foreground">
             默认 7 天，最长 7 天。当前生效值 <CodePill>{janitorCfg.worktreeTTLDays} 天</CodePill>
           </div>
+        </Field>
+
+        <Field label="部署源码磁盘治理">
+          <p className="text-xs text-muted-foreground">
+            最近一轮文件系统净可用空间变化：{janitorSnap.lastSweep?.deploymentSources?.filesystem?.netAvailableBytesDelta == null
+              ? '尚无已确认读数'
+              : `${janitorSnap.lastSweep.deploymentSources.filesystem.netAvailableBytesDelta.toLocaleString()} 字节`}。
+            该读数包含同时发生的写入，不能将候选估计值或删除数量当作实际释放量。
+          </p>
+          <SourceRetentionPreview />
         </Field>
 
         {cfg.pinnedBranches.length > 0 ? (

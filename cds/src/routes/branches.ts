@@ -44,6 +44,7 @@ import { resolveArtifactCommitIdentity } from '../services/artifact-commit-ident
 import { refreshArtifactWaiters, registerArtifactWaitRefresher, requestArtifactWaitRefresh } from '../services/artifact-admission-wait.js';
 import { ContainerStopUnconfirmedError, resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
+import { createJanitorObservationRouter } from './janitor-observation.js';
 import { createSelfUpdateCheckpoint, prepareDetachedCdsRestart } from '../services/self-update-handoff.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
 import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
@@ -2317,6 +2318,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   if (branchOperationCoordinator && deploymentRunService) deploymentRunService.bindOperationCoordinator(branchOperationCoordinator);
   const router = Router();
+  router.use(createJanitorObservationRouter(janitorService));
   router.use((req, res, next) => {
     if (req.method === 'POST') {
       const match = /^\/branches\/([^/]+)\/(?:deploy(?:\/[^/]+)?|restart|force-rebuild\/[^/]+|prebuilt-image\/claim)\/?$/.exec(req.path);

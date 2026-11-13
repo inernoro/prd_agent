@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.20.6
+  version: 0.20.7
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, checks current-site load and tells users about standby sites with host-isolated credentials, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.20.6 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
+> **版本**：v0.20.7 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -192,6 +192,12 @@ $CLI schedule list --project <id>
 $CLI schedule run <scheduledJobId>
 # 支持调度口令：每天 02:00 / 每隔 10 分钟 / 手动
 # 支持动作口令：curl ... / 调用 POST https://... / 执行命令 ...
+
+# 磁盘治理只读观测：沿用当前实例与授权，不跨主机重放
+$CLI disk state                         # Janitor、磁盘档位及最近回收结果
+$CLI disk sources                       # 预览源码候选、分配块估计和保护原因
+$CLI disk target <targetId>             # 现有发布目标的真实主机磁盘诊断
+# 估计大小不能相加充当释放量；filesystem.netAvailableBytesDelta 是文件系统净变化，包含并发写入。
 
 # CDS 服务自更新（仅改 cds/ 代码时）
 $CLI self branches                       # 看 CDS 自身能切到哪些分支

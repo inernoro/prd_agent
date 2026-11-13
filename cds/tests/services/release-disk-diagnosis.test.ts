@@ -33,6 +33,12 @@ describe('buildDiskDiagnosisCommand 只许读', () => {
     // 首行必须亮明主机身份：曾有用户对着 A 机的诊断去清 B 机的盘。
     expect(command).toContain('hostname');
     expect(command).toContain('df -Pm');
+    expect(command).toContain('df -PT -B1');
+    expect(command).toContain('df -Pi');
+    expect(command).toContain('{{.DockerRootDir}}');
+    expect(command).toContain('docker ps -a --no-trunc');
+    expect(command).toContain('org.opencontainers.image.revision');
+    expect(command).not.toContain('.Config.Env');
     expect(command).toContain('docker system df');
     expect(command).toContain('docker images');
     expect(command).toContain('du -sm');
