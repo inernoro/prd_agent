@@ -38,12 +38,15 @@ class Client:
         self.timeout = timeout
         self.opener = build_opener(NoRedirect)
 
-    def open(self, method, path, body=None, stream=False):
+    def open(self, method, path, body=None, stream=False, idempotency_key=None):
         if not path.startswith('/') or path.startswith('//'):
             raise CollectionError('request path must be same-origin relative')
-        headers = {'Accept': 'text/event-stream' if stream else 'application/json', 'X-Client': 'admin'}
+        headers = {'Accept': 'text/event-stream' if stream else 'application/json', 'X-Client': 'admin',
+                   'User-Agent': 'curl/8.5.0'}
         if self.token:
             headers['Authorization'] = 'Bearer ' + self.token
+        if idempotency_key:
+            headers['Idempotency-Key'] = idempotency_key
         data = None
         if body is not None:
             data = json.dumps(body).encode()
@@ -55,8 +58,8 @@ class Client:
         except (URLError, TimeoutError, OSError):
             raise CollectionError(f'{method} request failed before a usable response') from None
 
-    def json(self, method, path, body=None):
-        with self.open(method, path, body) as response:
+    def json(self, method, path, body=None, idempotency_key=None):
+        with self.open(method, path, body, idempotency_key=idempotency_key) as response:
             try:
                 value = json.load(response)
             except (ValueError, UnicodeError):

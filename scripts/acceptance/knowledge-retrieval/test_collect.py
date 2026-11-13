@@ -207,16 +207,25 @@ class FakeServerTests(unittest.TestCase):
         self.assertEqual(sum(method == 'POST' and path.endswith('/messages') for method, path, _, _ in self.requests), 1)
         for _, path, headers, body in self.requests:
             self.assertEqual(headers.get('Authorization'), 'Bearer test-access-token')
+            self.assertEqual(headers.get('User-Agent'), 'curl/8.5.0')
             self.assertFalse(any('permit' in key.lower() or 'impersonate' in key.lower() for key in headers))
             self.assertNotIn('/gw/', path)
             self.assertNotIn('taskPermitId', body)
+
+    def test_idempotency_header_is_explicit_and_not_injected_into_other_requests(self):
+        client = collect.Client(f'http://127.0.0.1:{self.server.server_port}', 'test-access-token')
+        client.json('POST', '/api/chat-agent/sessions', {'title': 'fake'}, idempotency_key='fixture-once')
+        client.json('GET', '/api/authz/me')
+        self.assertEqual(self.requests[0][2]['Idempotency-Key'], 'fixture-once')
+        self.assertNotIn('Idempotency-Key', self.requests[1][2])
 
     def test_normal_login_instead_of_impersonation(self):
         client = collect.Client(f'http://127.0.0.1:{self.server.server_port}')
         with patch.dict(collect.os.environ, {'KB_EVAL_USERNAME': 'evaluation-login', 'KB_EVAL_PASSWORD': 'dummy-password'}):
             self.assertEqual(client.authenticate(), 'u')
         self.assertEqual(self.requests[0][1], '/api/v1/auth/login')
-        self.assertEqual(self.requests[0][3]['clientType'], 'admin')
+        self.assertEqual(self.requests[0][3], {'username': 'evaluation-login', 'password': 'dummy-password', 'clientType': 'admin'})
+        self.assertEqual(self.requests[0][2]['User-Agent'], 'curl/8.5.0')
         self.assertNotIn('Authorization', self.requests[0][2])
         self.assertEqual(self.requests[1][2]['Authorization'], 'Bearer normal-login-token')
 

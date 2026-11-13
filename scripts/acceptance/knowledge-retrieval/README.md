@@ -130,3 +130,35 @@ python3 scripts/acceptance/knowledge-retrieval/evaluate.py --corpus work/kb-real
 复核合并只写新观察文件，保留原始观察。它禁止重写已观察到的引用身份或 URL，禁止删掉失败引用，也不允许把采集未完成的题目标为已完成。证据文件是否真实存在、是否证明对应断言仍须在归档 CDS `/reports` 前核对；脚本不会把填写了一个路径当成浏览器验证。
 
 确定性测试使用本机 fake HTTP/SSE，不访问真实网关或模型。它们只证明协议采集与证据阻塞逻辑，不证明检索质量、引用正确或生产可用。
+
+## 双身份临时 fixture 与恢复账本
+
+`fixture.py` 准备固定的两位 owner、两个私有库与 12 篇合成正文，复用上述题集和采集器。它只使用已有登录、用户管理、授权、文档空间及会话接口，不直调网关，不自报 ownerId、不伪造任务许可，不改模型配置。`plan`、`prompts`、`track-session` 仅写本地文件；`prepare` / `cleanup` 没有 `--execute` 就不会发远端请求。先核对实际预览提交已包含认证及选定问答链路的日志保护，并让负责人审阅 plan 的精确范围，再执行准备。
+
+```bash
+python3 scripts/acceptance/knowledge-retrieval/fixture.py plan --state work/kb-fixture/fixture-state.json --base-url '<权威预览源站>' --target-revision '<实际部署提交SHA>'
+python3 scripts/acceptance/knowledge-retrieval/fixture.py prepare --state work/kb-fixture/fixture-state.json --execute --create-secondary
+```
+
+默认创建唯一用户名 `kb_eval_{runId}` 的一个 QA 第二账号；既有主账号只用于正常登录和创建自有临时库，不修改其权限。创建/授权需要当前正常管理员具备 `users.read`、`users.write`、`authz.manage`。新账号明确绑定 `none`，仅额外允许 `document-store.read`、`document-store.write`、`chat-agent.use`，不填邮箱/SSO、不发邀请、不加团队。需要复用已有专用账号时，在 plan 加 `--secondary-mode existing`；执行器不会修改该账号权限、重置其密码或在清理时禁用它。
+
+第二账号正常凭据从 `KB_FIXTURE_SECONDARY_USERNAME`（仅 existing 模式）、`KB_FIXTURE_SECONDARY_PASSWORD` 读取；新建账号还可用 `KB_FIXTURE_SECONDARY_INITIAL_PASSWORD` 指定初始密码。首次登录要求改密时，仅对本 run 创建的账号走正常本人重置接口。密码不得出现在参数、stdout、报告、fixture 账本或 Git；如需跨进程恢复，由执行者保存在本地 0600 非跟踪凭据文件，再注入环境。账本、映射及提示文件也是 0600，并采用原子替换写入。
+
+准备的实际写入范围固定为：管理员正常创建一个 QA 及其最小授权/本人首次改密；两个 owner 分别创建一个带唯一 run 标记的私库；在各自库中创建并保存固定 10 篇/2 篇合成正文。初次保存前检查文档未索引；已索引文档不会被 prepare 重写，防止隐式触发刷新模型任务。源正文与固定语料不符时停止，不擅自覆盖。完成后生成 `mapping.json` 与 `index-prompts.json`，状态为 `prepared_not_indexed`，不是效果验证通过。
+
+**12 篇索引必须由各自 owner 使用正常 ChatAgent 任务单篇明确发起，每次只指定 1 篇。** 提示文件仅列出待执行指令，执行器不会发送这些指令，也不会自动遍历或重建任何生产库。根轨确认运行时健康后，先完成一条单篇索引与单题检索，再决定执行其余固定范围和 40 题；模型调用继续使用现有统一网关的 Index/Query 绑定。
+
+每次变更先持久化意图，再记录正常响应。响应未知时重跑同一账本：账号按唯一用户名正常读取、核对 run 标记并确认相同幂等键回执；库/条目只从本 owner 的有限元数据结果或固定库范围认领精确标记；正文按固定原文回读核实。不因“没拿到回执”循环创建，不用列表里找到的相似名称猜归属，未能确认则保留 pending 并停止。不要删除账本后重建同一个 run。
+
+对明确属于本次 fixture 的索引、采集会话逐个登记，以便清理前核查其终态。只登记本次实际回执中的 ID，不遍历删除用户会话：
+
+```bash
+python3 scripts/acceptance/knowledge-retrieval/fixture.py track-session --state work/kb-fixture/fixture-state.json --owner primary --session-id '<本次实际会话ID>'
+python3 scripts/acceptance/knowledge-retrieval/fixture.py cleanup --state work/kb-fixture/fixture-state.json --execute --tasks-terminal-confirmed
+```
+
+清理会检查每个库的 owner、唯一标记、私有性、条目身份、正文哈希与索引终态，拒绝未登记条目、被改动正文或在途任务。若本轮生命周期验收有意改变了某篇正文，应先依据该次真实写入与回读证据核对并更新账本中该篇的期望哈希，不能为让清理通过自动接受任意新正文。准备回执仍 pending 时不声称完成清理。
+
+顺序为：逐篇正常 `DeleteEntry` → 确认空库 → 正常 `DeleteStore` → 仅软删登记会话 → 仅对本 run 创建的 QA 精确撤销 admin/desktop 会话并禁用。逐篇入口保留了共享内容寻址正文的引用守卫，避免直接整库级联误删其他库仍使用的相同正文。不会删除既有账号、强制全员退出、清洗共享历史日志或直连数据库清向量。
+
+结论必须保留边界：现有正常接口不物理删除 `document_embeddings`，会话软删保留 messages/events，审计和计费记录按系统策略保留，QA 禁用也不是账号物理删除。执行器因此只记录 `cleanup_logical_complete_with_retained_records`，不能把它改写为“全部数据已清空”。
