@@ -72,6 +72,39 @@ public class PoolFailoverNotifierTests
         Assert.DoesNotContain("sk-fixture-secret", stored.Title + stored.Message);
     }
 
+    [Theory]
+    [InlineData("same-pool", true)]
+    [InlineData("other-pool", true)]
+    [InlineData("before-failure", true)]
+    [InlineData("expired-recovery", true)]
+    [InlineData("handled", false)]
+    public async Task Review_LegacyClosedPool_ReopensOnNewConfirmedFailureButHandledDoesNot(string evidence, bool reopen)
+    {
+        await using var testDb = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
+        var notifier = new PoolFailoverNotifier(testDb.Context, NullLogger<PoolFailoverNotifier>.Instance);
+        var created = DateTime.UtcNow.AddMinutes(-10);
+        var legacy = new AdminNotification {
+            Id = "legacy-pool-fault", Key = "pool-exhausted:pool-a", Source = "model-pool-probe",
+            Section = AdminNotificationSections.Admin, Status = evidence == "handled" ? "handled" : "closed", Level = "warning",
+            CreatedAt = created, UpdatedAt = created.AddMinutes(1), HandledAt = created.AddMinutes(1), ExpiresAt = null,
+        };
+        await testDb.Context.AdminNotifications.InsertOneAsync(legacy);
+        if (evidence is not "expired-recovery" and not "handled")
+            await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
+                Key = evidence == "other-pool" ? "pool-recovered:pool-b" : "pool-recovered:pool-a",
+                Source = "model-pool-probe", Level = "success", Status = "open",
+                CreatedAt = evidence == "before-failure" ? created.AddMinutes(-1) : created.AddMinutes(1),
+                UpdatedAt = evidence == "before-failure" ? created.AddMinutes(-1) : created.AddMinutes(1),
+            });
+        await notifier.NotifyPoolExhaustedAsync(new ModelGroup { Id = "pool-a", Name = "所选模型池", ModelType = "image" });
+        var current = await testDb.Context.AdminNotifications.Find(x => x.Id == legacy.Id).SingleAsync();
+        current.Status.ShouldBe(reopen ? "open" : "handled");
+        current.PushEpisode.ShouldBe(reopen ? 1 : 0);
+        current.IncidentState.ShouldBe("active");
+        current.RecoveredAt.ShouldBeNull();
+        current.OccurrenceCount.ShouldBe(1);
+    }
+
     [Fact]
     public async Task UserFailureAndRecovery_ShouldKeepPersonalTargetAcrossUpdates()
     {
@@ -95,6 +128,9 @@ public class PoolFailoverNotifierTests
         recovery.TargetUserId.ShouldBe("u1");
         recovery.RequestOutcome.ShouldBe("unknown");
         recovery.IncidentState.ShouldBe("recovered");
+        recovery.OccurrenceCount.ShouldBe(updated.OccurrenceCount);
+        recovery.FirstOccurredAt.ShouldBe(updated.FirstOccurredAt);
+        recovery.LastOccurredAt.ShouldBe(updated.LastOccurredAt);
         AdminNotificationSourceCatalog.ResolveSection(recovery.Source, recovery.Section).ShouldBe(AdminNotificationSections.Personal);
         (await testDb.Context.AdminNotifications.Find(x => x.Id == original.Id).SingleAsync()).Status.ShouldBe("closed");
     }

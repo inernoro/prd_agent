@@ -62,7 +62,7 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
             source: "model-pool-probe",
             ct: ct,
             incidentId: $"model-pool:{pool.Id}", incidentState: "recovered", requestOutcome: "unknown",
-            actionUrl: $"/logs?modelPoolId={Uri.EscapeDataString(pool.Id)}");
+            actionUrl: $"/logs?modelPoolId={Uri.EscapeDataString(pool.Id)}", recoveryFacts: fault);
 
         // 2. 关闭对应的故障通知
         var exhaustedKey = $"pool-exhausted:{pool.Id}";
@@ -131,7 +131,9 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
                 title: string.IsNullOrWhiteSpace(poolName) ? "所选模型已出现可用线路" : $"{poolName} 已出现可用线路",
                 message: $"{(string.IsNullOrWhiteSpace(poolName) ? "此前不可用的所选模型" : poolName)}已通过检测，至少一条线路恢复可用。您可以重试之前失败的请求。",
                 level: "success", source: "model-pool-probe", targetUserId: userId, ct: ct,
-                incidentId: incidentId, incidentState: "recovered", requestOutcome: "unknown");
+                incidentId: incidentId, incidentState: "recovered", requestOutcome: "unknown", observedAt: now,
+                recoveryFacts: confirmed.Where(n => n.TargetUserId == userId)
+                    .OrderByDescending(n => n.PushEpisode).ThenByDescending(n => n.CreatedAt).First());
         }
     }
 
@@ -234,7 +236,7 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
         string key, string title, string message, string level, string source,
         string? targetUserId = null, CancellationToken ct = default,
         string? incidentId = null, string? incidentState = null, string? requestOutcome = null,
-        string? actionUrl = null, DateTime? observedAt = null)
+        string? actionUrl = null, DateTime? observedAt = null, AdminNotification? recoveryFacts = null)
     {
         // The event time belongs to this observation, not to a later CAS retry.
         var eventAt = observedAt ?? DateTime.UtcNow;
@@ -272,7 +274,14 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
                         update = update.Set(n => n.OccurrenceCount, 1)
                             .Set(n => n.FirstOccurredAt, eventAt).Set(n => n.LastOccurredAt, eventAt);
                 }
-                if (!olderThanRecovery && existing.IncidentState == "recovered" && incidentState == "active")
+                // The old writer used closed only for system recovery; user acknowledgement
+                // writes handled. A new confirmed exhaustion starts a new episode even if
+                // the old recovery notice has expired, without inventing a recovery time.
+                var legacySystemClosed = existing.Status == "closed" && existing.IncidentState == null
+                    && existing.IncidentId == null && existing.Source == "model-pool-probe"
+                    && key.StartsWith("pool-exhausted:", StringComparison.Ordinal)
+                    && string.IsNullOrWhiteSpace(existing.TargetUserId);
+                if (!olderThanRecovery && (existing.IncidentState == "recovered" || legacySystemClosed) && incidentState == "active")
                     update = update.Set(n => n.Status, "open").Inc(n => n.PushEpisode, 1)
                         .Set(n => n.PushEpisodeStartedAtUtcTicks, DateTime.UtcNow.Ticks).Set(n => n.HandledAt, null);
                 // Only one observer can open this recurrence. A loser reloads the current
@@ -288,13 +297,17 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
             else if (incidentState != null)
                 update = update.Set(n => n.IncidentState, incidentState).Set(n => n.RequestOutcome, requestOutcome);
 
+            if (recoveryFacts != null)
+                update = update.Set(n => n.OccurrenceCount, recoveryFacts.OccurrenceCount)
+                    .Set(n => n.FirstOccurredAt, recoveryFacts.FirstOccurredAt)
+                    .Set(n => n.LastOccurredAt, recoveryFacts.LastOccurredAt);
             if (string.IsNullOrWhiteSpace(targetUserId) && actionUrl != null)
                 update = update.Set(n => n.ActionUrl, actionUrl).Set(n => n.ActionLabel, "查看线路日志")
                     .Set(n => n.ActionKind, "llm-gateway");
             var result = await _db.AdminNotifications.UpdateOneAsync(writeFilter, update, cancellationToken: ct);
             if (result.MatchedCount == 0)
                 await UpsertNotificationAsync(key, title, message, level, source, targetUserId, ct,
-                    incidentId, incidentState, requestOutcome, actionUrl, eventAt);
+                    incidentId, incidentState, requestOutcome, actionUrl, eventAt, recoveryFacts);
         }
         else
         {
@@ -312,8 +325,9 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
                 IncidentId = incidentId,
                 IncidentState = incidentState,
                 RequestOutcome = requestOutcome,
-                FirstOccurredAt = incidentId != null && incidentState == "active" ? eventAt : null,
-                LastOccurredAt = incidentId != null && incidentState == "active" ? eventAt : null,
+                OccurrenceCount = recoveryFacts?.OccurrenceCount ?? 1,
+                FirstOccurredAt = recoveryFacts?.FirstOccurredAt ?? (incidentId != null && incidentState == "active" ? eventAt : null),
+                LastOccurredAt = recoveryFacts?.LastOccurredAt ?? (incidentId != null && incidentState == "active" ? eventAt : null),
                 RecoveredAt = incidentState == "recovered" ? eventAt : null,
                 ActionUrl = string.IsNullOrWhiteSpace(targetUserId) ? actionUrl : null,
                 ActionLabel = string.IsNullOrWhiteSpace(targetUserId) && actionUrl != null ? "查看线路日志" : null,
@@ -327,7 +341,7 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
             catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
             {
                 await UpsertNotificationAsync(key, title, message, level, source, targetUserId, ct,
-                    incidentId, incidentState, requestOutcome, actionUrl, eventAt);
+                    incidentId, incidentState, requestOutcome, actionUrl, eventAt, recoveryFacts);
             }
         }
     }

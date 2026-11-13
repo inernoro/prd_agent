@@ -178,6 +178,109 @@ public sealed class GatewayIncidentFactsPersistenceTests
         Assert.Null(after.RecoveredAt);
     }
 
+    [Fact]
+    public async Task Review_RecoveryPreservesAccumulated182FailureFacts()
+    {
+        await using var f = new Fixture();
+        var logs = Enumerable.Range(0, 182).Select(i => {
+            var log = f.Request("repeated-" + i, "failed", 402, 0);
+            log.EndedAt = log.EndedAt!.Value.AddMilliseconds(i);
+            log.Error = "insufficient_balance";
+            return log;
+        }).ToList();
+        await f.Gateway.LlmRequestLogs.InsertManyAsync(logs);
+        await f.SweepAsync();
+        var fault = Assert.Single(await f.Notices());
+        Assert.Equal(182, fault.OccurrenceCount);
+        var success = f.Request("confirmed-recovery", "succeeded", 200, 1);
+        await f.Gateway.LlmRequestLogs.InsertOneAsync(success);
+        await f.SweepAsync();
+        var recovered = Assert.Single(await f.Notices(), x => x.Level == "success");
+        Assert.Equal(fault.IncidentId, recovered.IncidentId);
+        Assert.Equal(fault.OccurrenceCount, recovered.OccurrenceCount);
+        Assert.Equal(fault.FirstOccurredAt, recovered.FirstOccurredAt);
+        Assert.Equal(fault.LastOccurredAt, recovered.LastOccurredAt);
+        Assert.Equal(success.EndedAt, recovered.RecoveredAt);
+    }
+
+    [Fact]
+    public async Task Review_LegacyRouteMigration_RemainsVisibleWithoutMergingScopesOrClaimingRecovery()
+    {
+        await using var f = new Fixture();
+        var log = f.Request("scoped-failure", "failed", 503, 0);
+        log.TeamId = "new-team"; log.SourceDeployment = "isolated-preview";
+        var legacy = LegacyRouteNotice(log);
+        await f.Map.AdminNotifications.InsertOneAsync(legacy);
+        await f.Gateway.LlmRequestLogs.InsertOneAsync(log);
+        await f.SweepAsync();
+        var rows = await f.Notices();
+        var active = Assert.Single(rows, x => x.IncidentState == "active");
+        Assert.NotEqual(legacy.Id, active.Id);
+        Assert.Equal("active", active.IncidentState);
+        Assert.Equal(1, active.OccurrenceCount);
+        Assert.Equal(log.EndedAt, active.FirstOccurredAt);
+        Assert.Equal(log.EndedAt, active.LastOccurredAt);
+        Assert.Single(rows, x => !string.IsNullOrWhiteSpace(x.IncidentId));
+        var retired = Assert.Single(rows, x => x.Id == legacy.Id);
+        Assert.Equal(legacy.Key, retired.Key);
+        Assert.Equal("open", retired.Status);
+        Assert.Equal("unknown", retired.IncidentState);
+        Assert.Null(retired.RecoveredAt);
+        Assert.Null(retired.HandledAt);
+        Assert.Null(retired.ExpiresAt);
+        Assert.Null(retired.IncidentId);
+        Assert.Equal(legacy.CreatedAt, retired.CreatedAt);
+        Assert.Equal(legacy.UpdatedAt, retired.UpdatedAt);
+        Assert.Equal(legacy.OccurrenceCount, retired.OccurrenceCount);
+        Assert.Null(retired.FirstOccurredAt);
+        Assert.Null(retired.LastOccurredAt);
+        Assert.Contains("不代表", retired.Message);
+        var other = f.Request("other-deployment-success", "succeeded", 200, 1);
+        other.TeamId = log.TeamId; other.SourceDeployment = "another-preview";
+        await f.Gateway.LlmRequestLogs.InsertOneAsync(other);
+        await f.SweepAsync();
+        Assert.Equal("active", (await f.Notices()).Single(x => x.Id == active.Id).IncidentState);
+        var after = await f.Notices();
+        Assert.Equal(2, after.Count);
+        Assert.Equal("unknown", after.Single(x => x.Id == legacy.Id).IncidentState);
+        Assert.Equal("open", after.Single(x => x.Id == legacy.Id).Status);
+    }
+
+    [Fact]
+    public async Task Review_LegacyRouteWithoutRecentLog_RemainsVisibleAsUnknown()
+    {
+        await using var f = new Fixture();
+        var legacy = LegacyRouteNotice(f.Request("outside-lookback", "failed", 503, 0));
+        await f.Map.AdminNotifications.InsertOneAsync(legacy);
+        await f.SweepAsync(); await f.SweepAsync();
+        var row = Assert.Single(await f.Notices());
+        Assert.Equal(legacy.Id, row.Id);
+        Assert.Equal(legacy.Key, row.Key);
+        Assert.Equal("open", row.Status);
+        Assert.Equal("unknown", row.IncidentState);
+        Assert.Null(row.RecoveredAt);
+        Assert.Null(row.HandledAt);
+        Assert.Equal(legacy.ActionUrl, row.ActionUrl);
+        Assert.Null(row.ExpiresAt);
+        Assert.Equal(legacy.CreatedAt, row.CreatedAt);
+        Assert.Equal(legacy.UpdatedAt, row.UpdatedAt);
+        Assert.Equal(1, row.Title.Split("历史范围待核对").Length - 1);
+    }
+
+    private static AdminNotification LegacyRouteNotice(LlmRequestLog log)
+    {
+        var identity = string.Join("|", log.TenantId.Trim().ToLowerInvariant(),
+            log.PlatformId!.Trim().ToLowerInvariant(), log.Model.Trim().ToLowerInvariant(),
+            log.RequestType!.Trim().ToLowerInvariant());
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identity)))
+            .ToLowerInvariant()[..24];
+        return new AdminNotification { Id = "historical-route", Key = "llmgw-upstream:" + hash,
+            Source = "gateway-alert", Section = AdminNotificationSections.Admin, Level = "error",
+            Status = "open", ExpiresAt = null, Title = "历史上游故障", Message = "原始旧通知",
+            ActionKind = "llm-gateway", ActionUrl = "/logs?requestId=historical-request",
+            CreatedAt = RecentStart().AddDays(-5), UpdatedAt = RecentStart().AddDays(-4) };
+    }
+
     private static DateTime RecentStart()
     {
         var value = DateTime.UtcNow.AddMinutes(-4);

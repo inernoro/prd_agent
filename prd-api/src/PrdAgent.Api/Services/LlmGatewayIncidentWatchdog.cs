@@ -100,10 +100,37 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 : await CloseFailureAndNotifyRecoveryAsync(signal, ct);
         }
 
+        await MarkLegacyRouteScopeUnknownAsync(ct);
         changed |= await NotifyConsumptionAlertsAsync(ct);
         if (changed)
         {
             _pushSignal.NotifyPending();
+        }
+    }
+
+    private async Task MarkLegacyRouteScopeUnknownAsync(CancellationToken ct)
+    {
+        // Old pipe-separated route hashes omitted team/deployment/environment. They cannot
+        // safely be assigned to one new scope, nor recovered by a success in that scope.
+        // Keep the original visible record and evidence; this is migration, not a new event.
+        var filter = Builders<AdminNotification>.Filter.Eq(x => x.Source, "gateway-alert")
+            & Builders<AdminNotification>.Filter.Regex(x => x.Key, new BsonRegularExpression("^llmgw-upstream:[0-9a-f]{24}$"))
+            & Builders<AdminNotification>.Filter.Eq(x => x.IncidentId, null)
+            & Builders<AdminNotification>.Filter.Eq(x => x.IncidentState, null)
+            & Builders<AdminNotification>.Filter.Eq(x => x.Status, "open");
+        var legacy = await _mapDb.AdminNotifications.Find(filter).ToListAsync(ct);
+        foreach (var row in legacy)
+        {
+            await _mapDb.AdminNotifications.UpdateOneAsync(filter
+                    & Builders<AdminNotification>.Filter.Eq(x => x.Id, row.Id)
+                    & Builders<AdminNotification>.Filter.Eq(x => x.UpdatedAt, row.UpdatedAt)
+                    & Builders<AdminNotification>.Filter.Eq(x => x.Title, row.Title)
+                    & Builders<AdminNotification>.Filter.Eq(x => x.Message, row.Message),
+                Builders<AdminNotification>.Update.Set(x => x.IncidentState, "unknown")
+                    .Set(x => x.RequestOutcome, "unknown")
+                    .Set(x => x.Title, $"历史范围待核对 · {row.Title}")
+                    .Set(x => x.Message, "旧版通知未保存完整故障范围，当前状态与请求结果尚未确认。新范围的故障和恢复记录不代表此历史记录已恢复或已处理，请查看原始日志核对。\n" + row.Message),
+                cancellationToken: ct);
         }
     }
 
@@ -359,6 +386,9 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             IncidentId = signal.Fingerprint,
             IncidentState = "recovered",
             RequestOutcome = "request_succeeded",
+            OccurrenceCount = transitioned.OccurrenceCount,
+            FirstOccurredAt = transitioned.FirstOccurredAt,
+            LastOccurredAt = transitioned.LastOccurredAt,
             RecoveredAt = signal.ObservedAt,
             EvidenceRequestId = signal.RequestId,
             Level = "success",
