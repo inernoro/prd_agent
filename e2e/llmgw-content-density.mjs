@@ -81,7 +81,7 @@ async function snapshot(page, id) {
     const container = scroll?.parentElement;
     const firstRow = document.querySelector('tbody tr')?.getBoundingClientRect();
     const maintenanceBeforeData = Array.from(document.querySelectorAll('summary')).filter(el => /全局上游代理|批量轮换已有 Provider/.test(el.textContent || '')).map(el => el.parentElement.getBoundingClientRect()).filter(r => firstRow && r.bottom <= firstRow.top).reduce((height, r) => height + r.height, 0);
-    return { maintenanceBeforeData, firstRow: rect('tbody tr'), table: rect('table'), container: container ? (() => { const r = container.getBoundingClientRect(); return { y: r.y, height: r.height, bottom: r.bottom }; })() : null, bodyScrollHeight: document.documentElement.scrollHeight, viewportWidth: innerWidth, documentWidth: document.documentElement.scrollWidth, bodyFontSize: getComputedStyle(document.body).fontSize, theme: document.documentElement.dataset.theme };
+    return { maintenanceBeforeData, firstRow: rect('tbody tr'), table: rect('table'), container: container ? (() => { const r = container.getBoundingClientRect(); return { y: r.y, height: r.height, bottom: r.bottom }; })() : null, bodyScrollHeight: document.documentElement.scrollHeight, viewportWidth: innerWidth, touchPoints: navigator.maxTouchPoints, coarsePointer: matchMedia('(pointer: coarse)').matches, documentWidth: document.documentElement.scrollWidth, bodyFontSize: getComputedStyle(document.body).fontSize, theme: document.documentElement.dataset.theme };
   });
   await page.screenshot({ path: path.join(OUT, `${id}.png`), timeout: 30000, animations: 'disabled' });
   results.push({ id, provenance: 'deterministic-fixture', metrics });
@@ -102,7 +102,7 @@ try {
   for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) for (const theme of ['light', 'dark']) {
     const id = `${viewport.width}-${theme}`;
     if (process.env.LLMGW_DENSITY_FILTER && !new RegExp(process.env.LLMGW_DENSITY_FILTER).test(id)) continue;
-    const context = await browser.newContext({ viewport, colorScheme: theme });
+    const context = await browser.newContext({ viewport, colorScheme: theme, isMobile: viewport.width < 700, hasTouch: viewport.width < 700 });
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
     page.on('pageerror', error => failures.push({ name: `${id}:运行异常`, detail: error.message }));
@@ -216,7 +216,7 @@ try {
     } catch (error) { failures.push({ name: `${id}:交互路径`, detail: error.message }); console.error(`${id}: ${error.message}`); await page.screenshot({ path: path.join(OUT, `${id}-failure.png`) }).catch(() => {}); }
     await context.close();
     scenarios.role = 'viewer'; scenarios.count = 2; scenarios.failure = false;
-    const viewerContext = await browser.newContext({ viewport, colorScheme: theme });
+    const viewerContext = await browser.newContext({ viewport, colorScheme: theme, isMobile: viewport.width < 700, hasTouch: viewport.width < 700 });
     const viewer = await viewerContext.newPage(); viewer.setDefaultTimeout(15000);
     try {
       await login(viewer);
