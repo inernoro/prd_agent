@@ -28,6 +28,22 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 
 describe('逐镜配音与字幕', () => {
+  it('采用请求成功时即使原面板已关闭，仍刷新父编辑器且不刷新已卸载面板', async () => {
+    let complete!: (value: { success: boolean; data: boolean }) => void;
+    api.adopt.mockReturnValue(new Promise(resolve => { complete = resolve; }));
+    await render();
+    const select = host.querySelector<HTMLSelectElement>('[aria-label="已有语音"]')!;
+    await act(async () => { select.value = speech.id; Simulate.change(select); });
+    await act(async () => button('采用到此镜头').click());
+    await act(async () => root.render(<div>编辑器仍打开，配音面板已关闭</div>));
+    const readsBeforeCompletion = api.narration.mock.calls.length;
+    await act(async () => { complete({ success: true, data: true }); });
+    expect(onAdopt).toHaveBeenCalledTimes(1);
+    expect(api.narration).toHaveBeenCalledTimes(readsBeforeCompletion);
+    expect(host.textContent).toContain('编辑器仍打开');
+    expect(api.generate).not.toHaveBeenCalled();
+  });
+
   it('已有PCM试听请求同归属的可播放封装，不生成新语音', async () => {
     api.list.mockResolvedValue({ success: true, data: { items: [{ ...speech, format: 'pcm' }] } });
     await render();

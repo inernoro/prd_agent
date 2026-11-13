@@ -1,4 +1,7 @@
 using System.Text;
+using System.Diagnostics;
+using System.Reflection;
+using PrdAgent.Core.Models;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Services.Speech;
 using PrdAgent.Core.Services;
@@ -10,6 +13,34 @@ namespace PrdAgent.Api.Tests.Services;
 [Trait("Category", "Integration")]
 public sealed class VideoNarrationMediaTests
 {
+    [Theory]
+    [InlineData("First paragraph\n\nSecond paragraph")]
+    [InlineData("第一段\r\n  \r\n第二段\r第三段")]
+    public async Task ParagraphBreaks_SurviveRealSrtParsingWithoutChangingNarration(string text)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"narration-srt-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var scene = new VideoGenScene { Narration = new() { Text = text, DurationSeconds = 2 } };
+            var clips = VideoNarrationTimeline.BuildSubtitles([(scene, 3)]);
+            var method = typeof(VideoGenRunWorker).GetMethod("WriteSubtitleFileAsync", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var path = await (Task<string?>)method.Invoke(null, [null, tempDir, clips])!;
+            var output = Path.Combine(tempDir, "parsed.srt");
+            var start = new ProcessStartInfo("ffmpeg") { RedirectStandardError = true, UseShellExecute = false };
+            foreach (var argument in new[] { "-v", "error", "-i", path!, "-c:s", "srt", output }) start.ArgumentList.Add(argument);
+            using var process = Process.Start(start)!;
+            var error = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            Assert.True(process.ExitCode == 0, error);
+            var parsed = await File.ReadAllTextAsync(output);
+            foreach (var paragraph in text.Replace('\r', '\n').Split('\n').Where(line => !string.IsNullOrWhiteSpace(line)))
+                Assert.Contains(paragraph, parsed);
+            Assert.Equal(text, scene.Narration.Text);
+        }
+        finally { Directory.Delete(tempDir, recursive: true); }
+    }
+
     [Fact]
     public async Task RealWaveFile_ReportsFullVoiceDuration()
     {

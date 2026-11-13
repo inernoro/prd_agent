@@ -1808,7 +1808,9 @@ public partial class VideoGenRunWorker : BackgroundService
             content.Append(FormatSrtTime(clip.StartSeconds));
             content.Append(" --> ");
             content.AppendLine(FormatSrtTime(clip.StartSeconds + clip.DurationSeconds));
-            content.AppendLine(clip.Text!.Trim().Replace("\r\n", "\n").Replace('\r', '\n'));
+            // SRT 的空行代表字幕结束；段落只折为单换行，原始旁白正文仍保留在素材中。
+            content.AppendLine(string.Join("\n", clip.Text!.Replace("\r\n", "\n").Replace('\r', '\n')
+                .Split('\n').Where(line => !string.IsNullOrWhiteSpace(line))).Trim());
             content.AppendLine();
         }
         var path = Path.Combine(tempDir, "subtitles.srt");

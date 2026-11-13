@@ -107,10 +107,13 @@ export function VideoNarrationPanel({ runId, sceneIndex, editable, onClose, onAd
     setBusy('adopt'); setError(null);
     try {
       const response = await adoptVideoNarrationReal(runId, sceneIndex, selected.id);
-      if (!alive.current) return;
-      if (!response.success) { setError(response.error?.message || '采用失败，请重试。'); return; }
-      await refresh();
+      if (!response.success) {
+        if (alive.current) setError(response.error?.message || '采用失败，请重试。');
+        return;
+      }
+      // 服务端已保存时，父编辑器必须同步结果，不依赖当前镜头面板仍然挂载。
       await onAdopt();
+      if (alive.current) await refresh();
     } catch (cause) {
       if (alive.current) setError(cause instanceof Error ? cause.message : '采用失败，请刷新确认后重试。');
     } finally { requestActive.current = false; if (alive.current) setBusy(null); }
