@@ -120,6 +120,7 @@ def context_for(case):
     ds=[copy.deepcopy(d) for d in daily if case['start']<=d['metadata']['dailyDate']<=case['end']]
     for item in ds:item.update(entryId=item['id'],date=item['metadata']['dailyDate'],shareUrl=item['sourceShareUrl'])
     return {'weekStart':case['start'],'weekEnd':case['end'],'project':'prd-agent','sampleType':'frozen-historical-source-projection',
+        'coverageWindow':{'mode':'sha','baseSha':case['ledger'].get('collection',{}).get('base'),'headSha':case['ledger'].get('collection',{}).get('head'),'coverFrom':case['ledger'].get('collection',{}).get('coverFrom'),'coverTo':case['ledger'].get('collection',{}).get('coverTo')},
         'dailyReports':{'available':True,'items':ds,'count':len(ds)},
         'acceptance':{'available':True,'items':selected,'count':len(selected),'coverageComplete':False,'note':'仅固定样本子集，不是全项目验收率；date为观测日，实际运行时间未获确认。'},
         'releases':{'available':False,'reason':'旧W40报告记载发布3次/成功1次，但当时原始run快照未取得；不能用今天保留期外空列表否定历史。'},
@@ -150,7 +151,7 @@ def audit_current(report,gold):
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--out',required=True);p.add_argument('--work',required=True);p.add_argument('--current-collector',default=str(ROOT/'.claude/skills/weekly-update-summary/scripts/collect_week_context.py'));p.add_argument('--edition-script',default='');p.add_argument('--require-edition',action='store_true');args=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--out',required=True);p.add_argument('--work',required=True);p.add_argument('--current-collector',default=str(ROOT/'.claude/skills/weekly-update-summary/scripts/collect_week_context.py'));p.add_argument('--edition-script',default='');p.add_argument('--require-edition',action='store_true');p.add_argument('--local-publish',action='store_true',help='逐刊实际调用原publisher本地模式，不写在线库');args=p.parse_args()
     work=Path(args.work).resolve();work.mkdir(parents=True,exist_ok=True);manifest=verify_archive();old=replay_collector(FIX/'archive/old-collect-week-context.py','frozen_old_skill_collector');new=replay_collector(args.current_collector,'current_skill_collector')
     cases=read_json(FIX/'cases.json');gold={c['id']:c for c in read_json(FIX/'gold.json')['cases']};results=[]
     for case in cases['cases']:
@@ -159,7 +160,15 @@ def main():
         script=Path(args.edition_script) if args.edition_script else ROOT/'scripts/reporting/edition.py'
         if script.exists():
             subprocess.run([sys.executable,str(script),'build','--ledger',str(ledger_path),'--context',str(context_path),'--start',case['start'],'--end',case['end'],'--cadence',case['cadence'],'--out',str(directory/'edition')],check=True,cwd=ROOT,capture_output=True,text=True)
-            edition={'directory':str(directory/'edition'),'files':[str(f.name) for f in sorted((directory/'edition').iterdir())]}
+            report=read_json(directory/'edition/report.json')
+            verified=subprocess.run([sys.executable,str(script),'verify','--bundle',str(directory/'edition/bundle.json')],check=True,cwd=ROOT,capture_output=True,text=True)
+            edition={'directory':str(directory/'edition'),'files':[str(f.name) for f in sorted((directory/'edition').iterdir())],'bundleVerified':json.loads(verified.stdout),'assessmentSource':'actual-edition-report.json'}
+            if args.local_publish:
+                published=directory/'edition/published.html'
+                publication=subprocess.run([sys.executable,str(script),'publish','--bundle',str(directory/'edition/bundle.json'),'--local','--out',str(published)],check=True,cwd=ROOT,capture_output=True,text=True)
+                publication_mode=next(json.loads(line) for line in publication.stdout.splitlines() if line.startswith('{'))
+                if publication_mode.get('mode')!='local' or not published.is_file():raise AssertionError('原publisher未产出本地刊物')
+                edition['localPublication']={'mode':'local','path':str(published),'sha256':hashlib.sha256(published.read_bytes()).hexdigest(),'publisher':'daily-report-summary/reference/publish.py'}
         elif args.require_edition:raise SystemExit('实际技能edition入口不存在，不能以离线事实渲染冒充最终技能输出。')
         failures=audit_current(report,gold[case['id']]);results.append({'id':case['id'],'cadence':case['cadence'],'sourceInputDigest':report['inputDigest'],'historicalArtifacts':case['historicalArtifacts'],'oldEditionAvailable':case['oldEditionAvailable'],'oldArtifactRelationship':case['oldArtifactRelationship'],'strictSameInputLlmReplay':False,'report':report,'edition':edition,'failures':failures})
     result={'schemaVersion':1,'baselineRef':cases['baselineRef'],'archiveCount':len(manifest['artifacts']),

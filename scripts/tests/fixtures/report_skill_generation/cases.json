@@ -1154,12 +1154,14 @@
           "下一步是本次复核建议，负责人和期限尚未指定。",
           "验收来源仅提供报告创建时间，原始测试运行时间未获独立确认；本样本将其标为证据观测，不计作本周期首次验证完成。",
           "本样本为真实来源的明确事项归属投影；不是原历史LLM运行的完整输入，也不宣称覆盖整个项目。",
-          "本样本右端固定到历史日报水位线2026-09-29T05:08:37+08:00，非09-29整日。"
+          "本样本采集窗口由历史日报SHA水位线限定，右端为2026-09-29T05:08:37+08:00，不是结束日整天。"
         ],
         "collection": {
-          "base": "7039b1b1fd571972a1b05fcf56436568cacf9d54",
-          "head": "b0611f79fad85b08461454c5d6d5614f6f06f765",
-          "repository": "https://github.com/inernoro/prd_agent"
+          "base": "cdd9c09378e056a4ee8e1cdf3089b76aa5855cea",
+          "head": "b543be5be63fd83d52597768823a053975786955",
+          "repository": "https://github.com/inernoro/prd_agent",
+          "coverFrom": "2026-09-28T05:41:53+08:00",
+          "coverTo": "2026-09-29T05:08:37+08:00"
         },
         "historyComplete": false
       },
@@ -1174,7 +1176,7 @@
     {
       "id": "daily-repeated-fixes",
       "cadence": "daily",
-      "start": "2026-10-03",
+      "start": "2026-09-30",
       "end": "2026-10-04",
       "edge": "同一功能多次修复不能算多项交付",
       "ledger": {
@@ -1665,20 +1667,6 @@
             }
           },
           {
-            "id": "acceptance-b1a2cbf7c85c4c0bb16accb0258587cf",
-            "workItemId": "core-smoke",
-            "occurredAt": "2026-10-04T22:08:14.766Z",
-            "kind": "validation_failed",
-            "scope": "feature",
-            "revision": "ee905ed82803423f8136d96e787d0a0bb96b77e5",
-            "source": {
-              "uri": "https://miduo.org/reports?project=prd-agent&folder=e525bc9663c8449793b950808860982e&report=b1a2cbf7c85c4c0bb16accb0258587cf",
-              "excerpt": "功能验收 · 核心业务 / 稳定冒烟修复复测业务结论验后回填 · 2026-10-05；verdict=fail；版本=ee905ed82803423f8136d96e787d0a0bb96b77e5",
-              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
-            },
-            "timeBasis": "observed"
-          },
-          {
             "id": "acceptance-7bf0d83c50c94cee89607736a6e2183e",
             "workItemId": "web-redeploy",
             "occurredAt": "2026-09-28T08:16:14.018Z",
@@ -1752,12 +1740,15 @@
           "未取到同口径效率、工时和收益测量；不按提交量、跨日跨度或预期收益推算。",
           "下一步是本次复核建议，负责人和期限尚未指定。",
           "验收来源仅提供报告创建时间，原始测试运行时间未获独立确认；本样本将其标为证据观测，不计作本周期首次验证完成。",
-          "本样本为真实来源的明确事项归属投影；不是原历史LLM运行的完整输入，也不宣称覆盖整个项目。"
+          "本样本为真实来源的明确事项归属投影；不是原历史LLM运行的完整输入，也不宣称覆盖整个项目。",
+          "本样本采集窗口由历史日报SHA水位线限定，右端为2026-10-04T05:06:55+08:00，不是结束日整天。"
         ],
         "collection": {
-          "base": "7039b1b1fd571972a1b05fcf56436568cacf9d54",
-          "head": "b0611f79fad85b08461454c5d6d5614f6f06f765",
-          "repository": "https://github.com/inernoro/prd_agent"
+          "base": "ae1727e15a2e91778aa72e7254ad30a695a6fe11",
+          "head": "627ec2b2b9d07dda74d0d2954f8da20200121561",
+          "repository": "https://github.com/inernoro/prd_agent",
+          "coverFrom": "2026-09-30T05:09:17+08:00",
+          "coverTo": "2026-10-04T05:06:55+08:00"
         },
         "historyComplete": false
       },

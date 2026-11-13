@@ -62,6 +62,9 @@ class SkillReportEvaluationTests(unittest.TestCase):
             self.assertEqual([],replay.audit_current(report,labels[case['id']]),case['id'])
             self.assertTrue(all(e['source']['uri'].startswith('https://') and e['source']['excerpt'] for e in case['ledger']['events']))
             self.assertFalse(any(m['available'] for m in report['metrics'].values()))
+        daily=next(c for c in cases['cases'] if c['id']=='daily-cross-day')
+        self.assertEqual('b543be5be63fd83d52597768823a053975786955',daily['ledger']['collection']['head'])
+        self.assertEqual('2026-09-29T05:08:37+08:00',replay.context_for(daily)['coverageWindow']['coverTo'])
         monthly=next(c for c in cases['cases'] if c['cadence']=='monthly')
         self.assertNotIn('archive/old-monthly',str(monthly['historicalArtifacts']))
 

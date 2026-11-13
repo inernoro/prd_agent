@@ -1,0 +1,167 @@
+{
+  "schemaVersion": 1,
+  "methods": {
+    "collector": "同一冻结真实记录经未改写的旧采集器原函数与当前采集器，传输封套受控；不请求在线服务。",
+    "historicalProse": "真实完整原文的声明片段复核，不重跑LLM；不宣称线上准确率。",
+    "current": "实际 edition.py build → verify → 原publish.py --local，评分读取实际生成report.json。"
+  },
+  "fixtureDigest": "2e3520aeab4fb8c44b2b7af32773810df29d1043f057cacd8e852c47d654c4fd",
+  "collectorMetrics": {
+    "old": {
+      "missingFullRevision": 2,
+      "wrongObservationDateBucket": 1,
+      "missingDailyBody": 3,
+      "missingDailyWatermark": 3,
+      "missingDirectAcceptanceLink": 0
+    },
+    "current": {
+      "missingFullRevision": 0,
+      "wrongObservationDateBucket": 0,
+      "missingDailyBody": 0,
+      "missingDailyWatermark": 0,
+      "missingDirectAcceptanceLink": 0
+    }
+  },
+  "historicalReview": {
+    "scoredFindingIds": [
+      "w40-commit-volume-to-work-rhythm",
+      "w40-missing-continued-kb-validation",
+      "w40-acceptance-citations-local-only"
+    ],
+    "clarificationOnlyIds": [
+      "daily1004-completion-stage-ambiguous"
+    ],
+    "positiveControlIds": [
+      "w38-correctly-excludes-later-fixes",
+      "daily0929-explicitly-unverified",
+      "w40-release-attempts-not-preview"
+    ]
+  },
+  "cases": [
+    {
+      "id": "weekly-w40",
+      "cadence": "weekly",
+      "oldEditionAvailable": true,
+      "strictSameInputLlmReplay": false,
+      "sourceInputDigest": "fac7b3d9d640cde46ec26d204ea062f838befd3ec6d7608550dce0b54d42fa36",
+      "bundleVerified": true,
+      "localPublication": "local",
+      "files": {
+        "report.json": "23c67b3a65c18400cb2efdf8bdf54e468484f5bcc596d59bb12fcbc47b404b2c",
+        "report.md": "9b7455d06982717e9bac1aef08926406cfb9375ef570f13a49e70888e75a3e67",
+        "report.html": "f4110dc0912a73bbada045f69637cb5aae94e73716c8ff022fdc580ac4615e97",
+        "published.html": "f4110dc0912a73bbada045f69637cb5aae94e73716c8ff022fdc580ac4615e97"
+      },
+      "assessedSource": "actual-edition-report.json",
+      "failures": []
+    },
+    {
+      "id": "daily-cross-day",
+      "cadence": "daily",
+      "oldEditionAvailable": true,
+      "strictSameInputLlmReplay": false,
+      "sourceInputDigest": "1969ba836b544da2d6552ab1fcad88202b163f68efd33c1adb2c1b477becd739",
+      "bundleVerified": true,
+      "localPublication": "local",
+      "files": {
+        "report.json": "b2e3fea4f2ea55628b581f08c1a42b5778d62a81f1240d955aa293be837387d2",
+        "report.md": "92373df6abe8c5cb2030d519358b8b707bd31f92fb928a67b5e63b7a965079bc",
+        "report.html": "67d23195c5455d5ebdabfeb7a3125b7d85ab733a866baba4fbb0535d7c221d8d",
+        "published.html": "67d23195c5455d5ebdabfeb7a3125b7d85ab733a866baba4fbb0535d7c221d8d"
+      },
+      "assessedSource": "actual-edition-report.json",
+      "failures": []
+    },
+    {
+      "id": "daily-repeated-fixes",
+      "cadence": "daily",
+      "oldEditionAvailable": true,
+      "strictSameInputLlmReplay": false,
+      "sourceInputDigest": "3699af07a0a288452c8666c02f40a005af8a47386a93cec800cd321293bc5df6",
+      "bundleVerified": true,
+      "localPublication": "local",
+      "files": {
+        "report.json": "5cc4c76d202be8bbded9dd633708ab3ff3dd9df02711abd9f4f0e4b5db367dcb",
+        "report.md": "59250f85ba4a40a1188255fef9ea3749a2e8815065158b713d6954a2dbee6cce",
+        "report.html": "795ee16ecb2c6be487d85050908a8b03cc19aafcd366e728d8d0eef8778ade58",
+        "published.html": "795ee16ecb2c6be487d85050908a8b03cc19aafcd366e728d8d0eef8778ade58"
+      },
+      "assessedSource": "actual-edition-report.json",
+      "failures": []
+    },
+    {
+      "id": "weekly-old-validation",
+      "cadence": "weekly",
+      "oldEditionAvailable": true,
+      "strictSameInputLlmReplay": false,
+      "sourceInputDigest": "fac7b3d9d640cde46ec26d204ea062f838befd3ec6d7608550dce0b54d42fa36",
+      "bundleVerified": true,
+      "localPublication": "local",
+      "files": {
+        "report.json": "a8fae92dceb00b4fa1d6a2d77549435d9373400034e19c3db62f7fcb4cef6afe",
+        "report.md": "6c73daea61e367c4c0b95602b11af976461f4b64acd0e2f31cadaaae0527638a",
+        "report.html": "6a2d1b28437374fff8d2a29433aea02ec332e9c28099505a050b931ba500ee9d",
+        "published.html": "6a2d1b28437374fff8d2a29433aea02ec332e9c28099505a050b931ba500ee9d"
+      },
+      "assessedSource": "actual-edition-report.json",
+      "failures": []
+    },
+    {
+      "id": "daily-observed-failed-validation",
+      "cadence": "daily",
+      "oldEditionAvailable": false,
+      "strictSameInputLlmReplay": false,
+      "sourceInputDigest": "fac7b3d9d640cde46ec26d204ea062f838befd3ec6d7608550dce0b54d42fa36",
+      "bundleVerified": true,
+      "localPublication": "local",
+      "files": {
+        "report.json": "ba4ad1ddcb34386a02470f771a9f6648220e48e5f3eafc385e1ac1741146019b",
+        "report.md": "bb44a680a2f936b2125f53a99c52fca7b00df1630e4823bc7e0437c78b5b1b07",
+        "report.html": "dfdd8718d4545c0f4cda009206a62cc1fe995c0aaae4a6657495d4c2b864310d",
+        "published.html": "dfdd8718d4545c0f4cda009206a62cc1fe995c0aaae4a6657495d4c2b864310d"
+      },
+      "assessedSource": "actual-edition-report.json",
+      "failures": []
+    },
+    {
+      "id": "monthly-cross-month",
+      "cadence": "monthly",
+      "oldEditionAvailable": false,
+      "strictSameInputLlmReplay": false,
+      "sourceInputDigest": "fac7b3d9d640cde46ec26d204ea062f838befd3ec6d7608550dce0b54d42fa36",
+      "bundleVerified": true,
+      "localPublication": "local",
+      "files": {
+        "report.json": "f55051a731bbbffcc767e6f79e35b821297802d29b92fce60623931539b6dd7c",
+        "report.md": "47d020fdd397b26d79803208560fa1b638b96ace429d570566cb05abda51fff7",
+        "report.html": "2b282b7815b4dc6da9ba584103e5ac1f6f0b696ca9d51fe45d9810c0286586c1",
+        "published.html": "2b282b7815b4dc6da9ba584103e5ac1f6f0b696ca9d51fe45d9810c0286586c1"
+      },
+      "assessedSource": "actual-edition-report.json",
+      "failures": []
+    },
+    {
+      "id": "weekly-external-blocker",
+      "cadence": "weekly",
+      "oldEditionAvailable": false,
+      "strictSameInputLlmReplay": false,
+      "sourceInputDigest": "6c9d3d2e116c29b88d5e5aedc2a812a449e0e5aa3a44e26b44588a7d8c3bf6fd",
+      "bundleVerified": true,
+      "localPublication": "local",
+      "files": {
+        "report.json": "24e1cf02805280f116533e128d693bca3deface562329d5c3ce18a27b873ece8",
+        "report.md": "b2cc546ff44e7fb1986910bab06c29d460a526f75ff772b1809e9cce118be91a",
+        "report.html": "c5d9a9901008371c7a8756c440f681649d93ad98a6273001500a1cdf98258311",
+        "published.html": "c5d9a9901008371c7a8756c440f681649d93ad98a6273001500a1cdf98258311"
+      },
+      "assessedSource": "actual-edition-report.json",
+      "failures": []
+    }
+  ],
+  "limits": [
+    "旧日报和周报完整原文真实保留；没有历史LLM完整输入和响应，不执行人工伪造旧生成器。",
+    "当前样本对同一冻结来源做确定性事实重建；历史正文对照属于原文复核，不能宣称严格同输入的LLM改善率。",
+    "月度与外部阻塞档缺少对应旧技能报告，旧结果为未取得，不填零、不伪造旧正文。",
+    "独立来源预标注未经真人审核。"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "sourceUrl": "https://main-prd-agent.miduo.org/api/document-store/public/share/OBvWO_n9HZrj/entries",
+  "capturedAt": "2026-11-13T11:28:32.054493+00:00",
+  "entry": {
+    "id": "f98121268f2f4926a100d5c253a6ab4c",
+    "title": "日报-2026-09-30-今日大事早知道",
+    "storeId": "115bc3ab603444d38066585852ef3d6d",
+    "metadata": {
+      "kind": "daily-report",
+      "dailyDate": "2026-09-30",
+      "format": "html",
+      "lastCommit": "ae1727e15a2e91778aa72e7254ad30a695a6fe11",
+      "coverTo": "2026-09-30T05:09:17+08:00"
+    },
+    "createdAt": "2026-09-30T01:06:57.478Z",
+    "updatedAt": "2026-09-30T01:07:00.606Z",
+    "contentHash": null
+  }
+}

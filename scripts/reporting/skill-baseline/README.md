@@ -14,11 +14,11 @@
 python3 scripts/reporting/skill-baseline/replay.py \
   --out /tmp/report-skill-baseline/comparison.json \
   --work /tmp/report-skill-baseline/editions \
-  --require-edition
+  --require-edition --local-publish
 python3 scripts/tests/test_skill_report_evaluation.py
 ```
 
-当前技能的正式构建入口为 `scripts/reporting/edition.py build --ledger … --context … --start … --end … --cadence daily|weekly|monthly --out …`。回放会实际调用该入口，在仓库外保存每组 JSON/Markdown/HTML，而不是把独立事实页面冒充完整技能报告。`--require-edition` 是交付检查必须项；缺入口则失败。诊断时可不带该开关先单独检查事实规则，但这种输出不算完整技能交付。
+当前技能的正式构建入口为 `scripts/reporting/edition.py build --ledger … --context … --start … --end … --cadence daily|weekly|monthly --out …`。回放会实际调用该入口，在仓库外保存每组 JSON/Markdown/HTML，而不是把独立事实页面冒充完整技能报告。`--local-publish` 会逐刊调用原 `publish.py` 的本地模式并核对落盘文件，只读来源、不写线上库。`--require-edition` 是交付检查必须项；缺入口则失败。诊断时可不带该开关先单独检查事实规则，但这种输出不算完整技能交付。
 
 ## 如何看结果
 
