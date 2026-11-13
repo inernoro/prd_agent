@@ -34,6 +34,8 @@ jobs:
         uses: dorny/paths-filter@v3
         id: filter
         with:
+          # 验收分支每次推送都检查整条分支的改动，避免最后一次小修跳过既有影响面。
+          base: ${{ github.ref == 'refs/heads/fix/report-reading-parity' && 'main' || github.ref }}
           filters: |
             server:
               - 'prd-api/**'

@@ -22,6 +22,7 @@ import {
   Users,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
+import { isSessionAuthenticationFailure } from '@/services/real/apiClient';
 import { viewTeamWeekShare, type TeamWeekShareViewData } from '@/services';
 
 /**
@@ -36,7 +37,7 @@ import { viewTeamWeekShare, type TeamWeekShareViewData } from '@/services';
 export default function ReportTeamShareViewPage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const resolvedTheme = useResolvedThemeMode();
   useApplyDocumentTheme(pathname, resolvedTheme);
   // 智能返回：弹栈回真正的上一页；分享链接直达无历史时兜底回首页
@@ -68,10 +69,13 @@ export default function ReportTeamShareViewPage() {
       return;
     }
     const code = res.error?.code;
-    if (code === 'UNAUTHORIZED') {
-      if (!isAuthenticated) {
+    // HTTP状态未保留，仅识别会话码；已登录UNAUTHORIZED仍是分享密码恢复。
+    if (isSessionAuthenticationFailure(0, code)) {
+      if (code !== 'UNAUTHORIZED' || !isAuthenticated) {
         setNeedLogin(true);
+        setNeedPassword(false);
       } else {
+        setNeedLogin(false);
         setNeedPassword(true);
         if (pwd !== undefined) {
           setWrongPassword(true);
@@ -97,8 +101,9 @@ export default function ReportTeamShareViewPage() {
   };
 
   const goLogin = () => {
-    const currentPath = window.location.pathname + window.location.search;
-    navigate(`/login?redirect=${encodeURIComponent(currentPath)}`);
+    const currentPath = pathname + search;
+    useAuthStore.getState().logout(); // 同步清本地会话，避免登录页已认证守卫跳回。
+    navigate(`/login?returnUrl=${encodeURIComponent(currentPath)}`);
   };
 
   if (loading) {
