@@ -27,7 +27,8 @@
           "SourceSystem": "compat-regression"
         },
         "ExpectedModel": "compat-model"
-      }
+      },
+      "expectedText": "OK"
     },
     {
       "id": "native-tools-json",
@@ -105,7 +106,8 @@
           "SourceSystem": "compat-regression"
         },
         "ExpectedModel": "compat-model"
-      }
+      },
+      "expectedText": "OK"
     },
     {
       "id": "native-tools-stream",
@@ -176,7 +178,8 @@
           "require_parameters": true
         },
         "model": "compat-model"
-      }
+      },
+      "expectedText": "OK"
     },
     {
       "id": "openai-tools-json",
@@ -240,7 +243,8 @@
           "require_parameters": true
         },
         "model": "compat-model"
-      }
+      },
+      "expectedText": "OK"
     },
     {
       "id": "openai-tools-stream",
@@ -301,7 +305,8 @@
         "max_tokens": 128,
         "stream": false,
         "model": "compat-model"
-      }
+      },
+      "expectedText": "OK"
     },
     {
       "id": "claude-tools-json",
@@ -358,7 +363,8 @@
         "max_tokens": 128,
         "stream": true,
         "model": "compat-model"
-      }
+      },
+      "expectedText": "OK"
     },
     {
       "id": "claude-tools-stream",
@@ -420,7 +426,8 @@
           "maxOutputTokens": 128
         },
         "model": "compat-model"
-      }
+      },
+      "expectedText": "OK"
     },
     {
       "id": "gemini-tools-json",
@@ -496,7 +503,8 @@
           "maxOutputTokens": 128
         },
         "model": "compat-model"
-      }
+      },
+      "expectedText": "OK"
     },
     {
       "id": "gemini-tools-stream",
@@ -579,7 +587,8 @@
         },
         "ExpectedModel": "compat-model"
       },
-      "parameter": "reasoning_effort"
+      "parameter": "reasoning_effort",
+      "expectedText": "OK"
     },
     {
       "id": "reasoning_effort-stream",
@@ -609,7 +618,8 @@
         },
         "ExpectedModel": "compat-model"
       },
-      "parameter": "reasoning_effort"
+      "parameter": "reasoning_effort",
+      "expectedText": "OK"
     },
     {
       "id": "reasoning-json",
@@ -641,7 +651,8 @@
         },
         "ExpectedModel": "compat-model"
       },
-      "parameter": "reasoning"
+      "parameter": "reasoning",
+      "expectedText": "OK"
     },
     {
       "id": "reasoning-stream",
@@ -673,7 +684,8 @@
         },
         "ExpectedModel": "compat-model"
       },
-      "parameter": "reasoning"
+      "parameter": "reasoning",
+      "expectedText": "OK"
     }
   ]
 }

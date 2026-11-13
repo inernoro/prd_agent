@@ -82,7 +82,7 @@
 
 | 未关闭项 | 当前边界 | 负责人及关闭条件 |
 |---|---|---|
-| 真实供应商验证 | 本次没有目标测试网关的合法 service key/任务许可；未运行，不以替身通过替代 | 网关维护者：用已有模型执行同一完整部署提交的 provider 报告，并逐项核对未验证范围 |
+| 真实供应商验证 | 需要按实际预览入口核验项目网关密钥作用域与任务许可；没有合法调用和审计证据时标为未验收，不以替身通过替代 | 网关维护者：用已有模型执行同一完整部署提交的 provider 报告，并逐项核对未验证范围 |
 | 非流式结束原因 | Native DTO 没有结束原因；兼容出口部分路径从工具存在性推断 stop/tool_calls，无法保证 length/safety 保真 | 网关维护者：携带原始结束原因并补所有出口的固定截断/过滤响应回归 |
 | Claude SSE 用量 | compatible SSE 当前只回吐 output usage；input/cache 不完整 | 网关维护者：保留开始及终止 usage，并补对应完整事件流断言 |
 | 旧入口严格参数合同 | Claude/Gemini compatible 仍默认 default-drop；任意参数没有通用 fail-closed 保证；Gemini ANY 仅验证单个 allowedFunctionNames | 网关维护者：逐项实现或拒绝未支持转换，补物理请求和拒绝断言后再声明严格支持 |

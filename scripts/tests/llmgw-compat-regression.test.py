@@ -7,6 +7,7 @@ import tempfile
 import re
 import subprocess
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -52,6 +53,49 @@ class CompatibilityTests(unittest.TestCase):
   frames[1]['choices'][0]['delta']['tool_calls'][0]['id']='call_another'
   frames[-1]['usage']['completion_tokens']=12
   self.assertEqual(m.normalize(CASE,200,'text/event-stream',wire(FRAMES)),m.normalize(CASE,200,'text/event-stream',wire(frames)))
+
+ def test_fixed_text_rejects_a_different_answer_and_preserves_meaning(self):
+  case={'protocol':'openai','kind':'text','stream':False,'expectedText':'OK'}
+  payload={'model':'fixed','choices':[{'message':{'content':'OK'},'finish_reason':'stop'}], 'usage':{'prompt_tokens':11,'completion_tokens':7}}
+  self.assertEqual('OK',m.normalize(case,200,'application/json',json.dumps(payload))['text'])
+  payload['choices'][0]['message']['content']='WRONG'
+  with self.assertRaisesRegex(AssertionError,'fixed text meaning changed'):
+   m.normalize(case,200,'application/json',json.dumps(payload))
+  case['stream']=True
+  good=[{'model':'fixed','choices':[{'delta':{'content':'O'}}]}, {'choices':[{'delta':{'content':'K'},'finish_reason':'stop'}],'usage':payload['usage']}]
+  self.assertEqual('OK',m.normalize(case,200,'text/event-stream',wire(good))['text'])
+  good[1]['choices'][0]['delta']['content']='X'
+  with self.assertRaisesRegex(AssertionError,'fixed text meaning changed'):
+   m.normalize(case,200,'text/event-stream',wire(good))
+
+ def test_unsupported_parameters_require_a_structured_rejection(self):
+  case={'protocol':'native','kind':'reasoning','stream':True}
+  good='data: {"Type":5,"ErrorCode":"PARAMETER_PROTOCOL_UNSUPPORTED","Error":"unsupported"}\n\n'
+  self.assertEqual({'rejected':'PARAMETER_PROTOCOL_UNSUPPORTED'},m.validate_rejection(case,200,'text/event-stream',good))
+  bad='data: {"Type":1,"Content":"PARAMETER_PROTOCOL_UNSUPPORTED is answer text"}\n\n'
+  for raw,status,media in [(bad,200,'text/event-stream'),(good+bad,200,'text/event-stream'),(good,503,'text/event-stream'),('{"Success":true,"ErrorCode":"PARAMETER_PROTOCOL_UNSUPPORTED"}',400,'application/json')]:
+   with self.subTest(status=status,raw=raw),self.assertRaises(AssertionError):m.validate_rejection(case,status,media,raw)
+  case['stream']=False
+  self.assertEqual({'rejected':'PARAMETER_PROTOCOL_UNSUPPORTED'},m.validate_rejection(case,400,'application/json','{"Success":false,"ErrorCode":"PARAMETER_PROTOCOL_UNSUPPORTED"}'))
+
+ def test_bad_evidence_fails_reports_then_parallel_recovery_is_isolated(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);caps=root/'captures';caps.mkdir();corpus=root/'requests.json'
+   corpus.write_text(json.dumps({'cases':[{'id':'ack','protocol':'openai','kind':'text','stream':False,'expectedText':'OK'}]}))
+   raw=json.dumps({'model':'fixed','choices':[{'message':{'content':'OK'},'finish_reason':'stop'}],'usage':{'prompt_tokens':11,'completion_tokens':7}})
+   cap={'sourceCommit':'a'*40,'status':200,'contentType':'application/json','raw':raw}
+   for upstream in ('openai','claude'):(caps/(upstream+'--ack.json')).write_text(json.dumps(cap))
+   broken=copy.deepcopy(cap);broken['sourceCommit']=None;(caps/'openai--ack.json').write_text(json.dumps(broken))
+   def run(name):return m.main(['--mode','simulation','--captures',str(caps),'--expected-commit','a'*40,'--output',str(root/(name+'.json'))])
+   with patch.object(m,'CORPUS',corpus):
+    self.assertEqual(1,run('failure'))
+    self.assertEqual('missing capture assembly version',json.loads((root/'failure.json').read_text())['cases'][0]['failure'])
+    (caps/'openai--ack.json').write_text(json.dumps(cap))
+    with ThreadPoolExecutor(max_workers=2) as pool:self.assertEqual([0,0],list(pool.map(run,['recovered-a','recovered-b'])))
+   self.assertEqual('fail',json.loads((root/'failure.json').read_text())['status'])
+   m.compare(json.loads((root/'recovered-a.json').read_text()),json.loads((root/'recovered-b.json').read_text()))
+   with self.assertRaisesRegex(AssertionError,'response event must be an object'):
+    m.normalize({'protocol':'openai','kind':'text','stream':True,'expectedText':'OK'},200,'text/event-stream','data: []\n\ndata: [DONE]\n\n')
 
  def test_compare_never_mixes_real_and_simulated_or_missing_cases(self):
   a={'schema':1,'mode':'simulation','status':'pass','corpusSha256':'fixed','cases':[{'id':'a','semantic':{'finish':'stop'}}]}

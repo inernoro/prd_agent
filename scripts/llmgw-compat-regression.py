@@ -64,6 +64,7 @@ def normalize(case, status, content_type, raw, expected_usage=None):
         if args is not None: item['arguments'] += args
 
     for f in frames:
+        assert isinstance(f, dict), 'response event must be an object'
         assert not f.get('error') and get(f, 'success', True) is not False, 'error response'
         if protocol == 'native':
             reported_model = get(get(f, 'resolution') or {}, 'actualModel') or reported_model
@@ -156,10 +157,29 @@ def normalize(case, status, content_type, raw, expected_usage=None):
         assert finish == 'tools', 'tool finish reason'
     else:
         assert not normalized_tools, 'unexpected tool'
-        assert text.strip(), 'empty text'
+        expected_text = case.get('expectedText')
+        assert isinstance(expected_text, str) and expected_text, 'fixed request has no text expectation'
+        assert text.strip() == expected_text, 'fixed text meaning changed'
         assert finish == 'stop', 'text finish reason'
-    return {'reportedModel': reported_model, 'textPresent':bool(text.strip()), 'finish':finish, 'finishEvidence': 'inferred' if protocol == 'native' and not stream else 'wire', 'tools':normalized_tools,
+    return {'reportedModel': reported_model, 'text': text.strip() if case['kind'] != 'tools' else None, 'textPresent':bool(text.strip()), 'finish':finish, 'finishEvidence': 'inferred' if protocol == 'native' and not stream else 'wire', 'tools':normalized_tools,
             'usageFields':sorted(usage), 'usageValid':True}
+
+
+def validate_rejection(case, status, content_type, raw):
+    """A matching phrase in successful output is not an error contract."""
+    code = 'PARAMETER_PROTOCOL_UNSUPPORTED'
+    if status == 400:
+        assert 'application/json' in content_type, 'rejection content type'
+        payload = json.loads(raw)
+        assert isinstance(payload, dict), 'rejection must be an object'
+        assert get(payload, 'success') is False and get(payload, 'errorCode') == code, 'missing structured rejection'
+    else:
+        assert case['stream'] and status == 200 and 'text/event-stream' in content_type, 'rejection status or content type'
+        frames, _ = events(raw)
+        assert frames and all(isinstance(f, dict) for f in frames), 'invalid rejection events'
+        assert any(get(f, 'type') in (5, 'Error') and get(f, 'errorCode') == code for f in frames), 'missing structured rejection'
+        assert all(get(f, 'type') in (0, 5, 'Start', 'Error') for f in frames), 'rejected request produced successful output'
+    return {'rejected': code}
 
 
 def compare(before, after):
@@ -215,6 +235,7 @@ def main(argv=None):
                 rejected = upstream == 'claude' and case['kind'] == 'reasoning'
                 if args.mode == 'simulation':
                     cap = json.loads((args.captures / (item['id']+'.json')).read_text())
+                    assert isinstance(cap.get('sourceCommit'), str), 'missing capture assembly version'
                     assert cap['sourceCommit'].lower() == args.expected_commit.lower(), 'capture assembly version mismatch'
                     report['observedCommit'] = cap['sourceCommit']
                     status, content_type, raw = cap['status'], cap['contentType'], cap['raw']
@@ -245,8 +266,7 @@ def main(argv=None):
                     item['responseBytes'] = len(raw.encode('utf-8'))
                     item['responseSha256'] = hashlib.sha256(raw.encode()).hexdigest()
                 if rejected:
-                    assert 'PARAMETER_PROTOCOL_UNSUPPORTED' in raw and (status == 400 or case['stream']), 'missing explicit protocol rejection'
-                    item['semantic'] = {'rejected':'PARAMETER_PROTOCOL_UNSUPPORTED'}
+                    item['semantic'] = validate_rejection(case, status, content_type, raw)
                 else:
                     item['semantic'] = normalize(case,status,content_type,raw, {'inputTokens':11,'outputTokens':7} if args.mode == 'simulation' else None)
                 item['status'] = 'pass'

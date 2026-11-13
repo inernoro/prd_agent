@@ -48,7 +48,7 @@ python3 scripts/llmgw-compat-regression.py --mode simulation \
   --baseline work/compat-v1/simulation.json --output work/compare.json
 ```
 
-比较检查语料哈希、用例集合、证据类型、正文存在、工具名/JSON 参数、报告模型、结束语义和用量字段。模型自然语言措辞、生成 id、时间戳及真实 token 数不做逐字比较；工具参数仍精确比较。“正文非空”不能证明自然语言任务质量。
+比较检查语料哈希、用例集合、证据类型、固定应答正文、工具名/JSON 参数、报告模型、结束语义和用量字段。本批文本请求明确要求回复 `OK`，只忽略首尾空白；错误正文必须失败，报告保留实际确认应答。生成 id、时间戳及真实 token 数不做逐字比较；工具参数仍精确比较。这只证明固定确认应答的语义，不外推为一般自然语言任务质量。
 
 ## 真实供应商验证
 
@@ -66,6 +66,19 @@ CI 的 `LLMGW_COMPAT_TARGET` secret 保存目标 JSON，引用 `LLMGW_COMPAT_KEY
 
 ## 探测有效性与未验证项
 
-Python 回归包含删除 finish_reason、tool id/name/arguments、用量和终止帧的故障探测；任何一次必须被拒绝。新 Gemini 固定工具请求包含两段中文 JSON 参数，可直接发现“普通聊天正常，流式工具参数损坏”。
+Python 回归包含删除 finish_reason、tool id/name/arguments、用量和终止帧的故障探测；任何一次必须被拒绝。固定应答被改成错误内容，以及成功正文冒充“不支持参数”错误，都必须失败；拒绝必须有结构化错误码与失败信封。新 Gemini 固定工具请求包含两段中文 JSON 参数，可直接发现“普通聊天正常，流式工具参数损坏”。
 
-当前任务没有可用于目标测试网关的 Gateway service key 和任务许可；AI_ACCESS_KEY 不是这类端点的合法替代凭据。本次真实供应商验证未运行，不能将 simulation 通过当成 provider 通过。原生 Responses 真实配对、旧 compatible 默认丢参边界、全部终止/用量细项的出口保真仍见[协议保真债务](../../doc/debt.platform.llm-gateway.protocol-fidelity.md)。后续由网关维护者用已有模型完成同一部署版本的 provider 报告后，才能对所选范围签署真实兼容结论。
+真实验证必须按当次预览版本、项目凭据的实际作用域与任务许可执行。项目存在网关密钥配置，不等于当前调用已获准；AI_ACCESS_KEY 也不是网关调用凭据的替代。未触达真实供应商时只可标为未验收，不能将 simulation 通过当成 provider 通过。原生 Responses 真实配对、旧 compatible 默认丢参边界、全部终止/用量细项的出口保真仍见[协议保真债务](../../doc/debt.platform.llm-gateway.protocol-fidelity.md)。后续由网关维护者用已有模型完成同一部署版本的 provider 报告后，才能对所选范围签署真实兼容结论。
+
+
+## 隔离旧行为与修复后行为的证明
+
+不能用修改捕获文件代替旧生产代码的反向验证。以下入口把同一套客户端请求与断言冻结到临时目录，将旧提交的生产代码在隔离 Git worktree 中编译，再执行当前提交。只在旧版的代表性用例真实失败、修复版通过时，证明报告才为 pass；编译失败、缺失捕获或版本不符均不算有效的红灯。不会改动运行环境。
+
+```bash
+python3 scripts/llmgw-compat-red-green.py --old-ref <旧提交完整SHA> --output work/red-green-new
+```
+
+输出保留两边的版本、固定测试文件哈希、TRX、捕获、语义失败项与 proof.json；退出时移除自己创建的隔离源码工作树。旧代码应至少触发 Gemini 工具参数分片、跨协议结束枚举和 Claude 分帧输入用量三条失败。若旧提交已具备修复，脚本会拒绝把它当成反向证明。
+
+验收证据必须区分：确定性夹具证明协议转换与检查器的区分能力；预览健康检查仅证明对应版本可达；真实供应商路径仍须独立的合法调用与审计证据。CLI 工具没有新增页面，主题与移动端布局不适用于此入口；不能用旁边控制台页面的截图替代调用结果。

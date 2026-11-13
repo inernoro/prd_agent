@@ -70,6 +70,7 @@ jobs:
               - 'scripts/bundle-official-skills.mjs'
               - 'scripts/test-official-skill-bundles.mjs'
               - 'scripts/llmgw-compat-regression.*'
+              - 'scripts/llmgw-compat-red-green.py'
               - 'scripts/fixtures/llmgw-compat/**'
               - 'scripts/tests/llmgw-compat-regression.test.py'
               - 'scripts/verify-dotnet-test-projects.sh'
