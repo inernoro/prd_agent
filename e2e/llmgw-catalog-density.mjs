@@ -31,6 +31,7 @@ const server = http.createServer((req, res) => {
       return send(res, req.method === 'PUT' ? current : { appCallerId: 'a1', appCallerCode: 'fixture.app-1::chat', requestType: 'chat', current: state.promptVersion ? current : null, versions: state.promptVersion ? [current] : [] });
     }
     if (api === '/platforms') return send(res, { items: [provider], total: 1 });
+    if (api === '/logical-models') return send(res, { items: [{ id: 'logical', publicId: 'fixture-logical', name: '验收对外模型', modelType: 'chat', capabilities: ['chat'], allowedAppCallerCodes: [], defaultForAppCallerCodes: [], routingStrategy: 'priority', enabled: true, offerings: Array.from({ length: state.count }, (_, i) => ({ id: `route-${i + 1}`, targetKind: 'model', targetId: `m${i + 1}`, providerName: provider.name, targetName: `fixture-model-${i + 1}`, upstreamModelId: `fixture-model-${i + 1}`, priority: i + 1, weight: 1, enabled: true, healthStatus: 0 })) }], total: 1 });
     if (api === '/models') return send(res, { items: Array.from({ length: state.count }, (_, i) => model(i + 1)), total: state.count });
     if (api === '/service-keys') return send(res, Array.from({ length: state.count }, (_, i) => key(i + 1)));
     if (api === '/legacy-key-cutover') return send(res, { applicable: true, requiredIngressProtocols: ['openai-compatible'], requiredScopes: ['invoke'], status: 'observing', deadlineAt: '2099-11-13T08:00:00Z', allowedAppCallerCodes: ['fixture.access::chat'], successorServiceKeyIds: [], requiredSuccessorObservations: 1, successorObservedCount: 0, usage: [] });
@@ -74,7 +75,8 @@ try {
       const metrics = await page.locator(selector).first().evaluate(el => {
         const r = el.getBoundingClientRect(); let scroll = el.parentElement;
         while (scroll && !['auto', 'scroll'].includes(getComputedStyle(scroll).overflowY)) scroll = scroll.parentElement;
-        const last = el.closest('tbody')?.lastElementChild?.getBoundingClientRect();
+        const last = (el.closest('tbody')?.lastElementChild || el.closest('.lg-collection-scroll')?.lastElementChild)?.getBoundingClientRect();
+        const ordinarySection = el.closest('.lg-entity-detail-collection')?.getBoundingClientRect();
         const area = selector => [...document.querySelectorAll(selector)].filter(node => { const box = node.getBoundingClientRect(); return box.height > 0 && box.bottom <= r.y + 1; }).reduce((sum, node) => sum + node.getBoundingClientRect().height, 0);
         const coveragePadding = [];
         for (const node of document.querySelectorAll('.lg-collection-key-overview > div, .lg-collection-key-legacy')) {
@@ -90,7 +92,7 @@ try {
         return { y: r.y, height: r.height, font: getComputedStyle(el).fontSize, viewport: innerWidth, width: document.documentElement.scrollWidth, scrollTail: scroll && last ? scroll.getBoundingClientRect().bottom - last.bottom : null,
           firstRecordScroll: Math.max(0, r.bottom - innerHeight),
           nonessentialBeforeData: { bulkMaintenance: [...document.querySelectorAll('summary')].filter(node => node.textContent.includes('高级：批量维护已有模型') && node.parentElement.getBoundingClientRect().bottom <= r.y).reduce((sum, node) => sum + node.parentElement.getBoundingClientRect().height, 0), coverageWrapperPadding: paddingHeight, genericAppIntroduction: area('.lg-app-detail-compact .lg-entity-detail-description, .lg-entity-detail-page:not(.lg-entity-detail-bounded) .lg-entity-detail-description'), installationForm: installer && installer.height > 0 && installer.bottom <= r.y ? installer.height : 0 },
-          sourceFactScroll: source ? Math.max(0, source.bottom - innerHeight) : null };
+          sourceFactScroll: source ? Math.max(0, source.bottom - innerHeight) : null, ordinarySectionTail: ordinarySection && last ? ordinarySection.bottom - last.bottom : null };
       });
       const name = `${narrow ? 'narrow' : 'desktop'}-${theme}-${id}`;
       await page.screenshot({ path: path.join(OUT, `${name}.png`) }); results.push({ id: name, provenance: 'deterministic-fixture', metrics });
@@ -154,6 +156,21 @@ try {
     await expect(page.getByText('布局夹具读取失败，请重试', { exact: true })).toBeVisible();
     await page.goto(`${origin}/llmgw/platforms?view=exchange#image-layering`);
     await expect(page.locator('#fal-image-layering-key')).toBeVisible();
+    for (const kind of ['model', 'provider']) {
+      state.count = 2;
+      await page.goto(`${origin}/llmgw/${kind === 'model' ? 'models/view?modelId=m1&platformId=provider&model=fixture-model-1' : 'platforms/view?id=provider&name=fixture'}`);
+      const data = kind === 'model' ? '.lg-entity-detail-collection .lg-collection-detail-card' : '.lg-collection-hosted-table tbody tr';
+      await expect(page.locator(data)).toHaveCount(kind === 'model' ? 1 : 2);
+      const few = await snapshot(`${kind}-detail-few`, data);
+      check(`${kind}少量记录不由详情容器撑空`, few.ordinarySectionTail < 8, few);
+      check(`${kind}单页不展示无效翻页`, await page.getByRole('button', { name: '下一页', exact: true }).count() === 0, few);
+      state.count = 31;
+      await page.goto(`${origin}/llmgw/${kind === 'model' ? 'models/view?logicalModelId=logical&model=fixture-logical' : 'platforms/view?id=provider&name=fixture'}`);
+      await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeVisible();
+      for (let index = 0; index < 3; index++) await page.getByRole('button', { name: '下一页', exact: true }).click();
+      await expect(page.getByText('fixture-model-31', { exact: true }).first()).toBeVisible();
+      await snapshot(`${kind}-detail-many-last`, 'tbody tr');
+    }
     state.count = 51; await page.goto(`${origin}/llmgw/app-callers`); await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeVisible();
     await page.getByRole('button', { name: '下一页', exact: true }).click(); await expect(page.getByText('fixture.app-51::chat', { exact: true }).filter({ visible: true })).toBeVisible();
     await snapshot('callers-many-last', narrow ? '.lg-app-caller-mobile-card' : 'tbody tr');
