@@ -26,6 +26,9 @@ def validate(ledger, require_live=False, require_complete=False):
 
     if not isinstance(ledger, dict) or ledger.get("schema_version") != 1:
         return ["ledger: expected object with schema_version 1"], counts
+    target_revision = ledger.get("target_revision")
+    if require_live and not nonempty(target_revision):
+        issue("ledger", "target_revision required for same-version real-preview acceptance")
     scope, cases = ledger.get("scope"), ledger.get("cases")
     if not isinstance(scope, list) or not scope:
         issue("scope", "nonempty page inventory required")
@@ -103,14 +106,15 @@ def validate(ledger, require_live=False, require_complete=False):
             provenance = ev.get("provenance")
             if not isinstance(provenance, str) or provenance not in PROVENANCE:
                 issue(where, "unknown evidence provenance")
-            live |= provenance in ("preview-live", "integration-live")
+            live |= (provenance in ("preview-live", "integration-live")
+                     and nonempty(target_revision) and ev.get("revision") == target_revision)
             for field in ("reference", "revision"):
                 if not nonempty(ev.get(field)):
                     issue(where, f"evidence {field} required")
             if isinstance(ev.get("revision"), str):
                 revisions.add(ev["revision"])
         if require_live and not live:
-            issue(where, "fixture evidence cannot satisfy real-preview requirement")
+            issue(where, "same-target-revision real-preview evidence required; old previews and fixtures cannot substitute")
         checks = case.get("checks")
         if not isinstance(checks, list) or not checks:
             issue(where, "observable checks required")
@@ -156,6 +160,8 @@ def validate(ledger, require_live=False, require_complete=False):
         for field in ("dataset", "viewport", "theme", "role"):
             if before.get(field) != after.get(field):
                 issue(where, f"comparison {field} differs; cannot claim same-condition improvement")
+        if require_live and after.get("revision") != target_revision:
+            issue(where, "comparison after revision must match target_revision")
     for page, required in pages.items():
         for state in sorted(required):
             if (page, state) not in observed:

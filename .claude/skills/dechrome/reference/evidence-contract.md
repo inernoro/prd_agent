@@ -9,6 +9,7 @@
 ```json
 {
   "schema_version": 1,
+  "target_revision": "待验收部署提交",
   "scope": [{
     "id": "upstreams/providers",
     "route": "/platforms?view=providers",
@@ -48,7 +49,7 @@
 
 `reference` 是可访问的报告链接或交接中的相对工件路径；不放凭据、会话和私有配置。`revision` 记录实际观测版本，不用期望部署版本代替。`blocked` 需要 `reason` 与 `blocker`（具体失败及恢复条件），可附失败入口证据。`not-applicable` 不需要证据，但必须有可解释理由。
 
-`--require-live` 要求所有非受阻、非不适用 case 至少有真实预览或真实集成证据；否则仍可检查确定性账本，但不能标为真实验收齐备。`--require-complete` 拒绝受阻和失败断言。二者一起使用才是完整真实验收的字段门槛；仍须人工查证引用和判定。
+`--require-live` 要求顶层声明 `target_revision`；所有非受阻、非不适用 case 至少有该版本的真实预览或真实集成证据，修复对照的 after 也必须是该版本。旧版本真实截图不能搭配新版夹具冒充新版真实验收；否则仍可检查确定性账本，但不能标为真实验收齐备。`--require-complete` 拒绝受阻和失败断言。二者一起使用才是完整真实验收的字段门槛；仍须人工查证引用和判定。
 
 ## 修复的前后比较
 

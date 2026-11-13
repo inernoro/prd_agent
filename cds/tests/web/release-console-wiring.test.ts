@@ -534,13 +534,14 @@ describe('发布控制台 · 状态条不许被按钮文案顶高', () => {
  */
 describe('发布控制台 · 状态条一行的宽度预算', () => {
   it('中段 min-width 留得下操作组，且版本选择不在操作组里', () => {
-    expect(PAGE).toContain('min-w-0 flex-1 basis-[21.25rem]');
+    expect(PAGE).toContain('min-w-0 flex-1 basis-[15rem] sm:basis-[21.25rem]');
     const STACK_MIN = 340;
     const ICON = 52;
     const GAP = 18;
     // 操作组只有三个按钮：发布 + 试跑 + 中止 + 两个 8px 间隔
     const GROUP = 120 + 72 + 90 + 8 * 2;
     expect(ICON + GAP + STACK_MIN + GAP + GROUP, '1600 宽下内容行只有 47.75rem').toBeLessThanOrEqual(764);
+    expect(ICON + GAP + 240, '窄屏中段不应把图标挤成单独一行；实际浏览器另验').toBeLessThanOrEqual(340);
   });
 
   /**

@@ -47,9 +47,12 @@
   flex-shrink: 0;
 }
 
-.lg-app-caller-page[data-size="small"] {
-  overflow-y: auto;
+@media (min-width: 681px) {
+  .lg-app-caller-page[data-size="small"] { overflow-y: auto; }
 }
+
+/* 移动卡片不挤压裁掉底部配置操作；滚动留给已有清单容器。 */
+.lg-app-caller-mobile-card { flex-shrink: 0; }
 
 .lg-physical-models-small .lg-page-body {
   overflow-y: auto;

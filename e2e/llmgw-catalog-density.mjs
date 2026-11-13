@@ -62,6 +62,7 @@ const check = (name, ok, metrics) => { if (!ok) failures.push({ name, metrics })
 const browser = await chromium.launch(process.env.LLMGW_CHROMIUM ? { executablePath: process.env.LLMGW_CHROMIUM } : fs.existsSync('/usr/bin/chromium') ? { executablePath: '/usr/bin/chromium' } : {});
 try {
   for (const narrow of [false, true]) for (const theme of ['light', 'dark']) {
+    if (process.env.LLMGW_CATALOG_FILTER && !new RegExp(process.env.LLMGW_CATALOG_FILTER).test(`${narrow ? 'narrow' : 'desktop'}-${theme}`)) continue;
     state.count = 2; state.failure = false; state.role = 'owner'; state.promptVersion = 0; state.promptFailure = false;
     const context = await browser.newContext({ viewport: narrow ? { width: 390, height: 844 } : { width: 1440, height: 900 }, isMobile: narrow, hasTouch: narrow, colorScheme: theme });
     const page = await context.newPage(); const errors = [];
@@ -121,6 +122,7 @@ try {
     check('单页调用方无无效翻页', await page.getByRole('button', { name: '下一页', exact: true }).count() === 0, callers);
     if (!narrow) check('少量调用方不撑空表体', callers.scrollTail < 8, callers);
     const config = page.getByRole('button', { name: '配置', exact: true }).filter({ visible: true }).first();
+    if (narrow) check('窄屏卡片不裁掉主操作', await config.evaluate(el => el.getBoundingClientRect().bottom <= el.closest('article').getBoundingClientRect().bottom + 1), '主操作不能依赖自动滚动overflow:hidden容器才出现');
     await config.click(); await expect(page.getByRole('button', { name: '保存配置', exact: true }).filter({ visible: true }).first()).toBeVisible();
     await page.getByRole('button', { name: '关闭', exact: true }).filter({ visible: true }).first().click();
     await page.goto(`${origin}/llmgw/app-callers/view?code=fixture.app-1%3A%3Achat`); await expect(page.locator('h1')).toBeVisible();
@@ -146,13 +148,13 @@ try {
     await expect(page.locator('#image-layering').getByText('未安装', { exact: true })).toBeVisible();
     const ability = page.locator('details#image-layering');
     if (await ability.count()) {
-      await ability.locator('summary').focus(); await page.keyboard.press('Enter');
+      await ability.locator(':scope > summary').focus(); await page.keyboard.press('Enter');
       await expect(page.locator('#fal-image-layering-key')).toBeVisible();
     }
     await page.locator('#fal-image-layering-key').fill('fixture-only-not-a-real-key');
     await page.getByRole('button', { name: '安装能力', exact: true }).click();
     await expect(page.getByText('布局夹具读取失败，请重试', { exact: true })).toBeVisible();
-    if (await ability.count()) await ability.locator('summary').click();
+    if (await ability.count()) await ability.locator(':scope > summary').click();
     await expect(page.getByText('布局夹具读取失败，请重试', { exact: true })).toBeVisible();
     await page.goto(`${origin}/llmgw/platforms?view=exchange#image-layering`);
     await expect(page.locator('#fal-image-layering-key')).toBeVisible();
@@ -168,8 +170,13 @@ try {
       await page.goto(`${origin}/llmgw/${kind === 'model' ? 'models/view?logicalModelId=logical&model=fixture-logical' : 'platforms/view?id=provider&name=fixture'}`);
       await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeVisible();
       for (let index = 0; index < 3; index++) await page.getByRole('button', { name: '下一页', exact: true }).click();
-      await expect(page.getByText('fixture-model-31', { exact: true }).first()).toBeVisible();
+      await expect(page.getByText(kind === 'model' ? 'fixture-model-31' : 'fixture-model-9', { exact: true }).first()).toBeVisible();
+      await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeDisabled();
       await snapshot(`${kind}-detail-many-last`, 'tbody tr');
+      if (kind === 'provider') {
+        await page.getByRole('searchbox', { name: '搜索模型名称、标识或协议' }).fill('fixture-model-31');
+        await expect(page.getByText('fixture-model-31', { exact: true }).first()).toBeVisible();
+      }
     }
     state.count = 51; await page.goto(`${origin}/llmgw/app-callers`); await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeVisible();
     await page.getByRole('button', { name: '下一页', exact: true }).click(); await expect(page.getByText('fixture.app-51::chat', { exact: true }).filter({ visible: true })).toBeVisible();
@@ -178,6 +185,6 @@ try {
     state.failure = true; await page.reload(); await expect(page.getByText('布局夹具读取失败，请重试', { exact: true })).toBeVisible();
     check('页面无运行时错误', errors.length === 0, errors); await context.close();
   }
-} finally { await browser.close(); server.close(); fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ results, failures }, null, 2)); }
+} catch (error) { failures.push({ name: '浏览器核心路径', error: error.message }); console.error(error.message); } finally { await browser.close(); server.close(); fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ results, failures }, null, 2)); }
 console.log(JSON.stringify({ snapshots: results.length, failures }, null, 2));
 if (failures.length) process.exitCode = 1;

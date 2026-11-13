@@ -19,6 +19,7 @@ def ledger():
     states = sorted(checker.STATES)
     return {
         "schema_version": 1,
+        "target_revision": "new",
         "scope": [{"id": "upstreams", "route": "/upstreams", "goal": "Find an upstream",
                    "frequency": "High; task-inferred", "core_action": "Open connection details",
                    "required_states": states}],
@@ -38,6 +39,17 @@ class EvidenceBoundaryTests(unittest.TestCase):
         for case in data["cases"]:
             case["evidence"][0]["provenance"] = "preview-live"
         self.assertFalse(checker.validate(data, require_live=True, require_complete=True)[0])
+
+    def test_old_real_preview_cannot_satisfy_new_revision(self):
+        data = ledger()
+        for case in data["cases"]:
+            case["evidence"].append({"provenance": "preview-live", "reference": "old-preview.png", "revision": "old"})
+        self.assertTrue(checker.validate(data, require_live=True)[0])
+        for case in data["cases"]:
+            case["evidence"][-1]["revision"] = "new"
+        self.assertFalse(checker.validate(data, require_live=True)[0])
+        del data["target_revision"]
+        self.assertTrue(checker.validate(data, require_live=True)[0])
 
     def test_missing_scope_case_and_blocked_path_stay_visible(self):
         data = ledger()
