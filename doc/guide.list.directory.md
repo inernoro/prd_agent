@@ -307,6 +307,7 @@
 
 ### 五、计划
 
+- [视频制作台新环境验收续接 · 计划](./plan.video-agent.acceptance.handoff.md) `plan.video-agent.acceptance.handoff`
 - [CDS 代码审查需求兑现台账 · 计划](./plan.cds.code-review-delivery.md) `plan.cds.code-review-delivery`
   > 用户全部要求逐项对照，区分已上线、已合并和仍未完成的工作。
 
