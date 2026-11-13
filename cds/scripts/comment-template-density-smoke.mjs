@@ -75,7 +75,10 @@ try{
    await preview.filter({hasText:'旧草稿 fixture/branch'}).waitFor();
    assert(await editor.inputValue()==='预览期间的新输入','延迟预览覆盖了较新的草稿');
    delay=0;await editor.fill('');await panel.getByRole('button',{name:'预览',exact:true}).click();
-   await preview.filter({hasText:'fixture/branch'}).waitFor();assert((await preview.innerText()).includes('{{unknown}}'),'未知变量说明与实际保留行为不一致');
+   // The preceding delayed preview also contains fixture/branch. Wait for this
+   // request's complete rendered default, rather than accepting that stale result.
+   await p.waitForFunction(({expected})=>[...document.querySelectorAll('.whitespace-pre-wrap')].some(e=>e.innerText===expected),{expected:body.replaceAll('{{branch}}','fixture/branch')});
+   assert((await preview.innerText()).includes('{{unknown}}'),'未知变量说明与实际保留行为不一致');
   }
   assert(writes.length===0,'布局验收不应保存项目配置');assert(errors.length===0,`页面异常：${errors.join(';')}`);assert(unknown.size===0,`fixture未登记：${[...unknown].join(',')}`);
   await p.close();
