@@ -16,6 +16,75 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// <summary>真实网关发送到内存 HTTP 替身；不访问供应商、不消费额度。</summary>
 public sealed class ReasoningChatBudgetCompatibilityTests
 {
+    public static IEnumerable<object?[]> StrictGpt56Cases()
+    {
+        foreach (var route in new[] { "native-json", "native-stream", "raw-json", "raw-stream" })
+        foreach (var explicitEffort in new[] { false, true })
+        foreach (bool? support in new bool?[] { null, false, true })
+            yield return new object?[] { route, explicitEffort, support };
+    }
+
+    [Theory]
+    [MemberData(nameof(StrictGpt56Cases))]
+    public async Task StrictGpt56_DistinguishesCallerParametersFromGatewayDefaults(
+        string route, bool explicitEffort, bool? support)
+    {
+        var transport = new StrictReasoningUpstream();
+        var capabilities = new Dictionary<string, bool>();
+        if (support.HasValue) capabilities["reasoning_effort"] = support.Value;
+        var gateway = Gateway(transport, "gpt-5.6-sol", capabilities);
+        var stream = route.EndsWith("stream", StringComparison.Ordinal);
+        var body = new JsonObject
+        {
+            ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "合成验收" }),
+            ["max_tokens"] = 128, ["stream"] = stream
+        };
+        if (explicitEffort) body["reasoning_effort"] = "low";
+        var original = body.ToJsonString();
+        var context = new GatewayRequestContext { ParameterPolicy = "strict-require" };
+        bool success;
+        string? code;
+        if (route.StartsWith("raw", StringComparison.Ordinal))
+        {
+            var resolution = await gateway.ResolveModelAsync(AppCallerRegistry.Desktop.Arena.BattleChat, ModelTypes.Chat);
+            var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+            {
+                AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat, ModelType = ModelTypes.Chat,
+                EndpointPath = "/chat/completions", RequestBody = body, Context = context
+            }, resolution);
+            success = response.Success; code = response.ErrorCode;
+        }
+        else
+        {
+            var request = new GatewayRequest
+            {
+                AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat, ModelType = ModelTypes.Chat,
+                RequestBody = body, Context = context
+            };
+            if (stream)
+            {
+                var chunks = new List<GatewayStreamChunk>();
+                await foreach (var chunk in gateway.StreamAsync(request)) chunks.Add(chunk);
+                var error = chunks.FirstOrDefault(x => x.Type == GatewayChunkType.Error);
+                success = error is null; code = error?.ErrorCode;
+                if (success) Assert.Contains(chunks, x => x.Content == "合成结果");
+            }
+            else
+            {
+                var response = await gateway.SendAsync(request);
+                success = response.Success; code = response.ErrorCode;
+            }
+        }
+        var expectedSuccess = support != false && (!explicitEffort || support == true);
+        Assert.Equal(expectedSuccess, success);
+        Assert.Equal(expectedSuccess ? 1 : 0, transport.Calls);
+        Assert.Equal(original, body.ToJsonString());
+        if (expectedSuccess)
+            Assert.Equal(explicitEffort ? "low" : "none", transport.Body!["reasoning_effort"]!.GetValue<string>());
+        else
+            Assert.Equal(support == false ? "PARAMETER_UNSUPPORTED" : "PARAMETER_UNVERIFIED", code);
+    }
+
     [Theory]
     [InlineData("o3")]
     [InlineData("gpt-6.1-sol")]
@@ -194,7 +263,7 @@ public sealed class ReasoningChatBudgetCompatibilityTests
         }
     };
 
-    private static LlmGateway Gateway(StrictReasoningUpstream transport, string model)
+    private static LlmGateway Gateway(StrictReasoningUpstream transport, string model, Dictionary<string, bool>? capabilities = null)
     {
         var resolver = new Mock<IModelResolver>();
         resolver.Setup(r => r.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
@@ -205,7 +274,7 @@ public sealed class ReasoningChatBudgetCompatibilityTests
                 PlatformType = "openai", Protocol = "openai", ResolutionType = "Pinned",
                 ApiUrl = "https://api.openai.com/v1", ApiKey = "synthetic", MaxTokens = 1024,
                 SupportsFunctionCalling = true,
-                ParameterCapabilities = new() { ["temperature"] = true, ["top_p"] = true, ["logprobs"] = true, ["top_logprobs"] = true, ["reasoning_effort"] = true }
+                ParameterCapabilities = capabilities ?? new() { ["temperature"] = true, ["top_p"] = true, ["logprobs"] = true, ["top_logprobs"] = true, ["reasoning_effort"] = true }
             });
         return new LlmGateway(resolver.Object, transport, NullLogger<LlmGateway>.Instance);
     }

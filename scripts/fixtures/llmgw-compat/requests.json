@@ -1,0 +1,699 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "native-text-json",
+      "protocol": "native",
+      "stream": false,
+      "kind": "text",
+      "path": "/gw/v1/invoke",
+      "body": {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "Stream": false,
+        "IncludeThinking": false,
+        "RequestBody": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
+            }
+          ],
+          "max_tokens": 128,
+          "stream": false
+        },
+        "Context": {
+          "ParameterPolicy": "strict-require",
+          "SourceSystem": "compat-regression"
+        },
+        "ExpectedModel": "compat-model"
+      },
+      "expectedText": "OK"
+    },
+    {
+      "id": "native-tools-json",
+      "protocol": "native",
+      "stream": false,
+      "kind": "tools",
+      "path": "/gw/v1/invoke",
+      "body": {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "Stream": false,
+        "IncludeThinking": false,
+        "RequestBody": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Call echo_city exactly once with city 北京. Return only that tool call, with no assistant text."
+            }
+          ],
+          "max_tokens": 128,
+          "stream": false,
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "echo_city",
+                "description": "Echo the given city",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          ],
+          "tool_choice": "required"
+        },
+        "Context": {
+          "ParameterPolicy": "strict-require",
+          "SourceSystem": "compat-regression"
+        },
+        "ExpectedModel": "compat-model"
+      },
+      "expectedToolText": ""
+    },
+    {
+      "id": "native-text-stream",
+      "protocol": "native",
+      "stream": true,
+      "kind": "text",
+      "path": "/gw/v1/stream",
+      "body": {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "Stream": true,
+        "IncludeThinking": false,
+        "RequestBody": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
+            }
+          ],
+          "max_tokens": 128,
+          "stream": true
+        },
+        "Context": {
+          "ParameterPolicy": "strict-require",
+          "SourceSystem": "compat-regression"
+        },
+        "ExpectedModel": "compat-model"
+      },
+      "expectedText": "OK"
+    },
+    {
+      "id": "native-tools-stream",
+      "protocol": "native",
+      "stream": true,
+      "kind": "tools",
+      "path": "/gw/v1/stream",
+      "body": {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "Stream": true,
+        "IncludeThinking": false,
+        "RequestBody": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Call echo_city exactly once with city 北京. Return only that tool call, with no assistant text."
+            }
+          ],
+          "max_tokens": 128,
+          "stream": true,
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "echo_city",
+                "description": "Echo the given city",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          ],
+          "tool_choice": "required"
+        },
+        "Context": {
+          "ParameterPolicy": "strict-require",
+          "SourceSystem": "compat-regression"
+        },
+        "ExpectedModel": "compat-model"
+      },
+      "expectedToolText": ""
+    },
+    {
+      "id": "openai-text-json",
+      "protocol": "openai",
+      "stream": false,
+      "kind": "text",
+      "path": "/v1/chat/completions",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
+          }
+        ],
+        "max_tokens": 128,
+        "stream": false,
+        "provider": {
+          "require_parameters": true
+        },
+        "model": "compat-model"
+      },
+      "expectedText": "OK"
+    },
+    {
+      "id": "openai-tools-json",
+      "protocol": "openai",
+      "stream": false,
+      "kind": "tools",
+      "path": "/v1/chat/completions",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Call echo_city exactly once with city 北京. Return only that tool call, with no assistant text."
+          }
+        ],
+        "max_tokens": 128,
+        "stream": false,
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "echo_city",
+              "description": "Echo the given city",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        ],
+        "tool_choice": "required",
+        "provider": {
+          "require_parameters": true
+        },
+        "model": "compat-model"
+      },
+      "expectedToolText": ""
+    },
+    {
+      "id": "openai-text-stream",
+      "protocol": "openai",
+      "stream": true,
+      "kind": "text",
+      "path": "/v1/chat/completions",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
+          }
+        ],
+        "max_tokens": 128,
+        "stream": true,
+        "provider": {
+          "require_parameters": true
+        },
+        "model": "compat-model"
+      },
+      "expectedText": "OK"
+    },
+    {
+      "id": "openai-tools-stream",
+      "protocol": "openai",
+      "stream": true,
+      "kind": "tools",
+      "path": "/v1/chat/completions",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Call echo_city exactly once with city 北京. Return only that tool call, with no assistant text."
+          }
+        ],
+        "max_tokens": 128,
+        "stream": true,
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "echo_city",
+              "description": "Echo the given city",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        ],
+        "tool_choice": "required",
+        "provider": {
+          "require_parameters": true
+        },
+        "model": "compat-model"
+      },
+      "expectedToolText": ""
+    },
+    {
+      "id": "claude-text-json",
+      "protocol": "claude",
+      "stream": false,
+      "kind": "text",
+      "path": "/v1/messages",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
+          }
+        ],
+        "max_tokens": 128,
+        "stream": false,
+        "model": "compat-model"
+      },
+      "expectedText": "OK"
+    },
+    {
+      "id": "claude-tools-json",
+      "protocol": "claude",
+      "stream": false,
+      "kind": "tools",
+      "path": "/v1/messages",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Call echo_city exactly once with city 北京. Return only that tool call, with no assistant text."
+          }
+        ],
+        "max_tokens": 128,
+        "stream": false,
+        "tools": [
+          {
+            "name": "echo_city",
+            "description": "Echo the given city",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ],
+              "additionalProperties": false
+            }
+          }
+        ],
+        "tool_choice": {
+          "type": "any"
+        },
+        "model": "compat-model"
+      },
+      "expectedToolText": ""
+    },
+    {
+      "id": "claude-text-stream",
+      "protocol": "claude",
+      "stream": true,
+      "kind": "text",
+      "path": "/v1/messages",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
+          }
+        ],
+        "max_tokens": 128,
+        "stream": true,
+        "model": "compat-model"
+      },
+      "expectedText": "OK"
+    },
+    {
+      "id": "claude-tools-stream",
+      "protocol": "claude",
+      "stream": true,
+      "kind": "tools",
+      "path": "/v1/messages",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Call echo_city exactly once with city 北京. Return only that tool call, with no assistant text."
+          }
+        ],
+        "max_tokens": 128,
+        "stream": true,
+        "tools": [
+          {
+            "name": "echo_city",
+            "description": "Echo the given city",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ],
+              "additionalProperties": false
+            }
+          }
+        ],
+        "tool_choice": {
+          "type": "any"
+        },
+        "model": "compat-model"
+      },
+      "expectedToolText": ""
+    },
+    {
+      "id": "gemini-text-json",
+      "protocol": "gemini",
+      "stream": false,
+      "kind": "text",
+      "path": "/v1beta/models/{model}:generateContent",
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "maxOutputTokens": 128
+        },
+        "model": "compat-model"
+      },
+      "expectedText": "OK"
+    },
+    {
+      "id": "gemini-tools-json",
+      "protocol": "gemini",
+      "stream": false,
+      "kind": "tools",
+      "path": "/v1beta/models/{model}:generateContent",
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Call echo_city exactly once with city 北京. Return only that tool call, with no assistant text."
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "maxOutputTokens": 128
+        },
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "echo_city",
+                "description": "Echo the given city",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            ]
+          }
+        ],
+        "toolConfig": {
+          "functionCallingConfig": {
+            "mode": "ANY",
+            "allowedFunctionNames": [
+              "echo_city"
+            ]
+          }
+        },
+        "model": "compat-model"
+      },
+      "expectedToolText": ""
+    },
+    {
+      "id": "gemini-text-stream",
+      "protocol": "gemini",
+      "stream": true,
+      "kind": "text",
+      "path": "/v1beta/models/{model}:streamGenerateContent",
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "maxOutputTokens": 128
+        },
+        "model": "compat-model"
+      },
+      "expectedText": "OK"
+    },
+    {
+      "id": "gemini-tools-stream",
+      "protocol": "gemini",
+      "stream": true,
+      "kind": "tools",
+      "path": "/v1beta/models/{model}:streamGenerateContent",
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Call echo_city exactly once with city 北京. Return only that tool call, with no assistant text."
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "maxOutputTokens": 128
+        },
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "echo_city",
+                "description": "Echo the given city",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            ]
+          }
+        ],
+        "toolConfig": {
+          "functionCallingConfig": {
+            "mode": "ANY",
+            "allowedFunctionNames": [
+              "echo_city"
+            ]
+          }
+        },
+        "model": "compat-model"
+      },
+      "expectedToolText": ""
+    },
+    {
+      "id": "reasoning_effort-json",
+      "protocol": "native",
+      "stream": false,
+      "kind": "reasoning",
+      "path": "/gw/v1/invoke",
+      "body": {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "Stream": false,
+        "IncludeThinking": false,
+        "RequestBody": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
+            }
+          ],
+          "max_tokens": 128,
+          "stream": false,
+          "reasoning_effort": "low"
+        },
+        "Context": {
+          "ParameterPolicy": "strict-require",
+          "SourceSystem": "compat-regression"
+        },
+        "ExpectedModel": "compat-model"
+      },
+      "parameter": "reasoning_effort",
+      "expectedText": "OK"
+    },
+    {
+      "id": "reasoning_effort-stream",
+      "protocol": "native",
+      "stream": true,
+      "kind": "reasoning",
+      "path": "/gw/v1/stream",
+      "body": {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "Stream": true,
+        "IncludeThinking": false,
+        "RequestBody": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
+            }
+          ],
+          "max_tokens": 128,
+          "stream": true,
+          "reasoning_effort": "low"
+        },
+        "Context": {
+          "ParameterPolicy": "strict-require",
+          "SourceSystem": "compat-regression"
+        },
+        "ExpectedModel": "compat-model"
+      },
+      "parameter": "reasoning_effort",
+      "expectedText": "OK"
+    },
+    {
+      "id": "reasoning-json",
+      "protocol": "native",
+      "stream": false,
+      "kind": "reasoning",
+      "path": "/gw/v1/invoke",
+      "body": {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "Stream": false,
+        "IncludeThinking": false,
+        "RequestBody": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
+            }
+          ],
+          "max_tokens": 128,
+          "stream": false,
+          "reasoning": {
+            "effort": "low"
+          }
+        },
+        "Context": {
+          "ParameterPolicy": "strict-require",
+          "SourceSystem": "compat-regression"
+        },
+        "ExpectedModel": "compat-model"
+      },
+      "parameter": "reasoning",
+      "expectedText": "OK"
+    },
+    {
+      "id": "reasoning-stream",
+      "protocol": "native",
+      "stream": true,
+      "kind": "reasoning",
+      "path": "/gw/v1/stream",
+      "body": {
+        "AppCallerCode": "report-agent.generate::chat",
+        "ModelType": "chat",
+        "Stream": true,
+        "IncludeThinking": false,
+        "RequestBody": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Return exactly the two ASCII letters OK. Do not add punctuation, quotes, formatting, explanations, or any other characters."
+            }
+          ],
+          "max_tokens": 128,
+          "stream": true,
+          "reasoning": {
+            "effort": "low"
+          }
+        },
+        "Context": {
+          "ParameterPolicy": "strict-require",
+          "SourceSystem": "compat-regression"
+        },
+        "ExpectedModel": "compat-model"
+      },
+      "parameter": "reasoning",
+      "expectedText": "OK"
+    }
+  ]
+}

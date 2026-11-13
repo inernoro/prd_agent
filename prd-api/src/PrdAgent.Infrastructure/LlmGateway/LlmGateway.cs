@@ -583,6 +583,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
 
                 var requestBody = CloneEffectiveRequestBody(request);
+                var suppliedParameterNames = CaptureSuppliedParameterNames(request.Context, requestBody);
                 requestBody["model"] = activeResolution.ActualModel;
                 requestBody["stream"] = false;
                 ApplyOpenAiChatCompletionsCompatibility(requestBody, activeResolution, request.Context);
@@ -594,7 +595,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         request.AppCallerCode, activeResolution.ActualModel, cappedMaxTokens.Value);
                 }
 
-                if (TryBuildCapabilityFailure(request, activeResolution, requestBody, out var capabilityError))
+                if (TryBuildCapabilityFailure(request, activeResolution, requestBody, out var capabilityError, suppliedParameterNames))
                 {
                     var capabilityMessage = capabilityError!.ErrorMessage ?? "模型能力不匹配";
                     if (attemptIndex == 0 && retryResolutions.Count == 1)
@@ -784,13 +785,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 从原始响应中提取消息文本内容
+            // 纯工具响应允许没有正文；协议封套保留在 RawResponseBody，不伪造为助手文本。
             var messageContent = activeAdapter!.ParseMessageContent(responseBody);
 
             return new GatewayResponse
             {
                 Success = true,
                 StatusCode = (int)response.StatusCode,
-                Content = messageContent ?? responseBody,
+                Content = messageContent ?? (toolCalls is { Count: > 0 } ? null : responseBody),
                 RawResponseBody = responseBody,
                 ToolCalls = toolCalls,
                 Extensions = extensions,
@@ -924,6 +926,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
 
                 var requestBody = CloneEffectiveRequestBody(request);
+                var suppliedParameterNames = CaptureSuppliedParameterNames(request.Context, requestBody);
                 requestBody["model"] = resolution.ActualModel;
                 requestBody["stream"] = true;
                 ApplyOpenAiChatCompletionsCompatibility(requestBody, resolution, request.Context);
@@ -935,7 +938,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         request.AppCallerCode, resolution.ActualModel, cappedMaxTokens.Value);
                 }
 
-                if (TryBuildCapabilityFailure(request, resolution, requestBody, out var capabilityError))
+                if (TryBuildCapabilityFailure(request, resolution, requestBody, out var capabilityError, suppliedParameterNames))
                 {
                     terminalError = capabilityError!.ErrorMessage ?? "模型能力不匹配";
                     terminalErrorCode = capabilityError.ErrorCode;
@@ -1290,7 +1293,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     if (chunk.TokenUsage != null)
                     {
-                        tokenUsage = chunk.TokenUsage;
+                        tokenUsage = MergeStreamUsage(tokenUsage, chunk.TokenUsage);
                         break;
                     }
                     continue;
@@ -1370,7 +1373,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 if (chunk.TokenUsage != null)
                 {
-                    tokenUsage = chunk.TokenUsage;
+                    tokenUsage = MergeStreamUsage(tokenUsage, chunk.TokenUsage);
                 }
 
                 // OpenAI 标准流会在 finish_reason 之后再发一条 choices=[] 的 usage 末帧；
@@ -1466,6 +1469,24 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (providerLease is not null)
                 await providerLease.DisposeAsync();
         }
+    }
+
+    private static GatewayTokenUsage MergeStreamUsage(GatewayTokenUsage? previous, GatewayTokenUsage next)
+    {
+        if (previous is null) return next;
+        // Counts are cumulative snapshots, not increments. A final Claude event
+        // omits input/cache counts supplied by message_start; retain those values.
+        return new GatewayTokenUsage
+        {
+            InputTokens = next.InputTokens ?? previous.InputTokens,
+            OutputTokens = next.OutputTokens ?? previous.OutputTokens,
+            ReasoningTokens = next.ReasoningTokens ?? previous.ReasoningTokens,
+            CacheCreationInputTokens = next.CacheCreationInputTokens ?? previous.CacheCreationInputTokens,
+            CacheReadInputTokens = next.CacheReadInputTokens ?? previous.CacheReadInputTokens,
+            CacheCreationCountedInsideInput = next.CacheCreationInputTokens.HasValue
+                ? next.CacheCreationCountedInsideInput : previous.CacheCreationCountedInsideInput,
+            Source = next.Source == "missing" ? previous.Source : next.Source,
+        };
     }
 
     private Task<GatewayProviderConcurrencyAdmission> AcquireProviderConcurrencyAsync(
@@ -1887,11 +1908,12 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         else
         {
             var requestBody = request.RequestBody?.DeepClone() as JsonObject ?? new JsonObject();
+            var suppliedParameterNames = CaptureSuppliedParameterNames(request.Context, requestBody);
             requestBody["model"] = resolution.ActualModel;
             if (IsChatCompletionsEndpoint(endpoint))
                 ApplyOpenAiChatCompletionsCompatibility(requestBody, resolution, request.Context);
             ApplyResolvedMaxTokensCap(requestBody, resolution);
-            if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError))
+            if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError, suppliedParameterNames))
             {
                 return capabilityError!;
             }
@@ -2860,12 +2882,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             else
             {
                 // JSON 请求
-                var requestBody = request.RequestBody ?? new JsonObject();
+                var requestBody = request.RequestBody?.DeepClone() as JsonObject ?? new JsonObject();
+                var suppliedParameterNames = CaptureSuppliedParameterNames(request.Context, requestBody);
                 requestBody["model"] = resolution.ActualModel;
                 if (IsChatCompletionsEndpoint(endpoint))
                     ApplyOpenAiChatCompletionsCompatibility(requestBody, resolution, request.Context);
                 ApplyResolvedMaxTokensCap(requestBody, resolution);
-                if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError))
+                if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError, suppliedParameterNames))
                 {
                     return capabilityError!;
                 }
@@ -4440,7 +4463,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                || !string.Equals(effortText, "none", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool TryBuildCapabilityFailure(GatewayRequest request, ModelResolutionResult resolution, JsonObject requestBody, out GatewayResponse? error)
+    private static bool TryBuildCapabilityFailure(GatewayRequest request, ModelResolutionResult resolution, JsonObject requestBody, out GatewayResponse? error, IReadOnlySet<string>? suppliedParameterNames = null)
     {
         error = null;
         var strict = IsStrictParameterPolicy(request.Context);
@@ -4451,7 +4474,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return true;
         }
 
-        if (TryBuildStrictParameterCapabilityFailure(request.Context, resolution, requestBody, out var parameterError))
+        if (TryBuildStrictParameterCapabilityFailure(request.Context, resolution, requestBody, out var parameterError, suppliedParameterNames))
         {
             error = parameterError;
             return true;
@@ -4553,7 +4576,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return false;
     }
 
-    private static bool TryBuildRawCapabilityFailure(GatewayRawRequest request, ModelResolutionResult resolution, JsonObject? requestBody, out GatewayRawResponse? error)
+    private static bool TryBuildRawCapabilityFailure(GatewayRawRequest request, ModelResolutionResult resolution, JsonObject? requestBody, out GatewayRawResponse? error, IReadOnlySet<string>? suppliedParameterNames = null)
     {
         error = null;
         var strict = IsStrictParameterPolicy(request.Context);
@@ -4563,7 +4586,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return true;
         }
 
-        if (TryBuildStrictParameterCapabilityRawFailure(request.Context, resolution, requestBody, out var parameterError))
+        if (TryBuildStrictParameterCapabilityRawFailure(request.Context, resolution, requestBody, out var parameterError, suppliedParameterNames))
         {
             error = parameterError;
             return true;
@@ -4647,6 +4670,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return false;
     }
 
+    private static IReadOnlySet<string>? CaptureSuppliedParameterNames(GatewayRequestContext? context, JsonObject body)
+        => IsStrictParameterPolicy(context)
+            ? body.Select(p => p.Key).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
+
     private static bool IsStrictParameterPolicy(GatewayRequestContext? context)
         => string.Equals(context?.ParameterPolicy, "strict-require", StringComparison.OrdinalIgnoreCase);
 
@@ -4680,7 +4708,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayRequestContext? context,
         ModelResolutionResult resolution,
         JsonObject? requestBody,
-        out GatewayResponse? error)
+        out GatewayResponse? error,
+        IReadOnlySet<string>? suppliedParameterNames = null)
     {
         error = null;
         if (UnsupportedStrictProtocolParameter(context, resolution, requestBody) is { } unsupported)
@@ -4689,7 +4718,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 $"当前模型协议尚不能保留请求参数 {unsupported}，请调整参数或选择兼容协议", 400);
             return true;
         }
-        if (!TryFindRejectedStrictParameter(context, resolution, requestBody, out var parameter, out var supported))
+        if (!TryFindRejectedStrictParameter(context, resolution, requestBody, out var parameter, out var supported, suppliedParameterNames))
             return false;
 
         error = GatewayResponse.Fail(
@@ -4705,10 +4734,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayRequestContext? context,
         ModelResolutionResult resolution,
         JsonObject? requestBody,
-        out GatewayRawResponse? error)
+        out GatewayRawResponse? error,
+        IReadOnlySet<string>? suppliedParameterNames = null)
     {
         error = null;
-        if (!TryFindRejectedStrictParameter(context, resolution, requestBody, out var parameter, out var supported))
+        if (!TryFindRejectedStrictParameter(context, resolution, requestBody, out var parameter, out var supported, suppliedParameterNames))
             return false;
 
         error = GatewayRawResponse.Fail(
@@ -4735,7 +4765,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ModelResolutionResult resolution,
         JsonObject? requestBody,
         out string parameter,
-        out bool? supported)
+        out bool? supported,
+        IReadOnlySet<string>? suppliedParameterNames = null)
     {
         parameter = string.Empty;
         supported = null;
@@ -4774,6 +4805,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         && resolution.ParameterCapabilities.TryGetValue(key, out var value)
                 ? value
                 : null;
+            // 未确认参数的严格检查针对调用方意图，不把网关自己补入的兼容默认值当作用户传参。
+            // 明确声明不支持的参数仍然拒绝，不能借默认值绕过。
+            if (supported is null && suppliedParameterNames is not null && !suppliedParameterNames.Contains(key))
+                continue;
             if (CapabilityRejected(supported, strict)) return true;
         }
 

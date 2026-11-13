@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -41,22 +42,22 @@ public class ChatAgentController : ControllerBase
     public async Task<IActionResult> ListSessions(CancellationToken ct)
     {
         var items = await _chat.ListSessionsAsync(this.GetRequiredUserId(), ct);
-        return Ok(new { success = true, data = new { items } });
+        return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
     [HttpPost("sessions")]
     public async Task<IActionResult> CreateSession([FromBody] CreateSessionRequest? body, CancellationToken ct)
     {
         var item = await _chat.CreateSessionAsync(this.GetRequiredUserId(), body?.Title, body?.Model, ct);
-        return Ok(new { success = true, data = new { item } });
+        return Ok(ApiResponse<object>.Ok(new { item }));
     }
 
     [HttpGet("sessions/{id}")]
     public async Task<IActionResult> GetSession(string id, CancellationToken ct)
     {
         var item = await _chat.GetSessionAsync(this.GetRequiredUserId(), id, ct);
-        if (item == null) return NotFound(new { success = false, error = new { message = "会话不存在" } });
-        return Ok(new { success = true, data = new { item } });
+        if (item == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "会话不存在"));
+        return Ok(ApiResponse<object>.Ok(new { item }));
     }
 
     [HttpPatch("sessions/{id}")]
@@ -64,23 +65,23 @@ public class ChatAgentController : ControllerBase
         string id, [FromBody] RenameSessionRequest? body, CancellationToken ct)
     {
         var item = await _chat.RenameSessionAsync(this.GetRequiredUserId(), id, body?.Title ?? string.Empty, ct);
-        if (item == null) return NotFound(new { success = false, error = new { message = "会话不存在或标题为空" } });
-        return Ok(new { success = true, data = new { item } });
+        if (item == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "会话不存在或标题为空"));
+        return Ok(ApiResponse<object>.Ok(new { item }));
     }
 
     [HttpDelete("sessions/{id}")]
     public async Task<IActionResult> DeleteSession(string id, CancellationToken ct)
     {
         var ok = await _chat.DeleteSessionAsync(this.GetRequiredUserId(), id, ct);
-        if (!ok) return NotFound(new { success = false, error = new { message = "会话不存在" } });
-        return Ok(new { success = true, data = new { deleted = true } });
+        if (!ok) return NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "会话不存在"));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
     [HttpGet("sessions/{id}/messages")]
     public async Task<IActionResult> ListMessages(string id, [FromQuery] int limit = 200, CancellationToken ct = default)
     {
         var items = await _chat.ListMessagesAsync(this.GetRequiredUserId(), id, limit, ct);
-        return Ok(new { success = true, data = new { items } });
+        return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
     [HttpPost("sessions/{id}/messages")]
@@ -92,11 +93,11 @@ public class ChatAgentController : ControllerBase
             // 服务端权威：接单一旦开始就整体落地，客户端此刻断开不许撕成半截。
             var accepted = await _chat.SendMessageAsync(
                 this.GetRequiredUserId(), id, body?.Content ?? string.Empty, CancellationToken.None);
-            return Ok(new { success = true, data = accepted });
+            return Ok(ApiResponse<ChatAgentTurnAccepted>.Ok(accepted));
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { success = false, error = new { message = ex.Message } });
+            return BadRequest(ApiResponse<object>.Fail("CHAT_MESSAGE_REJECTED", ex.Message));
         }
     }
 

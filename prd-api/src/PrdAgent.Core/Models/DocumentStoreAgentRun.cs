@@ -22,6 +22,11 @@ public class DocumentStoreAgentRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     /// <summary>源文档条目 ID（字幕：音视频/图片；再加工：文字 entry）</summary>
     public string SourceEntryId { get; set; } = string.Empty;
 
+    /// <summary>索引刷新绑定的保存版本；不从长期旧任务许可恢复付费执行。</summary>
+    public string? SourceDocumentId { get; set; }
+    public DateTime? SourceUpdatedAt { get; set; }
+    public string? SourceContentHash { get; set; }
+
     /// <summary>所属知识库</summary>
     public string StoreId { get; set; } = string.Empty;
 
@@ -144,6 +149,7 @@ public static class DocumentStoreAgentRunKind
 {
     public const string Subtitle = "subtitle";
     public const string Reprocess = "reprocess";
+    public const string KnowledgeIndex = "knowledgeIndex";
 
     /// <summary>知识库级自动补链（标题精确匹配改写为 [[标题]]）。SourceEntryId 存空串，任务粒度是整个 StoreId。</summary>
     public const string AutoLink = "autolink";
@@ -168,6 +174,7 @@ public static class DocumentStoreRunKinds
 {
     public const string Subtitle = "docStoreSubtitle";
     public const string Reprocess = "docStoreReprocess";
+    public const string KnowledgeIndex = "docStoreKnowledgeIndex";
     public const string AutoLink = "docStoreAutoLink";
     public const string Transcribe = "docStoreTranscribe";
 }

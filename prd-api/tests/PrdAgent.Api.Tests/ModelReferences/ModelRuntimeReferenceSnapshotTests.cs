@@ -46,7 +46,8 @@ public sealed class ModelRuntimeReferenceSnapshotTests
     {
         var snapshot = Build();
         Assert.Equal(10, snapshot.Entries.Count);
-        Assert.Equal("claude-opus-4-5", snapshot.Entries.Single(x => x.ConsumerKey == "chat-agent.default").Value);
+        Assert.Equal("default-chat-curated", snapshot.Entries.Single(x => x.ConsumerKey == "chat-agent.default").Value);
+        Assert.Equal("public-id", snapshot.Entries.Single(x => x.ConsumerKey == "chat-agent.default").IdentityKind);
         Assert.Equal("default", snapshot.Entries.Single(x => x.ConsumerKey == "chat-agent.default").State);
         Assert.Equal("claude-3-5-sonnet-20241022", snapshot.Entries.Single(x => x.ConsumerKey == "llm.environment-fallback").Value);
         Assert.Equal("gpt-5.6-sol", snapshot.Entries.Single(x => x.ConsumerKey == "sdk.openai.default").Value);
@@ -204,6 +205,9 @@ public sealed class ModelRuntimeReferenceSnapshotTests
         required.State = "none";
         required.Value = null;
         Assert.NotNull(ModelRuntimeReferenceSnapshotBuilder.ValidateCoverage(snapshot, Identity, Now));
+        var oldChatKind = Build();
+        oldChatKind.Entries.Single(x => x.ConsumerKey == "chat-agent.default").IdentityKind = "upstream-model-id";
+        Assert.Equal("consumer-identity-kind-mismatch", ModelRuntimeReferenceSnapshotBuilder.ValidateCoverage(oldChatKind, Identity, Now));
         var wrongKind = Build();
         wrongKind.Entries.Single(x => x.ConsumerKey == "design-artifact.pool").IdentityKind = "public-id";
         Assert.NotNull(ModelRuntimeReferenceSnapshotBuilder.ValidateCoverage(wrongKind, Identity, Now));
