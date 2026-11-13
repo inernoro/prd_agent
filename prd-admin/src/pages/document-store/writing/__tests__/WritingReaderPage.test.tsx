@@ -37,6 +37,7 @@ describe('教学转换必须保留已发布的执行约束', () => {
     await mount();
     const block = container.querySelector('.writing-tutorial-steps .writing-section-condition');
     expect(block?.textContent).toContain(condition);
+    expect(container.querySelector('.writing-tutorial-step[aria-current="step"]')).toBeNull();
     expect(container.querySelectorAll('.writing-tutorial-steps .writing-section-condition')).toHaveLength(1);
     expect(block!.compareDocumentPosition(container.querySelector('.writing-tutorial-step')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

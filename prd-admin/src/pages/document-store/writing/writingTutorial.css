@@ -22,7 +22,7 @@
 .writing-tutorial.writing-root .writing-keyboard-hint{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:0;margin:0 0 14px}
 .writing-tutorial.writing-root .writing-tutorial-steps{margin:0 0 12px;overflow:hidden}
 .writing-tutorial.writing-root .writing-step-heading{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:0;font-size:14px;line-height:20px}
-.writing-tutorial.writing-root .writing-step-heading>strong{font-weight:600}
+.writing-tutorial.writing-root .writing-step-heading>strong{font:600 14px Inter,'Noto Sans SC',sans-serif}
 .writing-tutorial.writing-root .writing-tutorial-step{display:grid;grid-template-columns:24px minmax(0,1fr) auto;column-gap:12px;row-gap:0;align-items:start;padding:12px 14px;border:0;border-top:1px solid var(--writing-ln)}
 .writing-tutorial.writing-root .writing-tutorial-step.current{background:var(--writing-acs)}
 .writing-tutorial.writing-root .writing-tutorial-step>.sid{grid-column:1;grid-row:1;display:block;width:22px;height:22px;border-radius:11px;border:1px solid var(--writing-ln2);background:var(--writing-sf);color:var(--writing-ink3);font:500 10.5px/20px 'JetBrains Mono',monospace;text-align:center}
@@ -39,6 +39,10 @@
 .writing-tutorial.writing-root .writing-video-recovery{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}
 .writing-tutorial.writing-root .writing-step-actions>.writing-step-time{background:transparent;border-color:transparent;color:var(--writing-ink2);padding:0 9px}
 .writing-tutorial.writing-root .writing-chapter-list>.writing-step-heading{border:0;padding:10px 14px}
+.writing-tutorial.writing-root .writing-chapter-list>.writing-learning-card{border-top:1px solid var(--writing-ln)}
+.writing-tutorial.writing-root .writing-chapter-list>.writing-learning-card>.cap{margin-bottom:6px}
+.writing-tutorial.writing-root .writing-chapter-list>.writing-learning-card>p{margin:0 0 10px;font-size:12.5px}
+.writing-tutorial.writing-root .writing-chapter>.mono{color:var(--writing-ink3)}
 .writing-tutorial.writing-root .writing-chapter{grid-template-columns:22px minmax(0,1fr) auto;padding:11px 14px;gap:10px;border:0;border-top:1px solid var(--writing-ln);font:inherit}
 @media(max-width:760px){
   .writing-tutorial.writing-root .writing-desktop-step-count{display:none}

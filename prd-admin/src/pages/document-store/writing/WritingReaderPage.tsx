@@ -115,7 +115,8 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
   const chapter = chapters[Math.min(chapterIndex, chapters.length - 1)];
   // Only derived chapters have an exact source section. Custom chapters have no section mapping.
   const chapterSection = !doc.chapters.length ? doc.sections.find(section => section.id === chapter?.id) : undefined;
-  const currentStepIndex = chapter?.steps.reduce((last, step, i) => time >= step.at ? i : last, 0) ?? 0;
+  const currentStepIndex = doc.chapters.length && videoUrl && !videoFailure
+    ? chapter?.steps.reduce((last, step, i) => time >= step.at ? i : last, 0) ?? 0 : -1;
   const mediaLoading = !!doc.videoEntryId && !videoUrl && !videoFailure;
   const allSteps = chapters.flatMap(c => c.steps);
   const allCaptions = doc.captions?.length ? doc.captions : allSteps;
