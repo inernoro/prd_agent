@@ -59,6 +59,30 @@ describe('读者来源状态必须真实', () => {
 });
 
 describe('教学转换必须保留已发布的执行约束', () => {
+  it('新发布版本不继承旧版本的图文章节位置', async () => {
+    localStorage.setItem('map-learning:entry:v1:chapter', 's2');
+    const data = fixture(); data.publication.version = 2; api.read.mockResolvedValue(ok(data));
+    await mount(); expect(container.querySelector('.writing-tutorial-title')?.textContent).toBe('移交权限');
+  });
+  it('已删除的章节游标安全回到首章，不显示空白或错误的执行条件', async () => {
+    localStorage.setItem('map-learning:entry:v1:chapter', 'removed-chapter');
+    await mount(); expect(container.querySelector('.writing-tutorial-title')?.textContent).toBe('移交权限');
+    expect(container.querySelector('.writing-tutorial-steps')?.textContent).toContain(condition);
+  });
+
+  it('图文教学刷新后恢复当前章节及其执行条件和完成记录', async () => {
+    await mount();
+    await click(container.querySelectorAll<HTMLButtonElement>('.writing-chapter-list .writing-chapter')[1]);
+    await click(container.querySelector<HTMLButtonElement>('.writing-done-step')!);
+    expect(container.querySelector('.writing-tutorial-title')?.textContent).toBe('主管签收');
+    expect(container.querySelector('.writing-done-step')?.getAttribute('aria-checked')).toBe('true');
+    await act(async () => root.unmount()); container.remove();
+    await mount();
+    expect(container.querySelector('.writing-tutorial-title')?.textContent).toBe('主管签收');
+    expect(container.querySelector('.writing-tutorial-steps')?.textContent).toContain('接手人核验完成后，主管才能签收。');
+    expect(container.querySelector('.writing-done-step')?.getAttribute('aria-checked')).toBe('true');
+  });
+
   it('未关联视频的图文教学不显示不可用播放器控件、零秒字幕或虚假观看状态', async () => {
     await mount();
     expect(container.querySelector('.writing-control-play')).toBeNull();

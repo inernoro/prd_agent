@@ -52,7 +52,7 @@ export function HostedCollectionManage({ data, onClose, onSaved }: { data?: Host
   }
   function move(id: string, to: number) {
     if (id === form.mainSiteId || to < 1 || to >= form.siteIds.length) return;
-    const ids = form.siteIds.filter(x => x !== id); ids.splice(to, 0, id); patch({ siteIds: ids });
+    const ids = form.siteIds.filter(x => x !== id); ids.splice(to, 0, id); patch({ siteIds: ids, sections: form.sections.map(section => ({ ...section, siteIds: ids.filter(member => section.siteIds.includes(member)) })) });
   }
   function toggle(item: HostedCollectionItem) {
     if (form.siteIds.includes(item.id)) remove(item.id);
