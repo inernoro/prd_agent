@@ -16,7 +16,7 @@
 //
 // 本路由被 e2e/llmgw-layout-drift.mjs 监测：新增上游与新建模型都必须留在页面内联表单里，
 // 不要改成抽屉或对话框——被测的扁平 DOM 一旦变成浮层，量到的就不是这一页的版式了。
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   createModelOffering,
@@ -89,6 +89,8 @@ export function LogicalModelsPage() {
   const [migrationFor, setMigrationFor] = useState<string | null>(null);
   const [migrationPlan, setMigrationPlan] = useState<ReferenceMigrationPlan | null>(null);
   const [repairOpen, setRepairOpen] = useState(false);
+  const [migrationStatus, setMigrationStatus] = useState<{ pending: number | null; failed: boolean }>({ pending: null, failed: false });
+  const onMigrationStatus = useCallback((value: { pending: number | null; failed: boolean }) => setMigrationStatus(previous => previous.pending === value.pending && previous.failed === value.failed ? previous : value), []);
   const [upgradesOpen, setUpgradesOpen] = useState(false);
   const [batchProgress, setBatchProgress] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -639,7 +641,7 @@ export function LogicalModelsPage() {
         title="模型"
         actions={<>
           <HelpPopover label="模型帮助">模型名称自由定义，公开标识供 MAP、API 与 MCP 调用。为模型绑定上游线路后即可使用；删除会检查使用位置和运行中任务。</HelpPopover>
-          <Button size="sm" variant="ghost" onClick={() => setUpgradesOpen(value => !value)}>升级与引用</Button>
+          <Button size="sm" variant="ghost" onClick={() => setUpgradesOpen(value => !value)}>升级与引用</Button>{migrationStatus.failed || (migrationStatus.pending ?? 0) > 0 ? <Chip label={migrationStatus.failed ? '记录待核对' : `待处理 ${migrationStatus.pending}`} color="var(--err)" bg="var(--err-bg)"/> : null}
           {canWrite ? <Button variant="primary" size="sm" onClick={() => setCreateOpen(value => !value)}>{createOpen ? '收起新建' : '新建模型'}</Button> : null}
         </>}
       />
@@ -649,7 +651,7 @@ export function LogicalModelsPage() {
         {notice ? <InlineAlert tone={notice.tone}>{notice.text}</InlineAlert> : null}
         {routingRefreshFailed ? <Button size="sm" disabled={busy !== null} onClick={async () => { setBusy('refresh-routes'); await refreshRoutes(); setBusy(null); }}>{busy === 'refresh-routes' ? '读取中…' : '刷新线路状态'}</Button> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
-        {upgradesOpen ? <Card style={CARD_BODY}><ModelReferenceMigrationOverview onOpen={plan => openMigration(plan.mapping.source.logicalId || '', plan)} /><Button size="sm" variant="ghost" onClick={() => { setRepairOpen(value => !value); setMigrationFor(null); }}>{repairOpen ? '收起修复' : '修复失效引用'}</Button>{repairOpen ? <ModelReferenceUsageRepairPanel /> : null}</Card> : null}
+        <Card className={upgradesOpen ? undefined : "lg-collection-hidden"} style={CARD_BODY}><ModelReferenceMigrationOverview onStatus={onMigrationStatus} onOpen={plan => openMigration(plan.mapping.source.logicalId || '', plan)} /><Button size="sm" variant="ghost" onClick={() => { setRepairOpen(value => !value); setMigrationFor(null); }}>{repairOpen ? '收起修复' : '修复失效引用'}</Button>{repairOpen ? <ModelReferenceUsageRepairPanel /> : null}</Card>
         {createOpen && canWrite ? <Card style={CARD_BODY}>
           {modelTypesError ? <InlineAlert tone="error">{modelTypesError}</InlineAlert> : null}
           <ModelCreationPanel models={models} exchanges={exchanges} modelTypes={modelTypes} onCancel={() => setCreateOpen(false)} onCreated={(item, needsBinding) => {
