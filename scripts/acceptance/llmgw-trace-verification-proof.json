@@ -101,5 +101,78 @@
     "web": "19 passed, 0 failed; production build passed",
     "localUi": "Normal viewer login → request logs → trace: team/owner scope, ambiguous IDs, historical running and summary markers passed; diagnostic only, not live preview acceptance",
     "fullRegression": "Category!=Integration&Category!=Manual: 8789 passed, 84 skipped, 0 failed (2645 + 6144)"
-  }
+  },
+  "review1973": {
+    "baseline": "3baad12f8a4558455cce0e22c2901e8e2121767b",
+    "red": [
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Trace_PagesEveryAuthorizedCall_RejectsAmbiguity_AndWithholdsBodies",
+        "outcome": "Failed",
+        "failure": "Assert.True() Failure\nExpected: True\nActual:   False"
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.LlmGatewayTests.SendRawWithResolutionAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate",
+        "outcome": "Failed",
+        "failure": "Assert.Equal() Failure: Values differ\nExpected: 0.01\nActual:   null"
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.LlmGatewayTests.SendAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate",
+        "outcome": "Passed",
+        "failure": null
+      }
+    ],
+    "green": [
+      {
+        "test": "PrdAgent.Api.Tests.Services.LlmGatewayTests.SendAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.LostOwner_CallLoggedAfterLeaseExpiry_DoesNotRemainRunningForever",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Trace_PagesEveryAuthorizedCall_RejectsAmbiguity_AndWithholdsBodies",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ExplicitDifferentRuns_AreNotMergedByReusedLogicalOrProviderTaskId",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.GatewayLogLifecycleTests.ExpiredOwner_ClosesOnlyItsUnfinishedCalls_WithoutInventingOutcomeOrCost",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.LlmGatewayTests.SendRawWithResolutionAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ConcurrentReconciliationAndCompletion_PreserveConfirmedTerminalResults",
+        "outcome": "Passed",
+        "failure": null
+      }
+    ],
+    "scope": "Per-response failover evidence and runless-anchor disambiguation; deterministic HTTP fixture + real isolated Mongo, no production fault injection",
+    "architecture": "Lifecycle persistence moved into Infrastructure LlmLogLifecycleReconciler; serving only schedules it. Behavior unchanged; existing real Mongo recovery assertions pass. No artificial behavioral inversion claimed for file relocation.",
+    "tutorial": "Unchanged tutorial graph checks failed with unmapped /logs/trace; after real chapter mapping, factual instructions and registered existing preview image, 38 tests and drift audit pass.",
+    "sha256": {
+      "llmgw/console-api/Logs/LogTraceEndpoints.cs": "2ebb2bf48a883a2d003a599dc1cf9b304de9cbd21b50dd5fe7edb716b348fabb",
+      "prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs": "a8e8c73bd51b7df53e0e7620e384c84ec6c3780c45d3982c89a8f14a283b8bff",
+      "prd-api/src/PrdAgent.Infrastructure/LLM/LlmLogLifecycleReconciler.cs": "c3d4962d18d61c5311a6bfdf04148c6b272582e329e29f117fe3e90f57c4c549"
+    },
+    "verification": {
+      "build": "0 errors",
+      "fullRegression": "8943 passed, 85 skipped, 0 failed",
+      "targeted": "7 passed, 0 failed",
+      "web": "38 passed; production build passed; candidate click queries the selected explicit RunId",
+      "tutorial": "38 passed; publisher check passed; unchanged drift guard reports P0/P1/P2 all zero"
+    }
+  },
+  "originalProofCapturedAtCommit": "f7bf5e99c327317cd4ef96941d9f0b98e6f55939"
 }

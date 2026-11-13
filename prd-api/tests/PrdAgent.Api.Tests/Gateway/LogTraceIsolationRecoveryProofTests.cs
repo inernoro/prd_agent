@@ -4,7 +4,6 @@ using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
-using PrdAgent.LlmGatewayHost;
 using PrdAgent.LlmGw.Logs;
 using Xunit;
 
@@ -60,7 +59,7 @@ public class LogTraceIsolationRecoveryProofTests
                 Id = "logged-after-last-lease", TenantId = "tenant-a", WriterInstanceId = "lost-owner",
                 StartedAt = now.AddMinutes(-1), Status = "running"
             });
-            var worker = new GatewayLogLifecycleWorker(data, new LlmLogOwner(), NullLogger<GatewayLogLifecycleWorker>.Instance);
+            var worker = new LlmLogLifecycleReconciler(data, new LlmLogOwner(), NullLogger<LlmLogLifecycleReconciler>.Instance);
             await worker.TickAsync(CancellationToken.None);
             var row = await data.LlmRequestLogs.Find(x => x.Id == "logged-after-last-lease").SingleAsync();
             Assert.Equal("unknown", row.Status);
@@ -85,8 +84,8 @@ public class LogTraceIsolationRecoveryProofTests
                 Id = "concurrent-" + index, TenantId = "tenant-a", WriterInstanceId = "lost-owner",
                 StartedAt = now.AddMinutes(-9), Status = "running"
             }));
-            var a = new GatewayLogLifecycleWorker(data, new LlmLogOwner(), NullLogger<GatewayLogLifecycleWorker>.Instance);
-            var b = new GatewayLogLifecycleWorker(data, new LlmLogOwner(), NullLogger<GatewayLogLifecycleWorker>.Instance);
+            var a = new LlmLogLifecycleReconciler(data, new LlmLogOwner(), NullLogger<LlmLogLifecycleReconciler>.Instance);
+            var b = new LlmLogLifecycleReconciler(data, new LlmLogOwner(), NullLogger<LlmLogLifecycleReconciler>.Instance);
             await Task.WhenAll(a.TickAsync(CancellationToken.None), b.TickAsync(CancellationToken.None),
                 data.LlmRequestLogs.UpdateManyAsync(x => x.WriterInstanceId == "lost-owner",
                     Builders<LlmRequestLog>.Update.Set(x => x.Status, "succeeded").Set(x => x.EndedAt, now)

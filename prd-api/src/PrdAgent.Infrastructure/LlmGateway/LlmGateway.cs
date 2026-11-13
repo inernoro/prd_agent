@@ -2888,6 +2888,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 (int)response.StatusCode,
                 submitDurationMs,
                 response.IsSuccessStatusCode ? null : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}");
+            CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(a => a.Stage == "send"), responseBody,
+                response.Headers.ToDictionary(h => h.Key, h => string.Join(", ", h.Value), StringComparer.OrdinalIgnoreCase),
+                request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
 
             for (var attemptIndex = 1;
                  !response.IsSuccessStatusCode
@@ -3038,15 +3041,15 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     (int)response.StatusCode,
                     submitDurationMs,
                     response.IsSuccessStatusCode ? null : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}");
+                CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(a => a.Stage == "send"), responseBody,
+                    response.Headers.ToDictionary(h => h.Key, h => string.Join(", ", h.Value), StringComparer.OrdinalIgnoreCase),
+                    request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
             }
 
             // 6.5 Exchange 异步轮询（submit+query 模式）
             var submitResponseHeaders = new Dictionary<string, string>();
             foreach (var h in response.Headers)
                 submitResponseHeaders[h.Key] = string.Join(", ", h.Value);
-
-            CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(a => a.Stage == "send"),
-                responseBody, submitResponseHeaders, request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
 
             // 二进制响应（视频/图片下载）是终态读取，绝不是 async-submit 任务，
             // 必须跳过 Exchange 轮询，否则下载到的 mp4 字节会被当成"任务未完成"误进轮询。

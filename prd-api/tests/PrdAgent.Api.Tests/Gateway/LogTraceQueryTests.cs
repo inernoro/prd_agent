@@ -76,6 +76,32 @@ public class LogTraceQueryTests
             Assert.Equal(System.Net.HttpStatusCode.NotFound, foreign.StatusCode);
             var forgedAnchor = await client.GetAsync("/gw/logs/trace?reference=run-a&anchorId=foreign-team");
             Assert.Equal(System.Net.HttpStatusCode.NotFound, forgedAnchor.StatusCode);
+
+            BsonDocument LegacyLink(string id, string? run, string team, string logical) => new() {
+                { "_id", id }, { "TenantId", "tenant-a" }, { "TeamId", team },
+                { "RunId", run is null ? BsonNull.Value : new BsonString(run) }, { "LogicalRequestId", logical }
+            };
+            await logs.InsertManyAsync(new[] {
+                LegacyLink("legacy-anchor", null, "team-a", "reused-legacy-logical"),
+                LegacyLink("first-operation", "explicit-first", "team-a", "reused-legacy-logical"),
+                LegacyLink("second-operation", "explicit-second", "team-a", "reused-legacy-logical"),
+                LegacyLink("hidden-operation", "explicit-hidden", "team-b", "reused-legacy-logical")
+            });
+            using var legacy = JsonDocument.Parse(await client.GetStringAsync("/gw/logs/trace?reference=legacy-anchor"));
+            var legacyData = legacy.RootElement.GetProperty("data");
+            Assert.True(legacyData.GetProperty("ambiguous").GetBoolean());
+            Assert.Equal(2, legacyData.GetProperty("candidates").GetArrayLength());
+            Assert.DoesNotContain("hidden-operation", legacy.RootElement.GetRawText());
+            using var selected = JsonDocument.Parse(await client.GetStringAsync("/gw/logs/trace?reference=explicit-first&anchorId=first-operation"));
+            Assert.Equal(2, selected.RootElement.GetProperty("data").GetProperty("total").GetInt32());
+            Assert.DoesNotContain("second-operation", selected.RootElement.GetRawText());
+            await logs.InsertManyAsync(new[] {
+                LegacyLink("unique-legacy", null, "team-a", "unique-logical"),
+                LegacyLink("unique-operation", "unique-run", "team-a", "unique-logical")
+            });
+            using var unique = JsonDocument.Parse(await client.GetStringAsync("/gw/logs/trace?reference=unique-legacy"));
+            Assert.False(unique.RootElement.GetProperty("data").GetProperty("ambiguous").GetBoolean());
+            Assert.Equal(2, unique.RootElement.GetProperty("data").GetProperty("total").GetInt32());
         }
         finally { await mongo.DropDatabaseAsync(db.DatabaseNamespace.DatabaseName); }
     }

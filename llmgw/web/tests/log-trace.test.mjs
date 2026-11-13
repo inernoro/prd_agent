@@ -9,6 +9,7 @@ test('调用链区分未知费用、明确零费用、重复回执、汇总和�
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/logs/trace?reference=run' });
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   globalThis.window = dom.window; globalThis.document = dom.window.document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  globalThis.__traceQueries = [];
   globalThis.__traceFixture = { ambiguous: false, total: 3, page: 1, pageSize: 50, items: [
     { log: { id: 'submit', requestId: 'req-1', status: 'failed', operation: 'submit', userId: 'user-1' }, recordKind: 'request', sameReceiptRecords: 0,
       attempts: [{ order: 1, stage: 'send', provider: 'A', status: 'failed', reachedProvider: true, statusCode: 403, error: '账户欠费' }, { order: 2, stage: 'send', provider: 'B', status: 'failed', reachedProvider: true, statusCode: 403, error: '额度耗尽' }] },
@@ -19,7 +20,7 @@ test('调用链区分未知费用、明确零费用、重复回执、汇总和�
   globalThis.__traceRouter = { ...routerModule.default, ...routerModule };
   const server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: [] },
     ssr: { noExternal: ['react-router-dom'] },
-    plugins: [{ name: 'trace-api', enforce: 'pre', resolveId(id) { if (id === 'react-router-dom') return '\0trace-router'; }, load(id) { if (id === '\0trace-router') return Object.keys(globalThis.__traceRouter).filter(name => name !== 'default').map(name => `export const ${name}=globalThis.__traceRouter.${name};`).join('\n'); if (id.endsWith('/src/lib/api.ts')) return 'export async function getLogTrace(){return {success:true,data:globalThis.__traceFixture}}'; } }] });
+    plugins: [{ name: 'trace-api', enforce: 'pre', resolveId(id) { if (id === 'react-router-dom') return '\0trace-router'; }, load(id) { if (id === '\0trace-router') return Object.keys(globalThis.__traceRouter).filter(name => name !== 'default').map(name => `export const ${name}=globalThis.__traceRouter.${name};`).join('\n'); if (id.endsWith('/src/lib/api.ts')) return 'export async function getLogTrace(...args){globalThis.__traceQueries.push(args);return {success:true,data:globalThis.__traceFixture}}'; } }] });
   let root;
   try {
     const { createRoot } = await import('react-dom/client');
@@ -34,10 +35,16 @@ test('调用链区分未知费用、明确零费用、重复回执、汇总和�
     assert.match(text, /同一上游回执出现在 2 条/); assert.match(text, /历史业务汇总/);
     assert.match(text, /历史记录缺少写入实例租约/);
     assert.equal(document.querySelectorAll('li').length, 2);
+    globalThis.__traceFixture = { ambiguous: true, candidates: [{ id: 'explicit-a', runId: 'run-a' }] };
+    await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === '刷新')
+      .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })));
+    await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent.includes('explicit-a'))
+      .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })));
+    assert.deepEqual(globalThis.__traceQueries.at(-1), ['run-a', 'explicit-a', 1]);
   } finally {
     if (root) await act(async () => root.unmount());
     await server.close(); dom.window.close();
     globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
-    delete globalThis.__traceFixture; delete globalThis.__traceRouter;
+    delete globalThis.__traceFixture; delete globalThis.__traceRouter; delete globalThis.__traceQueries;
   }
 });

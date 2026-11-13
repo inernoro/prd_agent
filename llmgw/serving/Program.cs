@@ -95,6 +95,7 @@ builder.Services.AddMemoryCache();
 // LLM 请求上下文 + 旁路日志写入
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
 builder.Services.AddSingleton<LlmLogOwner>();
+builder.Services.AddSingleton<LlmLogLifecycleReconciler>();
 builder.Services.AddHostedService<GatewayLogLifecycleWorker>();
 builder.Services.AddSingleton(sp =>
     new LlmRequestLogBackground(

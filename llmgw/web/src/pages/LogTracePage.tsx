@@ -48,7 +48,7 @@ export function LogTracePage() {
     {busy ? <div role="status"><Spinner size={16} /> 正在读取关联记录…</div> : null}
     {error ? <div role="alert">{error}</div> : null}
     {data?.ambiguous ? <Card style={{ padding: 16 }}><h2>编号对应多个独立请求，请选择记录</h2><p>相同请求编号不能证明重试或重复记账。</p>
-      {data.candidates?.map(candidate => <p key={candidate.id}><Button variant="ghost" onClick={() => setParams({ reference, anchorId: candidate.id })}>
+      {data.candidates?.map(candidate => <p key={candidate.id}><Button variant="ghost" onClick={() => setParams({ reference: candidate.runId || reference, anchorId: candidate.id })}>
         {candidate.runId || candidate.logicalRequestId || candidate.requestId || candidate.id} · {candidate.id}
       </Button></p>)}
       {data.hasMoreCandidates ? <p>仅显示前 100 个候选，请使用更明确的日志或业务操作编号。</p> : null}

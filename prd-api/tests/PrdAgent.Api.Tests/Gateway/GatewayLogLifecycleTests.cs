@@ -4,7 +4,6 @@ using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
-using PrdAgent.LlmGatewayHost;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Gateway;
@@ -31,7 +30,7 @@ public class GatewayLogLifecycleTests
                 new LlmRequestLog { Id = "live", TenantId = "b", WriterInstanceId = "live", StartedAt = now.AddHours(-4), Status = "running" },
                 new LlmRequestLog { Id = "historical", TenantId = "a", StartedAt = now.AddYears(-1), Status = "running" }
             });
-            var worker = new GatewayLogLifecycleWorker(data, new LlmLogOwner(), NullLogger<GatewayLogLifecycleWorker>.Instance);
+            var worker = new LlmLogLifecycleReconciler(data, new LlmLogOwner(), NullLogger<LlmLogLifecycleReconciler>.Instance);
             await worker.TickAsync(CancellationToken.None);
             await worker.TickAsync(CancellationToken.None);
             var rows = (await data.LlmRequestLogs.Find(_ => true).ToListAsync()).ToDictionary(x => x.Id);

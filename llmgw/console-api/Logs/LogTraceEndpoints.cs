@@ -39,6 +39,28 @@ public static class LogTraceEndpoints
                         requestId = LogTraceQuery.Text(doc, "RequestId"), runId = LogTraceQuery.Text(doc, "RunId"), logicalRequestId = LogTraceQuery.Text(doc, "LogicalRequestId") })
                 }), json);
             }
+            if (string.IsNullOrEmpty(LogTraceQuery.Text(anchor, "RunId")))
+            {
+                // 精确日志编号也可能指向无 RunId 的旧行。先在授权关联范围内消歧，
+                // 不能因 seed 只有一行就把复用逻辑编号的多个明确运行合成一条链。
+                var explicitRuns = TenantAccess.FilterTeamScope(http, LogTraceQuery.Related(anchor))
+                    & f.Type("RunId", BsonType.String) & f.Ne("RunId", "");
+                var runGroups = await logs.Aggregate().Match(explicitRuns).Project(seedProjection)
+                    .SortBy(x => x["_id"])
+                    .Group<BsonDocument>(new BsonDocument {
+                        { "_id", "$RunId" }, { "record", new BsonDocument("$first", "$$ROOT") }
+                    }).SortBy(x => x["_id"]).Limit(101).ToListAsync(http.RequestAborted);
+                if (runGroups.Count > 1)
+                    return Results.Json(ApiEnvelope<object>.Ok(new {
+                        ambiguous = true, hasMoreCandidates = runGroups.Count > 100,
+                        candidates = runGroups.Take(100).Select(group => group["record"].AsBsonDocument)
+                            .Select(doc => new { id = LogTraceQuery.Text(doc, "_id"),
+                                requestId = LogTraceQuery.Text(doc, "RequestId"), runId = LogTraceQuery.Text(doc, "RunId"),
+                                logicalRequestId = LogTraceQuery.Text(doc, "LogicalRequestId") })
+                    }), json);
+                // 唯一明确运行只用于本次关联查询，不改写旧日志的 RunId。
+                if (runGroups.Count == 1) anchor["RunId"] = runGroups[0]["_id"];
+            }
             var related = TenantAccess.FilterTeamScope(http, LogTraceQuery.Related(anchor));
             var p = Math.Max(1, page ?? 1);
             if (p > 1_000_000) return Results.Json(ApiEnvelope<object>.Fail("INVALID_PAGE", "页码超出范围"), json, statusCode: 400);
