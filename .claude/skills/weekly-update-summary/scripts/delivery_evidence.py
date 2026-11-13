@@ -251,7 +251,7 @@ def context_ledger(context, prior):
             record_id = row.get('entryId') or row.get('id') or row.get('releaseId')
             source_uri = row.get('sourceUrl') or row.get('deeplink') or row.get('shareUrl')
             excerpt = row.get('excerpt') or row.get('content') or row.get('summary') or row.get('title')
-            when = row.get('occurredAt') or row.get('finishedAt') or row.get('createdAt') or row.get('updatedAt')
+            when = row.get('occurredAt') or row.get('finishedAt') or row.get('updatedAt') or row.get('createdAt')
             if not record_id or not source_uri or not excerpt or not when:
                 out['limitations'].append(f'{source_name}记录{record_id or "未知ID"}缺少链接、原文或带时区时间；保留在原始采集段，不据此认证交付。')
                 continue

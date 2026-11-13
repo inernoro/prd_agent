@@ -332,7 +332,7 @@ def collect_acceptance(project, start, end):
             "scope": r.get("scope"), "workItemId": r.get("workItemId"),
             "workItemIds": r.get("workItemIds"), "workItemTitle": r.get("workItemTitle"),
             "occurredAt": r.get("occurredAt"), "timeBasis": r.get("timeBasis"),
-            "excerpt": r.get("excerpt") or json.dumps({key: r.get(key) for key in ("id", "title", "verdict", "commitSha", "createdAt", "scope", "prNumber")}, ensure_ascii=False),
+            "excerpt": r.get("excerpt") or json.dumps({key: r.get(key) for key in ("id", "title", "verdict", "commitSha", "createdAt", "updatedAt", "scope", "prNumber")}, ensure_ascii=False),
             "deeplink": acceptance_deeplink(r.get("id")),
         })
     items.sort(key=lambda x: (x["date"], x["title"] or ""))

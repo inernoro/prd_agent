@@ -279,3 +279,16 @@ def test_recollecting_old_git_snapshot_keeps_original_source_and_identity(adapte
     first['events'][0]['source']['excerpt'] = '原采集器保存的不可变摘录'
     again = adapter.collect_git_ledger(repo, 'origin/main', sha, '2026-09-28', '2026-10-04', first, git_base=first['collection']['base'])
     assert again['events'][0] == first['events'][0]
+
+
+def test_changed_daily_source_is_versioned_at_update_not_backdated_to_creation(adapter):
+    first = {'entryId': 'daily', 'createdAt': '2026-09-28T01:00:00Z', 'updatedAt': '2026-09-28T01:00:01Z',
+             'sourceUrl': 'https://example.test/daily', 'content': 'first source text'}
+    changed = {**first, 'updatedAt': '2026-09-29T01:00:00Z', 'content': 'later amended source text'}
+    old = adapter.context_ledger(context(dailyReports={'available': True, 'items': [first]}), adapter.empty_ledger())
+    new = adapter.context_ledger(context(dailyReports={'available': True, 'items': [changed]}), old)
+    data = adapter.engine()['merge_ledgers']([old, new])
+    assert len(data['events']) == 2
+    report = adapter.engine()['analyze'](data, '2026-09-28', '2026-09-28', 'daily')
+    assert len(report['evidence']) == 1
+    assert next(iter(report['evidence'].values()))['source']['excerpt'] == 'first source text'
