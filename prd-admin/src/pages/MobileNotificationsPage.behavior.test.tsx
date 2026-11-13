@@ -121,4 +121,21 @@ describe('通知动作与事实真实组件交互', () => {
     expect(host.textContent).toContain('无法确认独立故障数或发生次数');
     expect(host.textContent).not.toContain('同一故障已记录');
   });
+
+  it('当前新unknown事件缺少身份时不称为历史，不补造一次或恢复', async () => {
+    const now = new Date().toISOString();
+    api.list.mockResolvedValue({ success: true, data: { items: [{
+      ...notice, id: 'fresh-unidentified', title: '当前请求结果需要核对',
+      message: '该次请求结果尚未确认，请先核对任务结果。',
+      source: 'llm-gateway-quota', incidentId: null, incidentState: 'unknown', requestOutcome: 'unknown',
+      occurrenceCount: 1, createdAt: now, updatedAt: now, pushEpisode: 0,
+      firstOccurredAt: undefined, lastOccurredAt: undefined, recoveredAt: undefined, actionUrl: null,
+    }] } });
+    await render();
+    expect(host.textContent).toContain('缺少可确认的故障身份，无法确认独立故障数或发生次数。');
+    expect(host.textContent).not.toContain('历史');
+    expect(host.textContent).not.toContain('同一故障已记录');
+    expect(host.textContent).not.toContain('已有恢复证据');
+    expect(host.textContent).not.toContain('恢复证据时间');
+  });
 });

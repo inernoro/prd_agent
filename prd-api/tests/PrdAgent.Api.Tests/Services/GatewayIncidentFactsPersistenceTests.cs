@@ -376,6 +376,54 @@ public sealed class GatewayIncidentFactsPersistenceTests
         Assert.Equal(182, after.OccurrenceCount);
     }
 
+    [Theory]
+    [InlineData("closed", true)]
+    [InlineData("handled", false)]
+    public async Task Review_LegacyGatewayEntryRecurrenceOutsideRecoveryWindow_ReopensOnlySystemClosed(string priorStatus, bool reopen)
+    {
+        await using var f = new Fixture();
+        var log = f.Request("entry-recurrence-today", "failed", 503, 0);
+        log.Provider = "gateway-auth";
+        log.Error = PrdAgent.Core.LlmGateway.GatewayRouteFailure.ModelPoolAllUnavailable;
+        log.PlatformId = null; log.PlatformName = null; log.Model = "";
+        var signal = Assert.Single(LlmGatewayIncidentPolicy.BuildSignals([log]), x => x.IsGatewayEntry);
+        // Exact old entry identity/watermark writer, not a parsed title or diagnostic.
+        var oldEntryIdentity = string.Join("|", "gateway-entry", log.TenantId.Trim().ToLowerInvariant(),
+            log.AppCallerCode.Trim().ToLowerInvariant(), log.Path.Trim());
+        var oldHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(oldEntryIdentity))).ToLowerInvariant()[..24];
+        Assert.Equal(oldHash, signal.Fingerprint);
+        var oldSuccessAt = log.StartedAt.AddDays(-1);
+        var oldSuccessIdentity = System.Text.Json.JsonSerializer.Serialize(new[] { "old-entry-success", "old-entry-success" });
+        var oldWatermark = oldSuccessAt.Ticks.ToString("D19", System.Globalization.CultureInfo.InvariantCulture)
+            + ":0:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(oldSuccessIdentity)));
+        var legacy = new AdminNotification {
+            Id = "legacy-entry-closed", Key = "llmgw-upstream:" + oldHash, Source = "gateway-alert",
+            Section = AdminNotificationSections.Admin, Status = priorStatus, Level = "error",
+            CreatedAt = log.StartedAt.AddDays(-2), UpdatedAt = oldSuccessAt, HandledAt = oldSuccessAt,
+            GatewaySignalVersion = oldWatermark, ExpiresAt = null,
+        };
+        await f.Map.AdminNotifications.InsertOneAsync(legacy);
+        // Recovery logs have already aged out; the current request is a real new rejection.
+        await f.Gateway.LlmRequestLogs.InsertOneAsync(log);
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => f.SweepAsync()));
+        await f.SweepAsync();
+        var row = Assert.Single(await f.Notices());
+        Assert.Equal(legacy.Id, row.Id);
+        Assert.Equal(legacy.Key, row.Key);
+        Assert.Equal(reopen ? "open" : "handled", row.Status);
+        Assert.Equal(reopen ? 1 : 0, row.PushEpisode);
+        Assert.Equal("active", row.IncidentState);
+        Assert.Equal("request_failed", row.RequestOutcome);
+        Assert.Equal(log.RequestId, row.EvidenceRequestId);
+        Assert.Null(row.RecoveredAt);
+        Assert.Equal(1, row.OccurrenceCount);
+        Assert.Equal(log.EndedAt, row.FirstOccurredAt);
+        Assert.Equal(log.EndedAt, row.LastOccurredAt);
+        Assert.Equal(reopen ? null : legacy.HandledAt, row.HandledAt);
+        Assert.Equal(reopen, row.PushEpisodeStartedAtUtcTicks.HasValue);
+    }
+
     [Fact]
     public async Task Review_RecoveryPreservesAccumulated182FailureFacts()
     {

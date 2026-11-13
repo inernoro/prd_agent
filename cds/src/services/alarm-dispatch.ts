@@ -149,7 +149,7 @@ export async function sendAlarm(
   const message = renderAlarmMessage(event, boardUrl ? { boardUrl } : {});
   if (channel.kind === 'bark' && phoneQueue) return phoneQueue.enqueue({ channel, event, message, boardUrl: opts.boardUrl });
   const mapPayload = channel.kind === 'map' ? buildNotificationPayload({
-    identity: event.identity, notificationFacts: event.notificationFacts,
+    identity: event.identity, notificationFacts: event.notificationFacts, drill: event.drill,
     eventId: event.eventId, firstOccurredAt: event.firstOccurredAt, lastOccurredAt: event.lastOccurredAt, occurrenceCount: event.occurrenceCount,
     urgency: event.drill ? 'normal' : event.urgency,
     finding: event.finding, assessment: event.assessment, affectedChecks: event.affectedChecks, environmentLabel: event.environmentLabel,
@@ -213,7 +213,7 @@ async function sendAlarmTransport(
       timeoutMs,
     });
     return await notifier.send({
-      identity: event.identity, notificationFacts: event.notificationFacts,
+      identity: event.identity, notificationFacts: event.notificationFacts, drill: event.drill,
     eventId: event.eventId, firstOccurredAt: event.firstOccurredAt, lastOccurredAt: event.lastOccurredAt, occurrenceCount: event.occurrenceCount,
       urgency: event.drill ? 'normal' : event.urgency,
       finding: event.finding, assessment: event.assessment, affectedChecks: event.affectedChecks, environmentLabel: event.environmentLabel,

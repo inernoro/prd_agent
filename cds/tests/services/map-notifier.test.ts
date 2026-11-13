@@ -225,13 +225,13 @@ describe('接线守卫', () => {
   });
 });
 
-it('MAP 通道实际 HTTP 载荷保留严重资格，演练和采集异常不能借此提权', async () => {
+it('MAP 通道实际 HTTP 保留故障与恢复，演练不登记真实故障或提权', async () => {
   const { sendAlarm } = await import('../../src/services/alarm-dispatch.js');
-  const received: string[] = [];
+  const received: ReturnType<typeof buildNotificationPayload>[] = [];
   const server = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
-    received.push(JSON.parse(body).level);
+    received.push(JSON.parse(body));
     res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}');
   });
   server.listen(0, '127.0.0.1');
@@ -240,13 +240,24 @@ it('MAP 通道实际 HTTP 载荷保留严重资格，演练和采集异常不能
   const channel = { id: 'map-fixture', name: 'MAP', enabled: true, kind: 'map' as const, projects: [], events: [] as [], createdAt: 0, updatedAt: 0,
     map: { endpoint: `http://127.0.0.1:${(server.address() as {port: number}).port}/events`, keyId: 'fixture', username: 'fixture', privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() } };
   const event = { kind: 'business-down' as const, projectId: 'fixture', targetName: '业务访问', urgency: 'urgent' as const,
-    message: '未响应', consecutiveFailures: 3, detectedAt: '2026-10-19T00:00:00Z' };
+    message: '未响应', consecutiveFailures: 3, detectedAt: '2026-10-19T00:00:00Z',
+    eventId: 'fixture-event', firstOccurredAt: '2026-10-19T00:00:00Z', lastOccurredAt: '2026-10-19T00:00:00Z', occurrenceCount: 3 };
   try {
     expect((await sendAlarm(channel, event)).ok).toBe(true);
     expect((await sendAlarm(channel, { ...event, assessment: 'observation-unavailable' })).ok).toBe(true);
     expect((await sendAlarm(channel, { ...event, drill: true })).ok).toBe(true);
     expect((await sendAlarm(channel, { ...event, kind: 'business-recovered' })).ok).toBe(true);
-    expect(received).toEqual(['error', 'warning', 'warning', 'info']);
+    expect(received.map(payload => payload.level)).toEqual(['error', 'warning', 'warning', 'info']);
+    expect(received[0].incidentState).toBe('active');
+    expect(received[3].incidentState).toBe('recovered');
+    expect(received[3].incidentId).toBe(received[0].incidentId);
+    const drill = received[2];
+    for (const field of ['incidentId', 'incidentState', 'firstOccurredAt', 'lastOccurredAt', 'recoveredAt', 'occurrenceCount', 'requestOutcome']) {
+      expect(drill, `演练不应伪造真实故障字段 ${field}`).not.toHaveProperty(field);
+    }
+    expect(drill.title).toContain('演练');
+    expect(drill.message).toContain('演练');
+    expect(drill.dedupKey).not.toBe(received[0].dedupKey);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 

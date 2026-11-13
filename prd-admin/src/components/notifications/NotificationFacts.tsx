@@ -14,7 +14,7 @@ export function NotificationFacts({ item }: { item: AdminNotificationItem }) {
     <div className="mt-2 space-y-1 text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}>
       <div>{NOTIFICATION_INCIDENT_STATE[item.incidentState ?? 'unknown'] ?? NOTIFICATION_INCIDENT_STATE.unknown} · {NOTIFICATION_REQUEST_OUTCOME[item.requestOutcome ?? 'unknown'] ?? NOTIFICATION_REQUEST_OUTCOME.unknown}</div>
       {item.incidentId && item.occurrenceCount != null && <div>同一故障已记录 {item.occurrenceCount} 次{(item.pushEpisode ?? 0) > 0 ? ` · 第 ${(item.pushEpisode ?? 0) + 1} 轮` : ''}</div>}
-      {!item.incidentId && <div>历史通知缺少故障身份，无法确认独立故障数或发生次数。</div>}
+      {!item.incidentId && <div>缺少可确认的故障身份，无法确认独立故障数或发生次数。</div>}
       {item.firstOccurredAt && <div>首次记录：{time(item.firstOccurredAt)}</div>}
       {item.lastOccurredAt && <div>最近发生：{time(item.lastOccurredAt)}</div>}
       {item.recoveredAt && item.incidentState === 'recovered' && <div>恢复证据时间：{time(item.recoveredAt)}</div>}

@@ -1292,6 +1292,65 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Theory]
+    [InlineData("unknown", "unknown")]
+    [InlineData("unknown", null)]
+    [InlineData(null, "unknown")]
+    public void Review_ModernUnknownQuotaWithoutIdentity_IsNotMisrepresentedAsHistory(string? incidentState, string? outcome)
+    {
+        var notification = new AdminNotification {
+            Source = "llm-gateway-quota", IncidentState = incidentState, RequestOutcome = outcome,
+            Title = "上游额度不足（对象尚未确认）", Message = "上游拒绝了一次调用，整次请求结果尚未确认。",
+        };
+        var presentation = NotificationsController.ToUserReadablePresentation(notification);
+        Assert.Equal(notification.Title, presentation.Title);
+        Assert.Equal(notification.Message, presentation.Message);
+        Assert.DoesNotContain("历史", presentation.Message);
+        Assert.Null(notification.IncidentId);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Review_CurrentUnknownQuotaProducer_KeepsFactsCurrentAndPreservesObjectPermissions(bool gatewayPermission)
+    {
+        await using var db = await AdminPushTestDatabase.TryCreateAsync();
+        var notifier = new PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier(db.Context,
+            NullLogger<PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>.Instance);
+        // Platform creation accepts this name; existing quota safety rules deliberately
+        // withhold its identity. A missing identity is not evidence this event is historical.
+        await notifier.NotifyQuotaExceededAsync("供应商（欧洲）", "notification-modern-model");
+        var stored = await db.Context.AdminNotifications.Find(_ => true).SingleAsync();
+        Assert.Null(stored.IncidentId);
+        Assert.Equal("unknown", stored.IncidentState);
+        Assert.Equal("unknown", stored.RequestOutcome);
+        var controller = CreateNotificationsController(db.Context, "u1", adminRole: true,
+            adminPermission: true, gatewayPermission: gatewayPermission);
+        var item = Assert.Single(ReadNotificationItems(await controller.List(ct: CancellationToken.None)));
+        var message = item.GetProperty("message").GetString();
+        Assert.DoesNotContain("历史", message);
+        Assert.Contains("结果", message);
+        Assert.Equal("unknown", item.GetProperty("incidentState").GetString());
+        Assert.Equal("unknown", item.GetProperty("requestOutcome").GetString());
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("incidentId").ValueKind);
+        if (gatewayPermission)
+        {
+            Assert.Equal(stored.Title, item.GetProperty("title").GetString());
+            Assert.Equal(stored.Message, message);
+            Assert.Contains("notification-modern-model", message);
+        }
+        else
+        {
+            Assert.Equal("模型服务状态需要网关管理员检查", item.GetProperty("title").GetString());
+            Assert.DoesNotContain("notification-modern-model", message);
+            Assert.DoesNotContain("供应商（欧洲）", message);
+        }
+        var after = await db.Context.AdminNotifications.Find(x => x.Id == stored.Id).SingleAsync();
+        Assert.Equal(stored.Title, after.Title);
+        Assert.Equal(stored.Message, after.Message);
+        Assert.Null(after.IncidentId);
+    }
+
+    [Theory]
     [InlineData("null")]
     [InlineData("missing")]
     [InlineData(" ")]
@@ -1713,7 +1772,8 @@ public sealed class AdminPushNotificationServiceTests
         string userId,
         bool stableSmoke = false,
         bool adminRole = false,
-        bool adminPermission = false)
+        bool adminPermission = false,
+        bool gatewayPermission = false)
     {
         var push = CreateService(db, new RecordingHttpClientFactory(HttpStatusCode.OK));
         var events = new AdminNotificationEventService(
@@ -1736,6 +1796,7 @@ public sealed class AdminPushNotificationServiceTests
         IReadOnlyList<string> effectivePermissions = adminPermission
             ? [AdminPermissionCatalog.Access, AdminPermissionCatalog.SettingsWrite]
             : [AdminPermissionCatalog.Access];
+        if (gatewayPermission) effectivePermissions = effectivePermissions.Append(AdminPermissionCatalog.LlmGatewayAccess).ToArray();
         var permissions = new Moq.Mock<IAdminPermissionService>(Moq.MockBehavior.Strict);
         permissions.Setup(x => x.GetEffectivePermissionsAsync(userId, false, Moq.It.IsAny<CancellationToken>()))
             .Returns(Task.FromResult(effectivePermissions));

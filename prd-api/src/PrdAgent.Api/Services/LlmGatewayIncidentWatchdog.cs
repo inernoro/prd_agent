@@ -234,7 +234,14 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             var confirmsPendingOutcome = order == 0 && existing.EvidenceRequestId == signal.RequestId
                 && existing.RequestOutcome == "unknown" && signal.RequestOutcome != "unknown";
             if (order > 0 || (order == 0 && !confirmsPendingOutcome)) return false;
-            var shouldReopen = string.Equals(existing.IncidentState, "recovered", StringComparison.Ordinal);
+            // The old entry writer closed this exact key only on system recovery,
+            // without the modern identity/state fields. A new real rejection starts a
+            // recurrence even after recovery logs age out; handled is user acknowledgement.
+            var legacySystemClosedEntry = signal.IsGatewayEntry && existing.Key == key
+                && existing.Source == "gateway-alert" && existing.Status == "closed"
+                && existing.IncidentId == null && existing.IncidentState == null;
+            var shouldReopen = string.Equals(existing.IncidentState, "recovered", StringComparison.Ordinal)
+                || legacySystemClosedEntry;
             var impactEscalated = !shouldReopen && IsImpactEscalation(existing.RequestOutcome, signal.RequestOutcome);
             var newFailures = signal.FailureObservations
                 .Where(x => string.CompareOrdinal(x.Version, existing.GatewaySignalVersion) > 0).ToList();

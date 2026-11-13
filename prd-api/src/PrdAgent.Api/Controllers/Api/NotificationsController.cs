@@ -437,7 +437,7 @@ public sealed class NotificationsController : ControllerBase
         var presentation = ToUserReadablePresentation(n);
         var gatewayDiagnostic = AdminNotificationAudience.RequiresGatewayObjectPermission(n);
         var restrictDiagnostic = gatewayDiagnostic && !canOpenGateway;
-        if (restrictDiagnostic && !(n.Source == "llm-gateway-quota" && string.IsNullOrWhiteSpace(n.IncidentId)))
+        if (restrictDiagnostic && !IsLegacyQuotaWithoutStructuredFacts(n))
         {
             // 运营通知可见性不授予网关对象查看权；普通运营管理员只看到适用的影响与下一步。
             presentation = ("模型服务状态需要网关管理员检查", n.IncidentState == "recovered"
@@ -485,8 +485,7 @@ public sealed class NotificationsController : ControllerBase
 
     internal static (string Title, string? Message) ToUserReadablePresentation(AdminNotification notification)
     {
-        if (string.IsNullOrWhiteSpace(notification.IncidentId)
-            && string.Equals(notification.Source, "llm-gateway-quota", StringComparison.OrdinalIgnoreCase))
+        if (IsLegacyQuotaWithoutStructuredFacts(notification))
         {
             return (
                 "AI 创作服务需要管理员处理",
@@ -495,6 +494,14 @@ public sealed class NotificationsController : ControllerBase
 
         return (notification.Title, notification.Message);
     }
+
+    // A current producer may deliberately withhold an unsafe/unknown identity. Its
+    // explicit outcome/state remains current evidence, not proof of a historical row.
+    private static bool IsLegacyQuotaWithoutStructuredFacts(AdminNotification n)
+        => string.IsNullOrWhiteSpace(n.IncidentId)
+           && string.IsNullOrWhiteSpace(n.IncidentState)
+           && string.IsNullOrWhiteSpace(n.RequestOutcome)
+           && string.Equals(n.Source, "llm-gateway-quota", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsLegacyIncident(AdminNotification n) => n.Source is
         "llm-gateway-quota" or "gateway-alert" or "uptime-alert" or "system-alert" or "api-request-alert" or "model-pool-probe";
