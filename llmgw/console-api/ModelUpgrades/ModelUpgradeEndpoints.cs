@@ -2,6 +2,7 @@ using System.Text.Json;
 using MongoDB.Driver;
 using PrdAgent.LlmGw.Auth;
 using PrdAgent.LlmGw.Models;
+using PrdAgent.LlmGw.ModelReferences;
 
 namespace PrdAgent.LlmGw.ModelUpgrades;
 
@@ -11,7 +12,8 @@ public static class ModelUpgradeEndpoints
         IConfiguration configuration, string internalTenantId)
     {
         services.AddSingleton<IModelUpgradeDiscovery>(new ModelUpgradeDiscovery(new UpstreamProxyService(gateway, configuration, internalTenantId), configuration, internalTenantId, gateway));
-        services.AddSingleton(sp => new ModelUpgradeService(gateway, map, sp.GetRequiredService<IModelUpgradeDiscovery>(), internalTenantId, sp.GetRequiredService<ILogger<ModelUpgradeService>>(), configuration));
+        services.AddSingleton(sp => new ModelUpgradeService(gateway, map, sp.GetRequiredService<IModelUpgradeDiscovery>(), internalTenantId, sp.GetRequiredService<ILogger<ModelUpgradeService>>(), configuration,
+            sp.GetRequiredService<ModelReferenceEngine>(), sp.GetRequiredService<ModelReferenceCatalog>()));
         services.AddHostedService<ModelUpgradeWorker>();
         return services;
     }

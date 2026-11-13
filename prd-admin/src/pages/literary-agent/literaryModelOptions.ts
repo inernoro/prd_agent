@@ -13,6 +13,8 @@ export type LiteraryModelOption = {
   isDedicated: boolean;
   isDefault: boolean;
   isAutoResolved?: boolean;
+  aliases?: string[];
+  selectionIds?: string[];
 };
 
 const INTERNAL_ROUTE_ID = /^(?:default-|pool[_-]|logical[_-])/i;
@@ -58,6 +60,8 @@ export function buildLiteraryModelOptions(pools: LiteraryAgentModelPool[]): Lite
         enabled: pool.models.some(isModelAvailableForRequest),
         isDedicated: pool.isDedicated,
         isDefault: pool.isDefault,
+        aliases: pool.aliases ?? [],
+        selectionIds: (pool.legacyPoolIds ?? []).map(id => `pool_${id}`),
       };
     })
     .filter((model): model is LiteraryModelOption => model !== null && model.enabled);
@@ -86,6 +90,18 @@ export function selectLiteraryModelOption(
   options: LiteraryModelOption[],
   selectedId?: string | null,
 ): LiteraryModelOption | null {
-  const selected = selectedId ? options.find((model) => model.id === selectedId) : null;
-  return selected ?? options.find((model) => model.isDefault) ?? options[0] ?? null;
+  const selected = selectedId ? options.find((model) => model.id === selectedId || model.selectionIds?.includes(selectedId)) : null;
+  if (selectedId) return selected ?? null;
+  return options.find((model) => model.isDefault) ?? options[0] ?? null;
+}
+
+/** 提交前重新读取目录，只接受原身份或明确继承关系，不能因旧项消失而任意换模型。 */
+export function selectFreshLiteraryModel(
+  options: LiteraryModelOption[], previous: LiteraryModelOption | null,
+): LiteraryModelOption | null {
+  if (!previous || previous.isAutoResolved) return selectLiteraryModelOption(options);
+  const key = previous.modelName.trim().toLowerCase();
+  const matches = options.filter(model => model.modelName.trim().toLowerCase() === key
+    || model.aliases?.some(alias => alias.trim().toLowerCase() === key));
+  return matches.length === 1 ? matches[0] : null;
 }
