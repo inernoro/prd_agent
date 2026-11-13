@@ -42,6 +42,34 @@ describe('自动化任务健康与安全恢复', () => {
     title: '隔离验收报告', format: 'md', content: '# 已完成验收\n断言通过', projectId: run.projectId,
     scheduledJobRunId: run.id, verdict: 'pass', ...extra,
   });
+  it('人工并发跳过持久保留幂等回执，历史裁剪和进程更换后重试不执行', async () => {
+    let finish!: () => void;
+    const completion = new Promise<void>(resolve => { finish = resolve; });
+    shell.exec.mockImplementationOnce(async () => { await completion; return { stdout: 'first', stderr: '', exitCode: 0 }; });
+    const row = job({ schedule: { type: 'manual' }, nextRunAt: null, timeoutSeconds: 600 });
+    const stamp = Date.now();
+    const active = service.runJob(row.id, 'manual', { requestKey: `${stamp - 1}:active-request` });
+    try {
+      await vi.waitFor(() => expect(shell.exec).toHaveBeenCalledTimes(1));
+      const options = { requestKey: `${stamp}:skipped-request` };
+      const skipped = await service.runJob(row.id, 'manual', options);
+      expect(skipped.status).toBe('skipped');
+      finish(); await active;
+      expect((await service.runJob(row.id, 'manual', options)).id, '同一请求必须返回已确认的跳过').toBe(skipped.id);
+      expect(shell.exec).toHaveBeenCalledTimes(1);
+      expect(state.getScheduledJob(row.id)!.lastManualRequest).toMatchObject({ id: skipped.id, requestKey: options.requestKey, status: 'skipped' });
+      state.getState().scheduledJobRuns = [];
+      state.upsertScheduledJob(state.getScheduledJob(row.id)!);
+      await state.flush(); service.stop();
+      state = new StateService(path.join(dir, 'state.json'), dir); state.load(); service = makeService();
+      expect(state.listScheduledJobRuns()).toHaveLength(0);
+      expect((await service.runJob(row.id, 'manual', options)).id).toBe(skipped.id);
+      await expect(service.runJob(row.id, 'manual', { requestKey: `${stamp - 1}:older-request` })).rejects.toThrow('过期');
+      expect(shell.exec).toHaveBeenCalledTimes(1);
+      const newer = await service.runJob(row.id, 'manual', { requestKey: `${stamp + 1}:newer-request` });
+      expect(newer.status).toBe('success'); expect(shell.exec).toHaveBeenCalledTimes(2);
+    } finally { finish(); await active; }
+  });
   it('区分暂停、未到时间和漏跑；手动成功不能掩盖漏跑', async () => {
     let row = job({ enabled: false, nextRunAt: new Date(Date.now() - 300_000).toISOString() });
     expect(service.health(row).state).toBe('paused'); await service.tick(); expect(shell.exec).not.toHaveBeenCalled();

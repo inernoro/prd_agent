@@ -329,11 +329,17 @@ export class ScheduledJobService {
       skipped.finishedAt = skipped.queuedAt;
       skipped.durationMs = 0;
       skipped.log = '上一次执行仍在运行，本次按并发策略跳过。';
+      skipped.requestKey = options.requestKey;
       if (trigger === 'schedule') {
-        skipped.requestKey = options.requestKey;
         this.claimScheduledOccurrence(job, skipped, options.scheduledFor, options.now || new Date());
         await this.deps.stateService.flush();
-      } else this.deps.stateService.upsertScheduledJobRun(skipped);
+      } else {
+        this.deps.stateService.upsertScheduledJobRun(skipped);
+        if (trigger === 'manual' && options.requestKey) {
+          this.deps.stateService.upsertScheduledJob({ ...job, lastManualRequest: { ...skipped } });
+          await this.deps.stateService.flush();
+        }
+      }
       return skipped;
     }
 
