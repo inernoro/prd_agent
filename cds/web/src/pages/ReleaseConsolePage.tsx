@@ -864,7 +864,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     min-width 兜住），不是 grow 之后的结果。1600 宽下内容行 764px，
                     52(图标) + 18 + 340 + 18 + 300(三个按钮) = 728，留得下一行。
                     版本选择挪进标题行之后操作组才收得到 300 —— 它在操作组里时是 480。 */}
-                <div className="min-w-0 flex-1 basis-[21.25rem]">
+                <div className="min-w-0 flex-1 basis-[15rem] sm:basis-[21.25rem]">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <h2 className={`text-xl font-bold ${failed ? 'text-bad' : running ? 'text-primary' : ''}`}>
                       {statusTitle}
