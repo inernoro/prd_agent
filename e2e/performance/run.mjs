@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as pause } from 'node:timers/promises';
 import { chromium, expect } from '@playwright/test';
-import { workload, digest, summarize, compare, capacity, executionErrors, buildIdentityErrors } from './metrics.mjs';
+import { workload, digest, summarize, compare, capacity, executionErrors, buildIdentityErrors, browserScenarios, stats } from './metrics.mjs';
 import { readProcesses, processTree } from './resources.mjs';
 
 const exec = promisify(execFile);
@@ -16,8 +16,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
 const options = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, index, args) => {
   if (index % 2 === 0) {
-    if (!['--ref', '--out', '--profile', '--baseline', '--inject-ms'].includes(value) || !args[index + 1])
-      throw new Error('参数: --ref COMMIT --out DIR --profile normal|all --baseline FILE --inject-ms 350');
+    if (!['--ref', '--out', '--profile', '--baseline', '--inject-ms', '--inject-browser-ms'].includes(value) || !args[index + 1])
+      throw new Error('参数: --ref COMMIT --out DIR --profile normal|all --baseline FILE --inject-ms 350 --inject-browser-ms 10000');
     pairs.push([value.slice(2), args[index + 1]]);
   }
   return pairs;
@@ -53,7 +53,7 @@ const images = {
   web: 'nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10',
 };
 const limits = { api: ['1', '1024m'], mongo: ['1', '768m'], redis: ['0.5', '256m'], web: ['0.5', '256m'] };
-const contract = { schema: 2, buildMetadataVersion: 2, workload, limits, images, sdkVersion,
+const contract = { schema: 3, buildMetadataVersion: 2, workload, limits, images, sdkVersion,
   nodeMajor: process.versions.node.split('.')[0], arch: os.arch(), cpu: os.cpus()[0].model,
   probe: digest(await fs.readFile(path.join(here, 'probe/Probe.cs'), 'utf8')),
   metricsCode: digest(await fs.readFile(path.join(here, 'metrics.mjs'), 'utf8')),
@@ -65,9 +65,13 @@ const result = { schema: 2, commit, harnessCommit: await command('git', ['rev-pa
   environmentId: runId, startedAt: new Date().toISOString(), contract,
   execution: { profile: options.profile ?? 'all', state: 'running' },
   host: { cpus: os.cpus().length, memoryBytes: os.totalmem(), kernel: os.release() },
-  injectionMs: Number(options['inject-ms'] ?? 0), phases: [], browser: {}, resources: [] };
+  injectionMs: Number(options['inject-ms'] ?? 0), phases: [],
+  browser: { samples: Object.fromEntries(browserScenarios.map(name => [name, []])) }, resources: [],
+  browserInjection: { delayMs: Number(options['inject-browser-ms'] ?? 0), applied: [] } };
 if (!Number.isInteger(result.injectionMs) || result.injectionMs < 0 || result.injectionMs > 2000)
   throw new Error('注入延迟必须为0到2000毫秒');
+if (!Number.isInteger(result.browserInjection.delayMs) || result.browserInjection.delayMs < 0 || result.browserInjection.delayMs > 15000)
+  throw new Error('浏览器脚本交付注入延迟必须为0到15000毫秒');
 const log = text => console.log(`[${new Date().toISOString()}] ${text}`);
 const buildKey = digest({ commit, sdkVersion, arch: os.arch(), buildMetadataVersion: 2 }).slice(0, 20);
 const build = path.join(root, 'work/performance', `build-${buildKey}`);
@@ -152,14 +156,22 @@ async function seed() {
   fixture.writers = Array.from({ length: Math.max(...workload.ramp.users) }, (_, i) => fixture.stores[i % fixture.stores.length]);
   await fs.writeFile(path.join(out, 'fixture.json'), JSON.stringify({ ...workload, actualContentBytes: Buffer.byteLength(payload), totalStores: fixture.stores.length }, null, 2));
 }
-async function browserJourney() {
+async function browserJourney(round) {
   browser = await chromium.launch({ executablePath: process.env.PERF_CHROMIUM_PATH || undefined, args: ['--no-proxy-server'] });
   contract.browserVersion = browser.version();
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' });
   // Block all non-local destinations, including browser-side font/CDN requests.
   const origin = new URL(base).origin;
-  await context.route('**/*', route => {
+  let stage = 'login';
+  await context.route('**/*', async route => {
     const url = new URL(route.request().url());
+    // Delay delivery of the real, unchanged homepage bundle only in this local
+    // browser. Server/API timing stays independent of this user-visible fault.
+    if (url.origin === origin && stage === 'home' && /\/AgentLauncherPage-[^/]+\.js$/.test(url.pathname)
+        && result.browserInjection.delayMs > 0) {
+      result.browserInjection.applied.push({ round, stage, asset: url.pathname, delayMs: result.browserInjection.delayMs });
+      await pause(result.browserInjection.delayMs);
+    }
     return url.origin === origin || ['data:', 'blob:'].includes(url.protocol) ? route.continue() : route.abort();
   });
   const page = await context.newPage();
@@ -172,11 +184,14 @@ async function browserJourney() {
   const requests = [];
   page.on('response', response => {
     const url = new URL(response.url());
-    if (url.pathname.startsWith('/api/')) requests.push({ path: url.pathname, status: response.status() });
+    if (url.pathname.startsWith('/api/')) requests.push({ path: url.pathname, status: response.status(), stage, round });
   });
   const timed = async (name, task) => {
-    const start = performance.now(); await task(); result.browser[name] = performance.now() - start;
-    await page.screenshot({ path: path.join(out, `browser-${name}.png`) });
+    stage = name;
+    const start = performance.now(); await task();
+    result.browser.samples[name].push(performance.now() - start);
+    result.browser[name] = stats(result.browser.samples[name]).p95;
+    await page.screenshot({ path: path.join(out, `browser-${name}-${round}.png`) });
   };
   try {
     const loginPage = await page.goto(`${base}/login`, { waitUntil: 'domcontentloaded' });
@@ -188,6 +203,9 @@ async function browserJourney() {
       await page.getByRole('button', { name: '进入控制台', exact: true }).click();
       await page.waitForURL(url => !url.pathname.includes('/login'));
       await home;
+      // The seeded recent-work cards must be usable in the actual homepage,
+      // rather than treating the already-visible application sidebar as ready.
+      await expect(page.locator('[aria-labelledby="home-continue-heading"] .home-desk-work-list button').first()).toBeVisible();
       await expect(page.getByText('知识库', { exact: true }).first()).toBeVisible();
     });
     await timed('knowledge-list', async () => {
@@ -214,16 +232,15 @@ async function browserJourney() {
       const persisted = (await api(`/api/document-store/entries/${fixture.entries[0]}/content`)).data;
       if (!persisted.content.includes('MAP无模型写入已持久化')) throw new Error('浏览器写入未持久化');
     });
-    result.browser.pass = true;
   } catch (error) {
     await page.screenshot({ path: path.join(out, 'browser-failure.png') });
     await fs.writeFile(path.join(out, 'browser-failure.html'), await page.content());
     throw error;
   } finally {
-    result.browser.requests = requests;
+    result.browser.requests = [...(result.browser.requests ?? []), ...requests];
     await browser.close(); browser = null;
     // Restore the deterministic read fixture before warm-up and measurement.
-    await api(`/api/document-store/entries/${fixture.entries[0]}/content`, 'PUT', { content: payload });
+    await api(`/api/document-store/entries/${fixture.entries[0]}/content`, 'PUT', { content: documentContent('性能文档-0-0') });
   }
 }
 async function journey(vu, phase, iteration) {
@@ -374,7 +391,10 @@ try {
   result.admission = { original: (await api('/api/v1/admin/rate-limit/global')).data, applied: workload.rateLimit };
   await api('/api/v1/admin/rate-limit/global', 'PUT', workload.rateLimit);
   await seed();
-  await browserJourney(); log('浏览器路径已通过');
+  for (let round = 1; round <= workload.browserRepetitions; round++) {
+    await browserJourney(round); log(`浏览器核心路径已通过 ${round}/${workload.browserRepetitions}`);
+  }
+  result.browser.pass = true;
   activePhase = 'warmup';
   for (let i = 0; i < 5; i++) {
     const warmed = await journey(0, 'warmup', i);

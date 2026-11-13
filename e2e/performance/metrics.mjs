@@ -2,11 +2,13 @@ import { createHash } from 'node:crypto';
 
 export const workload = {
   version: 1, stores: 6, documentsPerStore: 20, contentBytes: 8192,
+  browserRepetitions: 3,
   rateLimit: { maxRequestsPerMinute: 100000, maxConcurrentRequests: 1024 },
   normal: { users: 2, seconds: 20, intervalMs: 1000 },
   ramp: { users: [2, 4, 8, 16, 32, 64, 128], seconds: 15, intervalMs: 0 },
   soak: { users: 2, seconds: 120, intervalMs: 1000 },
 };
+export const browserScenarios = ['home', 'knowledge-list', 'document-open', 'write'];
 export const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function stats(values) {
   const sorted = [...values].sort((a, b) => a - b);
@@ -39,6 +41,12 @@ export function executionErrors(result) {
   if (execution?.state !== 'complete' || !Number.isFinite(Date.parse(result?.finishedAt)))
     failures.push('测试尚未完成或缺少终态，阶段快照不能作为通过证据');
   if (result?.browser?.pass !== true) failures.push('真实浏览器业务闭环未通过');
+  for (const name of browserScenarios) {
+    const samples = result?.browser?.samples?.[name];
+    if (!Array.isArray(samples) || samples.length < workload.browserRepetitions
+        || samples.some(ms => !Number.isFinite(ms) || ms <= 0))
+      failures.push(`browser/${name}: 缺少足量真实用户可用耗时样本`);
+  }
   failures.push(...buildIdentityErrors(result?.commit, result?.buildIdentity));
   const phases = result?.phases ?? [];
   const names = phases.map(p => p.name);
@@ -83,14 +91,28 @@ export function calibrate(results) {
       errorRate: 3 / rows.reduce((n, r) => n + r.attempts, 0),
       minThroughput: Math.min(...rows.map(r => r.throughput)) * .7 };
   }
-  return { schema: 1, policyVersion: 2, commit: results[0].commit, contract, limits,
+  const browserLimits = Object.fromEntries(browserScenarios.map(name => {
+    const values = results.flatMap(r => r.browser.samples[name]);
+    const high = Math.max(...values), low = Math.min(...values);
+    return [name, { samples: values.length, readyP95Ms: Math.max(high * 1.3, high + (high - low) * 3) }];
+  }));
+  return { schema: 1, policyVersion: 3, commit: results[0].commit, contract, limits, browserLimits,
     sourceRuns: results.map(r => ({ environmentId: r.environmentId, commit: r.commit, startedAt: r.startedAt })),
-    policy: 'p95上限=max(三次p95最大值*1.3, p95最大值+3*极差, 基线p99最大值); 错误率上限=3/总样本数(零错误95%上界); 吞吐下限=最小值*0.7' };
+    policy: 'API p95上限=max(三次p95最大值*1.3, p95最大值+3*极差, 基线p99最大值); 错误率上限=3/总样本数; 吞吐下限=最小值*0.7; 浏览器可用耗时上限=max(独立基线所有样本最大值*1.3, 最大值+3*极差)' };
 }
 export function compare(result, baseline) {
   const failures = executionErrors(result);
   if (failures.length) return { pass: false, failures };
   if (digest(result.contract) !== digest(baseline.contract)) return { pass: false, failures: ['运行契约不一致，须在同机重新校准'] };
+  for (const name of browserScenarios) {
+    const limit = baseline.browserLimits?.[name]?.readyP95Ms;
+    if (!Number.isFinite(limit) || limit <= 0) {
+      failures.push(`browser/${name}: 基线缺少用户可用耗时阈值，须重新校准`);
+      continue;
+    }
+    const actual = stats(result.browser.samples[name]).p95;
+    if (actual > limit) failures.push(`browser/${name}: ready p95 ${actual.toFixed(2)} > ${limit.toFixed(2)} ms`);
+  }
   for (const phase of result.phases.filter(p => p.name === 'normal' || p.name === 'soak')) {
     for (const [name, limit] of Object.entries(baseline.limits)) {
       const m = phase.metrics[name];

@@ -89,6 +89,14 @@ jobs:
           set -e
           test "$status" -eq 1
           node e2e/performance/prove.mjs work/performance/injected/result.json
+      - name: Prove user-visible homepage regression is rejected with healthy API
+        run: |
+          set +e
+          node e2e/performance/run.mjs --ref "$PERF_BASE_REF" --profile normal --inject-browser-ms 10000 --baseline work/performance/baseline.json --out work/performance/injected-browser
+          status=$?
+          set -e
+          test "$status" -eq 1
+          node e2e/performance/prove-browser.mjs work/performance/injected-browser/result.json
       - name: Upload performance evidence
         if: always()
         uses: actions/upload-artifact@v4

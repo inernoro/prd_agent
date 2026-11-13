@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calibrate, compare, capacity, summarize, stats, workload } from './metrics.mjs';
+import { calibrate, compare, capacity, summarize, stats, workload, browserScenarios } from './metrics.mjs';
 
 function run(id, ms = 20) {
   const samples = Array.from({ length: 100 }, () => ({ name: 'home', ok: true, ms, app: ms - 2, external: 0 }));
   return { environmentId: id, commit: 'base', contract: { schema: 1 }, startedAt: id,
     buildIdentity: { api: { actualCommit: 'base', expectedCommit: 'base', commitMatch: 'match' }, webEntries: ['/assets/index-base.js'] },
-    finishedAt: '2026-11-13T00:00:00.000Z', execution: { profile: 'normal', state: 'complete' }, browser: { pass: true },
+    finishedAt: '2026-11-13T00:00:00.000Z', execution: { profile: 'normal', state: 'complete' },
+    browser: { pass: true, samples: Object.fromEntries(browserScenarios.map(name => [name, [100, 110, 105]])) },
     phases: [{ name: 'normal', metrics: summarize(samples, 20) }] };
 }
 test('零错误、足量、三次独立运行才允许校准', () => {
@@ -103,4 +104,23 @@ test('错误不计入成功吞吐，保留长尾和空样本', () => {
   assert.equal(summary.throughput, .5);
   assert.equal(summary.client.p95, 7);
   assert.equal(stats([]).n, 0);
+});
+test('API正常而用户可用时间退化时，四条浏览器主路径都会触发门禁', () => {
+  const baseline = calibrate([run('a'), run('b'), run('c')]);
+  assert.equal(compare(run('normal'), baseline).pass, true);
+  for (const name of browserScenarios) {
+    const slow = run('slow-ui'); slow.browser.samples[name] = [10000, 10000, 10000];
+    const verdict = compare(slow, baseline);
+    assert.equal(verdict.pass, false);
+    assert.ok(verdict.failures.some(line => line.startsWith(`browser/${name}: ready p95`)));
+    assert.equal(verdict.failures.some(line => line.includes('app p95')), false);
+  }
+});
+test('用户可用时间不能缺样本，也不能沿用没有浏览器阈值的旧基线', () => {
+  const baseline = calibrate([run('a'), run('b'), run('c')]);
+  const partial = run('partial-ui'); partial.browser.samples.home = [100];
+  assert.equal(compare(partial, baseline).pass, false);
+  assert.throws(() => calibrate([partial, run('b'), run('c')]), /可用耗时/);
+  const legacy = structuredClone(baseline); delete legacy.browserLimits;
+  assert.equal(compare(run('normal'), legacy).pass, false);
 });
