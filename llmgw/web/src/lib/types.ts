@@ -1896,4 +1896,4 @@ export type ReferenceMigrationPlan = {
   createdAt: string; updatedAt: string;
 };
 export type CreateReferenceMigrationPlanRequest = { sourceLogicalId: string; targetLogicalId: string; clientRequestId: string };
-export type RepairableModelUsage = { consumerKey: string; recordId: string; path: string; modelType: string; value: string; platformId?: string | null; logicalId?: string | null; status: 'available' | 'orphan' | 'unknown'; canConfirmPurpose?: boolean };
+export type RepairableModelUsage = { consumerKey: string; recordId: string; path: string; modelType: string; value: string; platformId?: string | null; logicalId?: string | null; status: 'available' | 'orphan' | 'unknown'; canConfirmPurpose?: boolean; fingerprint?: string | null };
