@@ -1046,7 +1046,11 @@ export const Timeline: React.FC<{
       const sceneIndex = clip.sceneIndex!;
       const scene = run.scenes[sceneIndex];
       const trim = 'trimStartSeconds' in clip ? Math.max(0, clip.trimStartSeconds) + Math.max(0, clip.trimEndSeconds) : 0;
-      const clipDuration = Math.max(0.1, (scene.duration ?? run.directDuration ?? 5) - trim);
+      // 导入轨道保留探测得到的小数时长，scene.duration 是模型参数用的整数秒。
+      // 仅在轨道仍引用当前素材时复用；采用新版本后不能沿用旧素材长度。
+      const measuredDuration = 'assetUrl' in clip && clip.assetUrl && clip.assetUrl === scene.videoUrl
+        && Number.isFinite(clip.durationSeconds) && clip.durationSeconds > 0 ? clip.durationSeconds : undefined;
+      const clipDuration = Math.max(0.1, (measuredDuration ?? scene.duration ?? run.directDuration ?? 5) - trim);
       const item = { scene, sceneIndex, start: cursor, duration: clipDuration };
       cursor += clipDuration;
       return item;

@@ -9,9 +9,9 @@ const run = { directDuration: 5, scenes: [
   { index: 1, topic: '第二镜', duration: 5 },
   { index: 2, topic: '第三镜', duration: 5, narration: { text: '第三句', durationSeconds: 3 } },
 ] } as VideoGenRun;
-const render = (tracks: VideoTimelineTrack[] = []) => {
+const render = (tracks: VideoTimelineTrack[] = [], sourceRun = run) => {
   const host = document.createElement('div');
-  host.innerHTML = renderToStaticMarkup(<Timeline run={run} tracks={tracks} selectedSceneIndex={0}
+  host.innerHTML = renderToStaticMarkup(<Timeline run={sourceRun} tracks={tracks} selectedSceneIndex={0}
     onSelect={vi.fn()} onReorder={vi.fn()} disabled={false} />);
   return host;
 };
@@ -19,6 +19,23 @@ const card = (host: HTMLDivElement, text: string) => Array.from(host.querySelect
   .find(item => item.querySelector('strong')?.textContent === text)!;
 
 describe('制作台时间线与导出时序一致', () => {
+  it('导入非整数秒镜头按匹配素材的精确时长排布，采用新版本后不复用旧素材时长', () => {
+    const durations = [2.4, 5.2, 3.4];
+    const imported = { ...run, scenes: run.scenes.map((scene, index) => ({
+      ...scene, videoUrl: `/scene-${index}.mp4`, duration: Math.ceil(durations[index]),
+    })) } as VideoGenRun;
+    const tracks = [{ id: 'v', type: 'video', clips: durations.map((durationSeconds, sceneIndex) => ({
+      id: `${sceneIndex}`, sceneIndex, durationSeconds, assetUrl: `/scene-${sceneIndex}.mp4`,
+      startSeconds: 0, trimStartSeconds: 0, trimEndSeconds: 0,
+    })) }] as VideoTimelineTrack[];
+    const host = render(tracks, imported);
+    expect(host.textContent).toContain('3 个镜头 · 11 秒');
+    expect(card(host, '第三句').textContent).toContain('7.60s');
+    expect(parseFloat(card(host, '第三句').style.left)).toBeCloseTo(100 * 7.6 / 11);
+    const replaced = { ...imported, scenes: imported.scenes.map((scene, index) =>
+      index === 0 ? { ...scene, videoUrl: '/new-scene.mp4', duration: 4 } : scene) };
+    expect(card(render(tracks, replaced), '第三句').textContent).toContain('9.20s');
+  });
   it('未配音镜头占用时间，第三镜字幕和配音从 10 秒开始', () => {
     const host = render();
     expect(parseFloat(card(host, '第三句').style.left)).toBeCloseTo(100 * 10 / 15);
