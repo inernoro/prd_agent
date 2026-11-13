@@ -21,6 +21,11 @@ const errors = [], results = [], unknown = [];
 const json = (res, data, success = true) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success, data: success ? data : null, error: success ? null : { code: 'FIXTURE_UNAVAILABLE', message: data } })); };
 const server = http.createServer((req, res) => {
  const pathname = new URL(req.url, 'http://fixture.test').pathname;
+ // Serving 兼容入口在 /gw 之外；必须给原始回执，不能让 SPA fallback 冒充安全试跑。
+ if (/^\/v1\/(chat\/completions|messages)$/.test(pathname) || /^\/v1beta\/models\/.+:generateContent$/.test(pathname)) {
+  if (req.headers['x-gateway-dry-run'] !== 'quickstart') { unknown.push(`禁止非dry-run的夹具请求 ${pathname}`);res.writeHead(400);res.end();return; }
+  res.writeHead(200, { 'Content-Type': 'application/json', 'X-Gateway-Upstream-Called': 'false' });res.end(JSON.stringify({ success: true, upstreamCalled: false, requestId: 'fixture-dry-run' }));return;
+ }
  if (/^\/(llmgw\/)?gw\//.test(pathname)) {
   const api = pathname.replace(/^\/(llmgw\/)?gw/, '');
   if (api === '/auth/login') return state.loginFailure ? json(res, '账号校验未通过，请重试', false) : json(res, { token: 'fixture-only', username: 'fixture-owner', displayName: '验收管理员', expiresAt: '2099-11-13T08:00:00Z', mustChangePassword: state.mustChange, tenant: tenant() });
@@ -58,6 +63,20 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const check = (name, ok, detail) => { if (!ok) errors.push({ name, detail }); };
 async function stable(page) { await page.evaluate(async () => { await document.fonts.ready;await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); }); }
+async function measureTaskScroll(page, selector) {
+ const target = page.locator(selector).first();
+ const positions = () => page.evaluate(() => ({ document: document.scrollingElement.scrollTop, body: document.querySelector('.lg-page-body')?.scrollTop ?? 0 }));
+ const initial = await positions();let wheels = 0;
+ const complete = async () => { const r = await target.boundingBox();return !!r && r.y >= 0 && r.y + r.height <= page.viewportSize().height; };
+ while (!await complete() && wheels < 12) {
+  const pane = page.locator('.lg-page-body');const r = await pane.count() ? await pane.boundingBox() : null;
+  await page.mouse.move(r ? r.x + r.width / 2 : page.viewportSize().width / 2, r ? r.y + r.height / 2 : page.viewportSize().height / 2);
+  await page.mouse.wheel(0, 400);await page.waitForTimeout(120);wheels += 1;
+ }
+ const final = await positions();const visible = await complete();
+ await page.evaluate(initial => { document.scrollingElement.scrollTop = initial.document;const body = document.querySelector('.lg-page-body');if (body) body.scrollTop = initial.body; }, initial);
+ return { wheelActions: wheels, actualVerticalScroll: Math.abs(final.document - initial.document) + Math.abs(final.body - initial.body), completeVisible: visible, initial, final };
+}
 async function screenshot(page, id, metrics = {}) {
  await stable(page);
  const taskGeometry = await page.evaluate(id => {
@@ -72,6 +91,10 @@ async function screenshot(page, id, metrics = {}) {
   return { core, nonessentialBeforeTaskHeight: beforeTask.reduce((sum, r) => sum + r.height, 0), minimumScrollToReadCore: core ? Math.max(0, core.bottom - innerHeight) : null };
  }, id);
  metrics = { ...metrics, ...taskGeometry };
+ if (id.endsWith('-login')) metrics.task = { name: '填写两项并到达登录提交', clicksOrEntries: 3, ...await measureTaskScroll(page, '.lg-login-submit') };
+ if (id.endsWith('-members-small')) metrics.task = { name: '进入组织并查看首个成员', clicksOrEntries: 1, ...await measureTaskScroll(page, 'tbody tr') };
+ if (id.endsWith('-usage')) metrics.task = { name: '进入用量并完整读取首项USD估算卡', clicksOrEntries: 1, ...await measureTaskScroll(page, '.lg-usage-grid > div:has-text("USD Gateway 估算")') };
+ if (id.endsWith('-settings')) metrics.task = { name: '进入偏好并选择主题', clicksOrEntries: 2, ...await measureTaskScroll(page, '[role=radio]') };
  const width = await page.evaluate(() => document.documentElement.scrollWidth); check(`${id}:无文档横溢出`, width <= page.viewportSize().width + 1, width); await page.screenshot({ path: path.join(OUT, `${id}.png`), animations: 'disabled' }); results.push({ id, provenance: 'deterministic-fixture', metrics: { ...metrics, documentWidth: width, bodyFont: await page.locator('body').evaluate(e => getComputedStyle(e).fontSize) } }); }
 async function nav(page, route) { const menu = page.getByRole('button', { name: '打开导航', exact: true }); if (await menu.isVisible()) await menu.click(); await page.locator(`aside a[href$="${route}"]`).last().click(); await stable(page); }
 async function login(page) { await page.goto(`${origin}/llmgw/organization`); await page.locator('#llmgw-username').fill('fixture-owner'); await page.locator('#llmgw-password').fill('fixture-only-password'); await page.getByRole('button', { name: '进入租户工作区', exact: true }).click(); await page.getByRole('heading', { name: '团队与成员', exact: true }).waitFor(); }
@@ -89,6 +112,12 @@ try {
    const user = await page.locator('#llmgw-username').boundingBox(), submit = await page.getByRole('button', { name: '进入租户工作区', exact: true }).boundingBox();
    await screenshot(page, `${id}-login`, { username: user, submit });
    check(`${id}:登录主操作首屏可见`, submit && submit.y + submit.height <= (width === 1440 ? 900 : 844), submit);
+   if (process.env.LLMGW_ADMIN_TASKS_ONLY === '1') {
+    await login(page);await page.locator('tbody tr').first().waitFor();const row = await page.locator('tbody tr').first().boundingBox();await screenshot(page, `${id}-members-small`, { firstRow: row });
+    await nav(page, '/usage');await page.locator('.lg-card-kicker').filter({ hasText: /USD Gateway 估算/ }).waitFor();await screenshot(page, `${id}-usage`, { usage: await page.locator('.lg-card-kicker').filter({ hasText: /USD Gateway 估算/ }).boundingBox() });
+    await nav(page, '/settings');await page.getByRole('radio').first().waitFor();await screenshot(page, `${id}-settings`, { choice: await page.getByRole('radio').first().boundingBox() });await page.getByRole('radio', { name: /^深色/ }).click();await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    continue;
+   }
    await page.getByRole('button', { name: '进入租户工作区', exact: true }).click();await expect(page.getByRole('alert')).toContainText('请输入用户名和密码');
    await login(page);await page.locator('tbody tr').first().waitFor();await stable(page);
    const row = await page.locator('tbody tr').first().boundingBox();await screenshot(page, `${id}-members-small`, { firstRow: row });
@@ -125,8 +154,9 @@ try {
     if (route === '/quickstart') {
      await page.getByRole('textbox', { name: '我想做什么', exact: true }).fill('为客服助手接入文字对话');await page.getByRole('button', { name: '准备接入', exact: true }).click();await page.getByRole('button', { name: '下一步', exact: true }).waitFor();await screenshot(page, `${id}-quickstart-draft`);
      await page.getByRole('button', { name: '下一步', exact: true }).click();await page.getByRole('button', { name: '创建密钥', exact: true }).waitFor();await screenshot(page, `${id}-quickstart-owner`);
-     state.failure = '/service-keys';await page.getByRole('button', { name: '创建密钥', exact: true }).click();await expect(page.getByRole('alert')).toContainText('appCaller 已就绪，但密钥签发失败');await screenshot(page, `${id}-quickstart-key-error`);state.failure = '';
-     await page.getByRole('button', { name: '创建密钥', exact: true }).click();await page.getByRole('tablist', { name: '接入产物', exact: true }).waitFor();
+     state.failure = '/service-keys';await page.getByRole('button', { name: '创建密钥', exact: true }).click();await expect(page.getByRole('alert')).toContainText('appCaller 已就绪，但密钥签发失败');
+     check(`${id}:签发失败说明无遮挡`, await page.getByRole('alert').evaluate(el => { const r = el.getBoundingClientRect();return [r.y + r.height / 2, r.bottom - 4].every(y => { const top = document.elementFromPoint(r.x + r.width / 2, y);return top === el || el.contains(top); }); }), '错误说明必须与创建主操作同时可读');await screenshot(page, `${id}-quickstart-key-error`);state.failure = '';
+     await page.getByRole('button', { name: '创建密钥', exact: true }).click();await page.getByRole('tablist', { name: '接入产物', exact: true }).waitFor();await expect(page.getByText(/团队边界和密钥鉴权均通过/)).toBeVisible();
      for (const label of ['接入信息', 'cURL', '提示词']) { const tab = page.getByRole('tab', { name: label, exact: true });await tab.click();await expect(tab).toHaveAttribute('aria-selected', 'true');await expect(page.getByText('一次性密钥', { exact: true })).toBeAttached();await screenshot(page, `${id}-quickstart-${label === 'cURL' ? 'curl' : label === '提示词' ? 'prompt' : 'access'}`); }
     }
    }

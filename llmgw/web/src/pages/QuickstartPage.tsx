@@ -1459,10 +1459,9 @@ export function QuickstartPage() {
                   </div>
                 </DetailsBlock>
 
-                {actionError ? <div className="lg-test-result is-error" role="alert">{actionError}</div> : null}
-
                 {canCreateAccess ? (
                   <div className="lg-qs-create-footer">
+                    {actionError ? <div className="lg-test-result is-error" style={{ flexBasis: '100%', width: '100%' }} role="alert">{actionError}</div> : null}
                     <span style={{ ...BODY_TEXT, margin: 0 }}>不创建通配 key；默认 60 次/分钟，只授权当前调用用途与四种协议，签发后自动跑一次安全试跑。</span>
                     <Button variant="primary" className="lg-qs-primary" title={blockedByTeam ? '请先创建团队' : undefined} disabled={issueDisabled} onClick={() => void createAccessBundle()}>
                       <KeyRound size={15} />创建密钥
