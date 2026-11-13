@@ -160,7 +160,7 @@ public sealed class AdminNotificationEventService
             || (incoming.IncidentState != "recovered" && incoming.RecoveredAt is not null))
             throw new InvalidOperationException("通知缺少有效的发生时间或恢复证据，请检查事件来源后重试");
         // 故障来源的管理员分区不能被事件载荷降为个人分区。
-        incoming.Section = AdminNotificationSourceCatalog.ResolveSection(incoming.Source, targetUserId: incoming.TargetUserId);
+        incoming.Section = AdminNotificationSourceCatalog.ResolveSection(incoming.Source, null, incoming.TargetUserId);
         var identity = System.Text.Json.JsonSerializer.Serialize(new[] { incoming.Source, incoming.TargetUserId, incoming.IncidentId });
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant();
         incoming.Id = $"incident-{hash}";

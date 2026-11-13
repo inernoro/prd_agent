@@ -435,8 +435,7 @@ public sealed class NotificationsController : ControllerBase
         var section = AdminNotificationSourceCatalog.ResolveSection(n.Source,
             legacyPersonalDataTransfer ? AdminNotificationSections.Personal : n.Section, n.TargetUserId);
         var presentation = ToUserReadablePresentation(n);
-        var gatewayDiagnostic = n.Source is "gateway-alert" or "llm-gateway-quota"
-            || n.Source == "model-pool-probe" && section == AdminNotificationSections.Admin;
+        var gatewayDiagnostic = AdminNotificationAudience.RequiresGatewayObjectPermission(n);
         var restrictDiagnostic = gatewayDiagnostic && !canOpenGateway;
         if (restrictDiagnostic && !(n.Source == "llm-gateway-quota" && string.IsNullOrWhiteSpace(n.IncidentId)))
         {

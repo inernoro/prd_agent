@@ -517,12 +517,14 @@ public sealed class AdminPushNotificationService
                 .Project<AdminNotification>(new BsonDocument("_pushReceipt", 0)).ToCursorAsync(ct);
             var candidates = new List<AdminNotification>();
             var canReceiveAdmin = _audience is not null && await _audience.CanReceiveAdminAsync(userId, ct);
+            var canReceiveGateway = _audience is not null && await _audience.CanReceiveGatewayAsync(userId, ct);
             while (await candidateCursor.MoveNextAsync(ct))
             {
                 foreach (var candidate in candidateCursor.Current)
                 {
                     if (!canReceiveAdmin && AdminNotificationSourceCatalog.ResolveSection(candidate.Source, candidate.Section, candidate.TargetUserId) == AdminNotificationSections.Admin)
                         continue;
+                    if (!canReceiveGateway && AdminNotificationAudience.RequiresGatewayObjectPermission(candidate)) continue;
                     if (!subscriptions.Any(subscription => MatchesTopic(subscription.TopicKey, candidate))) continue;
                     if (candidates.Count < MaxCandidateNotificationsPerRecipient) candidates.Add(candidate);
                     else if (IsFreshUrgent(candidate, budget))
@@ -615,7 +617,7 @@ public sealed class AdminPushNotificationService
         return new AdminNotification
         {
             Title = (urgent ? "新增严重变化：" : "通知汇总：") + scope,
-            Message = string.Join("；", notices.OrderByDescending(n => n.Level == "error").Select(n => n.Title)
+            Message = scope + "。" + string.Join("；", notices.OrderByDescending(n => n.Level == "error").Select(n => n.Title)
                 .Distinct().Take(2).Select(title => TrimForLog(title, 60)))
                 + (identities.Count > 0 ? $"。已识别故障累计发生 {occurrenceCount} 次" : string.Empty)
                 + "。通知数和发生次数均不代表失败请求数。请打开通知列表，逐项查看发生时间、当前状态与适用操作。",

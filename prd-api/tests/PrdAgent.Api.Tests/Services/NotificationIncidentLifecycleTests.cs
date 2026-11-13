@@ -124,7 +124,7 @@ public sealed class NotificationIncidentLifecycleTests
             .ReturnsAsync(Array.Empty<string>());
         var controller = new NotificationsController(db.Context, null!, null!, new ConfigurationBuilder().Build(), permissions.Object) {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(new[] {
-                new Claim("userId", "u1"), new Claim(ClaimTypes.Role, "ADMIN"),
+                new Claim("sub", "u1"), new Claim(ClaimTypes.Role, "ADMIN"),
                 new Claim("permissions", AdminPermissionCatalog.SettingsWrite),
             }, "test")) } },
         };
@@ -154,7 +154,7 @@ public sealed class NotificationIncidentLifecycleTests
             .ReturnsAsync(Array.Empty<string>());
         var controller = new NotificationsController(db.Context, null!, null!, new ConfigurationBuilder().Build(), permissions.Object) {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(new[] {
-                new Claim("userId", "u1"), new Claim(ClaimTypes.Role, "DEV"),
+                new Claim("sub", "u1"), new Claim(ClaimTypes.Role, "DEV"),
             }, "test")) } },
         };
         var result = Assert.IsType<OkObjectResult>(await controller.List());
@@ -184,7 +184,7 @@ public sealed class NotificationIncidentLifecycleTests
                 : new[] { AdminPermissionCatalog.SettingsWrite });
         var controller = new NotificationsController(db.Context, null!, null!, new ConfigurationBuilder().Build(), permissions.Object) {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(new[] {
-                new Claim("userId", "u1"), new Claim(ClaimTypes.Role, "ADMIN"),
+                new Claim("sub", "u1"), new Claim(ClaimTypes.Role, "ADMIN"),
             }, "test")) } },
         };
         async Task<JsonElement> Item()

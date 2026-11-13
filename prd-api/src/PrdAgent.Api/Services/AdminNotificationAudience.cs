@@ -10,18 +10,32 @@ namespace PrdAgent.Api.Services;
 public interface IAdminNotificationAudience
 {
     Task<bool> CanReceiveAdminAsync(string userId, CancellationToken ct);
+    Task<bool> CanReceiveGatewayAsync(string userId, CancellationToken ct) => Task.FromResult(false);
 }
 
 public sealed class AdminNotificationAudience(MongoDbContext db, IAdminPermissionService permissions) : IAdminNotificationAudience
 {
     public async Task<bool> CanReceiveAdminAsync(string userId, CancellationToken ct)
+        => HasPermission(await PermissionsForActiveAdminAsync(userId, ct));
+
+    public async Task<bool> CanReceiveGatewayAsync(string userId, CancellationToken ct)
+    {
+        var effective = await PermissionsForActiveAdminAsync(userId, ct);
+        return effective.Contains(AdminPermissionCatalog.Super) || effective.Contains(AdminPermissionCatalog.LlmGatewayAccess);
+    }
+
+    private async Task<IReadOnlyList<string>> PermissionsForActiveAdminAsync(string userId, CancellationToken ct)
     {
         var user = await db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
         if (user is null || user.Status != UserStatus.Active || user.UserType != UserType.Human || user.Role != UserRole.ADMIN)
-            return false;
-        var effective = await permissions.GetEffectivePermissionsAsync(userId, false, ct);
-        return HasPermission(effective);
+            return Array.Empty<string>();
+        return await permissions.GetEffectivePermissionsAsync(userId, false, ct);
     }
+
+    internal static bool RequiresGatewayObjectPermission(AdminNotification notification)
+        => notification.Source is "gateway-alert" or "llm-gateway-quota"
+            || notification.Source == "model-pool-probe"
+               && AdminNotificationSourceCatalog.ResolveSection(notification.Source, notification.Section, notification.TargetUserId) == AdminNotificationSections.Admin;
 
     internal static bool HasPermission(IEnumerable<string> permissions)
     {

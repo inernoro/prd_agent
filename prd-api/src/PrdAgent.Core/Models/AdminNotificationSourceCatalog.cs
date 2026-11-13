@@ -81,17 +81,20 @@ public static class AdminNotificationSourceCatalog
         return string.IsNullOrWhiteSpace(value) ? null : DefinitionMap.GetValueOrDefault(value);
     }
 
-    public static string ResolveSection(string? source, string? explicitSection = null, string? targetUserId = null)
+    public static string ResolveSection(string? source, string? explicitSection = null)
+    {
+        if (!string.IsNullOrWhiteSpace(explicitSection)) return AdminNotificationSections.Normalize(explicitSection);
+        return Find(source)?.Section ?? AdminNotificationSections.Personal;
+    }
+
+    public static string ResolveSection(string? source, string? explicitSection, string? targetUserId)
     {
         if (NormalizeSource(source) == "model-pool-probe")
         {
             if (string.IsNullOrWhiteSpace(targetUserId)) return AdminNotificationSections.Admin;
             if (string.IsNullOrWhiteSpace(explicitSection)) return AdminNotificationSections.Personal;
         }
-        if (!string.IsNullOrWhiteSpace(explicitSection))
-            return AdminNotificationSections.Normalize(explicitSection);
-
-        return Find(source)?.Section ?? AdminNotificationSections.Personal;
+        return ResolveSection(source, explicitSection);
     }
 
     public static string ResolveSourceLabel(string? source)

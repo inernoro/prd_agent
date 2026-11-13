@@ -1625,6 +1625,30 @@ public sealed class AdminPushNotificationServiceTests
     private sealed class AllowAdminAudience : IAdminNotificationAudience
     {
         public Task<bool> CanReceiveAdminAsync(string userId, CancellationToken ct) => Task.FromResult(true);
+        public Task<bool> CanReceiveGatewayAsync(string userId, CancellationToken ct) => Task.FromResult(true);
+    }
+
+    private sealed class GeneralAdminAudience : IAdminNotificationAudience
+    {
+        public Task<bool> CanReceiveAdminAsync(string userId, CancellationToken ct) => Task.FromResult(true);
+    }
+
+    [Fact]
+    public async Task ExternalGatewayDelivery_RequiresGatewayPermission_BeyondGeneralOperationalPermission()
+    {
+        await using var db = await AdminPushTestDatabase.TryCreateAsync();
+        await SeedChannelAsync(db.Context);
+        await db.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
+            Source = "llm-gateway-quota", IncidentId = "private-route", Title = "私有供应商额度不足", Level = "error",
+            CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+        });
+        var http = new RecordingHttpClientFactory();
+        var service = new AdminPushNotificationService(db.Context, http, new AllowAllUrlValidator(), TestConfiguration,
+            NullLogger<AdminPushNotificationService>.Instance, audience: new GeneralAdminAudience());
+        await service.DispatchPendingAsync(default);
+        Assert.Empty(http.Requests);
+        Assert.Equal(1, await db.Context.AdminNotifications.CountDocumentsAsync(n => n.Status == "open"));
+        Assert.Equal(0, await db.Context.AdminPushDeliveryLogs.CountDocumentsAsync(_ => true));
     }
 
     private static AdminPushNotificationService CreateService(
