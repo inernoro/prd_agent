@@ -79,9 +79,13 @@ class FakePlatform:
             return user
         if route.startswith('/api/authz/users/'):
             target = route.split('/')[4]
-            assert body == {'systemRoleKey': 'none', 'permAllow': module.PERMISSIONS, 'permDeny': []}
-            self.users[target]['effectivePermissions'] = body['permAllow']
-            return self.users[target]
+            if method == 'PUT':
+                assert body == {'systemRoleKey': 'none', 'permAllow': module.PERMISSIONS, 'permDeny': []}
+                self.users[target]['effectivePermissions'] = body['permAllow']
+                self.users[target]['systemRoleKey'] = 'none'
+            return {'userId': target, 'systemRoleKey': self.users[target].get('systemRoleKey'),
+                    'effectiveSystemRoleKey': self.users[target].get('systemRoleKey') or 'none',
+                    'permAllow': self.users[target]['effectivePermissions'], 'permDeny': []}
         if route.startswith('/api/users/'):
             target = route.split('/')[3]
             if route.endswith('/force-expire'):
@@ -233,6 +237,17 @@ class FixtureTests(unittest.TestCase):
         with self.assertRaises(module.CollectionError):
             self.prepare()
         self.assertEqual(sum(call[1:3] == ('POST', '/api/users') for call in self.server.calls), 1)
+
+    def test_unknown_grant_receipt_uses_real_snapshot_fields_without_repeating_put(self):
+        self.server.fail_once_after = ('PUT', '/api/authz/users/user1/authz')
+        with self.assertRaises(module.CollectionError):
+            self.prepare()
+        self.resume()
+        self.prepare()
+        grants = [call for call in self.server.calls if call[1] == 'PUT' and call[2].startswith('/api/authz/users/')]
+        self.assertEqual(len(grants), 1)
+        self.assertTrue(any(call[1:3] == ('GET', '/api/authz/users/user1/authz') for call in self.server.calls))
+        self.assertEqual(self.fixture.state['operations']['grant-secondary']['status'], 'completed')
 
     def test_unknown_store_create_recovered_without_duplicate(self):
         self.server.fail_once_after = ('POST', '/api/document-store/stores')

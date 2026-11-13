@@ -180,12 +180,17 @@ class Fixture:
             self.save()
             self.verify_created_user(primary)
             user_path = '/api/authz/users/' + ident(secondary['userId']) + '/authz'
+            def matches_grant(snapshot):
+                return (snapshot.get('userId') == secondary['userId'] and snapshot.get('systemRoleKey') == 'none'
+                        and snapshot.get('effectiveSystemRoleKey') == 'none'
+                        and set(snapshot.get('permAllow', [])) == set(PERMISSIONS) and not snapshot.get('permDeny'))
             def grant():
                 response = primary.json('PUT', user_path, {'systemRoleKey': 'none', 'permAllow': PERMISSIONS, 'permDeny': []})
-                if not set(PERMISSIONS) <= set(response.get('effectivePermissions', [])):
-                    raise CollectionError('minimal permissions were not confirmed')
+                if not matches_grant(response):
+                    raise CollectionError('minimal permission snapshot was not confirmed')
                 return True
-            self.step('grant-secondary', 'PUT', user_path, grant, replay_safe=True)
+            self.step('grant-secondary', 'PUT', user_path, grant,
+                      reconcile=lambda: True if matches_grant(primary.json('GET', user_path)) else None)
         else:
             username = os.environ.get('KB_FIXTURE_SECONDARY_USERNAME')
             if not username:
