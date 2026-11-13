@@ -49,7 +49,7 @@ public partial class VideoAgentController
             return Conflict(ApiResponse<object>.Fail("NARRATION_NOT_READY", "请选择已完成且正文不超过 2000 字的语音任务。"));
         try
         {
-            var audio = await speech.ReadAudioAsync(owner, speechRun.Id);
+            var audio = await speech.ReadAudioAsync(owner, speechRun.Id, normalizeForMedia: true);
             var duration = await VideoNarrationMedia.ProbeAudioDurationAsync(audio.Bytes);
             var project = string.IsNullOrEmpty(run.ProjectId) ? null
                 : await _videoGenService.GetProjectAsync(run.ProjectId, owner, AppKey, CancellationToken.None);

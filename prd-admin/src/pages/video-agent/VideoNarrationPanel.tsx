@@ -141,7 +141,9 @@ export function VideoNarrationPanel({ runId, sceneIndex, editable, onClose, onAd
         <p>{selected.text}</p>
         {selected.status !== 'completed' && <div role="status">{selected.stage} {hasActiveSpeech && <MapSpinner size={14} />}</div>}
         {selected.errorMessage && <div role="alert">{selected.errorMessage} 可修改文字后重新生成，或采用其他已有语音。</div>}
-        {selected.audioUrl && <AudioAssetPlayer url={selected.audioUrl} title={selected.title || '镜头配音'} />}
+        {selected.audioUrl && <AudioAssetPlayer url={selected.format === 'pcm'
+          ? `${selected.audioUrl}${selected.audioUrl.includes('?') ? '&' : '?'}playable=true` : selected.audioUrl}
+          title={selected.title || '镜头配音'} />}
         <Button size="sm" onClick={() => void adopt()} disabled={!editable || Boolean(busy) || selected.status !== 'completed'}>
           {busy === 'adopt' && <MapSpinner size={14} />}采用到此镜头并同步字幕
         </Button>

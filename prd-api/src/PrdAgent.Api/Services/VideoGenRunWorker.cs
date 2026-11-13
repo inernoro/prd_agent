@@ -1617,7 +1617,7 @@ public partial class VideoGenRunWorker : BackgroundService
                     authorityToken.ThrowIfCancellationRequested();
                     var speech = scope.ServiceProvider.GetRequiredService<Speech.SpeechGenerationService>();
                     byte[] narrationBytes;
-                    try { narrationBytes = (await speech.ReadAudioAsync(run.OwnerAdminId, narration.SpeechRunId)).Bytes; }
+                    try { narrationBytes = (await speech.ReadAudioAsync(run.OwnerAdminId, narration.SpeechRunId, normalizeForMedia: true)).Bytes; }
                     catch (PrdAgent.Core.Services.SpeechException ex)
                     {
                         throw new InvalidOperationException("已采用的配音暂不可用，请在制作台重新选择本人已完成的语音后导出。", ex);

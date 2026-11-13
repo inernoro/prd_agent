@@ -1,5 +1,7 @@
 using System.Text;
 using PrdAgent.Api.Services;
+using PrdAgent.Api.Services.Speech;
+using PrdAgent.Core.Services;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -9,7 +11,7 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class VideoNarrationMediaTests
 {
     [Fact]
-    public async Task RealPcmFile_ReportsFullVoiceDuration()
+    public async Task RealWaveFile_ReportsFullVoiceDuration()
     {
         using var stream = new MemoryStream();
         using (var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true))
@@ -24,6 +26,20 @@ public sealed class VideoNarrationMediaTests
         }
         var duration = await VideoNarrationMedia.ProbeAudioDurationAsync(stream.ToArray());
         Assert.InRange(duration, 1.49, 1.51);
+    }
+
+    [Fact]
+    public async Task RawPcmWithoutHeader_NormalizesToFullDecodableVoice()
+    {
+        var pcm = new byte[SpeechCapabilityPolicy.PcmSampleRate * 3]; // 1.5秒，16-bit单声道。
+        for (var sample = 0; sample < pcm.Length / 2; sample++)
+        {
+            var value = (short)(Math.Sin(sample * 2 * Math.PI * 440 / SpeechCapabilityPolicy.PcmSampleRate) * 10000);
+            pcm[sample * 2] = (byte)value;pcm[sample * 2 + 1] = (byte)(value >> 8);
+        }
+        var wave = SpeechAudioMedia.WrapPcm16(pcm, SpeechCapabilityPolicy.PcmSampleRate, channels: 1);
+        Assert.Equal(pcm, wave.AsSpan(44).ToArray());
+        Assert.InRange(await VideoNarrationMedia.ProbeAudioDurationAsync(wave), 1.49, 1.51);
     }
 
     [Fact]

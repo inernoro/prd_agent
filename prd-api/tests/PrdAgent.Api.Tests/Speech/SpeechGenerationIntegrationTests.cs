@@ -94,6 +94,34 @@ public sealed class SpeechGenerationIntegrationTests : IAsyncLifetime
     [Theory]
     [InlineData("openai")]
     [InlineData("doubao-tts")]
+    public async Task PcmMediaRead_UsesSameAuthorizedNormalizationForAdoptionAndExport(string protocol)
+    {
+        resolution = Resolution(protocol);
+        var profile = SpeechCapabilityPolicyTests.Profile(protocol);
+        profile.Formats.Add("pcm");
+        profile = (await service.SaveSettingsAsync(0, [profile])).Profiles.Single();
+        var pcm = new byte[24000 * 3]; // 无容器头的1.5秒16-bit单声道。
+        upstream = new GatewayRawResponse {
+            Success = true, StatusCode = 200, ContentType = "audio/pcm", LogId = "test-pcm-log", BinaryContent = pcm,
+        };
+        var created = await service.CreateAsync("owner-a", "client-a", new() {
+            Text = "原始PCM配音", ProfileId = profile.Id, ProfileRevision = profile.Revision, Format = "pcm",
+        });
+        Assert.True(await service.ProcessNextAsync("worker-a"));
+        var raw = await service.ReadAudioAsync("owner-a", created.Run.Id);
+        Assert.Equal(pcm, raw.Bytes);Assert.Equal("audio/pcm", raw.Mime);Assert.EndsWith(".pcm", raw.FileName);
+        var media = await service.ReadAudioAsync("owner-a", created.Run.Id, normalizeForMedia: true);
+        Assert.Equal("audio/wav", media.Mime);Assert.EndsWith(".wav", media.FileName);
+        Assert.Equal(pcm, media.Bytes.AsSpan(44).ToArray());
+        Assert.InRange(await PrdAgent.Api.Services.VideoNarrationMedia.ProbeAudioDurationAsync(media.Bytes), 1.49, 1.51);
+        Assert.Equal("RUN_NOT_FOUND", (await Assert.ThrowsAsync<SpeechException>(() =>
+            service.ReadAudioAsync("other-owner", created.Run.Id, normalizeForMedia: true))).Code);
+        Assert.Single(sent);
+    }
+
+    [Theory]
+    [InlineData("openai")]
+    [InlineData("doubao-tts")]
     public async Task GenerateStoresEncryptedAudioAndPublishesOwnedAsset(string protocol)
     {
         var profile = await ConfigureAsync(protocol);

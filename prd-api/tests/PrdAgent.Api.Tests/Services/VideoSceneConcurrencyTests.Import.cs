@@ -18,6 +18,47 @@ namespace PrdAgent.Api.Tests.Services;
 
 public partial class VideoSceneConcurrencyTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReorderImportedClips_PreservesPreciseDurationAndTrims(bool trimmed)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("reorder-fractional", test.OwnerId, SceneItemStatus.Done, SceneItemStatus.Done, SceneItemStatus.Done);
+        var durations = new[] { 2.4, 5.2, 3.4 };
+        var project = new VideoProject { OwnerAdminId = test.OwnerId, AppKey = run.AppKey, LatestRunId = run.Id };
+        var clips = durations.Select((duration, index) => new VideoTimelineClip {
+            Id = $"clip-{index}", SceneIndex = index, DurationSeconds = duration,
+            AssetUrl = $"https://fixture.invalid/scene-{index}.mp4",
+            TrimStartSeconds = trimmed && index == 0 ? 0.1 : 0,
+            TrimEndSeconds = trimmed && index == 0 ? 0.2 : 0,
+            Transition = index == 0 ? "fade" : null,
+        }).ToList();
+        for (var index = 0; index < run.Scenes.Count; index++)
+        {
+            run.Scenes[index].Duration = (int)Math.Ceiling(durations[index]);
+            run.Scenes[index].VideoUrl = clips[index].AssetUrl;
+        }
+        project.TimelineTracks = [new VideoTimelineTrack { Clips = clips }];
+        run.ProjectId = project.Id;
+        await test.Context.VideoProjects.InsertOneAsync(project);
+        await test.SaveRunAsync(run);
+
+        await test.CreateService().ReorderScenesAsync(run.Id, test.OwnerId, [1, 0, 2], run.AppKey);
+
+        var saved = await test.Context.VideoProjects.Find(item => item.Id == project.Id).SingleAsync();
+        var actual = saved.TimelineTracks.Single().Clips;
+        Assert.Equal(new[] { 5.2, 2.4, 3.4 }, actual.Select(clip => clip.DurationSeconds));
+        Assert.Equal(new[] { 0, 1, 2 }, actual.Select(clip => clip.SceneIndex!.Value));
+        Assert.Equal("clip-0", actual[1].Id);
+        Assert.Equal("fade", actual[1].Transition);
+        Assert.Equal(trimmed ? 0.1 : 0, actual[1].TrimStartSeconds);
+        Assert.Equal(trimmed ? 0.2 : 0, actual[1].TrimEndSeconds);
+        Assert.Equal(5.2, actual[1].StartSeconds, 6);
+        Assert.Equal(trimmed ? 7.3 : 7.6, actual[2].StartSeconds, 6);
+        Assert.Empty(test.VideoClient.Invocations);
+    }
+
     [Fact]
     public async Task ImportClips_ShouldPersistNewEditableRunAndKeepPreviousRunWithoutAnySupplierCalls()
     {

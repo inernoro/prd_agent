@@ -29,7 +29,8 @@ describe('最近作品从项目恢复任务', () => {
       expect(cards).toHaveLength(6);
       await act(async () => cards[0].click());
       expect(onOpenRun).toHaveBeenCalledWith('saved-run');
-      expect(onSelectProject).not.toHaveBeenCalled();
+      expect(onSelectProject).toHaveBeenCalledWith(projects[0]);
+      expect(onSelectProject.mock.invocationCallOrder[0]).toBeLessThan(onOpenRun.mock.invocationCallOrder[0]);
       await act(async () => cards[1].click());
       expect(onSelectProject).toHaveBeenCalledWith(projects[1]);
       expect(onOpenRun).toHaveBeenCalledTimes(1);

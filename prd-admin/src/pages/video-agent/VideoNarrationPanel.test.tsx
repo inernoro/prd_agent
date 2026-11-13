@@ -8,7 +8,7 @@ import { narrationRequestId, VideoNarrationPanel } from './VideoNarrationPanel';
 const api = vi.hoisted(() => ({ list: vi.fn(), capabilities: vi.fn(), generate: vi.fn(), narration: vi.fn(), adopt: vi.fn() }));
 vi.mock('@/services/real/mcpSpeech', () => ({ listSpeechRuns: api.list, getSpeechCapabilities: api.capabilities, generateSpeech: api.generate }));
 vi.mock('@/services/real/videoAgent', () => ({ getVideoNarrationReal: api.narration, adoptVideoNarrationReal: api.adopt }));
-vi.mock('@/components/assets/AudioAssetPlayer', () => ({ AudioAssetPlayer: () => <span>私有音频试听</span> }));
+vi.mock('@/components/assets/AudioAssetPlayer', () => ({ AudioAssetPlayer: ({ url }: { url: string }) => <span data-audio-url={url}>私有音频试听</span> }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => <span>正在处理</span> }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let host: HTMLDivElement;
@@ -28,6 +28,16 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 
 describe('逐镜配音与字幕', () => {
+  it('已有PCM试听请求同归属的可播放封装，不生成新语音', async () => {
+    api.list.mockResolvedValue({ success: true, data: { items: [{ ...speech, format: 'pcm' }] } });
+    await render();
+    const select = host.querySelector<HTMLSelectElement>('[aria-label="已有语音"]')!;
+    await act(async () => { select.value = speech.id; Simulate.change(select); });
+    expect(host.querySelector('[data-audio-url]')?.getAttribute('data-audio-url'))
+      .toBe('/api/mcp-speech/runs/speech-1/audio?playable=true');
+    expect(api.generate).not.toHaveBeenCalled();
+  });
+
   it('刷新只恢复已有配音与字幕，采用既有语音不提交TTS', async () => {
     await render();
     expect(host.textContent).toContain('已采用配音 · 2.10 秒');
