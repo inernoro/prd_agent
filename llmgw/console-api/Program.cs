@@ -453,7 +453,8 @@ await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
         .Ascending("TenantId")
         .Ascending("ProviderTaskId"),
     new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_provider_task" }));
-foreach (var field in new[] { "RequestId", "RunId", "LogicalRequestId" })
+foreach (var field in new[] { "RequestId", "RunId", "LogicalRequestId", "ProviderRequestId", "ProviderTaskId",
+    "ProviderAttempts.AttemptId", "ProviderAttempts.ProviderRequestId", "ProviderAttempts.ProviderTaskId" })
     await IndexAdvisory.ReportIfMissingAsync(logs, "idx_llmgw_trace_" + field,
         "历史调用链查找可能扫描日志集合，需 DBA 执行 scripts/mongodb-indexes.js 的网关索引段");
 await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]

@@ -15,6 +15,48 @@ namespace PrdAgent.Api.Tests.Gateway;
 public class LogTraceQueryTests
 {
     [Fact, Trait("Category", "Integration")]
+    public async Task Reference_DbaCatalogIndexes_KeepEveryIdentityLookupSelective()
+    {
+        var connection = Environment.GetEnvironmentVariable("LLMGW_TRACE_TEST_MONGO")
+            ?? throw new InvalidOperationException("显式指定隔离 Mongo：LLMGW_TRACE_TEST_MONGO");
+        var mongo = new MongoClient(connection);
+        var db = mongo.GetDatabase("trace_indexes_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var root = new DirectoryInfo(AppContext.BaseDirectory);
+            while (root is not null && !File.Exists(Path.Combine(root.FullName, "scripts/mongodb-indexes.js"))) root = root.Parent;
+            Assert.NotNull(root);
+            var catalog = await File.ReadAllTextAsync(Path.Combine(root!.FullName, "scripts/mongodb-indexes.js"));
+            var section = catalog[(catalog.IndexOf("// 调用链查询只使用持久化编号", StringComparison.Ordinal))..];
+            var fieldList = System.Text.RegularExpressions.Regex.Match(section, @"for \(const field of \[(.*?)\]\)", System.Text.RegularExpressions.RegexOptions.Singleline).Groups[1].Value;
+            var fields = System.Text.RegularExpressions.Regex.Matches(fieldList, "\"([^\"]+)\"").Select(m => m.Groups[1].Value).ToArray();
+            Assert.NotEmpty(fields);
+            var logs = db.GetCollection<BsonDocument>("logs");
+            await logs.InsertManyAsync(Enumerable.Range(0, 4000).Select(i => new BsonDocument {
+                { "_id", "noise-" + i }, { "TenantId", "tenant-a" }, { "RunId", "run-" + i },
+                { "StartedAt", DateTime.UtcNow }, { "ProviderAttempts", new BsonArray { new BsonDocument("AttemptId", "attempt-" + i) } }
+            }));
+            await logs.InsertOneAsync(new BsonDocument { { "_id", "needle" }, { "TenantId", "tenant-a" },
+                { "RequestId", "needle" }, { "RunId", "needle" }, { "LogicalRequestId", "needle" },
+                { "ProviderRequestId", "needle" }, { "ProviderTaskId", "needle" },
+                { "ProviderAttempts", new BsonArray { new BsonDocument {
+                    { "AttemptId", "needle" }, { "ProviderRequestId", "needle" }, { "ProviderTaskId", "needle" } } } }
+            });
+            foreach (var field in fields)
+                await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+                    new BsonDocument { { "TenantId", 1 }, { field, 1 }, { "StartedAt", 1 }, { "_id", 1 } }));
+            var filter = (Builders<BsonDocument>.Filter.Eq("TenantId", "tenant-a") & LogTraceQuery.Reference("needle"))
+                .Render(new RenderArgs<BsonDocument>(logs.DocumentSerializer, logs.Settings.SerializerRegistry));
+            var explain = await db.RunCommandAsync<BsonDocument>(new BsonDocument {
+                { "explain", new BsonDocument { { "find", "logs" }, { "filter", filter } } }, { "verbosity", "executionStats" } });
+            Assert.Equal(1, explain["executionStats"]["nReturned"].ToInt32());
+            Assert.True(explain["executionStats"]["totalDocsExamined"].ToInt32() <= 5,
+                "Reference should examine only selected records, not tenant history: " + explain["executionStats"]);
+        }
+        finally { await mongo.DropDatabaseAsync(db.DatabaseNamespace.DatabaseName); }
+    }
+
+    [Fact, Trait("Category", "Integration")]
     public async Task Trace_PagesEveryAuthorizedCall_RejectsAmbiguity_AndWithholdsBodies()
     {
         var connection = Environment.GetEnvironmentVariable("LLMGW_TRACE_TEST_MONGO")

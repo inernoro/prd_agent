@@ -1944,7 +1944,8 @@ if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
     "        PRD_GATEWAY_DB=1 mongosh <uri>/<网关库名> scripts/mongodb-indexes.js")
 } else {
   // 调用链查询只使用持久化编号；这些索引由 DBA 执行，应用启动只巡检。
-  for (const field of ["RequestId", "RunId", "LogicalRequestId"]) {
+  for (const field of ["RequestId", "RunId", "LogicalRequestId", "ProviderRequestId", "ProviderTaskId",
+    "ProviderAttempts.AttemptId", "ProviderAttempts.ProviderRequestId", "ProviderAttempts.ProviderTaskId"]) {
     ensureCatalogIndex("llmrequestlogs",
       { "TenantId": 1, [field]: 1, "StartedAt": 1, "_id": 1 },
       { name: "idx_llmgw_trace_" + field })

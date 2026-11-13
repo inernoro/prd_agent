@@ -234,5 +234,54 @@
       "tutorial": "38 passed; publisher check passed"
     },
     "scope": "Read-only nested persisted identity match under the existing authorization filter; no new billing, indexes, endpoints or historical backfill."
+  },
+  "thirdReviewRunIdentityAndIndexes": {
+    "baseline": "c78482322023374e64108ee1fc67abb5be3736cc",
+    "classification": "Both A/direct defects: admitted workflow identity must reach gateway; existing identity lookup must have selective DBA indexes. Scope check retained original goal, no new authorization/billing semantics.",
+    "findings": [
+      "https://github.com/inernoro/prd_agent/pull/1973#discussion_r4561607879",
+      "https://github.com/inernoro/prd_agent/pull/1973#discussion_r4561607883"
+    ],
+    "red": [
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Reference_DbaCatalogIndexes_KeepEveryIdentityLookupSelective",
+        "outcome": "Failed",
+        "failure": "Reference should examine only selected records, not tenant history: { \"executionSuccess\" : true, \"nReturned\" : 1, \"executionTimeMillis\" : 28, \"totalKeysExamined\" : 4001, \"totalDocsExamined\" : 4001, \"executionStages\" : { \"stage\" : \"FETCH\", \"filter\" : { \"$or\" : [{ \"LogicalRequestId\" : { \"$eq\" : \"needle\" } }, { \"ProviderAttempts.AttemptId\" : { \"$eq\" : \"needle\" } }, { \"ProviderAttempts.ProviderRequestId\" : { \"$eq\" : \"needle\" } }, { \"ProviderAttempts.ProviderTaskId\" : { \"$eq\" : \"needle\" } }, { \"ProviderRequestId\" : { \"$eq\" : \"needle\" } }, { \"ProviderTaskId\" : { \"$eq\" : \"needle\" } }, { \"RequestId\" : { \"$eq\" : \"needle\" } }, { \"RunId\" : { \"$eq\" : \"needle\" } }, { \"_id\" : { \"$eq\" : \"needle\" } }] }, \"nReturned\" : 1, \"executionTimeMillisEstimate\" : 3, \"works\" : 4003, \"advanced\" : 1, \"needTime\" : 4000, \"needYield\" : 0, \"saveState\" : 12, \"restoreState\" : 12, \"isEOF\" : 1, \"docsExamined\" : 4001, \"alreadyHasObj\" : 0, \"inputStage\" : { \"stage\" : \"IXSCAN\", \"nReturned\" : 4001, \"executionTimeMillisEstimate\" : 0, \"works\" : 4002, \"advanced\" : 4001, \"needTime\" : 0, \"needYield\" : 0, \"saveState\" : 12, \"restoreState\" : 12, \"isEOF\" : 1, \"keyPattern\" : { \"TenantId\" : 1, \"RequestId\" : 1, \"StartedAt\" : 1, \"_id\" : 1 }, \"indexName\" : \"TenantId_1_RequestId_1_StartedAt_1__id_1\", \"isMultiKey\" : false, \"multiKeyPaths\" : { \"TenantId\" : [], \"RequestId\" : [], \"StartedAt\" : [], \"_id\" : [] }, \"isUnique\" : false, \"isSparse\" : false, \"isPartial\" : false, \"indexVersion\" : 2, \"direction\" : \"forward\", \"indexBounds\" : { \"TenantId\" : [\"[\\\"tenant-a\\\", \\\"tenant-a\\\"]\"], \"RequestId\" : [\"[MinKey, MaxKey]\"], \"StartedAt\" : [\"[MinKey, MaxKey]\"], \"_id\" : [\"[MinKey, MaxKey]\"] }, \"keysExamined\" : 4001, \"seeks\" : 1, \"dupsTested\" : 0, \"dupsDropped\" : 0 } } }"
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.TaskScopedRuntimeGrantIssuerTests.IssuedRequest_PreservesSelectedModelAndTrace_AndOnlyExportsShortGatewayKey",
+        "outcome": "Failed",
+        "failure": "Assert.True() Failure\nExpected: True\nActual:   False"
+      }
+    ],
+    "pythonRed": "Existing header test with distinct callback/business IDs: expected operation-a, actual callback-operation-a.",
+    "greenRepresentative": [
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Reference_DbaCatalogIndexes_KeepEveryIdentityLookupSelective",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.TaskScopedRuntimeGrantIssuerTests.IssuedRequest_PreservesSelectedModelAndTrace_AndOnlyExportsShortGatewayKey",
+        "outcome": "Passed",
+        "failure": null
+      }
+    ],
+    "verification": {
+      "build": "0 errors",
+      "targeted": "41 passed, 0 failed, 0 skipped; isolated MongoDB including all runtime-grant authorization/budget/callback tests",
+      "python": "54 passed, 0 failed",
+      "tutorial": "38 passed; publisher check and drift P0/P1/P2 all zero",
+      "indexSelectivity": "Same 4001-record isolated Mongo fixture: old catalog examines 4001 documents; new catalog returns 1 record and passes <=5 documents examined. No production DDL executed."
+    },
+    "scope": "Callback RunId remains independent. GatewayRunId is set from admitted TaskExecutionContext, overriding an unbound client value. Separate array-field indexes in DBA script; startup only advises.",
+    "initialTestHarnessFailures": "First issuer probe could not serialize its fixture tool schema (undefined JsonElement); initialized a valid object schema and reran unchanged production behavior, then observed the intended missing gatewayRunId failure. Initial system Python lacked anthropic; reran in existing sidecar venv. Neither harness/setup error is counted as a product red proof.",
+    "sha256": {
+      "prd-api/src/PrdAgent.Infrastructure/Security/TaskScopedRuntimeGrantIssuer.cs": "870c439fc0982b04bee9581cb2f68b16d24af78f9473d5cd55cbe7a206cdb91c",
+      "claude-sdk-sidecar/app/agent_loop.py": "d702b35fe28f91e7a10a82857ee414711590ee83a6106dbfb43d687675b1e154",
+      "claude-sdk-sidecar/app/schemas.py": "c779a9c01b7f6e155c970f6e449ac36f1c0d5cb9c182ad61faad8f7613e443f9",
+      "scripts/mongodb-indexes.js": "e77e48a860e2d87ef3b0d08f6b3ca5032958249dd2350ac13667114a707bffe3"
+    },
+    "preview": "Not yet verified on this fix: CDS rejected c784 deployment with HTTP507 disk freeze at 90%; actual runtime stayed at 8fcb. PR tracks subsequent deployment and real-page status."
   }
 }

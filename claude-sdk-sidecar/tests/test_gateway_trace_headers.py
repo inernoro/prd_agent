@@ -43,13 +43,14 @@ class Client:
 class GatewayTraceHeadersTests(unittest.IsolatedAsyncioTestCase):
     async def test_business_identity_reaches_gateway_without_reusing_request_id(self):
         Client.calls = []
-        with patch('app.agent_loop.httpx.AsyncClient', Client):
+        with patch('app.agent_loop.httpx.AsyncClient', Client), patch('app.agent_loop.ToolBridge') as bridge:
             for run in ['operation-a', 'operation-b']:
-                request = SidecarRunRequest(runId=run, model='fixture-model', protocol='openai-compatible',
+                request = SidecarRunRequest(runId='callback-'+run, gatewayRunId=run, model='fixture-model', protocol='openai-compatible',
                     baseUrl='https://gateway.example', apiKey='fixture-key', appCallerCode='page-agent.generate::chat',
                     maxTurns=1, messages=[{'role': 'user', 'content': 'fixture'}])
                 events = [event async for event in run_agent(request)]
                 self.assertEqual(events[-1].type, 'done')
+                self.assertEqual(bridge.call_args.kwargs['run_id'], 'callback-'+run)
         self.assertEqual(len(Client.calls), 2)
         self.assertEqual(Client.calls[0][2]['headers']['X-Gateway-Run-Id'], 'operation-a')
         self.assertEqual(Client.calls[1][2]['headers']['X-Gateway-Run-Id'], 'operation-b')
