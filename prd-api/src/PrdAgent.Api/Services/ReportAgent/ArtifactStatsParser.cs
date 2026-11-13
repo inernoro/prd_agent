@@ -263,6 +263,7 @@ public class ArtifactStatsParser
 
     private static string? DetailIdentity(StatsDetail detail)
         => detail.Type == "commit" ? detail.Revision ?? detail.Id
+            : detail.Type is "pull_request" or "pr" ? detail.SourceUrl ?? detail.Id
             : detail.WorkItemId ?? detail.SourceUrl ?? detail.Id;
 
     #endregion

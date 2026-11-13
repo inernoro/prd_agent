@@ -147,6 +147,47 @@ public class ReportSourceEvidenceTests
     }
 
     [Fact]
+    public async Task DifferentPullRequestsWithOneExplicitIssueStayInSameWorkItem()
+    {
+        var payload = JsonSerializer.Serialize(new[] { 17, 18 }.Select(number => new
+        {
+            id = "event-" + number, type = "PullRequestEvent", created_at = "2026-01-31T11:00:00Z",
+            payload = new { action = "closed", pull_request = new
+            {
+                html_url = "https://github.com/example/repo/pull/" + number,
+                title = "标题不能作为归属依据 " + number, body = "本次修复\nFixes #42",
+                merged = true, state = "closed", merged_at = "2026-01-31T10:59:00Z", merge_commit_sha = FullSha
+            } }
+        }));
+        var result = await new PersonalGitHubConnector("fixture-token","author",null,new(new StubHandler(HttpStatusCode.OK,payload))).CollectStatsAsync(From,To,default);
+        Assert.Equal(2,result.Details.Count);
+        Assert.All(result.Details,d => Assert.Equal("https://github.com/example/repo/issues/42",d.WorkItemId));
+        Assert.Equal(2,result.Details.Select(d => d.SourceUrl).Distinct().Count());
+        Assert.Equal(2,result.Summary["prs_merged"]);
+        Assert.All(result.Details,d => Assert.Equal("merged",d.EvidenceKind));
+    }
+
+    [Theory]
+    [InlineData("Fixes #42\nCloses #43")]
+    [InlineData("Fixes #42, #43")]
+    public void AmbiguousClosingIssuesDoNotCollapseDistinctBusinessItems(string body)
+    {
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(new { body }));
+        var warnings = new List<string>();
+        Assert.Equal("https://github.com/example/repo/pull/17",PersonalGitHubConnector.ResolvePullRequestWorkItem(doc.RootElement,"https://github.com/example/repo/pull/17",warnings));
+        Assert.Contains(warnings,w => w.Contains("不明确"));
+    }
+
+    [Fact]
+    public void ClosingTextInsideCodeBlockDoesNotCreateIssueAssociation()
+    {
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(new { body = "示例：\n```text\nFixes #42\n```" }));
+        var warnings = new List<string>();
+        Assert.Equal("https://github.com/example/repo/pull/17",PersonalGitHubConnector.ResolvePullRequestWorkItem(doc.RootElement,"https://github.com/example/repo/pull/17",warnings));
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
     public async Task FailedRequestIsNotReturnedAsZeroActivity()
     {
         var connector = new PersonalGitHubConnector("fixture-token","author",null,new(new StubHandler(HttpStatusCode.Forbidden,"{\"message\":\"private upstream details\"}")));

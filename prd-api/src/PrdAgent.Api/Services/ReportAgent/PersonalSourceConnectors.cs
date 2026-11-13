@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services.ReportAgent;
@@ -181,10 +182,11 @@ public class PersonalGitHubConnector : IPersonalSourceConnector
                     var occurred = merged ? UtcDate(Text(pr, "merged_at")) : action == "opened" ? UtcDate(Text(pr, "created_at")) : created;
                     if (!occurred.HasValue)
                         stats.CollectionWarnings.Add("部分 GitHub PR 记录缺少事实发生时间，不能按采集时间认定本期进展。");
+                    var workItemId = ResolvePullRequestWorkItem(pr, prUrl, stats.CollectionWarnings);
                     stats.Details.Add(new StatsDetail
                     {
                         Id = eventId ?? prUrl,
-                        WorkItemId = prUrl,
+                        WorkItemId = workItemId,
                         SourceUrl = prUrl,
                         Title = Text(pr, "title") ?? "",
                         Type = "pull_request",
@@ -201,7 +203,53 @@ public class PersonalGitHubConnector : IPersonalSourceConnector
         stats.Summary["commits"] = stats.Details.Where(d => d.Type == "commit").Select(d => d.Revision).Distinct().Count();
         stats.Summary["push_events"] = pushCount;
         stats.Summary["pr_events"] = prCount;
-        stats.Summary["prs_merged"] = stats.Details.Where(d => d.Type == "pull_request" && d.Status == "merged" && d.WorkItemId != null).Select(d => d.WorkItemId).Distinct().Count();
+        stats.Summary["prs_merged"] = stats.Details.Where(d => d.Type == "pull_request" && d.Status == "merged" && d.SourceUrl != null).Select(d => d.SourceUrl).Distinct().Count();
+    }
+
+    private static readonly Regex ClosingPrefix = new(@"^ {0,3}(?:Fixes|Closes|Resolves)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex ClosingDirective = new(@"^ {0,3}(?:Fixes|Closes|Resolves)[ \t]+(?<ref>#[1-9][0-9]*|https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*)[ \t]*[.!]?[ \t]*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex CodeFence = new(@"^ {0,3}(?<fence>`{3,}|~{3,})", RegexOptions.CultureInvariant);
+
+    /// <summary>只认明确的 GitHub 关闭指令；不从标题相似度推测功能归属。</summary>
+    internal static string? ResolvePullRequestWorkItem(JsonElement pr, string? prUrl, List<string> warnings)
+    {
+        var body = Text(pr, "body");
+        if (string.IsNullOrWhiteSpace(body)) return prUrl;
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool ambiguous = false;
+        char fenceCharacter = '\0';
+        int fenceLength = 0;
+        foreach (var rawLine in body.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+            var fence = CodeFence.Match(line);
+            if (fence.Success)
+            {
+                var marker = fence.Groups["fence"].Value;
+                if (fenceCharacter == '\0') { fenceCharacter = marker[0]; fenceLength = marker.Length; }
+                else if (marker[0] == fenceCharacter && marker.Length >= fenceLength && string.IsNullOrWhiteSpace(line[fence.Length..]))
+                    fenceCharacter = '\0';
+                continue;
+            }
+            if (fenceCharacter != '\0' || !ClosingPrefix.IsMatch(line)) continue;
+            var directive = ClosingDirective.Match(line);
+            if (!directive.Success) { ambiguous = true; continue; }
+            var reference = directive.Groups["ref"].Value;
+            if (reference.StartsWith('#'))
+            {
+                if (!Uri.TryCreate(prUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
+                    !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrEmpty(uri.UserInfo))
+                { ambiguous = true; continue; }
+                var path = uri.AbsolutePath.Trim('/').Split('/');
+                if (path.Length != 4 || path[2] != "pull") { ambiguous = true; continue; }
+                candidates.Add($"https://github.com/{path[0]}/{path[1]}/issues/{reference[1..]}");
+            }
+            else candidates.Add(reference);
+        }
+        if (!ambiguous && candidates.Count == 1) return candidates.Single();
+        if (ambiguous || candidates.Count > 1)
+            warnings.Add("GitHub PR 含多个或不明确的关闭事项引用，保留 PR 自身身份，需确认主要业务事项。");
+        return prUrl;
     }
 
     private static void AddCommit(SourceStats stats, StatsDetail detail)
