@@ -186,6 +186,39 @@ class CapacityTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 cap.load_history(file, {})
 
+    def test_insecure_state_directory_is_rejected_before_writing(self):
+        with tempfile.TemporaryDirectory() as root:
+            source, state = Path(root) / "cache", Path(root) / "state"
+            source.mkdir(); state.mkdir(); state.chmod(0o755)
+            result = subprocess.run(["python3", str(SCRIPT), "--source", f"cache={source}",
+                                     "--state-dir", str(state)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 3)
+            self.assertEqual(json.loads(result.stdout)["status"], "unknown")
+            self.assertEqual(list(state.iterdir()), [])
+
+    def test_unsafe_pending_files_preserve_history_and_external_bytes(self):
+        with tempfile.TemporaryDirectory() as root:
+            file, pending, target = (Path(root) / name for name in ("history.json", "history.pending", "sentinel"))
+            cap.save_history(file, {}, [], sample())
+            original = file.read_bytes()
+            target.write_text("protected bytes"); target.chmod(0o600)
+            for kind in ("symlink", "hardlink", "public", "fifo"):
+                with self.subTest(kind=kind):
+                    if kind == "symlink": pending.symlink_to(target)
+                    elif kind == "hardlink": os.link(target, pending)
+                    elif kind == "public": pending.write_text("public pending"); pending.chmod(0o640)
+                    else: os.mkfifo(pending, 0o600)
+                    try:
+                        with self.assertRaises((ValueError, OSError)):
+                            cap.save_history(file, {}, cap.load_history(file, {}), sample(1))
+                        self.assertEqual(file.read_bytes(), original)
+                        self.assertEqual(target.read_text(), "protected bytes")
+                        self.assertTrue(pending.exists())
+                    finally:
+                        pending.unlink()
+            cap.save_history(file, {}, cap.load_history(file, {}), sample(1))
+            self.assertEqual(cap.load_history(file, {})[-1]["at"], sample(1)["at"])
+
     def test_repeated_sigkill_leaves_one_bounded_pending_slot_then_retry_commits(self):
         with tempfile.TemporaryDirectory() as root:
             file = Path(root) / "history.json"
@@ -211,7 +244,18 @@ cap.save_history(Path(sys.argv[2]),{},[],json.loads(sys.argv[3]))
     def test_ci_runs_on_script_only_changes(self):
         workflow = (SCRIPT.parents[1] / ".github/workflows/ci.yml").read_text()
         self.assertIn("- 'scripts/host-capacity.py'", workflow)
+        self.assertIn("- 'scripts/capacity-behavior-proof.py'", workflow)
         self.assertIn("for t in scripts/tests/test_*.py", workflow)
+
+    def test_behavior_proof_driver_detects_faults_and_runs_candidate_main(self):
+        result = subprocess.run(["python3", str(SCRIPT.with_name("capacity-behavior-proof.py")),
+                                 "--baseline-ref", "HEAD"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["verdict"], "PASS")
+        self.assertEqual(report["forecast"]["old"]["verdict"], "RED")
+        self.assertEqual(report["forecast"]["new"]["verdict"], "GREEN")
+        self.assertEqual([entry["verdict"] for entry in report["mutationControls"]], ["PASS", "PASS"])
 
 
 if __name__ == "__main__":
