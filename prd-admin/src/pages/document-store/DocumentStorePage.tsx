@@ -66,6 +66,7 @@ import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
 import { StoreSyncBadge, SyncManagerPanel } from './SyncManagerPanel';
+import { DocumentTrashButton } from './DocumentTrashButton';
 import { RecentEntriesList } from './RecentEntriesList';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
@@ -1972,13 +1973,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const handleDeleteEntry = useCallback(async (entryId: string) => {
     const res = await deleteDocumentEntry(entryId);
     if (res.success) {
-      setEntries(prev => prev.filter(e => e.id !== entryId));
-      if (selectedEntryId === entryId) setSelectedEntryId(undefined);
-      toast.success('已删除');
+      await loadEntries();
+      setSelectedEntryId(undefined);
+      toast.success('已移入回收站', '30 天内可在回收站恢复');
     } else {
       toast.error('删除失败', res.error?.message);
     }
-  }, [selectedEntryId]);
+  }, [loadEntries]);
 
   const handleUpdateEntryTags = useCallback(async (entryId: string, tags: string[]) => {
     const res = await updateDocumentEntry(entryId, { tags });
@@ -2554,6 +2555,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 }
               `}</style>
             </button>}
+            <DocumentTrashButton storeId={storeId} onRestored={async () => { await loadEntries(); await loadStore(); }} />
             {/* 更多：收纳低频管理动作（发布 / 关系图谱 / 统计 / 订阅），折叠屏只占一个位 */}
             <div className="relative" ref={moreRef}>
               <Button variant="secondary" size="xs" onClick={toggleMore} title="更多操作">
@@ -3783,16 +3785,16 @@ export function DocumentStorePage() {
     const entryCount = s.documentCount ?? 0;
     const confirmed = await systemDialog.confirm({
       title: '确认删除知识库',
-      message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
+      message: `将「${s.name}」及 ${entryCount} 个条目移入回收站。正文、附件和历史记录保留，创建者可在 30 天内恢复。`,
       tone: 'danger',
-      confirmText: '永久删除',
+      confirmText: '移入回收站',
       cancelText: '取消',
     });
     if (!confirmed) return;
     const res = await deleteDocumentStore(s.id);
     if (res.success) {
       setStores(prev => prev.filter(x => x.id !== s.id));
-      toast.success('知识库已删除', '关联数据已全部清理');
+      toast.success('已移入回收站', '创建者可在 30 天内恢复');
     } else {
       toast.error('删除失败', res.error?.message);
     }
@@ -4260,6 +4262,7 @@ export function DocumentStorePage() {
               hideScopeToggle
             />
           )}
+          <DocumentTrashButton onRestored={() => loadStores(tab === 'team' ? 'team' : 'mine', teamScope.teamId)} />
           {/* 统计概览 */}
           {/* 功能区：库数 / 文章数（左侧） */}
           <span data-tour-id="library-stats" className={isMobile ? 'hidden' : 'text-[12px] tabular-nums whitespace-nowrap flex-none'} style={{ color: 'var(--text-muted)' }}>

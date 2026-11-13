@@ -1390,6 +1390,10 @@ export const api = {
 
   // ============ Document Store 文档空间 ============
   documentStore: {
+    trash: {
+      list: () => '/api/document-store/stores/trash',
+      restore: (kind: 'entry' | 'store', id: string) => `/api/document-store/${kind === 'store' ? 'stores' : 'entries'}/${encodeURIComponent(id)}/restore`,
+    },
     stores: {
       list: () => '/api/document-store/stores',
       listWithPreview: () => '/api/document-store/stores/with-preview',
