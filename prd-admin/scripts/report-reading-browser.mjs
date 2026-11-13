@@ -1,7 +1,6 @@
 // 本地固定样本浏览器回归。先在 prd-admin 启动 pnpm dev；真实服务验收另行执行。
 // REPORT_TEST_URL / REPORT_SCREENSHOT_DIR / CHROMIUM_PATH 可指定服务、证据目录与浏览器。
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 const require = createRequire(import.meta.url);
 let playwright;
@@ -12,7 +11,8 @@ if (!playwright) throw new Error('请安装 cds 浏览器测试依赖，或通�
 const { chromium } = playwright;
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-const out = process.env.REPORT_SCREENSHOT_DIR || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../work/report-reading-admin');
+import os from 'node:os';
+const out = process.env.REPORT_SCREENSHOT_DIR || path.join(os.tmpdir(), 'admin-report-reading-regression');
 const baseUrl = (process.env.REPORT_TEST_URL || 'http://localhost:8000').replace(/\/$/, '');
 await fs.mkdir(out, { recursive: true });
 const longUrl = 'https://example.com/reports/' + 'long-path-'.repeat(20) + '?source=llmgw';

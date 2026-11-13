@@ -15,7 +15,7 @@ import { StateService } from '../src/services/state.ts';
 import { createReportsRouter, createPublicReportShareRouter } from '../src/routes/reports.ts';
 import { flushAllJsonStateStores } from '../src/infra/state-store/json-backing-store.ts';
 const cds = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const output = path.resolve(cds, '../work/report-reading');
+const output = path.resolve(process.env.REPORT_SCREENSHOT_DIR || path.join(os.tmpdir(), 'cds-report-reading-regression'));
 await fs.mkdir(output, { recursive:true });
 const data = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-reading-browser-'));
 const previousCache = process.env.CDS_CACHE_BASE;
