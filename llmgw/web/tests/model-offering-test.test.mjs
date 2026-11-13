@@ -21,7 +21,7 @@ test('逐线路测试只在确认后收费发送一次，刷新不重发，未�
     if(id==='\0binding-probe-router')return Object.keys(globalThis.__bindingProbeRouter).filter(name=>name!=='default').map(name=>`export const ${name}=globalThis.__bindingProbeRouter.${name};`).join('\n');
     if (id.endsWith('/src/components/ConfirmDialog.tsx')) return 'export function useDialogs(){return {confirm:async()=>globalThis.__bindingProbeFixture.confirmed}}';
     if (id.endsWith('/src/lib/api.ts')) return apiNames.map(name => {
-      if (name === 'getGatewayAppCallers') return 'export async function getGatewayAppCallers(){return {success:true,data:{items:[{id:"caller",appCallerCode:"visual.image::generation",title:"视觉配图"}],total:1}}}';
+      if (name === 'getGatewayAppCallers') return 'export async function getGatewayAppCallers(){return {success:true,data:{items:[{id:"caller",appCallerCode:"visual.image::generation",title:"视觉配图",status:"configured"},{id:"disabled",appCallerCode:"disabled.image::generation",title:"已停用",status:"disabled"},{id:"archived",appCallerCode:"archived.image::generation",title:"已归档",status:"archived"}],total:3}}}';
       if (name === 'getModelBindingProbe') return 'export async function getModelBindingProbe(){const f=globalThis.__bindingProbeFixture;f.reads++;return {success:true,data:structuredClone(f.view)}}';
       if (name === 'startModelBindingProbe') return 'export async function startModelBindingProbe(logicalId,offeringId,body){const f=globalThis.__bindingProbeFixture;f.calls.push({logicalId,offeringId,body});if(f.reject)throw new Error("transport");f.view={requestId:"exact-test",status:"pending",message:"排队",offeringId,upstreamModelId:"future-image"};return {success:true,data:structuredClone(f.view)}}';
       return `export async function ${name}(){return {success:true,data:{items:[]}}}`;
@@ -36,6 +36,8 @@ test('逐线路测试只在确认后收费发送一次，刷新不重发，未�
     root = createRoot(document.getElementById('root'));
     const mount = key => act(async () => root.render(React.createElement(globalThis.__bindingProbeRouter.MemoryRouter, {}, React.createElement(ModelOfferingTestPanel, { key, logical: { id:'logical',name:'我的画师',modelType:'generation' }, offering: { id:'chosen-offering',targetKind:'model',targetId:'physical',targetName:'官方',enabled:true }, providerId:'official' }))));
     await mount('initial'); assert.equal(f.calls.length, 0, '挂载与读记录不能发推理');
+    assert.equal(document.querySelector('[aria-label="服务测试调用用途"]').options.length, 1, '已配置调用方可测试，停用和归档调用方不可选');
+    assert.equal(button('测试真实产物').disabled, false);
     await click('测试真实产物'); assert.equal(f.calls.length, 0, '取消确认不发送');
     f.confirmed = true; await click('测试真实产物');
     assert.equal(f.calls.length, 1); assert.equal(f.calls[0].offeringId, 'chosen-offering'); assert.equal(f.calls[0].body.maxCostUsd, .1);

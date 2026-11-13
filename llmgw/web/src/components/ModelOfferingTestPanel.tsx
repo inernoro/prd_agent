@@ -27,10 +27,12 @@ export function ModelOfferingTestPanel({ logical, offering, providerId }: { logi
     void Promise.all([getModelBindingProbe(logical.id, offering.id), (async () => {
       const items: GatewayAppCaller[] = [];
       for (let page = 1; ; page++) {
-        const result = await getGatewayAppCallers({ page, pageSize: 100, requestType: logical.modelType, status: 'active' });
+        const result = await getGatewayAppCallers({ page, pageSize: 100, requestType: logical.modelType });
         if (!result.success) throw new Error('caller-directory');
         items.push(...result.data.items);
-        if (items.length >= result.data.total || result.data.items.length === 0) return items;
+        if (items.length >= result.data.total || result.data.items.length === 0) return items.filter(item =>
+          ['discovered', 'configured', 'active'].includes(item.status?.trim().toLowerCase() || 'discovered')
+          && (!logical.allowedAppCallerCodes?.length || logical.allowedAppCallerCodes.includes(item.appCallerCode)));
       }
     })()]).then(([result, items]) => {
       if (generation.current !== current) return;

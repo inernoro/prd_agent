@@ -34,6 +34,11 @@ public sealed class ModelBindingProbeService(IMongoDatabase database, IConfigura
             throw Error("PROBE_MAP_IDENTITY_REQUIRED", "请从 MAP 登录内部组织后发起服务测试；当前仍可测试网络。");
         if (!configuration.GetValue<bool>("LlmGateway:ModelUpgrades:CanaryEnabled"))
             throw Error("PROBE_EXECUTOR_UNAVAILABLE", "当前环境未开启受预算测试执行器，请联系管理员配置后重试。");
+        if (ModelUpgradeDeploymentAuthority.BlockReason(configuration) is { } deploymentReason)
+            throw Error("PROBE_DEPLOYMENT_BLOCKED", deploymentReason);
+        var deployment = configuration[ModelUpgradeDeploymentAuthority.WorkerDeploymentKey];
+        if (configuration["LlmGateway:ModelUpgrades:CanaryDeployment"] != deployment)
+            throw Error("PROBE_DEPLOYMENT_BLOCKED", "测试执行器与当前部署不匹配，请由管理员核对配置后重试。");
         if (!Guid.TryParse(write.ClientRequestId, out _) || write.MaxCostUsd is <= 0 or > 1
             || string.IsNullOrWhiteSpace(write.AppCallerCode) || write.AppCallerCode.Length > 128)
             throw Error("PROBE_INPUT_INVALID", "请选择调用用途、填写 0 到 1 美元的正数预算后重试。", 400);
@@ -75,7 +80,7 @@ public sealed class ModelBindingProbeService(IMongoDatabase database, IConfigura
         var revision = new BsonArray(new[] { logical, provider, model }.Select(doc => new BsonDocument {
             { "id", doc["_id"] }, { "updatedAt", doc.GetValue("UpdatedAt", BsonNull.Value) } })).ToJson();
         var job = new BsonDocument { { "_id", requestId }, { "TenantId", actor.TenantId }, { "Operation", "binding-test" },
-            { "ProbeRequestFingerprint", fingerprint }, { "LogicalModelId", logicalId }, { "CandidateLogicalModelPublicId", logical.GetStringOrEmpty("PublicId") },
+            { "TargetDeployment", deployment! }, { "ProbeRequestFingerprint", fingerprint }, { "LogicalModelId", logicalId }, { "CandidateLogicalModelPublicId", logical.GetStringOrEmpty("PublicId") },
             { "CandidateOfferingId", offeringId }, { "OfferingVersion", wire.OfferingVersion }, { "EndpointPath", (BsonValue?)wire.EndpointPath ?? BsonNull.Value },
             { "Protocol", wire.Protocol }, { "ProviderId", provider.GetStringOrEmpty("_id") }, { "Provider", provider.GetStringOrEmpty("Name") },
             { "ModelId", model.GetStringOrEmpty("_id") }, { "UpstreamModelId", wire.UpstreamModelId }, { "ModelType", type },

@@ -57,7 +57,7 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
         await queue.UpdateManyAsync(new BsonDocument { { "TenantId", tenant }, { "Status", "running" },
             { "ExecutionDeadline", new BsonDocument("$lt", DateTime.UtcNow) } },
             new BsonDocument("$set", new BsonDocument { { "Status", "unknown" }, { "Message", "执行中断，等待既有日志核账；不会重发。" }, { "UpdatedAt", DateTime.UtcNow } }), cancellationToken: ct);
-        var filter = PendingClaimFilter(tenant, DateTime.UtcNow, config.GetValue<bool>("LlmGateway:ModelUpgrades:ScheduledCanaryEnabled"));
+        var filter = PendingClaimFilter(tenant, DateTime.UtcNow, config.GetValue<bool>("LlmGateway:ModelUpgrades:ScheduledCanaryEnabled"), TaskPermitDeployment.Resolve(config));
         var job = await queue.FindOneAndUpdateAsync(filter, new BsonDocument("$set", new BsonDocument {
             { "Status", "running" }, { "ExecutionDeadline", DateTime.UtcNow.AddMinutes(12) }, { "UpdatedAt", DateTime.UtcNow },
             { "ConsumerDeployment", TaskPermitDeployment.Resolve(config) } }),
@@ -209,9 +209,11 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
         TaskExecutionIdentity admission, string requestId, CancellationToken ct)
         => executions.AcquireAsync(admission.PermitId, requestId, ct);
 
-    internal static BsonDocument PendingClaimFilter(string tenant, DateTime now, bool allowScheduled)
+    internal static BsonDocument PendingClaimFilter(string tenant, DateTime now, bool allowScheduled, string? deployment = null)
     {
         var filter = new BsonDocument { { "TenantId", tenant }, { "Status", "pending" }, { "ExpiresAt", new BsonDocument("$gt", now) } };
+        filter.Add("$or", new BsonArray { new BsonDocument("Operation", new BsonDocument("$ne", "binding-test")),
+            new BsonDocument { { "Operation", "binding-test" }, { "TargetDeployment", deployment ?? "" } } });
         if (!allowScheduled) filter.Add("ExecutionRequestedBy", "manual");
         return filter;
     }
