@@ -206,6 +206,12 @@ public partial class DocumentStoreController
         if (state.Revision != request.Revision || state.Stage == "publishing") return WritingConflict();
         if (state.Stage == "generating") {
             if (request.Action != "skip-source" || !state.Sources.Any(s => s.Id == request.SourceId)) return WritingConflict();
+            // 只有确实会续跑的跳过操作才领取写作许可；确认、审核等普通命令没有付费执行权。
+            var resume = state.Sources.Any(s => s.Id != request.SourceId && s.Status != "skipped") || !string.IsNullOrWhiteSpace(state.ManualInput);
+            var authority = resume ? await HttpContext.RequestServices
+                .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                .AdmitAuthenticatedPaidBranchAsync(HttpContext, HttpContext.RequestAborted) : null;
+            using var continuation = authority == null ? null : PrdAgent.Core.Security.TaskExecutionContext.Enter(authority);
             var cancelled = await _db.DocumentStoreAgentRuns.UpdateOneAsync(r => r.Id == state.ActiveRunId
                 && (r.Status == DocumentStoreRunStatus.Running || r.Status == DocumentStoreRunStatus.Queued),
                 Builders<DocumentStoreAgentRun>.Update.Set(r => r.Status, DocumentStoreRunStatus.Cancelled).Set(r => r.EndedAt, DateTime.UtcNow));
@@ -214,7 +220,7 @@ public partial class DocumentStoreController
             skipped.Status = "skipped"; skipped.Content = ""; skipped.Hash = "";
             state.Stage = "failed"; state.Failure = "已跳过该资料，原文与目录位置保留。";
             if (!await SaveWritingState(entry, state, request.Revision)) return WritingConflict();
-            if (state.Sources.Any(s => s.Status != "skipped") || !string.IsNullOrWhiteSpace(state.ManualInput))
+            if (resume)
                 return await GenerateWritingDraft(entryId, new WritingCommandRequest { Revision = state.Revision });
             return Ok(ApiResponse<object>.Ok(new { state }));
         }
@@ -257,7 +263,7 @@ public partial class DocumentStoreController
             else if (request.Action == "approve" && state.Stage == "pending-review" && state.ReviewerId == GetUserId()) {
                 var problems = WritingDocumentPolicy.SubmissionProblems(state);
                 if (problems.Count > 0) return UnprocessableEntity(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, string.Join("；", problems)));
-                foreach (var source in state.Sources) {
+                foreach (var source in state.Sources.Where(s => s.Status == "read")) {
                     var original = await _db.DocumentEntries.Find(e => e.Id == source.EntryId && e.StoreId == entry.StoreId).FirstOrDefaultAsync();
                     if (original == null) return UnprocessableEntity(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "引用资料已删除，请先复核"));
                     var (_, currentContent) = await LoadEntryMarkdownAsync(original);

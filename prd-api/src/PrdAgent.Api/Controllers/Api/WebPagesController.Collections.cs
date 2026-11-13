@@ -9,6 +9,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Security;
+using PrdAgent.Api.Extensions;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -265,7 +266,7 @@ public partial class WebPagesController
         }
         var widening = targets.Where(t => source.Visibility == "public" && t.Visibility != "public").ToList();
         if (widening.Count > 0 && _privateSources != null) {
-            var decision = await _privateSources.EnforceForSitesAsync(widening, HostedSitePrivateSourceActions.SitePublic, GetUserId(), null, CancellationToken.None);
+            var decision = await _privateSources.EnforceForSitesAsync(widening, HostedSitePrivateSourceActions.SitePublic, GetUserId(), request.ConfirmedPrivateSourceFingerprint, CancellationToken.None);
             if (!decision.Allowed) return Conflict(ApiResponse<object>.Fail(decision.ErrorCode, decision.Message));
         }
         var results = new List<object>();
@@ -323,6 +324,8 @@ public partial class WebPagesController
         foreach (var siteId in snapshot.SiteIds.Where(allowed.Contains))
             items.Add(byId.TryGetValue(siteId, out var site) ? await CollectionItem(site, false, true, true)
                 : UnavailableCollectionItem(siteId, snapshot.MemberMetadata));
+        await _siteService.RecordShareViewAsync(resolved.Share!, viewer,
+            viewer == null ? null : await ResolveDisplayNameAsync(viewer), HttpContext.GetRealClientIp(), Request.Headers.UserAgent.ToString());
         return Ok(ApiResponse<object>.Ok(new { collection = snapshot, items, canManage = false, shareToken = token }));
     }
 
@@ -379,5 +382,5 @@ public partial class WebPagesController
         public string? Title { get; set; } public string? Password { get; set; } public int ExpiresInDays { get; set; }
         public string Visibility { get; set; } = "owner-only"; public string? ConfirmedPrivateSourceFingerprint { get; set; }
     }
-    public class CollectionSyncRequest { public string Fingerprint { get; set; } = ""; public List<string> SiteIds { get; set; } = new(); }
+    public class CollectionSyncRequest { public string? ConfirmedPrivateSourceFingerprint { get; set; } public string Fingerprint { get; set; } = ""; public List<string> SiteIds { get; set; } = new(); }
 }

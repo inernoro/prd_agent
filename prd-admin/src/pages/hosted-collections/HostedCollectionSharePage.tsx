@@ -72,7 +72,22 @@ export default function HostedCollectionSharePage() {
     if (step === 2) { if (diff.some(item => ids.includes(item.id) && !item.canShare)) { setError('部分文档没有分享权限，请从本次分享中排除'); return; } setError(''); setStep(3); return; }
     await action(async () => {
       let fingerprint = permissions!.fingerprint;
-      if (syncIds.length) { const r = await syncHostedCollectionPermissions(collectionId, fingerprint, syncIds.filter(id => ids.includes(id))); if (!r.success) throw new Error(r.error.message); setSyncResults(r.data.results); fingerprint = r.data.fingerprint; const fresh = await getHostedCollectionPermissions(collectionId); if (fresh.success) setPermissions(fresh.data); setSyncIds([]); if (r.data.results.some(item => !item.success)) { setStep(2); throw new Error('部分文档权限同步未完成，请查看逐项结果并重新核对'); } }
+      if (syncIds.length) {
+        const targets = syncIds.filter(id => ids.includes(id));
+        const mainIsPublic = permissions!.items.find(item => item.id === collection.mainSiteId)?.visibility === 'public';
+        const widening = mainIsPublic ? permissions!.items.filter(item => targets.includes(item.id) && item.visibility !== 'public').map(item => item.id) : [];
+        const sync = (confirmedPrivateSourceFingerprint?: string) => syncHostedCollectionPermissions(collectionId, fingerprint, targets, confirmedPrivateSourceFingerprint);
+        const outcome = widening.length
+          ? await runWithPrivateSourceGate({ actionLabel: '将所选原文设为公开', inspect: () => getSitesPrivateSources(widening), run: sync })
+          : { status: 'done' as const, res: await sync() };
+        if (outcome.status !== 'done') return;
+        const r = outcome.res;
+        if (!r.success) throw new Error(r.error.message);
+        setSyncResults(r.data.results); fingerprint = r.data.fingerprint;
+        const fresh = await getHostedCollectionPermissions(collectionId); if (fresh.success) setPermissions(fresh.data);
+        setSyncIds([]);
+        if (r.data.results.some(item => !item.success)) { setStep(2); throw new Error('部分文档权限同步未完成，请查看逐项结果并重新核对'); }
+      }
       const result = await runWithPrivateSourceGate({ actionLabel: '创建合集分享', inspect: () => getSitesPrivateSources(ids), run: confirmedPrivateSourceFingerprint => createHostedCollectionShare(collectionId, { version: collection.version, fingerprint, siteIds: ids, title: reshare?.title || collection.name, visibility: audience === 3 ? 'owner-only' : audience === 2 ? 'public' : 'logged-in', accessUserIds: audience === 1 || audience === 3 ? members.map(m => m.id) : [], password: passwordOn ? password : undefined, expiresInDays: expires, confirmedPrivateSourceFingerprint }) });
       if (result.status !== 'done') return;
       if (!result.res.success) throw new Error(result.res.error.message);

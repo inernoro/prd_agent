@@ -52,7 +52,7 @@ function HostedCollectionReader() {
   const members = collection.siteIds.map(id => byId.get(id)).filter((item): item is HostedCollectionItem => !!item);
   const primary = byId.get(collection.mainSiteId);
   const other = members.filter(item => item.id !== collection.mainSiteId);
-  const explicit = collection.sections.map(section => ({ ...section, siteIds: section.siteIds.filter(id => id !== collection.mainSiteId && byId.has(id)) }));
+  const explicit = collection.sections.map(section => ({ ...section, siteIds: collection.siteIds.filter(id => section.siteIds.includes(id) && id !== collection.mainSiteId && byId.has(id)) }));
   const assigned = new Set(explicit.flatMap(s => s.siteIds));
   const unassigned = other.filter(item => !assigned.has(item.id));
   const groups: HostedCollectionSection[] = [...explicit.filter(s => s.siteIds.length), ...(unassigned.length ? [{ id: 'other', title: explicit.length ? '其他文档' : '文档', siteIds: unassigned.map(item => item.id) }] : [])];

@@ -68,6 +68,8 @@ public static class HostedCollectionPolicy
             || sectionIds.Distinct().Count() != sectionIds.Count)
             throw new InvalidOperationException("章节成员不能重复，主文档始终独立置顶");
         collection.SiteIds = new[] { collection.MainSiteId }.Concat(collection.SiteIds.Where(id => id != collection.MainSiteId)).ToList();
+        foreach (var section in collection.Sections)
+            section.SiteIds = collection.SiteIds.Where(section.SiteIds.Contains).ToList();
     }
 
     public static void RestrictVisibleMembers(HostedDocumentCollection collection, IReadOnlySet<string> visibleIds)

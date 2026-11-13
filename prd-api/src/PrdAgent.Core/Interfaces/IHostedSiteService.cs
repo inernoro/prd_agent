@@ -451,6 +451,9 @@ public interface IHostedSiteService
     /// 与 ListCommentsByShareAsync 同一套判定源。siteId 为空取分享首站点；指定时必须属于该分享。
     /// 供预览页取回站点入口 HTML 用（浏览器直接 fetch 托管域名会被 CORS 拦掉，必须走服务端同源代理）。
     /// </summary>
+    Task RecordShareViewAsync(WebPageShareLink share, string? viewerUserId = null, string? viewerName = null,
+        string? ipAddress = null, string? userAgent = null, CancellationToken ct = default);
+
     Task<ShareSiteResolveResult> ResolveCollectionShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default);
 
     Task<ShareSiteResolveResult> ResolveShareSiteAsync(

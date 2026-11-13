@@ -64,6 +64,9 @@ public static class TaskAdmissionPolicies
         Add("VideoAgentController", "RegenerateScene RenderScene RenderScenes CreateV2dRun", new[] { "video-agent.", "visual-agent.", "workflow-agent." });
         Add("TranscriptAgentController", "UploadItem CreateCopywriteRun", new[] { "transcript-agent." });
         Add("DocumentStoreController", "CreativePublishEntry SelectionRewrite GenerateSubtitle TranscribeEntry RestyleTranscribeRun Reprocess SendReprocessChat GenerateWritingDraft StartRecordingUpload CompleteRecordingUpload RetryRecordingArchive LiveTranscription StartAutoLink", new[] { "document-store.", "transcript-agent.", "prd-agent-web.web-hosting.", "md-to-ppt-agent." });
+        Register("DocumentStoreController", "CommandWritingDocument",
+            new[] { AppCallerRegistry.DocumentStoreAgent.Writing.Generate }, false, 128,
+            timing: TaskAdmissionTiming.AuthenticatedPaidBranch);
         Add("ShortVideoMaterialController", "CreateRun", new[] { "video-agent.", "workflow-agent.", "transcript-agent.", "document-store." });
         Add("DesignArtifactsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);
         Add("HostedSiteEditsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);

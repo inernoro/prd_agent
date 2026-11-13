@@ -28,6 +28,18 @@ public sealed class TaskAdmissionPolicyTests
     }
 
     [Fact]
+    public void WritingContinuationRequiresExplicitPaidBranchWithOnlyWritingCapability()
+    {
+        const string controller = "PrdAgent.Api.Controllers.Api.DocumentStoreController";
+        var policy = TaskAdmissionPolicies.Find(controller, "CommandWritingDocument");
+        Assert.NotNull(policy);
+        Assert.Equal(TaskAdmissionTiming.AuthenticatedPaidBranch, policy.Timing);
+        Assert.Equal(new[] { PrdAgent.Core.Models.AppCallerRegistry.DocumentStoreAgent.Writing.Generate }, policy.AppCallers);
+        Assert.False(policy.AllowDelegatedSubjects);
+        Assert.Null(TaskAdmissionPolicies.Find(controller, "SaveWritingDocument"));
+    }
+
+    [Fact]
     public void SpeechRun_PersistsTaskAuthorityWithoutExposingItInJson()
     {
         PrdAgent.Core.Interfaces.ITaskAuthorizedRun task = new PrdAgent.Core.Models.SpeechRun { TaskPermitId = "private-permit" };
@@ -105,6 +117,7 @@ public sealed class TaskAdmissionPolicyTests
         {
             "PrdAgent.Api.Controllers.Api.LabController.SimulateMessage",
             "PrdAgent.Api.Controllers.GroupsController.Create",
+            "PrdAgent.Api.Controllers.Api.DocumentStoreController.CommandWritingDocument",
             reportController + ".CreateReport",
             "PrdAgent.Api.Controllers.Api.DefectAgentController.StreamScores",
             "PrdAgent.Api.Controllers.Api.ReviewAgentController.StreamReviewResult",

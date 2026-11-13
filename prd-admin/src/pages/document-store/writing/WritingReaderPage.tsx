@@ -135,8 +135,13 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
     try {
       const saved: unknown = JSON.parse(localStorage.getItem(key) ?? '[]');
       setDoneSteps(Array.isArray(saved) ? [...new Set(saved.filter((id): id is string => typeof id === 'string'))] : []);
+      if (tutorial && !data.publication.videoEntryId && !data.publication.mobileVideoEntryId) {
+        const chapters = data.publication.chapters.length ? data.publication.chapters : data.publication.sections;
+        const savedChapter = localStorage.getItem(`${key}:chapter`);
+        setChapterIndex(Math.max(0, chapters.findIndex(chapter => chapter.id === savedChapter)));
+      }
     } catch { setDoneSteps([]); }
-  }, [entryId, data]);
+  }, [entryId, data, tutorial]);
   useEffect(() => {
     if (!data || data.bodyPending || loading || tutorial) return;
     const media = window.matchMedia('(max-width: 760px)');
@@ -197,7 +202,13 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
     }
     video.current.currentTime = Math.max(0, Math.min(value, duration || value));
   };
-  const pickChapter = (i: number) => { setChapterIndex(i); if (doc.chapters.length) seek(chapters[i].start); };
+  const pickChapter = (i: number) => {
+    setChapterIndex(i);
+    if (!doc.videoEntryId && !doc.mobileVideoEntryId) {
+      try { localStorage.setItem(`map-learning:${entryId}:v${doc.version}:chapter`, chapters[i].id); } catch { /* 存储不可用时仍可继续阅读 */ }
+    }
+    if (doc.chapters.length) seek(chapters[i].start);
+  };
   const toggleDone = (id: string) => {
     const next = doneSteps.includes(id) ? doneSteps.filter(x => x !== id) : [...doneSteps, id]; setDoneSteps(next);
     try { localStorage.setItem(`map-learning:${entryId}:v${doc.version}`, JSON.stringify(next)); } catch { /* 阅读仍可继续 */ }

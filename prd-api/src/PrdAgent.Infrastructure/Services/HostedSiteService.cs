@@ -3249,6 +3249,44 @@ public class HostedSiteService : IHostedSiteService
         return null;
     }
 
+    /// <summary>仅在调用方已完成分享和业务资源门禁后记录入口访问；正文、评论等辅助读取不调用。</summary>
+    public async Task RecordShareViewAsync(WebPageShareLink share, string? viewerUserId = null, string? viewerName = null,
+        string? ipAddress = null, string? userAgent = null, CancellationToken ct = default)
+    {
+        // 更新浏览量
+        await _db.WebPageShareLinks.UpdateOneAsync(
+            x => x.Id == share.Id,
+            Builders<WebPageShareLink>.Update
+                .Inc(x => x.ViewCount, 1)
+                .Set(x => x.LastViewedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        // 记录观看日志
+        try
+        {
+            var viewerAvatarFileName = !string.IsNullOrWhiteSpace(viewerUserId)
+                ? await LookupAvatarFileNameAsync(viewerUserId, ct)
+                : null;
+
+            await _db.ShareViewLogs.InsertOneAsync(new ShareViewLog
+            {
+                ShareToken = share.Token,
+                ShareId = share.Id,
+                ViewerUserId = viewerUserId,
+                ViewerName = viewerName,
+                ViewerAvatarFileName = viewerAvatarFileName,
+                ShareOwnerUserId = share.CreatedBy,
+                IpAddress = ipAddress,
+                UserAgent = userAgent,
+            }, cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "记录分享观看日志失败: {ShareId}", share.Id);
+        }
+
+    }
+
     public async Task<ShareViewResult?> ViewShareAsync(string token, string? password,
         string? viewerUserId = null, string? viewerName = null,
         string? ipAddress = null, string? userAgent = null,
@@ -3274,37 +3312,7 @@ public class HostedSiteService : IHostedSiteService
         if (gate is { } g)
             return new ShareViewResult { Error = g.Error, HttpStatus = g.HttpStatus, RetryAfterSeconds = g.RetryAfter, ErrorCode = g.HttpStatus == 429 ? "rate_limited" : "wrong_password" };
 
-        // 更新浏览量
-        await _db.WebPageShareLinks.UpdateOneAsync(
-            x => x.Id == share.Id,
-            Builders<WebPageShareLink>.Update
-                .Inc(x => x.ViewCount, 1)
-                .Set(x => x.LastViewedAt, DateTime.UtcNow),
-            cancellationToken: ct);
-
-        // 记录观看日志
-        try
-        {
-            var viewerAvatarFileName = !string.IsNullOrWhiteSpace(viewerUserId)
-                ? await LookupAvatarFileNameAsync(viewerUserId, ct)
-                : null;
-
-            await _db.ShareViewLogs.InsertOneAsync(new ShareViewLog
-            {
-                ShareToken = token,
-                ShareId = share.Id,
-                ViewerUserId = viewerUserId,
-                ViewerName = viewerName,
-                ViewerAvatarFileName = viewerAvatarFileName,
-                ShareOwnerUserId = share.CreatedBy,
-                IpAddress = ipAddress,
-                UserAgent = userAgent,
-            }, cancellationToken: ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "记录分享观看日志失败: {ShareId}", share.Id);
-        }
+        await RecordShareViewAsync(share, viewerUserId, viewerName, ipAddress, userAgent, ct);
 
         var siteIds = share.SiteIds.Count > 0 ? share.SiteIds : new List<string>();
         if (share.SiteId != null && !siteIds.Contains(share.SiteId))
