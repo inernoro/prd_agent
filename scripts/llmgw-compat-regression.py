@@ -180,9 +180,8 @@ def normalize(case, status, content_type, raw, expected_usage=None):
             'usageFields':sorted(usage), 'usageValid':True}
 
 
-def validate_rejection(case, status, content_type, raw):
+def validate_rejection(case, status, content_type, raw, code='PARAMETER_PROTOCOL_UNSUPPORTED'):
     """A matching phrase in successful output is not an error contract."""
-    code = 'PARAMETER_PROTOCOL_UNSUPPORTED'
     if status == 400:
         assert 'application/json' in content_type, 'rejection content type'
         payload = json.loads(raw)
@@ -230,6 +229,13 @@ def main(argv=None):
             assert args.expected_commit and len(args.expected_commit) == 40 and all(c in '0123456789abcdef' for c in args.expected_commit.lower()), 'exact 40-character deployed commit required'
             assert args.target, 'provider target is not configured; no provider validation performed'
             target = json.loads(args.target.read_text())
+            expected_rejections = target.get('expectedRejections', {})
+            assert isinstance(expected_rejections, dict), 'expectedRejections must be an object'
+            reasoning_ids = {c['id'] for c in corpus if c['kind'] == 'reasoning'}
+            assert set(expected_rejections) <= reasoning_ids, 'only unsupported reasoning cases may declare expected rejection'
+            assert all(code in ('PARAMETER_PROTOCOL_UNSUPPORTED', 'PARAMETER_UNSUPPORTED', 'PARAMETER_UNVERIFIED') for code in expected_rejections.values()), 'unsupported rejection expectation'
+            assert set(expected_rejections) <= set(target['caseIds']), 'rejection expectation is outside selected cases'
+            target['expectedRejections'] = expected_rejections
             caller = target.get('appCallerCode', 'report-agent.generate::chat')
             assert isinstance(caller, str) and caller.strip() == caller and caller, 'explicit nonempty appCallerCode required'
             target['appCallerCode'] = caller
@@ -244,13 +250,14 @@ def main(argv=None):
             health, failures = CANARY._health_check(target['base'], args.expected_commit, 20)
             assert not failures and health['ok'] and health['commit'] == args.expected_commit.lower(), 'target version not verified'
             report['observedCommit'] = health['commit']
-            report['targetContract'] = {k:target[k] for k in ('base','model','upstream','appCallerCode','caseIds')}
+            report['targetContract'] = {k:target[k] for k in ('base','model','upstream','appCallerCode','caseIds','expectedRejections')}
             report['unverified'] = [c['id'] for c in corpus if c['id'] not in target['caseIds']]
             jobs = [(c,target['upstream']) for c in corpus if c['id'] in target['caseIds']]
         for case, upstream in jobs:
             item = {'id':upstream+'--'+case['id'],'status':'fail'}
             try:
-                rejected = upstream == 'claude' and case['kind'] == 'reasoning'
+                rejection_code = 'PARAMETER_PROTOCOL_UNSUPPORTED' if upstream == 'claude' and case['kind'] == 'reasoning' else None
+                if args.mode == 'provider': rejection_code = target['expectedRejections'].get(case['id'], rejection_code)
                 if args.mode == 'simulation':
                     cap = json.loads((args.captures / (item['id']+'.json')).read_text())
                     assert isinstance(cap.get('sourceCommit'), str), 'missing capture assembly version'
@@ -287,8 +294,8 @@ def main(argv=None):
                     item['responseSha256'] = hashlib.sha256(raw.encode()).hexdigest()
                     code = response_error_code(raw, content_type)
                     if code: item['errorCode'] = code
-                if rejected:
-                    item['semantic'] = validate_rejection(case, status, content_type, raw)
+                if rejection_code:
+                    item['semantic'] = validate_rejection(case, status, content_type, raw, rejection_code)
                 else:
                     item['semantic'] = normalize(case,status,content_type,raw, {'inputTokens':11,'outputTokens':7} if args.mode == 'simulation' else None)
                 item['status'] = 'pass'
@@ -302,6 +309,9 @@ def main(argv=None):
         report['status'] = 'fail'
         # Never include HTTP exception bodies, headers, credentials or model output in public CI reports.
         report['failure'] = str(exc) if isinstance(exc, AssertionError) else type(exc).__name__
+    report['acceptedResponses'] = sum(c['status']=='pass' and 'rejected' not in c.get('semantic', {}) for c in report['cases'])
+    report['validatedRejections'] = sum(c['status']=='pass' and 'rejected' in c.get('semantic', {}) for c in report['cases'])
+    report['failedCases'] = sum(c['status']=='fail' for c in report['cases'])
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
     print(f"{args.mode}: {report['status']} ({sum(c['status']=='pass' for c in report['cases'])}/{len(report['cases'])})")

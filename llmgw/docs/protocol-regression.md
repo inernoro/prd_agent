@@ -62,7 +62,20 @@ python3 scripts/llmgw-compat-regression.py --mode provider \
 
 执行前 healthz 必须返回该完整提交。每个所选用例最多调用一次，无自动重试或替身回退；默认示例 16 个用例，未选择的推理参数用例逐项列入 unverified。健康检查不能替代真实请求。CI 报告保留状态、媒体类型、字节数、响应哈希和安全的语义结果；详细原文应在网关受控审计中查询，不能上传任意供应商响应原文。模拟 captures 仅包含合成数据。
 
-失败报告另保留有界的结构化 `errorCode`，不保存任意供应商错误正文。`PARAMETER_UNVERIFIED` 表示当前模型缺少精确参数能力确认，不能解释为请求成功或自动改成 default-drop。尤其 gpt-5.6 的既有 Chat 兼容处理会在关闭思考时使用 `reasoning_effort:none`；严格入口仍要求对应参数能力确认。Claude/Gemini compatible 默认丢参路径能调用成功，不代表同一模型的严格入口或推理参数也已验证。
+失败报告另保留有界的结构化 `errorCode`，不保存任意供应商错误正文。`PARAMETER_UNVERIFIED` 表示调用方显式请求的参数缺少精确能力确认，不能解释为请求成功或自动改成 default-drop。网关在兼容处理中补入的默认值与调用方参数分开检查；例如 GPT-5.6 的 `reasoning_effort:none` 默认值不再被误认作用户显式传参，模型明确声明不支持时仍拒绝。Native 与 raw 的请求体均先复制，重复使用同一客户端请求不会被改写。Claude/Gemini compatible 默认丢参路径能调用成功，不代表严格入口或推理参数也已验证。
+
+真实目标可用 `expectedRejections` 明确列出本模型未确认或不支持的四个推理参数用例及预期错误码。只允许 `reasoning` / `reasoning_effort` 的既有固定用例，错误码仅可为 `PARAMETER_UNVERIFIED`、`PARAMETER_UNSUPPORTED`、`PARAMETER_PROTOCOL_UNSUPPORTED`；必须有精确失败信封、无成功输出。普通文本/工具用例禁止改成“预期拒绝”，授权、网络、限流与任意其他错误也不能算通过。报告分别列出 `acceptedResponses` 与 `validatedRejections`，拒绝测试不代表真实推理调用成功；比较目标合同包含该配置，不能事后改判。
+
+例如已登记工具和流式用量能力、未确认推理参数的现有模型，可选择全部 20 个用例，并在目标中配置：
+
+```json
+"expectedRejections": {
+  "reasoning_effort-json": "PARAMETER_UNVERIFIED",
+  "reasoning_effort-stream": "PARAMETER_UNVERIFIED",
+  "reasoning-json": "PARAMETER_UNVERIFIED",
+  "reasoning-stream": "PARAMETER_UNVERIFIED"
+}
+```
 
 CI 的 `LLMGW_COMPAT_TARGET` secret 保存目标 JSON，引用 `LLMGW_COMPAT_KEY` / 可选 `LLMGW_COMPAT_HEADERS`。手动 dispatch 现有 CI 时打开 llmgw_provider，并填写 llmgw_expected_commit。provider job 不依赖 simulation、失败照样上传独立 provider.json，并使 CI Status 失败。未打开时 job 为 skipped，表示未验证；未配置凭据却打开验证时直接失败。常规 PR 自动执行模拟回归，不自动消费供应商额度。
 

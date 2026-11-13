@@ -29,6 +29,32 @@ def wire(frames):
  return ''.join('data: '+json.dumps(f,ensure_ascii=False)+'\n\n' for f in frames)+'data: [DONE]\n\n'
 
 class CompatibilityTests(unittest.TestCase):
+ def test_declared_reasoning_rejection_is_counted_separately_and_requires_exact_error(self):
+  with tempfile.TemporaryDirectory() as d,patch.dict('os.environ',{'COMPAT_TEST_KEY':'synthetic'}):
+   target=Path(d)/'target.json';output=Path(d)/'provider.json'
+   target.write_text(json.dumps({'base':'https://gateway.invalid','model':'fixed','upstream':'openai','keyEnv':'COMPAT_TEST_KEY','caseIds':['reasoning_effort-json'],'expectedRejections':{'reasoning_effort-json':'PARAMETER_UNVERIFIED'}}))
+   payload={'Success':False,'ErrorCode':'PARAMETER_UNVERIFIED'}
+   def respond(opener,request,**kwargs):
+    response=io.BytesIO(json.dumps(payload).encode());response.code=400;response.headers={'Content-Type':'application/json'}
+    return response
+   def run():return m.main(['--mode','provider','--target',str(target),'--expected-commit','a'*40,'--output',str(output)])
+   with patch.object(m.CANARY,'_health_check',return_value=({'ok':True,'commit':'a'*40},[])),patch.object(m.urllib.request.OpenerDirector,'open',respond):
+    self.assertEqual(0,run());report=json.loads(output.read_text())
+    self.assertEqual(0,report['acceptedResponses']);self.assertEqual(1,report['validatedRejections'])
+    payload['Success']=True
+    self.assertEqual(1,run(),'successful envelope cannot masquerade as rejected capability')
+    payload.update(Success=False,ErrorCode='PARAMETER_UNSUPPORTED')
+    self.assertEqual(1,run(),'a different rejection code does not satisfy the declared contract')
+
+ def test_normal_calls_cannot_be_reclassified_as_expected_rejections(self):
+  with tempfile.TemporaryDirectory() as d:
+   target=Path(d)/'target.json';output=Path(d)/'provider.json'
+   target.write_text(json.dumps({'base':'https://gateway.invalid','model':'fixed','upstream':'openai','keyEnv':'COMPAT_TEST_KEY','caseIds':['openai-tools-stream'],'expectedRejections':{'openai-tools-stream':'PARAMETER_UNVERIFIED'}}))
+   with patch.object(m.CANARY,'_health_check') as health:
+    self.assertEqual(1,m.main(['--mode','provider','--target',str(target),'--expected-commit','a'*40,'--output',str(output)]))
+    health.assert_not_called()
+   self.assertIn('only unsupported reasoning cases',json.loads(output.read_text())['failure'])
+
  def test_error_reports_keep_structured_codes_without_error_bodies(self):
   self.assertEqual('PARAMETER_PROTOCOL_UNSUPPORTED',m.response_error_code('{"Success":false,"ErrorCode":"PARAMETER_PROTOCOL_UNSUPPORTED","Error":"private body"}','application/json'))
   self.assertEqual('invalid_request',m.response_error_code('data: {"error":{"code":"invalid_request","message":"private body"}}\n\n','text/event-stream'))
