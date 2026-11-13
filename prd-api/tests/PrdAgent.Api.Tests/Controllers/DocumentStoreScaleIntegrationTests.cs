@@ -36,6 +36,60 @@ public class DocumentStoreScaleIntegrationTests
     private static JsonElement Data(IActionResult result)
         => JsonSerializer.SerializeToElement(((OkObjectResult)result).Value).GetProperty("Data");
 
+    [Fact]
+    public async Task NavigationAndSearch_PreservePublishedOnlyScope_AndCurrentWritePermission()
+    {
+        var db = new MongoDbContext("mongodb://127.0.0.1:27017", "kb_scale_test_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            await db.DocumentStores.InsertOneAsync(new DocumentStore { Id = "public", OwnerId = "owner", IsPublic = true });
+            await db.Documents.InsertOneAsync(new ParsedPrd { Id = "draft-body", RawContent = new string('文', 3000) + " private-draft-tail" });
+            var at = DateTime.UtcNow.AddDays(-1);
+            await db.DocumentEntries.InsertManyAsync(Enumerable.Range(0, 255).Select(i => new DocumentEntry {
+                Id = $"e{i:D6}", StoreId = "public", Title = "样本", CreatedAt = at,
+                DocumentId = i == 0 ? "draft-body" : null,
+                Writing = i < 120 ? new WritingDocumentState() : i < 200 ? new WritingDocumentState { Published = new() } : null }));
+            await db.DocumentEntriesIncludingTrash.InsertOneAsync(new DocumentEntry {
+                Id = "e000300", StoreId = "public", Title = "样本", CreatedAt = at, Trash = new() });
+            await db.DocumentStoreShareLinks.InsertManyAsync(new[] {
+                new DocumentStoreShareLink { Token = "whole", StoreId = "public" },
+                new DocumentStoreShareLink { Token = "draft", StoreId = "public", EntryId = "e000000" } });
+            var reader = Controller(db, "reader");
+            var owner = Controller(db, "owner");
+            foreach (var channel in new[] { "authenticated", "public", "share" })
+            {
+                var seen = new HashSet<string>();
+                string? cursor = null;
+                do
+                {
+                    var page = Data(channel == "authenticated"
+                        ? await reader.ListEntries("public", pageSize: 50, all: true, navigation: true, cursor: cursor, keyword: "样本")
+                        : channel == "public" ? await reader.ListPublicStoreEntries("public", pageSize: 50, cursor: cursor, keyword: "样本")
+                        : await reader.ListShareEntries("whole", pageSize: 50, cursor: cursor, keyword: "样本"));
+                    page.GetProperty("total").GetInt64().ShouldBe(135);
+                    if (channel == "authenticated") page.GetProperty("canWrite").GetBoolean().ShouldBeFalse();
+                    foreach (var entry in page.GetProperty("items").EnumerateArray())
+                    {
+                        var id = entry.GetProperty("Id").GetString()!;
+                        string.CompareOrdinal(id, "e000120").ShouldBeGreaterThanOrEqualTo(0);
+                        seen.Add(id).ShouldBeTrue();
+                    }
+                    cursor = page.GetProperty("nextCursor").GetString();
+                } while (cursor != null);
+                seen.Count.ShouldBe(135);
+            }
+            var authored = Data(await owner.ListEntries("public", all: true, navigation: true));
+            authored.GetProperty("canWrite").GetBoolean().ShouldBeTrue();
+            authored.GetProperty("total").GetInt64().ShouldBe(255);
+            Data(await owner.ListEntries("public", keyword: "private-draft-tail", searchContent: true, navigation: true)).GetProperty("total").GetInt64().ShouldBe(1);
+            Data(await reader.ListEntries("public", keyword: "private-draft-tail", searchContent: true, navigation: true)).GetProperty("total").GetInt64().ShouldBe(0);
+            Data(await reader.ListPublicStoreEntries("public", keyword: "private-draft-tail", searchContent: true)).GetProperty("total").GetInt64().ShouldBe(0);
+            Data(await reader.ListShareEntries("whole", keyword: "private-draft-tail", searchContent: true)).GetProperty("total").GetInt64().ShouldBe(0);
+            Data(await reader.ListShareEntries("draft")).GetProperty("total").GetInt64().ShouldBe(0);
+        }
+        finally { await db.Database.Client.DropDatabaseAsync(db.Database.DatabaseNamespace.DatabaseName); }
+    }
+
     [Theory]
     [InlineData(200)]
     [InlineData(1000)]

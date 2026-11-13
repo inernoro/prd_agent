@@ -1,5 +1,16 @@
 import type { DocBrowserEntry } from './DocBrowser';
 
+/** 每层批次定位及标签筛选使用同一条展示祖先链。 */
+export function docBrowserEntryPath(parents: ReadonlyMap<string, string | undefined>, entryId?: string) {
+  const path = new Set<string>();
+  let id = entryId;
+  while (id && !path.has(id)) {
+    path.add(id);
+    id = parents.get(id);
+  }
+  return path;
+}
+
 /** 只生成展示关系，不回写存量数据。坏关系回到根级，保证仍可浏览。 */
 export function buildDocBrowserTree<T extends DocBrowserEntry>(entries: T[]) {
   const byId = new Map(entries.map(e => [e.id, e]));

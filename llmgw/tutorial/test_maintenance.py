@@ -70,7 +70,7 @@ class TutorialMaintenanceTests(unittest.TestCase):
 
         self.assertEqual("review_required", report["status"])
         self.assertEqual(
-            {"log-detail", "log-entity-details", "logs"},
+            {"log-detail", "log-entity-details", "logs", "log-trace"},
             {item["surface"] for item in report["affectedTutorials"]},
         )
 

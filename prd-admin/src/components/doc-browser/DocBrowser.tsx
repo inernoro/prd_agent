@@ -1,4 +1,4 @@
-import { buildDocBrowserTree } from './docBrowserTree';
+import { buildDocBrowserTree, docBrowserEntryPath } from './docBrowserTree';
 import { ProgressiveEntries } from './ProgressiveEntries';
 import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -398,6 +398,7 @@ export type DocBrowserProps = {
   enableSelectionAi?: boolean;
   onCreateFolder?: (name: string, parentId?: string) => Promise<void>;
   onCreateDocument?: () => void;
+  onCreateWriting?: () => void;
   onUploadFile?: () => void;
   /** 「添加」菜单项：从网页托管导入（提供时显示）。具体选择/导入流程由调用方实现。 */
   onImportFromHosting?: () => void;
@@ -1144,6 +1145,7 @@ function EntryRenameDialog({
 function TreeNode({
   entry,
   childrenMap,
+  revealPath,
   depth,
   selectedEntryId,
   returnEntryId,
@@ -1179,6 +1181,7 @@ function TreeNode({
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
+  revealPath: ReadonlySet<string>;
   depth: number;
   selectedEntryId?: string;
   /** 从正文退回列表后保留的来源行，只做浅色定位，不代表仍处于选中态。 */
@@ -1560,12 +1563,13 @@ function TreeNode({
 
       {/* 子节点 */}
       {isFolder && isOpen && <ProgressiveEntries items={children} itemKey={child => child.id}
-        revealIndex={children.findIndex(child => child.id === selectedEntryId || child.id === returnEntryId)}
+        revealIndex={children.findIndex(child => revealPath.has(child.id))}
         render={child => (
         <TreeNode
           key={child.id}
           entry={child}
           childrenMap={childrenMap}
+          revealPath={revealPath}
           depth={depth + 1}
           selectedEntryId={selectedEntryId}
           returnEntryId={returnEntryId}
@@ -1641,6 +1645,7 @@ export function DocBrowser({
   loadContent,
   onCreateFolder,
   onCreateDocument,
+  onCreateWriting,
   onUploadFile,
   onImportFromHosting,
   onOpenVideoParser,
@@ -1926,6 +1931,8 @@ export function DocBrowser({
     for (const e of (searchResults ?? [])) if (!m.has(e.id)) m.set(e.id, e.parentId);
     return m;
   }, [navigationTree, searchResults]);
+  const revealPath = useMemo(() => docBrowserEntryPath(parentMap, selectedEntryId ?? lastVisitedEntryId),
+    [parentMap, selectedEntryId, lastVisitedEntryId]);
 
   // 选中条目自动展开祖先；退回列表后继续滚到刚才阅读的来源行，保留空间记忆。
   useEffect(() => {
@@ -2689,7 +2696,6 @@ export function DocBrowser({
 
     // 本地搜索 / tag 过滤（两者 AND）
     const matchIds = new Set<string>();
-    const entryMap = new Map(entries.map(e => [e.id, e]));
     for (const e of entries) {
       let searchHit = !hasLocalSearch;
       if (hasLocalSearch) {
@@ -2701,14 +2707,7 @@ export function DocBrowser({
       // 文件夹本身不参与 tag 过滤（无 tag），但若其后代命中则保留
       const tagHit = !hasTagFilter || (!e.isFolder && (e.tags ?? []).some(t => selectedTags.has(t)));
       if (searchHit && tagHit && !e.isFolder) {
-        matchIds.add(e.id);
-        let cur = e;
-        while (cur.parentId) {
-          matchIds.add(cur.parentId);
-          const parent = entryMap.get(cur.parentId);
-          if (!parent) break;
-          cur = parent;
-        }
+        for (const id of docBrowserEntryPath(parentMap, e.id)) matchIds.add(id);
       } else if (hasLocalSearch && !hasTagFilter && e.isFolder && e.title.toLowerCase().includes(kw)) {
         // 仅文本搜索时文件夹标题命中仍保留（与原逻辑保持兼容）
         matchIds.add(e.id);
@@ -2723,7 +2722,7 @@ export function DocBrowser({
     }
 
     return { filteredRoots: fRoots, filteredChildrenMap: fMap };
-  }, [search, selectedTags, searchResults, rootEntries, childrenMap, entries, contentFirstLines]);
+  }, [search, selectedTags, searchResults, rootEntries, childrenMap, entries, contentFirstLines, parentMap]);
 
   // 收集 entries 中所有出现过的 tag（按出现频次排序，热门 tag 排前）
   const allTagsRanked = useMemo(() => {
@@ -3044,9 +3043,9 @@ export function DocBrowser({
     const ids = Array.from(selectedIds);
     const confirmed = await systemDialog.confirm({
       title: '批量删除文档',
-      message: `将永久删除选中的 ${ids.length} 个文件及其解析正文 / 附件。\n\n此操作不可恢复。`,
+      message: `将选中的 ${ids.length} 个文件移入回收站，30 天内可恢复。`,
       tone: 'danger',
-      confirmText: `永久删除 ${ids.length} 个`,
+      confirmText: `移入回收站 ${ids.length} 个`,
       cancelText: '取消',
     });
     if (!confirmed) return;
@@ -3598,7 +3597,7 @@ export function DocBrowser({
             </div>
           ) : <ProgressiveEntries key={`${search}|${[...selectedTags].join(',')}|${sortMode}`}
             items={displayItems} itemKey={(item, idx) => item.kind === 'header' ? `grp-${item.bucketKey}-${idx}` : item.entry.id}
-            revealIndex={displayItems.findIndex(item => item.kind === 'entry' && (item.entry.id === selectedEntryId || item.entry.id === lastVisitedEntryId))}
+            revealIndex={displayItems.findIndex(item => item.kind === 'entry' && revealPath.has(item.entry.id))}
             render={(item, idx) => (
             item.kind === 'header' ? (
               <div
@@ -3631,6 +3630,7 @@ export function DocBrowser({
             >
             <TreeNode
               entry={item.entry}
+              revealPath={revealPath}
               childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() || selectedTags.size > 0 ? filteredChildrenMap : childrenMap)}
               depth={0}
               selectedEntryId={selectedEntryId}
@@ -4494,6 +4494,7 @@ export function DocBrowser({
         <CreatePaletteFab
           onDoubleActivation={onQuickRecord ?? onUploadAudio}
           actions={[
+            ...(onCreateWriting ? [{ key: 'writing', label: '按模版成文', icon: FilePlus, onClick: onCreateWriting }] : []),
             ...(onCreateDocument ? [{ key: 'doc', label: '写文章', icon: FilePlus, onClick: onCreateDocument }] : []),
             ...(onUploadAudio ? [{ key: 'audio', label: '录音转笔记', icon: AudioLines, onClick: onUploadAudio, hue: 'rgba(34,197,94,0.92)' }] : []),
             ...((onUploadFile || onOpenVideoParser || onImportFromHosting) ? [{
@@ -4536,9 +4537,9 @@ export function DocBrowser({
                   : '解析正文、附件文件';
             const confirmed = await systemDialog.confirm({
               title: `确认删除${isFolder ? '文件夹' : '文档'}`,
-              message: `删除「${target.title}」将永久清除：\n  · ${consequence}\n\n此操作不可恢复。`,
+              message: `将「${target.title}」移入回收站：\n  · ${consequence}\n\n30 天内可在知识库回收站恢复。`,
               tone: 'danger',
-              confirmText: '永久删除',
+              confirmText: '移入回收站',
               cancelText: '取消',
             });
             if (confirmed) onDeleteEntry(entryId);

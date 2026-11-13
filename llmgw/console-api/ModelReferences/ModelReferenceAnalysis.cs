@@ -205,6 +205,27 @@ public static class ModelReferenceAnalysis
                         Finding(leaf.Path, "blocked", job.Length > 0 ? "SUBMITTED_VIDEO_JOB_MUST_DRAIN" : "UNSUBMITTED_VIDEO_REQUIRES_LIFECYCLE_VALIDATION");
                     }
                     break;
+                case "validation-queue":
+                    var validationStatus = Text(doc, "Status");
+                    var expiryKnown = TryGet(doc, "ExpiresAt", out var validationExpiry) && validationExpiry.IsValidDateTime;
+                    var validationLive = validationStatus == "running" || validationStatus == "pending" && expiryKnown && validationExpiry.ToUniversalTime() > DateTime.UtcNow;
+                    var validationUnknown = validationStatus == "pending" && !expiryKnown
+                        || validationStatus is not ("pending" or "running" or "succeeded" or "failed" or "unknown" or "cancelled" or "expired");
+                    foreach (var path in new[] { "LogicalModelId", "CandidateLogicalModelPublicId", "CandidateOfferingId", "ModelId", "UpstreamModelId" })
+                    {
+                        var value = Text(doc, path);
+                        var matchesValidation = value.Length > 0 && (path switch
+                        {
+                            "LogicalModelId" => value == source.LogicalId,
+                            "CandidateLogicalModelPublicId" => PublicMatch(source, value),
+                            "CandidateOfferingId" => value == source.OfferingId,
+                            "ModelId" => value == source.PhysicalModelId && (string.IsNullOrEmpty(source.ProviderId) || Text(doc, "ProviderId") == source.ProviderId),
+                            _ => !string.IsNullOrEmpty(source.ProviderId) && Text(doc, "ProviderId") == source.ProviderId && value == source.UpstreamModelId,
+                        });
+                        if (matchesValidation) Finding(path, validationUnknown ? "unknown" : validationLive ? "blocked" : "excluded",
+                            validationUnknown ? "线路验收状态未确认，请先核对任务。" : validationLive ? "仍有等待或执行中的线路验收，请等待结束后再变更模型。" : "已结束的验收记录仅作历史保留，不改写。" );
+                    }
+                    break;
                 case "upgrade-policy":
                     var ownerLogical = Text(doc, "LogicalModelId");
                     if (ownerLogical.Length == 0) { Finding("LogicalModelId", "unknown", "UPGRADE_POLICY_OWNER_UNKNOWN"); break; }

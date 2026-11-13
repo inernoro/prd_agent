@@ -1,0 +1,145 @@
+{
+  "source": "MAP模版设计稿.zip / v14",
+  "tokens": "\n/* MAP writing design v14 · source SHA-256 recorded in writing-design-spec.json. */\n:root {\n  --writing-bg: #0C0E12;\n  --writing-sf: #14171D;\n  --writing-sf2: #1A1E25;\n  --writing-ln: #262B34;\n  --writing-ln2: #353B46;\n  --writing-ink: #E9ECF1;\n  --writing-ink2: #B3BAC6;\n  --writing-ink3: #8A93A1;\n  --writing-ac: #8EA0FF;\n  --writing-acs: #1E2550;\n  --writing-am: #E5A84B;\n  --writing-ams: #2E2414;\n  --writing-dg: #F97066;\n  --writing-dgs: #3A1A17;\n  --writing-ok: #5BBF8A;\n  --writing-oks: #14281E;\n}\n[data-theme=\"light\"] {\n  --writing-bg: #EEF0F3;\n  --writing-sf: #FFFFFF;\n  --writing-sf2: #F7F8FA;\n  --writing-ln: #E2E5EA;\n  --writing-ln2: #CDD2DA;\n  --writing-ink: #14171C;\n  --writing-ink2: #4A5260;\n  --writing-ink3: #667080;\n  --writing-ac: #3046C5;\n  --writing-acs: #E8EBFA;\n  --writing-am: #8A5200;\n  --writing-ams: #FBF0DC;\n  --writing-dg: #B42318;\n  --writing-dgs: #FDECEA;\n  --writing-ok: #1E7046;\n  --writing-oks: #E4F3EA;\n}\n",
+  "mediaTokens": {
+    "--writing-media-ink": "#14171C",
+    "--writing-media-accent": "#3046C5",
+    "--writing-media-muted": "#667080",
+    "--writing-media-border": "#CDD2DA",
+    "--writing-media-line": "#E2E5EA",
+    "--writing-media-focus": "#E5A84B",
+    "--writing-media-paper": "#F7F8FA"
+  },
+  "implementationNotes": [
+    "真实系统使用实际作者、审核人与资料更新时间，不伪装原稿虚构身份。",
+    "原稿演示控制条不属于产品界面，实际页面未添加。",
+    "来源标记表示可定位，所有正文仍须作者核实语义与适用条件。"
+  ],
+  "referenceInventory": [
+    {
+      "file": "3-按模版成文与帮助理解/12-教学-章节、步骤与字幕.html",
+      "sha256": "2542e9011def9c69564a6d20d8deffc9a94911d28582eaf2d22c3ad95715b649",
+      "viewport": 1440,
+      "module": "3-按模版成文与帮助理解",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "3-按模版成文与帮助理解/10-作者-选模版与资料、生成、补充确认、审核发布.html",
+      "sha256": "d1d41a38c6bb5115582b727e86c0fcc5f949ee5cf1c52df2340a021a14e49442",
+      "viewport": 1440,
+      "module": "3-按模版成文与帮助理解",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "3-按模版成文与帮助理解/11-读者-分层阅读页.html",
+      "sha256": "19c2fdf77a290e95db629aa5a33617cca0c3eb07558eb4e97758e12167061f2e",
+      "viewport": 1440,
+      "module": "3-按模版成文与帮助理解",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "3-按模版成文与帮助理解/11b-阅读与教学-移动端.html",
+      "sha256": "f637ea4526dd1c5e6fbfad6e7d8b9873d896b3d8a1bac3cb913c6f645ac2bad1",
+      "viewport": 390,
+      "module": "3-按模版成文与帮助理解",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "3-按模版成文与帮助理解/13-关键交互、组件状态与设计变量.html",
+      "sha256": "e387361a1d5e936d2b3b2e3608b1d79decc64122d82e6ecd1caff5dcfef17b94",
+      "viewport": 1440,
+      "module": "3-按模版成文与帮助理解",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "3-按模版成文与帮助理解/10b-作者-移动端.html",
+      "sha256": "6f2c2246edaa15640b8f2873af4724bb8344193b96bce18087ce94362e5dc5aa",
+      "viewport": 390,
+      "module": "3-按模版成文与帮助理解",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "1-合集页面与管理组件/06-移动端.html",
+      "sha256": "936ae781a4869cd02b9e7e895afafd80b1cae30706ae168bc3fae8363f66070f",
+      "viewport": 390,
+      "module": "1-合集页面与管理组件",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "1-合集页面与管理组件/背景-Threads 动态背景选型.html",
+      "sha256": "5cafcd1c0327c28329af13224cfbd78c447beb2936a51ee9522820d9b0edf072",
+      "viewport": 1440,
+      "module": "1-合集页面与管理组件",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "1-合集页面与管理组件/02-合集阅读（1-3-12-30-90 份）.html",
+      "sha256": "75150b7ddb70f88afd7db95af8f86f76a4936c466d508d4e91de33f84ff97632",
+      "viewport": 1440,
+      "module": "1-合集页面与管理组件",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "1-合集页面与管理组件/01-设计方向与推荐.html",
+      "sha256": "21f656b87e03c14faf8e7615bee35ca7b684429e55bb62c57f42be222a09b702",
+      "viewport": 1440,
+      "module": "1-合集页面与管理组件",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "1-合集页面与管理组件/03-创建与编辑合集.html",
+      "sha256": "33624ff4ba068bdb9786b3cee40401f32c6e357eb6bf0a780bff874a0d42e07e",
+      "viewport": 1440,
+      "module": "1-合集页面与管理组件",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "1-合集页面与管理组件/04-分享、权限差异与停止.html",
+      "sha256": "965590650e67cf68825121cb5302568fd01fe65be113b35489518d7f94eae728",
+      "viewport": 1440,
+      "module": "1-合集页面与管理组件",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "1-合集页面与管理组件/05-边界状态.html",
+      "sha256": "87bce13e225141fa2836e219969cd9a1f2260cce474f960898d00034dc78ace2",
+      "viewport": 1440,
+      "module": "1-合集页面与管理组件",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "2-写作模版/08-写作模版包-使用说明.html",
+      "sha256": "ced4e2428b30cec7b771a4e37c6ef8f43c7b48e3256171cf740073f988b2c3ad",
+      "viewport": 1440,
+      "module": "2-写作模版",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "2-写作模版/07b-写作模版-移动端.html",
+      "sha256": "277a8fc59a4e02bb86fc08cac6ac757297bc19a58f38f7c730b909db89723ec4",
+      "viewport": 390,
+      "module": "2-写作模版",
+      "kind": "reference-artboard"
+    },
+    {
+      "file": "2-写作模版/07-写作模版-字段如何落到合集页.html",
+      "sha256": "6fe9f2893e9d84af97fa4023cea9fabc47dabc125b2bb6d8eea3bb0681d3502b",
+      "viewport": 1440,
+      "module": "2-写作模版",
+      "kind": "reference-artboard"
+    }
+  ],
+  "measuredTypography": {
+    "16px": 81,
+    "13px": 24,
+    "11px": 26,
+    "12.5px": 8,
+    "10px": 8,
+    "12px": 42,
+    "19px": 2,
+    "14px": 26,
+    "11.5px": 12,
+    "10.5px": 10,
+    "13.5px": 10
+  }
+}

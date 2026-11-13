@@ -1,3 +1,4 @@
+import { LogTracePage } from '@/pages/LogTracePage';
 // 独立路由（自成体系，不依赖 prd-admin）：/login 登录 + /change-password 首登强制改密 + / 控制台首页（需鉴权）。
 import { useEffect } from 'react';
 import { BrowserRouter, Link, Routes, Route, Navigate, useLocation } from 'react-router-dom';
@@ -115,6 +116,7 @@ export function App() {
           >
             <Route path="/" element={<RequirePageAccess page="home"><OverviewPage /></RequirePageAccess>} />
             <Route path="/logs" element={<RequirePageAccess page="logs"><LogsPage /></RequirePageAccess>} />
+            <Route path="/logs/trace" element={<RequirePageAccess page="logs"><LogTracePage /></RequirePageAccess>} />
             <Route path="/logs/:id" element={<RequirePageAccess page="logs"><LogDetailPage /></RequirePageAccess>} />
             <Route path="/app-callers" element={<RequirePageAccess page="appCallers"><AppCallersPage /></RequirePageAccess>} />
             <Route path="/app-callers/view" element={<RequirePageAccess page="appCallers"><AppCallerDetailsPage /></RequirePageAccess>} />

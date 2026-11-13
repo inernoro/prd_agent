@@ -610,7 +610,15 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     // 让 CDS 报告正文永不再携带 base64（下游知识库拉取时也就不会出现 base64）。
     const { content: normalizedContent } = await normalizeInlineImages(content, publicBaseFromReq(req), stateService);
 
+    const scheduledJobRunId = String(req.get('X-CDS-Job-Run-Id') || req.body?.scheduledJobRunId || '').trim() || undefined;
+    if (scheduledJobRunId) {
+      const run = stateService.getState().scheduledJobRuns?.find(r => r.id === scheduledJobRunId);
+      if (!run || run.projectId !== resolvedProjectId) {
+        return res.status(400).json({ error: '报告运行标识不存在或不属于当前项目' });
+      }
+    }
     const meta = await stateService.createAcceptanceReportAsync({
+      scheduledJobRunId,
       reportType: 'acceptance',
       classification,
       title: cleanTitle,

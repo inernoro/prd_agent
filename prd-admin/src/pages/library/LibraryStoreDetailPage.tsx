@@ -307,6 +307,7 @@ export function LibraryStoreDetailPage() {
           <LibraryDocReader
             entries={entries}
             searchEntries={searchEntries}
+            writingStoreId={store.id}
             primaryEntryId={store.primaryEntryId}
             pinnedEntryIds={store.pinnedEntryIds ?? []}
             loadContent={loadContent}

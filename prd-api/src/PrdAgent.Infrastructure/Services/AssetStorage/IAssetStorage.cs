@@ -219,6 +219,13 @@ public interface IAssetStorage
     string? TryBuildUrlBySha(string sha256, string mime, string? domain = null, string? type = null);
 
     /// <summary>
+    /// 按已保存的精确 key 打开顺序流；不支持原生流的实现返回 null。
+    /// 调用者负责释放 Content，并在读取中执行自己的大小上限。
+    /// </summary>
+    Task<AssetReadHandle?> TryOpenReadByKeyAsync(string key, CancellationToken ct)
+        => Task.FromResult<AssetReadHandle?>(null);
+
+    /// <summary>
     /// 按 key 下载对象的原始 bytes（不存在返回 null）。
     /// </summary>
     Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct);

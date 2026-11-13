@@ -1,6 +1,7 @@
-import { buildDocBrowserTree } from '@/components/doc-browser/docBrowserTree';
+import { buildDocBrowserTree, docBrowserEntryPath } from '@/components/doc-browser/docBrowserTree';
 import { ProgressiveEntries } from '@/components/doc-browser/ProgressiveEntries';
 import type { DocumentEntryPage } from '@/services/real/documentEntryPages';
+import { WritingPublicationActions } from '../document-store/writing/WritingPublicationActions';
 /**
  * LibraryDocReader — 智识殿堂专属文档阅读器（claymorphism 风格）
  *
@@ -175,6 +176,8 @@ export type LibraryDocReaderPreview = {
 
 type Props = {
   entries: DocumentEntry[];
+  /** Only normal public stores provide this; token-only private shares omit it. */
+  writingStoreId?: string;
   primaryEntryId?: string;
   pinnedEntryIds?: string[];
   loadContent: (entryId: string) => Promise<LibraryDocReaderPreview | null>;
@@ -183,6 +186,7 @@ type Props = {
 
 export function LibraryDocReader({
   entries,
+  writingStoreId,
   primaryEntryId,
   pinnedEntryIds = [],
   loadContent,
@@ -287,7 +291,7 @@ export function LibraryDocReader({
   }, [fullscreen]);
 
   // 构建树（过滤掉 github_directory）
-  const { roots, childrenMap } = useMemo(() => {
+  const { roots, childrenMap, parentIds } = useMemo(() => {
     const tree = buildDocBrowserTree(entries);
     const rs = tree.rootEntries;
     const cMap = tree.childrenMap;
@@ -301,15 +305,15 @@ export function LibraryDocReader({
     };
     rs.sort(sortFn);
     for (const [, arr] of cMap) arr.sort(sortFn);
-    return { roots: rs, childrenMap: cMap };
+    return { roots: rs, childrenMap: cMap, parentIds: tree.parentIds };
   }, [entries, primaryEntryId, pinnedSet]);
+  const revealPath = useMemo(() => docBrowserEntryPath(parentIds, selectedId), [parentIds, selectedId]);
 
   // 搜索过滤：匹配标题 + 正文第一行（只隐藏未命中的文件，祖先文件夹保留）
   const { filteredRoots, filteredChildrenMap } = useMemo(() => {
     if (searchPage) return { filteredRoots: searchPage.items, filteredChildrenMap: new Map<string, DocumentEntry[]>() };
     if (!search.trim()) return { filteredRoots: roots, filteredChildrenMap: childrenMap };
     const kw = search.toLowerCase();
-    const entryMap = new Map(entries.map((e) => [e.id, e]));
     const matchIds = new Set<string>();
     for (const e of entries) {
       if (e.sourceType === 'github_directory' || e.isFolder) continue;
@@ -317,12 +321,7 @@ export function LibraryDocReader({
       const firstLineMatch = contentFirstLines.get(e.id)?.toLowerCase().includes(kw) ?? false;
       const summaryMatch = e.summary?.toLowerCase().includes(kw) ?? false;
       if (titleMatch || firstLineMatch || summaryMatch) {
-        matchIds.add(e.id);
-        let cur = entryMap.get(e.parentId ?? '');
-        while (cur && !matchIds.has(cur.id)) {
-          matchIds.add(cur.id);
-          cur = entryMap.get(cur.parentId ?? '');
-        }
+        for (const id of docBrowserEntryPath(parentIds, e.id)) matchIds.add(id);
       }
     }
     const fRoots = roots.filter((e) => matchIds.has(e.id));
@@ -332,7 +331,7 @@ export function LibraryDocReader({
       if (kept.length > 0) fMap.set(parentId, kept);
     }
     return { filteredRoots: fRoots, filteredChildrenMap: fMap };
-  }, [search, searchPage, roots, childrenMap, entries, contentFirstLines]);
+  }, [search, searchPage, roots, childrenMap, entries, contentFirstLines, parentIds]);
 
   // 初始默认展开根级所有文件夹 + 主文档的父链
   useEffect(() => {
@@ -343,12 +342,7 @@ export function LibraryDocReader({
     }
     // 展开主文档所在的祖先链
     if (primaryEntryId) {
-      const entryMap = new Map(entries.map((e) => [e.id, e]));
-      let cur = entryMap.get(primaryEntryId);
-      while (cur?.parentId && !toOpen.has(cur.parentId)) {
-        toOpen.add(cur.parentId);
-        cur = entryMap.get(cur.parentId);
-      }
+      for (const id of docBrowserEntryPath(parentIds, primaryEntryId)) if (id !== primaryEntryId) toOpen.add(id);
     }
     setExpanded(toOpen);
     if (primaryEntryId && !selectedId) setSelectedId(primaryEntryId);
@@ -551,17 +545,21 @@ export function LibraryDocReader({
           </div>
         </div>
 
+        {writingStoreId && entries.find(entry => entry.id === selectedId)?.hasWritingPublication && <nav aria-label="已发布阅读方式" className="flex flex-wrap gap-2 border-b-2 border-dashed border-amber-500 px-3 py-3"><WritingPublicationActions storeId={writingStoreId} entryId={selectedId} hasPublication publicStore className="inline-flex items-center gap-1.5 rounded-lg border-2 border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-2 text-[12px] font-bold text-[var(--text-primary)]" /></nav>}
+
         <div className="flex-1 overflow-y-auto py-3 px-2">
           {filteredRoots.length === 0 ? (
             <div className="px-3 py-6 text-center text-[12px] font-semibold" style={{ color: '#78350F' }}>
               {searchLoading ? '搜索中…' : search.trim() ? '没有找到匹配的文档' : '这本藏书还是空白的...'}
             </div>
           ) : (
-            <ProgressiveEntries key={search} items={filteredRoots} itemKey={entry => entry.id} render={entry => (
+            <ProgressiveEntries key={search} items={filteredRoots} itemKey={entry => entry.id}
+              revealIndex={filteredRoots.findIndex(entry => revealPath.has(entry.id))} render={entry => (
               <TreeNode
                 key={entry.id}
                 entry={entry}
                 childrenMap={search.trim() ? filteredChildrenMap : childrenMap}
+                revealPath={revealPath}
                 depth={0}
                 selectedId={selectedId}
                 primaryEntryId={primaryEntryId}
@@ -607,6 +605,7 @@ export function LibraryDocReader({
 function TreeNode({
   entry,
   childrenMap,
+  revealPath,
   depth,
   selectedId,
   primaryEntryId,
@@ -618,6 +617,7 @@ function TreeNode({
 }: {
   entry: DocumentEntry;
   childrenMap: Map<string, DocumentEntry[]>;
+  revealPath: ReadonlySet<string>;
   depth: number;
   selectedId?: string;
   primaryEntryId?: string;
@@ -714,11 +714,13 @@ function TreeNode({
       </button>
 
       {isFolder && isOpen &&
-        <ProgressiveEntries items={children} itemKey={child => child.id} render={child => (
+        <ProgressiveEntries items={children} itemKey={child => child.id}
+          revealIndex={children.findIndex(child => revealPath.has(child.id))} render={child => (
           <TreeNode
             key={child.id}
             entry={child}
             childrenMap={childrenMap}
+            revealPath={revealPath}
             depth={depth + 1}
             selectedId={selectedId}
             primaryEntryId={primaryEntryId}

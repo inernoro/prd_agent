@@ -1,3 +1,4 @@
+using PrdAgent.LlmGw.Logs;
 using PrdAgent.LlmGw.ModelUpgrades;
 using PrdAgent.LlmGw.ModelReferences;
 // AI 大模型网关 —— 独立观测/登录后端（与 MAP 物理隔离）。
@@ -452,6 +453,10 @@ await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
         .Ascending("TenantId")
         .Ascending("ProviderTaskId"),
     new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_provider_task" }));
+foreach (var field in new[] { "RequestId", "RunId", "LogicalRequestId", "ProviderRequestId", "ProviderTaskId",
+    "ProviderAttempts.AttemptId", "ProviderAttempts.ProviderRequestId", "ProviderAttempts.ProviderTaskId" })
+    await IndexAdvisory.ReportIfMissingAsync(logs, "idx_llmgw_trace_" + field,
+        "历史调用链查找可能扫描日志集合，需 DBA 执行 scripts/mongodb-indexes.js 的网关索引段");
 await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
 {
     new CreateIndexModel<BsonDocument>(
@@ -2739,6 +2744,8 @@ app.MapPost("/gw/members/{id}/invalidate-sessions", async (HttpContext http, str
 // ───────────────────────────── 日志列表（需鉴权）─────────────────────────────
 app.MapGatewayConsumptionAlerts(gatewayDatabase, jsonOptions);
 
+app.MapLogTraceEndpoints(logs, mapDatabase, MapListItem, MapProviderAttempts, jsonOptions, internalTenantId);
+
 app.MapGet("/gw/logs", async (
     HttpContext http,
     int? page, int? pageSize, string? from, string? to, string? model, string? status,
@@ -3516,7 +3523,9 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
             .Include("AllowedModelPoolIds")
             .Include("DefaultModelPoolId"))
         .ToListAsync();
-    var logFilter = Builders<BsonDocument>.Filter.Gte("StartedAt", since);
+    var logFilter = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Not(LogTraceQuery.LegacySummary),
+        Builders<BsonDocument>.Filter.Gte("StartedAt", since));
     var logStatsDocs = await logs.Aggregate()
         .Match(TenantAccess.FilterTeamScope(http, logFilter))
         .Group(new BsonDocument
@@ -3626,6 +3635,33 @@ app.MapGet("/gw/platforms", async (HttpContext http) =>
         Items = docs.Select(d => MapPlatform(d, config, revealFingerprint)).ToList(),
         Total = docs.Count,
     };
+    foreach (var item in data.Items)
+    {
+        var lastCall = await logs.Find(TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("PlatformId", item.Id),
+                Builders<BsonDocument>.Filter.Gte("StartedAt", DateTime.UtcNow.AddDays(-7)),
+                Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true),
+                Builders<BsonDocument>.Filter.In("Status", new[] { "succeeded", "failed" }))))
+            .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt").Descending("_id"))
+            .Project(new BsonDocument
+            {
+                ["StartedAt"] = 1, ["EndedAt"] = 1, ["Status"] = 1, ["StatusCode"] = 1, ["Error"] = 1,
+                ["AnswerText"] = new BsonDocument("$cond", new BsonArray
+                {
+                    new BsonDocument("$and", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$Status", "failed" }),
+                        new BsonDocument("$eq", new BsonArray { new BsonDocument("$type", "$AnswerText"), "string" }),
+                    }),
+                    new BsonDocument("$substrCP", new BsonArray { "$AnswerText", 0, 16384 }), "",
+                }),
+            })
+            .FirstOrDefaultAsync();
+        var source = docs.First(x => x.GetStringOrEmpty("_id") == item.Id);
+        item.RecentCallStatus = PlatformRecentCallPolicy.Classify(lastCall, source.AsNullableUtcDateTime("UpdatedAt"));
+        if (item.RecentCallStatus is not null)
+            item.RecentCallAt = (lastCall!.AsNullableUtcDateTime("EndedAt") ?? lastCall.AsNullableUtcDateTime("StartedAt")).ToIso();
+    }
     return Json(ApiEnvelope<PlatformsData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
@@ -6446,6 +6482,35 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
 
 // 删除逻辑模型。它名下的 offering 是从属子项——离开逻辑模型没有独立意义，
 // 留着就是一堆指向不存在父项的孤儿，所以跟着一起删，并把条数如实回报。
+// 删除预检只返回计数和恢复动作；执行删除仍重新运行原有保护，不把预检当授权令牌。
+app.MapGet("/gw/logical-models/{id}/delete-check", async (HttpContext http, string id) =>
+{
+    var doc = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id))).FirstOrDefaultAsync(http.RequestAborted);
+    if (doc is null) return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "模型已不存在，请刷新列表。"), jsonOptions, 404);
+    var reasons = new List<string>();
+    var coverage = await InspectModelRetirementAsync(http, id);
+    if (!coverage.CanComplete || coverage.Residual > 0)
+        reasons.Add($"使用位置检查：{coverage.Residual} 处残留、{coverage.Blocked} 处阻断、{coverage.Unknown} 处未确认；请先迁移并复核。");
+    if (doc.AsNullableBool("IsDefaultForType") == true) reasons.Add("仍是用途默认，请先更换默认模型。");
+    if (GetStringArray(doc, "DefaultForAppCallerCodes").Count > 0) reasons.Add("仍被调用方指定，请先转移调用方配置。");
+    var references = await CollectMapBusinessModelReferencesAsync(http, mapDatabase, internalTenantId, logicalModelId: id, publicId: doc.AsNullableString("PublicId"));
+    if (references.Count > 0) reasons.Add($"仍被 {string.Join("、", references)} 使用，请先改绑。");
+    var publicId = doc.AsNullableString("PublicId")?.Trim() ?? string.Empty;
+    if (publicId.Length > 0)
+    {
+        if (await mapAppSettings.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildVisualPolicyFilter(publicId), cancellationToken: http.RequestAborted) > 0) reasons.Add("视觉创作策略仍在使用，请先改绑。");
+        if (await mapAgentApiKeys.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildAgentApiKeyReferenceFilter(publicId), cancellationToken: http.RequestAborted) > 0) reasons.Add("接入密钥仍绑定此模型，请先改绑。");
+        if (await mapImageGenRuns.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildInFlightImageRunFilter(publicId), cancellationToken: http.RequestAborted) > 0) reasons.Add("存在未结束的生图任务，请等待结束或明确处理后重查。");
+    }
+    var children = await gwModelOfferings.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id))).Project(new BsonDocument("_id", 1)).ToListAsync(http.RequestAborted);
+    var ids = children.Select(child => child.GetStringOrEmpty("_id")).Where(value => value.Length > 0).ToList();
+    var video = OfferingReferencePolicy.BuildInFlightVideoRunFilter(ids);
+    var direct = OfferingReferencePolicy.BuildLiveDirectVideoJobFilter(ids, DateTime.UtcNow);
+    if (video is not null && await videoGenRuns.CountDocumentsAsync(video, cancellationToken: http.RequestAborted) > 0) reasons.Add("线路存在未结束的视频任务，请等待结束后重查。");
+    if (direct is not null && await directVideoJobOwnerships.CountDocumentsAsync(direct, cancellationToken: http.RequestAborted) > 0) reasons.Add("线路仍在直连视频任务保留期内，请等待保留期结束。");
+    return Json(ApiEnvelope<object>.Ok(new { canDelete = reasons.Count == 0, reasons, offerings = children.Count }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
 {
     var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
@@ -8411,6 +8476,8 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         ? TenantAccess.Filter(http)
         : TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("ReleaseCommit", runtimeCommit),
+            Builders<BsonDocument>.Filter.Not(LogTraceQuery.LegacySummary),
+            Builders<BsonDocument>.Filter.Ne("IngressProtocol", BsonNull.Value),
             Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true)));
     var releaseLogTotal = runtimeCommit is null ? 0 : await logs.CountDocumentsAsync(logReleaseFilter);
     var httpTransportLogs = runtimeCommit is null
@@ -12668,6 +12735,7 @@ app.MapGet("/gw/cost-reconciliations", async (HttpContext http, string? from, st
         .Sort(new BsonDocument("Count", -1))
         .ToListAsync();
     var logFilter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Not(LogTraceQuery.LegacySummary),
         Builders<BsonDocument>.Filter.Gte("StartedAt", range.From),
         Builders<BsonDocument>.Filter.Lt("StartedAt", range.To),
         Builders<BsonDocument>.Filter.Or(
@@ -16876,6 +16944,7 @@ static FilterDefinition<BsonDocument> BuildFilter(
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
     {
+        fb.Not(LogTraceQuery.LegacySummary),
         fb.Gte("StartedAt", fromUtc),
         fb.Lt("StartedAt", toUtc),
     };
@@ -16920,9 +16989,9 @@ static FilterDefinition<BsonDocument> BuildBusinessOperationFilter()
         fb.Or(
             fb.Ne("RequestType", "video-gen"),
             fb.Nin("HttpMethod", new[] { "GET", "DELETE" })));
-    return fb.Or(
+    return fb.And(fb.Not(LogTraceQuery.LegacySummary), fb.Or(
         fb.In("Operation", new[] { "invoke", "submit" }),
-        legacyBusiness);
+        legacyBusiness));
 }
 
 static FilterDefinition<BsonDocument> BuildOperationFilter(string operation)
@@ -17493,6 +17562,13 @@ static List<ProviderAttemptDto> MapProviderAttempts(BsonDocument d)
             var doc = x.AsBsonDocument;
             return new ProviderAttemptDto
             {
+                AttemptId = doc.AsNullableString("AttemptId"),
+                ProviderRequestId = doc.AsNullableString("ProviderRequestId"),
+                ProviderTaskId = doc.AsNullableString("ProviderTaskId"),
+                InputTokens = doc.AsNullableInt("InputTokens"),
+                OutputTokens = doc.AsNullableInt("OutputTokens"),
+                ProviderReportedCost = doc.AsNullableDecimal("ProviderReportedCost"),
+                ProviderCostCurrency = doc.AsNullableString("ProviderCostCurrency"),
                 Order = doc.AsNullableInt("Order") ?? 0,
                 Stage = doc.AsNullableString("Stage") ?? "send",
                 Provider = doc.AsNullableString("Provider"),
@@ -17524,36 +17600,7 @@ static List<ProviderAttemptDto> MapProviderAttempts(BsonDocument d)
 }
 
 static List<ProviderAttemptDto> BuildFallbackProviderAttempts(BsonDocument d)
-{
-    var model = d.AsNullableString("Model");
-    var provider = d.AsNullableString("Provider");
-    if (string.IsNullOrWhiteSpace(model) && string.IsNullOrWhiteSpace(provider))
-        return new List<ProviderAttemptDto>();
-
-    return new List<ProviderAttemptDto>
-    {
-        new()
-        {
-            Order = 1,
-            Stage = "send",
-            Provider = provider,
-            PlatformId = d.AsNullableString("PlatformId"),
-            PlatformName = d.AsNullableString("PlatformName"),
-            Model = model,
-            ModelGroupId = d.AsNullableString("ModelGroupId") ?? d.AsNullableString("GroupId"),
-            ModelGroupName = d.AsNullableString("ModelGroupName"),
-            Protocol = d.AsNullableString("Protocol"),
-            Transport = d.AsNullableString("GatewayTransport"),
-            ReachedProvider = true,
-            Status = d.AsNullableString("Status") == "failed" ? "failed" : "sent",
-            Reason = d.AsNullableString("FallbackReason") ?? d.AsNullableString("ResolutionReason"),
-            StatusCode = d.AsNullableInt("StatusCode"),
-            DurationMs = d.AsNullableLong("DurationMs"),
-            Error = d.AsNullableString("Error"),
-            EndedAt = d.AsNullableUtcDateTime("EndedAt").ToIso(),
-        }
-    };
-}
+    => new();
 
 static string? NormalizeResolutionMode(string? raw, string? reason)
 {

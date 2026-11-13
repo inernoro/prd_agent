@@ -69,8 +69,9 @@ for (const n of [200, 1000, 5000]) {
   } while (cursor);
   if (new Set(items.map(e => e.id)).size !== record.expectedEntries) throw Error('回读条目数量不符，保留数据供核对');
   record.folderId = items.find(e => e.title === '目录 0')?.id;
+  record.firstEntryId = items.find(e => e.title === '样本文档 00000')?.id;
   record.lastEntryId = items.find(e => e.title === `样本文档 ${String(n-1).padStart(5,'0')}`)?.id;
-  if (!record.folderId || !record.lastEntryId) throw Error('关键条目回读缺失');
+  if (!record.folderId || !record.firstEntryId || !record.lastEntryId) throw Error('关键条目回读缺失');
   record.state = 'complete';
   fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2), { mode: 0o600 });
 }
