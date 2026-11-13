@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "overallStatus": "NOT_PASSED",
+  "overallStatus": "NOT_PASSED_BLOCKED",
   "blockers": [
     {
       "id": "BLOCK-PREVIEW",
@@ -41,12 +41,12 @@
     {
       "stage": "实施",
       "action": "每VU独立持久写入文档，样本保持相同内容规模但带唯一标记，写入失败计入事务；不在计时流程中执行删除",
-      "status": "IMPLEMENTED_AWAITING_EXECUTION"
+      "status": "DONE"
     },
     {
       "stage": "证明修复有效",
       "action": "三次干净环境校准；完整正常/并发/持续测试；相同实测负例旧新判定对照；应用与页面两类注入及撤除恢复",
-      "status": "IN_PROGRESS"
+      "status": "DONE"
     },
     {
       "stage": "真实验收",
@@ -60,7 +60,11 @@
     {
       "stage": "交付",
       "action": "全部断言通过才判PASS，提交推送独立分支并给出SHA、基线、容量、失败及预览证据；阻塞优先显示",
-      "status": "TODO"
+      "status": "BLOCKED",
+      "dependsOn": [
+        "AC-CI",
+        "AC-PREVIEW"
+      ]
     }
   ],
   "assertions": [
@@ -69,35 +73,40 @@
       "condition": "真实登录后首页工作卡片、知识库列表、文档正文、编辑保存刷新与持久化回读",
       "pass": "三次基线各三个独立浏览器上下文；全部可见内容断言通过，四步正数计时，每步至少九个基线样本",
       "evidenceType": "integration-live",
-      "status": "TODO"
+      "status": "PASS",
+      "evidence": "evidence.core-write.reference.json"
     },
     {
       "id": "AC-WRITE",
       "condition": "并发负载对应不依赖付费模型的核心编辑保存路径",
       "pass": "128个VU各持有独立文档；每次实际PUT、回读唯一标记、读取版本；计时阶段不混入创建和删除清理；禁止忽略或重试掉业务错误",
       "evidenceType": "integration-live",
-      "status": "TODO"
+      "status": "PASS",
+      "evidence": "evidence.core-write.reference.json"
     },
     {
       "id": "AC-LOAD",
       "condition": "正常2VU60秒、2至128VU每档15秒、2VU持续120秒；两VU各20次实际请求预热",
       "pass": "连续档位完整或实际事务错误率>10%安全停止后仍执行持续阶段；每个基线场景至少100样本；正常和持续满足同机三次基线门槛；分位数、错误、吞吐、进程树CPU/RSS及有效配额齐全",
       "evidenceType": "integration-live",
-      "status": "TODO"
+      "status": "PASS",
+      "evidence": "evidence.core-write.reference.json"
     },
     {
       "id": "AC-DIFFERENTIATE",
       "condition": "在本地隔离环境分别注入应用350ms和真实首页脚本交付10000ms延迟",
       "pass": "业务最终完成，完整结果被正确门禁拒绝；页面负例API全部健康且三个上下文均命中；同一真实页面负例旧判定通过、新判定失败；不以基础设施失败冒充检测",
       "evidenceType": "integration-live",
-      "status": "TODO"
+      "status": "PASS",
+      "evidence": "evidence.core-write.reference.json"
     },
     {
       "id": "AC-RECOVER",
       "condition": "撤除注入后创建全新实例",
       "pass": "同基线同提交正常负载与四条页面路径恢复通过，保留此前全部原始失败结果；本轮容器、网络和数据清理完整",
       "evidenceType": "integration-live",
-      "status": "TODO"
+      "status": "PASS",
+      "evidence": "evidence.core-write.reference.json"
     },
     {
       "id": "AC-CI",
@@ -118,7 +127,8 @@
       "condition": "所选路径对应实际产品入口，受控数据规模与角色及容量结论可追溯",
       "pass": "真实页面入口与服务调用对应；固定6库、120篇阅读文档和128篇独立写入文档与实际fixture一致；声明单管理员和实际资源边界，不外推为生产用户数或典型用户数据分布",
       "evidenceType": "integration-live",
-      "status": "TODO"
+      "status": "PASS",
+      "evidence": "evidence.core-write.reference.json"
     }
   ],
   "thresholdPolicy": "只从同机同提交三个独立基线校准：API p95=max(p95最大值*1.3,p95最大值+3*极差,p99最大值)，错误率3/总样本数，吞吐最小值*0.7；页面上限=max(样本最大值*1.3,最大值+3*极差)；不能根据候选失败事后放宽",
@@ -133,5 +143,6 @@
         "work/core-goal-closeout/normal-recheck/result.json"
       ]
     }
-  ]
+  ],
+  "remaining": "仅AC-CI与AC-PREVIEW受外部访问阻断；放行后由执行器继续实际云端作业与公开页面验收，全部通过前不关闭任务"
 }

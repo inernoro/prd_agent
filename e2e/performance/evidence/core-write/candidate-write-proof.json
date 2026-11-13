@@ -1,0 +1,18 @@
+{
+  "verified": true,
+  "flow": "edit-existing-document",
+  "independentWriterDocuments": 128,
+  "phases": [
+    "normal",
+    "ramp-2",
+    "ramp-4",
+    "ramp-8",
+    "ramp-16",
+    "ramp-32",
+    "ramp-64",
+    "ramp-128",
+    "soak"
+  ],
+  "observedRows": 60256,
+  "cleanup": "销毁本轮隔离容器、卷与网络；不在计时流程中删除文档"
+}
