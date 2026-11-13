@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { replaceDirectoriesAtomically } from './atomic-directory-replacement.js';
-import { maintenanceDirectoryIdentity, markRetentionDisposition, forgetRetention, retireRetainedCheckpoint,
+import { maintenanceDirectoryIdentity, sameMaintenanceIdentity, markRetentionDisposition, forgetRetention, retireRetainedCheckpoint,
   type MaintenanceDirectoryIdentity, type MaintenanceRetirement } from './self-maintenance-retention.js';
 export { maintenanceDirectoryIdentity, type MaintenanceDirectoryIdentity } from './self-maintenance-retention.js';
 
@@ -27,7 +27,7 @@ export interface MaintenanceFilesReceipt {
 
 function sameIdentity(identity: MaintenanceDirectoryIdentity): boolean {
   const actual = maintenanceDirectoryIdentity(identity.path);
-  return actual.dev === identity.dev && actual.ino === identity.ino;
+  return sameMaintenanceIdentity(actual, identity);
 }
 
 export function verifyMaintenanceFilesInput(input: MaintenanceFilesInput): void {

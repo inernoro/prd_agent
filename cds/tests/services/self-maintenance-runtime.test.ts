@@ -255,6 +255,69 @@ describe('四来源维护runtime与真实owned文件组件', () => {
     }
   });
 
+  it('64位源模块inode经JSON清单保持精确，真实worker仍可完成保存与回滚', async () => {
+    seedFiles();
+    const module = fileURLToPath(new URL('../../src/services/self-maintenance-retention.ts', import.meta.url));
+    const inode = (1n << 63n) + 12345n;
+    const original = fs.lstatSync.bind(fs);
+    vi.spyOn(fs, 'lstatSync').mockImplementation(((file, options) => {
+      const actual = original(file, options);
+      if (file !== module) return actual;
+      // Linux overlay的高位inode在BigInt Stats可表现为signed64；Number已经损失精度。
+      return Object.assign(Object.create(Object.getPrototypeOf(actual)), actual, {
+        ino: options && typeof options === 'object' && options.bigint ? BigInt.asIntN(64, inode) : Number(inode),
+      });
+    }) as typeof fs.lstatSync);
+    const instance = runtime(pool()), ticket = instance.acquire({ source: 'self-update', actor: 'large-inode' })!;
+    const checkpoint = instance.prepareCheckpoint(ticket);
+    expect((await instance.files(ticket, 'snapshot', checkpoint)).existed).toEqual([true, true, true, true, true]);
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, 'cds/.cds/checkpoint-retention.json'), 'utf8'));
+    expect(manifest.slots[0].producer.module.ino).toBe(inode.toString());
+    fs.writeFileSync(path.join(root, 'cds/dist/fixture'), 'new-generation');
+    expect((await instance.files(ticket, 'restore', checkpoint)).artifactsRestored).toBe(true);
+    expect(fs.readFileSync(path.join(root, 'cds/dist/fixture'), 'utf8')).toBe('old:dist');
+    await instance.files(ticket, 'discard', checkpoint);
+    expect(fs.existsSync(checkpoint.backupPath)).toBe(false);
+    expect(instance.finish(ticket)).toBe(true);
+  });
+
+  it('64位目录身份经真实worker的stdin与清单往返，不将相邻高inode压成同一Number', async () => {
+    seedFiles();
+    const inode = (1n << 63n) + 12345n, base = path.join(root, 'cds/.cds');
+    const preload = path.join(root, 'stat64-fixture.cjs');
+    const statPatch = `const fs=require('node:fs'),path=require('node:path');const original=fs.lstatSync.bind(fs);fs.lstatSync=(file,options)=>{
+      const actual=original(file,options);let ino;
+      if(file===${JSON.stringify(root)})ino=BigInt(${JSON.stringify(inode.toString())});
+      else if(typeof file==='string'&&path.dirname(file)===${JSON.stringify(base)}&&path.basename(file).startsWith('restart-rollback-'))ino=BigInt(${JSON.stringify((inode + 1n).toString())});
+      return ino===undefined?actual:Object.assign(Object.create(Object.getPrototypeOf(actual)),actual,{ino:options?.bigint?BigInt.asIntN(64,ino):Number(ino)});
+    };`;
+    fs.writeFileSync(preload, statPatch);
+    const original = fs.lstatSync.bind(fs);
+    vi.spyOn(fs, 'lstatSync').mockImplementation(((file, options) => {
+      const actual = original(file, options);
+      const selected = file === root ? inode : typeof file === 'string' && path.dirname(file) === base
+        && path.basename(file).startsWith('restart-rollback-') ? inode + 1n : undefined;
+      return selected === undefined ? actual : Object.assign(Object.create(Object.getPrototypeOf(actual)), actual, {
+        ino: options && typeof options === 'object' && options.bigint ? BigInt.asIntN(64, selected) : Number(selected),
+      });
+    }) as typeof fs.lstatSync);
+    const operation = pool();
+    const instance = runtime({ exec: operation.exec.bind(operation), execOwnedOperation: (command, options) =>
+      operation.execOwnedOperation(command, { ...options, env: { ...options.env, NODE_OPTIONS: '--require=' + JSON.stringify(preload) } }) });
+    const ticket = instance.acquire({ source: 'self-update', actor: 'large-directory-inodes' })!;
+    const checkpoint = instance.prepareCheckpoint(ticket);
+    await instance.files(ticket, 'snapshot', checkpoint);
+    const manifest = JSON.parse(fs.readFileSync(path.join(base, 'checkpoint-retention.json'), 'utf8'));
+    expect(manifest.root.ino).toBe(inode.toString());
+    expect(manifest.slots[0].backup.ino).toBe((inode + 1n).toString());
+    fs.writeFileSync(path.join(root, 'cds/dist/fixture'), 'new-generation');
+    expect((await instance.files(ticket, 'restore', checkpoint)).artifactsRestored).toBe(true);
+    expect(fs.readFileSync(path.join(root, 'cds/dist/fixture'), 'utf8')).toBe('old:dist');
+    await instance.files(ticket, 'discard', checkpoint);
+    expect(fs.existsSync(checkpoint.backupPath)).toBe(false);
+    expect(instance.finish(ticket)).toBe(true);
+  });
+
   it('source worker真实保存/恢复/删除固定五目录，保留pnpm原始链接并防止已恢复FS重放', async () => {
     seedFiles();
     const instance = runtime(pool()), ticket = instance.acquire({ source: 'self-update', actor: 'fixture' })!;

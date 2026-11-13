@@ -8,6 +8,7 @@ import { shellQuote } from './sidecar/sidecar-deployer.js';
 import { maintenanceDirectoryIdentity, verifyMaintenanceFilesInput,
   type MaintenanceFilesAction, type MaintenanceFilesInput, type MaintenanceFilesReceipt } from './self-maintenance-files-process.js';
 import { reserveRetention, completeRetention, sealRetention, retirementFor, recoverCompleteRetention, markRetentionDisposition, forgetRetention,
+  maintenanceFileIdentity, sameMaintenanceIdentity,
   type MaintenanceDirectoryIdentity, type MaintenanceRetirement } from './self-maintenance-retention.js';
 
 // 与index.ts既有operation默认预算一致，显式投影才能在清理未终态时观察到期。
@@ -77,7 +78,7 @@ interface Checkpoint {
   discarded: boolean;
   busy: boolean;
   retirementUnconfirmed: boolean;
-  recoveryProgram?: { path: string; dev: number; ino: number; sha256: string };
+  recoveryProgram?: MaintenanceDirectoryIdentity & { sha256: string };
 }
 
 /** 四种维护业务共享一棵树；无等待队列，无TTL解锁，只信真实owned执行终态。 */
@@ -261,8 +262,7 @@ export class SelfMaintenanceRuntime {
     const check = () => {
       this.current(ticket);
       const actual = maintenanceDirectoryIdentity(fs.realpathSync(this.repoRoot));
-      if (!source || source.owner !== ticket || actual.path !== source.root.path
-        || actual.dev !== source.root.dev || actual.ino !== source.root.ino) {
+      if (!source || source.owner !== ticket || !sameMaintenanceIdentity(actual, source.root)) {
         throw new Error('CDS 原源码恢复点身份已变化，已停止恢复。');
       }
     };
@@ -366,7 +366,7 @@ export class SelfMaintenanceRuntime {
       if (action === 'program' || action === 'snapshot' && managedSource && !checkpoint.recoveryProgram) {
         const program = path.join(input.backup.path, 'maintenance-recovery.mjs'), stat = fs.lstatSync(program);
         if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('CDS 独立恢复程序未确认，已停止维护。');
-        checkpoint.recoveryProgram = { path: program, dev: stat.dev, ino: stat.ino,
+        checkpoint.recoveryProgram = { ...maintenanceFileIdentity(program),
           sha256: createHash('sha256').update(fs.readFileSync(program)).digest('hex') };
       }
       if (action === 'snapshot') {
@@ -426,7 +426,7 @@ export class SelfMaintenanceRuntime {
 
   private verifyRecoveryProgram(program: NonNullable<Checkpoint['recoveryProgram']>): void {
     const actual = fs.lstatSync(program.path);
-    if (!actual.isFile() || actual.isSymbolicLink() || actual.dev !== program.dev || actual.ino !== program.ino
+    if (!actual.isFile() || actual.isSymbolicLink() || !sameMaintenanceIdentity(maintenanceFileIdentity(program.path), program)
       || createHash('sha256').update(fs.readFileSync(program.path)).digest('hex') !== program.sha256) {
       throw new Error('CDS 独立恢复程序身份已变化，已保留恢复点并停止操作。');
     }

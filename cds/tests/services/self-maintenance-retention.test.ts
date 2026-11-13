@@ -7,7 +7,8 @@ import { build } from 'esbuild';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
 import { shellQuote } from '../../src/services/sidecar/sidecar-deployer.js';
-import { confirmMaintenanceBoot, maintenanceDirectoryIdentity, retirementFor } from '../../src/services/self-maintenance-retention.js';
+import { confirmMaintenanceBoot, maintenanceDirectoryIdentity, retirementFor, sameMaintenanceIdentity,
+  reserveRetention, completeRetention } from '../../src/services/self-maintenance-retention.js';
 import type { ExecAssignment, ExecResult } from '../../src/types.js';
 
 const directories = ['dist', 'web/dist', 'web/dist.previous', 'node_modules', 'web/node_modules'];
@@ -168,6 +169,39 @@ afterEach(async () => {
     if (mayRemove && closed.every(result => result.status === 'fulfilled')) fs.rmSync(root, { recursive: true, force: true });
     else console.warn('[retention-fixture] 未确认完整收尾，保留本任务恢复目录：', root);
   }
+});
+
+describe('受管文件身份的64位精度与历史记录', () => {
+  it('相邻64位inode不能因Number舍入而合并，安全历史整数仍可精确比较', () => {
+    const first = (1n << 63n) + 12345n, second = first + 1n;
+    expect(Number(first)).toBe(Number(second));
+    const entry = { path: '/owned-checkpoint', dev: 27, ino: first.toString() };
+    expect(sameMaintenanceIdentity(entry, { ...entry, ino: second.toString() })).toBe(false);
+    expect(sameMaintenanceIdentity(entry, { ...entry })).toBe(true);
+    expect(sameMaintenanceIdentity({ ...entry, ino: 12345 }, { ...entry, dev: '27', ino: '12345' })).toBe(true);
+    for (const ino of [Number(first), '012345', '-1', '0', (1n << 64n).toString()]) {
+      expect(sameMaintenanceIdentity({ ...entry, ino }, { ...entry, ino })).toBe(false);
+    }
+  });
+
+  it('拒绝已舍入的旧producer身份而保留原副本与清单，不补猜恢复权限', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cds-retention-identity-')));
+    roots.push({ root, mayRemove: true });
+    fs.mkdirSync(path.join(root, 'cds/web'), { recursive: true });
+    const base = path.join(root, 'cds/.cds'); fs.mkdirSync(base);
+    const ownerId = 'ff7766aa-3344-5566-7788-123456789abc';
+    const backup = fs.mkdtempSync(path.join(base, `restart-rollback-${ownerId}-`));
+    fs.writeFileSync(path.join(backup, 'protected'), 'original checkpoint');
+    const identity = maintenanceDirectoryIdentity(root);
+    reserveRetention(identity, maintenanceDirectoryIdentity(backup), ownerId);
+    const file = path.join(base, 'checkpoint-retention.json');
+    const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+    manifest.slots[0].producer.module.ino = Number((1n << 63n) + 12345n);
+    const unconfirmed = JSON.stringify(manifest); fs.writeFileSync(file, unconfirmed);
+    expect(() => completeRetention(identity, ownerId, [true, true, true, true, true])).toThrow('身份或终态未确认');
+    expect(fs.readFileSync(file, 'utf8')).toBe(unconfirmed);
+    expect(fs.readFileSync(path.join(backup, 'protected'), 'utf8')).toBe('original checkpoint');
+  });
 });
 
 describe('受管恢复副本的真实Node换代与完整替代点', () => {

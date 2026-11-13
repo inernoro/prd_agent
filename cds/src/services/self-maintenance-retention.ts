@@ -5,7 +5,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import type { ExecAssignment } from '../types.js';
 
-export interface MaintenanceDirectoryIdentity { path: string; dev: number; ino: number }
+// Safe legacy integers remain valid; uint64 values must never pass through a rounded JS Number.
+export interface MaintenanceDirectoryIdentity { path: string; dev: number | string; ino: number | string }
 interface ProcessBirth { platform: 'linux' | 'darwin'; boot: string; scope: string; pid: number; start: string }
 interface MaintenanceBoot {
   initialization: string;
@@ -47,24 +48,36 @@ const uuid = /^[a-f0-9-]{36}$/;
 const claimName = '.retirement-writer.json';
 const fail = () => new Error('CDS 受管恢复副本身份或终态未确认，已保留恢复点，请检查维护状态。');
 
+function filesystemIdentityNumber(value: bigint): number | string {
+  // Node's bigint stat can expose an unsigned kernel inode as signed int64.
+  const unsigned = BigInt.asUintN(64, value);
+  return unsigned <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(unsigned) : unsigned.toString();
+}
+function identityNumber(value: unknown, allowZero: boolean): value is number | string {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value >= (allowZero ? 0 : 1);
+  return typeof value === 'string' && /^(0|[1-9]\d{0,19})$/.test(value)
+    && BigInt(value) <= 0xffffffffffffffffn && (allowZero || value !== '0');
+}
+
 /** 小入口身份；备份中的任何代码、链接或目录名称都不产生删除权。 */
 export function maintenanceDirectoryIdentity(dir: string): MaintenanceDirectoryIdentity {
-  const stat = fs.lstatSync(dir);
+  const stat = fs.lstatSync(dir, { bigint: true });
   if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(dir) !== path.resolve(dir)) throw fail();
-  return { path: path.resolve(dir), dev: stat.dev, ino: stat.ino };
+  return { path: path.resolve(dir), dev: filesystemIdentityNumber(stat.dev), ino: filesystemIdentityNumber(stat.ino) };
 }
-function fileIdentity(file: string): MaintenanceDirectoryIdentity {
-  const canonical = fs.realpathSync(file), stat = fs.lstatSync(canonical);
+export function maintenanceFileIdentity(file: string): MaintenanceDirectoryIdentity {
+  const canonical = fs.realpathSync(file), stat = fs.lstatSync(canonical, { bigint: true });
   if (!stat.isFile()) throw fail();
-  return { path: canonical, dev: stat.dev, ino: stat.ino };
+  return { path: canonical, dev: filesystemIdentityNumber(stat.dev), ino: filesystemIdentityNumber(stat.ino) };
 }
-function same(a: MaintenanceDirectoryIdentity, b: MaintenanceDirectoryIdentity): boolean {
-  return a.path === b.path && a.dev === b.dev && a.ino === b.ino;
+export function sameMaintenanceIdentity(a: MaintenanceDirectoryIdentity, b: MaintenanceDirectoryIdentity): boolean {
+  return identity(a) && identity(b) && a.path === b.path && String(a.dev) === String(b.dev) && String(a.ino) === String(b.ino);
 }
+const same = sameMaintenanceIdentity;
 function identity(value: unknown): value is MaintenanceDirectoryIdentity {
   const v = value as MaintenanceDirectoryIdentity;
   return Boolean(v && typeof v.path === 'string' && path.isAbsolute(v.path)
-    && Number.isSafeInteger(v.dev) && v.dev >= 0 && Number.isSafeInteger(v.ino) && v.ino > 0);
+    && identityNumber(v.dev, true) && identityNumber(v.ino, false));
 }
 function osBirth(pid: number): ProcessBirth {
   if (!Number.isSafeInteger(pid) || pid < 1) throw fail();
@@ -105,8 +118,8 @@ function currentBoot(root: string): MaintenanceBoot | null {
   if (!boots.has(root)) {
     try {
       boots.set(root, { initialization, birth: osBirth(process.pid),
-        entry: fileIdentity(process.argv[1] || fileURLToPath(import.meta.url)),
-        module: fileIdentity(fileURLToPath(import.meta.url)), confirmed: false });
+        entry: maintenanceFileIdentity(process.argv[1] || fileURLToPath(import.meta.url)),
+        module: maintenanceFileIdentity(fileURLToPath(import.meta.url)), confirmed: false });
     } catch { boots.set(root, null); }
   }
   return boots.get(root)!;
@@ -164,11 +177,11 @@ function readClaim(slot: RetentionSlot): { token: string; birth: ProcessBirth; i
   try { fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
   try {
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > 2048 || (stat.mode & 0o077) !== 0) throw fail();
+    const stat = fs.fstatSync(fd, { bigint: true });
+    if (!stat.isFile() || stat.size > 2048n || (stat.mode & 0o077n) !== 0n) throw fail();
     const value = JSON.parse(fs.readFileSync(fd, 'utf8'));
     if (!uuid.test(value.token) || !birthShape(value.birth)) throw fail();
-    return { ...value, identity: { path: file, dev: stat.dev, ino: stat.ino } };
+    return { ...value, identity: { path: file, dev: filesystemIdentityNumber(stat.dev), ino: filesystemIdentityNumber(stat.ino) } };
   } finally { fs.closeSync(fd); }
 }
 function requireWriterEnded(slot: RetentionSlot, requester: MaintenanceBoot): void {
@@ -310,7 +323,7 @@ export function retirementFor(root: MaintenanceDirectoryIdentity): MaintenanceRe
   // 先撤销尚未启动的旧许可，再重读原子claim；不能把“刚才未见writer”当作无迟到writer。
   const claim = readClaim(replacement);
   if (claim) {
-    if (!birthEnded(claim.birth, requester.birth) || !same(claim.identity, fileIdentity(claim.identity.path))) throw fail();
+    if (!birthEnded(claim.birth, requester.birth) || !same(claim.identity, maintenanceFileIdentity(claim.identity.path))) throw fail();
     fs.unlinkSync(claim.identity.path);
   }
   return { revision: manifest.revision + 1, previousOwnerId: previous.ownerId,
