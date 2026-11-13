@@ -117,7 +117,8 @@ public class GitHubDirectorySyncService
         // 但「这一轮没见到」只在**清单完整**时才等于「远端没有了」—— 见下面第 3 步的闸。
 
         // 2) 查找该 Store 下已有的同步子条目（SourceType=subscription + github_parent_id）
-        var existingEntries = await db.DocumentEntries.Find(
+        // 回收条目仍占用同步身份；只识别路径，不读取其正文或自动重新创建。
+        var existingEntries = await db.DocumentEntriesIncludingTrash.Find(
             e => e.StoreId == parentEntry.StoreId &&
                  e.SourceType == DocumentSourceType.Subscription &&
                  e.Metadata.ContainsKey("github_parent_id") &&
@@ -142,6 +143,11 @@ public class GitHubDirectorySyncService
 
             if (existing != null)
             {
+                if (existing.Trash != null)
+                {
+                    diff.SkippedCount++;
+                    continue;
+                }
                 // 已存在 → 比较 SHA 决定是否需要更新（GitHub SHA 即版本号，O(1) 命中判定）
                 var existingSha = existing.Metadata.GetValueOrDefault("github_sha", "");
 

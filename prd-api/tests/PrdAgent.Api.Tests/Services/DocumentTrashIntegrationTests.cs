@@ -57,7 +57,7 @@ public sealed class DocumentTrashIntegrationTests : IAsyncLifetime
         (await _db.Documents.Find(x => x.Id == "body").SingleAsync()).RawContent.ShouldBe("完整正文");
         (await _db.Attachments.Find(x => x.AttachmentId == "attachment").SingleAsync()).FileName.ShouldBe("附件.pdf");
         (await _db.DocumentEntryVersions.Find(x => x.EntryId == child.Id).SingleAsync()).Content.ShouldBe("历史正文");
-        (await _db.DocumentStores.Find(x => x.Id == _store.Id).SingleAsync()).DocumentCount.ShouldBe(1);
+        (await _db.DocumentStores.Find(x => x.Id == _store.Id).SingleAsync()).DocumentCount.ShouldBe(2);
     }
 
     [Fact]
@@ -276,6 +276,8 @@ public sealed class DocumentTrashIntegrationTests : IAsyncLifetime
         var entry = new DocumentEntry { StoreId = _store.Id, Title = "原文", ParentId = parent, IsFolder = folder,
             DocumentId = folder ? null : "body", AttachmentId = folder ? null : "attachment" };
         await _db.DocumentEntries.InsertOneAsync(entry);
+        await _db.DocumentStoresIncludingTrash.UpdateOneAsync(x => x.Id == _store.Id,
+            Builders<DocumentStore>.Update.Inc(x => x.DocumentCount, 1));
         return entry;
     }
 

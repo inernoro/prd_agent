@@ -37,6 +37,48 @@ public sealed class DocumentTrashReviewProofTests : IAsyncLifetime
     public Task DisposeAsync() => _client.DropDatabaseAsync(_name);
 
     [Fact]
+    public async Task ControllerCreatedFolder_RecycleAndRestoreMatchesCreationCount()
+    {
+        Assert.IsType<OkObjectResult>(await Controller("owner").CreateFolder(_store.Id, new CreateDocStoreFolderRequest { Name = "空目录" }));
+        var folder = await _db.DocumentEntries.Find(x => x.StoreId == _store.Id).SingleAsync();
+        Assert.Equal(1, (await _db.DocumentStores.Find(x => x.Id == _store.Id).SingleAsync()).DocumentCount);
+        var trash = new DocumentTrashService(_db);
+        await trash.DeleteAsync(_store.Id, folder.Id, "owner");
+        Assert.Equal(0, (await _db.DocumentStores.Find(x => x.Id == _store.Id).SingleAsync()).DocumentCount);
+        await trash.RestoreAsync(_store.Id, folder.Id);
+        Assert.Equal(1, (await _db.DocumentStores.Find(x => x.Id == _store.Id).SingleAsync()).DocumentCount);
+    }
+
+    [Fact]
+    public async Task RecycledGitHubChild_IsNotRecreatedByActiveSubscription()
+    {
+        var parent = await EntryAsync();
+        parent.SourceType = DocumentSourceType.GithubDirectory;
+        parent.Metadata = new() { ["github_owner"] = "proof", ["github_repo"] = "proof", ["github_path"] = "docs", ["github_branch"] = "main" };
+        await _db.DocumentEntries.ReplaceOneAsync(x => x.Id == parent.Id, parent);
+        var child = await EntryAsync();
+        child.SourceType = DocumentSourceType.Subscription;
+        child.Metadata = new() { ["github_parent_id"] = parent.Id, ["github_path"] = "docs/readme.md", ["github_sha"] = "old" };
+        await _db.DocumentEntries.ReplaceOneAsync(x => x.Id == child.Id, child);
+        await _db.DocumentEntryVersions.InsertOneAsync(new DocumentEntryVersion { EntryId = child.Id, StoreId = _store.Id, Content = "原历史" });
+        await _db.DocumentInlineComments.InsertOneAsync(new DocumentInlineComment { EntryId = child.Id, StoreId = _store.Id, Content = "原评论" });
+        var documents = new Mock<IDocumentService>();
+        documents.Setup(x => x.ParseAsync(It.IsAny<string>())).ReturnsAsync((string text) => new ParsedPrd { RawContent = text });
+        documents.Setup(x => x.SaveAsync(It.IsAny<ParsedPrd>())).Returns(async (ParsedPrd doc) => { await _db.Documents.InsertOneAsync(doc); return doc; });
+        var trash = new DocumentTrashService(_db);
+        await trash.DeleteAsync(_store.Id, child.Id, "owner");
+        using var http = new HttpClient(new GitHubFixture());
+        await new GitHubDirectorySyncService(NullLogger<GitHubDirectorySyncService>.Instance, http)
+            .SyncDirectoryAsync(_db, documents.Object, parent, CancellationToken.None);
+        var children = Builders<DocumentEntry>.Filter.Eq("Metadata.github_parent_id", parent.Id);
+        Assert.Equal(0, await _db.DocumentEntries.CountDocumentsAsync(children));
+        await trash.RestoreAsync(_store.Id, child.Id);
+        Assert.Equal(child.Id, (await _db.DocumentEntries.Find(children).SingleAsync()).Id);
+        Assert.Equal(1, await _db.DocumentEntryVersions.CountDocumentsAsync(x => x.EntryId == child.Id));
+        Assert.Equal(1, await _db.DocumentInlineComments.CountDocumentsAsync(x => x.EntryId == child.Id));
+    }
+
+    [Fact]
     public async Task RecentComments_ExcludeTrashBeforeLimit_AndReappearAfterRestore()
     {
         var active = await EntryAsync();

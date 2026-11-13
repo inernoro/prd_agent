@@ -54,7 +54,7 @@ public class DocumentStore
     /// 缺省时前端按 tag 名哈希自动分色。详见 prd-admin/src/lib/tagPalette.ts。</summary>
     public Dictionary<string, string> TagColors { get; set; } = new();
 
-    /// <summary>空间内文档数量（冗余计数，便于列表展示）</summary>
+    /// <summary>空间内条目数量（含文件夹及订阅目录，沿用创建流程的冗余计数）</summary>
     public int DocumentCount { get; set; }
 
     /// <summary>点赞数（冗余计数，便于列表排序）</summary>

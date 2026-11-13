@@ -426,7 +426,7 @@ public class MongoDbContext
     public IMongoCollection<DocumentStore> DocumentStoresIncludingTrash => _database.GetCollection<DocumentStore>("document_stores");
     public IMongoCollection<DocumentEntry> DocumentEntries => new ScopedMongoCollection<DocumentEntry>(
         DocumentEntriesIncludingTrash, Builders<DocumentEntry>.Filter.Eq(x => x.Trash, null));
-    // 仅回收恢复和资源引用守卫使用；不能用于普通读路径。
+    // 仅回收恢复、资源引用和同步身份识别使用；不能用于普通读路径。
     public IMongoCollection<DocumentEntry> DocumentEntriesIncludingTrash => _database.GetCollection<DocumentEntry>("document_entries");
     public IMongoCollection<DocumentStoreLike> DocumentStoreLikes => _database.GetCollection<DocumentStoreLike>("document_store_likes");
     public IMongoCollection<DocumentStoreFavorite> DocumentStoreFavorites => _database.GetCollection<DocumentStoreFavorite>("document_store_favorites");

@@ -29,7 +29,7 @@ public sealed class DocumentTrashService(MongoDbContext db)
             var targets = entryId == null ? entries.Where(x => x.Trash == null || x.Trash.BatchId == state.BatchId).Select(x => x.Id).ToHashSet()
                 : CollectDescendants(entries, entryId);
             state.DocumentCount ??= entries.Count(x => targets.Contains(x.Id)
-                && (x.Trash == null || x.Trash.BatchId == state.BatchId) && CountsAsDocument(x));
+                && (x.Trash == null || x.Trash.BatchId == state.BatchId));
             var update = Builders<DocumentEntry>.Update.Set(x => x.Trash, state).Inc(x => x.LifecycleVersion, 1);
             if (entryId == null)
                 await db.DocumentStoresIncludingTrash.UpdateOneAsync(x => x.Id == storeId && x.Trash == null,
@@ -81,8 +81,7 @@ public sealed class DocumentTrashService(MongoDbContext db)
                     throw new ConflictException("原目录已被删除，请先恢复原目录");
             await EnsureLeaseAsync(storeId, lease);
             var restoredCount = state.DocumentCount ?? checked((int)await db.DocumentEntriesIncludingTrash.CountDocumentsAsync(
-                x => x.StoreId == storeId && x.Trash != null && x.Trash.BatchId == state.BatchId
-                    && !x.IsFolder && x.SourceType != DocumentSourceType.GithubDirectory));
+                x => x.StoreId == storeId && x.Trash != null && x.Trash.BatchId == state.BatchId));
             var countReceipt = state.BatchId + ":restore";
             await ApplyCountChangeAsync(storeId, countReceipt, restoredCount);
             // 根对象最后恢复，使部分完成的恢复可以从同一根对象重试。
@@ -109,8 +108,6 @@ public sealed class DocumentTrashService(MongoDbContext db)
                 if ((entry.Trash == null || entry.Trash.RootEntryId == rootId) && ids.Add(entry.Id)) queue.Enqueue(entry.Id);
         return ids;
     }
-
-    private static bool CountsAsDocument(DocumentEntry entry) => !entry.IsFolder && entry.SourceType != DocumentSourceType.GithubDirectory;
 
     private async Task ApplyCountChangeAsync(string storeId, string receipt, int delta)
     {
