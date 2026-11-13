@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { runOrphanRecheckProbe, probeEnumerationYield, type RecheckCase } from './orphan-worktree-recheck-probe.js';
 import { runOrphanOwnershipProbe, type OwnershipCase } from './orphan-worktree-ownership-probe.js';
-import { qualifyNativeSource } from './native-source-qualification.js';
+import { qualifyNativeSource, prepareHistoricalClosure } from './native-source-qualification.js';
 
 const referenceHead = 'a64d9b2494c8a0e140dd678c9c4bd9b90e1935c4';
 const inheritedCandidateHead = '2884f9a9cffdb6447658b25497beb4f3cacdc6c7';
@@ -23,26 +23,6 @@ const sources = ['src/services/janitor.ts', 'src/services/state.ts', 'src/servic
   'tests/services/janitor-orphan-worktree-ownership.test.ts', 'tests/services/worktree-path-activity.test.ts',
   'tests/services/deployment-source-concurrent.test.ts'];
 const digest = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
-async function prepareHistoricalClosure(head: string, destination: string) {
-  const source = path.join(path.dirname(destination), `source-${head}`); await fs.mkdir(source);
-  execFileSync('/usr/bin/tar', ['-xf', '-', '-C', source], { input: execFileSync('/usr/bin/git',
-    ['archive', '--format=tar', head, 'cds/src'], { cwd: path.resolve('..'), maxBuffer: 128 * 1024 * 1024 }) });
-  const files = execFileSync('/usr/bin/git', ['ls-tree', '-r', '--name-only', head, '--', 'cds/src'], { cwd: path.resolve('..'), encoding: 'utf8' }).trim().split('\n');
-  const hashes: Record<string, string> = {};
-  for (const name of files) {
-    const bytes = await fs.readFile(path.join(source, name)); hashes[name] = digest(bytes);
-    if (name.endsWith('.d.ts')) continue;
-    const target = path.join(destination, name.slice('cds/src/'.length).replace(/\.ts$/, '.js'));
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    if (!name.endsWith('.ts')) { await fs.writeFile(target, bytes); continue; }
-    const compiled = ts.transpileModule(bytes.toString(), { fileName: path.basename(name), reportDiagnostics: true,
-      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022, useDefineForClassFields: true,
-        newLine: ts.NewLineKind.LineFeed, sourceMap: true, removeComments: false } });
-    assert.equal(compiled.diagnostics?.filter(d => d.category === ts.DiagnosticCategory.Error).length ?? 0, 0);
-    await fs.writeFile(target, compiled.outputText); await fs.writeFile(target + '.map', compiled.sourceMapText!);
-  }
-  return hashes;
-}
 async function main() {
   assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(os.platform(), 'linux');
   assert.match(process.env.GITHUB_RUN_ID || '', /^\d+$/);

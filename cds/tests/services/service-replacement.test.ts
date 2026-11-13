@@ -61,6 +61,33 @@ describe('就绪切换与保旧回退', () => {
     expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
     expect(f.service.retainedRuntimes?.[0].containerName).toBe('old-api');
   });
+  it('另一未发布候选收到实际创建回执时，真实旧入口保持且当前发布可完成', async () => {
+    const f = fixture(); f.service.status = 'running';
+    const web: ServiceState = { profileId: 'web', containerName: 'new-web', hostPort: 10004, status: 'building', networkName: 'next-network',
+      servingRuntime: { containerName: 'old-web', containerId: 'd'.repeat(64), hostPort: 10003, networkName: 'old-network' } };
+    f.entry.services.web = web;
+    vi.mocked(f.container.inspectOwnedRuntime).mockImplementationOnce(async (_entry, _id, runtime) => {
+      Object.assign(web, { containerId: 'c'.repeat(64), deployedImage: 'sha256:' + 'e'.repeat(64), creationIssued: true, status: 'starting' });
+      web.pendingRuntime = { containerName: web.containerName, containerId: web.containerId, hostPort: web.hostPort, networkName: web.networkName };
+      return { ...runtime, aliasNetworks: [runtime.networkName!] };
+    });
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(resolveBranchUpstream(f.entry, 'web')).toBe('http://127.0.0.1:10003');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    expect(f.service.retainedRuntimes?.[0].containerName).toBe('old-api');
+  });
+  it('删除实际执行前其它候选认领旧CID时保留旧实例，不能沿用更早保护快照', async () => {
+    const f = fixture(); f.service.status = 'running';
+    const web: ServiceState = { profileId: 'web', containerName: 'web', containerId: 'd'.repeat(64), hostPort: 10003,
+      status: 'running', networkName: 'new-network' }; f.entry.services.web = web;
+    const removed: string[] = [];
+    vi.mocked(f.container.removeOwnedRuntime).mockImplementation(async (_entry, _id, runtime, context) => {
+      web.pendingRuntime = { containerName: 'claimed-old', containerId: 'a'.repeat(64), hostPort: 12000, networkName: 'next-network' };
+      context?.assertCurrent?.('actual removal admission'); removed.push(runtime.containerName);
+    });
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).rejects.toThrow('身份已变化');
+    expect(removed).toEqual([]); expect(f.service.retainedRuntimes?.[0].containerName).toBe('old-api');
+  });
   it.each([{ step: 'stop', state: 'dead' }, { step: 'rm', state: 'dead' },
     { step: 'stop', state: 'changed' }, { step: 'stop', state: 'live' }])('实际shell槽准入后复核旧入口，step=$step state=$state', async ({ step, state }) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-admitted-cleanup-'));

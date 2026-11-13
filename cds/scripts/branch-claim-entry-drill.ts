@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { assertCurrentSourceQualification } from './current-source-qualification.js';
+import { qualifyNativeSource, prepareHistoricalClosure } from './native-source-qualification.js';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs/promises';
@@ -13,6 +13,7 @@ import type { CdsConfig } from '../src/types.js';
 
 const referenceHead = 'b81cfe70f6b7602e882668cd8d9e43c19d5e1592';
 const inheritedCandidateHead = '2884f9a9cffdb6447658b25497beb4f3cacdc6c7';
+const historicalCandidateHead = '7b964b87bf8e3c176ece89ccba2d3d160eb0b76b';
 // 保留旧历史范围/编译黄金；本批新增按需能力准备及探针归属这一源，不能抵扣旧路径语义。
 const currentSourceChanges = ['src/executor/routes.ts', 'src/index.ts', 'src/middleware/github-auth.ts', 'src/routes/access-requests.ts', 'src/routes/branches.ts', 'src/routes/cache.ts', 'src/routes/projects.ts', 'src/routes/remote-hosts.ts', 'src/server.ts', 'src/services/agent-workspace-session-runtime.ts', 'src/services/artifact-admission.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/cds-events-bus.ts', 'src/services/compose-parser.ts', 'src/services/container.ts', 'src/services/core-image-cache.ts', 'src/services/deployment-phase-budget.ts', 'src/services/forwarder-route-publisher.ts', 'src/services/github-webhook-dispatcher.ts', 'src/services/internal-pending-replay-auth.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/observation-supervisor-process.ts', 'src/services/proxy.ts', 'src/services/resource-usage-sampler.ts', 'src/services/running-version.ts', 'src/services/service-replacement.ts', 'src/services/service-runtime.ts', 'src/services/state.ts', 'src/services/uptime-history-write.ts', 'src/services/uptime-monitor.ts', 'src/types.ts', 'src/widget-script.ts'];
 const changedSources = ['src/routes/branches.ts', 'src/services/worktree-path-activity.ts'];
@@ -186,15 +187,19 @@ async function main() {
     otherCreationEntrypointsVerified: false, crossProcessClaimVerified: false, restartFencingVerified: false,
     fullResourceBudgetVerified: false, privateFilesRemoved: false };
   try {
-    if (native) git(['fetch', '--depth', '1', 'origin', referenceHead, inheritedCandidateHead]);
+    if (native) git(['fetch', '--depth', '1', 'origin', referenceHead, inheritedCandidateHead, historicalCandidateHead]);
     report.inheritedCandidateHead = inheritedCandidateHead;
     report.inheritedProductionSources = git(['diff', '--name-only', referenceHead, inheritedCandidateHead, '--', ':(top)cds/src']).split('\n').filter(Boolean).sort();
     assert.deepEqual(report.inheritedProductionSources, changedSources.map(name => `cds/${name}`).sort());
     report.changedProductionSources = git(['diff', '--name-only', inheritedCandidateHead, '--', ':(top)cds/src']).split('\n').filter(Boolean).sort();
-    assertCurrentSourceQualification(currentSourceChanges, report, native);
-    assert.equal(git(['diff', '--name-only', referenceHead, '--', ':(top)cds/package.json', ':(top)cds/pnpm-lock.yaml']), '');
+    report.currentQualification = await qualifyNativeSource(path.resolve('..'), native ? process.env.GITHUB_SHA || '' : head);
+    report.historicalCandidateHead = historicalCandidateHead;
+    report.historicalProductionSources = git(['diff', '--name-only', inheritedCandidateHead, historicalCandidateHead, '--', ':(top)cds/src']).split('\n').filter(Boolean).sort();
+    assert.deepEqual(report.historicalProductionSources, currentSourceChanges.map(name => `cds/${name}`).sort());
+    assert.equal(git(['diff', '--name-only', referenceHead, historicalCandidateHead, '--', ':(top)cds/package.json', ':(top)cds/pnpm-lock.yaml']), '');
     const old = path.join(temp, 'reference-runtime'); await fs.cp(path.resolve('dist'), old, { recursive: true });
     await fs.writeFile(path.join(old, 'package.json'), '{"type":"module"}\n'); await fs.symlink(path.resolve('node_modules'), path.join(old, 'node_modules'), 'dir');
+    report.referenceClosureSourceHashes = await prepareHistoricalClosure(referenceHead, old);
     report.referenceSourceHashes = {}; report.referenceCompiledRuntimeHashes = {};
     for (const name of changedSources) {
       const source = execFileSync('/usr/bin/git', ['show', `${referenceHead}:cds/${name}`], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });

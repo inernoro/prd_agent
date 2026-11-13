@@ -187,8 +187,22 @@ async function main(): Promise<void> {
         hostPort: Number(oldPort), status: 'running' } } };
     peerState.addBranch(protectedEntry);
     const peerCommands: string[] = [];
+    const managedBuilderIds = new Set<string>();
+    const managedExecutions = (from: number) => peerCommands.slice(from).filter(command => {
+      const match = /^docker exec '([a-f0-9]{64})' sh -c /.exec(command);
+      return match && managedBuilderIds.has(match[1]);
+    });
     const peerShell = new Proxy(shell, { get(target, property) {
-      if (property === 'exec') return (command: string, options: any) => { peerCommands.push(command); return target.exec(command, options); };
+      if (property === 'exec') return async (command: string, options: any) => {
+        peerCommands.push(command); const result = await target.exec(command, options);
+        if (command.startsWith('docker create ') && command.includes('-managed-build-') && result.exitCode === 0) {
+          const name = /--name '([^']+-managed-build-[a-f0-9]{12})'/.exec(command)?.[1];
+          assert.ok(name?.startsWith(owner + '-')); assert.match(result.stdout.trim(), /^[a-f0-9]{64}$/);
+          managedBuilderIds.add(result.stdout.trim());
+          (report.managedBuilderReceipts ||= []).push({ name, containerId: result.stdout.trim() });
+        }
+        return result;
+      };
       const item = Reflect.get(target, property); return typeof item === 'function' ? item.bind(target) : item;
     } });
     const reserve = http.createServer(); await new Promise<void>(resolve => reserve.listen(0, '127.0.0.1', resolve));
@@ -419,7 +433,7 @@ async function main(): Promise<void> {
     await peerContainer.runService(managedEntry, managedProfile, managedRuntime);
     const imageOne = managedRuntime.deployedImage!; assert.match(imageOne, /^sha256:[a-f0-9]{64}$/);
     verifiedManagedImage(imageOne, sourceOne); assert.deepEqual(await managedBody(), { source: 'source-one', built: sourceOne, runtime: sourceOne, flavor: 'first' });
-    assert.equal(peerCommands.slice(firstCommands).filter(command => command.startsWith('docker exec') && command.includes('-managed-build-')).length, 1);
+    assert.equal(managedExecutions(firstCommands).length, 1);
     const versions = new m.versions.DeploymentVersionService(peerState);
     const versionOne = versions.create({ projectId: 'owned', branchId: managedEntry.id, commitSha: sourceOne, configHash: ownImage(imageOne).Config.Labels['cds.managed.contract'],
       profiles: [managedProfile], branch: managedEntry, createdByRunId: 'owned-managed-one' });
@@ -438,7 +452,7 @@ async function main(): Promise<void> {
     await peerContainer.runService(managedEntry, managedProfile, managedRuntime); const imageTwo = managedRuntime.deployedImage!;
     assert.notEqual(imageTwo, imageOne); verifiedManagedImage(imageTwo, sourceTwo);
     assert.deepEqual(await managedBody(), { source: 'source-two', built: sourceTwo, runtime: sourceTwo, flavor: 'first' });
-    assert.equal(peerCommands.slice(beforeSourceChange).filter(command => command.startsWith('docker exec') && command.includes('-managed-build-')).length, 1);
+    assert.equal(managedExecutions(beforeSourceChange).length, 1);
     report.checks.push({ name: 'compiled-managed-new-source-rebuilds-retargeted-cache-tag', passed: true });
 
     report.stage = 'managed-configuration-change'; const changedProfile = { ...managedProfile, env: { OWNED_FLAVOR: 'second' } }; const beforeConfig = peerCommands.length;
@@ -446,7 +460,7 @@ async function main(): Promise<void> {
     assert.notEqual(imageThree, imageTwo); const changedImage = verifiedManagedImage(imageThree, sourceTwo);
     assert.notEqual(changedImage.Config.Labels['cds.managed.contract'], ownImage(imageTwo).Config.Labels['cds.managed.contract']);
     assert.deepEqual(await managedBody(), { source: 'source-two', built: sourceTwo, runtime: sourceTwo, flavor: 'second' });
-    assert.equal(peerCommands.slice(beforeConfig).filter(command => command.startsWith('docker exec') && command.includes('-managed-build-')).length, 1);
+    assert.equal(managedExecutions(beforeConfig).length, 1);
     report.checks.push({ name: 'compiled-managed-changed-contract-rebuilds-instead-of-reusing-tag', passed: true });
 
     report.stage = 'managed-build-failure'; const beforeFailedBuild = await managedBody(); const protectedManagedId = docker(['inspect', '--format', '{{.Id}}', managedRuntime.containerName]);
