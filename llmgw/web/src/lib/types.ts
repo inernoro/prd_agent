@@ -1884,7 +1884,6 @@ export type UpdateModelUpgradePolicyRequest = ModelUpgradePolicy & { version: nu
 export type ModelUpgradeAction = 'check' | 'validate' | 'promote' | 'rollback';
 export type ModelUpgradeActionRequest = { version: number; requestId?: string; mode?: 'evidence' | 'canary' };
 
-
 export type LogTraceData = {
   ambiguous: boolean;
   hasMoreCandidates?: boolean;

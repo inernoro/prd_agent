@@ -82,7 +82,7 @@ jobs:
         run: pnpm -C cds/web build
 
       - name: Verify loading continuity in a real browser
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: |
           pnpm -C cds/web exec vite preview --host 127.0.0.1 --port 8870 --strictPort > "$RUNNER_TEMP/cds-loading-preview.log" 2>&1 &
           CDS_LOADING_PREVIEW_PID=$!
@@ -95,6 +95,9 @@ jobs:
           pnpm -C cds smoke:loading http://127.0.0.1:8870 --out "$RUNNER_TEMP/cds-loading-continuity"
           CDS_LOADING_EVIDENCE="$RUNNER_TEMP/cds-loading-neighbors" node cds/scripts/loading-coverage-smoke.mjs http://127.0.0.1:8870
           CDS_DENSITY_EVIDENCE="$RUNNER_TEMP/cds-loading-density" node cds/scripts/content-density-smoke.mjs http://127.0.0.1:8870 after
+          CDS_SETTINGS_EVIDENCE="$RUNNER_TEMP/cds-loading-settings-density" node cds/scripts/settings-content-density-smoke.mjs
+          CDS_PAGE_DENSITY_OUT="$RUNNER_TEMP/cds-loading-page-density" node cds/scripts/page-density-smoke.mjs http://127.0.0.1:8870 after
+          CDS_RELATION_DENSITY_OUT="$RUNNER_TEMP/cds-loading-relation-density" node cds/scripts/relation-density-smoke.mjs http://127.0.0.1:8870
           CDS_SKELETON_EVIDENCE="$RUNNER_TEMP/cds-loading-lists" node cds/scripts/list-loading-smoke.mjs http://127.0.0.1:8870
 
       - name: Archive loading acceptance failure

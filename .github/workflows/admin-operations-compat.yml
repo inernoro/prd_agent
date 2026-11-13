@@ -12,6 +12,8 @@ on:
       - 'e2e/admin-operations.config.ts'
       - 'e2e/specs/admin-operations-compat.spec.ts'
       - 'e2e/fixtures/admin-operations*'
+      - 'e2e/llmgw-*-density.mjs'
+      - '.claude/skills/dechrome/**'
       - 'cds/scripts/fixtures/mobile-layout-fixtures.mjs'
       - '.github/workflows/admin-operations-compat.yml'
   pull_request:
@@ -24,6 +26,8 @@ on:
       - 'e2e/admin-operations.config.ts'
       - 'e2e/specs/admin-operations-compat.spec.ts'
       - 'e2e/fixtures/admin-operations*'
+      - 'e2e/llmgw-*-density.mjs'
+      - '.claude/skills/dechrome/**'
       - 'cds/scripts/fixtures/mobile-layout-fixtures.mjs'
       - '.github/workflows/admin-operations-compat.yml'
   workflow_dispatch:
@@ -34,7 +38,7 @@ permissions:
 jobs:
   browser-operations:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -50,6 +54,7 @@ jobs:
           pnpm -C e2e install --frozen-lockfile
           pnpm -C e2e exec playwright install --with-deps chromium firefox webkit
       - name: Build the actual frontend bundles
+        id: frontends
         run: |
           pnpm -C cds/web typecheck
           pnpm -C cds/web build
@@ -57,6 +62,18 @@ jobs:
           pnpm -C e2e typecheck
       - name: Verify isolated management operations across browser engines
         run: pnpm -C e2e exec playwright test -c admin-operations.config.ts --workers=2
+      - name: Verify content visibility and sparse layouts
+        if: ${{ !cancelled() && steps.frontends.outcome == 'success' }}
+        env:
+          LLMGW_DENSITY_OUT: work/compat/density-upstreams
+          LLMGW_CATALOG_OUT: work/compat/density-catalog
+          LLMGW_ADMIN_DENSITY_OUT: work/compat/density-admin
+          LLMGW_OBSERVABILITY_DENSITY_OUT: work/compat/density-observability
+        run: |
+          node e2e/llmgw-content-density.mjs
+          node e2e/llmgw-catalog-density.mjs
+          node e2e/llmgw-admin-density.mjs
+          node e2e/llmgw-observability-density.mjs
       - name: Retain browser evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -64,3 +81,23 @@ jobs:
           name: admin-operations-browser-evidence
           path: work/compat/
           retention-days: 14
+
+  dechrome-skill:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify the evidence contract and portable package
+        run: python3 -m unittest discover -s .claude/skills/dechrome/tests -p 'test_*.py'
+      - name: Package the skill without publishing
+        run: |
+          python3 .claude/skills/dechrome/scripts/package_skill.py --output "$RUNNER_TEMP/dechrome-skill/dechrome.zip"
+          cp .claude/skills/dechrome/reference/install.md "$RUNNER_TEMP/dechrome-skill/INSTALL.md"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dechrome-skill-${{ github.sha }}
+          path: ${{ runner.temp }}/dechrome-skill/
+          if-no-files-found: error
+          retention-days: 30
