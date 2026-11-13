@@ -1099,7 +1099,7 @@ export function getModelReferenceMigrationPlans(): Promise<ApiResponse<{ items: 
 export function getRepairableModelUsages(): Promise<ApiResponse<{ items: import('./types').RepairableModelUsage[] }>> {
   return apiRequest('/model-reference-migrations/repairable-usages');
 }
-export function createModelReferenceMigrationFromUsage(body: { consumerKey: string; recordId: string; path: string; targetLogicalId: string; clientRequestId: string }): Promise<ApiResponse<import('./types').ReferenceMigrationPlan>> {
+export function createModelReferenceMigrationFromUsage(body: { consumerKey: string; recordId: string; path: string; targetLogicalId: string; clientRequestId: string; confirmedModelType?: string }): Promise<ApiResponse<import('./types').ReferenceMigrationPlan>> {
   return apiRequest('/model-reference-migrations/plans/from-usage', { method: 'POST', body });
 }
 
