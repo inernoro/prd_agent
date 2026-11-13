@@ -32,6 +32,7 @@ public sealed class AdminPushNotificationService
     private readonly string? _publicBaseUrl;
     private readonly TimeProvider _clock;
     private readonly TimeSpan _aggregationDelay;
+    private readonly IAdminNotificationAudience? _audience;
 
     public AdminPushNotificationService(
         MongoDbContext db,
@@ -39,7 +40,8 @@ public sealed class AdminPushNotificationService
         ISafeOutboundUrlValidator urlValidator,
         IConfiguration configuration,
         ILogger<AdminPushNotificationService> logger,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        IAdminNotificationAudience? audience = null)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
@@ -47,6 +49,7 @@ public sealed class AdminPushNotificationService
         _logger = logger;
         _publicBaseUrl = ResolvePublicBaseUrl(configuration);
         _clock = clock ?? TimeProvider.System;
+        _audience = audience;
         _aggregationDelay = TimeSpan.FromSeconds(Math.Clamp(configuration.GetValue("AdminPush:AggregationSeconds", 15), 0, 60));
     }
 
@@ -513,10 +516,13 @@ public sealed class AdminPushNotificationService
                 .Match(new BsonDocument("_pushReceipt.0", new BsonDocument("$exists", false)))
                 .Project<AdminNotification>(new BsonDocument("_pushReceipt", 0)).ToCursorAsync(ct);
             var candidates = new List<AdminNotification>();
+            var canReceiveAdmin = _audience is not null && await _audience.CanReceiveAdminAsync(userId, ct);
             while (await candidateCursor.MoveNextAsync(ct))
             {
                 foreach (var candidate in candidateCursor.Current)
                 {
+                    if (!canReceiveAdmin && AdminNotificationSourceCatalog.ResolveSection(candidate.Source, candidate.Section, candidate.TargetUserId) == AdminNotificationSections.Admin)
+                        continue;
                     if (!subscriptions.Any(subscription => MatchesTopic(subscription.TopicKey, candidate))) continue;
                     if (candidates.Count < MaxCandidateNotificationsPerRecipient) candidates.Add(candidate);
                     else if (IsFreshUrgent(candidate, budget))
@@ -567,15 +573,7 @@ public sealed class AdminPushNotificationService
                 .OrderByDescending(r => IsFreshUrgent(r.Notice, budget)).ToList();
             if (!useUrgent && now - batch.Min(r => r.Notice.CreatedAt) < _aggregationDelay) return;
             var notices = batch.Select(r => r.Notice).ToList();
-            var notification = notices.Count == 1 ? notices[0] : new AdminNotification
-            {
-                Title = useUrgent ? $"新增严重故障，共 {notices.Count} 项消息" : $"有 {notices.Count} 项新消息需要查看",
-                Message = $"共 {notices.Count} 项：" + string.Join("；", notices.Select(n => n.Title ?? "业务消息").Distinct()
-                    .Take(2).Select(title => TrimForLog(title, 40)))
-                    + "。已合并提醒，数量不等于事故数；请到消息中心逐项查看影响与处理入口。",
-                Level = notices.Any(n => n.Level == "error") ? "error" : "warning",
-                Source = "system", TargetUserId = userId, ActionUrl = "/?panel=notifications", CreatedAt = now,
-            };
+            var notification = notices.Count == 1 ? notices[0] : BuildDigest(notices, userId, now, useUrgent);
             var reservation = new AdminPushDeliveryLog
             {
                 UserId = userId, SubscriptionId = selected.Route.Id, TopicKey = selected.Route.TopicKey,
@@ -606,6 +604,26 @@ public sealed class AdminPushNotificationService
 
     private sealed record DispatchBudget(List<BsonDocument> Attempts, BsonDocument Incidents);
 
+    internal static AdminNotification BuildDigest(IReadOnlyList<AdminNotification> notices, string userId, DateTime now, bool urgent)
+    {
+        var identities = notices.Where(n => !string.IsNullOrWhiteSpace(n.IncidentId))
+            .GroupBy(n => (n.Source, n.TargetUserId, n.IncidentId)).ToList();
+        var unclassified = notices.Count(n => string.IsNullOrWhiteSpace(n.IncidentId));
+        var occurrenceCount = identities.Sum(g => g.Max(n => n.OccurrenceCount));
+        var scope = $"{notices.Count} 条通知，{identities.Count} 个已识别故障"
+            + (unclassified > 0 ? $"、{unclassified} 条未分类通知" : "");
+        return new AdminNotification
+        {
+            Title = (urgent ? "新增严重变化：" : "通知汇总：") + scope,
+            Message = string.Join("；", notices.OrderByDescending(n => n.Level == "error").Select(n => n.Title)
+                .Distinct().Take(2).Select(title => TrimForLog(title, 60)))
+                + (identities.Count > 0 ? $"。已识别故障累计发生 {occurrenceCount} 次" : string.Empty)
+                + "。通知数和发生次数均不代表失败请求数。请打开通知列表，逐项查看发生时间、当前状态与适用操作。",
+            Level = notices.Any(n => n.Level == "error") ? "error" : "warning",
+            Source = "system", TargetUserId = userId, ActionUrl = "/?panel=notifications", CreatedAt = now,
+        };
+    }
+
     private static DispatchBudget ReadBudget(BsonDocument state, DateTime now)
     {
         var history = state.TryGetValue("attemptHistory", out var raw)
@@ -625,7 +643,7 @@ public sealed class AdminPushNotificationService
 
     private static string IncidentKey(AdminNotification notice) => Convert.ToHexString(SHA256.HashData(
         Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new[] { notice.Source,
-            notice.Source == "gateway-alert" ? DeliveryKey(notice)
+            notice.Source == "gateway-alert" || !string.IsNullOrWhiteSpace(notice.IncidentId) ? DeliveryKey(notice)
                 : !string.IsNullOrWhiteSpace(notice.Key) ? notice.Key
                 : !string.IsNullOrWhiteSpace(notice.ActionUrl) ? notice.ActionUrl : notice.Id }))));
 
@@ -1002,6 +1020,9 @@ public sealed class AdminPushNotificationService
                 || level.Equals("error", StringComparison.OrdinalIgnoreCase)
                 || source.Contains("platform", StringComparison.OrdinalIgnoreCase)
                 || source.Contains("quota", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("uptime-alert", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("stable-smoke", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("model-pool-probe", StringComparison.OrdinalIgnoreCase)
                 || source.Equals("system", StringComparison.OrdinalIgnoreCase);
         }
 

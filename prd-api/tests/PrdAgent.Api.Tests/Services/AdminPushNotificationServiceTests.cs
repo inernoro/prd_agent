@@ -105,7 +105,7 @@ public sealed class AdminPushNotificationServiceTests
         var http = new RecordingHttpClientFactory();
         var clock = new PushTestClock();
         AdminPushNotificationService Push() => new(db.Context, http, new AllowAllUrlValidator(), config,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         await Push().DispatchPendingAsync(default);
         Assert.Single(http.Requests);
 
@@ -189,7 +189,7 @@ public sealed class AdminPushNotificationServiceTests
         var http = new RecordingHttpClientFactory();
         var clock = new PushTestClock();
         var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         await SeedChannelAsync(testDb.Context);
         await testDb.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription {
             UserId = "u1", TopicKey = "api-request-alert", Enabled = true, ChannelType = "url",
@@ -232,7 +232,7 @@ public sealed class AdminPushNotificationServiceTests
         var configuration = new ConfigurationBuilder().AddConfiguration(TestConfiguration)
             .AddInMemoryCollection(new Dictionary<string,string?> { ["AdminPush:AggregationSeconds"] = "0" }).Build();
         var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), configuration,
-            NullLogger<AdminPushNotificationService>.Instance);
+            NullLogger<AdminPushNotificationService>.Instance, audience: AllowedAudience);
         await service.DispatchPendingAsync(default);
         await ExpireRecipientWindowAsync(testDb.Context);
         await service.DispatchPendingAsync(default);
@@ -289,7 +289,7 @@ public sealed class AdminPushNotificationServiceTests
         var http = new RecordingHttpClientFactory();
         var clock = new PushTestClock();
         var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         await testDb.Context.AdminNotifications.InsertManyAsync(Enumerable.Range(0, 100).Select(i => new AdminNotification {
             Id = $"quiet-{i}", Level = "warning", Source = "stable-smoke", TargetUserId = "u1", Title = "检查结果", CreatedAt = clock.GetUtcNow().UtcDateTime,
         }));
@@ -307,7 +307,7 @@ public sealed class AdminPushNotificationServiceTests
         await SeedChannelAsync(testDb.Context);
         var clock = new PushTestClock(); var http = new RecordingHttpClientFactory();
         AdminPushNotificationService Service() => new(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         async Task Add(string key, string level) => await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
             Key = key, Source = "stable-smoke", TargetUserId = "u1", Level = level, Title = key,
             CreatedAt = clock.GetUtcNow().UtcDateTime.AddSeconds(-20),
@@ -336,7 +336,7 @@ public sealed class AdminPushNotificationServiceTests
         await SeedChannelAsync(testDb.Context);
         var clock = new PushTestClock(); var http = new RecordingHttpClientFactory();
         var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         for (var i = 0; i < 60; i++)
         {
             await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
@@ -361,7 +361,7 @@ public sealed class AdminPushNotificationServiceTests
         await SeedChannelAsync(testDb.Context);
         var clock = new PushTestClock(); var http = new RecordingHttpClientFactory();
         AdminPushNotificationService Service() => new(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         async Task Add(string id, string level) => await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
             Id = id, Source = "workflow-agent", TargetUserId = "u1", Level = level, Title = id,
             CreatedAt = clock.GetUtcNow().UtcDateTime.AddSeconds(-20),
@@ -385,7 +385,7 @@ public sealed class AdminPushNotificationServiceTests
         await SeedChannelAsync(testDb.Context);
         var clock = new PushTestClock(); var http = new RecordingHttpClientFactory();
         var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         await testDb.Context.AdminNotifications.InsertManyAsync(Enumerable.Range(0, 1100).Select(i => new AdminNotification {
             Key = "ordinary-" + i, Source = "stable-smoke", TargetUserId = "u1", Level = "warning", Title = "普通变化",
             CreatedAt = clock.GetUtcNow().UtcDateTime,
@@ -1284,7 +1284,7 @@ public sealed class AdminPushNotificationServiceTests
         });
 
         Assert.Equal("AI 创作服务需要管理员处理", presentation.Title);
-        Assert.Contains("请稍后重试", presentation.Message);
+        Assert.Contains("结果和当前状态尚未确认", presentation.Message);
         Assert.Contains("管理员需要检查", presentation.Message);
         Assert.DoesNotContain("Key limit exceeded", presentation.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("openrouter", presentation.Message, StringComparison.OrdinalIgnoreCase);
@@ -1395,7 +1395,7 @@ public sealed class AdminPushNotificationServiceTests
         var item = Assert.Single(ReadNotificationItems(await admin.List(ct: CancellationToken.None)));
         var message = item.GetProperty("message").GetString();
         Assert.Equal("AI 创作服务需要管理员处理", item.GetProperty("title").GetString());
-        Assert.Contains("请稍后重试", message);
+        Assert.Contains("结果和当前状态尚未确认", message);
         Assert.Contains("管理员需要检查", message);
         Assert.DoesNotContain("fix/quota-alert", message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("anthropic/claude-sonnet", message, StringComparison.OrdinalIgnoreCase);
@@ -1621,6 +1621,12 @@ public sealed class AdminPushNotificationServiceTests
         }
     }
 
+    internal static readonly IAdminNotificationAudience AllowedAudience = new AllowAdminAudience();
+    private sealed class AllowAdminAudience : IAdminNotificationAudience
+    {
+        public Task<bool> CanReceiveAdminAsync(string userId, CancellationToken ct) => Task.FromResult(true);
+    }
+
     private static AdminPushNotificationService CreateService(
         MongoDbContext db,
         RecordingHttpClientFactory http,
@@ -1632,7 +1638,7 @@ public sealed class AdminPushNotificationServiceTests
             new AllowAllUrlValidator(),
             new ConfigurationBuilder().AddConfiguration(configuration ?? TestConfiguration)
                 .AddInMemoryCollection(new Dictionary<string, string?> { ["AdminPush:AggregationSeconds"] = "0" }).Build(),
-            NullLogger<AdminPushNotificationService>.Instance);
+            NullLogger<AdminPushNotificationService>.Instance, audience: AllowedAudience);
     }
 
     private static AdminPushNotificationService CreateService(
@@ -1646,7 +1652,7 @@ public sealed class AdminPushNotificationServiceTests
             new AllowAllUrlValidator(),
             new ConfigurationBuilder().AddConfiguration(configuration ?? TestConfiguration)
                 .AddInMemoryCollection(new Dictionary<string, string?> { ["AdminPush:AggregationSeconds"] = "0" }).Build(),
-            NullLogger<AdminPushNotificationService>.Instance);
+            NullLogger<AdminPushNotificationService>.Instance, audience: AllowedAudience);
     }
 
     private static NotificationsController CreateNotificationsController(

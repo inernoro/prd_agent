@@ -161,7 +161,7 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
         var fault = await f.FaultAsync();
         var subscription = await f.Db.AdminPushSubscriptions.Find(_ => true).SingleAsync();
         var push = new AdminPushNotificationService(f.Db, f.Http, new LoopbackOnlyValidator(),
-            new ConfigurationBuilder().Build(), NullLogger<AdminPushNotificationService>.Instance, f.Clock);
+            new ConfigurationBuilder().Build(), NullLogger<AdminPushNotificationService>.Instance, f.Clock, audience: AdminPushNotificationServiceTests.AllowedAudience);
         // Execute the real baseline method with its explicit cutoff parameter; no clock or product logic is replaced.
         await (Task)typeof(AdminPushNotificationService).GetMethod("MarkExistingNotificationsAsDeliveredAsync", BindingFlags.NonPublic | BindingFlags.Instance)!
             .Invoke(push, new object[] { subscription, new DateTime(fault.PushEpisodeStartedAtUtcTicks!.Value, DateTimeKind.Utc), CancellationToken.None })!;
