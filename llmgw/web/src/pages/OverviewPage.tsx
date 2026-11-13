@@ -1,52 +1,14 @@
-// 系统运维：运行闸门、协议入口覆盖、配置权威迁移与容器拓扑。
-//
-// 按「控制台风格调性 v1.2」原则 6 / 7 迁移（doc/rule.platform.llm-gateway.console-design-tonality.md）：
-//   - 走 PageShell 骨架；页头 summary 用 runtimeGates 派生的「通过 / 阻塞 / 等待」，
-//     让页面在标题下就回答自己那个问题，而不是先读一段话再去下面找数字。
-//   - 硬编码的容器清单是文档冒充数据：它不来自任何接口，改了 compose 也不会变。
-//     收进默认收起的折叠块，七句 desc 删掉（概念解释交给教程外链），只留「谁是谁、从哪进」。
-//   - 七个快捷入口全删：侧边栏「路由 / 工作区」两组本来就有这些页，上面的指标卡也已经链过去，
-//     同一屏第三次重复导航只是占版面。
-//   - 每个面板的解释压到一句，超出的收进 HelpPopover。
-//   - 颜色不再写十六进制：语义色一律走 --ok / --warn / --err / --info（含 -bg），
-//     否则浅色主题下这些为深色底调过的绿黄红会直接刺眼。
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import { Server, Cpu, Layers, Database, Tags, Shuffle, KeyRound, ShieldCheck } from 'lucide-react';
-import { bulkClaimConfigAuthority, getPlatforms, getModels, getGatewayAppCallers, getExchanges, getKeyHealth, getConfigAuthorityReport, getRuntimeGates, getProtocolCoverage } from '@/lib/api';
-import type { PlatformItem, ModelItem, ExchangeItem, KeyHealthSummary, ConfigAuthoritySummary, RuntimeGatesData, ProtocolCoverageData } from '@/lib/types';
+import { Server, Cpu, Tags, Shuffle, KeyRound } from 'lucide-react';
+import { bulkClaimConfigAuthority, getPlatforms, getModels, getGatewayAppCallers, getExchanges, getKeyHealth, getConfigAuthorityReport, getProtocolCoverage } from '@/lib/api';
+import type { PlatformItem, ModelItem, ExchangeItem, KeyHealthSummary, ConfigAuthoritySummary, ProtocolCoverageData } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/components/ui';
-import { DetailsBlock, HelpPopover, PageBody, PageHeader, PageShell, TutorialLink } from '@/components/PageShell';
+import { HelpPopover, PageBody, PageHeader, PageShell } from '@/components/PageShell';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
-import { CARD_BODY, GAP, INSET_BLOCK } from '@/lib/surface';
-import { BODY_TEXT, METRIC_CAPTION, METRIC_VALUE, MONO_META, SECTION_TITLE } from '@/lib/typography';
-
-// 网关容器拓扑（SSOT：cds-compose.yml 的 services + .claude/rules/cds-dual-exit-topology.md）。
-// 这是静态清单而非运行时数据，所以只在折叠块里作为参考资料出现，不占常驻版面。
-type TopoRole = {
-  name: string;
-  role: string;
-  exposure: string;
-  group: 'gateway' | 'map' | 'infra';
-};
-const TOPOLOGY: TopoRole[] = [
-  { name: 'llmgw-serve', role: 'serving 引擎', exposure: 'HTTPS 出口', group: 'gateway' },
-  { name: 'llmgw', role: '控制台后端', exposure: 'HTTPS 出口', group: 'gateway' },
-  { name: 'llmgw-web', role: '控制台前端', exposure: '经 llmgw 反代', group: 'gateway' },
-  { name: 'api', role: 'MAP 后端', exposure: 'HTTPS 出口', group: 'map' },
-  { name: 'admin', role: 'MAP 前端', exposure: 'HTTPS 出口', group: 'map' },
-  { name: 'mongodb', role: '共享数据库', exposure: '内网', group: 'infra' },
-  { name: 'redis', role: '共享缓存', exposure: '内网', group: 'infra' },
-];
-
-// 三个分组是**分类色**不是状态色，但仍从语义 token 取值：自己拍十六进制的话，
-// 浅色主题没有对应覆盖，绿/黄会直接刺眼（cds-theme-tokens.md 同一条教训）。
-const GROUP_META: Record<TopoRole['group'], { label: string; color: string; bg: string; icon: JSX.Element }> = {
-  gateway: { label: '网关', color: 'var(--accent)', bg: 'var(--accent-soft)', icon: <Cpu size={13} /> },
-  map: { label: 'MAP 主应用', color: 'var(--info)', bg: 'var(--info-bg)', icon: <Layers size={13} /> },
-  infra: { label: '共享基础设施', color: 'var(--ok)', bg: 'var(--ok-bg)', icon: <Database size={13} /> },
-};
+import { CARD_BODY, GAP } from '@/lib/surface';
+import { BODY_TEXT, METRIC_CAPTION, METRIC_VALUE, SECTION_TITLE } from '@/lib/typography';
 
 export function GovernancePage() {
   const { tenant } = useAuth();
@@ -56,7 +18,6 @@ export function GovernancePage() {
   const [exchanges, setExchanges] = useState<ExchangeItem[] | null>(null);
   const [keyHealth, setKeyHealth] = useState<KeyHealthSummary | null>(null);
   const [configAuthority, setConfigAuthority] = useState<ConfigAuthoritySummary | null>(null);
-  const [runtimeGates, setRuntimeGates] = useState<RuntimeGatesData | null>(null);
   const [protocolCoverage, setProtocolCoverage] = useState<ProtocolCoverageData | null>(null);
   const [appCallerTotal, setAppCallerTotal] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,26 +26,24 @@ export function GovernancePage() {
 
   useEffect(() => {
     let alive = true;
-    const protocolReleaseCommit = new URLSearchParams(window.location.search).get('releaseCommit')?.trim() || undefined;
     // 每个 slice 失败也置空数组（而非留 null）→ loading 一定会收敛、不卡 spinner；成功的部分照常渲染局部数据。
     // 「success 但 body 缺字段」也要兜：否则 setX(undefined) 会绕过 `=== null` 的 loading 判定，
     // 直接渲染并在 keyHealth!.status 上抛错，整页白屏。
-    Promise.all([getPlatforms(), getModels(), getExchanges(), getKeyHealth(), getConfigAuthorityReport(), getRuntimeGates(), getProtocolCoverage({ releaseCommit: protocolReleaseCommit, sinceHours: 24 }), getGatewayAppCallers({ page: 1, pageSize: 1 })]).then(
-      ([platformsRes, modelsRes, exchangesRes, keyHealthRes, authorityRes, runtimeGatesRes, protocolCoverageRes, appCallersRes]) => {
+    Promise.all([getPlatforms(), getModels(), getExchanges(), getKeyHealth(), getConfigAuthorityReport(), getProtocolCoverage({ sinceHours: 24 }), getGatewayAppCallers({ page: 1, pageSize: 1 })]).then(
+      ([platformsRes, modelsRes, exchangesRes, keyHealthRes, authorityRes, protocolCoverageRes, appCallersRes]) => {
         if (!alive) return;
         if (platformsRes.success) setPlatforms(platformsRes.data.items); else { setPlatforms([]); setError((e) => e || platformsRes.error?.message || '加载失败'); }
         if (modelsRes.success) setModels(modelsRes.data.items); else { setModels([]); setError((e) => e || modelsRes.error?.message || '加载失败'); }
         if (exchangesRes.success) setExchanges(exchangesRes.data.items); else { setExchanges([]); setError((e) => e || exchangesRes.error?.message || '加载失败'); }
         if (keyHealthRes.success) setKeyHealth(keyHealthRes.data.summary ?? emptyKeyHealth()); else { setKeyHealth(emptyKeyHealth()); setError((e) => e || keyHealthRes.error?.message || '加载失败'); }
         if (authorityRes.success) setConfigAuthority(authorityRes.data.summary ?? emptyConfigAuthority()); else { setConfigAuthority(emptyConfigAuthority()); setError((e) => e || authorityRes.error?.message || '加载失败'); }
-        if (runtimeGatesRes.success) setRuntimeGates(runtimeGatesRes.data); else { setRuntimeGates(emptyRuntimeGates()); setError((e) => e || runtimeGatesRes.error?.message || '加载失败'); }
         if (protocolCoverageRes.success) setProtocolCoverage(protocolCoverageRes.data); else { setProtocolCoverage(emptyProtocolCoverage()); setError((e) => e || protocolCoverageRes.error?.message || '加载失败'); }
         if (appCallersRes.success) setAppCallerTotal(appCallersRes.data.total); else { setAppCallerTotal(0); setError((e) => e || appCallersRes.error?.message || '加载失败'); }
       },
     ).catch((err) => {
       // Promise.all/then 里抛错也要收敛 loading（否则永远转圈）。
       if (!alive) return;
-      setPlatforms((p) => p ?? []); setModels((p) => p ?? []); setExchanges((p) => p ?? []); setKeyHealth((p) => p ?? emptyKeyHealth()); setConfigAuthority((p) => p ?? emptyConfigAuthority()); setRuntimeGates((p) => p ?? emptyRuntimeGates()); setProtocolCoverage((p) => p ?? emptyProtocolCoverage()); setAppCallerTotal((p) => p ?? 0);
+      setPlatforms((p) => p ?? []); setModels((p) => p ?? []); setExchanges((p) => p ?? []); setKeyHealth((p) => p ?? emptyKeyHealth()); setConfigAuthority((p) => p ?? emptyConfigAuthority()); setProtocolCoverage((p) => p ?? emptyProtocolCoverage()); setAppCallerTotal((p) => p ?? 0);
       setError((e) => e || (err instanceof Error ? err.message : '加载失败'));
     });
     return () => { alive = false; };
@@ -96,27 +55,25 @@ export function GovernancePage() {
     const res = await bulkClaimConfigAuthority({ overwrite: false });
     if (!res.success) {
       setBusyAction(null);
-      setActionMessage(res.error?.message || '批量认领失败');
+      setActionMessage(res.error?.message || '导入失败');
       return;
     }
-    const [platformsRes, modelsRes, exchangesRes, authorityRes, runtimeGatesRes] = await Promise.all([
+    const [platformsRes, modelsRes, exchangesRes, authorityRes] = await Promise.all([
       getPlatforms(),
       getModels(),
       getExchanges(),
       getConfigAuthorityReport(),
-      getRuntimeGates(),
     ]);
     if (platformsRes.success) setPlatforms(platformsRes.data.items);
     if (modelsRes.success) setModels(modelsRes.data.items);
     if (exchangesRes.success) setExchanges(exchangesRes.data.items);
     if (authorityRes.success) setConfigAuthority(authorityRes.data.summary ?? emptyConfigAuthority());
-    if (runtimeGatesRes.success) setRuntimeGates(runtimeGatesRes.data);
     setBusyAction(null);
-    setActionMessage(`已认领 ${res.data.claimedTotal} 个配置，跳过 ${res.data.skippedTotal} 个已存在配置`);
+    setActionMessage(`已导入 ${res.data.claimedTotal} 个配置，跳过 ${res.data.skippedTotal} 个已存在配置`);
   }
 
 
-  const loading = platforms === null || models === null || exchanges === null || keyHealth === null || configAuthority === null || runtimeGates === null || protocolCoverage === null || appCallerTotal === null;
+  const loading = platforms === null || models === null || exchanges === null || keyHealth === null || configAuthority === null || protocolCoverage === null || appCallerTotal === null;
   // 完全没加载出来（都还 null）时才整屏报错/转圈；有部分数据则进入下方渲染，用顶部横幅提示失败（不掩盖故障）。
   if (loading && error) return <Empty text={error} />;
   if (loading) return <SectionLoader text="正在加载网关概览…" />;
@@ -125,37 +82,16 @@ export function GovernancePage() {
   const enabledModels = models!.filter((m) => m.enabled).length;
   const enabledExchanges = exchanges!.filter((x) => x.enabled).length;
   const keyHealthTone = keyHealth!.status === 'ok' ? 'var(--ok)' : keyHealth!.status === 'unreadable' ? 'var(--err)' : 'var(--warn)';
-  const authorityTone = configAuthority!.status === 'ready' ? 'var(--ok)' : configAuthority!.status === 'blocked' ? 'var(--err)' : 'var(--warn)';
-  const mapOnlyTotal = configAuthority!.mapOnlyPools + configAuthority!.mapOnlyPlatforms + configAuthority!.mapOnlyModels + configAuthority!.mapOnlyExchanges;
-  const unusableActivePools = configAuthority!.activeBoundPoolWithoutUsableMember ?? 0;
-  const activeFallbackStatus = configAuthority!.activeAppCallerMapFallbackReady
-    ? 'active fallback 可关闭'
-    : `${configAuthority!.activeMissingGatewayPool} 个 active 调用方没人接得住 · ${unusableActivePools} 条存量池绑定指向没有可用成员的池`;
-
+  const mapOnlyTotal = configAuthority!.mapOnlyPlatforms + configAuthority!.mapOnlyModels + configAuthority!.mapOnlyExchanges;
   return (
     <PageShell>
-      {/* 页头这排小字直接由 runtimeGates 派生：这一页存在的理由就是回答「现在卡在哪」，
-          答案不该藏在下面某张卡里，更不该先写一段话再让人去找数字。 */}
-      <PageHeader
-        title="系统运维"
-        subtitle="判断网关能否按预期承接流量。"
-        summary={(
-          <>
-            <Chip label={runtimeGateLabel(runtimeGates!)} color={runtimeGateColor(runtimeGates!.status)} bg={runtimeGateBg(runtimeGates!.status)} />
-            <span>通过 <strong>{runtimeGates!.passed}</strong></span>
-            <span>阻塞 <strong>{runtimeGates!.blocked}</strong></span>
-            <span>等待 <strong>{runtimeGates!.waiting}</strong></span>
-            {runtimeGates!.releaseCommit ? <code style={MONO_META}>{runtimeGates!.releaseCommit}</code> : null}
-          </>
-        )}
-      />
+      <PageHeader title="系统运维" subtitle="查看配置、密钥和协议请求状态。" />
 
       <PageBody>
         {/* 部分接口失败：明示故障，避免「计数为 0」被误读为网关健康 */}
         {error ? <InlineAlert tone="error">部分接口加载失败，计数可能不完整：{error}</InlineAlert> : null}
         {actionMessage ? <InlineAlert tone="info">{actionMessage}</InlineAlert> : null}
 
-        <RuntimeGatePanel gates={runtimeGates!} />
         <ProtocolCoveragePanel coverage={protocolCoverage!} />
 
         {/* 配置概览计数 */}
@@ -164,22 +100,6 @@ export function GovernancePage() {
           <StatCard icon={<Tags size={16} />} label="调用方" value={`${appCallerTotal}`} sub="GW 已发现注册项" to="/app-callers" />
           <StatCard icon={<Cpu size={16} />} label="模型" value={`${enabledModels}/${models!.length}`} sub="启用/总数" to="/models" />
           <StatCard icon={<Shuffle size={16} />} label="Exchange" value={`${enabledExchanges}/${exchanges!.length}`} sub="启用/总数" to="/exchanges" />
-          <StatCard
-            icon={<Database size={16} />}
-            label="权威迁移"
-            value={`${configAuthority!.readinessPercent}%`}
-            sub={`${configAuthority!.mapFallbackObjectsRemaining ?? mapOnlyTotal} 个 MAP-only · ${activeFallbackStatus}`}
-            to="/logical-models"
-            color={authorityTone}
-          />
-          <StatCard
-            icon={<ShieldCheck size={16} />}
-            label="发布 Gate"
-            value={runtimeGates!.readyForRelease ? 'Ready' : runtimeGateLabel(runtimeGates!)}
-            sub={`${runtimeGates!.passed} 通过 · ${runtimeGates!.blocked} 阻塞 · ${runtimeGates!.waiting} 等待`}
-            to="/governance"
-            color={runtimeGateColor(runtimeGates!.status)}
-          />
           <StatCard
             icon={<KeyRound size={16} />}
             label="密钥自检"
@@ -191,55 +111,18 @@ export function GovernancePage() {
         </div>
 
         <Card style={{ ...CARD_BODY, display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap' }}>
-          <span style={SECTION_TITLE}>配置权威迁移</span>
-          <span style={BODY_TEXT}>
-            把 MAP-only 配置复制到网关；调用方没人接得住时去对外模型页处理。
-            <HelpPopover label="配置权威迁移">
-              认领会把 MAP 侧的平台、模型和 Exchange 复制到 llm_gateway 作为权威副本，已存在的对象直接跳过、不会覆盖。
-              「没人接得住」说的是这个 active 调用方既没有被任何对外模型认领、它那个用途也没有默认模型，
-              于是它不点名的请求解析不出任何模型。修法在对外模型页：给它设一条认领，或给那个用途设一个默认。
-              池绑定已经退场，解析器不读那几个字段，改它不会让这个数字下降。
-            </HelpPopover>
-          </span>
-          <Link to="/app-callers?status=active" style={{ textDecoration: 'none' }}>
-            <Chip label={`没人接得住 ${configAuthority!.activeMissingGatewayPool}`} color={configAuthority!.activeMissingGatewayPool > 0 ? 'var(--warn)' : 'var(--ok)'} bg={configAuthority!.activeMissingGatewayPool > 0 ? 'var(--warn-bg)' : 'var(--ok-bg)'} />
-          </Link>
-          {canWrite ? <Button size="sm" variant="secondary" disabled={busyAction !== null || mapOnlyTotal === 0} onClick={() => void claimMapOnlyConfig()} style={{ marginLeft: 'auto' }}>
-            {busyAction === 'bulk-claim-authority' ? '处理中…' : '认领 MAP-only 配置'}
-          </Button> : null}
-          {/*
-            这里原本有一个把 active 调用方绑到池上的按钮，点了只写池绑定。池退场之后解析器一个字段
-            都不读，于是它点完显示成功、闸门照红、请求照样 MODEL_NOT_FOUND——一个假装能修的
-            按钮，比没有按钮糟（第 71 轮 review）。换成指向真正能修的那一屏：
-            去对外模型页给调用方设认领，或给用途设默认。
-          */}
-          <Link to="/logical-models" style={{ textDecoration: 'none' }}>
-            <Button size="sm" variant="secondary">去对外模型页设认领或默认</Button>
-          </Link>
+          <span style={SECTION_TITLE}>调用方路由</span>
+          <span style={BODY_TEXT}>{configAuthority!.status === 'unknown' ? '调用方路由状态暂不可用' : `${configAuthority!.activeMissingGatewayPool} 个活跃调用方尚无可用模型`}</span>
+          <Link to="/app-callers?status=active" style={{ textDecoration: 'none' }}><Button size="sm" variant="secondary">查看调用方</Button></Link>
+          <Link to="/logical-models" style={{ textDecoration: 'none' }}><Button size="sm" variant="secondary">设置模型与默认项</Button></Link>
+          {mapOnlyTotal > 0 ? <>
+            <span style={BODY_TEXT}>有 {mapOnlyTotal} 项已有 MAP 配置可导入</span>
+            <HelpPopover label="导入已有配置">将已有上游、模型与转接配置复制到网关；保留密钥，跳过已存在的配置。</HelpPopover>
+            {canWrite ? <Button size="sm" variant="secondary" disabled={busyAction !== null} onClick={() => void claimMapOnlyConfig()}>{busyAction ? '导入中…' : '导入已有配置'}</Button> : null}
+          </> : null}
         </Card>
-        {!canWrite ? <ReadOnlyNotice>当前角色可以查看运行状态、配置权威和容器拓扑，但不能执行配置认领或绑定。</ReadOnlyNotice> : null}
+        {!canWrite ? <ReadOnlyNotice>当前角色可以查看状态；修改配置需要管理员权限。</ReadOnlyNotice> : null}
 
-        {/* 容器拓扑：静态参考资料，默认收起。概念解释走教程，不在控制台里复述。 */}
-        <DetailsBlock title={`容器拓扑（${TOPOLOGY.length} 个容器）`}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
-            {TOPOLOGY.map((t) => {
-              const g = GROUP_META[t.group];
-              const https = t.exposure.includes('HTTPS');
-              return (
-                <div
-                  key={t.name}
-                  style={{ ...INSET_BLOCK, display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap' }}
-                >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: g.color }}>{g.icon}<Chip label={g.label} color={g.color} bg={g.bg} /></span>
-                  <span style={{ ...MONO_META, color: 'var(--text-primary)', fontWeight: 600, minWidth: 120 }}>{t.name}</span>
-                  <span style={{ ...BODY_TEXT, minWidth: 96 }}>{t.role}</span>
-                  <Chip label={t.exposure} color={https ? 'var(--ok)' : 'var(--text-muted)'} bg={https ? 'var(--ok-bg)' : 'var(--bg-elevated)'} />
-                </div>
-              );
-            })}
-          </div>
-          <TutorialLink chapter="chapter-31">查看教程：容器拓扑与双出口</TutorialLink>
-        </DetailsBlock>
       </PageBody>
     </PageShell>
   );
@@ -275,123 +158,34 @@ function StatCard({ icon, label, value, sub, to, color }: { icon: JSX.Element; l
   );
 }
 
-function RuntimeGatePanel({ gates }: { gates: RuntimeGatesData }) {
-  return (
-    <Card style={CARD_BODY}>
-      <div style={cardHeadStyle}>
-        <h2 style={{ ...SECTION_TITLE, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <ShieldCheck size={16} /> 发布 Gate
-          <HelpPopover label="发布 Gate">
-            这些 gate 只聚合本控制台已有的证据，不替代发布脚本和生产台账。
-            全部阻塞项通过才代表当前 commit 可以放行发布；没通过时，下面每张卡的「下一步」就是当前阻塞点。
-          </HelpPopover>
-        </h2>
-        <Chip label={runtimeGateLabel(gates)} color={runtimeGateColor(gates.status)} bg={runtimeGateBg(gates.status)} />
-        {/* 右侧这句由 readyForRelease（= 全部 blocking gate 通过）派生，不是常驻说明：状态变了它跟着变。 */}
-        <span style={{ ...BODY_TEXT, marginLeft: 'auto' }}>
-          {gates.readyForRelease ? '当前 commit 可以放行发布' : '还有阻塞项，暂不能放行发布'}
-        </span>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: GAP.normal }}>
-        {gates.items.map((item) => {
-          const actions = item.links && item.links.length > 0 ? item.links : runtimeGateActionLinks(item, gates);
-          return (
-            <div key={item.id} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: 12, background: 'var(--bg-elevated)', display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 'var(--fs-secondary)', fontWeight: 650, color: 'var(--text-primary)' }}>{item.label}</span>
-                <Chip label={runtimeGateStatusLabel(item.status)} color={runtimeGateColor(item.status)} bg={runtimeGateBg(item.status)} />
-              </div>
-              {/* 成句解释一律正文档：这两处原来是 12/11px 配 1.45 行高，正是「整页糊一档」的来源。 */}
-              <div style={BODY_TEXT}>{item.detail}</div>
-              {item.facts && Object.keys(item.facts).length > 0 ? (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight }}>
-                  {runtimeGateFactsForDisplay(item).map(([key, value]) => (
-                    <span
-                      key={key}
-                      title={`${key}: ${value}`}
-                      style={{
-                        maxWidth: '100%',
-                        minWidth: 0,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        fontSize: 'var(--fs-micro)',
-                        color: 'var(--text-secondary)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-sm)',
-                        padding: '3px 6px',
-                        background: 'var(--bg-surface)',
-                      }}
-                    >
-                      <span style={{ color: 'var(--text-muted)' }}>{key}</span>: {value || 'empty'}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', wordBreak: 'break-word' }}>{item.evidence}</div>
-              {actions.length > 0 ? (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight }}>
-                  {actions.map((action) => (
-                    <Link
-                      key={`${item.id}:${action.to}:${action.label}`}
-                      to={action.to}
-                      style={miniLinkStyle}
-                    >
-                      {action.label}
-                    </Link>
-                  ))}
-                </div>
-              ) : null}
-              <div style={{ ...BODY_TEXT, color: item.blocking ? 'var(--warn)' : 'var(--text-muted)' }}>{item.nextAction}</div>
-            </div>
-          );
-        })}
-      </div>
-    </Card>
-  );
-}
-
 function ProtocolCoveragePanel({ coverage }: { coverage: ProtocolCoverageData }) {
   return (
     <Card style={CARD_BODY}>
       <div style={cardHeadStyle}>
         <h2 style={{ ...SECTION_TITLE, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <Shuffle size={16} /> 协议入口覆盖
-          <HelpPopover label="协议入口覆盖">
-            覆盖判定只看两样东西：这个协议在选定窗口内有没有真实请求日志，以及 active 调用方是否都被日志覆盖到。
-            「代码里支持该协议」不算数；缺样本的调用方会直接列在对应卡片上，点「日志」即可按协议回查。
+          <Shuffle size={16} /> 协议请求
+          <HelpPopover label="协议请求">
+            显示最近 24 小时的请求与失败数量。没有请求表示暂无流量，不代表协议不可用；需要排查时打开日志。
           </HelpPopover>
         </h2>
-        <Chip
-          label={`${coverage.coveredProtocols}/${coverage.items.length} 有运行日志`}
-          color={coverage.missingRuntimeProtocols === 0 ? 'var(--ok)' : 'var(--warn)'}
-          bg={coverage.missingRuntimeProtocols === 0 ? 'var(--ok-bg)' : 'var(--warn-bg)'}
-        />
-        <span style={{ ...BODY_TEXT, marginLeft: 'auto' }}>
-          {coverage.releaseCommit ? `commit=${coverage.releaseCommit}` : `最近 ${coverage.sinceHours} 小时`}
-        </span>
+        <span style={{ ...BODY_TEXT, marginLeft: 'auto' }}>最近 {coverage.sinceHours} 小时</span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: GAP.normal }}>
         {coverage.items.map((item) => (
           <div key={item.ingressProtocol} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: 12, background: 'var(--bg-elevated)', display: 'flex', flexDirection: 'column', gap: 7 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: GAP.normal }}>
               <span style={{ fontSize: 'var(--fs-secondary)', fontWeight: 650, color: 'var(--text-primary)' }}>{item.label}</span>
-              <Chip label={protocolCoverageLabel(item.status)} color={protocolCoverageColor(item.status)} bg={protocolCoverageBg(item.status)} />
+              <Chip label={item.logRequests > 0 ? '有请求' : '暂无请求'} color="var(--text-muted)" bg="var(--bg-elevated)" />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.tight }}>
               <MiniMetric label="请求" value={`${item.logRequests}`} />
               <MiniMetric label="HTTP" value={`${item.httpRequests}`} />
-              <MiniMetric label="active 覆盖" value={`${item.coveredActiveAppCallers}/${item.activeAppCallers}`} />
-              <MiniMetric label="失败/丢参" value={`${item.failedRequests}/${item.droppedParameterRequests}`} />
+
+              <MiniMetric label="失败/参数未采用" value={`${item.failedRequests}/${item.droppedParameterRequests}`} />
             </div>
             <div style={{ minHeight: 18, fontSize: 'var(--fs-micro)', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {item.requestTypes.length > 0 ? item.requestTypes.join(', ') : '暂无 requestType 样本'}
             </div>
-            {item.missingActiveAppCallerCodes.length > 0 ? (
-              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--warn)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.missingActiveAppCallerCodes.join(', ')}>
-                缺样本：{item.missingActiveAppCallerCodes.join(', ')}
-              </div>
-            ) : null}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight }}>
               <Link to={item.logsLink} style={miniLinkStyle}>日志</Link>
               <Link to={item.appCallersLink} style={miniLinkStyle}>调用方</Link>
@@ -420,117 +214,6 @@ function MiniMetric({ label, value }: { label: string; value: string }) {
       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-secondary)', fontWeight: 650, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
     </div>
   );
-}
-
-function runtimeGateActionLinks(item: { id: string; facts?: Record<string, string> }, gates: RuntimeGatesData): Array<{ label: string; to: string }> {
-  const facts = item.facts ?? {};
-  const releaseCommit = (facts.releaseCommit || gates.releaseCommit || '').trim();
-  const releaseQuery = releaseCommit ? `?releaseCommit=${encodeURIComponent(releaseCommit)}` : '';
-  const missingCode = (facts.missingAppCallerCodes || '')
-    .split(',')
-    .map((x) => x.trim())
-    .find(Boolean);
-  switch (item.id) {
-    case 'config_authority_objects':
-      return [
-        { label: '模型', to: '/logical-models' },
-        { label: '平台', to: '/platforms' },
-        { label: '模型', to: '/models' },
-        { label: 'Exchange', to: '/exchanges' },
-      ];
-    case 'active_appcaller_pool_binding':
-      return [
-        { label: 'active 调用方', to: '/app-callers?status=active' },
-        { label: 'discovered 调用方', to: '/app-callers?status=discovered' },
-        { label: '模型', to: '/logical-models' },
-      ];
-    case 'appcaller_policy_drift':
-      return [{ label: '漂移调用方', to: '/app-callers?drift=any' }];
-    case 'appcaller_ingress_registry_coverage':
-      return [
-        { label: '协议覆盖', to: '/?protocolCoverage=1' },
-        { label: '调用方', to: '/app-callers' },
-      ];
-    case 'gateway_pool_member_readiness':
-      return [{ label: '检查对外模型', to: '/logical-models' }];
-    case 'active_appcaller_map_fallback_exit':
-      return [
-        { label: 'active 调用方', to: '/app-callers?status=active' },
-        { label: '模型', to: '/logical-models' },
-        { label: '平台密钥', to: '/platforms' },
-        { label: '配置权威审计', to: '/audits?targetType=llmgw_config_authority' },
-      ];
-    case 'gateway_key_integrity':
-      return [
-        { label: '平台密钥', to: '/platforms' },
-        { label: '模型密钥', to: '/models' },
-        { label: 'Exchange 密钥', to: '/exchanges' },
-      ];
-    case 'current_commit_http_transport':
-      return [{ label: '当前 commit 日志', to: `/logs${releaseQuery}` }];
-    case 'dropped_parameter_runtime_evidence':
-      return [{ label: '参数证据日志', to: `/logs${releaseQuery}` }];
-    case 'appcaller_runtime_coverage':
-      return [
-        { label: 'active 调用方', to: missingCode ? `/app-callers?status=active&search=${encodeURIComponent(missingCode)}` : '/app-callers?status=active' },
-        { label: '当前 commit 日志', to: `/logs${releaseQuery}` },
-      ];
-    case 'protocol_runtime_coverage':
-      return [
-        { label: '协议覆盖', to: `/${releaseCommit ? `?protocolCoverage=1&releaseCommit=${encodeURIComponent(releaseCommit)}` : '?protocolCoverage=1'}` },
-        { label: '协议日志', to: `/logs${releaseQuery}` },
-        { label: '调用方', to: '/app-callers' },
-      ];
-    default:
-      return [];
-  }
-}
-
-function runtimeGateFactsForDisplay(item: { id: string; facts?: Record<string, string> }): Array<[string, string]> {
-  const facts = item.facts ?? {};
-  const preferredByGate: Record<string, string[]> = {
-    active_appcaller_map_fallback_exit: [
-      'disableMapConfigFallbackForActiveAppCallers',
-      'mapFallbackObjectsRemaining',
-      'activeMissingGatewayPool',
-      'discoveredAppCallers',
-      'withoutUsableMember',
-    ],
-    appcaller_ingress_registry_coverage: [
-      'registeredAppCallers',
-      'coveredProtocols',
-      'missingProtocols',
-      'missingIngressProtocols',
-    ],
-    current_commit_http_transport: [
-      'releaseCommit',
-      'releaseLogTotal',
-      'httpTransportLogs',
-      'nonHttpTransportLogs',
-    ],
-    protocol_runtime_coverage: [
-      'releaseCommit',
-      'coveredProtocols',
-      'missingProtocols',
-      'missingIngressProtocols',
-      'protocolLogTotal',
-      'failedProtocolLogs',
-      'droppedParameterProtocolLogs',
-    ],
-  };
-  const preferred = preferredByGate[item.id] ?? [];
-  const seen = new Set<string>();
-  const ordered: Array<[string, string]> = [];
-  for (const key of preferred) {
-    if (Object.prototype.hasOwnProperty.call(facts, key)) {
-      ordered.push([key, facts[key]]);
-      seen.add(key);
-    }
-  }
-  for (const entry of Object.entries(facts)) {
-    if (!seen.has(entry[0])) ordered.push(entry);
-  }
-  return ordered.slice(0, 8);
 }
 
 function emptyKeyHealth(): KeyHealthSummary {
@@ -575,19 +258,6 @@ function emptyConfigAuthority(): ConfigAuthoritySummary {
     activeAppCallerMapFallbackPolicy: 'configurable',
     readinessPercent: 0,
     status: 'unknown',
-  };
-}
-
-function emptyRuntimeGates(): RuntimeGatesData {
-  return {
-    status: 'unknown',
-    readyForRelease: false,
-    passed: 0,
-    blocked: 0,
-    waiting: 0,
-    generatedAt: '',
-    releaseCommit: null,
-    items: [],
   };
 }
 
@@ -636,53 +306,6 @@ function protocolCoverageTitle(protocol: string) {
   if (protocol === 'claude-compatible') return 'Claude-compatible';
   if (protocol === 'gemini-compatible') return 'Gemini-compatible';
   return protocol;
-}
-
-function protocolCoverageLabel(status: string) {
-  if (status === 'covered') return '已覆盖';
-  if (status === 'runtime-seen') return '有日志';
-  if (status === 'registry-only') return '仅注册';
-  return '无证据';
-}
-
-function protocolCoverageColor(status: string) {
-  if (status === 'covered') return 'var(--ok)';
-  if (status === 'runtime-seen') return 'var(--warn)';
-  if (status === 'registry-only') return 'var(--accent)';
-  return 'var(--text-muted)';
-}
-
-function protocolCoverageBg(status: string) {
-  if (status === 'covered') return 'var(--ok-bg)';
-  if (status === 'runtime-seen') return 'var(--warn-bg)';
-  if (status === 'registry-only') return 'var(--accent-soft)';
-  return 'var(--bg-surface)';
-}
-
-function runtimeGateLabel(gates: RuntimeGatesData) {
-  if (gates.readyForRelease) return 'Ready';
-  if (gates.status === 'blocked') return 'Blocked';
-  if (gates.status === 'waiting') return 'Waiting';
-  return 'Unknown';
-}
-
-function runtimeGateStatusLabel(status: string) {
-  if (status === 'pass') return '通过';
-  if (status === 'blocked') return '阻塞';
-  if (status === 'waiting') return '等待';
-  return '未知';
-}
-
-function runtimeGateColor(status: string) {
-  if (status === 'ready' || status === 'pass') return 'var(--ok)';
-  if (status === 'blocked') return 'var(--err)';
-  return 'var(--warn)';
-}
-
-function runtimeGateBg(status: string) {
-  if (status === 'ready' || status === 'pass') return 'var(--ok-bg)';
-  if (status === 'blocked') return 'var(--err-bg)';
-  return 'var(--warn-bg)';
 }
 
 function Empty({ text }: { text: string }) {

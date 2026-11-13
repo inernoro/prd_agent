@@ -298,3 +298,9 @@ PRD_GATEWAY_DB=1 mongosh "<connection-uri>/<网关库名>" scripts/mongodb-index
 ## 实现来源
 
 - [模型兼容命名空间维护脚本](../scripts/migrate-gateway-model-identities.js)
+
+## 调用链排查与写入实例租约（2026-11-12）
+
+调用链通过请求、业务运行、逻辑请求、上游回执／作业及逐次尝试编号覆盖保留期内的日志。网关索引清单对 `RequestId`、`RunId`、`LogicalRequestId`、`ProviderRequestId`、`ProviderTaskId`、`ProviderAttempts.AttemptId`、`ProviderAttempts.ProviderRequestId`、`ProviderAttempts.ProviderTaskId` 分别维护 `TenantId + 字段 + StartedAt + _id` 非唯一索引，名字为 `idx_llmgw_trace_` 加字段名。三个数组字段各建独立多键索引，不将多个数组字段放入同一复合索引。必须覆盖所有 `$or` 身份分支，否则连精确业务编号查询也可能扫描租户历史；`_id` 分支使用原生主键索引。控制台启动只巡检，DBA显式执行清单；缺失时查询仍可用，但可能扫描历史日志。
+
+serving 持久化写入实例租约。`idx_llmgw_logs_writer_lifecycle` 限定需收口的实例与进行中记录，`idx_llmgw_writer_lease_scan` 支持过期实例轮转扫描；均为非唯一索引，不修改日志或历史费用，不自动执行。租约不设 TTL，以保留收口依据。
