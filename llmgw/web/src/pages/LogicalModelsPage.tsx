@@ -107,6 +107,7 @@ export function LogicalModelsPage() {
   const [testingOfferingId, setTestingOfferingId] = useState<string | null>(null);
   const [editingOfferingId, setEditingOfferingId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [routingRefreshFailed, setRoutingRefreshFailed] = useState(false);
   const [claimDraft, setClaimDraft] = useState<{ id: string; value: string } | null>(null);
   const [allowlistDraft, setAllowlistDraft] = useState<{ id: string; value: string } | null>(null);
   const [offeringDraft, setOfferingDraft] = useState<CreateModelOfferingRequest>({
@@ -127,16 +128,33 @@ export function LogicalModelsPage() {
       return;
     }
     setItems(logicalRes.data.items);
+    setRoutingRefreshFailed(false);
     if (modelsRes.success) setModels(modelsRes.data.items.filter((x) => x.authority === 'llm_gateway'));
     if (exchangesRes.success) setExchanges(exchangesRes.data.items.filter((x) => x.authority === 'llm_gateway'));
     // 用量只是锦上添花，取不到不该让整页报错——列表照常渲染，那一列留空。
     setUsage(usageRes.success ? new Map(usageRes.data.items.map((x) => [x.publicId, x])) : null);
   }
 
+  // 一条线路的变更会影响所有兄弟线路的排队位置，只读服务端完整队列，不在客户端拼接。
+  async function refreshRoutes(): Promise<boolean> {
+    try {
+      const res = await getLogicalModels();
+      if (res.success) {
+        setItems(res.data.items);
+        setRoutingRefreshFailed(false);
+        setNotice(null);
+        return true;
+      }
+    } catch { /* 写入已成功，读取失败需要单独呈现，不能让用户重复提交写入。 */ }
+    setRoutingRefreshFailed(true);
+    failNotice('上游变更已保存，但最新线路状态未读取成功。请刷新线路状态后再确认主备与可用性。');
+    return false;
+  }
+
   useEffect(() => { void reload(); }, []);
 
   const targets = useMemo(() => offeringDraft.targetKind === 'model'
-    ? models.map((x) => ({ id: x.id, label: `${platforms.find(platform => platform.id === x.platformId)?.name || '未识别上游'} · ${x.modelName}${x.name && x.name !== x.modelName ? ` · ${x.name}` : ''}` }))
+    ? models.map((x) => ({ id: x.id, label: `${platforms.find(platform => platform.id === x.platformId)?.name || (x.platformId ? `上游 ${x.platformId.slice(0, 8)}` : '未识别上游')} · ${x.modelName}${x.name && x.name !== x.modelName ? ` · ${x.name}` : ''}` }))
     : exchanges.map((x) => ({ id: x.id, label: `${x.name} · ${x.transformerType}` })), [models, exchanges, platforms, offeringDraft.targetKind]);
 
   async function submitOffering(event: React.FormEvent, logical: LogicalModelItem) {
@@ -150,14 +168,13 @@ export function LogicalModelsPage() {
           rateLimitPerMinute: offeringDraft.rateLimitPerMinute ?? 0,
         })
       : await createModelOffering(logical.id, offeringDraft);
+    if (!res.success) { setBusy(null); failNotice(res.error?.message || '添加 Offering 失败'); return; }
+    const refreshed = await refreshRoutes();
     setBusy(null);
-    if (!res.success) { failNotice(res.error?.message || '添加 Offering 失败'); return; }
-    setItems((prev) => prev?.map((x) => x.id === logical.id
-      ? { ...x, offerings: editingOfferingId ? x.offerings.map((o) => o.id === editingOfferingId ? res.data : o) : [...x.offerings, res.data] }
-      : x) || null);
     setOfferingFor(null);
     setEditingOfferingId(null);
     setOfferingDraft({ targetKind: 'model', targetId: '', priority: 100, weight: 100 });
+    if (!refreshed) return;
     okNotice(editingOfferingId ? `已更新「${logical.name}」的上游 ${res.data.targetName}` : `已为「${logical.name}」添加上游 ${res.data.targetName}`);
   }
 
@@ -378,6 +395,7 @@ export function LogicalModelsPage() {
       setItems(previous => previous?.map(item => item.id === logical.id
         ? { ...item, offerings: item.offerings.filter(itemOffering => itemOffering.id !== offering.id) }
         : item) || null);
+      if (!await refreshRoutes()) return;
       okNotice('已删除停用线路，公开模型和 MAP 配置已保留');
     } catch { failNotice('线路删除结果未确认，请刷新列表核对后再操作'); }
     finally { setBusy(null); }
@@ -386,12 +404,11 @@ export function LogicalModelsPage() {
   async function toggleOffering(logical: LogicalModelItem, offeringId: string, enabled: boolean) {
     setBusy(offeringId);
     const res = await setModelOfferingEnabled(logical.id, offeringId, !enabled);
+    if (!res.success) { setBusy(null); failNotice(res.error?.message || '操作失败'); return; }
+    await refreshRoutes();
     setBusy(null);
-    if (!res.success) { failNotice(res.error?.message || '操作失败'); return; }
-    setItems((prev) => prev?.map((x) => x.id === logical.id
-      ? { ...x, offerings: x.offerings.map((o) => o.id === offeringId ? res.data : o) }
-      : x) || null);
   }
+
 
   /**
    * 手动恢复一条被熔断摘掉的线路：立刻给它进半开的资格，省掉冷却期的等待。
@@ -405,7 +422,7 @@ export function LogicalModelsPage() {
     setBusy(offeringId);
     const res = await recoverModelOffering(logical.id, offeringId);
     if (!res.success) { setBusy(null); failNotice(res.error?.message || '恢复失败'); return; }
-    await reload();
+    await refreshRoutes();
     setBusy(null);
   }
 
@@ -632,6 +649,7 @@ export function LogicalModelsPage() {
       <PageBody className="lg-collection-page">
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
         {notice ? <InlineAlert tone={notice.tone}>{notice.text}</InlineAlert> : null}
+        {routingRefreshFailed ? <Button size="sm" disabled={busy !== null} onClick={async () => { setBusy('refresh-routes'); await refreshRoutes(); setBusy(null); }}>{busy === 'refresh-routes' ? '读取中…' : '刷新线路状态'}</Button> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
         <Card className={upgradesOpen ? undefined : "lg-collection-hidden"} style={CARD_BODY}><ModelReferenceMigrationOverview onStatus={onMigrationStatus} onOpen={plan => openMigration(plan.mapping.source.logicalId || '', plan)} /><Button size="sm" variant="ghost" onClick={() => { setRepairOpen(value => !value); setMigrationFor(null); }}>{repairOpen ? '收起修复' : '修复失效引用'}</Button>{repairOpen ? <ModelReferenceUsageRepairPanel /> : null}</Card>
         {createOpen && canWrite ? <Card style={CARD_BODY}>
@@ -653,7 +671,7 @@ export function LogicalModelsPage() {
           </Card>
         ) : null}
 
-        {items !== null && items.length > 0 ? (
+        {items !== null && items.length > 0 && !routingRefreshFailed ? (
           <div className="lg-collection-workspace">
           <Card className="lg-logical-model-list lg-collection-list" style={{ padding: 0 }}>
             <CollectionView continuous pageSize={20} initialFilter="enabled" toolbarActions={canWrite ? <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set(items.filter(item => !item.enabled).map(item => item.id)))}>选择已停用</Button> : null} afterToolbar={canWrite && selectedIds.size > 0 ? <div className="lg-model-batch-actions"><span style={HINT_TEXT}>已选 {selectedIds.size} 项</span>{batchProgress ? <SectionLoader text={batchProgress}/> : null}<Button size="sm" disabled={busy !== null || !selectedIds.size} onClick={() => void removeSelected()}>删除所选</Button>{selectedIds.size ? <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>取消选择</Button> : null}</div> : null} items={items} placeholder="搜索模型名称或公开标识" searchText={(item) => `${item.name} ${item.publicId}`} filters={[{ value: 'enabled', label: '已启用', matches: (item) => item.enabled }, { value: 'disabled', label: '已停用', matches: (item) => !item.enabled }]}>

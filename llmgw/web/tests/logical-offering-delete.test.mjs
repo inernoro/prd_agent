@@ -39,7 +39,7 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
         if (name === 'getExchangeMeta') return 'export async function getExchangeMeta(){return {success:true,data:{modelTypes:[{value:"chat",label:"聊天"}]}}}';
         if (name === 'checkLogicalModelDeletion') return 'export async function checkLogicalModelDeletion(id){const f=globalThis.__offeringDeleteFixture;f.checks.push(id);return {success:true,data:{canDelete:id!=="blocked-model",reasons:id==="blocked-model"?["仍有业务配置，请先迁移"]:[],offerings:0}}}';
         if (name === 'deleteLogicalModel') return 'export async function deleteLogicalModel(id){const f=globalThis.__offeringDeleteFixture;f.deleted.push(id);return {success:true,data:{offeringsDeleted:0}}}';
-        if (name === 'deleteModelOffering') return 'export async function deleteModelOffering(logicalId,offeringId){const f=globalThis.__offeringDeleteFixture;f.calls.push({logicalId,offeringId});if(f.pending)return new Promise(resolve=>{f.complete=resolve});if(f.failure)return {success:false,error:{code:"OFFERING_IN_USE",message:f.failure}};return {success:true,data:{logicalModelId:logicalId,offeringId,removed:true}}}';
+        if (name === 'deleteModelOffering') return 'export async function deleteModelOffering(logicalId,offeringId){const f=globalThis.__offeringDeleteFixture;f.calls.push({logicalId,offeringId});if(f.pending)return new Promise(resolve=>{f.complete=resolve});if(f.failure)return {success:false,error:{code:"OFFERING_IN_USE",message:f.failure}};f.items=f.items.map(x=>x.id===logicalId?{...x,offerings:x.offerings.filter(o=>o.id!==offeringId)}:x);return {success:true,data:{logicalModelId:logicalId,offeringId,removed:true}}}';
         return `export async function ${name}(){return {success:true,data:{items:[]}}}`;
       }).join('\n');
     } }],
@@ -65,7 +65,7 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
     assert.deepEqual(fixture.calls[0], { logicalId: 'logical-quality', offeringId: 'legacy-disabled' });
     assert.equal(row('legacy-disabled'), undefined, '成功后从同一列表局部移除');
     assert.ok(row('official-enabled'), '兄弟官方线路保持');
-    assert.equal(fixture.reads, 1, '不重新加载整页或覆盖其他模型配置');
+    assert.equal(fixture.reads, 2, '删除后重新读取服务端权威线路状态');
     const prompt = fixture.prompts.at(-1);
     assert.equal(prompt.requireExact, 'legacy-disabled'); assert.equal(prompt.tone, 'danger');
     assert.match(prompt.description, /无法撤销/); assert.match(prompt.description, /公开模型、兼容标识及 MAP 配置会保留/);
@@ -79,6 +79,7 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
     assert.ok(buttons('删除线路').every(button => button.disabled), '确认或DELETE待返回时阻止第二次删除');
     await click(remove('protected-disabled'));
     assert.equal(fixture.calls.length, 3, 'busy期间不得重复提交');
+    fixture.items[0].offerings = fixture.items[0].offerings.filter(offering => offering.id !== 'pending-disabled');
     await act(async () => fixture.complete({ success: true, data: { logicalModelId: 'logical-quality', offeringId: 'pending-disabled', removed: true } }));
     assert.equal(row('pending-disabled'), undefined);
     assert.equal(remove('protected-disabled').disabled, false);
