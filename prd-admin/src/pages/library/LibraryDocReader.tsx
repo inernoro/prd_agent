@@ -1,3 +1,4 @@
+import { WritingPublicationActions } from '../document-store/writing/WritingPublicationActions';
 /**
  * LibraryDocReader — 智识殿堂专属文档阅读器（claymorphism 风格）
  *
@@ -172,6 +173,8 @@ export type LibraryDocReaderPreview = {
 
 type Props = {
   entries: DocumentEntry[];
+  /** Only normal public stores provide this; token-only private shares omit it. */
+  writingStoreId?: string;
   primaryEntryId?: string;
   pinnedEntryIds?: string[];
   loadContent: (entryId: string) => Promise<LibraryDocReaderPreview | null>;
@@ -179,6 +182,7 @@ type Props = {
 
 export function LibraryDocReader({
   entries,
+  writingStoreId,
   primaryEntryId,
   pinnedEntryIds = [],
   loadContent,
@@ -521,6 +525,8 @@ export function LibraryDocReader({
             />
           </div>
         </div>
+
+        {writingStoreId && entries.find(entry => entry.id === selectedId)?.hasWritingPublication && <nav aria-label="已发布阅读方式" className="flex flex-wrap gap-2 border-b-2 border-dashed border-amber-500 px-3 py-3"><WritingPublicationActions storeId={writingStoreId} entryId={selectedId} hasPublication publicStore className="inline-flex items-center gap-1.5 rounded-lg border-2 border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-2 text-[12px] font-bold text-[var(--text-primary)]" /></nav>}
 
         <div className="flex-1 overflow-y-auto py-3 px-2">
           {filteredRoots.length === 0 ? (

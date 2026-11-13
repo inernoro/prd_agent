@@ -433,11 +433,11 @@ export function preserveSrcDocFragmentLinks(html: string): string {
   return output + html.slice(lastEnd);
 }
 
-export function withPreviewBase(html: string, siteUrl: string) {
+export function withPreviewBase(html: string, siteUrl: string, parentOrigin = typeof location === 'undefined' ? undefined : location.origin) {
   // 同一处剥干净：srcDoc 里留着一条注定加载不了的第三方 beacon 没有意义，
   // 还会在访客的控制台里刷一条 CORS 报错，让真问题更难被看见。
   html = preserveSrcDocFragmentLinks(stripInjectedTelemetry(html));
-  const baseHref = new URL('.', siteUrl).toString();
+  const baseHref = new URL('.', new URL(siteUrl, parentOrigin)).toString();
 
   // 先找到那个 <base> 标签本身，再看它有没有 href —— 两件事分开判。
   // 合成一条正则要求 href 必须存在，会让 `<base target="_blank">` 这种「有标签、没 href」

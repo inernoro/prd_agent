@@ -341,7 +341,7 @@ public partial class DocumentStoreController : ControllerBase
         return (entry, store, null);
     }
 
-    /// <summary>加载条目 + 其所属空间并校验可读（拥有者/公开/团队成员）。无权返回错误 IActionResult</summary>
+    /// <summary>加载可读条目；未发布写作草稿仅对知识库可写成员可见。</summary>
     private async Task<(DocumentEntry? entry, DocumentStore? store, IActionResult? error)> LoadReadableEntryAsync(string entryId, string userId)
     {
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
@@ -352,6 +352,8 @@ public partial class DocumentStoreController : ControllerBase
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
         if (!await CanReadStoreAsync(store, userId, myTeamIds))
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
+        if (entry.Writing != null && entry.Writing.Published == null && !await CanWriteStoreAsync(store, userId, myTeamIds))
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
         return (entry, store, null);
     }
@@ -806,11 +808,14 @@ public partial class DocumentStoreController : ControllerBase
         if (!await CanReadStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
+        var canWrite = await CanWriteStoreAsync(store, userId, myTeamIds);
         pageSize = Math.Clamp(pageSize, 1, 500);
         page = Math.Max(1, page);
 
         var filterBuilder = Builders<DocumentEntry>.Filter;
         var filter = filterBuilder.Eq(e => e.StoreId, storeId);
+        if (!canWrite)
+            filter &= filterBuilder.Where(e => e.Writing == null || e.Writing.Published != null);
 
         // 按层级过滤：all=true 返回全部，否则按 parentId 过滤
         if (!all && string.IsNullOrWhiteSpace(keyword))
@@ -892,7 +897,7 @@ public partial class DocumentStoreController : ControllerBase
             .Distinct()
             .ToList();
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds, canWrite }));
     }
 
     /// <summary>
@@ -1008,6 +1013,9 @@ public partial class DocumentStoreController : ControllerBase
         var (entry, store, error) = await LoadWritableEntryAsync(entryId, userId);
         if (error != null) return error;
 
+        if (entry!.Writing != null && (request.Title != null || request.Summary != null || request.ContentType != null))
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请在作者工作区编辑并审核发布"));
+
         var updates = new List<UpdateDefinition<DocumentEntry>>();
 
         if (request.Title != null)
@@ -1104,6 +1112,7 @@ public partial class DocumentStoreController : ControllerBase
         if (entry is null || store is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
+        if (entry.Writing != null) return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请在作者工作区编辑并审核发布"));
         if (entry.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持编辑"));
 
@@ -1242,6 +1251,7 @@ public partial class DocumentStoreController : ControllerBase
         if (error != null) return error;
         if (entry is null || store is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        if (entry.Writing != null) return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请在作者工作区编辑并审核发布"));
         if (entry.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持版本恢复"));
 
@@ -3711,6 +3721,8 @@ public partial class DocumentStoreController : ControllerBase
         if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
+        if (entry.Writing != null) return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请在作者工作区编辑并审核发布"));
+
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择要替换的文件"));
         if (file.Length > MaxUploadBytes)
@@ -3926,7 +3938,7 @@ public partial class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             entryId = entry.Id,
-            title = title ?? entry.Title,
+            title = entry.Writing?.Published?.Title ?? title ?? entry.Title,
             content,
             contentType = entry.ContentType,
             fileUrl,
@@ -6383,6 +6395,7 @@ public partial class DocumentStoreController : ControllerBase
     {
         var userId = GetUserId();
         var run = await _db.DocumentStoreAgentRuns.Find(r => r.Id == runId && r.UserId == userId).FirstOrDefaultAsync();
+        if (run?.Kind == WritingDocumentPolicy.RunKind) run = null;
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));
         return Ok(ApiResponse<DocumentStoreAgentRun>.Ok(run));
@@ -6441,6 +6454,7 @@ public partial class DocumentStoreController : ControllerBase
 
         var userId = GetUserId();
         var run = await _db.DocumentStoreAgentRuns.Find(r => r.Id == runId && r.UserId == userId).FirstOrDefaultAsync(cancellationToken);
+        if (run?.Kind == WritingDocumentPolicy.RunKind) run = null;
         if (run == null)
         {
             await WriteSseEventAsync(null, "error", System.Text.Json.JsonSerializer.Serialize(
@@ -6664,6 +6678,7 @@ public partial class DocumentStoreController : ControllerBase
             .Limit(500)
             .ToListAsync();
 
+        items = items.Where(e => e.Writing == null || e.Writing.Published != null).ToList();
         return Ok(ApiResponse<object>.Ok(new { items, total = items.Count }));
     }
 
@@ -6673,7 +6688,7 @@ public partial class DocumentStoreController : ControllerBase
     public async Task<IActionResult> GetPublicEntryContent(string entryId)
     {
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
-        if (entry == null)
+        if (entry == null || (entry.Writing != null && entry.Writing.Published == null))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在"));
 
         var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.IsPublic).FirstOrDefaultAsync();
@@ -7135,6 +7150,7 @@ public partial class DocumentStoreController : ControllerBase
                 .ToListAsync();
         }
 
+        items = items.Where(e => e.Writing == null || e.Writing.Published != null).ToList();
         return Ok(ApiResponse<object>.Ok(new { items, total = items.Count }));
     }
 
@@ -7152,7 +7168,7 @@ public partial class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "该文档不在分享范围内"));
 
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId && e.StoreId == link.StoreId).FirstOrDefaultAsync();
-        if (entry == null)
+        if (entry == null || (entry.Writing != null && entry.Writing.Published == null))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在"));
 
         return Ok(ApiResponse<object>.Ok(await BuildEntryContentPayloadAsync(entry)));
@@ -7364,7 +7380,7 @@ public partial class DocumentStoreController : ControllerBase
         return new
         {
             entryId = entry.Id,
-            title = title ?? entry.Title,
+            title = entry.Writing?.Published?.Title ?? title ?? entry.Title,
             content,
             contentType = entry.ContentType,
             fileUrl,
