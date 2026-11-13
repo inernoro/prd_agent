@@ -326,3 +326,9 @@
 @media(max-width:760px){.writing-reader .writing-conclusions{font-size:16px;line-height:1.85;margin-bottom:14px}.writing-reader .writing-conclusions>li{margin-bottom:4px}.writing-reader .writing-scope-grid>div{padding:10px 12px}.writing-tutorial .writing-tutorial-step>div>p{font-size:14.5px;line-height:1.6}.writing-tutorial .writing-tutorial-step{grid-template-columns:22px auto minmax(0,1fr)}.hcol-template .ht-editor-heading{display:flex;align-items:flex-start;padding:16px;background:var(--writing-sf);border-bottom:1px solid var(--writing-ln)}.hcol-template .ht-editor-heading>.mono{display:none}.hcol-template .fb{padding:16px}.hcol-template .fb>.fk{position:static;float:none;display:none}.hcol-template .ht-editor .fb .ht-types{flex-wrap:nowrap;overflow:auto;margin-right:-16px;padding-right:16px;scrollbar-width:none}.hcol-template .ht-types .btn.sm{height:30px;min-height:30px;padding:0 10px;border-radius:17px;font-size:12.5px;flex-shrink:0}.hcol-template .ht-editor .fi-t{height:46px}.hcol-template .ht-editor .fi-s{height:96px;resize:none;font-size:15px;line-height:1.7}}
 
 @media(max-width:760px){.hcol-template .ht-editor .fb{padding:16px}}
+
+/* Derived teaching keeps the current published section's constraints next to its steps. */
+.writing-tutorial-steps>.writing-section-condition{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;margin:12px 0;color:var(--writing-am);background:var(--writing-sf2);border-radius:6px;font-size:13px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+.writing-tutorial-steps>.writing-section-condition>.tag{flex-shrink:0}
+.writing-tutorial-steps>.writing-reader-detail{margin:12px 0;overflow:auto;max-width:100%}
+.writing-tutorial-steps>.writing-reader-detail td{overflow-wrap:anywhere}
