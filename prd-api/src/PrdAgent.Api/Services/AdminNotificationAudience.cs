@@ -26,6 +26,9 @@ public sealed class AdminNotificationAudience(MongoDbContext db, IAdminPermissio
 
     private async Task<IReadOnlyList<string>> PermissionsForActiveAdminAsync(string userId, CancellationToken ct)
     {
+        // Root 是认证层保留身份，不写入 users；沿用现有 Root 权限计算，不能当作缺失用户丢弃。
+        if (string.Equals(userId, AdminPermissionCatalog.RootUserId, StringComparison.Ordinal))
+            return await permissions.GetEffectivePermissionsAsync(userId, true, ct);
         var user = await db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
         if (user is null || user.Status != UserStatus.Active || user.UserType != UserType.Human || user.Role != UserRole.ADMIN)
             return Array.Empty<string>();

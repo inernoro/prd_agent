@@ -1651,6 +1651,35 @@ public sealed class AdminPushNotificationServiceTests
         Assert.Equal(0, await db.Context.AdminPushDeliveryLogs.CountDocumentsAsync(_ => true));
     }
 
+    [Theory]
+    [InlineData("llm-gateway-quota")]
+    [InlineData("platform-key-integrity")]
+    public async Task ExternalRootDelivery_UsesReservedIdentityWithoutPersistedUser(string source)
+    {
+        await using var db = await AdminPushTestDatabase.TryCreateAsync();
+        Assert.False(await db.Context.Users.Find(u => u.UserId == AdminPermissionCatalog.RootUserId).AnyAsync());
+        var permissions = new PrdAgent.Infrastructure.Services.AdminPermissionService(
+            db.Context, new Moq.Mock<ISystemRoleCacheService>(Moq.MockBehavior.Strict).Object);
+        var audience = new AdminNotificationAudience(db.Context, permissions);
+        await db.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription {
+            UserId = AdminPermissionCatalog.RootUserId, TopicKey = "system-alert", Enabled = true,
+            ChannelType = "url", Method = "GET", UrlTemplate = "https://example.com/push/{{message}}",
+        });
+        await db.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
+            Source = source, Title = "隔离根账号告警", Level = "error", CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+        });
+        var http = new RecordingHttpClientFactory();
+        var configuration = new ConfigurationBuilder().AddConfiguration(TestConfiguration)
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["AdminPush:AggregationSeconds"] = "0" }).Build();
+        var service = new AdminPushNotificationService(db.Context, http, new AllowAllUrlValidator(), configuration,
+            NullLogger<AdminPushNotificationService>.Instance, audience: audience);
+        await service.DispatchPendingAsync(default);
+        Assert.Single(http.Requests);
+        Assert.True((await db.Context.AdminPushDeliveryLogs.Find(_ => true).SingleAsync()).Success);
+        Assert.False(await audience.CanReceiveAdminAsync("missing-user", default));
+        Assert.False(await audience.CanReceiveGatewayAsync("missing-user", default));
+    }
+
     private static AdminPushNotificationService CreateService(
         MongoDbContext db,
         RecordingHttpClientFactory http,
