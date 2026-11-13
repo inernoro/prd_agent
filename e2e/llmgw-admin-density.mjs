@@ -84,7 +84,7 @@ async function screenshot(page, id, metrics = {}) {
   let target, wrappers = [];
   if (id.endsWith('-login')) { target = document.querySelector('.lg-login-submit');wrappers = [...document.querySelectorAll('.lg-login-capabilities')]; }
   if (id.endsWith('-members-small')) { target = document.querySelector('tbody tr');wrappers = [...document.querySelectorAll('.lg-form-grid')]; }
-  if (id.endsWith('-usage')) { target = [...document.querySelectorAll('.lg-card-kicker')].find(el => /USD Gateway 估算/.test(el.textContent))?.parentElement;wrappers = [...document.querySelectorAll('[aria-labelledby="tenant-governance-title"] .lg-form-grid')]; }
+  if (id.endsWith('-usage')) { target = [...document.querySelectorAll('.lg-card-kicker')].find(el => /USD Gateway 估算/.test(el.textContent))?.parentElement;wrappers = [...(document.getElementById('tenant-governance-title')?.parentElement?.parentElement?.querySelectorAll('.lg-form-grid') ?? [])]; }
   if (id.endsWith('-settings')) { target = document.querySelector('[role=radio]');wrappers = [...document.querySelectorAll('.lg-eyebrow,.lg-settings-card > .lg-card-kicker')]; }
   const core = rect(target);
   const beforeTask = wrappers.map(rect).filter(r => r && r.height > 0 && core && r.bottom <= core.y);
@@ -113,7 +113,7 @@ try {
    await screenshot(page, `${id}-login`, { username: user, submit });
    check(`${id}:登录主操作首屏可见`, submit && submit.y + submit.height <= (width === 1440 ? 900 : 844), submit);
    if (process.env.LLMGW_ADMIN_TASKS_ONLY === '1') {
-    await login(page);await page.locator('tbody tr').first().waitFor();const row = await page.locator('tbody tr').first().boundingBox();await screenshot(page, `${id}-members-small`, { firstRow: row });
+    await login(page);await nav(page, '/organization');await page.locator('tbody tr').first().waitFor();const row = await page.locator('tbody tr').first().boundingBox();await screenshot(page, `${id}-members-small`, { firstRow: row });
     await nav(page, '/usage');await page.locator('.lg-card-kicker').filter({ hasText: /USD Gateway 估算/ }).waitFor();await screenshot(page, `${id}-usage`, { usage: await page.locator('.lg-card-kicker').filter({ hasText: /USD Gateway 估算/ }).boundingBox() });
     await nav(page, '/settings');await page.getByRole('radio').first().waitFor();await screenshot(page, `${id}-settings`, { choice: await page.getByRole('radio').first().boundingBox() });await page.getByRole('radio', { name: /^深色/ }).click();await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     continue;
