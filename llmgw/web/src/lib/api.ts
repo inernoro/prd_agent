@@ -599,8 +599,8 @@ export function testPlatformConnection(id: string): Promise<ApiResponse<Platform
 export function getUpstreamModels(id: string): Promise<ApiResponse<UpstreamModelsData>> {
   return apiRequest<UpstreamModelsData>(`/platforms/${id}/upstream-models`);
 }
-export function importUpstreamModels(id: string, models: ImportUpstreamModelEntry[]): Promise<ApiResponse<ImportUpstreamModelsResult>> {
-  return apiRequest<ImportUpstreamModelsResult>(`/platforms/${id}/models/import`, { method: 'POST', body: { models } });
+export function importUpstreamModels(id: string, models: ImportUpstreamModelEntry[], options?: { publishToWhitelist?: boolean }): Promise<ApiResponse<ImportUpstreamModelsResult>> {
+  return apiRequest<ImportUpstreamModelsResult>(`/platforms/${id}/models/import`, { method: 'POST', body: { models, ...options } });
 }
 export function getModels(params?: { platformId?: string; enabled?: boolean }): Promise<ApiResponse<ModelsData>> {
   return apiRequest<ModelsData>('/models', {
@@ -1101,4 +1101,16 @@ export function getRepairableModelUsages(): Promise<ApiResponse<{ items: import(
 }
 export function createModelReferenceMigrationFromUsage(body: { consumerKey: string; recordId: string; path: string; targetLogicalId: string; clientRequestId: string }): Promise<ApiResponse<import('./types').ReferenceMigrationPlan>> {
   return apiRequest('/model-reference-migrations/plans/from-usage', { method: 'POST', body });
+}
+
+export function checkLogicalModelDeletion(id: string): Promise<ApiResponse<{ canDelete: boolean; reasons: string[]; offerings: number }>> {
+  return apiRequest(`/logical-models/${encodeURIComponent(id)}/delete-check`);
+}
+
+export type ModelBindingProbeView = { requestId: string; status: string; message: string; offeringId?: string; upstreamModelId?: string; outputUrl?: string | null; httpStatus?: number | null; failureKind?: string | null; updatedAt?: string | null };
+export function getModelBindingProbe(logicalId: string, offeringId: string, requestId?: string): Promise<ApiResponse<ModelBindingProbeView>> {
+  return apiRequest(`/logical-models/${encodeURIComponent(logicalId)}/offerings/${encodeURIComponent(offeringId)}/test${requestId ? `/${encodeURIComponent(requestId)}` : ''}`);
+}
+export function startModelBindingProbe(logicalId: string, offeringId: string, body: { clientRequestId: string; appCallerCode: string; maxCostUsd: number }): Promise<ApiResponse<ModelBindingProbeView>> {
+  return apiRequest(`/logical-models/${encodeURIComponent(logicalId)}/offerings/${encodeURIComponent(offeringId)}/test`, { method: 'POST', body });
 }

@@ -6473,6 +6473,35 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
 
 // 删除逻辑模型。它名下的 offering 是从属子项——离开逻辑模型没有独立意义，
 // 留着就是一堆指向不存在父项的孤儿，所以跟着一起删，并把条数如实回报。
+// 删除预检只返回计数和恢复动作；执行删除仍重新运行原有保护，不把预检当授权令牌。
+app.MapGet("/gw/logical-models/{id}/delete-check", async (HttpContext http, string id) =>
+{
+    var doc = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id))).FirstOrDefaultAsync(http.RequestAborted);
+    if (doc is null) return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "模型已不存在，请刷新列表。"), jsonOptions, 404);
+    var reasons = new List<string>();
+    var coverage = await InspectModelRetirementAsync(http, id);
+    if (!coverage.CanComplete || coverage.Residual > 0)
+        reasons.Add($"使用位置检查：{coverage.Residual} 处残留、{coverage.Blocked} 处阻断、{coverage.Unknown} 处未确认；请先迁移并复核。");
+    if (doc.AsNullableBool("IsDefaultForType") == true) reasons.Add("仍是用途默认，请先更换默认模型。");
+    if (GetStringArray(doc, "DefaultForAppCallerCodes").Count > 0) reasons.Add("仍被调用方指定，请先转移调用方配置。");
+    var references = await CollectMapBusinessModelReferencesAsync(http, mapDatabase, internalTenantId, logicalModelId: id, publicId: doc.AsNullableString("PublicId"));
+    if (references.Count > 0) reasons.Add($"仍被 {string.Join("、", references)} 使用，请先改绑。");
+    var publicId = doc.AsNullableString("PublicId")?.Trim() ?? string.Empty;
+    if (publicId.Length > 0)
+    {
+        if (await mapAppSettings.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildVisualPolicyFilter(publicId), cancellationToken: http.RequestAborted) > 0) reasons.Add("视觉创作策略仍在使用，请先改绑。");
+        if (await mapAgentApiKeys.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildAgentApiKeyReferenceFilter(publicId), cancellationToken: http.RequestAborted) > 0) reasons.Add("接入密钥仍绑定此模型，请先改绑。");
+        if (await mapImageGenRuns.CountDocumentsAsync(MapLogicalModelReferencePolicy.BuildInFlightImageRunFilter(publicId), cancellationToken: http.RequestAborted) > 0) reasons.Add("存在未结束的生图任务，请等待结束或明确处理后重查。");
+    }
+    var children = await gwModelOfferings.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id))).Project(new BsonDocument("_id", 1)).ToListAsync(http.RequestAborted);
+    var ids = children.Select(child => child.GetStringOrEmpty("_id")).Where(value => value.Length > 0).ToList();
+    var video = OfferingReferencePolicy.BuildInFlightVideoRunFilter(ids);
+    var direct = OfferingReferencePolicy.BuildLiveDirectVideoJobFilter(ids, DateTime.UtcNow);
+    if (video is not null && await videoGenRuns.CountDocumentsAsync(video, cancellationToken: http.RequestAborted) > 0) reasons.Add("线路存在未结束的视频任务，请等待结束后重查。");
+    if (direct is not null && await directVideoJobOwnerships.CountDocumentsAsync(direct, cancellationToken: http.RequestAborted) > 0) reasons.Add("线路仍在直连视频任务保留期内，请等待保留期结束。");
+    return Json(ApiEnvelope<object>.Ok(new { canDelete = reasons.Count == 0, reasons, offerings = children.Count }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
 {
     var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));

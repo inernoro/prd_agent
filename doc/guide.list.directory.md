@@ -58,6 +58,7 @@
 ### 二、设计文档
 
 - [稳定模型标识与模型生命周期 · 设计](./design.llmgw.model-lifecycle.md) `design.llmgw.model-lifecycle`
+- [模型工作台与上游绑定 · 设计](./design.llmgw.model-workbench.md) `design.llmgw.model-workbench`
 
 - [CDS 项目检查与通知总览 · 设计](./design.cds.project-status.md) `design.cds.project-status`
 

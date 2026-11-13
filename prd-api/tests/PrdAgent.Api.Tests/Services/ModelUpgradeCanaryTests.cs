@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using MongoDB.Bson;
+using MongoDB.Driver;
 using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
@@ -16,6 +17,71 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class ModelUpgradeCanaryTests
 {
+    [Fact, Trait("Category", "Integration")]
+    public async Task BindingProbeConsumerRechecksCurrentActorWireAndFrozenBudgetWithoutDispatch()
+    {
+        var uri = Environment.GetEnvironmentVariable("MODEL_BINDING_TEST_MONGO_URI");
+        Assert.False(string.IsNullOrEmpty(uri), "需要明确配置本地 MODEL_BINDING_TEST_MONGO_URI。");
+        var url = new MongoDB.Driver.MongoUrl(uri); Assert.All(url.Servers, host => Assert.Contains(host.Host, new[] { "localhost", "127.0.0.1", "::1" }));
+        var client = new MongoDB.Driver.MongoClient(uri); var suffix = Guid.NewGuid().ToString("N");
+        var gwName = "binding_consumer_gw_" + suffix; var mapName = "binding_consumer_map_" + suffix;
+        var data = new PrdAgent.Infrastructure.Database.LlmGatewayDataContext(uri!, gwName);
+        var map = new PrdAgent.Infrastructure.Database.MongoDbContext(uri!, mapName);
+        var now = new BsonDateTime(DateTime.UtcNow).ToUniversalTime();
+        BsonDocument Doc(string id) => new() { { "_id", id }, { "TenantId", "internal" }, { "Enabled", true }, { "UpdatedAt", now } };
+        var logical = Doc("logical"); logical["PublicId"] = "custom-chat"; logical["IdentityKind"] = "fixed"; logical["ModelType"] = "chat";
+        var provider = Doc("provider"); provider["Name"] = "Official"; provider["PlatformType"] = "openai";
+        var model = Doc("model"); model["PlatformId"] = "provider"; model["ModelName"] = "future-chat"; model["PriceCurrency"] = "USD";
+        model["InputPricePerMillion"] = new Decimal128(1m); model["OutputPricePerMillion"] = new Decimal128(2m); model["PriceObservedAt"] = now;
+        var route = Doc("route"); route["LogicalModelId"] = "logical"; route["TargetKind"] = "model"; route["TargetId"] = "model";
+        var fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            new BsonArray(new[] { logical, provider, model }.Select(d => new BsonDocument { { "id", d["_id"] }, { "updatedAt", d["UpdatedAt"] } })).ToJson()))).ToLowerInvariant();
+        var job = new BsonDocument { { "TenantId", "internal" }, { "Operation", "binding-test" }, { "ExpiresAt", now.AddMinutes(5) },
+            { "LogicalModelId", "logical" }, { "CandidateLogicalModelPublicId", "custom-chat" }, { "CandidateOfferingId", "route" },
+            { "ProviderId", "provider" }, { "Provider", "Official" }, { "ModelId", "model" }, { "UpstreamModelId", "future-chat" },
+            { "Protocol", "openai" }, { "EndpointPath", BsonNull.Value }, { "OfferingVersion", ModelUpgradeCanaryWorker.OfferingWireVersion(route) },
+            { "CandidateFingerprint", fingerprint }, { "PriceVersion", now.ToString("O") }, { "UnitCostUpperBoundUsd", new Decimal128(.1m) },
+            { "ModelType", "chat" }, { "ExecutionRequestedBy", "manual" }, { "ProbeRequestFingerprint", "explicit-user-intent" },
+            { "ActorUserId", "probe-user" }, { "ActorConsoleUserId", "console-user" } };
+        try
+        {
+            await map.Users.InsertOneAsync(new User { UserId = "probe-user", Username = "probe", Status = UserStatus.Active });
+            foreach (var pair in new[] { ("llmgw_logical_models", logical), ("llmgw_platforms", provider), ("llmgw_models", model), ("llmgw_model_offerings", route),
+                ("llmgw_console_users", new BsonDocument { { "_id", "console-user" }, { "IsActive", true }, { "IdentityProvider", "map" }, { "ExternalSubjectId", "map:probe-user" } }),
+                ("llmgw_memberships", new BsonDocument { { "_id", "member" }, { "TenantId", "internal" }, { "UserId", "console-user" }, { "Status", "active" }, { "Role", "admin" } }) })
+                await data.Database.GetCollection<BsonDocument>(pair.Item1).InsertOneAsync(pair.Item2);
+            Assert.NotNull(await ModelUpgradeCanaryWorker.ValidateAsync(data, map, job, "internal", default));
+            var altered = job.DeepClone().AsBsonDocument; altered["UnitCostUpperBoundUsd"] = new Decimal128(2m);
+            Assert.Null(await ModelUpgradeCanaryWorker.ValidateAsync(data, map, altered, "internal", default));
+            altered = job.DeepClone().AsBsonDocument; altered["OfferingVersion"] = "changed";
+            Assert.Null(await ModelUpgradeCanaryWorker.ValidateAsync(data, map, altered, "internal", default));
+            await data.Database.GetCollection<BsonDocument>("llmgw_memberships").UpdateOneAsync(new BsonDocument("_id", "member"), new BsonDocument("$set", new BsonDocument("Role", "viewer")));
+            Assert.Null(await ModelUpgradeCanaryWorker.ValidateAsync(data, map, job, "internal", default));
+        }
+        finally { await client.DropDatabaseAsync(gwName); await client.DropDatabaseAsync(mapName); }
+    }
+
+    [Theory]
+    [InlineData(429, "You have no credits remaining.", "quota_exhausted")]
+    [InlineData(429, "Rate limit exceeded", "rate_limited")]
+    [InlineData(403, "Denied", "rejected")]
+    [InlineData(500, "Failed", "upstream_error")]
+    [InlineData(200, "no credits remaining", "")]
+    public void BindingProbeFailureDistinguishesBillingAndRate(int status, string diagnostic, string expected)
+        => Assert.Equal(expected, ModelUpgradeCanaryWorker.ClassifyProbeFailure(status, diagnostic));
+
+    [Fact]
+    public void BindingImageProbeRequiresDecodableImageInsteadOfJustHttp200OrNonemptyBase64()
+    {
+        Assert.False(ModelUpgradeCanaryWorker.TryDecodeProbeImage("{\"data\":[{\"b64_json\":\"aGVsbG8=\"}]}", out _));
+        Assert.False(ModelUpgradeCanaryWorker.TryDecodeProbeImage("{\"data\":[{\"url\":\"https://example.invalid/not-fetched\"}]}", out _));
+        using var image = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(2, 2);
+        using var bytes = new MemoryStream();
+        image.Save(bytes, new SixLabors.ImageSharp.Formats.Png.PngEncoder());
+        var content = "{\"data\":[{\"b64_json\":\"" + Convert.ToBase64String(bytes.ToArray()) + "\"}]}";
+        Assert.True(ModelUpgradeCanaryWorker.TryDecodeProbeImage(content, out var decoded)); Assert.Equal(bytes.ToArray(), decoded);
+    }
+
     [Fact]
     public void DeploymentAuthorization_IsExplicitAndScoped()
     {
