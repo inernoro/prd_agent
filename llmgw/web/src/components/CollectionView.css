@@ -3,6 +3,7 @@
 .lg-collection-list { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .lg-collection-view { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .lg-collection-toolbar { display: flex; flex-shrink: 0; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border-subtle); }
+.lg-collection-toolbar > button { flex-shrink: 0; white-space: nowrap; }
 .lg-collection-toolbar input { width: 100%; min-width: 0; height: 36px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0 10px; background: var(--bg-input); color: var(--text-primary); font-size: var(--fs-secondary); }
 .lg-collection-toolbar select { max-width: 150px; height: 36px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text-secondary); font-size: var(--fs-secondary); }
 .lg-collection-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
