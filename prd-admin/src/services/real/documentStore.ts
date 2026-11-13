@@ -1,3 +1,4 @@
+import { collectDocumentEntryPages, type DocumentEntryPage } from './documentEntryPages';
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import { toUserReadableErrorMessage } from '@/lib/userReadableError';
@@ -146,11 +147,28 @@ export async function listKnowledgeEntriesPaged(storeId: string, q: KnowledgeEnt
   }>(`${api.documentStore.entries.list(storeId)}?${params.toString()}`, { method: 'GET' });
 }
 
-/** 搜索文档条目（支持内容搜索） */
-export async function searchDocumentEntries(storeId: string, keyword: string, searchContent: boolean) {
-  let url = `${api.documentStore.entries.list(storeId)}?page=1&pageSize=200&all=true&keyword=${encodeURIComponent(keyword)}`;
-  if (searchContent) url += '&searchContent=true';
-  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(url, { method: 'GET' });
+/** 文档树与搜索共用游标遍历；首批可先展示，其余后台补齐。 */
+export async function loadDocumentEntries(
+  storeId: string,
+  keyword?: string,
+  searchContent = false,
+  onFirstPage?: (page: DocumentEntryPage) => void,
+) {
+  return collectDocumentEntryPages(async cursor => {
+    const params = new URLSearchParams({ all: 'true', navigation: 'true', pageSize: '2000' });
+    if (keyword) params.set('keyword', keyword);
+    if (searchContent) params.set('searchContent', 'true');
+    if (cursor) params.set('cursor', cursor);
+    return apiRequest<DocumentEntryPage>(`${api.documentStore.entries.list(storeId)}?${params}`, { method: 'GET' });
+  }, onFirstPage);
+}
+
+/** 全部命中可达；读路径不触发索引回填或写权限。 */
+export async function searchDocumentEntries(storeId: string, keyword: string, searchContent: boolean, cursor?: string) {
+  const params = new URLSearchParams({ all: 'true', navigation: 'true', pageSize: '50', keyword });
+  if (searchContent) params.set('searchContent', 'true');
+  if (cursor) params.set('cursor', cursor);
+  return apiRequest<DocumentEntryPage>(`${api.documentStore.entries.list(storeId)}?${params}`, { method: 'GET' });
 }
 
 export const updateDocumentEntryReal: UpdateDocumentEntryContract = async (entryId, input) => {
@@ -614,11 +632,23 @@ export async function getPublicDocumentStore(storeId: string) {
 }
 
 /** 获取公开知识库内文档列表 */
+async function loadAnonymousDocumentEntries(url: string) {
+  return collectDocumentEntryPages(cursor => {
+    const params = new URLSearchParams({ pageSize: '2000' });
+    if (cursor) params.set('cursor', cursor);
+    return apiRequest<DocumentEntryPage>(`${url}?${params}`, { method: 'GET', auth: false });
+  });
+}
+
 export async function listPublicStoreEntries(storeId: string) {
-  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(
-    api.documentStore.stores.publicEntries(storeId),
-    { method: 'GET', auth: false },
-  );
+  return loadAnonymousDocumentEntries(api.documentStore.stores.publicEntries(storeId));
+}
+
+/** 公开空间的全文检索仍逐页复查 IsPublic。 */
+export async function searchPublicStoreEntries(storeId: string, keyword: string, cursor?: string) {
+  const params = new URLSearchParams({ pageSize: '50', keyword, searchContent: 'true' });
+  if (cursor) params.set('cursor', cursor);
+  return apiRequest<DocumentEntryPage>(`${api.documentStore.stores.publicEntries(storeId)}?${params}`, { method: 'GET', auth: false });
 }
 
 /** 获取公开文档内容 */
@@ -722,10 +752,13 @@ export async function getDocStoreShareView(token: string) {
 
 /** 列出分享范围内的文档（匿名；单篇分享只返回该篇） */
 export async function listDocStoreShareEntries(token: string) {
-  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(
-    api.documentStore.stores.publicShareEntries(token),
-    { method: 'GET', auth: false },
-  );
+  return loadAnonymousDocumentEntries(api.documentStore.stores.publicShareEntries(token));
+}
+
+export async function searchDocStoreShareEntries(token: string, keyword: string, cursor?: string) {
+  const params = new URLSearchParams({ pageSize: '50', keyword, searchContent: 'true' });
+  if (cursor) params.set('cursor', cursor);
+  return apiRequest<DocumentEntryPage>(`${api.documentStore.stores.publicShareEntries(token)}?${params}`, { method: 'GET', auth: false });
 }
 
 /** 读取分享范围内某篇文档正文（匿名） */

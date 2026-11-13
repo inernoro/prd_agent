@@ -800,7 +800,9 @@ public partial class DocumentStoreController : ControllerBase
         [FromQuery] string? category = null,
         [FromQuery] string? tag = null,
         [FromQuery] string? versionId = null,
-        [FromQuery] bool excludeFolders = false)
+        [FromQuery] bool excludeFolders = false,
+        [FromQuery] bool navigation = false,
+        [FromQuery] string? cursor = null)
     {
         var userId = GetUserId();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
@@ -812,8 +814,16 @@ public partial class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         var canWrite = await CanWriteStoreAsync(store, userId, myTeamIds);
-        pageSize = Math.Clamp(pageSize, 1, 500);
+        pageSize = Math.Clamp(pageSize, 1, navigation ? 2000 : 500);
         page = Math.Max(1, page);
+
+        DocumentEntryCursor? position = null;
+        if (navigation)
+        {
+            if (!string.IsNullOrEmpty(cursor) && !DocumentEntryCursor.TryDecode(cursor, storeId, out position))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分页位置已失效，请重新加载"));
+            position ??= new DocumentEntryCursor(storeId, DateTime.UtcNow, "");
+        }
 
         var filterBuilder = Builders<DocumentEntry>.Filter;
         var filter = filterBuilder.Eq(e => e.StoreId, storeId);
@@ -869,38 +879,60 @@ public partial class DocumentStoreController : ControllerBase
                 filterBuilder.Regex(e => e.Summary, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
             };
 
-            // 启用内容搜索时，同时搜索 ContentIndex 字段
+            // 正文与阅读接口同源；旧 ContentIndex 只有前 2000 字且可能过期，不作为正文事实源。
             if (searchContent)
             {
-                searchFilters.Add(
-                    filterBuilder.Regex(e => e.ContentIndex, new MongoDB.Bson.BsonRegularExpression(kw, "i")));
+                var contentMatches = await DocumentEntryContentSearch.FindAsync(_db,
+                    filter & !filterBuilder.Or(searchFilters), kw, HttpContext.RequestAborted);
+                searchFilters.Add(filterBuilder.In(e => e.Id, contentMatches));
             }
 
             filter &= filterBuilder.Or(searchFilters);
         }
 
-        var total = await _db.DocumentEntries.CountDocumentsAsync(filter);
-        var items = await _db.DocumentEntries.Find(filter)
-            .SortByDescending(e => e.IsFolder) // 文件夹优先
-            .ThenByDescending(e => e.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Limit(pageSize)
-            .ToListAsync();
+        // 导航采用不可变 ID 游标；同毫秒创建、插入与删除不会移动已读页面的边界。
+        var total = await _db.DocumentEntries.CountDocumentsAsync(filter, cancellationToken: HttpContext.RequestAborted);
+        List<DocumentEntry> items;
+        string? nextCursor = null;
+        // 大库首屏只需一批可见行，后续仍按调用方批量补齐；小库一页返回完整目录。
+        if (position != null && string.IsNullOrEmpty(position.AfterId)
+            && string.IsNullOrWhiteSpace(keyword) && total > 500)
+            pageSize = Math.Min(pageSize, 100);
+        if (position != null)
+        {
+            items = await _db.DocumentEntries.Find(filter & position.Filter())
+                .SortBy(e => e.Id)
+                .Project<DocumentEntry>(Builders<DocumentEntry>.Projection.Exclude(e => e.ContentIndex))
+                .Limit(pageSize + 1).ToListAsync(HttpContext.RequestAborted);
+            if (items.Count > pageSize)
+            {
+                items.RemoveAt(items.Count - 1);
+                nextCursor = (position with { AfterId = items[^1].Id }).Encode();
+            }
+        }
+        else
+        {
+            items = await _db.DocumentEntries.Find(filter)
+                .SortByDescending(e => e.IsFolder)
+                .ThenByDescending(e => e.CreatedAt)
+                .ThenBy(e => e.Id)
+                .Skip((page - 1) * pageSize).Limit(pageSize).ToListAsync(HttpContext.RequestAborted);
+        }
 
         // 标黄用：本批文档里哪些存在「单篇」有效分享（未撤销 + 未过期）
         // 过期判定放内存做，规避可空 DateTime 进 Mongo 表达式树
         var now = DateTime.UtcNow;
         var pageEntryIds = items.Where(e => !e.IsFolder).Select(e => e.Id).ToHashSet();
         var storeShareLinks = await _db.DocumentStoreShareLinks
-            .Find(l => l.StoreId == storeId && !l.IsRevoked)
-            .ToListAsync();
+            .Find(l => l.StoreId == storeId && !l.IsRevoked && pageEntryIds.Contains(l.EntryId!))
+            .ToListAsync(HttpContext.RequestAborted);
         var sharedEntryIds = storeShareLinks
             .Where(l => !string.IsNullOrEmpty(l.EntryId) && (l.ExpiresAt == null || l.ExpiresAt > now) && pageEntryIds.Contains(l.EntryId!))
             .Select(l => l.EntryId!)
             .Distinct()
             .ToList();
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds, canWrite }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds, canWrite, nextCursor }));
     }
 
     /// <summary>
@@ -1350,7 +1382,8 @@ public partial class DocumentStoreController : ControllerBase
 
         var entries = await _db.DocumentEntries
             .Find(e => e.StoreId == storeId)
-            .ToListAsync();
+            .Project(e => new { e.IsFolder, e.SourceType, e.DocumentId, e.AttachmentId })
+            .ToListAsync(HttpContext.RequestAborted);
 
         int docCount = 0, folderCount = 0;
         long documentBytes = 0, attachmentBytes = 0, imageBytes = 0;
@@ -1364,25 +1397,29 @@ public partial class DocumentStoreController : ControllerBase
 
         foreach (var e in entries)
         {
-            if (e.IsFolder) folderCount++;
+            if (e.IsFolder || e.SourceType == DocumentSourceType.GithubDirectory) folderCount++;
             else docCount++;
         }
 
         if (documentIds.Count > 0)
         {
-            var docs = await _db.Documents
-                .Find(d => documentIds.Contains(d.Id))
-                .Project<ParsedPrd>(Builders<ParsedPrd>.Projection.Include(d => d.RawContent))
-                .ToListAsync();
-            foreach (var d in docs)
-                documentBytes += System.Text.Encoding.UTF8.GetByteCount(d.RawContent ?? string.Empty);
+            // 在 Mongo 内计算 UTF-8 字节数，不为一个徽章把全库正文搬进 API 进程。
+            var total = await _db.Documents.Aggregate()
+                .Match(d => documentIds.Contains(d.Id))
+                .Group<MongoDB.Bson.BsonDocument>(new MongoDB.Bson.BsonDocument {
+                    { "_id", MongoDB.Bson.BsonNull.Value },
+                    { "bytes", new MongoDB.Bson.BsonDocument("$sum", new MongoDB.Bson.BsonDocument("$strLenBytes",
+                        new MongoDB.Bson.BsonDocument("$ifNull", new MongoDB.Bson.BsonArray { "$RawContent", "" }))) }
+                }).FirstOrDefaultAsync(HttpContext.RequestAborted);
+            documentBytes = total == null ? 0 : total["bytes"].ToInt64();
         }
 
         if (attachmentIds.Count > 0)
         {
             var atts = await _db.Attachments
                 .Find(a => attachmentIds.Contains(a.AttachmentId))
-                .ToListAsync();
+                .Project(a => new { a.Size, a.Type, a.MimeType })
+                .ToListAsync(HttpContext.RequestAborted);
             foreach (var a in atts)
             {
                 attachmentBytes += a.Size;
@@ -6707,20 +6744,21 @@ public partial class DocumentStoreController : ControllerBase
     /// <summary>获取公开知识库的文档列表（匿名可访问）</summary>
     [HttpGet("public/stores/{storeId}/entries")]
     [AllowAnonymous]
-    public async Task<IActionResult> ListPublicStoreEntries(string storeId)
+    public async Task<IActionResult> ListPublicStoreEntries(string storeId,
+        [FromQuery] int pageSize = 500, [FromQuery] string? cursor = null,
+        [FromQuery] string? keyword = null, [FromQuery] bool searchContent = false)
     {
         var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.IsPublic).FirstOrDefaultAsync();
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在或未公开"));
 
-        var items = await _db.DocumentEntries.Find(e => e.StoreId == storeId)
-            .SortByDescending(e => e.IsFolder)
-            .ThenByDescending(e => e.CreatedAt)
-            .Limit(500)
-            .ToListAsync();
-
-        items = items.Where(e => e.Writing == null || e.Writing.Published != null).ToList();
-        return Ok(ApiResponse<object>.Ok(new { items, total = items.Count }));
+        var page = await DocumentEntryNavigation.ReadAsync(_db, storeId,
+            Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId)
+                & Builders<DocumentEntry>.Filter.Where(e => e.Writing == null || e.Writing.Published != null), pageSize, cursor,
+            keyword, searchContent, HttpContext.RequestAborted);
+        return page == null
+            ? BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分页位置已失效，请重新加载"))
+            : Ok(ApiResponse<object>.Ok(page));
     }
 
     /// <summary>获取公开知识库内单个文档的内容（匿名可访问）</summary>
@@ -7170,29 +7208,22 @@ public partial class DocumentStoreController : ControllerBase
     /// <summary>列出分享链接对应知识库的文档（匿名，token 门禁；单篇分享只返回该篇）</summary>
     [HttpGet("public/share/{token}/entries")]
     [AllowAnonymous]
-    public async Task<IActionResult> ListShareEntries(string token)
+    public async Task<IActionResult> ListShareEntries(string token,
+        [FromQuery] int pageSize = 500, [FromQuery] string? cursor = null,
+        [FromQuery] string? keyword = null, [FromQuery] bool searchContent = false)
     {
         var link = await ResolveActiveShareLinkAsync(token);
         if (link == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
 
-        List<DocumentEntry> items;
-        if (!string.IsNullOrEmpty(link.EntryId))
-        {
-            // 单篇分享：只暴露该篇
-            items = await _db.DocumentEntries.Find(e => e.Id == link.EntryId && e.StoreId == link.StoreId).ToListAsync();
-        }
-        else
-        {
-            items = await _db.DocumentEntries.Find(e => e.StoreId == link.StoreId)
-                .SortByDescending(e => e.IsFolder)
-                .ThenByDescending(e => e.CreatedAt)
-                .Limit(500)
-                .ToListAsync();
-        }
-
-        items = items.Where(e => e.Writing == null || e.Writing.Published != null).ToList();
-        return Ok(ApiResponse<object>.Ok(new { items, total = items.Count }));
+        var scope = Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, link.StoreId);
+        scope &= Builders<DocumentEntry>.Filter.Where(e => e.Writing == null || e.Writing.Published != null);
+        if (!string.IsNullOrEmpty(link.EntryId)) scope &= Builders<DocumentEntry>.Filter.Eq(e => e.Id, link.EntryId);
+        var page = await DocumentEntryNavigation.ReadAsync(_db, link.StoreId, scope,
+            pageSize, cursor, keyword, searchContent, HttpContext.RequestAborted);
+        return page == null
+            ? BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分页位置已失效，请重新加载"))
+            : Ok(ApiResponse<object>.Ok(page));
     }
 
     /// <summary>读取分享链接内某篇文档的正文（匿名，token 门禁 + entry 必须属于该库/单篇）</summary>

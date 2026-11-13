@@ -21,6 +21,20 @@ beforeEach(() => { auth.isAuthenticated = true; auth.isRoot = false; auth.permis
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('公开库原生阅读与已发布阅读的连续性', () => {
+  it('深层主文档位于后续根批次和子批次时，祖先与选中行仍会挂载', async () => {
+    const roots = Array.from({ length: 220 }, (_, i) => ({ ...fixture(false), id: `r${i}`, title: `根${String(i).padStart(3, '0')}`, isFolder: true }));
+    const folders = Array.from({ length: 220 }, (_, i) => ({ ...fixture(false), id: `f${i}`, title: `子${String(i).padStart(3, '0')}`, parentId: 'r219', isFolder: true }));
+    const doc = { ...fixture(false), parentId: 'f219' };
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root.render(<MemoryRouter><LibraryDocReader entries={[...roots, ...folders, doc]}
+      primaryEntryId="doc" loadContent={async () => ({ text: '深层正文', fileUrl: null, contentType: 'text/markdown' })} /></MemoryRouter>));
+    const buttons = [...container.querySelectorAll('button')];
+    expect(buttons.some(button => button.textContent?.includes('公开测试文档'))).toBe(true);
+    expect(buttons.some(button => button.textContent?.includes('根219'))).toBe(true);
+    expect(buttons.some(button => button.textContent?.includes('子219'))).toBe(true);
+    expect(buttons.length).toBeLessThan(200);
+    expect(container.textContent).toContain('深层正文');
+  });
   it('下一版confirm但发布flag仍真时，只读者可直接阅读和学习', async () => {
     await mount();
     const links = [...container.querySelectorAll('a')];
