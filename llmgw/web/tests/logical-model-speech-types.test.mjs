@@ -34,7 +34,7 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
       load(id) {
         if (id === '\0logical-speech-router') return Object.keys(globalThis.__logicalSpeechRouter).filter(name => name !== 'default').map(name => `export const ${name}=globalThis.__logicalSpeechRouter.${name};`).join('\n');
         if (id.endsWith('/src/lib/auth.tsx')) return 'export function useAuth(){return {tenant:{role:"admin"}}}';
-        if (id.endsWith('/src/components/ConfirmDialog.tsx')) return 'export function useDialogs(){return {confirm:async()=>false,promptText:async()=>null}}';
+        if (id.endsWith('/src/components/ConfirmDialog.tsx')) return 'export function useDialogs(){return {confirm:async()=>false,promptText:async options=>options.requireExact??null}}';
         if (id.endsWith('/src/lib/api.ts')) return apiNames.map(name => {
           if (name === 'getLogicalModels') return 'export async function getLogicalModels(){const f=globalThis.__logicalSpeechFixture;f.reads++;if(f.failNextRead){f.failNextRead=false;return {success:false,error:{message:"队列读取失败"}}}return {success:true,data:{items:f.requeue?f.requeue():f.items}}}';
           if (name === 'getExchanges') return 'export async function getExchanges(){return {success:true,data:{items:[globalThis.__logicalSpeechFixture.exchange]}}}';
