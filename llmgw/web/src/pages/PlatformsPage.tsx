@@ -701,8 +701,8 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                       {summarizeProviderModels(ownedRows(p.id))}
                     </button>
                   </td>
-                  <td style={td}><div className="lg-collection-provider-key" title={p.keyFingerprint ? `密钥指纹 ${p.keyFingerprint}` : undefined}><Chip label={key.label} color={key.color} bg={key.bg}/><span style={HINT_TEXT} title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined}>{p.authority === 'llm_gateway' ? '平台配置' : '待导入'}</span></div></td>
-                  <td style={td}><Chip label={en.label} color={en.color} bg={en.bg}/></td>
+                  <td style={td}><div className="lg-collection-provider-key"><Chip label={key.label} color={key.color} bg={key.bg}/>{p.keyFingerprint ? <code title="当前密钥的脱敏标识，仅配置管理员可见">{p.keyFingerprint}</code> : null}<span style={HINT_TEXT} title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined}>{p.authority === 'llm_gateway' ? '平台配置' : '待导入'}</span></div></td>
+                  <td style={td}><Chip label={en.label} color={en.color} bg={en.bg}/>{p.recentCallStatus ? <div title={p.recentCallAt ? `最近真实调用：${formatPlatformTime(p.recentCallAt)}；并非实时余额，充值后以新的调用结果核对` : undefined} style={{ ...HINT_TEXT, marginTop: 6, color: p.recentCallStatus === 'quota_exhausted' ? 'var(--danger)' : undefined }}>最近调用：{({ quota_exhausted: '余额或额度不足', rate_limited: '限流', rejected: '请求被拒绝', service_error: '上游服务异常', succeeded: '成功', failed: '失败' })[p.recentCallStatus]}</div> : null}</td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
                     {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
 

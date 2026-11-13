@@ -3626,6 +3626,22 @@ app.MapGet("/gw/platforms", async (HttpContext http) =>
         Items = docs.Select(d => MapPlatform(d, config, revealFingerprint)).ToList(),
         Total = docs.Count,
     };
+    foreach (var item in data.Items)
+    {
+        var lastCall = await logs.Find(TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("PlatformId", item.Id),
+                Builders<BsonDocument>.Filter.Gte("StartedAt", DateTime.UtcNow.AddDays(-7)),
+                Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true),
+                Builders<BsonDocument>.Filter.In("Status", new[] { "succeeded", "failed" }))))
+            .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt").Descending("_id"))
+            .Project(Builders<BsonDocument>.Projection.Include("StartedAt").Include("EndedAt")
+                .Include("Status").Include("StatusCode").Include("Error"))
+            .FirstOrDefaultAsync();
+        var source = docs.First(x => x.GetStringOrEmpty("_id") == item.Id);
+        item.RecentCallStatus = PlatformRecentCallPolicy.Classify(lastCall, source.AsNullableUtcDateTime("UpdatedAt"));
+        if (item.RecentCallStatus is not null)
+            item.RecentCallAt = (lastCall!.AsNullableUtcDateTime("EndedAt") ?? lastCall.AsNullableUtcDateTime("StartedAt")).ToIso();
+    }
     return Json(ApiEnvelope<PlatformsData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 

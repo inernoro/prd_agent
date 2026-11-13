@@ -690,6 +690,8 @@ export type UpsertPoolModelRequest = {
 
 // ── 平台（密钥明文永不下发；只有头尾打码的指纹）──
 export type PlatformItem = {
+  recentCallStatus?: 'quota_exhausted' | 'rate_limited' | 'rejected' | 'service_error' | 'succeeded' | 'failed' | null;
+  recentCallAt?: string | null;
   proxy?: UpstreamProxyView | null;
   id: string; name: string; platformType: string; providerId?: string | null; apiUrl?: string | null;
   enabled: boolean; maxConcurrency: number; remark?: string | null; hasKey: boolean;
