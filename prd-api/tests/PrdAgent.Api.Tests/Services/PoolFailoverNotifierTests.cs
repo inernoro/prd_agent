@@ -66,6 +66,25 @@ public class PoolFailoverNotifierTests
     }
 
     [Fact]
+    public async Task ConcurrentFailuresAfterRecovery_OpenOnlyOneEpisodeAndCountEveryFailure()
+    {
+        await using var testDb = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
+        var notifier = new PoolFailoverNotifier(testDb.Context, NullLogger<PoolFailoverNotifier>.Instance);
+        await notifier.NotifyUserFailureAsync("u1", "image", "所选模型", poolId: "pool-a");
+        var original = await testDb.Context.AdminNotifications.Find(x => x.IncidentState == "active").SingleAsync();
+        await notifier.CloseUserFailureNotificationsAsync("image", poolId: "pool-a");
+        const int newFailures = 24;
+        await Task.WhenAll(Enumerable.Range(0, newFailures)
+            .Select(_ => notifier.NotifyUserFailureAsync("u1", "image", "所选模型", poolId: "pool-a")));
+        var current = await testDb.Context.AdminNotifications.Find(x => x.Id == original.Id).SingleAsync();
+        current.PushEpisode.ShouldBe(1);
+        current.OccurrenceCount.ShouldBe(1 + newFailures);
+        current.Status.ShouldBe("open");
+        current.IncidentState.ShouldBe("active");
+        current.RecoveredAt.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task RecoveryOfOnePool_CannotCloseOtherPoolOrUnattributedLegacyFailure()
     {
         await using var testDb = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();

@@ -64,6 +64,16 @@ public sealed class GatewayIncidentFactsTests
         Assert.True(LlmGatewayIncidentPolicy.BuildSignals([failed, success]).Single(s => s.Fingerprint == before.Fingerprint).IsFailure);
     }
 
+    [Fact]
+    public void PoolUnavailableWithoutSendEvidence_IsRequestFailureInsteadOfAllRoutesFailed()
+    {
+        var log = Request("unavailable-without-send", "failed", 503);
+        log.Provider = "gateway-auth";
+        log.Error = PrdAgent.Core.LlmGateway.GatewayRouteFailure.ModelPoolAllUnavailable;
+        var signal = Assert.Single(LlmGatewayIncidentPolicy.BuildSignals([log]));
+        Assert.Equal("request_failed", signal.RequestOutcome);
+    }
+
     internal static LlmRequestLog Request(string id, string status, int code) => new()
     {
         Id = id, RequestId = id, TenantId = "fixture-tenant", AppCallerCode = "fixture.future::generation",

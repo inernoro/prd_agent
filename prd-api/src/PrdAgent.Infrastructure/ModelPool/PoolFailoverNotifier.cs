@@ -222,8 +222,10 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
         string key, string title, string message, string level, string source,
         string? targetUserId = null, CancellationToken ct = default,
         string? incidentId = null, string? incidentState = null, string? requestOutcome = null,
-        string? actionUrl = null)
+        string? actionUrl = null, DateTime? observedAt = null)
     {
+        // The event time belongs to this observation, not to a later CAS retry.
+        var eventAt = observedAt ?? DateTime.UtcNow;
         var existing = await _db.AdminNotifications
             .Find(n => n.Key == key)
             .SortByDescending(n => n.CreatedAt)
@@ -239,23 +241,36 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
                 .Set(n => n.Level, level)
                 .Set(n => n.Section, section)
                 .Set(n => n.UpdatedAt, DateTime.UtcNow);
+            var writeFilter = Builders<AdminNotification>.Filter.Eq(n => n.Id, existing.Id);
             if (incidentId != null)
             {
-                update = update.Set(n => n.IncidentId, incidentId).Set(n => n.IncidentState, incidentState)
-                    .Set(n => n.RequestOutcome, requestOutcome)
-                    .Set(n => n.RecoveredAt, incidentState == "recovered" ? DateTime.UtcNow : null);
+                var olderThanRecovery = incidentState == "active" && existing.IncidentState == "recovered"
+                    && existing.RecoveredAt.HasValue && eventAt < existing.RecoveredAt.Value;
+                update = update.Set(n => n.IncidentId, incidentId);
+                if (!olderThanRecovery)
+                    update = update.Set(n => n.IncidentState, incidentState).Set(n => n.RequestOutcome, requestOutcome)
+                        .Set(n => n.RecoveredAt, incidentState == "recovered" ? eventAt : null);
                 if (requestOutcome == "request_failed") update = update.Inc(n => n.OccurrenceCount, 1)
-                    .Set(n => n.LastOccurredAt, DateTime.UtcNow);
-                if (existing.IncidentState == "recovered" && incidentState == "active")
+                    .Min(n => n.FirstOccurredAt, eventAt).Max(n => n.LastOccurredAt, eventAt);
+                if (!olderThanRecovery && existing.IncidentState == "recovered" && incidentState == "active")
                     update = update.Set(n => n.Status, "open").Inc(n => n.PushEpisode, 1)
                         .Set(n => n.PushEpisodeStartedAtUtcTicks, DateTime.UtcNow.Ticks).Set(n => n.HandledAt, null);
+                // Only one observer can open this recurrence. A loser reloads the current
+                // state and counts its real failure once without opening another episode.
+                writeFilter &= Builders<AdminNotification>.Filter.Eq(n => n.IncidentState, existing.IncidentState)
+                    & (existing.PushEpisode == 0
+                        ? Builders<AdminNotification>.Filter.Eq(n => n.PushEpisode, 0)
+                          | Builders<AdminNotification>.Filter.Exists(n => n.PushEpisode, false)
+                        : Builders<AdminNotification>.Filter.Eq(n => n.PushEpisode, existing.PushEpisode));
             }
 
             if (string.IsNullOrWhiteSpace(targetUserId) && actionUrl != null)
                 update = update.Set(n => n.ActionUrl, actionUrl).Set(n => n.ActionLabel, "查看线路日志")
                     .Set(n => n.ActionKind, "llm-gateway");
-            await _db.AdminNotifications.UpdateOneAsync(
-                n => n.Id == existing.Id, update, cancellationToken: ct);
+            var result = await _db.AdminNotifications.UpdateOneAsync(writeFilter, update, cancellationToken: ct);
+            if (result.MatchedCount == 0)
+                await UpsertNotificationAsync(key, title, message, level, source, targetUserId, ct,
+                    incidentId, incidentState, requestOutcome, actionUrl, eventAt);
         }
         else
         {
@@ -273,9 +288,9 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
                 IncidentId = incidentId,
                 IncidentState = incidentState,
                 RequestOutcome = requestOutcome,
-                FirstOccurredAt = incidentId != null && incidentState == "active" ? DateTime.UtcNow : null,
-                LastOccurredAt = incidentId != null && incidentState == "active" ? DateTime.UtcNow : null,
-                RecoveredAt = incidentState == "recovered" ? DateTime.UtcNow : null,
+                FirstOccurredAt = incidentId != null && incidentState == "active" ? eventAt : null,
+                LastOccurredAt = incidentId != null && incidentState == "active" ? eventAt : null,
+                RecoveredAt = incidentState == "recovered" ? eventAt : null,
                 ActionUrl = string.IsNullOrWhiteSpace(targetUserId) ? actionUrl : null,
                 ActionLabel = string.IsNullOrWhiteSpace(targetUserId) && actionUrl != null ? "查看线路日志" : null,
                 ActionKind = string.IsNullOrWhiteSpace(targetUserId) && actionUrl != null ? "llm-gateway" : null,
@@ -288,7 +303,7 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
             catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
             {
                 await UpsertNotificationAsync(key, title, message, level, source, targetUserId, ct,
-                    incidentId, incidentState, requestOutcome, actionUrl);
+                    incidentId, incidentState, requestOutcome, actionUrl, eventAt);
             }
         }
     }

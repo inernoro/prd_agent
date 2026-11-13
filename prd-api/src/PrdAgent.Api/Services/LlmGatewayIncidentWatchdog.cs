@@ -546,7 +546,6 @@ internal static class LlmGatewayIncidentPolicy
         if (IsSuccess(log))
             return sends.Any(x => x.Status == "failed" && x.ReachedProvider != false) ? "fallback_succeeded" : "request_succeeded";
         if (!string.Equals(log.Status, "failed", StringComparison.OrdinalIgnoreCase)) return "unknown";
-        if (string.Equals(log.Error, GatewayRouteFailure.ModelPoolAllUnavailable, StringComparison.Ordinal)) return "all_failed";
         // Only call the observed attempt set exhausted. Never claim that every configured
         // provider failed when the snapshot contains selected or unfinished candidates.
         return sends.Count > 1 && sends.All(x => x.Status == "failed" && x.ReachedProvider == true)
