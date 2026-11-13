@@ -519,12 +519,18 @@ internal static class LlmGatewayIncidentPolicy
             Display(log.PlatformName, log.Provider, "调用入口"),
             Display(log.Model, log.ExpectedModel, log.LogicalModelPublicId, "未进入模型调用"),
             latest.Failure ? SummarizeFailure(log) : string.Empty,
-            run.Count(x => x.Failure), latest.Version, latest.Entry, latest.At)
+            // Append the fact-policy revision after the full observation identity. It can
+            // correct that same observation once while preserving chronological ordering,
+            // and older workers cannot overwrite it with the unsuffixed version. Apply it
+            // to successes too, so pending outcomes can still be genuinely confirmed.
+            run.Count(x => x.Failure), latest.Version + ":facts-0002", latest.Entry, latest.At)
         {
             RouteFingerprint = latest.RouteFingerprint,
             FailureCategory = category,
             RequestOutcome = latest.Outcome,
             AttemptedRouteCount = latest.AttemptedRoutes,
+            // Counts use raw observation versions: upgrading the interpretation is not
+            // another failure occurrence, nor does it start a new delivery episode.
             FailureObservations = run.Where(x => x.Failure)
                 .Select(x => new LlmGatewayFailureObservation(x.Version, x.At)).ToList(),
         };

@@ -254,6 +254,128 @@ public sealed class GatewayIncidentFactsPersistenceTests
         });
     }
 
+    [Theory]
+    [InlineData("request_failed", "open")]
+    [InlineData("all_failed", "handled")]
+    public async Task Review_SameObservationPolicyUpgrade_CorrectsUnknownWithoutRecountOrReopening(string oldOutcome, string status)
+    {
+        await using var f = new Fixture();
+        var log = f.Request("same-observation-policy", "failed", 502, 0);
+        var failed = f.Attempt("primary", "failed", 502, 0, 0);
+        failed.Error = "UPSTREAM_OUTCOME_UNKNOWN: response interrupted after sending";
+        failed.Reason = "outcome_unknown; recovery=stop; response interrupted after sending";
+        log.ProviderAttempts = [failed];
+        if (oldOutcome == "all_failed")
+        {
+            // The old all_failed classification came from two actual failed sends,
+            // the latter carrying explicit outcome_unknown rather than rejection.
+            failed.PlatformId = "backup"; failed.PlatformName = "backup"; failed.Order = 1;
+            log.PlatformId = "backup"; log.PlatformName = "backup";
+            log.ProviderAttempts.Insert(0, f.Attempt("primary", "failed", 402, 0, 0));
+        }
+        var signal = Assert.Single(LlmGatewayIncidentPolicy.BuildSignals([log]),
+            x => x.IsFailure && x.PlatformLabel == failed.PlatformName);
+        var rawVersion = Assert.Single(signal.FailureObservations).Version;
+        var legacy = new AdminNotification {
+            Id = "same-observation-legacy", Key = "llmgw-upstream:" + signal.Fingerprint,
+            Source = "gateway-alert", Section = AdminNotificationSections.Admin, Level = "error", Status = status,
+            IncidentId = signal.Fingerprint, IncidentState = "active", RequestOutcome = oldOutcome,
+            GatewaySignalVersion = rawVersion, EvidenceRequestId = log.RequestId,
+            OccurrenceCount = 182, FirstOccurredAt = log.StartedAt.AddDays(-2), LastOccurredAt = failed.EndedAt,
+            PushEpisode = 7, PushEpisodeStartedAtUtcTicks = log.StartedAt.Ticks,
+            HandledAt = status == "handled" ? log.StartedAt.AddSeconds(-1) : null, ExpiresAt = null,
+        };
+        await f.Map.AdminNotifications.InsertOneAsync(legacy);
+        await f.Gateway.LlmRequestLogs.InsertOneAsync(log);
+        await f.SweepAsync();
+        var corrected = (await f.Notices()).Single(x => x.Id == legacy.Id);
+        Assert.Equal("unknown", corrected.RequestOutcome);
+        Assert.True(string.CompareOrdinal(corrected.GatewaySignalVersion, rawVersion) > 0);
+        Assert.Contains("结果尚未确认", corrected.Message);
+        void AssertUnchangedFacts(AdminNotification row)
+        {
+            Assert.Equal(legacy.OccurrenceCount, row.OccurrenceCount);
+            Assert.Equal(legacy.FirstOccurredAt, row.FirstOccurredAt);
+            Assert.Equal(legacy.LastOccurredAt, row.LastOccurredAt);
+            Assert.Equal(legacy.PushEpisode, row.PushEpisode);
+            Assert.Equal(legacy.PushEpisodeStartedAtUtcTicks, row.PushEpisodeStartedAtUtcTicks);
+            Assert.Equal(legacy.Status, row.Status);
+            Assert.Equal(legacy.HandledAt, row.HandledAt);
+            Assert.Equal("active", row.IncidentState);
+            Assert.Null(row.RecoveredAt);
+        }
+        AssertUnchangedFacts(corrected);
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => f.SweepAsync()));
+        var repeated = (await f.Notices()).Single(x => x.Id == legacy.Id);
+        AssertUnchangedFacts(repeated);
+        Assert.Equal(corrected.GatewaySignalVersion, repeated.GatewaySignalVersion);
+        Assert.Equal(corrected.UpdatedAt, repeated.UpdatedAt);
+
+        // Replay an old worker's raw-version signal: its lexical watermark is lower,
+        // so it cannot turn the corrected unknown fact back into the old failed result.
+        using (var watchdog = new LlmGatewayIncidentWatchdog(f.Gateway, f.Map, new AdminPushDispatchSignal(),
+                   new ConfigurationBuilder().Build(), NullLogger<LlmGatewayIncidentWatchdog>.Instance))
+        {
+            var oldSignal = signal with { SignalVersion = rawVersion, RequestOutcome = oldOutcome };
+            var write = typeof(LlmGatewayIncidentWatchdog).GetMethod("UpsertFailureAsync",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            Assert.False(await (Task<bool>)write.Invoke(watchdog, [oldSignal, CancellationToken.None])!);
+        }
+        Assert.Equal("unknown", (await f.Notices()).Single(x => x.Id == legacy.Id).RequestOutcome);
+
+        // The primary observation is unchanged; a real backup completion confirms the
+        // request outcome at that same watermark without claiming the primary recovered.
+        log.Status = "succeeded"; log.StatusCode = 200; log.PlatformId = "completion"; log.PlatformName = "completion";
+        log.ProviderAttempts.Add(f.Attempt("completion", "succeeded", 200, 2, 1));
+        await f.Gateway.LlmRequestLogs.ReplaceOneAsync(x => x.Id == log.Id, log);
+        await f.SweepAsync();
+        var completed = (await f.Notices()).Single(x => x.Id == legacy.Id);
+        Assert.Equal("fallback_succeeded", completed.RequestOutcome);
+        AssertUnchangedFacts(completed);
+        Assert.Equal(corrected.GatewaySignalVersion, completed.GatewaySignalVersion);
+
+        var success = f.Request("same-route-confirmed-success", "succeeded", 200, 2);
+        success.PlatformId = failed.PlatformId; success.PlatformName = failed.PlatformName;
+        await f.Gateway.LlmRequestLogs.InsertOneAsync(success);
+        await f.SweepAsync();
+        var recovered = (await f.Notices()).Single(x => x.Id == legacy.Id);
+        Assert.Equal("recovered", recovered.IncidentState);
+        Assert.Equal(success.EndedAt, recovered.RecoveredAt);
+        Assert.Equal(182, recovered.OccurrenceCount);
+        Assert.Equal(7, recovered.PushEpisode);
+    }
+
+    [Fact]
+    public async Task Review_OldRawVersionWorker_CannotOverwritePolicyCorrectedObservation()
+    {
+        await using var f = new Fixture();
+        var log = f.Request("old-worker-replay", "failed", 502, 0);
+        var attempt = f.Attempt("primary", "failed", 502, 0, 0);
+        attempt.Error = "UPSTREAM_OUTCOME_UNKNOWN: response interrupted";
+        attempt.Reason = "outcome_unknown; recovery=stop; response interrupted";
+        log.ProviderAttempts = [attempt];
+        var signal = Assert.Single(LlmGatewayIncidentPolicy.BuildSignals([log]), x => x.IsFailure);
+        var rawVersion = Assert.Single(signal.FailureObservations).Version;
+        var corrected = new AdminNotification {
+            Id = "policy-corrected-before-old-worker", Key = "llmgw-upstream:" + signal.Fingerprint,
+            Source = "gateway-alert", Section = AdminNotificationSections.Admin, Status = "handled",
+            IncidentId = signal.Fingerprint, IncidentState = "active", RequestOutcome = "unknown",
+            GatewaySignalVersion = rawVersion + ":facts-0002", EvidenceRequestId = log.RequestId,
+            OccurrenceCount = 182, FirstOccurredAt = log.StartedAt, LastOccurredAt = attempt.EndedAt,
+            UpdatedAt = log.StartedAt.AddDays(-1), PushEpisode = 7, ExpiresAt = null,
+        };
+        await f.Map.AdminNotifications.InsertOneAsync(corrected);
+        await f.Gateway.LlmRequestLogs.InsertOneAsync(log);
+        await f.SweepAsync();
+        var after = Assert.Single(await f.Notices());
+        Assert.Equal("unknown", after.RequestOutcome);
+        Assert.Equal(corrected.GatewaySignalVersion, after.GatewaySignalVersion);
+        Assert.Equal(corrected.UpdatedAt, after.UpdatedAt);
+        Assert.Equal("handled", after.Status);
+        Assert.Equal(7, after.PushEpisode);
+        Assert.Equal(182, after.OccurrenceCount);
+    }
+
     [Fact]
     public async Task Review_RecoveryPreservesAccumulated182FailureFacts()
     {
