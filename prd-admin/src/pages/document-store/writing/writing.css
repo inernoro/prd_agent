@@ -340,6 +340,7 @@
   .writing-reader:not(.writing-tutorial) [data-section="top"]>.cap{font:600 11px/1.45 'Noto Serif SC',serif;margin-bottom:6px}
   .writing-reader:not(.writing-tutorial) .writing-conclusions{margin-bottom:20px}
   .writing-reader:not(.writing-tutorial) .writing-role-heading .hint{margin-right:2px}
+  .writing-reader:not(.writing-tutorial) .writing-reading-order>.hint{font-size:13px;margin-right:4px}
   .writing-reader:not(.writing-tutorial) .writing-reader-toc>.cap{padding-bottom:8px}
   .writing-reader:not(.writing-tutorial) .toc button{padding:7px 10px}
   .writing-reader:not(.writing-tutorial) .writing-reader-toc .writing-divided{margin:18px 10px 0;padding:14px 0 0}
@@ -389,6 +390,8 @@
 
 /* Author mobile confirmation follows one page flow; desktop columns keep their own scrolling. */
 @media(max-width:760px){
+  .writing-author .writing-choose{flex:none}
+  .writing-author .writing-picker-footer{display:block}
   .writing-author .writing-three-columns{flex:none;width:100%;padding:0;gap:10px}
   .writing-author .writing-three-columns>.writing-document-column,
   .writing-author .writing-three-columns>.writing-sources-column,

@@ -347,3 +347,23 @@ describe('媒体切换边界回归', () => {
     expect(container.querySelector('video')?.getAttribute('src')).toBe('/course.mp4');
   });
 });
+
+describe('阅读页使用真实媒体信息与角色提示', () => {
+  beforeEach(() => { Object.defineProperty(globalThis, 'IntersectionObserver', { configurable: true, value: class { observe() {} disconnect() {} } }); });
+  it('阅读页真实metadata到达后显示课程分钟数，不硬编码教学时长', async () => {
+    const data = fixture(); data.publication.videoEntryId = 'video';
+    data.publication.roles = [{ label: '接手人', action: '核验', condition: '', sectionId: 's1', orderedSectionIds: ['s1'] }];
+    api.read.mockResolvedValue(ok(data)); api.content.mockResolvedValue({ success: true, data: { fileUrl: '/real-course.mp4' } });
+    await mount(false);
+    const media = container.querySelector('video'); expect(media).toBeTruthy();
+    expect(container.querySelector('.writing-mobile-tabs')?.textContent).not.toContain('4 分钟');
+    Object.defineProperty(media!, 'duration', { configurable: true, value: 260 });
+    await act(async () => media!.dispatchEvent(new Event('loadedmetadata')));
+    expect(container.querySelector('.writing-mobile-tabs')?.textContent).toContain('教学 · 4 分钟');
+    expect(container.querySelector('.writing-reading-order .hint')?.textContent).toContain('接手人');
+    expect(container.querySelector('.writing-reading-order a')?.textContent).toContain('4 分钟教学');
+    Object.defineProperty(media!, 'duration', { configurable: true, value: Infinity });
+    await act(async () => media!.dispatchEvent(new Event('loadedmetadata')));
+    expect(container.querySelector('.writing-mobile-tabs')?.textContent).not.toContain('4 分钟');
+  });
+});
