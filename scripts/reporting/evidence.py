@@ -95,7 +95,7 @@ def merge_ledgers(ledgers):
     """Append immutable evidence; current-period and prior facts survive source outages."""
     inputs = [normalize(x) for x in ledgers if x is not None]
     merged = {"schemaVersion": 1, "historyComplete": bool(inputs) and all(x.get("historyComplete") is True for x in inputs),
-              "workItems": [], "events": [], "measurements": [], "limitations": [], "evidenceBindings": {}}
+              "workItems": [], "events": [], "measurements": [], "limitations": [], "evidenceBindings": {}, "artifactBindings": {}}
     items, events, measurements = {}, {}, {}
     for data in inputs:
         for item in data.get("workItems", []):
@@ -110,10 +110,11 @@ def merge_ledgers(ledgers):
             if key in measurements and measurements[key] != measurement:
                 raise ValueError("同一测量来源出现冲突，请核对原始记录")
             measurements[key] = deepcopy(measurement)
-        for key, value in data.get("evidenceBindings", {}).items():
-            if key in merged["evidenceBindings"] and merged["evidenceBindings"][key] != value:
-                raise ValueError("同一来源的事项归属冲突")
-            merged["evidenceBindings"][key] = value
+        for family in ("evidenceBindings", "artifactBindings"):
+            for key, value in data.get(family, {}).items():
+                if key in merged[family] and merged[family][key] != value:
+                    raise ValueError("同一来源的事项归属冲突")
+                merged[family][key] = deepcopy(value)
         merged["limitations"].extend(data.get("limitations", []))
         if data.get("collection"):
             merged["collection"] = deepcopy(data["collection"])
@@ -232,7 +233,7 @@ def analyze(ledger, start, end, cadence="weekly", timezone="Asia/Shanghai"):
             "inputDigest": hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
             "newMilestones": counts if data.get("historyComplete") is True else dict.fromkeys(counts, None),
             "observedMilestones": counts, "historyComplete": data.get("historyComplete") is True, "items": rows, "claims": claims, "metrics": metrics,
-            "unassignedEvidence": unassigned, "evidence": by_id,
+            "unassignedEvidence": unassigned, "unassignedRisks": [by_id[eid] for eid in unassigned if by_id[eid]["kind"] in {"validation_failed", "release_failed", "blocked"}], "evidence": by_id,
             "limitations": data.get("limitations", []), "personalMonthly": "评价、认可和建议由员工本人表达；本产物只作管理事实参考，不代填、不提交。"}
 
 
@@ -279,6 +280,10 @@ def render_markdown(report):
         relevant = list(dict.fromkeys(relevant))[-5:]
         lines += [f'- 下一步：{n.get("action") or "待负责人确认"}；执行人：{n.get("owner") or "待指定"}；期限：{n.get("due") or "待确认"}。',
                   '- 核查来源：' + ' / '.join(source_link(eid) for eid in relevant) + '；完整历史见来源索引。', ""]
+    if report.get("unassignedRisks"):
+        lines += ["## 未归属的失败与阻塞记录", ""]
+        for e in report["unassignedRisks"]:
+            lines.append(f'- {e["source"]["excerpt"]}；版本 {e.get("revision") or "未提供"}；范围 {e.get("scope") or e.get("environment") or "未提供"}；尚未关联事项，闭环未核查。{source_link(e["id"])}')
     lines += ["## 效率、工时与收益", ""]
     for k, label in METRICS.items():
         m = report["metrics"][k]
