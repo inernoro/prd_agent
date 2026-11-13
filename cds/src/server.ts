@@ -1961,6 +1961,11 @@ export function createServer(deps: ServerDeps): express.Express {
   // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
   const releaseService = new ReleaseService(deps.stateService, {
     verifyProjectCI: (branch, sha, strategy) => verifyProjectReleaseCI(deps.stateService.getProject(branch.projectId), githubAppClient, branch, sha, strategy),
+    resolveProjectRepository: (projectId) => {
+      const project = deps.stateService.getProject(projectId);
+      if (!project || (project.gitRepoUrl && !project.repoPath)) return undefined;
+      return deps.stateService.getProjectRepoRoot(projectId, deps.config.repoRoot);
+    },
   });
   const releaseReconciler: ReleaseRunReconciler = releaseService;
   startReleaseRunReaper({ service: releaseReconciler });
