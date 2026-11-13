@@ -26,6 +26,8 @@ try {
                 let data;
                 if (isEventStream(path))
                     return r.fulfill({ contentType: 'text/event-stream', body: ': ready\n\n' });
+                if (/^\/api\/reports\/report-\d+\/raw$/.test(path))
+                    return r.fulfill({ contentType: 'text/plain', body: '# 测试报告\n验收证据内容。' });
                 if (path === '/api/reports')
                     data = { reports: reports() };
                 else if (path === '/api/report-folders')
@@ -73,6 +75,20 @@ try {
                 if (!(await p.locator('.tc .card').first().isVisible()))
                     throw Error('趋势展开不可见');
                 await summary.click();
+                const classification = p.locator('summary').filter({ hasText: '交叉分类' });
+                await classification.focus();
+                await p.keyboard.press('Enter');
+                await p.getByRole('button', { name: '服务可用性', exact: true }).click();
+                if (!new URL(p.url()).searchParams.get('categories')?.includes('availability')) throw Error('分类筛选未写入深链');
+                await p.reload({ waitUntil: 'domcontentloaded' });
+                await p.getByRole('button', { name: '清空交叉筛选', exact: true }).waitFor();
+                if (!(await p.getByRole('button', { name: '服务可用性', exact: true }).isVisible())) throw Error('带分类深链刷新后筛选未展开');
+                await p.getByRole('button', { name: '清空交叉筛选', exact: true }).click();
+                await p.locator('summary').filter({ hasText: '交叉分类' }).click();
+                await p.locator('#reports-ledger tbody tr').first().click();
+                await p.getByRole('button', { name: '返回报告首页', exact: true }).waitFor();
+                await p.frameLocator('iframe').getByText('验收证据内容。', { exact: true }).waitFor();
+                await p.getByRole('button', { name: '返回报告首页', exact: true }).click();
                 count = 21;
                 await p.reload({ waitUntil: 'domcontentloaded' });
                 await p.locator('#reports-ledger tbody tr').first().waitFor();
