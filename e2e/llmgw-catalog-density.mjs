@@ -34,6 +34,11 @@ const server = http.createServer((req, res) => {
     if (api === '/models') return send(res, { items: Array.from({ length: state.count }, (_, i) => model(i + 1)), total: state.count });
     if (api === '/service-keys') return send(res, Array.from({ length: state.count }, (_, i) => key(i + 1)));
     if (api === '/legacy-key-cutover') return send(res, { applicable: true, requiredIngressProtocols: ['openai-compatible'], requiredScopes: ['invoke'], status: 'observing', deadlineAt: '2099-11-13T08:00:00Z', allowedAppCallerCodes: ['fixture.access::chat'], successorServiceKeyIds: [], requiredSuccessorObservations: 1, successorObservedCount: 0, usage: [] });
+    if (api === '/upstream-proxy') return send(res, { mode: 'inherit', effectiveMode: 'direct', effectiveSource: 'deployment' });
+    if (api === '/capabilities/image-layering') return send(res, { capabilityId: 'image-layering', state: 'not-installed', installed: false, verified: false, hasKey: false, modelId: 'fal-qwen-image-layered', publicId: 'image-layering' });
+    if (api === '/capabilities/image-layering/install') return send(res, null, false);
+    if (api === '/exchanges/meta') return send(res, { modelTypes: [{ value: 'chat', label: '对话' }], transformerTypes: [], authSchemes: [] });
+    if (api === '/exchanges') return send(res, { items: [1, 2].map(i => ({ id: `exchange-${i}`, name: `验收转接 ${i}`, enabled: true, hasKey: true, authority: 'llm_gateway', transformerType: 'passthrough', targetUrl: 'https://example.test/chat', targetAuthScheme: 'Bearer', version: '1', proxy: { mode: 'inherit' }, models: [{ modelId: `fixture-model-${i}`, modelType: 'chat', enabled: true }] })), total: 2 });
     if (api === '/organization') return send(res, { tenant: { id: 'fixture', name: '验收组织' }, teams: [], members: [] });
     if (api === '/app-callers') {
       let all = Array.from({ length: state.count }, (_, i) => caller(i + 1));
@@ -117,6 +122,23 @@ try {
       await expect(page.getByText('布局夹具读取失败，请重试', { exact: true })).toBeVisible();
       state.promptFailure = false;
     }
+    await page.goto(`${origin}/llmgw/platforms?view=exchange`); await expect(page.getByTestId('exchange-list')).toBeVisible();
+    const exchange = await snapshot('exchange-two', '[data-testid="exchange-list"] > div');
+    check('转接映射先于低频安装表单出现', exchange.y < (narrow ? 600 : 450), exchange);
+    check('图片分层默认保留状态且按需安装', !await page.locator('#fal-image-layering-key').isVisible(), exchange);
+    await expect(page.locator('#image-layering').getByText('未安装', { exact: true })).toBeVisible();
+    const ability = page.locator('details#image-layering');
+    if (await ability.count()) {
+      await ability.locator('summary').focus(); await page.keyboard.press('Enter');
+      await expect(page.locator('#fal-image-layering-key')).toBeVisible();
+    }
+    await page.locator('#fal-image-layering-key').fill('fixture-only-not-a-real-key');
+    await page.getByRole('button', { name: '安装能力', exact: true }).click();
+    await expect(page.getByText('布局夹具读取失败，请重试', { exact: true })).toBeVisible();
+    if (await ability.count()) await ability.locator('summary').click();
+    await expect(page.getByText('布局夹具读取失败，请重试', { exact: true })).toBeVisible();
+    await page.goto(`${origin}/llmgw/platforms?view=exchange#image-layering`);
+    await expect(page.locator('#fal-image-layering-key')).toBeVisible();
     state.count = 51; await page.goto(`${origin}/llmgw/app-callers`); await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeVisible();
     await page.getByRole('button', { name: '下一页', exact: true }).click(); await expect(page.getByText('fixture.app-51::chat', { exact: true }).filter({ visible: true })).toBeVisible();
     await snapshot('callers-many-last', narrow ? '.lg-app-caller-mobile-card' : 'tbody tr');
