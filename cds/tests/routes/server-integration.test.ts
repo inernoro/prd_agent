@@ -1797,6 +1797,29 @@ describe('Server route ordering (regression)', () => {
     expect(unknown.body).not.toContain('DASHBOARD');
   });
 
+  it('react mount: forbids framing every shell entry while preserving report raw embedding policy', async () => {
+    const app = buildApp();
+    const reactDist = path.join(tmpDir, 'react-dist');
+    fs.mkdirSync(reactDist, { recursive: true });
+    fs.writeFileSync(path.join(reactDist, 'index.html'), '<html><head></head><body>CONTROL_PLANE</body></html>');
+    app.get('/api/reports/fixture/raw', (_req, res) => {
+      res.setHeader('Content-Security-Policy', 'sandbox allow-scripts');
+      res.type('html').send('<p>REPORT_CONTENT</p>');
+    });
+    installSpaFallback(app, webDir, reactDist);
+    server = await startServer(app);
+    for (const route of ['/', '/project-list', '/branch-list', '/release-center', '/reports', '/unknown-entry']) {
+      const page = await request(server, route);
+      expect(page.status).toBe(200);
+      expect(page.headers['content-security-policy']).toBe("frame-ancestors 'none'");
+      expect(page.headers['x-frame-options']).toBe('DENY');
+    }
+    const raw = await request(server, '/api/reports/fixture/raw');
+    expect(raw.body).toContain('REPORT_CONTENT');
+    expect(raw.headers['content-security-policy']).toBe('sandbox allow-scripts');
+    expect(raw.headers['x-frame-options']).toBeUndefined();
+  });
+
   it('react mount: serves a missing hashed asset from the previous web generation', async () => {
     const app = buildApp();
     const reactDist = path.join(tmpDir, 'react-dist');
