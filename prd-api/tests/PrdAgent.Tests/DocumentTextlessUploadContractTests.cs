@@ -18,7 +18,7 @@ public class DocumentTextlessUploadContractTests
     }
 
     [Fact]
-    public void SyntheticUploads_MustUseTrackedTestObjectsAndDeleteTheBackingBlob()
+    public void SyntheticUploads_MustTrackOrphansAndRetainRecoverableFiles()
     {
         var controller = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs"));
@@ -32,7 +32,6 @@ public class DocumentTextlessUploadContractTests
         Assert.Contains("FederatedConsoleSessionPolicy.IsSynthetic(User)", controller);
         Assert.Contains("_it/stable-smoke-document/", controller);
         Assert.Contains("StorageKey = storedUpload.StorageKey", controller);
-        Assert.Contains("_documentAssetCleanup.TrackPendingAsync(attachments", controller);
         Assert.Contains("DocumentAssetCleanupTasks.UpdateOneAsync", cleanupService);
         Assert.Contains("new UpdateOptions { IsUpsert = true }", cleanupService);
         Assert.Contains("TrackPendingUploadAsync(key, cancellationToken)", controller);
@@ -49,34 +48,16 @@ public class DocumentTextlessUploadContractTests
         Assert.True(
             cleanupService.IndexOf(".Project(attachment => attachment.AttachmentId)", StringComparison.Ordinal)
             < cleanupService.IndexOf("_assetStorage.DeleteByKeyAsync(task.StorageKey", StringComparison.Ordinal));
-        var deleteStore = controller[
-            controller.IndexOf("public async Task<IActionResult> DeleteStore", StringComparison.Ordinal)..
-            controller.IndexOf("// ─────────────────────────────────────────────", controller.IndexOf("public async Task<IActionResult> DeleteStore", StringComparison.Ordinal), StringComparison.Ordinal)];
-        var deleteEntry = controller[
-            controller.IndexOf("public async Task<IActionResult> DeleteEntry", StringComparison.Ordinal)..
-            controller.IndexOf("// ─────────────────────────────────────────────", controller.IndexOf("public async Task<IActionResult> DeleteEntry", StringComparison.Ordinal), StringComparison.Ordinal)];
-        Assert.True(
-            deleteStore.IndexOf("TrackPendingAsync", StringComparison.Ordinal)
-            < deleteStore.IndexOf("DocumentEntries.DeleteManyAsync", StringComparison.Ordinal));
-        Assert.True(
-            deleteStore.LastIndexOf("TrackPendingAsync", StringComparison.Ordinal)
-            > deleteStore.IndexOf("Attachments.DeleteManyAsync", StringComparison.Ordinal));
-        var deleteCall = deleteEntry.IndexOf("BeginEntryDeletionAsync(_db", StringComparison.Ordinal);
-        Assert.True(deleteCall >= 0);
-        Assert.True(deleteEntry.IndexOf("TrackPendingAsync", StringComparison.Ordinal) >= 0);
-        Assert.True(deleteEntry.IndexOf("TrackPendingAsync", StringComparison.Ordinal) < deleteCall);
-        var countConsumerStart = controller.IndexOf("internal static async Task<EntryDeletionReceipt> BeginEntryDeletionAsync", StringComparison.Ordinal);
-        Assert.True(countConsumerStart >= 0);
-        var countConsumer = controller[countConsumerStart..controller.IndexOf(
-            "internal static async Task ApplyDocumentCountDeletionAsync", countConsumerStart, StringComparison.Ordinal)];
-        Assert.Contains("db.DocumentEntries.DeleteManyAsync", countConsumer);
-        Assert.Contains("db.DocumentEntries.DeleteOneAsync", countConsumer);
-        var finishCounts = deleteEntry.IndexOf("CompleteEntryDeletionCountsAsync", StringComparison.Ordinal);
-        Assert.True(finishCounts > deleteEntry.IndexOf("Attachments.DeleteManyAsync", StringComparison.Ordinal));
-        Assert.True(finishCounts > deleteEntry.IndexOf("DocumentEntryVersions.DeleteManyAsync", StringComparison.Ordinal));
+        var recycle = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Services/DocumentStore/DocumentTrashService.cs"));
+        Assert.Contains("MoveStoreToTrashAsync", controller);
+        Assert.Contains("MoveEntryToTrashAsync", controller);
+        Assert.DoesNotContain("DeleteManyAsync", recycle);
+        Assert.DoesNotContain("DeleteOneAsync", recycle);
+        Assert.Contains("DocumentEntriesIncludingTrash.CountDocumentsAsync", cleanupService);
         Assert.Contains("public string? StorageKey", attachment);
         Assert.Contains("createdFileUrls.push(uploaded.fileUrl)", stableSmoke);
-        Assert.Contains("删除知识库后原始文件必须同步清理", stableSmoke);
+        Assert.Contains("恢复后原始文件必须仍可下载", stableSmoke);
         Assert.Contains(".toBe(404)", stableSmoke);
     }
 
