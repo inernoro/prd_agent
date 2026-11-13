@@ -143,7 +143,7 @@ describe('模版来源、字段映射与真实相邻预览', () => {
       const toggle = toc!.querySelector<HTMLButtonElement>('button')!; expect(toggle.getAttribute('aria-expanded')).toBe('false'); expect(toggle.textContent).toContain(`本文目录 · ${count} 节`);
       await act(async () => toggle.click()); expect(toggle.getAttribute('aria-expanded')).toBe('true');
       const links = [...toc!.querySelectorAll<HTMLAnchorElement>('a')]; expect(links).toHaveLength(count);
-      for (const link of links) expect(link.classList.contains('cur')).toBe(false);
+      for (const link of links) { expect(link.classList.contains('cur')).toBe(false); expect(link.querySelector<HTMLElement>('.mono')?.style.color).toBe('var(--writing-ink3)'); }
       const target = container.querySelector<HTMLElement>(`#template-read-section-${count-1}`)!; const scroll = vi.fn(); target.scrollIntoView = scroll;
       vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });
       await act(async () => links[count-1].click()); vi.unstubAllGlobals(); expect(scroll).toHaveBeenCalledWith({ block: 'start' }); expect(toggle.getAttribute('aria-expanded')).toBe('false');
