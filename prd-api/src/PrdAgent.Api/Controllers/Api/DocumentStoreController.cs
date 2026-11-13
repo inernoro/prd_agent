@@ -908,7 +908,7 @@ public class DocumentStoreController : ControllerBase
         if (!await CanReadStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
-        pageSize = Math.Clamp(pageSize, 1, 500);
+        pageSize = Math.Clamp(pageSize, 1, navigation ? 2000 : 500);
         page = Math.Max(1, page);
 
         DocumentEntryCursor? position = null;

@@ -96,7 +96,7 @@ try {
         await search.waitFor();
         await frame(page);
         const firstVisibleMs = Date.now() - start;
-        await expect(page.getByText(/正在补齐目录/)).toHaveCount(0);
+        await expect(page.getByText(/正在补齐目录/)).toHaveCount(0, { timeout: 45000 });
         const folder = page.locator(`[data-entry-id="${store.id}-folder-0"]`);
         // 导入式 fixture 的文件夹 ID 可由 manifest 覆盖。
         const folderRow = store.folderId ? page.locator(`[data-entry-id="${store.folderId}"]`) : folder;

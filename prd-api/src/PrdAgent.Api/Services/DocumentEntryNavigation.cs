@@ -28,7 +28,7 @@ public static class DocumentEntryNavigation
             scope &= matches;
         }
         var total = await db.DocumentEntries.CountDocumentsAsync(scope, cancellationToken: ct);
-        pageSize = Math.Clamp(pageSize, 1, 500);
+        pageSize = Math.Clamp(pageSize, 1, 2000);
         var items = await db.DocumentEntries.Find(scope & position.Filter()).SortBy(e => e.Id)
             .Project<DocumentEntry>(Builders<DocumentEntry>.Projection.Exclude(e => e.ContentIndex))
             .Limit(pageSize + 1).ToListAsync(ct);

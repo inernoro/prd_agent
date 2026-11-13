@@ -155,7 +155,7 @@ export async function loadDocumentEntries(
   onFirstPage?: (page: DocumentEntryPage) => void,
 ) {
   return collectDocumentEntryPages(async cursor => {
-    const params = new URLSearchParams({ all: 'true', navigation: 'true', pageSize: '500' });
+    const params = new URLSearchParams({ all: 'true', navigation: 'true', pageSize: '2000' });
     if (keyword) params.set('keyword', keyword);
     if (searchContent) params.set('searchContent', 'true');
     if (cursor) params.set('cursor', cursor);
@@ -624,7 +624,7 @@ export async function getPublicDocumentStore(storeId: string) {
 /** 获取公开知识库内文档列表 */
 async function loadAnonymousDocumentEntries(url: string) {
   return collectDocumentEntryPages(cursor => {
-    const params = new URLSearchParams({ pageSize: '500' });
+    const params = new URLSearchParams({ pageSize: '2000' });
     if (cursor) params.set('cursor', cursor);
     return apiRequest<DocumentEntryPage>(`${url}?${params}`, { method: 'GET', auth: false });
   });

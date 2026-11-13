@@ -73,6 +73,14 @@ public class DocumentStoreScaleIntegrationTests
             } while (cursor != null);
             seen.Count.ShouldBe(count);
             seen.Contains("a-new").ShouldBeFalse();
+            var bulk = Data(await owner.ListEntries("mine", pageSize: 2000, all: true, navigation: true));
+            var firstCount = bulk.GetProperty("items").GetArrayLength();
+            firstCount.ShouldBe(count > 500 ? 100 : count);
+            if (bulk.GetProperty("nextCursor").GetString() is { } next)
+            {
+                var remainder = Data(await owner.ListEntries("mine", pageSize: 2000, all: true, navigation: true, cursor: next));
+                remainder.GetProperty("items").GetArrayLength().ShouldBe(Math.Min(2000, count - firstCount));
+            }
             await db.DocumentStores.UpdateOneAsync(s => s.Id == "mine", Builders<DocumentStore>.Update.Set(s => s.SharedTeamIds, new List<string>()));
             (await Controller(db, "collaborator", "team").ListEntries("mine", all: true, navigation: true)).ShouldBeOfType<NotFoundObjectResult>();
         }
