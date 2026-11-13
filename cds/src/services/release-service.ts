@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import type { ProjectReleaseCIVerifier } from './project-release-ci.js';
 import type { StateService } from './state.js';
 import type { BranchEntry, DeploymentFailure, ReleaseArtifact, ReleaseExecutionMode, ReleasePlan, ReleasePreflightCheck, ReleasePreflightRecord, ReleaseRun, ReleaseRunProgress, ReleaseRunStatus, ReleaseStrategy, ReleaseTarget, RemoteHost } from '../types.js';
@@ -368,6 +369,8 @@ export type ReleaseSshExecutor = (req: ReleaseSshExecRequest) => Promise<string>
 
 export interface ReleaseServiceOptions {
   verifyProjectCI?: ProjectReleaseCIVerifier;
+  /** 从受信项目配置解析 Git 仓库；极速部署不保证存在分支源码目录。 */
+  resolveProjectRepository?: (projectId: string) => string | undefined;
   now?: () => Date;
   /** 发布命令执行超时（毫秒）。缺省读 CDS_RELEASE_EXEC_TIMEOUT_MS，再缺省用常量。 */
   execTimeoutMs?: number;
@@ -392,6 +395,7 @@ export class ReleaseService {
   private readonly heartbeatIntervalMs: number;
   private readonly sshExecutor: ReleaseSshExecutor;
   private readonly verifyProjectCI: ProjectReleaseCIVerifier;
+  private readonly resolveProjectRepository: ReleaseServiceOptions['resolveProjectRepository'];
   private readonly inFlight = new Map<string, ReleaseExecutionHandle>();
   private readonly runStartedHooks: Array<(run: ReleaseRun) => void> = [];
 
@@ -403,6 +407,7 @@ export class ReleaseService {
     this.heartbeatIntervalMs = resolvePositiveMs(options.heartbeatIntervalMs) ?? RELEASE_HEARTBEAT_INTERVAL_MS;
     this.sshExecutor = options.sshExecutor || defaultReleaseSshExecutor;
     this.verifyProjectCI = options.verifyProjectCI || (async () => ({ ok: false, message: '项目发布 CI 读取器未接入，不能借用镜像构建绿灯' }));
+    this.resolveProjectRepository = options.resolveProjectRepository;
   }
 
   /**
@@ -549,6 +554,7 @@ export class ReleaseService {
     }
 
     const previewUrl = input.previewUrl || '';
+    const artifact = branch && commitSha ? buildArtifact(branch, commitSha, previewUrl) : undefined;
     if (branch && commitSha && (previewUrl || input.batchSource)) {
       push({ id: 'artifact', label: '可发布产物', status: 'pass', message: input.batchSource ? '已验收的固定部署版本已锁定' : 'branch-preview artifact 已就绪', blocking: false });
     } else {
@@ -621,7 +627,24 @@ export class ReleaseService {
         message: ci.message, blocking: !ciOk });
       if (!strategyError && commitSha) {
         try {
-          const execution = buildReleaseExecution(target, { commitSha, artifact: buildArtifact(branch, commitSha, input.previewUrl || ''), releaseId: 'preflight' } as ReleaseRun);
+          if (strategy.mode === 'project-script') {
+            const repository = this.resolveProjectRepository?.(projectId);
+            if (repository) {
+              let origin: string;
+              try {
+                origin = execFileSync('git', ['-C', repository, 'remote', 'get-url', 'origin'], { encoding: 'utf8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] });
+              } catch {
+                throw new Error('项目脚本来源仓库不可读，请检查项目仓库配置');
+              }
+              const project = this.stateService.getProject(projectId);
+              const expected = project && normalizeRepositoryIdentity(releaseProjectIdentity(project).repository);
+              if (!expected || normalizeRepositoryIdentity(origin.trim()) !== expected) {
+                throw new Error('项目脚本来源仓库与项目绑定不一致，请检查项目仓库配置');
+              }
+              artifact!.artifactPath = repository;
+            }
+          }
+          const execution = buildReleaseExecution(target, { commitSha, artifact, releaseId: 'preflight' } as ReleaseRun);
           push({ id: 'release-script', label: '发布脚本正文有效', status: 'pass', message: `${execution.summary} · sha256=${execution.scriptSha256}`, blocking: false });
         } catch (error) {
           push({ id: 'release-script', label: '发布脚本正文有效', status: 'fail', message: (error as Error).message, blocking: true });
@@ -796,9 +819,6 @@ export class ReleaseService {
       push({ id: 'rollback-version', label: '可回滚版本', status: 'warn', message: '这是该目标首次发布，成功前没有可回滚版本', blocking: false });
     }
 
-    const artifact = branch && commitSha
-      ? buildArtifact(branch, commitSha, previewUrl)
-      : undefined;
     const result: ReleasePreflightResult = {
       ok: checks.every((check) => !check.blocking || check.status !== 'fail'),
       checks,
