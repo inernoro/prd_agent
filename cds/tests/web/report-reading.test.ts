@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { chromium } from 'playwright';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { chromium, type Browser } from 'playwright';
 import express from 'express';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -33,11 +33,21 @@ describe('报告入口内容一致性', () => {
     expect(anchored).toContain('id="目标章节"');
     expect(anchored).toContain("target.scrollIntoView({ behavior: 'smooth', block: 'start' })");
   });
-  it('HTML链接与两张图表按实际白纸/黑纸配色，保留可读作者颜色；Markdown仍跟宿主题', async () => {
-    const browser = await chromium.launch({ ...(process.env.CDS_CHROMIUM_PATH ? { executablePath: process.env.CDS_CHROMIUM_PATH } : { channel: 'chrome' }), headless: true });
-    try {
+  describe('HTML纸面配色与Markdown宿主题', () => {
+    let browser: Browser;
+    beforeAll(async () => {
+      browser = await chromium.launch({ ...(process.env.CDS_CHROMIUM_PATH ? { executablePath: process.env.CDS_CHROMIUM_PATH } : { channel: 'chrome' }), headless: true });
+    });
+    afterAll(async () => { await browser?.close(); });
+
+    it.each([
+      { paper: 'light', authoredLink: false },
+      { paper: 'light', authoredLink: true },
+      { paper: 'dark', authoredLink: false },
+      { paper: 'dark', authoredLink: true },
+    ] as const)('HTML纸面 $paper、作者链接配色 $authoredLink：链接与两张图表可读', async ({ paper, authoredLink }) => {
       const page = await browser.newPage();
-      for (const paper of ['light', 'dark'] as const) for (const authoredLink of [false, true]) {
+      try {
         const host = paper === 'light' ? 'dark' : 'light';
         const background = paper === 'light' ? '#fffdf8' : '#17191f';
         const foreground = paper === 'light' ? '#211d18' : '#f1f5f9';
@@ -58,10 +68,16 @@ describe('报告入口内容一致性', () => {
         }).reduce((sum, channel, index) => sum + channel * [.2126, .7152, .0722][index], 0);
         const first = luminance(actual.color), second = luminance(actual.background);
         expect((Math.max(first, second) + .05) / (Math.min(first, second) + .05)).toBeGreaterThanOrEqual(4.5);
-      }
-      await page.setContent(buildMarkdownReportDocument('[证据](https://example.com)', 'dark'));
-      expect(await page.locator('a').evaluate(node => getComputedStyle(node).color)).toBe('rgb(96, 165, 250)');
-    } finally { await browser.close(); }
+      } finally { await page.close(); }
+    });
+
+    it('Markdown链接仍跟随深色宿主题', async () => {
+      const page = await browser.newPage();
+      try {
+        await page.setContent(buildMarkdownReportDocument('[证据](https://example.com)', 'dark'));
+        expect(await page.locator('a').evaluate(node => getComputedStyle(node).color)).toBe('rgb(96, 165, 250)');
+      } finally { await page.close(); }
+    });
   });
 
   it('实际分享路由返回可读 HTML，而 raw 仍保持 Markdown 下载契约与安全沙箱', async () => {
