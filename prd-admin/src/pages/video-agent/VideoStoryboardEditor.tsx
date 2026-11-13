@@ -70,6 +70,31 @@ type PreviewMode = 'scene' | 'compare' | 'export';
 type PlayerStatus = 'idle' | 'loading' | 'ready' | 'waiting' | 'playing' | 'error';
 export type StoryboardExperienceState = 'progress' | 'empty-error' | 'editor';
 
+function resolveVideoSceneTimings(run: VideoGenRun, tracks: VideoTimelineTrack[]) {
+  // 导出按视频轨数组顺序拼接，startSeconds 不参与视频定位；旁白跟随裁剪后的镜头起点。
+  const videoClips = tracks.find(track => track.type === 'video')?.clips
+    .filter(clip => clip.sceneIndex != null && run.scenes[clip.sceneIndex]);
+  let cursor = 0;
+  const scenes = (videoClips?.length ? videoClips : run.scenes.map((_, sceneIndex) => ({ sceneIndex })))
+    .map(clip => {
+      const sceneIndex = clip.sceneIndex!;
+      const scene = run.scenes[sceneIndex];
+      const trim = 'trimStartSeconds' in clip ? Math.max(0, clip.trimStartSeconds) + Math.max(0, clip.trimEndSeconds) : 0;
+      // 导入轨道保留探测得到的小数时长，scene.duration 是模型参数用的整数秒。
+      // 仅在轨道仍引用当前素材时复用；采用新版本后不能沿用旧素材长度。
+      const measuredDuration = 'assetUrl' in clip && clip.assetUrl && clip.assetUrl === scene.videoUrl
+        && Number.isFinite(clip.durationSeconds) && clip.durationSeconds > 0 ? clip.durationSeconds : undefined;
+      const clipDuration = Math.max(0.1, (measuredDuration ?? scene.duration ?? run.directDuration ?? 5) - trim);
+      const item = { scene, sceneIndex, start: cursor, duration: clipDuration };
+      cursor += clipDuration;
+      return item;
+    });
+  return scenes;
+}
+
+export const calculateVideoRunDuration = (run: VideoGenRun, tracks: VideoTimelineTrack[] = []): number =>
+  resolveVideoSceneTimings(run, tracks).reduce((sum, item) => sum + item.duration, 0);
+
 const DURATIONS = [5, 8, 10, 12, 15];
 const ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '9:21'];
 const RESOLUTIONS = ['480p', '720p', '1080p'];
@@ -306,8 +331,8 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     [run],
   );
   const totalDuration = useMemo(
-    () => run?.scenes.reduce((sum, scene) => sum + (scene.duration ?? run.directDuration ?? 5), 0) ?? 0,
-    [run],
+    () => run ? calculateVideoRunDuration(run, project?.timelineTracks ?? []) : 0,
+    [run, project?.timelineTracks],
   );
   const previewSceneUrl = selectedScene?.versions.find((version) => version.id === previewVersionId)?.videoUrl
     ?? selectedScene?.videoUrl;
@@ -553,7 +578,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
           )}
           <div className="min-w-0">
             <div className="video-workbench__title">{resolveVideoTitle(run.articleTitle, run.createdAt, 56)}</div>
-            <div className="video-workbench__meta">{run.scenes.length} 个镜头 · {totalDuration} 秒 · 已记录成本 ${totalCost.toFixed(3)}</div>
+            <div className="video-workbench__meta">{run.scenes.length} 个镜头 · {Number(totalDuration.toFixed(2))} 秒 · 已记录成本 ${totalCost.toFixed(3)}</div>
           </div>
         </div>
 
@@ -1037,25 +1062,8 @@ export const Timeline: React.FC<{
   disabled: boolean;
 }> = ({ run, tracks, selectedSceneIndex, onSelect, onReorder, disabled }) => {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
-  // 导出按视频轨数组顺序拼接，startSeconds 不参与视频定位；旁白跟随裁剪后的镜头起点。
-  const videoClips = tracks.find(track => track.type === 'video')?.clips
-    .filter(clip => clip.sceneIndex != null && run.scenes[clip.sceneIndex]);
-  let cursor = 0;
-  const scenes = (videoClips?.length ? videoClips : run.scenes.map((_, sceneIndex) => ({ sceneIndex })))
-    .map(clip => {
-      const sceneIndex = clip.sceneIndex!;
-      const scene = run.scenes[sceneIndex];
-      const trim = 'trimStartSeconds' in clip ? Math.max(0, clip.trimStartSeconds) + Math.max(0, clip.trimEndSeconds) : 0;
-      // 导入轨道保留探测得到的小数时长，scene.duration 是模型参数用的整数秒。
-      // 仅在轨道仍引用当前素材时复用；采用新版本后不能沿用旧素材长度。
-      const measuredDuration = 'assetUrl' in clip && clip.assetUrl && clip.assetUrl === scene.videoUrl
-        && Number.isFinite(clip.durationSeconds) && clip.durationSeconds > 0 ? clip.durationSeconds : undefined;
-      const clipDuration = Math.max(0.1, (measuredDuration ?? scene.duration ?? run.directDuration ?? 5) - trim);
-      const item = { scene, sceneIndex, start: cursor, duration: clipDuration };
-      cursor += clipDuration;
-      return item;
-    });
-  const duration = Math.max(cursor, 1);
+  const scenes = resolveVideoSceneTimings(run, tracks);
+  const duration = scenes.reduce((sum, item) => sum + item.duration, 0) || 1;
   const timingStyle = (start: number, length: number) => ({ left: `${start / duration * 100}%`, width: `${length / duration * 100}%` });
   const ticks = Array.from({ length: Math.floor(duration / 5) + 1 }, (_, index) => index * 5);
   if (ticks[ticks.length - 1] !== duration) ticks.push(duration);

@@ -2,7 +2,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { VideoGenRun, VideoTimelineTrack } from '@/services/contracts/videoAgent';
-import { Timeline } from './VideoStoryboardEditor';
+import { calculateVideoRunDuration, Timeline } from './VideoStoryboardEditor';
 
 const run = { directDuration: 5, scenes: [
   { index: 0, topic: '第一镜', duration: 5, narration: { text: '第一句', durationSeconds: 2 } },
@@ -30,11 +30,21 @@ describe('制作台时间线与导出时序一致', () => {
     })) }] as VideoTimelineTrack[];
     const host = render(tracks, imported);
     expect(host.textContent).toContain('3 个镜头 · 11 秒');
+    expect(calculateVideoRunDuration(imported, tracks)).toBe(11);
     expect(card(host, '第三句').textContent).toContain('7.60s');
     expect(parseFloat(card(host, '第三句').style.left)).toBeCloseTo(100 * 7.6 / 11);
     const replaced = { ...imported, scenes: imported.scenes.map((scene, index) =>
       index === 0 ? { ...scene, videoUrl: '/new-scene.mp4', duration: 4 } : scene) };
     expect(card(render(tracks, replaced), '第三句').textContent).toContain('9.20s');
+  });
+  it('单段不足一秒素材的顶部总时长和时间线保持真实长度', () => {
+    const short = { ...run, scenes: [{ ...run.scenes[0], duration: 1, videoUrl: '/short.mp4' }] } as VideoGenRun;
+    const tracks = [{ id: 'v', type: 'video', clips: [{
+      id: '0', sceneIndex: 0, durationSeconds: 0.44, assetUrl: '/short.mp4',
+      startSeconds: 0, trimStartSeconds: 0, trimEndSeconds: 0,
+    }] }] as VideoTimelineTrack[];
+    expect(calculateVideoRunDuration(short, tracks)).toBe(0.44);
+    expect(render(tracks, short).textContent).toContain('1 个镜头 · 0.44 秒');
   });
   it('未配音镜头占用时间，第三镜字幕和配音从 10 秒开始', () => {
     const host = render();
