@@ -100,6 +100,10 @@ try {
         const folder = page.locator(`[data-entry-id="${store.id}-folder-0"]`);
         // 导入式 fixture 的文件夹 ID 可由 manifest 覆盖。
         const folderRow = store.folderId ? page.locator(`[data-entry-id="${store.folderId}"]`) : folder;
+        // 定位到尾部的选中项可能让分批目录停在中段；使用可见入口回到目录顶部。
+        if (!(await folderRow.count()) && await page.getByRole('button', { name: '从头浏览', exact: true }).isVisible().catch(() => false)) {
+          await page.getByRole('button', { name: '从头浏览', exact: true }).click();
+        }
         await folderRow.waitFor();
         await frame(page);
         const completeBrowseMs = Date.now() - start;
