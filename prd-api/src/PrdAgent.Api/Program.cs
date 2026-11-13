@@ -553,6 +553,8 @@ builder.Services.AddHttpClient("McpLoopback", c =>
         RemoteCertificateValidationCallback = (_, _, _, _) => true,
     },
 });
+builder.Services.AddScoped<PrdAgent.Api.Services.KnowledgeIndexRefreshQueue>();
+builder.Services.AddScoped<PrdAgent.Api.Services.KnowledgeIndexRefreshProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>();

@@ -33,7 +33,7 @@ public sealed class KnowledgeRetrievalService
         _context = context;
     }
 
-    public async Task<AgentToolInvokeResult> IndexEntryAsync(string entryId, string userId, CancellationToken ct)
+    public async Task<AgentToolInvokeResult> IndexEntryAsync(string entryId, string userId, CancellationToken ct, string? expectedSourceHash = null)
     {
         if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(entryId))
             return AgentToolInvokeResult.Fail("kb_identity_required", "索引需要明确的用户与单篇文档");
@@ -43,6 +43,8 @@ public sealed class KnowledgeRetrievalService
         if (entry == null || store == null || entry.IsFolder)
             return AgentToolInvokeResult.Fail("kb_entry_not_found", "文档不存在或不属于当前用户");
         var content = await ReadContentAsync(entry, ct);
+        if (expectedSourceHash is not null && expectedSourceHash != DocumentChunker.ComputeHash(content, string.Empty))
+            return AgentToolInvokeResult.Fail("KB_INDEX_SOURCE_CHANGED", "正文已变化，本次旧保存许可未调用向量模型");
         var chunks = DocumentChunker.Split(content);
         if (chunks.Count == 0) return AgentToolInvokeResult.Fail("kb_content_empty", "该文档没有可索引正文");
         if (chunks.Count > MaxIndexChunks)
@@ -144,7 +146,7 @@ public sealed class KnowledgeRetrievalService
         var staleChunks = rows.Count(row => currentHashes.TryGetValue(row.EntryId, out var current)
             && current.storeId == row.StoreId && !current.hashes.Contains(row.ContentHash));
         var hits = RankCurrent(rows, documents, userId, batch.Model, batch.Vectors[0], limit, DeploymentScope.Current);
-        return SearchResult(query, hits, watch.ElapsedMilliseconds, staleChunks);
+        return SearchResult(query, hits, watch.ElapsedMilliseconds, staleChunks, batch.Model, batch.Dimension);
     }
 
     /// <summary>Shared runtime ranking boundary, testable without a model or database.</summary>
@@ -170,10 +172,12 @@ public sealed class KnowledgeRetrievalService
             .GroupBy(hit => hit.Entry.Id).Select(group => group.First()).Take(Math.Clamp(limit, 1, 50)).ToList();
     }
 
-    private static AgentToolInvokeResult SearchResult(string query, IReadOnlyList<KnowledgeRetrievalHit> hits, long elapsed, int staleChunks = 0)
+    private static AgentToolInvokeResult SearchResult(string query, IReadOnlyList<KnowledgeRetrievalHit> hits, long elapsed, int staleChunks = 0,
+        string? embeddingModel = null, int? embeddingDimension = null)
         => AgentToolInvokeResult.Ok(JsonSerializer.Serialize(new
         {
             query, mode = "semantic", readonlyAccess = true, total = hits.Count,
+            embeddingModel, embeddingDimension,
             retrievalLatencyMs = elapsed, staleChunks,
             indexWarning = staleChunks > 0 ? "已排除旧版索引块；若新正文未命中，请明确选择该篇文档重新索引，不会自动建库" : null,
             contextEntryIds = hits.Select(x => x.Entry.Id),

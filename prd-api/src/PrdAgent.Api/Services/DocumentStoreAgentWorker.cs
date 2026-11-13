@@ -520,7 +520,12 @@ public class DocumentStoreAgentWorker : BackgroundService
 
             await EmitEventAsync(runStore, kindForEvents, run.Id, "phase", new { phase = "started" });
 
-            if (run.Kind == DocumentStoreAgentRunKind.Subtitle)
+            if (run.Kind == DocumentStoreAgentRunKind.KnowledgeIndex)
+            {
+                var processor = scope.ServiceProvider.GetRequiredService<KnowledgeIndexRefreshProcessor>();
+                await processor.ProcessAsync(run);
+            }
+            else if (run.Kind == DocumentStoreAgentRunKind.Subtitle)
             {
                 var processor = scope.ServiceProvider.GetRequiredService<SubtitleGenerationProcessor>();
                 await processor.ProcessAsync(run, db, runStore);
@@ -860,6 +865,7 @@ public class DocumentStoreAgentWorker : BackgroundService
     /// <summary>Run kind → IRunEventStore 事件 kind 的映射（Controller 的 SSE 端点用同一映射）。</summary>
     internal static string KindForEvents(string kind) => kind switch
     {
+        DocumentStoreAgentRunKind.KnowledgeIndex => DocumentStoreRunKinds.KnowledgeIndex,
         DocumentStoreAgentRunKind.Subtitle => DocumentStoreRunKinds.Subtitle,
         DocumentStoreAgentRunKind.AutoLink => DocumentStoreRunKinds.AutoLink,
         DocumentStoreAgentRunKind.Transcribe => DocumentStoreRunKinds.Transcribe,
