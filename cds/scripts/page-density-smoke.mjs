@@ -15,6 +15,8 @@ fs.mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({ executablePath: process.env.CDS_CHROMIUM_PATH || (fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined), args: ['--no-sandbox'] });
 const measurements = [], failures = [], unexpected = new Set();
 const check = (condition, message) => { if (!condition) failures.push(message); };
+// Closed native details can retain descendant bounding boxes; count only visible content.
+const visibleHeight = async locator => await locator.isVisible() ? (await locator.boundingBox())?.height || 0 : 0;
 const project = resolveFixture('/api/projects').projects[0];
 const profile = id => ({ id, projectId: project.id, name: id, dockerImage: `fixture/${id}:latest`, command: 'node server.js', containerPort: 8080, workDir: '.', dependsOn: [] });
 const task = i => ({ id: `review-${i}`, projectId: project.id, title: `布局审查 ${i + 1}`, sourceType: 'zip', sourceName: 'source.zip', status: 'completed', phase: '报告已归档', progress: { totalFiles: 2, scannedFiles: 2 }, createdAt: '2026-11-13T10:00:00Z', updatedAt: '2026-11-13T10:00:00Z', delivery: { status: 'not_requested' }, findingsSummary: { high: 0, medium: 0, low: 1 } });
@@ -103,7 +105,7 @@ try {
     await page.goto(`${base}/branch-panel/${branch().id}`, { waitUntil: 'domcontentloaded' });
     const service = page.getByRole('button', { name: /^api/ }).first(); await service.waitFor(); await save('branch-detail');
     const serviceBox = await service.boundingBox();
-    measurements.push({ page: 'branch-detail', width, theme, firstServiceY: serviceBox.y, targetHeight: serviceBox.height, minScrollToTarget: Math.max(0, serviceBox.y + serviceBox.height - (width === 390 ? 844 : 900)), labelFont: await service.evaluate(e => getComputedStyle(e.querySelector('.font-medium') || e).fontSize), optionalShaRegionHeight: (await page.getByText('提交一致性', { exact: true }).locator('..').boundingBox())?.height || 0 });
+    measurements.push({ page: 'branch-detail', width, theme, firstServiceY: serviceBox.y, targetHeight: serviceBox.height, minScrollToTarget: Math.max(0, serviceBox.y + serviceBox.height - (width === 390 ? 844 : 900)), labelFont: await service.evaluate(e => getComputedStyle(e.querySelector('.font-medium') || e).fontSize), optionalShaRegionHeight: await visibleHeight(page.getByText('GitHub 目标', { exact: true }).locator('../..')) });
     check(serviceBox.y < (width === 390 ? 560 : 370), `${width}/${theme}: metadata delays first service`);
     const beforeServiceSelection = await scrollDistance(); await page.getByRole('button', { name: /^web-1/ }).first().click();
     measurements.at(-1).scrollToSelectSecondService = Math.abs(await scrollDistance() - beforeServiceSelection);
@@ -157,7 +159,7 @@ try {
     await page.goto(`${base}/release-center?project=${project.id}`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: '环境与配置', exact: true }).click();
     await page.getByText('发布模式', { exact: true }).waitFor(); await save('release-center-config');
-    measurements.push({ page: 'release-center-config', width, theme, firstFieldY: (await page.getByText('发布模式', { exact: true }).boundingBox()).y, optionalMetricsHeight: (await page.getByText('近 30 天发布', { exact: true }).locator('../..').boundingBox())?.height || 0 });
+    measurements.push({ page: 'release-center-config', width, theme, firstFieldY: (await page.getByText('发布模式', { exact: true }).boundingBox()).y, optionalMetricsHeight: await visibleHeight(page.getByText('近 30 天发布', { exact: true }).locator('../..')) });
     check(!(await page.getByText('近 30 天发布', { exact: true }).isVisible()), `${width}/${theme}: low-frequency metrics crowd environment configuration`);
     if (!layoutOnly) {
       const metrics = page.locator('summary').filter({ hasText: '近 30 天发布指标' });
