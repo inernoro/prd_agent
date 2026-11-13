@@ -53,7 +53,7 @@ const images = {
   web: 'nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10',
 };
 const limits = { api: ['1', '1024m'], mongo: ['1', '768m'], redis: ['0.5', '256m'], web: ['0.5', '256m'] };
-const contract = { schema: 3, buildMetadataVersion: 2, workload, limits, images, sdkVersion,
+const contract = { schema: 4, buildMetadataVersion: 2, workload, limits, images, sdkVersion,
   nodeMajor: process.versions.node.split('.')[0], arch: os.arch(), cpu: os.cpus()[0].model,
   probe: digest(await fs.readFile(path.join(here, 'probe/Probe.cs'), 'utf8')),
   metricsCode: digest(await fs.readFile(path.join(here, 'metrics.mjs'), 'utf8')),
@@ -152,9 +152,21 @@ async function seed() {
     // Populate the actual recent-open ledger through the same store-open endpoint as the UI.
     await api(`/api/document-store/stores/${store.id}`);
   }
-  // Every iteration creates a unique document; concurrent users never overwrite one another.
-  fixture.writers = Array.from({ length: Math.max(...workload.ramp.users) }, (_, i) => fixture.stores[i % fixture.stores.length]);
-  await fs.writeFile(path.join(out, 'fixture.json'), JSON.stringify({ ...workload, actualContentBytes: Buffer.byteLength(payload), totalStores: fixture.stores.length }, null, 2));
+  // Match the UI's existing-document edit/save path. Give each VU a distinct
+  // document so another user's writes cannot invalidate the readback assertion.
+  // Creation is setup; disposal of this run's database is cleanup. Neither
+  // document creation nor the store-level recycle-bin lease is timed as writing.
+  for (let vu = 0; vu < workload.writerDocuments; vu++) {
+    const doc = (await api(`/api/document-store/stores/${fixture.stores[vu % fixture.stores.length]}/entries`, 'POST', {
+      title: `性能写入-${vu}`, sourceType: 'upload', contentType: 'text/markdown',
+    })).data;
+    fixture.writers.push(doc.id);
+  }
+  if (fixture.writers.length < Math.max(...workload.ramp.users) || new Set(fixture.writers).size !== fixture.writers.length)
+    throw new Error('每个并发用户必须持有独立写入文档');
+  await fs.writeFile(path.join(out, 'fixture.json'), JSON.stringify({ ...workload,
+    actualContentBytes: Buffer.byteLength(payload), totalStores: fixture.stores.length,
+    totalDocuments: fixture.entries.length + fixture.writers.length, writers: fixture.writers }, null, 2));
 }
 async function browserJourney(round) {
   browser = await chromium.launch({ executablePath: process.env.PERF_CHROMIUM_PATH || undefined, args: ['--no-proxy-server'] });
@@ -245,6 +257,7 @@ async function browserJourney(round) {
 }
 async function journey(vu, phase, iteration) {
   const rows = [], started = performance.now();
+  let writeStart;
   const measured = async (name, route, method, body) => {
     try { const r = await api(route, method, body, name); rows.push(r.row); return r.data; }
     catch (error) { rows.push(error.sample); throw error; }
@@ -257,20 +270,20 @@ async function journey(vu, phase, iteration) {
     const id = fixture.entries[(vu + iteration) % fixture.entries.length];
     const doc = await measured('document-open', `/api/document-store/entries/${id}/content`);
     if (!doc.content?.includes('MAP性能样例')) throw new Error('文档正文不正确');
-    const writeStart = performance.now();
-    const docId = (await measured('write-create', `/api/document-store/stores/${fixture.writers[vu]}/entries`, 'POST', {
-      title: `回归-${phase}-${vu}-${iteration}`, sourceType: 'upload', contentType: 'text/markdown',
-    })).id;
+    writeStart = performance.now();
+    const docId = fixture.writers[vu];
     const marker = `${phase}-${vu}-${iteration}`;
-    await measured('write-save', `/api/document-store/entries/${docId}/content`, 'PUT', { content: `${payload}\n${marker}` });
+    const content = payload.slice(0, -marker.length) + marker;
+    await measured('write-save', `/api/document-store/entries/${docId}/content`, 'PUT', { content });
     const read = await measured('write-readback', `/api/document-store/entries/${docId}/content`);
     if (!read.content.endsWith(marker)) throw new Error('写后读取不一致');
     const versions = await measured('write-versions', `/api/document-store/entries/${docId}/versions`);
     if (versions.total < 1 || !versions.items?.[0]?.id) throw new Error('写入版本未生成');
     rows.push(sample({ name: 'write', ms: performance.now() - writeStart, ok: true }));
-    await measured('write-delete', `/api/document-store/entries/${docId}`, 'DELETE');
     rows.push(sample({ name: 'journey', ms: performance.now() - started, ok: true }));
   } catch (error) {
+    if (writeStart !== undefined)
+      rows.push(sample({ name: 'write', ms: performance.now() - writeStart, ok: false, error: error.message }));
     rows.push(sample({ name: 'journey', ms: performance.now() - started, ok: false, error: error.message }));
   }
   return rows;

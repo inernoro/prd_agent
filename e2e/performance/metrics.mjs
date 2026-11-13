@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 
 export const workload = {
-  version: 1, stores: 6, documentsPerStore: 20, contentBytes: 8192,
+  version: 2, stores: 6, documentsPerStore: 20, writerDocuments: 128, contentBytes: 8192,
+  writeFlow: 'edit-existing-document',
   browserRepetitions: 3,
   rateLimit: { maxRequestsPerMinute: 100000, maxConcurrentRequests: 1024 },
   normal: { users: 2, seconds: 20, intervalMs: 1000 },
