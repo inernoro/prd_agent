@@ -77,6 +77,7 @@ test('稳定模型升级页签按真实状态保存策略、验证、采用与�
     await mount('owner');
     await openPolicy();
     const panel = () => document.querySelector('[data-testid="model-upgrade-panel"]');
+    assert.doesNotMatch(panel().textContent, /全量使用位置|使用位置覆盖核验|旧引用残留/);
     assert.match(panel().textContent, /image-quality/);
     assert.match(panel().textContent, /image-2-all/);
     assert.match(panel().textContent, /future-image-2/);
