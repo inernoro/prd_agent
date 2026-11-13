@@ -40,6 +40,11 @@ public class LogTraceQueryTests
             var native = summary.DeepClone().AsBsonDocument;
             native["_id"] = "native"; native["IngressProtocol"] = "gw-native";
             rows.Add(native);
+            rows[0]["ProviderRequestId"] = "final-receipt";
+            rows[0]["ProviderAttempts"] = new BsonArray { new BsonDocument {
+                { "AttemptId", "physical-attempt-a" }, { "ProviderRequestId", "failed-provider-receipt-a" },
+                { "ProviderTaskId", "intermediate-provider-job-a" }
+            } };
             await logs.InsertManyAsync(rows);
             Assert.Equal("summary", (await logs.Find(LogTraceQuery.LegacySummary).SingleAsync())["_id"].AsString);
             Assert.True(LogTraceQuery.IsLegacySummary(summary));
@@ -76,6 +81,12 @@ public class LogTraceQueryTests
             Assert.Equal(System.Net.HttpStatusCode.NotFound, foreign.StatusCode);
             var forgedAnchor = await client.GetAsync("/gw/logs/trace?reference=run-a&anchorId=foreign-team");
             Assert.Equal(System.Net.HttpStatusCode.NotFound, forgedAnchor.StatusCode);
+            foreach (var attemptReference in new[] { "failed-provider-receipt-a", "intermediate-provider-job-a", "physical-attempt-a" })
+            {
+                using var fromAttempt = JsonDocument.Parse(await client.GetStringAsync("/gw/logs/trace?reference=" + attemptReference));
+                Assert.Equal(55, fromAttempt.RootElement.GetProperty("data").GetProperty("total").GetInt32());
+                Assert.DoesNotContain("foreign-", fromAttempt.RootElement.GetRawText());
+            }
 
             BsonDocument LegacyLink(string id, string? run, string team, string logical) => new() {
                 { "_id", id }, { "TenantId", "tenant-a" }, { "TeamId", team },

@@ -57,7 +57,7 @@
     "command": "LLMGW_TRACE_TEST_MONGO=mongodb://127.0.0.1:27021 dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter FullyQualifiedName~LogTraceIsolationRecoveryProofTests",
     "safety": "Unique trace_proof_* databases are deleted in finally; no production records or supplier requests are modified."
   },
-  "previewLive": "PENDING; prior deployment queued because image content did not match target revision",
+  "previewLive": "Original full real acceptance completed at f7bf5e99c327317cd4ef96941d9f0b98e6f55939; report 2795223a026f46c5a7129ad7639874d4. Subsequent review-head read-only acceptance is tracked separately in PR #1973.",
   "historicalEvidence": "No historical records, supplier bills or missing costs were fabricated.",
   "originalHttpContrast": [
     {
@@ -174,5 +174,65 @@
       "tutorial": "38 passed; publisher check passed; unchanged drift guard reports P0/P1/P2 all zero"
     }
   },
-  "originalProofCapturedAtCommit": "f7bf5e99c327317cd4ef96941d9f0b98e6f55939"
+  "originalProofCapturedAtCommit": "f7bf5e99c327317cd4ef96941d9f0b98e6f55939",
+  "secondReviewReceiptLookup": {
+    "baseline": "8fcb1df2ef991f5e56c7bb9fcae1623d51d35d03",
+    "finding": "https://github.com/inernoro/prd_agent/pull/1973#discussion_r4561481468",
+    "red": [
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Trace_PagesEveryAuthorizedCall_RejectsAmbiguity_AndWithholdsBodies",
+        "outcome": "Failed",
+        "failure": "System.Net.Http.HttpRequestException : Response status code does not indicate success: 404 (Not Found)."
+      }
+    ],
+    "green": [
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.GatewayLogLifecycleTests.ExpiredOwner_ClosesOnlyItsUnfinishedCalls_WithoutInventingOutcomeOrCost",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.LlmGatewayTests.SendRawWithResolutionAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Trace_PagesEveryAuthorizedCall_RejectsAmbiguity_AndWithholdsBodies",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.LostOwner_CallLoggedAfterLeaseExpiry_DoesNotRemainRunningForever",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ExplicitDifferentRuns_AreNotMergedByReusedLogicalOrProviderTaskId",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ConcurrentReconciliationAndCompletion_PreserveConfirmedTerminalResults",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.LlmGatewayTests.SendAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate",
+        "outcome": "Passed",
+        "failure": null
+      }
+    ],
+    "assertions": [
+      "Failed/intermediate ProviderAttempts.ProviderRequestId, ProviderTaskId and AttemptId all locate the same 55 authorized records.",
+      "Hidden-team records remain absent; ambiguous explicit runs stay separate; no historical mutation."
+    ],
+    "realOldPreview": "Normal MAP login and SSO at 8fcb1df2e: persisted attempt d5ada42671064ffb856fe08e252f2342 returns no record while business 659dbc93-0c41-4781-9676-1b45f71710e8 returns 22 records. No new supplier call.",
+    "querySourceSha256": "1a60e6ab2a7d5cdb0e733da87394a4ad137daf9ecc3a158e474646cd3f20b47b",
+    "verification": {
+      "build": "0 errors",
+      "targeted": "7 passed, 0 failed; real isolated MongoDB",
+      "tutorial": "38 passed; publisher check passed"
+    },
+    "scope": "Read-only nested persisted identity match under the existing authorization filter; no new billing, indexes, endpoints or historical backfill."
+  }
 }

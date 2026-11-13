@@ -9,7 +9,8 @@ public static class LogTraceQuery
     private static readonly FilterDefinitionBuilder<BsonDocument> F = Builders<BsonDocument>.Filter;
 
     public static FilterDefinition<BsonDocument> Reference(string reference) => F.Or(
-        new[] { "_id", "RequestId", "RunId", "LogicalRequestId", "ProviderRequestId", "ProviderTaskId" }
+        new[] { "_id", "RequestId", "RunId", "LogicalRequestId", "ProviderRequestId", "ProviderTaskId",
+            "ProviderAttempts.AttemptId", "ProviderAttempts.ProviderRequestId", "ProviderAttempts.ProviderTaskId" }
             .Select(field => F.Eq(field, reference)));
 
     public static FilterDefinition<BsonDocument> LegacySummary => F.And(
