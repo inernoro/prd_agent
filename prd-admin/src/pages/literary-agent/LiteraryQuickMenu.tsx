@@ -1,6 +1,7 @@
 import * as React from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Check, ChevronsUpDown } from 'lucide-react';
+import { InlineMenuContext, LiteraryInlineMenu } from './LiteraryInlineMenu';
 
 /**
  * 文学创作编辑器的就地菜单（弹出按钮 + 菜单）。
@@ -101,6 +102,8 @@ export function QuickMenu({
   align = 'start',
   open,
   onOpenChange,
+  inline = false,
+  search,
   children,
 }: {
   trigger: React.ReactElement;
@@ -110,9 +113,14 @@ export function QuickMenu({
   align?: 'start' | 'center' | 'end';
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  inline?: boolean;
+  search?: { value: string; onChange: (value: string) => void; placeholder: string };
   children: React.ReactNode;
 }) {
   React.useLayoutEffect(ensureStyles, []);
+  if (inline) {
+    return <LiteraryInlineMenu trigger={trigger} title={title} note={note} open={open} onOpenChange={onOpenChange} search={search}>{children}</LiteraryInlineMenu>;
+  }
   return (
     <DropdownMenu.Root open={open} onOpenChange={onOpenChange}>
       <DropdownMenu.Trigger asChild>{trigger}</DropdownMenu.Trigger>
@@ -146,13 +154,31 @@ export function QuickMenuItem({
   selected,
   disabled,
   onSelect,
+  trailing,
+  tabIndex,
 }: {
   label: React.ReactNode;
   description?: React.ReactNode;
   selected?: boolean;
   disabled?: boolean;
   onSelect: () => void;
+  trailing?: React.ReactNode;
+  tabIndex?: number;
 }) {
+  const inline = React.useContext(InlineMenuContext);
+  if (inline) {
+    return (
+      <button type="button" className="lit-inline-option" role="menuitemradio" aria-checked={selected}
+        disabled={disabled} tabIndex={tabIndex ?? (selected ? 0 : -1)} onClick={() => { onSelect(); inline.close(); }}>
+        <span className="lit-inline-check">{selected ? <Check size={15} strokeWidth={2.5} /> : null}</span>
+        <span className="lit-inline-option-body">
+          <span className="lit-inline-option-name">{label}</span>
+          {description && <span className="lit-inline-option-detail">{description}</span>}
+        </span>
+        {trailing && <span className="lit-inline-option-trailing">{trailing}</span>}
+      </button>
+    );
+  }
   return (
     <DropdownMenu.Item
       className="lqm-item"
@@ -172,6 +198,10 @@ export function QuickMenuItem({
 
 /** 菜单最底部的「管理…」类动作：打开完整配置页。 */
 export function QuickMenuAction({ label, onSelect }: { label: string; onSelect: () => void }) {
+  const inline = React.useContext(InlineMenuContext);
+  if (inline) {
+    return <button type="button" role="menuitem" className="lit-inline-option lit-inline-action" onClick={() => { onSelect(); inline.close(); }}>{label}</button>;
+  }
   return (
     <>
       <DropdownMenu.Separator className="lqm-sep" />
@@ -183,5 +213,6 @@ export function QuickMenuAction({ label, onSelect }: { label: string; onSelect: 
 }
 
 export function QuickMenuEmpty({ children }: { children: React.ReactNode }) {
-  return <div className="lqm-empty">{children}</div>;
+  const inline = React.useContext(InlineMenuContext);
+  return <div className={inline ? 'lit-inline-empty' : 'lqm-empty'}>{children}</div>;
 }

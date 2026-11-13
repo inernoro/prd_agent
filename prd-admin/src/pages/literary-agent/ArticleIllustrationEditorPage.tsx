@@ -64,11 +64,12 @@ import { fitLiteraryImageSize, imageRunFailure } from './literaryImageRunContrac
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, PenLine, SlidersHorizontal, History, AlertTriangle } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, PenLine, SlidersHorizontal, History, AlertTriangle, Layers, Square } from 'lucide-react';
 import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
 import { ArticleEditorToolbar } from './ArticleEditorToolbar';
 import { LiteraryModelPicker } from './LiteraryModelPicker';
-import { PopupButton, QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
+import { LiteraryInlineMenuGroup, LiterarySettingsRow } from './LiteraryInlineMenu';
+import { QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
 import type { WatermarkConfig } from '@/services/contracts/watermark';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
@@ -3395,9 +3396,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       </div>
 
       {/* 右侧：工作台 */}
-      <div className={cn("flex flex-col gap-3", isMobile ? "w-full" : "w-96", isMobile && mobileTab !== 'markers' && "hidden")}>
+      <div className={cn("flex min-w-0 min-h-0 flex-col gap-3 overflow-y-auto", isMobile ? "w-full" : "w-96", isMobile && mobileTab !== 'markers' && "hidden")}>
         {/* 顶部：工作流进度 + 配置折叠区 */}
-        <PanelCard>
+        <PanelCard className="shrink-0">
           <WorkflowProgressBar
             steps={phaseSteps}
             currentStep={phase}
@@ -3445,215 +3446,211 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             </Button>
           ))}
 
-          {/* 生成设置：四个弹出按钮（图标 + 当前值 + 上下箭头），就地弹出选项菜单；
-              行尾图标按钮打开完整配置页。参照 Apple HIG 的弹出按钮：长得像下拉就必须就地给出选项。 */}
-          <div
-            className="mt-2.5 pt-2.5 border-t flex items-center gap-1.5"
-            style={{ borderColor: 'var(--border-subtle)' }}
-            data-testid="literary-generation-settings"
-          >
-            {/* 两列配置：右栏只有三百来像素，四个挤一行时风格、水印的名字被截成「全域…」「水印…」，
-                看不出用的是哪一套。「这是本文自己的设定」由悬停说明与菜单说明交代，不占按钮文字 */}
-            <div className="grid grid-cols-2 gap-1.5 flex-1 min-w-0">
-              <QuickMenu
-                title="提示词风格"
-                width={260}
-                trigger={
-                  <PopupButton
-                    icon={<FileText size={13} style={{ color: 'var(--accent-fg-blue)', flexShrink: 0 }} />}
-                    value={selectedPrompt?.title || '自动'}
-                    isSet={!!selectedPrompt}
-                    title={`提示词风格：${selectedPrompt?.title || '自动（系统推断）'}`}
-                    aria-label="提示词风格"
-                  />
-                }
-              >
-                <QuickMenuItem
-                  label="自动"
-                  description="由系统按文章内容推断风格"
-                  selected={!selectedPrompt}
-                  onSelect={() => setSelectedPrompt(null)}
-                />
-                {userPrompts.map((p) => (
-                  <QuickMenuItem
-                    key={p.id}
-                    label={p.title || '未命名'}
-                    selected={selectedPrompt?.id === p.id}
-                    onSelect={() => setSelectedPrompt(p)}
-                  />
-                ))}
-                <QuickMenuAction label="管理提示词…" onSelect={() => setPromptPreviewOpen(true)} />
-              </QuickMenu>
-
-              <QuickMenu
-                title="风格参考图"
-                width={260}
-                note={articlePrefNote('风格', articleChoice?.style)}
-                // 还没拿到真实列表（首次读取失败）时，打开菜单就重读一次
-                onOpenChange={(o) => { if (o && !referenceImageListReady && !referenceImageLoading) void loadReferenceImageConfigs(); }}
-                trigger={
-                  <PopupButton
-                    icon={articleChoice?.style.missing
-                      ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
-                      : <ImageIcon size={13} style={{ color: 'var(--accent-fg-violet)', flexShrink: 0 }} />}
-                    warning={!!articleChoice?.style.missing}
-                    value={articleChoice
-                      ? (articleChoice.style.styleId === 'none' ? '无' : articleChoice.style.name)
-                      : !referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中…') : (activeRefConfig?.name || '无')}
-                    isSet={articleChoice ? articleChoice.style.styleId !== 'none' : !!activeRefConfig}
-                    title={articleChoice
-                      ? articlePrefTitle('风格', articleChoice.style)
-                      : `风格参考图：${!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中') : (activeRefConfig?.name || '不使用')}`}
-                    aria-label="风格参考图"
-                  />
-                }
-              >
-                {!referenceImageListReady ? (
-                  <QuickMenuEmpty>
-                    {referenceImageLoadError && !referenceImageLoading
-                      ? `读取风格图失败：${referenceImageLoadError}。关闭菜单再打开即可重试。`
-                      : '正在读取风格图…'}
-                  </QuickMenuEmpty>
-                ) : (
-                  <>
-                    <QuickMenuItem
-                      label="不使用"
-                      selected={articleChoice ? articleChoice.style.styleId === 'none' : !activeRefConfig}
-                      disabled={referenceImageSaving}
-                      onSelect={() => {
-                        if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== 'none') void applyArticleChoice({ style: 'none' }); return; }
-                        if (activeRefConfig) void switchReferenceImage(activeRefConfig, false);
-                      }}
+          {/* 配置与模型共用原位展开区域，同一时间只展开一项。 */}
+          <LiteraryInlineMenuGroup>
+            <div className="lit-settings" data-testid="literary-generation-settings">
+              <section className="lit-settings-section lit-settings-section--rows" aria-label="配图设置">
+                <div className="lit-settings-heading">
+                  <h3>配图设置</h3>
+                  <button type="button" className="lit-settings-manage" onClick={() => setPromptPreviewOpen(true)} title="全部配置" aria-label="全部配置">
+                    <SlidersHorizontal size={15} />
+                  </button>
+                </div>
+                <QuickMenu inline
+                  title="提示词风格"
+                  width={260}
+                  trigger={
+                    <LiterarySettingsRow
+                      icon={<PenLine size={16} />}
+                      label="提示词"
+                      value={selectedPrompt?.title || '自动推断'}
+                      title={`提示词风格：${selectedPrompt?.title || '自动（系统推断）'}`}
+                      aria-label="提示词风格"
                     />
-                    {referenceImageConfigs.map((c) => (
+                  }
+                >
+                  <QuickMenuItem
+                    label="自动"
+                    description="由系统按文章内容推断风格"
+                    selected={!selectedPrompt}
+                    onSelect={() => setSelectedPrompt(null)}
+                  />
+                  {userPrompts.map((p) => (
+                    <QuickMenuItem
+                      key={p.id}
+                      label={p.title || '未命名'}
+                      selected={selectedPrompt?.id === p.id}
+                      onSelect={() => setSelectedPrompt(p)}
+                    />
+                  ))}
+                  <QuickMenuAction label="管理提示词…" onSelect={() => setPromptPreviewOpen(true)} />
+                </QuickMenu>
+
+                <QuickMenu inline
+                  title="风格参考图"
+                  width={260}
+                  note={articlePrefNote('风格', articleChoice?.style)}
+                  // 还没拿到真实列表（首次读取失败）时，打开菜单就重读一次
+                  onOpenChange={(o) => { if (o && !referenceImageListReady && !referenceImageLoading) void loadReferenceImageConfigs(); }}
+                  trigger={
+                    <LiterarySettingsRow
+                      icon={articleChoice?.style.missing
+                        ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
+                        : <ImageIcon size={16} />}
+                      label="参考图"
+                      warning={!!articleChoice?.style.missing}
+                      value={articleChoice
+                        ? (articleChoice.style.styleId === 'none' ? '无参考图' : articleChoice.style.name)
+                        : !referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中…') : (activeRefConfig?.name || '无参考图')}
+                      title={articleChoice
+                        ? articlePrefTitle('风格', articleChoice.style)
+                        : `风格参考图：${!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中') : (activeRefConfig?.name || '不使用')}`}
+                      aria-label="风格参考图"
+                    />
+                  }
+                >
+                  {!referenceImageListReady ? (
+                    <QuickMenuEmpty>
+                      {referenceImageLoadError && !referenceImageLoading
+                        ? `读取风格图失败：${referenceImageLoadError}。关闭菜单再打开即可重试。`
+                        : '正在读取风格图…'}
+                    </QuickMenuEmpty>
+                  ) : (
+                    <>
                       <QuickMenuItem
-                        key={c.id}
-                        label={c.name || '未命名'}
-                        selected={articleChoice ? articleChoice.style.styleId === c.id : c.isActive}
+                        label="不使用"
+                        selected={articleChoice ? articleChoice.style.styleId === 'none' : !activeRefConfig}
                         disabled={referenceImageSaving}
                         onSelect={() => {
-                          if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== c.id) void switchReferenceImage(c, true); return; }
-                          if (!c.isActive) void switchReferenceImage(c, true);
+                          if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== 'none') void applyArticleChoice({ style: 'none' }); return; }
+                          if (activeRefConfig) void switchReferenceImage(activeRefConfig, false);
                         }}
                       />
-                    ))}
-                    {articleChoice && (
-                      <QuickMenuItem
-                        label="跟随账号默认（清除本文设定）"
-                        selected={false}
-                        disabled={referenceImageSaving}
-                        onSelect={() => void applyArticleChoice({ clear: true })}
-                      />
-                    )}
-                  </>
-                )}
-                <QuickMenuAction label="管理风格图…" onSelect={() => setPromptPreviewOpen(true)} />
-              </QuickMenu>
+                      {referenceImageConfigs.map((c) => (
+                        <QuickMenuItem
+                          key={c.id}
+                          label={c.name || '未命名'}
+                          selected={articleChoice ? articleChoice.style.styleId === c.id : c.isActive}
+                          disabled={referenceImageSaving}
+                          onSelect={() => {
+                            if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== c.id) void switchReferenceImage(c, true); return; }
+                            if (!c.isActive) void switchReferenceImage(c, true);
+                          }}
+                        />
+                      ))}
+                      {articleChoice && (
+                        <QuickMenuItem
+                          label="跟随账号默认（清除本文设定）"
+                          selected={false}
+                          disabled={referenceImageSaving}
+                          onSelect={() => void applyArticleChoice({ clear: true })}
+                        />
+                      )}
+                    </>
+                  )}
+                  <QuickMenuAction label="管理风格图…" onSelect={() => setPromptPreviewOpen(true)} />
+                </QuickMenu>
 
-              <QuickMenu
-                title="水印"
-                width={240}
-                note={articlePrefNote('水印', articleChoice?.watermark)}
-                onOpenChange={(o) => { if (o) void loadWatermarkOptions(); }}
-                trigger={
-                  <PopupButton
-                    icon={articleChoice?.watermark.missing
-                      ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
-                      : <Sparkles size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />}
-                    warning={!!articleChoice?.watermark.missing}
-                    value={articleChoice
-                      ? (articleChoice.watermark.watermarkId === 'none' ? '关' : articleChoice.watermark.name)
-                      : watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '关'}
-                    isSet={articleChoice ? articleChoice.watermark.watermarkId !== 'none' : watermarkStatus.enabled}
-                    title={articleChoice
-                      ? articlePrefTitle('水印', articleChoice.watermark)
-                      : `水印：${watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'}`}
-                    aria-label="水印"
-                  />
-                }
-              >
-                {watermarkLoadError ? (
-                  <QuickMenuEmpty>{`读取水印失败：${watermarkLoadError}。关闭菜单再打开即可重试。`}</QuickMenuEmpty>
-                ) : watermarkOptions === null ? (
-                  <QuickMenuEmpty>正在读取水印…</QuickMenuEmpty>
-                ) : (
-                  <>
-                    <QuickMenuItem
-                      label="不加水印"
-                      selected={articleChoice ? articleChoice.watermark.watermarkId === 'none' : !watermarkStatus.enabled}
-                      disabled={watermarkSaving}
-                      onSelect={() => void switchWatermark(null)}
+                <QuickMenu inline
+                  title="水印"
+                  width={240}
+                  note={articlePrefNote('水印', articleChoice?.watermark)}
+                  onOpenChange={(o) => { if (o) void loadWatermarkOptions(); }}
+                  trigger={
+                    <LiterarySettingsRow
+                      icon={articleChoice?.watermark.missing
+                        ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
+                        : <Square size={16} />}
+                      label="水印"
+                      warning={!!articleChoice?.watermark.missing}
+                      value={articleChoice
+                        ? (articleChoice.watermark.watermarkId === 'none' ? '不加水印' : articleChoice.watermark.name)
+                        : watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '不加水印'}
+                      title={articleChoice
+                        ? articlePrefTitle('水印', articleChoice.watermark)
+                        : `水印：${watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'}`}
+                      aria-label="水印"
                     />
-                    {watermarkOptions.map((w) => (
+                  }
+                >
+                  {watermarkLoadError ? (
+                    <QuickMenuEmpty>{`读取水印失败：${watermarkLoadError}。关闭菜单再打开即可重试。`}</QuickMenuEmpty>
+                  ) : watermarkOptions === null ? (
+                    <QuickMenuEmpty>正在读取水印…</QuickMenuEmpty>
+                  ) : (
+                    <>
                       <QuickMenuItem
-                        key={w.id}
-                        label={w.name || w.text || '未命名'}
-                        selected={articleChoice ? articleChoice.watermark.watermarkId === w.id : w.appKeys?.includes(LITERARY_APP_KEY)}
+                        label="不加水印"
+                        selected={articleChoice ? articleChoice.watermark.watermarkId === 'none' : !watermarkStatus.enabled}
                         disabled={watermarkSaving}
-                        onSelect={() => void switchWatermark(w)}
+                        onSelect={() => void switchWatermark(null)}
                       />
-                    ))}
-                    {articleChoice && (
-                      <QuickMenuItem
-                        label="跟随账号默认（清除本文设定）"
-                        selected={false}
-                        disabled={watermarkSaving}
-                        onSelect={() => void applyArticleChoice({ clear: true })}
-                      />
-                    )}
-                  </>
-                )}
-                <QuickMenuAction
-                  label="管理水印…"
-                  onSelect={() => { setPendingWatermarkEdit(true); setPromptPreviewOpen(true); }}
-                />
-              </QuickMenu>
-
-              <QuickMenu
-                title="配图位置"
-                width={260}
-                open={positionStrategyOpen}
-                onOpenChange={setPositionStrategyOpen}
-                note={<>想自己指定位置：在预览里右键段落选「在上方 / 下方插入配图」，或悬停段落左侧点 +；也可在文章里写 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code>。这些位置在「尊重用户锚点」下生效。</>}
-                trigger={
-                  <PopupButton
-                    icon={<MapPin size={13} style={{ color: 'var(--accent-fg-emerald)', flexShrink: 0 }} />}
-                    value={POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动'}
-                    isSet={positionStrategy !== 'auto'}
-                    title="配图位置：控制 AI 在哪些段落插入配图标记"
-                    aria-label="配图位置"
+                      {watermarkOptions.map((w) => (
+                        <QuickMenuItem
+                          key={w.id}
+                          label={w.name || w.text || '未命名'}
+                          selected={articleChoice ? articleChoice.watermark.watermarkId === w.id : w.appKeys?.includes(LITERARY_APP_KEY)}
+                          disabled={watermarkSaving}
+                          onSelect={() => void switchWatermark(w)}
+                        />
+                      ))}
+                      {articleChoice && (
+                        <QuickMenuItem
+                          label="跟随账号默认（清除本文设定）"
+                          selected={false}
+                          disabled={watermarkSaving}
+                          onSelect={() => void applyArticleChoice({ clear: true })}
+                        />
+                      )}
+                    </>
+                  )}
+                  <QuickMenuAction
+                    label="管理水印…"
+                    onSelect={() => { setPendingWatermarkEdit(true); setPromptPreviewOpen(true); }}
                   />
-                }
-              >
-                {POSITION_STRATEGY_OPTIONS.map((opt) => (
-                  <QuickMenuItem
-                    key={opt.value}
-                    label={opt.label}
-                    selected={positionStrategy === opt.value}
-                    onSelect={() => {
-                      setPositionStrategy(opt.value);
-                      // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
-                      if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
-                        setPhase(1);
-                        toast.info('已切到「预览」页，可以开始打锚点了');
-                      } else if (opt.value !== 'auto' && phase === 1) {
-                        toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
-                      }
-                    }}
-                  />
-                ))}
-              </QuickMenu>
+                </QuickMenu>
 
-              <div
-                className="col-span-2 grid min-w-0 grid-cols-2 gap-1.5 border-t pt-2 mt-0.5"
-                style={{ borderColor: 'var(--border-subtle)' }}
-                role="group"
-                aria-label="模型选择"
-                data-testid="literary-model-settings"
-              >
+                <QuickMenu inline
+                  title="配图位置"
+                  width={260}
+                  open={positionStrategyOpen}
+                  onOpenChange={setPositionStrategyOpen}
+                  note={<>想自己指定位置：在预览里右键段落选「在上方 / 下方插入配图」，或悬停段落左侧点 +；也可在文章里写 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code>。这些位置在「尊重用户锚点」下生效。</>}
+                  trigger={
+                    <LiterarySettingsRow
+                      icon={<Layers size={16} />}
+                      label="插图位置"
+                      value={positionStrategy === 'auto' ? '自动安排' : POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动安排'}
+                      title="配图位置：控制 AI 在哪些段落插入配图标记"
+                      aria-label="配图位置"
+                    />
+                  }
+                >
+                  {POSITION_STRATEGY_OPTIONS.map((opt) => (
+                    <QuickMenuItem
+                      key={opt.value}
+                      label={opt.label}
+                      selected={positionStrategy === opt.value}
+                      onSelect={() => {
+                        setPositionStrategy(opt.value);
+                        // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
+                        if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
+                          setPhase(1);
+                          toast.info('已切到「预览」页，可以开始打锚点了');
+                        } else if (opt.value !== 'auto' && phase === 1) {
+                          toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
+                        }
+                      }}
+                    />
+                  ))}
+                </QuickMenu>
+
+              </section>
+              <section className="lit-model-section" aria-label="模型设置" data-testid="literary-model-settings">
+                <h3 className="lit-settings-heading">模型设置</h3>
                 <LiteraryModelPicker
                   label="写作"
-                  icon={<PenLine size={12} style={{ color: 'var(--accent-fg-blue)' }} />}
+                  icon={<PenLine size={16} />}
                   model={effectiveChatModel}
                   options={enabledChatModels}
                   open={chatModelPrefOpen}
@@ -3665,7 +3662,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 />
                 <LiteraryModelPicker
                   label="配图"
-                  icon={<ImageIcon size={12} style={{ color: 'var(--accent-fg-success)' }} />}
+                  icon={<ImageIcon size={16} />}
                   model={effectiveModel}
                   options={enabledImageModels}
                   open={imageModelPrefOpen}
@@ -3676,24 +3673,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   onSelect={setImageModelPrefId}
                 />
                 {imageGenModelError && enabledImageModels.length === 0 && !autoResolvedModel && (
-                  <div className="col-span-2 text-[10px]" style={{ color: 'var(--accent-fg-danger)' }}>
+                  <div className="mt-2 text-xs" style={{ color: 'var(--accent-fg-danger)' }}>
                     生图不可用
                   </div>
                 )}
-              </div>
+              </section>
             </div>
-
-            <button
-              type="button"
-              className="lqm-trigger shrink-0 justify-center"
-              style={{ width: 30, padding: 0 }}
-              onClick={() => setPromptPreviewOpen(true)}
-              title="全部配置"
-              aria-label="全部配置"
-            >
-              <SlidersHorizontal size={14} />
-            </button>
-          </div>
+          </LiteraryInlineMenuGroup>
         </PanelCard>
 
         {/* 配图标记列表 */}
