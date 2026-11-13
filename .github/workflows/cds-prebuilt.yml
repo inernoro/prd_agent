@@ -14,6 +14,9 @@ on:
       - "cds/**"
       - "cds-instances.json"
       - ".github/workflows/cds-prebuilt.yml"
+      # 检查配置更新也生成同版本预览产物，避免验收运行旧镜像。
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/cds.yml"
       - ".claude/skills/cds/**"
       - ".claude/skills/cds-project-scan/**"
       - ".claude/skills/cds-deploy-pipeline/**"
