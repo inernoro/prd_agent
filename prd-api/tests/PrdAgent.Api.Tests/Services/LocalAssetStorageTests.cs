@@ -86,6 +86,7 @@ public sealed class LocalAssetStorageTests
                 "application/octet-stream",
                 CancellationToken.None));
             Should.Throw<ArgumentException>(() => storage.BuildUrlForKey(key));
+            await Should.ThrowAsync<ArgumentException>(() => storage.TryOpenReadByKeyAsync(key, CancellationToken.None));
         }
         finally
         {

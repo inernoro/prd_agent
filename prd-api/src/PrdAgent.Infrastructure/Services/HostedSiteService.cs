@@ -2664,6 +2664,26 @@ public class HostedSiteService : IHostedSiteService
         string visibility = "owner-only",
         bool allocateShortLink = false,
         List<string>? askSuggestedQuestions = null)
+        => await CreateShareCoreAsync(userId, displayName, siteId, siteIds, shareType, title, description,
+            password, expiresInDays, ct, purpose, forceNew, visibility, allocateShortLink, askSuggestedQuestions);
+
+    public async Task<WebPageShareLink> CreateCollectionShareAsync(string userId, string displayName,
+        HostedCollectionSnapshot snapshot, string? title, string? description, string? password,
+        int expiresInDays, string visibility, CancellationToken ct = default)
+        => (await CreateShareCoreAsync(userId, displayName, null, snapshot.SiteIds, "collection", title, description,
+            password, expiresInDays, ct, "share", true, visibility, false, null, snapshot)).Link;
+
+    private async Task<(WebPageShareLink Link, bool ReusedWithoutChange)> CreateShareCoreAsync(
+        string userId, string displayName,
+        string? siteId, List<string>? siteIds, string shareType,
+        string? title, string? description,
+        string? password, int expiresInDays,
+        CancellationToken ct = default,
+        string purpose = "share",
+        bool forceNew = false,
+        string visibility = "owner-only",
+        bool allocateShortLink = false,
+        List<string>? askSuggestedQuestions = null, HostedCollectionSnapshot? collectionSnapshot = null)
     {
         // 开场问题保持三态：null（调用方没提这茬）不动存量值，非 null（含空数组）按用户本次所选落库。
         //
@@ -2881,6 +2901,7 @@ public class HostedSiteService : IHostedSiteService
         var pwdHash = wantPassword != null ? (SharePasswordHash?)_sharePwd.Hash(wantPassword) : null;
         var share = new WebPageShareLink
         {
+            CollectionSnapshot = collectionSnapshot,
             SiteId = shareType != "collection" ? siteId : null,
             SiteIds = allIds,
             ShareType = shareType ?? "single",
@@ -3097,6 +3118,13 @@ public class HostedSiteService : IHostedSiteService
     private async Task<(string Error, int HttpStatus, string ErrorCode)?> EnforceShareVisibilityAsync(
         WebPageShareLink share, string? viewerUserId, CancellationToken ct)
     {
+        if (share.CollectionSnapshot is { } collectionSnapshot) {
+            var activeCollection = await _db.Database.GetCollection<HostedDocumentCollection>("hosted_document_collections")
+                .Find(c => c.Id == collectionSnapshot.CollectionId && c.DissolvedAt == null).FirstOrDefaultAsync(ct);
+            if (activeCollection == null || collectionSnapshot.ShareGeneration != activeCollection.ShareGeneration) return ("此合集分享已失效", 404, "not_found");
+            if (!HostedCollectionPolicy.AudienceAllows(collectionSnapshot, viewerUserId, share.CreatedBy))
+                return ("此链接仅限指定成员访问", 403, "visibility_denied");
+        }
         // 旧记录 / visit 链 / 默认 public 都识别为可公开访问（不阻断历史链路）
         var effVisibility = string.IsNullOrEmpty(share.Visibility) ? "public" : share.Visibility;
 
@@ -5675,6 +5703,13 @@ public class HostedSiteService : IHostedSiteService
     /// 经分享链接解析出一个可读取正文的站点。门禁**完全复用** ResolveShareForCommentAsync
     /// （撤销 / 过期 / 可见性 / 密码 + 滑动窗口限流），不另写一套判定，避免两份判据日后漂移。
     /// </summary>
+    public async Task<ShareSiteResolveResult> ResolveCollectionShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default)
+    {
+        var (_, share, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct);
+        return err is { } e ? new ShareSiteResolveResult { Error = e.Error, HttpStatus = e.HttpStatus, ErrorCode = e.ErrorCode, RetryAfterSeconds = e.RetryAfter }
+            : new ShareSiteResolveResult { Share = share };
+    }
+
     public async Task<ShareSiteResolveResult> ResolveShareSiteAsync(
         string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default)
     {

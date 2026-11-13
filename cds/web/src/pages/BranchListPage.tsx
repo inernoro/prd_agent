@@ -81,6 +81,7 @@ import { BRANCH_VIEW_SOURCES, branchViewGroups, branchViewsStorageKey, defaultBr
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
+import { buildReleaseEnvironmentTask } from '@/lib/releaseAgentTask';
 import { PrebuiltRuntimeIcon } from '@/components/branch/PrebuiltRuntimeIcon';
 import { DetectStackDialog } from '@/components/branch/DetectStackDialog';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
@@ -90,6 +91,7 @@ type RsCardMember = { id?: string; status?: string; hostPort?: number; projectGr
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -104,6 +106,7 @@ import { branchCardPhase, deployOutcome, deployingServiceIds, isDeployPhase, isD
 import { profileColor, profileShortName } from '@/lib/replica-colors';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { releaseCenterHref } from '@/lib/releaseCenter';
+import { branchPreviewUrls } from '@/lib/releaseDialogAddress';
 import { multiPreviewUrl, simplePreviewUrl } from '@/lib/previewUrl';
 import { resolveReleaseSteps, type ReleaseRunProgressLike, type ReleaseStepState } from '@/lib/releaseSteps';
 import {
@@ -204,6 +207,8 @@ type InfraServiceSummary = BranchResourceInfraInput;
 type BuildProfileSummary = BranchResourceProfileInput;
 
 interface BranchSummary {
+  previewUrl?: string;
+  previewUrls?: string[];
   id: string;
   projectId: string;
   branch: string;
@@ -330,6 +335,8 @@ interface ReleaseTargetSummary {
   name: string;
   type: string;
   isEnabled: boolean;
+  lifecycle?: string;
+  environment?: string;
   projectIdentity?: { projectId: string; projectSlug: string; repository?: string };
   strategy?: {
     mode: 'project-script' | 'managed-script' | 'existing-script' | 'generated-compose' | 'generated-static';
@@ -4530,8 +4537,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             if (state.status !== 'ok' || !releaseBranchId) return '';
             const target = state.branches.find((b) => b.id === releaseBranchId);
             if (!target) return '';
-            if (state.previewMode === 'simple') return simplePreviewUrl(state.config);
-            return multiPreviewUrl(target, state.config);
+            return branchPreviewUrls(target)[0] || '';
           })()}
           onClose={() => setReleaseBranchId(null)}
           onToast={setToast}
@@ -5280,487 +5286,123 @@ function BranchSearchDropdown({
 // OpsDrawer 已并入统一的「运维」面板（MonitoringDialog 的「运维操作」页签），
 // 不再单独存在右侧抽屉 + 独立的「运维监控」按钮（2026-06-22 用户指出二者本是一个东西）。
 
-function ReleaseBranchDialog({
-  branch,
-  previewUrl,
-  onClose,
-  onToast,
-}: {
-  branch: BranchSummary | null;
-  previewUrl: string;
-  onClose: () => void;
-  onToast: (message: string) => void;
+function ReleaseBranchDialog({ branch, previewUrl, onClose, onToast }: {
+  branch: BranchSummary | null; previewUrl: string; onClose: () => void; onToast: (message: string) => void;
 }): JSX.Element {
   const [targets, setTargets] = useState<ReleaseTargetSummary[]>([]);
-  const [targetId, setTargetId] = useState('');
   const [loadingTargets, setLoadingTargets] = useState(false);
+  const [selectedTarget, setSelectedTarget] = useState<ReleaseTargetSummary | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [phase, setPhase] = useState<'choose' | 'checking' | 'starting' | 'running'>('choose');
+  const [error, setError] = useState('');
   const [preflight, setPreflight] = useState<ReleasePreflightResult | null>(null);
-  const [preflightState, setPreflightState] = useState<'idle' | 'running' | 'error'>('idle');
   const [run, setRun] = useState<ReleaseRunSummary | null>(null);
   const [logs, setLogs] = useState<ReleaseLogEntry[]>([]);
-  const [starting, setStarting] = useState(false);
-  // 发布弹窗改成分阶段向导（选站点 → 发布前检查 → 发布），避免旧版一条长滚动把
-  // 实时发布状态挤到最底部（被遮挡）。stage 由 wizardStep + run 派生：一旦 run 存在
-  // 就固定进入「发布」阶段，前序配置/预检收起成一行摘要，状态区直接占满弹窗。
-  const [wizardStep, setWizardStep] = useState<'config' | 'preflight'>('config');
-  const [scriptOpen, setScriptOpen] = useState(false);
-  // 发布过程是分钟级长任务（远端脚本 + 健康检查）。每秒滴答一次，
-  // 让运行中的步骤显示"已用时 mm:ss"，用户随时知道在动而非卡死（2 秒原则）。
+  const operation = useRef<AbortController | null>(null);
+  const inFlight = useRef(false);
+  const hasRun = useRef(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  // 分支轮询会替换对象；不能因此重置已经开始的发布。
   useEffect(() => {
-    if (!run || isReleaseTerminal(run.status)) return undefined;
-    const timer = setInterval(() => setNowTick(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [run?.releaseId, run?.status]);
-
+    setTargets([]); setSelectedTarget(null); setLoadError(''); setRun(null); setLogs([]); setPreflight(null); setError(''); setPhase('choose');
+    hasRun.current = false; inFlight.current = false;
+    if (!branch) return;
+    const projectId = branch.projectId;
+    const ctrl = new AbortController(); let disposed = false; let fetching = false;
+    const refresh = async () => {
+      if (fetching || inFlight.current || hasRun.current) return;
+      fetching = true; setLoadingTargets(true);
+      try {
+        const data = await apiRequest<{ targets: ReleaseTargetSummary[] }>(`/api/releases/targets?project=${encodeURIComponent(projectId)}`, { signal: ctrl.signal });
+        if (!disposed) {
+          setTargets((data.targets || []).filter((target) => target.projectId === projectId && target.isEnabled && target.lifecycle !== 'archived'));
+          setLoadError('');
+        }
+      } catch (failure) {
+        if (!disposed) setLoadError(failure instanceof ApiError ? failure.message : '环境未能加载，请稍后重试。');
+      } finally { fetching = false; if (!disposed) setLoadingTargets(false); }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 5000);
+    window.addEventListener('focus', refresh);
+    return () => { disposed = true; ctrl.abort(); operation.current?.abort(); window.clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, [branch?.id, branch?.projectId]);
   useEffect(() => {
-    if (!branch) return undefined;
-    setPreflight(null);
-    setRun(null);
-    setLogs([]);
-    setWizardStep('config');
-    setScriptOpen(false);
-    setLoadingTargets(true);
-    const ctrl = new AbortController();
-    apiRequest<{ targets: ReleaseTargetSummary[] }>(
-      `/api/releases/targets?project=${encodeURIComponent(branch.projectId)}`,
-      { signal: ctrl.signal },
-    )
-      .then((data) => {
-        const enabled = (data.targets || []).filter((target) => target.isEnabled && target.type === 'ssh');
-        setTargets(enabled);
-        setTargetId((current) => current && enabled.some((target) => target.id === current) ? current : enabled[0]?.id || '');
-      })
-      .catch((err) => {
-        if ((err as DOMException)?.name === 'AbortError') return;
-        onToast(err instanceof ApiError ? err.message : String(err));
-      })
-      .finally(() => setLoadingTargets(false));
-    return () => ctrl.abort();
-  }, [branch, onToast]);
-
-  useEffect(() => {
-    if (!run || isReleaseTerminal(run.status)) return undefined;
+    if (!run || isReleaseTerminal(run.status)) return;
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
     const source = new EventSource(apiUrl(`/api/releases/runs/${encodeURIComponent(run.releaseId)}/stream?afterSeq=${run.logs.at(-1)?.seq || 0}`));
     source.addEventListener('snapshot', (event) => {
       const data = parseSseJson<{ run: ReleaseRunSummary; logs: ReleaseLogEntry[] }>(event);
-      if (!data) return;
-      setRun(data.run);
-      setLogs(dedupeReleaseLogs(data.run.logs || []));
+      if (data?.run) { setRun(data.run); setLogs((items) => dedupeReleaseLogs([...items, ...(data.run.logs || []), ...(data.logs || [])])); }
     });
     source.addEventListener('release.log', (event) => {
-      const data = parseSseJson<{ log: ReleaseLogEntry }>(event);
-      if (!data?.log) return;
-      setLogs((current) => dedupeReleaseLogs([...current, data.log]));
+      const data = parseSseJson<{ releaseId: string; log: ReleaseLogEntry }>(event);
+      if (data?.log) setLogs((items) => dedupeReleaseLogs([...items, data.log]));
     });
     source.addEventListener('release.status', (event) => {
       const data = parseSseJson<{ run: ReleaseRunSummary }>(event);
-      if (data?.run) {
-        setRun(data.run);
-        setLogs((current) => dedupeReleaseLogs([...(data.run.logs || []), ...current]));
-      }
+      if (data?.run) { setRun(data.run); if (isReleaseTerminal(data.run.status)) source.close(); }
     });
-    return () => source.close();
+    return () => { source.close(); window.clearInterval(timer); };
   }, [run?.releaseId, run?.status]);
-
-  const selectedTarget = useMemo(
-    () => targets.find((target) => target.id === targetId),
-    [targetId, targets],
-  );
-  const selectedScripts = useMemo(
-    () => releaseStepsFromTarget(selectedTarget),
-    [selectedTarget],
-  );
-  const selectedServer = selectedTarget?.ssh
-    ? `${selectedTarget.ssh.user}@${selectedTarget.ssh.host}:${selectedTarget.ssh.port}`
-    : '-';
-
-  const runPreflight = async (): Promise<void> => {
-    if (!branch || !targetId) return;
-    // 进入「发布前检查」阶段：把配置收起、只显示检查进度与结果，避免选项和结果同屏堆叠。
-    setWizardStep('preflight');
-    setScriptOpen(false);
-    setPreflightState('running');
-    setPreflight(null);
+  const publish = async (target: ReleaseTargetSummary): Promise<void> => {
+    if (!branch || inFlight.current || hasRun.current) return;
+    inFlight.current = true;
+    const ctrl = new AbortController(); operation.current = ctrl;
+    setSelectedTarget(target); setError(''); setPreflight(null); setPhase('checking');
+    const body = { targetId: target.id, previewUrl };
     try {
-      const result = await apiRequest<ReleasePreflightResult>(`/api/releases/branches/${encodeURIComponent(branch.id)}/preflight`, {
-        method: 'POST',
-        body: { targetId, previewUrl },
-      });
-      setPreflight(result);
-      setPreflightState('idle');
-    } catch (err) {
-      setPreflightState('error');
-      onToast(err instanceof ApiError ? err.message : String(err));
-    }
+      const check = await apiRequest<ReleasePreflightResult>(`/api/releases/branches/${encodeURIComponent(branch.id)}/preflight`, { method: 'POST', body, signal: ctrl.signal });
+      if (ctrl.signal.aborted) return;
+      setPreflight(check);
+      if (!check.ok) { setError('未开始发布：环境检查未通过。请交给 Agent 处理后重试。'); setPhase('choose'); return; }
+      setPhase('starting');
+      const result = await apiRequest<{ run: ReleaseRunSummary }>(`/api/releases/branches/${encodeURIComponent(branch.id)}/runs`, { method: 'POST', body, signal: ctrl.signal });
+      if (ctrl.signal.aborted) return;
+      hasRun.current = true; setRun(result.run); setLogs(result.run.logs || []); setPhase('running'); onToast('发布已开始');
+    } catch (failure) {
+      if (!ctrl.signal.aborted) { setError(failure instanceof ApiError ? failure.message : '发布请求未确认，请检查发布记录后重试。'); setPhase('choose'); }
+    } finally { if (operation.current === ctrl) inFlight.current = false; }
   };
-
-  const startRelease = async (): Promise<void> => {
-    if (!branch || !targetId) return;
-    setStarting(true);
-    try {
-      const result = await apiRequest<{ run: ReleaseRunSummary }>(`/api/releases/branches/${encodeURIComponent(branch.id)}/runs`, {
-        method: 'POST',
-        body: { targetId, previewUrl },
-      });
-      setRun(result.run);
-      setLogs(result.run.logs || []);
-      onToast('发布已开始');
-    } catch (err) {
-      onToast(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setStarting(false);
-    }
+  const copyOnboarding = async () => {
+    if (!branch) return;
+    try { await navigator.clipboard.writeText(buildReleaseEnvironmentTask({ projectId: branch.projectId, branchId: branch.id, branchName: branch.branch, cdsHost: window.location.origin })); onToast('已复制接入任务，交给你的 Agent 即可'); }
+    catch { setError('复制未成功。请告诉你的 Agent：帮我接入新的发布环境到 CDS。'); }
   };
-
-  // stage 由向导步骤 + run 派生：一旦发布开始（run 存在），永远进入「发布」阶段，
-  // 前序配置 / 预检收起成一行摘要，实时状态直接占满弹窗（不再被长滚动挤到最底部）。
-  const stage: 'config' | 'preflight' | 'releasing' = run ? 'releasing' : wizardStep;
-  const releaseTerminal = run ? isReleaseTerminal(run.status) : false;
-  const passCount = preflight ? preflight.checks.filter((check) => check.status === 'pass').length : 0;
-  const totalChecks = preflight ? preflight.checks.length : 0;
-
   return (
     <Dialog open={!!branch} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-none" style={{ width: 'min(48rem, calc(100vw - 2rem))' }}>
-        <DialogHeader>
-          <DialogTitle>发布 {branch?.branch}</DialogTitle>
-          <DialogDescription>从已验收预览分支发布到站点。</DialogDescription>
+      <DialogContent frame className="max-w-none" style={{ width: 'min(40rem, calc(100vw - 1rem))' }}>
+        <DialogHeader className="min-w-0 shrink-0 p-4 pr-12"><DialogTitle>{run ? releaseStatusLabel(run.status) : '发布到'}</DialogTitle>
+          <DialogDescription className="truncate">{branch?.branch} · {branch ? shortCommitSha(branch) : ''}</DialogDescription>
         </DialogHeader>
-        {!branch ? null : (
-          <div className="space-y-4">
-            <div className="grid gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-sm md:grid-cols-3">
-              <div>
-                <div className="text-xs text-muted-foreground">Commit</div>
-                <div className="mt-1 font-mono">{shortCommitSha(branch) || '-'}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">预览地址</div>
-                <div className="mt-1 truncate font-mono">{previewUrl || '-'}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">分支状态</div>
-                <div className="mt-1">{statusLabel(branch.status)}</div>
-              </div>
-            </div>
-
-            <ReleaseWizardRail stage={stage} status={run?.status} />
-
-            {stage === 'config' ? (
-              <div className="space-y-4">
-                <label className="grid gap-1 text-sm">
-                  <span className="text-muted-foreground">发布站点</span>
-                  <select
-                    value={targetId}
-                    onChange={(event) => {
-                      setTargetId(event.target.value);
-                      setPreflight(null);
-                    }}
-                    disabled={loadingTargets || targets.length === 0}
-                    className="h-9 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60"
-                  >
-                    {targets.length === 0 ? <option value="">没有可用站点发布目标</option> : null}
-                    {targets.map((target) => (
-                      <option key={target.id} value={target.id}>
-                        {target.name} · {target.ssh?.host || '-'} · {target.ssh?.appPath || '-'}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                {targets.length === 0 && !loadingTargets ? (
-                  <div className="rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-sm text-warn">
-                    当前项目没有站点发布目标。先到发布中心添加站点发布。
-                  </div>
-                ) : null}
-
-                {selectedTarget ? (
-                  <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface))] p-3">
-                    <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-                      <Server className="h-4 w-4 text-primary" />
-                      发布确认
-                    </div>
-                    <div className="grid gap-3 text-sm md:grid-cols-2">
-                      <ReleaseConfirmItem label="发布目标" value={selectedTarget.name} />
-                      <ReleaseConfirmItem label="服务器" value={selectedServer} mono />
-                      <ReleaseConfirmItem label="目录" value={selectedTarget.ssh?.appPath || '-'} mono />
-                      <ReleaseConfirmItem label="上线地址" value={selectedTarget.ssh?.healthcheckUrl || '-'} mono />
-                      <div className="md:col-span-2">
-                        <div className="text-xs text-muted-foreground">执行计划</div>
-                        <div className="mt-1 flex flex-wrap items-center gap-2">
-                          {selectedScripts.map((script, index) => (
-                            <span key={`${script}-${index}`} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-xs">
-                              {script}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {stage === 'preflight' ? (
-              <div className="space-y-3">
-                <ReleaseStageSummary
-                  target={selectedTarget}
-                  server={selectedServer}
-                  pass={passCount}
-                  total={totalChecks}
-                  editable
-                  onEdit={() => setWizardStep('config')}
-                />
-
-                {preflightState === 'running' ? (
-                  <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">
-                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                    正在连接发布服务器并执行发布前检查…首次建立 SSH 连接可能需要若干秒，请稍候。
-                  </div>
-                ) : null}
-
-                {starting && !run ? (
-                  <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">
-                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                    正在提交发布任务，准备连接服务器…
-                  </div>
-                ) : null}
-
-                {preflight ? (
-                  <div className="grid gap-2">
-                    {preflight.checks.map((check) => {
-                      const longMessage = check.id === 'deploy-command' && check.message.length > 80;
-                      return (
-                        <div
-                          key={check.id}
-                          className={`rounded-md border text-sm ${
-                            check.status === 'pass'
-                              ? 'border-ok/30 bg-ok-soft'
-                              : check.status === 'warn'
-                                ? 'border-warn/30 bg-warn-soft'
-                                : 'border-bad/30 bg-bad-soft'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-3 px-3 py-2">
-                            <div className="min-w-0">
-                              <div className="font-medium">{releaseCheckLabel(check)}</div>
-                              {longMessage ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setScriptOpen((value) => !value)}
-                                  className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                                >
-                                  {scriptOpen ? '收起脚本' : '查看脚本'}
-                                  <ChevronDown className={`h-3 w-3 transition-transform ${scriptOpen ? 'rotate-180' : ''}`} />
-                                </button>
-                              ) : (
-                                <div className="mt-0.5 break-words text-xs text-muted-foreground">{check.message}</div>
-                              )}
-                            </div>
-                            <span className="shrink-0 font-mono text-xs">{releaseCheckStatusLabel(check.status)}</span>
-                          </div>
-                          {longMessage && scriptOpen ? (
-                            <div className="mx-3 mb-2 max-h-40 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
-                              <pre className="p-2.5 font-mono text-[0.6875rem] leading-5 text-muted-foreground" style={{ whiteSpace: 'pre', minWidth: 'max-content' }}>{check.message}</pre>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {stage === 'releasing' && run ? (
-              <div className="space-y-3">
-                <ReleaseStageSummary
-                  target={selectedTarget}
-                  server={selectedServer}
-                  pass={passCount}
-                  total={totalChecks}
-                />
-                <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="font-mono">{run.releaseId}</span>
-                  <span className="flex items-center gap-2">
-                    {!isReleaseTerminal(run.status) ? (
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        已用时 {formatReleaseElapsed(Math.max(0, nowTick - Date.parse(run.startedAt)))}
-                      </span>
-                    ) : null}
-                    <span className="rounded-md border border-[hsl(var(--hairline))] px-2 py-1 text-xs">{releaseStatusLabel(run.status)}</span>
-                  </span>
-                </div>
-                {!isReleaseTerminal(run.status) ? (
-                  <div className="text-xs text-muted-foreground">
-                    当前阶段：{releaseCurrentStepText(run, logs)}。发布为分钟级任务，进度会随服务器日志实时刷新。
-                  </div>
-                ) : null}
-                <ReleaseRunStepList run={run} logs={logs} />
-                <pre className="max-h-72 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs leading-5">
-                  {logs.map((log) => `[${formatShortTime(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`).join('\n') || '等待发布日志...'}
-                </pre>
-              </div>
-            ) : null}
-
-            <div className="sticky bottom-0 -mx-6 -mb-6 flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] bg-card px-6 py-3">
-              {stage === 'config' ? (
-                <>
-                  <Button asChild variant="outline">
-                    <Link to={releaseCenterHref(branch.projectId)}>发布中心</Link>
-                  </Button>
-                  <div className="flex-1" />
-                  <span className="hidden text-xs text-muted-foreground sm:inline">下一步：连接服务器并检查</span>
-                  <Button onClick={() => void runPreflight()} disabled={!targetId || preflightState === 'running'}>
-                    {preflightState === 'running' ? <Loader2 className="animate-spin" /> : <Gauge />}
-                    发布前检查
-                  </Button>
-                </>
-              ) : null}
-              {stage === 'preflight' ? (
-                <>
-                  <Button variant="outline" onClick={() => setWizardStep('config')} disabled={preflightState === 'running' || starting}>
-                    上一步
-                  </Button>
-                  <Button variant="ghost" onClick={() => void runPreflight()} disabled={!targetId || preflightState === 'running' || starting}>
-                    {preflightState === 'running' ? <Loader2 className="animate-spin" /> : <RotateCw />}
-                    重新检查
-                  </Button>
-                  <div className="flex-1" />
-                  {preflight ? (
-                    <span className="hidden text-xs text-muted-foreground sm:inline">
-                      {preflight.ok ? `${passCount}/${totalChecks} 通过，可发布` : '存在阻塞项，先修复再发布'}
-                    </span>
-                  ) : null}
-                  <Button onClick={() => void startRelease()} disabled={!targetId || !preflight?.ok || starting || !!run}>
-                    {starting ? <Loader2 className="animate-spin" /> : <Rocket />}
-                    开始发布
-                  </Button>
-                </>
-              ) : null}
-              {stage === 'releasing' && run ? (
-                releaseTerminal ? (
-                  <>
-                    <Button asChild variant="outline">
-                      <Link to={releaseCenterHref(branch.projectId)}>发布中心</Link>
-                    </Button>
-                    <div className="flex-1" />
-                    {run.status === 'success' && selectedTarget?.ssh?.healthcheckUrl ? (
-                      <Button asChild>
-                        <a href={selectedTarget.ssh.healthcheckUrl} target="_blank" rel="noreferrer">
-                          <ExternalLink />
-                          打开上线地址
-                        </a>
-                      </Button>
-                    ) : (
-                      <Button variant="outline" onClick={onClose}>关闭</Button>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <Button asChild variant="ghost">
-                      <Link to={releaseCenterHref(branch.projectId)}>发布中心</Link>
-                    </Button>
-                    <div className="flex-1" />
-                    <span className="text-xs text-muted-foreground">发布中，可关闭弹窗，任务在服务器继续运行</span>
-                  </>
-                )
-              ) : null}
-            </div>
+        <DialogBody className="grid gap-4 p-4" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+        {error || loadError ? <div role="alert" className="break-words rounded-md border border-bad/30 bg-bad-soft p-3 text-sm text-bad">{error || loadError}</div> : null}
+        {phase === 'choose' && !run ? <>
+          <p className="text-sm text-muted-foreground">选择一个环境，自动检查并发布当前分支。</p>
+          {loadingTargets && targets.length === 0 ? <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />正在加载环境…</p> : null}
+          <div className="grid min-w-0 gap-2">
+            {targets.map((target) => <button key={target.id} type="button" aria-label={`发布到 ${target.name}`} onClick={() => void publish(target)}
+              className="flex min-w-0 items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] p-3 text-left hover:border-primary/60 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+              <span className="min-w-0 flex-1 break-words font-medium">{target.name}
+                {target.ssh?.healthcheckUrl ? <span className="mt-1 block break-all text-xs font-normal text-muted-foreground">{target.ssh.healthcheckUrl}</span> : null}</span>
+            </button>)}
           </div>
-        )}
+          {!loadingTargets && targets.length === 0 ? <p className="text-sm text-muted-foreground">还没有发布环境。告诉你的 Agent：“帮我接入 xxx 环境到 CDS。”</p> : null}
+          {preflight && !preflight.ok ? <details className="min-w-0 text-sm"><summary className="cursor-pointer">查看未通过的检查</summary><ul className="mt-2 grid gap-2">{preflight.checks.filter((check) => check.blocking && check.status === 'fail').map((check) => <li key={check.id} className="break-words">{check.label}：{check.message}</li>)}</ul></details> : null}
+          <Button variant="ghost" className="h-auto min-w-0 whitespace-normal break-words py-2" title="复制接入任务给 Agent" onClick={() => void copyOnboarding()}>接入新环境</Button>
+        </> : null}
+        {phase === 'checking' || phase === 'starting' ? <div className="grid min-w-0 gap-2 rounded-lg bg-primary/10 p-4 text-sm"><p className="break-words">{phase === 'checking' ? `正在检查 ${selectedTarget?.name || '环境'}，通过后自动发布…` : '正在开始发布…'}</p><ContentLoading variant="inline" label={phase === 'checking' ? '检查环境，通过后自动发布' : '开始发布'} /></div> : null}
+        {run ? <div className="min-w-0 space-y-3">
+          <p className="break-words text-sm">{selectedTarget?.name} · {releaseStatusLabel(run.status)}{!isReleaseTerminal(run.status) ? ` · 已用时 ${formatReleaseElapsed(Math.max(0, nowTick - Date.parse(run.startedAt)))}` : ''}</p>
+          {!isReleaseTerminal(run.status) ? <p className="text-xs text-muted-foreground">当前阶段：{releaseCurrentStepText(run, logs)}</p> : null}
+          <ReleaseRunStepList run={run} logs={logs} />
+          <details open={run.status === 'failed' || undefined}><summary className="cursor-pointer text-sm">查看发布日志</summary><pre className="mt-2 max-h-72 min-w-0 overflow-auto whitespace-pre-wrap break-all rounded-md bg-[hsl(var(--surface-sunken))] p-3 text-xs">{logs.map((log) => `[${formatShortTime(log.at)}] ${log.message}`).join('\n') || '等待发布日志…'}</pre></details>
+          {!isReleaseTerminal(run.status) ? <p className="text-xs text-muted-foreground">可关闭窗口，发布会继续运行。</p> : null}
+        </div> : null}
+        </DialogBody>
+        <div className="flex min-w-0 shrink-0 flex-wrap justify-between gap-2 border-t p-4"><Button asChild variant="ghost" className="h-auto min-w-0 whitespace-normal break-words py-2"><Link to={branch ? releaseCenterHref(branch.projectId) : '/release-center'}>发布记录</Link></Button><Button variant="outline" className="h-auto min-w-0 whitespace-normal py-2" onClick={onClose}>关闭</Button></div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-/** 发布向导阶段条：选择站点 → 发布前检查 → 发布，走到哪高亮哪。 */
-function ReleaseWizardRail({ stage, status }: { stage: 'config' | 'preflight' | 'releasing'; status?: string }): JSX.Element {
-  const nodes: Array<{ key: 'config' | 'preflight' | 'releasing'; label: string }> = [
-    { key: 'config', label: '选择站点' },
-    { key: 'preflight', label: '发布前检查' },
-    { key: 'releasing', label: '发布' },
-  ];
-  const currentIdx = nodes.findIndex((node) => node.key === stage);
-  const terminalSuccess = status === 'success' || status === 'rollback_success';
-  const terminalFailed = status === 'failed' || status === 'rollback_failed';
-  return (
-    <div className="flex items-center">
-      {nodes.map((node, idx) => {
-        let state: 'done' | 'active' | 'failed' | 'pending';
-        if (idx < currentIdx) state = 'done';
-        else if (idx === currentIdx) {
-          state = node.key === 'releasing'
-            ? (terminalSuccess ? 'done' : terminalFailed ? 'failed' : 'active')
-            : 'active';
-        } else state = 'pending';
-        const dotClass = state === 'done'
-          ? 'border-ok/70 bg-ok-soft text-ok'
-          : state === 'failed'
-            ? 'border-bad/70 bg-bad-soft text-bad'
-            : state === 'active'
-              ? 'border-primary bg-primary/12 text-primary'
-              : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
-        return (
-          <div key={node.key} className="flex flex-1 items-center last:flex-none">
-            <div className="flex items-center gap-2">
-              <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border text-xs font-semibold ${dotClass}`}>
-                {state === 'done' ? <CheckCircle2 className="h-3.5 w-3.5" /> : state === 'failed' ? <XCircle className="h-3.5 w-3.5" /> : idx + 1}
-              </span>
-              <span className={`text-xs font-medium ${state === 'pending' ? 'text-muted-foreground' : 'text-foreground'}`}>{node.label}</span>
-            </div>
-            {idx < nodes.length - 1 ? (
-              <span className={`mx-2 h-px flex-1 ${idx < currentIdx ? 'bg-ok/60' : 'bg-[hsl(var(--hairline-strong))]'}`} />
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** 收起态摘要条：发布开始后把「发布到哪 / 预检结果」压成一行，为实时状态腾出主视觉。 */
-function ReleaseStageSummary({
-  target,
-  server,
-  pass,
-  total,
-  editable,
-  onEdit,
-}: {
-  target?: ReleaseTargetSummary;
-  server: string;
-  pass: number;
-  total: number;
-  editable?: boolean;
-  onEdit?: () => void;
-}): JSX.Element {
-  return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/60 px-3 py-2 text-xs">
-      {total > 0 ? (
-        <span className="inline-flex items-center gap-1 rounded-full bg-ok-soft px-2 py-0.5 font-medium text-ok">
-          <CheckCircle2 className="h-3 w-3" />
-          预检 {pass}/{total}
-        </span>
-      ) : null}
-      <span className="text-muted-foreground">
-        发布到 <span className="font-medium text-foreground">{target?.name || '-'}</span>
-      </span>
-      <span className="truncate font-mono text-muted-foreground">{server}</span>
-      {editable ? (
-        <button type="button" onClick={onEdit} className="ml-auto shrink-0 text-primary hover:underline">修改</button>
-      ) : null}
-    </div>
-  );
-}
-
-function ReleaseConfirmItem({ label, value, mono }: { label: string; value: string; mono?: boolean }): JSX.Element {
-  return (
-    <div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`mt-1 min-w-0 break-words ${mono ? 'font-mono text-xs' : 'font-medium'}`}>{value || '-'}</div>
-    </div>
   );
 }
 
@@ -5816,46 +5458,6 @@ function isReleaseTerminal(status: string): boolean {
   return ['success', 'failed', 'rollback_success', 'rollback_failed'].includes(status);
 }
 
-/**
- * 「执行计划」chips 的展开：只把用户**真配了**的发布命令拆开展示。
- *
- * 这里原本兜底成 `./fast.sh && ./exec_dep.sh`——本仓库的脚本名，写死在 CDS 这个
- * 通用产品里。换个项目、或者目标还没配命令，界面就会煞有介事地展示两个根本不会
- * 执行的脚本。没配就说没配。
- */
-function releaseScriptsFromCommand(command?: string): string[] {
-  const source = command?.trim() || '';
-  if (!source) return ['未配置发布命令'];
-  const parts = source.replace(/&&/g, '\n').replace(/;/g, '\n')
-    .split('\n').map((item) => item.trim()).filter(Boolean);
-  return parts.length > 0 ? parts : [source];
-}
-
-function releaseStepsFromTarget(target?: ReleaseTargetSummary): string[] {
-  if (target?.strategy?.mode === 'project-script') return [
-    `读取指定提交中的 ${target.strategy.scriptFile || 'cds-release.sh'}`,
-    '核对同提交 CI 和脚本正文哈希',
-    '执行项目脚本 check / deploy 并验证最终入口',
-  ];
-  if (target?.strategy?.mode === 'managed-script') return ['执行明确选择的 CDS 独立脚本', '核对脚本正文哈希并执行 check / deploy', '验证最终入口'];
-  if (target?.strategy?.mode === 'generated-compose') {
-    return [
-      'CDS 生成 commit 隔离 worktree',
-      `动态执行 ${target.strategy.composeFile || 'compose.yml'}`,
-      '验证最终入口并记录脚本哈希',
-    ];
-  }
-  if (target?.strategy?.mode === 'generated-static') {
-    return [
-      target.strategy.buildCommand || '执行静态构建',
-      `离线验证 ${target.strategy.artifactDirectory || 'dist'}/index.html 与入口资源`,
-      `原子切换 ${target.strategy.publicDirectory || '-'}/current`,
-    ];
-  }
-  return releaseScriptsFromCommand(target?.strategy?.command || target?.ssh?.deployCommand);
-}
-
-/** 当前正在跑（或下一个待跑）的发布步骤，供进行中的状态行展示「第 N/M 步 · 标题」。 */
 function releaseCurrentStepText(run: ReleaseRunSummary, logs: ReleaseLogEntry[]): string {
   const { currentIndex, total, currentLabel, degraded } = resolveReleaseSteps({ ...run, logs });
   if (total === 0) return '收尾中';
@@ -5885,28 +5487,6 @@ function releaseStatusLabel(status: string): string {
     rollback_failed: '回滚失败',
   };
   return map[status] || status;
-}
-
-function releaseCheckLabel(check: ReleasePreflightCheck): string {
-  const map: Record<string, string> = {
-    branch: '分支部署成功',
-    commit: 'commit 明确',
-    artifact: '可发布产物',
-    target: '站点发布目标',
-    'project-scope': '项目一致',
-    ssh: '服务器可连接',
-    'deploy-command': '发布脚本已配置',
-    scripts: '发布脚本可执行',
-    healthcheck: '上线地址可访问',
-    'rollback-version': '可回滚版本',
-  };
-  return map[check.id] || check.label;
-}
-
-function releaseCheckStatusLabel(status: ReleasePreflightCheck['status']): string {
-  if (status === 'pass') return '通过';
-  if (status === 'warn') return '提醒';
-  return '失败';
 }
 
 /**
@@ -7715,7 +7295,7 @@ const BranchCard = memo(function BranchCard({
                 disabled={busy || (!isAiOperated && !handlers.canPreview)}
                 loading={busy}
                 fill={!isAiOperated}
-                className={isAiOperated ? '' : 'w-32'}
+                className={isAiOperated ? '' : 'min-w-0'}
                 icon={isAiOperated ? <Bot className="h-4 w-4" /> : undefined}
                 previewLabel={isAiOperated ? undefined : '预览'}
                 previewTitle={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}

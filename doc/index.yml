@@ -24,6 +24,8 @@ folders:
 
 docs:
   guide.platform.capacity: "MAP 与 CDS 磁盘容量治理 · 指南"
+  plan.knowledge-base.information-delivery: "知识库信息高效传递与复刻验收计划"
+  guide.cds.automation-health: "CDS 自动化任务健康与安全恢复 · 指南"
   plan.web-hosting.related-documents: "网页托管关联文档 · 计划"
   guide.cds.release-scripts: "CDS 项目发布脚本 · 指南"
   # 一、产品规格
@@ -121,6 +123,7 @@ docs:
   design.knowledge-base.store: "文档空间 · 设计"
   design.literary-agent: "文学创作 Agent (Literary Agent) · 设计"
   design.llmgw.model-lifecycle: "稳定模型标识与模型生命周期 · 设计"
+  design.llmgw.model-workbench: "模型工作台与上游绑定 · 设计"
   design.marketplace: "配置市场（海鲜市场） · 设计"
   design.open-platform.open-api: "开放接口（OpenAI 兼容对外网关）技术设计 · 设计"
   design.open-platform: "开放平台功能概要 · 设计"

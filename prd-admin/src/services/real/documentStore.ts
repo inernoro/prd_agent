@@ -591,7 +591,7 @@ export async function rebuildContentIndex(storeId: string) {
 export async function listPublicDocumentStores(page = 1, pageSize = 24, sort: 'hot' | 'new' | 'popular' | 'viewed' = 'hot') {
   return await apiRequest<{ items: import('@/services/contracts/documentStore').PublicDocumentStore[]; total: number; page: number; pageSize: number }>(
     `${api.documentStore.stores.publicList()}?page=${page}&pageSize=${pageSize}&sort=${sort}`,
-    { method: 'GET' },
+    { method: 'GET', auth: false },
   );
 }
 
@@ -599,7 +599,7 @@ export async function listPublicDocumentStores(page = 1, pageSize = 24, sort: 'h
 export async function getPublicDocumentStore(storeId: string) {
   return await apiRequest<import('@/services/contracts/documentStore').PublicStoreDetail>(
     api.documentStore.stores.publicDetail(storeId),
-    { method: 'GET' },
+    { method: 'GET', auth: false },
   );
 }
 
@@ -607,7 +607,7 @@ export async function getPublicDocumentStore(storeId: string) {
 export async function listPublicStoreEntries(storeId: string) {
   return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(
     api.documentStore.stores.publicEntries(storeId),
-    { method: 'GET' },
+    { method: 'GET', auth: false },
   );
 }
 
@@ -620,7 +620,7 @@ export async function getPublicEntryContent(entryId: string) {
     contentType: string;
     fileUrl: string | null;
     hasContent: boolean;
-  }>(api.documentStore.stores.publicEntryContent(entryId), { method: 'GET' });
+  }>(api.documentStore.stores.publicEntryContent(entryId), { method: 'GET', auth: false });
 }
 
 /** 点赞知识库 */
@@ -1275,4 +1275,31 @@ export function streamSelectionRewrite(
   })();
 
   return () => abortController.abort();
+}
+
+export interface DocumentTrashItem {
+  kind: 'entry' | 'store';
+  id: string;
+  title: string;
+  storeId: string;
+  storeName: string;
+  deletedAt: string;
+  deletedBy: string;
+  expiresAt: string;
+  canRestore: boolean;
+  pending: boolean;
+}
+
+export function listDocumentTrash(storeId?: string) {
+  const query = storeId ? `?storeId=${encodeURIComponent(storeId)}` : '';
+  return apiRequest<{ items: DocumentTrashItem[]; retentionDays: number }>(`${api.documentStore.trash.list()}${query}`, { method: 'GET' });
+}
+
+export function restoreDocumentTrash(item: Pick<DocumentTrashItem, 'kind' | 'id'>) {
+  return apiRequest(api.documentStore.trash.restore(item.kind, item.id), { method: 'POST' });
+}
+
+export function resumeDocumentTrash(item: Pick<DocumentTrashItem, 'kind' | 'id'>) {
+  const url = item.kind === 'store' ? api.documentStore.stores.detail(item.id) : api.documentStore.entries.detail(item.id);
+  return apiRequest(url, { method: 'DELETE' });
 }
