@@ -29,6 +29,65 @@ function fixture() {
 }
 
 describe('就绪切换与保旧回退', () => {
+  it('不同服务可同时就绪，发布回收临界段依次执行并收回两代旧实例', async () => {
+    const f = fixture(); f.service.status = 'running'; f.service.containerId = 'b'.repeat(64);
+    const web: ServiceState = { profileId: 'web', containerName: 'new-web', containerId: 'c'.repeat(64), hostPort: 10004,
+      status: 'running', networkName: 'new-network', servingRuntime: {
+        containerName: 'old-web', containerId: 'd'.repeat(64), hostPort: 10003, networkName: 'old-network' } };
+    f.entry.services.web = web;
+    let entered!: () => void, release!: () => void;
+    const observed = new Promise<void>(r => { entered = r; }), gate = new Promise<void>(r => { release = r; });
+    vi.mocked(f.container.inspectOwnedRuntime).mockImplementationOnce(async (_entry, _id, runtime) => {
+      entered(); await gate; return { ...runtime, aliasNetworks: [runtime.networkName!] };
+    });
+    const first = commitServiceReplacements({ ...f, profileIds: ['api'] }); void first.catch(() => {});
+    await observed;
+    const second = commitServiceReplacements({ ...f, profileIds: ['web'] }); void second.catch(() => {});
+    await new Promise<void>(r => setImmediate(r)); release();
+    await Promise.all([first, second]);
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10002');
+    expect(resolveBranchUpstream(f.entry, 'web')).toBe('http://127.0.0.1:10004');
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(2);
+    expect(f.service.retainedRuntimes).toEqual([]); expect(web.retainedRuntimes).toEqual([]);
+  });
+  it('其它服务就绪进度变化不替换实际入口，仍按真实消费者保留旧实例', async () => {
+    const f = fixture(); f.service.status = 'running';
+    f.entry.services.web = { profileId: 'web', containerName: 'old-web', hostPort: 10003, status: 'starting', networkName: 'old-network',
+      servingRuntime: { containerName: 'old-web', hostPort: 10003, networkName: 'old-network' } };
+    vi.mocked(f.container.inspectOwnedRuntime).mockImplementationOnce(async (_entry, _id, runtime) => {
+      f.entry.services.web.status = 'running'; return { ...runtime, aliasNetworks: [runtime.networkName!] };
+    });
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    expect(f.service.retainedRuntimes?.[0].containerName).toBe('old-api');
+  });
+  it('另一未发布候选收到实际创建回执时，真实旧入口保持且当前发布可完成', async () => {
+    const f = fixture(); f.service.status = 'running';
+    const web: ServiceState = { profileId: 'web', containerName: 'new-web', hostPort: 10004, status: 'building', networkName: 'next-network',
+      servingRuntime: { containerName: 'old-web', containerId: 'd'.repeat(64), hostPort: 10003, networkName: 'old-network' } };
+    f.entry.services.web = web;
+    vi.mocked(f.container.inspectOwnedRuntime).mockImplementationOnce(async (_entry, _id, runtime) => {
+      Object.assign(web, { containerId: 'c'.repeat(64), deployedImage: 'sha256:' + 'e'.repeat(64), creationIssued: true, status: 'starting' });
+      web.pendingRuntime = { containerName: web.containerName, containerId: web.containerId, hostPort: web.hostPort, networkName: web.networkName };
+      return { ...runtime, aliasNetworks: [runtime.networkName!] };
+    });
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(resolveBranchUpstream(f.entry, 'web')).toBe('http://127.0.0.1:10003');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    expect(f.service.retainedRuntimes?.[0].containerName).toBe('old-api');
+  });
+  it('删除实际执行前其它候选认领旧CID时保留旧实例，不能沿用更早保护快照', async () => {
+    const f = fixture(); f.service.status = 'running';
+    const web: ServiceState = { profileId: 'web', containerName: 'web', containerId: 'd'.repeat(64), hostPort: 10003,
+      status: 'running', networkName: 'new-network' }; f.entry.services.web = web;
+    const removed: string[] = [];
+    vi.mocked(f.container.removeOwnedRuntime).mockImplementation(async (_entry, _id, runtime, context) => {
+      web.pendingRuntime = { containerName: 'claimed-old', containerId: 'a'.repeat(64), hostPort: 12000, networkName: 'next-network' };
+      context?.assertCurrent?.('actual removal admission'); removed.push(runtime.containerName);
+    });
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).rejects.toThrow('身份已变化');
+    expect(removed).toEqual([]); expect(f.service.retainedRuntimes?.[0].containerName).toBe('old-api');
+  });
   it.each([{ step: 'stop', state: 'dead' }, { step: 'rm', state: 'dead' },
     { step: 'stop', state: 'changed' }, { step: 'stop', state: 'live' }])('实际shell槽准入后复核旧入口，step=$step state=$state', async ({ step, state }) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-admitted-cleanup-'));

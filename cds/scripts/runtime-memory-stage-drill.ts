@@ -14,6 +14,7 @@ import { resolveBranchUpstream } from '../src/services/proxy.js';
 import { stopServiceForCooling } from '../src/services/scheduler-service-stop.js';
 import { SchedulerService } from '../src/services/scheduler.js';
 import { DeploymentPhaseBudget, deploymentPhaseBudget } from '../src/services/deployment-phase-budget.js';
+import { isOwnedRuntimeCleanup } from './owned-runtime-cleanup-guard.js';
 import type { BranchEntry, CdsConfig, IShellExecutor, ServiceState } from '../src/types.js';
 
 // Only exact, owned fixtures on a disposable GitHub runner. No production credentials or endpoints.
@@ -41,7 +42,7 @@ const shell = new ShellExecutor(); let transportFault = false;
 const checkedShell: IShellExecutor = { exec: async (command, options) => {
   // ContainerService commands may use names or CIDs. All references must be from this fixture set.
   for (const token of command.match(/\b[a-f0-9]{64}\b/g) || []) assert.ok(ownedIds.has(token));
-  assert.ok(command.startsWith('docker '));
+  assert.ok(command.startsWith('docker ') || isOwnedRuntimeCleanup(command, ownedIds), 'Unsupported owned Docker command');
   return shell.exec(transportFault ? command.replace(/^docker /, `docker --host unix://${temp}/absent.sock `) : command, options);
 } };
 const state = new StateService(path.join(temp, 'state.json')); state.load();

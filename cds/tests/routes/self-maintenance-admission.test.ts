@@ -191,6 +191,10 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     const trace = getHttpFixtureTrace(server);
     expect(trace).toBeDefined();
     expect(server.address()).toMatchObject({ address: '127.0.0.1', family: 'IPv4' });
+    // 与生产入口前的执行池预热一致；请求内真实文件任务、恢复及原阶段期限保持不变。
+    await filesPool.start();
+    expect(filesPool.getLifecycle().readyAt).toEqual(expect.any(String));
+    expect(filesPool.getStats().actors).toHaveLength(1);
   });
 
   afterEach(async () => {

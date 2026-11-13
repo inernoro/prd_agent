@@ -9,6 +9,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { BranchEntry, BuildProfile, CdsConfig } from '../src/types.js';
 import type { ArtifactAdmission } from '../src/services/artifact-admission.js';
+import { assertPinnedArtifactRuntime, assertPortableArtifactContents } from './native-artifact-identity.js';
 
 const value = (name: string): string => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] || '' : ''; };
 const modules = async () => ({
@@ -186,8 +187,22 @@ async function main(): Promise<void> {
         hostPort: Number(oldPort), status: 'running' } } };
     peerState.addBranch(protectedEntry);
     const peerCommands: string[] = [];
+    const managedBuilderIds = new Set<string>();
+    const managedExecutions = (from: number) => peerCommands.slice(from).filter(command => {
+      const match = /^docker exec '([a-f0-9]{64})' sh -c /.exec(command);
+      return match && managedBuilderIds.has(match[1]);
+    });
     const peerShell = new Proxy(shell, { get(target, property) {
-      if (property === 'exec') return (command: string, options: any) => { peerCommands.push(command); return target.exec(command, options); };
+      if (property === 'exec') return async (command: string, options: any) => {
+        peerCommands.push(command); const result = await target.exec(command, options);
+        if (command.startsWith('docker create ') && command.includes('-managed-build-') && result.exitCode === 0) {
+          const name = /--name '([^']+-managed-build-[a-f0-9]{12})'/.exec(command)?.[1];
+          assert.ok(name?.startsWith(owner + '-')); assert.match(result.stdout.trim(), /^[a-f0-9]{64}$/);
+          managedBuilderIds.add(result.stdout.trim());
+          (report.managedBuilderReceipts ||= []).push({ name, containerId: result.stdout.trim() });
+        }
+        return result;
+      };
       const item = Reflect.get(target, property); return typeof item === 'function' ? item.bind(target) : item;
     } });
     const reserve = http.createServer(); await new Promise<void>(resolve => reserve.listen(0, '127.0.0.1', resolve));
@@ -305,7 +320,11 @@ async function main(): Promise<void> {
     assert.equal(localPeerService.deployedImage, repositoryDigest);
     const localPeerId = docker(['inspect', '--format', '{{.Id}}', localPeerService.containerName]);
     const localPeerRuntime = ownedView(localPeerId); assert.notEqual(localPeerId, peerId);
-    assert.equal(localPeerRuntime.Config.Image, repositoryDigest);
+    const expectedWeb = admitted.artifactAdmission.artifacts.find(artifact => artifact.profileIds.includes('web'))!;
+    const expectedLocalImage = JSON.parse(docker(['image', 'inspect', repositoryDigest]))[0];
+    assertPinnedArtifactRuntime(localPeerRuntime, expectedLocalImage, {
+      manifest: expectedWeb.image, revision: head, platform: expectedWeb.platform, owner,
+    });
     assert.equal(localPeerRuntime.Config.Labels['org.opencontainers.image.revision'], head);
     assert.equal(docker(['ps', '-aq', '--no-trunc', '--filter', `id=${peerId}`]), '');
     ownedIds.splice(ownedIds.indexOf(peerId), 1); ownedIds.push(localPeerId);
@@ -362,7 +381,10 @@ async function main(): Promise<void> {
     const [repositoryWithTag, contentDigest] = repositoryDigest.split('@');
     const canonicalRepositoryDigest = `${repositoryWithTag.replace(/:[^/:]+$/, '')}@${contentDigest}`;
     // Docker保留运行配置里的提交tag，但RepoDigests按仓库+内容digest登记，不含tag。
-    assert.equal(recoveredImage.Id, localPeerRuntime.Image); assert.ok(recoveredImage.RepoDigests.includes(canonicalRepositoryDigest));
+    assertPortableArtifactContents(expectedLocalImage, recoveredImage, canonicalRepositoryDigest);
+    report.crossDaemonContent = { primaryLocalId: expectedLocalImage.Id, recoveredLocalId: recoveredImage.Id,
+      canonicalRepositoryDigest, configSha256: createHash('sha256').update(JSON.stringify(expectedLocalImage.Config)).digest('hex'),
+      rootFs: expectedLocalImage.RootFS, sameConfigAndLayers: true };
     assert.equal(recoveredImage.Config.Labels['cds.acceptance.owner'], owner);
     assert.equal(recoveredImage.Config.Labels['org.opencontainers.image.revision'], head);
     assert.equal(recoveredImage.Os, 'linux'); assert.equal(recoveredImage.Architecture, JSON.parse(docker(['image', 'inspect', repositoryDigest]))[0].Architecture);
@@ -411,7 +433,7 @@ async function main(): Promise<void> {
     await peerContainer.runService(managedEntry, managedProfile, managedRuntime);
     const imageOne = managedRuntime.deployedImage!; assert.match(imageOne, /^sha256:[a-f0-9]{64}$/);
     verifiedManagedImage(imageOne, sourceOne); assert.deepEqual(await managedBody(), { source: 'source-one', built: sourceOne, runtime: sourceOne, flavor: 'first' });
-    assert.equal(peerCommands.slice(firstCommands).filter(command => command.startsWith('docker exec') && command.includes('-managed-build-')).length, 1);
+    assert.equal(managedExecutions(firstCommands).length, 1);
     const versions = new m.versions.DeploymentVersionService(peerState);
     const versionOne = versions.create({ projectId: 'owned', branchId: managedEntry.id, commitSha: sourceOne, configHash: ownImage(imageOne).Config.Labels['cds.managed.contract'],
       profiles: [managedProfile], branch: managedEntry, createdByRunId: 'owned-managed-one' });
@@ -430,7 +452,7 @@ async function main(): Promise<void> {
     await peerContainer.runService(managedEntry, managedProfile, managedRuntime); const imageTwo = managedRuntime.deployedImage!;
     assert.notEqual(imageTwo, imageOne); verifiedManagedImage(imageTwo, sourceTwo);
     assert.deepEqual(await managedBody(), { source: 'source-two', built: sourceTwo, runtime: sourceTwo, flavor: 'first' });
-    assert.equal(peerCommands.slice(beforeSourceChange).filter(command => command.startsWith('docker exec') && command.includes('-managed-build-')).length, 1);
+    assert.equal(managedExecutions(beforeSourceChange).length, 1);
     report.checks.push({ name: 'compiled-managed-new-source-rebuilds-retargeted-cache-tag', passed: true });
 
     report.stage = 'managed-configuration-change'; const changedProfile = { ...managedProfile, env: { OWNED_FLAVOR: 'second' } }; const beforeConfig = peerCommands.length;
@@ -438,7 +460,7 @@ async function main(): Promise<void> {
     assert.notEqual(imageThree, imageTwo); const changedImage = verifiedManagedImage(imageThree, sourceTwo);
     assert.notEqual(changedImage.Config.Labels['cds.managed.contract'], ownImage(imageTwo).Config.Labels['cds.managed.contract']);
     assert.deepEqual(await managedBody(), { source: 'source-two', built: sourceTwo, runtime: sourceTwo, flavor: 'second' });
-    assert.equal(peerCommands.slice(beforeConfig).filter(command => command.startsWith('docker exec') && command.includes('-managed-build-')).length, 1);
+    assert.equal(managedExecutions(beforeConfig).length, 1);
     report.checks.push({ name: 'compiled-managed-changed-contract-rebuilds-instead-of-reusing-tag', passed: true });
 
     report.stage = 'managed-build-failure'; const beforeFailedBuild = await managedBody(); const protectedManagedId = docker(['inspect', '--format', '{{.Id}}', managedRuntime.containerName]);
@@ -482,7 +504,11 @@ async function main(): Promise<void> {
       secondary(['rm', '-f', secondaryRuntime]); assert.equal(secondary(['ps', '-aq']), ''); report.secondaryRuntimeRemoved = true;
     } catch (error) { cleanupErrors.push(String(error)); report.secondaryRuntimeRemoved = false; } }
     await shell.close().catch(error => cleanupErrors.push(String(error)));
-    for (const id of ownedIds.reverse()) { try { ownedView(id); docker(['rm', '-f', id]); } catch (error) { cleanupErrors.push(String(error)); } }
+    for (const id of ownedIds.reverse()) { try {
+      assert.match(id, /^[a-f0-9]{64}$/);
+      if (docker(['ps', '-aq', '--no-trunc', '--filter', `id=${id}`]) === '') continue;
+      ownedView(id); docker(['rm', '-f', id]);
+    } catch (error) { cleanupErrors.push(String(error)); } }
     report.ownedContainersRemoved = cleanupErrors.length === 0;
     if (secondaryDaemon) { try { report.secondaryDaemonRemoved = docker(['ps', '-aq', '--no-trunc', '--filter', `id=${secondaryDaemon}`]) === ''; assert.equal(report.secondaryDaemonRemoved, true); } catch (error) { cleanupErrors.push(String(error)); } }
     for (const volume of ownedVolumes.reverse()) { try {

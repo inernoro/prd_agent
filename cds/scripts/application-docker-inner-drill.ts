@@ -13,6 +13,7 @@ import { runApplicationBootstrap, type ApplicationBootstrapContext } from './app
 import { CoreImageCache, CORE_IMAGE_CACHE_IDLE_MS } from '../src/services/core-image-cache.js';
 import { createJanitorDockerAdapters } from '../src/services/janitor.js';
 import type { IShellExecutor } from '../src/types.js';
+import { fixtureContentReference } from './native-artifact-identity.js';
 
 // 在外层自有容器里运行；原 index 与 Docker 发布端口在同一个网络空间，保留原分支网络隔离。
 const execute = promisify(execFile);
@@ -161,7 +162,7 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
   let startGate: StartReplyGate | undefined;
   const holdNextAppStart = (target: AppStartTarget) => {
     for (const value of [target.projectId, target.branchId, target.profileId]) assert.match(value, /^[a-zA-Z0-9_.-]{1,128}$/);
-    assert.match(target.imageReference, /^127\.0\.0\.1:\d{1,5}\/owned-(?:api|web)(?::sha-[a-f0-9]{40})?@sha256:[a-f0-9]{64}$/);
+    assert.match(target.imageReference, /^(?:sha256:[a-f0-9]{64}|127\.0\.0\.1:\d{1,5}\/owned-(?:api|web)(?::sha-[a-f0-9]{40})?@sha256:[a-f0-9]{64})$/);
     assert.equal(startGate, undefined);
     let confirm!: (reply: AppStartReply) => void;
     const caught = new Promise<AppStartReply>(resolve => { confirm = resolve; });
@@ -1083,6 +1084,10 @@ async function main(): Promise<void> {
             assert.equal(service.status, 'running'); const view = await ownedView(service.containerName); containers.add(view.Id);
             assert.equal(view.State.Running, true); assert.notEqual(view.HostConfig.NetworkMode, 'host'); assert.notEqual(view.HostConfig.NetworkMode, 'bridge');
             assert.equal(view.Config.Labels['org.opencontainers.image.revision'], sha);
+            const role = profiles.find((p: any) => p.id === profileId).env.SERVICE_NAME === 'web' ? 'web' : 'api';
+            const image = report.publishedImages.find((item: any) => item.role === role && item.sha === sha); assert.ok(image);
+            assert.equal(view.Image, image.id); assert.equal(view.Config.Image, image.id);
+            assert.equal(service.deployedImage, fixtureContentReference(image));
             const response = await fetch(`http://127.0.0.1:${service.hostPort}/`, { signal: AbortSignal.timeout(3000) }); assert.equal(response.status, 200);
             const content: any = await response.json(); assert.equal(content.source, sha); assert.equal(content.runtime, sha);
             assert.equal(content.service, profiles.find((p: any) => p.id === profileId).env.SERVICE_NAME);
@@ -1265,22 +1270,12 @@ async function main(): Promise<void> {
             targets[label] = sha; await build('api', sha, registry); await build('web', sha, registry);
           }
           assert.equal(new Set(Object.values(targets)).size, 4); scopeProof.targets = targets;
-          const registryDigest = (image: any): string => {
-            const references = image.repoDigests.filter((reference: string) => reference.startsWith(`${registry}/owned-`));
-            assert.equal(references.length, 1); assert.match(references[0], /@sha256:[a-f0-9]{64}$/); return references[0];
-          };
-          const runtimeImage = (image: any): string => {
-            // 保持精确wire URI断言；线上准入现在同时携带已核验提交tag与固定内容digest。
-            assert.match(image.sha, /^[a-f0-9]{40}$/);
-            const [repository, digest] = registryDigest(image).split('@');
-            return `${repository}:sha-${image.sha}@${digest}`;
-          };
           const apiImage = (sha: string) => {
             const image = report.publishedImages.find((item: any) => item.role === 'api' && item.sha === sha); assert.ok(image); return image;
           };
-          const startTarget = (sha: string) => ({ projectId, branchId, profileId: apiProfile.id, imageReference: runtimeImage(apiImage(sha)) });
+          const startTarget = (sha: string) => ({ projectId, branchId, profileId: apiProfile.id, imageReference: apiImage(sha).id });
           const heldStartProof = async (held: Awaited<ReturnType<NonNullable<typeof probeProxy>['holdNextAppStart']>['caught']>, sha: string) => {
-            assert.equal(held.status, 204); assert.equal(held.imageReference, runtimeImage(apiImage(sha)));
+            assert.equal(held.status, 204); assert.equal(held.imageReference, apiImage(sha).id);
             const view = await ownedView(held.containerId); containers.add(view.Id);
             assert.equal(view.Id, held.containerId); assert.equal(view.Name.slice(1), held.containerName); assert.equal(view.State.Running, true);
             for (const [key, value] of Object.entries({ 'cds.managed': 'true', 'cds.type': 'app', 'cds.project.id': projectId,
@@ -1353,12 +1348,12 @@ async function main(): Promise<void> {
           const apiLatest = report.publishedImages.find((image: any) => image.role === 'api' && image.sha === targets.latest);
           assert.ok(apiObsolete && webObsolete && apiLatest);
           const creations = daemonEvents.filter(event => event.action === 'create');
-          assert.equal(creations.filter(event => event.image === runtimeImage(apiObsolete)).length, 0);
+          assert.equal(creations.filter(event => event.image === apiObsolete.id).length, 0);
           const apiActive = report.publishedImages.find((image: any) => image.role === 'api' && image.sha === targets.active); assert.ok(apiActive);
           // Docker retains a finite event history. The first executing target
           // must still be present, so absence of the later queued target is
           // not inferred from a window whose beginning has already rolled off.
-          for (const image of [apiActive, webObsolete, apiLatest]) assert.equal(creations.filter(event => event.image === runtimeImage(image)).length, 1);
+          for (const image of [apiActive, webObsolete, apiLatest]) assert.equal(creations.filter(event => event.image === image.id).length, 1);
           scopeProof.mixedServices = mixed; scopeProof.replacementRuns = runs; scopeProof.creationEvents = creations;
           report.checks.push({ name: 'full-original-authenticated-application-replaces-only-obsolete-service-target-and-retains-distinct-service-and-worker', passed: true });
 
@@ -1409,7 +1404,7 @@ async function main(): Promise<void> {
           const cancelCid = scopeProof.cancelStart.containerId;
           const cancelledImage = apiImage(targets.cancelled);
           const createdTarget = cancellationEvents.filter(event => event.type === 'container' && event.action === 'create'
-            && event.id === cancelCid && event.image === runtimeImage(cancelledImage));
+            && event.id === cancelCid && event.image === cancelledImage.id);
           assert.equal(createdTarget.length, 1);
           assert.equal(cancellationEvents.filter(event => event.type === 'container' && event.action === 'start' && event.id === cancelCid).length, 1);
           const actualCancelled = await daemonRead(`/containers/${cancelCid}/json`, 256 * 1024);
@@ -1612,7 +1607,25 @@ async function main(): Promise<void> {
       try { report.remainingContainersAfterCleanupFailure = await auditNamespace('after-cleanup-failure'); await eventSnapshot('after-cleanup-failure'); }
       catch (diagnosticError) { report.cleanupDiagnosticError = String(diagnosticError); }
     }
-    try { for (const id of images) { const view = JSON.parse(await docker(['image', 'inspect', id]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner); await docker(['image', 'rm', '-f', id]); } report.ownedImagesRemoved = true; }
+    try {
+      report.ownedImageCleanup = [];
+      const isMissingImage = (error: any, id: string) => error.code === 1
+        && String(error.stderr || '').trim() === `Error response from daemon: No such image: ${id}`;
+      for (const id of images) {
+        assert.match(id, /^sha256:[a-f0-9]{64}$/);
+        let view;
+        try { view = JSON.parse(await docker(['image', 'inspect', id]))[0]; }
+        catch (error) {
+          assert.ok(isMissingImage(error, id));
+          report.ownedImageCleanup.push({ id, outcome: 'already-absent' }); continue;
+        }
+        assert.equal(view.Id, id); assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner);
+        await docker(['image', 'rm', '-f', id]);
+        await assert.rejects(docker(['image', 'inspect', id]), error => isMissingImage(error, id));
+        report.ownedImageCleanup.push({ id, outcome: 'removed-and-absence-confirmed' });
+      }
+      assert.equal(report.ownedImageCleanup.length, images.size); report.ownedImagesRemoved = true;
+    }
     catch (error) { cleanupErrors.push(String(error)); }
     if (capabilityFixtureReference) {
       try {

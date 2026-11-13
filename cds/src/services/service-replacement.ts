@@ -225,10 +225,14 @@ export async function abortUnpublishedServiceReplacements(options: {
   }
 }
 
-function publicationIdentity(entry: BranchEntry): string {
-  return JSON.stringify(Object.entries(entry.services).map(([id, service]) =>
-    [id, service.status, runtimeRef(service), service.servingRuntime, service.pendingRuntime]));
+function publicationIdentity(entry: BranchEntry, selectedIds: readonly string[]): string {
+  return JSON.stringify(Object.entries(entry.services).map(([id, service]) => {
+    const active = servingRuntime(service);
+    return [id, active ? runtimeRef(active) : null,
+      selectedIds.includes(id) ? [runtimeRef(service), service.pendingRuntime] : null];
+  }));
 }
+const publicationQueue = new WeakMap<BranchEntry, Promise<void>>();
 
 async function runningConsumersDoNotReference(profileId: string, published: ReadonlyMap<string, ServiceRuntimeRef | null>,
   container: Pick<ContainerService, 'getEnv'>, aliases: Set<string>, check: (step: string) => void): Promise<boolean> {
@@ -248,10 +252,10 @@ async function runningConsumersDoNotReference(profileId: string, published: Read
 /** 连接旧网络不代表仍依赖旧版本；消费者必须已能通过服务别名访问当前版本。 */
 async function retireReplacedRuntimes(options: Parameters<typeof commitServiceReplacements>[0]): Promise<void> {
   const { entry, state, container } = options;
-  const identity = publicationIdentity(entry);
+  const identity = publicationIdentity(entry, options.profileIds);
   const check = (step: string) => {
     options.assertCurrent?.(step);
-    if (publicationIdentity(entry) !== identity) throw new Error('当前服务身份已变化，停止回收旧版本');
+    if (publicationIdentity(entry, options.profileIds) !== identity) throw new Error('当前服务身份已变化，停止回收旧版本');
   };
   const published = new Map<string, ServiceRuntimeRef | null>();
   for (const [id, service] of Object.entries(entry.services)) {
@@ -261,10 +265,9 @@ async function retireReplacedRuntimes(options: Parameters<typeof commitServiceRe
     published.set(id, await container.inspectOwnedRuntime(entry, id, active));
     check('after retirement serving identity');
   }
-  const protectedRefs = [...Object.values(entry.services).flatMap(service =>
+  const isProtected = (runtime: ServiceRuntimeRef) => [...Object.values(entry.services).flatMap(service =>
     [service, service.servingRuntime, service.pendingRuntime]), ...published.values()]
-    .filter((ref): ref is ServiceRuntimeRef => Boolean(ref));
-  const isProtected = (runtime: ServiceRuntimeRef) => protectedRefs.some(ref =>
+    .filter((ref): ref is ServiceRuntimeRef => Boolean(ref)).some(ref =>
     ref.containerName === runtime.containerName || Boolean(ref.containerId && ref.containerId === runtime.containerId));
   for (const [id, service] of Object.entries(entry.services)) {
     const active = published.get(id);
@@ -294,7 +297,10 @@ async function retireReplacedRuntimes(options: Parameters<typeof commitServiceRe
       await container.removeOwnedRuntime(entry, id, actual || old, { branchId: entry.id, projectId: entry.projectId,
         operationId: options.operationId, operationGeneration: options.operationGeneration,
         profileId: id, operation: 'ready-runtime-retirement', source: 'service-replacement',
-        assertCurrent: () => check('old runtime retirement command') });
+        assertCurrent: () => {
+          check('old runtime retirement command');
+          if (isProtected(actual || old)) throw new Error('当前服务身份已变化，停止回收旧版本');
+        } });
       check('after old runtime retirement');
       service.retainedRuntimes = service.retainedRuntimes?.filter(runtime => runtime.containerName !== old.containerName);
       state.save([{ kind: 'branches', id: entry.id }]); await state.flush();
@@ -310,6 +316,22 @@ export async function commitServiceReplacements(options: {
   assertCurrent?: (step: string) => void;
   onFailureDiagnostics?: (snapshots: OperationLogContainerSnapshot[]) => void;
 }): Promise<void> {
+  // 构建、启动和就绪仍并行；同分支的指针发布与历史回收必须使用一致快照。
+  const previous = publicationQueue.get(options.entry);
+  let release!: () => void;
+  const current = new Promise<void>(resolve => { release = resolve; });
+  publicationQueue.set(options.entry, current);
+  try {
+    await previous;
+    options.assertCurrent?.('runtime publication admission');
+    await commitServiceReplacementsUnlocked(options);
+  } finally {
+    release();
+    if (publicationQueue.get(options.entry) === current) publicationQueue.delete(options.entry);
+  }
+}
+
+async function commitServiceReplacementsUnlocked(options: Parameters<typeof commitServiceReplacements>[0]): Promise<void> {
   const { entry, profileIds, state, container, assertCurrent } = options;
   const selected = profileIds.map(id => entry.services[id]).filter((service): service is ServiceState => Boolean(service));
   if (selected.some(service => service.status !== 'running')) {

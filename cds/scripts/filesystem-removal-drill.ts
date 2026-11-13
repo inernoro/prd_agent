@@ -7,8 +7,10 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import ts from 'typescript';
+import { qualifyNativeSource, prepareHistoricalClosure } from './native-source-qualification.js';
 
 const referenceHead = '913b9d6a9b98ef5b44d056f5a181c053a5dd9bca';
+const historicalCandidateHead = 'c48691a282f1133277d6336418352f90bf361b63';
 const sources = ['src/executor/routes.ts', 'src/routes/branches.ts', 'src/routes/legacy-cleanup.ts',
   'src/routes/remote-hosts.ts', 'src/services/container.ts', 'src/services/github-webhook-dispatcher.ts',
   'src/services/isolated-shell-executor.ts', 'src/services/janitor.ts', 'src/services/state.ts',
@@ -36,13 +38,16 @@ async function main() {
   };
   try {
     report.stage = 'fixed-old-adapter';
-    execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', referenceHead], { stdio: 'pipe', timeout: 120000 });
-    assert.equal(execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--',
+    execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', referenceHead, historicalCandidateHead], { stdio: 'pipe', timeout: 120000 });
+    report.currentQualification = await qualifyNativeSource(path.resolve('..'), process.env.GITHUB_SHA || '');
+    report.historicalManifestCandidateHead = historicalCandidateHead;
+    assert.equal(execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, historicalCandidateHead, '--',
       ':(top)cds/package.json', ':(top)cds/pnpm-lock.yaml'], { encoding: 'utf8' }).trim(), '');
     const original = execFileSync('/usr/bin/git', ['show', `${referenceHead}:cds/src/services/janitor.ts`]);
     const runtime = path.join(temp, 'old-adapter-runtime'); await fs.cp(path.resolve('dist'), runtime, { recursive: true });
     await fs.writeFile(path.join(runtime, 'package.json'), '{"type":"module"}\n');
     await fs.symlink(path.resolve('node_modules'), path.join(runtime, 'node_modules'), 'dir');
+    report.referenceClosureSourceHashes = await prepareHistoricalClosure(referenceHead, runtime);
     const compiled = ts.transpileModule(original.toString('utf8'), { fileName: 'janitor.ts', reportDiagnostics: true,
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022, useDefineForClassFields: true,
         newLine: ts.NewLineKind.LineFeed, sourceMap: true, removeComments: false } });
