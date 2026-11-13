@@ -144,28 +144,33 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
         CancellationToken ct = default)
     {
         var environment = ResolveQuotaEnvironment(Environment.GetEnvironmentVariable);
-        var platform = NormalizeQuotaDetail(platformName);
-        var model = NormalizeQuotaDetail(modelName);
+        var safePlatform = SafeQuotaObjectName(platformName);
+        var safeModel = SafeQuotaObjectName(modelName);
+        var platform = safePlatform ?? "未能从网关响应确认";
+        var model = safeModel ?? "未能从网关响应确认";
+        var knownObject = safePlatform != null && safeModel != null;
+        var key = BuildQuotaNotificationKey(environment.Identity, platform, model);
 
         return UpsertNotificationAsync(
-            key: BuildQuotaNotificationKey(environment.Identity, platform, model),
-            title: "AI 服务额度不足",
+            key: key,
+            title: knownObject ? $"{platform} · {model}：上游额度不足" : "上游额度不足（对象尚未确认）",
             message: BuildQuotaNotificationMessage(environment.Label, platform, model),
             level: "error",
             source: "llm-gateway-quota",
             targetUserId: null,
-            ct: ct);
+            ct: ct,
+            incidentId: knownObject ? key : null,
+            incidentState: knownObject ? "active" : "unknown",
+            requestOutcome: "unknown");
     }
 
     internal static string BuildQuotaNotificationMessage(
         string environmentLabel,
         string platformName,
         string modelName)
-        => $"上游 AI 服务因额度不足拒绝了本次调用，本次 AI 创作未完成。\n" +
-           $"环境：{environmentLabel}\n" +
-           $"模型：{modelName}\n" +
-           $"平台：{platformName}\n" +
-           "请稍后重试；管理员需要检查服务额度或切换可用配置。诊断信息已保留。";
+        => "上游因额度不足拒绝了一次调用，整次请求结果尚未确认。" +
+           "管理员请检查该平台账户余额和线路额度，或切换可用配置。\n" +
+           $"环境：{environmentLabel}；模型：{modelName}；平台：{platformName}。";
 
     internal static string BuildQuotaNotificationKey(
         string environmentIdentity,
@@ -205,11 +210,18 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
         };
     }
 
-    private static string NormalizeQuotaDetail(string? value)
+    private static string? SafeQuotaObjectName(string? value)
     {
-        var normalized = NormalizeEnvironmentValue(value);
-        if (normalized == null) return "未能从网关响应确认";
-        return normalized.Length <= 160 ? normalized : normalized[..160];
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 160 || value.Any(char.IsControl)) return null;
+        var name = value.Trim();
+        if (name.Any(c => !char.IsLetterOrDigit(c) && !" -_./():+".Contains(c)) || name.Contains("://")) return null;
+        if (new[] { "authorization", "api_key", "api-key", "apikey", "password", "secret" }
+            .Any(marker => name.Contains(marker, StringComparison.OrdinalIgnoreCase))) return null;
+        if (name.Split(' ', ':', '/').Any(part => part.Equals("bearer", StringComparison.OrdinalIgnoreCase)
+            || part.Equals("token", StringComparison.OrdinalIgnoreCase)
+            || part.StartsWith("sk-", StringComparison.OrdinalIgnoreCase)
+            || part.StartsWith("eyJ", StringComparison.Ordinal))) return null;
+        return name;
     }
 
     private static string? NormalizeEnvironmentValue(string? value)
@@ -250,19 +262,31 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
                 if (!olderThanRecovery)
                     update = update.Set(n => n.IncidentState, incidentState).Set(n => n.RequestOutcome, requestOutcome)
                         .Set(n => n.RecoveredAt, incidentState == "recovered" ? eventAt : null);
-                if (requestOutcome == "request_failed") update = update.Inc(n => n.OccurrenceCount, 1)
-                    .Min(n => n.FirstOccurredAt, eventAt).Max(n => n.LastOccurredAt, eventAt);
+                if (incidentState == "active")
+                {
+                    // Missing tracking fields are not evidence of historical occurrence counts.
+                    if (existing.IncidentId == incidentId && existing.FirstOccurredAt.HasValue)
+                        update = update.Inc(n => n.OccurrenceCount, 1)
+                            .Min(n => n.FirstOccurredAt, eventAt).Max(n => n.LastOccurredAt, eventAt);
+                    else
+                        update = update.Set(n => n.OccurrenceCount, 1)
+                            .Set(n => n.FirstOccurredAt, eventAt).Set(n => n.LastOccurredAt, eventAt);
+                }
                 if (!olderThanRecovery && existing.IncidentState == "recovered" && incidentState == "active")
                     update = update.Set(n => n.Status, "open").Inc(n => n.PushEpisode, 1)
                         .Set(n => n.PushEpisodeStartedAtUtcTicks, DateTime.UtcNow.Ticks).Set(n => n.HandledAt, null);
                 // Only one observer can open this recurrence. A loser reloads the current
                 // state and counts its real failure once without opening another episode.
                 writeFilter &= Builders<AdminNotification>.Filter.Eq(n => n.IncidentState, existing.IncidentState)
+                    & Builders<AdminNotification>.Filter.Eq(n => n.IncidentId, existing.IncidentId)
+                    & Builders<AdminNotification>.Filter.Eq(n => n.FirstOccurredAt, existing.FirstOccurredAt)
                     & (existing.PushEpisode == 0
                         ? Builders<AdminNotification>.Filter.Eq(n => n.PushEpisode, 0)
                           | Builders<AdminNotification>.Filter.Exists(n => n.PushEpisode, false)
                         : Builders<AdminNotification>.Filter.Eq(n => n.PushEpisode, existing.PushEpisode));
             }
+            else if (incidentState != null)
+                update = update.Set(n => n.IncidentState, incidentState).Set(n => n.RequestOutcome, requestOutcome);
 
             if (string.IsNullOrWhiteSpace(targetUserId) && actionUrl != null)
                 update = update.Set(n => n.ActionUrl, actionUrl).Set(n => n.ActionLabel, "查看线路日志")

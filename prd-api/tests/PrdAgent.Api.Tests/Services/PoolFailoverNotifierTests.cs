@@ -21,7 +21,10 @@ public class PoolFailoverNotifierTests
         if (legacyUpdate)
         {
             await testDb.Context.AdminNotifications.UpdateOneAsync(x => x.Id == original.Id,
-                Builders<AdminNotification>.Update.Unset(x => x.Section));
+                Builders<AdminNotification>.Update.Unset(x => x.Section)
+                    .Unset(x => x.IncidentId).Unset(x => x.IncidentState).Unset(x => x.RequestOutcome)
+                    .Unset(x => x.FirstOccurredAt).Unset(x => x.LastOccurredAt)
+                    .Set(x => x.OccurrenceCount, 182).Set(x => x.CreatedAt, DateTime.UtcNow.AddDays(-10)));
             await notifier.NotifyQuotaExceededAsync("fixture-platform", "fixture-model");
         }
 
@@ -31,11 +34,42 @@ public class PoolFailoverNotifierTests
         stored.Id.ShouldBe(original.Id);
         stored.Key.ShouldBe(original.Key);
         stored.Source.ShouldBe("llm-gateway-quota");
+        stored.Title.ShouldBe("fixture-platform · fixture-model：上游额度不足");
+        stored.IncidentId.ShouldBe(stored.Key);
+        stored.IncidentState.ShouldBe("active");
+        stored.RequestOutcome.ShouldBe("unknown");
+        stored.OccurrenceCount.ShouldBe(1);
+        stored.FirstOccurredAt.ShouldNotBeNull();
+        stored.LastOccurredAt.ShouldBe(stored.FirstOccurredAt);
+        if (legacyUpdate) Assert.True(stored.FirstOccurredAt > stored.CreatedAt);
         stored.Message.ShouldBe(original.Message);
         var storedMessage = stored.Message;
         Assert.NotNull(storedMessage);
         storedMessage.ShouldContain("fixture-platform");
         storedMessage.ShouldContain("fixture-model");
+        storedMessage.ShouldContain("整次请求结果尚未确认");
+        storedMessage.ShouldNotContain("本次 AI 创作未完成");
+        await notifier.NotifyQuotaExceededAsync("fixture-platform", "fixture-model");
+        var repeated = await testDb.Context.AdminNotifications.Find(x => x.Id == stored.Id).SingleAsync();
+        repeated.OccurrenceCount.ShouldBe(2);
+        repeated.FirstOccurredAt.ShouldBe(stored.FirstOccurredAt);
+        Assert.True(repeated.LastOccurredAt >= stored.LastOccurredAt);
+    }
+
+    [Theory]
+    [InlineData(null, "fixture-model")]
+    [InlineData("Bearer sk-fixture-secret", "fixture-model")]
+    public async Task QuotaNotification_WithoutSafeObjectEvidence_KeepsIdentityAndOutcomeUnknown(string? platform, string model)
+    {
+        await using var testDb = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
+        var notifier = new PoolFailoverNotifier(testDb.Context, NullLogger<PoolFailoverNotifier>.Instance);
+        await notifier.NotifyQuotaExceededAsync(platform, model);
+        var stored = await testDb.Context.AdminNotifications.Find(_ => true).SingleAsync();
+        stored.IncidentId.ShouldBeNull();
+        stored.IncidentState.ShouldBe("unknown");
+        stored.RequestOutcome.ShouldBe("unknown");
+        stored.FirstOccurredAt.ShouldBeNull();
+        Assert.DoesNotContain("sk-fixture-secret", stored.Title + stored.Message);
     }
 
     [Fact]
