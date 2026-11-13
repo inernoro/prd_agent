@@ -83,6 +83,23 @@ describe('合集阅读游标必须跟随文档与路由', () => {
     expect(container.textContent).toContain('shared合集');
     expect(container.textContent).not.toContain('旧密码错误');
   });
+  it('主文档读后返回，手机主卡不再提供同目标继续01', async () => {
+    await mount();
+    await act(async () => (container.querySelector('.hc-primary .hc-mobile-read') as HTMLButtonElement).click());
+    await click('返回目录');
+    expect(localStorage.getItem('hosted-collection:last:a')).toBe('a-0');
+    expect([...container.querySelectorAll('.hc-primary .hc-mobile-read')].map(e => e.textContent)).toEqual(['从主文档开始阅读']);
+  });
+  it('真实下一篇后仍提供手机继续02并回到该份文档', async () => {
+    await mount();
+    await act(async () => (container.querySelector('.hc-primary .hc-mobile-read') as HTMLButtonElement).click());
+    await click('下一篇'); await click('返回目录');
+    expect(localStorage.getItem('hosted-collection:last:a')).toBe('a-1');
+    const actions = [...container.querySelectorAll<HTMLButtonElement>('.hc-primary .hc-mobile-read')];
+    expect(actions.map(e => e.textContent)).toEqual(['从主文档开始阅读', '继续 · 02']);
+    await act(async () => actions[1].click());
+    expect(container.querySelector('[data-reading] p')?.textContent).toBe('a文档2');
+  });
   it('第31篇跳到第32篇再返回目录，应进入第2页并显示刚读过的文档', async () => {
     await mount(); await act(async () => (container.querySelector('[data-member="a-30"]') as HTMLButtonElement).click());
     await click('下一篇'); await click('返回目录');

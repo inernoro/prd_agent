@@ -1066,6 +1066,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const hasWritingPermission = useAuthStore(state => state.isRoot || state.permissions.includes('super') || state.permissions.includes('document-store.write'));
   const [canWriteEntries, setCanWriteEntries] = useState(false);
   const [store, setStore] = useState<DocumentStore | null>(null);
+  const [storeLoadError, setStoreLoadError] = useState('');
+  const [entriesLoadError, setEntriesLoadError] = useState('');
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
@@ -1445,12 +1447,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   // 加载空间详情和条目
   const loadStore = useCallback(async () => {
+    setStoreLoadError('');
     const res = await getDocumentStore(storeId);
     if (res.success) setStore(res.data);
+    else setStoreLoadError(res.error?.message || '知识库加载失败，请稍后重试');
   }, [storeId]);
 
   const loadEntries = useCallback(async () => {
     setLoading(true);
+    setEntriesLoadError('');
     setCanWriteEntries(false);
     const res = await listDocumentEntries(storeId, 1, 200);
     if (res.success) {
@@ -1458,6 +1463,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       setCanWriteEntries(res.data.canWrite === true);
       setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
     }
+    else setEntriesLoadError(res.error?.message || '知识库内容加载失败，请稍后重试');
     setLoading(false);
   }, [storeId]);
 
@@ -2277,10 +2283,19 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     }
   }, [store, storeId, selectedDocEntry]);
 
-  if (!store) {
+  if (!store || entriesLoadError) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 160px)' }}>
-        <MapSpinner size={16} />
+        {storeLoadError || entriesLoadError ? <div role="alert" className="flex flex-col items-center gap-3 px-5 text-center">
+          <AlertCircle size={24} style={{ color: 'var(--text-muted)' }} />
+          {store && <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>{store.name}</p>}
+          <p style={{ color: 'var(--text-primary)' }}>知识库暂时无法加载</p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{storeLoadError || entriesLoadError}</p>
+          <div className="flex items-center gap-2">
+            <Button variant="primary" onClick={() => { void loadStore(); void loadEntries(); }}>重试</Button>
+            <Button onClick={onBack}>返回知识库</Button>
+          </div>
+        </div> : <MapSpinner size={16} />}
       </div>
     );
   }

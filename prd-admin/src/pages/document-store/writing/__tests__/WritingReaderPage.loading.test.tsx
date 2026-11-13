@@ -45,9 +45,10 @@ describe('真实发布概要先达与正文隔离', () => {
     await act(async () => finish(ok(data()))); await act(async () => { vi.advanceTimersByTime(3000); });
     expect(container.querySelector('.writing-reader-body-state')).toBeNull(); expect(container.textContent).toContain('已发布完整正文v1');
   });
-  it.each(['NETWORK_ERROR', 'DISCONNECTED'])('正文%s失败保留概要，重试只读同版正文并恢复', async code => {
-    api.read.mockResolvedValueOnce(ok(data(true))).mockResolvedValueOnce({ success: false, error: { code, message: '网络中断' } }).mockResolvedValueOnce(ok(data()));
-    await render(); expect(container.textContent).toContain('缩短交接周期'); expect(container.textContent).toContain('网络中断');
+  it.each(['NETWORK_ERROR', 'DISCONNECTED', 'RATE_LIMITED'])('正文%s失败保留概要，重试只读同版正文并恢复', async code => {
+    const message = code === 'RATE_LIMITED' ? '请求频率过高，请稍后再试' : '网络中断';
+    api.read.mockResolvedValueOnce(ok(data(true))).mockResolvedValueOnce({ success: false, error: { code, message } }).mockResolvedValueOnce(ok(data()));
+    await render(); expect(container.textContent).toContain('缩短交接周期'); expect(container.textContent).toContain(message);
     const retry = [...container.querySelectorAll<HTMLButtonElement>('button')].find(e => e.textContent === '重试正文')!;
     expect(retry).toBeTruthy(); await act(async () => retry.click()); expect(api.read).toHaveBeenLastCalledWith('entry', { version: 1 }); expect(container.textContent).toContain('已发布完整正文v1');
   });

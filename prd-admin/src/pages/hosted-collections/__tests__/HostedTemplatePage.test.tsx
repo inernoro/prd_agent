@@ -124,4 +124,30 @@ describe('模版来源、字段映射与真实相邻预览', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull(); expect(JSON.parse(localStorage.getItem('hosted-template-draft:author')!).title).toBe('规则不改我的标题'); expect(api.publish).not.toHaveBeenCalled();
   });
 
+  it('桌面阅读目录无编号，首项选中，点击定位真实小节且不修改正文', async () => {
+    localStorage.setItem('hosted-template-draft:author', JSON.stringify({ templateId: 'overview', type: '总览', title: '阅读目录', summary: '摘要', headings: ['甲', '乙', '丙'], body: '作者的完整正文' }));
+    await mount(); const links = [...container.querySelectorAll<HTMLAnchorElement>('.ht-read-toc a')];
+    expect(links.map(e => e.textContent)).toEqual(['甲', '乙', '丙']); expect(links[0].getAttribute('aria-current')).toBe('location');
+    const section = container.querySelector<HTMLElement>('#template-read-section-2')!; const scroll = vi.fn(); section.scrollIntoView = scroll;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });
+    await act(async () => links[2].click()); vi.unstubAllGlobals();
+    expect(scroll).toHaveBeenCalledWith({ block: 'start' }); expect(links[2].getAttribute('aria-current')).toBe('location');
+    expect(JSON.parse(localStorage.getItem('hosted-template-draft:author')!).body).toBe('作者的完整正文');
+  });
+  it.each([0, 1, 3, 5])('手机阅读预览%d节时提供真实折叠目录，0节不留空目录列', async count => {
+    const draft = { templateId: 'overview', type: '总览', title: '真实阅读标题', summary: '', headings: Array.from({ length: count }, (_, i) => `真实第${i+1}节`), body: '正文原文不能被目录改写' };
+    localStorage.setItem('hosted-template-draft:author', JSON.stringify(draft)); await mount();
+    const toc = container.querySelector('.ht-read-mobile-toc');
+    if (!count) { expect(toc).toBeNull(); expect(container.querySelector('.ht-read aside')).toBeNull(); expect(container.querySelector('.ht-read-no-toc')).not.toBeNull(); }
+    else {
+      const toggle = toc!.querySelector<HTMLButtonElement>('button')!; expect(toggle.getAttribute('aria-expanded')).toBe('false'); expect(toggle.textContent).toContain(`本文目录 · ${count} 节`);
+      await act(async () => toggle.click()); expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      const links = [...toc!.querySelectorAll<HTMLAnchorElement>('a')]; expect(links).toHaveLength(count);
+      const target = container.querySelector<HTMLElement>(`#template-read-section-${count-1}`)!; const scroll = vi.fn(); target.scrollIntoView = scroll;
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });
+      await act(async () => links[count-1].click()); vi.unstubAllGlobals(); expect(scroll).toHaveBeenCalledWith({ block: 'start' }); expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    }
+    expect(JSON.parse(localStorage.getItem('hosted-template-draft:author')!)).toEqual(draft);
+  });
+
 });

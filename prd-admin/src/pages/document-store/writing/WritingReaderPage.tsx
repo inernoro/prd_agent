@@ -68,7 +68,7 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
       if (result.data.publication.version !== version || result.data.bodyPending) {
         setBodyFailure('正文版本与概要不一致，请重新加载文档');
       } else setData(result.data);
-    } else if (['DISCONNECTED', 'NETWORK_ERROR', 'SERVER_ERROR', 'SERVER_UNAVAILABLE', 'INTERNAL_ERROR'].includes(result.error.code)) {
+    } else if (['DISCONNECTED', 'NETWORK_ERROR', 'RATE_LIMITED', 'SERVER_ERROR', 'SERVER_UNAVAILABLE', 'INTERNAL_ERROR'].includes(result.error.code)) {
       setBodyFailure(result.error.message);
     } else {
       setData(undefined); setSource(undefined); setError(result.error.message);
