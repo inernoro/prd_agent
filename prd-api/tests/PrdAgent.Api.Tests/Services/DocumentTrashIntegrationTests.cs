@@ -203,6 +203,74 @@ public sealed class DocumentTrashIntegrationTests : IAsyncLifetime
         (await _db.DocumentEntries.Find(x => x.Id == entry.Id).SingleAsync()).AttachmentId.ShouldBe("attachment");
     }
 
+    [Fact]
+    public async Task RevokedTeamMember_CannotListOrRestorePreviouslyWritableTrash()
+    {
+        var entry = await EntryAsync();
+        (await Controller("member").DeleteEntry(entry.Id)).ShouldBeOfType<OkObjectResult>();
+        var revoked = Controller("member", memberStillAuthorized: false);
+        (await revoked.RestoreEntry(entry.Id)).ShouldBeOfType<NotFoundObjectResult>();
+        var list = (await revoked.ListTrash()).ShouldBeOfType<OkObjectResult>();
+        JsonSerializer.Serialize(list.Value).ShouldNotContain(entry.Id);
+        (await _db.DocumentEntriesIncludingTrash.Find(x => x.Id == entry.Id).SingleAsync()).Trash.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task HeldRecycleLease_RejectsWithoutDeleting_AndRetryRestoresNormally()
+    {
+        var entry = await EntryAsync();
+        await _db.DocumentStores.UpdateOneAsync(x => x.Id == _store.Id,
+            Builders<DocumentStore>.Update.Set(x => x.TrashLeaseToken, "controlled-holder").Set(x => x.TrashLeaseUntil, DateTime.UtcNow.AddMinutes(1)));
+        (await Controller("owner").DeleteEntry(entry.Id)).ShouldBeOfType<ConflictObjectResult>();
+        (await _db.DocumentEntries.CountDocumentsAsync(x => x.Id == entry.Id)).ShouldBe(1);
+        await _db.DocumentStores.UpdateOneAsync(x => x.Id == _store.Id,
+            Builders<DocumentStore>.Update.Set(x => x.TrashLeaseToken, null).Set(x => x.TrashLeaseUntil, null));
+        (await Controller("owner").DeleteEntry(entry.Id)).ShouldBeOfType<OkObjectResult>();
+        (await Controller("owner").RestoreEntry(entry.Id)).ShouldBeOfType<OkObjectResult>();
+        (await _db.DocumentEntries.CountDocumentsAsync(x => x.Id == entry.Id)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task InterruptedFolderDeletion_ResumesSameBatchBeforeRestoring()
+    {
+        var folder = await EntryAsync(folder: true);
+        var child = await EntryAsync(parent: folder.Id);
+        var state = new DocumentTrashState { RootEntryId = folder.Id, DeletedBy = "owner", Pending = true };
+        await _db.DocumentEntriesIncludingTrash.UpdateOneAsync(x => x.Id == folder.Id,
+            Builders<DocumentEntry>.Update.Set(x => x.Trash, state).Inc(x => x.LifecycleVersion, 1));
+        var before = (await _db.DocumentEntriesIncludingTrash.Find(x => x.Id == folder.Id).SingleAsync()).Trash!;
+        (await Controller("owner").RestoreEntry(folder.Id)).ShouldBeOfType<ConflictObjectResult>();
+        (await Controller("owner").DeleteEntry(folder.Id)).ShouldBeOfType<OkObjectResult>();
+        var completed = (await _db.DocumentEntriesIncludingTrash.Find(x => x.Id == folder.Id).SingleAsync()).Trash!;
+        completed.BatchId.ShouldBe(before.BatchId);
+        completed.DeletedAt.ShouldBe(before.DeletedAt);
+        completed.Pending.ShouldBeFalse();
+        (await _db.DocumentEntries.CountDocumentsAsync(x => x.Id == child.Id)).ShouldBe(0);
+        (await Controller("owner").RestoreEntry(folder.Id)).ShouldBeOfType<OkObjectResult>();
+        (await _db.DocumentEntries.Find(x => x.Id == child.Id).SingleAsync()).ParentId.ShouldBe(folder.Id);
+    }
+
+    [Fact]
+    public async Task RealLocalAttachmentBytes_RemainReadableAfterRecycleAndRestore()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "trash-proof-assets-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var storage = new LocalAssetStorage(directory);
+            var bytes = System.Text.Encoding.UTF8.GetBytes("附件字节也必须原样恢复");
+            var asset = await storage.SaveAsync(bytes, "text/plain", CancellationToken.None, fileName: "附件.txt");
+            var entry = await EntryAsync();
+            await _db.Attachments.InsertOneAsync(new Attachment { AttachmentId = "attachment", FileName = "附件.txt", Url = asset.Url, StorageKey = asset.Key });
+            await _trash.DeleteAsync(_store.Id, entry.Id, "member");
+            await _trash.RestoreAsync(_store.Id, entry.Id);
+            var attachment = await _db.Attachments.Find(x => x.AttachmentId == "attachment").SingleAsync();
+            attachment.StorageKey.ShouldBe(asset.Key);
+            (await storage.TryDownloadBytesAsync(attachment.StorageKey!, CancellationToken.None)).ShouldBe(bytes);
+            (await _db.DocumentEntries.Find(x => x.Id == entry.Id).SingleAsync()).AttachmentId.ShouldBe(attachment.AttachmentId);
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+    }
+
     private async Task<DocumentEntry> EntryAsync(bool folder = false, string? parent = null)
     {
         var entry = new DocumentEntry { StoreId = _store.Id, Title = "原文", ParentId = parent, IsFolder = folder,
@@ -211,10 +279,10 @@ public sealed class DocumentTrashIntegrationTests : IAsyncLifetime
         return entry;
     }
 
-    private DocumentStoreController Controller(string actor)
+    private DocumentStoreController Controller(string actor, bool memberStillAuthorized = true)
     {
         var teams = new Mock<ITeamService>();
-        teams.Setup(x => x.GetMyTeamIdsAsync(actor, It.IsAny<CancellationToken>())).ReturnsAsync(actor == "member" ? ["team"] : []);
+        teams.Setup(x => x.GetMyTeamIdsAsync(actor, It.IsAny<CancellationToken>())).ReturnsAsync(actor == "member" && memberStillAuthorized ? ["team"] : []);
         var controller = new DocumentStoreController(_db, null!, null!, null!, null!, null!, null!, teams.Object, Mock.Of<ITeamActivityService>(), null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, NullLogger<DocumentStoreController>.Instance);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", actor)], "test")) } };
         return controller;

@@ -144,10 +144,7 @@ public class EntryContentWriteService
         // 时间戳只回答「有没有被人动过」，答不了「这还是不是我那条」：确定性 id 会被重用，
         // 而 BSON 只到毫秒 —— 同一毫秒内被删掉再重建的话，两条在 Id + UpdatedAt 上完全一样，
         // 这次写入就会把正文落进**别人那一代**里，还接着参与它的收尾。
-        var lifecycleGuard = Builders<DocumentEntry>.Filter.Eq(e => e.LifecycleVersion, entry.LifecycleVersion);
-        if (entry.LifecycleVersion == 0)
-            lifecycleGuard |= Builders<DocumentEntry>.Filter.Exists(e => e.LifecycleVersion, false);
-        var entryFilter = Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id) & lifecycleGuard;
+        var entryFilter = DocumentEntryWriteGuard.ForCurrentLifecycle(entry);
         if (expectedUpdatedAt != null)
             entryFilter = Builders<DocumentEntry>.Filter.And(entryFilter,
                 Builders<DocumentEntry>.Filter.Eq(e => e.UpdatedAt, expectedUpdatedAt.Value));

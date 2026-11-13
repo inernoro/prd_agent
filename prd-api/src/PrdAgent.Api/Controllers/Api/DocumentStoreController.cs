@@ -3769,8 +3769,8 @@ public partial class DocumentStoreController : ControllerBase
         var summary = extractedText?.Length > 200 ? extractedText[..200] : extractedText;
         var contentIndex = extractedText?.Length > 2000 ? extractedText[..2000] : extractedText;
 
-        await _db.DocumentEntries.UpdateOneAsync(
-            e => e.Id == entryId,
+        var replacement = await _db.DocumentEntries.UpdateOneAsync(
+            DocumentEntryWriteGuard.ForCurrentLifecycle(entry),
             Builders<DocumentEntry>.Update
                 .Set(e => e.AttachmentId, attachment.AttachmentId)
                 .Set(e => e.DocumentId, documentId)
@@ -3784,6 +3784,11 @@ public partial class DocumentStoreController : ControllerBase
                 .Set(e => e.UpdatedAt, DateTime.UtcNow)
                 .Set(e => e.LastChangedAt, DateTime.UtcNow),
             cancellationToken: ct);
+
+        // 没有提交替换时，不能重绑评论或清理旧引用：它们仍属于回收站/恢复后的内容。
+        if (replacement.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail(
+                "DOCUMENT_TRASH_CONFLICT", "内容已被删除或恢复，请刷新后重新选择文件"));
 
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == entry.StoreId,
