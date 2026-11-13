@@ -221,10 +221,11 @@ describe('发布控制台 · 对齐设计稿的组件', () => {
     expect(PAGE).toContain("type RailPane = 'history' | 'failed'");
     expect(PAGE).not.toContain("pane === 'config'");
     const sheetFn = PAGE.slice(PAGE.indexOf('function Sheet('), PAGE.indexOf('export function ReleaseConsolePage'));
-    expect(sheetFn).toContain('fixed inset-0');
-    expect(sheetFn).toContain("aria-modal=\"true\"");
-    // Esc 关闭：全屏浮层没有键盘出口是无障碍缺陷
-    expect(sheetFn).toContain("event.key === 'Escape'");
+    expect(sheetFn).toContain('<Dialog open onOpenChange=');
+    expect(sheetFn).toContain('<DialogContent frame');
+    // Portal、焦点约束与 Escape 由共享 Radix Dialog 负责，浏览器回归验证真实关闭行为。
+    expect(read('components/ui/dialog.tsx')).toContain('<DialogPortal>');
+    expect(read('components/ui/dialog.tsx')).toContain('<DialogPrimitive.Content');
   });
 
   /**
@@ -404,7 +405,7 @@ describe('发布控制台 · 英文字形与分支卡同源', () => {
    */
   it('日志按语义着色，时间单独成列', () => {
     expect(PAGE).toContain('LOG_TONE_CLASS[logLineTone(log.level, log.message)]');
-    expect(PAGE).toContain('text-muted-foreground/60">{formatClock(log.at)}');
+    expect(PAGE).toContain('text-muted-foreground">{formatClock(log.at)}');
     // 别再把 `[时间] LEVEL 正文` 拼成一整行塞进 pre
     expect(PAGE).not.toContain('log.level.toUpperCase()');
   });
@@ -533,7 +534,7 @@ describe('发布控制台 · 状态条不许被按钮文案顶高', () => {
  */
 describe('发布控制台 · 状态条一行的宽度预算', () => {
   it('中段 min-width 留得下操作组，且版本选择不在操作组里', () => {
-    expect(PAGE).toContain('min-w-[21.25rem] flex-1 basis-0');
+    expect(PAGE).toContain('min-w-0 flex-1 basis-[21.25rem]');
     const STACK_MIN = 340;
     const ICON = 52;
     const GAP = 18;
@@ -549,7 +550,8 @@ describe('发布控制台 · 状态条一行的宽度预算', () => {
   it('版本选择在标题行，进度条才横贯中段', () => {
     const titleRow = PAGE.slice(PAGE.indexOf('flex flex-wrap items-baseline gap-x-3'), PAGE.indexOf('overflow-hidden rounded bg-[hsl(var(--surface-sunken))]'));
     expect(titleRow, '版本选择应当在标题行里').toContain('aria-label="要发布的版本"');
-    const group = PAGE.slice(PAGE.indexOf('[&_button]:h-10'), PAGE.indexOf('试跑'));
+    const groupStart = PAGE.indexOf('flex min-w-0 w-full max-w-full flex-wrap items-center justify-end');
+    const group = PAGE.slice(groupStart, PAGE.indexOf('</section>', groupStart));
     expect(group, '操作组里不该再有版本选择').not.toContain('aria-label="要发布的版本"');
   });
 });
@@ -605,7 +607,7 @@ describe('发布控制台 · 节奏', () => {
  */
 describe('发布控制台 · 发布前检查是发布的第一步', () => {
   it('没有单独的试跑按钮，检查在 startRelease 里先跑', () => {
-    const group = PAGE.slice(PAGE.indexOf('flex w-full flex-wrap items-center justify-end'), PAGE.indexOf('</section>'));
+    const group = PAGE.slice(PAGE.indexOf('flex min-w-0 w-full max-w-full flex-wrap items-center justify-end'), PAGE.indexOf('</section>'));
     expect(group, '操作组里不该再有试跑按钮').not.toContain('试跑');
     const start = bodyAfter(PAGE, 'const startRelease = async ()');
     expect(start, '发布前必须先过检查').toContain('if (!(await passesPreflight())) return;');
@@ -624,7 +626,7 @@ describe('发布控制台 · 发布前检查是发布的第一步', () => {
    * 中止常驻时是一个 90% 时间都点不了的灰按钮，占位又没用。
    */
   it('开始在最右，中止只在进行中出现', () => {
-    const group = PAGE.slice(PAGE.indexOf('flex w-full flex-wrap items-center justify-end'), PAGE.indexOf('</section>'));
+    const group = PAGE.slice(PAGE.indexOf('flex min-w-0 w-full max-w-full flex-wrap items-center justify-end'), PAGE.indexOf('</section>'));
     const cancelAt = group.indexOf('中止');
     // 主按钮的文案已收进 buildConsoleStance，锚点换成它的渲染点，
     // 不再依赖「开始发布」这个字面量出现在页面里。
