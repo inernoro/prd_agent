@@ -30,6 +30,8 @@ import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import {
   HISTORY_RANGES,
+  INCIDENT_STATE_LABEL,
+  incidentDisplayState,
   PROBE_KIND_LABEL,
   SOURCE_META,
   availabilityOfBuckets,
@@ -381,7 +383,7 @@ export function TargetDetail({
                 {own.map((incident) => (
                   <li key={incident.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2 text-xs">
                     <span className={cn('inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 font-medium', incident.ongoing ? 'border-destructive/40 bg-destructive/10 text-destructive' : 'border-[hsl(var(--hairline-strong))] text-muted-foreground')}>
-                      {incident.ongoing ? '进行中' : '已恢复'}
+                      {INCIDENT_STATE_LABEL[incidentDisplayState(incident)]}
                     </span>
                     <span className="font-mono text-muted-foreground">{formatClock(incident.startedAt)}</span>
                     <span className="text-muted-foreground">持续 {formatDuration(incident.durationMs)}</span>

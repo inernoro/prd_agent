@@ -3,7 +3,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type C
 import { ArrowLeft, Bell, ChevronDown, ChevronRight, Plus, Search, Wind, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { buildWorkspaceModel, visibleWorkspaceServices, workspaceHealthCell, type WorkspaceCategory, type WorkspaceService, type WorkspaceState } from '@/lib/monitorWorkspace';
-import { formatRelative, type UptimeBucket, type UptimeIncidentView, type UptimeSummary, type UptimeTargetSummary } from '@/lib/monitorCenter';
+import { formatRelative, hasIncidentRecoveryEvidence, type UptimeBucket, type UptimeIncidentView, type UptimeSummary, type UptimeTargetSummary } from '@/lib/monitorCenter';
 import { planMonitorLayout, categoryMonitorLayout, MONITOR_LEVELS, type MonitorDensity, type MonitorLevel, type MonitorLayout, type LayoutBand, type LayoutPart } from '@/lib/monitorLayout';
 import { measurementView } from '@/lib/monitorMeasurement';
 import { ServiceDetail } from './MonitorServiceDetail';
@@ -324,7 +324,7 @@ export function MonitorWorkspace({ targets, notificationTarget, summary, inciden
     const key = `${group.id}:${s.reason}`, value = noneGroups.get(key) ?? { category: group, reason: s.reason, services: [] };
     value.services.push(s); noneGroups.set(key, value);
   });
-  const recovered = incidents.filter(e => e.endedAt && model.services.some(s => s.id === e.targetId)).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0)).slice(0, 4);
+  const recovered = incidents.filter(e => hasIncidentRecoveryEvidence(e) && model.services.some(s => s.id === e.targetId)).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0)).slice(0, 4);
   const renderCategory = (c: WorkspaceCategory, part: LayoutPart, level: MonitorLevel, stacked: boolean) => {
     const initialCount = layoutCache.current!.counts[c.id] ?? c.services.length;
     const capacity = stacked ? c.services.length : part.visible >= initialCount ? Math.min(c.services.length, part.columns * part.rows) : part.visible;
