@@ -1,0 +1,577 @@
+{
+  "snapshotAt": "2026-11-13T08:34:36.609013+00:00",
+  "method": "只读抓取原始产品报告、原模型请求与响应；不写生产，不执行恢复curl。",
+  "llmLog": {
+    "id": "feb68087-6667-4c29-b917-68c6c2b108f7",
+    "uri": "https://main-prd-agent.miduo.org/api/logs/llm/feb68087-6667-4c29-b917-68c6c2b108f7",
+    "startedAt": "2026-10-09T08:01:52.429Z",
+    "status": "succeeded",
+    "model": "gpt-5.6-sol",
+    "request": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "你是一位专业的周报撰写助手。\n严格遵守用户输入中的模板结构与写作要求。\n输出必须是合法 JSON，不要包含 markdown 代码块标记。"
+        },
+        {
+          "role": "user",
+          "content": "## 周报周期: 2026 年第 41 周\n\n## 写作要求（生效 Prompt）\n你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记\n\n## 模板结构（请严格按此结构输出 JSON）\n输出格式: { \"sections\": [ { \"items\": [ { \"content\": \"...\", \"source\": \"...\" } ] } ] }\nsections 数组长度必须与以下板块数量一致。\n\n### 板块 1: 本周任务进展\n填写指引: 本周完成了哪些任务、整体进度如何。\n输入类型: table\n是否必填: 是\n\n### 板块 2: 问题&对策\n填写指引: 存在哪些问题或风险、对应的对策是什么。\n输入类型: issue-list\n是否必填: 是\n\n### 板块 3: 下周计划\n填写指引: 所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。\n输入类型: table\n是否必填: 是\n\n### 板块 4: 思考总结\n填写指引: 有什么想法或心得体会，都可以拿出来分享下。\n输入类型: rich-text\n是否必填: 是\n\n## 采集到的原始数据\n\n### MAP 平台工作记录（行为统计）\n- 图片生成完成: 10 次\n- 网页发布/更新: 8 次\n- AI 调用: 10 次\n\n请基于以上数据生成周报，每个条目的 source 字段标记来源：map-platform / daily-log / ai\n严格约束：\n1. 只基于「采集到的原始数据」中明确列出的指标生成内容，禁止凭空编造。\n2. 不要把指标名称改写成其他活动。采集结果说什么就是什么，不允许语义漂移：\n   - 「创建 PRD 项目」不能写成「编辑文档」「新建知识库」「完成技术规范」\n   - 「网页发布/更新」不能写成「发布网站」的泛化描述或夸大数量\n   - 「AI 调用」不能写成「优化处理效率」「辅助生成」的效果类描述\n3. 指标数值必须与采集结果完全一致，禁止凑整、放大、捏造修饰语（如「量较大」「若干篇」）。\n4. 如果某个板块确实没有数据支撑，请输出空 items 数组，禁止用「无数据」「待补充」等占位文本。\n"
+        }
+      ],
+      "temperature": 0.3,
+      "model": "gpt-5.6-sol",
+      "stream": false,
+      "reasoning_effort": "none",
+      "max_completion_tokens": 4096
+    },
+    "response": "{\n  \"id\": \"chatcmpl-EWzq60M4JDnE3SQdJsdkfJep8daDU\",\n  \"object\": \"chat.completion\",\n  \"created\": 1791532914,\n  \"model\": \"gpt-5.6-sol\",\n  \"choices\": [\n    {\n      \"index\": 0,\n      \"message\": {\n        \"role\": \"assistant\",\n        \"content\": \"{\\\"sections\\\":[{\\\"items\\\":[{\\\"content\\\":\\\"完成图片生成 10 次、网页发布/更新 8 次、AI 调用 10 次。\\\",\\\"source\\\":\\\"map-platform\\\"}]},{\\\"items\\\":[]},{\\\"items\\\":[]},{\\\"items\\\":[{\\\"content\\\":\\\"本周工作记录覆盖图片生成、网页发布/更新和 AI 调用三类行为，共计 28 次。\\\",\\\"source\\\":\\\"map-platform\\\"}]}]}\",\n        \"refusal\": null,\n        \"annotations\": []\n      },\n      \"finish_reason\": \"stop\"\n    }\n  ],\n  \"usage\": {\n    \"prompt_tokens\": 781,\n    \"completion_tokens\": 86,\n    \"total_tokens\": 867,\n    \"prompt_tokens_details\": {\n      \"cached_tokens\": 0,\n      \"cache_write_tokens\": 0,\n      \"audio_tokens\": 0\n    },\n    \"completion_tokens_details\": {\n      \"reasoning_tokens\": 0,\n      \"audio_tokens\": 0,\n      \"accepted_prediction_tokens\": 0,\n      \"rejected_prediction_tokens\": 0\n    }\n  },\n  \"service_tier\": \"default\",\n  \"system_fingerprint\": null\n}\n",
+    "restoreErrors": null
+  },
+  "reports": [
+    {
+      "id": "e3f7e777624146b58bedb9b98d698f11",
+      "userId": "cd996f19390745cfb577ea712b0b1868",
+      "userName": "蒋云峰",
+      "avatarFileName": null,
+      "teamId": "1e6b9ddfa303446ba004d4b2778a1568",
+      "teamName": "基础研发部",
+      "templateId": "fe6bf7aff1a94482a2b18b28e13488b0",
+      "weekYear": 2026,
+      "weekNumber": 41,
+      "periodStart": "2026-10-05T00:00:00Z",
+      "periodEnd": "2026-10-11T23:59:59Z",
+      "status": "overdue",
+      "sections": [
+        {
+          "templateSection": {
+            "title": "本周任务进展",
+            "description": "本周完成了哪些任务、整体进度如何。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 0,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "完成率",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "items": [
+            {
+              "content": "完成图片生成 10 次、网页发布/更新 8 次、AI 调用 10 次。",
+              "source": "map-platform",
+              "sourceRef": null,
+              "issueCategoryKey": null,
+              "issueStatusKey": null,
+              "imageUrls": null,
+              "cells": [
+                "完成图片生成 10 次、网页发布/更新 8 次、AI 调用 10 次。",
+                "",
+                "",
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "templateSection": {
+            "title": "问题&对策",
+            "description": "存在哪些问题或风险、对应的对策是什么。",
+            "inputType": "issue-list",
+            "isRequired": true,
+            "sortOrder": 1,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": [
+              {
+                "key": "tech",
+                "label": "技术",
+                "color": null
+              },
+              {
+                "key": "product",
+                "label": "产品",
+                "color": null
+              },
+              {
+                "key": "process",
+                "label": "流程",
+                "color": null
+              },
+              {
+                "key": "resource",
+                "label": "资源",
+                "color": null
+              }
+            ],
+            "issueStatuses": [
+              {
+                "key": "new",
+                "label": "新增",
+                "color": null
+              },
+              {
+                "key": "ongoing",
+                "label": "跟进中",
+                "color": null
+              },
+              {
+                "key": "resolved",
+                "label": "已解决",
+                "color": null
+              },
+              {
+                "key": "blocked",
+                "label": "阻塞",
+                "color": null
+              }
+            ],
+            "tableColumns": null,
+            "tableColumnWidths": null
+          },
+          "items": []
+        },
+        {
+          "templateSection": {
+            "title": "下周计划",
+            "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 2,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0
+            ]
+          },
+          "items": []
+        },
+        {
+          "templateSection": {
+            "title": "思考总结",
+            "description": "有什么想法或心得体会，都可以拿出来分享下。",
+            "inputType": "rich-text",
+            "isRequired": true,
+            "sortOrder": 3,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": null,
+            "tableColumnWidths": null
+          },
+          "items": [
+            {
+              "content": "本周工作记录覆盖图片生成、网页发布/更新和 AI 调用三类行为，共计 28 次。",
+              "source": "map-platform",
+              "sourceRef": null,
+              "issueCategoryKey": null,
+              "issueStatusKey": null,
+              "imageUrls": null,
+              "cells": null
+            }
+          ]
+        }
+      ],
+      "submittedAt": null,
+      "reviewedAt": null,
+      "reviewedBy": null,
+      "reviewedByName": null,
+      "returnReason": null,
+      "returnedBy": null,
+      "returnedByName": null,
+      "returnedAt": null,
+      "autoGeneratedAt": "2026-10-09T08:01:55.939Z",
+      "autoGeneratedModelId": "gpt-5.6-sol",
+      "autoGeneratedPlatformId": "40f3d21558b3476bbff9807b0c9ee5bc",
+      "autoGeneratedBy": "llm",
+      "autoGenerationFallbackReason": null,
+      "workflowExecutionId": null,
+      "statsSnapshot": null,
+      "versionHistory": [],
+      "createdAt": "2026-10-09T08:01:55.971Z",
+      "updatedAt": "2026-10-12T02:05:20.282Z"
+    },
+    {
+      "id": "c37a3082b351446da37f7d0408eec3e3",
+      "userId": "cd996f19390745cfb577ea712b0b1868",
+      "userName": "蒋云峰",
+      "avatarFileName": null,
+      "teamId": "1e6b9ddfa303446ba004d4b2778a1568",
+      "teamName": "基础研发部",
+      "templateId": "fe6bf7aff1a94482a2b18b28e13488b0",
+      "weekYear": 2026,
+      "weekNumber": 46,
+      "periodStart": "2026-11-09T00:00:00Z",
+      "periodEnd": "2026-11-15T23:59:59Z",
+      "status": "draft",
+      "sections": [
+        {
+          "templateSection": {
+            "title": "本周任务进展",
+            "description": "本周完成了哪些任务、整体进度如何。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 0,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "完成率",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "items": [
+            {
+              "content": "本周工作按计划推进，建议下周继续围绕核心目标聚焦执行。",
+              "source": "map-platform",
+              "sourceRef": null,
+              "issueCategoryKey": null,
+              "issueStatusKey": null,
+              "imageUrls": null,
+              "cells": null
+            }
+          ]
+        },
+        {
+          "templateSection": {
+            "title": "问题&对策",
+            "description": "存在哪些问题或风险、对应的对策是什么。",
+            "inputType": "issue-list",
+            "isRequired": true,
+            "sortOrder": 1,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": [
+              {
+                "key": "tech",
+                "label": "技术",
+                "color": null
+              },
+              {
+                "key": "product",
+                "label": "产品",
+                "color": null
+              },
+              {
+                "key": "process",
+                "label": "流程",
+                "color": null
+              },
+              {
+                "key": "resource",
+                "label": "资源",
+                "color": null
+              }
+            ],
+            "issueStatuses": [
+              {
+                "key": "new",
+                "label": "新增",
+                "color": null
+              },
+              {
+                "key": "ongoing",
+                "label": "跟进中",
+                "color": null
+              },
+              {
+                "key": "resolved",
+                "label": "已解决",
+                "color": null
+              },
+              {
+                "key": "blocked",
+                "label": "阻塞",
+                "color": null
+              }
+            ],
+            "tableColumns": null,
+            "tableColumnWidths": null
+          },
+          "items": [
+            {
+              "content": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+              "source": "map-platform",
+              "sourceRef": null,
+              "issueCategoryKey": null,
+              "issueStatusKey": null,
+              "imageUrls": null,
+              "cells": null
+            }
+          ]
+        },
+        {
+          "templateSection": {
+            "title": "下周计划",
+            "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 2,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0
+            ]
+          },
+          "items": [
+            {
+              "content": "下周聚焦核心目标拆解与交付节奏，按优先级推进并按日复盘。",
+              "source": "ai",
+              "sourceRef": null,
+              "issueCategoryKey": null,
+              "issueStatusKey": null,
+              "imageUrls": null,
+              "cells": null
+            }
+          ]
+        },
+        {
+          "templateSection": {
+            "title": "思考总结",
+            "description": "有什么想法或心得体会，都可以拿出来分享下。",
+            "inputType": "rich-text",
+            "isRequired": true,
+            "sortOrder": 3,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": null,
+            "tableColumnWidths": null
+          },
+          "items": [
+            {
+              "content": "本周工作按计划推进，建议下周继续围绕核心目标聚焦执行。",
+              "source": "map-platform",
+              "sourceRef": null,
+              "issueCategoryKey": null,
+              "issueStatusKey": null,
+              "imageUrls": null,
+              "cells": null
+            }
+          ]
+        }
+      ],
+      "submittedAt": null,
+      "reviewedAt": null,
+      "reviewedBy": null,
+      "reviewedByName": null,
+      "returnReason": null,
+      "returnedBy": null,
+      "returnedByName": null,
+      "returnedAt": null,
+      "autoGeneratedAt": "2026-11-13T08:00:50.02Z",
+      "autoGeneratedModelId": null,
+      "autoGeneratedPlatformId": null,
+      "autoGeneratedBy": "rule-fallback",
+      "autoGenerationFallbackReason": "upstream-failed",
+      "workflowExecutionId": null,
+      "statsSnapshot": null,
+      "versionHistory": [],
+      "createdAt": "2026-11-13T08:00:50.028Z",
+      "updatedAt": "2026-11-13T08:00:50.028Z"
+    }
+  ],
+  "currentActivitySnapshots": [
+    {
+      "success": true,
+      "data": {
+        "userId": "cd996f19390745cfb577ea712b0b1868",
+        "periodStart": "2026-09-28T00:00:00",
+        "periodEnd": "2026-10-04T23:59:59",
+        "prdSessions": 0,
+        "defectsSubmitted": 0,
+        "visualSessions": 0,
+        "llmCalls": 94,
+        "dailyLogs": [],
+        "commits": [],
+        "prdMessageCount": 0,
+        "imageGenCompletedCount": 29,
+        "videoGenCompletedCount": 0,
+        "documentEditCount": 0,
+        "workflowExecutionCount": 0,
+        "toolboxRunCount": 3,
+        "webPagePublishCount": 3,
+        "attachmentUploadCount": 7,
+        "defectDetails": {
+          "submitted": 0,
+          "resolved": 0,
+          "reopened": 0,
+          "avgResolutionHours": 0
+        }
+      },
+      "error": null
+    },
+    {
+      "success": true,
+      "data": {
+        "userId": "cd996f19390745cfb577ea712b0b1868",
+        "periodStart": "2026-10-05T00:00:00",
+        "periodEnd": "2026-10-11T23:59:59",
+        "prdSessions": 0,
+        "defectsSubmitted": 0,
+        "visualSessions": 0,
+        "llmCalls": 14,
+        "dailyLogs": [],
+        "commits": [],
+        "prdMessageCount": 0,
+        "imageGenCompletedCount": 11,
+        "videoGenCompletedCount": 0,
+        "documentEditCount": 0,
+        "workflowExecutionCount": 0,
+        "toolboxRunCount": 0,
+        "webPagePublishCount": 0,
+        "attachmentUploadCount": 0,
+        "defectDetails": {
+          "submitted": 0,
+          "resolved": 0,
+          "reopened": 0,
+          "avgResolutionHours": 0
+        }
+      },
+      "error": null
+    },
+    {
+      "success": true,
+      "data": {
+        "userId": "cd996f19390745cfb577ea712b0b1868",
+        "periodStart": "2026-10-12T00:00:00",
+        "periodEnd": "2026-10-18T23:59:59",
+        "prdSessions": 0,
+        "defectsSubmitted": 0,
+        "visualSessions": 0,
+        "llmCalls": 843,
+        "dailyLogs": [],
+        "commits": [],
+        "prdMessageCount": 0,
+        "imageGenCompletedCount": 0,
+        "videoGenCompletedCount": 0,
+        "documentEditCount": 0,
+        "workflowExecutionCount": 1,
+        "toolboxRunCount": 0,
+        "webPagePublishCount": 6,
+        "attachmentUploadCount": 29,
+        "defectDetails": {
+          "submitted": 0,
+          "resolved": 0,
+          "reopened": 0,
+          "avgResolutionHours": 0
+        }
+      },
+      "error": null
+    },
+    {
+      "success": true,
+      "data": {
+        "userId": "cd996f19390745cfb577ea712b0b1868",
+        "periodStart": "2026-11-02T00:00:00",
+        "periodEnd": "2026-11-08T23:59:59",
+        "prdSessions": 0,
+        "defectsSubmitted": 0,
+        "visualSessions": 0,
+        "llmCalls": 95,
+        "dailyLogs": [],
+        "commits": [],
+        "prdMessageCount": 0,
+        "imageGenCompletedCount": 1,
+        "videoGenCompletedCount": 0,
+        "documentEditCount": 0,
+        "workflowExecutionCount": 0,
+        "toolboxRunCount": 0,
+        "webPagePublishCount": 217,
+        "attachmentUploadCount": 0,
+        "defectDetails": {
+          "submitted": 0,
+          "resolved": 0,
+          "reopened": 0,
+          "avgResolutionHours": 0
+        }
+      },
+      "error": null
+    },
+    {
+      "success": true,
+      "data": {
+        "userId": "cd996f19390745cfb577ea712b0b1868",
+        "periodStart": "2026-11-09T00:00:00",
+        "periodEnd": "2026-11-15T23:59:59",
+        "prdSessions": 0,
+        "defectsSubmitted": 0,
+        "visualSessions": 0,
+        "llmCalls": 61,
+        "dailyLogs": [],
+        "commits": [],
+        "prdMessageCount": 0,
+        "imageGenCompletedCount": 16,
+        "videoGenCompletedCount": 1,
+        "documentEditCount": 0,
+        "workflowExecutionCount": 0,
+        "toolboxRunCount": 0,
+        "webPagePublishCount": 3,
+        "attachmentUploadCount": 0,
+        "defectDetails": {
+          "submitted": 0,
+          "resolved": 0,
+          "reopened": 0,
+          "avgResolutionHours": 0
+        }
+      },
+      "error": null
+    }
+  ],
+  "warning": "当前重查历史窗口的计数已变化，不冒充当时输入。严格同输入模型档使用llmLog.request；W46四章旧产物只作独立原文证据。"
+}

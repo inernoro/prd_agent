@@ -1,0 +1,2967 @@
+{
+  "schemaVersion": 1,
+  "baseline": {
+    "gitRef": "0459c01b162ba17c0230f8ad8cdf26d02c199f03",
+    "sourcePath": "prd-api/src/PrdAgent.Api/Services/ReportAgent/ReportGenerationService.cs",
+    "sha256": "be5ad17846a2a319774e93747067b1713ac50c1cd5b07b0ee1166af775a0f88f",
+    "sourceUri": "https://github.com/inernoro/prd_agent/blob/0459c01b162ba17c0230f8ad8cdf26d02c199f03/prd-api/src/PrdAgent.Api/Services/ReportAgent/ReportGenerationService.cs"
+  },
+  "cases": [
+    {
+      "id": "actual-w41-captured-model",
+      "provenance": "真实历史请求、响应与四章报告；旧代码回放捕获的模型响应，不重新调用模型。",
+      "weekYear": 2026,
+      "weekNumber": 41,
+      "start": "2026-10-05T00:00:00",
+      "end": "2026-10-11T00:00:00",
+      "template": {
+        "id": "fe6bf7aff1a94482a2b18b28e13488b0",
+        "name": "真实历史报告模板快照",
+        "sections": [
+          {
+            "title": "本周任务进展",
+            "description": "本周完成了哪些任务、整体进度如何。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 0,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "完成率",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "title": "问题&对策",
+            "description": "存在哪些问题或风险、对应的对策是什么。",
+            "inputType": "issue-list",
+            "isRequired": true,
+            "sortOrder": 1,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": [
+              {
+                "key": "tech",
+                "label": "技术",
+                "color": null
+              },
+              {
+                "key": "product",
+                "label": "产品",
+                "color": null
+              },
+              {
+                "key": "process",
+                "label": "流程",
+                "color": null
+              },
+              {
+                "key": "resource",
+                "label": "资源",
+                "color": null
+              }
+            ],
+            "issueStatuses": [
+              {
+                "key": "new",
+                "label": "新增",
+                "color": null
+              },
+              {
+                "key": "ongoing",
+                "label": "跟进中",
+                "color": null
+              },
+              {
+                "key": "resolved",
+                "label": "已解决",
+                "color": null
+              },
+              {
+                "key": "blocked",
+                "label": "阻塞",
+                "color": null
+              }
+            ],
+            "tableColumns": null,
+            "tableColumnWidths": null
+          },
+          {
+            "title": "下周计划",
+            "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 2,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "title": "思考总结",
+            "description": "有什么想法或心得体会，都可以拿出来分享下。",
+            "inputType": "rich-text",
+            "isRequired": true,
+            "sortOrder": 3,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": null,
+            "tableColumnWidths": null
+          }
+        ]
+      },
+      "activity": {
+        "userId": "cd996f19390745cfb577ea712b0b1868",
+        "periodStart": "2026-10-05T00:00:00",
+        "periodEnd": "2026-10-11T23:59:59",
+        "commits": [],
+        "dailyLogs": [],
+        "imageGenCompletedCount": 10,
+        "webPagePublishCount": 8,
+        "llmCalls": 10
+      },
+      "sourcePrefs": {
+        "dailyLogEnabled": true,
+        "mapPlatformEnabled": true
+      },
+      "effectivePrompt": "你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记",
+      "upstreamMode": "captured-model-response",
+      "capturedResponse": "{\n  \"id\": \"chatcmpl-EWzq60M4JDnE3SQdJsdkfJep8daDU\",\n  \"object\": \"chat.completion\",\n  \"created\": 1791532914,\n  \"model\": \"gpt-5.6-sol\",\n  \"choices\": [\n    {\n      \"index\": 0,\n      \"message\": {\n        \"role\": \"assistant\",\n        \"content\": \"{\\\"sections\\\":[{\\\"items\\\":[{\\\"content\\\":\\\"完成图片生成 10 次、网页发布/更新 8 次、AI 调用 10 次。\\\",\\\"source\\\":\\\"map-platform\\\"}]},{\\\"items\\\":[]},{\\\"items\\\":[]},{\\\"items\\\":[{\\\"content\\\":\\\"本周工作记录覆盖图片生成、网页发布/更新和 AI 调用三类行为，共计 28 次。\\\",\\\"source\\\":\\\"map-platform\\\"}]}]}\",\n        \"refusal\": null,\n        \"annotations\": []\n      },\n      \"finish_reason\": \"stop\"\n    }\n  ],\n  \"usage\": {\n    \"prompt_tokens\": 781,\n    \"completion_tokens\": 86,\n    \"total_tokens\": 867,\n    \"prompt_tokens_details\": {\n      \"cached_tokens\": 0,\n      \"cache_write_tokens\": 0,\n      \"audio_tokens\": 0\n    },\n    \"completion_tokens_details\": {\n      \"reasoning_tokens\": 0,\n      \"audio_tokens\": 0,\n      \"accepted_prediction_tokens\": 0,\n      \"rejected_prediction_tokens\": 0\n    }\n  },\n  \"service_tier\": \"default\",\n  \"system_fingerprint\": null\n}\n",
+      "capturedRequest": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是一位专业的周报撰写助手。\n严格遵守用户输入中的模板结构与写作要求。\n输出必须是合法 JSON，不要包含 markdown 代码块标记。"
+          },
+          {
+            "role": "user",
+            "content": "## 周报周期: 2026 年第 41 周\n\n## 写作要求（生效 Prompt）\n你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记\n\n## 模板结构（请严格按此结构输出 JSON）\n输出格式: { \"sections\": [ { \"items\": [ { \"content\": \"...\", \"source\": \"...\" } ] } ] }\nsections 数组长度必须与以下板块数量一致。\n\n### 板块 1: 本周任务进展\n填写指引: 本周完成了哪些任务、整体进度如何。\n输入类型: table\n是否必填: 是\n\n### 板块 2: 问题&对策\n填写指引: 存在哪些问题或风险、对应的对策是什么。\n输入类型: issue-list\n是否必填: 是\n\n### 板块 3: 下周计划\n填写指引: 所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。\n输入类型: table\n是否必填: 是\n\n### 板块 4: 思考总结\n填写指引: 有什么想法或心得体会，都可以拿出来分享下。\n输入类型: rich-text\n是否必填: 是\n\n## 采集到的原始数据\n\n### MAP 平台工作记录（行为统计）\n- 图片生成完成: 10 次\n- 网页发布/更新: 8 次\n- AI 调用: 10 次\n\n请基于以上数据生成周报，每个条目的 source 字段标记来源：map-platform / daily-log / ai\n严格约束：\n1. 只基于「采集到的原始数据」中明确列出的指标生成内容，禁止凭空编造。\n2. 不要把指标名称改写成其他活动。采集结果说什么就是什么，不允许语义漂移：\n   - 「创建 PRD 项目」不能写成「编辑文档」「新建知识库」「完成技术规范」\n   - 「网页发布/更新」不能写成「发布网站」的泛化描述或夸大数量\n   - 「AI 调用」不能写成「优化处理效率」「辅助生成」的效果类描述\n3. 指标数值必须与采集结果完全一致，禁止凑整、放大、捏造修饰语（如「量较大」「若干篇」）。\n4. 如果某个板块确实没有数据支撑，请输出空 items 数组，禁止用「无数据」「待补充」等占位文本。\n"
+          }
+        ],
+        "temperature": 0.3,
+        "model": "gpt-5.6-sol",
+        "stream": false,
+        "reasoning_effort": "none",
+        "max_completion_tokens": 4096
+      },
+      "capturedUserPrompt": "## 周报周期: 2026 年第 41 周\n\n## 写作要求（生效 Prompt）\n你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记\n\n## 模板结构（请严格按此结构输出 JSON）\n输出格式: { \"sections\": [ { \"items\": [ { \"content\": \"...\", \"source\": \"...\" } ] } ] }\nsections 数组长度必须与以下板块数量一致。\n\n### 板块 1: 本周任务进展\n填写指引: 本周完成了哪些任务、整体进度如何。\n输入类型: table\n是否必填: 是\n\n### 板块 2: 问题&对策\n填写指引: 存在哪些问题或风险、对应的对策是什么。\n输入类型: issue-list\n是否必填: 是\n\n### 板块 3: 下周计划\n填写指引: 所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。\n输入类型: table\n是否必填: 是\n\n### 板块 4: 思考总结\n填写指引: 有什么想法或心得体会，都可以拿出来分享下。\n输入类型: rich-text\n是否必填: 是\n\n## 采集到的原始数据\n\n### MAP 平台工作记录（行为统计）\n- 图片生成完成: 10 次\n- 网页发布/更新: 8 次\n- AI 调用: 10 次\n\n请基于以上数据生成周报，每个条目的 source 字段标记来源：map-platform / daily-log / ai\n严格约束：\n1. 只基于「采集到的原始数据」中明确列出的指标生成内容，禁止凭空编造。\n2. 不要把指标名称改写成其他活动。采集结果说什么就是什么，不允许语义漂移：\n   - 「创建 PRD 项目」不能写成「编辑文档」「新建知识库」「完成技术规范」\n   - 「网页发布/更新」不能写成「发布网站」的泛化描述或夸大数量\n   - 「AI 调用」不能写成「优化处理效率」「辅助生成」的效果类描述\n3. 指标数值必须与采集结果完全一致，禁止凑整、放大、捏造修饰语（如「量较大」「若干篇」）。\n4. 如果某个板块确实没有数据支撑，请输出空 items 数组，禁止用「无数据」「待补充」等占位文本。\n",
+      "sourceLogId": "feb68087-6667-4c29-b917-68c6c2b108f7",
+      "ledger": {
+        "schemaVersion": 1,
+        "historyComplete": false,
+        "workItems": [],
+        "events": [
+          {
+            "id": "captured-image-count",
+            "workItemId": null,
+            "occurredAt": "2026-10-09T08:01:52.429Z",
+            "kind": "observation",
+            "timeBasis": "observed",
+            "source": {
+              "uri": "https://main-prd-agent.miduo.org/api/logs/llm/feb68087-6667-4c29-b917-68c6c2b108f7",
+              "excerpt": "图片生成完成: 10 次"
+            }
+          },
+          {
+            "id": "captured-publish-count",
+            "workItemId": null,
+            "occurredAt": "2026-10-09T08:01:52.429Z",
+            "kind": "observation",
+            "timeBasis": "observed",
+            "source": {
+              "uri": "https://main-prd-agent.miduo.org/api/logs/llm/feb68087-6667-4c29-b917-68c6c2b108f7",
+              "excerpt": "网页发布/更新: 8 次"
+            }
+          },
+          {
+            "id": "captured-llm-count",
+            "workItemId": null,
+            "occurredAt": "2026-10-09T08:01:52.429Z",
+            "kind": "observation",
+            "timeBasis": "observed",
+            "source": {
+              "uri": "https://main-prd-agent.miduo.org/api/logs/llm/feb68087-6667-4c29-b917-68c6c2b108f7",
+              "excerpt": "AI 调用: 10 次"
+            }
+          }
+        ],
+        "limitations": [
+          "仅有平台行为次数，没有工作事项或交付阶段证据。"
+        ]
+      }
+    },
+    {
+      "id": "actual-w41-upstream-failure-replay",
+      "provenance": "同一真实冻结输入，受控上游失败回放实际旧规则路径；这是故障注入档，不是W41线上模型失败记录。",
+      "weekYear": 2026,
+      "weekNumber": 41,
+      "start": "2026-10-05T00:00:00",
+      "end": "2026-10-11T00:00:00",
+      "template": {
+        "id": "fe6bf7aff1a94482a2b18b28e13488b0",
+        "name": "真实历史报告模板快照",
+        "sections": [
+          {
+            "title": "本周任务进展",
+            "description": "本周完成了哪些任务、整体进度如何。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 0,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "完成率",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "title": "问题&对策",
+            "description": "存在哪些问题或风险、对应的对策是什么。",
+            "inputType": "issue-list",
+            "isRequired": true,
+            "sortOrder": 1,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": [
+              {
+                "key": "tech",
+                "label": "技术",
+                "color": null
+              },
+              {
+                "key": "product",
+                "label": "产品",
+                "color": null
+              },
+              {
+                "key": "process",
+                "label": "流程",
+                "color": null
+              },
+              {
+                "key": "resource",
+                "label": "资源",
+                "color": null
+              }
+            ],
+            "issueStatuses": [
+              {
+                "key": "new",
+                "label": "新增",
+                "color": null
+              },
+              {
+                "key": "ongoing",
+                "label": "跟进中",
+                "color": null
+              },
+              {
+                "key": "resolved",
+                "label": "已解决",
+                "color": null
+              },
+              {
+                "key": "blocked",
+                "label": "阻塞",
+                "color": null
+              }
+            ],
+            "tableColumns": null,
+            "tableColumnWidths": null
+          },
+          {
+            "title": "下周计划",
+            "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 2,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "title": "思考总结",
+            "description": "有什么想法或心得体会，都可以拿出来分享下。",
+            "inputType": "rich-text",
+            "isRequired": true,
+            "sortOrder": 3,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": null,
+            "tableColumnWidths": null
+          }
+        ]
+      },
+      "activity": {
+        "userId": "cd996f19390745cfb577ea712b0b1868",
+        "periodStart": "2026-10-05T00:00:00",
+        "periodEnd": "2026-10-11T23:59:59",
+        "commits": [],
+        "dailyLogs": [],
+        "imageGenCompletedCount": 10,
+        "webPagePublishCount": 8,
+        "llmCalls": 10
+      },
+      "sourcePrefs": {
+        "dailyLogEnabled": true,
+        "mapPlatformEnabled": true
+      },
+      "effectivePrompt": "你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记",
+      "upstreamMode": "upstream-failed",
+      "capturedResponse": "{\n  \"id\": \"chatcmpl-EWzq60M4JDnE3SQdJsdkfJep8daDU\",\n  \"object\": \"chat.completion\",\n  \"created\": 1791532914,\n  \"model\": \"gpt-5.6-sol\",\n  \"choices\": [\n    {\n      \"index\": 0,\n      \"message\": {\n        \"role\": \"assistant\",\n        \"content\": \"{\\\"sections\\\":[{\\\"items\\\":[{\\\"content\\\":\\\"完成图片生成 10 次、网页发布/更新 8 次、AI 调用 10 次。\\\",\\\"source\\\":\\\"map-platform\\\"}]},{\\\"items\\\":[]},{\\\"items\\\":[]},{\\\"items\\\":[{\\\"content\\\":\\\"本周工作记录覆盖图片生成、网页发布/更新和 AI 调用三类行为，共计 28 次。\\\",\\\"source\\\":\\\"map-platform\\\"}]}]}\",\n        \"refusal\": null,\n        \"annotations\": []\n      },\n      \"finish_reason\": \"stop\"\n    }\n  ],\n  \"usage\": {\n    \"prompt_tokens\": 781,\n    \"completion_tokens\": 86,\n    \"total_tokens\": 867,\n    \"prompt_tokens_details\": {\n      \"cached_tokens\": 0,\n      \"cache_write_tokens\": 0,\n      \"audio_tokens\": 0\n    },\n    \"completion_tokens_details\": {\n      \"reasoning_tokens\": 0,\n      \"audio_tokens\": 0,\n      \"accepted_prediction_tokens\": 0,\n      \"rejected_prediction_tokens\": 0\n    }\n  },\n  \"service_tier\": \"default\",\n  \"system_fingerprint\": null\n}\n",
+      "capturedRequest": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是一位专业的周报撰写助手。\n严格遵守用户输入中的模板结构与写作要求。\n输出必须是合法 JSON，不要包含 markdown 代码块标记。"
+          },
+          {
+            "role": "user",
+            "content": "## 周报周期: 2026 年第 41 周\n\n## 写作要求（生效 Prompt）\n你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记\n\n## 模板结构（请严格按此结构输出 JSON）\n输出格式: { \"sections\": [ { \"items\": [ { \"content\": \"...\", \"source\": \"...\" } ] } ] }\nsections 数组长度必须与以下板块数量一致。\n\n### 板块 1: 本周任务进展\n填写指引: 本周完成了哪些任务、整体进度如何。\n输入类型: table\n是否必填: 是\n\n### 板块 2: 问题&对策\n填写指引: 存在哪些问题或风险、对应的对策是什么。\n输入类型: issue-list\n是否必填: 是\n\n### 板块 3: 下周计划\n填写指引: 所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。\n输入类型: table\n是否必填: 是\n\n### 板块 4: 思考总结\n填写指引: 有什么想法或心得体会，都可以拿出来分享下。\n输入类型: rich-text\n是否必填: 是\n\n## 采集到的原始数据\n\n### MAP 平台工作记录（行为统计）\n- 图片生成完成: 10 次\n- 网页发布/更新: 8 次\n- AI 调用: 10 次\n\n请基于以上数据生成周报，每个条目的 source 字段标记来源：map-platform / daily-log / ai\n严格约束：\n1. 只基于「采集到的原始数据」中明确列出的指标生成内容，禁止凭空编造。\n2. 不要把指标名称改写成其他活动。采集结果说什么就是什么，不允许语义漂移：\n   - 「创建 PRD 项目」不能写成「编辑文档」「新建知识库」「完成技术规范」\n   - 「网页发布/更新」不能写成「发布网站」的泛化描述或夸大数量\n   - 「AI 调用」不能写成「优化处理效率」「辅助生成」的效果类描述\n3. 指标数值必须与采集结果完全一致，禁止凑整、放大、捏造修饰语（如「量较大」「若干篇」）。\n4. 如果某个板块确实没有数据支撑，请输出空 items 数组，禁止用「无数据」「待补充」等占位文本。\n"
+          }
+        ],
+        "temperature": 0.3,
+        "model": "gpt-5.6-sol",
+        "stream": false,
+        "reasoning_effort": "none",
+        "max_completion_tokens": 4096
+      },
+      "capturedUserPrompt": "## 周报周期: 2026 年第 41 周\n\n## 写作要求（生效 Prompt）\n你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记\n\n## 模板结构（请严格按此结构输出 JSON）\n输出格式: { \"sections\": [ { \"items\": [ { \"content\": \"...\", \"source\": \"...\" } ] } ] }\nsections 数组长度必须与以下板块数量一致。\n\n### 板块 1: 本周任务进展\n填写指引: 本周完成了哪些任务、整体进度如何。\n输入类型: table\n是否必填: 是\n\n### 板块 2: 问题&对策\n填写指引: 存在哪些问题或风险、对应的对策是什么。\n输入类型: issue-list\n是否必填: 是\n\n### 板块 3: 下周计划\n填写指引: 所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。\n输入类型: table\n是否必填: 是\n\n### 板块 4: 思考总结\n填写指引: 有什么想法或心得体会，都可以拿出来分享下。\n输入类型: rich-text\n是否必填: 是\n\n## 采集到的原始数据\n\n### MAP 平台工作记录（行为统计）\n- 图片生成完成: 10 次\n- 网页发布/更新: 8 次\n- AI 调用: 10 次\n\n请基于以上数据生成周报，每个条目的 source 字段标记来源：map-platform / daily-log / ai\n严格约束：\n1. 只基于「采集到的原始数据」中明确列出的指标生成内容，禁止凭空编造。\n2. 不要把指标名称改写成其他活动。采集结果说什么就是什么，不允许语义漂移：\n   - 「创建 PRD 项目」不能写成「编辑文档」「新建知识库」「完成技术规范」\n   - 「网页发布/更新」不能写成「发布网站」的泛化描述或夸大数量\n   - 「AI 调用」不能写成「优化处理效率」「辅助生成」的效果类描述\n3. 指标数值必须与采集结果完全一致，禁止凑整、放大、捏造修饰语（如「量较大」「若干篇」）。\n4. 如果某个板块确实没有数据支撑，请输出空 items 数组，禁止用「无数据」「待补充」等占位文本。\n",
+      "sourceLogId": "feb68087-6667-4c29-b917-68c6c2b108f7",
+      "ledger": {
+        "schemaVersion": 1,
+        "historyComplete": false,
+        "workItems": [],
+        "events": [
+          {
+            "id": "captured-image-count",
+            "workItemId": null,
+            "occurredAt": "2026-10-09T08:01:52.429Z",
+            "kind": "observation",
+            "timeBasis": "observed",
+            "source": {
+              "uri": "https://main-prd-agent.miduo.org/api/logs/llm/feb68087-6667-4c29-b917-68c6c2b108f7",
+              "excerpt": "图片生成完成: 10 次"
+            }
+          },
+          {
+            "id": "captured-publish-count",
+            "workItemId": null,
+            "occurredAt": "2026-10-09T08:01:52.429Z",
+            "kind": "observation",
+            "timeBasis": "observed",
+            "source": {
+              "uri": "https://main-prd-agent.miduo.org/api/logs/llm/feb68087-6667-4c29-b917-68c6c2b108f7",
+              "excerpt": "网页发布/更新: 8 次"
+            }
+          },
+          {
+            "id": "captured-llm-count",
+            "workItemId": null,
+            "occurredAt": "2026-10-09T08:01:52.429Z",
+            "kind": "observation",
+            "timeBasis": "observed",
+            "source": {
+              "uri": "https://main-prd-agent.miduo.org/api/logs/llm/feb68087-6667-4c29-b917-68c6c2b108f7",
+              "excerpt": "AI 调用: 10 次"
+            }
+          }
+        ],
+        "limitations": [
+          "仅有平台行为次数，没有工作事项或交付阶段证据。"
+        ]
+      }
+    },
+    {
+      "id": "real-history-week",
+      "provenance": "由真实Git与验收记录投影为产品输入，业务归属人工固定；不是生产历史请求。每个原始来源和发生时间均在ledger中。",
+      "weekYear": 2026,
+      "weekNumber": 40,
+      "start": "2026-09-28T00:00:00",
+      "end": "2026-10-04T00:00:00",
+      "template": {
+        "id": "fe6bf7aff1a94482a2b18b28e13488b0",
+        "name": "真实历史报告模板快照",
+        "sections": [
+          {
+            "title": "本周任务进展",
+            "description": "本周完成了哪些任务、整体进度如何。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 0,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "完成率",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "title": "问题&对策",
+            "description": "存在哪些问题或风险、对应的对策是什么。",
+            "inputType": "issue-list",
+            "isRequired": true,
+            "sortOrder": 1,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": [
+              {
+                "key": "tech",
+                "label": "技术",
+                "color": null
+              },
+              {
+                "key": "product",
+                "label": "产品",
+                "color": null
+              },
+              {
+                "key": "process",
+                "label": "流程",
+                "color": null
+              },
+              {
+                "key": "resource",
+                "label": "资源",
+                "color": null
+              }
+            ],
+            "issueStatuses": [
+              {
+                "key": "new",
+                "label": "新增",
+                "color": null
+              },
+              {
+                "key": "ongoing",
+                "label": "跟进中",
+                "color": null
+              },
+              {
+                "key": "resolved",
+                "label": "已解决",
+                "color": null
+              },
+              {
+                "key": "blocked",
+                "label": "阻塞",
+                "color": null
+              }
+            ],
+            "tableColumns": null,
+            "tableColumnWidths": null
+          },
+          {
+            "title": "下周计划",
+            "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 2,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "title": "思考总结",
+            "description": "有什么想法或心得体会，都可以拿出来分享下。",
+            "inputType": "rich-text",
+            "isRequired": true,
+            "sortOrder": 3,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": null,
+            "tableColumnWidths": null
+          }
+        ]
+      },
+      "activity": {
+        "userId": "cd996f19390745cfb577ea712b0b1868",
+        "periodStart": "2026-09-28T00:00:00",
+        "periodEnd": "2026-10-04T23:59:59",
+        "commits": [
+          {
+            "id": "git-70f727ceada071ca804d0512b06034931502516c",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "70f727ceada071ca804d0512b06034931502516c",
+            "message": "docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #155",
+            "committedAt": "2026-09-28T07:26:38Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "web-redeploy",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/70f727ceada071ca804d0512b06034931502516c"
+          },
+          {
+            "id": "git-e3c589f5a2e69054ddbd80d626b2ab334b7bca70",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "e3c589f5a2e69054ddbd80d626b2ab334b7bca70",
+            "message": "docs(web-hosting): 去掉 #135 无法保证的收敛上界，登记 #156",
+            "committedAt": "2026-09-28T07:30:01Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "web-redeploy",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/e3c589f5a2e69054ddbd80d626b2ab334b7bca70"
+          },
+          {
+            "id": "git-49cbed8a51e5006f4783a9d244a9a496e6c8be7e",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "49cbed8a51e5006f4783a9d244a9a496e6c8be7e",
+            "message": "docs(web-hosting): #135 退回待验收，等真实重新部署证据再关闭",
+            "committedAt": "2026-09-28T07:32:53Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "web-redeploy",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/49cbed8a51e5006f4783a9d244a9a496e6c8be7e"
+          },
+          {
+            "id": "git-2aa4b1f95b875a930312715224ccd49c9bba8046",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "2aa4b1f95b875a930312715224ccd49c9bba8046",
+            "message": "docs(web-hosting): #153 补记样式表隐藏数字造成的误拒",
+            "committedAt": "2026-09-28T07:42:58Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "web-redeploy",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/2aa4b1f95b875a930312715224ccd49c9bba8046"
+          },
+          {
+            "id": "git-b6463e50781310eed2a4941635a48bab9206d1aa",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "b6463e50781310eed2a4941635a48bab9206d1aa",
+            "message": "docs(web-hosting): #135 真实 revision 切换验收通过后移入已修复，新增 #157、#158",
+            "committedAt": "2026-09-28T08:22:11Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "web-redeploy",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/b6463e50781310eed2a4941635a48bab9206d1aa"
+          },
+          {
+            "id": "git-6fbe9363751b5817cf1b070790751fe029a1cd33",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+            "message": "docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #158 (#1636)",
+            "committedAt": "2026-09-28T16:25:11+08:00",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "web-redeploy",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/6fbe9363751b5817cf1b070790751fe029a1cd33"
+          },
+          {
+            "id": "git-acfabb257c327c26baaea9b59314568cd2846820",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "acfabb257c327c26baaea9b59314568cd2846820",
+            "message": "fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+            "committedAt": "2026-10-03T21:18:53+08:00",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/acfabb257c327c26baaea9b59314568cd2846820"
+          }
+        ],
+        "dailyLogs": []
+      },
+      "sourcePrefs": {
+        "dailyLogEnabled": true,
+        "mapPlatformEnabled": true
+      },
+      "effectivePrompt": "你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记",
+      "upstreamMode": "upstream-failed",
+      "ledger": {
+        "schemaVersion": 1,
+        "workItems": [
+          {
+            "id": "web-redeploy",
+            "title": "网页托管分支重新部署后的任务恢复",
+            "nextStep": "建议：对主干当前版本补完整端到端复验"
+          },
+          {
+            "id": "kb-sync",
+            "title": "知识库私有仓目录同步及后续修复",
+            "nextStep": "建议：按包含后续修复的版本重新验证"
+          },
+          {
+            "id": "core-smoke",
+            "title": "核心业务稳定冒烟",
+            "nextStep": "建议：定位失败链路并保留修复后的复验报告"
+          }
+        ],
+        "events": [
+          {
+            "id": "git-b27a6c0e89e01311e31298b40083a21a9877f8ba",
+            "workItemId": "kb-sync",
+            "occurredAt": "2026-09-15T13:56:28+08:00",
+            "kind": "merged",
+            "revision": "b27a6c0e89e01311e31298b40083a21a9877f8ba",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/b27a6c0e89e01311e31298b40083a21a9877f8ba",
+              "excerpt": "feat(knowledge-base): GitHub 登录后勾选目录一键同步（默认预勾全部 doc/docs）(#1528)",
+              "integratedBy": "b27a6c0e89e01311e31298b40083a21a9877f8ba",
+              "originalCommittedAt": "2026-09-15T13:56:28+08:00"
+            }
+          },
+          {
+            "id": "git-6ffbf65c13087dd6b5014496b776f21519215b6a",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T08:09:14Z",
+            "kind": "commit",
+            "revision": "6ffbf65c13087dd6b5014496b776f21519215b6a",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/6ffbf65c13087dd6b5014496b776f21519215b6a",
+              "excerpt": "fix(stable-smoke): 修复 48 小时稳定冒烟九项失败的根因并补永久回归",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T08:09:14Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-b2b848426c77888c40ba91c8be0bb4f7a2ba41e0",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T08:30:23Z",
+            "kind": "commit",
+            "revision": "b2b848426c77888c40ba91c8be0bb4f7a2ba41e0",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/b2b848426c77888c40ba91c8be0bb4f7a2ba41e0",
+              "excerpt": "test(e2e): 录音旅程先关闭 CDS 预览小部件，沙箱第三方外链噪音可用环境变量桩掉",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T08:30:23Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-f1180474df796bcaea79b986756845e4ca8ca14d",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T08:39:00Z",
+            "kind": "commit",
+            "revision": "f1180474df796bcaea79b986756845e4ca8ca14d",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/f1180474df796bcaea79b986756845e4ca8ca14d",
+              "excerpt": "test(e2e): 单图下载文件名改为断言产品写入的 download 属性，并把分支预览复测证据写回台账",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T08:39:00Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-b64490052f64c43bde848e7c52f3f5eed3686cad",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T08:52:31Z",
+            "kind": "commit",
+            "revision": "b64490052f64c43bde848e7c52f3f5eed3686cad",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/b64490052f64c43bde848e7c52f3f5eed3686cad",
+              "excerpt": "fix(stable-smoke): 回应 Codex 首轮三条意见——权限开关接进部署文件、托管默认头像保留独立入口、小部件同步中不缩",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T08:52:31Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-2527fd19b44f03d8054e1f778a490f765766f8bb",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T09:03:46Z",
+            "kind": "commit",
+            "revision": "2527fd19b44f03d8054e1f778a490f765766f8bb",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2527fd19b44f03d8054e1f778a490f765766f8bb",
+              "excerpt": "fix(stable-smoke): 回应 Codex 第二轮三条意见——补权原子化、GW-007 清理作用域前置并照抄捐出方路由",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T09:03:46Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-8e6d7068a8f9bea109e5429659992d92602c82c2",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T09:20:19Z",
+            "kind": "commit",
+            "revision": "8e6d7068a8f9bea109e5429659992d92602c82c2",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/8e6d7068a8f9bea109e5429659992d92602c82c2",
+              "excerpt": "fix(stable-smoke): 回应 Codex 第三轮两条意见——补权改为对 null 安全的管道更新、托管头像接受相对基址",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T09:20:19Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-5625ddf30b43d11236e3c858f0d757ea5eec2300",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T09:29:11Z",
+            "kind": "commit",
+            "revision": "5625ddf30b43d11236e3c858f0d757ea5eec2300",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/5625ddf30b43d11236e3c858f0d757ea5eec2300",
+              "excerpt": "fix(stable-smoke): GW-007 备用上游先登记归属再等待启用，清理阶段按标记重新找回",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T09:29:11Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-2ea02bd4863c32b370bc29f7e9bb090413b08cb4",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T09:50:57Z",
+            "kind": "commit",
+            "revision": "2ea02bd4863c32b370bc29f7e9bb090413b08cb4",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2ea02bd4863c32b370bc29f7e9bb090413b08cb4",
+              "excerpt": "fix(stable-smoke): 图片判定补记 4xx/5xx 响应并用 decode() 判 SVG，身份预检认 super",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T09:50:57Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-ce38b977b534f168622b9e03d4655098a34ae111",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T18:01:04+08:00",
+            "kind": "merged",
+            "revision": "ce38b977b534f168622b9e03d4655098a34ae111",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/ce38b977b534f168622b9e03d4655098a34ae111",
+              "excerpt": "Merge pull request #1535 from inernoro/claude/jolly-bohr-ozjj2x",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+            "workItemId": "kb-sync",
+            "occurredAt": "2026-09-15T23:34:50+08:00",
+            "kind": "merged",
+            "revision": "6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+              "excerpt": "fix(knowledge-base): 补掉 GitHub 目录同步对抗审查发现的边界 (#1534)",
+              "integratedBy": "6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+              "originalCommittedAt": "2026-09-15T23:34:50+08:00"
+            }
+          },
+          {
+            "id": "git-706676ba0ddd51e617a5e80e305e808b51e6ecbd",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T15:38:03Z",
+            "kind": "commit",
+            "revision": "706676ba0ddd51e617a5e80e305e808b51e6ecbd",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/706676ba0ddd51e617a5e80e305e808b51e6ecbd",
+              "excerpt": "fix(stable-smoke): GW-007 开始前自愈上一轮硬中断遗留的网关注入态（issue #1536）",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T15:38:03Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-2b797ca772dc877bdf47c5bcf6435a9c464e733b",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T15:50:59Z",
+            "kind": "commit",
+            "revision": "2b797ca772dc877bdf47c5bcf6435a9c464e733b",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2b797ca772dc877bdf47c5bcf6435a9c464e733b",
+              "excerpt": "test(e2e): 自愈回归用例改为按逻辑模型加标记重新定位 Offering 当前版本，并写回分支预览证据",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T15:50:59Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-664a654489e4d7e951da833b5eaead0f5a2dc5ac",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T15:57:45Z",
+            "kind": "commit",
+            "revision": "664a654489e4d7e951da833b5eaead0f5a2dc5ac",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/664a654489e4d7e951da833b5eaead0f5a2dc5ac",
+              "excerpt": "fix(stable-smoke): 注入路径自带原 Endpoint，自愈只按精确契约还原，还原不了就拒绝猜写",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T15:57:45Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-195deccd13e8720cb4fac756932b0ceeaa9eef25",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:02:25Z",
+            "kind": "commit",
+            "revision": "195deccd13e8720cb4fac756932b0ceeaa9eef25",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/195deccd13e8720cb4fac756932b0ceeaa9eef25",
+              "excerpt": "test(e2e): 自愈回归用例进入时先自愈再取快照，结束时备用一律停用，拒绝把注入态写回网关",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:02:25Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-75f17f2189f2510fa452e9bbaaaa1c66e03aa0df",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:09:25Z",
+            "kind": "commit",
+            "revision": "75f17f2189f2510fa452e9bbaaaa1c66e03aa0df",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/75f17f2189f2510fa452e9bbaaaa1c66e03aa0df",
+              "excerpt": "fix(stable-smoke): 注入路径受网关 500 字符上限约束，启用着的带标记备用不论挂在哪个逻辑模型都停用",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:09:25Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-2ecdef59328e2cfbf928356829e616ed97177563",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:15:20Z",
+            "kind": "commit",
+            "revision": "2ecdef59328e2cfbf928356829e616ed97177563",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2ecdef59328e2cfbf928356829e616ed97177563",
+              "excerpt": "fix(stable-smoke): 自愈回归用例自带创建备用，网关两条回归 ID 登记为 CDS-only 并进入用例标题",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:15:20Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-e06663e9b3c73d3317fbb3fedb598d88509720a7",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:18:07Z",
+            "kind": "commit",
+            "revision": "e06663e9b3c73d3317fbb3fedb598d88509720a7",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/e06663e9b3c73d3317fbb3fedb598d88509720a7",
+              "excerpt": "fix(stable-smoke): 先隔离启用着的带标记备用，再判无法还原的注入态",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:18:07Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-593f135b63be2d0e24fe95753e2c362b90b0a843",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:26:38Z",
+            "kind": "commit",
+            "revision": "593f135b63be2d0e24fe95753e2c362b90b0a843",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/593f135b63be2d0e24fe95753e2c362b90b0a843",
+              "excerpt": "fix(stable-smoke): 挑捐出方时排除已绑定上游，回归用例进入时无条件先自愈，嵌入用例按可嵌入性分支",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:26:38Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-93387df0d24d7e0928ad9acc5e5beed38c82723b",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:35:45Z",
+            "kind": "commit",
+            "revision": "93387df0d24d7e0928ad9acc5e5beed38c82723b",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/93387df0d24d7e0928ad9acc5e5beed38c82723b",
+              "excerpt": "test(e2e): 自愈回归用例从补备用起就进入清理作用域，任何 setup 失败都停掉启用着的带标记备用",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:35:45Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-9c8b660c65e95e49bad0a41f359908428553a5f2",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:41:41Z",
+            "kind": "commit",
+            "revision": "9c8b660c65e95e49bad0a41f359908428553a5f2",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/9c8b660c65e95e49bad0a41f359908428553a5f2",
+              "excerpt": "fix(stable-smoke): 带标记备用只认夹具写入的精确备注格式",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:41:41Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-7c29d02247e3ac8fd3ce7efdaabd89e56c643991",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:48:21Z",
+            "kind": "commit",
+            "revision": "7c29d02247e3ac8fd3ce7efdaabd89e56c643991",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/7c29d02247e3ac8fd3ce7efdaabd89e56c643991",
+              "excerpt": "fix(stable-smoke): 隔离启用着的带标记备用排在自愈之前",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:48:21Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-e93cc5748af0ae170cee92d77c76eb1d00636ee7",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:54:56Z",
+            "kind": "commit",
+            "revision": "e93cc5748af0ae170cee92d77c76eb1d00636ee7",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/e93cc5748af0ae170cee92d77c76eb1d00636ee7",
+              "excerpt": "fix(stable-smoke): GW-007 清理阶段按当前列表停用带标记备用，不再攒可能过期的 id",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:54:56Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-93807ca6fe80eaccc052660af11ef4a3129b2862",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-16T15:35:59+08:00",
+            "kind": "merged",
+            "revision": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "excerpt": "fix(stable-smoke): GW-007 开始前自愈上一轮硬中断遗留的网关注入态（issue #1536）(#1537)",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-70f727ceada071ca804d0512b06034931502516c",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:26:38Z",
+            "kind": "commit",
+            "revision": "70f727ceada071ca804d0512b06034931502516c",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/70f727ceada071ca804d0512b06034931502516c",
+              "excerpt": "docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #155",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T07:26:38Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-e3c589f5a2e69054ddbd80d626b2ab334b7bca70",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:30:01Z",
+            "kind": "commit",
+            "revision": "e3c589f5a2e69054ddbd80d626b2ab334b7bca70",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/e3c589f5a2e69054ddbd80d626b2ab334b7bca70",
+              "excerpt": "docs(web-hosting): 去掉 #135 无法保证的收敛上界，登记 #156",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T07:30:01Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-49cbed8a51e5006f4783a9d244a9a496e6c8be7e",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:32:53Z",
+            "kind": "commit",
+            "revision": "49cbed8a51e5006f4783a9d244a9a496e6c8be7e",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/49cbed8a51e5006f4783a9d244a9a496e6c8be7e",
+              "excerpt": "docs(web-hosting): #135 退回待验收，等真实重新部署证据再关闭",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T07:32:53Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-2aa4b1f95b875a930312715224ccd49c9bba8046",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:42:58Z",
+            "kind": "commit",
+            "revision": "2aa4b1f95b875a930312715224ccd49c9bba8046",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2aa4b1f95b875a930312715224ccd49c9bba8046",
+              "excerpt": "docs(web-hosting): #153 补记样式表隐藏数字造成的误拒",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T07:42:58Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-b6463e50781310eed2a4941635a48bab9206d1aa",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T08:22:11Z",
+            "kind": "commit",
+            "revision": "b6463e50781310eed2a4941635a48bab9206d1aa",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/b6463e50781310eed2a4941635a48bab9206d1aa",
+              "excerpt": "docs(web-hosting): #135 真实 revision 切换验收通过后移入已修复，新增 #157、#158",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T08:22:11Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-6fbe9363751b5817cf1b070790751fe029a1cd33",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T16:25:11+08:00",
+            "kind": "merged",
+            "revision": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "excerpt": "docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #158 (#1636)",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-acfabb257c327c26baaea9b59314568cd2846820",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-10-03T21:18:53+08:00",
+            "kind": "merged",
+            "revision": "acfabb257c327c26baaea9b59314568cd2846820",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/acfabb257c327c26baaea9b59314568cd2846820",
+              "excerpt": "fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+              "integratedBy": "acfabb257c327c26baaea9b59314568cd2846820",
+              "originalCommittedAt": "2026-10-03T21:18:53+08:00"
+            }
+          },
+          {
+            "id": "acceptance-b1a2cbf7c85c4c0bb16accb0258587cf",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-10-04T22:08:14.766Z",
+            "kind": "validation_failed",
+            "scope": "feature",
+            "revision": "ee905ed82803423f8136d96e787d0a0bb96b77e5",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=e525bc9663c8449793b950808860982e&report=b1a2cbf7c85c4c0bb16accb0258587cf",
+              "excerpt": "功能验收 · 核心业务 / 稳定冒烟修复复测业务结论验后回填 · 2026-10-05；verdict=fail；版本=ee905ed82803423f8136d96e787d0a0bb96b77e5",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          },
+          {
+            "id": "acceptance-7bf0d83c50c94cee89607736a6e2183e",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T08:16:14.018Z",
+            "kind": "validation_passed",
+            "scope": "feature",
+            "revision": "ed85c573d2f84d6cc6c8c94966170854ef1b5de7",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=94b981552e5b45ea87698fc208022577&report=7bf0d83c50c94cee89607736a6e2183e",
+              "excerpt": "缺陷复测 · 网页托管 / #135 精细生成遇分支重新部署的真实 revision 切换复现 · 2026-09-28；verdict=pass；版本=ed85c573d2f84d6cc6c8c94966170854ef1b5de7",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          },
+          {
+            "id": "acceptance-e649910df13d4e57b454a7de279e94a3",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:24:38.097Z",
+            "kind": "validation_passed",
+            "scope": "feature",
+            "revision": "952bc64f63f6fe7535c5970ba55607bfd27cd6a8",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=94b981552e5b45ea87698fc208022577&report=e649910df13d4e57b454a7de279e94a3",
+              "excerpt": "分支验收 · 网页托管 / main 精细生成端到端补验（#149 / #135） · 2026-09-28；verdict=pass；版本=952bc64f6",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          },
+          {
+            "id": "acceptance-97105d54be19450fa67b682fee77006b",
+            "workItemId": "kb-sync",
+            "occurredAt": "2026-09-14T07:36:38.270Z",
+            "kind": "validation_passed",
+            "scope": "feature",
+            "revision": "673b31cccb5e346ce3354a9d216e61bd96655c64",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=0864ccf0981547eb8af54b4470634dd7&report=97105d54be19450fa67b682fee77006b",
+              "excerpt": "缺陷复测 · 知识库 / GitHub 私有仓目录同步 · 2026-09-14；verdict=pass；版本=673b31cccb5e346ce3354a9d216e61bd96655c64",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          },
+          {
+            "id": "acceptance-c52f7ee05482477e84d9aa29fb862c60",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-14T03:09:14.710Z",
+            "kind": "validation_failed",
+            "scope": "feature",
+            "revision": "3a6f06305a7668033a8c6cd7ea7a21a78a4f4e7a",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=e5a9f42a570d4c93969c7a8e3d3e4eb3&report=c52f7ee05482477e84d9aa29fb862c60",
+              "excerpt": "功能验收 · 核心业务稳定冒烟失败取证 · 2026-09-14；verdict=fail；版本=3a6f06305a7668033a8c6cd7ea7a21a78a4f4e7a",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          }
+        ],
+        "limitations": [
+          "本展示是三个真实事项的历史复核样本，不是整个项目的完整周报；采集区间中另有 1196 条未纳入本样本的 Git 记录。",
+          "合并只证明集成。当前样本没有独立的功能完成声明，不据此断言功能已完成或未完成。",
+          "验收保留真实版本；不同 SHA 不推测包含关系。较早分支的通过不能覆盖后续主干修复。",
+          "W40 旧周报记录正式发布尝试3/成功1/失败2；2026-11-12只读查询同一窗口返回0条，当前台账最早保留日期2026-11-03。来源存在差异，不能据空列表断言历史未上线。",
+          "未取到同口径效率、工时和收益测量；不按提交量、跨日跨度或预期收益推算。",
+          "下一步是本次复核建议，负责人和期限尚未指定。",
+          "验收来源仅提供报告创建时间，原始测试运行时间未获独立确认；本样本将其标为证据观测，不计作本周期首次验证完成。"
+        ],
+        "historyComplete": false
+      }
+    },
+    {
+      "id": "real-history-cross-day",
+      "provenance": "由真实Git与验收记录投影为产品输入，业务归属人工固定；不是生产历史请求。每个原始来源和发生时间均在ledger中。",
+      "weekYear": 2026,
+      "weekNumber": 38,
+      "start": "2026-09-14T00:00:00",
+      "end": "2026-09-15T00:00:00",
+      "template": {
+        "id": "fe6bf7aff1a94482a2b18b28e13488b0",
+        "name": "真实历史报告模板快照",
+        "sections": [
+          {
+            "title": "本周任务进展",
+            "description": "本周完成了哪些任务、整体进度如何。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 0,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "完成率",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "title": "问题&对策",
+            "description": "存在哪些问题或风险、对应的对策是什么。",
+            "inputType": "issue-list",
+            "isRequired": true,
+            "sortOrder": 1,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": [
+              {
+                "key": "tech",
+                "label": "技术",
+                "color": null
+              },
+              {
+                "key": "product",
+                "label": "产品",
+                "color": null
+              },
+              {
+                "key": "process",
+                "label": "流程",
+                "color": null
+              },
+              {
+                "key": "resource",
+                "label": "资源",
+                "color": null
+              }
+            ],
+            "issueStatuses": [
+              {
+                "key": "new",
+                "label": "新增",
+                "color": null
+              },
+              {
+                "key": "ongoing",
+                "label": "跟进中",
+                "color": null
+              },
+              {
+                "key": "resolved",
+                "label": "已解决",
+                "color": null
+              },
+              {
+                "key": "blocked",
+                "label": "阻塞",
+                "color": null
+              }
+            ],
+            "tableColumns": null,
+            "tableColumnWidths": null
+          },
+          {
+            "title": "下周计划",
+            "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 2,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "title": "思考总结",
+            "description": "有什么想法或心得体会，都可以拿出来分享下。",
+            "inputType": "rich-text",
+            "isRequired": true,
+            "sortOrder": 3,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": null,
+            "tableColumnWidths": null
+          }
+        ]
+      },
+      "activity": {
+        "userId": "cd996f19390745cfb577ea712b0b1868",
+        "periodStart": "2026-09-14T00:00:00",
+        "periodEnd": "2026-09-15T23:59:59",
+        "commits": [
+          {
+            "id": "git-b27a6c0e89e01311e31298b40083a21a9877f8ba",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "b27a6c0e89e01311e31298b40083a21a9877f8ba",
+            "message": "feat(knowledge-base): GitHub 登录后勾选目录一键同步（默认预勾全部 doc/docs）(#1528)",
+            "committedAt": "2026-09-15T13:56:28+08:00",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "kb-sync",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/b27a6c0e89e01311e31298b40083a21a9877f8ba"
+          },
+          {
+            "id": "git-6ffbf65c13087dd6b5014496b776f21519215b6a",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "6ffbf65c13087dd6b5014496b776f21519215b6a",
+            "message": "fix(stable-smoke): 修复 48 小时稳定冒烟九项失败的根因并补永久回归",
+            "committedAt": "2026-09-15T08:09:14Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/6ffbf65c13087dd6b5014496b776f21519215b6a"
+          },
+          {
+            "id": "git-b2b848426c77888c40ba91c8be0bb4f7a2ba41e0",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "b2b848426c77888c40ba91c8be0bb4f7a2ba41e0",
+            "message": "test(e2e): 录音旅程先关闭 CDS 预览小部件，沙箱第三方外链噪音可用环境变量桩掉",
+            "committedAt": "2026-09-15T08:30:23Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/b2b848426c77888c40ba91c8be0bb4f7a2ba41e0"
+          },
+          {
+            "id": "git-f1180474df796bcaea79b986756845e4ca8ca14d",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "f1180474df796bcaea79b986756845e4ca8ca14d",
+            "message": "test(e2e): 单图下载文件名改为断言产品写入的 download 属性，并把分支预览复测证据写回台账",
+            "committedAt": "2026-09-15T08:39:00Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/f1180474df796bcaea79b986756845e4ca8ca14d"
+          },
+          {
+            "id": "git-b64490052f64c43bde848e7c52f3f5eed3686cad",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "b64490052f64c43bde848e7c52f3f5eed3686cad",
+            "message": "fix(stable-smoke): 回应 Codex 首轮三条意见——权限开关接进部署文件、托管默认头像保留独立入口、小部件同步中不缩",
+            "committedAt": "2026-09-15T08:52:31Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/b64490052f64c43bde848e7c52f3f5eed3686cad"
+          },
+          {
+            "id": "git-2527fd19b44f03d8054e1f778a490f765766f8bb",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "2527fd19b44f03d8054e1f778a490f765766f8bb",
+            "message": "fix(stable-smoke): 回应 Codex 第二轮三条意见——补权原子化、GW-007 清理作用域前置并照抄捐出方路由",
+            "committedAt": "2026-09-15T09:03:46Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/2527fd19b44f03d8054e1f778a490f765766f8bb"
+          },
+          {
+            "id": "git-8e6d7068a8f9bea109e5429659992d92602c82c2",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "8e6d7068a8f9bea109e5429659992d92602c82c2",
+            "message": "fix(stable-smoke): 回应 Codex 第三轮两条意见——补权改为对 null 安全的管道更新、托管头像接受相对基址",
+            "committedAt": "2026-09-15T09:20:19Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/8e6d7068a8f9bea109e5429659992d92602c82c2"
+          },
+          {
+            "id": "git-5625ddf30b43d11236e3c858f0d757ea5eec2300",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "5625ddf30b43d11236e3c858f0d757ea5eec2300",
+            "message": "fix(stable-smoke): GW-007 备用上游先登记归属再等待启用，清理阶段按标记重新找回",
+            "committedAt": "2026-09-15T09:29:11Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/5625ddf30b43d11236e3c858f0d757ea5eec2300"
+          },
+          {
+            "id": "git-2ea02bd4863c32b370bc29f7e9bb090413b08cb4",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "2ea02bd4863c32b370bc29f7e9bb090413b08cb4",
+            "message": "fix(stable-smoke): 图片判定补记 4xx/5xx 响应并用 decode() 判 SVG，身份预检认 super",
+            "committedAt": "2026-09-15T09:50:57Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/2ea02bd4863c32b370bc29f7e9bb090413b08cb4"
+          },
+          {
+            "id": "git-ce38b977b534f168622b9e03d4655098a34ae111",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "ce38b977b534f168622b9e03d4655098a34ae111",
+            "message": "Merge pull request #1535 from inernoro/claude/jolly-bohr-ozjj2x",
+            "committedAt": "2026-09-15T18:01:04+08:00",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/ce38b977b534f168622b9e03d4655098a34ae111"
+          },
+          {
+            "id": "git-6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+            "message": "fix(knowledge-base): 补掉 GitHub 目录同步对抗审查发现的边界 (#1534)",
+            "committedAt": "2026-09-15T23:34:50+08:00",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "kb-sync",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/6d222779c5c6a6abd5c9645dd8a32ffe156b292c"
+          },
+          {
+            "id": "git-706676ba0ddd51e617a5e80e305e808b51e6ecbd",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "706676ba0ddd51e617a5e80e305e808b51e6ecbd",
+            "message": "fix(stable-smoke): GW-007 开始前自愈上一轮硬中断遗留的网关注入态（issue #1536）",
+            "committedAt": "2026-09-15T15:38:03Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/706676ba0ddd51e617a5e80e305e808b51e6ecbd"
+          },
+          {
+            "id": "git-2b797ca772dc877bdf47c5bcf6435a9c464e733b",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "2b797ca772dc877bdf47c5bcf6435a9c464e733b",
+            "message": "test(e2e): 自愈回归用例改为按逻辑模型加标记重新定位 Offering 当前版本，并写回分支预览证据",
+            "committedAt": "2026-09-15T15:50:59Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/2b797ca772dc877bdf47c5bcf6435a9c464e733b"
+          },
+          {
+            "id": "git-664a654489e4d7e951da833b5eaead0f5a2dc5ac",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "664a654489e4d7e951da833b5eaead0f5a2dc5ac",
+            "message": "fix(stable-smoke): 注入路径自带原 Endpoint，自愈只按精确契约还原，还原不了就拒绝猜写",
+            "committedAt": "2026-09-15T15:57:45Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/664a654489e4d7e951da833b5eaead0f5a2dc5ac"
+          },
+          {
+            "id": "git-195deccd13e8720cb4fac756932b0ceeaa9eef25",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "195deccd13e8720cb4fac756932b0ceeaa9eef25",
+            "message": "test(e2e): 自愈回归用例进入时先自愈再取快照，结束时备用一律停用，拒绝把注入态写回网关",
+            "committedAt": "2026-09-15T16:02:25Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/195deccd13e8720cb4fac756932b0ceeaa9eef25"
+          },
+          {
+            "id": "git-75f17f2189f2510fa452e9bbaaaa1c66e03aa0df",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "75f17f2189f2510fa452e9bbaaaa1c66e03aa0df",
+            "message": "fix(stable-smoke): 注入路径受网关 500 字符上限约束，启用着的带标记备用不论挂在哪个逻辑模型都停用",
+            "committedAt": "2026-09-15T16:09:25Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/75f17f2189f2510fa452e9bbaaaa1c66e03aa0df"
+          },
+          {
+            "id": "git-2ecdef59328e2cfbf928356829e616ed97177563",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "2ecdef59328e2cfbf928356829e616ed97177563",
+            "message": "fix(stable-smoke): 自愈回归用例自带创建备用，网关两条回归 ID 登记为 CDS-only 并进入用例标题",
+            "committedAt": "2026-09-15T16:15:20Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/2ecdef59328e2cfbf928356829e616ed97177563"
+          },
+          {
+            "id": "git-e06663e9b3c73d3317fbb3fedb598d88509720a7",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "e06663e9b3c73d3317fbb3fedb598d88509720a7",
+            "message": "fix(stable-smoke): 先隔离启用着的带标记备用，再判无法还原的注入态",
+            "committedAt": "2026-09-15T16:18:07Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/e06663e9b3c73d3317fbb3fedb598d88509720a7"
+          },
+          {
+            "id": "git-593f135b63be2d0e24fe95753e2c362b90b0a843",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "593f135b63be2d0e24fe95753e2c362b90b0a843",
+            "message": "fix(stable-smoke): 挑捐出方时排除已绑定上游，回归用例进入时无条件先自愈，嵌入用例按可嵌入性分支",
+            "committedAt": "2026-09-15T16:26:38Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/593f135b63be2d0e24fe95753e2c362b90b0a843"
+          },
+          {
+            "id": "git-93387df0d24d7e0928ad9acc5e5beed38c82723b",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "93387df0d24d7e0928ad9acc5e5beed38c82723b",
+            "message": "test(e2e): 自愈回归用例从补备用起就进入清理作用域，任何 setup 失败都停掉启用着的带标记备用",
+            "committedAt": "2026-09-15T16:35:45Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/93387df0d24d7e0928ad9acc5e5beed38c82723b"
+          },
+          {
+            "id": "git-9c8b660c65e95e49bad0a41f359908428553a5f2",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "9c8b660c65e95e49bad0a41f359908428553a5f2",
+            "message": "fix(stable-smoke): 带标记备用只认夹具写入的精确备注格式",
+            "committedAt": "2026-09-15T16:41:41Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/9c8b660c65e95e49bad0a41f359908428553a5f2"
+          },
+          {
+            "id": "git-7c29d02247e3ac8fd3ce7efdaabd89e56c643991",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "7c29d02247e3ac8fd3ce7efdaabd89e56c643991",
+            "message": "fix(stable-smoke): 隔离启用着的带标记备用排在自愈之前",
+            "committedAt": "2026-09-15T16:48:21Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/7c29d02247e3ac8fd3ce7efdaabd89e56c643991"
+          },
+          {
+            "id": "git-e93cc5748af0ae170cee92d77c76eb1d00636ee7",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "e93cc5748af0ae170cee92d77c76eb1d00636ee7",
+            "message": "fix(stable-smoke): GW-007 清理阶段按当前列表停用带标记备用，不再攒可能过期的 id",
+            "committedAt": "2026-09-15T16:54:56Z",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/e93cc5748af0ae170cee92d77c76eb1d00636ee7"
+          }
+        ],
+        "dailyLogs": []
+      },
+      "sourcePrefs": {
+        "dailyLogEnabled": true,
+        "mapPlatformEnabled": true
+      },
+      "effectivePrompt": "你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记",
+      "upstreamMode": "upstream-failed",
+      "ledger": {
+        "schemaVersion": 1,
+        "workItems": [
+          {
+            "id": "web-redeploy",
+            "title": "网页托管分支重新部署后的任务恢复",
+            "nextStep": "建议：对主干当前版本补完整端到端复验"
+          },
+          {
+            "id": "kb-sync",
+            "title": "知识库私有仓目录同步及后续修复",
+            "nextStep": "建议：按包含后续修复的版本重新验证"
+          },
+          {
+            "id": "core-smoke",
+            "title": "核心业务稳定冒烟",
+            "nextStep": "建议：定位失败链路并保留修复后的复验报告"
+          }
+        ],
+        "events": [
+          {
+            "id": "git-b27a6c0e89e01311e31298b40083a21a9877f8ba",
+            "workItemId": "kb-sync",
+            "occurredAt": "2026-09-15T13:56:28+08:00",
+            "kind": "merged",
+            "revision": "b27a6c0e89e01311e31298b40083a21a9877f8ba",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/b27a6c0e89e01311e31298b40083a21a9877f8ba",
+              "excerpt": "feat(knowledge-base): GitHub 登录后勾选目录一键同步（默认预勾全部 doc/docs）(#1528)",
+              "integratedBy": "b27a6c0e89e01311e31298b40083a21a9877f8ba",
+              "originalCommittedAt": "2026-09-15T13:56:28+08:00"
+            }
+          },
+          {
+            "id": "git-6ffbf65c13087dd6b5014496b776f21519215b6a",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T08:09:14Z",
+            "kind": "commit",
+            "revision": "6ffbf65c13087dd6b5014496b776f21519215b6a",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/6ffbf65c13087dd6b5014496b776f21519215b6a",
+              "excerpt": "fix(stable-smoke): 修复 48 小时稳定冒烟九项失败的根因并补永久回归",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T08:09:14Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-b2b848426c77888c40ba91c8be0bb4f7a2ba41e0",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T08:30:23Z",
+            "kind": "commit",
+            "revision": "b2b848426c77888c40ba91c8be0bb4f7a2ba41e0",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/b2b848426c77888c40ba91c8be0bb4f7a2ba41e0",
+              "excerpt": "test(e2e): 录音旅程先关闭 CDS 预览小部件，沙箱第三方外链噪音可用环境变量桩掉",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T08:30:23Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-f1180474df796bcaea79b986756845e4ca8ca14d",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T08:39:00Z",
+            "kind": "commit",
+            "revision": "f1180474df796bcaea79b986756845e4ca8ca14d",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/f1180474df796bcaea79b986756845e4ca8ca14d",
+              "excerpt": "test(e2e): 单图下载文件名改为断言产品写入的 download 属性，并把分支预览复测证据写回台账",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T08:39:00Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-b64490052f64c43bde848e7c52f3f5eed3686cad",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T08:52:31Z",
+            "kind": "commit",
+            "revision": "b64490052f64c43bde848e7c52f3f5eed3686cad",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/b64490052f64c43bde848e7c52f3f5eed3686cad",
+              "excerpt": "fix(stable-smoke): 回应 Codex 首轮三条意见——权限开关接进部署文件、托管默认头像保留独立入口、小部件同步中不缩",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T08:52:31Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-2527fd19b44f03d8054e1f778a490f765766f8bb",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T09:03:46Z",
+            "kind": "commit",
+            "revision": "2527fd19b44f03d8054e1f778a490f765766f8bb",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2527fd19b44f03d8054e1f778a490f765766f8bb",
+              "excerpt": "fix(stable-smoke): 回应 Codex 第二轮三条意见——补权原子化、GW-007 清理作用域前置并照抄捐出方路由",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T09:03:46Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-8e6d7068a8f9bea109e5429659992d92602c82c2",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T09:20:19Z",
+            "kind": "commit",
+            "revision": "8e6d7068a8f9bea109e5429659992d92602c82c2",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/8e6d7068a8f9bea109e5429659992d92602c82c2",
+              "excerpt": "fix(stable-smoke): 回应 Codex 第三轮两条意见——补权改为对 null 安全的管道更新、托管头像接受相对基址",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T09:20:19Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-5625ddf30b43d11236e3c858f0d757ea5eec2300",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T09:29:11Z",
+            "kind": "commit",
+            "revision": "5625ddf30b43d11236e3c858f0d757ea5eec2300",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/5625ddf30b43d11236e3c858f0d757ea5eec2300",
+              "excerpt": "fix(stable-smoke): GW-007 备用上游先登记归属再等待启用，清理阶段按标记重新找回",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T09:29:11Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-2ea02bd4863c32b370bc29f7e9bb090413b08cb4",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T09:50:57Z",
+            "kind": "commit",
+            "revision": "2ea02bd4863c32b370bc29f7e9bb090413b08cb4",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2ea02bd4863c32b370bc29f7e9bb090413b08cb4",
+              "excerpt": "fix(stable-smoke): 图片判定补记 4xx/5xx 响应并用 decode() 判 SVG，身份预检认 super",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T09:50:57Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-ce38b977b534f168622b9e03d4655098a34ae111",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T18:01:04+08:00",
+            "kind": "merged",
+            "revision": "ce38b977b534f168622b9e03d4655098a34ae111",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/ce38b977b534f168622b9e03d4655098a34ae111",
+              "excerpt": "Merge pull request #1535 from inernoro/claude/jolly-bohr-ozjj2x",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+            "workItemId": "kb-sync",
+            "occurredAt": "2026-09-15T23:34:50+08:00",
+            "kind": "merged",
+            "revision": "6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+              "excerpt": "fix(knowledge-base): 补掉 GitHub 目录同步对抗审查发现的边界 (#1534)",
+              "integratedBy": "6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+              "originalCommittedAt": "2026-09-15T23:34:50+08:00"
+            }
+          },
+          {
+            "id": "git-706676ba0ddd51e617a5e80e305e808b51e6ecbd",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T15:38:03Z",
+            "kind": "commit",
+            "revision": "706676ba0ddd51e617a5e80e305e808b51e6ecbd",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/706676ba0ddd51e617a5e80e305e808b51e6ecbd",
+              "excerpt": "fix(stable-smoke): GW-007 开始前自愈上一轮硬中断遗留的网关注入态（issue #1536）",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T15:38:03Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-2b797ca772dc877bdf47c5bcf6435a9c464e733b",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T15:50:59Z",
+            "kind": "commit",
+            "revision": "2b797ca772dc877bdf47c5bcf6435a9c464e733b",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2b797ca772dc877bdf47c5bcf6435a9c464e733b",
+              "excerpt": "test(e2e): 自愈回归用例改为按逻辑模型加标记重新定位 Offering 当前版本，并写回分支预览证据",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T15:50:59Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-664a654489e4d7e951da833b5eaead0f5a2dc5ac",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T15:57:45Z",
+            "kind": "commit",
+            "revision": "664a654489e4d7e951da833b5eaead0f5a2dc5ac",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/664a654489e4d7e951da833b5eaead0f5a2dc5ac",
+              "excerpt": "fix(stable-smoke): 注入路径自带原 Endpoint，自愈只按精确契约还原，还原不了就拒绝猜写",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T15:57:45Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-195deccd13e8720cb4fac756932b0ceeaa9eef25",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:02:25Z",
+            "kind": "commit",
+            "revision": "195deccd13e8720cb4fac756932b0ceeaa9eef25",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/195deccd13e8720cb4fac756932b0ceeaa9eef25",
+              "excerpt": "test(e2e): 自愈回归用例进入时先自愈再取快照，结束时备用一律停用，拒绝把注入态写回网关",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:02:25Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-75f17f2189f2510fa452e9bbaaaa1c66e03aa0df",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:09:25Z",
+            "kind": "commit",
+            "revision": "75f17f2189f2510fa452e9bbaaaa1c66e03aa0df",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/75f17f2189f2510fa452e9bbaaaa1c66e03aa0df",
+              "excerpt": "fix(stable-smoke): 注入路径受网关 500 字符上限约束，启用着的带标记备用不论挂在哪个逻辑模型都停用",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:09:25Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-2ecdef59328e2cfbf928356829e616ed97177563",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:15:20Z",
+            "kind": "commit",
+            "revision": "2ecdef59328e2cfbf928356829e616ed97177563",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2ecdef59328e2cfbf928356829e616ed97177563",
+              "excerpt": "fix(stable-smoke): 自愈回归用例自带创建备用，网关两条回归 ID 登记为 CDS-only 并进入用例标题",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:15:20Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-e06663e9b3c73d3317fbb3fedb598d88509720a7",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:18:07Z",
+            "kind": "commit",
+            "revision": "e06663e9b3c73d3317fbb3fedb598d88509720a7",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/e06663e9b3c73d3317fbb3fedb598d88509720a7",
+              "excerpt": "fix(stable-smoke): 先隔离启用着的带标记备用，再判无法还原的注入态",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:18:07Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-593f135b63be2d0e24fe95753e2c362b90b0a843",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:26:38Z",
+            "kind": "commit",
+            "revision": "593f135b63be2d0e24fe95753e2c362b90b0a843",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/593f135b63be2d0e24fe95753e2c362b90b0a843",
+              "excerpt": "fix(stable-smoke): 挑捐出方时排除已绑定上游，回归用例进入时无条件先自愈，嵌入用例按可嵌入性分支",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:26:38Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-93387df0d24d7e0928ad9acc5e5beed38c82723b",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:35:45Z",
+            "kind": "commit",
+            "revision": "93387df0d24d7e0928ad9acc5e5beed38c82723b",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/93387df0d24d7e0928ad9acc5e5beed38c82723b",
+              "excerpt": "test(e2e): 自愈回归用例从补备用起就进入清理作用域，任何 setup 失败都停掉启用着的带标记备用",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:35:45Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-9c8b660c65e95e49bad0a41f359908428553a5f2",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:41:41Z",
+            "kind": "commit",
+            "revision": "9c8b660c65e95e49bad0a41f359908428553a5f2",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/9c8b660c65e95e49bad0a41f359908428553a5f2",
+              "excerpt": "fix(stable-smoke): 带标记备用只认夹具写入的精确备注格式",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:41:41Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-7c29d02247e3ac8fd3ce7efdaabd89e56c643991",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:48:21Z",
+            "kind": "commit",
+            "revision": "7c29d02247e3ac8fd3ce7efdaabd89e56c643991",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/7c29d02247e3ac8fd3ce7efdaabd89e56c643991",
+              "excerpt": "fix(stable-smoke): 隔离启用着的带标记备用排在自愈之前",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:48:21Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-e93cc5748af0ae170cee92d77c76eb1d00636ee7",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:54:56Z",
+            "kind": "commit",
+            "revision": "e93cc5748af0ae170cee92d77c76eb1d00636ee7",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/e93cc5748af0ae170cee92d77c76eb1d00636ee7",
+              "excerpt": "fix(stable-smoke): GW-007 清理阶段按当前列表停用带标记备用，不再攒可能过期的 id",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:54:56Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-93807ca6fe80eaccc052660af11ef4a3129b2862",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-16T15:35:59+08:00",
+            "kind": "merged",
+            "revision": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "excerpt": "fix(stable-smoke): GW-007 开始前自愈上一轮硬中断遗留的网关注入态（issue #1536）(#1537)",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-70f727ceada071ca804d0512b06034931502516c",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:26:38Z",
+            "kind": "commit",
+            "revision": "70f727ceada071ca804d0512b06034931502516c",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/70f727ceada071ca804d0512b06034931502516c",
+              "excerpt": "docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #155",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T07:26:38Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-e3c589f5a2e69054ddbd80d626b2ab334b7bca70",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:30:01Z",
+            "kind": "commit",
+            "revision": "e3c589f5a2e69054ddbd80d626b2ab334b7bca70",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/e3c589f5a2e69054ddbd80d626b2ab334b7bca70",
+              "excerpt": "docs(web-hosting): 去掉 #135 无法保证的收敛上界，登记 #156",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T07:30:01Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-49cbed8a51e5006f4783a9d244a9a496e6c8be7e",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:32:53Z",
+            "kind": "commit",
+            "revision": "49cbed8a51e5006f4783a9d244a9a496e6c8be7e",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/49cbed8a51e5006f4783a9d244a9a496e6c8be7e",
+              "excerpt": "docs(web-hosting): #135 退回待验收，等真实重新部署证据再关闭",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T07:32:53Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-2aa4b1f95b875a930312715224ccd49c9bba8046",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:42:58Z",
+            "kind": "commit",
+            "revision": "2aa4b1f95b875a930312715224ccd49c9bba8046",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2aa4b1f95b875a930312715224ccd49c9bba8046",
+              "excerpt": "docs(web-hosting): #153 补记样式表隐藏数字造成的误拒",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T07:42:58Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-b6463e50781310eed2a4941635a48bab9206d1aa",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T08:22:11Z",
+            "kind": "commit",
+            "revision": "b6463e50781310eed2a4941635a48bab9206d1aa",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/b6463e50781310eed2a4941635a48bab9206d1aa",
+              "excerpt": "docs(web-hosting): #135 真实 revision 切换验收通过后移入已修复，新增 #157、#158",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T08:22:11Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-6fbe9363751b5817cf1b070790751fe029a1cd33",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T16:25:11+08:00",
+            "kind": "merged",
+            "revision": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "excerpt": "docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #158 (#1636)",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-acfabb257c327c26baaea9b59314568cd2846820",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-10-03T21:18:53+08:00",
+            "kind": "merged",
+            "revision": "acfabb257c327c26baaea9b59314568cd2846820",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/acfabb257c327c26baaea9b59314568cd2846820",
+              "excerpt": "fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+              "integratedBy": "acfabb257c327c26baaea9b59314568cd2846820",
+              "originalCommittedAt": "2026-10-03T21:18:53+08:00"
+            }
+          },
+          {
+            "id": "acceptance-b1a2cbf7c85c4c0bb16accb0258587cf",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-10-04T22:08:14.766Z",
+            "kind": "validation_failed",
+            "scope": "feature",
+            "revision": "ee905ed82803423f8136d96e787d0a0bb96b77e5",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=e525bc9663c8449793b950808860982e&report=b1a2cbf7c85c4c0bb16accb0258587cf",
+              "excerpt": "功能验收 · 核心业务 / 稳定冒烟修复复测业务结论验后回填 · 2026-10-05；verdict=fail；版本=ee905ed82803423f8136d96e787d0a0bb96b77e5",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          },
+          {
+            "id": "acceptance-7bf0d83c50c94cee89607736a6e2183e",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T08:16:14.018Z",
+            "kind": "validation_passed",
+            "scope": "feature",
+            "revision": "ed85c573d2f84d6cc6c8c94966170854ef1b5de7",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=94b981552e5b45ea87698fc208022577&report=7bf0d83c50c94cee89607736a6e2183e",
+              "excerpt": "缺陷复测 · 网页托管 / #135 精细生成遇分支重新部署的真实 revision 切换复现 · 2026-09-28；verdict=pass；版本=ed85c573d2f84d6cc6c8c94966170854ef1b5de7",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          },
+          {
+            "id": "acceptance-e649910df13d4e57b454a7de279e94a3",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:24:38.097Z",
+            "kind": "validation_passed",
+            "scope": "feature",
+            "revision": "952bc64f63f6fe7535c5970ba55607bfd27cd6a8",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=94b981552e5b45ea87698fc208022577&report=e649910df13d4e57b454a7de279e94a3",
+              "excerpt": "分支验收 · 网页托管 / main 精细生成端到端补验（#149 / #135） · 2026-09-28；verdict=pass；版本=952bc64f6",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          },
+          {
+            "id": "acceptance-97105d54be19450fa67b682fee77006b",
+            "workItemId": "kb-sync",
+            "occurredAt": "2026-09-14T07:36:38.270Z",
+            "kind": "validation_passed",
+            "scope": "feature",
+            "revision": "673b31cccb5e346ce3354a9d216e61bd96655c64",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=0864ccf0981547eb8af54b4470634dd7&report=97105d54be19450fa67b682fee77006b",
+              "excerpt": "缺陷复测 · 知识库 / GitHub 私有仓目录同步 · 2026-09-14；verdict=pass；版本=673b31cccb5e346ce3354a9d216e61bd96655c64",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          },
+          {
+            "id": "acceptance-c52f7ee05482477e84d9aa29fb862c60",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-14T03:09:14.710Z",
+            "kind": "validation_failed",
+            "scope": "feature",
+            "revision": "3a6f06305a7668033a8c6cd7ea7a21a78a4f4e7a",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=e5a9f42a570d4c93969c7a8e3d3e4eb3&report=c52f7ee05482477e84d9aa29fb862c60",
+              "excerpt": "功能验收 · 核心业务稳定冒烟失败取证 · 2026-09-14；verdict=fail；版本=3a6f06305a7668033a8c6cd7ea7a21a78a4f4e7a",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          }
+        ],
+        "limitations": [
+          "本展示是三个真实事项的历史复核样本，不是整个项目的完整周报；采集区间中另有 1196 条未纳入本样本的 Git 记录。",
+          "合并只证明集成。当前样本没有独立的功能完成声明，不据此断言功能已完成或未完成。",
+          "验收保留真实版本；不同 SHA 不推测包含关系。较早分支的通过不能覆盖后续主干修复。",
+          "W40 旧周报记录正式发布尝试3/成功1/失败2；2026-11-12只读查询同一窗口返回0条，当前台账最早保留日期2026-11-03。来源存在差异，不能据空列表断言历史未上线。",
+          "未取到同口径效率、工时和收益测量；不按提交量、跨日跨度或预期收益推算。",
+          "下一步是本次复核建议，负责人和期限尚未指定。",
+          "验收来源仅提供报告创建时间，原始测试运行时间未获独立确认；本样本将其标为证据观测，不计作本周期首次验证完成。"
+        ],
+        "historyComplete": false
+      }
+    },
+    {
+      "id": "real-history-cross-month",
+      "provenance": "由真实Git与验收记录投影为产品输入，业务归属人工固定；不是生产历史请求。每个原始来源和发生时间均在ledger中。",
+      "weekYear": 2026,
+      "weekNumber": 40,
+      "start": "2026-10-01T00:00:00",
+      "end": "2026-10-04T00:00:00",
+      "template": {
+        "id": "fe6bf7aff1a94482a2b18b28e13488b0",
+        "name": "真实历史报告模板快照",
+        "sections": [
+          {
+            "title": "本周任务进展",
+            "description": "本周完成了哪些任务、整体进度如何。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 0,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "完成率",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "title": "问题&对策",
+            "description": "存在哪些问题或风险、对应的对策是什么。",
+            "inputType": "issue-list",
+            "isRequired": true,
+            "sortOrder": 1,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": [
+              {
+                "key": "tech",
+                "label": "技术",
+                "color": null
+              },
+              {
+                "key": "product",
+                "label": "产品",
+                "color": null
+              },
+              {
+                "key": "process",
+                "label": "流程",
+                "color": null
+              },
+              {
+                "key": "resource",
+                "label": "资源",
+                "color": null
+              }
+            ],
+            "issueStatuses": [
+              {
+                "key": "new",
+                "label": "新增",
+                "color": null
+              },
+              {
+                "key": "ongoing",
+                "label": "跟进中",
+                "color": null
+              },
+              {
+                "key": "resolved",
+                "label": "已解决",
+                "color": null
+              },
+              {
+                "key": "blocked",
+                "label": "阻塞",
+                "color": null
+              }
+            ],
+            "tableColumns": null,
+            "tableColumnWidths": null
+          },
+          {
+            "title": "下周计划",
+            "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 2,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "title": "思考总结",
+            "description": "有什么想法或心得体会，都可以拿出来分享下。",
+            "inputType": "rich-text",
+            "isRequired": true,
+            "sortOrder": 3,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": null,
+            "tableColumnWidths": null
+          }
+        ]
+      },
+      "activity": {
+        "userId": "cd996f19390745cfb577ea712b0b1868",
+        "periodStart": "2026-10-01T00:00:00",
+        "periodEnd": "2026-10-04T23:59:59",
+        "commits": [
+          {
+            "id": "git-acfabb257c327c26baaea9b59314568cd2846820",
+            "dataSourceId": "fixed-real-git",
+            "commitHash": "acfabb257c327c26baaea9b59314568cd2846820",
+            "message": "fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+            "committedAt": "2026-10-03T21:18:53+08:00",
+            "mappedUserId": "cd996f19390745cfb577ea712b0b1868",
+            "workItemId": "core-smoke",
+            "sourceUrl": "https://github.com/inernoro/prd_agent/commit/acfabb257c327c26baaea9b59314568cd2846820"
+          }
+        ],
+        "dailyLogs": []
+      },
+      "sourcePrefs": {
+        "dailyLogEnabled": true,
+        "mapPlatformEnabled": true
+      },
+      "effectivePrompt": "你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记",
+      "upstreamMode": "upstream-failed",
+      "ledger": {
+        "schemaVersion": 1,
+        "workItems": [
+          {
+            "id": "web-redeploy",
+            "title": "网页托管分支重新部署后的任务恢复",
+            "nextStep": "建议：对主干当前版本补完整端到端复验"
+          },
+          {
+            "id": "kb-sync",
+            "title": "知识库私有仓目录同步及后续修复",
+            "nextStep": "建议：按包含后续修复的版本重新验证"
+          },
+          {
+            "id": "core-smoke",
+            "title": "核心业务稳定冒烟",
+            "nextStep": "建议：定位失败链路并保留修复后的复验报告"
+          }
+        ],
+        "events": [
+          {
+            "id": "git-b27a6c0e89e01311e31298b40083a21a9877f8ba",
+            "workItemId": "kb-sync",
+            "occurredAt": "2026-09-15T13:56:28+08:00",
+            "kind": "merged",
+            "revision": "b27a6c0e89e01311e31298b40083a21a9877f8ba",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/b27a6c0e89e01311e31298b40083a21a9877f8ba",
+              "excerpt": "feat(knowledge-base): GitHub 登录后勾选目录一键同步（默认预勾全部 doc/docs）(#1528)",
+              "integratedBy": "b27a6c0e89e01311e31298b40083a21a9877f8ba",
+              "originalCommittedAt": "2026-09-15T13:56:28+08:00"
+            }
+          },
+          {
+            "id": "git-6ffbf65c13087dd6b5014496b776f21519215b6a",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T08:09:14Z",
+            "kind": "commit",
+            "revision": "6ffbf65c13087dd6b5014496b776f21519215b6a",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/6ffbf65c13087dd6b5014496b776f21519215b6a",
+              "excerpt": "fix(stable-smoke): 修复 48 小时稳定冒烟九项失败的根因并补永久回归",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T08:09:14Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-b2b848426c77888c40ba91c8be0bb4f7a2ba41e0",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T08:30:23Z",
+            "kind": "commit",
+            "revision": "b2b848426c77888c40ba91c8be0bb4f7a2ba41e0",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/b2b848426c77888c40ba91c8be0bb4f7a2ba41e0",
+              "excerpt": "test(e2e): 录音旅程先关闭 CDS 预览小部件，沙箱第三方外链噪音可用环境变量桩掉",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T08:30:23Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-f1180474df796bcaea79b986756845e4ca8ca14d",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T08:39:00Z",
+            "kind": "commit",
+            "revision": "f1180474df796bcaea79b986756845e4ca8ca14d",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/f1180474df796bcaea79b986756845e4ca8ca14d",
+              "excerpt": "test(e2e): 单图下载文件名改为断言产品写入的 download 属性，并把分支预览复测证据写回台账",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T08:39:00Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-b64490052f64c43bde848e7c52f3f5eed3686cad",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T08:52:31Z",
+            "kind": "commit",
+            "revision": "b64490052f64c43bde848e7c52f3f5eed3686cad",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/b64490052f64c43bde848e7c52f3f5eed3686cad",
+              "excerpt": "fix(stable-smoke): 回应 Codex 首轮三条意见——权限开关接进部署文件、托管默认头像保留独立入口、小部件同步中不缩",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T08:52:31Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-2527fd19b44f03d8054e1f778a490f765766f8bb",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T09:03:46Z",
+            "kind": "commit",
+            "revision": "2527fd19b44f03d8054e1f778a490f765766f8bb",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2527fd19b44f03d8054e1f778a490f765766f8bb",
+              "excerpt": "fix(stable-smoke): 回应 Codex 第二轮三条意见——补权原子化、GW-007 清理作用域前置并照抄捐出方路由",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T09:03:46Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-8e6d7068a8f9bea109e5429659992d92602c82c2",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T09:20:19Z",
+            "kind": "commit",
+            "revision": "8e6d7068a8f9bea109e5429659992d92602c82c2",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/8e6d7068a8f9bea109e5429659992d92602c82c2",
+              "excerpt": "fix(stable-smoke): 回应 Codex 第三轮两条意见——补权改为对 null 安全的管道更新、托管头像接受相对基址",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T09:20:19Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-5625ddf30b43d11236e3c858f0d757ea5eec2300",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T09:29:11Z",
+            "kind": "commit",
+            "revision": "5625ddf30b43d11236e3c858f0d757ea5eec2300",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/5625ddf30b43d11236e3c858f0d757ea5eec2300",
+              "excerpt": "fix(stable-smoke): GW-007 备用上游先登记归属再等待启用，清理阶段按标记重新找回",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T09:29:11Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-2ea02bd4863c32b370bc29f7e9bb090413b08cb4",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T09:50:57Z",
+            "kind": "commit",
+            "revision": "2ea02bd4863c32b370bc29f7e9bb090413b08cb4",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2ea02bd4863c32b370bc29f7e9bb090413b08cb4",
+              "excerpt": "fix(stable-smoke): 图片判定补记 4xx/5xx 响应并用 decode() 判 SVG，身份预检认 super",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T09:50:57Z",
+              "integratedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-ce38b977b534f168622b9e03d4655098a34ae111",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T18:01:04+08:00",
+            "kind": "merged",
+            "revision": "ce38b977b534f168622b9e03d4655098a34ae111",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/ce38b977b534f168622b9e03d4655098a34ae111",
+              "excerpt": "Merge pull request #1535 from inernoro/claude/jolly-bohr-ozjj2x",
+              "integratedBy": "ce38b977b534f168622b9e03d4655098a34ae111",
+              "originalCommittedAt": "2026-09-15T18:01:04+08:00"
+            }
+          },
+          {
+            "id": "git-6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+            "workItemId": "kb-sync",
+            "occurredAt": "2026-09-15T23:34:50+08:00",
+            "kind": "merged",
+            "revision": "6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+              "excerpt": "fix(knowledge-base): 补掉 GitHub 目录同步对抗审查发现的边界 (#1534)",
+              "integratedBy": "6d222779c5c6a6abd5c9645dd8a32ffe156b292c",
+              "originalCommittedAt": "2026-09-15T23:34:50+08:00"
+            }
+          },
+          {
+            "id": "git-706676ba0ddd51e617a5e80e305e808b51e6ecbd",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T15:38:03Z",
+            "kind": "commit",
+            "revision": "706676ba0ddd51e617a5e80e305e808b51e6ecbd",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/706676ba0ddd51e617a5e80e305e808b51e6ecbd",
+              "excerpt": "fix(stable-smoke): GW-007 开始前自愈上一轮硬中断遗留的网关注入态（issue #1536）",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T15:38:03Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-2b797ca772dc877bdf47c5bcf6435a9c464e733b",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T15:50:59Z",
+            "kind": "commit",
+            "revision": "2b797ca772dc877bdf47c5bcf6435a9c464e733b",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2b797ca772dc877bdf47c5bcf6435a9c464e733b",
+              "excerpt": "test(e2e): 自愈回归用例改为按逻辑模型加标记重新定位 Offering 当前版本，并写回分支预览证据",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T15:50:59Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-664a654489e4d7e951da833b5eaead0f5a2dc5ac",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T15:57:45Z",
+            "kind": "commit",
+            "revision": "664a654489e4d7e951da833b5eaead0f5a2dc5ac",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/664a654489e4d7e951da833b5eaead0f5a2dc5ac",
+              "excerpt": "fix(stable-smoke): 注入路径自带原 Endpoint，自愈只按精确契约还原，还原不了就拒绝猜写",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T15:57:45Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-195deccd13e8720cb4fac756932b0ceeaa9eef25",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:02:25Z",
+            "kind": "commit",
+            "revision": "195deccd13e8720cb4fac756932b0ceeaa9eef25",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/195deccd13e8720cb4fac756932b0ceeaa9eef25",
+              "excerpt": "test(e2e): 自愈回归用例进入时先自愈再取快照，结束时备用一律停用，拒绝把注入态写回网关",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:02:25Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-75f17f2189f2510fa452e9bbaaaa1c66e03aa0df",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:09:25Z",
+            "kind": "commit",
+            "revision": "75f17f2189f2510fa452e9bbaaaa1c66e03aa0df",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/75f17f2189f2510fa452e9bbaaaa1c66e03aa0df",
+              "excerpt": "fix(stable-smoke): 注入路径受网关 500 字符上限约束，启用着的带标记备用不论挂在哪个逻辑模型都停用",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:09:25Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-2ecdef59328e2cfbf928356829e616ed97177563",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:15:20Z",
+            "kind": "commit",
+            "revision": "2ecdef59328e2cfbf928356829e616ed97177563",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2ecdef59328e2cfbf928356829e616ed97177563",
+              "excerpt": "fix(stable-smoke): 自愈回归用例自带创建备用，网关两条回归 ID 登记为 CDS-only 并进入用例标题",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:15:20Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-e06663e9b3c73d3317fbb3fedb598d88509720a7",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:18:07Z",
+            "kind": "commit",
+            "revision": "e06663e9b3c73d3317fbb3fedb598d88509720a7",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/e06663e9b3c73d3317fbb3fedb598d88509720a7",
+              "excerpt": "fix(stable-smoke): 先隔离启用着的带标记备用，再判无法还原的注入态",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:18:07Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-593f135b63be2d0e24fe95753e2c362b90b0a843",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:26:38Z",
+            "kind": "commit",
+            "revision": "593f135b63be2d0e24fe95753e2c362b90b0a843",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/593f135b63be2d0e24fe95753e2c362b90b0a843",
+              "excerpt": "fix(stable-smoke): 挑捐出方时排除已绑定上游，回归用例进入时无条件先自愈，嵌入用例按可嵌入性分支",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:26:38Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-93387df0d24d7e0928ad9acc5e5beed38c82723b",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:35:45Z",
+            "kind": "commit",
+            "revision": "93387df0d24d7e0928ad9acc5e5beed38c82723b",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/93387df0d24d7e0928ad9acc5e5beed38c82723b",
+              "excerpt": "test(e2e): 自愈回归用例从补备用起就进入清理作用域，任何 setup 失败都停掉启用着的带标记备用",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:35:45Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-9c8b660c65e95e49bad0a41f359908428553a5f2",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:41:41Z",
+            "kind": "commit",
+            "revision": "9c8b660c65e95e49bad0a41f359908428553a5f2",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/9c8b660c65e95e49bad0a41f359908428553a5f2",
+              "excerpt": "fix(stable-smoke): 带标记备用只认夹具写入的精确备注格式",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:41:41Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-7c29d02247e3ac8fd3ce7efdaabd89e56c643991",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:48:21Z",
+            "kind": "commit",
+            "revision": "7c29d02247e3ac8fd3ce7efdaabd89e56c643991",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/7c29d02247e3ac8fd3ce7efdaabd89e56c643991",
+              "excerpt": "fix(stable-smoke): 隔离启用着的带标记备用排在自愈之前",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:48:21Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-e93cc5748af0ae170cee92d77c76eb1d00636ee7",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-15T16:54:56Z",
+            "kind": "commit",
+            "revision": "e93cc5748af0ae170cee92d77c76eb1d00636ee7",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/e93cc5748af0ae170cee92d77c76eb1d00636ee7",
+              "excerpt": "fix(stable-smoke): GW-007 清理阶段按当前列表停用带标记备用，不再攒可能过期的 id",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-15T16:54:56Z",
+              "integratedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-93807ca6fe80eaccc052660af11ef4a3129b2862",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-16T15:35:59+08:00",
+            "kind": "merged",
+            "revision": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "excerpt": "fix(stable-smoke): GW-007 开始前自愈上一轮硬中断遗留的网关注入态（issue #1536）(#1537)",
+              "integratedBy": "93807ca6fe80eaccc052660af11ef4a3129b2862",
+              "originalCommittedAt": "2026-09-16T15:35:59+08:00"
+            }
+          },
+          {
+            "id": "git-70f727ceada071ca804d0512b06034931502516c",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:26:38Z",
+            "kind": "commit",
+            "revision": "70f727ceada071ca804d0512b06034931502516c",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/70f727ceada071ca804d0512b06034931502516c",
+              "excerpt": "docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #155",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T07:26:38Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-e3c589f5a2e69054ddbd80d626b2ab334b7bca70",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:30:01Z",
+            "kind": "commit",
+            "revision": "e3c589f5a2e69054ddbd80d626b2ab334b7bca70",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/e3c589f5a2e69054ddbd80d626b2ab334b7bca70",
+              "excerpt": "docs(web-hosting): 去掉 #135 无法保证的收敛上界，登记 #156",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T07:30:01Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-49cbed8a51e5006f4783a9d244a9a496e6c8be7e",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:32:53Z",
+            "kind": "commit",
+            "revision": "49cbed8a51e5006f4783a9d244a9a496e6c8be7e",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/49cbed8a51e5006f4783a9d244a9a496e6c8be7e",
+              "excerpt": "docs(web-hosting): #135 退回待验收，等真实重新部署证据再关闭",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T07:32:53Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-2aa4b1f95b875a930312715224ccd49c9bba8046",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:42:58Z",
+            "kind": "commit",
+            "revision": "2aa4b1f95b875a930312715224ccd49c9bba8046",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/2aa4b1f95b875a930312715224ccd49c9bba8046",
+              "excerpt": "docs(web-hosting): #153 补记样式表隐藏数字造成的误拒",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T07:42:58Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-b6463e50781310eed2a4941635a48bab9206d1aa",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T08:22:11Z",
+            "kind": "commit",
+            "revision": "b6463e50781310eed2a4941635a48bab9206d1aa",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/b6463e50781310eed2a4941635a48bab9206d1aa",
+              "excerpt": "docs(web-hosting): #135 真实 revision 切换验收通过后移入已修复，新增 #157、#158",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T08:22:11Z",
+              "integratedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-6fbe9363751b5817cf1b070790751fe029a1cd33",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T16:25:11+08:00",
+            "kind": "merged",
+            "revision": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "excerpt": "docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #158 (#1636)",
+              "integratedBy": "6fbe9363751b5817cf1b070790751fe029a1cd33",
+              "originalCommittedAt": "2026-09-28T16:25:11+08:00"
+            }
+          },
+          {
+            "id": "git-acfabb257c327c26baaea9b59314568cd2846820",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-10-03T21:18:53+08:00",
+            "kind": "merged",
+            "revision": "acfabb257c327c26baaea9b59314568cd2846820",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/commit/acfabb257c327c26baaea9b59314568cd2846820",
+              "excerpt": "fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+              "integratedBy": "acfabb257c327c26baaea9b59314568cd2846820",
+              "originalCommittedAt": "2026-10-03T21:18:53+08:00"
+            }
+          },
+          {
+            "id": "acceptance-b1a2cbf7c85c4c0bb16accb0258587cf",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-10-04T22:08:14.766Z",
+            "kind": "validation_failed",
+            "scope": "feature",
+            "revision": "ee905ed82803423f8136d96e787d0a0bb96b77e5",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=e525bc9663c8449793b950808860982e&report=b1a2cbf7c85c4c0bb16accb0258587cf",
+              "excerpt": "功能验收 · 核心业务 / 稳定冒烟修复复测业务结论验后回填 · 2026-10-05；verdict=fail；版本=ee905ed82803423f8136d96e787d0a0bb96b77e5",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          },
+          {
+            "id": "acceptance-7bf0d83c50c94cee89607736a6e2183e",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T08:16:14.018Z",
+            "kind": "validation_passed",
+            "scope": "feature",
+            "revision": "ed85c573d2f84d6cc6c8c94966170854ef1b5de7",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=94b981552e5b45ea87698fc208022577&report=7bf0d83c50c94cee89607736a6e2183e",
+              "excerpt": "缺陷复测 · 网页托管 / #135 精细生成遇分支重新部署的真实 revision 切换复现 · 2026-09-28；verdict=pass；版本=ed85c573d2f84d6cc6c8c94966170854ef1b5de7",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          },
+          {
+            "id": "acceptance-e649910df13d4e57b454a7de279e94a3",
+            "workItemId": "web-redeploy",
+            "occurredAt": "2026-09-28T07:24:38.097Z",
+            "kind": "validation_passed",
+            "scope": "feature",
+            "revision": "952bc64f63f6fe7535c5970ba55607bfd27cd6a8",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=94b981552e5b45ea87698fc208022577&report=e649910df13d4e57b454a7de279e94a3",
+              "excerpt": "分支验收 · 网页托管 / main 精细生成端到端补验（#149 / #135） · 2026-09-28；verdict=pass；版本=952bc64f6",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          },
+          {
+            "id": "acceptance-97105d54be19450fa67b682fee77006b",
+            "workItemId": "kb-sync",
+            "occurredAt": "2026-09-14T07:36:38.270Z",
+            "kind": "validation_passed",
+            "scope": "feature",
+            "revision": "673b31cccb5e346ce3354a9d216e61bd96655c64",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=0864ccf0981547eb8af54b4470634dd7&report=97105d54be19450fa67b682fee77006b",
+              "excerpt": "缺陷复测 · 知识库 / GitHub 私有仓目录同步 · 2026-09-14；verdict=pass；版本=673b31cccb5e346ce3354a9d216e61bd96655c64",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          },
+          {
+            "id": "acceptance-c52f7ee05482477e84d9aa29fb862c60",
+            "workItemId": "core-smoke",
+            "occurredAt": "2026-09-14T03:09:14.710Z",
+            "kind": "validation_failed",
+            "scope": "feature",
+            "revision": "3a6f06305a7668033a8c6cd7ea7a21a78a4f4e7a",
+            "source": {
+              "uri": "https://miduo.org/reports?project=prd-agent&folder=e5a9f42a570d4c93969c7a8e3d3e4eb3&report=c52f7ee05482477e84d9aa29fb862c60",
+              "excerpt": "功能验收 · 核心业务稳定冒烟失败取证 · 2026-09-14；verdict=fail；版本=3a6f06305a7668033a8c6cd7ea7a21a78a4f4e7a",
+              "snapshotAt": "2026-11-12T10:07:55.640055+00:00"
+            },
+            "timeBasis": "observed"
+          }
+        ],
+        "limitations": [
+          "本展示是三个真实事项的历史复核样本，不是整个项目的完整周报；采集区间中另有 1196 条未纳入本样本的 Git 记录。",
+          "合并只证明集成。当前样本没有独立的功能完成声明，不据此断言功能已完成或未完成。",
+          "验收保留真实版本；不同 SHA 不推测包含关系。较早分支的通过不能覆盖后续主干修复。",
+          "W40 旧周报记录正式发布尝试3/成功1/失败2；2026-11-12只读查询同一窗口返回0条，当前台账最早保留日期2026-11-03。来源存在差异，不能据空列表断言历史未上线。",
+          "未取到同口径效率、工时和收益测量；不按提交量、跨日跨度或预期收益推算。",
+          "下一步是本次复核建议，负责人和期限尚未指定。",
+          "验收来源仅提供报告创建时间，原始测试运行时间未获独立确认；本样本将其标为证据观测，不计作本周期首次验证完成。"
+        ],
+        "historyComplete": false
+      }
+    },
+    {
+      "id": "real-external-blocker-no-new-activity",
+      "provenance": "真实PR#1357债务原文及git blame观察时间；当前周期无新增记录，验证旧阻塞不会丢失。",
+      "weekYear": 2026,
+      "weekNumber": 40,
+      "start": "2026-09-28T00:00:00",
+      "end": "2026-10-04T00:00:00",
+      "template": {
+        "id": "fe6bf7aff1a94482a2b18b28e13488b0",
+        "name": "真实历史报告模板快照",
+        "sections": [
+          {
+            "title": "本周任务进展",
+            "description": "本周完成了哪些任务、整体进度如何。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 0,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "完成率",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "title": "问题&对策",
+            "description": "存在哪些问题或风险、对应的对策是什么。",
+            "inputType": "issue-list",
+            "isRequired": true,
+            "sortOrder": 1,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": [
+              {
+                "key": "tech",
+                "label": "技术",
+                "color": null
+              },
+              {
+                "key": "product",
+                "label": "产品",
+                "color": null
+              },
+              {
+                "key": "process",
+                "label": "流程",
+                "color": null
+              },
+              {
+                "key": "resource",
+                "label": "资源",
+                "color": null
+              }
+            ],
+            "issueStatuses": [
+              {
+                "key": "new",
+                "label": "新增",
+                "color": null
+              },
+              {
+                "key": "ongoing",
+                "label": "跟进中",
+                "color": null
+              },
+              {
+                "key": "resolved",
+                "label": "已解决",
+                "color": null
+              },
+              {
+                "key": "blocked",
+                "label": "阻塞",
+                "color": null
+              }
+            ],
+            "tableColumns": null,
+            "tableColumnWidths": null
+          },
+          {
+            "title": "下周计划",
+            "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+            "inputType": "table",
+            "isRequired": true,
+            "sortOrder": 2,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": [
+              "内容",
+              "目标进度",
+              "备注"
+            ],
+            "tableColumnWidths": [
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "title": "思考总结",
+            "description": "有什么想法或心得体会，都可以拿出来分享下。",
+            "inputType": "rich-text",
+            "isRequired": true,
+            "sortOrder": 3,
+            "dataSourceHint": null,
+            "maxItems": null,
+            "sectionType": null,
+            "dataSources": null,
+            "issueCategories": null,
+            "issueStatuses": null,
+            "tableColumns": null,
+            "tableColumnWidths": null
+          }
+        ]
+      },
+      "activity": {
+        "userId": "cd996f19390745cfb577ea712b0b1868",
+        "periodStart": "2026-09-28T00:00:00",
+        "periodEnd": "2026-10-04T23:59:59",
+        "commits": [],
+        "dailyLogs": []
+      },
+      "sourcePrefs": {
+        "dailyLogEnabled": true,
+        "mapPlatformEnabled": true
+      },
+      "effectivePrompt": "你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记",
+      "upstreamMode": "upstream-failed",
+      "ledger": {
+        "schemaVersion": 1,
+        "historyComplete": false,
+        "workItems": [
+          {
+            "id": "knowledge-embedding",
+            "title": "知识库语义检索接入真实向量供应商",
+            "nextStep": "由供应商或运维提供可用模型与凭据后联调；当前不宣称可用"
+          }
+        ],
+        "events": [
+          {
+            "id": "external-embedding-observation",
+            "workItemId": "knowledge-embedding",
+            "occurredAt": "2026-08-11T21:47:54+08:00",
+            "kind": "observation",
+            "timeBasis": "observed",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/blob/01388f59f73ae6d19d6db5d238731ca8445da8c6/doc/debt.knowledge-base.md",
+              "excerpt": "| K-2 | **语义检索：底座已落地，缺一个 embedding 供应商凭据**（2026-08-10 更新）。已完成：网关 embedding 通路（compute-then-send 单次解析、响应按 index 归位）、embedding 进入专属池不可用时的失败关闭名单、`document_embeddings` 向量存储（float32 二进制 + 盖 Model/Dimension，跨模型判为不兼容）、切块与增量索引哈希（哈希拌入模型标识）、Stub 平台的 OpenAI 兼容 `/v1/embeddings` 自测通道。**卡在哪**：本部署已配置的两个平台里没有任何 embedding 模型——OpenRouter 的 399 个模型零 embedding，需要新接一个供应商并提供 key（属外部输入，工程侧造不出来）。**注意**：原条目建议的 MongoDB Atlas Vector Search 在本部署上不成立，跑的是自建 `mongo:8.0` Community + `redis:7-alpine`，两者都没有向量检索能力；现方案是向量存 Mongo + 作用域先过滤 + 进程内余弦，按真实规模（最大的 MAP 库 330 篇 4.24MB ≈ 5 千余块）够用。剩余未做：建索引 Worker、检索服务、回答引用注入、前端挂库与引用渲染。选型与「绑定多个」的结论见 [debt.platform.embedding-provider.md](./debt.platform.embedding-provider.md)。 | **P1**（等 key 到位即可续做） | 拿到任一 OpenAI 兼容 embedding 供应商的 key | partial |"
+            }
+          },
+          {
+            "id": "external-embedding-blocker",
+            "workItemId": "knowledge-embedding",
+            "occurredAt": "2026-08-11T21:47:54+08:00",
+            "kind": "blocked",
+            "reason": "没有可用embedding供应商与凭据，等待外部输入",
+            "timeBasis": "observed",
+            "source": {
+              "uri": "https://github.com/inernoro/prd_agent/blob/01388f59f73ae6d19d6db5d238731ca8445da8c6/doc/debt.knowledge-base.md",
+              "excerpt": "| K-2 | **语义检索：底座已落地，缺一个 embedding 供应商凭据**（2026-08-10 更新）。已完成：网关 embedding 通路（compute-then-send 单次解析、响应按 index 归位）、embedding 进入专属池不可用时的失败关闭名单、`document_embeddings` 向量存储（float32 二进制 + 盖 Model/Dimension，跨模型判为不兼容）、切块与增量索引哈希（哈希拌入模型标识）、Stub 平台的 OpenAI 兼容 `/v1/embeddings` 自测通道。**卡在哪**：本部署已配置的两个平台里没有任何 embedding 模型——OpenRouter 的 399 个模型零 embedding，需要新接一个供应商并提供 key（属外部输入，工程侧造不出来）。**注意**：原条目建议的 MongoDB Atlas Vector Search 在本部署上不成立，跑的是自建 `mongo:8.0` Community + `redis:7-alpine`，两者都没有向量检索能力；现方案是向量存 Mongo + 作用域先过滤 + 进程内余弦，按真实规模（最大的 MAP 库 330 篇 4.24MB ≈ 5 千余块）够用。剩余未做：建索引 Worker、检索服务、回答引用注入、前端挂库与引用渲染。选型与「绑定多个」的结论见 [debt.platform.embedding-provider.md](./debt.platform.embedding-provider.md)。 | **P1**（等 key 到位即可续做） | 拿到任一 OpenAI 兼容 embedding 供应商的 key | partial |"
+            }
+          }
+        ],
+        "limitations": [
+          "这是旧台账持续未解除的外部阻塞，未证实现在已经具备凭据；不以没有新提交断言已解除。"
+        ]
+      }
+    }
+  ]
+}

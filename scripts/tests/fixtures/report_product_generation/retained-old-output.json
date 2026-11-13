@@ -1,0 +1,1078 @@
+{
+  "baseline": {
+    "gitRef": "0459c01b162ba17c0230f8ad8cdf26d02c199f03",
+    "sourcePath": "prd-api/src/PrdAgent.Api/Services/ReportAgent/ReportGenerationService.cs",
+    "sha256": "be5ad17846a2a319774e93747067b1713ac50c1cd5b07b0ee1166af775a0f88f",
+    "sourceUri": "https://github.com/inernoro/prd_agent/blob/0459c01b162ba17c0230f8ad8cdf26d02c199f03/prd-api/src/PrdAgent.Api/Services/ReportAgent/ReportGenerationService.cs"
+  },
+  "sampleInputDigest": "746ff92019ff12752ff26f5e239f1058c114a1709888b07d47eda089aad4a409",
+  "method": "实际编译固定Git版本的完整旧源类，通过原BuildUserPrompt/ParseGeneratedSections/BuildRuleBasedSections方法输出；没有手写旧生成算法。",
+  "outputs": [
+    {
+      "id": "actual-w41-captured-model",
+      "inputDigest": "50358db5d76c2241724ab1f815107e5d43ff0092ae2cc76a75645a7e9a5ca2af",
+      "upstreamMode": "captured-model-response",
+      "old": {
+        "usedFallback": false,
+        "sections": [
+          {
+            "templateSection": {
+              "title": "本周任务进展",
+              "description": "本周完成了哪些任务、整体进度如何。",
+              "inputType": "table",
+              "isRequired": true,
+              "sortOrder": 0,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": [
+                "内容",
+                "目标进度",
+                "完成率",
+                "备注"
+              ],
+              "tableColumnWidths": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            "items": [
+              {
+                "content": "完成图片生成 10 次、网页发布/更新 8 次、AI 调用 10 次。",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": [
+                  "完成图片生成 10 次、网页发布/更新 8 次、AI 调用 10 次。",
+                  "",
+                  "",
+                  ""
+                ]
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "问题&对策",
+              "description": "存在哪些问题或风险、对应的对策是什么。",
+              "inputType": "issue-list",
+              "isRequired": true,
+              "sortOrder": 1,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": [
+                {
+                  "key": "tech",
+                  "label": "技术",
+                  "color": null
+                },
+                {
+                  "key": "product",
+                  "label": "产品",
+                  "color": null
+                },
+                {
+                  "key": "process",
+                  "label": "流程",
+                  "color": null
+                },
+                {
+                  "key": "resource",
+                  "label": "资源",
+                  "color": null
+                }
+              ],
+              "issueStatuses": [
+                {
+                  "key": "new",
+                  "label": "新增",
+                  "color": null
+                },
+                {
+                  "key": "ongoing",
+                  "label": "跟进中",
+                  "color": null
+                },
+                {
+                  "key": "resolved",
+                  "label": "已解决",
+                  "color": null
+                },
+                {
+                  "key": "blocked",
+                  "label": "阻塞",
+                  "color": null
+                }
+              ],
+              "tableColumns": null,
+              "tableColumnWidths": null
+            },
+            "items": []
+          },
+          {
+            "templateSection": {
+              "title": "下周计划",
+              "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+              "inputType": "table",
+              "isRequired": true,
+              "sortOrder": 2,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": [
+                "内容",
+                "目标进度",
+                "备注"
+              ],
+              "tableColumnWidths": [
+                0,
+                0,
+                0
+              ]
+            },
+            "items": []
+          },
+          {
+            "templateSection": {
+              "title": "思考总结",
+              "description": "有什么想法或心得体会，都可以拿出来分享下。",
+              "inputType": "rich-text",
+              "isRequired": true,
+              "sortOrder": 3,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": null,
+              "tableColumnWidths": null
+            },
+            "items": [
+              {
+                "content": "本周工作记录覆盖图片生成、网页发布/更新和 AI 调用三类行为，共计 28 次。",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          }
+        ],
+        "prompt": "## 周报周期: 2026 年第 41 周\n\n## 写作要求（生效 Prompt）\n你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记\n\n## 模板结构（请严格按此结构输出 JSON）\n输出格式: { \"sections\": [ { \"items\": [ { \"content\": \"...\", \"source\": \"...\" } ] } ] }\nsections 数组长度必须与以下板块数量一致。\n\n### 板块 1: 本周任务进展\n填写指引: 本周完成了哪些任务、整体进度如何。\n输入类型: table\n是否必填: 是\n\n### 板块 2: 问题&对策\n填写指引: 存在哪些问题或风险、对应的对策是什么。\n输入类型: issue-list\n是否必填: 是\n\n### 板块 3: 下周计划\n填写指引: 所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。\n输入类型: table\n是否必填: 是\n\n### 板块 4: 思考总结\n填写指引: 有什么想法或心得体会，都可以拿出来分享下。\n输入类型: rich-text\n是否必填: 是\n\n## 采集到的原始数据\n\n### MAP 平台工作记录（行为统计）\n- 图片生成完成: 10 次\n- 网页发布/更新: 8 次\n- AI 调用: 10 次\n\n请基于以上数据生成周报，每个条目的 source 字段标记来源：map-platform / daily-log / ai\n严格约束：\n1. 只基于「采集到的原始数据」中明确列出的指标生成内容，禁止凭空编造。\n2. 不要把指标名称改写成其他活动。采集结果说什么就是什么，不允许语义漂移：\n   - 「创建 PRD 项目」不能写成「编辑文档」「新建知识库」「完成技术规范」\n   - 「网页发布/更新」不能写成「发布网站」的泛化描述或夸大数量\n   - 「AI 调用」不能写成「优化处理效率」「辅助生成」的效果类描述\n3. 指标数值必须与采集结果完全一致，禁止凑整、放大、捏造修饰语（如「量较大」「若干篇」）。\n4. 如果某个板块确实没有数据支撑，请输出空 items 数组，禁止用「无数据」「待补充」等占位文本。\n",
+        "originalPromptMatch": true
+      },
+      "note": "旧模型输出为真实历史响应回放，不是本次重新调用模型；新正文与生产相同的事实引擎生成。"
+    },
+    {
+      "id": "actual-w41-upstream-failure-replay",
+      "inputDigest": "29657cb671200dcdc982744fd0ca2fcb10379c3de1588a8708fbf87a9eb0b8bb",
+      "upstreamMode": "upstream-failed",
+      "old": {
+        "usedFallback": true,
+        "sections": [
+          {
+            "templateSection": {
+              "title": "本周任务进展",
+              "description": "本周完成了哪些任务、整体进度如何。",
+              "inputType": "table",
+              "isRequired": true,
+              "sortOrder": 0,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": [
+                "内容",
+                "目标进度",
+                "完成率",
+                "备注"
+              ],
+              "tableColumnWidths": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            "items": [
+              {
+                "content": "本周工作按计划推进，建议下周继续围绕核心目标聚焦执行。",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "问题&对策",
+              "description": "存在哪些问题或风险、对应的对策是什么。",
+              "inputType": "issue-list",
+              "isRequired": true,
+              "sortOrder": 1,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": [
+                {
+                  "key": "tech",
+                  "label": "技术",
+                  "color": null
+                },
+                {
+                  "key": "product",
+                  "label": "产品",
+                  "color": null
+                },
+                {
+                  "key": "process",
+                  "label": "流程",
+                  "color": null
+                },
+                {
+                  "key": "resource",
+                  "label": "资源",
+                  "color": null
+                }
+              ],
+              "issueStatuses": [
+                {
+                  "key": "new",
+                  "label": "新增",
+                  "color": null
+                },
+                {
+                  "key": "ongoing",
+                  "label": "跟进中",
+                  "color": null
+                },
+                {
+                  "key": "resolved",
+                  "label": "已解决",
+                  "color": null
+                },
+                {
+                  "key": "blocked",
+                  "label": "阻塞",
+                  "color": null
+                }
+              ],
+              "tableColumns": null,
+              "tableColumnWidths": null
+            },
+            "items": [
+              {
+                "content": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "下周计划",
+              "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+              "inputType": "table",
+              "isRequired": true,
+              "sortOrder": 2,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": [
+                "内容",
+                "目标进度",
+                "备注"
+              ],
+              "tableColumnWidths": [
+                0,
+                0,
+                0
+              ]
+            },
+            "items": [
+              {
+                "content": "下周聚焦核心目标拆解与交付节奏，按优先级推进并按日复盘。",
+                "source": "ai",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "思考总结",
+              "description": "有什么想法或心得体会，都可以拿出来分享下。",
+              "inputType": "rich-text",
+              "isRequired": true,
+              "sortOrder": 3,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": null,
+              "tableColumnWidths": null
+            },
+            "items": [
+              {
+                "content": "本周工作按计划推进，建议下周继续围绕核心目标聚焦执行。",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          }
+        ],
+        "prompt": "## 周报周期: 2026 年第 41 周\n\n## 写作要求（生效 Prompt）\n你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记\n\n## 模板结构（请严格按此结构输出 JSON）\n输出格式: { \"sections\": [ { \"items\": [ { \"content\": \"...\", \"source\": \"...\" } ] } ] }\nsections 数组长度必须与以下板块数量一致。\n\n### 板块 1: 本周任务进展\n填写指引: 本周完成了哪些任务、整体进度如何。\n输入类型: table\n是否必填: 是\n\n### 板块 2: 问题&对策\n填写指引: 存在哪些问题或风险、对应的对策是什么。\n输入类型: issue-list\n是否必填: 是\n\n### 板块 3: 下周计划\n填写指引: 所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。\n输入类型: table\n是否必填: 是\n\n### 板块 4: 思考总结\n填写指引: 有什么想法或心得体会，都可以拿出来分享下。\n输入类型: rich-text\n是否必填: 是\n\n## 采集到的原始数据\n\n### MAP 平台工作记录（行为统计）\n- 图片生成完成: 10 次\n- 网页发布/更新: 8 次\n- AI 调用: 10 次\n\n请基于以上数据生成周报，每个条目的 source 字段标记来源：map-platform / daily-log / ai\n严格约束：\n1. 只基于「采集到的原始数据」中明确列出的指标生成内容，禁止凭空编造。\n2. 不要把指标名称改写成其他活动。采集结果说什么就是什么，不允许语义漂移：\n   - 「创建 PRD 项目」不能写成「编辑文档」「新建知识库」「完成技术规范」\n   - 「网页发布/更新」不能写成「发布网站」的泛化描述或夸大数量\n   - 「AI 调用」不能写成「优化处理效率」「辅助生成」的效果类描述\n3. 指标数值必须与采集结果完全一致，禁止凑整、放大、捏造修饰语（如「量较大」「若干篇」）。\n4. 如果某个板块确实没有数据支撑，请输出空 items 数组，禁止用「无数据」「待补充」等占位文本。\n",
+        "originalPromptMatch": true
+      },
+      "note": "在同一冻结输入上，直接运行真实旧规则回退方法与生产使用的新证据引擎；上游失败档不作为模型质量改进率。"
+    },
+    {
+      "id": "real-history-week",
+      "inputDigest": "8d917b79d593d55124b104a2b2f6b2cf42ab50b56a250d82a653f76363a3e71e",
+      "upstreamMode": "upstream-failed",
+      "old": {
+        "usedFallback": true,
+        "sections": [
+          {
+            "templateSection": {
+              "title": "本周任务进展",
+              "description": "本周完成了哪些任务、整体进度如何。",
+              "inputType": "table",
+              "isRequired": true,
+              "sortOrder": 0,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": [
+                "内容",
+                "目标进度",
+                "完成率",
+                "备注"
+              ],
+              "tableColumnWidths": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            "items": [
+              {
+                "content": "代码提交：fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "代码提交：docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #158 (#1636)",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "代码提交：docs(web-hosting): #135 真实 revision 切换验收通过后移入已修复，新增 #157、#158",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "代码提交：docs(web-hosting): #153 补记样式表隐藏数字造成的误拒",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "代码提交：docs(web-hosting): #135 退回待验收，等真实重新部署证据再关闭",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "问题&对策",
+              "description": "存在哪些问题或风险、对应的对策是什么。",
+              "inputType": "issue-list",
+              "isRequired": true,
+              "sortOrder": 1,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": [
+                {
+                  "key": "tech",
+                  "label": "技术",
+                  "color": null
+                },
+                {
+                  "key": "product",
+                  "label": "产品",
+                  "color": null
+                },
+                {
+                  "key": "process",
+                  "label": "流程",
+                  "color": null
+                },
+                {
+                  "key": "resource",
+                  "label": "资源",
+                  "color": null
+                }
+              ],
+              "issueStatuses": [
+                {
+                  "key": "new",
+                  "label": "新增",
+                  "color": null
+                },
+                {
+                  "key": "ongoing",
+                  "label": "跟进中",
+                  "color": null
+                },
+                {
+                  "key": "resolved",
+                  "label": "已解决",
+                  "color": null
+                },
+                {
+                  "key": "blocked",
+                  "label": "阻塞",
+                  "color": null
+                }
+              ],
+              "tableColumns": null,
+              "tableColumnWidths": null
+            },
+            "items": [
+              {
+                "content": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "下周计划",
+              "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+              "inputType": "table",
+              "isRequired": true,
+              "sortOrder": 2,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": [
+                "内容",
+                "目标进度",
+                "备注"
+              ],
+              "tableColumnWidths": [
+                0,
+                0,
+                0
+              ]
+            },
+            "items": [
+              {
+                "content": "继续推进：代码提交：fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "继续推进：代码提交：docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #158 (#1636)",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "继续推进：代码提交：docs(web-hosting): #135 真实 revision 切换验收通过后移入已修复，新增 #157、#158",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "继续推进：代码提交：docs(web-hosting): #153 补记样式表隐藏数字造成的误拒",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "继续推进：代码提交：docs(web-hosting): #135 退回待验收，等真实重新部署证据再关闭",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "思考总结",
+              "description": "有什么想法或心得体会，都可以拿出来分享下。",
+              "inputType": "rich-text",
+              "isRequired": true,
+              "sortOrder": 3,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": null,
+              "tableColumnWidths": null
+            },
+            "items": [
+              {
+                "content": "本周完成 7 次代码提交，持续推进需求落地。",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          }
+        ],
+        "prompt": "## 周报周期: 2026 年第 40 周\n\n## 写作要求（生效 Prompt）\n你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记\n\n## 模板结构（请严格按此结构输出 JSON）\n输出格式: { \"sections\": [ { \"items\": [ { \"content\": \"...\", \"source\": \"...\" } ] } ] }\nsections 数组长度必须与以下板块数量一致。\n\n### 板块 1: 本周任务进展\n填写指引: 本周完成了哪些任务、整体进度如何。\n输入类型: table\n是否必填: 是\n\n### 板块 2: 问题&对策\n填写指引: 存在哪些问题或风险、对应的对策是什么。\n输入类型: issue-list\n是否必填: 是\n\n### 板块 3: 下周计划\n填写指引: 所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。\n输入类型: table\n是否必填: 是\n\n### 板块 4: 思考总结\n填写指引: 有什么想法或心得体会，都可以拿出来分享下。\n输入类型: rich-text\n是否必填: 是\n\n## 采集到的原始数据\n\n### MAP 平台工作记录（代码提交）\n- [09-28] docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #155\n- [09-28] docs(web-hosting): 去掉 #135 无法保证的收敛上界，登记 #156\n- [09-28] docs(web-hosting): #135 退回待验收，等真实重新部署证据再关闭\n- [09-28] docs(web-hosting): #153 补记样式表隐藏数字造成的误拒\n- [09-28] docs(web-hosting): #135 真实 revision 切换验收通过后移入已修复，新增 #157、#158\n- [09-28] docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #158 (#1636)\n- [10-03] fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)\n总计: 7 次提交\n代码统计: +0 -0\n\n请基于以上数据生成周报，每个条目的 source 字段标记来源：map-platform / daily-log / ai\n严格约束：\n1. 只基于「采集到的原始数据」中明确列出的指标生成内容，禁止凭空编造。\n2. 不要把指标名称改写成其他活动。采集结果说什么就是什么，不允许语义漂移：\n   - 「创建 PRD 项目」不能写成「编辑文档」「新建知识库」「完成技术规范」\n   - 「网页发布/更新」不能写成「发布网站」的泛化描述或夸大数量\n   - 「AI 调用」不能写成「优化处理效率」「辅助生成」的效果类描述\n3. 指标数值必须与采集结果完全一致，禁止凑整、放大、捏造修饰语（如「量较大」「若干篇」）。\n4. 如果某个板块确实没有数据支撑，请输出空 items 数组，禁止用「无数据」「待补充」等占位文本。\n",
+        "originalPromptMatch": null
+      },
+      "note": "在同一冻结输入上，直接运行真实旧规则回退方法与生产使用的新证据引擎；上游失败档不作为模型质量改进率。"
+    },
+    {
+      "id": "real-history-cross-day",
+      "inputDigest": "092bf9fa5e7025d328228e657790b6c9d795eb3e1142cbc8001c0b0cbec84866",
+      "upstreamMode": "upstream-failed",
+      "old": {
+        "usedFallback": true,
+        "sections": [
+          {
+            "templateSection": {
+              "title": "本周任务进展",
+              "description": "本周完成了哪些任务、整体进度如何。",
+              "inputType": "table",
+              "isRequired": true,
+              "sortOrder": 0,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": [
+                "内容",
+                "目标进度",
+                "完成率",
+                "备注"
+              ],
+              "tableColumnWidths": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            "items": [
+              {
+                "content": "代码提交：fix(stable-smoke): GW-007 清理阶段按当前列表停用带标记备用，不再攒可能过期的 id",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "代码提交：fix(stable-smoke): 隔离启用着的带标记备用排在自愈之前",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "代码提交：fix(stable-smoke): 带标记备用只认夹具写入的精确备注格式",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "代码提交：test(e2e): 自愈回归用例从补备用起就进入清理作用域，任何 setup 失败都停掉启用着的带标记备用",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "代码提交：fix(stable-smoke): 挑捐出方时排除已绑定上游，回归用例进入时无条件先自愈，嵌入用例按可嵌入性分支",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "问题&对策",
+              "description": "存在哪些问题或风险、对应的对策是什么。",
+              "inputType": "issue-list",
+              "isRequired": true,
+              "sortOrder": 1,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": [
+                {
+                  "key": "tech",
+                  "label": "技术",
+                  "color": null
+                },
+                {
+                  "key": "product",
+                  "label": "产品",
+                  "color": null
+                },
+                {
+                  "key": "process",
+                  "label": "流程",
+                  "color": null
+                },
+                {
+                  "key": "resource",
+                  "label": "资源",
+                  "color": null
+                }
+              ],
+              "issueStatuses": [
+                {
+                  "key": "new",
+                  "label": "新增",
+                  "color": null
+                },
+                {
+                  "key": "ongoing",
+                  "label": "跟进中",
+                  "color": null
+                },
+                {
+                  "key": "resolved",
+                  "label": "已解决",
+                  "color": null
+                },
+                {
+                  "key": "blocked",
+                  "label": "阻塞",
+                  "color": null
+                }
+              ],
+              "tableColumns": null,
+              "tableColumnWidths": null
+            },
+            "items": [
+              {
+                "content": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "下周计划",
+              "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+              "inputType": "table",
+              "isRequired": true,
+              "sortOrder": 2,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": [
+                "内容",
+                "目标进度",
+                "备注"
+              ],
+              "tableColumnWidths": [
+                0,
+                0,
+                0
+              ]
+            },
+            "items": [
+              {
+                "content": "继续推进：代码提交：fix(stable-smoke): GW-007 清理阶段按当前列表停用带标记备用，不再攒可能过期的 id",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "继续推进：代码提交：fix(stable-smoke): 隔离启用着的带标记备用排在自愈之前",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "继续推进：代码提交：fix(stable-smoke): 带标记备用只认夹具写入的精确备注格式",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "继续推进：代码提交：test(e2e): 自愈回归用例从补备用起就进入清理作用域，任何 setup 失败都停掉启用着的带标记备用",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              },
+              {
+                "content": "继续推进：代码提交：fix(stable-smoke): 挑捐出方时排除已绑定上游，回归用例进入时无条件先自愈，嵌入用例按可嵌入性分支",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "思考总结",
+              "description": "有什么想法或心得体会，都可以拿出来分享下。",
+              "inputType": "rich-text",
+              "isRequired": true,
+              "sortOrder": 3,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": null,
+              "tableColumnWidths": null
+            },
+            "items": [
+              {
+                "content": "本周完成 23 次代码提交，持续推进需求落地。",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          }
+        ],
+        "prompt": "## 周报周期: 2026 年第 38 周\n\n## 写作要求（生效 Prompt）\n你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记\n\n## 模板结构（请严格按此结构输出 JSON）\n输出格式: { \"sections\": [ { \"items\": [ { \"content\": \"...\", \"source\": \"...\" } ] } ] }\nsections 数组长度必须与以下板块数量一致。\n\n### 板块 1: 本周任务进展\n填写指引: 本周完成了哪些任务、整体进度如何。\n输入类型: table\n是否必填: 是\n\n### 板块 2: 问题&对策\n填写指引: 存在哪些问题或风险、对应的对策是什么。\n输入类型: issue-list\n是否必填: 是\n\n### 板块 3: 下周计划\n填写指引: 所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。\n输入类型: table\n是否必填: 是\n\n### 板块 4: 思考总结\n填写指引: 有什么想法或心得体会，都可以拿出来分享下。\n输入类型: rich-text\n是否必填: 是\n\n## 采集到的原始数据\n\n### MAP 平台工作记录（代码提交）\n- [09-15] feat(knowledge-base): GitHub 登录后勾选目录一键同步（默认预勾全部 doc/docs）(#1528)\n- [09-15] fix(stable-smoke): 修复 48 小时稳定冒烟九项失败的根因并补永久回归\n- [09-15] test(e2e): 录音旅程先关闭 CDS 预览小部件，沙箱第三方外链噪音可用环境变量桩掉\n- [09-15] test(e2e): 单图下载文件名改为断言产品写入的 download 属性，并把分支预览复测证据写回台账\n- [09-15] fix(stable-smoke): 回应 Codex 首轮三条意见——权限开关接进部署文件、托管默认头像保留独立入口、小部件同步中不缩\n- [09-15] fix(stable-smoke): 回应 Codex 第二轮三条意见——补权原子化、GW-007 清理作用域前置并照抄捐出方路由\n- [09-15] fix(stable-smoke): 回应 Codex 第三轮两条意见——补权改为对 null 安全的管道更新、托管头像接受相对基址\n- [09-15] fix(stable-smoke): GW-007 备用上游先登记归属再等待启用，清理阶段按标记重新找回\n- [09-15] fix(stable-smoke): 图片判定补记 4xx/5xx 响应并用 decode() 判 SVG，身份预检认 super\n- [09-15] Merge pull request #1535 from inernoro/claude/jolly-bohr-ozjj2x\n- [09-15] fix(knowledge-base): 补掉 GitHub 目录同步对抗审查发现的边界 (#1534)\n- [09-15] fix(stable-smoke): GW-007 开始前自愈上一轮硬中断遗留的网关注入态（issue #1536）\n- [09-15] test(e2e): 自愈回归用例改为按逻辑模型加标记重新定位 Offering 当前版本，并写回分支预览证据\n- [09-15] fix(stable-smoke): 注入路径自带原 Endpoint，自愈只按精确契约还原，还原不了就拒绝猜写\n- [09-15] test(e2e): 自愈回归用例进入时先自愈再取快照，结束时备用一律停用，拒绝把注入态写回网关\n- [09-15] fix(stable-smoke): 注入路径受网关 500 字符上限约束，启用着的带标记备用不论挂在哪个逻辑模型都停用\n- [09-15] fix(stable-smoke): 自愈回归用例自带创建备用，网关两条回归 ID 登记为 CDS-only 并进入用例标题\n- [09-15] fix(stable-smoke): 先隔离启用着的带标记备用，再判无法还原的注入态\n- [09-15] fix(stable-smoke): 挑捐出方时排除已绑定上游，回归用例进入时无条件先自愈，嵌入用例按可嵌入性分支\n- [09-15] test(e2e): 自愈回归用例从补备用起就进入清理作用域，任何 setup 失败都停掉启用着的带标记备用\n- [09-15] fix(stable-smoke): 带标记备用只认夹具写入的精确备注格式\n- [09-15] fix(stable-smoke): 隔离启用着的带标记备用排在自愈之前\n- [09-15] fix(stable-smoke): GW-007 清理阶段按当前列表停用带标记备用，不再攒可能过期的 id\n总计: 23 次提交\n代码统计: +0 -0\n\n请基于以上数据生成周报，每个条目的 source 字段标记来源：map-platform / daily-log / ai\n严格约束：\n1. 只基于「采集到的原始数据」中明确列出的指标生成内容，禁止凭空编造。\n2. 不要把指标名称改写成其他活动。采集结果说什么就是什么，不允许语义漂移：\n   - 「创建 PRD 项目」不能写成「编辑文档」「新建知识库」「完成技术规范」\n   - 「网页发布/更新」不能写成「发布网站」的泛化描述或夸大数量\n   - 「AI 调用」不能写成「优化处理效率」「辅助生成」的效果类描述\n3. 指标数值必须与采集结果完全一致，禁止凑整、放大、捏造修饰语（如「量较大」「若干篇」）。\n4. 如果某个板块确实没有数据支撑，请输出空 items 数组，禁止用「无数据」「待补充」等占位文本。\n",
+        "originalPromptMatch": null
+      },
+      "note": "在同一冻结输入上，直接运行真实旧规则回退方法与生产使用的新证据引擎；上游失败档不作为模型质量改进率。"
+    },
+    {
+      "id": "real-history-cross-month",
+      "inputDigest": "2c1899ee3c33f26944bf049d62423cf339ca2ecf05760cf3e84d95eced8e9c1a",
+      "upstreamMode": "upstream-failed",
+      "old": {
+        "usedFallback": true,
+        "sections": [
+          {
+            "templateSection": {
+              "title": "本周任务进展",
+              "description": "本周完成了哪些任务、整体进度如何。",
+              "inputType": "table",
+              "isRequired": true,
+              "sortOrder": 0,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": [
+                "内容",
+                "目标进度",
+                "完成率",
+                "备注"
+              ],
+              "tableColumnWidths": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            "items": [
+              {
+                "content": "代码提交：fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "问题&对策",
+              "description": "存在哪些问题或风险、对应的对策是什么。",
+              "inputType": "issue-list",
+              "isRequired": true,
+              "sortOrder": 1,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": [
+                {
+                  "key": "tech",
+                  "label": "技术",
+                  "color": null
+                },
+                {
+                  "key": "product",
+                  "label": "产品",
+                  "color": null
+                },
+                {
+                  "key": "process",
+                  "label": "流程",
+                  "color": null
+                },
+                {
+                  "key": "resource",
+                  "label": "资源",
+                  "color": null
+                }
+              ],
+              "issueStatuses": [
+                {
+                  "key": "new",
+                  "label": "新增",
+                  "color": null
+                },
+                {
+                  "key": "ongoing",
+                  "label": "跟进中",
+                  "color": null
+                },
+                {
+                  "key": "resolved",
+                  "label": "已解决",
+                  "color": null
+                },
+                {
+                  "key": "blocked",
+                  "label": "阻塞",
+                  "color": null
+                }
+              ],
+              "tableColumns": null,
+              "tableColumnWidths": null
+            },
+            "items": [
+              {
+                "content": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "下周计划",
+              "description": "所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。",
+              "inputType": "table",
+              "isRequired": true,
+              "sortOrder": 2,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": [
+                "内容",
+                "目标进度",
+                "备注"
+              ],
+              "tableColumnWidths": [
+                0,
+                0,
+                0
+              ]
+            },
+            "items": [
+              {
+                "content": "继续推进：代码提交：fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          },
+          {
+            "templateSection": {
+              "title": "思考总结",
+              "description": "有什么想法或心得体会，都可以拿出来分享下。",
+              "inputType": "rich-text",
+              "isRequired": true,
+              "sortOrder": 3,
+              "dataSourceHint": null,
+              "maxItems": null,
+              "sectionType": null,
+              "dataSources": null,
+              "issueCategories": null,
+              "issueStatuses": null,
+              "tableColumns": null,
+              "tableColumnWidths": null
+            },
+            "items": [
+              {
+                "content": "本周完成 1 次代码提交，持续推进需求落地。",
+                "source": "map-platform",
+                "sourceRef": null,
+                "issueCategoryKey": null,
+                "issueStatusKey": null,
+                "imageUrls": null,
+                "cells": null
+              }
+            ]
+          }
+        ],
+        "prompt": "## 周报周期: 2026 年第 40 周\n\n## 写作要求（生效 Prompt）\n你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记\n\n## 模板结构（请严格按此结构输出 JSON）\n输出格式: { \"sections\": [ { \"items\": [ { \"content\": \"...\", \"source\": \"...\" } ] } ] }\nsections 数组长度必须与以下板块数量一致。\n\n### 板块 1: 本周任务进展\n填写指引: 本周完成了哪些任务、整体进度如何。\n输入类型: table\n是否必填: 是\n\n### 板块 2: 问题&对策\n填写指引: 存在哪些问题或风险、对应的对策是什么。\n输入类型: issue-list\n是否必填: 是\n\n### 板块 3: 下周计划\n填写指引: 所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。\n输入类型: table\n是否必填: 是\n\n### 板块 4: 思考总结\n填写指引: 有什么想法或心得体会，都可以拿出来分享下。\n输入类型: rich-text\n是否必填: 是\n\n## 采集到的原始数据\n\n### MAP 平台工作记录（代码提交）\n- [10-03] fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)\n总计: 1 次提交\n代码统计: +0 -0\n\n请基于以上数据生成周报，每个条目的 source 字段标记来源：map-platform / daily-log / ai\n严格约束：\n1. 只基于「采集到的原始数据」中明确列出的指标生成内容，禁止凭空编造。\n2. 不要把指标名称改写成其他活动。采集结果说什么就是什么，不允许语义漂移：\n   - 「创建 PRD 项目」不能写成「编辑文档」「新建知识库」「完成技术规范」\n   - 「网页发布/更新」不能写成「发布网站」的泛化描述或夸大数量\n   - 「AI 调用」不能写成「优化处理效率」「辅助生成」的效果类描述\n3. 指标数值必须与采集结果完全一致，禁止凑整、放大、捏造修饰语（如「量较大」「若干篇」）。\n4. 如果某个板块确实没有数据支撑，请输出空 items 数组，禁止用「无数据」「待补充」等占位文本。\n",
+        "originalPromptMatch": null
+      },
+      "note": "在同一冻结输入上，直接运行真实旧规则回退方法与生产使用的新证据引擎；上游失败档不作为模型质量改进率。"
+    },
+    {
+      "id": "real-external-blocker-no-new-activity",
+      "inputDigest": "17acb3ab65aff3d5f0046dbe5312dc777da9143ed64edf42246596b263eb5ad7",
+      "upstreamMode": "upstream-failed",
+      "old": {
+        "usedFallback": true,
+        "sections": null,
+        "prompt": "## 周报周期: 2026 年第 40 周\n\n## 写作要求（生效 Prompt）\n你是一位专业的周报撰写助手。你的任务是将原始工作数据整理为清晰、简洁的周报内容。\n\n规则：\n1. 将多个零散记录归纳为有意义的任务/成果描述\n2. 使用业务语言而非底层技术细节\n3. 突出成果和影响，而非过程堆砌\n4. 每条尽量精炼，避免冗长\n5. 对统计数据只展示关键数字，不做主观评判\n6. 严格按照模板板块结构输出\n7. 不要输出“无数据/暂无记录”这类空洞结论\n8. 数据量少时也要提炼有价值总结\n9. 优先使用具体数字与事实\n10. 输出必须是合法 JSON，不要包含 markdown 代码块标记\n\n## 模板结构（请严格按此结构输出 JSON）\n输出格式: { \"sections\": [ { \"items\": [ { \"content\": \"...\", \"source\": \"...\" } ] } ] }\nsections 数组长度必须与以下板块数量一致。\n\n### 板块 1: 本周任务进展\n填写指引: 本周完成了哪些任务、整体进度如何。\n输入类型: table\n是否必填: 是\n\n### 板块 2: 问题&对策\n填写指引: 存在哪些问题或风险、对应的对策是什么。\n输入类型: issue-list\n是否必填: 是\n\n### 板块 3: 下周计划\n填写指引: 所有成员的个人周计划必须收敛到月度计划表，并与对应项目目标、里程碑和上下游任务形成联动。\n输入类型: table\n是否必填: 是\n\n### 板块 4: 思考总结\n填写指引: 有什么想法或心得体会，都可以拿出来分享下。\n输入类型: rich-text\n是否必填: 是\n\n## 采集到的原始数据\n\n请基于以上数据生成周报，每个条目的 source 字段标记来源：map-platform / daily-log / ai\n严格约束：\n1. 只基于「采集到的原始数据」中明确列出的指标生成内容，禁止凭空编造。\n2. 不要把指标名称改写成其他活动。采集结果说什么就是什么，不允许语义漂移：\n   - 「创建 PRD 项目」不能写成「编辑文档」「新建知识库」「完成技术规范」\n   - 「网页发布/更新」不能写成「发布网站」的泛化描述或夸大数量\n   - 「AI 调用」不能写成「优化处理效率」「辅助生成」的效果类描述\n3. 指标数值必须与采集结果完全一致，禁止凑整、放大、捏造修饰语（如「量较大」「若干篇」）。\n4. 如果某个板块确实没有数据支撑，请输出空 items 数组，禁止用「无数据」「待补充」等占位文本。\n",
+        "originalPromptMatch": null
+      },
+      "note": "在同一冻结输入上，直接运行真实旧规则回退方法与生产使用的新证据引擎；上游失败档不作为模型质量改进率。"
+    }
+  ]
+}

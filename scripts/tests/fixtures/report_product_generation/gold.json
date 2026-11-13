@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "annotationMethod": "人工依据冻结输入和原始来源独立标注；状态词表示证据支持程度，不推测实际上是否已完成。",
+  "cases": [
+    {
+      "id": "actual-w41-captured-model",
+      "expectedItemIds": [],
+      "mustDeclareInsufficientEvidence": true,
+      "mustNotClaimNoRisk": true,
+      "mustNotClaimOnSchedule": true,
+      "metricsUnavailable": [
+        "efficiency",
+        "hours",
+        "benefit"
+      ],
+      "notes": "真实旧模型输出没有凭空填零风险，但把三个可能重叠的活动类相加为28次，不能解释为28个独立成果；不将这句话强判成旧模型已声称28成果。"
+    },
+    {
+      "id": "actual-w41-upstream-failure-replay",
+      "expectedItemIds": [],
+      "mustDeclareInsufficientEvidence": true,
+      "mustNotClaimNoRisk": true,
+      "mustNotClaimOnSchedule": true,
+      "metricsUnavailable": [
+        "efficiency",
+        "hours",
+        "benefit"
+      ],
+      "legacyUnsupportedSpans": [
+        "本周工作按计划推进",
+        "本周未发现明显阻塞风险"
+      ]
+    },
+    {
+      "id": "real-history-week",
+      "expectedItemIds": [
+        "core-smoke",
+        "kb-sync",
+        "web-redeploy"
+      ],
+      "expectedStages": {
+        "core-smoke": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown"
+        },
+        "kb-sync": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown"
+        },
+        "web-redeploy": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown"
+        }
+      },
+      "metricsUnavailable": [
+        "efficiency",
+        "hours",
+        "benefit"
+      ]
+    },
+    {
+      "id": "real-history-cross-day",
+      "expectedItemIds": [
+        "core-smoke",
+        "kb-sync"
+      ],
+      "metricsUnavailable": [
+        "efficiency",
+        "hours",
+        "benefit"
+      ],
+      "notes": "网页重部署属于后续日期，不能泄漏到本窗口。"
+    },
+    {
+      "id": "real-history-cross-month",
+      "expectedItemIds": [
+        "core-smoke",
+        "kb-sync",
+        "web-redeploy"
+      ],
+      "expectedStages": {
+        "core-smoke": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown"
+        },
+        "kb-sync": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown"
+        },
+        "web-redeploy": {
+          "code": "in_progress",
+          "validation": "stale",
+          "release": "unknown"
+        }
+      },
+      "metricsUnavailable": [
+        "efficiency",
+        "hours",
+        "benefit"
+      ],
+      "mustNotCountOldMilestonesAsNew": true
+    },
+    {
+      "id": "real-external-blocker-no-new-activity",
+      "expectedItemIds": [
+        "knowledge-embedding"
+      ],
+      "expectedStages": {
+        "knowledge-embedding": {
+          "code": "in_progress",
+          "validation": "unknown",
+          "release": "unknown"
+        }
+      },
+      "blockedItemIds": [
+        "knowledge-embedding"
+      ],
+      "metricsUnavailable": [
+        "efficiency",
+        "hours",
+        "benefit"
+      ],
+      "mustNotCountOldMilestonesAsNew": true
+    }
+  ]
+}

@@ -1,0 +1,506 @@
+{
+  "baseline": {
+    "gitRef": "0459c01b162ba17c0230f8ad8cdf26d02c199f03",
+    "sourcePath": "prd-api/src/PrdAgent.Api/Services/ReportAgent/ReportGenerationService.cs",
+    "sha256": "be5ad17846a2a319774e93747067b1713ac50c1cd5b07b0ee1166af775a0f88f",
+    "sourceUri": "https://github.com/inernoro/prd_agent/blob/0459c01b162ba17c0230f8ad8cdf26d02c199f03/prd-api/src/PrdAgent.Api/Services/ReportAgent/ReportGenerationService.cs"
+  },
+  "sampleInputDigest": "746ff92019ff12752ff26f5e239f1058c114a1709888b07d47eda089aad4a409",
+  "definition": {
+    "omissions": "已标注真实事项未出现在交付跟踪中；仅比较本固定样本，不推断采集全集完整率。",
+    "duplicates": "交付章节同一已知事项的多行提交记录，风险和计划章节的必要引用不算重复成果。",
+    "unsupportedConclusions": "与独立来源标签不符的阶段/新增计数，或没有任务证据却断言无风险、按计划、效率稳定。",
+    "missingDirectCitations": "肯定正文条目缺少直接来源引用；证据不足声明不当成无来源肯定结论。"
+  },
+  "limits": [
+    "模型档使用真实历史捕获响应回放，不是本次重新调用模型，不宣称模型本身的线上质量改善率。",
+    "故障注入档直接执行真实旧规则方法；真实W46旧四章原文单独保留，不用今天重查的变化输入冒充当时输入。",
+    "旧正文的自由语义仍需人工核查，自动评分仅覆盖预先声明的标签和原文模式，不宣称自动判断任意正文。",
+    "各指标会重叠，不可相加为单一质量分。"
+  ],
+  "totals": {
+    "old": {
+      "omissions": 5,
+      "duplicates": 7,
+      "unsupportedConclusions": 6,
+      "missingDirectCitations": 34
+    },
+    "current": {
+      "omissions": 0,
+      "duplicates": 0,
+      "unsupportedConclusions": 0,
+      "missingDirectCitations": 0
+    }
+  },
+  "cases": [
+    {
+      "id": "actual-w41-captured-model",
+      "upstreamMode": "captured-model-response",
+      "inputDigest": "50358db5d76c2241724ab1f815107e5d43ff0092ae2cc76a75645a7e9a5ca2af",
+      "old": {
+        "omissions": 0,
+        "duplicates": 0,
+        "unsupportedConclusions": 0,
+        "missingDirectCitations": 2
+      },
+      "current": {
+        "omissions": 0,
+        "duplicates": 0,
+        "unsupportedConclusions": 0,
+        "missingDirectCitations": 0
+      },
+      "retainedFailures": {
+        "old": {
+          "omissions": [],
+          "duplicates": [],
+          "unsupportedConclusions": [],
+          "missingDirectCitations": [
+            {
+              "section": 0,
+              "item": 0,
+              "span": "完成图片生成 10 次、网页发布/更新 8 次、AI 调用 10 次。",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 3,
+              "item": 0,
+              "span": "本周工作记录覆盖图片生成、网页发布/更新和 AI 调用三类行为，共计 28 次。",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            }
+          ]
+        },
+        "current": {
+          "omissions": [],
+          "duplicates": [],
+          "unsupportedConclusions": [],
+          "missingDirectCitations": []
+        }
+      }
+    },
+    {
+      "id": "actual-w41-upstream-failure-replay",
+      "upstreamMode": "upstream-failed",
+      "inputDigest": "29657cb671200dcdc982744fd0ca2fcb10379c3de1588a8708fbf87a9eb0b8bb",
+      "old": {
+        "omissions": 0,
+        "duplicates": 0,
+        "unsupportedConclusions": 3,
+        "missingDirectCitations": 4
+      },
+      "current": {
+        "omissions": 0,
+        "duplicates": 0,
+        "unsupportedConclusions": 0,
+        "missingDirectCitations": 0
+      },
+      "retainedFailures": {
+        "old": {
+          "omissions": [],
+          "duplicates": [],
+          "unsupportedConclusions": [
+            {
+              "section": 0,
+              "item": 0,
+              "span": "本周工作按计划推进，建议下周继续围绕核心目标聚焦执行。",
+              "reason": "没有任务与计划对照证据不能断言按计划推进"
+            },
+            {
+              "section": 1,
+              "item": 0,
+              "span": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+              "reason": "没有风险证据不能据此断言无阻塞"
+            },
+            {
+              "section": 3,
+              "item": 0,
+              "span": "本周工作按计划推进，建议下周继续围绕核心目标聚焦执行。",
+              "reason": "没有任务与计划对照证据不能断言按计划推进"
+            }
+          ],
+          "missingDirectCitations": [
+            {
+              "section": 0,
+              "item": 0,
+              "span": "本周工作按计划推进，建议下周继续围绕核心目标聚焦执行。",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 1,
+              "item": 0,
+              "span": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 2,
+              "item": 0,
+              "span": "下周聚焦核心目标拆解与交付节奏，按优先级推进并按日复盘。",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 3,
+              "item": 0,
+              "span": "本周工作按计划推进，建议下周继续围绕核心目标聚焦执行。",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            }
+          ]
+        },
+        "current": {
+          "omissions": [],
+          "duplicates": [],
+          "unsupportedConclusions": [],
+          "missingDirectCitations": []
+        }
+      }
+    },
+    {
+      "id": "real-history-week",
+      "upstreamMode": "upstream-failed",
+      "inputDigest": "8d917b79d593d55124b104a2b2f6b2cf42ab50b56a250d82a653f76363a3e71e",
+      "old": {
+        "omissions": 1,
+        "duplicates": 3,
+        "unsupportedConclusions": 1,
+        "missingDirectCitations": 12
+      },
+      "current": {
+        "omissions": 0,
+        "duplicates": 0,
+        "unsupportedConclusions": 0,
+        "missingDirectCitations": 0
+      },
+      "retainedFailures": {
+        "old": {
+          "omissions": [
+            {
+              "workItemId": "kb-sync",
+              "reason": "交付章节未连续跟踪该已知事项"
+            }
+          ],
+          "duplicates": [
+            {
+              "workItemId": "web-redeploy",
+              "extraRows": 3
+            }
+          ],
+          "unsupportedConclusions": [
+            {
+              "section": 1,
+              "item": 0,
+              "span": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+              "reason": "没有风险证据不能据此断言无阻塞"
+            }
+          ],
+          "missingDirectCitations": [
+            {
+              "section": 0,
+              "item": 0,
+              "span": "代码提交：fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 0,
+              "item": 1,
+              "span": "代码提交：docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #158 (#1636)",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 0,
+              "item": 2,
+              "span": "代码提交：docs(web-hosting): #135 真实 revision 切换验收通过后移入已修复，新增 #157、#158",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 0,
+              "item": 3,
+              "span": "代码提交：docs(web-hosting): #153 补记样式表隐藏数字造成的误拒",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 0,
+              "item": 4,
+              "span": "代码提交：docs(web-hosting): #135 退回待验收，等真实重新部署证据再关闭",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 1,
+              "item": 0,
+              "span": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 2,
+              "item": 0,
+              "span": "继续推进：代码提交：fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 2,
+              "item": 1,
+              "span": "继续推进：代码提交：docs(web-hosting): 债务台账关闭 #135、#149，新增 #152 至 #158 (#1636)",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 2,
+              "item": 2,
+              "span": "继续推进：代码提交：docs(web-hosting): #135 真实 revision 切换验收通过后移入已修复，新增 #157、#158",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 2,
+              "item": 3,
+              "span": "继续推进：代码提交：docs(web-hosting): #153 补记样式表隐藏数字造成的误拒",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 2,
+              "item": 4,
+              "span": "继续推进：代码提交：docs(web-hosting): #135 退回待验收，等真实重新部署证据再关闭",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 3,
+              "item": 0,
+              "span": "本周完成 7 次代码提交，持续推进需求落地。",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            }
+          ]
+        },
+        "current": {
+          "omissions": [],
+          "duplicates": [],
+          "unsupportedConclusions": [],
+          "missingDirectCitations": []
+        }
+      }
+    },
+    {
+      "id": "real-history-cross-day",
+      "upstreamMode": "upstream-failed",
+      "inputDigest": "092bf9fa5e7025d328228e657790b6c9d795eb3e1142cbc8001c0b0cbec84866",
+      "old": {
+        "omissions": 1,
+        "duplicates": 4,
+        "unsupportedConclusions": 1,
+        "missingDirectCitations": 12
+      },
+      "current": {
+        "omissions": 0,
+        "duplicates": 0,
+        "unsupportedConclusions": 0,
+        "missingDirectCitations": 0
+      },
+      "retainedFailures": {
+        "old": {
+          "omissions": [
+            {
+              "workItemId": "kb-sync",
+              "reason": "交付章节未连续跟踪该已知事项"
+            }
+          ],
+          "duplicates": [
+            {
+              "workItemId": "core-smoke",
+              "extraRows": 4
+            }
+          ],
+          "unsupportedConclusions": [
+            {
+              "section": 1,
+              "item": 0,
+              "span": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+              "reason": "没有风险证据不能据此断言无阻塞"
+            }
+          ],
+          "missingDirectCitations": [
+            {
+              "section": 0,
+              "item": 0,
+              "span": "代码提交：fix(stable-smoke): GW-007 清理阶段按当前列表停用带标记备用，不再攒可能过期的 id",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 0,
+              "item": 1,
+              "span": "代码提交：fix(stable-smoke): 隔离启用着的带标记备用排在自愈之前",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 0,
+              "item": 2,
+              "span": "代码提交：fix(stable-smoke): 带标记备用只认夹具写入的精确备注格式",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 0,
+              "item": 3,
+              "span": "代码提交：test(e2e): 自愈回归用例从补备用起就进入清理作用域，任何 setup 失败都停掉启用着的带标记备用",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 0,
+              "item": 4,
+              "span": "代码提交：fix(stable-smoke): 挑捐出方时排除已绑定上游，回归用例进入时无条件先自愈，嵌入用例按可嵌入性分支",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 1,
+              "item": 0,
+              "span": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 2,
+              "item": 0,
+              "span": "继续推进：代码提交：fix(stable-smoke): GW-007 清理阶段按当前列表停用带标记备用，不再攒可能过期的 id",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 2,
+              "item": 1,
+              "span": "继续推进：代码提交：fix(stable-smoke): 隔离启用着的带标记备用排在自愈之前",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 2,
+              "item": 2,
+              "span": "继续推进：代码提交：fix(stable-smoke): 带标记备用只认夹具写入的精确备注格式",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 2,
+              "item": 3,
+              "span": "继续推进：代码提交：test(e2e): 自愈回归用例从补备用起就进入清理作用域，任何 setup 失败都停掉启用着的带标记备用",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 2,
+              "item": 4,
+              "span": "继续推进：代码提交：fix(stable-smoke): 挑捐出方时排除已绑定上游，回归用例进入时无条件先自愈，嵌入用例按可嵌入性分支",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 3,
+              "item": 0,
+              "span": "本周完成 23 次代码提交，持续推进需求落地。",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            }
+          ]
+        },
+        "current": {
+          "omissions": [],
+          "duplicates": [],
+          "unsupportedConclusions": [],
+          "missingDirectCitations": []
+        }
+      }
+    },
+    {
+      "id": "real-history-cross-month",
+      "upstreamMode": "upstream-failed",
+      "inputDigest": "2c1899ee3c33f26944bf049d62423cf339ca2ecf05760cf3e84d95eced8e9c1a",
+      "old": {
+        "omissions": 2,
+        "duplicates": 0,
+        "unsupportedConclusions": 1,
+        "missingDirectCitations": 4
+      },
+      "current": {
+        "omissions": 0,
+        "duplicates": 0,
+        "unsupportedConclusions": 0,
+        "missingDirectCitations": 0
+      },
+      "retainedFailures": {
+        "old": {
+          "omissions": [
+            {
+              "workItemId": "kb-sync",
+              "reason": "交付章节未连续跟踪该已知事项"
+            },
+            {
+              "workItemId": "web-redeploy",
+              "reason": "交付章节未连续跟踪该已知事项"
+            }
+          ],
+          "duplicates": [],
+          "unsupportedConclusions": [
+            {
+              "section": 1,
+              "item": 0,
+              "span": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+              "reason": "没有风险证据不能据此断言无阻塞"
+            }
+          ],
+          "missingDirectCitations": [
+            {
+              "section": 0,
+              "item": 0,
+              "span": "代码提交：fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 1,
+              "item": 0,
+              "span": "本周未发现明显阻塞风险，建议保持每日同步并提前暴露依赖问题。",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 2,
+              "item": 0,
+              "span": "继续推进：代码提交：fix: 修复每日核心功能验收报出的排行榜停更与浮窗遮挡 (#1656)",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            },
+            {
+              "section": 3,
+              "item": 0,
+              "span": "本周完成 1 次代码提交，持续推进需求落地。",
+              "reason": "只有泛化source标签，没有可直接核查的引用"
+            }
+          ]
+        },
+        "current": {
+          "omissions": [],
+          "duplicates": [],
+          "unsupportedConclusions": [],
+          "missingDirectCitations": []
+        }
+      }
+    },
+    {
+      "id": "real-external-blocker-no-new-activity",
+      "upstreamMode": "upstream-failed",
+      "inputDigest": "17acb3ab65aff3d5f0046dbe5312dc777da9143ed64edf42246596b263eb5ad7",
+      "old": {
+        "omissions": 1,
+        "duplicates": 0,
+        "unsupportedConclusions": 0,
+        "missingDirectCitations": 0
+      },
+      "current": {
+        "omissions": 0,
+        "duplicates": 0,
+        "unsupportedConclusions": 0,
+        "missingDirectCitations": 0
+      },
+      "retainedFailures": {
+        "old": {
+          "omissions": [
+            {
+              "workItemId": "knowledge-embedding",
+              "reason": "交付章节未连续跟踪该已知事项"
+            }
+          ],
+          "duplicates": [],
+          "unsupportedConclusions": [],
+          "missingDirectCitations": []
+        },
+        "current": {
+          "omissions": [],
+          "duplicates": [],
+          "unsupportedConclusions": [],
+          "missingDirectCitations": []
+        }
+      }
+    }
+  ]
+}
