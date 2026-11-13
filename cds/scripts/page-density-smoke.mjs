@@ -54,6 +54,12 @@ try {
     });
     const page = await context.newPage();
     page.on('pageerror', error => { console.error('pageerror', width, theme, error.message); failures.push(`${width}/${theme}: ${error.message}`); });
+    const scrollDistance = () => page.evaluate(() => {
+      const nodes = new Set([document.scrollingElement, ...document.querySelectorAll('*')]);
+      let total = 0;
+      for (const element of nodes) if (element && (element === document.scrollingElement || /auto|scroll/.test(getComputedStyle(element).overflowY))) total += element.scrollTop;
+      return total;
+    });
     const settle = async () => { await page.evaluate(() => document.fonts.ready); await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); };
     const save = async name => { console.log('capture', name, width, theme); await settle(); await page.screenshot({ path: `${out}/${name}-${width}-${theme}.png` }); check(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), `${name}/${width}/${theme}: document overflow`); };
     // Real application navigation with fixture data, not a token/storage bypass.
@@ -99,6 +105,10 @@ try {
     const serviceBox = await service.boundingBox();
     measurements.push({ page: 'branch-detail', width, theme, firstServiceY: serviceBox.y, targetHeight: serviceBox.height, minScrollToTarget: Math.max(0, serviceBox.y + serviceBox.height - (width === 390 ? 844 : 900)), labelFont: await service.evaluate(e => getComputedStyle(e.querySelector('.font-medium') || e).fontSize), optionalShaRegionHeight: (await page.getByText('提交一致性', { exact: true }).locator('..').boundingBox())?.height || 0 });
     check(serviceBox.y < (width === 390 ? 560 : 370), `${width}/${theme}: metadata delays first service`);
+    const beforeServiceSelection = await scrollDistance(); await page.getByRole('button', { name: /^web-1/ }).first().click();
+    measurements.at(-1).scrollToSelectSecondService = Math.abs(await scrollDistance() - beforeServiceSelection);
+    measurements.at(-1).coreClickSteps = 1;
+
     if (!layoutOnly) {
       const consistency = page.locator('summary').filter({ hasText: '提交一致性' });
       await consistency.focus(); await page.keyboard.press('Enter');
@@ -110,6 +120,10 @@ try {
     const node = page.getByRole('button', { name: /^api/ }).first(); await node.waitFor(); await save('branch-topology');
     const nodeBox = await node.boundingBox(); measurements.push({ page: 'branch-topology', width, theme, firstNodeY: nodeBox.y, targetHeight: nodeBox.height, minScrollToTarget: Math.max(0, nodeBox.y + nodeBox.height - (width === 390 ? 844 : 900)), labelFont: await node.evaluate(e => getComputedStyle(e.querySelector('.text-sm') || e).fontSize) });
     check(nodeBox.y < (width === 390 ? 760 : 355), `${width}/${theme}: repeated summaries delay topology nodes`);
+    const beforeNodeSelection = await scrollDistance(); await page.getByRole('button', { name: /^web-1/ }).first().click();
+    measurements.at(-1).scrollToSelectSecondNode = Math.abs(await scrollDistance() - beforeNodeSelection);
+    measurements.at(-1).coreClickSteps = 1;
+
     if (!layoutOnly) {
       const select = page.locator('select').filter({ has: page.locator('option[value=""]', { hasText: '共享视图' }) }).first();
       await select.selectOption(branch().id); check(await page.getByText('分支详情', { exact: true }).isVisible(), `${width}/${theme}: single-branch context missing`);
