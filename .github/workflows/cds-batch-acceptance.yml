@@ -67,3 +67,40 @@ jobs:
             echo '错误提交不得通过 check' >&2
             exit 1
           fi
+      - name: 构建同提交专用验收站点镜像
+        env:
+          IMAGE: cds-batch-acceptance:${{ github.sha }}
+        run: |
+          docker build --build-arg CDS_COMMIT_SHA="${{ github.sha }}" --tag "$IMAGE" acceptance/cds-batch
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "${{ github.sha }}"
+      - name: 真实HTTP验证镜像HTML、入口资源与健康提交
+        env:
+          IMAGE: cds-batch-acceptance:${{ github.sha }}
+          CDS_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          container=$(docker run --detach --rm --publish 127.0.0.1::8080 "$IMAGE")
+          trap 'docker stop "$container" >/dev/null' EXIT
+          address=$(docker port "$container" 8080/tcp)
+          export SITE_ORIGIN="http://$address"
+          python3 - <<'PYTHON'
+          import json,os,pathlib,time,urllib.request
+          origin=os.environ['SITE_ORIGIN']; sha=os.environ['CDS_COMMIT_SHA']; evidence=[]
+          for route in ['/', '/entry.js', '/health']:
+              for attempt in range(30):
+                  try:
+                      with urllib.request.urlopen(origin+route,timeout=5) as response:
+                          body=response.read().decode(); assert response.status==200; assert sha in body
+                          if route=='/health': assert json.loads(body)['status']=='healthy'
+                          evidence.append({'route':route,'status':response.status,'contentType':response.headers.get('content-type'),'body':body}); break
+                  except Exception:
+                      if attempt==29: raise
+                      time.sleep(.2)
+          pathlib.Path(os.environ['RUNNER_TEMP']+'/cds-batch-http-evidence.json').write_text(json.dumps(evidence,indent=2))
+          PYTHON
+      - name: 保留真实HTTP与提交证据
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-batch-acceptance-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/cds-batch-http-evidence.json
