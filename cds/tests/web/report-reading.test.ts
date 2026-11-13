@@ -36,7 +36,7 @@ describe('报告入口内容一致性', () => {
   describe('HTML纸面配色与Markdown宿主题', () => {
     let browser: Browser;
     beforeAll(async () => {
-      browser = await chromium.launch({ ...(process.env.CDS_CHROMIUM_PATH ? { executablePath: process.env.CDS_CHROMIUM_PATH } : { channel: 'chrome' }), headless: true });
+      browser = await chromium.launch({ ...(process.env.CDS_CHROMIUM_PATH ? { executablePath: process.env.CDS_CHROMIUM_PATH } : {}), headless: true });
     });
     afterAll(async () => { await browser?.close(); });
 
