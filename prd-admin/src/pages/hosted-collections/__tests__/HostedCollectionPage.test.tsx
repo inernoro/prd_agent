@@ -8,8 +8,8 @@ import type { HostedCollectionItem, HostedCollectionView } from '@/services/cont
 
 const api = vi.hoisted(() => ({ get: vi.fn(), share: vi.fn() }));
 vi.mock('@/services/real/hostedCollections', () => ({ getHostedCollection: api.get, readHostedCollectionShare: api.share }));
-vi.mock('../CollectionShell', () => ({ CollectionShell: ({ children }: { children: ReactNode }) => <div>{children}</div>, collectionDate: () => '11-13' }));
-vi.mock('../HostedCollectionManage', () => ({ HostedCollectionManage: ({ data, onSaved }: { data: HostedCollectionView; onSaved: (data: HostedCollectionView) => void }) => <div role="dialog" aria-label="管理合集">{data.collection.name}<button onClick={() => onSaved({ ...data, collection: { ...data.collection, siteIds: data.collection.siteIds.filter(id => !data.items.find(item => item.id === id)?.unavailable) }, items: data.items.filter(item => !item.unavailable) })}>保存移出不可用文档</button></div> }));
+vi.mock('../CollectionShell', () => ({ CollectionShell: ({ children, shareHref }: { children: ReactNode; shareHref?: string }) => <div data-shell-share-href={shareHref}>{children}</div>, collectionDate: () => '11-13' }));
+vi.mock('../HostedCollectionManage', () => ({ HostedCollectionManage: ({ data, onSaved }: { data: HostedCollectionView; onSaved: (data: HostedCollectionView) => void }) => <div role="dialog" aria-label="管理合集">{data.collection.name}{data.collection.siteIds.length === 0 && <button onClick={() => onSaved({ ...data, collection: { ...data.collection, siteIds: ['restored-first'], mainSiteId: 'restored-first', version: data.collection.version + 1 }, items: [{ id: 'restored-first', title: '恢复首份文档', canEdit: true, canShare: true }] })}>添加首份并保存</button>}<button onClick={() => onSaved({ ...data, collection: { ...data.collection, siteIds: data.collection.siteIds.filter(id => !data.items.find(item => item.id === id)?.unavailable) }, items: data.items.filter(item => !item.unavailable) })}>保存移出不可用文档</button></div> }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSectionLoader: () => <p>正在读取</p> }));
 vi.mock('../HostedCollectionDocument', () => ({ HostedCollectionDocument: ({ item, items, onNavigate, onBack, onManage }: { item?: HostedCollectionItem; items: HostedCollectionItem[]; onNavigate: (id: string) => void; onBack: () => void; onManage?: () => void }) => <div data-reading><p>{item?.title ?? '错误：继承了其他合集的文档'}</p>{item?.unavailable && onManage && <button onClick={onManage}>从合集移出</button>}<button onClick={() => { const i = items.findIndex(x => x.id === item?.id); if (items[i + 1]) onNavigate(items[i + 1].id); }}>下一篇</button><button onClick={onBack}>返回目录</button></div> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -82,6 +82,26 @@ describe('合集阅读游标必须跟随文档与路由', () => {
     await act(async () => slow.resolve({ success: false, error: { code: 'UNAUTHORIZED', message: '旧密码错误' } }));
     expect(container.textContent).toContain('shared合集');
     expect(container.textContent).not.toContain('旧密码错误');
+  });
+  it('legacy零成员读取引导添加并禁分享，既有管理保存首份后恢复正常阅读', async () => {
+    const data = fixture('a', 1); data.collection.siteIds = []; data.collection.mainSiteId = ''; data.items = [];
+    api.get.mockResolvedValue(ok(data));
+    await mount();
+    expect(container.textContent).toContain('0 份文档');
+    expect(container.textContent).toContain('还没有文档');
+    expect(container.textContent).toContain('第一份会成为主文档');
+    expect(container.textContent).toContain('合集在添加成员前不可分享');
+    expect(container.querySelector('[data-shell-share-href]')).toBeNull();
+    expect(container.querySelector('.hc-primary')).toBeNull();
+    expect(container.querySelector('.hc-read-actions')?.textContent).not.toContain('从主文档开始阅读');
+    await click('添加文档');
+    expect(container.querySelector('[role="dialog"][aria-label="管理合集"]')).toBeTruthy();
+    await click('添加首份并保存');
+    expect(container.textContent).not.toContain('还没有文档');
+    expect(container.querySelector('.hc-primary h2')?.textContent).toBe('恢复首份文档');
+    expect(container.querySelector('[data-shell-share-href]')?.getAttribute('data-shell-share-href')).toBe('/web-pages/collections/a/share');
+    await act(async () => (container.querySelector('.hc-primary .hc-mobile-read') as HTMLButtonElement).click());
+    expect(container.querySelector('[data-reading] p')?.textContent).toBe('恢复首份文档');
   });
   it('主文档读后返回，手机主卡不再提供同目标继续01', async () => {
     await mount();
