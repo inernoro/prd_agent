@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import io
 from pathlib import Path
 import tempfile
 import re
@@ -28,6 +29,12 @@ def wire(frames):
  return ''.join('data: '+json.dumps(f,ensure_ascii=False)+'\n\n' for f in frames)+'data: [DONE]\n\n'
 
 class CompatibilityTests(unittest.TestCase):
+ def test_error_reports_keep_structured_codes_without_error_bodies(self):
+  self.assertEqual('PARAMETER_PROTOCOL_UNSUPPORTED',m.response_error_code('{"Success":false,"ErrorCode":"PARAMETER_PROTOCOL_UNSUPPORTED","Error":"private body"}','application/json'))
+  self.assertEqual('invalid_request',m.response_error_code('data: {"error":{"code":"invalid_request","message":"private body"}}\n\n','text/event-stream'))
+  self.assertIsNone(m.response_error_code('{"error":{"code":"private body containing credentials"}}','application/json'))
+  self.assertIsNone(m.response_error_code('incomplete','application/json'))
+
  def test_reassembles_real_tool_json_fragments(self):
   result=m.normalize(CASE,200,'text/event-stream',wire(FRAMES))
   self.assertEqual([{'name':'echo_city','arguments':{'city':'北京'}}],result['tools'])
@@ -135,5 +142,30 @@ class CompatibilityTests(unittest.TestCase):
    report=json.loads(output.read_text())
    self.assertEqual(1,rc);self.assertEqual('fail',report['cases'][0]['status'])
    self.assertNotIn('secret upstream detail',output.read_text())
+
+ def test_provider_uses_one_configured_caller_in_native_body_headers_and_report(self):
+  caller='llmgw.compat-regression::chat'
+  native={'Success':True,'Content':'OK','Resolution':{'ActualModel':'fixed'},'TokenUsage':{'InputTokens':11,'OutputTokens':7}}
+  openai={'model':'fixed','choices':[{'message':{'content':'OK'},'finish_reason':'stop'}],'usage':{'prompt_tokens':11,'completion_tokens':7}}
+  sent=[]
+  def respond(opener,request,**kwargs):
+   sent.append(request)
+   response=io.BytesIO(json.dumps(native if request.full_url.endswith('/invoke') else openai).encode())
+   response.code=200;response.headers={'Content-Type':'application/json'}
+   return response
+  with tempfile.TemporaryDirectory() as d,patch.dict('os.environ',{'COMPAT_TEST_KEY':'synthetic'}):
+   target=Path(d)/'target.json';output=Path(d)/'provider.json'
+   target.write_text(json.dumps({'base':'https://gateway.invalid','model':'fixed','upstream':'openai','keyEnv':'COMPAT_TEST_KEY','appCallerCode':caller,'caseIds':['native-text-json','openai-text-json']}))
+   with patch.object(m.CANARY,'_health_check',return_value=({'ok':True,'commit':'a'*40},[])),patch.object(m.urllib.request.OpenerDirector,'open',respond):
+    self.assertEqual(0,m.main(['--mode','provider','--target',str(target),'--expected-commit','a'*40,'--output',str(output)]))
+   self.assertEqual(2,len(sent))
+   for request in sent:
+    self.assertEqual(caller,{k.lower():v for k,v in request.header_items()}['x-gateway-app-caller'])
+   self.assertEqual(caller,json.loads(sent[0].data)['AppCallerCode'])
+   self.assertEqual(caller,json.loads(output.read_text())['targetContract']['appCallerCode'])
+   config=json.loads(target.read_text());config['headersEnv']='COMPAT_TEST_HEADERS';target.write_text(json.dumps(config))
+   with patch.dict('os.environ',{'COMPAT_TEST_HEADERS':json.dumps({'X-Gateway-App-Caller':'other.identity::chat'})}),patch.object(m.CANARY,'_health_check',return_value=({'ok':True,'commit':'a'*40},[])),patch.object(m.urllib.request.OpenerDirector,'open',respond):
+    self.assertEqual(1,m.main(['--mode','provider','--target',str(target),'--expected-commit','a'*40,'--output',str(output)]))
+   self.assertEqual(2,len(sent),'identity mismatch must be rejected before transport')
 
 if __name__=='__main__':unittest.main()

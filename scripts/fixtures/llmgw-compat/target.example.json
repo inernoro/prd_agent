@@ -2,6 +2,7 @@
   "base": "https://your-test-gateway.example",
   "model": "existing-fixed-logical-model-id",
   "upstream": "openai",
+  "appCallerCode": "llmgw.compat-regression::chat",
   "keyEnv": "LLMGW_COMPAT_KEY",
   "headersEnv": "LLMGW_COMPAT_HEADERS",
   "caseIds": [

@@ -11,6 +11,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import urllib.parse
@@ -45,6 +46,20 @@ def get(obj, key, default=None):
     if key in obj:
         return obj[key]
     return obj.get(key[0].upper() + key[1:], default)
+
+
+def response_error_code(raw, content_type):
+    """Keep a bounded structured code, never an arbitrary error message/body."""
+    try:
+        frames = events(raw)[0] if 'text/event-stream' in content_type else [json.loads(raw)]
+        for frame in frames:
+            if not isinstance(frame, dict): continue
+            error = get(frame, 'error')
+            code = get(frame, 'errorCode') or (error.get('code') if isinstance(error, dict) else None)
+            if isinstance(code, str) and re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{1,79}', code): return code
+    except (ValueError, TypeError):
+        pass
+    return None
 
 
 def normalize(case, status, content_type, raw, expected_usage=None):
@@ -198,7 +213,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--mode', choices=['simulation','provider'], required=True)
     p.add_argument('--captures', type=Path)
-    p.add_argument('--target', type=Path, help='provider JSON: base, model, upstream, keyEnv, caseIds, headersEnv(optional)')
+    p.add_argument('--target', type=Path, help='provider JSON: base, model, upstream, keyEnv, caseIds, appCallerCode(optional), headersEnv(optional)')
     p.add_argument('--expected-commit', required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--baseline', type=Path)
@@ -215,6 +230,9 @@ def main(argv=None):
             assert args.expected_commit and len(args.expected_commit) == 40 and all(c in '0123456789abcdef' for c in args.expected_commit.lower()), 'exact 40-character deployed commit required'
             assert args.target, 'provider target is not configured; no provider validation performed'
             target = json.loads(args.target.read_text())
+            caller = target.get('appCallerCode', 'report-agent.generate::chat')
+            assert isinstance(caller, str) and caller.strip() == caller and caller, 'explicit nonempty appCallerCode required'
+            target['appCallerCode'] = caller
             assert target['upstream'] in ('openai','claude'), 'declare actual upstream protocol'
             assert target['model'] and target['model'] != 'auto', 'fixed model required'
             parsed_base = urllib.parse.urlsplit(target['base'])
@@ -226,7 +244,7 @@ def main(argv=None):
             health, failures = CANARY._health_check(target['base'], args.expected_commit, 20)
             assert not failures and health['ok'] and health['commit'] == args.expected_commit.lower(), 'target version not verified'
             report['observedCommit'] = health['commit']
-            report['targetContract'] = {k:target[k] for k in ('base','model','upstream','caseIds')}
+            report['targetContract'] = {k:target[k] for k in ('base','model','upstream','appCallerCode','caseIds')}
             report['unverified'] = [c['id'] for c in corpus if c['id'] not in target['caseIds']]
             jobs = [(c,target['upstream']) for c in corpus if c['id'] in target['caseIds']]
         for case, upstream in jobs:
@@ -242,11 +260,13 @@ def main(argv=None):
                 else:
                     body = copy.deepcopy(case['body'])
                     body['ExpectedModel' if case['protocol']=='native' else 'model'] = target['model']
-                    headers = {'X-Gateway-App-Caller':'report-agent.generate::chat',
+                    if case['protocol'] == 'native': body['AppCallerCode'] = target['appCallerCode']
+                    headers = {'X-Gateway-App-Caller':target['appCallerCode'],
                                'X-Gateway-Source':'compat-regression',
                                'X-Gateway-Include-Thinking':'false',
                                'X-Gateway-Run-Id':'compat-'+args.expected_commit[:12]}
                     headers.update(json.loads(os.environ.get(target.get('headersEnv',''), '{}')))
+                    assert all(v == target['appCallerCode'] for k,v in headers.items() if k.lower() == 'x-gateway-app-caller'), 'caller header differs from target contract'
                     assert not any(k.lower() == 'x-gateway-dry-run' for k in headers), 'dry-run forbidden in provider mode'
                     headers.update({'Content-Type':'application/json', 'X-Gateway-Key':key})
                     url = target['base'].rstrip('/') + case['path'].replace('{model}', 'auto')
@@ -265,6 +285,8 @@ def main(argv=None):
                     item['contentType'] = content_type
                     item['responseBytes'] = len(raw.encode('utf-8'))
                     item['responseSha256'] = hashlib.sha256(raw.encode()).hexdigest()
+                    code = response_error_code(raw, content_type)
+                    if code: item['errorCode'] = code
                 if rejected:
                     item['semantic'] = validate_rejection(case, status, content_type, raw)
                 else:

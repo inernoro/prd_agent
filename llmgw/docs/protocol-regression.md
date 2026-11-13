@@ -52,7 +52,7 @@ python3 scripts/llmgw-compat-regression.py --mode simulation \
 
 ## 真实供应商验证
 
-只使用已经配置的测试网关、模型和权限。先复制 `scripts/fixtures/llmgw-compat/target.example.json` 到受控位置，填测试地址、固定模型和已确认支持的 caseIds。模型需有相应工具/参数能力声明。keyEnv 和 headersEnv 仅引用环境变量名；密钥、任务许可等从安全渠道注入，不能写进文件或提交。
+只使用已经配置的测试网关、模型和权限。先复制 `scripts/fixtures/llmgw-compat/target.example.json` 到受控位置，填测试地址、固定模型、已授权且团队归属匹配的 `appCallerCode` 和已确认支持的 caseIds。模型需有相应工具/参数能力声明。`appCallerCode` 同时替换 Native 请求体和四入口请求头，并记入比较目标合同；不填时兼容旧默认 `report-agent.generate::chat`，不能用 headersEnv 单独覆盖成另一个身份。业务消息、工具 schema 和参数断言保持同一固定语料。keyEnv 和 headersEnv 仅引用环境变量名；密钥、任务许可等从安全渠道注入，不能写进文件或提交。
 
 ```bash
 python3 scripts/llmgw-compat-regression.py --mode provider \
@@ -61,6 +61,8 @@ python3 scripts/llmgw-compat-regression.py --mode provider \
 ```
 
 执行前 healthz 必须返回该完整提交。每个所选用例最多调用一次，无自动重试或替身回退；默认示例 16 个用例，未选择的推理参数用例逐项列入 unverified。健康检查不能替代真实请求。CI 报告保留状态、媒体类型、字节数、响应哈希和安全的语义结果；详细原文应在网关受控审计中查询，不能上传任意供应商响应原文。模拟 captures 仅包含合成数据。
+
+失败报告另保留有界的结构化 `errorCode`，不保存任意供应商错误正文。`PARAMETER_UNVERIFIED` 表示当前模型缺少精确参数能力确认，不能解释为请求成功或自动改成 default-drop。尤其 gpt-5.6 的既有 Chat 兼容处理会在关闭思考时使用 `reasoning_effort:none`；严格入口仍要求对应参数能力确认。Claude/Gemini compatible 默认丢参路径能调用成功，不代表同一模型的严格入口或推理参数也已验证。
 
 CI 的 `LLMGW_COMPAT_TARGET` secret 保存目标 JSON，引用 `LLMGW_COMPAT_KEY` / 可选 `LLMGW_COMPAT_HEADERS`。手动 dispatch 现有 CI 时打开 llmgw_provider，并填写 llmgw_expected_commit。provider job 不依赖 simulation、失败照样上传独立 provider.json，并使 CI Status 失败。未打开时 job 为 skipped，表示未验证；未配置凭据却打开验证时直接失败。常规 PR 自动执行模拟回归，不自动消费供应商额度。
 
