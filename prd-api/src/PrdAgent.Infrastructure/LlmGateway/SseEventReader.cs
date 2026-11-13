@@ -11,6 +11,8 @@ public class SseEventReader
 {
     private readonly StreamReader _reader;
 
+    public bool Completed { get; private set; }
+
     public SseEventReader(StreamReader reader) => _reader = reader;
 
     /// <summary>
@@ -34,6 +36,7 @@ public class SseEventReader
                 var value = line.Substring(5).TrimStart();
                 if (value == "[DONE]")
                 {
+                    Completed = true;
                     yield break;
                 }
                 yield return value;

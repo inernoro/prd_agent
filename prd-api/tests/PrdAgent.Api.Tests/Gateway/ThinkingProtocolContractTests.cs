@@ -124,24 +124,24 @@ public class ThinkingProtocolContractTests
     }
 
     [Theory]
-    [InlineData(HttpStatusCode.BadRequest)]
-    [InlineData(HttpStatusCode.Unauthorized)]
-    [InlineData(HttpStatusCode.ServiceUnavailable)]
-    public async Task UpstreamFailure_RemainsDistinctFromCapabilityFailure(HttpStatusCode status)
+    [InlineData(HttpStatusCode.BadRequest, "LLM_ERROR")]
+    [InlineData(HttpStatusCode.Unauthorized, "LLM_ERROR")]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "UPSTREAM_OUTCOME_UNKNOWN")]
+    public async Task UpstreamFailure_RemainsDistinctFromCapabilityFailure(HttpStatusCode status, string code)
     {
         var http = new ProtocolUpstream(openRouter: false) { Failure = status };
         var (gateway, _) = CreateGateway(http, supportsThinking: true);
         var error = Assert.Single(await Collect(gateway.StreamAsync(Request())),
             c => c.Type == GatewayChunkType.Error);
-        Assert.Equal("LLM_ERROR", error.ErrorCode);
+        Assert.Equal(code, error.ErrorCode);
         Assert.Equal("contract-model", error.Resolution!.ActualModel);
         Assert.Equal(1, http.Calls);
     }
 
     [Theory]
-    [InlineData(false, "NETWORK_ERROR")]
-    [InlineData(true, "TIMEOUT")]
-    public async Task TransportFailure_PreservesTypedClassification(bool timeout, string code)
+    [InlineData(false, "网络")]
+    [InlineData(true, "超时")]
+    public async Task TransportFailure_PreservesCauseAndMarksUnknownExecution(bool timeout, string cause)
     {
         var http = new ProtocolUpstream(openRouter: false)
         {
@@ -151,7 +151,8 @@ public class ThinkingProtocolContractTests
         var (gateway, _) = CreateGateway(http, supportsThinking: true);
         var error = Assert.Single(await Collect(gateway.StreamAsync(Request())),
             c => c.Type == GatewayChunkType.Error);
-        Assert.Equal(code, error.ErrorCode);
+        Assert.Equal("UPSTREAM_OUTCOME_UNKNOWN", error.ErrorCode);
+        Assert.Contains(cause, error.Error);
         Assert.Equal("contract-model", error.Resolution!.ActualModel);
         Assert.Equal(1, http.Calls);
     }
