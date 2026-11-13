@@ -2,8 +2,10 @@ import { SharedReportSection } from './report-agent/components/SharedReportSecti
 import { RichTextMarkdownContent } from './report-agent/components/RichTextMarkdownContent';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSmartBack } from '@/hooks/useSmartBack';
+import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
+import { useResolvedThemeMode } from '@/stores/mobileThemeStore';
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
@@ -33,6 +35,9 @@ import { viewTeamWeekShare, type TeamWeekShareViewData } from '@/services';
 export default function ReportTeamShareViewPage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const resolvedTheme = useResolvedThemeMode();
+  useApplyDocumentTheme(pathname, resolvedTheme);
   // 智能返回：弹栈回真正的上一页；分享链接直达无历史时兜底回首页
   const goBack = useSmartBack('/');
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);

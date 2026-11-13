@@ -38,9 +38,10 @@ if(!process.env.REPORT_ANCHOR_ONLY)for(const width of [1440,390]) for(const them
  await page.route('https://example.com/evidence.svg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="900" height="220"><rect width="900" height="220" fill="#3564a6"/><text x="30" y="100" fill="white" font-size="30">Report evidence image</text></svg>'}));
  await page.route('https://example.com/missing.png',route=>route.fulfill({status:404,body:'missing'}));
  await page.goto(`${baseUrl}/scripts/fixtures/report-reading.html`);
- await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
+ await page.getByRole('radiogroup',{name:'主题',exact:true}).getByRole('radio',{name:theme==='light'?'白天':'黑夜',exact:true}).click();
  await page.getByRole('link',{name:'打开固定样本分享报告'}).click();
  await page.getByText('REPORT-END-完整文末').waitFor({state:'attached',timeout:60000});
+ assert.equal(await page.locator('html').getAttribute('data-theme')||'dark',theme,'独立分享页必须沿用真实主题控件选择的明暗');
  await page.locator('.mermaid-render svg').nth(1).waitFor({state:'attached',timeout:60000});
  await page.getByText(/图表渲染失败/).waitFor({state:'attached'});
  assert.equal(await page.locator('td').count(),15);
