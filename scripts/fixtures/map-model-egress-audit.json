@@ -311,11 +311,11 @@
     },
     "prd-api/src/PrdAgent.Api/Services/GitHubDirectorySyncService.cs": {
       "calls": {
-        "call:GetStringAsync:4c17ac644ecada49871b84f1": 1,
-        "call:SendAsync:c3ab8828cd34112fd4c4a251": 5,
+        "call:GetStringAsync:8e3232c9ecaab77439afda56": 1,
+        "call:SendAsync:d6e0aa5479afa5c37370b2e3": 5,
         "target-new:HttpClient:322584c0561c7d77cace338a": 1
       },
-      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+      "purpose": "GitHub 仓库目录、正文和提交时间读取，非模型用途；生产仍复用原 30 秒超时及既有请求头的静态 HttpClient。internal 构造注入仅用于隔离 HTTP 测试，接收变量改为 _http；逐调用更新 5 次 SendAsync 和 1 次 GetStringAsync 的精确指纹，不新增运输或放宽用途"
     },
     "prd-api/src/PrdAgent.Api/Services/HistoricalAssetUrlResolver.cs": {
       "calls": {

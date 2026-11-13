@@ -1,0 +1,66 @@
+name: Admin Operations Browser Compatibility
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'cds/web/**'
+      - 'llmgw/web/**'
+      - 'e2e/package.json'
+      - 'e2e/pnpm-lock.yaml'
+      - 'e2e/tsconfig.json'
+      - 'e2e/admin-operations.config.ts'
+      - 'e2e/specs/admin-operations-compat.spec.ts'
+      - 'e2e/fixtures/admin-operations*'
+      - 'cds/scripts/fixtures/mobile-layout-fixtures.mjs'
+      - '.github/workflows/admin-operations-compat.yml'
+  pull_request:
+    paths:
+      - 'cds/web/**'
+      - 'llmgw/web/**'
+      - 'e2e/package.json'
+      - 'e2e/pnpm-lock.yaml'
+      - 'e2e/tsconfig.json'
+      - 'e2e/admin-operations.config.ts'
+      - 'e2e/specs/admin-operations-compat.spec.ts'
+      - 'e2e/fixtures/admin-operations*'
+      - 'cds/scripts/fixtures/mobile-layout-fixtures.mjs'
+      - '.github/workflows/admin-operations-compat.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-operations:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install frontend and browser test dependencies
+        run: |
+          pnpm -C cds/web install --frozen-lockfile
+          pnpm -C llmgw/web install --frozen-lockfile
+          pnpm -C e2e install --frozen-lockfile
+          pnpm -C e2e exec playwright install --with-deps chromium firefox webkit
+      - name: Build the actual frontend bundles
+        run: |
+          pnpm -C cds/web typecheck
+          pnpm -C cds/web build
+          pnpm -C llmgw/web build
+          pnpm -C e2e typecheck
+      - name: Verify isolated management operations across browser engines
+        run: pnpm -C e2e exec playwright test -c admin-operations.config.ts --workers=2
+      - name: Retain browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-operations-browser-evidence
+          path: work/compat/
+          retention-days: 14

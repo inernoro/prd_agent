@@ -96,7 +96,7 @@ public class EntryContentWriteService
         FilterDefinition<DocumentEntry>? extraGuard = null)
     {
         // 更新或创建 ParsedPrd（内容寻址 + 共享保护；乐观并发模式不就地覆盖旧文档）
-        var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content, reuseExclusiveDocId: expectedUpdatedAt == null);
+        var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content, reuseExclusiveDocId: false);
         entry.DocumentId = newDocId;
 
         // 摘要/搜索索引：html 条目剥标签取可读文本
@@ -144,14 +144,14 @@ public class EntryContentWriteService
         // 时间戳只回答「有没有被人动过」，答不了「这还是不是我那条」：确定性 id 会被重用，
         // 而 BSON 只到毫秒 —— 同一毫秒内被删掉再重建的话，两条在 Id + UpdatedAt 上完全一样，
         // 这次写入就会把正文落进**别人那一代**里，还接着参与它的收尾。
-        var entryFilter = Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id);
+        var entryFilter = DocumentEntryWriteGuard.ForCurrentLifecycle(entry);
         if (expectedUpdatedAt != null)
             entryFilter = Builders<DocumentEntry>.Filter.And(entryFilter,
                 Builders<DocumentEntry>.Filter.Eq(e => e.UpdatedAt, expectedUpdatedAt.Value));
         if (extraGuard != null)
             entryFilter = Builders<DocumentEntry>.Filter.And(entryFilter, extraGuard);
         var updateResult = await _db.DocumentEntries.UpdateOneAsync(entryFilter, contentUpdate);
-        if ((expectedUpdatedAt != null || extraGuard != null) && updateResult.MatchedCount == 0)
+        if (updateResult.MatchedCount == 0)
             return new WriteResult(now, 0, 0, 0, entry.DocumentId!, Conflicted: true);
 
         try
@@ -242,7 +242,7 @@ public class EntryContentWriteService
             parsed.Title = oldDoc?.Title ?? entry.Title;
             if (parsed.Id != entry.DocumentId && reuseExclusiveDocId)
             {
-                var sharedByOthers = await _db.DocumentEntries.CountDocumentsAsync(
+                var sharedByOthers = await _db.DocumentEntriesIncludingTrash.CountDocumentsAsync(
                     e => e.DocumentId == entry.DocumentId && e.Id != entry.Id) > 0;
                 if (!sharedByOthers)
                     parsed.Id = entry.DocumentId; // 独占 → 复用旧 id 就地更新，不产生孤儿

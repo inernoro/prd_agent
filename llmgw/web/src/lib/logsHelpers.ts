@@ -126,6 +126,7 @@ export function statusBadgeStyle(
     return { label: code ? String(code) : '成功', color: 'var(--text-muted)', bg: 'transparent', quiet: true };
   if (status === 'failed' || code >= 400)
     return { label: code ? String(code) : '失败', color: 'var(--err)', bg: 'var(--err-bg)' };
+  if (status === 'unknown') return { label: '结果未知', color: 'var(--warn)', bg: 'var(--warn-bg)' };
   if (status === 'running') return { label: '进行中', color: 'var(--info)', bg: 'var(--info-bg)' };
   if (status === 'cancelled') return { label: '已取消', color: 'var(--text-muted)', bg: 'rgba(148,163,184,0.15)' };
   return { label: status || DASH, color: 'var(--text-muted)', bg: 'rgba(148,163,184,0.15)' };
@@ -341,6 +342,7 @@ export function deriveLifecycle(it: {
   endedAt?: string | null;
 }): LifecycleInfo {
   const status = it.status || '';
+  if (status === 'unknown') return { key: 'unknown', label: '结果未知', color: 'var(--warn)', bg: 'var(--warn-bg)' };
   if (status === 'succeeded') return { key: 'completed', label: '已完成', color: '#34d399', bg: 'rgba(52,211,153,0.15)' };
   if (status === 'failed') return { key: 'failed', label: '失败', color: '#f87171', bg: 'rgba(248,113,113,0.15)' };
   if (status === 'cancelled') return { key: 'cancelled', label: '已取消', color: '#94a3b8', bg: 'rgba(148,163,184,0.15)' };

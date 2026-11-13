@@ -1,0 +1,246 @@
+<!doctype html><html lang="zh-CN" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>模型工作台 · 可交互预览</title><style>
+:root{
+  color-scheme: dark;
+  --bg-base:#141418; --bg-elevated:#1e1e24; --bg-card:rgba(255,255,255,.06);
+  --bg-card-hover:rgba(255,255,255,.10); --bg-input:rgba(255,255,255,.07);
+  --bg-nested:rgba(255,255,255,.025);
+  --text-primary:#f7f7fb; --text-secondary:rgba(247,247,251,.80); --text-muted:rgba(247,247,251,.55);
+  --border-faint:rgba(255,255,255,.08); --border-subtle:rgba(255,255,255,.12);
+  --border-default:rgba(255,255,255,.18);
+  --accent:#D97757; --accent-soft:rgba(217,119,87,.16); --accent-border:rgba(217,119,87,.42);
+  --ok:#5FBF7F; --ok-soft:rgba(95,191,127,.14);
+  --warn:#E0A85C; --warn-soft:rgba(224,168,92,.14);
+  --bad:#D96A6A; --bad-soft:rgba(217,106,106,.14);
+  --info:#7BA7D9; --info-soft:rgba(123,167,217,.14);
+  --shadow:0 10px 30px -20px rgba(0,0,0,.85);
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+[data-theme="light"]{
+  color-scheme: light;
+  --bg-base:#EEEAE3; --bg-elevated:#E4DED5; --bg-card:#F8F5EF;
+  --bg-card-hover:rgba(26,26,31,.05); --bg-input:#FBF8F3;
+  --bg-nested:rgba(26,26,31,.03);
+  --text-primary:#262029; --text-secondary:rgba(38,32,41,.78); --text-muted:rgba(38,32,41,.56);
+  --border-faint:rgba(26,26,31,.08); --border-subtle:rgba(26,26,31,.14);
+  --border-default:rgba(26,26,31,.22);
+  --accent:#A64B35; --accent-soft:rgba(166,75,53,.12); --accent-border:rgba(166,75,53,.34);
+  --ok:#3F8A5C; --ok-soft:rgba(63,138,92,.12);
+  --warn:#A9762C; --warn-soft:rgba(169,118,44,.12);
+  --bad:#B04A4A; --bad-soft:rgba(176,74,74,.12);
+  --info:#3F6E9E; --info-soft:rgba(63,110,158,.12);
+  --shadow:0 10px 26px -20px rgba(89,65,50,.5);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg-base);color:var(--text-primary);overflow-x:hidden;
+  font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",Segoe UI,Roboto,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px 100px}
+a{color:var(--accent)}
+
+header.top{position:sticky;top:0;z-index:40;background:var(--bg-base);border-bottom:1px solid var(--border-faint)}
+.top-inner{max-width:1180px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-size:17px;font-weight:650;letter-spacing:.2px}
+.brand span{color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px}
+.top-spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:12px;
+  border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-secondary);white-space:nowrap}
+.pill.accent{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent)}
+.pill.warn{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:9px;cursor:pointer;
+  border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-primary);
+  font-size:13px;font-family:inherit;transition:background .16s,border-color .16s,transform .1s}
+.btn:hover{background:var(--bg-card-hover);border-color:var(--border-default)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn[disabled]{opacity:.42;cursor:default}
+
+nav.secnav{position:sticky;top:57px;z-index:30;background:var(--bg-base);border-bottom:1px solid var(--border-faint)}
+.secnav-inner{max-width:1180px;margin:0 auto;padding:9px 20px;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+.secnav-inner::-webkit-scrollbar{display:none}
+.secnav a{flex:0 0 auto;padding:5px 11px;border-radius:8px;font-size:12.5px;text-decoration:none;
+  color:var(--text-muted);border:1px solid transparent;white-space:nowrap}
+.secnav a:hover{background:var(--bg-card);color:var(--text-primary)}
+.secnav a.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-border)}
+
+section{padding-top:52px;scroll-margin-top:112px}
+.sec-head{display:flex;align-items:baseline;gap:12px;margin-bottom:6px;flex-wrap:wrap}
+.sec-num{font:600 12px/1 var(--mono);color:var(--accent);letter-spacing:1.5px;padding-top:6px}
+h2{font-size:24px;margin:0;letter-spacing:-.2px}
+.sec-sub{color:var(--text-muted);font-size:13.5px;margin:0 0 22px 0}
+h3{font-size:16px;margin:26px 0 10px}
+.card{background:var(--bg-card);border:1px solid var(--border-faint);border-radius:14px;padding:18px;box-shadow:var(--shadow)}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g5{grid-template-columns:repeat(5,minmax(0,1fr))}
+@media(max-width:900px){.g3,.g5{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.g2,.g3,.g5{grid-template-columns:1fr}}
+
+.get{background:var(--bg-card);border:1px solid var(--border-faint);border-radius:13px;padding:15px 15px 16px}
+.get .ico{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);margin-bottom:10px}
+.get b{display:block;font-size:14px;margin-bottom:4px}
+.get p{margin:0;font-size:12.8px;color:var(--text-muted);line-height:1.65}
+.nots{border:1px dashed var(--border-subtle);border-radius:13px;padding:15px 18px;background:var(--bg-nested)}
+.nots ul{margin:8px 0 0;padding-left:19px;color:var(--text-muted);font-size:13px}
+.nots li{margin:3px 0}
+
+/* ---------- 演示外壳：按本次改动的真实页面结构改造 ---------- */
+.demo-frame{border:1px solid var(--border-default);border-radius:16px;overflow:hidden;background:var(--bg-elevated);box-shadow:var(--shadow)}
+.demo-bar{display:flex;align-items:center;gap:8px;padding:9px 13px;background:var(--bg-nested);border-bottom:1px solid var(--border-faint)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--border-default)}
+.urlbar{flex:1;text-align:center;font:11.5px/1 var(--mono);color:var(--text-muted);background:var(--bg-input);
+  border:1px solid var(--border-faint);border-radius:7px;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app{display:grid;grid-template-columns:186px 214px 1fr;min-height:552px}
+@media(max-width:900px){.app{grid-template-columns:1fr}.appnav,.applist{display:none!important}}
+.appnav{background:var(--bg-nested);border-right:1px solid var(--border-faint);padding:12px 9px}
+.navitem{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:9px;font-size:13px;color:var(--text-muted);cursor:default;margin-bottom:2px}
+.navitem.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.navitem.new::after{content:"新";font-size:9.5px;margin-left:auto;background:var(--accent);color:#fff;padding:1px 5px;border-radius:5px;font-weight:600}
+.navgroup{font-size:10.5px;color:var(--text-muted);opacity:.65;padding:12px 10px 5px;letter-spacing:.6px}
+.applist{background:var(--bg-nested);border-right:1px solid var(--border-faint);padding:12px 9px;overflow:auto}
+.newchat{width:100%;justify-content:center;margin-bottom:11px;font-size:12.5px;padding:7px}
+.sessitem{padding:9px 10px;border-radius:9px;margin-bottom:3px;cursor:default}
+.sessitem.on{background:var(--bg-card);border:1px solid var(--border-subtle)}
+.sessitem b{display:block;font-size:12.7px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sessitem span{font-size:11px;color:var(--text-muted)}
+.chat{display:flex;flex-direction:column;background:var(--bg-elevated);min-width:0}
+.chat-head{display:flex;align-items:center;gap:10px;padding:11px 18px;border-bottom:1px solid var(--border-faint);font-size:13.5px;font-weight:600}
+.chat-head .pill{margin-left:auto;font-size:11px;padding:3px 9px}
+.stream{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px;min-height:340px;max-height:440px}
+.stream::-webkit-scrollbar{width:7px}
+.stream::-webkit-scrollbar-thumb{background:var(--border-subtle);border-radius:4px}
+.msg{display:flex;gap:11px;animation:rise .34s cubic-bezier(.2,.7,.3,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+.avatar{flex:0 0 27px;height:27px;border-radius:8px;display:grid;place-items:center;font-size:10.5px;font-weight:700;margin-top:1px}
+.msg.user .avatar{background:var(--info-soft);color:var(--info)}
+.msg.ai .avatar{background:var(--accent-soft);color:var(--accent)}
+.body{flex:1;min-width:0}
+.bubble{background:var(--bg-card);border:1px solid var(--border-faint);border-radius:12px;padding:10px 13px;font-size:13.6px;line-height:1.72;white-space:pre-wrap}
+.msg.user .bubble{background:var(--info-soft);border-color:transparent}
+.think{font-size:12.3px;color:var(--text-muted);font-style:italic;border-left:2px solid var(--border-subtle);padding:2px 0 2px 10px;margin-bottom:7px}
+.caret{display:inline-block;width:2px;height:1em;background:var(--accent);vertical-align:-2px;animation:blink .95s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+.tool{border:1px solid var(--border-subtle);border-radius:12px;overflow:hidden;background:var(--bg-nested);margin-top:8px}
+.tool-head{display:flex;align-items:center;gap:9px;padding:9px 12px;font-size:12.6px;font-weight:600}
+.tool-head .tag{font:10.5px/1 var(--mono);padding:2px 6px;border-radius:5px;background:var(--bg-card);border:1px solid var(--border-faint);color:var(--text-muted);font-weight:400}
+.tool-state{margin-left:auto;font-size:11.5px;font-weight:500}
+.tool.run .tool-state{color:var(--accent)}
+.tool.done .tool-state{color:var(--ok)}
+.tool.fail .tool-state{color:var(--bad)}
+.tool-body{padding:0 12px 12px}
+.bar{height:4px;border-radius:3px;background:var(--border-faint);overflow:hidden;margin:2px 0 8px}
+.bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .5s ease}
+.steps{display:flex;gap:5px;flex-wrap:wrap;font-size:11.2px;color:var(--text-muted)}
+.steps s{text-decoration:none;padding:2px 7px;border-radius:6px;background:var(--bg-card);border:1px solid var(--border-faint)}
+.steps s.on{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent)}
+.steps s.ok{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+/* 产物占位：用渐变模拟图片等视觉产物，禁止外链真实图片 */
+.artwork{height:126px;border-radius:9px;margin-top:4px;position:relative;overflow:hidden;
+  background:linear-gradient(125deg,#D97757 0%,#8E4B6E 42%,#3B4E86 100%);
+  display:grid;place-items:center;color:#fff;text-align:center;animation:fadein .55s ease both}
+@keyframes fadein{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+.artwork::after{content:"";position:absolute;inset:0;background:radial-gradient(120% 90% at 18% 8%,rgba(255,255,255,.34),transparent 55%)}
+.artwork div{position:relative;z-index:1}
+.artwork b{display:block;font-size:16px;letter-spacing:3px}
+.artwork span{font-size:10.5px;opacity:.85;letter-spacing:1.5px}
+.kbcard{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;background:var(--ok-soft);border:1px solid transparent;font-size:12.4px;margin-top:2px}
+.kbcard .btn{margin-left:auto;padding:4px 10px;font-size:11.5px}
+.cite{font-size:11.8px;color:var(--text-muted);border-left:2px solid var(--accent-border);padding-left:9px;margin-top:7px}
+.cite b{color:var(--text-secondary);font-weight:550}
+.composer{border-top:1px solid var(--border-faint);padding:11px 16px 14px;background:var(--bg-elevated)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px}
+.chip{font-size:11.5px;padding:4px 10px;border-radius:999px;cursor:pointer;border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-secondary)}
+.chip:hover{border-color:var(--accent-border);color:var(--accent)}
+.inputrow{display:flex;gap:9px;align-items:center;background:var(--bg-input);border:1px solid var(--border-subtle);border-radius:11px;padding:8px 10px 8px 13px}
+.inputrow input{flex:1;background:transparent;border:0;outline:0;color:var(--text-primary);font:14px/1.5 inherit}
+.inputrow input::placeholder{color:var(--text-muted)}
+.sendbtn{width:31px;height:31px;border-radius:8px;border:0;background:var(--accent);color:#fff;display:grid;place-items:center;cursor:pointer}
+.playbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:14px 0 0}
+.playbar .hint{font-size:12.3px;color:var(--text-muted)}
+
+/* ---------- 图表元件 ---------- */
+.figwrap{overflow-x:auto;border:1px solid var(--border-faint);border-radius:14px;background:var(--bg-card);padding:16px}
+svg .bx{fill:var(--bg-nested);stroke:var(--border-subtle)}
+svg .bx.acc{fill:var(--accent-soft);stroke:var(--accent-border)}   /* 本次新增 */
+svg .bx.ok{fill:var(--ok-soft);stroke:transparent}                 /* 复用现有 */
+svg .bx.info{fill:var(--info-soft);stroke:transparent}             /* 用户侧 */
+svg .bx.warn{fill:var(--warn-soft);stroke:transparent}
+svg .bx.bad{fill:var(--bad-soft);stroke:var(--bad);stroke-dasharray:5 4} /* 明确不碰 */
+svg text{fill:var(--text-primary);font-family:inherit}
+svg .t{font-size:12.5px;font-weight:600}
+svg .s{font-size:10.8px;fill:var(--text-muted);font-weight:400}
+svg .lbl{font-size:10.5px;fill:var(--text-muted)}
+svg .ln{stroke:var(--border-default);fill:none}
+svg .ln.acc{stroke:var(--accent)}
+svg .grp{fill:none;stroke:var(--border-faint);stroke-dasharray:4 4}
+svg .grpt{font-size:10.5px;fill:var(--text-muted);letter-spacing:1px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--text-muted)}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+
+.lane{border:1px solid var(--border-faint);border-radius:13px;background:var(--bg-card);padding:15px;margin-bottom:12px}
+.lane-head{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+.lane-head b{font-size:14.5px}
+.lane-head .pill{font-size:11px;padding:3px 9px}
+.flow{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding-bottom:4px}
+.step{flex:0 0 auto;min-width:126px;max-width:170px;background:var(--bg-nested);border:1px solid var(--border-faint);border-radius:10px;padding:9px 11px;font-size:12.2px}
+.step b{display:block;font-size:12.4px;margin-bottom:3px}
+.step span{color:var(--text-muted);font-size:11.3px;line-height:1.55;display:block}
+.step.end{background:var(--ok-soft);border-color:transparent}
+.step.end b{color:var(--ok)}
+.arrow{flex:0 0 auto;display:grid;place-items:center;padding:0 7px;color:var(--text-muted)}
+.endnote{margin-top:10px;font-size:12px;color:var(--text-muted);display:flex;gap:7px;align-items:flex-start}
+.endnote b{color:var(--ok)}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--border-faint);vertical-align:top}
+th{font-size:11.5px;letter-spacing:.5px;color:var(--text-muted);font-weight:600;background:var(--bg-nested)}
+tbody tr:hover{background:var(--bg-card-hover)}
+td code,.mono{font:12px var(--mono);background:var(--bg-nested);padding:1px 5px;border-radius:4px}
+.tblwrap{overflow-x:auto;border:1px solid var(--border-faint);border-radius:13px}
+.yes{color:var(--ok);font-weight:600}
+.no{color:var(--bad);font-weight:600}
+
+.dd{border-radius:13px;padding:16px;border:1px solid var(--border-faint)}
+.dd.do{background:var(--ok-soft)}
+.dd.dont{background:var(--bad-soft)}
+.dd h4{margin:0 0 9px;font-size:14px;display:flex;align-items:center;gap:7px}
+.dd.do h4{color:var(--ok)}
+.dd.dont h4{color:var(--bad)}
+.dd ul{margin:0;padding-left:19px;font-size:13px;line-height:1.75}
+.fuse{background:var(--warn-soft);border:1px solid transparent;border-radius:13px;padding:16px;margin-top:12px}
+.fuse h4{margin:0 0 8px;color:var(--warn);font-size:14px}
+.fuse ul{margin:0;padding-left:19px;font-size:13px;line-height:1.75}
+
+.dec{border:1px solid var(--border-faint);border-radius:13px;background:var(--bg-card);padding:15px;margin-bottom:11px}
+.dec-q{font-size:14px;font-weight:600;margin-bottom:9px;display:flex;gap:9px}
+.dec-q em{font-style:normal;flex:0 0 auto;width:21px;height:21px;border-radius:6px;background:var(--accent-soft);
+  color:var(--accent);display:grid;place-items:center;font:600 11px/1 var(--mono);margin-top:2px}
+.opts{display:grid;gap:8px;grid-template-columns:1fr 1fr}
+@media(max-width:640px){.opts{grid-template-columns:1fr}}
+.opt{border:1px solid var(--border-faint);border-radius:9px;padding:9px 11px;font-size:12.5px;background:var(--bg-nested)}
+.opt.pick{border-color:var(--accent-border);background:var(--accent-soft)}
+.opt b{display:block;font-size:12.8px;margin-bottom:3px}
+.opt.pick b{color:var(--accent)}
+.opt span{color:var(--text-muted);font-size:11.6px;line-height:1.6}
+
+.phase{display:flex;gap:13px;padding:14px 0;border-bottom:1px solid var(--border-faint)}
+.phase:last-child{border-bottom:0}
+.phase .no{flex:0 0 auto;width:34px;height:34px;border-radius:10px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font:600 13px/1 var(--mono)}
+.phase b{font-size:14px}
+.phase p{margin:4px 0 0;font-size:12.8px;color:var(--text-muted)}
+.phase .stop{margin-top:6px;font-size:12px;color:var(--ok)}
+
+footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint);color:var(--text-muted);font-size:12.5px}
+
+[hidden]{display:none!important}*{box-sizing:border-box}body{margin:0;font:14px system-ui;background:var(--bg-base);color:var(--text-primary)}button,input,select{font:inherit}button{cursor:pointer;border:1px solid var(--border-faint);border-radius:7px;padding:7px 11px;background:var(--bg-elevated);color:inherit}button:hover{filter:brightness(1.18)}button:disabled{opacity:.45;cursor:default}.primary{background:#8572ee;color:#fff}.danger{color:#f68a90}.top{height:48px;display:flex;align-items:center;gap:18px;padding:0 18px;border-bottom:1px solid var(--border-faint)}.muted,small{color:var(--text-muted)}.preview{font-size:11px;border:1px solid #8572ee;border-radius:5px;padding:2px 6px;color:#b5a8ff}.layout{display:grid;grid-template-columns:156px 1fr;height:calc(100dvh - 48px)}aside{border-right:1px solid var(--border-faint);padding:15px 10px}aside div{padding:10px 12px;margin:5px 0;color:var(--text-secondary)}aside .active{background:#8572ee28;border-radius:6px;color:#b5a8ff}main{padding:16px 22px;min-width:0;display:flex;flex-direction:column;gap:12px}.wbbar{display:flex;flex-shrink:0;gap:8px;align-items:center;flex-wrap:wrap}.wbbar h1{font-size:22px;margin:0 8px 0 0}.grow{flex:1}input,select{border:1px solid var(--border-faint);background:var(--bg-elevated);color:inherit;padding:9px;border-radius:6px;min-width:0}.search{width:310px}.list{flex:1;overflow:auto;border:1px solid var(--border-faint);border-radius:9px}table{width:100%;border-collapse:collapse}th{text-align:left;position:sticky;top:0;background:var(--bg-elevated);font-weight:500;font-size:12px;color:var(--text-muted);z-index:1}td,th{padding:13px;border-bottom:1px solid var(--border-faint)}td strong{font-size:14px;display:block;margin-bottom:4px}td code{font-size:11px;color:var(--text-muted)}.chip{font-size:11px;border-radius:4px;padding:3px 6px;background:#8572ee20;color:#b5a8ff;white-space:nowrap}.ok{background:#29ba8320;color:#42c58f}.warn{background:#d7a03820;color:#e9ba69}.rowactions{white-space:nowrap}.rowactions button{padding:5px 8px;font-size:12px;margin-left:4px}.hint{font-size:12px;margin:0;color:var(--text-muted)}dialog{border:1px solid var(--border-faint);border-radius:12px;color:inherit;background:var(--bg-base);padding:22px;width:min(540px,94vw)}dialog::backdrop{background:#0009}dialog h2{margin:0 0 16px;font-size:19px}label{display:grid;gap:6px;margin:12px 0;color:var(--text-secondary)}.dialogactions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}.result{padding:10px;border:1px solid var(--border-faint);border-radius:6px;margin-top:10px}.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--bg-elevated);border:1px solid #8572ee;padding:12px 20px;border-radius:7px;z-index:20}.drawer{position:fixed;right:0;top:48px;bottom:0;width:min(440px,95vw);background:var(--bg-base);border-left:1px solid var(--border-faint);padding:24px;overflow:auto;z-index:5}.drawer h2{margin:0 0 5px}.stage{height:5px;background:#8572ee30;border-radius:5px;overflow:hidden;margin:10px 0}.stage i{display:block;height:100%;background:#8572ee;animation:progress 1.8s ease-in-out infinite}@keyframes progress{from{width:8%}to{width:95%}}.notes{width:min(1050px,96vw);max-height:85vh;overflow:auto}.notes table{font-size:12px}.diagram{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}.node{border:1px solid var(--border-faint);padding:10px;border-radius:7px}.new{border-color:#d7a038;background:#d7a03816}.reuse{border-color:#29ba83;background:#29ba8316}.untouched{border:1px dashed #777;opacity:.7}.sample{display:grid;place-items:center;background:#eeeff5;color:#22689f;height:110px;border-radius:8px;font-size:50px}.cup{width:55px;height:52px;background:#3488c3;border-radius:4px 4px 18px 18px;position:relative}.cup:after{content:'';position:absolute;right:-18px;top:5px;width:20px;height:30px;border:6px solid #3488c3;border-left:0;border-radius:0 20px 20px 0}@media(max-width:850px){.layout{grid-template-columns:1fr}aside{display:none}main{padding:12px}.search{width:180px}.hide-small{display:none}td,th{padding:10px}}
+[data-theme="light"] .chip{color:#593a87;background:#e5dcf0}[data-theme="light"] .ok{color:#126847;background:#dbeee4}[data-theme="light"] .warn{color:#80500c;background:#f4e5c8}[data-theme="light"] .danger{color:#a52639}[data-theme="light"] .preview{color:#63449e}</style></head><body><div class="top"><strong>LLM Gateway</strong><span class="muted">MAP Internal</span><span class="preview">交互预览 · 示例数据</span><span class="grow"></span><button id="theme">切换主题</button><button onclick="document.querySelector('#notes').showModal()">设计与验收</button></div><div class="layout"><aside><div>概览</div><div>请求记录</div><div>appCaller</div><div class="active">模型</div><div>上游</div><div>接入密钥</div></aside><main><div class="wbbar"><h1>模型</h1><button title="模型名称可自定义；通过绑定上游决定实际调用的型号和方式。详情在设计与验收中。" onclick="document.querySelector('#help').showModal()">?</button><span class="grow"></span><button class="primary" onclick="openCreate(false)">新建模型</button></div><div class="wbbar"><input id="search" class="search" placeholder="搜索模型或上游" oninput="render()"><select id="filter" onchange="render()"><option value="enabled">在用模型</option><option value="all">全部模型</option><option value="disabled">停用待清理</option></select><span id="count" class="muted"></span><span class="grow"></span><button onclick="openCleanup()">清理停用项</button><button onclick="toast('升级记录与失效引用在侧栏查看，不再占用列表顶部。')">升级记录 <span class="chip warn">11</span></button></div><div id="batch" class="wbbar" hidden><span id="selectedCount"></span><button class="danger" onclick="deleteSelected()">删除所选</button><button onclick="selected.clear();render()">取消选择</button></div><div class="list" id="list"><table><thead><tr><th><input type="checkbox" aria-label="选择当前结果" onchange="selectAll(this.checked)"></th><th>模型</th><th>已绑定上游 / 实际型号</th><th class="hide-small">调用方式</th><th>状态</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table><div id="sentinel" class="hint" style="text-align:center;padding:15px">继续下滑加载</div></div></main></div>
+<dialog id="help"><h2>先定义模型，再绑定上游</h2><p>自定义名称是你在 MAP 里看到的名字。公开标识用于 MCP/API 调用，升级时保持稳定。</p><p>同一模型可绑定多个上游；每条线路独立选择实际型号和调用方式，测试后保存。余额或额度错误会显示对应的脱敏 Key 标识。</p><button onclick="this.closest('dialog').close()">明白</button></dialog>
+<dialog id="create"><h2 id="createTitle">新建模型</h2><div class="wbbar"><button onclick="creationMode(false)">自定义创建</button><button onclick="creationMode(true)">从上游登记</button></div><label id="fromProvider" hidden>上游<select onchange="document.querySelector('#modelName').value=this.value+' 新登记模型'"><option>OpenAI</option><option>火山引擎</option><option>OpenRouter（示例）</option><option>fal（示例）</option></select></label><label>模型名称<input id="modelName" placeholder="任意名称，例如「画师」"></label><label>公开标识<input id="publicId" placeholder="例如 studio-image，用于 API/MCP"></label><label>用途<select><option>图片生成</option><option>对话</option><option>视频生成</option></select></label><p class="hint">登记后可在列表直接绑定上游，未绑定的模型会清晰标记。</p><div class="dialogactions"><button onclick="this.closest('dialog').close()">取消</button><button class="primary" onclick="createModel()">创建并绑定上游</button></div></dialog>
+<section id="bind" class="drawer" hidden><div class="wbbar"><h2 id="bindingName"></h2><span class="grow"></span><button onclick="document.querySelector('#bind').hidden=true">关闭</button></div><small>绑定上游线路</small><label>上游<select id="provider" onchange="invalidate()"><option>OpenAI</option><option>火山引擎</option><option>OpenRouter（示例）</option><option>fal（示例）</option></select></label><p class="hint">Key：<code>sk-…A1B2</code>（虚构脱敏示例）</p><label>上游实际模型<input id="wire" value="gpt-image-2.6-flare" oninput="invalidate()"></label><label>调用方式<select id="protocol" onchange="invalidate()"><option>OpenAI 图片接口</option><option>OpenAI Chat 接口</option><option>OpenRouter 图片接口</option><option>fal 队列接口</option></select></label><p class="hint">正式实现只列出网关已注册的适配器。示例中的选项不代表该上游已配置。</p><div class="wbbar"><button onclick="probe()">测试此绑定</button><button onclick="document.querySelector('#provider').value='fal（示例）';document.querySelector('#protocol').value='OpenAI 图片接口';document.querySelector('#wire').value='示例 fal 图片型号';invalidate();probe()">演示协议不匹配</button></div><div id="probeResult" class="result" hidden></div><div class="dialogactions"><button id="saveBinding" class="primary" disabled onclick="saveBinding()">保存绑定</button></div></section>
+<dialog id="remove"><h2>确认删除这些模型</h2><div id="removeItems"></div><p class="hint">此处只修改演示数据。正式操作先检查所有使用位置和在途任务，存在引用的项保留并说明原因。</p><div class="dialogactions"><button onclick="this.closest('dialog').close()">取消</button><button class="danger" onclick="confirmDelete()">删除无引用项</button></div></dialog>
+<dialog id="notes" class="notes"><div class="wbbar"><h2>模型管理：设计与验收</h2><span class="grow"></span><button onclick="this.closest('dialog').close()">关闭</button></div><p>你能得到：以模型为中心的紧凑列表、连续滚动、自定义命名、从上游登记、直接绑定与测试、批量删除。首版不创建任意自定义协议，也不通过自动取消任务绕过删除保护。</p><h3>名字与架构</h3><table><tr><th>名称</th><th>是什么 / 在哪运行</th><th>本次</th></tr><tr><td>模型工作台</td><td>现有控制台的模型页面，沿用原入口</td><td>改布局与操作流程</td></tr><tr><td>逻辑模型 / 上游线路</td><td>现有网关的公开标识与执行绑定</td><td>复用数据契约，补绑定测试</td></tr><tr><td>MAP 画师 / 日光 / MCP</td><td>现有业务与外部调用入口</td><td>保持稳定模型标识</td></tr><tr><td>CDS</td><td>部署与验收平台</td><td>先 main 验证，再正式</td></tr></table><div class="diagram"><span class="node new">新增：紧凑操作与绑定探测</span><span>→</span><span class="node reuse">复用：模型目录、线路、适配器、删除保护</span><span>→</span><span class="node untouched">不碰：SSO、密钥体系、业务稳定标识</span></div><p>直接使用：现有认证、适配器、网络探测、模型测试、任务授权、引用扫描。只补：操作入口、清单交互、按所选绑定执行的探测。禁止另造协议框架或绕过统一网关。</p><h3>数据与鉴权</h3><div class="diagram"><span class="node reuse">① 浏览器配置管理员</span><span>→</span><span class="node new">② 控制台保存 / 测试</span><span>→</span><span class="node reuse">③ Serving 既有执行入口</span><span>→</span><span class="node reuse">④ 上游</span></div><p>①→②沿用登录会话与配置写权限；②→③沿用内网调用身份与有限任务许可；③→④仅服务端使用该线路密钥。浏览器只拿脱敏标识，不接收完整密钥。未授权、超限、协议不匹配均在发送前阻断；真实上游失败保留记录并显示恢复动作；不自动重发未知结果。</p><h3>三个角色走到产物</h3><p>普通使用者：MAP 选择稳定名称 → 完成图片/文章 → 拿到最终作品。运营：自定义模型 → 绑定已验证上游 → 在业务选择器中找到模型并拿到测试产物。管理员：查看余额错误与脱敏 Key → 修复上游 → 核对成功请求；清理时拿到逐项删除与阻断回执。停在入队或进度条不算完成。</p><h3>验收</h3><table><tr><th>证明什么</th><th>自己怎么核</th><th>通过条件</th></tr><tr><td>列表优先</td><td>打开模型页，滚动、搜索、切换主题</td><td>首屏看到多条模型，没有大段头尾说明和翻页</td></tr><tr><td>命名与登记</td><td>自定义中文名称；从上游登记</td><td>都能出现在列表，公开标识唯一，名称可修改</td></tr><tr><td>绑定正确</td><td>在模型行选上游、实际型号、协议，先测再保存</td><td>测试日志与选定绑定一致；修改参数使上次测试失效</td></tr><tr><td>删除安全而直接</td><td>选中无引用与有引用停用项一起删除</td><td>一次清单确认，无引用项删除；有引用项保留并列出原因</td></tr><tr><td>稳定业务</td><td>画师、日光、MCP 各完成一条真实业务路径</td><td>产物可见，实际模型正确，历史作品保留</td></tr></table><p>接口 200、编译成功、单元测试绿灯、旧截图和进度条截图都不能单独证明真实业务通过。</p><h3>范围与退出</h3><p>本期六件事：紧凑列表、连续滚动、创建/登记、模型上绑定与测试、快速/批量删除、余额与脱敏 Key。保持现有密钥、模型默认与调用方约束。回收站、任意脚本适配器、新供应商自动采购进入后续范围。</p><p>基线：约 12 个业务文件，不新增容器或一级导航。超 24 个业务文件、触碰登录鉴权或费用授权、连续 3 个实现提交没有完成一条新路径时停止扩展并重新评审。</p><p>推荐默认：只展示在用模型，停用项在「待清理」；批量删除前固定对象清单，变化后重验；协议选择只展示已注册方式。分别可在布局、绑定测试、批量清理三个阶段停下验收。回滚页面不迁移密钥；历史清理不可通过代码回滚恢复，删除仍在最终执行前确认。</p></dialog><div id="toast" class="toast" hidden></div>
+<script>
+let models=[{id:'quality',name:'GPT 画师',publicId:'image-quality',provider:'OpenAI',wire:'gpt-image-2.6-flare',protocol:'OpenAI 图片接口',enabled:true,refs:6,role:'默认'},{id:'sunlight',name:'GPT 日光',publicId:'image-sunlight',provider:'OpenAI',wire:'gpt-image-2.6-sunburst',protocol:'OpenAI 图片接口',enabled:true,refs:3},{id:'chat',name:'6.1 Sol',publicId:'gpt-6.1-sol',provider:'OpenAI',wire:'gpt-6.1-sol',protocol:'OpenAI Chat 接口',enabled:true,refs:4},{id:'v25',name:'GPT Image 2.5 Sunburst',publicId:'gpt-image-2.5-sunburst',provider:'OpenAI',wire:'gpt-image-2.5-sunburst',protocol:'OpenAI 图片接口',enabled:true,refs:0},{id:'old',name:'GPT Image 1',publicId:'image1',enabled:false,refs:0},{id:'oldv',name:'旧中转视频',publicId:'old-video',enabled:false,refs:2}];for(let i=1;i<=30;i++)models.push({id:'demo'+i,name:'示例模型 '+i,publicId:'demo-model-'+i,provider:i%2?'火山引擎':'OpenAI',wire:'示例实际型号',protocol:'已登记方式',enabled:true,refs:0});let selected=new Set(),visible=12,current=null,removing=[],tested=false,probeVersion=0;
+const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));function filtered(){let q=$('#search').value.toLowerCase(),f=$('#filter').value;return models.filter(m=>(f==='all'||(f==='enabled'?m.enabled:!m.enabled))&&[m.name,m.publicId,m.provider].join(' ').toLowerCase().includes(q))}function render(){let all=filtered();$('#rows').innerHTML=all.slice(0,visible).map(m=>`<tr><td><input type="checkbox" aria-label="选择 ${esc(m.name)}" ${selected.has(m.id)?'checked':''} onchange="toggle('${m.id}',this.checked)"></td><td><strong>${esc(m.name)} ${m.role?'<span class="chip">'+esc(m.role)+'</span>':''}</strong><code>${esc(m.publicId)}</code></td><td>${esc(m.provider||'未绑定上游')}<br><small>${esc(m.wire||'点击绑定上游开始')}</small></td><td class="hide-small"><small>${esc(m.protocol||'—')}</small></td><td><span class="chip ${m.enabled?'ok':'warn'}">${m.enabled?(m.provider?'可用':'待绑定'):'已停用'}</span></td><td class="rowactions"><button onclick="openBind('${m.id}')">绑定上游</button><button onclick="openBind('${m.id}');probe()">测试</button><button class="danger" onclick="removeOne('${m.id}')">删除</button></td></tr>`).join('');$('#count').textContent=all.length+' 个模型';$('#sentinel').textContent=visible>=all.length?'已显示全部 '+all.length+' 个模型':'继续下滑加载更多';$('#batch').hidden=!selected.size;$('#selectedCount').textContent='已选 '+selected.size+' 项'}function toggle(id,on){on?selected.add(id):selected.delete(id);render()}function selectAll(on){filtered().forEach(m=>on?selected.add(m.id):selected.delete(m.id));render()}function toast(t){$('#toast').textContent=t;$('#toast').hidden=false;setTimeout(()=>$('#toast').hidden=true,3200)}function creationMode(from){$('#fromProvider').hidden=!from;$('#createTitle').textContent='新建模型';}function openCreate(from){creationMode(from);$('#modelName').value='';$('#publicId').value='';$('#create').showModal()}function createModel(){let name=$('#modelName').value.trim(),pid=$('#publicId').value.trim();if(!name||!pid)return toast('请填写模型名称与公开标识');if(models.some(m=>m.publicId===pid))return toast('公开标识已存在，请使用另一个标识');let m={id:'custom'+Date.now(),name,publicId:pid,enabled:true,refs:0};models.unshift(m);$('#create').close();$('#filter').value='enabled';render();openBind(m.id)}function openBind(id){current=models.find(m=>m.id===id);$('#bindingName').textContent=current.name;$('#provider').value=current.provider||'OpenAI';$('#wire').value=current.wire||'';$('#protocol').value=current.protocol==='OpenAI Chat 接口'?current.protocol:'OpenAI 图片接口';$('#bind').hidden=false;invalidate()}function invalidate(){probeVersion++;tested=false;$('#saveBinding').disabled=true;$('#probeResult').hidden=true}function probe(){let version=++probeVersion;let r=$('#probeResult');r.hidden=false;r.innerHTML='正在检查绑定参数<div class="stage"><i></i></div>';$('#saveBinding').disabled=true;setTimeout(()=>{if(version!==probeVersion)return;if($('#provider').value.startsWith('fal')&&!$('#protocol').value.startsWith('fal')){r.textContent='调用方式不匹配，未修改线路。请选择 fal 队列接口后重新测试。';return}r.innerHTML='示例测试成功：所选方式已返回测试图。<div class="sample"><div class="cup"></div></div>';tested=true;$('#saveBinding').disabled=false},1800)}function saveBinding(){if(!tested)return;current.provider=$('#provider').value;current.wire=$('#wire').value;current.protocol=$('#protocol').value;$('#bind').hidden=true;render();toast('示例绑定已保存，可继续给同一模型添加备用上游')}function openCleanup(){$('#filter').value='disabled';selected=new Set(models.filter(m=>!m.enabled).map(m=>m.id));render();deleteSelected()}function removeOne(id){selected=new Set([id]);deleteSelected()}function deleteSelected(){removing=models.filter(m=>selected.has(m.id));$('#removeItems').innerHTML=removing.map(m=>`<p><strong>${esc(m.name)}</strong> <code>${esc(m.publicId)}</code><br><small>${m.refs?'保留：仍有 '+m.refs+' 处活动引用，请先迁移':'无活动引用，可删除'}</small></p>`).join('');$('#remove').showModal()}function confirmDelete(){let ids=new Set(removing.filter(m=>!m.refs).map(m=>m.id));models=models.filter(m=>!ids.has(m.id));selected=new Set(removing.filter(m=>m.refs).map(m=>m.id));$('#remove').close();render();toast('已删除 '+ids.size+' 项；仍有引用的 '+selected.size+' 项已保留')}$('#theme').onclick=()=>document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';new IntersectionObserver(e=>{if(e[0].isIntersecting&&visible<filtered().length){visible+=10;render()}},{root:$('#list')}).observe($('#sentinel'));render();
+</script></body></html>

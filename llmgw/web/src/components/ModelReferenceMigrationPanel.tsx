@@ -42,6 +42,9 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
   const [models, setModels] = useState<LogicalModelItem[]>([]);
   const [catalogError, setCatalogError] = useState(false);
   const [targetId, setTargetId] = useState(initialPlan?.mapping.target.logicalId || '');
+  const [confirmedPurpose, setConfirmedPurpose] = useState('');
+  const canConfirmPurpose = Boolean(usage?.canConfirmPurpose && usage.fingerprint);
+  const modelType = source.modelType || (canConfirmPurpose ? confirmedPurpose : '');
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 30000); return () => window.clearInterval(timer); }, []);
   const [coverage, setCoverage] = useState<ReferenceCoverage | null>(null);
@@ -52,7 +55,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
   const [confirmed, setConfirmed] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const generation = useRef(0);
-  const scopeKey = JSON.stringify([tenant?.id || '', source.id, targetId, usage?.consumerKey, usage?.recordId, usage?.path, initialPlan?.intentId]);
+  const scopeKey = JSON.stringify([tenant?.id || '', source.id, modelType, targetId, usage?.consumerKey, usage?.recordId, usage?.path, initialPlan?.intentId]);
   const currentScope = useRef(scopeKey);
   currentScope.current = scopeKey;
   const currentPlan = useRef<ReferenceMigrationPlan | null>(null);
@@ -62,8 +65,8 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
   const readFlight = useRef<symbol | null>(null);
   const notified = useRef('');
   const resumeAttemptedFor = useRef<string | null>(null);
-  const target = models.find(item => item.id === targetId && item.modelType === source.modelType && item.enabled);
-  const validScope = Boolean(target && target.id !== source.id && !catalogError && (!usage || (usage.status === 'orphan' && usage.modelType)));
+  const target = models.find(item => item.id === targetId && item.modelType === modelType && item.enabled);
+  const validScope = Boolean(target && target.id !== source.id && !catalogError && (!usage || (usage.status === 'orphan' && usage.modelType) || (usage.status === 'unknown' && canConfirmPurpose && confirmedPurpose)));
   const observing = Boolean(pending || plan?.status === 'applying');
   const active = Boolean(busy || observing);
 
@@ -76,7 +79,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
       if (result.success) setModels(result.data.items);
     } catch { if (key === currentScope.current) setCatalogError(true); }
   }
-  useEffect(() => { void loadModels(); }, [source.id, tenant?.id]);
+  useEffect(() => { void loadModels(); }, [source.id, tenant?.id, modelType]);
 
   function accept(next: ReferenceMigrationPlan, fromRead: boolean, key: string, epoch: number): boolean {
     if (key !== currentScope.current || epoch !== generation.current) return false;
@@ -172,7 +175,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
     setError(null); setConfirmed(false);
     try {
       const result = action === 'create'
-        ? usage ? await createModelReferenceMigrationFromUsage({ consumerKey: usage.consumerKey, recordId: usage.recordId, path: usage.path, targetLogicalId: targetId, clientRequestId: locator.clientRequestId! })
+        ? usage ? await createModelReferenceMigrationFromUsage({ consumerKey: usage.consumerKey, recordId: usage.recordId, path: usage.path, targetLogicalId: targetId, clientRequestId: locator.clientRequestId!, ...(usage.fingerprint ? { expectedUsageFingerprint: usage.fingerprint } : {}), ...(canConfirmPurpose ? { confirmedModelType: confirmedPurpose } : {}) })
           : await createModelReferenceMigrationPlan({ sourceLogicalId: source.id, targetLogicalId: targetId, clientRequestId: locator.clientRequestId! })
         : await runModelReferenceMigrationAction(plan!.intentId, action, plan!.revision);
       if (key !== currentScope.current || epoch !== generation.current) return;
@@ -206,11 +209,11 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
     <h3 style={SECTION_TITLE}>全量使用位置</h3>
     <div style={HINT_TEXT}>仅更新活动使用配置，历史记录保持原样。阻断、未确认或未扫描的位置都会阻止完成。</div>
     <div style={HINT_TEXT}>已更新按配置记录计数，旧引用残留按使用位置计数。</div>
-    {usage && (usage.status === 'unknown' || !usage.modelType) ? <InlineAlert tone="error">此位置的结构或用途尚未确认，当前不能自动迁移；请先核对原配置。</InlineAlert> : null}
+    {usage && (usage.status === 'unknown' || !usage.modelType) ? canConfirmPurpose ? <label style={FIELD_LABEL}>明确确认原使用位置的用途<select aria-label="明确确认原使用位置的用途" style={FIELD_INPUT} value={confirmedPurpose} disabled={!canWrite || active} onChange={event => { setConfirmedPurpose(event.target.value); setTargetId(''); }}><option value="">请选择已核实的用途，不按模型名称推断</option><option value="chat">对话</option><option value="generation">图片生成</option></select><span style={HINT_TEXT}>原目录已不存在。仅修复所选实验位置，保留所属信息与历史结果；仍须生成计划、核对影响并确认执行。</span></label> : <InlineAlert tone="error">此位置的结构或用途尚未确认，当前不能自动迁移；请先核对原配置。</InlineAlert> : null}
     {usage ? <InlineAlert>只修改所选使用位置，不会更改同名的其他业务字段。生成计划后才核对完整覆盖范围。</InlineAlert> : null}
     {!canWrite ? <ReadOnlyNotice /> : null}
     <CollectionFacts items={[{ label: '当前模型', value: <>{source.name} <code>{source.publicId}</code>{sourceUnavailable ? ' · 目录身份失效' : !source.enabled && !usage && source.id ? ' · 已停用' : ''}</> }]} />
-    <label style={FIELD_LABEL}>升级到同用途模型<select aria-label="升级到同用途模型" style={FIELD_INPUT} value={targetId} disabled={Boolean(busy && busy !== '正在扫描使用位置')} onChange={event => setTargetId(event.target.value)}><option value="">请选择目标模型</option>{models.filter(item => item.id !== source.id && item.modelType === source.modelType).map(item => <option key={item.id} value={item.id} disabled={!item.enabled}>{item.name} · {item.publicId}{!item.enabled ? ' · 已停用' : ''}</option>)}{targetId && !models.some(item => item.id === targetId) ? <option value={targetId}>当前目标暂不可用，请重新选择</option> : null}</select></label>
+    <label style={FIELD_LABEL}>升级到同用途模型<select aria-label="升级到同用途模型" style={FIELD_INPUT} value={targetId} disabled={Boolean(busy && busy !== '正在扫描使用位置')} onChange={event => setTargetId(event.target.value)}><option value="">请选择目标模型</option>{models.filter(item => item.id !== source.id && item.modelType === modelType).map(item => <option key={item.id} value={item.id} disabled={!item.enabled}>{item.name} · {item.publicId}{!item.enabled ? ' · 已停用' : ''}</option>)}{targetId && !models.some(item => item.id === targetId) ? <option value={targetId}>当前目标暂不可用，请重新选择</option> : null}</select></label>
     {sourceUnavailable ? <InlineAlert>原模型目录身份已失效；已有计划仍可核对，新计划请从失效引用清单选择具体使用位置。</InlineAlert> : null}
     {catalogError ? <InlineAlert tone="error">目标模型清单读取失败，原选择已保留。<Button size="sm" onClick={() => void loadModels()}>重新读取模型</Button></InlineAlert> : null}
     {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
@@ -239,7 +242,7 @@ export function ModelReferenceMigrationPanel({ source, onChanged, initialPlan, u
 }
 
 
-export function ModelReferenceMigrationOverview({ onOpen }: { onOpen: (plan: ReferenceMigrationPlan) => void }) {
+export function ModelReferenceMigrationOverview({ onOpen, onStatus }: { onOpen: (plan: ReferenceMigrationPlan) => void; onStatus?: (value: { pending: number | null; failed: boolean }) => void }) {
   const { tenant } = useAuth();
   const [plans, setPlans] = useState<ReferenceMigrationPlan[]>([]);
   const [failed, setFailed] = useState(false);
@@ -269,6 +272,7 @@ export function ModelReferenceMigrationOverview({ onOpen }: { onOpen: (plan: Ref
   }, [tenant?.id]);
   const unresolved = plans.filter(plan => plan.status !== 'completed' || !isReferenceCoverageVerified(plan.coverage, now));
   const unresolvedCount = Math.max(unresolved.length, unresolvedTotal ?? 0);
+  useEffect(() => { onStatus?.({ pending: loaded ? unresolvedCount : null, failed }); }, [loaded, unresolvedCount, failed, onStatus]);
   return <div data-testid="model-reference-migration-overview" style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}><Button size="sm" variant="ghost" onClick={() => setOpen(value => !value)}>升级记录与遗漏</Button><span style={HINT_TEXT}>{failed ? '升级记录需重新核对' : !loaded ? '正在读取升级记录' : `显示 ${plans.length} 个计划 · 待处理 ${unresolvedCount}`}</span><Button size="sm" variant="ghost" onClick={() => void refresh()}>刷新升级记录</Button></div>
     {!loaded && !failed ? <Spinner size={14} /> : null}
@@ -305,6 +309,6 @@ export function ModelReferenceUsageRepairPanel() {
     {loading ? <div style={HINT_TEXT}><Spinner size={14} /> 正在读取可修复位置</div> : null}
     {failed ? <InlineAlert tone="error">使用位置读取未完成，不能确认是否存在遗漏，请重新读取。</InlineAlert> : null}
     <CollectionView items={items.filter(item => item.status === 'orphan' || item.status === 'unknown')} searchText={item => `${item.consumerKey} ${item.recordId} ${item.path} ${item.value}`} placeholder="搜索失效使用位置" emptyText="当前候选清单没有失效项；这不代表全量核验通过。">{rows => <>{rows.map(item => <div key={`${item.consumerKey}:${item.recordId}:${item.path}`} style={{ padding: 8, display: 'flex', gap: GAP.normal, flexWrap: 'wrap', alignItems: 'center' }}><span>{USAGE_LABELS[item.status]} · {item.value}</span><span style={MONO_META}>{item.consumerKey} · {item.recordId} · {item.path}</span><Button size="sm" onClick={() => setSelected(item)}>选择使用位置</Button></div>)}</>}</CollectionView>
-    {selected ? <ModelReferenceMigrationPanel key={`${selected.consumerKey}:${selected.recordId}:${selected.path}`} usage={selected} source={{ id: selected.logicalId || '', publicId: selected.value, name: '所选使用位置', modelType: selected.modelType, enabled: false }} onChanged={() => void refresh()} /> : null}
+    {selected ? <ModelReferenceMigrationPanel key={`${selected.consumerKey}:${selected.recordId}:${selected.path}:${selected.fingerprint || selected.value}`} usage={selected} source={{ id: selected.logicalId || '', publicId: selected.value, name: '所选使用位置', modelType: selected.modelType, enabled: false }} onChanged={() => void refresh()} /> : null}
   </section>;
 }
