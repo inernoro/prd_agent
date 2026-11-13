@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { chromium } from 'playwright';
 import express from 'express';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,6 +33,37 @@ describe('报告入口内容一致性', () => {
     expect(anchored).toContain('id="目标章节"');
     expect(anchored).toContain("target.scrollIntoView({ behavior: 'smooth', block: 'start' })");
   });
+  it('HTML链接与两张图表按实际白纸/黑纸配色，保留可读作者颜色；Markdown仍跟宿主题', async () => {
+    const browser = await chromium.launch({ ...(process.env.CDS_CHROMIUM_PATH ? { executablePath: process.env.CDS_CHROMIUM_PATH } : { channel: 'chrome' }), headless: true });
+    try {
+      const page = await browser.newPage();
+      for (const paper of ['light', 'dark'] as const) for (const authoredLink of [false, true]) {
+        const host = paper === 'light' ? 'dark' : 'light';
+        const background = paper === 'light' ? '#fffdf8' : '#17191f';
+        const foreground = paper === 'light' ? '#211d18' : '#f1f5f9';
+        const link = paper === 'light' ? '#125e36' : '#80cbc4';
+        await page.evaluate(() => {
+          const state = window as unknown as { mermaid: { initialize: (value: { theme: string }) => void; render: () => Promise<{ svg: string }> } };
+          let theme = '';
+          state.mermaid = { initialize: value => { theme = value.theme; }, render: async () => ({ svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 80" data-render-theme="${theme}"><text x="10" y="30">图表</text></svg>` }) };
+        });
+        const original = `<style>body{background:${background};color:${foreground}}${authoredLink ? `a{color:${link}}` : ''}</style><main class="paper"><h1>报告纸面</h1><a id="paper-link" href="https://example.com">完整证据链接</a><pre class="mermaid">flowchart LR\n A[报告] --&gt; B[阅读]</pre><pre class="mermaid">timeline\n 2026-11-12 : 完成</pre></main>`;
+        await page.setContent(enhanceHtmlReportDocument(original, host));
+        await page.locator('[data-report-diagram] svg').nth(1).waitFor();
+        expect(await page.locator('[data-render-theme]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-render-theme')))).toEqual([paper === 'light' ? 'default' : 'dark', paper === 'light' ? 'default' : 'dark']);
+        const actual = await page.locator('#paper-link').evaluate(node => ({ color: getComputedStyle(node).color, background: getComputedStyle(document.body).backgroundColor }));
+        if (authoredLink) expect(actual.color).toBe(paper === 'light' ? 'rgb(18, 94, 54)' : 'rgb(128, 203, 196)');
+        const luminance = (value: string) => value.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(channel => {
+          const scaled = channel / 255; return scaled <= .04045 ? scaled / 12.92 : ((scaled + .055) / 1.055) ** 2.4;
+        }).reduce((sum, channel, index) => sum + channel * [.2126, .7152, .0722][index], 0);
+        const first = luminance(actual.color), second = luminance(actual.background);
+        expect((Math.max(first, second) + .05) / (Math.min(first, second) + .05)).toBeGreaterThanOrEqual(4.5);
+      }
+      await page.setContent(buildMarkdownReportDocument('[证据](https://example.com)', 'dark'));
+      expect(await page.locator('a').evaluate(node => getComputedStyle(node).color)).toBe('rgb(96, 165, 250)');
+    } finally { await browser.close(); }
+  });
+
   it('实际分享路由返回可读 HTML，而 raw 仍保持 Markdown 下载契约与安全沙箱', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'report-reading-'));
     const state = new StateService(path.join(dir, 'state.json')); state.load();
