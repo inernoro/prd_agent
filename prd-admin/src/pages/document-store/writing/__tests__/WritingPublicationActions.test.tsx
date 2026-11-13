@@ -43,7 +43,7 @@ describe('正常公库读取不能在客户端强制要求登录', () => {
   it('四个匿名GET实际发出请求，私库分享创建仍需登录', async () => {
     auth.isAuthenticated = false; auth.permissions = []; auth.token = null;
     await mount({ hasPublication: false });
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ success: true, data: { items: [], total: 0 } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ success: true, data: { items: [], total: 0 }, error: null }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetcher);
     const service = await import('@/services/real/documentStore');
     const reads = await Promise.all([service.listPublicDocumentStores(), service.getPublicDocumentStore('store'), service.listPublicStoreEntries('store'), service.getPublicEntryContent('doc')]);
