@@ -6,6 +6,8 @@ import { chromium, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const config = JSON.parse(fs.readFileSync(process.env.KB_AB_CONFIG));
 const fixture = JSON.parse(fs.readFileSync(config.fixture));
@@ -23,6 +25,13 @@ const browser = await chromium.launch({ proxy: process.env.HTTPS_PROXY ? { serve
 const sessions = {};
 const frame = p => p.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 const append = (file, value) => fs.appendFileSync(path.join(out, file), JSON.stringify(value) + '\n');
+const run = promisify(execFile);
+async function guard(label) {
+  if (!config.runtimeGuard?.command) return;
+  const [command, ...args] = config.runtimeGuard.command;
+  const { stdout } = await run(command, args, { timeout: 30000, maxBuffer: 1024 * 1024 });
+  append('runtime-guards.jsonl', { label, ...JSON.parse(stdout) });
+}
 let randomState = config.seed;
 function random() { randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0; return randomState / 2 ** 32; }
 const metrics = async cdp => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map(x => [x.name, x.value]));
@@ -128,19 +137,24 @@ async function trial(mode, store, block, warmup, order) {
 }
 
 try {
+  await guard('before-login');
   await session('before'); await session('after');
   for (const store of fixture) for (const mode of ['before', 'after']) await trial(mode, store, 0, true, ['before', 'after']);
+  await guard('after-warmups');
   for (let block = 1; block <= config.pairsPerScale; block++) {
     const stores = [...fixture]; for (let i = stores.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); [stores[i], stores[j]] = [stores[j], stores[i]]; }
     for (const store of stores) {
+      await guard(`before-${block}-${store.n}`);
       const order = (block + fixture.findIndex(s => s.n === store.n)) % 2 ? ['before', 'after'] : ['after', 'before'];
       const records = [];
       for (const mode of order) records.push(await trial(mode, store, block, false, order));
       append('pairs.jsonl', { block, n: store.n, order, records });
+      await guard(`after-${block}-${store.n}`);
     }
   }
 } catch (error) {
   fs.writeFileSync(path.join(out, 'failure.txt'), String(error));
+  fs.writeFileSync(path.join(out, 'failure-observations.json'), JSON.stringify(Object.fromEntries(Object.entries(sessions).map(([mode, s]) => [mode, { stage: s.active, requests: s.requests, navigationEntries: s.nav.size, errors: s.errors }])), null, 2));
   for (const [mode, s] of Object.entries(sessions)) await s.p.screenshot({ path: path.join(out, `failure-${mode}.png`) }).catch(() => {});
   throw error;
 } finally { await browser.close(); }
