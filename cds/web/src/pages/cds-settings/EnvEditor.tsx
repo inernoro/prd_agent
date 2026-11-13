@@ -17,6 +17,7 @@ interface EnvEditorProps {
   onChanged?: () => void;
   reloadKey?: number;
   topContent?: ReactNode;
+  bottomContent?: ReactNode;
 }
 
 type EntryMode = 'single' | 'bulk';
@@ -128,6 +129,7 @@ export function EnvEditor({
   onChanged,
   reloadKey = 0,
   topContent,
+  bottomContent,
 }: EnvEditorProps): JSX.Element {
   const [state, setState] = useState<LoadState<EnvResponse>>({ status: 'loading' });
   const [query, setQuery] = useState('');
@@ -564,6 +566,7 @@ export function EnvEditor({
             </div>
           ) : null}
         </div>
+        {bottomContent}
       </div>
     </Section>
   );

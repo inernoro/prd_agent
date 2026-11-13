@@ -194,8 +194,9 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
       ) : null}
 
       {/* 签发新 Key */}
-      <div className="cds-surface-raised cds-hairline space-y-3 px-4 py-3">
-        <div className="text-sm font-semibold">签发新 Key</div>
+      <details className="border-b border-border pb-3">
+        <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">签发新 Key</summary>
+        <div className="mt-3 space-y-3">
         <input
           className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
           placeholder="可选标签,例如 prod-rotate-2026-05 / shenzhen-mac"
@@ -217,7 +218,8 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
             {signError}
           </div>
         ) : null}
-      </div>
+        </div>
+      </details>
 
       {/* 已有 keys 列表 */}
       <div>
@@ -235,7 +237,7 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
         {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
         {state.status === 'ok' && activeKeys.length === 0 && revokedKeys.length === 0 ? (
           <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-            还没有签发过任何全局 Agent Key。可点击上方「签发」按钮新建。
+            还没有签发过任何全局 Agent Key。展开上方「签发新 Key」即可创建。
           </div>
         ) : null}
         {state.status === 'ok' && (activeKeys.length > 0 || revokedKeys.length > 0) ? (

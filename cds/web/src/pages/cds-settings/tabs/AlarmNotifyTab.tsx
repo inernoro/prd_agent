@@ -102,8 +102,8 @@ export function AlarmNotifyTab(): JSX.Element {
     <div className="flex flex-col gap-6">
       {/* 多协议通道在前：它是现在该用的那条路。Bark 的 key 当场就能粘进来，
           不必先定「发给哪个 MAP 账号、用哪个 MAP 实例」那两件只有人能定的事。 */}
-      <AlarmIdentityPanel />
       <AlarmChannelsPanel projects={projects} />
+      <AlarmIdentityPanel />
 
       {/* 存量的单一 MAP 通道。先于多通道存在，且可能已经在工作——删掉它等于让已经
           接好的铃在升级那天哑掉，所以留着，只是降到第二位并说清它和上面的关系。 */}
@@ -121,7 +121,7 @@ export function AlarmNotifyTab(): JSX.Element {
         <span className="text-sm font-medium">
           {view?.configured
             ? `通知通道已配置（来自${view.source === 'settings' ? 'CDS 系统设置' : '.cds.env'}）`
-            : '出问题时不会有任何人被通知'}
+            : '旧版 MAP 通道未配置'}
         </span>
         {view?.configured ? (
           <span className="font-mono text-[0.6875rem] text-muted-foreground">
@@ -129,7 +129,7 @@ export function AlarmNotifyTab(): JSX.Element {
           </span>
         ) : (
           <span className="text-[0.6875rem] text-muted-foreground">
-            监控探到故障时，告警只会留在 CDS 自己的台账里。填好下面四项即可接上。
+            这条旧版通道不会发送告警；上方多协议通道独立生效。需要启用旧版通道时，请填好下面四项。
           </span>
         )}
         <div className="flex-grow" />

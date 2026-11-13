@@ -877,38 +877,31 @@ function ProjectEnvTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 border-b border-border pb-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-1 text-sm">
-          <div className="font-semibold text-foreground">继承 CDS 全局变量</div>
+          <div className="font-semibold text-foreground">
+            继承 CDS 全局变量：{project.inheritGlobalEnv ? '已启用' : '已关闭'}
+          </div>
           <div className="text-xs text-muted-foreground">
             默认关闭，避免其他项目的凭据进入当前项目。仅在明确需要共享配置时启用；同名项目环境变量优先。
           </div>
-          <div className="text-xs font-medium text-foreground">
-            当前状态：{project.inheritGlobalEnv ? '已启用' : '已关闭'}
-          </div>
         </div>
-        <Button
-          type="button"
-          variant={project.inheritGlobalEnv ? 'destructive' : 'outline'}
-          size="sm"
-          className="shrink-0"
-          disabled={savingInheritance}
-          onClick={() => void toggleGlobalInheritance()}
-        >
-          {savingInheritance ? <Loader2 className="animate-spin" /> : null}
-          {project.inheritGlobalEnv ? '停止继承' : '允许继承'}
-        </Button>
-      </div>
-      <div className="flex items-start justify-between gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4">
-        <div className="space-y-1 text-sm">
-          <div className="font-semibold text-foreground">配置向导</div>
-          <div className="text-xs text-muted-foreground">
-            按"必填 / CDS 自动 / 推导"三色分组弹窗,适合一次性把缺失项填齐。
-          </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button
+            type="button"
+            variant={project.inheritGlobalEnv ? 'destructive' : 'outline'}
+            size="sm"
+            disabled={savingInheritance}
+            onClick={() => void toggleGlobalInheritance()}
+          >
+            {savingInheritance ? <Loader2 className="animate-spin" /> : null}
+            {project.inheritGlobalEnv ? '停止继承' : '允许继承'}
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => setWizardOpen(true)}
+            title='按“必填 / CDS 自动 / 推导”分组，适合一次性把缺失项填齐。'>
+            打开向导
+          </Button>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={() => setWizardOpen(true)}>
-          打开向导
-        </Button>
       </div>
       <EnvEditor
         scope={project.id}

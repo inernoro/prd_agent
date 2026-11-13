@@ -151,62 +151,13 @@ export function UsersTab({
           当前认证存储为内存模式，新建账号会在 CDS 重启后丢失。生产环境请配置持久化认证存储后再创建用户。
         </div>
       ) : null}
-      <Section
-        title="修改密码"
-        description={
-          isLocal
-            ? '修改当前本地账号的登录密码。修改后所有会话失效，需要用新密码重新登录。'
-            : isLegacy
-              ? '当前使用原始环境变量账号登录，密码继续由 CDS_USERNAME / CDS_PASSWORD 管理。'
-              : '当前账号通过外部身份提供方登录，密码由身份提供方管理，无需在此修改。'
-        }
-      >
-        {isLocal ? (
-          <form onSubmit={submitPassword} className="max-w-md space-y-3">
-            <Field label="原密码">
-              <input
-                type="password"
-                value={oldPw}
-                onChange={(e) => setOldPw(e.target.value)}
-                autoComplete="current-password"
-                required
-                className={inputCls}
-                placeholder="原密码"
-              />
-            </Field>
-            <Field label="新密码（至少 8 位）">
-              <input
-                type="password"
-                value={newPw}
-                onChange={(e) => setNewPw(e.target.value)}
-                autoComplete="new-password"
-                required
-                minLength={8}
-                className={inputCls}
-                placeholder="新密码"
-              />
-            </Field>
-            {pwError ? <ErrorBlock message={pwError} /> : null}
-            <Button type="submit" disabled={pwBusy}>
-              <KeyRound />
-              {pwBusy ? '修改中' : '修改密码'}
-            </Button>
-          </form>
-        ) : (
-          <div className="rounded-md border border-border bg-card px-4 py-4 text-sm leading-6 text-muted-foreground">
-            {isLegacy ? '原始管理员账号' : '外部身份账号'}{' '}
-            <CodePill>{me?.username || me?.name || '当前用户'}</CodePill>{' '}
-            的凭据不在持久化用户库中修改。
-          </div>
-        )}
-      </Section>
+
 
       {isOwner ? (
         <>
-          <Section
-            title="创建本地账号"
-            description="为团队成员开设用户名 + 密码账号，与 GitHub OAuth 用户共存。新账号默认为普通成员。"
-          >
+          <details className="border-b border-border pb-3">
+            <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">创建本地账号</summary>
+            <p className="my-3 text-sm text-muted-foreground">为团队成员开设用户名 + 密码账号，与 GitHub OAuth 用户共存。新账号默认为普通成员。</p>
             <form onSubmit={submitCreate} className="grid max-w-3xl gap-3 md:grid-cols-3">
               <Field label="用户名">
                 <input
@@ -247,7 +198,7 @@ export function UsersTab({
                 </Button>
               </div>
             </form>
-          </Section>
+          </details>
 
           <Section
             title="用户列表"
@@ -350,6 +301,55 @@ export function UsersTab({
           </div>
         </Section>
       )}
+      <Section
+        title="修改密码"
+        description={
+          isLocal
+            ? '修改当前本地账号的登录密码。修改后所有会话失效，需要用新密码重新登录。'
+            : isLegacy
+              ? '当前使用原始环境变量账号登录，密码继续由 CDS_USERNAME / CDS_PASSWORD 管理。'
+              : '当前账号通过外部身份提供方登录，密码由身份提供方管理，无需在此修改。'
+        }
+      >
+        {isLocal ? (
+          <form onSubmit={submitPassword} className="max-w-md space-y-3">
+            <Field label="原密码">
+              <input
+                type="password"
+                value={oldPw}
+                onChange={(e) => setOldPw(e.target.value)}
+                autoComplete="current-password"
+                required
+                className={inputCls}
+                placeholder="原密码"
+              />
+            </Field>
+            <Field label="新密码（至少 8 位）">
+              <input
+                type="password"
+                value={newPw}
+                onChange={(e) => setNewPw(e.target.value)}
+                autoComplete="new-password"
+                required
+                minLength={8}
+                className={inputCls}
+                placeholder="新密码"
+              />
+            </Field>
+            {pwError ? <ErrorBlock message={pwError} /> : null}
+            <Button type="submit" disabled={pwBusy}>
+              <KeyRound />
+              {pwBusy ? '修改中' : '修改密码'}
+            </Button>
+          </form>
+        ) : (
+          <div className="rounded-md border border-border bg-card px-4 py-4 text-sm leading-6 text-muted-foreground">
+            {isLegacy ? '原始管理员账号' : '外部身份账号'}{' '}
+            <CodePill>{me?.username || me?.name || '当前用户'}</CodePill>{' '}
+            的凭据不在持久化用户库中修改。
+          </div>
+        )}
+      </Section>
       {isOwner ? <IdentityRecoveryPanel onToast={onToast} /> : null}
       <UserProjectAccessDialog user={grantUser} onClose={() => setGrantUser(null)} onToast={onToast} />
     </div>

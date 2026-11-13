@@ -84,45 +84,46 @@ export function GlobalVarsTab({ onToast }: { onToast: (message: string) => void 
 
   const projects = projectsState.status === 'ok' ? projectsState.data.projects || [] : [];
   const organizePanel = (
-    <div className="rounded-md border border-warn/30 bg-warn-soft p-4">
-      <div className="text-sm font-semibold text-warn">
-        一键整理：把项目级变量迁到具体项目
+    <details className="border-t border-border pt-3">
+      <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">整理项目级变量</summary>
+      <div className="mt-2">
+        <div className="mt-1 text-sm leading-6 text-muted-foreground">
+          CDS 字典识别：CDS_* 留全局；legacy 复制一份到项目；其他项目级变量从全局移到项目。
+        </div>
+        {projectsState.status === 'loading' ? (
+          <div className="mt-3">
+            <LoadingBlock label="加载项目列表" />
+          </div>
+        ) : null}
+        {projectsState.status === 'error' ? (
+          <div className="mt-3">
+            <ErrorBlock message={projectsState.message} />
+          </div>
+        ) : null}
+        {projectsState.status === 'ok' && projects.length === 0 ? (
+          <div className="mt-3 text-sm text-muted-foreground">当前没有项目，先创建项目后再整理变量。</div>
+        ) : null}
+        {projects.length > 0 ? (
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <select
+              aria-label="整理目标项目"
+              value={targetProjectId}
+              onChange={(event) => setTargetProjectId(event.target.value)}
+              className="min-h-11 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name || project.id}
+                </option>
+              ))}
+            </select>
+            <Button type="button" variant="outline" onClick={() => void previewMigrate()} disabled={submitting}>
+              预览整理方案
+            </Button>
+          </div>
+        ) : null}
       </div>
-      <div className="mt-1 text-sm leading-6 text-muted-foreground">
-        CDS 字典识别：CDS_* 留全局；legacy 复制一份到项目；其他项目级变量从全局移到项目。
-      </div>
-      {projectsState.status === 'loading' ? (
-        <div className="mt-3">
-          <LoadingBlock label="加载项目列表" />
-        </div>
-      ) : null}
-      {projectsState.status === 'error' ? (
-        <div className="mt-3">
-          <ErrorBlock message={projectsState.message} />
-        </div>
-      ) : null}
-      {projectsState.status === 'ok' && projects.length === 0 ? (
-        <div className="mt-3 text-sm text-muted-foreground">当前没有项目，先创建项目后再整理变量。</div>
-      ) : null}
-      {projects.length > 0 ? (
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <select
-            value={targetProjectId}
-            onChange={(event) => setTargetProjectId(event.target.value)}
-            className="min-h-11 rounded-md border border-input bg-background px-3 text-sm"
-          >
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name || project.id}
-              </option>
-            ))}
-          </select>
-          <Button type="button" variant="outline" onClick={() => void previewMigrate()} disabled={submitting}>
-            预览整理方案
-          </Button>
-        </div>
-      ) : null}
-    </div>
+    </details>
   );
 
   return (
@@ -141,7 +142,7 @@ export function GlobalVarsTab({ onToast }: { onToast: (message: string) => void 
       emptyDescription="没有全局变量。跨项目共享的 CDS 配置可以直接在这里添加；项目独有配置请进入项目设置。"
       onToast={onToast}
       reloadKey={reloadKey}
-      topContent={organizePanel}
+      bottomContent={organizePanel}
     />
   );
 }
