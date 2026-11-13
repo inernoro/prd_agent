@@ -232,6 +232,8 @@ public class AvailableModelPool
 
     /// <summary>当前逻辑模型明确登记的兼容标识，不携带供应商凭据。</summary>
     public List<string> Aliases { get; init; } = new();
+    /// <summary>迁移前的池身份，仅用于解析已有业务选择，不作为模型名称展示。</summary>
+    public List<string> LegacyPoolIds { get; init; } = new();
 
     /// <summary>
     /// 优先级

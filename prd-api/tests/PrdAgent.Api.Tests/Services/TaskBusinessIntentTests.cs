@@ -10,6 +10,48 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class TaskBusinessIntentTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LiteraryBatchDeclaresDistinctChildRunsWithoutTrustingClientLimits(bool mcp)
+    {
+        const string args = "{\"markerIndexes\":[0,1,2,3,4,4],\"maxRuns\":999}";
+        var body = mcp ? "{\"method\":\"tools/call\",\"params\":{\"name\":\"map_literary_generate_image\",\"arguments\":" + args + "}}" : args;
+        var http = Json(body, "batch-request");
+        var operation = mcp ? "PrdAgent.Api.Controllers.McpGatewayController.Handle"
+            : "PrdAgent.Api.Controllers.Api.LiteraryImageOpenApiController.Generate";
+        var intent = await TaskBusinessIntent.ResolveAsync(http, operation, TaskExecutionOrigins.Agent, false, default);
+        Assert.Equal(5, intent.DeclaredRunCount);
+        Assert.Equal(0, http.Request.Body.Position);
+        Assert.Null((await TaskBusinessIntent.ResolveAsync(Json(body, "other"), "future.operation", TaskExecutionOrigins.Agent, false, default)).DeclaredRunCount);
+    }
+
+    [Theory]
+    [InlineData("{\"markerIndexes\":[-1]}")]
+    [InlineData("{\"markerIndexes\":[\"1\"]}")]
+    [InlineData("{\"markerIndexes\":[1.5]}")]
+    [InlineData("{\"markerIndexes\":[1],\"markerIndex\":0}")]
+    [InlineData("{\"markerIndexes\":[1],\"MarkerIndexes\":[2]}")]
+    public async Task InvalidLiteraryBatchCannotReceiveAnExpandedPermit(string body)
+    {
+        var http = Json(body, "invalid-batch");
+        var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => TaskBusinessIntent.ResolveAsync(http,
+            "PrdAgent.Api.Controllers.Api.LiteraryImageOpenApiController.Generate", TaskExecutionOrigins.Agent, false, default));
+        Assert.Equal("TASK_LITERARY_BATCH_INVALID", error.Code);
+        Assert.Equal(400, error.StatusCode);
+        Assert.Contains("分批", error.Message);
+        Assert.Equal(0, http.Request.Body.Position);
+    }
+
+    [Fact]
+    public async Task LiteraryBatchOverThePlatformCeilingFailsBeforeAdmission()
+    {
+        var body = JsonSerializer.Serialize(new { markerIndexes = Enumerable.Range(0, GatewayTaskPermitRecord.MaximumRuns + 1) });
+        var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => TaskBusinessIntent.ResolveAsync(Json(body, "large-batch"),
+            "PrdAgent.Api.Controllers.Api.LiteraryImageOpenApiController.Generate", TaskExecutionOrigins.Agent, false, default));
+        Assert.Equal("TASK_LITERARY_BATCH_INVALID", error.Code);
+    }
+
     [Fact]
     public async Task CanonicalJsonAndMultipart_AreIndependentOfPropertyOrderAndBoundary()
     {
@@ -88,6 +130,37 @@ public sealed class TaskBusinessIntentTests
         await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => TaskBusinessIntent.ResolveAsync(
             Json("{\"method\":\"tools/call\",\"id\":1,\"params\":{\"name\":\"map_visual_generate_image\"}}", null),
             "PrdAgent.Api.Controllers.McpGatewayController.Handle", TaskExecutionOrigins.Agent, false, default));
+    }
+
+    [Fact]
+    public async Task McpSdkReplay_IgnoresFiniteObservedTransportMetadataAcrossTurns()
+    {
+        Task<TaskBusinessIntent> Intent(string call,int progress,string prompt="sample",string trace="same-turn",bool businessCallChanged=false,string unknownMeta="unchanged")
+            => TaskBusinessIntent.ResolveAsync(Json(JsonSerializer.Serialize(new {
+                jsonrpc="2.0",id=progress,method="tools/call",@params=new {
+                    name="map_visual_generate_image",arguments=new { clientRequestId="stable-sdk-request",prompt,
+                        modelId="image-2-all",count=1,size="1024x1024",callId=businessCallChanged?"other-business":"same-business" },
+                    _meta=new Dictionary<string,object> {
+                        ["callId"]=call,["progressToken"]=progress,["threadId"]="thread-"+trace,["sessionId"]="session-"+trace,
+                        ["windowId"]="window-"+trace,["itemId"]="item-"+trace,["x-codex-turn-metadata"]=new { trace },["customGuard"]=unknownMeta
+                    }
+                }
+            }),null),"PrdAgent.Api.Controllers.McpGatewayController.Handle",TaskExecutionOrigins.Agent,false,default);
+        var initial=await Intent("sdk-call-one",11);
+        Assert.Equal(initial,await Intent("sdk-call-two",12));
+        Assert.NotEqual(initial.Fingerprint,(await Intent("sdk-call-three",13,prompt:"changed")).Fingerprint);
+        Assert.Equal(initial,await Intent("sdk-call-four",14,trace:"different-turn-session"));
+        Assert.NotEqual(initial.Fingerprint,(await Intent("sdk-call-unknown",16,unknownMeta:"changed")).Fingerprint);
+        Assert.NotEqual(initial.Fingerprint,(await Intent("sdk-call-five",15,businessCallChanged:true)).Fingerprint);
+    }
+
+    [Fact]
+    public async Task McpProgressOnlyEnvelope_IsEquivalentToAbsentTransportMetadata()
+    {
+        Task<TaskBusinessIntent> Intent(string metadata) => TaskBusinessIntent.ResolveAsync(Json(
+            "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"map_visual_generate_image\",\"arguments\":{\"clientRequestId\":\"same\",\"prompt\":\"sample\"}"+metadata+"}}",null),
+            "PrdAgent.Api.Controllers.McpGatewayController.Handle",TaskExecutionOrigins.Agent,false,default);
+        Assert.Equal(await Intent(""),await Intent(",\"_meta\":{\"callId\":\"request-one\",\"progressToken\":11}"));
     }
 
     private static Task<TaskBusinessIntent> Resolve(HttpContext http) => TaskBusinessIntent.ResolveAsync(http,

@@ -6,7 +6,9 @@ import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
 import { PrdLoader } from '@/components/ui/PrdLoader';
-import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
+import { ArenaModelPickerDialog } from '@/components/model/ArenaModelPickerDialog';
+import { ModelReferenceStatus } from '@/components/model/ModelReferenceStatus';
+import type { ArenaSlot, ArenaGroup } from '@/services/contracts/arena';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
 import type { Platform } from '@/types/admin';
@@ -15,7 +17,6 @@ import {
   createArenaGroup,
   updateArenaGroup,
   deleteArenaGroup,
-  createArenaSlot,
   updateArenaSlot,
   deleteArenaSlot,
   toggleArenaSlot,
@@ -23,26 +24,6 @@ import {
 } from '@/services';
 
 // ── Types ──
-
-interface ArenaSlot {
-  id: string;
-  displayName: string;
-  platformId: string;
-  modelId: string;
-  group: string;
-  sortOrder: number;
-  enabled: boolean;
-}
-
-interface ArenaGroup {
-  id: string;
-  key: string;
-  name: string;
-  description?: string;
-  icon?: string;
-  sortOrder: number;
-  slots: ArenaSlot[];
-}
 
 // ── Form state types ──
 
@@ -75,6 +56,7 @@ export default function ArenaConfigTab() {
   // ── Model picker state (for batch-adding slots) ──
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelPickerTargetGroup, setModelPickerTargetGroup] = useState('');
+  const [repairingSlot, setRepairingSlot] = useState<ArenaSlot | null>(null);
 
   // ── Slot edit dialog state ──
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -88,17 +70,6 @@ export default function ArenaConfigTab() {
     for (const p of platforms) map.set(p.id, p.name);
     return map;
   }, [platforms]);
-
-  // ── Existing models for the target group (pre-select in picker) ──
-  const existingModelsForPicker = useMemo<SelectedModelItem[]>(() => {
-    const group = groups.find((g) => g.key === modelPickerTargetGroup);
-    if (!group) return [];
-    return group.slots.map((s) => ({
-      platformId: s.platformId,
-      modelId: s.modelId,
-      name: s.displayName,
-    }));
-  }, [groups, modelPickerTargetGroup]);
 
   // ── Load data ──
   const fetchData = useCallback(async () => {
@@ -156,7 +127,7 @@ export default function ArenaConfigTab() {
       key: group.key,
       name: group.name,
       description: group.description ?? '',
-      sortOrder: group.sortOrder,
+      sortOrder: group.sortOrder ?? 0,
     });
     setGroupDialogOpen(true);
   }, []);
@@ -214,47 +185,9 @@ export default function ArenaConfigTab() {
   // ── Slot: open model picker for batch-adding ──
   const openAddSlots = useCallback((groupKey: string) => {
     setModelPickerTargetGroup(groupKey);
+    setRepairingSlot(null);
     setModelPickerOpen(true);
   }, []);
-
-  // ── Slot: handle model picker confirm ──
-  const handleModelPickerConfirm = useCallback(async (models: SelectedModelItem[]) => {
-    const group = groups.find((g) => g.key === modelPickerTargetGroup);
-    const existingKeys = new Set(
-      (group?.slots ?? []).map((s) => `${s.platformId}:${s.modelId}`.toLowerCase()),
-    );
-    const newModels = models.filter(
-      (m) => !existingKeys.has(`${m.platformId}:${m.modelId}`.toLowerCase()),
-    );
-
-    if (newModels.length === 0) {
-      toast.info('没有新模型需要添加');
-      return;
-    }
-
-    let successCount = 0;
-    for (const m of newModels) {
-      try {
-        const res = await createArenaSlot({
-          displayName: m.name || m.modelName || m.modelId,
-          platformId: m.platformId,
-          modelId: m.modelId,
-          group: modelPickerTargetGroup,
-          enabled: true,
-        });
-        if (res.success) successCount++;
-      } catch {
-        // continue with remaining models
-      }
-    }
-
-    if (successCount > 0) {
-      toast.success(`已添加 ${successCount} 个槽位`);
-      await fetchData();
-    } else {
-      toast.error('添加槽位失败');
-    }
-  }, [groups, modelPickerTargetGroup, fetchData]);
 
   // ── Slot edit ──
   const openEditSlot = useCallback((slot: ArenaSlot) => {
@@ -421,6 +354,7 @@ export default function ArenaConfigTab() {
                           slot={slot}
                           platformName={platformMap.get(slot.platformId)}
                           onEdit={() => openEditSlot(slot)}
+                          onRepair={() => { setRepairingSlot(slot); setModelPickerTargetGroup(group.key); setModelPickerOpen(true); }}
                           onDelete={() => handleDeleteSlot(slot.id)}
                           onToggle={() => handleToggleSlot(slot.id)}
                         />
@@ -520,16 +454,8 @@ export default function ArenaConfigTab() {
       />
 
       {/* ── Model Picker Dialog (batch add slots) ── */}
-      <ModelPoolPickerDialog
-        open={modelPickerOpen}
-        onOpenChange={setModelPickerOpen}
-        selectedModels={existingModelsForPicker}
-        platforms={platforms}
-        onConfirm={handleModelPickerConfirm}
-        title="添加 Arena 槽位"
-        description="从平台中选择模型，确认后批量创建槽位"
-        confirmText="确认添加"
-      />
+      <ArenaModelPickerDialog open={modelPickerOpen} onOpenChange={setModelPickerOpen}
+        group={groups.find(group => group.key === modelPickerTargetGroup)} repairingSlot={repairingSlot} onSaved={fetchData} />
 
       {/* ── Slot Edit Dialog ── */}
       <Dialog
@@ -545,7 +471,7 @@ export default function ArenaConfigTab() {
                 style={{ border: '1px solid var(--border-subtle)' }}
               >
                 <div style={{ color: 'var(--text-secondary)' }}>
-                  {platformMap.get(editingSlot.platformId) || editingSlot.platformId}
+                  {editingSlot.logicalModelId ? '授权模型' : platformMap.get(editingSlot.platformId) || editingSlot.platformId}
                 </div>
                 <div className="font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
                   {editingSlot.modelId}
@@ -589,12 +515,14 @@ function SlotCard({
   onEdit,
   onDelete,
   onToggle,
+  onRepair,
 }: {
   slot: ArenaSlot;
   platformName?: string;
   onEdit: () => void;
   onDelete: () => void;
   onToggle: () => void;
+  onRepair: () => void;
 }) {
   return (
     <GlassCard
@@ -616,7 +544,7 @@ function SlotCard({
 
       {/* Platform */}
       <div className="text-[11px] mb-0.5" style={{ color: 'var(--text-secondary)' }}>
-        {platformName || slot.platformId}
+        {slot.logicalModelId ? '授权模型' : platformName || slot.platformId}
       </div>
 
       {/* Model ID */}
@@ -627,6 +555,9 @@ function SlotCard({
       >
         {slot.modelId}
       </div>
+
+      <ModelReferenceStatus reference={slot} />
+      {slot.modelReferenceStatus !== 'available' ? <Button variant="ghost" size="xs" onClick={onRepair}>修复模型引用</Button> : null}
 
       {/* Actions row */}
       <div className="flex items-center justify-between">

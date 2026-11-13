@@ -131,19 +131,15 @@ export default function AskThread({
             </div>
           ) : (
             <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>
-              {m.error ? (
-                <span style={{ color: 'var(--accent-primary)' }}>{m.error}</span>
-              ) : (
-                <StreamingText
-                  text={m.streaming ? askStreamingText(m.content) : m.content}
-                  streaming={!!m.streaming}
-                  markdown
-                  cursor={false}
-                  // 没有 renderMarkdown 的话 StreamingText 不会切到 markdown 视图，
-                  // 完成后的答案会把 **加粗**、列表、链接的原始语法裸露出来
-                  renderMarkdown={(c) => <AskMarkdown content={c} sourceTitle={title} streaming={!!m.streaming} />}
-                />
-              )}
+              <StreamingText
+                text={m.streaming ? askStreamingText(m.content) : m.content}
+                streaming={!!m.streaming}
+                markdown
+                cursor={false}
+                // 错误提示不能覆盖已收到的正文；中断内容仍可读，但不标成回答完成。
+                renderMarkdown={(c) => <AskMarkdown content={c} sourceTitle={title} streaming={!!m.streaming} />}
+              />
+              {m.error && <div role="alert" style={{ color: 'var(--accent-primary)' }}>{m.error}</div>}
             </div>
           )}
         </div>

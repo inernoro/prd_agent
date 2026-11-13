@@ -976,6 +976,9 @@ public sealed class PoolModelItem
 public sealed class PlatformsData { public List<PlatformItem> Items { get; set; } = new(); public long Total { get; set; } }
 public sealed class PlatformItem
 {
+    /// <summary>配置更新后最近一次真实调用的观测，不能当作实时余额。</summary>
+    public string? RecentCallStatus { get; set; }
+    public string? RecentCallAt { get; set; }
     public UpstreamProxyView? Proxy { get; set; }
     public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string PlatformType { get; set; } = "";
     public string? ProviderId { get; set; } public string? ApiUrl { get; set; } public bool Enabled { get; set; }
@@ -1724,6 +1727,12 @@ public sealed class UpdateExchangeRequest
     public string? ResourceId { get; set; }
     public bool? Enabled { get; set; }
     public string? Description { get; set; }
+    public long? Version { get; set; }
+}
+
+public sealed class UpdateExchangeProxyRequest
+{
+    public UpstreamProxyWrite? Proxy { get; set; }
     public long? Version { get; set; }
 }
 

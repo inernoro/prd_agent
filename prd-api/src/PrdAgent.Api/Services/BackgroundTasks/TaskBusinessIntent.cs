@@ -9,7 +9,7 @@ using PrdAgent.Infrastructure.Security;
 namespace PrdAgent.Api.Services.BackgroundTasks;
 
 /// <summary>提交意图与参数指纹的唯一构造处；不从提示词推断业务相同，不包含实例与版本。</summary>
-public sealed record TaskBusinessIntent(string Key, string Fingerprint, string Scope)
+public sealed record TaskBusinessIntent(string Key, string Fingerprint, string Scope, int? DeclaredRunCount = null)
 {
     // 阶段1已存在的交互入口兼容快照。新增业务默认要求 Idempotency-Key，不能随策略注册自动放宽。
     private static readonly HashSet<string> LegacyInteractiveOperations = new[]
@@ -114,6 +114,7 @@ public sealed record TaskBusinessIntent(string Key, string Fingerprint, string S
         var key = http.Request.Headers["Idempotency-Key"].ToString().Trim();
         var scope = operation + ":" + (http.Request.Path.Value ?? "").ToLowerInvariant();
         var parameters = new StringBuilder(http.Request.Method.ToUpperInvariant());
+        int? declaredRunCount = null;
         foreach (var item in http.Request.Query.OrderBy(x => x.Key, StringComparer.Ordinal))
             parameters.Append(JsonSerializer.Serialize(new { item.Key, Values = item.Value.ToArray() }));
 
@@ -137,6 +138,7 @@ public sealed record TaskBusinessIntent(string Key, string Fingerprint, string S
             try
             {
                 using var body = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: ct);
+                declaredRunCount = ReadLiteraryBatchRunCount(operation, body.RootElement);
                 if (body.RootElement.ValueKind == JsonValueKind.Object)
                 {
                     var root = body.RootElement;
@@ -157,9 +159,7 @@ public sealed record TaskBusinessIntent(string Key, string Fingerprint, string S
                 // JSON-RPC id 是传输关联标识，不属于付费操作参数；重试可使用新的 id。
                 if (operation == "PrdAgent.Api.Controllers.McpGatewayController.Handle"
                     && body.RootElement.ValueKind == JsonValueKind.Object)
-                    parameters.Append("{" + string.Join(",", body.RootElement.EnumerateObject()
-                        .Where(x => x.Name != "id").OrderBy(x => x.Name, StringComparer.Ordinal)
-                        .Select(x => JsonSerializer.Serialize(x.Name) + ":" + Canonical(x.Value))) + "}");
+                    parameters.Append(CanonicalMcpRequest(body.RootElement));
                 else parameters.Append(Canonical(body.RootElement));
             }
             catch (JsonException)
@@ -185,7 +185,79 @@ public sealed record TaskBusinessIntent(string Key, string Fingerprint, string S
         }
         if (key.Length > 256 || key.Any(char.IsControl))
             throw new TaskExecutionAdmissionException("TASK_INTENT_INVALID", "操作标识格式不正确，未启动任务；请使用256字以内的稳定标识。", 400);
-        return new(key, TaskExecutionCoordinator.Fingerprint(parameters.ToString()), scope);
+        return new(key, TaskExecutionCoordinator.Fingerprint(parameters.ToString()), scope, declaredRunCount);
+    }
+
+    // 文学批量生图是一项明确提交的操作，每个标记各有一个后台任务。
+    // 只从这两个已登记入口的结构化字段取数量，不接受客户端自报执行限额。
+    private static int? ReadLiteraryBatchRunCount(string operation, JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return null;
+        var arguments = root;
+        if (operation == "PrdAgent.Api.Controllers.McpGatewayController.Handle")
+        {
+            if (!root.TryGetProperty("method", out var method) || method.ValueKind != JsonValueKind.String
+                || method.GetString() != "tools/call"
+                || !root.TryGetProperty("params", out var parameters) || parameters.ValueKind != JsonValueKind.Object
+                || !parameters.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String
+                || name.GetString() != "map_literary_generate_image"
+                || !parameters.TryGetProperty("arguments", out arguments) || arguments.ValueKind != JsonValueKind.Object)
+                return null;
+        }
+        else if (operation != "PrdAgent.Api.Controllers.Api.LiteraryImageOpenApiController.Generate") return null;
+
+        var fields = arguments.EnumerateObject().Where(x =>
+            string.Equals(x.Name, "markerIndexes", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (fields.Length == 0) return null;
+        if (fields.Length == 1 && fields[0].Value.ValueKind == JsonValueKind.Null) return null;
+        if (fields.Length != 1 || fields[0].Value.ValueKind != JsonValueKind.Array)
+            throw InvalidLiteraryBatch();
+        var indexes = new HashSet<int>();
+        foreach (var item in fields[0].Value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Number || !item.TryGetInt32(out var index) || index < 0) throw InvalidLiteraryBatch();
+            indexes.Add(index);
+            if (indexes.Count > GatewayTaskPermitRecord.MaximumRuns) throw InvalidLiteraryBatch();
+        }
+        if (indexes.Count == 0) return null; // 单张入口的原有校验仍由控制器负责。
+        if (arguments.EnumerateObject().Any(x => string.Equals(x.Name, "markerIndex", StringComparison.OrdinalIgnoreCase)
+            && x.Value.ValueKind != JsonValueKind.Null)) throw InvalidLiteraryBatch();
+        return indexes.Count;
+    }
+
+    private static TaskExecutionAdmissionException InvalidLiteraryBatch() => new("TASK_LITERARY_BATCH_INVALID",
+        $"本次批量配图未启动。请使用有效的配图序号，每批最多 {GatewayTaskPermitRecord.MaximumRuns} 张；更多配图请分批提交。", 400);
+
+    // 真实 SDK 报文已观测的有限传输上下文；不得扩成忽略任意 _meta 或业务 arguments。
+    private static readonly HashSet<string> McpTransportMetadataFields = new(StringComparer.Ordinal)
+    {
+        "callId", "progressToken", "x-codex-turn-metadata", "threadId", "sessionId", "windowId", "itemId"
+    };
+
+    private static string CanonicalMcpRequest(JsonElement root)
+        => "{" + string.Join(",", root.EnumerateObject().Where(x => x.Name != "id")
+            .OrderBy(x => x.Name, StringComparer.Ordinal).Select(x => JsonSerializer.Serialize(x.Name) + ":"
+                + (x.Name == "params" && x.Value.ValueKind == JsonValueKind.Object
+                    ? CanonicalMcpParameters(x.Value) : Canonical(x.Value)))) + "}";
+
+    private static string CanonicalMcpParameters(JsonElement parameters)
+    {
+        var fields = new List<string>();
+        foreach (var field in parameters.EnumerateObject().OrderBy(x => x.Name, StringComparer.Ordinal))
+        {
+            if (field.Name == "_meta" && field.Value.ValueKind == JsonValueKind.Object)
+            {
+                // 已观测的 SDK 调用、进度及会话追踪上下文不是业务提交参数。
+                // 仅限此协议路径；其它元数据及 arguments 中同名业务字段仍参与指纹。
+                var retained = field.Value.EnumerateObject().Where(x => !McpTransportMetadataFields.Contains(x.Name))
+                    .OrderBy(x => x.Name, StringComparer.Ordinal).ToArray();
+                if (retained.Length == 0) continue;
+                fields.Add(JsonSerializer.Serialize(field.Name) + ":{" + string.Join(",", retained
+                    .Select(x => JsonSerializer.Serialize(x.Name) + ":" + Canonical(x.Value))) + "}");
+            }
+            else fields.Add(JsonSerializer.Serialize(field.Name) + ":" + Canonical(field.Value));
+        }
+        return "{" + string.Join(",", fields) + "}";
     }
 
     private static string Canonical(JsonElement value) => value.ValueKind switch

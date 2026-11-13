@@ -35,7 +35,8 @@ describe('MCP 文学配图模型模式接线', () => {
     expect(options).toContain('`${model.actualPlatformId}:${model.actualModelId}`');
     expect(options).toContain('name: displayModelId');
     expect(options).toContain('modelName: pool.code || first.modelId');
-    expect(page).toContain('modelId: effectiveModel.modelName');
+    expect(page).toContain('modelId: freshModel.modelName');
+    expect(page).toContain('selectFreshLiteraryModel(buildLiteraryModelOptions(freshCatalog.data), effectiveModel)');
     expect(page).toContain('modelId: effectiveChatModel?.modelName');
     expect(page).not.toContain('modelId: effectiveModel.actualModelId');
     expect(page).not.toContain('modelId: effectiveChatModel?.actualModelId');

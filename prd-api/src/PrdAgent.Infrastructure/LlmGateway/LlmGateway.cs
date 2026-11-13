@@ -113,42 +113,40 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <summary>
-    /// GPT-5 家族在 OpenAI 协议的 chat 请求里不认 max_tokens，只认 max_completion_tokens。
-    /// 这里把前者收编成后者——**唯一一份**，两个调用方共用：
-    ///   - <see cref="ApplyGpt56ChatCompletionsCompatibility"/>：chat 路径的兼容改写
-    ///   - <see cref="ApplyResolvedMaxTokensCap"/>：所有路径都会经过它
-    ///
-    /// 为什么不能只放在前者里：Exchange 的两条原始请求路径（请求体透传，不做 chat 兼容改写）
-    /// 只调 cap 那一个。cap 于是往 max_completion_tokens 里写，而调用方原来的 max_tokens
-    /// 原样留着——两个字段一起发出去，OpenAI 兼容上游直接拒。顺带治掉第二个后果：cap 看的是
-    /// 目标字段，看不见 max_tokens，会把「调用方明明只要 500」按「目标字段不存在」处理，
-    /// 直接塞成上限值发出去。
+    /// OpenAI chat 的预算字段按已解析型号统一；同义预算取最小值，再由模型上限收紧。
+    /// 普通 chat 与 Exchange 原始请求共用，避免重复字段或覆盖调用方更小的额度。
     /// </summary>
-    private static void NormalizeGpt5TokenField(JsonObject requestBody, ModelResolutionResult resolution)
+    private static void NormalizeOpenAiChatTokenField(JsonObject requestBody, ModelResolutionResult resolution)
     {
         if (!UsesOpenAiProtocol(resolution)
             || requestBody["messages"] is not JsonArray
-            || !IsGpt5FamilyModel(resolution.ActualModel))
+            || !UsesCompletionTokenBudget(resolution.ActualModel))
             return;
-        if (!requestBody.TryGetPropertyValue(MaxTokensField, out var maxTokens))
-            return;
-        if (!requestBody.ContainsKey(MaxCompletionTokensField))
+        var fields = new[] { MaxTokensField, MaxCompletionTokensField, "max_output_tokens" };
+        var positiveCaps = fields.Select(field => requestBody[field] is { } node
+                && TryReadInt(node, out var value) && value > 0 ? (int?)value : null)
+            .Where(value => value.HasValue).ToArray();
+        if (positiveCaps.Length > 0)
+            requestBody[MaxCompletionTokensField] = positiveCaps.Min()!.Value;
+        else if (!requestBody.ContainsKey(MaxCompletionTokensField)
+                 && requestBody.TryGetPropertyValue(MaxTokensField, out var maxTokens))
             requestBody[MaxCompletionTokensField] = maxTokens?.DeepClone();
         requestBody.Remove(MaxTokensField);
+        requestBody.Remove("max_output_tokens");
     }
 
     internal static int? ApplyResolvedMaxTokensCap(JsonObject requestBody, ModelResolutionResult resolution)
     {
         // 先收编再限流：顺序反过来的话，cap 已经按目标字段写完了，收编再把 max_tokens
         // 搬过来会把刚限好的值又盖回去。
-        NormalizeGpt5TokenField(requestBody, resolution);
+        NormalizeOpenAiChatTokenField(requestBody, resolution);
 
         var cap = resolution.MaxTokens;
         if (cap is not > 0)
             return null;
 
         var tokenField = UsesOpenAiProtocol(resolution)
-                         && IsGpt5FamilyModel(resolution.ActualModel)
+                         && UsesCompletionTokenBudget(resolution.ActualModel)
                          && requestBody["messages"] is JsonArray
             ? MaxCompletionTokensField
             : MaxTokensField;
@@ -577,7 +575,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var requestBody = CloneEffectiveRequestBody(request);
                 requestBody["model"] = activeResolution.ActualModel;
                 requestBody["stream"] = false;
-                ApplyGpt56ChatCompletionsCompatibility(requestBody, activeResolution);
+                ApplyOpenAiChatCompletionsCompatibility(requestBody, activeResolution, request.Context);
                 var cappedMaxTokens = ApplyResolvedMaxTokensCap(requestBody, activeResolution);
                 if (cappedMaxTokens.HasValue)
                 {
@@ -905,7 +903,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var requestBody = CloneEffectiveRequestBody(request);
                 requestBody["model"] = resolution.ActualModel;
                 requestBody["stream"] = true;
-                ApplyGpt56ChatCompletionsCompatibility(requestBody, resolution);
+                ApplyOpenAiChatCompletionsCompatibility(requestBody, resolution, request.Context);
                 var cappedMaxTokens = ApplyResolvedMaxTokensCap(requestBody, resolution);
                 if (cappedMaxTokens.HasValue)
                 {
@@ -1819,7 +1817,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var requestBody = request.RequestBody?.DeepClone() as JsonObject ?? new JsonObject();
             requestBody["model"] = resolution.ActualModel;
             if (IsChatCompletionsEndpoint(endpoint))
-                ApplyGpt56ChatCompletionsCompatibility(requestBody, resolution);
+                ApplyOpenAiChatCompletionsCompatibility(requestBody, resolution, request.Context);
             ApplyResolvedMaxTokensCap(requestBody, resolution);
             if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError))
             {
@@ -1865,7 +1863,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             || GatewayProtocolAliases.NormalizeAdapterKey(protocol) != GatewayProtocolAliases.OpenAI) return false;
         try
         {
-            var tokenField = actualModel is not null && IsGpt5FamilyModel(actualModel) ? MaxCompletionTokensField : MaxTokensField;
+            var tokenField = actualModel is not null && UsesCompletionTokenBudget(actualModel) ? MaxCompletionTokensField : MaxTokensField;
             var allowsReasoningNone = actualModel is not null && IsGpt56FamilyModel(actualModel);
             if (JsonNode.Parse(serializedBody ?? "") is not JsonObject body
                 || body.Any(p => p.Key is not ("model" or "messages" or "stream") && p.Key != tokenField
@@ -2773,7 +2771,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var requestBody = request.RequestBody ?? new JsonObject();
                 requestBody["model"] = resolution.ActualModel;
                 if (IsChatCompletionsEndpoint(endpoint))
-                    ApplyGpt56ChatCompletionsCompatibility(requestBody, resolution);
+                    ApplyOpenAiChatCompletionsCompatibility(requestBody, resolution, request.Context);
                 ApplyResolvedMaxTokensCap(requestBody, resolution);
                 if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError))
                 {
@@ -3931,31 +3929,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// "insufficient credits/quota exceeded/billing" 等）。命中后走专门错误码 + 主动站内告警，便于及时提醒。
     /// </summary>
     private static bool IsQuotaExceeded(int statusCode, string? rawMessage)
-    {
-        var m = (rawMessage ?? string.Empty).ToLowerInvariant();
-
-        // 限流（节流）排除：只把「文本明确指向速率/每分钟请求数」的失败排除掉，不能用「429 一律 false」短路——
-        // 部分供应商（如 OpenAI insufficient_quota）也用 429 返回额度耗尽，需让后面的 quota/credit/balance 文本判定
-        // 继续生效，否则这些额度失败会走泛化 LLM_ERROR、漏掉额度告警（Codex review）。
-        // "Rate limit exceeded" 含 "limit exceeded" 子串，由下面的 rate-limit 文本判定先行排除，不会误判为额度。
-        if (m.Contains("rate limit") || m.Contains("rate-limit")
-            || m.Contains("requests per") || m.Contains("per minute")
-            || m.Contains("too many requests"))
-            return false;
-
-        if (statusCode == 402) return true; // Payment Required = 额度/账单
-        if (m.Length == 0) return false;
-
-        // 只认明确指向「额度/余额/账单/key 限额」的信号；裸 "limit exceeded" 不再单独判定为额度。
-        return m.Contains("quota is not enough")                    // APIyi 403：user quota is not enough
-            || m.Contains("key limit")                                   // OpenRouter "Key limit exceeded"
-            || m.Contains("credit limit")
-            || (m.Contains("limit exceeded") && (m.Contains("credit") || m.Contains("quota") || m.Contains("balance") || m.Contains("key")))
-            || (m.Contains("quota") && (m.Contains("exceed") || m.Contains("insufficient")))
-            || (m.Contains("insufficient") && (m.Contains("credit") || m.Contains("balance")))
-            || m.Contains("exceeded your current")
-            || (m.Contains("billing") && m.Contains("limit"));
-    }
+        => PrdAgent.GatewayTransport.UpstreamQuotaPolicy.IsExceeded(statusCode, rawMessage);
 
     /// <summary>
     /// 命中额度用尽时：发专门错误码 + 触发主动站内告警（去重，复用 IPoolFailoverNotifier）。
@@ -4205,7 +4179,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         => requestBody.TryGetPropertyValue("tools", out var tools)
            && tools is System.Text.Json.Nodes.JsonArray arr && arr.Count > 0;
 
-    private static void ApplyGpt56ChatCompletionsCompatibility(JsonObject requestBody, ModelResolutionResult resolution)
+    private static void ApplyOpenAiChatCompletionsCompatibility(JsonObject requestBody, ModelResolutionResult resolution, GatewayRequestContext? context)
     {
         if (!UsesOpenAiProtocol(resolution) || requestBody["messages"] is not JsonArray)
             return;
@@ -4214,9 +4188,21 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (IsGpt56FamilyModel(resolution.ActualModel) && !requestBody.ContainsKey("reasoning_effort"))
             requestBody["reasoning_effort"] = "none";
 
-        // 字段改名整个 GPT-5 家族都要：OpenAI 对全家族都拒收 max_tokens。
+        // 普通业务客户端带有默认采样参数；o 系列不接受这些参数。
+        // strict-require 的显式意图保留给能力闸拒绝，不能静默丢弃后执行。
+        if (IsKnownOSeriesModel(resolution.ActualModel) && !IsStrictParameterPolicy(context))
+            foreach (var field in UnsupportedOSeriesParameters(resolution.ActualModel))
+                requestBody.Remove(field);
+
+        // GPT-6.1 Sol 不支持 none，不能沿用 GPT-5.6 的默认推理设置。
+        // https://developers.openai.com/api/docs/guides/latest-model
+        if (IsGpt61SolModel(resolution.ActualModel) && !IsStrictParameterPolicy(context))
+            foreach (var field in Gpt61SolUnsupportedSamplingParameters)
+                requestBody.Remove(field);
+
+        // GPT-5、已确认的 GPT-6.1 Sol 与 o 系列使用 max_completion_tokens。
         // 走共用的那一份，别在这里再写一遍（两份必然漂移，而漂移的表现是上游 400）。
-        NormalizeGpt5TokenField(requestBody, resolution);
+        NormalizeOpenAiChatTokenField(requestBody, resolution);
     }
 
     private static bool UsesOpenAiProtocol(ModelResolutionResult resolution)
@@ -4245,6 +4231,49 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         => NormalizeModelLeaf(model) is var normalized
            && (normalized == "gpt-5" || normalized.StartsWith("gpt-5-", StringComparison.Ordinal)
                || normalized.StartsWith("gpt-5.", StringComparison.Ordinal));
+
+    private static bool IsGpt61SolModel(string? model)
+        => NormalizeModelLeaf(model) == "gpt-6.1-sol";
+
+    private static readonly string[] Gpt61SolUnsupportedSamplingParameters =
+        ["temperature", "top_p", "logprobs", "top_logprobs"];
+
+    private static bool UsesCompletionTokenBudget(string? model)
+        => IsGpt5FamilyModel(model) || IsKnownOSeriesModel(model) || IsGpt61SolModel(model);
+
+    // 仅描述已确认型号的预算与采样规则，不承诺旧型号的 role/stream 等完整协议兼容。
+    // 仅接受原名与合法日期快照，不能凭 o 前缀猜未来协议。
+    private static bool IsKnownOSeriesModel(string? model)
+    {
+        var leaf = NormalizeModelLeaf(model);
+        return new[] { "o1", "o1-mini", "o1-preview", "o3", "o3-mini", "o4-mini" }
+            .Any(family => IsExactOrDatedModel(leaf, family));
+    }
+
+    private static bool IsExactOrDatedModel(string leaf, string family)
+    {
+        if (leaf == family) return true;
+        if (leaf.StartsWith(family + "-", StringComparison.Ordinal)
+            && DateOnly.TryParseExact(leaf[(family.Length + 1)..], "yyyy-MM-dd",
+                System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _))
+            return true;
+        return false;
+    }
+
+    private static IEnumerable<string> UnsupportedOSeriesParameters(string? model)
+    {
+        yield return "temperature";
+        yield return "top_p";
+        yield return "presence_penalty";
+        yield return "frequency_penalty";
+        yield return "logprobs";
+        yield return "top_logprobs";
+        yield return "logit_bias";
+        var leaf = NormalizeModelLeaf(model);
+        // 官方只明确这两条型号不支持 stop；不能把 o3-mini 的显式停止条件也丢掉。
+        if (IsExactOrDatedModel(leaf, "o3") || IsExactOrDatedModel(leaf, "o4-mini"))
+            yield return "stop";
+    }
 
     /// <summary>去掉 `openai/` 这类 provider 前缀，只留模型名本身。</summary>
     private static string NormalizeModelLeaf(string? model)
@@ -4289,6 +4318,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (TryBuildStrictParameterCapabilityFailure(request.Context, resolution, requestBody, out var parameterError))
         {
             error = parameterError;
+            return true;
+        }
+
+        if (UsesOpenAiProtocol(resolution) && IsGpt61SolModel(resolution.ActualModel) && RequestHasTools(requestBody))
+        {
+            error = GatewayResponse.Fail("GPT61_TOOLS_REQUIRE_RESPONSES",
+                "所选模型需要通过 Responses API 使用工具，请切换已配置的 Responses 线路。", 400);
             return true;
         }
 
@@ -4394,6 +4430,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (TryBuildStrictParameterCapabilityRawFailure(request.Context, resolution, requestBody, out var parameterError))
         {
             error = parameterError;
+            return true;
+        }
+
+        if (IsChatCompletionsEndpoint(request.EndpointPath) && requestBody is not null
+            && UsesOpenAiProtocol(resolution) && IsGpt61SolModel(resolution.ActualModel) && RequestHasTools(requestBody))
+        {
+            error = GatewayRawResponse.Fail("GPT61_TOOLS_REQUIRE_RESPONSES",
+                "所选模型需要通过 Responses API 使用工具，请切换已配置的 Responses 线路。", 400);
             return true;
         }
 
@@ -4563,6 +4607,29 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return false;
 
         var strict = IsStrictParameterPolicy(context);
+        if (UsesOpenAiProtocol(resolution) && requestBody["messages"] is JsonArray && IsGpt61SolModel(resolution.ActualModel))
+        {
+            var rejected = strict ? Gpt61SolUnsupportedSamplingParameters.FirstOrDefault(key => IsRequestedJsonParameter(requestBody, key)) : null;
+            if (rejected is not null || requestBody["reasoning_effort"] is JsonValue effort
+                && effort.TryGetValue<string>(out var effortText) && string.Equals(effortText, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                parameter = rejected ?? "reasoning_effort";
+                supported = false;
+                return true;
+            }
+        }
+        if (strict && UsesOpenAiProtocol(resolution) && requestBody["messages"] is JsonArray
+            && IsKnownOSeriesModel(resolution.ActualModel))
+        {
+            var rejected = UnsupportedOSeriesParameters(resolution.ActualModel)
+                .FirstOrDefault(key => IsRequestedJsonParameter(requestBody, key));
+            if (rejected is not null)
+            {
+                parameter = rejected;
+                supported = false;
+                return true;
+            }
+        }
         foreach (var key in StrictParameterCapabilityKeys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))
         {
             if (!IsRequestedJsonParameter(requestBody, key)) continue;

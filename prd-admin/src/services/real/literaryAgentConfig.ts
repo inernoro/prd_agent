@@ -326,6 +326,9 @@ export const createLiteraryAgentImageGenRunReal: CreateLiteraryAgentImageGenRunC
   return await apiRequest(api.literaryAgent.imageGen.runs.create(), { method: 'POST', body: input, headers });
 };
 
+export const getLiteraryAgentRunByRequestReal: import('../contracts/literaryAgentConfig').GetLiteraryAgentRunByRequestContract = async requestId =>
+  apiRequest(api.literaryAgent.imageGen.runs.byRequest(requestId), { method: 'GET' });
+
 /**
  * 取消文学创作图片生成任务
  */
