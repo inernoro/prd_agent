@@ -7,6 +7,7 @@ export interface DocEmptyStateProps {
   title?: string; // 默认 "这是你的知识库"
   description?: string; // 默认 "汇总文档，按结论与时间归档，支持全文搜索与标签筛选。"
   onCreateDocument?: () => void;
+  onCreateWriting?: () => void;
   onUploadFile?: () => void;
   onAddSubscription?: () => void;
 }
@@ -39,12 +40,13 @@ export function DocEmptyState(props: DocEmptyStateProps) {
     title = '这是你的知识库',
     description = '汇总文档，按结论与时间归档，支持全文搜索与标签筛选。',
     onCreateDocument,
+    onCreateWriting,
     onUploadFile,
     onAddSubscription,
   } = props;
 
   // 至少有一个回调时才渲染 CTA 行
-  const hasCta = !!(onCreateDocument || onUploadFile || onAddSubscription);
+  const hasCta = !!(onCreateWriting || onCreateDocument || onUploadFile || onAddSubscription);
 
   return (
     <div
@@ -86,6 +88,7 @@ export function DocEmptyState(props: DocEmptyStateProps) {
         {title}
       </h3>
 
+      {onCreateWriting && <button type="button" className="surface-action mb-3 rounded-md px-4 py-2 text-sm" onClick={onCreateWriting}>按模版成文</button>}
       {/* 3. 说明 */}
       <p
         style={{

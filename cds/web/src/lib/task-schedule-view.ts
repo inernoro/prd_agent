@@ -125,7 +125,18 @@ export function formatDuration(ms: number | null | undefined): string {
  */
 export type JobGroupKey = 'attention' | 'soon' | 'normal';
 
+export function hasTaskHealthFailure(job: ScheduledJob): boolean {
+  return Boolean(job.health && ['missed', 'execution', 'timeout', 'artifact-invalid', 'interrupted'].includes(job.health.state));
+}
+
+export function taskHealthTone(job: ScheduledJob): string {
+  if (!job.enabled) return 'bg-muted-foreground';
+  if (job.health) return hasTaskHealthFailure(job) ? 'bg-bad' : job.health.state === 'due' ? 'bg-warn' : 'bg-ok';
+  return statusTone(job.lastRunStatus || 'queued');
+}
+
 export function groupKeyOf(job: ScheduledJob, now: number): JobGroupKey {
+  if (hasTaskHealthFailure(job)) return 'attention';
   if (!job.enabled || job.autoDisabledReason || (job.consecutiveFailureCount || 0) > 0) return 'attention';
   const delta = msUntil(job.nextRunAt, now);
   if (delta === null) return 'normal';
@@ -187,7 +198,7 @@ export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now
   const skipped = today.filter((run) => run.status === 'skipped').length;
 
   const disabled = jobs.filter((job) => job.autoDisabledReason);
-  const failing = jobs.filter((job) => (job.consecutiveFailureCount || 0) > 0);
+  const failing = jobs.filter((job) => (job.consecutiveFailureCount || 0) > 0 || (job.enabled && hasTaskHealthFailure(job)));
 
   let nextJob: ScheduledJob | null = null;
   let nextDelta = Infinity;
@@ -227,7 +238,8 @@ export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now
   const failedJobIds = new Set(liveFailures.map((run) => run.jobId));
   const unrecovered = [...failedJobIds].filter((jobId) => {
     const lastFail = Math.max(...today.filter((r) => r.jobId === jobId && r.status === 'failed').map((r) => Date.parse(r.queuedAt)));
-    return !today.some((r) => r.jobId === jobId && r.status === 'success' && Date.parse(r.queuedAt) > lastFail);
+    const hadScheduledFailure = liveFailures.some(run => run.jobId === jobId && run.trigger === 'schedule');
+    return !today.some((r) => r.jobId === jobId && r.status === 'success' && (!hadScheduledFailure || r.trigger === 'schedule') && Date.parse(r.queuedAt) > lastFail);
   });
 
   const state: OverviewState = jobs.length === 0
@@ -262,6 +274,7 @@ export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now
     headline = disabled.length > 0
       ? `${failing.length} 个任务连续失败，其中 ${disabled.length} 个已被自动停用`
       : `${failing.length} 个任务连续失败`;
+    if (failing.some(job => job.health && ['missed', 'timeout', 'artifact-invalid', 'interrupted'].includes(job.health.state))) headline = `${failing.length} 个任务需要处理`;
     // 这句此前写成 `今日${failedLive ? '' : '零失败'}`——有别的失败时三元返回空串，
     // 句子就断在「其余 8 个任务今日。」（2026-09-02 预览域验收时一眼看到）。
     // 有失败就说清剩下那些各挂了几次，没有才说零失败。
