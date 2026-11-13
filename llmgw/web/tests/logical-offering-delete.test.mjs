@@ -53,7 +53,13 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
     const { LogicalModelsPage } = await server.ssrLoadModule('/src/pages/LogicalModelsPage.tsx');
     root = createRoot(document.getElementById('root'));
     const render = key => act(async () => root.render(React.createElement(globalThis.__offeringDeleteRouter.MemoryRouter, {}, React.createElement(LogicalModelsPage, { key }))));
-    await render('admin'); await click(buttons('查看')[0]);
+    await render('admin');
+    await click(buttons('绑定上游')[0]); assert.ok(buttons('保存绑定').length);
+    await click(document.querySelector('[aria-label="关闭详情"]'));
+    await click(buttons('测试')[0]);
+    assert.equal(buttons('保存绑定').length, 0, '行内测试不能带出前次关闭的空白绑定表单');
+    await click(document.querySelector('[aria-label="关闭详情"]'));
+    await click(buttons('查看')[0]);
     assert.equal(remove('official-enabled').disabled, true, '启用线路必须先停用');
     assert.equal(remove('legacy-disabled').disabled, false);
     fixture.typed = null; await click(remove('legacy-disabled'));
