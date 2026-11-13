@@ -81,6 +81,9 @@ public sealed class NotificationIncidentLifecycleTests
         Assert.Equal("recovered", recovered.Notification.IncidentState);
         Assert.Equal("open", recovered.Notification.Status);
         Assert.Equal(1, recovered.Notification.PushEpisode);
+        var lateFailure = await service.CreateAsync(Request("active", latest, 999), "actor", CancellationToken.None);
+        Assert.Equal("recovered", lateFailure.Notification.IncidentState);
+        Assert.Equal(182, lateFailure.Notification.OccurrenceCount);
         var recurrent = await service.CreateAsync(Request("active", latest.AddMinutes(20), 183), "actor", CancellationToken.None);
         Assert.Equal("active", recurrent.Notification.IncidentState);
         Assert.Null(recurrent.Notification.RecoveredAt);
@@ -161,5 +164,43 @@ public sealed class NotificationIncidentLifecycleTests
         Assert.IsType<NotFoundObjectResult>(await controller.Handle("global-pool"));
         Assert.Equal("admin", AdminNotificationSourceCatalog.ResolveSection("model-pool-probe", "personal", null));
         Assert.Equal("personal", AdminNotificationSourceCatalog.ResolveSection("model-pool-probe", null, "u1"));
+    }
+
+    [Fact]
+    public async Task OperationalPermission_DoesNotExposeGatewayObjectsOrActions_WithoutGatewayPermission()
+    {
+        await using var db = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
+        await db.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
+            Id = "restricted-gateway", Source = "gateway-alert", Section = "admin", IncidentId = "fixture-route",
+            Title = "私有供应商甲 · 模型甲余额不足", Message = "供应商内部诊断", IncidentState = "active",
+            RequestOutcome = "fallback_succeeded", EvidenceRequestId = "fixture-request",
+            ActionKind = "llm-gateway", ActionUrl = "/logs?requestId=fixture-request",
+        });
+        var canEnterGateway = false;
+        var permissions = new Mock<IAdminPermissionService>();
+        permissions.Setup(p => p.GetEffectivePermissionsAsync(It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => canEnterGateway
+                ? new[] { AdminPermissionCatalog.SettingsWrite, AdminPermissionCatalog.LlmGatewayAccess }
+                : new[] { AdminPermissionCatalog.SettingsWrite });
+        var controller = new NotificationsController(db.Context, null!, null!, new ConfigurationBuilder().Build(), permissions.Object) {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(new[] {
+                new Claim("userId", "u1"), new Claim(ClaimTypes.Role, "ADMIN"),
+            }, "test")) } },
+        };
+        async Task<JsonElement> Item()
+        {
+            var result = Assert.IsType<OkObjectResult>(await controller.List());
+            return JsonSerializer.SerializeToElement(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                .GetProperty("data").GetProperty("items")[0];
+        }
+        var restricted = await Item();
+        Assert.DoesNotContain("私有供应商", restricted.GetProperty("title").GetString());
+        Assert.Contains("备用线路成功完成", restricted.GetProperty("message").GetString());
+        Assert.Equal(JsonValueKind.Null, restricted.GetProperty("actionUrl").ValueKind);
+        Assert.Equal(JsonValueKind.Null, restricted.GetProperty("evidenceRequestId").ValueKind);
+        canEnterGateway = true;
+        var allowed = await Item();
+        Assert.Contains("私有供应商甲", allowed.GetProperty("title").GetString());
+        Assert.Equal("/logs?requestId=fixture-request", allowed.GetProperty("actionUrl").GetString());
     }
 }

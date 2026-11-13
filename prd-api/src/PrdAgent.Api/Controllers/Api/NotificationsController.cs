@@ -435,6 +435,22 @@ public sealed class NotificationsController : ControllerBase
         var section = AdminNotificationSourceCatalog.ResolveSection(n.Source,
             legacyPersonalDataTransfer ? AdminNotificationSections.Personal : n.Section, n.TargetUserId);
         var presentation = ToUserReadablePresentation(n);
+        var gatewayDiagnostic = n.Source is "gateway-alert" or "llm-gateway-quota"
+            || n.Source == "model-pool-probe" && section == AdminNotificationSections.Admin;
+        var restrictDiagnostic = gatewayDiagnostic && !canOpenGateway;
+        if (restrictDiagnostic && !(n.Source == "llm-gateway-quota" && string.IsNullOrWhiteSpace(n.IncidentId)))
+        {
+            // 运营通知可见性不授予网关对象查看权；普通运营管理员只看到适用的影响与下一步。
+            presentation = ("模型服务状态需要网关管理员检查", n.IncidentState == "recovered"
+                ? "已有恢复观测；历史失败任务不会自动重做，请核对任务结果后决定是否重试。"
+                : n.RequestOutcome switch
+                {
+                    "fallback_succeeded" => "该次请求已由备用线路成功完成，无需重试。异常线路需由有网关权限的管理员检查。",
+                    "all_failed" => "该次请求已尝试的线路均失败。请联系有网关权限的管理员检查，或切换可用模型后重试。",
+                    "request_failed" => "已记录一次模型调用失败。请联系有网关权限的管理员检查，并核对任务结果后再重试。",
+                    _ => "已记录模型服务异常；该次请求结果与当前可用范围未确认。请联系有网关权限的管理员检查，并先核对任务结果。",
+                });
+        }
         return new
         {
             n.Id,
@@ -452,9 +468,9 @@ public sealed class NotificationsController : ControllerBase
             n.FirstOccurredAt,
             n.LastOccurredAt,
             n.RecoveredAt,
-            n.EvidenceRequestId,
+            evidenceRequestId = restrictDiagnostic ? null : n.EvidenceRequestId,
             n.ActionLabel,
-            actionUrl = n.ActionKind == "llm-gateway" && !canOpenGateway ? null : n.ActionUrl,
+            actionUrl = restrictDiagnostic || n.ActionKind == "llm-gateway" && !canOpenGateway ? null : n.ActionUrl,
             n.ActionKind,
             n.Source,
             section,
