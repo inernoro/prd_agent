@@ -199,7 +199,7 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
                 D(model, "InputPricePerMillion"), D(model, "OutputPricePerMillion")))) return null;
         return (new TaskBudgetContractPolicy { AuthorizedLimitUsd = upper,
             CanaryUnitCostUpperBoundUsd = type == ModelTypes.ImageGen ? upper : null,
-            ExpectedOfferingId = S(job, "CandidateOfferingId"), MaxOutputTokens = type == ModelTypes.ImageGen ? 1 : 16,
+            ExpectedOfferingId = S(job, "CandidateOfferingId"), MaxOutputTokens = type == ModelTypes.ImageGen ? 1 : bindingTest ? 256 : 16,
             LogicalModelPublicId = S(job, "CandidateLogicalModelPublicId"), Provider = S(job, "Provider"), Model = S(job, "UpstreamModelId"),
             Protocol = S(job, "Protocol"), PriceVersion = S(job, "PriceVersion"), InputUsdPerMillion = D(model, "InputPricePerMillion"),
             OutputUsdPerMillion = D(model, "OutputPricePerMillion"), CachedInputUsdPerMillion = Math.Max(D(model, "CachedInputPricePerMillion"), D(model, "InputPricePerMillion")), CacheWriteUsdPerMillion = Math.Max(D(model, "CacheWritePricePerMillion"), D(model, "InputPricePerMillion")) }, type);
@@ -241,7 +241,7 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
             ExpectedModel = S(job, "CandidateLogicalModelPublicId"), Context = context,
             EndpointPath = S(job, "EndpointPath") is { Length: > 0 } endpoint ? endpoint : GatewayProtocolAliases.IsClaudeProtocol(S(job, "Protocol")) ? "messages" : "chat/completions",
             RequestBody = new JsonObject { ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "Reply OK." }),
-                ["max_tokens"] = 16, ["stream"] = false }, TimeoutSeconds = 120 };
+                ["max_tokens"] = S(job, "Operation") == "binding-test" ? 256 : 16, ["stream"] = false }, TimeoutSeconds = 120 };
 
     internal static bool HasChatOutput(string? content)
     {

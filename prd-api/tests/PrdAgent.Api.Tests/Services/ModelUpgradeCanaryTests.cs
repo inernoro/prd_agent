@@ -50,7 +50,12 @@ public sealed class ModelUpgradeCanaryTests
                 ("llmgw_console_users", new BsonDocument { { "_id", "console-user" }, { "IsActive", true }, { "IdentityProvider", "map" }, { "ExternalSubjectId", "map:probe-user" } }),
                 ("llmgw_memberships", new BsonDocument { { "_id", "member" }, { "TenantId", "internal" }, { "UserId", "console-user" }, { "Status", "active" }, { "Role", "admin" } }) })
                 await data.Database.GetCollection<BsonDocument>(pair.Item1).InsertOneAsync(pair.Item2);
-            Assert.NotNull(await ModelUpgradeCanaryWorker.ValidateAsync(data, map, job, "internal", default));
+            var validated = await ModelUpgradeCanaryWorker.ValidateAsync(data, map, job, "internal", default)
+                ?? throw new Xunit.Sdk.XunitException("当前有效身份和受限线路应通过发送前检查。");
+            Assert.Equal(256, validated.Budget.MaxOutputTokens);
+            var request = ModelUpgradeCanaryWorker.CreateChatCanaryRequest(job, new GatewayRequestContext());
+            Assert.Equal(256, request.RequestBody!["max_tokens"]!.GetValue<int>());
+
             var altered = job.DeepClone().AsBsonDocument; altered["UnitCostUpperBoundUsd"] = new Decimal128(2m);
             Assert.Null(await ModelUpgradeCanaryWorker.ValidateAsync(data, map, altered, "internal", default));
             altered = job.DeepClone().AsBsonDocument; altered["OfferingVersion"] = "changed";

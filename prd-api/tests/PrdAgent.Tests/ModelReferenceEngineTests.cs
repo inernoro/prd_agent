@@ -44,6 +44,34 @@ public sealed class ModelReferenceEngineTests
         Assert.Equal("old-fixed", doc["Scenes"][0]["Versions"][0]["Model"].AsString);
         Assert.Equal(0, store.Writes);
     }
+    [Theory]
+    [InlineData("pending", 60, true)]
+    [InlineData("running", -60, true)]
+    [InlineData("pending", -60, false)]
+    [InlineData("succeeded", 60, false)]
+    [InlineData("failed", 60, false)]
+    [InlineData("unknown", 60, false)]
+    public async Task FrozenValidationQueueMustDrainWhileTerminalHistoryIsPreserved(string status, int expiryMinutes, bool blocked)
+    {
+        var store = new MemoryStore();
+        var doc = store.Add("llmgw_model_upgrade_validation_runs", "{_id:'probe',TenantId:'internal',LogicalModelId:'old-logical',CandidateLogicalModelPublicId:'old-fixed',CandidateOfferingId:'old-offering',ModelId:'old-physical',Status:'" + status + "'}");
+        doc["ExpiresAt"] = DateTime.UtcNow.AddMinutes(expiryMinutes);
+        var coverage = await Engine(store).FindDeleteBlockersAsync(Mapping());
+        Assert.Equal(blocked, coverage.Blocked > 0); Assert.Equal(0, coverage.Unknown); Assert.Equal(0, store.Writes);
+        Assert.Equal("old-logical", doc["LogicalModelId"].AsString);
+    }
+
+    [Fact]
+    public async Task ValidationModelNameOnAnotherProviderDoesNotBlockThisPhysicalRetirement()
+    {
+        var store = new MemoryStore(); var mapping = Mapping();
+        mapping.Source = new ReferenceIdentity { PhysicalModelId = "old-physical", ProviderId = "old-provider", UpstreamModelId = "same-name" };
+        var doc = store.Add("llmgw_model_upgrade_validation_runs", "{_id:'probe',TenantId:'internal',LogicalModelId:'other-logical',ProviderId:'other-provider',ModelId:'other-physical',UpstreamModelId:'same-name',Status:'pending'}");
+        doc["ExpiresAt"] = DateTime.UtcNow.AddMinutes(5);
+        var coverage = await Engine(store).FindDeleteBlockersAsync(mapping);
+        Assert.Equal(0, coverage.Blocked); Assert.Equal(0, coverage.Unknown); Assert.Equal(0, store.Writes);
+    }
+
     [Fact]
     public async Task NewUnclassifiedSelectionInsideVideoVersionStillBlocksCompletion()
     {

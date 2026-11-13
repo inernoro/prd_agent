@@ -9,7 +9,7 @@ public sealed record ReferenceCollection(string Key, string Database, string Col
 
 public static class ModelReferenceRegistry
 {
-    public const string Version = "2026-11-12.v1";
+    public const string Version = "2026-11-13.v1";
     public static readonly IReadOnlyList<ReferenceCollection> Collections = new ReferenceCollection[]
     {
         new("map.arena-slots", "map", "arena_slots", "business", ["LogicalModelId", "PlatformId", "ModelId"], ["LogicalModelId", "PlatformId", "ModelId"]),
@@ -37,13 +37,14 @@ public static class ModelReferenceRegistry
         new("gw.logical-roles", "gateway", "llmgw_logical_models", "roles", ["PublicId", "Aliases", "MigratedFromPoolIds", "DefaultForAppCallerCodes", "IsDefaultForType", "ModelType"], ["MigratedFromPoolIds", "ModelType"]),
         new("gw.legacy-pools", "gateway", "llmgw_model_pools", "inactive", ["Models.ModelId", "Models.PlatformId"], ["Models[].ModelId", "Models[].PlatformId", "ModelType"]),
         new("gw.legacy-callers", "gateway", "llmgw_app_callers", "inactive", ["ModelPoolId", "DefaultModelPoolId", "AllowedModelPoolIds"], ["ModelPoolId", "DefaultModelPoolId", "AllowedModelPoolIds", "ObservedModelPoolIds", "LastObservedModelPoolId"]),
+        new("gw.validation-queue", "gateway", "llmgw_model_upgrade_validation_runs", "validation-queue", ["LogicalModelId", "CandidateLogicalModelPublicId", "CandidateOfferingId", "ProviderId", "ModelId", "UpstreamModelId", "Status", "ExpiresAt", "ExecutionDeadline"], ["LogicalModelId", "CandidateLogicalModelPublicId", "CandidateOfferingId", "ModelId", "UpstreamModelId"]),
         new("gw.upgrade-policy", "gateway", "llmgw_model_upgrade_policies", "upgrade-policy", ["LogicalModelId", "Policy.Enabled", "Policy.Successors.ProviderId", "Policy.Successors.FromModel", "Policy.Successors.ToModel", "PendingAction", "PendingSwitch.OperationId", "LeaseUntil", "Current.UpstreamModelId", "Candidate.ValidationRoute.LogicalModelId"], ["LogicalModelId", "Policy.Successors[].FromModel", "Policy.Successors[].ToModel", "Discoveries[].UpstreamModelId"]),
     };
     public static readonly IReadOnlyList<string> HistoricalExclusions = new[]
     {
         "arena_battles", "model_lab_runs", "model_lab_run_items", "llmrequestlogs", "openapirequestlogs",
         "image_gen_runs", "image_gen_run_items", "speech_runs", "direct_video_job_ownerships", "design_artifact_runs_v2",
-        "llmgw_request_executions", "llmgw_model_upgrade_validation_runs", "submissions", "weekly_reports",
+        "llmgw_request_executions", "submissions", "weekly_reports",
     };
     public static readonly IReadOnlyList<string> ExternalConsumers = new[]
     { "runtime.map-legacy-model", "runtime.chat-agent-default", "runtime.design-route", "runtime.sdk-models" };
