@@ -25,21 +25,26 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
         var stale = f.SweepAsync();
         await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Exception? error;
+        AdminNotification? beforeStale = null;
         try
         {
             if (reopened) await f.SweepAsync(); // the same success is legitimately applied once
             await f.LogAsync("failure-newer", "failed", -60); await f.SweepAsync();
             if (reopened) { f.Clock.Advance(TimeSpan.FromMinutes(31)); await f.DispatchAsync(); }
             await TraceAsync(f, "before-stale-success", reopened);
+            beforeStale = await f.FaultAsync();
         }
         finally { barrier.Release.TrySetResult(); }
         error = await Record.ExceptionAsync(() => stale);
         await TraceAsync(f, "after-stale-success", reopened);
+        Assert.Equal(beforeStale!.GatewaySignalVersion, (await f.FaultAsync()).GatewaySignalVersion);
+        Assert.Equal(beforeStale.PushEpisode, (await f.FaultAsync()).PushEpisode);
         await f.SweepAsync();
         f.Clock.Advance(TimeSpan.FromMinutes(31)); await f.DispatchAsync();
         await TraceAsync(f, "after-reentry", reopened);
-        Assert.Equal(reopened ? 1 : 0, (await f.FaultAsync()).PushEpisode);
-        Assert.Equal(reopened ? 2 : 1, f.Http.Calls);
+        // The real success followed by failure is a recurrence even when both arrive in one sweep.
+        Assert.Equal(1, (await f.FaultAsync()).PushEpisode);
+        Assert.Equal(2, f.Http.Calls);
         Assert.Equal("open", (await f.FaultAsync()).Status);
         Assert.Null(error);
     }
@@ -105,12 +110,15 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
         using var barrier = PauseLogSnapshot(f);
         var stale = f.SweepAsync();
         await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        try { await f.LogAsync("success-two", "succeeded", -60); await f.SweepAsync(); }
+        AdminNotification? beforeStale = null;
+        try { await f.LogAsync("success-two", "succeeded", -60); await f.SweepAsync(); beforeStale = await f.FaultAsync(); }
         finally { barrier.Release.TrySetResult(); }
         await stale;
         Assert.Equal("closed", (await f.FaultAsync()).Status);
-        Assert.Equal(0, (await f.FaultAsync()).PushEpisode);
-        Assert.Equal(1, await f.Db.AdminNotifications.CountDocumentsAsync(n => n.Level == "success"));
+        Assert.Equal(beforeStale!.GatewaySignalVersion, (await f.FaultAsync()).GatewaySignalVersion);
+        Assert.Equal(beforeStale.PushEpisode, (await f.FaultAsync()).PushEpisode);
+        Assert.Equal(1, (await f.FaultAsync()).PushEpisode);
+        Assert.Equal(2, await f.Db.AdminNotifications.CountDocumentsAsync(n => n.Level == "success"));
     }
 
     [Fact]

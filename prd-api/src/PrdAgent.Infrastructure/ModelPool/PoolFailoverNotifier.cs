@@ -25,12 +25,8 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
     public async Task NotifyPoolExhaustedAsync(ModelGroup pool, CancellationToken ct = default)
     {
         var key = $"pool-exhausted:{pool.Id}";
-        var modelDetails = string.Join("、",
-            pool.Models?.Select(m => $"{m.ModelId}（连续失败 {m.ConsecutiveFailures} 次）") ?? []);
-
-        var message = $"模型池 \"{pool.Name}\"（{pool.ModelType}）中 {pool.Models?.Count ?? 0} 个端点全部失败。\n" +
-                      $"系统已启动自动探活，恢复后将自动通知。\n" +
-                      $"失败端点：{modelDetails}";
+        var message = $"模型池“{pool.Name}”当前记录的 {pool.Models?.Count ?? 0} 条线路均不可用。" +
+                      "使用该池的新请求暂时没有可用线路，请切换可用模型或检查该池配置。后续检测确认恢复后更新状态。";
 
         await UpsertNotificationAsync(
             key: key,
@@ -38,7 +34,9 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
             message: message,
             level: "warning",
             source: "model-pool-probe",
-            ct: ct);
+            ct: ct,
+            incidentId: $"model-pool:{pool.Id}", incidentState: "active", requestOutcome: "unknown",
+            actionUrl: $"/logs?modelPoolId={Uri.EscapeDataString(pool.Id)}");
 
         _logger.LogWarning("[PoolFailoverNotifier] 模型池全部不可用通知已发送: {PoolName}", pool.Name);
     }
@@ -47,18 +45,24 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
         ModelGroup pool, string recoveredModelId, TimeSpan downDuration, CancellationToken ct = default)
     {
         // 1. 发送恢复通知
-        var recoveryKey = $"pool-recovered:{pool.Id}";
+        var fault = await _db.AdminNotifications.Find(n => n.Key == $"pool-exhausted:{pool.Id}")
+            .SortByDescending(n => n.CreatedAt).FirstOrDefaultAsync(ct);
+        if (fault == null || fault.IncidentState == "recovered") return;
+        var recoveryKey = $"pool-recovered:{pool.Id}:episode:{fault.PushEpisode}";
         var durationStr = downDuration.TotalMinutes >= 1
             ? $"{downDuration.TotalMinutes:F0} 分钟"
             : $"{downDuration.TotalSeconds:F0} 秒";
 
         await UpsertNotificationAsync(
             key: recoveryKey,
-            title: $"模型池 \"{pool.Name}\" 已恢复",
-            message: $"模型池 \"{pool.Name}\" 中 {recoveredModelId} 已通过探活恢复为健康状态。\n故障持续时间：{durationStr}。",
+            title: $"模型池 \"{pool.Name}\" 已有可用线路",
+            message: $"模型池 \"{pool.Name}\" 中 {recoveredModelId} 已通过检测，至少一条线路可用。\n" +
+                (downDuration > TimeSpan.Zero ? $"本次记录的不可用时长约 {durationStr}。" : "完整故障持续时间未确认。"),
             level: "success",
             source: "model-pool-probe",
-            ct: ct);
+            ct: ct,
+            incidentId: $"model-pool:{pool.Id}", incidentState: "recovered", requestOutcome: "unknown",
+            actionUrl: $"/logs?modelPoolId={Uri.EscapeDataString(pool.Id)}");
 
         // 2. 关闭对应的故障通知
         var exhaustedKey = $"pool-exhausted:{pool.Id}";
@@ -70,70 +74,69 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
     }
 
     public async Task NotifyUserFailureAsync(
-        string userId, string modelType, string poolName, CancellationToken ct = default)
+        string userId, string modelType, string poolName, CancellationToken ct = default, string? poolId = null)
     {
-        var key = $"pool-unavailable-user:{userId}:{modelType}";
+        var key = string.IsNullOrWhiteSpace(poolId) ? $"pool-unavailable-user:{userId}:{modelType}"
+            : $"pool-unavailable-user:v2:{userId}:{modelType}:{PoolIdentity(poolId)}";
 
         await UpsertNotificationAsync(
             key: key,
-            title: "AI 服务暂时不可用",
-            message: $"当前 {modelType} 类型的 AI 模型暂时全部不可用，系统正在自动恢复中。恢复后将自动通知您。",
+            title: $"所选模型 {poolName} 暂时不可用",
+            message: $"本次选择的模型“{poolName}”暂时没有可用线路，请切换可用模型或稍后重试。历史失败请求不会自动重做。",
             level: "warning",
             source: "model-pool-probe",
             targetUserId: userId,
-            ct: ct);
+            ct: ct,
+            incidentId: string.IsNullOrWhiteSpace(poolId) ? null : $"model-pool:{poolId}",
+            incidentState: string.IsNullOrWhiteSpace(poolId) ? "unknown" : "active",
+            requestOutcome: "request_failed");
     }
 
-    public async Task CloseUserFailureNotificationsAsync(string modelType, CancellationToken ct = default)
+    public async Task CloseUserFailureNotificationsAsync(string modelType, CancellationToken ct = default, string? poolId = null, DateTime? recoveredAt = null)
     {
-        var keyPrefix = $"pool-unavailable-user:";
-        var keySuffix = $":{modelType}";
-
-        // 1. 先查出所有受影响的用户通知（需要提取 userId 来发恢复消息）
-        var filter = Builders<AdminNotification>.Filter.And(
-            Builders<AdminNotification>.Filter.Regex(n => n.Key, $"^{keyPrefix}.*{keySuffix}$"),
-            Builders<AdminNotification>.Filter.Eq(n => n.Status, "open"));
-
-        var openNotifications = await _db.AdminNotifications
-            .Find(filter)
-            .ToListAsync(ct);
-
-        if (openNotifications.Count == 0)
-            return;
-
-        // 2. 关闭所有故障通知
-        var update = Builders<AdminNotification>.Update
-            .Set(n => n.Status, "closed")
-            .Set(n => n.HandledAt, DateTime.UtcNow)
-            .Set(n => n.UpdatedAt, DateTime.UtcNow);
-
-        await _db.AdminNotifications.UpdateManyAsync(filter, update, cancellationToken: ct);
-
-        // 3. 向每个受影响用户发送恢复通知（以最新一条为准，Key 幂等去重）
-        var affectedUserIds = openNotifications
-            .Where(n => !string.IsNullOrWhiteSpace(n.TargetUserId))
-            .Select(n => n.TargetUserId!)
-            .Distinct()
-            .ToList();
-
-        foreach (var userId in affectedUserIds)
+        // A successful probe of one pool cannot prove that every pool of this type is healthy.
+        // Legacy callers without a stable pool ID have no evidence to close user incidents.
+        if (string.IsNullOrWhiteSpace(poolId))
         {
-            var recoveryKey = $"pool-recovered-user:{userId}:{modelType}";
-
-            await UpsertNotificationAsync(
-                key: recoveryKey,
-                title: "AI 服务已恢复",
-                message: $"{modelType} 类型的 AI 模型已恢复正常，您现在可以继续使用。",
-                level: "success",
-                source: "model-pool-probe",
-                targetUserId: userId,
-                ct: ct);
+            _logger.LogWarning("[PoolFailoverNotifier] 恢复事件缺少模型池身份，保留用户故障状态: ModelType={ModelType}", modelType);
+            return;
         }
-
-        _logger.LogInformation(
-            "[PoolFailoverNotifier] 已关闭 {Count} 条用户故障通知并发送恢复消息: ModelType={ModelType}, AffectedUsers={Users}",
-            openNotifications.Count, modelType, affectedUserIds.Count);
+        var incidentId = $"model-pool:{poolId}";
+        var now = recoveredAt ?? DateTime.UtcNow;
+        var filter = Builders<AdminNotification>.Filter.Eq(n => n.IncidentId, incidentId)
+            & Builders<AdminNotification>.Filter.Eq(n => n.Source, "model-pool-probe")
+            & Builders<AdminNotification>.Filter.Eq(n => n.RequestOutcome, "request_failed")
+            & Builders<AdminNotification>.Filter.Ne(n => n.IncidentState, "recovered")
+            & Builders<AdminNotification>.Filter.Lt(n => n.LastOccurredAt, now);
+        var failures = await _db.AdminNotifications.Find(filter).ToListAsync(ct);
+        if (failures.Count == 0) return;
+        var confirmed = new List<AdminNotification>();
+        foreach (var failure in failures)
+        {
+            var current = filter & Builders<AdminNotification>.Filter.Eq(n => n.Id, failure.Id)
+                & Builders<AdminNotification>.Filter.Eq(n => n.OccurrenceCount, failure.OccurrenceCount)
+                & Builders<AdminNotification>.Filter.Eq(n => n.PushEpisode, failure.PushEpisode)
+                & Builders<AdminNotification>.Filter.Eq(n => n.LastOccurredAt, failure.LastOccurredAt);
+            var result = await _db.AdminNotifications.UpdateOneAsync(current, Builders<AdminNotification>.Update
+                .Set(n => n.Status, "closed").Set(n => n.IncidentState, "recovered")
+                .Set(n => n.RecoveredAt, now).Set(n => n.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+            if (result.ModifiedCount == 1) confirmed.Add(failure);
+        }
+        var poolName = await _db.ModelGroups.Find(x => x.Id == poolId).Project(x => x.Name).FirstOrDefaultAsync(ct);
+        foreach (var userId in confirmed.Where(n => !string.IsNullOrWhiteSpace(n.TargetUserId))
+                     .Select(n => n.TargetUserId!).Distinct())
+        {
+            await UpsertNotificationAsync(
+                key: $"pool-recovered-user:v2:{userId}:{modelType}:{PoolIdentity(poolId)}:episode:{confirmed.Where(n => n.TargetUserId == userId).Max(n => n.PushEpisode)}",
+                title: string.IsNullOrWhiteSpace(poolName) ? "所选模型已出现可用线路" : $"{poolName} 已出现可用线路",
+                message: $"{(string.IsNullOrWhiteSpace(poolName) ? "此前不可用的所选模型" : poolName)}已通过检测，至少一条线路恢复可用。您可以重试之前失败的请求。",
+                level: "success", source: "model-pool-probe", targetUserId: userId, ct: ct,
+                incidentId: incidentId, incidentState: "recovered", requestOutcome: "unknown");
+        }
     }
+
+    private static string PoolIdentity(string poolId)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(poolId))).ToLowerInvariant()[..24];
 
     public Task NotifyQuotaExceededAsync(
         string? platformName,
@@ -217,12 +220,16 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
 
     private async Task UpsertNotificationAsync(
         string key, string title, string message, string level, string source,
-        string? targetUserId = null, CancellationToken ct = default)
+        string? targetUserId = null, CancellationToken ct = default,
+        string? incidentId = null, string? incidentState = null, string? requestOutcome = null,
+        string? actionUrl = null)
     {
         var existing = await _db.AdminNotifications
-            .Find(n => n.Key == key && n.Status == "open")
+            .Find(n => n.Key == key)
+            .SortByDescending(n => n.CreatedAt)
             .FirstOrDefaultAsync(ct);
-        var section = AdminNotificationSourceCatalog.ResolveSection(source, existing?.Section);
+        var section = string.IsNullOrWhiteSpace(targetUserId)
+            ? AdminNotificationSections.Admin : AdminNotificationSections.Personal;
 
         if (existing != null)
         {
@@ -232,7 +239,21 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
                 .Set(n => n.Level, level)
                 .Set(n => n.Section, section)
                 .Set(n => n.UpdatedAt, DateTime.UtcNow);
+            if (incidentId != null)
+            {
+                update = update.Set(n => n.IncidentId, incidentId).Set(n => n.IncidentState, incidentState)
+                    .Set(n => n.RequestOutcome, requestOutcome)
+                    .Set(n => n.RecoveredAt, incidentState == "recovered" ? DateTime.UtcNow : null);
+                if (requestOutcome == "request_failed") update = update.Inc(n => n.OccurrenceCount, 1)
+                    .Set(n => n.LastOccurredAt, DateTime.UtcNow);
+                if (existing.IncidentState == "recovered" && incidentState == "active")
+                    update = update.Set(n => n.Status, "open").Inc(n => n.PushEpisode, 1)
+                        .Set(n => n.PushEpisodeStartedAtUtcTicks, DateTime.UtcNow.Ticks).Set(n => n.HandledAt, null);
+            }
 
+            if (string.IsNullOrWhiteSpace(targetUserId) && actionUrl != null)
+                update = update.Set(n => n.ActionUrl, actionUrl).Set(n => n.ActionLabel, "查看线路日志")
+                    .Set(n => n.ActionKind, "llm-gateway");
             await _db.AdminNotifications.UpdateOneAsync(
                 n => n.Id == existing.Id, update, cancellationToken: ct);
         }
@@ -240,6 +261,7 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
         {
             var notification = new AdminNotification
             {
+                Id = "pool-notification-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key))).ToLowerInvariant()[..32],
                 Key = key,
                 Title = title,
                 Message = message,
@@ -248,24 +270,38 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
                 Section = section,
                 TargetUserId = targetUserId,
                 Status = "open",
+                IncidentId = incidentId,
+                IncidentState = incidentState,
+                RequestOutcome = requestOutcome,
+                FirstOccurredAt = incidentId != null && incidentState == "active" ? DateTime.UtcNow : null,
+                LastOccurredAt = incidentId != null && incidentState == "active" ? DateTime.UtcNow : null,
+                RecoveredAt = incidentState == "recovered" ? DateTime.UtcNow : null,
+                ActionUrl = string.IsNullOrWhiteSpace(targetUserId) ? actionUrl : null,
+                ActionLabel = string.IsNullOrWhiteSpace(targetUserId) && actionUrl != null ? "查看线路日志" : null,
+                ActionKind = string.IsNullOrWhiteSpace(targetUserId) && actionUrl != null ? "llm-gateway" : null,
                 // 故障转移是「持续到恢复为止」的运营告警:就地更新 + 恢复时由 CloseNotificationByKeyAsync 关闭。
                 // 显式置空覆盖 AdminNotification 的 7 天默认过期,避免未恢复的故障 7 天后从首页静默消失。
-                ExpiresAt = null
+                ExpiresAt = incidentState == "recovered" ? DateTime.UtcNow.AddDays(7) : null
             };
 
-            await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct);
+            try { await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct); }
+            catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
+            {
+                await UpsertNotificationAsync(key, title, message, level, source, targetUserId, ct,
+                    incidentId, incidentState, requestOutcome, actionUrl);
+            }
         }
     }
 
     private async Task CloseNotificationByKeyAsync(string key, CancellationToken ct)
     {
         var filter = Builders<AdminNotification>.Filter.And(
-            Builders<AdminNotification>.Filter.Eq(n => n.Key, key),
-            Builders<AdminNotification>.Filter.Eq(n => n.Status, "open"));
+            Builders<AdminNotification>.Filter.Eq(n => n.Key, key));
 
         var update = Builders<AdminNotification>.Update
             .Set(n => n.Status, "closed")
-            .Set(n => n.HandledAt, DateTime.UtcNow)
+            .Set(n => n.IncidentState, "recovered")
+            .Set(n => n.RecoveredAt, DateTime.UtcNow)
             .Set(n => n.UpdatedAt, DateTime.UtcNow);
 
         await _db.AdminNotifications.UpdateManyAsync(filter, update, cancellationToken: ct);

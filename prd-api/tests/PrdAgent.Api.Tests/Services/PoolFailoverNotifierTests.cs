@@ -43,23 +43,75 @@ public class PoolFailoverNotifierTests
     {
         await using var testDb = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
         var notifier = new PoolFailoverNotifier(testDb.Context, NullLogger<PoolFailoverNotifier>.Instance);
-        await notifier.NotifyUserFailureAsync("u1", "image", "fixture-pool");
+        await notifier.NotifyUserFailureAsync("u1", "image", "fixture-pool", poolId: "fixture-pool-id");
         var original = await testDb.Context.AdminNotifications.Find(_ => true).SingleAsync();
         AdminNotificationSourceCatalog.ResolveSection(original.Source, original.Section).ShouldBe(AdminNotificationSections.Personal);
         original.TargetUserId.ShouldBe("u1");
+        original.ActionUrl.ShouldBeNull();
         await testDb.Context.AdminNotifications.UpdateOneAsync(x => x.Id == original.Id,
             Builders<AdminNotification>.Update.Set(x => x.Section, AdminNotificationSections.Personal));
-        await notifier.NotifyUserFailureAsync("u1", "image", "fixture-pool");
+        await notifier.NotifyUserFailureAsync("u1", "image", "fixture-pool", poolId: "fixture-pool-id");
         var updated = await testDb.Context.AdminNotifications.Find(_ => true).SingleAsync();
         updated.Id.ShouldBe(original.Id);
         updated.Section.ShouldBe(AdminNotificationSections.Personal);
         updated.TargetUserId.ShouldBe("u1");
         updated.Message.ShouldBe(original.Message);
-        await notifier.CloseUserFailureNotificationsAsync("image");
-        var recovery = await testDb.Context.AdminNotifications.Find(x => x.Key == "pool-recovered-user:u1:image").SingleAsync();
+        await notifier.CloseUserFailureNotificationsAsync("image", poolId: "fixture-pool-id");
+        var recovery = await testDb.Context.AdminNotifications.Find(x => x.Level == "success" && x.TargetUserId == "u1").SingleAsync();
         recovery.TargetUserId.ShouldBe("u1");
+        recovery.RequestOutcome.ShouldBe("unknown");
+        recovery.IncidentState.ShouldBe("recovered");
         AdminNotificationSourceCatalog.ResolveSection(recovery.Source, recovery.Section).ShouldBe(AdminNotificationSections.Personal);
         (await testDb.Context.AdminNotifications.Find(x => x.Id == original.Id).SingleAsync()).Status.ShouldBe("closed");
+    }
+
+    [Fact]
+    public async Task RecoveryOfOnePool_CannotCloseOtherPoolOrUnattributedLegacyFailure()
+    {
+        await using var testDb = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
+        var notifier = new PoolFailoverNotifier(testDb.Context, NullLogger<PoolFailoverNotifier>.Instance);
+        await notifier.NotifyUserFailureAsync("u1", "image", "模型甲", poolId: "pool-a");
+        await notifier.NotifyUserFailureAsync("u1", "image", "模型乙", poolId: "pool-b");
+        await notifier.NotifyUserFailureAsync("u1", "image", "历史模型");
+        await notifier.CloseUserFailureNotificationsAsync("image", poolId: "pool-a");
+        var notices = await testDb.Context.AdminNotifications.Find(_ => true).ToListAsync();
+        var recovered = notices.Single(x => x.IncidentId == "model-pool:pool-a" && x.Level == "warning");
+        recovered.IncidentState.ShouldBe("recovered");
+        recovered.Status.ShouldBe("closed");
+        recovered.RecoveredAt.ShouldNotBeNull();
+        var other = notices.Single(x => x.IncidentId == "model-pool:pool-b");
+        other.IncidentState.ShouldBe("active");
+        other.Status.ShouldBe("open");
+        other.RecoveredAt.ShouldBeNull();
+        notices.Single(x => x.IncidentId == null).Status.ShouldBe("open");
+        await notifier.CloseUserFailureNotificationsAsync("image");
+        (await testDb.Context.AdminNotifications.Find(x => x.Id == other.Id).SingleAsync()).Status.ShouldBe("open");
+    }
+
+    [Fact]
+    public async Task GlobalPoolHealthNotifications_AreAdminOnlyAndKeepRecoveryEvidence()
+    {
+        await using var testDb = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
+        var notifier = new PoolFailoverNotifier(testDb.Context, NullLogger<PoolFailoverNotifier>.Instance);
+        var pool = new ModelGroup { Id = "future-pool", Name = "未来模型池", ModelType = "image" };
+        await notifier.NotifyPoolExhaustedAsync(pool);
+        var fault = await testDb.Context.AdminNotifications.Find(x => x.Level == "warning").SingleAsync();
+        fault.Section.ShouldBe(AdminNotificationSections.Admin);
+        fault.IncidentState.ShouldBe("active");
+        fault.ActionUrl.ShouldBe("/logs?modelPoolId=future-pool");
+        fault.ActionKind.ShouldBe("llm-gateway");
+        Assert.NotNull(fault.Message);
+        fault.Message.ShouldNotContain("全部失败");
+        await notifier.NotifyPoolRecoveredAsync(pool, "future-model-z", TimeSpan.Zero);
+        fault = await testDb.Context.AdminNotifications.Find(x => x.Id == fault.Id).SingleAsync();
+        fault.IncidentState.ShouldBe("recovered");
+        var recovery = await testDb.Context.AdminNotifications.Find(x => x.Level == "success").SingleAsync();
+        recovery.Section.ShouldBe(AdminNotificationSections.Admin);
+        recovery.ActionUrl.ShouldBe("/logs?modelPoolId=future-pool");
+        recovery.ActionLabel.ShouldBe("查看线路日志");
+        recovery.RecoveredAt.ShouldNotBeNull();
+        Assert.NotNull(recovery.Message);
+        recovery.Message.ShouldContain("完整故障持续时间未确认");
     }
 
     [Fact]

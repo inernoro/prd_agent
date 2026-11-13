@@ -83,15 +83,15 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
     {
         var since = DateTime.UtcNow - _lookback;
         var logs = await _gatewayDb.LlmRequestLogs
-            .Find(x => x.StartedAt >= since
+            .Find(x => (x.EndedAt >= since || (x.EndedAt == null && x.StartedAt >= since))
                        && x.TenantId == _internalTenantId
                        && x.IsHealthProbe != true
-                       && (x.Status == "failed" || x.Status == "succeeded"))
+                       && (x.Status == "failed" || x.Status == "succeeded" || x.Status == "running" || x.Status == "cancelled"))
             .SortByDescending(x => x.StartedAt)
             .Limit(5000)
             .ToListAsync(ct);
 
-        var signals = LlmGatewayIncidentPolicy.BuildSignals(logs);
+        var signals = LlmGatewayIncidentPolicy.BuildTimelineSignals(logs);
         var changed = false;
         foreach (var signal in signals)
         {
@@ -197,29 +197,41 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         var existing = await FindCurrentFailureAsync(key, ct);
         var now = DateTime.UtcNow;
         var actionUrl = $"/logs?requestId={Uri.EscapeDataString(signal.RequestId)}";
-        var title = signal.IsGatewayEntry ? $"{signal.AppCallerLabel} 请求未能进入处理" : $"{signal.AppCallerLabel} 调用服务异常";
-        var message = $"{signal.AppCallerLabel} 请求失败：{signal.FailureSummary}。"
-                      + $"\n平台：{signal.PlatformLabel}；最近窗口失败 {signal.FailureCount} 次；请求编号：{signal.RequestId}。"
-                      + (signal.IsGatewayEntry
-                          ? "\n请检查模型可用性及网关路由；同一业务入口出现成功请求后自动关闭故障。"
-                          : "\n请查看失败请求，核对上游服务的访问权限和可用性；同一上游出现成功请求后自动关闭故障。");
+        var title = BuildIncidentTitle(signal);
+        var message = BuildIncidentMessage(signal);
+        var level = signal.RequestOutcome is "fallback_succeeded" or "unknown" ? "warning" : "error";
 
         if (existing is not null)
         {
-            if (string.CompareOrdinal(existing.GatewaySignalVersion, signal.SignalVersion) >= 0) return false;
-            var shouldReopen = string.Equals(existing.Status, "closed", StringComparison.OrdinalIgnoreCase);
+            var order = string.CompareOrdinal(existing.GatewaySignalVersion, signal.SignalVersion);
+            var confirmsPendingOutcome = order == 0 && existing.EvidenceRequestId == signal.RequestId
+                && existing.RequestOutcome == "unknown" && signal.RequestOutcome != "unknown";
+            if (order > 0 || (order == 0 && !confirmsPendingOutcome)) return false;
+            var shouldReopen = string.Equals(existing.IncidentState, "recovered", StringComparison.Ordinal);
+            var impactEscalated = !shouldReopen && IsImpactEscalation(existing.RequestOutcome, signal.RequestOutcome);
+            var newFailures = signal.FailureObservations
+                .Where(x => string.CompareOrdinal(x.Version, existing.GatewaySignalVersion) > 0).ToList();
 
             var update = Builders<AdminNotification>.Update
                 .Set(x => x.Title, title)
                 .Set(x => x.Message, message)
-                .Set(x => x.Level, "error")
+                .Set(x => x.Level, level)
                 .Set(x => x.ActionLabel, "查看网关日志")
                 .Set(x => x.ActionUrl, actionUrl)
                 .Set(x => x.ActionKind, "llm-gateway")
                 .Set(x => x.UpdatedAt, now)
-                .Set(x => x.GatewaySignalVersion, signal.SignalVersion);
-            var transitionFilter = CurrentFailureFilter(existing, signal);
-            if (shouldReopen)
+                .Set(x => x.GatewaySignalVersion, signal.SignalVersion)
+                .Set(x => x.IncidentId, signal.Fingerprint)
+                .Set(x => x.IncidentState, "active")
+                .Set(x => x.RequestOutcome, signal.RequestOutcome)
+                .Set(x => x.EvidenceRequestId, signal.RequestId)
+                .Set(x => x.FirstOccurredAt, existing.FirstOccurredAt ?? signal.FailureObservations.Min(x => x.At))
+                .Set(x => x.LastOccurredAt, signal.ObservedAt)
+                .Set(x => x.RecoveredAt, null)
+                .Set(x => x.OccurrenceCount, existing.FirstOccurredAt.HasValue
+                    ? existing.OccurrenceCount + newFailures.Count : Math.Max(1, signal.FailureCount));
+            var transitionFilter = CurrentFailureFilter(existing, signal, confirmsPendingOutcome);
+            if (shouldReopen || impactEscalated)
             {
                 // 只有一个扫描者能从所观察到的关闭代次切换为新代次。
                 // 缺字段的存量记录按第 0 代处理，不清理任何历史投递回执。
@@ -232,7 +244,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             var transitioned = await _mapDb.AdminNotifications.UpdateOneAsync(transitionFilter, update,
                 new UpdateOptions { Collation = new Collation("simple") }, ct);
             if (transitioned.MatchedCount != 1) return null;
-            return shouldReopen && transitioned.ModifiedCount == 1;
+            return (shouldReopen || impactEscalated) && transitioned.ModifiedCount == 1;
         }
 
         try
@@ -243,10 +255,17 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 Key = key,
                 Title = title,
                 Message = message,
-                Level = "error",
+                Level = level,
                 Status = "open",
                 PushEpisodeStartedAtUtcTicks = now.Ticks,
                 GatewaySignalVersion = signal.SignalVersion,
+                IncidentId = signal.Fingerprint,
+                IncidentState = "active",
+                RequestOutcome = signal.RequestOutcome,
+                EvidenceRequestId = signal.RequestId,
+                OccurrenceCount = signal.FailureCount,
+                FirstOccurredAt = signal.FailureObservations.Min(x => x.At),
+                LastOccurredAt = signal.ObservedAt,
                 Source = "gateway-alert",
                 Section = AdminNotificationSections.Admin,
                 ActionLabel = "查看网关日志",
@@ -269,12 +288,28 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
 
     private async Task<bool> CloseFailureAndNotifyRecoveryAsync(LlmGatewayIncidentSignal signal, CancellationToken ct)
     {
-        for (var attempt = 0; attempt < 3; attempt++)
+        // A successful observation can recover only the exact route boundary, but it may
+        // resolve several independently tracked failure reasons on that route. Include
+        // failures outside this sweep's rolling log window by querying persisted identities.
+        var prefix = $"llmgw-upstream:{signal.RouteFingerprint}";
+        var matches = await _mapDb.AdminNotifications.Find(
+                Builders<AdminNotification>.Filter.Regex(x => x.Key,
+                    "^" + System.Text.RegularExpressions.Regex.Escape(prefix) + "(?::|$)"))
+            .ToListAsync(ct);
+        var changed = false;
+        foreach (var current in matches.GroupBy(x => x.Key)
+                     .Select(g => g.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).First()))
         {
-            var changed = await CloseFailureAndNotifyRecoveryOnceAsync(signal, ct);
-            if (changed.HasValue) return changed.Value;
+            var exactSignal = signal with { Fingerprint = current.Key!["llmgw-upstream:".Length..] };
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                var result = await CloseFailureAndNotifyRecoveryOnceAsync(exactSignal, ct);
+                if (!result.HasValue) continue;
+                changed |= result.Value;
+                break;
+            }
         }
-        return false;
+        return changed;
     }
 
     private async Task<bool?> CloseFailureAndNotifyRecoveryOnceAsync(LlmGatewayIncidentSignal signal, CancellationToken ct)
@@ -285,7 +320,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             return false;
         var now = DateTime.UtcNow;
         var transitionFilter = CurrentFailureFilter(existing, signal);
-        if (string.Equals(existing.Status, "closed", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(existing.IncidentState, "recovered", StringComparison.Ordinal))
         {
             // 成功/失败必须更新同一当前行；不能把水位写到更旧的同 Key 历史行。
             var advanced = await _mapDb.AdminNotifications.UpdateOneAsync(
@@ -298,7 +333,10 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 .Set(x => x.Status, "closed")
                 .Set(x => x.HandledAt, now)
                 .Set(x => x.UpdatedAt, now)
-                .Set(x => x.GatewaySignalVersion, signal.SignalVersion);
+                .Set(x => x.GatewaySignalVersion, signal.SignalVersion)
+                .Set(x => x.IncidentState, "recovered")
+                .Set(x => x.RecoveredAt, signal.ObservedAt)
+                .Set(x => x.EvidenceRequestId, signal.RequestId);
         var transitioned = await _mapDb.AdminNotifications.FindOneAndUpdateAsync(
             transitionFilter,
             transitionUpdate,
@@ -316,8 +354,13 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         {
             Id = $"llmgw-recovered-{signal.Fingerprint}-{signal.RequestId}",
             Key = recoveryKey,
-            Title = $"{signal.AppCallerLabel} 调用已恢复",
-            Message = $"{signal.AppCallerLabel} 的{(signal.IsGatewayEntry ? "同一请求入口" : "同一上游服务")}已出现成功请求，故障告警已自动关闭。请求编号：{signal.RequestId}。",
+            Title = signal.IsGatewayEntry ? $"{signal.AppCallerLabel} 请求入口已恢复" : $"{signal.PlatformLabel} · {signal.ModelLabel} 线路已恢复",
+            Message = $"{(signal.IsGatewayEntry ? signal.AppCallerLabel + " 的同一入口" : signal.PlatformLabel + " 的 " + signal.ModelLabel + " 线路")}已在 {signal.ObservedAt.ToUniversalTime():yyyy-MM-dd HH:mm:ss} UTC 完成一次成功调用，已关闭该线路对应故障。可查看恢复请求；历史失败请求不会自动重做。",
+            IncidentId = signal.Fingerprint,
+            IncidentState = "recovered",
+            RequestOutcome = "request_succeeded",
+            RecoveredAt = signal.ObservedAt,
+            EvidenceRequestId = signal.RequestId,
             Level = "success",
             Status = "open",
             Source = "gateway-alert",
@@ -334,6 +377,39 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         return true;
     }
 
+    internal static string BuildIncidentTitle(LlmGatewayIncidentSignal signal)
+        => signal.IsGatewayEntry ? $"{signal.AppCallerLabel} 请求未能进入处理"
+            : $"{signal.PlatformLabel} · {signal.ModelLabel}：{FailureLabel(signal.FailureCategory)}";
+
+    internal static string BuildIncidentMessage(LlmGatewayIncidentSignal signal)
+    {
+        var impact = signal.RequestOutcome switch
+        {
+            "fallback_succeeded" => "本次请求已由备用线路成功完成，无需重试；故障线路尚无恢复证据。",
+            "all_failed" when signal.AttemptedRouteCount > 0 => $"本次已尝试的 {signal.AttemptedRouteCount} 条线路均失败，请查看请求结果后重试或切换可用模型。",
+            "all_failed" => "本次请求没有可用线路，任务未能启动。请切换可用模型或等待管理员恢复配置。",
+            "request_failed" => "本次请求失败。请查看请求结果，再重试或切换可用模型；不能据此认定其他请求均失败。",
+            _ => "已确认这条线路失败，整次请求结果尚未确认。请查看请求最新状态，避免重复提交。",
+        };
+        var next = signal.IsGatewayEntry ? "管理员请检查该入口的模型授权和路由配置。"
+            : signal.FailureCategory == "quota" ? "管理员请补足该供应商账户额度或配置可用线路，再查看后续真实调用结果。"
+            : signal.FailureCategory == "access" ? "管理员请核对该线路访问权限与配置，再查看后续真实调用结果。"
+            : "管理员请查看该线路诊断与后续真实调用结果。";
+        return $"{signal.AppCallerLabel}：{impact}\n{next}";
+    }
+
+    private static string FailureLabel(string category) => category switch
+    {
+        "quota" => "上游账户余额或额度不足",
+        "access" => "上游拒绝访问",
+        "timeout" => "上游响应超时",
+        "connection" => "上游连接失败",
+        _ => "调用服务异常",
+    };
+
+    private static bool IsImpactEscalation(string? previous, string current)
+        => (previous is "fallback_succeeded" or "unknown") && (current is "request_failed" or "all_failed");
+
     private static FilterDefinition<AdminNotification> NewerSignalFilter(LlmGatewayIncidentSignal signal)
         => Builders<AdminNotification>.Filter.Eq(x => x.GatewaySignalVersion, null)
            | Builders<AdminNotification>.Filter.Lt(x => x.GatewaySignalVersion, signal.SignalVersion);
@@ -344,11 +420,14 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             .FirstOrDefaultAsync(ct);
 
     private static FilterDefinition<AdminNotification> CurrentFailureFilter(
-        AdminNotification existing, LlmGatewayIncidentSignal signal)
+        AdminNotification existing, LlmGatewayIncidentSignal signal, bool sameObservation = false)
     {
         var filter = Builders<AdminNotification>.Filter.Eq(x => x.Id, existing.Id)
             & Builders<AdminNotification>.Filter.Eq(x => x.Status, existing.Status)
-            & NewerSignalFilter(signal);
+            & Builders<AdminNotification>.Filter.Eq(x => x.GatewaySignalVersion, existing.GatewaySignalVersion)
+            & (sameObservation
+                ? Builders<AdminNotification>.Filter.Eq(x => x.GatewaySignalVersion, signal.SignalVersion)
+                : NewerSignalFilter(signal));
         return filter & (existing.PushEpisode == 0
             ? Builders<AdminNotification>.Filter.Eq(x => x.PushEpisode, 0)
                 | Builders<AdminNotification>.Filter.Exists(x => x.PushEpisode, false)
@@ -358,37 +437,147 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
 
 internal static class LlmGatewayIncidentPolicy
 {
+    // A terminal request is not the same thing as every provider attempt. Keep route failures
+    // even when a different route ultimately completed the request.
     internal static IReadOnlyList<LlmGatewayIncidentSignal> BuildSignals(IEnumerable<LlmRequestLog> logs)
-    {
-        // 成功请求同时可证明业务入口和上游恢复；入口拒绝没有模型，不能混入上游分组。
-        var entries = logs.Where(IsRelevant).SelectMany(log =>
-        {
-            var scopes = new List<(LlmRequestLog Log, bool Entry)>();
-            if (!IsGatewayEntry(log)) scopes.Add((log, false));
-            if (HasEntryIdentity(log) && (IsGatewayEntry(log) || IsSuccess(log))) scopes.Add((log, true));
-            return scopes;
-        });
-        return entries
-            .GroupBy(x => x.Entry ? BuildEntryFingerprint(x.Log) : BuildFingerprint(x.Log))
-            .Select(group =>
+        => BuildTimelineSignals(logs).GroupBy(x => x.Fingerprint)
+            .Select(group => group.Last() with
             {
-                var ordered = group.OrderBy(x => BuildSignalVersion(x.Log), StringComparer.Ordinal).ToList();
-                var (latest, entry) = ordered[^1];
-                var isFailure = IsFailure(latest);
-                return new LlmGatewayIncidentSignal(
-                    group.Key,
-                    isFailure,
-                    latest.RequestId,
-                    Display(latest.AppCallerCodeDisplayName, latest.AppCallerTitle, "AI 创作"),
-                    Display(latest.PlatformName, latest.Provider, "调用入口"),
-                    Display(latest.Model, latest.ExpectedModel, latest.LogicalModelPublicId, "未进入模型调用"),
-                    isFailure ? SummarizeFailure(latest) : string.Empty,
-                    ordered.Count(x => IsFailure(x.Log)),
-                    BuildSignalVersion(latest),
-                    entry,
-                    latest.EndedAt ?? latest.StartedAt);
-            })
-            .ToList();
+                FailureCount = group.Sum(x => x.FailureCount),
+                FailureObservations = group.SelectMany(x => x.FailureObservations).ToList(),
+            }).ToList();
+
+    internal static IReadOnlyList<LlmGatewayIncidentSignal> BuildTimelineSignals(IEnumerable<LlmRequestLog> logs)
+    {
+        var observations = logs.Where(x => x.IsHealthProbe != true && !string.IsNullOrWhiteSpace(x.RequestId))
+            .SelectMany(Observe).ToList();
+        var result = new List<LlmGatewayIncidentSignal>();
+        foreach (var route in observations.GroupBy(x => x.RouteFingerprint))
+        {
+            var categories = route.Where(x => x.Failure).Select(x => x.Category).Distinct().ToList();
+            if (categories.Count == 0) categories.Add("availability");
+            foreach (var category in categories)
+            {
+                var ordered = route.Where(x => !x.Failure || x.Category == category)
+                    .DistinctBy(x => x.Version).OrderBy(x => x.Version, StringComparer.Ordinal).ToList();
+                // Coalesce only continuous observations of the same state. Retain recovery and
+                // recurrence transitions even if both first appear during one watchdog sweep.
+                var run = new List<Observation>();
+                foreach (var item in ordered)
+                {
+                    if (run.Count > 0 && run[^1].Failure != item.Failure)
+                    {
+                        result.Add(Signal(run, category));
+                        run.Clear();
+                    }
+                    run.Add(item);
+                }
+                if (run.Count > 0) result.Add(Signal(run, category));
+            }
+        }
+        return result.OrderBy(x => x.SignalVersion, StringComparer.Ordinal).ToList();
+    }
+
+    private static LlmGatewayIncidentSignal Signal(List<Observation> run, string category)
+    {
+        var latest = run[^1];
+        var log = latest.Log;
+        return new LlmGatewayIncidentSignal(
+            latest.Entry ? latest.RouteFingerprint : $"{latest.RouteFingerprint}:{category}",
+            latest.Failure, log.RequestId,
+            Display(log.AppCallerCodeDisplayName, log.AppCallerTitle, "AI 创作"),
+            Display(log.PlatformName, log.Provider, "调用入口"),
+            Display(log.Model, log.ExpectedModel, log.LogicalModelPublicId, "未进入模型调用"),
+            latest.Failure ? SummarizeFailure(log) : string.Empty,
+            run.Count(x => x.Failure), latest.Version, latest.Entry, latest.At)
+        {
+            RouteFingerprint = latest.RouteFingerprint,
+            FailureCategory = category,
+            RequestOutcome = latest.Outcome,
+            AttemptedRouteCount = latest.AttemptedRoutes,
+            FailureObservations = run.Where(x => x.Failure)
+                .Select(x => new LlmGatewayFailureObservation(x.Version, x.At)).ToList(),
+        };
+    }
+
+    private static IEnumerable<Observation> Observe(LlmRequestLog log)
+    {
+        if (IsGatewayEntry(log))
+        {
+            if (IsFailure(log) && HasEntryIdentity(log))
+                yield return ObservationFor(log, true, true, "entry", -1, Outcome(log), 0);
+            yield break;
+        }
+
+        if (IsSuccess(log) && HasEntryIdentity(log))
+            yield return ObservationFor(log, true, false, "entry", -1, "request_succeeded", 0);
+
+        var sends = log.ProviderAttempts?.Where(x => x.Stage == "send").ToList() ?? [];
+        var completed = sends.Where(x => x.Status is "failed" or "succeeded").ToList();
+        var attemptedRoutes = completed.Where(x => x.ReachedProvider != false)
+            .Select(x => $"{x.PlatformId}|{x.Model}").Distinct().Count();
+        var outcome = Outcome(log);
+        if (completed.Count > 0)
+        {
+            foreach (var attempt in completed)
+            {
+                // A selected/skipped candidate or local capability rejection is not evidence
+                // that the upstream accepted (or rejected) an actual request.
+                if (attempt.ReachedProvider == false) continue;
+                var projected = ProjectAttempt(log, attempt);
+                var failed = IsFailure(projected);
+                var succeeded = IsSuccess(log) && IsSuccess(projected) && attempt.StatusCode is >= 200 and < 300;
+                if (failed || succeeded)
+                    yield return ObservationFor(projected, false, failed, Category(projected), attempt.Order, outcome, attemptedRoutes);
+            }
+            // A log may have a partially persisted attempt chain. A terminal failure of its
+            // final route must not disappear, but incomplete chains cannot prove all routes failed.
+            if (IsFailure(log) && !completed.Any(x => x.PlatformId == log.PlatformId && x.Model == log.Model && x.Status == "failed"))
+                yield return ObservationFor(log, false, true, Category(log), int.MaxValue, outcome, attemptedRoutes);
+            yield break;
+        }
+        if (IsFailure(log) || IsSuccess(log))
+            yield return ObservationFor(log, false, IsFailure(log), Category(log), -1, outcome, attemptedRoutes);
+    }
+
+    private static string Outcome(LlmRequestLog log)
+    {
+        var sends = log.ProviderAttempts?.Where(x => x.Stage == "send").ToList() ?? [];
+        if (IsSuccess(log))
+            return sends.Any(x => x.Status == "failed" && x.ReachedProvider != false) ? "fallback_succeeded" : "request_succeeded";
+        if (!string.Equals(log.Status, "failed", StringComparison.OrdinalIgnoreCase)) return "unknown";
+        if (string.Equals(log.Error, GatewayRouteFailure.ModelPoolAllUnavailable, StringComparison.Ordinal)) return "all_failed";
+        // Only call the observed attempt set exhausted. Never claim that every configured
+        // provider failed when the snapshot contains selected or unfinished candidates.
+        return sends.Count > 1 && sends.All(x => x.Status == "failed" && x.ReachedProvider == true)
+            ? "all_failed" : "request_failed";
+    }
+
+    private static LlmRequestLog ProjectAttempt(LlmRequestLog request, LlmProviderAttempt attempt) => new()
+    {
+        Id = request.Id, RequestId = request.RequestId, TenantId = request.TenantId, TeamId = request.TeamId,
+        SourceDeployment = request.SourceDeployment, Environment = request.Environment,
+        AppCallerCode = request.AppCallerCode, AppCallerCodeDisplayName = request.AppCallerCodeDisplayName,
+        AppCallerTitle = request.AppCallerTitle, Path = request.Path, RequestType = request.RequestType,
+        Provider = attempt.Provider ?? "", PlatformId = attempt.PlatformId, PlatformName = attempt.PlatformName,
+        Model = attempt.Model ?? "", ModelGroupId = attempt.ModelGroupId,
+        Status = attempt.Status, StatusCode = attempt.StatusCode, Error = attempt.Error,
+        StartedAt = request.StartedAt, EndedAt = attempt.EndedAt ?? request.EndedAt,
+    };
+
+    private static Observation ObservationFor(LlmRequestLog log, bool entry, bool failure, string category,
+        int order, string outcome, int attemptedRoutes)
+    {
+        var at = log.EndedAt ?? log.StartedAt;
+        var utc = at.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(at, DateTimeKind.Utc) : at.ToUniversalTime();
+        var ticks = utc.Ticks / TimeSpan.TicksPerMillisecond * TimeSpan.TicksPerMillisecond;
+        var identity = order == -1
+            ? System.Text.Json.JsonSerializer.Serialize(new[] { log.RequestId, log.Id })
+            : System.Text.Json.JsonSerializer.Serialize(new[] { log.RequestId, log.Id, order.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+        var version = $"{ticks.ToString("D19", System.Globalization.CultureInfo.InvariantCulture)}:{(failure ? "1" : "0")}:"
+            + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+        return new(log, entry ? BuildEntryFingerprint(log) : BuildFingerprint(log), entry, failure, category,
+            version, at, outcome, attemptedRoutes);
     }
 
     internal static bool IsFailure(LlmRequestLog log)
@@ -396,65 +585,55 @@ internal static class LlmGatewayIncidentPolicy
            && (IsGatewayEntry(log)
                ? HasEntryIdentity(log) && (log.StatusCode is 401 or 403 or 404 or >= 500
                    || GatewayRouteFailure.All.Contains(log.Error ?? string.Empty))
-               : log.StatusCode is 401 or 403 or >= 500
+               : IsQuota(log) || log.StatusCode is 401 or 403 or >= 500
                  || ContainsAny(log.Error, "timeout", "timed out", "connection", "HTTP 502", "HTTP 503", "HTTP 504", "不可用"));
 
-    private static string BuildSignalVersion(LlmRequestLog log)
-    {
-        // Mongo 日志只有毫秒精度。同毫秒没有真实先后证据，保守地让失败胜出；
-        // 最后用稳定身份摘要打破同类信号平局，所有字符为 ASCII，与 simple collation 一致。
-        var observedAt = log.EndedAt ?? log.StartedAt;
-        var utc = observedAt.Kind == DateTimeKind.Unspecified
-            ? DateTime.SpecifyKind(observedAt, DateTimeKind.Utc) : observedAt.ToUniversalTime();
-        var ticks = utc.Ticks / TimeSpan.TicksPerMillisecond * TimeSpan.TicksPerMillisecond;
-        var identity = System.Text.Json.JsonSerializer.Serialize(new[] { log.RequestId, log.Id });
-        return $"{ticks.ToString("D19", System.Globalization.CultureInfo.InvariantCulture)}:{(IsFailure(log) ? "1" : "0")}:"
-            + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
-    }
+    private static bool IsQuota(LlmRequestLog log)
+        => PrdAgent.GatewayTransport.UpstreamQuotaPolicy.IsExceeded(log.StatusCode ?? 0, log.Error);
+
+    private static string Category(LlmRequestLog log)
+        => IsQuota(log) ? "quota" : log.StatusCode is 401 or 403 ? "access"
+            : log.StatusCode is 504 || ContainsAny(log.Error, "timeout", "timed out") ? "timeout"
+            : ContainsAny(log.Error, "connection") ? "connection" : "availability";
 
     private static bool IsGatewayEntry(LlmRequestLog log)
         => string.Equals(log.Provider, "gateway-auth", StringComparison.OrdinalIgnoreCase);
-
     private static bool HasEntryIdentity(LlmRequestLog log)
-        => !string.IsNullOrWhiteSpace(log.TenantId)
-           && !string.IsNullOrWhiteSpace(log.AppCallerCode)
-           && !string.IsNullOrWhiteSpace(log.Path);
-
+        => !string.IsNullOrWhiteSpace(log.TenantId) && !string.IsNullOrWhiteSpace(log.AppCallerCode) && !string.IsNullOrWhiteSpace(log.Path);
     private static bool IsSuccess(LlmRequestLog log)
         => string.Equals(log.Status, "succeeded", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsRelevant(LlmRequestLog log)
-        => log.IsHealthProbe != true
-           && !string.IsNullOrWhiteSpace(log.RequestId)
-           && (IsSuccess(log) || IsFailure(log));
-
     private static string BuildEntryFingerprint(LlmRequestLog log)
     {
-        // 使用稳定业务入口，重试、请求编号和缺失的模型字段不生成新事故。
-        // 不并入上游指纹，避免另一业务或另一入口的成功误报恢复。
         var identity = string.Join("|", "gateway-entry", log.TenantId?.Trim().ToLowerInvariant(),
             log.AppCallerCode?.Trim().ToLowerInvariant(), log.Path?.Trim());
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant()[..24];
+        if (!string.IsNullOrWhiteSpace(log.TeamId) || !string.IsNullOrWhiteSpace(log.SourceDeployment)
+            || !string.IsNullOrWhiteSpace(log.Environment))
+            identity += System.Text.Json.JsonSerializer.Serialize(new[] { log.TeamId, log.SourceDeployment, log.Environment });
+        return Hash(identity);
     }
-
     private static string BuildFingerprint(LlmRequestLog log)
     {
-        var identity = string.Join("|",
-            log.TenantId?.Trim().ToLowerInvariant(),
-            First(log.PlatformId, log.PlatformName, log.Provider)?.ToLowerInvariant(),
-            First(log.Model, log.ExpectedModel, log.LogicalModelPublicId)?.ToLowerInvariant(),
-            log.RequestType?.Trim().ToLowerInvariant());
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant()[..24];
+        // IDs are identities, not case-insensitive labels. Include the deployment/team boundary
+        // so a test route success cannot close production or another team's incident.
+        var identity = System.Text.Json.JsonSerializer.Serialize(new[] {
+            log.TenantId, log.TeamId, log.SourceDeployment, log.Environment,
+            First(log.PlatformId, log.PlatformName, log.Provider),
+            First(log.Model, log.ExpectedModel, log.LogicalModelPublicId), log.RequestType,
+        });
+        return Hash(identity);
     }
+    private static string Hash(string value)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant()[..24];
 
     private static string SummarizeFailure(LlmRequestLog log)
     {
         if (IsGatewayEntry(log))
         {
-            if (GatewayRouteFailure.All.Contains(log.Error ?? string.Empty))
-                return GatewayRouteFailure.UserMessage(log.Error);
+            if (GatewayRouteFailure.All.Contains(log.Error ?? string.Empty)) return GatewayRouteFailure.UserMessage(log.Error);
             return log.StatusCode == 404 ? "网关未找到可用的处理目标，任务未能启动" : "网关未接受请求，生成任务未能启动";
         }
+        if (IsQuota(log)) return "上游账户余额或额度不足";
         return log.StatusCode switch
         {
             401 or 403 => "上游拒绝访问，请核对服务凭据、访问权限及服务器 IP 白名单",
@@ -467,26 +646,25 @@ internal static class LlmGatewayIncidentPolicy
             _ => "上游请求失败",
         };
     }
-
     private static string Display(params string?[] values) => First(values) ?? string.Empty;
-
     private static string? First(params string?[] values)
         => values.Select(x => x?.Trim()).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
-
     private static bool ContainsAny(string? value, params string[] needles)
-        => !string.IsNullOrWhiteSpace(value)
-           && needles.Any(needle => value.Contains(needle, StringComparison.OrdinalIgnoreCase));
+        => !string.IsNullOrWhiteSpace(value) && needles.Any(needle => value.Contains(needle, StringComparison.OrdinalIgnoreCase));
+    private sealed record Observation(LlmRequestLog Log, string RouteFingerprint, bool Entry, bool Failure,
+        string Category, string Version, DateTime At, string Outcome, int AttemptedRoutes);
 }
 
+internal sealed record LlmGatewayFailureObservation(string Version, DateTime At);
+
 internal sealed record LlmGatewayIncidentSignal(
-    string Fingerprint,
-    bool IsFailure,
-    string RequestId,
-    string AppCallerLabel,
-    string PlatformLabel,
-    string ModelLabel,
-    string FailureSummary,
-    int FailureCount,
-    string SignalVersion,
-    bool IsGatewayEntry = false,
-    DateTime ObservedAt = default);
+    string Fingerprint, bool IsFailure, string RequestId, string AppCallerLabel, string PlatformLabel,
+    string ModelLabel, string FailureSummary, int FailureCount, string SignalVersion,
+    bool IsGatewayEntry = false, DateTime ObservedAt = default)
+{
+    public string RouteFingerprint { get; init; } = string.Empty;
+    public string FailureCategory { get; init; } = "availability";
+    public string RequestOutcome { get; init; } = "unknown";
+    public int AttemptedRouteCount { get; init; }
+    public IReadOnlyList<LlmGatewayFailureObservation> FailureObservations { get; init; } = [];
+}
