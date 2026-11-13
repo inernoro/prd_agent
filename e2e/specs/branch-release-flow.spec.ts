@@ -131,3 +131,40 @@ test('检查期间关闭窗口不会在后台开始发布', async ({ page }) => 
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
   expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toHaveLength(0);
 });
+
+for (const terminal of ['success', 'failed']) test(`运行中发布通过实际 SSE 协议更新为 ${terminal}，重连保留历史日志`, async ({ page }) => {
+  const fixture = await installOperationsFixtures(page);
+  fixture.setPreflightPass(true);
+  fixture.setReleaseTargets([{ id: 'compat-target', projectId: 'fixture-project', name: '流式测试环境', isEnabled: true }]);
+  const boot = { seq: 1, at: new Date().toISOString(), level: 'info', message: 'STREAM_BOOT_HISTORY' };
+  const next = { ...boot, seq: 2, message: 'STREAM_LIVE_APPEND' };
+  const running = { releaseId: 'stream-run', projectId: 'fixture-project', branchId: 'compat-branch', targetId: 'compat-target', status: 'running', startedAt: boot.at, seq: 1, logs: [boot], steps: [] };
+  let starts = 0;
+  await page.route('**/api/releases/branches/compat-branch/runs', route => { starts++; return route.fulfill({ json: { run: running } }); });
+  let streams = 0;
+  let finish!: () => void;
+  const gate = new Promise<void>(resolve => { finish = resolve; });
+  const event = (name: string, data: unknown) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+  await page.route('**/api/releases/runs/stream-run/stream?*', async route => {
+    streams++;
+    const headers = { 'access-control-allow-origin': new URL(route.request().url()).origin, 'access-control-allow-credentials': 'true' };
+    if (streams === 1) {
+      expect(new URL(route.request().url()).searchParams.get('afterSeq')).toBe('1');
+      await route.fulfill({ contentType: 'text/event-stream', headers, body: 'retry: 100\n\n' + event('snapshot', { run: running, logs: [] }) + event('release.log', { releaseId: running.releaseId, log: next }) });
+      return;
+    }
+    await gate;
+    await route.fulfill({ contentType: 'text/event-stream', headers, body: event('snapshot', { run: { ...running, seq: 2, logs: [] }, logs: [] }) + event('release.status', { releaseId: running.releaseId, run: { ...running, status: terminal, finishedAt: new Date().toISOString(), seq: 2 } }) });
+  });
+  const dialog = await branchCard(page);
+  await dialog.getByRole('button', { name: '发布到 流式测试环境', exact: true }).click();
+  const active = page.getByRole('dialog');
+  await active.getByText('查看发布日志', { exact: true }).click();
+  await expect(active.locator('pre')).toContainText('STREAM_BOOT_HISTORY');
+  await expect(active.locator('pre')).toContainText('STREAM_LIVE_APPEND');
+  finish();
+  await expect(page.getByRole('dialog', { name: terminal === 'success' ? '发布成功' : '发布失败', exact: true })).toBeVisible();
+  await expect(active.locator('pre')).toContainText('STREAM_BOOT_HISTORY');
+  await expect(active.locator('pre')).toContainText('STREAM_LIVE_APPEND');
+  expect(starts).toBe(1);
+});

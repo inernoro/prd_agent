@@ -5333,13 +5333,13 @@ function ReleaseBranchDialog({ branch, previewUrl, onClose, onToast }: {
     const source = new EventSource(apiUrl(`/api/releases/runs/${encodeURIComponent(run.releaseId)}/stream?afterSeq=${run.logs.at(-1)?.seq || 0}`));
     source.addEventListener('snapshot', (event) => {
       const data = parseSseJson<{ run: ReleaseRunSummary; logs: ReleaseLogEntry[] }>(event);
-      if (data?.run) { setRun(data.run); setLogs(data.logs || data.run.logs || []); }
+      if (data?.run) { setRun(data.run); setLogs((items) => dedupeReleaseLogs([...items, ...(data.run.logs || []), ...(data.logs || [])])); }
     });
-    source.addEventListener('log', (event) => {
-      const data = parseSseJson<ReleaseLogEntry>(event);
-      if (data) setLogs((items) => dedupeReleaseLogs([...items, data]));
+    source.addEventListener('release.log', (event) => {
+      const data = parseSseJson<{ releaseId: string; log: ReleaseLogEntry }>(event);
+      if (data?.log) setLogs((items) => dedupeReleaseLogs([...items, data.log]));
     });
-    source.addEventListener('status', (event) => {
+    source.addEventListener('release.status', (event) => {
       const data = parseSseJson<{ run: ReleaseRunSummary }>(event);
       if (data?.run) { setRun(data.run); if (isReleaseTerminal(data.run.status)) source.close(); }
     });
