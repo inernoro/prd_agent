@@ -123,16 +123,16 @@ test('全局入口显示遗漏并打开原计划，空列表不冒称成功',asy
 });
 test('模型页固定和停用模型均可进入使用位置面板',async t=>{
   const h=await setup(t);const {LogicalModelsPage}=await h.server.ssrLoadModule('/src/pages/LogicalModelsPage.tsx');await h.render(LogicalModelsPage);
-  const entries=[...document.querySelectorAll('button')].filter(b=>b.textContent.trim()==='使用位置与升级');assert.ok(entries.length>=h.f.models.length);await act(async()=>entries[0].click());assert.ok(document.querySelector('[data-testid="model-reference-migration-panel"]'));assert.match(h.body(),/模型source/);assert.match(h.body(),/已停用/);await h.select('target');assert.equal(h.button('生成升级计划').disabled,false);
+  await act(async()=>{ const select=document.querySelector('[aria-label="清单状态筛选"]');Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set.call(select,'disabled');select.dispatchEvent(new window.Event('change',{bubbles:true})); });await h.click('查看');await h.click('使用位置与升级');assert.ok(document.querySelector('[data-testid="model-reference-migration-panel"]'));assert.match(h.body(),/模型source/);assert.match(h.body(),/已停用/);await h.select('target');assert.equal(h.button('生成升级计划').disabled,false);
 });
 test('全局计划可打开已删除的source，不伪装成停用模型且只核对原计划',async t=>{
   const h=await setup(t);h.f.models=h.f.models.filter(m=>m.id!=='source');h.f.plan=makePlan(h.f,'removed','target');h.f.plan.status='blocked';h.f.plan.coverage=coverage({canComplete:false,blocked:1});h.f.plans=[h.f.plan];
-  const {LogicalModelsPage}=await h.server.ssrLoadModule('/src/pages/LogicalModelsPage.tsx');await h.render(LogicalModelsPage);await h.click('升级记录与遗漏');await h.click('查看使用位置计划');
+  const {LogicalModelsPage}=await h.server.ssrLoadModule('/src/pages/LogicalModelsPage.tsx');await h.render(LogicalModelsPage);await h.click('升级与引用');await h.click('升级记录与遗漏');await h.click('查看使用位置计划');
   const panel=document.querySelector('[data-testid="model-reference-migration-panel"]');assert.ok(panel);assert.match(panel.textContent,/目录身份已失效/);assert.doesNotMatch(panel.querySelector('.lg-collection-facts').textContent,/已停用/);assert.equal(h.button('升级全部使用位置').disabled,true);assert.ok(h.f.calls.some(x=>x.name==='getModelReferenceMigrationPlan'&&x.args[0]==='original-intent'));
 });
 test('稳定升级策略即使读取失败仍有可操作的全量使用位置入口',async t=>{
   const h=await setup(t);h.f.models[0].identityKind='stable';h.f.override=name=>name==='getModelUpgrade'?fail():undefined;
-  const {LogicalModelsPage}=await h.server.ssrLoadModule('/src/pages/LogicalModelsPage.tsx');await h.render(LogicalModelsPage);await h.click('查看');await h.click('升级策略');await h.click('全量使用位置');assert.ok(document.querySelector('[data-testid="model-reference-migration-panel"]'));await h.select('target');assert.equal(h.button('生成升级计划').disabled,false);
+  const {LogicalModelsPage}=await h.server.ssrLoadModule('/src/pages/LogicalModelsPage.tsx');await h.render(LogicalModelsPage);await act(async()=>{ const select=document.querySelector('[aria-label="清单状态筛选"]');Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set.call(select,'disabled');select.dispatchEvent(new window.Event('change',{bubbles:true})); });await h.click('查看');await h.click('升级策略');await h.click('全量使用位置');assert.ok(document.querySelector('[data-testid="model-reference-migration-panel"]'));await h.select('target');assert.equal(h.button('生成升级计划').disabled,false);
 });
 
 test('Lab生图引用只选择generation目标，空用途或结构待核对不允许迁移',async t=>{
