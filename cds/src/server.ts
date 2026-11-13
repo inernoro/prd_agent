@@ -1598,6 +1598,11 @@ function broadcastAiPairing(event: string, data: unknown) {
  * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
  */
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  // 报告分享由随机token自鉴权；图片为内容寻址。两种登录网关共用同一只读边界，
+  // opaque iframe没有登录cookie，图表运行时也必须能匿名读取精确固定文件。
+  if (method === 'GET' && /^\/r\/[^/]+$/.test(path)) return true;
+  if (method === 'GET' && /^\/api\/reports\/assets\/[a-f0-9]{16,64}\.(?:png|jpe?g|gif|webp|svg)$/i.test(path)) return true;
+  if (method === 'GET' && path === '/report-assets/mermaid.min.js') return true;
   if (isMonitorOnboardingAgentRoute(method, path)) return true;
   if (method === 'POST' && path === '/api/identity-connections') return true;
   if (method === 'GET' && /^\/api\/identity-connections\/[^/]+$/.test(path)) return true;
@@ -2878,13 +2883,8 @@ export function createServer(deps: ServerDeps): express.Express {
       // GitHub webhook is public — it's authenticated by HMAC signature
       // verification inside the handler, not by the cookie/token middleware.
       if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
-      // E6 验收报告匿名分享：`/r/:token` 由 token 自鉴权（不可枚举随机串），公开只读。
-      if (req.method === 'GET' && /^\/r\/[^/]+$/.test(req.path)) return next();
       // 公开状态页 `/s/:token`：同款 token 自鉴权，公开只读的 SPA 入口。
       if (req.method === 'GET' && /^\/s\/[a-f0-9]{32}$/.test(req.path)) return next();
-      // 验收报告图片资源：name 为内容寻址 sha256+扩展名（不可枚举），公开只读，
-      // 供跨源（如 MAP 知识库）渲染报告时直接加载正文里的截图。
-      if (req.method === 'GET' && req.path.startsWith('/api/reports/assets/')) return next();
       // WS3 MAP-KBTP peer-sync 协议端点：由配对码 / HMAC 自鉴权（路由内校验），放行登录网关。
       // 放行整个 /api/peer-sync/ 前缀（admin 除外）——含 MAP 发起方探测的 handshake/confirm、
       // finalize、cancel 等子路径，必须落到 peer-sync 路由（CDS 是单阶段 peer，confirm/finalize
@@ -2892,7 +2892,9 @@ export function createServer(deps: ServerDeps): express.Express {
       // legacy 判定（依赖 404，见 prd-api AdminPeerNodesController）失效而取消配对。协议端点各自
       // 在路由内做配对码 / HMAC 鉴权；`/api/peer-sync/admin/*` 不放行，管理端点仍需 CDS 登录。
       if (req.path.startsWith('/api/peer-sync/') && !req.path.startsWith('/api/peer-sync/admin/')) return next();
-      if (/\.(css|js|ico|png|svg|woff2?)$/i.test(req.path)) return next();
+      // 报告资源必须遵守上方共享的精确GET判定，不能再借通用扩展名放行写请求或其它文件。
+      const reportPath = req.path.startsWith('/r/') || req.path.startsWith('/api/reports/assets/') || req.path.startsWith('/report-assets/');
+      if (!reportPath && /\.(css|js|ico|png|svg|woff2?)$/i.test(req.path)) return next();
       // Allow internal requests from widget proxy (/_cds/ → master)
       if (req.headers['x-cds-internal'] === '1') {
         const remoteIp = req.socket.remoteAddress || '';
