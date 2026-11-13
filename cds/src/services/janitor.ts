@@ -243,6 +243,8 @@ export const defaultDockerPrune: DockerPruneFn = createDockerPrune(execDockerDet
 /** Report returned by a single sweep pass. */
 export interface JanitorSweepReport {
   deploymentSources?: DeploymentSourceRetentionReport;
+  /** A phase not confirmed by a source-only retry failed (including a thrown operation). */
+  fullRecheckRequired?: boolean;
   timestamp: string;
   /** Branches removed by this pass. */
   removedBranches: string[];
@@ -1038,9 +1040,9 @@ export class JanitorService {
       this.sourceFollowUpHandle.unref?.();
     }
     // Cache-only confirmation cannot clear a failed Docker/orphan observation.
-    if (!sourceOnly) this.nonSourceReclaimFailed = Boolean(report.dockerPrune?.errors.length
-      || report.imageRetention?.failed.length || report.orphanWorktrees?.failed.length
-      || (report.errors.length && !sources?.failed.length));
+    if (report.fullRecheckRequired) this.nonSourceReclaimFailed = true;
+    else if (!sourceOnly) this.nonSourceReclaimFailed = Boolean(report.dockerPrune?.errors.length
+      || report.imageRetention?.failed.length || report.orphanWorktrees?.failed.length);
     const reasons: string[] = [];
     const messages: string[] = [];
     if (!report.disk) { reasons.push('disk-unconfirmed'); messages.push('磁盘余量未确认'); }
@@ -1058,8 +1060,10 @@ export class JanitorService {
       || held['identity-unknown'] || held['identity-or-mount-unconfirmed']) {
       reasons.push('source-unconfirmed'); messages.push('源码回收检查未确认，保护项未删除');
     }
-    if (deferred > 0 && !this.sourceFollowUpHandle) {
-      reasons.push('source-backlog'); messages.push(`仍有${deferred}份源码待回收，本周期未继续派发，下一常规周期重试`);
+    if (deferred > 0 && (!this.sourceFollowUpHandle || this.lastCapacityRisk)) {
+      reasons.push('source-backlog');
+      messages.push(`仍有${deferred}份源码待回收，${this.sourceFollowUpHandle
+        ? '已安排续扫，积压未清空前不宣布恢复' : '本周期未继续派发，下一常规周期重试'}`);
     }
     this.recordCapacityRisk(reasons, messages.join('；'));
     return { reasons, sourceDeferred: deferred, followUpScheduled: Boolean(this.sourceFollowUpHandle),
@@ -1189,6 +1193,7 @@ export class JanitorService {
       return true;
     });
     if (isReclaimSkip(reclaimed)) {
+      report.fullRecheckRequired = true;
       report.errors.push(
         `回收被跳过：${reclaimed.heldBy} 正在回收（已持有 ${Math.round(reclaimed.heldForMs / 1000)}s），本轮跳过不排队`,
       );
@@ -1262,6 +1267,7 @@ export class JanitorService {
         report.removedBranches.push(branch.id);
         console.log(`[janitor] removed stale branch "${branch.id}" (idle ${Math.round(idleMs / (24*60*60*1000))}d)`);
       } catch (err) {
+        report.fullRecheckRequired = true;
         report.errors.push(`remove ${branch.id}: ${(err as Error).message}`);
       }
     }
@@ -1285,6 +1291,7 @@ export class JanitorService {
         if (summary) console.log(`[janitor] docker prune: ${summary}`);
         for (const e of report.dockerPrune.errors) report.errors.push(`docker prune ${e}`);
       } catch (err) {
+        report.fullRecheckRequired = true;
         report.errors.push(`docker prune: ${(err as Error).message}`);
       }
     }
@@ -1308,6 +1315,7 @@ export class JanitorService {
         // held 不进 errors：它是正常保留，进了 errors 就等于 errors 恒 >=1
         for (const f of r.failed) report.errors.push(`image rmi ${f.image}: ${f.error}`);
       } catch (err) {
+        report.fullRecheckRequired = true;
         report.errors.push(`image retention: ${(err as Error).message}`);
       }
     }
@@ -1340,6 +1348,7 @@ export class JanitorService {
         }
         for (const f of o.failed) report.errors.push(`orphan worktree rm ${f.path}: ${f.error}`);
       } catch (err) {
+        report.fullRecheckRequired = true;
         report.errors.push(`orphan worktree reconcile: ${(err as Error).message}`);
       }
     }
@@ -1356,6 +1365,7 @@ export class JanitorService {
           console.warn(`[janitor] orphan infra containers (not in CDS state): ${report.orphanInfraContainers.join(', ')}`);
         }
       } catch (err) {
+        report.fullRecheckRequired = true;
         report.errors.push(`orphan infra scan: ${(err as Error).message}`);
       }
     }

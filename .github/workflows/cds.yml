@@ -114,7 +114,7 @@ jobs:
         env:
           CAPACITY_DRILL_PAYLOAD_BYTES: '16777216'
           CAPACITY_DRILL_EVIDENCE: ${{ runner.temp }}/capacity-gib.json
-        run: pnpm test --maxWorkers=1 --minWorkers=1 tests/services/capacity-growth-drill.test.ts
+        run: pnpm exec vitest run --maxWorkers=1 --minWorkers=1 tests/services/capacity-growth-drill.test.ts
 
       - name: Automatic capacity reclaim and notification drill (loopback only)
         env:

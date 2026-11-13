@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+import * as sourceRetention from '../../src/services/deployment-source-retention.js';
 import { NoticeLedgerService, startNoticeLedger } from '../../src/services/notice-ledger.js';
 
 const services: JanitorService[] = [];
@@ -185,5 +186,35 @@ describe('automatic reclamation catches bounded eligible backlog', () => {
     service.stop();service.start();await service.sweep();
     expect(service.getSnapshot().lastSweep?.capacity?.reasons).toContain('source-cleanup-unconfirmed');
     expect(ledger.list().some(row=>row.eventType==='capacity.recovered')).toBe(false);
+  });
+
+  it('mixed thrown Docker and returned source failures require a full recheck before recovery', async () => {
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'capacity-mixed-failure-'));roots.push(root);
+    const state=new StateService(path.join(root,'state.json'));
+    let sources=report(19,6).deploymentSources!;sources.failed=[{path:'source-failed',error:'controlled EIO'}];sources.attempted=20;
+    vi.spyOn(sourceRetention,'reclaimDeploymentSources').mockImplementation(async()=>sources);
+    const prune=vi.fn(async():Promise<{ran:boolean;reclaimed:string[];errors:string[]}>=>{throw new Error('controlled thrown Docker failure');});
+    const files={listWorktreeDirs:async()=>({dirs:[],unreadable:[]}),listMountedHostPaths:async()=>[],removeDir:async()=>null,statDirMtimeMs:async()=>null};
+    const service=new JanitorService(state,{enabled:false,worktreeTTLDays:7,diskWarnPercent:80,sweepIntervalSeconds:3600,imageRetention:false},
+      root,undefined,()=>({totalBytes:1000,freeBytes:500}),prune,undefined,files);
+    services.push(service);const ledger=new NoticeLedgerService({storePath:''});subscriptions.push(startNoticeLedger({ledger,outbound:null}));
+    const full=await service.sweep();expect(full.errors).toHaveLength(2);
+    sources=report(6,0).deploymentSources!;
+    await (service as unknown as {executeSweep(sourceOnly:boolean):Promise<JanitorSweepReport>}).executeSweep(true);
+    expect(ledger.list().some(row=>row.eventType==='capacity.recovered'),'source success must not clear the thrown Docker failure').toBe(false);
+    expect(service.getSnapshot().lastFullSweep?.errors).toBe(2);
+    prune.mockImplementation(async()=>({ran:true,reclaimed:[],errors:[]}));sources=report(0,0).deploymentSources!;
+    await service.sweep();expect(ledger.list().some(row=>row.eventType==='capacity.recovered')).toBe(true);
+  });
+
+  it('a successful partial batch cannot announce recovery while the failed source remains deferred', async () => {
+    let current=report(19,25);current.deploymentSources!.attempted=20;
+    current.deploymentSources!.failed=[{path:'failed-last',error:'controlled EIO'}];
+    const {service}=fixture(()=>current);const ledger=new NoticeLedgerService({storePath:''});
+    subscriptions.push(startNoticeLedger({ledger,outbound:null}));service.start();await vi.advanceTimersByTimeAsync(30_000);
+    current=report(20,6);await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(ledger.list().some(row=>row.eventType==='capacity.recovered'),'failed path is still in the six deferred sources').toBe(false);
+    current=report(6,0);current.deploymentSources!.removed[5]='failed-last';await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(ledger.list().some(row=>row.eventType==='capacity.recovered')).toBe(true);
   });
 });
