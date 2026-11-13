@@ -24,16 +24,16 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
       div .flex.gap-2.items-center.min-w-0
         span .shrink-0
           "11.0 KB"
-        div .flex.flex-1.gap-2.items-center.min-w-0.overflow-hidden [aria-label=网页统计]
-          span .flex-1.gap-1.inline-flex.items-center.min-w-0.overflow-hidden.whitespace-nowrap [aria-label=编辑次数暂不可用]
+        div .flex.flex-1.gap-2.items-center.justify-end.min-w-0.overflow-hidden [aria-label=网页统计]
+          span .gap-1.inline-flex.items-center.min-w-0.overflow-hidden.whitespace-nowrap [aria-label=编辑次数暂不可用]
             svg .shrink-0
             span .truncate
               "—"
-          span .flex-1.gap-1.inline-flex.items-center.min-w-0.whitespace-nowrap [aria-label=全部访问（含作者）]
+          span .gap-1.inline-flex.items-center.min-w-0.whitespace-nowrap [aria-label=全部访问（含作者）]
             svg .shrink-0
             span .truncate
               "—"
-          button .flex-1.gap-1.inline-flex.items-center.min-w-0.whitespace-nowrap [aria-label=全部访客 type=button]
+          button .gap-1.inline-flex.items-center.min-w-0.whitespace-nowrap [aria-label=全部访客 type=button]
             svg .shrink-0
             span .truncate
               "—"
