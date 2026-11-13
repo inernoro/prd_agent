@@ -254,6 +254,14 @@ export const STRIP_CSS = `
   background:hsl(var(--surface-sunken));}
 .cs .sbar{display:block;height:100%;background:hsl(var(--hairline-strong));}
 
+/* Column layouts must not interpret desktop width bases as minimum heights. */
+@media (max-width:1023px){
+  .cs .z{flex:0 0 auto;max-width:none;}
+  .cs .z > :last-child{margin-top:0.625rem;}
+  .cs .stagerow{flex:0 0 auto;}
+  .cs .stage{gap:0.625rem;}
+}
+
 @media (prefers-reduced-motion: no-preference){
   .cs[data-play="1"] .d{animation:cs-dot .26s ease-out backwards;animation-delay:var(--d,0ms);}
   .cs[data-play="1"] .rail span,.cs[data-play="1"] .vbar,.cs[data-play="1"] .sbar{

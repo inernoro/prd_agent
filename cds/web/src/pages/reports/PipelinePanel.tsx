@@ -272,7 +272,12 @@ export function PipelinePanel({ pipeline, series, onOpenProject }: PipelinePanel
       ) : (
         <>
           {strip}
-          {trends}
+          {trends ? (
+            <details>
+              <summary className="cursor-pointer py-2 text-sm font-medium text-muted-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">趋势分析 · 结论走向、项目分布与归档对照</summary>
+              {trends}
+            </details>
+          ) : null}
         </>
       )}
     </div>

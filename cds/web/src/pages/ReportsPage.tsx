@@ -153,6 +153,9 @@ function formatTime(iso: string): string {
 export function ReportsPage(): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
   const classificationFilters: ClassificationSelection = { categories: searchParams.get('categories')?.split(',').filter(Boolean) || [], systems: searchParams.get('systems')?.split(',').filter(Boolean) || [], environments: searchParams.get('environments')?.split(',').filter(Boolean) || [] };
+  const hasClassificationFilters = Boolean(classificationFilters.categories.length || classificationFilters.systems.length || classificationFilters.environments.length);
+  const [classificationExpanded, setClassificationExpanded] = useState(hasClassificationFilters);
+  useEffect(() => { if (hasClassificationFilters) setClassificationExpanded(true); }, [hasClassificationFilters]);
   const setClassificationFilters = (v: ClassificationSelection) => { const next = new URLSearchParams(searchParams); for (const [key, values] of Object.entries(v)) { if (values.length) next.set(key, values.join(',')); else next.delete(key); } setSearchParams(next, { replace: true }); };
   const monitorTarget = searchParams.get('target') || '';
   // 项目作用域：从 URL ?project= 取（项目卡右上角入口带）。空 = 全局（CDS 自身）报告。
@@ -620,7 +623,16 @@ export function ReportsPage(): JSX.Element {
           {state.status === 'loading' ? <LoadingBlock label="正在加载验收报告" /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} transient={state.transient} /> : null}
 
-          {state.status === 'ok' && !selected && <div className="shrink-0 space-y-2"><div className="flex flex-wrap items-center gap-3"><span className="text-sm">交叉分类 · 命中 {searchedReports.length} 份报告</span><NotificationTemplateCatalog />{monitorTarget && <span className="text-xs text-muted-foreground">当前监控目标的事件报告</span>}</div><ClassificationFilters value={classificationFilters} onChange={setClassificationFilters} /></div>}
+          {state.status === 'ok' && !selected ? (
+            <div className="flex flex-wrap items-start gap-3">
+              <details open={classificationExpanded} onToggle={(event) => setClassificationExpanded(event.currentTarget.open)} className="min-w-0 flex-1">
+                <summary className="cursor-pointer py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">交叉分类 · 命中 {searchedReports.length} 份报告{hasClassificationFilters ? ' · 已筛选' : ''}</summary>
+                <ClassificationFilters value={classificationFilters} onChange={setClassificationFilters} />
+              </details>
+              <NotificationTemplateCatalog />
+              {monitorTarget ? <span className="text-xs text-muted-foreground">当前监控目标的事件报告</span> : null}
+            </div>
+          ) : null}
           {state.status === 'ok' && !selected ? (
             <ReportsHome
               classificationActive={Boolean(monitorTarget || classificationFilters.categories.length || classificationFilters.systems.length || classificationFilters.environments.length)}
@@ -1171,11 +1183,11 @@ function ReportsHome({
             显示 {pageRows.length ? safePage * PAGE_SIZE + 1 : 0}–{safePage * PAGE_SIZE + pageRows.length} / {totalVisible}
             {hiddenSuperseded > 0 && !showSuperseded ? ` · 已折叠 ${hiddenSuperseded} 份被取代版本，不进通过率分母` : ''}
           </span>
-          <span className="inline-flex items-center gap-1.5">
+          {pageCount > 1 ? <span className="inline-flex items-center gap-1.5">
             <Button variant="outline" size="sm" className="h-7" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>上一页</Button>
             <span className="font-mono">{safePage + 1} / {pageCount}</span>
             <Button variant="outline" size="sm" className="h-7" disabled={safePage >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}>下一页</Button>
-          </span>
+          </span> : null}
         </div>
       </section>
     </div>
