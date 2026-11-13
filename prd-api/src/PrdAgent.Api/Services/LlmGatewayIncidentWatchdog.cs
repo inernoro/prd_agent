@@ -419,7 +419,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             "all_failed" when signal.AttemptedRouteCount > 0 => $"本次已尝试的 {signal.AttemptedRouteCount} 条线路均失败，请查看请求结果后重试或切换可用模型。",
             "all_failed" => "本次请求没有可用线路，任务未能启动。请切换可用模型或等待管理员恢复配置。",
             "request_failed" => "本次请求失败。请查看请求结果，再重试或切换可用模型；不能据此认定其他请求均失败。",
-            _ => "已确认这条线路失败，整次请求结果尚未确认。请查看请求最新状态，避免重复提交。",
+            _ => "这条线路返回异常，整次请求结果尚未确认。请查看请求最新状态，避免重复提交。",
         };
         var next = signal.IsGatewayEntry ? "管理员请检查该入口的模型授权和路由配置。"
             : signal.FailureCategory == "quota" ? "管理员请补足该供应商账户额度或配置可用线路，再查看后续真实调用结果。"
@@ -576,11 +576,22 @@ internal static class LlmGatewayIncidentPolicy
         if (IsSuccess(log))
             return sends.Any(x => x.Status == "failed" && x.ReachedProvider != false) ? "fallback_succeeded" : "request_succeeded";
         if (!string.Equals(log.Status, "failed", StringComparison.OrdinalIgnoreCase)) return "unknown";
+        // The producer records a failed transport exchange separately from the business
+        // outcome: the provider may already have executed it. Consume only its explicit
+        // code/prefix, never infer a completed rejection from Status=failed alone.
+        if (HasUnknownOutcomeCode(log.Error) || sends.Any(x => x.Status == "failed" && x.ReachedProvider != false
+                && (HasUnknownOutcomeCode(x.Error) || x.ReachedProvider == true
+                    && x.Reason?.StartsWith("outcome_unknown; recovery=", StringComparison.Ordinal) == true)))
+            return "unknown";
         // Only call the observed attempt set exhausted. Never claim that every configured
         // provider failed when the snapshot contains selected or unfinished candidates.
         return sends.Count > 1 && sends.All(x => x.Status == "failed" && x.ReachedProvider == true)
             ? "all_failed" : "request_failed";
     }
+
+    private static bool HasUnknownOutcomeCode(string? error)
+        => string.Equals(error, "UPSTREAM_OUTCOME_UNKNOWN", StringComparison.Ordinal)
+           || error?.StartsWith("UPSTREAM_OUTCOME_UNKNOWN:", StringComparison.Ordinal) == true;
 
     private static LlmRequestLog ProjectAttempt(LlmRequestLog request, LlmProviderAttempt attempt) => new()
     {

@@ -178,6 +178,82 @@ public sealed class GatewayIncidentFactsPersistenceTests
         Assert.Null(after.RecoveredAt);
     }
 
+    [Theory]
+    [InlineData("disconnect", "unknown")]
+    [InlineData("last-attempt-unknown", "unknown")]
+    [InlineData("terminal-code", "unknown")]
+    [InlineData("producer-reason", "unknown")]
+    [InlineData("terminal-prefix", "unknown")]
+    [InlineData("explicit-rejection", "request_failed")]
+    [InlineData("all-explicitly-rejected", "all_failed")]
+    [InlineData("backup-confirmed", "fallback_succeeded")]
+    [InlineData("cancelled", "unknown")]
+    [InlineData("not-sent", "request_failed")]
+    [InlineData("ordinary-text", "request_failed")]
+    public async Task Review_ExplicitUpstreamUnknownEvidence_IsPreservedWithoutOverridingConfirmedSuccess(string scenario, string expected)
+    {
+        await using var f = new Fixture();
+        var log = f.Request("producer-fact-" + scenario, "failed", 502, 0);
+        log.Error = "connection reset after request body"; // Actual non-stream final log keeps the transport message.
+        var attempt = f.Attempt("primary", "failed", 502, 0, 0);
+        attempt.Error = "UPSTREAM_OUTCOME_UNKNOWN: connection reset after request body";
+        attempt.Reason = "outcome_unknown; recovery=stop; connection reset after request body";
+        log.ProviderAttempts = [attempt];
+        if (scenario == "last-attempt-unknown")
+        {
+            attempt.Order = 1; attempt.PlatformId = "backup"; attempt.PlatformName = "backup";
+            log.PlatformId = "backup"; log.PlatformName = "backup";
+            log.ProviderAttempts = [f.Attempt("primary", "failed", 402, 0, 0), attempt];
+        }
+        else if (scenario == "producer-reason") attempt.Error = "HTTP 503";
+        else if (scenario is "terminal-code" or "terminal-prefix")
+        {
+            log.Error = scenario == "terminal-code" ? "UPSTREAM_OUTCOME_UNKNOWN" : "UPSTREAM_OUTCOME_UNKNOWN: result unconfirmed";
+            attempt.Error = "connection reset"; attempt.Reason = null;
+        }
+        else if (scenario is "explicit-rejection" or "all-explicitly-rejected")
+        {
+            log.StatusCode = 402; log.Error = "insufficient_balance";
+            log.ProviderAttempts = [f.Attempt("primary", "failed", 402, 0, 0)];
+            if (scenario == "all-explicitly-rejected")
+            {
+                log.PlatformId = "backup"; log.PlatformName = "backup";
+                log.ProviderAttempts.Add(f.Attempt("backup", "failed", 402, 1, 0));
+            }
+        }
+        else if (scenario == "backup-confirmed")
+        {
+            log.Status = "succeeded"; log.StatusCode = 200; log.Error = null;
+            log.PlatformId = "backup"; log.PlatformName = "backup";
+            log.ProviderAttempts.Add(f.Attempt("backup", "succeeded", 200, 1, 0));
+        }
+        else if (scenario == "cancelled") log.Status = "cancelled";
+        else if (scenario == "not-sent")
+        {
+            log.Provider = "gateway-auth"; log.Error = "MODEL_POOL_ALL_UNAVAILABLE";
+            log.ProviderAttempts.Clear();
+        }
+        else if (scenario == "ordinary-text")
+        {
+            log.Error = "provider mentioned UPSTREAM_OUTCOME_UNKNOWN in a message";
+            attempt.Error = log.Error; attempt.Reason = null;
+        }
+        await f.Gateway.LlmRequestLogs.InsertOneAsync(log);
+        await f.SweepAsync();
+        var notices = await f.Notices();
+        Assert.NotEmpty(notices);
+        Assert.All(notices, x => {
+            Assert.Equal(expected, x.RequestOutcome);
+            if (expected == "unknown")
+            {
+                Assert.Contains("结果尚未确认", x.Message);
+                Assert.DoesNotContain("本次请求失败", x.Message);
+            }
+            Assert.Equal("active", x.IncidentState);
+            Assert.Null(x.RecoveredAt);
+        });
+    }
+
     [Fact]
     public async Task Review_RecoveryPreservesAccumulated182FailureFacts()
     {
