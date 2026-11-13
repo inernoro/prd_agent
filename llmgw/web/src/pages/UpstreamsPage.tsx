@@ -36,7 +36,7 @@ export function UpstreamsPage() {
       : 'provider';
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: GAP.section }}>
+    <div className="lg-upstreams-page" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
       <TabBar
         ariaLabel="上游配置分类"
         items={VIEWS}

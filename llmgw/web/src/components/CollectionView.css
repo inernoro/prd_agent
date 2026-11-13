@@ -79,7 +79,7 @@
 .lg-entity-detail-bounded .lg-entity-detail-section details > div { max-height: 180px; overflow: auto; }
 @media(max-width:1450px) { .lg-collection-pane { width: 370px; } .lg-logical-model-grid { grid-template-columns: minmax(180px,2fr) minmax(160px,1.8fr) minmax(90px,1fr) minmax(100px,1fr) minmax(90px,1fr); } }
 @media(max-width:1000px) { .lg-collection-workspace:has(.lg-collection-pane) > .lg-collection-list { display: none; } .lg-collection-pane { flex: 1; width: 100%; } .lg-collection-workspace { min-height: 360px; } .lg-collection-provider-groups { grid-template-columns: minmax(0,1fr); } }
-@media(max-width:600px) { .lg-collection-pagination { flex-wrap: wrap; } .lg-collection-toolbar { flex-wrap: wrap; } .lg-collection-toolbar select { width: 100%; max-width: none; } }
+@media(max-width:600px) { .lg-collection-pagination { flex-wrap: wrap; } .lg-collection-toolbar { flex-wrap: wrap; } .lg-collection-toolbar select { width: auto; max-width: none; flex: 1; } }
 .lg-collection-hidden { display: none; }
 .lg-collection-trace { height: 400px; flex: none; border: 1px solid var(--border-subtle); border-radius: var(--radius); }
 .lg-collection-pane [data-testid="call-trace-panel"] > div { min-width: 0; }
@@ -252,3 +252,17 @@
   .lg-console-body:has(.lg-collection-page, .lg-entity-detail-bounded) .lg-sidebar-footer kbd { font-size: var(--fs-micro); }
 }
 .lg-collection-load-more { display: flex; justify-content: center; padding: 10px; }
+
+/* 少量记录按内容排布；详情、连续加载与大集合保留各自的工作空间。 */
+.lg-collection-view[data-size='small'] { flex: 0 0 auto; }
+.lg-collection-view[data-size='small'] > .lg-collection-scroll { flex: 0 1 auto; }
+.lg-collection-workspace:has(> .lg-collection-list > .lg-collection-view[data-size='small']):not(:has(.lg-collection-pane)) { flex: 0 0 auto; min-height: 0; }
+.lg-collection-count { align-self: center; flex-shrink: 0; color: var(--text-muted); font-size: var(--fs-secondary); white-space: nowrap; }
+.lg-upstream-maintenance { flex-shrink: 0; }
+.lg-upstream-maintenance > summary { cursor: pointer; padding-block: 6px; color: var(--text-secondary); font-size: var(--fs-secondary); }
+.lg-upstream-proxy { flex-shrink: 0; max-height: 55vh; overflow: auto; }
+.lg-upstream-proxy > summary { cursor: pointer; padding-block: 6px; color: var(--text-secondary); font-size: var(--fs-secondary); overflow-wrap: anywhere; }
+
+.lg-upstreams-page { overflow: hidden; }
+.lg-upstreams-page:has(.lg-collection-view[data-size='small']):not(:has(.lg-collection-pane)) { overflow-y: auto; }
+.lg-upstreams-page:has(.lg-collection-view[data-size='small']):not(:has(.lg-collection-pane)) > .lg-page-shell { flex: 0 0 auto; }

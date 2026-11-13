@@ -2,11 +2,12 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 const base = process.argv[2] || 'http://127.0.0.1:8873';
 const label = process.argv[3] || 'after';
 const verify = !process.argv.includes('--measure-only');
-const out = path.resolve(process.env.CDS_DENSITY_EVIDENCE || 'work/content-density');
+const out = path.resolve(process.env.CDS_DENSITY_EVIDENCE || path.join(os.tmpdir(), 'cds-content-density'));
 fs.mkdirSync(out, { recursive: true });
 const b = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || (fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined), args: ['--no-sandbox'] });
 const result = [];
