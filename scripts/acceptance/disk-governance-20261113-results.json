@@ -1,0 +1,320 @@
+{
+  "provenance": "composed-verification",
+  "recordedAt": "2026-11-13",
+  "productionGovernanceCodePublished": false,
+  "longTermProductionStabilityProven": false,
+  "nativeImage": {
+    "provenance": "integration-live",
+    "scope": "actual private XFS/Docker/loopback OCI registry, production governance and audit factory, durable file test sink; production Mongo sink is not replaced in application code",
+    "exactRegistryIdentityVerified": true,
+    "sameIdAliasesRetiredOnce": true,
+    "stoppedContainerCreatedAfterPlanProtected": true,
+    "currentRollbackAndOtherMasterProtected": true,
+    "realConnectionFailureRetained": true,
+    "realAuditWriteFailureRetained": true,
+    "rehydratedIdAndPayloadChecksumPreserved": true,
+    "explicitLegacyAdoptionValidated": true,
+    "registryAuditEvents": 5,
+    "filesystemNetAvailableBytesDelta": 4444160,
+    "bridgeWindowAccelerated": true
+  },
+  "nativeBackup": {
+    "provenance": "integration-live",
+    "scope": "Unmodified native backup worker in private XFS/Docker VM, complete proc and all running/stopped container references",
+    "fileAndAncestorBindProtected": true,
+    "stoppedContainerAfterPlanProtected": true,
+    "realDockerQueryFailureRetained": true,
+    "nativeOpenDescriptorProtected": true,
+    "checksumPreservedUntilUnreferenced": true,
+    "filesystemNetAvailableBytesDelta": 4210688,
+    "earlierContinuousBaseline": {
+      "baselineFiveEndedTasksIncrementBytes": null
+    }
+  },
+  "mongoExportRestore": {
+    "provenance": "integration-live",
+    "scope": "Actual Mongo7 synthetic64 rows, production local backup shell and canonical retention adapter, portable compose-to-native-Docker CLI adapter only; tmpfs source deliberately has unknown durable lineage",
+    "mongodumpExitAndGzipAndSHA256Verified": true,
+    "independentMongorestoreAndAllRowsEqual": true,
+    "records": 64,
+    "archiveBytes": 746,
+    "sha256": "ada5cb1748150945177e015bc716cb10558dea2a69cbc85fe0b3de5a5dce72af",
+    "volatileSourceNotGrantedReplacementAuthority": true,
+    "productionWrites": false,
+    "retirementRegistrationUnavailable": true,
+    "retirementRegistrationScope": "Full host descriptor observation is unavailable on this managed host; no recovery authority issued, archive retained, native Docker/FD protections separately tested in the private VM"
+  },
+  "browser": {
+    "provenance": "deterministic-fixture",
+    "scope": "real login/navigation and product HTTP/UI with actual synthetic-file worker; fixture descriptor view and deterministic image inventory/form action, no production writes; full /proc separately tested in native PID namespace",
+    "path": [
+      "landing",
+      "Log in",
+      "登录",
+      "系统设置",
+      "调度器",
+      "备份保留与退役"
+    ],
+    "candidates": 10,
+    "actualRemoved": 8,
+    "pending": 2,
+    "jobIdentityPreservedAfterReload": true,
+    "uniqueBusinessBackupProtected": true,
+    "historicalLineageDefaultOff": true,
+    "explicitLineageEvidenceRequired": true,
+    "imageAdoptionFormAttestationRequired": true,
+    "imageAdoptionInventoryIsDeterministicFixture": true,
+    "imageBudgetRemainsDisabled": true,
+    "dataCaseConfirmedWithoutDeletion": true,
+    "unknownQueryVisible": true,
+    "themes": [
+      "dark",
+      "light"
+    ],
+    "pageErrors": []
+  },
+  "nativeResources": {
+    "provenance": "integration-live",
+    "scope": "native Docker and XFS in a private file-backed Linux VM; actual producer SIGKILL and abrupt host reboot; synthetic data",
+    "producerSIGKILLRecovered": true,
+    "actualHostRebootRecovered": true,
+    "nestedDaemonRetiredThroughNativeAPIs": true,
+    "protectedDataChecksumPreserved": true,
+    "source": "40 fixed-resource cycles followed by separately rerun crash/reboot phase on new isolated tasks after fixing native recovery; original records kept separately",
+    "sourceLogSha256": "9d4dfd214be57a74835a3955392c51ab6c1faa1762016288117ead48ecfa7340",
+    "cycles": 40,
+    "physicalIncrements": [
+      86016,
+      90112,
+      94208,
+      98304,
+      102400,
+      106496,
+      172032,
+      172032,
+      172032,
+      172032,
+      172032,
+      172032,
+      172032,
+      172032,
+      172032,
+      172032,
+      172032,
+      172032,
+      172032,
+      172032,
+      172032,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104,
+      303104
+    ],
+    "cycleElapsedMs": [
+      56907,
+      55090,
+      56387,
+      55291,
+      56406,
+      61301,
+      54799,
+      54955,
+      54799,
+      56156,
+      57358,
+      55292,
+      53419,
+      57568,
+      55054,
+      58258,
+      56880,
+      53735,
+      54559,
+      58368,
+      60316,
+      57265,
+      56315,
+      52915,
+      55251,
+      56858,
+      59854,
+      55267,
+      54336,
+      54421,
+      58572,
+      57151,
+      57111,
+      57530,
+      55414,
+      62252,
+      57167,
+      53530,
+      54661,
+      53772
+    ],
+    "activeLeaseProtected": true,
+    "symlinkTargetPreserved": true,
+    "stoppedForeignContainerProtected": true,
+    "replacedDirectoryPreserved": true,
+    "backlogRetired": true,
+    "boundedRetirementHistory": true,
+    "testMeaning": "each flag was asserted before the40-cycle loop; completed loop reached nested-daemon preparation",
+    "unknownSpecialFileProtected": true,
+    "sourceLogHashNormalization": "UTF-8, normalize CRLF to LF",
+    "sourceRawLogSha256": "a92f59240849522f3c2416271fcf28adc308299d87b24eec5e067bb561015c2b",
+    "sourceNormalizedLogSha256": "9d4dfd214be57a74835a3955392c51ab6c1faa1762016288117ead48ecfa7340"
+  },
+  "onlineMounts": {
+    "observedAt": "2026-11-13T16:48:20.440877+00:00",
+    "containerCount": 569,
+    "usage": {
+      "/root/inernoro/prd_agent/.deployment-sources": {
+        "unknown": "RuntimeError"
+      },
+      "/root/inernoro/prd_agent/.cds-worktrees": {
+        "unknown": "TimeoutExpired"
+      },
+      "/root/inernoro/prd_agent/.cds-cache": "4937220096\t/root/inernoro/prd_agent/.cds-cache",
+      "/var/log": "4832534528\t/var/log",
+      "/var/lib/docker/containers": "1114251264\t/var/lib/docker/containers"
+    },
+    "dockerRoot": "/var/lib/docker\n",
+    "mounts": [
+      "/dev/sda1      ext4    362916454400 232016609280 130883067904      64% /",
+      "/dev/sda16     ext4       923156480    122351616    736161792      15% /boot",
+      "/dev/sda15     vfat       109395456      6399488    102995968       6% /boot/efi"
+    ],
+    "inodes": [
+      "/dev/sda1      45744128 2539436 43204692    6% /",
+      "/dev/sda16        58496     604    57892    2% /boot",
+      "/dev/sda15            0       0        0     - /boot/efi"
+    ]
+  },
+  "formalRoot": {
+    "observedAt": "2026-11-13T16:48:00Z",
+    "precision": "MiB rounded by built-in diagnosis",
+    "totalMiB": 71615,
+    "usedMiB": 70135,
+    "availableMiB": 1481,
+    "usedPercent": 98,
+    "capacityGapTo4GiBMiB": 2615
+  },
+  "backupGrowthObservation": {
+    "windowStartUTC": "2026-11-13T15:41:11Z",
+    "windowEndUTC": "2026-11-13T16:48:20Z",
+    "rootNetAvailableChange": -2385645568,
+    "twoNewBackupLogicalBytes": 2527019749,
+    "logicIsNotFilesystemAllocation": true,
+    "fullyAttributed": false,
+    "longTermRateMeasured": false
+  },
+  "verificationCLI": {
+    "passed": 404,
+    "subtestsPassed": 35
+  },
+  "reproducibleHarness": {
+    "publicBaseBuildPassed": true,
+    "backupReferenceDrill": {
+      "provenance": "integration-live",
+      "mode": "backups",
+      "cycles": null,
+      "owner": "cds-native-14e0f4b8ee1d4df18f5b79bb6b0b7765",
+      "baseImage": "cds-resource-native-vm:bookworm-node24",
+      "startedAt": "2026-11-13T16:53:18.469514+00:00",
+      "passed": true,
+      "baseImageId": "sha256:89e253a30df6c8337664681f11313dc7bb997df2bfdf0a97bad229524b8acf9d",
+      "sourceHead": "b5987bc605625265b7b12d13ea15787cddf9054b",
+      "artifactRetirement": [
+        {
+          "name": "owned-root.img",
+          "result": "removed"
+        },
+        {
+          "name": "alpine.tar",
+          "result": "removed"
+        },
+        {
+          "name": "extra.gz",
+          "result": "removed"
+        },
+        {
+          "name": "initramfs.gz",
+          "result": "removed"
+        },
+        {
+          "name": "vmlinuz",
+          "result": "removed"
+        }
+      ],
+      "driverSha256": "9c7ec359ebb6bb973b4bc83cb65732ca95f44b24249f338b77afb7af599206a0",
+      "finishedAt": "2026-11-13T16:58:04.983546+00:00"
+    },
+    "scope": "Public Debian/Node recipe built locally; fresh file-backed VM native backup references passed; all five large VM artifacts retired by exact file identity"
+  },
+  "backupSIGKILL": {
+    "provenance": "integration-live",
+    "scope": "actual file/FD worker, private Linux PID namespace and private tmpfs; Docker-reference provider is a fixture (separately tested in the live VM); SIGKILL at explicitly paused native retirement boundaries; not production disk throughput",
+    "restoreLeaseProtected": true,
+    "nativeOpenDescriptorProtected": true,
+    "expiredHistoricalBackupRetired": true,
+    "restartAndRepeatSafe": true,
+    "SIGKILLBeforeRenameRecovered": true,
+    "SIGKILLAfterRenameRecovered": true,
+    "filesystemNetAvailableBytesDelta": 4198400
+  },
+  "targetedRetirementTests": {
+    "files": 6,
+    "passedBeforeLateRollbackGuard": 43
+  },
+  "llmgwAdapterTests": {
+    "passed": 8,
+    "subtestsPassed": 6
+  },
+  "verificationCompleteSet": {
+    "coverageTotal": 12815,
+    "passedAfterGroupedReverification": 12784,
+    "preexistingSkipped": 29,
+    "approvedBaselineFailures": 2,
+    "singleNode22Run": {
+      "total": 12814,
+      "passed": 12781,
+      "failed": 4,
+      "skipped": 29
+    },
+    "node20Pnpm9IsolatedContainerBranchRoutes": {
+      "passed": 416,
+      "failed": 0,
+      "maxWorkers": 1,
+      "cpuLimit": 5,
+      "network": "none",
+      "realIsolatedPidNamespace": true,
+      "caseDeadlinesUnchanged": true
+    },
+    "node20OtherCriticalPaths": {
+      "passed": 70,
+      "skipped": 1
+    },
+    "lateRollbackGuardRegression": {
+      "passed": 35,
+      "files": 3,
+      "defaultRollbackPinnedOutsideGenerationWindow": true
+    },
+    "unapprovedFailuresRemaining": 0,
+    "sameCommitCIStillRequired": true
+  }
+}

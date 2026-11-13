@@ -139,6 +139,8 @@ jobs:
           retention-days: 14
 
   application-docker:
+    env:
+      CDS_RESOURCE_ROOT: ${{ runner.temp }}/cds-resource-lifecycle
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -168,7 +170,10 @@ jobs:
           docker --version
           pnpm -C cds exec vitest run tests/scripts/probe-daemon-proxy.test.ts
       - name: Verify unconfirmed delayed creation exit and owned restart recovery
-        run: pnpm -C cds exec tsx scripts/application-docker-host-drill.ts --qualify-unknown-create-shutdown
+        run: sudo -E env PATH="$PATH" pnpm -C cds exec tsx scripts/application-docker-host-drill.ts --qualify-unknown-create-shutdown
+      - name: Reconcile owned acceptance resources independently of the producer
+        if: always()
+        run: sudo -E env PATH="$PATH" pnpm -C cds exec tsx scripts/owned-resource-task.ts reconcile
       - name: Preserve original application Docker prerequisite evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -179,6 +184,8 @@ jobs:
           retention-days: 14
 
   application-probe-cancel:
+    env:
+      CDS_RESOURCE_ROOT: ${{ runner.temp }}/cds-resource-lifecycle
     # Both full cases previously shared a four-CPU primary daemon. Keep each
     # original workload and budget, but do not overlap these two platforms.
     needs: application-docker
@@ -207,7 +214,10 @@ jobs:
           docker --version
           pnpm -C cds exec vitest run tests/scripts/probe-daemon-proxy.test.ts
       - name: Original application cancels after daemon create before CLI acknowledgement
-        run: pnpm -C cds exec tsx scripts/application-docker-host-drill.ts --cancel-after-daemon-create
+        run: sudo -E env PATH="$PATH" pnpm -C cds exec tsx scripts/application-docker-host-drill.ts --cancel-after-daemon-create
+      - name: Reconcile cancelled acceptance resources independently of the producer
+        if: always()
+        run: sudo -E env PATH="$PATH" pnpm -C cds exec tsx scripts/owned-resource-task.ts reconcile
       - name: Preserve separate budget cancellation evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -64,11 +64,14 @@ import {
   buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
   redisUsernameFromServiceDefinition,
-  redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
+  redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups,
   backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound,
   shouldSkipOffsiteThisRound, INFRA_BACKUP_HEALTH_FILE, INFRA_BACKUP_INTERVAL_MS, backupFailureReason,
   type BackupOutcome,
 } from './services/infra-backup-schedule.js';
+import { BackupRetentionService } from './services/backup-retention.js';
+import { OwnedResourceLifecycle } from './services/owned-resource-task.js';
+import { ImageCacheGovernance, collectImageCacheReferences, configureImageCacheGovernance } from './services/image-cache-governance.js';
 import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
 import { evaluateInfrastructureHealth, infrastructureContainerHealth } from './services/infrastructure-health.js';
 import {
@@ -735,8 +738,8 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       // 半截文件的危害是具体的：保留策略按 `<key>-auto-` 前缀认它是一份备份，
       // 可能把真正可用的旧副本挤掉；备份历史也会把它列出来供人恢复。
       // 放子目录而不是加后缀，这样上层 ls 既看不到它，也不会把它算进份数。
-      const tmpDir = `${dir}/.tmp`;
-      await shell.exec(`rm -rf ${shq(tmpDir)} && mkdir -p ${shq(tmpDir)}`, { timeout: 15_000 });
+      const tmpDir = `${dir}/.tmp/${holder.roundId}-${crypto.randomBytes(8).toString('hex')}`;
+      await shell.exec(`mkdir -p ${shq(tmpDir)}`, { timeout: 15_000 });
 
       /**
        * 磁盘闸。**每个目标之前都要重跑一次**，不是每轮开头查一次就完事——
@@ -798,7 +801,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         const finalOut = `${dir}/${t.fileName}`;
         let maintenanceJobId: string | null = null;
         let maintenanceCompleted = false;
+        await backupRetentionService.withLease(dir, t.projectId, t.id, 'backup', async () => {
         try {
+          const backupSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
+          await backupRetentionService.beginOutput(out, t.projectId, t.id, backupSourceFingerprint);
           if (t.kind === 'mongo' || t.kind === 'redis') {
             try {
               const maintenanceJob = await stateService.beginInfraMaintenanceJob({
@@ -988,24 +994,19 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
           // 本地这份已经过 gzip -t，无论离机成不成都转正并纳入保留策略——
           // 保留策略是它的上界（份数 + 天数），不会因为离机长期挂掉就无限堆积把盘写满。
-          const promote = await shell.exec(`mv -f ${shq(out)} ${shq(finalOut)}`, { timeout: 15_000 });
-          if (promote.exitCode !== 0) throw new Error(`改名到正式目录失败：${combinedOutput(promote).slice(0, 200)}`);
+          await backupRetentionService.promoteOutput(out, finalOut);
           maintenanceCompleted = true;
 
-          // 保留策略：读目录里自己产的旧备份，超份数或超期的删掉，最新一份永不删。
-          const ls = await shell.exec(
-            `ls -l --time-style=+%s ${shq(dir)} 2>/dev/null | awk '{print $6"\\t"$7}'`,
-            { timeout: 15_000 },
-          );
-          const existing = (ls.stdout || '').split('\n')
-            .map((l) => l.split('\t'))
-            .filter((p) => p.length === 2 && p[1])
-            .map(([ts, name]) => ({ name: name.trim(), mtimeMs: Number(ts) * 1000 }))
-            .filter((f) => Number.isFinite(f.mtimeMs));
-          const doomed = selectExpiredBackups(existing, { projectId: t.projectId, id: t.id, now: new Date() });
-          for (const name of doomed) {
-            await shell.exec(`rm -f ${shq(`${dir}/${name}`)}`, { timeout: 10_000 });
-          }
+          // Completed outputs enter the shared catalog; the independent reconciler owns retirement.
+          const finalSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
+          await backupRetentionService.register(finalOut, t.projectId, t.id, 'automatic', {
+            sourceFingerprint: backupSourceFingerprint,
+            sourceComplete: Boolean(backupSourceFingerprint && backupSourceFingerprint === finalSourceFingerprint && !gapNote),
+          });
+          if (!backupSourceFingerprint || backupSourceFingerprint !== finalSourceFingerprint) store?.record({
+            category: 'system', severity: 'warn', source: 'infra-backup', action: 'infra.backup.recovery-point.unconfirmed',
+            projectId: t.projectId, serviceId: t.id, message: '导出已保留，但备份源身份未确认或已变化，不能替代旧恢复点。',
+          });
           outcomes.push({
             id: t.id,
             projectId: t.projectId,
@@ -1017,7 +1018,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
               : `离机副本缺失：${offsiteError}（本地副本已保留：${t.fileName}）`,
             fileName: t.fileName,
             bytes,
-            pruned: doomed,
+            pruned: [],
             remoteObjectKey: remote?.objectKey,
             sha256: remote?.sha256,
             note: scopeNote ?? undefined,
@@ -1026,9 +1027,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         } catch (err) {
           // 走到这里说明**本地这份就没成**（导出失败/空文件/gzip 校验不过），
           // 那才是真残骸，删掉；离机失败已经在上面单独处理，不会落到这条路径。
-          await shell.exec(`rm -f ${shq(out)}`, { timeout: 10_000 }).catch(() => undefined);
+          // Retire only the registered native output identity; unknown replacements remain protected.
           outcomes.push({ id: t.id, projectId: t.projectId, ok: false, error: (err as Error).message });
         } finally {
+          await backupRetentionService.closeOutput(out).catch(() => undefined);
           if (maintenanceJobId) {
             await stateService.finishInfraMaintenanceJob(
               maintenanceJobId,
@@ -1036,9 +1038,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             );
           }
         }
+        });
       }
 
-      await shell.exec(`rm -rf ${shq(tmpDir)}`, { timeout: 15_000 }).catch(() => undefined);
+      await shell.exec(`rmdir ${shq(tmpDir)}`, { timeout: 15_000 }).catch(() => undefined);
 
       const summary = summarizeBackupRound(outcomes, plan.skipped.length);
       const failed = outcomes.filter((o) => !o.ok);
@@ -2108,6 +2111,11 @@ async function initStateService(): Promise<void> {
 
 await initStateService();
 config.storageInstanceId = await stateService.ensureStorageInstanceId(config.storageInstanceId);
+const backupRetentionService = new BackupRetentionService({ shell, state: stateService, repoRoot: config.repoRoot, instanceId: config.storageInstanceId });
+const acceptanceResourceRoot = path.resolve(process.env.CDS_RESOURCE_ROOT || '/var/lib/cds-resource-lifecycle');
+const ownedResourceLifecycle = new OwnedResourceLifecycle({ shell, instanceId: config.storageInstanceId,
+  journal: stateService.resourceRetirementJournal(config.storageInstanceId, 'tasks'),
+  workspaceBase: path.join(acceptanceResourceRoot, 'workspaces'), catalog: path.join(acceptanceResourceRoot, 'catalog') });
 
 // ── Stale self-update 清扫(2026-05-07 用户反馈"卡 web-build 看不清状态"):
 // .cds/active-update.json 里如果还有未结束的 update 记录但写它的进程已死,
@@ -2176,6 +2184,27 @@ const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
 // 自动备份：手工备份的实际含义是「出事那天正好没人点」。带磁盘闸与保留策略，
 // 因为把根盘写满会同时打死所有预览、构建和 CDS 自己，那比没有备份更糟。
 const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
+// Independent of backup creation/success; restart resumes the same durable catalog.
+const reconcileBackups = async () => {
+  try {
+    const report = await backupRetentionService.inspect(false);
+    activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'backup-retention', action: 'backup.retention.reconciled', message: '全局备份保留对账（最多15天，冲突与未知保持保护）', details: { report } });
+  } catch (error) {
+    activeServerEventLogStore?.record({ category: 'system', severity: 'error', source: 'backup-retention', action: 'backup.retention.failed', message: '备份保留对账未完成，未确认的对象已保留。' });
+  }
+};
+const backupRetentionTimer = config.mode !== 'executor' && !isPreviewInstance() ? setInterval(() => void reconcileBackups(), 60 * 60_000) : null;
+const backupRetentionStartup = backupRetentionTimer ? setTimeout(() => void reconcileBackups(), 60_000) : null;
+backupRetentionTimer?.unref(); backupRetentionStartup?.unref();
+// Independent host keeper: a crashed producer is not responsible for its own retirement.
+const reconcileAcceptanceResources = async () => {
+  try {
+    const report = await ownedResourceLifecycle.inspect(false);
+    activeServerEventLogStore?.record({ category: 'system', severity: report.scanStatus === 'complete' ? 'info' : 'warn', source: 'acceptance-retention', action: 'acceptance.retention.reconciled', message: '验收资源租约与退役对账', details: { report } });
+  } catch { activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'acceptance-retention', action: 'acceptance.retention.failed', message: '验收资源身份或引用未确认，未确认对象已保留。' }); }
+};
+const acceptanceRetentionTimer = config.mode !== 'executor' && !isPreviewInstance() ? setInterval(() => void reconcileAcceptanceResources(), 60_000) : null;
+acceptanceRetentionTimer?.unref();
 const rotationRecoveryCleanup = startRotationRecoveryArtifactCleanup({
   recoveryDir: path.join(path.dirname(stateService.getCacheBase()), 'credential-rotation-recovery'),
   onError: (error) => console.warn(`[credential-rotation] recovery artifact cleanup failed: ${error.message}`),
@@ -3569,6 +3598,24 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
   }
 }
 const janitorDocker = createJanitorDockerAdapters(shell);
+const configuredImageCacheBudgetGiB = Number(process.env.CDS_IMAGE_CACHE_BUDGET_GIB || 0);
+if (!Number.isFinite(configuredImageCacheBudgetGiB) || configuredImageCacheBudgetGiB < 0 || configuredImageCacheBudgetGiB > 4096) throw new Error('镜像缓存总量预算必须在0至4096 GiB之间；0表示尚未启用。');
+const imageCacheGovernance = new ImageCacheGovernance({ shell, catalog: path.join(acceptanceResourceRoot, 'image-cache'),
+  audit: activeServerEventLogStore,
+  journal: stateService.resourceRetirementJournal(config.storageInstanceId, 'images'),
+  instanceId: computeCdsInstanceId(config.repoRoot), budgetBytes: configuredImageCacheBudgetGiB * 1024 ** 3,
+  protectedReferences: () => collectImageCacheReferences(stateService, config.scheduler?.pinnedBranches || [], 5,
+    7, Date.now(), (profile, branch) => resolveEffectiveProfile(profile, branch).dockerImage) });
+if (configuredImageCacheBudgetGiB > 0) configureImageCacheGovernance(imageCacheGovernance);
+// The hourly general Janitor cannot drain a two-image batch at deployment speed.
+// Share its global reclaim lock and native cross-process catalog lock; never queue ticks.
+const imageCacheRetentionTimer = configuredImageCacheBudgetGiB > 0 && config.mode !== 'executor' && !isPreviewInstance()
+  ? setInterval(() => {
+    void imageCacheGovernance.inspect(false).then(report => {
+      activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'image-cache-retention', action: 'image.cache.reconciled', message: '宿主镜像总量与引用对账', details: { report } });
+    }, () => activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'image-cache-retention', action: 'image.cache.failed', message: '镜像引用、registry 或审计未确认，相关镜像保持保护。' }));
+  }, 60_000) : null;
+imageCacheRetentionTimer?.unref();
 const janitorService = new JanitorService(
   stateService,
   // 固定名单只配在 scheduler 那侧（文档也只写了那一处），但 janitor 的删除判定
@@ -3587,6 +3634,7 @@ const janitorService = new JanitorService(
       .filter((image): image is string => Boolean(image));
   }),
 );
+if (configuredImageCacheBudgetGiB > 0) janitorService.setImageCacheGovernance(imageCacheGovernance);
 // 磁盘刹车自带测量能力（Codex 第二十八轮 P1）：不依赖 janitor 的启停与一小时
 // 节奏——进程刚重启（往往正是「刚被磁盘打满打死」）时部署闸门会就地测一次。
 // 两个挂载点都量（Codex 第二十九轮 P2）：worktree 与 docker 数据目录常不在同一个
@@ -4846,6 +4894,10 @@ async function shutdown(signal: string): Promise<void> {
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
   if (infraExposureAudit) clearInterval(infraExposureAudit);
   if (infraAutoBackup) clearInterval(infraAutoBackup);
+  if (backupRetentionTimer) clearInterval(backupRetentionTimer);
+  if (backupRetentionStartup) clearTimeout(backupRetentionStartup);
+  if (acceptanceRetentionTimer) clearInterval(acceptanceRetentionTimer);
+  if (imageCacheRetentionTimer) clearInterval(imageCacheRetentionTimer);
   clearInterval(deploymentMemoryReconciler);
   clearInterval(rotationRecoveryCleanup);
   if (externalPortAuditWatchdog) clearInterval(externalPortAuditWatchdog);
@@ -5618,6 +5670,9 @@ const serverDeps: ServerDeps = {
   config,
   schedulerService,
   janitorService,
+  backupRetentionService,
+  ownedResourceLifecycle,
+  imageCacheGovernance,
   registry,
   getClusterStrategy: () => clusterStrategy,
   storageModeContext,

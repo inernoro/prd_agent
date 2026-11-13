@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "serve": "tsx src/index.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-runtime-assets.mjs",
     "start": "node dist/index.js",
     "drill:r2-mongo": "tsx src/cli/r2-recovery-drill.ts",
     "audit:ui": "node ../scripts/audit-cds-ui-regressions.mjs",

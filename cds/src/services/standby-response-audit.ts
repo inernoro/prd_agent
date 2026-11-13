@@ -4,7 +4,7 @@ import type { ServerEventLogSink } from './server-event-log-store.js';
 
 const SNAPSHOT_BYTES = 4096;
 const SAFE_TEXT_KEYS = /^(code|message|reason|error|status|type|detail|event)$/i;
-const SAFE_FIELD_NAMES = /^(code|message|reason|error|status|type|detail|details|event|ok|success|data|branch|branches|protocolVersion|capabilities|configurationRevision|configHash|secretKeyHash|repository|defaultBranch|id|name|projectId|commitSha|githubCommitSha)$/i;
+const SAFE_FIELD_NAMES = /^(code|message|reason|error|status|type|detail|details|event|ok|success|data|branch|branches|protocolVersion|capabilities|configurationRevision|configHash|secretKeyHash|repository|defaultBranch|id|name|projectId|commitSha|githubCommitSha|digest|mediaType|size|manifests|config|layers|platform|architecture|os|variant)$/i;
 const PRIVATE_KEYS = /password|token|cookie|authorization|secret|credential|signature|email|phone|document|prompt|content|payload|body/i;
 
 function safeText(value: string, secrets: string[]): string {
@@ -21,6 +21,8 @@ function safeValue(value: unknown, secrets: string[], key = '', depth = 0, limit
   if (PRIVATE_KEYS.test(key) || isSensitiveKey(key)) return '[redacted]';
   if (depth > 6) { limits.truncated = true; return '[depth omitted]'; }
   if (typeof value === 'string') {
+    if (key === 'digest' && /^sha256:[a-f0-9]{64}$/.test(value)) return secrets.includes(value) ? '[redacted]' : value;
+    if (/^(mediaType|architecture|os|variant)$/.test(key) && /^[a-z0-9.+/_-]{1,128}$/i.test(value)) return safeText(value, secrets);
     if (/^(commitSha|githubCommitSha|configHash|configurationRevision)$/i.test(key) && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value)) {
       return secrets.includes(value) ? '[redacted]' : value;
     }
@@ -38,7 +40,7 @@ function safeValue(value: unknown, secrets: string[], key = '', depth = 0, limit
     if (entries.length > 40) limits.truncated = true;
     return Object.fromEntries(entries.slice(0, 40).map(([name, item], index) => [SAFE_FIELD_NAMES.test(name) ? name : `other-field-${index}`, safeValue(item, secrets, name, depth + 1, limits)]));
   }
-  return value === null || SAFE_TEXT_KEYS.test(key) || /^(ok|success|protocolVersion|secretKeyCount)$/i.test(key) ? value : '[value omitted]';
+  return value === null || SAFE_TEXT_KEYS.test(key) || /^(ok|success|protocolVersion|secretKeyCount|size)$/i.test(key) ? value : '[value omitted]';
 }
 
 export interface StandbyResponseFacts {
@@ -63,7 +65,7 @@ export interface StandbyResponseFacts {
 /** Existing project-scoped event store and its retention/query path; no new public log store. */
 export function createStandbyResponseAudit(sink: ServerEventLogSink | null | undefined, scope: {
   projectId: string; remoteProjectId: string; policy: string; dryRun: boolean; configUpdatedAt?: string;
-}) {
+}, event = { source: 'standby-response-audit', action: 'standby.peer.response', message: '备用站远端响应证据' }) {
   const operationId = randomUUID();
   let attempt = 0;
   let persistenceFailed = false;
@@ -123,7 +125,7 @@ export function createStandbyResponseAudit(sink: ServerEventLogSink | null | und
       };
       try {
         await sink.recordImmediate({ category: 'system', severity: facts.localDecision === 'success' ? 'info' : 'warn',
-          source: 'standby-response-audit', action: 'standby.peer.response', message: '备用站远端响应证据',
+          ...event,
           projectId: scope.projectId, requestId, operationId, details });
         // Some optional sinks silently no-op before initialization; never attest persistence then.
         const saved = await sink.findRecent({ projectId: scope.projectId, requestId, limit: 1 });
@@ -137,3 +139,5 @@ export function createStandbyResponseAudit(sink: ServerEventLogSink | null | und
 }
 
 export type StandbyResponseAudit = ReturnType<typeof createStandbyResponseAudit>;
+/** Same bounded redaction, durable event store and read-back proof for other remote calls. */
+export const createExternalResponseAudit = createStandbyResponseAudit;

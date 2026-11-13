@@ -7,6 +7,7 @@ import { worktreePathActivity, sameWorktreeDirectoryIdentity, WorktreeClaimHeldE
 import { inspectDeploymentSource, SourceInspectionHeldError, SOURCE_HOLD_REASONS, type SourceHoldReason } from './deployment-source-inspection.js';
 
 export interface DeploymentSourceRetentionReport {
+  dataObservations?: Array<{ projectId: string; sourceIdentity: string; dataIdentity: string; marker: string; device: number; inode: number; birthtimeMs?: number }>;
   scanned: number; attempted: number; removed: string[]; held: Record<string, string>;
   failed: Array<{ path: string; error: string }>; deferred: number;
   lastAttemptedPath?: string;
@@ -109,6 +110,20 @@ export async function reclaimDeploymentSources(input: {
     const identity = await input.files.readDirectoryIdentity?.(dir);
     const expectedPath = path.join(realBase, path.relative(path.resolve(input.base), path.resolve(dir)));
     if (!identity || identity.entryPath !== expectedPath) { report.held[dir] = '目录归属无法确认'; continue; }
+    // Observe data before age/current-use filtering: those protections must not hide migration debt.
+    let dataDetected = false;
+    for (const marker of ['.cds-data', '.cds-run-data']) {
+      const location = path.join(dir, marker);
+      try {
+        const entry = await fs.lstat(location);
+        dataDetected = true;
+        if (entry.isDirectory() && !entry.isSymbolicLink()) {
+          (report.dataObservations ??= []).push({ projectId: path.relative(input.base, dir).split(path.sep)[0],
+            sourceIdentity: path.relative(input.base, dir), dataIdentity: path.relative(input.base, location), marker, device: entry.dev, inode: entry.ino, birthtimeMs: entry.birthtimeMs });
+        }
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { dataDetected = true;report.held[dir] = 'persistent-data-query-unconfirmed'; } }
+    }
+    if (dataDetected) { report.held[dir] ??= 'persistent-data';continue; }
     const mtime = await input.files.statDirMtimeMs(dir);
     if (mtime === null || input.nowMs - mtime < minAge || isClaimed(dir)) {
       report.held[dir] = '目录过新、正在部署、台账引用或容器挂载'; continue;

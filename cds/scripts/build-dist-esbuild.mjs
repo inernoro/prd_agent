@@ -21,7 +21,8 @@
  */
 
 import { build } from 'esbuild';
-import { readdir, mkdir, copyFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
+import { copyRuntimeAssets } from './copy-runtime-assets.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -66,11 +67,7 @@ await build({
 });
 
 // Assets read at runtime belong in the emitted tree, including source-free prebuilt installs.
-for (const relative of ['services/preview-demo-snapshot.json', 'shared/notification-templates.json', 'services/release-source-preparation.py', 'services/remote-release-reclaim.py']) {
-  const destination = path.join(outDir, relative);
-  await mkdir(path.dirname(destination), { recursive: true });
-  await copyFile(path.join(srcDir, relative), destination);
-}
+await copyRuntimeAssets(outDir);
 
 const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);
 console.log(`[build-dist-esbuild] 完成,耗时 ${elapsed}s`);

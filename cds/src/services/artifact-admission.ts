@@ -1,13 +1,14 @@
 import type { BuildProfile, IShellExecutor } from '../types.js';
 import type { WorktreeService } from './worktree.js';
 import { shellQuoteArg } from './secure-database-cli.js';
+import { configuredImageCacheGovernance, ImageCacheBudgetError } from './image-cache-governance.js';
 import {
   componentInputComparator, imageRepositoryOf, normalizeBuildScope, normalizeFallbackImages, normalizeImageRevision, proveFallbackImage,
   type ProveFallbackImageInput,
 } from './prebuilt-reuse.js';
 
 export type ArtifactWaitReason = 'target-unresolved' | 'image-unresolved' | 'missing' | 'access-denied'
-  | 'verification-unavailable' | 'revision-mismatch' | 'platform-mismatch';
+  | 'verification-unavailable' | 'revision-mismatch' | 'platform-mismatch' | 'cache-budget';
 
 export interface VerifiedDeploymentArtifact {
   profileIds: string[];
@@ -115,13 +116,23 @@ export async function inspectDeploymentArtifacts(
     const key = JSON.stringify([image, needsPull, exactTarget]);
     const cached = inspections.get(key); if (cached) return cached;
     const promise = (async (): Promise<Inspection> => {
+      const cache = configuredImageCacheGovernance();let pin: { token: string } | undefined;
+      if (cache) {
+        try { const prepared = await cache.prepare(image, assertCurrent, !needsPull);if (prepared.token) pin = prepared; }
+        catch (error) { assertCurrent();return { reason: error instanceof ImageCacheBudgetError ? 'cache-budget' : 'verification-unavailable' }; }
+      }
       const pull = needsPull ? await exec(`docker pull ${shellQuoteArg(image)}`, 90_000).catch(() => undefined) : { exitCode: 0, stdout: '', stderr: '' };
       if (!pull) { assertCurrent(); return { reason: 'verification-unavailable' }; }
-      if (pull.exitCode) return { reason: pullFailureReason(pull.stdout, pull.stderr, image) };
+      if (pull.exitCode) {
+        // Only a completed native failure may settle absence; timeout/unknown leaves a visible pin.
+        if (pin && typeof pull.exitCode === 'number') await cache!.abort(pin.token, assertCurrent).catch(() => undefined);
+        return { reason: pullFailureReason(pull.stdout, pull.stderr, image) };
+      }
       const inspection = await exec(`docker image inspect ${shellQuoteArg(image)}`).catch(() => undefined);
       if (!inspection || inspection.exitCode) { assertCurrent(); return { reason: 'verification-unavailable' }; }
       const parsed = readJson(inspection.stdout);
       const metadata = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : undefined;
+      if (pin) { try { await cache!.confirm(pin.token, assertCurrent); } catch { assertCurrent();return { reason: 'verification-unavailable' }; } }
       const revision = normalizeImageRevision(metadata?.Config?.Labels?.['org.opencontainers.image.revision']);
       if (!revision || exactTarget && revision !== target) return { reason: 'revision-mismatch' };
       const imageArch = platformArchitecture(metadata?.Architecture);

@@ -689,15 +689,15 @@ def ok(data: Any = None, *, note: str | None = None, code: int = 0) -> None:
 # ── Commands ───────────────────────────────────────────────────────
 
 def cmd_disk(args: argparse.Namespace) -> None:
-    paths = {"state": "/api/janitor/state", "sources": "/api/janitor/deployment-sources"}
+    paths = {"state": "/api/janitor/state", "sources": "/api/janitor/deployment-sources", "backups": "/api/janitor/backups", "tasks": "/api/janitor/tasks", "data-cases": "/api/janitor/tasks/data-cases", "images": "/api/janitor/tasks/images"}
     path = paths.get(args.sub)
     if args.sub == "target":
         path = f"/api/releases/targets/{urllib.parse.quote(args.id, safe='')}/disk-diagnosis"
     body = _call("GET", path, timeout=120)
     if not isinstance(body, dict):
         die("磁盘观测响应未确认，不能据此判断零占用", code=3)
-    if args.sub == "sources" and body.get("scanStatus") != "complete":
-        die("源码盘点未完整确认，相关对象保持保护；请查看保护原因与待处理项", code=3, extra={"data": body})
+    if args.sub in ("sources", "backups", "tasks", "images") and body.get("scanStatus") != "complete":
+        die("资源盘点未完整确认，相关对象保持保护；请查看保护原因、策略冲突与待处理项", code=3, extra={"data": body})
     ok(body, note="只读磁盘观测；候选预览不授权删除，估计大小不代表实际释放")
 
 
@@ -10559,6 +10559,10 @@ def _build_parser() -> argparse.ArgumentParser:
     disk = sub.add_parser("disk", help="只读磁盘治理观测与候选预览").add_subparsers(dest="sub", required=True)
     disk.add_parser("state", help="磁盘档位、Janitor 与回收结果").set_defaults(func=cmd_disk)
     disk.add_parser("sources", help="预览源码候选、估计大小与保护原因，不执行删除").set_defaults(func=cmd_disk)
+    disk.add_parser("backups", help="只读预览15天全局备份保留、租约及策略冲突").set_defaults(func=cmd_disk)
+    disk.add_parser("tasks", help="只读预览验收资源租约、退役候选与未知对象").set_defaults(func=cmd_disk)
+    disk.add_parser("images", help="只读预览宿主镜像ID、总量预算与保护原因").set_defaults(func=cmd_disk)
+    disk.add_parser("data-cases", help="只读查看源码快照内持久化数据处置队列").set_defaults(func=cmd_disk)
     disk_target = disk.add_parser("target", help="读取指定发布目标的真实主机磁盘诊断")
     disk_target.add_argument("id", help="ReleaseTarget ID，须从目标清单读取")
     disk_target.set_defaults(func=cmd_disk)

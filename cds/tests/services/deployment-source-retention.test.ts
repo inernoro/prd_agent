@@ -171,9 +171,10 @@ describe('safe detached source retention on real Git and files',()=>{
   const janitor=new JanitorService(state,{enabled:false,worktreeTTLDays:7,diskWarnPercent:80,sweepIntervalSeconds:3600,dockerPrune:false,imageRetention:false},f.base,undefined,()=>null,undefined,undefined,f.files);
   const removed:string[]=[];
   for(let round=0;round<4;round++){
-   const report=(await janitor.sweep()).deploymentSources!;expect(report.scanned).toBeLessThanOrEqual(1024);expect(report.attempted).toBe(20);removed.push(...report.removed);
+   const report=(await janitor.sweep()).deploymentSources!;expect(report.scanned).toBeLessThanOrEqual(1024);expect(report.attempted).toBeLessThanOrEqual(20);removed.push(...report.removed);
   }
-  expect(removed).toContain(clean);expect(f.git('worktree','list','--porcelain')).not.toContain(clean);
+  expect(removed).toEqual([clean]);expect(f.git('worktree','list','--porcelain')).not.toContain(clean);
+  expect(state.getLegacyDataCases()).toHaveLength(2047);
   for(const i of [0,19,21,1024,1043,2047])expect(await fs.readFile(path.join(leaf(i),'.cds-data','keep'),'utf8')).toBe('persistent');
  },20000);
  it.each([false,true])('scans beyond retained prefixes even when the previous scan leaf disappeared: %s',async removeCursor=>{
@@ -293,7 +294,7 @@ describe('source retention observability preserves safe reclamation', () => {
   f.branch.services={source:{profileId:'source',status:'stopped',sourceCheckoutPath:claimed} as any};
   f.files.listMountedHostPaths=async()=>[mounted];
   const janitor=observe(f);await janitor.sweep();const summary=janitor.getSnapshot().lastSweep!.deploymentSources!;
-  expect(summary).toMatchObject({removed:0,failed:0,held:3,heldReasons:{'container-mounted':1,'age-or-claim-unconfirmed':1,'protected-or-unconfirmed':1}});
+  expect(summary).toMatchObject({removed:0,failed:0,held:3,heldReasons:{'container-mounted':1,'age-or-claim-unconfirmed':1,'persistent-data':1}});
   expect(Object.values(summary.heldReasons!).reduce((sum,n)=>sum+n,0)).toBe(summary.held);
   expect(JSON.stringify(summary)).not.toContain(f.base);
   expect(await fs.readFile(path.join(data,'.cds-data','db'),'utf8')).toBe('keep');

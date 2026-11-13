@@ -156,6 +156,8 @@ type CapabilitySeed = readonly [
 
 const CDS_AGENT_CAPABILITY_SEEDS = [
   ['janitor-observation', '部署源码回收候选与保护原因', 'janitor-observation.ts', 'mixed', 'project', 'read-only', 'direct', 'cds', 'disk', '只读预览，不签发删除许可；项目 Key 只能盘点本项目，完整宿主盘点由系统所有者或既有全局只读授权执行；未知引用保持保护，分配块估计不代表实际释放'],
+  ['backup-retention', '全局备份保留与退役', 'backup-retention.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', 'disk', '全局 Agent 仅只读盘点；归属登记、有限批次与取消需要系统所有者；唯一业务恢复点或未知来源保持保护并报告15天策略冲突'],
+  ['owned-resource-retention', '验收资源与镜像退役', 'owned-resource-retention.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', 'disk', '全局 Agent 仅只读；所有者执行受控批次。任务租约、当前与回滚引用、运行及停止容器、未知归属均保护；数据处置登记不授权删除'],
   ['identity-connections', '原账号设备接入与恢复', 'identity-connections.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect --recover', '匿名只能提交仓库恢复申请；原账号与原项目由系统所有者核对，历史匿名凭据归属也必须明确人工确认'],
   ['code-reviews', '代码审查任务与报告上传', 'code-reviews.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'code-review', 'ZIP/GitHub/CDS 项目分支固定快照；list 可附带当前项目分支 ID，submit 三选一且复用项目仓库授权；四个本地 stdio MCP 工具仅限项目任务与报告，复用项目权限，get 可分页读取已保存的问题、覆盖说明和报告链接，不触发分析；settings 仅限无项目作用域的管理员或 bootstrap 配置引擎引用，不暴露 settings MCP 工具；取消可停止任务，报告上传按内容去重，邮件仅在提交者指定时发送'],
   ['instance-catalog', '主备 CDS 实例目录', 'instance-catalog.ts', 'mixed', 'project', 'read-only', 'direct', 'cds', 'instance', '只读公共地址；实例独立授权，切换不迁移数据库或接管流量'],
@@ -269,7 +271,7 @@ export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, reado
   projects: ['projects', 'managed-projects', 'workspaces'],
   'system-health': ['server-control-plane', 'cds-system-topology', 'cds-system-diagnostics', 'docker-network-health', 'cluster', 'executor-scheduler'],
   'system-observability': ['server-control-plane', 'cds-events', 'operator-console'],
-  maintenance: ['server-control-plane', 'cache', 'snapshots', 'storage-mode', 'legacy-cleanup', 'janitor-observation'],
+  maintenance: ['server-control-plane', 'cache', 'snapshots', 'storage-mode', 'legacy-cleanup', 'janitor-observation', 'backup-retention', 'owned-resource-retention'],
   settings: ['comment-template', 'cds-system-connections', 'cds-system-offsite-backup', 'cds-system-sealed-storage', 'peer-sync', 'remote-hosts'],
   'project-onboarding': ['projects', 'pending-import', 'project-compose'],
   'code-review': ['code-reviews', 'project-compose', 'deployment-runs'],

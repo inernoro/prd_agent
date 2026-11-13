@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 set -eu
+umask 077
 
 # Stream production Mongo backups to the operator machine without writing large
 # archives to the production root filesystem. This script is intended to be run
@@ -20,6 +21,11 @@ dry_run="${LLMGW_EXTERNAL_BACKUP_DRY_RUN:-0}"
 include_secrets="${LLMGW_EXTERNAL_BACKUP_INCLUDE_SECRETS:-0}"
 json_out="${LLMGW_EXTERNAL_BACKUP_JSON_OUT:-}"
 report_md="${LLMGW_EXTERNAL_BACKUP_REPORT_MD:-}"
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$script_dir/lib/backup-stream.sh"
+source_before=""
+source_after=""
+backup_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 [ -n "$remote_host" ] || {
   echo "ERROR: LLMGW_EXTERNAL_BACKUP_HOST is required" >&2
@@ -95,9 +101,9 @@ write_remote_container_snapshot() {
 
 write_report() {
   verdict="$1"
-  if [ -z "$json_out" ] && [ -z "$report_md" ]; then
-    return 0
-  fi
+  LLMGW_BACKUP_SOURCE_BEFORE="$source_before" \
+  LLMGW_BACKUP_SOURCE_AFTER="$source_after" \
+  LLMGW_BACKUP_STARTED_AT="$backup_started_at" \
   LLMGW_EXTERNAL_BACKUP_REPORT_VERDICT="$verdict" \
   LLMGW_EXTERNAL_BACKUP_REPORT_JSON="$json_out" \
   LLMGW_EXTERNAL_BACKUP_REPORT_MD="$report_md" \
@@ -115,7 +121,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-backup_dir = Path(os.environ["LLMGW_EXTERNAL_BACKUP_REPORT_DIR"])
+backup_dir = Path(os.environ["LLMGW_EXTERNAL_BACKUP_REPORT_DIR"]).absolute()
 archives = []
 if backup_dir.exists():
     archives = sorted(str(path) for path in backup_dir.glob("*.archive.gz"))
@@ -135,6 +141,11 @@ report = {
     "archives": archives,
     "sha256Sums": str(sha_path) if sha_path.exists() else "",
 }
+report["sourceFingerprint"] = os.environ.get("LLMGW_BACKUP_SOURCE_BEFORE", "")
+report["sourceIdentityStable"] = bool(report["sourceFingerprint"] and report["sourceFingerprint"] == os.environ.get("LLMGW_BACKUP_SOURCE_AFTER", ""))
+report["backupStartedAt"] = os.environ["LLMGW_BACKUP_STARTED_AT"]
+if not report["dryRun"] and backup_dir.is_dir():
+    (backup_dir / ".cds-export.json").write_text(json.dumps(report, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
 json_out = os.environ.get("LLMGW_EXTERNAL_BACKUP_REPORT_JSON", "")
 if json_out:
     parent = Path(json_out).parent
@@ -178,6 +189,15 @@ fi
 
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
+capture_source() {
+  case "$remote_repo" in *[!A-Za-z0-9_./-]*) return 1;; esac
+  case "$compose_file" in *[!A-Za-z0-9_./-]*) return 1;; esac
+  case "$mongo_service" in *[!A-Za-z0-9_.-]*) return 1;; esac
+  if [ -n "$mongo_container" ]; then source_id="$mongo_container"; else source_id=$(run_remote "cd '$remote_repo' && docker compose -f '$compose_file' ps -q '$mongo_service'"); fi
+  case "$source_id" in *[!A-Za-z0-9_.-]*|"") return 1;; esac
+  run_remote "cd '$remote_repo' && python3 scripts/llmgw-backup-retention.py --source-container '$source_id'" | python3 -c 'import sys,json;print(json.load(sys.stdin)["sourceFingerprint"])'
+}
+source_before=$(capture_source 2>/dev/null || true)
 
 run_remote "cd '$remote_repo' && pwd" > "$backup_dir/remote-pwd.txt"
 run_remote "cd '$remote_repo' && df -Pm /" > "$backup_dir/remote-df-root.txt"
@@ -208,9 +228,7 @@ if [ "$mode" = "full" ]; then
         ;;
     esac
     echo "LLM Gateway external backup: streaming Mongo database $db"
-    remote_mongo_dump "$db" \
-      | gzip > "$backup_dir/$db.archive.gz"
-    gzip -t "$backup_dir/$db.archive.gz"
+    cds_backup_stream "$backup_dir/$db.archive.gz" remote_mongo_dump "$db"
   done
 else
   for spec in $critical_collections; do
@@ -233,9 +251,7 @@ else
     case "$collection" in
       "*")
         echo "LLM Gateway external backup: streaming Mongo database $db"
-        remote_mongo_dump "$db" \
-          | gzip > "$backup_dir/$db.archive.gz"
-        gzip -t "$backup_dir/$db.archive.gz"
+        cds_backup_stream "$backup_dir/$db.archive.gz" remote_mongo_dump "$db"
         ;;
       *[!A-Za-z0-9_-]*|"")
         echo "ERROR: invalid collection name in spec: $spec" >&2
@@ -243,9 +259,7 @@ else
         ;;
       *)
         echo "LLM Gateway external backup: streaming Mongo collection $db.$collection"
-        remote_mongo_dump "$db" "$collection" \
-          | gzip > "$backup_dir/$db.$collection.archive.gz"
-        gzip -t "$backup_dir/$db.$collection.archive.gz"
+        cds_backup_stream "$backup_dir/$db.$collection.archive.gz" remote_mongo_dump "$db" "$collection"
         ;;
     esac
   done
@@ -258,4 +272,8 @@ fi
 
 echo "LLM Gateway external backup completed: $backup_dir"
 cat "$backup_dir/SHA256SUMS"
+source_after=$(capture_source 2>/dev/null || true)
 write_report pass
+if ! python3 "$script_dir/llmgw-backup-retention.py" --root "$backup_root" --register-export "$backup_dir/.cds-export.json" --register-only; then
+  echo "WARNING: 导出已保留；退役登记未确认，旧恢复点继续保护。" >&2
+fi

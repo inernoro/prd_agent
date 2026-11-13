@@ -343,8 +343,8 @@ describe('自动备份真的被启动了', () => {
 
   it('离机校验成功后才把临时备份提升到正式保留集', () => {
     const upload = CODE.indexOf('await uploadAndVerifyR2Backup({');
-    const promote = CODE.indexOf('mv -f ${shq(out)} ${shq(finalOut)}');
-    const cleanup = CODE.indexOf('rm -f ${shq(out)}', promote);
+    const promote = CODE.indexOf('backupRetentionService.promoteOutput(out, finalOut)');
+    const cleanup = CODE.indexOf('backupRetentionService.closeOutput(out)', promote);
 
     expect(upload).toBeGreaterThan(0);
     expect(promote).toBeGreaterThan(upload);
@@ -623,9 +623,9 @@ describe('查历史不许创建备份目录', () => {
     // 否则「一份都没有过」会被自己刚建出来的空目录报成「目录在、只是没有匹配项」。
     //
     // 断言按**条数**而不是按行号：新增第三条只读路径时，这里必须一起改，
-    // 逼着人回来确认它也走了只读档（写盘那档仍然只有一处）。
+    // 备份与恢复各有一个明确写入入口，历史与设置仍只读。
     expect(SRC.match(/resolveBackupDir\(\{ create: false \}\)/g) || []).toHaveLength(2);
-    expect(SRC.match(/await resolveBackupDir\(\)/g) || []).toHaveLength(1);
+    expect(SRC.match(/await resolveBackupDir\(\)/g) || []).toHaveLength(2);
   });
 });
 
@@ -991,7 +991,7 @@ describe('MySQL 导出脚本', () => {
     const src = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
     expect(src).toContain('gzip -t ${shq(out)}');
     const check = src.indexOf('gzip -t ${shq(out)}');
-    const promote = src.indexOf('mv -f ${shq(out)} ${shq(finalOut)}');
+    const promote = src.indexOf('backupRetentionService.promoteOutput(out, finalOut)');
     expect(check).toBeGreaterThan(0);
     expect(promote).toBeGreaterThan(check);   // 校验必须排在转正之前
   });
@@ -1480,14 +1480,16 @@ describe('执行层真的保留了本地副本', () => {
     expect(SRC).toContain('localOnly: offsiteError !== null,');
   });
 
-  it('转正与保留策略排在离机之后、且不受离机成败影响', () => {
-    // 保留策略是「保留本地」不会把盘写满的唯一上界，必须照常执行。
+  it('转正后登记完整性与来源，独立保留任务不依赖下一次备份成功', () => {
+    // 导出成功只登记恢复点；失败输出与过期备份由独立租约回收器处理。
     const upload = SRC.indexOf('shouldSkipOffsiteThisRound(offsiteConsecutiveFailures)');
-    const promote = SRC.indexOf('mv -f ${shq(out)} ${shq(finalOut)}');
-    const prune = SRC.indexOf('selectExpiredBackups(existing');
+    const promote = SRC.indexOf('backupRetentionService.promoteOutput(out, finalOut)');
+    const registration = SRC.indexOf('backupRetentionService.register(finalOut', promote);
     expect(upload).toBeGreaterThan(0);
     expect(promote).toBeGreaterThan(upload);
-    expect(prune).toBeGreaterThan(promote);
+    expect(registration).toBeGreaterThan(promote);
+    expect(SRC).toContain('setInterval(() => void reconcileBackups(), 60 * 60_000)');
+    expect(SRC).not.toContain('selectExpiredBackups(existing');
   });
 });
 

@@ -37,6 +37,7 @@ import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts 
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
 import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConnections, resolveConfiguredMysqlMaxConnections } from './infra-connection-defaults.js';
 import { admittedArtifactProfile, inspectDeploymentArtifacts, type ArtifactInspectionOptions } from './artifact-admission.js';
+import { configuredImageCacheGovernance } from './image-cache-governance.js';
 import { computeDeploymentConfigHash } from './deployment-version.js';
 
 import { DOCKER_LOG_LIMIT_FLAGS, hasBoundedDockerLogs } from './docker-log-policy.js';
@@ -1166,7 +1167,11 @@ export class ContainerService {
     const buildCommand = [contract.installCommand, contract.buildCommand].filter(Boolean).join(' && ') || 'true';
     onOutput?.(`── managed 构建: ${contract.stack}，产物 ${artifactImage} ──\n`);
     let createdId: string | undefined;
+    const cache = configuredImageCacheGovernance();
+    let cachePin: { token: string } | undefined;
+    let committed = false;
     try {
+      cachePin = cache ? await cache.prepare(artifactImage, () => assertCurrent?.(`managed image budget ${profile.id}`), false, true) : undefined;
       assertCurrent?.(`managed build before create ${profile.id}`);
       const create = await shell.exec([
         'docker create',
@@ -1197,6 +1202,8 @@ export class ContainerService {
       if (build.exitCode !== 0) throw new Error(`managed 构建失败:\n${combinedOutput(build)}`);
       const commit = await shell.exec(`docker commit --change ${this.shellQuote(`LABEL org.opencontainers.image.revision=${sourceCommitSha.toLowerCase()}`)} --change ${this.shellQuote(`LABEL cds.managed.contract=${contractHash}`)} ${this.shellQuote(createdId!)} ${this.shellQuote(artifactImage)}`);
       if (commit.exitCode !== 0) throw new Error(`managed 产物固化失败:\n${combinedOutput(commit)}`);
+      committed = true;
+      if (cachePin) await cache!.confirm(cachePin.token, () => assertCurrent?.(`managed image identity ${profile.id}`));
       const fixed = commit.stdout.trim();
       if (!/^sha256:[0-9a-f]{64}$/i.test(fixed)) throw new Error('受管构建未返回可确认的镜像内容身份');
       const verified = await verifyArtifact(fixed);
@@ -1204,6 +1211,7 @@ export class ContainerService {
       onOutput?.('── 受管产物提交、平台和配置已确认，使用固定内容运行 ──\n');
       return verified;
     } finally {
+      if (cachePin && !committed) await cache!.abort(cachePin.token, () => {}).catch(() => undefined);
       try { if (createdId) await this.cleanupTemporaryContainer(createdId, entry, profile.id); }
       finally { try { fs.unlinkSync(envFilePath); } catch { /* best-effort */ } }
     }

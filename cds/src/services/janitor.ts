@@ -14,6 +14,7 @@ import {
   type DiskWorktreeDir, type OrphanWorktreePlan, type WorktreeEnumeration,
 } from './orphan-worktree.js';
 import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
+import { configuredImageCacheGovernance } from './image-cache-governance.js';
 import { reclaimLock, isReclaimSkip } from './reclaim-lock.js';
 import { worktreePathActivity, readWorktreeDirectoryIdentity, sameWorktreeDirectoryIdentity,
   WorktreeClaimHeldError, type WorktreeDirectoryIdentity } from './worktree-path-activity.js';
@@ -161,23 +162,10 @@ function createImageDocker(run: DockerRunner): ImageDockerFns {
       const out = await execDocker(['rmi', image], 60_000, run, beforeStart);
       if (!out.startsWith('__ERR__')) return null;
       const err = out.replace('__ERR__ ', '');
-      // 「must be forced」= 该镜像 ID 还挂着别的 tag / 子引用（生产实测：每轮固定
-      // 1 个 admin 镜像卡在这里，不处理就是永远失败下去的噪音）。只在**确认此刻
-      // 没有任何容器引用它**之后才 -f 重试——不带这层确认直接 -f 会把停止容器
-      // 依赖的镜像删掉，那个容器就再也起不来了。ps -a 的过滤是即时的，比 sweep
-      // 开头那张快照更新，顺带收窄了「快照之后新起容器」的竞态窗口。
-      if (!/must be forced/i.test(err)) return err;
-      const refs = await execDocker(['ps', '-a', '--filter', `ancestor=${image}`, '-q'], 30_000, run).catch(() => '__ERR__ 容器引用查询未确认');
-      if (refs.startsWith('__ERR__') || refs.trim() !== '') {
-        // 「有容器引用」是**正常的保留**，不是失败（2026-07-28 生产实测：每轮固定
-        // 一个 admin 镜像因停止容器引用而卡住，于是 /api/janitor/state 里 failed
-        // 恒为 1、errors 恒为 1——一个永远亮着的红灯，真出新故障时反而看不出来）。
-        // 用哨兵前缀把它与真失败区分开，由调用方归到「按住不删」而非「删失败」。
-        return `${IMAGE_HELD_PREFIX}${err}（有容器引用或引用检查失败，未强制删除）`;
-      }
-      beforeStart();
-      const forced = await execDocker(['rmi', '-f', image], 60_000, run, beforeStart);
-      return forced.startsWith('__ERR__') ? forced.replace('__ERR__ ', '') : null;
+      // Multiple aliases need an ID-wide ownership/reference proof. A failed ordinary
+      // removal is never authority to force-remove aliases belonging to another version.
+      return /must be forced/i.test(err)
+        ? `${IMAGE_HELD_PREFIX}${err}（别名归属需要镜像ID对账，未强制删除）` : err;
       } catch (error) {
         if (held) return `${IMAGE_HELD_PREFIX}在途部署仍需要此产物`;
         throw error;
@@ -226,6 +214,9 @@ function createDockerPrune(run: DockerRunner): DockerPruneFn {
       ['悬空镜像', ['image', 'prune', '-f']],
       ['构建缓存', ['builder', 'prune', '-f', '--keep-storage', '10GB']],
     ] as Array<[string, string[]]>) {
+      if (args[0] === 'image' && configuredImageCacheGovernance()) {
+        result.reclaimed.push('悬空镜像由镜像ID引用策略接管；构建缓存仍保留10GB预算');continue;
+      }
       const out = await execDocker(args, 120_000, run);
       if (out.startsWith('__ERR__')) {
         result.errors.push(`${label}: ${out.replace('__ERR__ ', '')}`);
@@ -273,6 +264,8 @@ export interface JanitorSweepReport {
   dockerPrune: DockerPruneResult | null;
   /** per-SHA 部署镜像定向回收结果。null = 本次未执行。 */
   imageRetention: {
+    scanStatus?: 'complete' | 'partial'; unknown?: number;
+    filesystem?: { netAvailableBytesDelta: number | null };
     removed: string[];
     failed: Array<{ image: string; error: string }>;
     /** 有正当理由未删（仍被容器引用）。与 failed 分开，避免常亮红灯淹没真故障。 */
@@ -559,6 +552,8 @@ export interface JanitorSnapshot {
     /** 其中按「主干分支」保住的分支 id —— 主干保护是否生效，看这一项。 */
     protectedTrunkBranches: string[];
     imageRetention: {
+      scanStatus?: 'complete' | 'partial'; unknown?: number;
+      filesystem?: { netAvailableBytesDelta: number | null };
       removed: number;
       failed: number;
       /** 有正当理由未删的数量（仍被容器引用）——正常值，不是故障。 */
@@ -639,6 +634,8 @@ export class JanitorService {
   private lastSweepSummary: JanitorSnapshot['lastSweep'] = null;
   private deploymentSourceCursor: string | undefined;
   private sourcePreviewActive = false;
+  private imageCacheGovernance?: import('./image-cache-governance.js').ImageCacheGovernance;
+  setImageCacheGovernance(service: import('./image-cache-governance.js').ImageCacheGovernance) { this.imageCacheGovernance = service; }
   /** 进行中的 sweep：并发调用合并到同一次，不叠加。 */
   private sweepInFlight: Promise<JanitorSweepReport> | null = null;
   private removeFn: RemoveBranchFn | null = null;
@@ -852,6 +849,14 @@ export class JanitorService {
    * → 纯函数算出可删集合 → 逐个 rmi。保留代数随磁盘档位收紧。
    */
   private async runImageRetention(tier: DiskTier): Promise<NonNullable<JanitorSweepReport['imageRetention']>> {
+    if (this.imageCacheGovernance) {
+      const result = await this.imageCacheGovernance.inspect(false, true);
+      if (result.skipped) return { removed: [], held: [{ image: '宿主镜像缓存', reason: '其他回收任务正在执行' }], failed: [], deferred: 1, keepGenerations: this.config.imageKeepGenerations ?? 5 };
+      return { scanStatus: result.scanStatus, unknown: result.counts.unknown, filesystem: result.filesystem,
+        removed: result.removed, held: result.held.map((row: any) => ({ image: row.identity, reason: row.reason })),
+        failed: result.failed.map((row: any) => ({ image: row.identity, error: row.reason })), deferred: result.pending.length,
+        keepGenerations: this.config.imageKeepGenerations ?? 5 };
+    }
     const keepGenerations = imageKeepGenerationsFor(tier, this.config.imageKeepGenerations ?? 5);
     const [hostImages, inUseImages] = await Promise.all([
       this.imageDocker.listImages(),
@@ -998,6 +1003,7 @@ export class JanitorService {
             .map((s) => s.branchId),
           imageRetention: report.imageRetention
             ? {
+              ...(report.imageRetention.scanStatus ? { scanStatus: report.imageRetention.scanStatus, unknown: report.imageRetention.unknown, filesystem: report.imageRetention.filesystem } : {}),
               removed: report.imageRetention.removed.length,
               failed: report.imageRetention.failed.length,
               held: report.imageRetention.held.length,
@@ -1231,6 +1237,7 @@ export class JanitorService {
           branches: () => this.stateService.getAllBranches(), files: this.orphanWorktreeFs,
           nowMs: this.clock.now(), afterPath: this.deploymentSourceCursor });
         const sources = report.deploymentSources;
+        if (sources.dataObservations?.length) this.stateService.recordLegacyDataObservations(sources.dataObservations, this.clock.now());
         this.deploymentSourceCursor = sources.lastAttemptedPath ?? sources.lastScannedPath ?? this.deploymentSourceCursor;
         if (sources.scanned || sources.failed.length || Object.keys(sources.held).length) console.log(`[janitor] 部署源码回收：扫描 ${sources.scanned}、删除 ${sources.removed.length}、保留 ${Object.keys(sources.held).length}、待下轮 ${sources.deferred}`);
         for (const f of sources.failed) report.errors.push(`deployment source: ${f.path}: ${f.error}`);
@@ -1316,6 +1323,7 @@ export class JanitorService {
       scanned: report.scanned, deferred: report.deferred, cancelled: report.cancelled ?? false,
       candidates: (report.preview || []).map(item => ({ identity: relative(item.path), allocatedBytesEstimate: item.allocatedBytes })),
       held: Object.entries(report.held).map(([p, reason]) => ({ identity: relative(p), reason })),
+      dataObservations: report.dataObservations || [],
       failures: report.failed.length,
       estimateNotice: '候选大小是分配块估计，不能相加作为实际收益；硬链接、共享层、打开的文件及并发写入会影响实际释放。执行仍由现有 Janitor 独立复核。' };
     } finally { this.sourcePreviewActive = false; }

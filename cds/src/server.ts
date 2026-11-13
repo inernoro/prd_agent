@@ -77,6 +77,8 @@ import { defaultEnvFilePath } from './services/env-file.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
+import { createBackupRetentionRouter } from './routes/backup-retention.js';
+import { createOwnedResourceRetentionRouter } from './routes/owned-resource-retention.js';
 import { createInfraDataRouter } from './routes/infra-data.js';
 import { createInfraCredentialRotationRouter } from './routes/infra-credential-rotation.js';
 import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
@@ -544,6 +546,9 @@ async function collectActiveHttpRequests(
 }
 
 export interface ServerDeps {
+  backupRetentionService?: import('./services/backup-retention.js').BackupRetentionService;
+  ownedResourceLifecycle?: import('./services/owned-resource-task.js').OwnedResourceLifecycle;
+  imageCacheGovernance?: import('./services/image-cache-governance.js').ImageCacheGovernance;
   branchLifecycleService?: BranchLifecycleService;
   stateService: StateService;
   worktreeService: WorktreeService;
@@ -890,6 +895,24 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Static exact matches
   const staticMap: Record<string, string> = {
+    'GET /janitor/backups': '预览备份回收',
+    'GET /janitor/backups/state': '查询备份回收',
+    'GET /janitor/backups/owners': '查询备份归属',
+    'POST /janitor/backups/adopt': '登记备份归属',
+    'POST /janitor/backups/reconcile': '执行备份回收',
+    'POST /janitor/backups/cancel': '停止备份回收',
+    'GET /janitor/tasks': '预览验收退役',
+    'GET /janitor/tasks/state': '查询验收退役',
+    'POST /janitor/tasks/reconcile': '执行验收退役',
+    'POST /janitor/tasks/cancel': '停止验收退役',
+    'GET /janitor/tasks/data-cases': '查询历史数据',
+    'POST /janitor/tasks/data-cases/:id/confirm': '登记数据处置',
+    'GET /janitor/tasks/images': '预览镜像回收',
+    'GET /janitor/tasks/images/state': '查询镜像回收',
+    'GET /janitor/tasks/images/owners': '查询镜像归属',
+    'POST /janitor/tasks/images/adopt': '登记镜像归属',
+    'POST /janitor/tasks/images/reconcile': '执行镜像回收',
+    'POST /janitor/tasks/images/cancel': '停止镜像回收',
     'GET /code-reviews/branches': '列出审查分支',
     // shared 基础设施服务远程主机（系统级，2026-05-06）
     'GET /cds-system/remote-hosts': '列出远程主机',
@@ -1214,6 +1237,7 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^POST \/janitor\/tasks\/data-cases\/[^/]+\/confirm$/, '登记数据处置'],
     [/^GET \/uptime\/incidents\/[^/]+$/, '查看故障通知上下文'],
     [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
@@ -4874,7 +4898,9 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
   app.use('/api', createDockerNetworkHealthRouter({ shell: deps.shell }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
-  app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any, repoRoot: deps.config.repoRoot }));
+  app.use('/api', createBackupRetentionRouter(deps.backupRetentionService));
+  app.use('/api', createOwnedResourceRetentionRouter(deps.ownedResourceLifecycle, deps.stateService, deps.imageCacheGovernance, deps.config.worktreeBase));
+  app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any, repoRoot: deps.config.repoRoot, retention: deps.backupRetentionService }));
   app.use('/api', createInfraDataRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any }));
   app.use('/api', createInfraCredentialRotationRouter({
     stateService: deps.stateService,

@@ -2258,6 +2258,14 @@ export interface DeletedProjectWorktreeTombstone {
   requestedAt: string;
 }
 
+export interface LegacyDataCase {
+  id: string; projectId: string; sourceIdentity: string; dataIdentity: string;
+  marker: string; device: number; inode: number; birthtimeMs?: number; firstObservedAt: string; lastObservedAt: string;
+  status: 'needs-owner' | 'protected' | 'backup-required';
+  disposition?: 'business-data' | 'ephemeral-test' | 'unknown';
+  confirmedBy?: string; confirmedAt?: string; note?: string;
+}
+
 export interface CdsState {
   profileStorageBindings?: Record<string, import('./services/profile-storage-provision.js').ProfileStorageBinding>;
   profileStoragePublications?: Record<string, {binding: import('./services/profile-storage-provision.js').ProfileStorageBinding}>;
@@ -2397,6 +2405,10 @@ export interface CdsState {
   resourceExternalAccess?: Record<string, ResourceExternalAccessPolicy>;
   /** Resource-scoped database clone / create / restore task history. */
   resourceCloneTasks?: ResourceCloneTask[];
+  /** Persistent-data observations are a disposition queue, never deletion permissions. */
+  legacyDataCases?: LegacyDataCase[];
+  /** Bounded last execution per host/keeper. Object identities live in native catalogs. */
+  resourceRetirementExecutions?: Record<string, unknown>;
   /**
    * 正在直接占用基础设施数据面的短作业台账。轮换在撤销旧凭据前以此做 drain 门禁；
    * completed/failed 记录只保留有限历史，active 记录在进程崩溃后故意保持阻断，等待人工核对。

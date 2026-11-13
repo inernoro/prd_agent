@@ -245,7 +245,11 @@ describe('CDS Agent 接入口令', () => {
     // 分支地址设置只提供给有权限的人类会话，不新增 Agent 写入口。
     // 新增分支归档清理：有项目边界、需要明确确认，不直接暴露为MCP自动操作。
     // 短期监控提议协议单独登记，不作为可直调的系统写能力。
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(65);
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(67);
+    for (const id of ['backup-retention','owned-resource-retention']) {
+      expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === id))
+        .toMatchObject({ access: 'system', risk: 'destructive', agentUse: 'guided', cliFamily: 'disk', mcpExposure: 'approval-required' });
+    }
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'janitor-observation'))
       .toMatchObject({ access: 'project', risk: 'read-only', agentUse: 'direct', cliFamily: 'disk' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'branch-lifecycle'))

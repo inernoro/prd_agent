@@ -3237,6 +3237,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           'platform-mismatch': '镜像平台与执行器不匹配，等待适用产物；旧服务继续保留',
           'target-unresolved': '目标提交的完整身份尚未确认，暂不部署；旧服务继续保留',
           'image-unresolved': '必需镜像引用尚未确认，暂不部署；旧服务继续保留',
+          'cache-budget': '宿主镜像总量预算不足，等待回收或容量调整；旧服务继续保留',
         };
         const phase = result.state === 'ready' ? 'artifact-ready' : 'artifact-wait';
         deploymentRunService!.heartbeat(run.id, phase);

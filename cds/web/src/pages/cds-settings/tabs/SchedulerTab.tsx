@@ -6,6 +6,9 @@ import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, Field, LoadingBlock, Section } from '../components';
 import type { LoadState } from '../types';
 import { SourceRetentionPreview } from '../components/SourceRetentionPreview';
+import { BackupRetentionPanel } from '../components/BackupRetentionPanel';
+import { AcceptanceRetentionPanel } from '../components/AcceptanceRetentionPanel';
+import { ImageCachePanel } from '../components/ImageCachePanel';
 
 interface SchedulerConfig {
   enabled: boolean;
@@ -277,6 +280,9 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
             该读数包含同时发生的写入，不能将候选估计值或删除数量当作实际释放量。
           </p>
           <SourceRetentionPreview />
+          <BackupRetentionPanel />
+          <AcceptanceRetentionPanel />
+          <ImageCachePanel />
         </Field>
 
         {cfg.pinnedBranches.length > 0 ? (

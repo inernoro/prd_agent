@@ -5683,7 +5683,44 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   // ── Data migrations ──
 
   getDataMigrations(): DataMigration[] {
+
     return this.state.dataMigrations || [];
+  }
+
+  getLegacyDataCases(projectId?: string) {
+    return (this.state.legacyDataCases || []).filter(row => !projectId || row.projectId === projectId);
+  }
+
+  resourceRetirementJournal(instance: string, kind: 'backups' | 'tasks' | 'images') {
+    const key = JSON.stringify([instance, kind]);
+    return {
+      read: () => structuredClone(this.state.resourceRetirementExecutions?.[key] || null),
+      write: (value: unknown) => {
+        this.state.resourceRetirementExecutions ??= {};
+        this.state.resourceRetirementExecutions[key] = structuredClone(value);
+        this.save(HINT_GLOBAL);
+      },
+    };
+  }
+
+  recordLegacyDataObservations(observations: Array<{ projectId: string; sourceIdentity: string; dataIdentity: string; marker: string; device: number; inode: number; birthtimeMs?: number }>, nowMs: number) {
+    this.state.legacyDataCases ??= [];
+    const date = new Date(nowMs).toISOString();
+    for (const observation of observations) {
+      const id = crypto.createHash('sha256').update(JSON.stringify([observation.sourceIdentity, observation.dataIdentity, observation.device, observation.inode, observation.birthtimeMs])).digest('hex').slice(0, 32);
+      const existing = this.state.legacyDataCases.find(row => row.id === id);
+      if (existing) existing.lastObservedAt = date;
+      else this.state.legacyDataCases.push({ ...observation, id, firstObservedAt: date, lastObservedAt: date, status: 'needs-owner' });
+    }
+    if (observations.length) this.save();
+  }
+
+  confirmLegacyDataCase(id: string, disposition: 'business-data' | 'ephemeral-test' | 'unknown', confirmedBy: string, note: string) {
+    const row = this.state.legacyDataCases?.find(item => item.id === id);
+    if (!row) throw new Error('数据对象不存在或身份已变化。');
+    // Confirmation cannot authorize data removal or assert a backup/migration has happened.
+    Object.assign(row, { disposition, confirmedBy, note, confirmedAt: new Date().toISOString(), status: disposition === 'ephemeral-test' ? 'backup-required' : 'protected' });
+    this.save();return row;
   }
 
   getDataMigration(id: string): DataMigration | undefined {

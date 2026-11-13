@@ -15,6 +15,7 @@
  *   GET  /api/infra/:id/backup-history 列出已保存在 CDS 服务器的自动备份（可选）
  */
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { IShellExecutor, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
@@ -59,6 +60,7 @@ import {
 } from '../services/secure-database-cli.js';
 
 export interface InfraBackupRouterDeps {
+  retention?: import('../services/backup-retention.js').BackupRetentionService;
   stateService: StateService;
   shell: IShellExecutor;
   /** Inline project-scope guard. No-op for admin/cookie auth; 403 for a project-scoped key reaching another project. */
@@ -529,6 +531,8 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
       await stateService.finishInfraMaintenanceJob(maintenanceJob.id, status);
     };
     let maintenanceStatus: 'completed' | 'failed' = 'failed';
+    const restoreOperation = async () => {
+    let closePreRestoreOutput: (() => Promise<void>) | undefined;
     try {
       const scripted = scriptedDump(kind);
       const { spawn } = await import('node:child_process');
@@ -543,8 +547,21 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
       : kind === 'redis' ? 'rdb'
         : scripted ? scripted.ext : 'bin';
     const preBackupPath = `${backupDir}/${backupKey(svc.projectId, svc.id)}-pre-restore-${stamp}.${preBackupExt}`;
-
+    const preBackupWritePath = deps.retention ? `${backupDir}/.tmp/restore-${randomUUID()}/pre-restore.${preBackupExt}` : preBackupPath;
+    const completePreRestoreBackup = async () => {
+      if (!deps.retention) return;
+      await deps.retention.promoteOutput(preBackupWritePath, preBackupPath);
+      await deps.retention.register(preBackupPath, svc.projectId, svc.id, 'pre-restore');
+    };
     try {
+      if (deps.retention) {
+        const round = preBackupWritePath.slice(0, preBackupWritePath.lastIndexOf('/'));
+        const created = await shell.exec(`mkdir -p ${shq(round)}`);
+        if (created.exitCode !== 0) throw new Error('恢复前备份准备目录失败，未开始恢复。');
+        const source = await deps.retention.captureSource(svc.projectId, svc.id);
+        await deps.retention.beginOutput(preBackupWritePath, svc.projectId, svc.id, source);
+        closePreRestoreOutput = () => deps.retention!.closeOutput(preBackupWritePath).catch(() => { console.warn('[infra-restore] 临时备份退役状态未确认，保持保护。'); });
+      }
       if (kind === 'mongo') {
         const auth = extractMongoAuth(svc.env);
         const authArgs: string[] = [];
@@ -557,14 +574,16 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           ['--archive', '--gzip', ...authArgs],
           auth.password || '',
         );
-        await shell.exec(
-          `${invocationShellCommand(invocation)} > ${shq(preBackupPath)}`,
+        const pre = await shell.exec(
+          `${invocationShellCommand(invocation)} > ${shq(preBackupWritePath)}`,
           { timeout: 1_800_000, stdin: invocation.stdinPrefix },
         );
+        if (pre.exitCode !== 0) throw new Error('恢复前备份失败，恢复尚未开始。');
+        await completePreRestoreBackup();
       }
     } catch (err) {
       console.error('[infra-restore] pre-restore backup 失败', err);
-      // 不阻止恢复；只是少一个兜底
+      throw new Error('恢复前备份未通过校验或登记，已中止恢复。');
     }
 
     // 2) 执行恢复
@@ -663,7 +682,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           containerName: svc.containerName,
           rdbPath: rdbTarget,
           uploadPath,
-          preBackupPath,
+          preBackupPath: preBackupWritePath,
         });
         let stopped = false;
         try {
@@ -671,6 +690,10 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
             const r = await shell.exec(step.argv.map(shq).join(' '), { timeout: 120_000 });
             if (step.id === 'stop') stopped = r.exitCode === 0;
             if (step.id === 'start') stopped = r.exitCode === 0 ? false : stopped;
+            if (step.id === 'save-current' && deps.retention) {
+              if (r.exitCode !== 0) throw new Error('恢复前快照失败，已中止恢复。');
+              await completePreRestoreBackup();
+            }
             // 存当前快照失败不致命（可能这台从没落过盘），其余每一步都必须成功：
             // 覆盖失败却继续启动，用户会拿到「已恢复」而数据没变。
             if (r.exitCode !== 0 && step.id !== 'save-current') {
@@ -749,13 +772,14 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         try {
           // 恢复前先存一份当前状态：这两个分支此前连撤销快照都没有。
           const pre = await shell.exec(
-            `docker exec -i ${shq(svc.containerName)} sh -s > ${shq(preBackupPath)}`,
+            `docker exec -i ${shq(svc.containerName)} sh -s > ${shq(preBackupWritePath)}`,
             { timeout: 600_000, stdin: dumpScript },
           );
           if (pre.exitCode !== 0) {
             // 存不下当前状态就不许往下走——没有退路的恢复不该开始。
             throw new Error(`恢复前快照失败，已中止：${outputTail(combinedOutput(pre), 200)}`);
           }
+          await completePreRestoreBackup();
           const cp = await shell.exec(
             `docker cp ${shq(uploadPath)} ${shq(`${svc.containerName}:${inContainer}`)}`,
             { timeout: 600_000 },
@@ -809,7 +833,16 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
       else if (!res.writableEnded) res.destroy();
     }
     } finally {
+      await closePreRestoreOutput?.();
       await settleMaintenance(maintenanceStatus);
+    }
+    };
+    try {
+      if (deps.retention) await deps.retention.withLease(await resolveBackupDir(), svc.projectId, svc.id, 'restore', restoreOperation);
+      else await restoreOperation();
+    } catch {
+      await settleMaintenance('failed'); bail();
+      if (!res.headersSent) res.status(503).json({ error: '恢复资源租约未确认，请稍后重试；未确认的备份保持保留。' });
     }
   });
 
