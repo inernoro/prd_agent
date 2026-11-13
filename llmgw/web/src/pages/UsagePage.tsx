@@ -175,7 +175,7 @@ export function UsagePage() {
       <PageBody>
       {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
 
-      {(summary?.cacheSavingsUsd != null || (summary?.estimatedCosts.length ?? 0) > 0 || (reconciliation?.providerActualCosts.length ?? 0) > 0) ? <div className="lg-usage-grid">
+      {(summary?.cacheSavingsUsd != null || (summary?.estimatedCosts?.length ?? 0) > 0 || (reconciliation?.providerActualCosts?.length ?? 0) > 0) ? <div className="lg-usage-grid">
         {summary?.cacheSavingsUsd != null ? (
           <Card>
             <div className="lg-card-kicker">缓存节省</div>
