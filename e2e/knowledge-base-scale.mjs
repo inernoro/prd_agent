@@ -15,7 +15,7 @@ const fixture = JSON.parse(fs.readFileSync(process.env.KB_SCALE_FIXTURE, 'utf8')
 const out = process.env.OUT_DIR || '/tmp/kb-scale';
 if (!base || !user || !password || fixture.map(s => s.n).join(',') !== '200,1000,5000') throw Error('需要预览地址、登录凭据与三档隔离空间 manifest');
 fs.mkdirSync(out, { recursive: true });
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, proxy: process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY, bypass: process.env.NO_PROXY } : undefined });
 const results = process.env.KB_SCALE_MODES && fs.existsSync(path.join(out, 'interaction-results.json')) ? JSON.parse(fs.readFileSync(path.join(out, 'interaction-results.json'))) : [];
 const frame = page => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 

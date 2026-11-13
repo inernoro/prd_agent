@@ -1,4 +1,5 @@
-/** 只在非生产预览创建本人私有的隔离样本；未知写入回执不自动重发或删除。 */
+/** 只在非生产预览创建本人私有的隔离样本；未知写入回执不自动重发或删除。
+ * 代理环境使用 Node 24+ 并设置 NODE_USE_ENV_PROXY=1，保留系统 CA 环境。 */
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';

@@ -8,7 +8,7 @@ const out = process.env.OUT_DIR || '/tmp/kb-scale-resilience';
 if (!base || !fixture || !process.env.MAP_USER || !process.env.MAP_PASSWORD) throw Error('缺少地址、凭据或隔离 fixture');
 if (process.env.MAP_PROD_HOST && new URL(base).host === new URL(process.env.MAP_PROD_HOST).host) throw Error('故障注入不得在正式环境执行');
 fs.mkdirSync(out, { recursive: true });
-const browser = await chromium.launch();
+const browser = await chromium.launch({ proxy: process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY, bypass: process.env.NO_PROXY } : undefined });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, recordVideo: { dir: path.join(out, 'video') } });
 const page = await context.newPage();
 page.setDefaultTimeout(45000);

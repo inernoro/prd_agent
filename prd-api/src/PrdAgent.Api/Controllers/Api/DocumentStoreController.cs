@@ -986,6 +986,10 @@ public class DocumentStoreController : ControllerBase
         var total = await _db.DocumentEntries.CountDocumentsAsync(filter, cancellationToken: HttpContext.RequestAborted);
         List<DocumentEntry> items;
         string? nextCursor = null;
+        // 大库首屏只需一批可见行，后续仍按调用方批量补齐；小库一页返回完整目录。
+        if (position != null && string.IsNullOrEmpty(position.AfterId)
+            && string.IsNullOrWhiteSpace(keyword) && total > 500)
+            pageSize = Math.Min(pageSize, 100);
         if (position != null)
         {
             items = await _db.DocumentEntries.Find(filter & position.Filter())
