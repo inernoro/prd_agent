@@ -59,6 +59,10 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
         Assert.Equal(input.AppCallerCode, stored.AppCallerCode);
         Assert.Equal(input.RunId, prepared.RunId);
         Assert.Equal("real-task", stored.RunId);
+        var serialized = System.Text.Json.JsonSerializer.SerializeToElement(prepared,
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        Assert.True(serialized.TryGetProperty("gatewayRunId", out var gatewayRunId));
+        Assert.Equal(stored.RunId, gatewayRunId.GetString());
         Assert.Equal("task-sidecar", stored.Purpose);
         Assert.Equal(permit.Id, stored.TaskPermitId);
         Assert.Equal(permit.TenantId, stored.TenantId);
@@ -373,11 +377,12 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
 
     private static SidecarRunRequest Request(string? subject = "owner") => new()
     {
-        RunId = "sdk-trace", SubjectUserId = subject, Model = "claude-opus-4-5",
+        RunId = "sdk-trace", GatewayRunId = "unbound-client-run", SubjectUserId = subject, Model = "claude-opus-4-5",
         AppCallerCode = Caller, BaseUrl = "https://vendor.example", ApiKey = "vendor-secret",
         Profile = "vendor-profile", Protocol = "anthropic", SystemPrompt = "既有系统提示词",
         Messages = [new SidecarChatMessage { Role = "user", Content = "正常任务" }],
-        Tools = [new SidecarToolDef { Name = "existing-tool" }], BuiltinTools = [],
+        Tools = [new SidecarToolDef { Name = "existing-tool",
+            InputSchema = System.Text.Json.JsonSerializer.SerializeToElement(new { type = "object" }) }], BuiltinTools = [],
         MaxTokens = 4096, MaxTurns = 8, TimeoutSeconds = 300,
         CallbackBaseUrl = "http://map", AgentApiKey = "tool-callback-key", SidecarTag = "trusted-runtime",
         StickyKey = "sticky-session", RuntimeAdapter = "claude-agent-sdk", MapSessionId = "session",
