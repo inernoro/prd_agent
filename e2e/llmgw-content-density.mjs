@@ -82,7 +82,10 @@ async function snapshot(page, id) {
     const container = scroll?.parentElement;
     const firstRow = document.querySelector('tbody tr')?.getBoundingClientRect();
     const maintenanceBeforeData = Array.from(document.querySelectorAll('summary')).filter(el => /全局上游代理|批量轮换已有 Provider/.test(el.textContent || '')).map(el => el.parentElement.getBoundingClientRect()).filter(r => firstRow && r.bottom <= firstRow.top).reduce((height, r) => height + r.height, 0);
-    return { maintenanceBeforeData, firstRow: rect('tbody tr'), table: rect('table'), container: container ? (() => { const r = container.getBoundingClientRect(); return { y: r.y, height: r.height, bottom: r.bottom }; })() : null, bodyScrollHeight: document.documentElement.scrollHeight, viewportWidth: innerWidth, touchPoints: navigator.maxTouchPoints, coarsePointer: matchMedia('(pointer: coarse)').matches, documentWidth: document.documentElement.scrollWidth, bodyFontSize: getComputedStyle(document.body).fontSize, theme: document.documentElement.dataset.theme };
+    const status = document.querySelector('.lg-collection-provider-table tbody tr td:nth-child(4)');
+    const sr = status?.getBoundingClientRect(), hit = sr && document.elementFromPoint(sr.x + sr.width / 2, sr.y + sr.height / 2);
+    const providerStatus = sr ? { x: sr.x, right: sr.right, y: sr.y, bottom: sr.bottom, visible: sr.x >= 0 && sr.right <= innerWidth && sr.y >= 0 && sr.bottom <= innerHeight && !!hit && (hit === status || status.contains(hit)) } : null;
+    return { maintenanceBeforeData, providerStatus, firstRow: rect('tbody tr'), table: rect('table'), container: container ? (() => { const r = container.getBoundingClientRect(); return { y: r.y, height: r.height, bottom: r.bottom }; })() : null, bodyScrollHeight: document.documentElement.scrollHeight, viewportWidth: innerWidth, touchPoints: navigator.maxTouchPoints, coarsePointer: matchMedia('(pointer: coarse)').matches, documentWidth: document.documentElement.scrollWidth, bodyFontSize: getComputedStyle(document.body).fontSize, theme: document.documentElement.dataset.theme };
   });
   await page.screenshot({ path: path.join(OUT, `${id}.png`), timeout: 30000, animations: 'disabled' });
   results.push({ id, provenance: 'deterministic-fixture', metrics });
@@ -142,6 +145,7 @@ try {
       }
       await page.locator('tbody tr').first().waitFor();
       const small = await snapshot(page, `${id}-small`);
+      check(`${id}:供应方连接状态首屏可读且未遮挡`, small.providerStatus?.visible === true, small.providerStatus);
       check(`${id}:首条数据提前`, small.firstRow?.y <= (viewport.width > 600 ? 320 : 420), small.firstRow);
       check(`${id}:少量自然高度`, small.container && small.table && small.container.bottom - small.table.bottom <= 24, small);
       check(`${id}:单页无翻页操作`, await page.getByRole('button', { name: '上一页', exact: true }).count() === 0 && await page.getByRole('button', { name: '下一页', exact: true }).count() === 0, '两条数据只有一页');

@@ -469,7 +469,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       <PageBody className="lg-collection-page">
       <PageHeader
         title={<>Provider<span style={{ whiteSpace: 'nowrap' }}>（模型供应方）</span></>}
-        help={{ label: '供应方接入', content: <>选平台、填密钥即可接入；这里存的是供应方密钥，不是业务应用用的 <code>gwk_</code> 接入密钥。</> }}
+        help={{ label: '供应方接入', content: <>这里存的是供应方密钥，不是业务应用用的 <code>gwk_</code> 接入密钥。</> }}
         actions={canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
           {showCreate ? '收起配置' : '添加 Provider'}
         </Button> : null}

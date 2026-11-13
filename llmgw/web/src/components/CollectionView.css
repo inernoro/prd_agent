@@ -271,3 +271,11 @@
 .lg-entity-detail-bounded .lg-entity-detail-layout:has(.lg-collection-view[data-size='small']) { flex: 0 0 auto; min-height: 0; }
 .lg-entity-detail-bounded .lg-entity-detail-collection:has(> .lg-collection-view[data-size='small']) { flex: 0 0 auto; min-height: 0; }
 .lg-collection-key-workspace .lg-collection-codes[data-size='small'] { height: auto; min-height: 0; }
+
+/* 查上游时先看到连接状态，其余列仍可横向浏览。 */
+@media (max-width: 700px) {
+  .lg-collection-provider-table th:nth-child(4),
+  .lg-collection-provider-table td:nth-child(4) { position: sticky; right: 0; background: var(--bg-surface); }
+  .lg-collection-provider-table th:nth-child(4) { z-index: 3; }
+  .lg-collection-provider-table td:nth-child(4) { z-index: 1; }
+}

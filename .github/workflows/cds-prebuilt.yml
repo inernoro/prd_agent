@@ -98,6 +98,8 @@ jobs:
           CDS_SETTINGS_EVIDENCE="$RUNNER_TEMP/cds-loading-settings-density" node cds/scripts/settings-content-density-smoke.mjs
           CDS_PAGE_DENSITY_OUT="$RUNNER_TEMP/cds-loading-page-density" node cds/scripts/page-density-smoke.mjs http://127.0.0.1:8870 after
           CDS_RELATION_DENSITY_OUT="$RUNNER_TEMP/cds-loading-relation-density" node cds/scripts/relation-density-smoke.mjs http://127.0.0.1:8870
+          CDS_RESOURCE_DENSITY_OUT="$RUNNER_TEMP/cds-loading-resource-density" node cds/scripts/resource-variables-density-smoke.mjs http://127.0.0.1:8870
+          CDS_TEMPLATE_EVIDENCE="$RUNNER_TEMP/cds-loading-comment-template-density" node cds/scripts/comment-template-density-smoke.mjs
           CDS_SKELETON_EVIDENCE="$RUNNER_TEMP/cds-loading-lists" node cds/scripts/list-loading-smoke.mjs http://127.0.0.1:8870
 
       - name: Archive loading acceptance failure
