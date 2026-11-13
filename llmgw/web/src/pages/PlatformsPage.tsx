@@ -15,7 +15,7 @@ import { ProviderPresetPicker, TestResultBar, UpstreamModelPicker, keyPrefixWarn
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { ImageGenContractsSection } from '@/components/ImageGenContractsSection';
 import { ModelCatalogSection } from '@/components/ModelCatalogSection';
-import { HelpPopover, PageBody, PageShell } from '@/components/PageShell';
+import { HelpPopover, PageBody, PageHeader, PageShell } from '@/components/PageShell';
 import { RowActions } from '@/components/RowActions';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
@@ -467,20 +467,16 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     <PageShell>
       {section === 'provider' ? (
       <PageBody className="lg-collection-page">
-      <header className="lg-page-heading">
-        <div style={{ maxWidth: 720 }}>
-          <h1>Provider（模型供应方）</h1>
-          <p>
-            选平台、填密钥即可接入；这里存的是供应方密钥，不是业务应用用的 <code>gwk_</code> 接入密钥。
-          </p>
-
-        </div>
-        {canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
+      <PageHeader
+        title={<>Provider<span style={{ whiteSpace: 'nowrap' }}>（模型供应方）</span></>}
+        help={{ label: '供应方接入', content: <>选平台、填密钥即可接入；这里存的是供应方密钥，不是业务应用用的 <code>gwk_</code> 接入密钥。</> }}
+        actions={canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
           {showCreate ? '收起配置' : '添加 Provider'}
         </Button> : null}
-      </header>
+      />
       {showCreate && canWrite ? (
         <section style={createCardStyle}>
+          <p style={HINT_TEXT}>这里填写供应方的通讯密钥，不是业务应用用的 <code>gwk_</code> 接入密钥。</p>
           {/* 第一步：选平台。地址、协议、并发都由预设带出来，用户不必去搜供应商文档。 */}
           <ProviderPresetPicker presets={presets} selectedKey={preset?.key ?? null} onSelect={applyPreset} />
 

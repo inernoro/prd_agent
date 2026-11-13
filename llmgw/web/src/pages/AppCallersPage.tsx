@@ -8,6 +8,7 @@ import { Button, Chip, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
+import { PageHeader } from '@/components/PageShell';
 import './CatalogDensity.css';
 
 const PAGE_SIZE = 50;
@@ -321,10 +322,7 @@ export function AppCallersPage() {
 
   return (
     <div className="lg-app-caller-page" data-size={data.total <= 10 && expandedId === null ? 'small' : 'large'}>
-      <header className="lg-app-caller-header">
-        <div><h1>appCaller</h1><p>查看每类业务为什么调用、会走哪个模型，以及预算和速率由谁负责。</p></div>
-        <span>共 {data.total} 个</span>
-      </header>
+      <PageHeader title="appCaller" help={{ label: '调用方列表', content: '查看每类业务为什么调用、会走哪个模型，以及预算和速率由谁负责。' }} actions={<span className="lg-app-caller-total">共 {data.total} 个</span>} />
       <div className="lg-app-caller-toolbar">
         <input
           value={search}
@@ -535,7 +533,7 @@ function AppCallerRow({
   return (
     <>
       <tr>
-        <td style={td}><div className="lg-app-caller-identity"><code>{item.appCallerCode}</code><span>{item.title || '未填写标题'} · {item.sourceSystem || '未知来源'}</span></div></td>
+        <td style={td}><div className="lg-app-caller-identity"><code>{item.appCallerCode}</code><span>{item.title?.trim() === item.appCallerCode.trim() ? null : <>{item.title || '未填写标题'} · </>}{item.sourceSystem || '未知来源'}</span></div></td>
         <td style={td}><Chip label={chip.label} color={chip.color} bg={chip.bg} /></td>
         <td style={td}><div className="lg-app-caller-stack"><strong>{requestTypeLabelForTable(item.requestType)}</strong><span>{observedIngressProtocols.join('、') || '未观察到协议'}</span></div></td>
         <td style={td}><div className="lg-app-caller-stack"><strong>按对外模型</strong><span>{modelPolicyLabel(item.modelPolicy || 'auto')} · {parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</span>{routeDrift || parameterDrift ? <span className="lg-app-caller-warning">配置与最近请求不一致</span> : null}</div></td>
@@ -600,7 +598,7 @@ function AppCallerMobileCard({
   return (
     <article className="lg-app-caller-mobile-card">
       <div className="lg-app-caller-mobile-heading">
-        <div className="lg-app-caller-identity"><code title={item.appCallerCode}>{item.appCallerCode}</code><span>{item.title || '未填写标题'} · {item.sourceSystem || '未知来源'}</span></div>
+        <div className="lg-app-caller-identity"><code title={item.appCallerCode}>{item.appCallerCode}</code><span>{item.title?.trim() === item.appCallerCode.trim() ? null : <>{item.title || '未填写标题'} · </>}{item.sourceSystem || '未知来源'}</span></div>
         <Chip label={chip.label} color={chip.color} bg={chip.bg} />
       </div>
       <dl className="lg-app-caller-mobile-facts">

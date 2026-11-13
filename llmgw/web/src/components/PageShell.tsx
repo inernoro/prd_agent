@@ -35,18 +35,20 @@ export function PageShell({ children, className }: { children: ReactNode; classN
  * 刻意**不提供 eyebrow**——风格调性规则原则 1 明令「没有副标题层，没有 eyebrow 小标签」。
  * 页面要交代的身份信息请放进 summary（标题下一排小字），而不是标题上方再加一层。
  */
-export function PageHeader({ title, subtitle, summary, actions }: {
+export function PageHeader({ title, subtitle, summary, actions, help }: {
   title: ReactNode;
   /** 一句话。多于一句请挪进 DetailsBlock 或 HelpPopover。 */
   subtitle?: ReactNode;
   /** 标题下的一排汇总小字，例如「团队 3 · 成员 12 · 密钥 5」。 */
   summary?: ReactNode;
   actions?: ReactNode;
+  /** 低频解释按需读取；必要状态仍放在 summary 或正文。 */
+  help?: { label: string; content: ReactNode };
 }) {
   return (
-    <header className="lg-page-heading">
+    <header className={cx('lg-page-heading', help && 'lg-page-heading--brief')}>
       <div>
-        <h1>{title}</h1>
+        {help ? <div className="lg-page-heading-title"><h1>{title}</h1><HelpPopover label={help.label}>{help.content}</HelpPopover></div> : <h1>{title}</h1>}
         {subtitle ? <p>{subtitle}</p> : null}
         {summary ? <p className="lg-summary-strip">{summary}</p> : null}
       </div>

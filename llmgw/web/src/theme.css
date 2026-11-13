@@ -1366,6 +1366,17 @@ a:focus-visible {
   flex-shrink: 0;
 }
 
+.lg-page-heading-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lg-page-heading--brief > div { min-width: 0; }
+.lg-page-heading--brief .lg-help-popover { flex-shrink: 0; position: static; }
+.lg-page-heading.lg-page-heading--brief { flex-direction: row; align-items: center; position: relative; }
+.lg-page-heading--brief .lg-page-actions { flex-shrink: 0; }
+.lg-page-heading--brief .lg-help-popover > summary { width: 44px; height: 44px; border: 0; position: relative; }
+.lg-page-heading--brief .lg-help-popover > summary::before { content: ''; position: absolute; width: 18px; height: 18px; border: 1px solid var(--border-subtle); border-radius: 999px; pointer-events: none; }
+.lg-page-heading--brief .lg-help-popover > div { left: 0; top: calc(100% + 4px); max-width: 100%; }
+.lg-page-heading--brief .lg-help-popover--up > div { top: auto; bottom: calc(100% + 4px); }
+.lg-app-caller-total { color: var(--text-muted); font-size: var(--fs-secondary); white-space: nowrap; }
+
 .lg-page-heading h1,
 .lg-logs-heading h1,
 .lg-section-heading h2,

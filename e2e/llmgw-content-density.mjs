@@ -112,6 +112,17 @@ try {
     try {
       await login(page);
       await page.locator('tbody tr').first().waitFor();
+      const providerHeading = await page.locator('.lg-page-heading').evaluate(el => ({ height: el.getBoundingClientRect().height, intro: [...el.querySelectorAll(':scope > div > p')].reduce((sum, p) => sum + p.getBoundingClientRect().height, 0) }));
+      check(`${id}:供应方说明不挤出数据和新增操作`, providerHeading.intro === 0 && providerHeading.height <= (viewport.width < 700 ? 64 : 44), providerHeading);
+      const providerHelp = page.getByLabel('供应方接入说明', { exact: true });
+      if (await providerHelp.count()) {
+        await providerHelp.focus(); await providerHelp.press('Enter');
+        const note = page.getByRole('note').filter({ hasText: '不是业务应用用的' });
+        await expect(note).toBeVisible();
+        const r = await note.boundingBox();
+        check(`${id}:接入说明完整留在视口`, r.x >= 0 && r.x + r.width <= viewport.width && r.y >= 0 && r.y + r.height <= viewport.height, r);
+        await providerHelp.press('Enter');
+      }
       // 从真实菜单入口换页，旧菜单不能长期遮住新页面的内容与操作。
       await page.getByLabel('打开用户菜单', { exact: true }).click();
       await page.getByRole('link', { name: '账号与安全', exact: true }).click();

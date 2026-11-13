@@ -5,7 +5,7 @@
 //   - 走 PageShell 骨架、贴边全宽；此前页头自己套了个 maxWidth:760 的盒子，
 //     可读宽度已由 .lg-page-heading p 的 --measure 接管，页面不再各拍一个数。
 //   - 页头原本两段常驻正文（一段讲模型与默认池的关系，一段讲价格口径）。
-//     副标题只留一句，价格口径收进价格字段旁的 HelpPopover——它只在填价格时才需要读。
+//     首次登记解释按需读取，价格口径收进价格字段旁的 HelpPopover——它只在填价格时才需要读。
 //   - 创建表单的三处 `repeat(auto-fit, minmax(N, 1fr))` 换成 FormGrid：
 //     minmax 的第二个值是 1fr，宽屏下输入框会跟着屏幕一起拉长，一个十来个字段的
 //     表单被摊成横贯整屏的长条；FormGrid 固定 260~320 且左对齐。
@@ -360,7 +360,7 @@ export function ModelsPage() {
     <PageShell className={items && items.length <= 10 ? "lg-physical-models-page lg-physical-models-small" : "lg-physical-models-page"}>
       <PageHeader
         title="模型管理"
-        subtitle="模型是 Provider 里可以实际调用的能力。选择用途后，系统只会把它追加到匹配的默认模型池。"
+        help={{ label: '模型登记', content: '模型是 Provider 里可以实际调用的能力。选择用途后，系统只会把它追加到匹配的默认模型池。' }}
         actions={canWrite && ownedPlatforms.length > 0 ? (
           <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>{showCreate ? '收起配置' : '添加模型'}</Button>
         ) : canWrite ? (

@@ -16,7 +16,7 @@ const time = '2026-11-13T08:00:00Z';
 const provider = { id: 'provider', name: '验收供应方', platformType: 'openai', enabled: true, authority: 'llm_gateway', apiUrl: 'https://example.test/v1', hasKey: true, proxy: { mode: 'inherit' } };
 const model = i => ({ id: `m${i}`, platformId: 'provider', modelName: `fixture-model-${i}`, name: `验收模型 ${i}`, enabled: true, authority: 'llm_gateway', capabilities: [{ type: 'chat' }], createdAt: time });
 const key = i => ({ id: `k${i}`, name: `验收密钥 ${i}`, keyPrefix: `gwk_fixture${i}`, enabled: true, sourceSystem: 'external', clientCode: `fixture-${i}`, environment: 'test', purpose: 'external-platform', appCallerCodes: ['fixture.access::chat'], ingressProtocols: ['openai-compatible'], scopes: ['invoke'], allowedCidrs: [], rotationState: 'active', createdAt: time });
-const caller = i => ({ id: `a${i}`, appCallerCode: `fixture.app-${i}::chat`, title: `验收调用方 ${i}`, requestType: 'chat', sourceSystem: 'fixture', status: 'active', allowedModelPoolIds: [], totalSeen: 1, lastSeenAt: time });
+const caller = i => ({ id: `a${i}`, appCallerCode: `fixture.app-${i}::chat`, title: i === 1 ? `fixture.app-${i}::chat` : i === 3 ? '' : `验收调用方 ${i}`, requestType: 'chat', sourceSystem: 'fixture', status: 'active', allowedModelPoolIds: [], totalSeen: 1, lastSeenAt: time });
 const send = (res, data, success = true) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success, data: success ? data : null, error: success ? null : { code: 'FIXTURE_ERROR', message: '布局夹具读取失败，请重试' } })); };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://fixture.test');
@@ -90,7 +90,9 @@ try {
         for (const [start, bottom] of coveragePadding) { paddingHeight += Math.max(0, bottom - Math.max(start, end)); end = Math.max(end, bottom); }
         const installer = document.querySelector('#image-layering > :last-child')?.getBoundingClientRect();
         const source = [...document.querySelectorAll('.lg-entity-detail-facts > div')].find(node => node.querySelector('dt')?.textContent === '来源系统')?.getBoundingClientRect();
-        return { y: r.y, height: r.height, font: getComputedStyle(el).fontSize, viewport: innerWidth, width: document.documentElement.scrollWidth, scrollTail: scroll && last ? scroll.getBoundingClientRect().bottom - last.bottom : null,
+        const heading = document.querySelector('.lg-page-heading,.lg-app-caller-header')?.getBoundingClientRect();
+        const genericIntro = [...document.querySelectorAll('.lg-page-heading > div > p:not(.lg-summary-strip),.lg-app-caller-header p')].reduce((sum, node) => sum + node.getBoundingClientRect().height, 0);
+        return { y: r.y, height: r.height, font: getComputedStyle(el).fontSize, viewport: innerWidth, width: document.documentElement.scrollWidth, headingHeight: heading?.height, genericIntro, scrollTail: scroll && last ? scroll.getBoundingClientRect().bottom - last.bottom : null,
           firstRecordScroll: Math.max(0, r.bottom - innerHeight),
           nonessentialBeforeData: { bulkMaintenance: [...document.querySelectorAll('summary')].filter(node => node.textContent.includes('高级：批量维护已有模型') && node.parentElement.getBoundingClientRect().bottom <= r.y).reduce((sum, node) => sum + node.parentElement.getBoundingClientRect().height, 0), coverageWrapperPadding: paddingHeight, genericAppIntroduction: area('.lg-app-detail-compact .lg-entity-detail-description, .lg-entity-detail-page:not(.lg-entity-detail-bounded) .lg-entity-detail-description'), installationForm: installer && installer.height > 0 && installer.bottom <= r.y ? installer.height : 0 },
           sourceFactScroll: source ? Math.max(0, source.bottom - innerHeight) : null, ordinarySectionTail: ordinarySection && last ? ordinarySection.bottom - last.bottom : null };
@@ -112,6 +114,9 @@ try {
     await page.getByRole('button', { name: '取消', exact: true }).click();
     await page.goto(`${origin}/llmgw/models`); await expect(page.locator('tbody tr')).toHaveCount(2);
     const models = await snapshot('models-two', 'tbody tr');
+    check('模型登记解释不常驻数据前，标题与新增仍可见', models.genericIntro === 0 && models.headingHeight <= 44, models);
+    const modelHelp = page.getByLabel('模型登记说明', { exact: true });
+    if (await modelHelp.count()) { await modelHelp.focus(); await modelHelp.press('Enter'); const note = page.getByRole('note').filter({ hasText: '匹配的默认模型池' }); await expect(note).toBeVisible(); const r = await note.boundingBox(); check('模型说明未裁出视口', r.x >= 0 && r.x + r.width <= (narrow ? 390 : 1440), r); await modelHelp.press('Enter'); }
     const maintenance = page.locator('summary').filter({ hasText: '高级：批量维护已有模型' });
     const before = await maintenance.evaluate(el => el.getBoundingClientRect().bottom);
     check('模型数据先于低频批量维护', models.y < before, { models, maintenanceBottom: before });
@@ -119,6 +124,10 @@ try {
     await maintenance.click(); await expect(page.getByRole('button', { name: '批量轮换密钥', exact: true })).toBeVisible(); await maintenance.click();
     await page.goto(`${origin}/llmgw/app-callers`); await expect(page.locator('tbody tr')).toHaveCount(2);
     const callers = await snapshot('callers-two', narrow ? '.lg-app-caller-mobile-card' : 'tbody tr');
+    check('调用方通用说明不重复占据默认首屏', callers.genericIntro === 0 && callers.headingHeight <= 44, callers);
+    const firstIdentity = page.locator(narrow ? '.lg-app-caller-mobile-card .lg-app-caller-identity' : 'tbody tr .lg-app-caller-identity').first();
+    check('同名标题不重复标识，来源保留', (await firstIdentity.innerText()).split('fixture.app-1::chat').length === 2 && (await firstIdentity.innerText()).includes('fixture'), await firstIdentity.innerText());
+    await expect(page.getByText('验收调用方 2 · fixture', { exact: true }).filter({ visible: true })).toBeVisible();
     check('单页调用方无无效翻页', await page.getByRole('button', { name: '下一页', exact: true }).count() === 0, callers);
     if (!narrow) check('少量调用方不撑空表体', callers.scrollTail < 8, callers);
     const config = page.getByRole('button', { name: '配置', exact: true }).filter({ visible: true }).first();
