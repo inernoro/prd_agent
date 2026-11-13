@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.20.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.21.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -988,6 +988,60 @@ def cmd_project_list(args: argparse.Namespace) -> None:
             print("  (敏感字段已隐藏，--include-sensitive 显示全部)")
         return
     ok([_redact_project(p, include_sensitive) for p in projects])
+
+
+def _release_environment_rows(project_id: str) -> tuple[list[dict], list[dict]]:
+    data = _call("GET", "/api/releases/targets?project=" + urllib.parse.quote(project_id, safe=""))
+    targets = data.get("targets", [])
+    active = [t for t in targets if t.get("projectId") == project_id
+              and t.get("isEnabled") is True and t.get("lifecycle") != "archived"]
+    return active, targets + data.get("archivedTargets", [])
+
+
+def _release_environment_summary(target: dict) -> dict:
+    return {"id": target.get("id"), "name": target.get("name"),
+            "environment": target.get("environment"), "isCanonical": target.get("isCanonical"),
+            "url": (target.get("ssh") or {}).get("healthcheckUrl")}
+
+
+def cmd_release_target_list(args: argparse.Namespace) -> None:
+    targets, _ = _release_environment_rows(args.project)
+    ok({"projectId": args.project, "environments": [_release_environment_summary(t) for t in targets]})
+
+
+def cmd_release_target_register(args: argparse.Namespace) -> None:
+    try:
+        body = json.loads(pathlib.Path(args.file).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        die("环境配置文件无法读取或不是有效 JSON", code=1)
+    if not isinstance(body, dict) or not isinstance(body.get("name"), str) or not body["name"].strip():
+        die("环境配置必须包含名称 name", code=1)
+    if body.get("projectId", args.project) != args.project:
+        die("project_scope_mismatch：环境配置与 --project 不一致，未写入", code=2)
+    if body.get("environment") not in ("production", "staging", "other"):
+        die("请明确 environment：production / staging / other，避免误登记为生产环境", code=1)
+    if body.get("isEnabled") is False:
+        die("disabled_environment：接入环境必须启用才能在分支卡片选择", code=1)
+    project = _call("GET", "/api/projects/" + urllib.parse.quote(args.project, safe=""))
+    project = project.get("project", project)
+    if project.get("id") != args.project:
+        die("project_identity_mismatch：未确认项目身份，未写入", code=2)
+    _, existing = _release_environment_rows(args.project)
+    if any(t.get("id") == body.get("id") for t in existing if body.get("id")) or any(
+            t.get("name") == body["name"].strip() and t.get("lifecycle") != "archived" for t in existing):
+        die("environment_exists：已有同名或同 ID 环境，请先 list 核对，不重复创建或覆盖", code=2)
+    body = {**body, "projectId": args.project, "name": body["name"].strip()}
+    created = _call("POST", "/api/releases/targets", body=body).get("target", {})
+    if created.get("projectId") != args.project or not created.get("id"):
+        die("registration_unconfirmed：服务端未返回当前项目环境，停止后续发布", code=2)
+    visible, _ = _release_environment_rows(args.project)
+    target = next((t for t in visible if t.get("id") == created["id"]), None)
+    if target is None:
+        die("registration_not_visible：环境已登记但未出现在可选列表，请核对启用状态，不要重复创建",
+            code=2, extra={"targetId": created["id"]})
+    ok({"projectId": args.project, "environment": _release_environment_summary(target),
+        "selectable": True, "releaseStarted": False},
+       note="环境已登记并读回；完成预检后回到项目分支卡片点击「发布到」选择，未自动发布")
 
 
 def cmd_project_show(args: argparse.Namespace) -> None:
@@ -10521,6 +10575,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"cdscli {VERSION}")
     p.add_argument("--instance", help="仅本次命令使用指定 CDS 实例及其独立项目授权")
     sub = p.add_subparsers(dest="cmd", required=True)
+    release_targets = sub.add_parser("release-target", help="Agent 接入发布环境，供分支卡片选择").add_subparsers(dest="release_target_cmd", required=True)
+    for command, handler in (("list", cmd_release_target_list), ("register", cmd_release_target_register)):
+        item = release_targets.add_parser(command)
+        item.add_argument("--project", required=True, help="当前项目 ID")
+        if command == "register":
+            item.add_argument("--file", required=True, help="环境配置 JSON；只登记，不触发发布")
+        item.set_defaults(func=handler)
     instances = sub.add_parser("instance", help="主备实例发现、接入、检查与选择").add_subparsers(dest="instance_cmd", required=True)
     instances.add_parser("sync", help="从当前已授权 CDS 同步公共实例目录").set_defaults(func=cmd_instance_sync)
     instances.add_parser("recommend", help="只读检查当前负载并提示备用站点及独立授权要求").set_defaults(func=cmd_instance_recommend)

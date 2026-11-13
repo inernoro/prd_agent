@@ -56,6 +56,7 @@ export async function installOperationsFixtures(page) {
   let error = false;
   let preflightPass = false;
   let latestRun = run;
+  let releaseTargets = [structuredClone(target)];
   await page.route("**/*", async (route) => {
     const req = route.request(),
       path = new URL(req.url()).pathname;
@@ -89,12 +90,16 @@ export async function installOperationsFixtures(page) {
           runs: [latestRun],
           plans: [],
         });
-      if (path === "/api/releases/targets")
-        return reply({
-          targets: [target],
-          archivedTargets: [],
-          remoteHosts: [],
-        });
+      if (path === "/api/releases/targets") {
+        if (req.method() === "POST") {
+          const body = req.postDataJSON();
+          if (body.projectId !== target.projectId) return route.fulfill({ status: 403, json: { error: "项目不一致" } });
+          const registered = { ...body, id: body.id || "compat-new-environment", type: "ssh", isEnabled: true, lifecycle: "active", ssh: { healthcheckUrl: body.healthcheckUrl } };
+          releaseTargets.push(registered);
+          return reply({ target: registered });
+        }
+        return reply({ targets: releaseTargets, archivedTargets: [], remoteHosts: [] });
+      }
       if (path === "/api/branches")
         return reply({
           branches: [
@@ -110,6 +115,7 @@ export async function installOperationsFixtures(page) {
         });
       if (path.endsWith("/preflight"))
         return reply({
+          ok: preflightPass,
           checks: preflightPass
             ? []
             : [
@@ -128,6 +134,7 @@ export async function installOperationsFixtures(page) {
       ) {
         latestRun = {
           ...run,
+          targetId: req.postDataJSON().targetId,
           releaseId: "compat-success-run",
           status: "success",
           logs: [{ ...logs[0], message: "COMPAT_RELEASE_SUCCESS" }],
@@ -279,6 +286,7 @@ export async function installOperationsFixtures(page) {
   });
   return {
     writes,
+    setReleaseTargets: (value) => { releaseTargets = value; },
     setPreflightPass: (value) => {
       preflightPass = value;
     },
