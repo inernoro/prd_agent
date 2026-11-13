@@ -86,6 +86,7 @@ async function snapshot(page, id) {
   await page.screenshot({ path: path.join(OUT, `${id}.png`), timeout: 30000, animations: 'disabled' });
   results.push({ id, provenance: 'deterministic-fixture', metrics });
   console.log(`${id}: row=${metrics.firstRow?.y ?? 'none'}, width=${metrics.documentWidth}`);
+  check(`${id}:视口未被自动缩放`, metrics.viewportWidth === page.viewportSize().width, metrics);
   check(`${id}:无文档横向溢出`, metrics.documentWidth <= metrics.viewportWidth + 1, metrics);
   return metrics;
 }
