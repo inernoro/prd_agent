@@ -3,11 +3,13 @@ using MongoDB.Driver;
 using PrdAgent.LlmGw.Auth;
 using PrdAgent.LlmGw.LogicalModels;
 using PrdAgent.LlmGw.Mongo;
+using PrdAgent.LlmGw.ModelReferences;
 
 namespace PrdAgent.LlmGw.ModelUpgrades;
 
 public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDatabase map, IModelUpgradeDiscovery discovery,
-    string internalTenantId, ILogger<ModelUpgradeService> logger, IConfiguration? configuration = null)
+    string internalTenantId, ILogger<ModelUpgradeService> logger, IConfiguration? configuration = null,
+    ModelReferenceEngine? references = null, ModelReferenceCatalog? referenceCatalog = null)
 {
     public const string CollectionName = "llmgw_model_upgrade_policies";
     public const string ValidationCollectionName = "llmgw_model_upgrade_validation_runs";
@@ -68,6 +70,7 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
             ModelType = logical.GetStringOrEmpty("ModelType"), IdentityKind = logical.AsNullableString("IdentityKind") ?? "fixed",
             Aliases = ModelUpgradeRules.Strings(logical, "Aliases"), Version = s?.Version ?? 0, Policy = policy, ValidationMode = s?.ValidationMode ?? "evidence",
             Current = current, Candidate = s?.Candidate, Gates = s?.Gates ?? new(),
+            ReferenceCoverage = s?.ReferenceCoverage,
             Discoveries = s?.Discoveries ?? [], ValidationStatus = s?.ValidationStatus ?? "not-run",
             Phase = s?.Phase ?? "idle", Message = s?.Message ?? "尚未配置自动更新策略。",
             UpdatedAt = s?.UpdatedAt, LastCheckedAt = s?.LastCheckedAt, NextCheckAt = s?.NextCheckAt, History = s?.History ?? [],

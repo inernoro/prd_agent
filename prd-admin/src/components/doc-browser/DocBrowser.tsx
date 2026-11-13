@@ -3024,9 +3024,9 @@ export function DocBrowser({
     const ids = Array.from(selectedIds);
     const confirmed = await systemDialog.confirm({
       title: '批量删除文档',
-      message: `将永久删除选中的 ${ids.length} 个文件及其解析正文 / 附件。\n\n此操作不可恢复。`,
+      message: `将选中的 ${ids.length} 个文件移入回收站，30 天内可恢复。`,
       tone: 'danger',
-      confirmText: `永久删除 ${ids.length} 个`,
+      confirmText: `移入回收站 ${ids.length} 个`,
       cancelText: '取消',
     });
     if (!confirmed) return;
@@ -4507,9 +4507,9 @@ export function DocBrowser({
                   : '解析正文、附件文件';
             const confirmed = await systemDialog.confirm({
               title: `确认删除${isFolder ? '文件夹' : '文档'}`,
-              message: `删除「${target.title}」将永久清除：\n  · ${consequence}\n\n此操作不可恢复。`,
+              message: `将「${target.title}」移入回收站：\n  · ${consequence}\n\n30 天内可在知识库回收站恢复。`,
               tone: 'danger',
-              confirmText: '永久删除',
+              confirmText: '移入回收站',
               cancelText: '取消',
             });
             if (confirmed) onDeleteEntry(entryId);

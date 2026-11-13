@@ -128,6 +128,12 @@ public class DocumentEntry
     /// <summary>最近一次"内容真正发生变化"的时间（用于 UI 显示 (new) 徽标）</summary>
     public DateTime? LastChangedAt { get; set; }
 
+    /// <summary>回收状态；null 为正常数据，恢复时只解除此标记。</summary>
+    public DocumentTrashState? Trash { get; set; }
+
+    /// <summary>回收代次；恢复后仍保留，拒绝删除前发出的陈旧正文写入。</summary>
+    public long LifecycleVersion { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

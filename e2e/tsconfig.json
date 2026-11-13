@@ -14,5 +14,5 @@
     "isolatedModules": true,
     "types": ["node", "@playwright/test"]
   },
-  "include": ["specs/**/*.ts", "playwright.config.ts", "utils/**/*.ts"]
+  "include": ["specs/**/*.ts", "*.config.ts", "utils/**/*.ts"]
 }

@@ -46,3 +46,7 @@
     min-height: 44px;
   }
 }
+
+.lg-model-create-mode, .lg-model-create-actions, .lg-model-batch-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lg-model-create-mode, .lg-model-create-actions { margin-block: 12px; }
+.lg-model-batch-actions { padding: 4px 14px 8px; }

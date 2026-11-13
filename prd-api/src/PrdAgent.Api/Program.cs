@@ -577,6 +577,8 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ReprocessAgentSeeder>();
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.BackgroundTasks.ModelUpgradeCanaryWorker>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.ModelReferences.ModelRuntimeReferenceSnapshotBuilder>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ModelReferences.ModelRuntimeReferenceSnapshotWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductClaimWebhookWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductScheduledNotificationWorker>();

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AlarmClock, ArrowDown, ArrowUp, CalendarClock, Globe2, Pencil, Play, Plus, RefreshCw, Rocket, Save, SlidersHorizontal, Terminal, Trash2, type LucideIcon } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -14,7 +14,7 @@ import type {
 } from '@/types/task-schedule';
 import {
   buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration,
-  groupJobs, runStatusLabel, scheduleLabel, statusTone,
+  groupJobs, runStatusLabel, scheduleLabel, statusTone, taskHealthTone,
   type JobHealth, type TimelineHourTick, type TimelineLane,
 } from '@/lib/task-schedule-view';
 
@@ -68,6 +68,7 @@ type FormState = {
   actions: ActionForm[];
   timeoutSeconds: string;
   retryCount: string;
+  completion: ScheduledJob['completion'] | null;
 };
 
 type ActionDraft = ActionForm;
@@ -85,6 +86,7 @@ const emptyForm = (projectId = ''): FormState => ({
   actions: [],
   timeoutSeconds: '300',
   retryCount: '0',
+  completion: null,
 });
 
 const emptyAction = (): ActionForm => ({
@@ -115,6 +117,21 @@ const RUN_FILTERS: { key: RunFilterKey; label: string }[] = [
 
 export function TaskSchedulePage(): JSX.Element {
   const location = useLocation();
+  const [selectionParams, setSelectionParams] = useSearchParams();
+  const selectedId = selectionParams.get('job') || '';
+  const setSelectedId = useCallback((id: string) => {
+    setSelectionParams(previous => {
+      const next = new URLSearchParams(previous);
+      if (id) next.set('job', id); else next.delete('job');
+      return next;
+    }, { replace: true });
+  }, [setSelectionParams]);
+  // 只改变任务选择不应重拉目录或重新展示整页加载器。
+  const projectSearch = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    params.delete('job');
+    return params.toString();
+  }, [location.search]);
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [runs, setRuns] = useState<ScheduledJobRun[]>([]);
@@ -135,7 +152,6 @@ export function TaskSchedulePage(): JSX.Element {
   const [selectedRuns, setSelectedRuns] = useState<{ jobId: string; runs: ScheduledJobRun[]; failed: boolean }>({ jobId: '', runs: [], failed: false });
   /** 完整史拉失败后的重试计数：进 effect 的依赖，加一次就重拉一次。 */
   const [historyRetry, setHistoryRetry] = useState(0);
-  const [selectedId, setSelectedId] = useState('');
   const [form, setForm] = useState<FormState>(() => emptyForm());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -162,8 +178,8 @@ export function TaskSchedulePage(): JSX.Element {
     return () => window.clearInterval(timer);
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setError('');
     try {
       const [projectRes, jobRes, runRes] = await Promise.all([
@@ -172,7 +188,7 @@ export function TaskSchedulePage(): JSX.Element {
         apiRequest<{ runs: ScheduledJobRun[] }>('/api/scheduled-jobs/runs?limit=400'),
       ]);
       const nextProjects = projectRes.projects || [];
-      const initialProjectId = resolveTaskScheduleProjectId(location.search, nextProjects);
+      const initialProjectId = resolveTaskScheduleProjectId(projectSearch, nextProjects);
       setProjects(nextProjects);
       setJobs(jobRes.jobs || []);
       setRuns(runRes.runs || []);
@@ -182,10 +198,12 @@ export function TaskSchedulePage(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [location.search]);
+  }, [projectSearch]);
 
   useEffect(() => {
     void load();
+    const refresh = window.setInterval(() => { void load(true); }, 30_000);
+    return () => window.clearInterval(refresh);
   }, [load]);
 
   useEffect(() => {
@@ -249,7 +267,7 @@ export function TaskSchedulePage(): JSX.Element {
     return map;
   }, [mergedRuns]);
 
-  const healthOf = useCallback((jobId: string): JobHealth => computeHealth(runsByJob.get(jobId) || []), [runsByJob]);
+  const healthOf = useCallback((jobId: string): JobHealth => computeHealth((runsByJob.get(jobId) || []).filter(run => run.trigger === 'schedule')), [runsByJob]);
 
   const jobNameOf = useCallback((jobId: string) => jobs.find((job) => job.id === jobId)?.name || jobId, [jobs]);
 
@@ -460,8 +478,8 @@ export function TaskSchedulePage(): JSX.Element {
     setRunningId(jobId);
     setError('');
     try {
-      await apiRequest(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/run`, { method: 'POST' });
-      setToast('手动执行已完成');
+      const result = await apiRequest<{ run: ScheduledJobRun }>(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/run`, { method: 'POST', headers: { 'Idempotency-Key': `${Date.now()}:${crypto.randomUUID()}` } });
+      setToast(result.run.status === 'success' ? '手动执行已完成；定时健康单独统计' : `手动执行：${runStatusLabel(result.run.status)}`);
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -611,6 +629,14 @@ export function TaskSchedulePage(): JSX.Element {
                       onEdit={() => { selectJob(selectedJob); openEditor(); }}
                       onBack={() => setSelectedId('')}
                     />
+                    {selectedJob.health ? <div role="status" className="border-b px-4 py-2 text-sm">
+                      定时健康：{selectedJob.health.message}
+                      {selectedJob.recoveryRequiredRunId ? <Button variant="ghost" size="sm" onClick={() => {
+                        setError('');
+                        void apiRequest(`/api/scheduled-jobs/${encodeURIComponent(selectedJob.id)}/recover`, { method: 'POST', body: { runId: selectedJob.recoveryRequiredRunId } })
+                          .then(() => load()).catch(err => setError((err as Error).message));
+                      }}>核实已有产物</Button> : null}
+                    </div> : null}
                     {selectedRuns.jobId === selectedId && selectedRuns.failed ? (
                       <div
                         role="status"
@@ -779,6 +805,21 @@ export function TaskSchedulePage(): JSX.Element {
                           <input className={compactInputClass} value={form.retryCount} onChange={(e) => setForm({ ...form, retryCount: e.target.value })} inputMode="numeric" />
                         </Field>
                       </div>
+                      <p className="text-xs text-muted-foreground">自动重试仅适用于 GET。发布、命令和写请求失败后需核实已有结果。</p>
+                      <Field label="报告验收">
+                        <label className="flex items-center gap-2 text-sm">
+                          <input type="checkbox" checked={Boolean(form.completion)} onChange={e => setForm({ ...form, completion: e.target.checked ? { type: 'reports', minCount: 1 } : null })} />
+                          报告归档并验证后才完成
+                        </label>
+                      </Field>
+                      {form.completion ? <>
+                        <Field label="预期报告数量">
+                          <input className={compactInputClass} type="number" min={1} max={20} value={form.completion.minCount} onChange={e => setForm({ ...form, completion: { ...form.completion!, minCount: Number(e.target.value) } })} />
+                        </Field>
+                        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(form.completion.requireObjectStorage)} onChange={e => setForm({ ...form, completion: { ...form.completion!, requireObjectStorage: e.target.checked } })} />要求持久归档到对象存储</label>
+                        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.completion.allowedVerdicts?.length === 1 && form.completion.allowedVerdicts[0] === 'pass'} onChange={e => setForm({ ...form, completion: { ...form.completion!, allowedVerdicts: e.target.checked ? ['pass'] : undefined } })} />仅接受验收通过的报告</label>
+                        <p className="text-xs text-muted-foreground">报告生成流程需支持任务关联。未归档、正文缺失或结论不符都会判为产物验证失败。</p>
+                      </> : null}
                       <Field label="时区">
                         <input className={compactInputClass} value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} />
                       </Field>
@@ -1198,10 +1239,11 @@ function jobToForm(job: ScheduledJob): FormState {
     actions: normalizeJobActions(job),
     timeoutSeconds: String(job.timeoutSeconds || 300),
     retryCount: String(job.retryCount || 0),
+    completion: job.completion || null,
   };
 }
 
-function formToPayload(form: FormState): Omit<ScheduledJob, 'id' | 'createdAt' | 'updatedAt' | 'concurrencyPolicy'> {
+function formToPayload(form: FormState): Omit<ScheduledJob, 'id' | 'createdAt' | 'updatedAt' | 'concurrencyPolicy' | 'completion'> & { completion: ScheduledJob['completion'] | null } {
   const actions = form.actions.map(actionPayloadFromForm);
   if (actions.length === 0) throw new Error('至少需要添加一个动作');
   return {
@@ -1218,6 +1260,7 @@ function formToPayload(form: FormState): Omit<ScheduledJob, 'id' | 'createdAt' |
     actions,
     timeoutSeconds: Number(form.timeoutSeconds) || 300,
     retryCount: Number(form.retryCount) || 0,
+    completion: form.completion,
   };
 }
 
@@ -1457,7 +1500,7 @@ function JobRow({
       className={`mb-1 block w-full rounded-md border px-2.5 py-2 text-left transition-colors ${selected ? 'border-primary/50 bg-primary-soft' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:border-primary/40'} ${disabled ? 'opacity-75' : ''}`}
     >
       <div className="flex items-center gap-2">
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${disabled ? 'bg-muted-foreground' : job.lastRunStatus === 'failed' ? 'bg-bad' : job.lastRunStatus === 'skipped' ? 'bg-warn' : 'bg-ok'}`} />
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${taskHealthTone(job)}`} />
         <span className={`min-w-0 flex-1 truncate text-[0.8125rem] font-semibold ${selected ? 'text-primary-ink' : ''}`}>{job.name}</span>
         <span className={`shrink-0 font-mono text-[0.6875rem] ${disabled ? 'text-bad' : selected ? 'text-primary-ink' : 'text-muted-foreground'}`}>
           {disabled ? '已停用' : countdown}
@@ -1473,6 +1516,7 @@ function JobRow({
           ))}
         </span>
       </div>
+      {job.health ? <div data-task-health={job.health.state} className="mt-1 text-xs text-muted-foreground">{job.health.message}{job.health.recoveryRequired ? '；需核实产物' : ''}</div> : null}
       {job.autoDisabledReason ? (
         <div className="mt-1.5 rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-[0.625rem] leading-4 text-destructive">
           {job.autoDisabledReason}
@@ -1536,6 +1580,12 @@ function RunRow({
               ))}
             </div>
           ) : null}
+          {run.scheduledFor ? <div className="mb-2 text-xs">应执行：{new Date(run.scheduledFor).toLocaleString()} · {run.failureKind || runStatusLabel(run.status)}</div> : null}
+          {run.recovery ? <div data-recovery-record className="mb-2 text-xs text-warn">
+            已核实已有产物：{new Date(run.recovery.verifiedAt).toLocaleString()}；原失败：{run.recovery.error || '执行失败，原因见原运行记录'}
+            {run.recovery.failedAt ? <span>（{new Date(run.recovery.failedAt).toLocaleString()}）</span> : null}
+          </div> : null}
+          {run.artifacts?.map(artifact => <a key={artifact.reportId} className="mb-2 block text-xs underline" href={`/reports?report=${encodeURIComponent(artifact.reportId)}`}>已验证报告 · {artifact.sha256.slice(0, 12)} · {artifact.sizeBytes} 字节</a>)}
           {run.error ? <div className="mb-2 text-[0.7188rem] text-destructive">{run.error}</div> : null}
           {run.log ? (
             <pre className="max-h-44 overflow-auto whitespace-pre-wrap rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2 font-mono text-[0.6875rem] leading-5 text-muted-foreground">
@@ -1631,7 +1681,7 @@ function JobOverview({
       tone: disabled ? 'text-muted-foreground' : 'text-primary-ink',
     },
     {
-      label: `近 ${health.total} 次`,
+      label: `近 ${health.total} 次定时`,
       value: health.successRate === null ? '—' : `${health.successRate}%`,
       tone: health.successRate !== null && health.successRate < 100 ? 'text-warn' : 'text-ok',
     },

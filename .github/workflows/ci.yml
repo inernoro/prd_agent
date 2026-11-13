@@ -134,6 +134,7 @@ jobs:
               - 'scripts/prd-agent-public-surface-smoke.py'
               - 'scripts/prd-agent-release-evidence.py'
               - 'scripts/tests/static-release-*.test.sh'
+              - 'scripts/tests/static-release-browser.mjs'
               - 'scripts/tests/gateway-bind-mount-coherence.test.sh'
               - 'scripts/tests/public-surface-smoke.test.py'
               - 'scripts/tests/asset-storage-readiness-gate.test.py'
@@ -340,7 +341,20 @@ jobs:
       - name: Static release layout
         run: sh scripts/tests/static-release-layout.test.sh
 
-      - name: Static release through nginx worker
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install browser regression dependencies
+        run: |
+          pnpm --dir cds install --frozen-lockfile
+          pnpm --dir cds exec playwright install --with-deps chromium
+
+      - name: Static release through nginx worker and browser
+        env:
+          STATIC_RELEASE_BROWSER_TEST: "1"
         run: sh scripts/tests/static-release-nginx.test.sh
 
       - name: Gateway bind mount coherence
@@ -453,7 +467,7 @@ jobs:
       - name: Install video test dependencies
         timeout-minutes: 10
         run: |
-          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror canonical
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
@@ -618,7 +632,7 @@ jobs:
         timeout-minutes: 10
         working-directory: ${{ github.workspace }}/e2e
         run: |
-          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror canonical
           pnpm exec playwright install --with-deps chromium
 
       - name: Run focused browser acceptance
@@ -741,7 +755,7 @@ jobs:
       - name: Install system dependencies (Linux)
         timeout-minutes: 10
         run: |
-          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror canonical
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 

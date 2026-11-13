@@ -1,0 +1,287 @@
+{
+  "schemaVersion": 1,
+  "sourceBaseline": "c259f56268f97790be71ff568062174ec91a70d9",
+  "provenance": "deterministic-fixture with real isolated MongoDB; not an upstream production test",
+  "red": [
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ConcurrentReconciliationAndCompletion_PreserveConfirmedTerminalResults",
+      "outcome": "Passed",
+      "failure": null
+    },
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ExplicitDifferentRuns_AreNotMergedByReusedLogicalOrProviderTaskId",
+      "outcome": "Failed",
+      "failure": "Assert.Equal() Failure: Collections differ\n                     ↓ (pos 1)\nExpected: [\"anchor\", \"legacy-empty-run\", \"legacy-null-run\", \"same-run\"]\nActual:   [\"anchor\", \"independent-job\", \"independent-logical\", \"legacy-empty-run\", \"legacy-null-run\", ···]\n                     ↑ (pos 1)"
+    },
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.LostOwner_CallLoggedAfterLeaseExpiry_DoesNotRemainRunningForever",
+      "outcome": "Failed",
+      "failure": "Assert.Equal() Failure: Strings differ\n           ↓ (pos 0)\nExpected: \"unknown\"\nActual:   \"running\"\n           ↑ (pos 0)"
+    }
+  ],
+  "green": [
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ConcurrentReconciliationAndCompletion_PreserveConfirmedTerminalResults",
+      "outcome": "Passed",
+      "failure": null
+    },
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.LostOwner_CallLoggedAfterLeaseExpiry_DoesNotRemainRunningForever",
+      "outcome": "Passed",
+      "failure": null
+    },
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ExplicitDifferentRuns_AreNotMergedByReusedLogicalOrProviderTaskId",
+      "outcome": "Passed",
+      "failure": null
+    },
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.GatewayLogLifecycleTests.ExpiredOwner_ClosesOnlyItsUnfinishedCalls_WithoutInventingOutcomeOrCost",
+      "outcome": "Passed",
+      "failure": null
+    },
+    {
+      "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Trace_PagesEveryAuthorizedCall_RejectsAmbiguity_AndWithholdsBodies",
+      "outcome": "Passed",
+      "failure": null
+    }
+  ],
+  "candidateSourceSha256": {
+    "llmgw/console-api/Logs/LogTraceQuery.cs": "f7a8658ce4f7e24d130c90e9b053dbcda36a905beaa34d960b5e97ed51c75d0f",
+    "llmgw/serving/GatewayLogLifecycleWorker.cs": "5a47ec442fe2a95bcc2b19a1b2beee13d0858f77ff2dfbbc994f61bfef5b7f2f",
+    "prd-api/tests/PrdAgent.Api.Tests/Gateway/LogTraceIsolationRecoveryProofTests.cs": "6ff028f1f32aeadf0746cc179056d72069844b298cd06df06434405576a9886b"
+  },
+  "reproduction": {
+    "old": "Use c259f5626 in an isolated snapshot and add only the same LogTraceIsolationRecoveryProofTests.cs; expected 2 failures and 1 pass.",
+    "new": "Run the same tests on this branch; expected 3 passes.",
+    "command": "LLMGW_TRACE_TEST_MONGO=mongodb://127.0.0.1:27021 dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter FullyQualifiedName~LogTraceIsolationRecoveryProofTests",
+    "safety": "Unique trace_proof_* databases are deleted in finally; no production records or supplier requests are modified."
+  },
+  "previewLive": "Original full real acceptance completed at f7bf5e99c327317cd4ef96941d9f0b98e6f55939; report 2795223a026f46c5a7129ad7639874d4. Subsequent review-head read-only acceptance is tracked separately in PR #1973.",
+  "historicalEvidence": "No historical records, supplier bills or missing costs were fabricated.",
+  "originalHttpContrast": [
+    {
+      "version": "original3035365de",
+      "check": "all-physical-calls",
+      "status": 404,
+      "total": null,
+      "expectedTotal": 26,
+      "passed": false
+    },
+    {
+      "version": "original3035365de",
+      "check": "exclude-sdk-summary",
+      "status": 200,
+      "total": 2,
+      "expectedTotal": 1,
+      "passed": false
+    },
+    {
+      "version": "candidate",
+      "check": "all-physical-calls",
+      "status": 200,
+      "total": 26,
+      "expectedTotal": 26,
+      "passed": true
+    },
+    {
+      "version": "candidate",
+      "check": "exclude-sdk-summary",
+      "status": 200,
+      "total": 1,
+      "expectedTotal": 1,
+      "passed": true
+    }
+  ],
+  "originalSnapshotProgramSha256": "b72c65686b808b9500db2fb9c28f31bdd5179df0e6ac7315208213885796fde0",
+  "ciGuard": "Three isolation/recovery assertions run in the normal Server Build & Test suite using isolated MONGODB_TEST_CONNECTION; only their unique trace_proof_* databases are dropped.",
+  "verification": {
+    "build": "dotnet build prd-api/PrdAgent.sln --no-restore: 0 errors",
+    "targeted": "5 passed, 0 failed on real isolated MongoDB",
+    "web": "19 passed, 0 failed; production build passed",
+    "localUi": "Normal viewer login → request logs → trace: team/owner scope, ambiguous IDs, historical running and summary markers passed; diagnostic only, not live preview acceptance",
+    "fullRegression": "Category!=Integration&Category!=Manual: 8789 passed, 84 skipped, 0 failed (2645 + 6144)"
+  },
+  "review1973": {
+    "baseline": "3baad12f8a4558455cce0e22c2901e8e2121767b",
+    "red": [
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Trace_PagesEveryAuthorizedCall_RejectsAmbiguity_AndWithholdsBodies",
+        "outcome": "Failed",
+        "failure": "Assert.True() Failure\nExpected: True\nActual:   False"
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.LlmGatewayTests.SendRawWithResolutionAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate",
+        "outcome": "Failed",
+        "failure": "Assert.Equal() Failure: Values differ\nExpected: 0.01\nActual:   null"
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.LlmGatewayTests.SendAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate",
+        "outcome": "Passed",
+        "failure": null
+      }
+    ],
+    "green": [
+      {
+        "test": "PrdAgent.Api.Tests.Services.LlmGatewayTests.SendAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.LostOwner_CallLoggedAfterLeaseExpiry_DoesNotRemainRunningForever",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Trace_PagesEveryAuthorizedCall_RejectsAmbiguity_AndWithholdsBodies",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ExplicitDifferentRuns_AreNotMergedByReusedLogicalOrProviderTaskId",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.GatewayLogLifecycleTests.ExpiredOwner_ClosesOnlyItsUnfinishedCalls_WithoutInventingOutcomeOrCost",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.LlmGatewayTests.SendRawWithResolutionAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ConcurrentReconciliationAndCompletion_PreserveConfirmedTerminalResults",
+        "outcome": "Passed",
+        "failure": null
+      }
+    ],
+    "scope": "Per-response failover evidence and runless-anchor disambiguation; deterministic HTTP fixture + real isolated Mongo, no production fault injection",
+    "architecture": "Lifecycle persistence moved into Infrastructure LlmLogLifecycleReconciler; serving only schedules it. Behavior unchanged; existing real Mongo recovery assertions pass. No artificial behavioral inversion claimed for file relocation.",
+    "tutorial": "Unchanged tutorial graph checks failed with unmapped /logs/trace; after real chapter mapping, factual instructions and registered existing preview image, 38 tests and drift audit pass.",
+    "sha256": {
+      "llmgw/console-api/Logs/LogTraceEndpoints.cs": "2ebb2bf48a883a2d003a599dc1cf9b304de9cbd21b50dd5fe7edb716b348fabb",
+      "prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs": "a8e8c73bd51b7df53e0e7620e384c84ec6c3780c45d3982c89a8f14a283b8bff",
+      "prd-api/src/PrdAgent.Infrastructure/LLM/LlmLogLifecycleReconciler.cs": "c3d4962d18d61c5311a6bfdf04148c6b272582e329e29f117fe3e90f57c4c549"
+    },
+    "verification": {
+      "build": "0 errors",
+      "fullRegression": "8943 passed, 85 skipped, 0 failed",
+      "targeted": "7 passed, 0 failed",
+      "web": "38 passed; production build passed; candidate click queries the selected explicit RunId",
+      "tutorial": "38 passed; publisher check passed; unchanged drift guard reports P0/P1/P2 all zero"
+    }
+  },
+  "originalProofCapturedAtCommit": "f7bf5e99c327317cd4ef96941d9f0b98e6f55939",
+  "secondReviewReceiptLookup": {
+    "baseline": "8fcb1df2ef991f5e56c7bb9fcae1623d51d35d03",
+    "finding": "https://github.com/inernoro/prd_agent/pull/1973#discussion_r4561481468",
+    "red": [
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Trace_PagesEveryAuthorizedCall_RejectsAmbiguity_AndWithholdsBodies",
+        "outcome": "Failed",
+        "failure": "System.Net.Http.HttpRequestException : Response status code does not indicate success: 404 (Not Found)."
+      }
+    ],
+    "green": [
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.GatewayLogLifecycleTests.ExpiredOwner_ClosesOnlyItsUnfinishedCalls_WithoutInventingOutcomeOrCost",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.LlmGatewayTests.SendRawWithResolutionAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Trace_PagesEveryAuthorizedCall_RejectsAmbiguity_AndWithholdsBodies",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.LostOwner_CallLoggedAfterLeaseExpiry_DoesNotRemainRunningForever",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ExplicitDifferentRuns_AreNotMergedByReusedLogicalOrProviderTaskId",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceIsolationRecoveryProofTests.ConcurrentReconciliationAndCompletion_PreserveConfirmedTerminalResults",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.LlmGatewayTests.SendAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate",
+        "outcome": "Passed",
+        "failure": null
+      }
+    ],
+    "assertions": [
+      "Failed/intermediate ProviderAttempts.ProviderRequestId, ProviderTaskId and AttemptId all locate the same 55 authorized records.",
+      "Hidden-team records remain absent; ambiguous explicit runs stay separate; no historical mutation."
+    ],
+    "realOldPreview": "Normal MAP login and SSO at 8fcb1df2e: persisted attempt d5ada42671064ffb856fe08e252f2342 returns no record while business 659dbc93-0c41-4781-9676-1b45f71710e8 returns 22 records. No new supplier call.",
+    "querySourceSha256": "1a60e6ab2a7d5cdb0e733da87394a4ad137daf9ecc3a158e474646cd3f20b47b",
+    "verification": {
+      "build": "0 errors",
+      "targeted": "7 passed, 0 failed; real isolated MongoDB",
+      "tutorial": "38 passed; publisher check passed"
+    },
+    "scope": "Read-only nested persisted identity match under the existing authorization filter; no new billing, indexes, endpoints or historical backfill."
+  },
+  "thirdReviewRunIdentityAndIndexes": {
+    "baseline": "c78482322023374e64108ee1fc67abb5be3736cc",
+    "classification": "Both A/direct defects: admitted workflow identity must reach gateway; existing identity lookup must have selective DBA indexes. Scope check retained original goal, no new authorization/billing semantics.",
+    "findings": [
+      "https://github.com/inernoro/prd_agent/pull/1973#discussion_r4561607879",
+      "https://github.com/inernoro/prd_agent/pull/1973#discussion_r4561607883"
+    ],
+    "red": [
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Reference_DbaCatalogIndexes_KeepEveryIdentityLookupSelective",
+        "outcome": "Failed",
+        "failure": "Reference should examine only selected records, not tenant history: { \"executionSuccess\" : true, \"nReturned\" : 1, \"executionTimeMillis\" : 28, \"totalKeysExamined\" : 4001, \"totalDocsExamined\" : 4001, \"executionStages\" : { \"stage\" : \"FETCH\", \"filter\" : { \"$or\" : [{ \"LogicalRequestId\" : { \"$eq\" : \"needle\" } }, { \"ProviderAttempts.AttemptId\" : { \"$eq\" : \"needle\" } }, { \"ProviderAttempts.ProviderRequestId\" : { \"$eq\" : \"needle\" } }, { \"ProviderAttempts.ProviderTaskId\" : { \"$eq\" : \"needle\" } }, { \"ProviderRequestId\" : { \"$eq\" : \"needle\" } }, { \"ProviderTaskId\" : { \"$eq\" : \"needle\" } }, { \"RequestId\" : { \"$eq\" : \"needle\" } }, { \"RunId\" : { \"$eq\" : \"needle\" } }, { \"_id\" : { \"$eq\" : \"needle\" } }] }, \"nReturned\" : 1, \"executionTimeMillisEstimate\" : 3, \"works\" : 4003, \"advanced\" : 1, \"needTime\" : 4000, \"needYield\" : 0, \"saveState\" : 12, \"restoreState\" : 12, \"isEOF\" : 1, \"docsExamined\" : 4001, \"alreadyHasObj\" : 0, \"inputStage\" : { \"stage\" : \"IXSCAN\", \"nReturned\" : 4001, \"executionTimeMillisEstimate\" : 0, \"works\" : 4002, \"advanced\" : 4001, \"needTime\" : 0, \"needYield\" : 0, \"saveState\" : 12, \"restoreState\" : 12, \"isEOF\" : 1, \"keyPattern\" : { \"TenantId\" : 1, \"RequestId\" : 1, \"StartedAt\" : 1, \"_id\" : 1 }, \"indexName\" : \"TenantId_1_RequestId_1_StartedAt_1__id_1\", \"isMultiKey\" : false, \"multiKeyPaths\" : { \"TenantId\" : [], \"RequestId\" : [], \"StartedAt\" : [], \"_id\" : [] }, \"isUnique\" : false, \"isSparse\" : false, \"isPartial\" : false, \"indexVersion\" : 2, \"direction\" : \"forward\", \"indexBounds\" : { \"TenantId\" : [\"[\\\"tenant-a\\\", \\\"tenant-a\\\"]\"], \"RequestId\" : [\"[MinKey, MaxKey]\"], \"StartedAt\" : [\"[MinKey, MaxKey]\"], \"_id\" : [\"[MinKey, MaxKey]\"] }, \"keysExamined\" : 4001, \"seeks\" : 1, \"dupsTested\" : 0, \"dupsDropped\" : 0 } } }"
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.TaskScopedRuntimeGrantIssuerTests.IssuedRequest_PreservesSelectedModelAndTrace_AndOnlyExportsShortGatewayKey",
+        "outcome": "Failed",
+        "failure": "Assert.True() Failure\nExpected: True\nActual:   False"
+      }
+    ],
+    "pythonRed": "Existing header test with distinct callback/business IDs: expected operation-a, actual callback-operation-a.",
+    "greenRepresentative": [
+      {
+        "test": "PrdAgent.Api.Tests.Gateway.LogTraceQueryTests.Reference_DbaCatalogIndexes_KeepEveryIdentityLookupSelective",
+        "outcome": "Passed",
+        "failure": null
+      },
+      {
+        "test": "PrdAgent.Api.Tests.Services.TaskScopedRuntimeGrantIssuerTests.IssuedRequest_PreservesSelectedModelAndTrace_AndOnlyExportsShortGatewayKey",
+        "outcome": "Passed",
+        "failure": null
+      }
+    ],
+    "verification": {
+      "build": "0 errors",
+      "targeted": "41 passed, 0 failed, 0 skipped; isolated MongoDB including all runtime-grant authorization/budget/callback tests",
+      "python": "54 passed, 0 failed",
+      "tutorial": "38 passed; publisher check and drift P0/P1/P2 all zero",
+      "indexSelectivity": "Same 4001-record isolated Mongo fixture: old catalog examines 4001 documents; new catalog returns 1 record and passes <=5 documents examined. No production DDL executed."
+    },
+    "scope": "Callback RunId remains independent. GatewayRunId is set from admitted TaskExecutionContext, overriding an unbound client value. Separate array-field indexes in DBA script; startup only advises.",
+    "initialTestHarnessFailures": "First issuer probe could not serialize its fixture tool schema (undefined JsonElement); initialized a valid object schema and reran unchanged production behavior, then observed the intended missing gatewayRunId failure. Initial system Python lacked anthropic; reran in existing sidecar venv. Neither harness/setup error is counted as a product red proof.",
+    "sha256": {
+      "prd-api/src/PrdAgent.Infrastructure/Security/TaskScopedRuntimeGrantIssuer.cs": "870c439fc0982b04bee9581cb2f68b16d24af78f9473d5cd55cbe7a206cdb91c",
+      "claude-sdk-sidecar/app/agent_loop.py": "d702b35fe28f91e7a10a82857ee414711590ee83a6106dbfb43d687675b1e154",
+      "claude-sdk-sidecar/app/schemas.py": "c779a9c01b7f6e155c970f6e449ac36f1c0d5cb9c182ad61faad8f7613e443f9",
+      "scripts/mongodb-indexes.js": "e77e48a860e2d87ef3b0d08f6b3ca5032958249dd2350ac13667114a707bffe3"
+    },
+    "preview": "Not yet verified on this fix: CDS rejected c784 deployment with HTTP507 disk freeze at 90%; actual runtime stayed at 8fcb. PR tracks subsequent deployment and real-page status."
+  }
+}
