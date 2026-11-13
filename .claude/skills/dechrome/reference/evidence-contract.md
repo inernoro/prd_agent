@@ -131,3 +131,11 @@ python3 scripts/check_ledger.py /path/to/ledger-v2.json --require-live --require
 ```
 
 退出0仅表示声明满足字段与所选门槛；退出1表示缺项/违规。脚本不抓取链接、不看截图、不裁定UX，也不保证调用方诚实；原始证据和人工复核仍是结论依据。
+
+## 对照报告的默认阅读与原图路径
+
+默认直接显示前后图，阅读差异需要0次模式切换；每张图一次激活直接打开对应100%原图，不能先选阶段再放大。完整原PNG字节不变，前后维持相同显示尺度。宽屏竖图对齐并排，宽截图及窄屏上下自然排布；不用固定高灰框撑满，也不把宽图缩成难读缩略图。
+
+可用 `scripts/render_comparisons.py` 的 `render_comparisons(comparisons)` 复用正文、manifest、STYLE与SCRIPT；输入仍使用before/after PNG及change/unchanged/scope/versions和明确合成provenance，不将实际私有截图混入公开报告。可选display_title与summary只精简展示，完整口径保留。报告的视觉规范以宿主仓库为准。
+
+浏览器执行：安装现有项目的Playwright，设DECHROME_PLAYWRIGHT_MODULE为其模块入口（缺省playwright），按环境设CHROMIUM_PATH，然后运行 `node tests/report_layout_smoke.mjs <报告URL>`。该检查验证默认双图、同尺度、排布、一步原图、Esc和焦点恢复及文档溢出；不替代截图审美检查、发布后的图片身份核对或业务验收。

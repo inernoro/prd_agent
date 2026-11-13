@@ -11,7 +11,9 @@ FILES = (
     "reference/install.md",
     "scripts/check_ledger.py",
     "scripts/package_skill.py",
+    "scripts/render_comparisons.py",
     "tests/test_contract.py",
+    "tests/report_layout_smoke.mjs",
 )
 
 
