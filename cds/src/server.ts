@@ -5,7 +5,7 @@ import { CodeReviewUserKeys } from './services/code-review-user-keys.js';
 import { createInstanceCatalogRouter } from './routes/instance-catalog.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
-import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
+import { isHostedSitePreviewRequest, redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
 import { describeRestartWait, getRestartWait, resolveRestartStatus } from './services/self-restart-wait.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -155,6 +155,7 @@ import {
   type HttpRequestKind,
   type HttpLogSink,
 } from './services/http-log-store.js';
+import { HttpLogRecorder } from './services/http-log-recorder.js';
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 import { computeBundleFreshness } from './services/bundle-freshness.js';
@@ -884,10 +885,9 @@ export interface ActivityEvent {
 }
 
 /** Map API path patterns to Chinese labels */
-export function resolveApiLabel(method: string, path: string): string {
-  // Normalize: remove /api prefix, trim trailing slash
-  const p = path.replace(/^\/api/, '').replace(/\/$/, '');
-
+// Label definitions are static. Allocate their objects and regular expressions
+// once, rather than on every polled API request. Matching order is unchanged.
+const apiLabelTables = (() => {
   // Static exact matches
   const staticMap: Record<string, string> = {
     'GET /code-reviews/branches': '列出审查分支',
@@ -1209,9 +1209,6 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /workspaces': '列出工作空间',
     'POST /workspaces': '创建工作空间',
   };
-
-  const key = `${method} ${p}`;
-  if (staticMap[key]) return staticMap[key];
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
@@ -1540,6 +1537,17 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/workspaces\/(.+)\/invites\/(.+)$/, '撤销工作空间邀请'],
     [/^GET \/workspaces\/(.+)$/, '查询工作空间'],
   ];
+
+  return { staticMap, patterns };
+})();
+
+export function resolveApiLabel(method: string, path: string): string {
+  // Normalize: remove /api prefix, trim trailing slash
+  const p = path.replace(/^\/api/, '').replace(/\/$/, '');
+
+  const { staticMap, patterns } = apiLabelTables;
+  const key = `${method} ${p}`;
+  if (staticMap[key]) return staticMap[key];
 
   for (const [regex, label] of patterns) {
     if (regex.test(key)) return label;
@@ -1875,6 +1883,11 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const httpLogRecorder = new HttpLogRecorder(deps.httpLogStore);
+  deps.registerResourceShutdown?.(async () => {
+    httpLogRecorder.close();
+    if (httpLogRecorder.snapshot().failures) throw new Error('HTTP audit processing incomplete');
+  });
   const selfMaintenance = deps.selfMaintenanceRuntime ?? new SelfMaintenanceRuntime(deps.shell, deps.config.repoRoot, view => {
     deps.serverEventLogStore?.record({ category: 'system', severity: 'warn', source: 'self-maintenance',
       action: 'self-maintenance.stop-unconfirmed', message: 'CDS 维护写者正在停止或等待清理确认，后继维护请求仍被拒绝。',
@@ -2470,6 +2483,8 @@ export function createServer(deps: ServerDeps): express.Express {
       // 路由可声明本次请求不值得落 HTTP 日志（2026-09-08：webhook CI 噪声廉价 ack，
       // 每条都写 Mongo 是宿主过载的一部分）。active 表照常收尾。
       if (res.locals.cdsSkipHttpLog === true) return;
+      if (!deps.httpLogStore) return;
+      const finishedAt = new Date();
       const status = res.statusCode || 0;
       const capturedReqBody = requestCapture.snapshot(req.headers['content-type']);
       const parsedReqBody = suppressPreviewBody ? {} : bodyPreviewFromUnknown(req.body, req.headers['content-type']);
@@ -2482,8 +2497,8 @@ export function createServer(deps: ServerDeps): express.Express {
         suppressRequestBodyLog || suppressPreviewBody,
       );
       const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
-      const respBody = responseCapture.snapshot(res.getHeader('content-type'));
-      deps.httpLogStore?.record({
+      const respBody = responseCapture.prepareSnapshot(res.getHeader('content-type'));
+      httpLogRecorder.record({
         layer: 'master',
         requestKind,
         requestId,
@@ -2494,7 +2509,8 @@ export function createServer(deps: ServerDeps): express.Express {
         host: suppressRequestDetails ? undefined : String(req.headers.host || ''),
         path: requestPathForLogs(req, res),
         status,
-        durationMs: Date.now() - start,
+        ts: finishedAt,
+        durationMs: finishedAt.getTime() - start,
         outcome: status >= 500 ? 'server-error' : status >= 400 ? 'client-error' : 'ok',
         remoteAddr: suppressRequestDetails
           ? undefined
@@ -2508,9 +2524,8 @@ export function createServer(deps: ServerDeps): express.Express {
         },
         response: {
           headers: responseHeaders,
-          ...omitHostedSitePreviewBody(respBody, suppressPreviewBody),
         },
-      });
+      }, respBody, suppressPreviewBody);
     });
     res.once('close', scheduleActiveCleanup);
     next();

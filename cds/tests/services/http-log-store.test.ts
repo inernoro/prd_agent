@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   bodyPreviewFromUnknown,
   classifyHttpRequestKind,
@@ -11,6 +11,23 @@ import {
 } from '../../src/services/http-log-store.js';
 
 describe('http log body redaction', () => {
+  it('counts via the built-in index and deletes only the oldest overflow records', async () => {
+    const store = new HttpLogStore({ uri: 'mongodb://unused', maxDocuments: 50_000 });
+    const cursor = { sort: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
+      toArray: vi.fn().mockResolvedValue([{ _id: 'old-1' }, { _id: 'old-2' }]) };
+    const collection = { countDocuments: vi.fn().mockResolvedValue(50_002),
+      find: vi.fn().mockReturnValue(cursor), deleteMany: vi.fn().mockResolvedValue({ deletedCount: 2 }) };
+    (store as any).collection = collection;
+    await (store as any).pruneByCount();
+    expect(collection.countDocuments).toHaveBeenCalledWith({}, { hint: '_id_' });
+    expect(cursor.sort).toHaveBeenCalledWith({ ts: 1 });
+    expect(cursor.limit).toHaveBeenCalledWith(2);
+    expect(collection.deleteMany).toHaveBeenCalledWith({ _id: { $in: ['old-1', 'old-2'] } });
+    collection.countDocuments.mockResolvedValue(50_000);
+    await (store as any).pruneByCount();
+    expect(collection.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
   it('redacts sensitive keys in structured JSON without regex scanning', () => {
     const result = bodyPreviewFromUnknown({
       username: 'alice',

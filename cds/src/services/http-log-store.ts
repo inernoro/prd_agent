@@ -1,8 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import type { Worker } from 'node:worker_threads';
 import type { IncomingHttpHeaders } from 'node:http';
 import { MongoClient, type Collection, type Sort } from 'mongodb';
 import { ensureIndexWithReconcile } from './mongo-index-reconcile.js';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './hosted-site-preview-log-policy.js';
+import { HttpLogNormalizationQueue } from './http-log-normalization-queue.js';
+import { timeMainThreadSection } from './main-thread-diagnostics.js';
 
 export interface HttpLogRecord {
   _id: string;
@@ -102,6 +105,7 @@ export interface HttpLogStoreOptions {
 
 export interface HttpLogSink {
   record(record: Omit<HttpLogRecord, '_id' | 'ts'> & { ts?: Date | string }): void;
+  recordCaptured?(record: HttpLogInput, body: PreparedBodySnapshot): void;
   beginActive?(record: Omit<ActiveHttpRequestRecord, 'id' | 'startedAt' | 'ageMs'> & { startedAt?: Date | string }): string;
   completeActive?(id: string): void;
   findActive?(filter?: HttpActiveRequestFilter): ActiveHttpRequestRecord[];
@@ -423,9 +427,71 @@ export function selectRequestBodyForHttpLog(
   };
 }
 
+export interface PreparedBodySnapshot {
+  readonly retainedBytes: number;
+  snapshot(): { bodyPreview?: string; bodyBytes: number };
+  serialize(): BodySnapshotInput;
+}
+
+export interface BodySnapshotInput {
+  bytes: Uint8Array;
+  bodyBytes: number;
+  maxBytes: number;
+  binary: boolean;
+}
+export type HttpLogInput = Omit<HttpLogRecord, '_id' | 'ts'> & { ts?: Date | string };
+export interface CapturedHttpLog { record: HttpLogInput; body: BodySnapshotInput }
+
+export function snapshotBodyInput(input: BodySnapshotInput): { bodyPreview?: string; bodyBytes: number } {
+  const { bodyBytes, maxBytes, binary } = input;
+  if (binary) return { bodyPreview: bodyBytes > 0 ? OMITTED_BINARY_BODY_PREVIEW : undefined, bodyBytes };
+  const preview = redactBodyText(Buffer.from(input.bytes).toString('utf8').replace(/\0/g, ''));
+  return { bodyPreview: preview ? truncateUtf8(preview, maxBytes) : undefined, bodyBytes };
+}
+
+/** Shared unchanged normalization for ordinary writes, worker writes and fallback. */
+export function normalizeHttpLogRecord(record: HttpLogInput): HttpLogRecord {
+  return normalizeRecordWithResponse(record);
+}
+
+function normalizeRecordWithResponse(record: HttpLogInput, response?: HttpLogRecord['response']): HttpLogRecord {
+  return {
+    ...record,
+    path: redactHostedSitePreviewLog(record.path),
+    upstream: record.upstream ? redactHostedSitePreviewLog(record.upstream) : record.upstream,
+    requestKind: record.requestKind || classifyHttpRequestKind({ layer: record.layer, method: record.method,
+      path: record.path, headers: record.request?.headers }),
+    _id: `${record.requestId}:${Date.now()}:${Math.random().toString(16).slice(2)}`,
+    ts: record.ts ? new Date(record.ts) : new Date(),
+    request: sanitizePayload(record.request, isHostedSitePreviewRequest(record.path)),
+    response: response ?? sanitizePayload(record.response, isHostedSitePreviewRequest(record.path)),
+    error: record.error ? { code: record.error.code,
+      message: record.error.message ? (isHostedSitePreviewRequest(record.path) ? '[preview upstream error omitted]' : truncateUtf8(redactHostedSitePreviewLog(record.error.message), MAX_ERROR_MESSAGE)) : undefined } : undefined,
+  };
+}
+
+export function normalizeCapturedHttpLog(job: CapturedHttpLog): HttpLogRecord {
+  return normalizeHttpLogRecord({ ...job.record, response: { ...job.record.response, ...snapshotBodyInput(job.body) } });
+}
+
+// Keep this factory outside createBodyCapture: deferred work must retain only
+// this bounded copy, not the capture's chunks or a full response backing buffer.
+function prepareBodySnapshot(bytes: Buffer, bodyBytes: number, maxBytes: number, binary: boolean): PreparedBodySnapshot {
+  return {
+    retainedBytes: bytes.length,
+    serialize: () => ({ bytes: Buffer.from(bytes), bodyBytes, maxBytes, binary }),
+    snapshot() {
+      if (binary) return { bodyPreview: bodyBytes > 0 ? OMITTED_BINARY_BODY_PREVIEW : undefined, bodyBytes };
+      const preview = redactBodyText(bytes.toString('utf8').replace(/\0/g, ''));
+      return { bodyPreview: preview ? truncateUtf8(preview, maxBytes) : undefined, bodyBytes };
+    },
+  };
+}
+
 export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES, contentType?: unknown): {
   onChunk(chunk: Buffer | string): void;
   snapshot(contentTypeOverride?: unknown): { bodyPreview?: string; bodyBytes: number };
+  prepareSnapshot(contentTypeOverride?: unknown): PreparedBodySnapshot;
 } {
   let bodyBytes = 0;
   let capturedBytes = 0;
@@ -458,23 +524,22 @@ export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES, contentType
       chunks.push(part);
       capturedBytes += part.length;
     },
+    prepareSnapshot(contentTypeOverride?: unknown) {
+      const binary = isBinaryContentType(contentTypeOverride ?? contentType);
+      return prepareBodySnapshot(binary ? Buffer.alloc(0) : Buffer.concat(chunks), bodyBytes, maxBytes, binary);
+    },
     snapshot(contentTypeOverride?: unknown) {
-      if (isBinaryContentType(contentTypeOverride ?? contentType)) {
-        return {
-          bodyPreview: bodyBytes > 0 ? OMITTED_BINARY_BODY_PREVIEW : undefined,
-          bodyBytes,
-        };
-      }
-      const preview = redactBodyText(Buffer.concat(chunks).toString('utf8').replace(/\0/g, ''));
-      return {
-        bodyPreview: preview ? truncateUtf8(preview, maxBytes) : undefined,
-        bodyBytes,
-      };
+      const binary = isBinaryContentType(contentTypeOverride ?? contentType);
+      return prepareBodySnapshot(binary ? Buffer.alloc(0) : Buffer.concat(chunks), bodyBytes, maxBytes, binary).snapshot();
     },
   };
 }
 
 export class HttpLogStore {
+  private normalizer?: HttpLogNormalizationQueue;
+  private readonly bodyMemo = new Map<string, { preview?: string; bytes: number }>();
+  private bodyMemoBytes = 0;
+  private bodyMemoStats = { hits: 0, misses: 0, evictions: 0, peakBytes: 0 };
   private client: MongoClient | null = null;
   private collection: Collection<HttpLogRecord> | null = null;
   /** 索引是否已建全；false 时由 scheduleIndexRetry 排程重试（不重连） */
@@ -499,7 +564,7 @@ export class HttpLogStore {
   private readonly maxDocuments: number;
   private readonly connectTimeoutMs: number;
 
-  constructor(private readonly opts: HttpLogStoreOptions) {
+  constructor(private readonly opts: HttpLogStoreOptions, private readonly workerFactory?: () => Worker) {
     this.databaseName = opts.databaseName || 'cds_state_db';
     this.collectionName = opts.collectionName || DEFAULT_COLLECTION;
     this.retentionDays = Math.max(1, opts.retentionDays ?? DEFAULT_RETENTION_DAYS);
@@ -602,31 +667,68 @@ export class HttpLogStore {
   record(record: Omit<HttpLogRecord, '_id' | 'ts'> & { ts?: Date | string }): void {
     if (!this.collection) return;
     if (!this.shouldPersist(record)) return;
-    const doc: HttpLogRecord = {
-      ...record,
-      path: redactHostedSitePreviewLog(record.path),
-      upstream: record.upstream ? redactHostedSitePreviewLog(record.upstream) : record.upstream,
-      requestKind: record.requestKind || classifyHttpRequestKind({
-        layer: record.layer,
-        method: record.method,
-        path: record.path,
-        headers: record.request?.headers,
-      }),
-      _id: `${record.requestId}:${Date.now()}:${Math.random().toString(16).slice(2)}`,
-      ts: record.ts ? new Date(record.ts) : new Date(),
-      request: sanitizePayload(record.request, isHostedSitePreviewRequest(record.path)),
-      response: sanitizePayload(record.response, isHostedSitePreviewRequest(record.path)),
-      error: record.error
-        ? {
-          code: record.error.code,
-          message: record.error.message ? (isHostedSitePreviewRequest(record.path) ? '[preview upstream error omitted]' : truncateUtf8(redactHostedSitePreviewLog(record.error.message), MAX_ERROR_MESSAGE)) : undefined,
+    this.persistNormalized(normalizeHttpLogRecord(record));
+  }
+
+  recordCaptured(record: HttpLogInput, body: PreparedBodySnapshot): void {
+    if (!this.collection || !this.shouldPersist(record)) return;
+    const job = { record, body: body.serialize() };
+    if (record.method !== 'GET' || record.status < 200 || record.status >= 400 || record.requestKind === 'sse') {
+      this.persistNormalized(normalizeCapturedHttpLog(job));
+      return;
+    }
+    const response = sanitizePayload({ ...record.response, bodyPreview: undefined, bodyBytes: job.body.bodyBytes });
+    const key = this.bodyMemoKey(job, response);
+    const cached = key ? this.bodyMemo.get(key) : undefined;
+    if (cached) {
+      this.bodyMemoStats.hits += 1;
+      this.bodyMemo.delete(key!); this.bodyMemo.set(key!, cached);
+      // Reuse only the pure body transformation. Status, headers, request,
+      // timestamps, identity and observed byte count are normalized afresh.
+      timeMainThreadSection('http-log.audit-body-memo', () => {
+        this.persistNormalized(normalizeRecordWithResponse(record, { ...response, bodyPreview: cached.preview }));
+      });
+      return;
+    }
+    if (key) this.bodyMemoStats.misses += 1;
+    this.normalizer ??= new HttpLogNormalizationQueue({
+      workerFactory: this.workerFactory,
+      onNormalized: (doc, input) => this.persistCaptured(doc, input),
+      onInline: pending => this.persistCaptured(normalizeCapturedHttpLog(pending), pending),
+      onFailure: err => console.warn(`[http-log] normalization worker degraded: ${redactBodyText(String(err)).slice(0, 1200)}`),
+    });
+    this.normalizer.enqueue(job);
+  }
+
+  private bodyMemoKey(job: CapturedHttpLog, response: HttpLogRecord['response']): string | undefined {
+    if (job.body.binary || isBinaryContentType(response.headers?.['content-type']) || isHostedSitePreviewRequest(job.record.path)) return;
+    // Store a digest of exact captured bytes, never an unredacted body key.
+    return `${job.body.maxBytes}:${createHash('sha256').update(job.body.bytes).digest('base64')}`;
+  }
+
+  private persistCaptured(doc: HttpLogRecord, job: CapturedHttpLog): void {
+    const key = this.bodyMemoKey(job, doc.response);
+    if (key) {
+      const bytes = Buffer.byteLength(key) + Buffer.byteLength(doc.response.bodyPreview || '');
+      if (bytes <= 128 * 1024) {
+        const previous = this.bodyMemo.get(key);
+        if (previous) { this.bodyMemoBytes -= previous.bytes; this.bodyMemo.delete(key); }
+        while (this.bodyMemo.size >= 16 || this.bodyMemoBytes + bytes > 128 * 1024) {
+          const oldest = this.bodyMemo.keys().next().value!;
+          this.bodyMemoBytes -= this.bodyMemo.get(oldest)!.bytes; this.bodyMemo.delete(oldest); this.bodyMemoStats.evictions += 1;
         }
-        : undefined,
-    };
+        this.bodyMemo.set(key, { preview: doc.response.bodyPreview, bytes }); this.bodyMemoBytes += bytes;
+        this.bodyMemoStats.peakBytes = Math.max(this.bodyMemoStats.peakBytes, this.bodyMemoBytes);
+      }
+    }
+    this.persistNormalized(doc);
+  }
+
+  private persistNormalized(doc: HttpLogRecord): void {
     // 有界背压:写链是串行 promise,Mongo 慢时积压会无界增长(内存 + GC 压力,
     // 又反过来加剧事件循环卡顿)。超限时丢弃非错误记录(4xx/5xx 永远保留),
     // 观测日志丢样本可接受,拖垮服务不可接受。
-    if (this.pendingWrites >= HttpLogStore.MAX_PENDING_WRITES && record.status < 400) {
+    if (this.pendingWrites >= HttpLogStore.MAX_PENDING_WRITES && doc.status < 400) {
       this.droppedWrites += 1;
       const now = Date.now();
       if (now - this.lastDropWarnAt > 60_000) {
@@ -754,7 +856,8 @@ export class HttpLogStore {
   }
 
   async flush(): Promise<void> {
-    await this.chain;
+    try { await this.normalizer?.flush(); }
+    finally { await this.chain; }
   }
 
   async close(): Promise<void> {
@@ -762,13 +865,18 @@ export class HttpLogStore {
     // collection 已置空，留着只会在下一次 tick 空转。
     if (this.indexRetryTimer) { clearTimeout(this.indexRetryTimer); this.indexRetryTimer = null; }
     try {
-      await this.flush();
+      try { await this.normalizer?.close(); }
+      finally { await this.flush(); }
     } finally {
       await this.client?.close();
       this.client = null;
       this.collection = null;
       this.indexesReady = false;
       this.indexRetryAttempt = 0;
+      if (this.normalizer) console.log('[http-log] normalization summary:', JSON.stringify({ ...this.normalizer.snapshot(),
+        redactionCache: { ...this.bodyMemoStats, entries: this.bodyMemo.size, bytes: this.bodyMemoBytes } }));
+      this.bodyMemo.clear(); this.bodyMemoBytes = 0;
+      this.normalizer = undefined;
     }
   }
 
@@ -784,7 +892,8 @@ export class HttpLogStore {
   private async pruneByCount(): Promise<void> {
     if (!this.collection) return;
     try {
-      const count = await this.collection.countDocuments();
+      // 空过滤条件默认全表扫描；保留精确计数，同时避免读取审计正文。
+      const count = await this.collection.countDocuments({}, { hint: '_id_' });
       if (count <= this.maxDocuments) return;
       const overflow = count - this.maxDocuments;
       const old = await this.collection

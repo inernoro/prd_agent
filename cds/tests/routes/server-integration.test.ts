@@ -412,6 +412,25 @@ describe('Server route ordering (regression)', () => {
     });
   }
 
+  it('yields after a successful read completes before processing its audit body', async () => {
+    const logs: HttpLogRecord[] = [];
+    const app = buildRealServerWithHttpLogs(logs, [], undefined, true);
+    let observeCompletion!: (count: number) => void;
+    const completed = new Promise<number>(resolve => { observeCompletion = resolve; });
+    server = http.createServer((req, res) => {
+      res.once('finish', () => queueMicrotask(() => observeCompletion(logs.length)));
+      app(req, res);
+    });
+    await new Promise<void>(resolve => server!.listen(0, '127.0.0.1', resolve));
+    const response = await request(server, '/api/projects');
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body).projects).toEqual(expect.any(Array));
+    expect(await completed).toBe(0);
+    await vi.waitFor(() => expect(logs).toHaveLength(1));
+    expect(logs[0].response.bodyPreview).toContain('projects');
+    expect(logs[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+
   it.each([68, 512 * 1024])('preserves %i-byte screenshots across asynchronous basic authentication and HTTP logging', async (size) => {
     const logs: HttpLogRecord[] = [];
     vi.stubEnv('CDS_AUTH_MODE', 'basic');
