@@ -168,3 +168,30 @@ for (const terminal of ['success', 'failed']) test(`运行中发布通过实际 
   await expect(active.locator('pre')).toContainText('STREAM_LIVE_APPEND');
   expect(starts).toBe(1);
 });
+
+for (const theme of ['light', 'dark']) test(`${theme} 大字弹窗暂时让预览浮标退让，关闭后恢复`, async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await installOperationsFixtures(page);
+  await page.addInitScript(t => localStorage.setItem('cds_theme', t), theme);
+  const dialog = await branchCard(page);
+  // 与父 CDS 注入根节点保持同一合同；不依赖诊断长连接来制造遮挡。
+  await page.evaluate(() => {
+    const badge = document.createElement('div');
+    badge.id = 'cds-widget'; badge.setAttribute('data-cds-widget-root', ''); badge.textContent = '预览浮标';
+    badge.style.cssText = 'position:fixed;right:12px;bottom:88px;z-index:99999;width:44px;height:44px;background:orange';
+    document.body.appendChild(badge); document.documentElement.style.fontSize = '200%';
+  });
+  const badge = page.locator('#cds-widget');
+  await expect(badge).toBeHidden();
+  await dialog.getByRole('button', { name: '关闭', exact: true }).last().click();
+  await expect(badge).toBeVisible();
+  await page.evaluate(() => document.documentElement.style.fontSize = '100%');
+  await page.getByLabel('打开导航菜单', { exact: true }).click();
+  await page.getByRole('link', { name: '发布控制台', exact: true }).first().click();
+  await page.getByRole('button', { name: '流水线', exact: true }).click();
+  const pipeline = page.getByRole('dialog');
+  await expect(pipeline).toBeVisible();
+  await expect(badge).toBeHidden();
+  await pipeline.getByRole('button', { name: '关闭', exact: true }).last().click();
+  await expect(badge).toBeVisible();
+});
