@@ -2,6 +2,9 @@
 <!--
   周刊版周报模板 v2（米多智能体周刊）— weekly-update-summary 的读者交付产物。
 
+  机器接线：scripts/reporting/edition_layout.py 实际读取本模板的 style 与 masthead，
+  使用证据台账填充刊物正文；下方历史正文只作排版参考，不得复制为本期事实。
+
   使用方法：整页复制，替换周次/统计/各栏目正文。下方正文是 2026-W30 期的真实成稿，
   作「写成什么样」的对照样例。
 
@@ -233,13 +236,13 @@
 </style>
 </head>
 <body>
-<div class="paper">
+<div class="paper" data-edition-template="v1">
 
   <header class="masthead">
     <div class="emblem"><svg viewBox="0 0 120 120" fill="none" data-emblem="earth" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><clipPath id="emb-earth-c"><circle cx="60" cy="60" r="44"/></clipPath></defs><circle cx="60" cy="60" r="44" fill="currentColor" fill-opacity="0.08"/><g clip-path="url(#emb-earth-c)"><g fill="currentColor" fill-opacity="0.42"><path d="M34 26 q16 -4 20 8 q4 12 -6 16 q-4 14 -14 12 q-12 -4 -10 -18 q0 -14 10 -18 z"/><path d="M40 68 q12 -2 12 10 q0 16 -8 26 q-10 6 -12 -6 q-2 -20 8 -30 z"/><path d="M70 30 q22 -6 30 8 q8 14 -4 22 q-6 16 -22 12 q-14 -6 -12 -22 q0 -16 8 -20 z"/><path d="M84 78 q14 -4 16 8 q0 12 -12 14 q-12 0 -12 -10 q0 -10 8 -12 z"/></g><path d="M16 60 H104" stroke="currentColor" stroke-width="1.8" opacity="0.45"/></g><circle cx="60" cy="60" r="44" stroke="currentColor" stroke-width="3"/></svg></div>
     <div class="stamp">MAP</div>
     <div class="t"><b>米多智能体周刊</b><span>MIDUO AGENT WEEKLY</span></div>
-    <div class="r">一周纵深读本<br>周报智能体 · 自动编印</div>
+    <div class="r">一周纵深读本<br>项目报告技能 · 证据编印</div>
   </header>
   <div class="dateline">
     <span>2026 年第 <b>30</b> 周 · 07-20 至 07-26 · 总第 <b>W30</b> 期</span>

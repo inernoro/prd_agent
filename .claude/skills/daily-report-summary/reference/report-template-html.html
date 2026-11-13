@@ -2,6 +2,9 @@
 <!--
   报纸版日报模板（米多智能体日报）— daily-report-summary 格式二选项之 html。
 
+  机器接线：scripts/reporting/edition_layout.py 实际读取本模板的 style 与 masthead，
+  使用证据台账填充刊物正文；下方历史正文只作排版参考，不得复制为本期事实。
+
   使用方法：整页复制，替换日期/期号/统计等具体值与各 article/li 的正文。
   下方正文是 2026-07-03 期（第二印，配图版）的真实成稿，作「写成什么样」的对照样例。
 
@@ -248,7 +251,7 @@
 </style>
 </head>
 <body>
-<div class="paper">
+<div class="paper" data-edition-template="v1">
 
   <!-- 报头 -->
   <header class="masthead">
@@ -258,7 +261,7 @@
       <b>米多智能体日报</b>
       <span>MIDUO AGENT DAILY</span>
     </div>
-    <div class="r">今日大事早知道<br>日报智能体 · 自动编印</div>
+    <div class="r">今日大事早知道<br>项目报告技能 · 证据编印</div>
   </header>
   <div class="dateline">
     <span>2026 年 7 月 3 日 · 星期五 · 第 <b>184</b> 期</span>
