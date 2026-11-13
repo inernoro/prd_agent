@@ -1425,12 +1425,12 @@ export function BranchDetailPage(): JSX.Element {
                         </code>
                       </div>
                     </div>
-                    {state.branch.githubCommitSha && state.branch.commitSha && !sameCommit(state.branch.githubCommitSha, state.branch.commitSha) ? (
-                      <div className="mt-3 rounded border border-warn/30 bg-warn-soft px-2 py-1 text-xs text-warn">
-                        当前运行提交与 GitHub 目标提交不一致，请重新部署并观察构建日志中的拉取前后版本。
-                      </div>
-                    ) : null}
                   </details>
+                  {state.branch.githubCommitSha && state.branch.commitSha && !sameCommit(state.branch.githubCommitSha, state.branch.commitSha) ? (
+                    <div role="alert" className="mt-3 rounded border border-warn/30 bg-warn-soft px-2 py-1 text-xs text-warn">
+                      当前运行提交与 GitHub 目标提交不一致，请重新部署并观察构建日志中的拉取前后版本。
+                    </div>
+                  ) : null}
                   {state.branch.errorMessage ? (
                     <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                       {state.branch.errorMessage}
