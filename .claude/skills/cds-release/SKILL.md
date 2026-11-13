@@ -1,6 +1,8 @@
 ---
 name: cds-release
-description: 当用户要求配置、修改、排查或验收 CDS 正式发布时使用。默认执行项目 Git 中经 CI 验证的 cds-release.sh；CDS 独立脚本仅为明确选择的备选，旧部署类型仅兼容存量。强制项目级 Key、身份、同提交 CI、正文指纹、真实入口与回滚证据。
+metadata:
+  version: 1.1.0
+description: 当用户要求“部署 xxx 环境到 CDS”、接入新发布环境、配置、修改、排查或验收 CDS 发布时使用。默认执行项目 Git 中经 CI 验证的 cds-release.sh；CDS 独立脚本仅为明确选择的备选，旧部署类型仅兼容存量。强制项目级 Key、身份、同提交 CI、正文指纹、真实入口与回滚证据。
 ---
 
 # CDS 正式发布配置技能
@@ -14,6 +16,29 @@ description: 当用户要求配置、修改、排查或验收 CDS 正式发布�
 ## 目标
 
 把“某个分支能在 CDS 预览”推进为“该项目有一个身份明确、可重复、可回滚、可审计的正式发布目标”。本技能配置发布控制面，不把“容器 running”误报为发布完成。
+
+## 用户路径与 Agent 接入配套
+
+用户日常只走「项目分支卡片 → 发布到 → 选择环境」，随后系统自动预检并发布，
+不要求用户进入发布中心配置服务器、脚本或流水线。
+
+用户说“帮我部署 xxx 环境到 CDS / 接入新环境”时，本技能负责环境接入：
+先查询当前项目及已有环境，复用已有服务器授权，按下文合同准备发布配置与预检。
+缺失的名称、域名或服务器身份从上下文和系统查询；查不到才询问，不让用户填整套表单。
+
+先按宿主提供的技能位置定位核心 `cds` 技能的 CLI，将实际绝对路径设为 `CDSCLI`，不要假定安装在某个仓库目录。
+
+```bash
+python3 "$CDSCLI" release-target list --project <projectId>
+python3 "$CDSCLI" release-target register --project <projectId> --file /tmp/release-environment.json
+```
+
+- register 使用下方目标配置合同，通过已有目标 API 登记，并立即从分支卡片同源列表读回。
+- 同名或同 ID 的已有环境先核对，不覆盖、不重复创建。追加同类别命名环境时保留已有主环境，新目标显式设 `isCanonical=false`。
+- 接入完成必须同时满足：当前项目身份一致、预检通过、登记后 `selectable=true`，分支卡片“发布到”能选到该环境。
+- 环境窗口定期刷新，用户切回页面也会刷新，不要求重新加载整个控制台。
+- 只要求接入环境时不发布分支。首次真正发布须有明确分支、commit 和环境授权，再遵循后续发布与公网验收合同。
+- 交付用用户语言说明环境名、所属项目、卡片入口、预检结果；不要把服务器和脚本配置步骤再转交用户。
 
 ## 默认发布合同（优先于旧模式说明）
 
@@ -124,15 +149,7 @@ curl -sS \
 - `environment=production` 与 `isCanonical=true`，除非明确配置临时或预发目标。
 - 默认项目脚本，或用户明确选择的 CDS 独立脚本；存量目标按其兼容合同处理。
 
-调用：
-
-```bash
-curl -sS \
-  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
-  -H "Content-Type: application/json" \
-  -X POST "$CDS_HOST/api/releases/targets" \
-  --data-binary @/tmp/cds-release-target.json
-```
+登记时使用上方 `release-target register --project ... --file ...`，不要只 POST 成功就宣称接入完成。
 
 服务端会写入 `projectIdentity`。调用方不得伪造该字段。
 

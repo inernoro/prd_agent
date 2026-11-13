@@ -5500,6 +5500,8 @@ export function installSpaFallback(
       index: false,
       setHeaders: (res, filePath) => {
         if (filePath.endsWith('.html')) {
+          res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+          res.setHeader('X-Frame-Options', 'DENY');
           res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
           res.setHeader('Pragma', 'no-cache');
           res.setHeader('Expires', '0');
@@ -5529,6 +5531,9 @@ export function installSpaFallback(
       return null;
     };
     const sendReactIndex = (res: express.Response): void => {
+      // 管理操作不能被不可信预览页以透明 iframe 诱导点击；报告 raw 嵌入走独立 API。
+      res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+      res.setHeader('X-Frame-Options', 'DENY');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       const selectedIndex = resolveReactIndex();
       if (!selectedIndex) {

@@ -2,7 +2,7 @@
 import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./specs",
-  testMatch: "admin-operations-compat.spec.ts",
+  testMatch: ["admin-operations-compat.spec.ts", "branch-release-flow.spec.ts"],
   timeout: 90000,
   outputDir: process.env.COMPAT_OUTPUT || "../work/compat/test-results",
   reporter: [
