@@ -28,7 +28,10 @@ const server = http.createServer((req, res) => {
     if (api === '/organization') return json(res, { tenant: { id: 'density-fixture', name: '布局验收组织' }, teams: [], members: [] });
     if (api === '/legacy-key-cutover') return json(res, { applicable: false });
     if (api === '/service-keys') return json(res, Array.from({ length: 2 }, (_, i) => ({ id: `key-${i}`, name: `验收密钥 ${i + 1}`, keyPrefix: `gwk_fixture${i}`, enabled: true, sourceSystem: 'external', clientCode: `fixture-${i}`, environment: 'test', purpose: 'runtime', appCallerCodes: ['fixture.chat::chat'], ingressProtocols: ['openai-compatible'], scopes: ['invoke'], allowedCidrs: [], rotationState: 'active', createdAt: FIXED_TIME })));
-    if (api === '/exchanges/meta') return json(res, { modelTypes: [{ code: 'chat', label: '对话' }], transformers: [] });
+    if (api === '/catalog-entries') return json(res, { items: [], total: 0, builtin: [], builtinCount: 0, knownCapabilities: ['chat'] });
+    if (api === '/imagegen-configs') return json(res, { items: [], total: 0, builtin: [], builtinCount: 0, refreshSeconds: 60, staleAfterSeconds: 180, syncedAt: FIXED_TIME, syncedPatterns: [], syncHosts: [] });
+    if (api === '/capabilities/image-layering') return json(res, { state: 'not-installed', installed: false, verified: false });
+    if (api === '/exchanges/meta') return json(res, { modelTypes: [{ value: 'chat', label: '对话' }], transformerTypes: [], authSchemes: [] });
     if (api === '/logical-models') return json(res, { items: Array.from({ length: 31 }, (_, i) => ({ id: `logical-${i}`, publicId: `fixture-model-${i + 1}`, name: `验收模型 ${i + 1}`, modelType: 'chat', capabilities: ['chat'], allowedAppCallerCodes: [], routingStrategy: 'priority', enabled: true, isDefaultForType: false, defaultForAppCallerCodes: [], displayOrder: i, offerings: [] })), total: 31 });
     if (api === '/healthz') return json(res, { status: 'ok' });
     if (/^\/platforms\/[^/]+\/upstream-models$/.test(api)) return json(res, { items: [], total: 0, alreadyImportedCount: 0, pricingProvided: false, fetchedAt: FIXED_TIME, probedUrl: 'https://provider.example.test/v1/models' });
@@ -65,6 +68,7 @@ async function visibleAndUncovered(locator) {
   });
 }
 async function snapshot(page, id) {
+  await page.evaluate(async () => { await document.fonts.ready; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
   const metrics = await page.evaluate(() => {
     const rect = selector => {
       const el = document.querySelector(selector);
@@ -104,6 +108,15 @@ try {
     scenarios.count = 2; scenarios.role = 'owner'; scenarios.failure = false;
     try {
       await login(page);
+      await page.locator('tbody tr').first().waitFor();
+      for (const [tab, heading] of [['模型名录', '模型名录'], ['生图契约', '生图契约'], ['转接上游', 'Exchange 映射'], ['Provider', 'Provider（模型供应方）']]) {
+        const control = page.getByRole('tab', { name: tab, exact: true });
+        check(`${id}:页签${tab}可见无遮挡`, await visibleAndUncovered(control), '导航不能因内容前置被裁剪或挤出视口');
+        await control.click();
+        await expect(control).toHaveAttribute('aria-selected', 'true');
+        await page.getByRole('heading', { name: heading, exact: true }).waitFor();
+        if (tab !== 'Provider') await snapshot(page, `${id}-tab-${tab === '模型名录' ? 'catalog' : tab === '生图契约' ? 'imagegen' : 'exchange'}`);
+      }
       await page.locator('tbody tr').first().waitFor();
       const small = await snapshot(page, `${id}-small`);
       check(`${id}:首条数据提前`, small.firstRow?.y <= (viewport.width > 600 ? 320 : 420), small.firstRow);
