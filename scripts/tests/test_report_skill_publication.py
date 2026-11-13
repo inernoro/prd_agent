@@ -45,7 +45,7 @@ class PublicationTests(unittest.TestCase):
         with patch.object(sys,'argv',argv),patch.object(self.pub,'headers',return_value=[]),patch.object(self.pub,'find_store',return_value={'id':'store','isPublic':False}),patch.object(self.pub,'list_entries_by_date',return_value=[('existing','2026-10-01')]),patch.object(self.pub,'shared_entry_ids',return_value=set()),patch.object(self.pub,'curl',side_effect=self.transport),contextlib.redirect_stdout(io.StringIO()):
             self.pub.main()
     def test_original_templates_build_and_verify_as_one_publication_bundle(self):
-        m,ledger=edition.verify_bundle(self.out/'bundle.json');self.assertEqual(self.ledger,ledger);self.assertTrue(m['templateDigest']);self.assertIn('reference/report-template-html.html',m['templatePath'])
+        m,ledger=edition.verify_bundle(self.out/'bundle.json');self.assertEqual(self.ledger['events'],ledger['events']);self.assertIn('未保存精确采集右端时间',ledger['limitations'][0]);self.assertTrue(m['templateDigest']);self.assertIn('reference/report-template-html.html',m['templatePath'])
     def test_manual_html_change_is_rejected_even_when_file_hash_is_rewritten(self):
         p=self.out/'report.html';p.write_text(p.read_text().replace('批量导出','已上线并节省一百工时'))
         m=json.loads((self.out/'bundle.json').read_text());m['files']['report.html']=edition.digest(p.read_bytes());(self.out/'bundle.json').write_text(json.dumps(m))
@@ -58,7 +58,7 @@ class PublicationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'缺少--evidence-bundle'):self.publish(False)
         self.assertEqual([],self.calls)
     def test_body_then_ledger_checkpoint_roundtrip_preserves_stable_entry(self):
-        self.publish();m=self.state['metadata'];self.assertEqual('a'*40,m['lastCommit']);self.assertEqual('verified',m['deliveryEvidenceStatus']);self.assertEqual(self.ledger,json.loads(m['deliveryEvidenceLedger']))
+        self.publish();m=self.state['metadata'];self.assertEqual('a'*40,m['lastCommit']);self.assertEqual('verified',m['deliveryEvidenceStatus']);self.assertEqual(self.ledger['events'],json.loads(m['deliveryEvidenceLedger'])['events'])
         put_meta=next(i for i,c in enumerate(self.calls) if c[0]=='PUT' and c[2] and 'metadata' in c[2]);self.assertTrue(any(c[0]=='GET' and c[1].endswith('/content') for c in self.calls[:put_meta]))
         self.assertFalse(any(c[0]=='POST' and c[1].endswith('/entries') for c in self.calls))
     def test_body_write_not_persisted_does_not_advance_checkpoint(self):
@@ -73,6 +73,13 @@ class PublicationTests(unittest.TestCase):
         self.drop_ledger=True
         with self.assertRaisesRegex(RuntimeError,'证据台账未确认'):self.publish()
         self.assertEqual('0'*40,self.state['metadata']['lastCommit'])
+    def test_precise_source_cutoff_is_not_replaced_by_end_of_day(self):
+        context={'coverageWindow':{'coverTo':'2026-10-04T05:08:37+08:00','headSha':'a'*40}}
+        bundle=edition.build_bundle(self.ledger,context,'2026-09-28','2026-10-04','weekly',self.out,baseline_sha='a'*40)
+        self.assertEqual('2026-10-04T05:08:37+08:00',bundle['coverageWindow']['coverTo'])
+        bundle['coverageWindow']['coverTo']='2026-10-04T23:59:59+08:00';(self.out/'bundle.json').write_text(json.dumps(bundle))
+        with self.assertRaisesRegex(ValueError,'采集时间水位线'):edition.verify_bundle(self.out/'bundle.json')
+
     def test_pending_failed_entry_does_not_hide_last_valid_checkpoint(self):
         coverage=module('skill_coverage_test',ROOT/'.claude/skills/daily-report-summary/reference/coverage_window.py')
         entries=[{'id':'failed','metadata':{'kind':'daily-report','dailyDate':'2026-10-03','deliveryEvidenceStatus':'pending'}},{'id':'good','metadata':{'kind':'daily-report','dailyDate':'2026-10-02','lastCommit':'a'*40}}]

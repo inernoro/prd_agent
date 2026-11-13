@@ -220,6 +220,10 @@ def main():
     out = {"mode": "today", "baseSha": "", "sinceIso": "", "excludeSha": "", "headSha": head,
            "branch": branch, "revRange": "", "spanDays": 1, "prevDate": "", "gap": False}
 
+    _time_code, head_time, _time_error = git("show", "-s", "--format=%cI", head)
+    if _time_code == 0 and head_time:
+        out["coverTo"] = head_time
+        out["headCommittedAt"] = head_time
     try:
         base = a.base.rstrip("/") + API
         H = headers(a.impersonate)
@@ -249,6 +253,7 @@ def main():
 
         last_sha = (md.get("lastCommit") or "").strip()
         cover_to = (md.get("coverTo") or "").strip()
+        if cover_to: out["coverFrom"] = cover_to
         log(f"[水位线] 上一期：dailyDate={prev_date} lastCommit={last_sha[:12] or '(无)'} coverTo={cover_to or '(无)'}")
 
         if sha_usable(last_sha, head):

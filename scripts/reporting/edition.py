@@ -30,9 +30,26 @@ def json_bytes(value):
 def canonical_html(value):
     return publisher().strip_html_comments(value).lstrip()
 
+def collection_window(ledger, context, baseline):
+    raw={**ledger.get('collection',{}),**(context.get('coverageWindow') or {})}
+    if raw.get('base'):raw.setdefault('baseSha',raw['base'])
+    if raw.get('head'):raw.setdefault('headSha',raw['head'])
+    if baseline and raw.get('headSha') and baseline != raw['headSha']:raise ValueError('刊物SHA基线与采集水位线冲突')
+    result={k:raw[k] for k in ('baseSha','headSha','coverFrom','coverTo','mode') if raw.get(k)}
+    if baseline:result.setdefault('headSha',baseline)
+    if not result.get('coverTo') and baseline:
+        resolved=subprocess.run(['git','-C',str(ROOT),'show','-s','--format=%cI',baseline],capture_output=True,text=True)
+        if resolved.returncode==0 and resolved.stdout.strip():result['coverTo']=resolved.stdout.strip()
+    return result
+
 def build_bundle(ledger, context, start, end, cadence, out, title=None, baseline_sha='', timezone='Asia/Shanghai'):
     from edition_layout import render_edition
-    ledger=normalize(ledger);context=context or {};report=analyze(ledger,start,end,cadence,timezone)
+    ledger=normalize(ledger);context=context or {}
+    baseline_sha=baseline_sha or ledger.get('collection',{}).get('head','')
+    coverage=collection_window(ledger,context,baseline_sha)
+    note=('Git采集右端：'+coverage['coverTo']+'；仅说明固定提交水位线，不代表已采满报告最后一天或其他来源。' if coverage.get('coverTo') else '未保存精确采集右端时间；不能宣称已采满报告最后一天。')
+    ledger['limitations']=list(dict.fromkeys(ledger.get('limitations',[])+[note]))
+    report=analyze(ledger,start,end,cadence,timezone)
     title=title or {'daily':'项目日报','weekly':'项目周刊','monthly':'项目管理月度汇总'}[cadence]+' · '+start+' ~ '+end
     rendered=render_edition(report,context,title)
     body=canonical_html(rendered['html']);errors=publisher().validate_html_report(body)
@@ -43,7 +60,7 @@ def build_bundle(ledger, context, start, end, cadence, out, title=None, baseline
               'report.md':md.encode(),'report.html':body.encode()}
     for name,data in contents.items():(directory/name).write_bytes(data)
     manifest={'schemaVersion':1,'cadence':cadence,'kind':KINDS[cadence],'start':start,'end':end,'timezone':timezone,'title':title,
-              'baselineSha':baseline_sha or ledger.get('collection',{}).get('head',''),'inputDigest':report['inputDigest'],
+              'baselineSha':baseline_sha,'coverageWindow':coverage,'inputDigest':report['inputDigest'],
               'templatePath':rendered.get('templatePath'),'templateDigest':rendered.get('templateDigest'),
               'files':{name:digest(data) for name,data in contents.items()}}
     (directory/'bundle.json').write_bytes(json_bytes(manifest))
@@ -65,6 +82,7 @@ def verify_bundle(path):
     if canonical_html(rendered['html'])!=(directory/'report.html').read_text() or rendered['markdown'].lstrip()!=(directory/'report.md').read_text():
         raise ValueError('技能报告正文与原模板和事实不一致，请重建')
     if rendered.get('templateDigest')!=manifest.get('templateDigest'):raise ValueError('技能模板已变动，请重建')
+    if manifest.get('coverageWindow')!=collection_window(ledger,context,manifest.get('baselineSha','')):raise ValueError('采集时间水位线与冻结来源不一致')
     return manifest,ledger
 
 def evidence_metadata(path):
@@ -106,13 +124,17 @@ def main():
         for name,value in [('base',a.base),('mainline',a.mainline),('git-head',a.git_head or window.get('headSha')),('evidence-ledger',a.evidence_ledger),('ledger-out',a.ledger_out),('pull-requests',a.pull_requests)]:
             if value:command+=['--'+name,value]
         subprocess.run(command,check=True,cwd=ROOT)
+        if window:
+            path=Path(a.out);collected=json.loads(path.read_text());collected['coverageWindow']=window;path.write_bytes(json_bytes(collected))
     else:
         manifest,_=verify_bundle(a.bundle);directory=Path(a.bundle).resolve().parent
         cmd=[sys.executable,str(ROOT/'.claude/skills/daily-report-summary/reference/publish.py'),'--title',manifest['title'],
              '--report-html',str(directory/'report.html'),'--evidence-bundle',str(Path(a.bundle).resolve()),'--kind',manifest['kind'],
              '--daily-date',manifest['end'],'--replace-same-date','--impersonate',a.impersonate,'--tags',{'daily':'日报,证据日报','weekly':'周报,项目周刊','monthly':'月报,项目管理汇总'}[manifest['cadence']]]
         if manifest.get('baselineSha'):cmd+=['--last-commit',manifest['baselineSha']]
-        cmd+=['--cover-from',manifest['start'],'--cover-to',manifest['end']+'T23:59:59+08:00']
+        coverage=manifest.get('coverageWindow',{})
+        for name in ('coverFrom','coverTo'):
+            if coverage.get(name):cmd+=['--cover-from' if name=='coverFrom' else '--cover-to',coverage[name]]
         if a.base:cmd+=['--base',a.base]
         if a.store:cmd+=['--store',a.store]
         else:cmd+=['--store',{'daily':'日报知识库','weekly':'周报知识库','monthly':'项目月度汇总知识库'}[manifest['cadence']]]

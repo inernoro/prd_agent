@@ -700,20 +700,20 @@ def main():
     ap.add_argument("--cover-from", default="", help="本期窗口起点（ISO 时间戳或 YYYY-MM-DD），仅记账用")
     ap.add_argument("--cover-to", default="", help="本期窗口终点（ISO 时间戳），SHA 不可达时的降级水位线")
     ap.add_argument("--replace-same-date", action="store_true",
-                    help="同 dailyDate 已有条目时替换它（先建新条目并校验落库成功，再删旧条目）")
+                    help="同dailyDate与kind已有条目时原地更新；正文/元数据核验后才清理未分享的历史重复条目")
     ap.add_argument("--evidence-bundle", default="", help="edition.py生成的完整事实/原模板刊物bundle，正式技能发布必传")
     ap.add_argument("--legacy-unverified-reason", default="", help="仅重发历史原文时显式说明原因；不会标为已核查报告")
     a = ap.parse_args()
 
     # 日报联网发布必须带水位线：没有它，下一期读不到 lastCommit/coverTo 就会退化为
     # 当日口径，把「上期水位线 → 今天 00:00」之间落地的提交整段漏掉——正是本技能存在的理由。
-    # 只对 kind=daily-report 且非 --local 强制：周报等复用本脚本的刊物没有水位线概念。
+    # 旧日报兼容闸；新技能日报/周报/月度刊物另由bundle核对固定SHA与精确采集时间。
     if (a.kind or "daily-report") == "daily-report" and not a.local and not a.last_commit:
         sys.stderr.write(
             "[错误] 联网发布日报必须传 --last-commit <本期覆盖到的最后一个主干提交 SHA>。\n"
             "  缺了它，下一期读不到水位线会退回「按日历日采」，把本期之前落地的提交整段漏掉。\n"
             "  取值：git rev-parse origin/main（或 coverage_window.py 输出的 headSha）。\n"
-            "  确实不需要水位线（如周报）请显式传 --kind，或用 --local 落本地。\n")
+            "  仅做本地展示时使用 --local。\n")
         sys.exit(7)
 
     if bool(a.report_md) == bool(a.report_html):
@@ -750,6 +750,9 @@ def main():
             raise RuntimeError("正文与已核查的技能刊物不一致，拒绝发布")
         if a.last_commit != bundle.get("baselineSha", ""):
             raise RuntimeError("发布水位线与证据bundle基线不一致，拒绝发布")
+        coverage = bundle.get("coverageWindow", {})
+        if a.cover_from != coverage.get("coverFrom", "") or a.cover_to != coverage.get("coverTo", ""):
+            raise RuntimeError("发布采集时间与证据bundle精确水位线不一致，拒绝发布")
         evidence_meta = evidence_metadata(a.evidence_bundle)
     elif not a.local and a.kind in {"daily-report", "weekly-report", "project-monthly-report"}:
         if not a.legacy_unverified_reason.strip():
@@ -991,7 +994,7 @@ def main():
             if not r.get("success"):
                 return None
             md = ((r.get("data") or {}).get("metadata")) or {}
-            return (not a.last_commit or md.get("lastCommit") == a.last_commit) and all(md.get(k) == v for k, v in evidence_meta.items())
+            return all(md.get(k) == meta[k] for k in ("lastCommit", "coverFrom", "coverTo") if k in meta) and all(md.get(k) == v for k, v in evidence_meta.items())
         except Exception:
             return None
 

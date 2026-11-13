@@ -1,392 +1,95 @@
 ---
 name: daily-report-summary
-description: 从 git 历史生成「今日大事早知道」开发日报，并发布到知识库（文档空间）。以可核查的交付进展、风险、效率证据和下一步组织内容，同一事项跨周期连续跟踪。自动 find-or-create「日报知识库」并出分享链。触发词："生成日报"、"写日报"、"今日大事"、"日报"、"daily report"、"/daily"、"今天干了啥"。
+description: 从固定主干水位线、日报原文、验收与发布来源生成项目日报报纸；按稳定事项连续跟踪交付、风险与下一步，并发布到日报知识库。触发词：生成日报、写日报、今日大事、daily report、/daily。
 ---
 
-# 日报生成（今日大事早知道）
+# 项目日报报纸
 
-> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/daily`、"生成日报"、"写日报"、"今日大事"、"日报"、"今天干了啥"
+本技能生成「今日大事早知道」项目日报刊物。入口是本仓库脚本与知识库，采用 `reference/report-template-html.html` 的纸张版式和月亮刊徽。员工个人月报的评价、认可、建议及提交仍由本人处理；本技能不调用员工报告 API。
 
-每天从连续采集窗口及事项证据台账重建实际进展，先展示交付、风险和下一步，再作业务解读，并按任务授权决定是否发布到知识库。
+## 必须保持的不变量
 
-> 与 `weekly-update-summary`（周报）互补：周报按 ISO 周 + PR 边界统计，落 `doc/report.YYYY-WXX.md`；日报按**单日提交日期文本**统计，落**知识库条目**（不进 `doc/`），主打「今天大事早知道」的早读体验。
->
-> 行业参照（`/find-skills` 调研）：公开生态里最流行的是「standup / 站会」格式（如 `googleworkspace/cli@gws-workflow-standup-report`，16K+ 安装），三段式「昨天做了/今天做/卡点」。本技能借鉴其「卡点（blockers）前置可见」的优点，但把叙事重心放在**当日实际落地的价值**上，而非待办计划，更贴合「日报回顾」而非「站会播报」。
+- 一件事沿用同一事项 ID。明确的任务引用、已核查的来源绑定或上期台账才能建立关联；标题相似不能建立身份。多个提交、PR、日报引用不重复算成果。
+- 功能完成、功能验证、正式上线分别核查版本、范围与直接来源。合并、CI通过、预览部署不能替代三个阶段。后续修改使旧验证待复验。
+- 日报原文是线索；没有明确事项或阶段证据时保持未归属/未证实。原文修订用观测/更新时间留档，不将未来修订倒灌到早期报告。
+- 未解决阻塞即使没有提交仍要连续展示。零提交不能成为停止采集验收、风险、发布或旧事项的理由。
+- 缺数据不填0、不报无风险、不硬凑亮点。效率、工时、收益只采用含单位、方法、样本范围、周期及来源的测量。提交数和代码量仅作附录活动记录。
+- 主干取远端默认分支并固定SHA。日报覆盖 `(上期lastCommit, 本期headSha]`，不是截到每天零点；断跑可续采，不重复处理已覆盖提交。
+- 事项事实使用带时区原始时间、Asia/Shanghai报告边界；Git旧统计的提交日期文本仅作活动附录，两者口径明确区分。精确采集右端不能伪造为当天23:59:59。
+- 新技能刊物只能从已核验bundle发布。正文、台账、日期、模板或水位线被手改后须重建；发布器读回正文和元数据后才标记成功。失败pending空壳不能成为下一期水位线。
 
-## 与验收链路的边界
+## 1. 读上期水位线与台账
 
-日报是验收方式生态中的“传播和回顾”环节，不是质量 Verdict 的来源。链路边界以仓库 SSOT `doc/rule.acceptance.map-enterprise.md` 的“验收链路总控矩阵”为准:
-
-- 单个验收: 直接使用 `create-visual-test-to-kb`，产出 CDS 验收报告和 Verdict。
-- 每日验收: 使用 `acceptance-test-design -> acceptance-scenario-orchestrator -> create-visual-test-to-kb`，产出 CDS 每日验收报告、缺口和 Slack 摘要。
-- 日报: 使用本技能产出「日报知识库」条目；只在新增方向需要图片时借用 `create-visual-test-to-kb` 的 harness 取证，不因此获得验收 Verdict。
-
-日报正文如果要写“通过、未通过、有条件通过”，必须链接到对应 CDS 验收报告，并说明这是引用验收结论，不是日报自行判定。若用户同时要求日报和每日验收，先产出验收报告，再让日报引用该验收链接。
-
-## 核心纪律（必须遵守）
-
-### 纪律 1：管理结论按证据与事项组织，风险不得被新增功能挤到末尾
-
-先执行共享事项证据流程（仓库 `scripts/reporting/README.md`）：沿用上期事项 ID 与事件，补采 `(上期 SHA, 主干固定 SHA]`，明确关联任务、PR、验证和正式发布。多个提交或多个 PR 指向同一事项，不得分别计作成果。不能确认关联的记录列为未归属，不自动制造成果 ID。
+先读取仓库规则、项目身份与技能脚本；确定用户要求的目标日期`TODAY`。临时产物全部放仓库外。以下命令在仓库根运行：
 
 ```bash
-python3 scripts/reporting/evidence.py collect-git --base "$LAST_SHA" --head "$HEAD_SHA" \
-  --ledger "$LEDGER" --out work/daily-ledger.json
-python3 scripts/reporting/evidence.py render --ledger work/daily-ledger.json \
-  --start "$COVER_START" --end "$TODAY" --cadence daily --out work/daily-facts
-```
-
-先阅读生成的 JSON 与来源索引，将事实区置于现有 HTML 报头之后：交付进展（功能 / 验证 / 上线分开）、风险与外部阻塞、效率证据、下一步。新增/优化/修复分类只作后续阅读层级，不决定风险可见性。不要硬凑 3–6 条亮点；无新增也要保留未解决事项。
-
-**功能完成只认明确完成证据，合并不自动代表功能完成；验证必须对应版本和范围；正式上线只认正式发布证据。** 旧成果本期只有返修、复验或上线时，明确写延续推进及本期变化，不能重新计作新增功能。工时、效率与收益缺测量时写不可用；提交数和行数只在附录表示活动量。
-
-### 纪律 2：采集窗口是「上期水位线 → 本期 HEAD」，不是「今天这个日历日」
-
-**日报覆盖的是一段连续区间，不是一个日历日。** 起点永远等于上一期日报采到的位置
-（水位线 / watermark），终点是本次运行时的主干 HEAD。区间**左开右闭**：`(上期 lastCommit, HEAD]`。
-
-> **为什么不能按日历日**（2026-07-30 实测事故，本纪律因此重写）：
-> 日报由定时任务在每天早上跑（实测 09:10 +0800）。按日历日过滤时，当天 09:10 之后
-> 落地的提交**不在当天报告里**（报告已经跑完了），也**不在第二天报告里**（日期桶不对），
-> 于是永久漏报。实测 07-28 / 07-29 两天共漏掉 8 个主干条目、36 个真实提交，含 4 个 feat
-> （周报技能 v2、知识库正文链接卡死修复、录音存储就绪修复等当周最大的几项）。
-> 漏报无声无息：每期报告自己看着都正常，只有把相邻两期的覆盖区间拼起来才看得见那个洞。
-
-**水位线以提交 SHA 为准**，不用日期、不用时间戳。三个理由：免疫时区错位（git `%cd` 用提交
-自带时区，容器多为 UTC，两者会差一天）；免疫「同一秒多个提交」的边界重叠；**中断自动续上**
-——漏跑三天，下次窗口自然横跨三天，不需要任何补偿逻辑。
-
-水位线存在上一期条目的 `metadata.lastCommit`，由 `coverage_window.py` 读取，三级兜底：
-
-| mode | 触发条件 | 窗口 |
-|------|----------|------|
-| `sha` | 上期 `lastCommit` 在本地可达**且是本期右端的祖先**（正常路径） | `git log <lastCommit>..<headSha>` |
-| `since` | **仅**上期从来没记过 SHA（本机制上线前的老条目）且有 `coverTo` | `git log <headSha> --since=<coverTo>` 再剔除 `excludeSha`（--since 是闭区间，须还原左开） |
-| `today` | 库里没有历史日报（首次运行），或老条目连 `coverTo` 都没有 | 退化为当日，与旧行为一致 |
-
-> **不降级的那种情况**：上期**记了 SHA 却在当前历史里用不上**（`cat-file` 找不到，或它不是本期右端的祖先——
-> main 被 force push 改写后的典型表现），`coverage_window.py` 直接 `exit 3`，**不**退到时间戳。
-> 因为时间戳表达不了「图上哪些点没被覆盖过」：改写后的提交常保留更早的 committer date，
-> 会被 `--since` 整批排除，而水位线照样前进 → 那批改动永久跳过。这种情况必须人工确认。
-
-```bash
-# 0. 主干：所有 git log 必须带 "$DEFAULT_BRANCH" + --first-parent（见纪律 3），
-#    否则在 feature 分支上跑会把未合并的本地提交当成「主干落地」统计上去。
-DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
-DEFAULT_BRANCH=${DEFAULT_BRANCH:-origin/main}
-git fetch origin --quiet          # 必须先 fetch：容器多为浅克隆，不 fetch 会少看好几天
-
-# 1. 读水位线（stdout 是单份 JSON，诊断走 stderr）
-WIN=$(python3 .claude/skills/daily-report-summary/reference/coverage_window.py \
-        --base https://main-prd-agent.miduo.org --impersonate inernoro --target-date "$TODAY")
-MODE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["mode"])')
-RANGE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["revRange"])')
-HEAD_SHA=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["headSha"])')
-
-# 2. 按 mode 取本期区间内的主干条目
-case "$MODE" in
-  sha)   git log --first-parent "$RANGE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
-  since) SINCE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["sinceIso"])')
-         # 右端用 $HEAD_SHA（已按 target-date 收敛），不用分支 tip——补历史时用 tip 会越界
-         git log --first-parent "$HEAD_SHA" --since="$SINCE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
-  today) git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --date=short \
-           | awk -F '\t' -v d="$TODAY" '$1==d' ;;
-esac
-```
-
-**发布时必须回写水位线**：`publish.py --last-commit "$HEAD_SHA"`（见 Phase 5）。
-不回写，下一期就读不到水位线、退回当日口径，这个洞立刻复发。
-
-**跨日窗口的写法**：当窗口横跨多天（`spanDays > 1`，即补记期），报头 dateline 必须写明
-真实覆盖区间而不是只写目标日期，例如
-`2026 年 7 月 30 日 · 第 211 期 · 补记 07-28 15:22 ~ 07-30 05:14`，
-并在「今日大事」首条说明这是补记期、补的是哪几天。**禁止**把多天的量按单日呈现。
-
-### 纪律 3：默认主干为主，但合并日 ≠ 提交日时要穿透 PR
-
-主仓库常见「feature 分支当天提交、当天/隔天 merge 到 main」。先取主干当日提交（`--first-parent` + 主干 merge commit 的 committer date = 落地时间，口径正确）；若发现当天有 merge commit，用 `git log <merge>^1..<merge>^2 --oneline` 穿透读 PR 真实 commits，以 commit 内容（而非 merge 标题）判断主题归属。**禁止**只读 merge 标题就归类。
-
-**已知边界（committer date 的口径）**：本仓库 PR 全部走 merge commit，merge 的 committer date 即落地日，统计准确。若仓库改用 **fast-forward / rebase 合并**，被合并的提交会保留更早的 committer date，可能让「当天 ff 落地」的提交按更早日期归档（当天显示零活动而实际已发版）。遇到 ff/rebase 流程，需改用 PR 元数据的落地 SHA 日期（参照 `weekly-update-summary` 纪律 3）。本边界已记入 `doc/debt.report-agent.md`。
-
-### 纪律 4：标题固定格式，库固定名
-
-- 知识库名：`日报知识库`（find-or-create，缺则建，isPublic=false 私有）
-- 条目标题：`日报-YYYY-MM-DD-今日大事早知道`
-- 正文以 `# {标题}` H1 打头（根治分享阅读器目录 `---`）
-
-### 纪律 5：数字必须来自 git，不估算；空日不硬凑
-
-所有计数（提交数、各类型分布、贡献者）必须来自 git 命令输出。若当日零提交，明确写「今日主干无落地提交」；仍须呈现台账中未解除的风险、阻塞和待验证事项。没有新提交不等于没有重要进展，也不等于旧问题已解决。
-
-### 纪律 6：格式二选项 —— html 报纸版（默认）/ md 朴素版
-
-日报正文有两种格式，发布时**恰好选一种**（publish.py 的 `--report-html` / `--report-md` 二选一）：
-
-| 格式 | 模板 | contentType | 渲染路径 | 何时用 |
-|------|------|-------------|----------|--------|
-| **html 报纸版（默认）** | `reference/report-template-html.html` | `text/html` | 知识库 FilePreview 的 srcDoc 沙箱 iframe 真渲染（分享链同链路） | 日常日报一律用这个（用户 2026-07-04 指定：不喜欢 md 版式） |
-| md 朴素版 | `reference/report-template.md` | `text/markdown` | MarkdownViewer | 用户明确要 md、或需要被双链/全文索引深度消费时 |
-
-html 报纸版硬约束（publish.py 发布前校验，违者拒发）：
-- **自包含**：内联 CSS，无外部 http 资源；图片仅允许知识库 upload 返回的站内 URL
-- **禁 `<script>`**：知识库沙箱 iframe 不给 allow-scripts，动效一律纯 CSS
-- **必带 `<meta viewport>`**：否则移动端按 980px 桌面视口缩放、整页变小
-- 版式即「米多智能体日报」报纸风（报头 + 期号 dateline + 今日大事 + 头条展开 + 双栏优化/修复 + 数据版 + 计划与遗留 + 数据页脚）；期号 = 当年第几天（`date +%j`）
-- 事实、风险、下一步优先级按纪律 1；新增/优化/修复可沿用原版式作为补充，不得覆盖事实区
-- **报纸必须有图**（用户 2026-07-04 反馈「缺少一些图」后固化）：
-  1. 头条必配图——首选 Phase 4.5 真实 UI 截图；取证不可用时兜底为**版画风内联 SVG 示意图**（双色 + hatch 纹理，模板有样例），并在「取证说明」注明待补原因
-  2. 「数据版」栏目每期必做，两图从 git 真实数据生成：今日战场（TOP6 模块文件变更横条图）+ N 格铅字（每格一个提交的瀑布格，按类型着色）
-  3. 引语大字（.pull）从头条提炼一句，制造版面节奏
-  4. 禁 `data:image`（后端防破图守卫拒存），插图一律内联 `<svg>` 标签、图表一律纯 CSS
-
-## 触发词
-
-"生成日报" / "写日报" / "今日大事" / "今日大事早知道" / "日报" / "daily report" / "/daily" / "今天干了啥"
-
-## 最简触发提示词（用户每天只需发这一句）
-
-逻辑全在本技能里，提示词保持极简、**不用每次改**；要调流程就改技能：
-
-```
-/daily
-```
-
-或自然语：
-
-```
-生成今天的开发日报，发到「日报知识库」，重要新增功能配截图验证。
-```
-
-补历史某天：
-
-```
-补 2026-05-30 的日报
-```
-
-> 设计意图（用户 2026-05-31 明确）：提示词尽量精简、固定不变；可变逻辑（分层权重、取证选择、发布目标）沉淀进技能，改技能即可，不动提示词。
-
----
-
-## 执行流程
-
-### Phase 1：确定目标日期 + 解析采集窗口
-
-```bash
-# 全流程唯一日期变量：TODAY —— 它只决定**标题和归档日期**，不再决定采集范围（纪律 2）。
-# 后续 Phase 5 的 --title/--daily-date 一律复用它，禁止引入 ARG_DATE 等别名。
-TODAY=${1:-$(date +%Y-%m-%d)}
-
-# 采集范围由水位线决定，与 TODAY 解耦。必须先 fetch：容器多为浅克隆，不 fetch 会少看好几天。
+REPORT_WORK=$(mktemp -d /tmp/project-daily.XXXXXX)
 DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
 DEFAULT_BRANCH=${DEFAULT_BRANCH:-origin/main}
 git fetch origin --quiet
-# 浅克隆必须**真的**补全：失败不能吞。浅克隆下 merge 的父提交不可达（.git/shallow 的
-# graft 会让边界提交看起来根本没有父），Phase 2 的穿透判据会把每个 merge 误判成「直接提交」，
-# 于是只统计到一行 merge 标题、PR 里的真实提交全部丢失——而 Phase 5 照样把水位线推到 HEAD，
-# 那些提交**永久**不会再被任何一期采到。这正是本 PR 要根治的漏报，必须当场中止。
-if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
-  git fetch origin --unshallow --quiet || git fetch origin --deepen=2000 --quiet || true
-  if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
-    echo "[致命] 仓库仍是浅克隆，merge 无法穿透：统计会静默丢失 PR 内提交，而水位线仍会前进。" >&2
-    echo "       请先手动跑通 git fetch origin --unshallow 再生成日报。" >&2
-    exit 3
-  fi
-fi
-
-WIN=$(python3 .claude/skills/daily-report-summary/reference/coverage_window.py \
-        --base https://main-prd-agent.miduo.org --impersonate inernoro --target-date "$TODAY")
-echo "$WIN"    # {mode, baseSha, sinceIso, headSha, revRange, spanDays, prevDate, gap}
-
-# 窗口三变量在此**一次性**解出，Phase 2 与 Phase 5 只引用、不重复解析——
-# 重复解析是上一轮的真实事故：Phase 2 只解了 MODE/RANGE 却引用 $HEAD_SHA，
-# since 模式下它是空串，git log 直接 exit 128，降级路径整条跑不起来。
-MODE=$(echo "$WIN"  | python3 -c 'import json,sys;print(json.load(sys.stdin)["mode"])')
-RANGE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["revRange"])')
-HEAD_SHA=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["headSha"])')
-SINCE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["sinceIso"])')
-EXCLUDE_SHA=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("excludeSha",""))')
-# 空值即刻报错，不要留到 git log 才以 exit 128 的形式暴露
-: "${MODE:?窗口解析失败：MODE 为空}" "${HEAD_SHA:?窗口解析失败：headSha 为空}"
+python3 .claude/skills/daily-report-summary/reference/coverage_window.py \
+  --base "$MAP_BASE" --impersonate "$REPORT_USER" --branch "$DEFAULT_BRANCH" \
+  --target-date "$TODAY" > "$REPORT_WORK/window.json"
 ```
 
-用户可指定日期（如「补 2026-05-30 的日报」时 `TODAY=2026-05-30`）；缺省取今天。
-`--target-date` 会让水位线查询**排除目标日当天已发布的那篇**，避免重跑当天时窗口塌成空集。
+`MAP_BASE`是当前项目的知识库API根地址，`REPORT_USER`是授权的报告账号；复用现有环境配置，不把凭据写入报告。第一次没有历史时明确记录历史覆盖不完整。读不到水位线、SHA不可达/非祖先或历史不足时拒绝推进水位线，不无声退回当天。
 
-若 `gap=true` 或 `spanDays>1`，本期是**补记期**：dateline 与「今日大事」首条必须说明补的是哪几天（纪律 2）。
+窗口JSON同时携带`baseSha/headSha`、精确`coverTo`、上一期`deliveryEvidenceLedger`及`previousEntryId`。旧日报尚无台账时只保留已知水位线与缺口，不从旧正文直接制造完成事件。
 
-### Phase 2：数据收集（按纪律 2/3）
+## 2. 采集六源并更新连续台账
+
+从window.json确定`COVER_START`（上期覆盖起点或首次运行目标日）和固定`HEAD_SHA`。先补全浅克隆，再使用同一入口采集：
 
 ```bash
-# 0. 把 Phase 1 解出的窗口落成一个可复用的 first-parent 列表 /tmp/win_fp.tsv：<date>\t<sha>\t<author>\t<subject>
-#    以下所有统计都从这个列表派生，保证「报头数字」与「正文叙事」同源，不会各算各的。
-#    MODE / RANGE / HEAD_SHA / SINCE 均来自 Phase 1，此处不重新解析（重解就会漏解）。
-case "$MODE" in
-  sha)   git log --first-parent "$RANGE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
-  since) # 右端用 $HEAD_SHA（已按 target-date 收敛），不用分支 tip——补历史时用 tip 会越界。
-         # git 的 --since 是闭区间（实测 git 2.43：喂某提交的 %cI 会把该提交自身返回），
-         # 而 $SINCE 正是上期最后一个提交的 %cI，故必须按 SHA 把它剔掉还原「左开」，
-         # 否则上期末条被重复统计；它若是 merge，Phase 2 还会穿透它把上个 PR 整个重算。
-         git log --first-parent "$HEAD_SHA" --since="$SINCE" --format="%cd%x09%H%x09%an%x09%s" --date=short \
-           | awk -F '\t' -v x="$EXCLUDE_SHA" 'x=="" || $2!=x' ;;
-  today) git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --date=short \
-           | awk -F '\t' -v d="$TODAY" '$1==d' ;;
-esac > /tmp/win_fp.tsv
-
-# 2.1 本期落地主干的 first-parent 条目——看"这期落了哪些 PR/直接提交"
-cat /tmp/win_fp.tsv
-
-# 2.2 收集"本期落地的真实提交"——类型分布/贡献者/新增展开的【权威来源】。
-#   关键：first-parent 多为 "Merge pull request…"，直接 grep 会把 feat/fix 统计成 0、
-#   贡献者只剩 merge 作者。所以真实提交 = (a) 直接落主干的非 merge 提交
-#   + (b) 每个 merge 内部穿透出来的真实提交。产出 /tmp/today_real.tsv：<author>\t<subject>
-: > /tmp/today_real.tsv
-while IFS=$'\t' read -r d sha an s; do
-  # 是不是 merge 必须看**提交对象本身**的 parent 行数（git cat-file -p），不能用
-  # `rev-parse ^2 是否可解` 来推断：浅克隆的 .git/shallow graft 会让边界提交
-  # 「看起来没有父」，于是 merge 被误判成直接提交、PR 内提交全部丢失且不报错。
-  # 实测：浅克隆下同一个 merge，cat-file 显示 2 个 parent，而 rev-list --parents 显示 0 个。
-  nparent=$(git cat-file -p "$sha" | grep -c '^parent')
-  if [ "$nparent" -ge 2 ]; then                                    # 是 merge
-    if ! git rev-parse -q --verify "$sha^2" >/dev/null 2>&1; then  # 但父不可达 → 不能静默降级
-      echo "[致命] merge $sha 的父提交不可达（浅克隆/部分克隆未补全），穿透会静默丢失该 PR 的全部提交" >&2
-      exit 3
-    fi
-    git log "$sha^1..$sha^2" --no-merges --format="%an%x09%s" >> /tmp/today_real.tsv
-  else                                                             # 直接提交：自己算一条
-    printf '%s\t%s\n' "$an" "$s" >> /tmp/today_real.tsv
-  fi
-done < /tmp/win_fp.tsv
-
-# 类型分布（权威：从真实提交主题统计，不是 merge 标题）
-cut -f2 /tmp/today_real.tsv | grep -oE '^(feat|fix|perf|refactor|style|docs|chore|test|ci)' | sort | uniq -c | sort -rn
-# 提交总数（报告头 N 用这个：真实落地提交数，不含 merge 壳）
-wc -l < /tmp/today_real.tsv
-
-# 2.3 穿透本期 merge commit（人读，判断主题归属；与 2.2(b) 同源）
-cut -f2 /tmp/win_fp.tsv \
-  | while read m; do echo "== PR merge $m =="; git log "$m^1..$m^2" --no-merges --oneline 2>/dev/null; done
-
-# 2.4 贡献者（权威：真实提交作者，含 PR 内作者，不是按 merge 作者；与 2.2 同源）
-cut -f1 /tmp/today_real.tsv | sort | uniq -c | sort -rn
+python3 scripts/reporting/edition.py collect \
+  --start "$COVER_START" --end "$TODAY" --cadence daily \
+  --coverage-window "$REPORT_WORK/window.json" --mainline "$DEFAULT_BRANCH" \
+  --base "$MAP_BASE" --impersonate "$REPORT_USER" --project "$PROJECT" \
+  --out "$REPORT_WORK/context.json"
 ```
 
-> 报告头的 `feat M / fix K / 贡献者 C / 提交 N` 一律取 2.2/2.4 的【真实提交】口径，**不要**用 2.1 的 first-parent 行数（合并日会把 N 缩成 PR 个数、把 feat/fix 显示成 0、贡献者只剩按 merge 的人），否则与正文「新增/修复」叙述自相矛盾。
+默认连续台账保存在Git common-dir的私有`report-skills/<project>/ledger.json`；也可显式传`--evidence-ledger/--ledger-out`。采集器同时合并本期已存台账、上期发布元数据和新来源，采集中断不能删掉已核实的本期事实。
 
-### Phase 3：聚类与分层
+需要补充原始PR对象时传`--pull-requests <JSON>`；只有明确单一closing引用才跨PR归到同一任务。需要已核查的验收/发布关联时用台账`artifactBindings`或`--evidence-input`，保留原始完整SHA、范围、环境、发生/观测时间和来源原文。不能靠标题、verdict或短SHA猜功能验收。
 
-1. 把当日 commit 按**主题**（不是按文件）聚成 5-10 条脉络
-2. 每条脉络判定归属层级（新增/优化/修复），打上权重
-3. 新增方向逐条展开（是什么+解决什么+怎么用）
-4. 优化、修复按主题聚类，修复段做计数 + 安全/数据类点名
-5. 从 `doc/debt.*.md` 与 commit 里的「遗留/TODO/未实现」提取「计划与遗留」
+采集器保留Git、日报原文与水位线、CDS验收、缺陷、正式发布、团队/采用度的可用性和原记录。任一来源失败独立标缺口。正式回滚会使明确对应的新版本上线证据失效，恢复旧版本不计新成果。CI失败和未归属失败须可见，闭环未知不能写已解决。
 
-### Phase 4：生成报告正文
-
-按纪律 6 选格式：**默认 html 报纸版**（`reference/report-template-html.html`，整页复制后替换日期/期号/统计与正文），用户明确要 md 时用 `reference/report-template.md`。事实与风险优先级见纪律 1。语言全中文，用户视角，禁止 emoji（CLAUDE.md 规则 0）。
-
-> **零提交硬闸（纪律 5）**：判据用 Phase 2.2 的**真实提交数**（`wc -l < /tmp/today_real.tsv`），**不是** 2.1 的 first-parent 行数——否则一条孤立的 merge 壳会被误当"有活动"，跳过硬闸却发出 header 显示 0 提交的报告。真实提交数为 0 即**到此为止**：写一句「{date} 主干无落地提交」回报用户，**不进入 Phase 4.5 / Phase 5**，绝不发布空壳条目。
-
-### Phase 4.5：视觉验收取证（新增方向必做，与 create-visual-test-to-kb 联动）
-
-日报的「新增方向」必须配**带标注的截图**，让读者一眼看到「已证实到哪个阶段、实际验证了什么」；没有正式发布证据时不得称为今天上线。本阶段调用 `create-visual-test-to-kb`（`/验收`）的取证 harness 取图，再把图嵌进报告的对应新功能段。
-
-**取证选择原则（重要）**：
-- **宽选重要的**：从当天「新增方向」里挑 **2-4 个最重要**的功能取证（不是每个 feat 都截，也不是只截一个）。优先选「用户能直接看到的页面级变化」，跳过纯后端/纯配置类。
-- **每张截图必须标注「验证了什么」**：caption 写成「{功能}：{这张图证明了什么}」，例如「AI 大事双栏布局：feed 居左 + 右侧栏填充，宽屏无大片留白」。**禁止**只写功能名不写验证点——读者不能靠猜。
-- 走真实用户路径（点击导航进入，禁地址栏直达），双主题按 `acceptance.config.json` 决定。
-
-**取证方式：写 driver，不是直接跑 harness。** `harness.mjs` 只导出 helper（`login/gotoByClick/click/shot/writeManifest/waitForReady/stepClick/stepShot…`），**没有 CLI 入口、不吃 `--base/--steps/--out`**。必须复制 `create-visual-test-to-kb/scripts/example-driver.mjs` 改成本次真人路径脚本，再用 `node` 跑：
+## 3. 按原日报模板构建刊物
 
 ```bash
-# 凭据在环境变量：MAP_AI_USER + MAP_ACCEPT_PASS（仅有 MAP_AI_PASSWORD 时取它兜底）
-export PWPATH=$(npm root -g)/playwright
-export MAP_ACCEPT_PASS="${MAP_ACCEPT_PASS:-$MAP_AI_PASSWORD}"
-PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | head -1)
-# driver 内 import harness helpers，对 2-4 个重要功能 login → gotoByClick → shot(带验证点 caption) → writeManifest(OUT)
-node /tmp/daily-driver.mjs "$PREVIEW_URL"      # 产出 OUT/*.png + OUT/manifest.json
+python3 scripts/reporting/edition.py build \
+  --context "$REPORT_WORK/context.json" --start "$COVER_START" --end "$TODAY" \
+  --cadence daily --out "$REPORT_WORK/edition"
+python3 scripts/reporting/edition.py verify --bundle "$REPORT_WORK/edition/bundle.json"
 ```
 
-在报告对应的新功能小节插入「{{IMG:<name>}}」占位（report-template.md 已支持逐步配图），**并把 harness 产出的 `manifest.json` 一起传给 Phase 5 的 `publish.py --manifest`**——脚本会先把截图上传到知识库拿可访问 URL、回填占位，再写正文。`publish.py` 发布前有硬闸：正文里若残留任何未替换的 `{{IMG:}}`/`{{EVIDENCE}}` 占位（即占位有了却没传对应截图）会**直接拒发**，杜绝读者看到坏占位。**缺少截图取证的新功能段落，必须显式写「本功能未取截图，原因：……」**（用文字，不要留占位），不留空白让读者疑惑。
+输出`report.html/report.md/report.json/ledger.json/context.json/bundle.json`，同一事实驱动两种正文。HTML实际读取原日报模板CSS与MAP报头，采用月亮刊徽；静态样例中的旧业务数字不得进入新刊。内容顺序为管理结论、风险、连续进展、下一步、测量与缺口、来源索引及活动附录。
 
-**占位的四条写法纪律**（2026-09-07 实测两次翻车后固化，详见 `report-design-system.md` §1.6）：
+不根据提交数量决定亮点个数。没有新成果时可报告延续事项、失败、外部阻塞或采集缺口；确实没有这些内容时如实给出无新证据的说明，不虚构工作。
 
-1. `{{IMG:<name>}}` **独立成行**放在正文里，publish.py 会把它整个换成 `<figure><img><figcaption></figure>`。
-   **禁止**写成 `<img src="{{IMG:x}}">`——整段 figure 会被塞进 `src=""`，页面漏出原始标记；publish.py 命中即拒发。
-2. **图说写在 manifest 的 `caption`**，正文里写的 alt / figcaption 不会被采用。driver 的 `shot(...)` caption 就是最终图说，一次写对。
-3. 展开物是裸 `<figure>`，不带 class，**可以放在任何章节**（不限于 `.story`）——模板已改为无作用域的 `figure img{width:100%}`，
-   自己改模板时不要把它重新收回某个容器下（publish.py 有 manifest 时校验这条，CI 守卫 `scripts/tests/test_report_evidence_figure.py` 盯模板）。
-4. 日报是**阅读用**刊物，取证 `launch(cfg)` 前把 `cfg.screenshot.deviceScaleFactor` 改成 `1`（1440x900 约 300KB）；
-   2x 的 2880x1800 单张 1.5-3MB 只给验收档案做像素比对。publish.py 对超过 1.5MB 的图告警。
+## 4. 展示与发布
 
-> 取证依赖预览环境就绪 + 浏览器登录凭据（`MAP_AI_USER` / `MAP_ACCEPT_PASS`）。若环境/凭据不可用，跳过本阶段并在报告里注明「本期无截图，因预览环境/凭据不可用」，不要假装截过。
+先看实际生成HTML，核对来源锚点、窄屏布局、阶段及采集右端。原文与事件、版本或范围不一致时修正来源后重建bundle，不直接改正文来改状态。
 
-### Phase 5：发布到知识库
-
-仅当**真实提交数 > 0**（`wc -l < /tmp/today_real.tsv`，与 Phase 4 零提交硬闸同一判据，不是 2.1 的 first-parent 行数）才执行。调 `reference/publish.py` 完成 find-or-create「日报知识库」+ 建条目 + 写正文（含 Phase 4.5 截图）+ 出分享链：
+仅本地预览/实现回归时：
 
 ```bash
-export AI_ACCESS_KEY=...            # 已在 CDS 远端环境注入
-# 注意：续行反斜杠必须是行尾最后一个字符，行内注释会截断命令（Codex P2 教训）
-# HEAD_SHA 来自 Phase 1，不重解
-COVER_TO=$(git log -1 "$HEAD_SHA" --format=%cI)
-python3 .claude/skills/daily-report-summary/reference/publish.py \
-  --base https://main-prd-agent.miduo.org \
-  --impersonate inernoro \
-  --title "日报-${TODAY}-今日大事早知道" \
-  --daily-date "${TODAY}" \
-  --report-html /tmp/daily-${TODAY}.html \
-  --last-commit "$HEAD_SHA" \
-  --cover-to "$COVER_TO" \
-  --replace-same-date \
-  --manifest /tmp/acc_shots/manifest.json
-# --last-commit：**必传，脚本已强制**（纪律 2；不传直接 exit 7 拒发）。它是下一期的水位线起点；
-#   当天晚些时候的提交会永久漏报（2026-07-30 实测漏 36 个真实提交的根因）。
-# --cover-to：SHA 因 force push / 浅克隆不可达时的降级水位线，一并写上。
-# --replace-same-date：同一天重跑/修正时替换旧条目而不是叠一篇（先建新、校验落库成功、再删旧）。
-# --report-html 为默认报纸版；用户要 md 时换成 --report-md /tmp/daily-${TODAY}.md
-# --manifest：有 Phase 4.5 截图时必传，脚本据此上传图 + 回填 {{IMG:}} 占位；无截图可省略
-# 二选项：--report-html 与 --report-md 恰好传一个（纪律 6）；html 版发布前有自包含/禁脚本/viewport 硬校验
-# 无密钥 / 无文档空间时退化：加 --local --out <path>，落本地文件（仅自查，不算交付）
+python3 scripts/reporting/edition.py publish \
+  --bundle "$REPORT_WORK/edition/bundle.json" --local
 ```
 
-鉴权优先级（同 create-visual-test-to-kb）：
-- 优先 `DAILY_DOC_STORE_KEY=sk-ak-*`（带 `document-store:write` scope 的最小权限长效 Key）→ `Authorization: Bearer`
-- 回退 `AI_ACCESS_KEY` 超级密钥 + `X-AI-Impersonate: <user>`
+用户已授权发布日报时，复用原`reference/publish.py`知识库流程：
 
-发布成功后必须向用户回报：知识库名 + 条目标题 + 分享链（`/s/lib/{token}?entry={eid}`）+ owner 登录路径。
-
-### Phase 6：输出
-
-```
-日报已发布：
-【知识库】日报知识库（私有）
-【标题】日报-2026-05-31-今日大事早知道
-【分享链】https://<base>/s/lib/<token>?entry=<eid>
-【Owner】登录后 知识库 → 「日报知识库」→ 本篇
-
-今日概要：N 次提交，feat M / fix K / perf P，Top 新增：……
+```bash
+python3 scripts/reporting/edition.py publish \
+  --bundle "$REPORT_WORK/edition/bundle.json" \
+  --base "$MAP_BASE" --impersonate "$REPORT_USER"
 ```
 
-## 边界情况
+默认目标为「日报知识库」，同日原地更新保留分享链接。`deliveryEvidenceLedger/deliveryEvidenceDigest`与SHA水位线一并写入且读回核验；未知写入结果不宣布成功、不推进检查点。历史原文重发如需绕过新bundle须明确`--legacy-unverified-reason`，元数据会标未核查，不能冒充新技能合格刊物。
 
-| 场景 | 处理 |
-|------|------|
-| 窗口内真实提交数为 0（`wc -l /tmp/today_real.tsv`） | 写「自上期日报（{prevDate}）以来主干无新落地提交」，不发布空报告。**注意措辞**：水位线口径下这句话的含义是「上期之后没有新东西」，不是「今天没干活」 |
-| 上期日报中断/漏跑（`gap=true`） | 无需人工干预：窗口自动从上期水位线一路续到本期 HEAD。dateline 与「今日大事」首条必须写明这是补记期、补的是哪几天（纪律 2） |
-| 水位线读取失败（知识库不可达/鉴权失败） | `coverage_window.py` 直接 exit 3，**不要**当成「首次运行」继续——那会把历史重报一遍。修好再跑 |
-| 上期条目无 `lastCommit` 也无 `coverTo`（本机制上线前的老条目） | 自动退化为当日口径并在 stderr 告警；本期正常出报，回写水位线后下期即恢复连续 |
-| 本地是浅克隆（容器默认） | Phase 1 已带 `--unshallow`；不做的话 `git log <sha>..HEAD` 会因为 SHA 不可达而降级成时间戳口径 |
-| 预览环境 524 / 不可达 | 正文已就绪，提示稍后用同命令重跑（publish.py 自带退避重试 + 空壳兜底） |
-| 「日报知识库」已存在 | 复用，不重复建；同日重跑用 `--replace-same-date` 替换旧条目，不叠第二篇 |
-| 没有 AI 密钥 / 无文档空间 | 退化为 `--local` 落 `doc/` 外的本地 md（仅自查，不算交付）。注意 `--local` 不写水位线，下期会退化为当日口径 |
+本文不授权生产代码部署、员工月报代填/提交或向他人发送通知。任务禁止生产发布时使用本地模式或独立只读展示，不覆盖正式日报库。
 
-## 注意事项
+## 回归与评测
 
-1. 报告语言全中文，价值主张从用户视角写，PR 英文标题翻译为简洁中文
-2. 严格遵守纪律 1：交付事实、风险与下一步先读；新增/优化/修复作为业务解读，同一事项不重复计数
-3. 禁止 emoji（CLAUDE.md 规则 0）
-4. 数字必须来自 git 输出（纪律 5）
-5. 知识库默认私有；分享链对「拿到链接者」开放，非殿堂（isPublic=true 对所有人）
-6. **发布必带 `--last-commit`**（纪律 2）。这是整条连续覆盖链的唯一支点：漏一次，
-   下一期就断链退回按日历日采，当天晚些时候的提交永久漏报，而且**报告自己看不出来**
-   ——每期单独看都正常，只有把相邻两期的覆盖区间拼起来才发现中间有洞。
+参见`scripts/reporting/README.md`与`skill-baseline/README.md`。固定样本保留真正旧日报HTML和项目周刊原文，严格采集器同输入回放与历史刊物复核分栏；没有原模型输入的部分不宣称同提示重跑改善率，独立预标注不称已完成真人评审。

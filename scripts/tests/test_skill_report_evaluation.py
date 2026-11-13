@@ -76,6 +76,16 @@ class SkillReportEvaluationTests(unittest.TestCase):
         failures=replay.audit_current(report,gold)
         self.assertTrue({'duplicate','omission','wrongConclusion'}<={f['type'] for f in failures})
 
+    def test_all_real_cases_execute_build_verify_and_original_local_publisher(self):
+        with tempfile.TemporaryDirectory(prefix='skill-report-integrated-') as temp:
+            result=subprocess.run([sys.executable,str(SCRIPT),'--out',temp+'/comparison.json','--work',temp+'/work','--require-edition','--local-publish'],cwd=ROOT,capture_output=True,text=True)
+            self.assertEqual(0,result.returncode,result.stderr)
+            comparison=json.loads(Path(temp+'/comparison.json').read_text())
+            self.assertTrue(all(value == 0 for value in comparison['collectorReplay']['current']['metrics'].values()))
+            self.assertEqual(7,len(comparison['currentSourceCases']))
+            self.assertTrue(all(not case['failures'] for case in comparison['currentSourceCases']))
+            self.assertEqual(7,len(list(Path(temp+'/work').rglob('published.html'))))
+
     def test_required_real_edition_cannot_silently_fall_back_to_facts_only(self):
         with tempfile.TemporaryDirectory(prefix='skill-report-required-') as temp:
             result=subprocess.run([sys.executable,str(SCRIPT),'--out',temp+'/comparison.json','--work',temp+'/work','--edition-script',temp+'/missing.py','--require-edition'],cwd=ROOT,capture_output=True,text=True)

@@ -292,3 +292,26 @@ def test_changed_daily_source_is_versioned_at_update_not_backdated_to_creation(a
     report = adapter.engine()['analyze'](data, '2026-09-28', '2026-09-28', 'daily')
     assert len(report['evidence']) == 1
     assert next(iter(report['evidence'].values()))['source']['excerpt'] == 'first source text'
+
+
+def test_monthly_resumes_own_verified_current_and_previous_edition(collector, monkeypatch):
+    stores = []
+    monkeypatch.setattr(collector, '_find_store', lambda base, headers, name: stores.append(name) or {'id': 'monthly'})
+    entries = [
+        {'id': 'pending', 'metadata': {'kind': 'project-monthly-report', 'dailyDate': '2026-10-31', 'deliveryEvidenceStatus': 'pending'}},
+        {'id': 'current', 'metadata': {'kind': 'project-monthly-report', 'dailyDate': '2026-10-31', 'deliveryEvidenceStatus': 'verified', 'deliveryEvidenceLedger': '{}'}},
+        {'id': 'previous', 'metadata': {'kind': 'project-monthly-report', 'dailyDate': '2026-09-30', 'deliveryEvidenceStatus': 'verified'}},
+        {'id': 'wrong-kind', 'metadata': {'kind': 'weekly-report', 'dailyDate': '2026-10-25'}}]
+    monkeypatch.setattr(collector, '_curl', lambda args: {'success': True, 'data': {'items': entries, 'hasNextPage': False}})
+    result = collector.collect_prev_weekly('https://example.test', [], '', '2026-10-31', 'monthly')
+    assert stores == ['项目月度汇总知识库']
+    assert result['prevEntry']['entryId'] == 'previous'
+    assert result['currentEntry']['entryId'] == 'current'
+
+
+def test_preview_keeps_full_revision_without_becoming_production(collector, monkeypatch):
+    monkeypatch.setattr(collector, '_cdscli', lambda args: {'ok': True, 'data': {'versions': [
+        {'id': 'preview', 'createdAt': '2026-10-03T10:00:00+08:00', 'commitSha': 'a' * 40}]}})
+    result = collector.collect_preview_deploys('project', '2026-09-28', '2026-10-04')
+    assert result['items'][0]['commitSha'] == 'a' * 40
+    assert '不等于正式发布' in result['note']

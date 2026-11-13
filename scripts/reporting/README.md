@@ -1,67 +1,68 @@
-# 报告事项证据台账
+# 项目报告技能：连续证据与原刊物
 
-日报、周报和管理月度汇总共用同一份事实，不从提交量推算交付、效率、工时或收益。所有命令只读来源、写本地文件，不归档、不提交员工月报、不发布生产。
+目标入口是 `daily-report-summary` 的日报报纸和 `weekly-update-summary` 的项目周刊。月度模式生成同一项目的管理汇总，保留太阳刊徽；员工个人月报继续由本人表达和提交。此目录没有员工报告API或周报Agent页面改动。
 
-## 固定操作路径
+## 实际生成链路
 
-1. 保存上一期台账，在 `workItems` 中沿用事项 ID；相同功能的多个 PR 通过 `evidenceBindings` 指向同一 ID。不能确认关联时保留未归属，不能按标题相似度强行合并。
-2. 使用日报 SHA 水位线或者固定主干 SHA 采集 `(base, head]`。完整历史是前提，不能拿当前 feature 分支当主干。合并记录只证明合并，不能证明功能、验证或上线完成。
-3. 补齐任务完成、功能验证、正式发布、阻塞等独立事件，保留原始时间、版本、可访问来源与原文摘录。CI 与预览部署单列，不能升级为功能验收和正式上线。
-4. 以同一台账渲染日报、周报和管理月度事实参考。每次重跑从事件重建状态，无隐式数据库或执行次序依赖。
-5. 对照来源审核事实区，再把业务意义、需管理者决策及下一步加入现有刊物模板；不能改写事实区状态、计数和缺口。收益愿景须明确标为预期，不能当成已实现收益。
+`edition.py collect` → 原技能六源采集器及连续台账 → `edition.py build` → 原日报/周刊模板 → `edition.py verify` → 原知识库 `publish.py`。
+
+所有命令在仓库根执行。临时数据与展示产物放仓库外；默认台账位于Git common-dir的私有`report-skills/<project>/ledger.json`。跨期与本期重跑均合并台账，断源不会丢本期已存事实。
 
 ```bash
-python3 scripts/reporting/evidence.py collect-git \
-  --base <上一期SHA> --head <已固定的主干SHA> \
-  --ledger <延续事项台账.json> --out work/collected-ledger.json
-python3 scripts/reporting/evidence.py render \
-  --ledger work/collected-ledger.json --start 2026-09-28 --end 2026-10-04 \
-  --cadence weekly --out work/report
-# daily / weekly / monthly 都输出同构 JSON、Markdown、可直接打开的自包含 HTML。
-python3 scripts/reporting/evaluate.py --out work/evaluation.json
-python3 scripts/tests/test_report_evidence.py
+REPORT_WORK=$(mktemp -d /tmp/project-report.XXXXXX)
+python3 scripts/reporting/edition.py collect \
+  --start 2026-09-28 --end 2026-10-04 --cadence weekly \
+  --mainline origin/main --git-head <固定主干SHA> \
+  --base <项目知识库API根地址> --impersonate <报告账号> --project <项目ID> \
+  --out "$REPORT_WORK/context.json"
+python3 scripts/reporting/edition.py build \
+  --context "$REPORT_WORK/context.json" --start 2026-09-28 --end 2026-10-04 \
+  --cadence weekly --out "$REPORT_WORK/edition"
+python3 scripts/reporting/edition.py verify --bundle "$REPORT_WORK/edition/bundle.json"
+python3 scripts/reporting/edition.py publish --bundle "$REPORT_WORK/edition/bundle.json" --local
 ```
 
-台账最小实例见 `scripts/tests/fixtures/report_evidence/cases.json`。这是明确标为 synthetic 的人工边界样本，不能用于真实业务报告。`historical.json` 则是钉住 Git SHA 与真实验收来源的历史复核样本。
+日报先运行技能的 `coverage_window.py`，把结果以`--coverage-window`传入collect。窗口携带上一条有效刊物的SHA、精确时间和台账；失败pending条目不能遮盖上一期有效检查点。可用`--evidence-ledger/--ledger-out`指定持久文件，`--pull-requests`输入原始PR对象，`--evidence-input`补充明确来源关联。跨月只改cadence和时间区间，不把周报篇数或提交数当成果数。
 
-## 数据约定
+需要发布且用户已经授权时，去掉`--local`并传`--base/--impersonate`，复用原日报/周报知识库。任务禁止生产发布时仅生成本地文件或独立只读展示，不覆盖正式库。默认目标分别为日报知识库、周报知识库、项目月度汇总知识库；月度kind是`project-monthly-report`，不会调用员工个人月报接口。
 
-顶层 `schemaVersion=1`；只有人工确认台账已覆盖事项的相关历史时才设置 `historyComplete=true`。否则新增数量为 null，首次观察不等于本期新增；`observedMilestones` 只表示台账中首次记录。另有 `workItems`、`events`、可选 `evidenceBindings`、`measurements`、`limitations`。事项包含稳定 `id`、`title`，可选负责人及下一步的动作、执行人、期限；不知道的显示待确认。一个源记录对应一个事件 ID，重复采集去重，同 ID 内容冲突拒绝处理。
+## 一致性与来源
 
-事件包含 `id`、`workItemId`（无法归属时为 null）、含时区的 `occurredAt`、有限枚举 `kind`、`source.uri` 与 `source.excerpt`。代码、验证、发布事件必须指定 `revision`；验证必须指定 `scope=feature|ci`，发布必须指定 `environment=production|preview`。验证与上线只关联明确相同的版本，不推测包含关系。阻塞需原因，解除阻塞需单独事件。来源 URI 不准带账号密码。
+bundle保存输入ledger/context、事实report、MD、HTML及文件哈希、模板哈希与精确采集窗口。发布时重新计算事实并重渲染原模板，不能只改正文或hash绕过规则。正文逐字读回后才提交台账与SHA水位线，元数据再次读回确认。失败不宣布发布成功；若台账被服务端丢弃，回退检查点避免永久漏采。元数据`verified`表示刊物与规则输入一致，不表示真人已审核全部来源。
 
-事件种类：`started`、`commit`、`merged`、`code_complete`、`validation_passed`、`validation_failed`、`release_succeeded`、`release_failed`、`blocked`、`unblocked`。`timeBasis=occurred` 表示事实发生时间；仅知道归档或观测时间时设 `timeBasis=observed`，可以展示已知状态，但不计本周期首次完成。归档元数据保留在 source；不能把晚归档的旧验收当作新验证。
+每项事实有稳定workItemId、完整版本、带时区时间、来源URL与原文摘录。Git/PR明确closing引用或人工核查的绑定才能建立业务身份，不按标题猜测。日报全文、正文hash和旧水位线保留；内容修订按更新时间观测，不能倒灌历史。HTML沿用原模板CSS与MAP报头，旧静态样例的业务数字不进入新刊。
 
-自然周期按显式时区（默认 Asia/Shanghai）左闭右开取整日；不覆盖日报的 SHA 采集水位线。两者回答不同问题：SHA 保证采集不漏，发生时间决定里程碑所属周期。补记旧事实须标明原发生时间和补记原因，不能重算为本期新增。
+阶段独立：合并不是功能完成，CI不是功能验收，预览不是正式上线，旧版本验证不能覆盖新修改，正式回滚不算新增成果。未关联事项的CI失败、发布失败或阻塞单列来源记录与闭环缺口。无新提交也须延续已知阻塞。
 
-每个事项三个阶段各自首次达到才计一次新增里程碑；三个维度不能相加为成果总数。后续返修更新版本并使旧验证陈旧，重验可以更新当前状态，但不能再次计成首次交付。上一期已完成的事项只有在本期出现新事件或仍有缺口时保留，并标明延续；本期未采到新证据的未解决事项不能静默消失。
+效率、工时与收益必须有数值、单位、方法、样本范围、周期及来源；无证据为不可用。只有相邻等长、单位/方法/样本一致的周期比较，不做收益或因果外推。SHA覆盖窗口与精确时间保留；不得把早晨采集写成覆盖至当天23:59:59。非Git来源统一Asia/Shanghai，Git原日期文本统计只在活动附录注明口径。
 
-效率、工时、收益测量必须具有数值、单位、方法、样本范围、周期和来源。只有同单位、同方法、同样本范围、相邻且等长周期才比较差值；不做因果推断。缺测量显示不可用，不填 0；跨日时长不等于工时。JSON 保留原始测量及上期比较来源。
+## 固定评测与失败案例
 
-## 评测的可解释边界
+权威技能基线见 [skill-baseline/README.md](skill-baseline/README.md)。它保存真实旧日报HTML、项目周刊MD/HTML、原采集脚本、原模板以及完整来源和哈希。
 
-`gold.json` 是人工独立标注的七个周期窗口，覆盖跨日、返修、合并未发布、测试失败、外部阻塞、跨月。`legacy-replay.json` 冻结人工按旧模板固定复演的正文和结论，保留失败；它不是旧 LLM 实跑，更不是历史线上报告。`historical-baseline.json` 保存真实旧报告的原文、定位及来源版本，单独呈现历史复核，不混入人工复演的数字。
+- 严格同输入部分：旧/新采集函数读取同一批冻结原始API记录，比较完整版本、时间归桶、日报全文及水位线的丢失；不把它说成旧LLM准确率。
+- 历史刊物部分：逐项保存旧正文问题、正例及待澄清项；缺少旧完整模型输入时，不虚构同提示重跑结果，不把旧版全判错。
+- 当前七组来源片段：经真正 `build → verify → 原publisher --local` 产生原刊物，再对实际report.json检查跨日、返修、合并未发布、失败、外部阻塞和跨月。独立预标注尚未经过真人审核；没有旧月报时不造旧月报基线。
 
-评测按事项和阶段计算遗漏、重复、错误结论及缺来源的肯定结论，并保留逐条失败。它验证结构化事实，不声称自动判断任意自由文本的正确性，也不能证明所有重要工作都已采集。未归属记录和未知状态始终显式展示。修改 gold 必须人工复核，禁止由待测实现重生成预期。
+早期 `report_evidence/legacy-replay.json` 文件是明确的**合成负例**，只用于规则边界测试，不是旧技能实际输出，不用于宣称改进收益。真实基线与其分开，失败案例不删除。
 
-## 员工个人月报边界
+```bash
+python3 scripts/reporting/skill-baseline/replay.py \
+  --out /tmp/skill-replay.json --work /tmp/skill-replay \
+  --require-edition --local-publish
+python3 scripts/tests/test_report_skill_core.py
+python3 scripts/tests/test_report_skill_publication.py
+python3 scripts/tests/test_skill_report_evaluation.py
+python3 -m pytest .claude/skills/weekly-update-summary/tests -q
+```
 
-`--cadence monthly` 只生成管理用事实参考，沿用现有月报可关联周报的路径。本人评价、认可伙伴、建议及提交动作完全留给员工，不写入员工月报 API，不生成个人立场。管理汇总的事实去重不改变现有月报按周四归属月份的选择框规则。
+## 交接边界
 
-
-## 本次交接
-
-| 维度 | 结论与核查入口 |
+| 维度 | 说明 |
 |---|---|
-| 入口 | 现有日报/周报技能；共享 CLI 的 collect-git 与 render；monthly 为管理事实参考 |
-| 文档 | 本说明约定来源、周期、去重与评测边界；已知限制同步到 report-agent 债务台账 |
-| 契约 | 本地 JSON schemaVersion=1；没有数据库迁移、产品 API 或权限变化 |
-| 测试 | 25 项行为测试、原周报上下文 21 项测试；七个固定周期的遗漏/重复/错误断言均为 0 |
-| 真实证据 | 三个真实历史事项、不可变 Git 提交及五份真实验收元数据；来源与旧报告原文保存在 historical 系列夹具 |
-| 展示 | 日报/周报/月度事实参考均已用 Chromium 检查桌面与 390px 手机宽度、来源锚点和脚本错误；窄屏页脚溢出已修复 |
-| 发布与隐私 | 只读查询来源并生成本地报告；员工月报未代填、未提交；不合并、不发布生产、不自动创建 PR |
-| 风险与后续 | 跨 PR 归属与完整历史基线需人工复核；产品内员工周报 AI 引擎尚未接入。缺少这些条件时不得宣称全产品报告已达标 |
-
-人工旧模板复演的遗漏 96、重复 21、错误结论 54；当前固定样本对应三项均为 0。各指标是对同一结论集的不同观察，不应相加成一个质量分。此数字只说明固定结构化样本的结果；真实旧报告保留原文单独复核，不将人工复演数字包装为线上改善率。
-
-浏览器回归入口：在已有 Playwright 的 Python 环境运行 `python scripts/reporting/check_browser.py --out <仓库外的截图目录>`，可用 `--chromium` 指定浏览器路径。脚本只在本机临时端口提供这三份自包含报告，检查完成即关闭；手机断言前先保存截图，失败原因保留在 browser-checks.json。月度展示截止 10 月 4 日，不把缺少后续采集的样本当作完整 10 月报告。
+| 入口 | 两个原项目报告技能、edition.py及原知识库发布器 |
+| 数据 | 本地schemaVersion=1、固定来源快照、发布metadata台账；无产品数据库迁移 |
+| 权限 | 复用原知识库授权；不提交员工月报、不部署生产、不自动建PR |
+| 兼容 | 旧原文重发必须显式给legacy-unverified-reason并标未核查；不能当新合格报告 |
+| 局限 | 旧正文自由语义仍需核查；任务身份、验收范围、版本包含关系或历史覆盖未知时保留缺口 |
+| 回滚 | 回退技能脚本不会删除知识库已有刊物；保留已发布原文、检查点及台账来源，不改写历史 |

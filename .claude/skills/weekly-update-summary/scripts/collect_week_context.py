@@ -748,17 +748,19 @@ def collect_preview_deploys(project, start, end):
         return {"available": False, "reason": "cdscli deployment-version list 返回 ok=false"}
     vers = ((res.get("data") or {}).get("versions")) or []
     items = [{"id": v.get("id"), "date": (v.get("createdAt") or "")[:10],
-              "commitSha": (v.get("commitSha") or "")[:7], "branchId": v.get("branchId")}
+              "commitSha": v.get("commitSha") or "", "branchId": v.get("branchId")}
              for v in vers if _in_week(v.get("createdAt") or "", start, end)]
     return {"available": True, "items": items, "count": len(items),
             "note": "不可变部署版本（含分支预览），不等于正式发布次数"}
 
 
 # ── 来源 5：上周周报（保证「上周方向落地对照」有据可依） ────────────────────
-def collect_prev_weekly(base, H, prev_title_hint, before_date=""):
-    store = _find_store(base, H, WEEKLY_STORE)
+def collect_prev_weekly(base, H, prev_title_hint, before_date="", cadence="weekly"):
+    store_name = "项目月度汇总知识库" if cadence == "monthly" else WEEKLY_STORE
+    report_kind = "project-monthly-report" if cadence == "monthly" else "weekly-report"
+    store = _find_store(base, H, store_name)
     if not store:
-        return {"available": False, "reason": f"未找到「{WEEKLY_STORE}」"}
+        return {"available": False, "reason": f"未找到「{store_name}」"}
     sid, entries, page = store["id"], [], 1
     while True:
         res = _curl(H + [f"{base}{API}/stores/{sid}/entries?page={page}&pageSize=200&all=true&excludeFolders=true"])
@@ -777,8 +779,8 @@ def collect_prev_weekly(base, H, prev_title_hint, before_date=""):
     def day(entry):
         return ((entry.get("metadata") or {}).get("dailyDate") or "")[:10]
     entries.sort(key=lambda entry: (day(entry), entry.get("updatedAt") or ""), reverse=True)
-    eligible = [entry for entry in entries if (entry.get("metadata") or {}).get("kind") == "weekly-report"]
-    hit = next((entry for entry in entries if prev_title_hint and prev_title_hint in (entry.get("title") or "")), None)
+    eligible = [entry for entry in entries if (entry.get("metadata") or {}).get("kind") == report_kind and (entry.get("metadata") or {}).get("deliveryEvidenceStatus") != "pending"]
+    hit = next((entry for entry in eligible if prev_title_hint and prev_title_hint in (entry.get("title") or "")), None)
     if hit is None and before_date:
         hit = next((entry for entry in eligible if day(entry) and day(entry) < before_date), None)
     current = next((entry for entry in eligible if before_date and day(entry) == before_date), None)
@@ -949,7 +951,7 @@ def main():
     for name, fn in [
         ("dailyReports", lambda: collect_daily_reports(base, H, start, end)),
         ("defects",      lambda: collect_defects(base, H, start, end)),
-        ("prevWeekly",   lambda: collect_prev_weekly(base, H, a.prev_week_hint, start)),
+        ("prevWeekly",   lambda: collect_prev_weekly(base, H, a.prev_week_hint, end, a.cadence)),
         ("teamInsights", lambda: collect_team_insights(base, H, start, end)),
         ("adoption",     lambda: collect_adoption(base, H, start, end, a.doc_dir, a.adoption_lookback)),
     ]:

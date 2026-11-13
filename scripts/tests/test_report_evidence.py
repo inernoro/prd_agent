@@ -140,10 +140,14 @@ class ReportEvidenceTests(unittest.TestCase):
         p=ROOT/'.claude/skills/weekly-update-summary/scripts/collect_week_context.py'
         spec=importlib.util.spec_from_file_location('week_context_evidence',p)
         m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-        self.assertFalse(m.collect_evidence_ledger('','2026-02-01','2026-02-28')['available'])
-        r=m.collect_evidence_ledger(str(FIX/'cases.json'),'2026-02-01','2026-02-28')
-        self.assertTrue(r['available'])
-        self.assertEqual(2,r['report']['newMilestones']['code'])
+        adapter=m._delivery_module()
+        collected=adapter.context_ledger({'acceptance':{'available':False,'reason':'source offline'}},self.ledger)
+        self.assertTrue(any('source offline' in reason for reason in collected['limitations']))
+        combined=adapter.engine()['merge_ledgers']([self.ledger,collected])
+        report=adapter.engine()['analyze'](combined,'2026-02-01','2026-02-28')
+        self.assertIsNone(report['newMilestones']['code'])
+        self.assertEqual(2,report['observedMilestones']['code'])
+        self.assertEqual(normalize(self.ledger)['events'],combined['events'])
 
     def test_cli_renders_three_reviewable_artifacts(self):
         with tempfile.TemporaryDirectory() as directory:

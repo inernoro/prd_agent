@@ -7,7 +7,7 @@ description: 'Generates business-facing weekly project reports for executives, p
 
 > **版本**：v2.0.0 | **状态**：已落地 | **触发**：`/weekly`、"生成周报"、"写周报"、"weekly report"、"本周总结"
 
-把一周内**本项目产生的全部事实**（git 提交与 PR、每日日报、验收结论、缺陷台账、线上发布）聚合成一份**面向老板 / 产品经理 / 业务经理**的周报。
+按可核查来源梳理一周内**本项目已采集的事实**（git 提交与 PR、每日日报、验收结论、缺陷台账、线上发布）聚合成一份**面向老板 / 产品经理 / 业务经理**的周报。
 
 ## 读者是谁（决定一切写法，v2 最重要的一条）
 
@@ -30,7 +30,7 @@ description: 'Generates business-facing weekly project reports for executives, p
 
 先按仓库 `scripts/reporting/README.md` 维护跨周期台账，沿用稳定事项 ID，把同一成果的开发、返修、验证、上线及阻塞事件关联到它。不得按每个提交、PR、日报条目重复计成果。日报是线索，不因被周报/月报引用而产生新成果。
 
-Phase 2.7 必传 `--evidence-ledger "$LEDGER"`，读取 `deliveryEvidence`。该段不可用时明确展示证据缺口，不生成确定的成果/效率结论。渲染 `scripts/reporting/evidence.py render --ledger "$LEDGER" --start "$MONDAY" --end "$SUNDAY" --cadence weekly --out work/weekly-facts`，将事实区放在周刊报头之后、封面与业务解读之前。
+Phase 2.7 必经连续证据采集，读取 `deliveryEvidence`，默认自动续用Git common-dir私有台账；可显式指定 `--evidence-ledger/--ledger-out`。该段不可用时明确展示证据缺口，不生成确定的成果/效率结论。使用Phase 5的 `edition.py collect/build/verify` 唯一入口，直接把事实填入原周刊模板；`evidence.py render`仅用于事实诊断，不作为最终周刊交付。
 
 每项重要结论保留事项 ID、当前版本、上期与本期状态、来源及下一步（执行人/期限未知则待确认）。功能完成、验证完成、上线完成三个维度独立报告，合并、CI 通过、预览部署都不能替代它们。旧版本验证不能覆盖后续修改；无新事件的旧成果不再包装为新增。未解决阻塞即使本周没有提交也要延续。
 
@@ -155,24 +155,9 @@ git log "$DEFAULT_BRANCH" --format="%cd\t%H\t%an\t%s" --date=short | \
 
 **正确做法**：对每个 PR，用 `git log HASH^1..HASH^2 --oneline` 读取全部 commits，基于 commits 内容判断 PR 真实主题。
 
-### 纪律 5：先列脉络确认，再写完整报告
+### 纪律 5：有来源的事实先成稿，归属歧义再澄清
 
-> **根因案例**：直接生成完整报告，脉络分组有误，修改成本高。先列脉络候选让用户确认，一次通过。
-
-**正确做法**：完成数据收集和 PR 深读后，**必须先向用户展示重大脉络候选列表**，等用户确认后再生成完整报告。
-
-输出格式：
-```
-**W{NUM} ({DATE_RANGE}) | {COUNT} 个 PR**
-
-### 重大脉络候选（按影响程度排序）：
-
-1. **{脉络名}** — {一句话总结} ({相关PR列表})
-2. **{脉络名}** — {一句话总结} ({相关PR列表})
-...
-
-这些脉络你觉得对吗？有哪些需要调整、合并或拆分的？
-```
+在用户已经要求生成时直接完成可审阅刊物，不停在脉络提案。采用稳定事项ID、原始证据和三个独立阶段；归属不清的来源留在待归属区，不用标题相似硬合并。只有会改变任务范围的缺失信息才询问，同时完成不依赖答案的工作。
 
 ### 纪律 6：文件命名使用 `report.YYYY-WXX.md`
 
@@ -216,61 +201,19 @@ html 周刊版硬约束（publish.py `--report-html` 发布前校验，与日报
   `ResizeObserver loop completed with undelivered notifications`，间隔 16ms）。
   阅读器侧已加父页点击拦截兜底（`FilePreview` 一律新标签打开），但**生成端仍必须写 target**：
   周刊在知识库之外（分享页、下载后本地打开）没有那层兜底。
-- 版式即「米多智能体周刊」（刊系归属见 `.claude/rules/report-design-system.md`）。**v2 章节顺序**：刊头 + 期号 dateline + 统计基线行 + 封面故事 + **质量闸**（四宫格 + 类别拆分表 + 未通过清单 + 提醒 callout）+ **业务价值看板**（`.cap` 卡片，六段式 + 用量口径行）+ **团队与用量**（四宫格 + 关注项表 + 上线→采用表）+ 一周脉络（逐日挂日报深链）+ 上周方向落地对照 + 下周优先级三卡 + **术语表** + 附录 A 验收表 + 附录 B PR 表 + 附录 C 工程数据页脚
-- verdict 三色是 v2 新增语义色，勿改：`--green` 通过 / `--amber` 有条件通过 / `--red` 未通过
-- 内容与 md 底稿同源同数（纪律 5：数字全部来自 git 与 Phase 2.7 采集器），格式只改皮不改骨
-**防漏数据对账清单（html 周刊版成稿后、发布前逐项打勾；任一不过不许发布）**：
+- 版式沿用「米多智能体周刊」的纸墨CSS、报头和地球刊徽，章节由`edition.py`填充：管理结论、风险、下一步、连续三阶段、测量依据、一周脉络、来源和活动附录。原模板样例只供版式参考，不复制其业务结论与数字。
+- MD和HTML由同一事实生成；原始活动统计与事项交付数分开，未取得的数据不能写0。
 
-- [ ] **附录 A 验收表列全**：行数 = 头部「验收份数」，每行带结论徽章 + 类别 + 深链（禁止节选）
-- [ ] **附录 B PR 表列全**：行数 = 头部「PR 收口」数（禁止节选、禁止"以 doc 为准"糊弄），带「分类」列，表下注明归属口径
-- [ ] **质量闸每个数字都能在 `collect_week_context.py` 输出里找到出处**，未通过与有条件通过逐条列出且每条有「下一步」
-- [ ] **一周脉络 7 天齐全**，每天挂当天日报可点击深链；缺日报的天有明确说明（纪律 9）
-- [ ] **每条业务能力都标了验收背书**（通过 / 有条件通过 / 未通过 / 本周未验收），「本周未验收」的要显著标注为证据空白
-- [ ] **正文无未翻译的英文缩写、文件名、类名、函数名**；出现的内部代号都能在术语表里查到（纪律 11）
-- [ ] md 底稿「业务价值看板」的每一条都能在 html 的 `.cap` 卡片里找到对应（逐条指认，不得因版面丢条）
-- [ ] 下周优先级每条为「动作——依据」两段式；与上周落地对照、md 底稿同数同结论
-- [ ] **团队与用量成本行**：`costAvailable=false` 时写「不可用 + 原因」，**不许写 0 元**（同 releases 的 available/0 之别）
-- [ ] **采用度五态不混写**：0 次 / 无信号 / 无采集 / 标签写错 四者各有徽章；`unlabeledWeeks` 非空必须显式列出
-- [ ] **每条能力条目都有用量口径行**，且 token 前缀是 llm/route/dim/none 之一（写 `none:` 也算写了）
-- [ ] baseline 行含统计基线 SHA + 采集时间 + **六源可用性说明**；触发纪律 3.5/7 时追加基线漂移 / 历史版本对照行
+**发布前核对**：
 
-- 发布命令（复用日报发布脚本的刊系参数）：
+- [ ] 正文与台账经`edition.py verify`重算一致，每个重要结论有可点击来源与原文。
+- [ ] 未通过/有条件来源逐条保留；无法归属事项的失败仍显示，闭环状态未知不能写已解决。
+- [ ] 一周七日日报逐日挂链；缺失日期明确列出。
+- [ ] 旧成果不复算新增，功能、验证、上线独立，旧验证不覆盖新修改。
+- [ ] 测量缺证据写不可用，外部源缺失不等于无风险。
+- [ ] HTML/MD/JSON/台账/模板摘要和精确SHA水位线属于同一bundle。
 
-```bash
-# BASELINE_SHA 必须在这里先取值 —— 它就是报告头部「统计基线」那个 SHA，同一个值两处用。
-# 不先赋值直接引用，shell 会展开成空串，而 publish.py 对 weekly-report 允许空 --last-commit
-# 且只打一行告警，于是「发布成功但元数据没写上」，看不出问题（Codex #1319 P1）。
-BASELINE_SHA=$(git rev-parse "origin/${DEFAULT_BRANCH}")
-
-python3 .claude/skills/daily-report-summary/reference/publish.py \
-  --base https://main-prd-agent.miduo.org \
-  --impersonate inernoro \
-  --title "周报-${ISO_YEAR}-W${WEEK_NUM}-本周纵深" \
-  --daily-date "${MONDAY}" \
-  --report-html /tmp/weekly-${ISO_YEAR}-W${WEEK_NUM}.html \
-  --store "周报知识库" --kind weekly-report --tags "周报,本周纵深" \
-  --replace-same-date \
-  --last-commit "${BASELINE_SHA}"
-# --replace-same-date：同一周重跑（补数据 / 改结论 / 修错字）时**原地更新**那条，
-#   不叠第二篇。缺了它，每重跑一次就在库里多一条同周周刊，读者不知道该信哪篇。
-#   匹配键是 dailyDate(=MONDAY) + kind(=weekly-report)，故只会命中同一周的周刊，不会误伤别周。
-#   这是本命令里**唯一有实际保护作用**的开关。
-# --last-commit：**只是出处记录（provenance），不是水位线**。周报侧目前没有任何消费方读它——
-#   `collect_week_context.py` 的 collect_prev_weekly 只返回上期标题与 entryId，
-#   唯一的水位线读取方 coverage_window.py 跑在**日报**的 store + kind 上。所以它今天的作用
-#   仅是「把这期基于哪个 SHA 算的」写进条目元数据备查，**不能**指望它让下期自动续采
-#   （Codex #1319 P2）。要真有续采能力，得先给周报侧接一个消费方，见 doc/debt.acceptance-center-cds.md。
-# 无密钥 / 无文档空间时退化：加 --local --out <path>，落本地文件（仅自查，不算交付）
-```
-
-> **为什么 `--replace-same-date` 必须写死在命令里**（2026-08-02 实测）：`publish.py` 的去重是
-> **opt-in**（`--replace-same-date` 是 `store_true`），日报技能的命令传了、周报技能的没传 ——
-> 同一条「重跑不叠篇」的规则在两处各写一遍然后漂移了（`predicate-and-wiring-discipline.md` 形状 3）。
-> 实测后果：W31 周刊发布后重跑一次，库里立刻多出一条同周周刊，只能手工 `DELETE /entries/{id}` 收拾。
-> **重跑是常态**（改结论、修错字、补元数据），所以它是默认必带，不是可选项。
->
-> **`--last-commit` 则不要夸大**：它今天只是出处记录，周报侧无人消费（见上方注释）。写它是为了
-> 日后接续采能力时有数据可用，以及排查「这期基于哪个 SHA 算的」；把它说成「防漏采」是无根之木。
+唯一发布入口见Phase 5.5，默认同日期与刊系原地更新。周报现在会读取上期和本期已核验台账续采；旧条目无台账仅作历史线索，不能声称历史完整。禁止再使用没有bundle的旧直发命令。
 
 ### 纪律 9：必须关联本周的每日日报（逐日，一天都不能少）
 
@@ -289,13 +232,13 @@ python3 .claude/skills/daily-report-summary/reference/publish.py \
 验收是"做完的东西到底靠不靠谱"的唯一客观证据。周报必须把本周所有验收报告的**结论**摊开。
 
 **正确做法**：
-1. 从 `collect_week_context.py` 的 `acceptance` 段取本周全部报告（按 `createdAt` 日期文本落在周内）
-2. 头部质量闸必须给三个数：**验收份数 / 通过率 / 未通过（fail）份数**
+1. 从 `collect_week_context.py` 的 `acceptance` 段取本周全部报告（按带时区观测/发生时间归属Asia/Shanghai周期，不能把createdAt当实际执行时间）
+2. 来源附录列出验收份数、各verdict与明确分母；报告通过率仅描述该批报告，不代替功能验证完成率
 3. **每一条 `fail` 和 `conditional` 都必须单独列出**并说明影响与后续动作——这是老板最想看的一栏
 4. 需要点进去的，用 `report deeplink` 取 CDS 深链（`--deeplinks` 开关）；深链需 CDS 登录，报告里注明
 5. verdict 用中文口径写：`pass` = 通过、`conditional` = 有条件通过、`fail` = 未通过
 
-**禁止**（v1 最严重的缺陷）：整份周报不提验收，或只写"已验收"三个字而不给通过率与失败清单。**通过率低于 80% 必须在封面故事里点名**，不许埋进附录。
+**禁止**（v1 最严重的缺陷）：整份周报不提验收，或只写"已验收"三个字而不给通过率与失败清单。失败及范围限制必须在正文可见，不能仅埋进附录。
 
 ### 纪律 11：业务优先叙事 —— 技术细节降级为引用，黑话必须翻译
 
@@ -565,75 +508,54 @@ PREV_FILE="doc/report.${PREV_ISO_YEAR}-W$(printf '%02d' $PREV_WEEK_NUM).md"
 
 ---
 
-### Phase 4: 分析与分类（v2：先业务后技术）
+### Phase 4: 连续事项与来源核对
 
-阅读全部 commit message、PR 列表与 Phase 2.7 的采集结果，执行分析。
+先读取Phase 2.7实际采集的`deliveryEvidence.ledger/report`。正文只采用这些事实；日报原文、PR、验收与正式发布均保留直接来源与完整版本。标题相似不自动关联，短SHA、verdict或预览不能推出功能完成或正式上线。
 
-#### 4.0 从「技术脉络」翻译成「业务能力」（v2 核心步骤）
+风险、失败和外部阻塞优先。同功能多次修复只显示同一事项本期变化；旧成果没有新证据时写延续，不重新当新增。禁止从每日提交分布推“停摆”“效率稳定/提升”，无测量时标不可用。业务解读若缺独立来源保持待核实，不硬凑5~8条能力，也不让语言模型覆盖事实状态。
 
-v1 直接把 PR 按模块聚类就开写，产出的是工程视角。v2 必须多做一次翻译：
+### Phase 5: 原周刊模板的唯一生成入口
 
-1. 先按功能主题把 PR 聚成技术脉络（同 v1）
-2. **再把每条技术脉络翻译成一条业务能力陈述**，模板：
-   > **谁**（内部团队 / 外部客户 / 运维 / 产品）在已证实的交付阶段**能做什么**；预期价值标为预期，只有独立测量支持时才写已节省或已收益。
-3. 翻译不出业务价值的脉络（纯重构 / 纯清理 / 纯文档），归入「地基工作」一段合并带过，**不占正文篇幅**，但要在附录 PR 表保留
-4. 交叉验证：把翻译结果与本周日报的「新增功能」段对照，日报讲过的用户可见变化，周报不能漏
+不再把手写摘要粘到静态HTML样例里。`edition.py`实际读取`reference/report-template-html.html`的CSS、MAP报头与地球刊徽，并由同一事实生成MD与HTML：
 
-#### 4.1 脉络确认检查点
+```bash
+REPORT_WORK=$(mktemp -d /tmp/project-weekly.XXXXXX)
+python3 scripts/reporting/edition.py collect \
+  --start "$MONDAY" --end "$SUNDAY" --cadence weekly \
+  --mainline "$DEFAULT_BRANCH" --git-head "$BASELINE_SHA" \
+  --base "$MAP_BASE" --impersonate "$REPORT_USER" --project "$PROJECT" \
+  --out "$REPORT_WORK/context.json"
+python3 scripts/reporting/edition.py build \
+  --context "$REPORT_WORK/context.json" --start "$MONDAY" --end "$SUNDAY" \
+  --cadence weekly --out "$REPORT_WORK/edition"
+python3 scripts/reporting/edition.py verify --bundle "$REPORT_WORK/edition/bundle.json"
+```
 
-1. 按业务影响排序，形成 5~8 条**业务能力**候选（不是 8~15 条技术脉络——业务读者记不住那么多）
-2. 每条标注**六项**：业务能力名 + 谁受益 + 一句话价值 + 关联 PR 列表 + 是否有验收报告背书 + **用量口径**
-   - 用量口径语法（反引号 token，空格分隔，四种前缀含义互不重叠）：
-     - `llm:<appKey>` —— 该能力在产品内会打模型，appKey 取 `AppCallerCode` 首段
-     - `route:<归一化路由>` —— 该能力有页面入口，参数段写 `:id`（覆盖不打模型的功能）
-     - `dim:<维度>` —— 走业务集合计数，取值 `docs` / `sites` / `reports` / `image-gen` / `workflows` / `defects`
-     - `none:<原因>` —— 本就不产生产品内用量信号，原因限 `平台能力` / `研发流程` / `基础设施`
-   - **写 `none:` 不丢人，写错才丢人**。约 2/3 的能力条目（部署平台、模型网关、技能套装、验收体系）
-     本质上就没有产品内用量信号；不显式声明的话，它们会在采用率里静默消失，报表会系统性低估平台类工作。
-3. **向用户展示候选列表，等待确认后才进入 Phase 5**
+`DEFAULT_BRANCH`必须是已fetch的`origin/<默认主干>`，`BASELINE_SHA`固定同一SHA。原Phase2的Git日期文本统计仅作活动附录；事项事实/非Git源按带时区实际时间与Asia/Shanghai归桶。原始PR对象可用`--pull-requests`输入；已核查的产物关联可用`--evidence-input`，不猜标题。采集器默认在Git common-dir私有路径持久化台账，自动合并本期和上期已发布台账；可用`--ledger-out`显式指定仓库外文件。
 
-> **例外（自动运行）**：用户在触发时明确说了「不用问我 / 你觉得好就好 / 自动跑」，或本次为定时任务（scheduled task）自动触发时，跳过等待确认，直接进入 Phase 5，并在最终交付消息里说明「已按自动模式跳过脉络确认」。除此之外禁止跳过。
+输出`report.html/report.md/report.json/ledger.json/context.json/bundle.json`。报头下是管理结论、风险与下一步、三阶段连续进展、效率/工时/收益证据、七日日报脉络、来源索引和六源活动附录。缺证据不报0，无提交仍须延续未闭环事项。历史样例中的业务数字不得复制到本周。
 
-#### 分类与排序详细规则
+MD底稿需要入库时只复制已核验的`report.md`到既有`$REPORT_FILE`，保留输入摘要、范围、来源及台账基线；不另写一套结论。
 
-分类表、排序规则、价值主张、新功能展开、脉络图数据生成 → 见 [reference/categories.md](reference/categories.md)
+### Phase 5.5: 由原知识库发布器核验发布
 
----
+```bash
+# 实现、回归或任务禁止生产发布时，使用只读本地展示：
+python3 scripts/reporting/edition.py publish --bundle "$REPORT_WORK/edition/bundle.json" --local
+# 用户已授权发布周刊时：
+python3 scripts/reporting/edition.py publish --bundle "$REPORT_WORK/edition/bundle.json" \
+  --base "$MAP_BASE" --impersonate "$REPORT_USER"
+```
 
-### Phase 5: 生成报告
+这条入口调用原`daily-report-summary/reference/publish.py`，默认「周报知识库」/`kind=weekly-report`，同日原地复用条目。发布前重新核验原模板、正文及事实文件；正文读回一致后才写`deliveryEvidenceLedger/deliveryEvidenceDigest`与采集水位线，并再次读回。失败pending条目不能成为下期检查点。篡改正文、日期、台账或SHA后不允许仅改hash冒充通过，必须重建。
 
-两个产物都要生成（纪律 8）：
+此前纪律8的直接发布命令仅供理解旧参数，不再作为新刊物入口；缺bundle只能显式标记为历史未核查重发。正文和台账必须同源，不能把模型新增句子混入已核验刊物。
 
-1. **md 底稿**：使用模板生成完整报告，写入 `$REPORT_FILE` → 见 [reference/report-template.md](reference/report-template.md)
-2. **html 周刊版（读者交付）**：整页复制 [reference/report-template-html.html](reference/report-template-html.html)，用本周真实数据替换周次/统计/各栏目正文，落 `/tmp/weekly-{ISO_YEAR}-W{WEEK_NUM}.html`
+### 项目管理月度汇总
 
-#### v2 章节顺序（业务优先，两个产物同构）
+仓库目前没有独立月报技能；本技能支持把同一项目台账按自然月汇总，使用上面相同collect/build入口的`--cadence monthly`与月初/月末日期。采用太阳刊徽，按事件实际日期重新归属，不能把四份周报相加为四份新成果。历史范围不足时明确来源截止时间，不能称完整月份。
 
-顺序即优先级——业务读者从上往下读，读到一半停下也已拿到关键信息：
-
-| # | 章节 | 回答 | 数据来源 |
-|---|------|------|---------|
-| 1 | **本周一句话** | 老板只读这一句也不亏 | 综合 |
-| 2 | **质量闸**（验收通过率 / 未通过清单 / 缺陷 / 发布次数） | 靠不靠谱、有没有真发出去 | Phase 2.7 |
-| 3 | **业务价值看板**（5~8 条能力，谁受益 + 价值 + 验收背书） | 做成了什么 | Phase 4.0 翻译结果 |
-| 4 | **团队与用量**（谁在做 + 关注项 + 上线→采用） | 谁做的、健不健康、做的东西有没有人用 | `teamInsights` + `adoption` |
-| 5 | **一周脉络**（逐日 + 当天日报深链） | 每天在忙什么 | git + `dailyReports` |
-| 6 | **上周方向落地对照** | 说到做到了吗 | 上周周报 |
-| 7 | **下周优先级** | 接下来干什么 | 综合 |
-| 8 | **术语表** | 黑话翻译（纪律 11） | 按本周出现的词裁剪 |
-| 9 | **附录：验收报告清单 + PR 全量表 + 技术明细引用** | 要深挖时去哪看 | Phase 2.7 + git |
-
-**技术细节（提交类型分布、行数、文件数、架构说明）一律降到附录**；正文只在需要佐证规模时引用一两个数字。
-
----
-
-### Phase 5.5: 发布 html 周刊版到知识库
-
-按纪律 8 的发布命令调 `daily-report-summary/reference/publish.py`（`--store 周报知识库 --kind weekly-report`），**必带 `--replace-same-date` 与 `--last-commit`**（理由见纪律 8 的命令注释：前者防重跑叠篇，后者写水位线给下一期）。发布成功后记录分享链，Phase 6 一并输出。无密钥/环境不可达时退化 `--local` 并在输出里明确说明「周刊版未发布，仅 md 底稿落盘」。
-
-发布后自查一条：库里同一周的周刊**有且只有一条**。多于一条说明开关漏传，先删重复再交付——别把重复条目留给读者去猜哪篇是准的（这正是本周报自己在质量闸里点名的「重复归档」问题，技能自身不能犯）。
-
----
+发布刊系为`project-monthly-report`，默认「项目月度汇总知识库」。它是管理事实参考；员工个人月报的评价、认可、建议和提交继续由本人完成，不调用员工报告API。若用户指的是其他月报技能，先定位该技能再复用事实契约。
 
 ### Phase 6: 输出与确认
 
@@ -690,54 +612,9 @@ v1 直接把 PR 按模块聚类就开写，产出的是工程视角。v2 必须�
 
 ---
 
-### Phase 7.5: 归档本周 changelog 碎片到 CHANGELOG.md
+### Phase 7.5: 保留范围
 
-> **背景**：`changelogs/` 目录里每个 PR 提交时落一个碎片（CLAUDE.md 规则 4），原本只在 `release-version` 技能发版时才合并。但发版节奏 ≠ 周报节奏，过去出现过 19 天积压 353 个碎片的情况。本阶段把"归档"和"周报"对齐，杜绝积压。
->
-> **判定**：仅当 `changelogs/` 目录存在且至少有 1 个匹配 `^[0-9]{4}-[0-9]{2}-[0-9]{2}_*.md` 格式的碎片文件时执行；否则跳过本阶段。
-
-#### 7.5.1 预检（dry-run）
-
-```bash
-# 先 dry-run 显示将合并多少碎片，给用户一个数量预期
-bash scripts/assemble-changelog.sh --dry-run 2>&1 | head -3
-```
-
-如果脚本输出"没有碎片文件需要合并"，**跳过 7.5.2 / 7.5.3**，直接进 Phase 8。
-
-#### 7.5.2 真正合并
-
-```bash
-bash scripts/assemble-changelog.sh
-```
-
-脚本行为：
-1. 扫描 `changelogs/*.md`
-2. 按文件名日期分组
-3. 在 `CHANGELOG.md` 的 `## [未发布]` 段顶部插入 `### YYYY-MM-DD` 块（按日期降序）
-4. `git rm` 已合并的碎片文件
-
-#### 7.5.3 输出与提示
-
-合并完成后，向用户输出一行精简反馈：
-
-```
-已归档 N 个 changelog 碎片到 CHANGELOG.md [未发布]（待下次发版 promote 成正式版本号）
-```
-
-注意事项：
-- **不要 commit**：本阶段只修改文件，由用户/外层流程统一 commit（与 Phase 5 / Phase 7 输出一致）
-- **不要按周过滤**：当前 `assemble-changelog.sh` 是无差别合并所有积压。若想精确按本周过滤，需要先扩展脚本加 `--week-start` / `--week-end` 参数（属于未来优化，本阶段不做）
-- **静默模式**：用户没有要求时不要询问"要不要合并"，直接执行（碎片合并是无破坏性的，最坏情况也只是 [未发布] 段长一点）
-
-#### 7.5.4 例外情况
-
-| 场景 | 处理 |
-|------|------|
-| `scripts/assemble-changelog.sh` 不存在 | 跳过本阶段，不报错 |
-| `changelogs/` 目录不存在 | 跳过本阶段，不报错 |
-| `CHANGELOG.md` 不存在或没有 `## [未发布]` 标记 | 脚本会报错并退出 1，本阶段输出"changelog 合并失败：CHANGELOG.md 缺 [未发布] 标记，请人工检查"，继续 Phase 8 |
-| 当前在 detached HEAD 或 git rebase 进行中 | 跳过本阶段（避免污染 rebase 状态） |
+生成周刊只读取changelog作为线索，不顺带合并碎片、修改CHANGELOG或执行发布。此类工作必须由用户单独授权的发布/归档流程处理。
 
 ---
 
@@ -776,7 +653,7 @@ bash scripts/assemble-changelog.sh
 3. **价值主张风格**：从**业务读者**视角描述（谁受益 / 以前 / 现在 / 意味着），避免技术术语（纪律 11）
 4. **排版一致性**：严格遵循模板中的表格、分隔线、引用块格式
 5. **数字准确性**：所有统计数字必须来自 git 命令输出与 `collect_week_context.py`，不可估算；两者口径不同时（如日报的每日提交数含 PR 分支内提交）必须在 baseline 行说明
-6. **边界口径**：时间边界用 `%cd --date=short` 的日期文本，默认主干分支，不做时区换算；验收/日报按其 `createdAt` / `dailyDate` 的日期文本落周
+6. **边界口径**：原Git活动附录保留`%cd --date=short`文本口径；连续事项、验收等带时区事件按Asia/Shanghai归属，createdAt仅为观测时间，日报dailyDate为刊物日期
 7. **PR 展示**：不要再使用 `#FIRST ~ #LAST` 作为头部或附录标题
 8. **风格**：正式周刊风格，分类与结论用文字分级 + 语义色，禁止使用 emoji
 9. **不许只报喜**：验收未通过、缺陷零改善、连续顺延项，都必须写进正文并给下一步——这是业务读者判断"该不该介入"的唯一依据
