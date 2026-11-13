@@ -270,3 +270,4 @@
 /* 独立实体中的短记录清单也按内容排布；大集合继续使用完整滚动工作区。 */
 .lg-entity-detail-bounded .lg-entity-detail-layout:has(.lg-collection-view[data-size='small']) { flex: 0 0 auto; min-height: 0; }
 .lg-entity-detail-bounded .lg-entity-detail-collection:has(> .lg-collection-view[data-size='small']) { flex: 0 0 auto; min-height: 0; }
+.lg-collection-key-workspace .lg-collection-codes[data-size='small'] { height: auto; min-height: 0; }

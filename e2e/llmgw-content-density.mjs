@@ -14,7 +14,7 @@ const OUT = path.resolve(process.env.LLMGW_DENSITY_OUT || path.join(os.tmpdir(),
 if (!fs.existsSync(path.join(DIST, 'index.html'))) throw new Error(`缺少构建产物：${DIST}`);
 fs.mkdirSync(OUT, { recursive: true });
 const FIXED_TIME = '2026-11-13T08:00:00Z';
-const scenarios = { count: 2, role: 'owner', failure: false, proxyFailure: false };
+const scenarios = { count: 2, role: 'owner', failure: false, proxyFailure: false, codeCount: 1 };
 const provider = i => ({ id: `provider-${i}`, name: `供应方 ${String(i + 1).padStart(2, '0')}`, platformType: 'openai', providerId: 'fixture', apiUrl: 'https://provider.example.test/v1', enabled: i % 2 === 0, maxConcurrency: 4, hasKey: true, keyStatus: 'ok', keyFingerprint: 'sk-fi…test', authority: 'llm_gateway', sourceCollection: 'platforms', proxy: { mode: 'inherit' }, recentCallStatus: i === 1 ? 'quota_exhausted' : 'succeeded', createdAt: FIXED_TIME, updatedAt: FIXED_TIME });
 const json = (res, data, success = true) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success, data: success ? data : null, error: success ? null : { code: 'FIXTURE_UNAVAILABLE', message: data } })); };
 const server = http.createServer((req, res) => {
@@ -28,7 +28,7 @@ const server = http.createServer((req, res) => {
     if (api === '/upstream-proxy') return json(res, { mode: 'inherit', effectiveMode: 'direct', effectiveSource: 'deployment' });
     if (api === '/organization') return json(res, { tenant: { id: 'density-fixture', name: '布局验收组织' }, teams: [], members: [] });
     if (api === '/legacy-key-cutover') return json(res, { applicable: false });
-    if (api === '/service-keys') return json(res, Array.from({ length: 2 }, (_, i) => ({ id: `key-${i}`, name: `验收密钥 ${i + 1}`, keyPrefix: `gwk_fixture${i}`, enabled: true, sourceSystem: 'external', clientCode: `fixture-${i}`, environment: 'test', purpose: 'runtime', appCallerCodes: ['fixture.chat::chat'], ingressProtocols: ['openai-compatible'], scopes: ['invoke'], allowedCidrs: [], rotationState: 'active', createdAt: FIXED_TIME })));
+    if (api === '/service-keys') return json(res, Array.from({ length: 2 }, (_, i) => ({ id: `key-${i}`, name: `验收密钥 ${i + 1}`, keyPrefix: `gwk_fixture${i}`, enabled: true, sourceSystem: 'external', clientCode: `fixture-${i}`, environment: 'test', purpose: 'runtime', appCallerCodes: Array.from({ length: scenarios.codeCount }, (_, n) => `fixture.chat-${n + 1}::chat`), ingressProtocols: ['openai-compatible'], scopes: ['invoke'], allowedCidrs: [], rotationState: 'active', createdAt: FIXED_TIME })));
     if (api === '/catalog-entries') return json(res, { items: [], total: 0, builtin: [], builtinCount: 0, knownCapabilities: ['chat'] });
     if (api === '/imagegen-configs') return json(res, { items: [], total: 0, builtin: [], builtinCount: 0, refreshSeconds: 60, staleAfterSeconds: 180, syncedAt: FIXED_TIME, syncedPatterns: [], syncHosts: [] });
     if (api === '/capabilities/image-layering') return json(res, { state: 'not-installed', installed: false, verified: false });
@@ -108,7 +108,7 @@ try {
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
     page.on('pageerror', error => failures.push({ name: `${id}:运行异常`, detail: error.message }));
-    scenarios.count = 2; scenarios.role = 'owner'; scenarios.failure = false;
+    scenarios.count = 2; scenarios.role = 'owner'; scenarios.failure = false; scenarios.codeCount = 1;
     try {
       await login(page);
       await page.locator('tbody tr').first().waitFor();
@@ -207,8 +207,27 @@ try {
       await keyDetail.click();
       await expect(page.getByRole('complementary', { name: '清单详情' })).toBeVisible();
       await expect(page.getByRole('button', { name: '权限范围', exact: true })).toBeVisible();
-      await snapshot(page, `${id}-key-detail`);
+      const codes = page.locator('.lg-collection-codes');
+      const codeLayout = await codes.evaluate(el => {
+        const r = el.getBoundingClientRect(), last = el.querySelector('.lg-collection-code').getBoundingClientRect();
+        const summary = document.querySelector('.lg-collection-key-permission-summary').getBoundingClientRect();
+        return { height: r.height, tail: r.bottom - last.bottom, summaryY: summary.y, summaryBottom: summary.bottom, viewport: innerHeight };
+      });
+      check(`${id}:单条调用用途不撑空内层清单`, codeLayout.tail <= 4, codeLayout);
+      check(`${id}:协议和Scope不被空架子推出首屏`, codeLayout.summaryY >= 0 && codeLayout.summaryBottom <= codeLayout.viewport, codeLayout);
+      const keyMetrics = await snapshot(page, `${id}-key-detail`);
+      keyMetrics.innerCodeLayout = codeLayout;
       await page.getByRole('button', { name: '关闭详情', exact: true }).click();
+      scenarios.codeCount = 31;
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await keySearch.fill('验收密钥 2');
+      const manyKeyDetail = viewport.width < 700 ? page.getByRole('button', { name: '31 个调用用途', exact: true }).filter({ visible: true }).first() : page.getByRole('button', { name: '详情', exact: true }).filter({ visible: true }).first();
+      await manyKeyDetail.click();
+      for (let n = 0; n < 3; n++) await page.locator('.lg-collection-codes').getByRole('button', { name: '下一页', exact: true }).click();
+      await expect(page.getByText('fixture.chat-31::chat', { exact: true }).first()).toBeVisible();
+      await expect(page.locator('.lg-collection-codes').getByRole('button', { name: '下一页', exact: true })).toBeDisabled();
+      await page.getByRole('button', { name: '关闭详情', exact: true }).click();
+      scenarios.codeCount = 1;
       await navigateTo('模型');
       const modelSearch = page.getByRole('searchbox', { name: '搜索模型名称或公开标识' });
       await modelSearch.waitFor();
