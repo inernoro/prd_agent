@@ -11,7 +11,7 @@ const DIST = path.resolve(process.env.LLMGW_DIST || path.join(ROOT, 'llmgw/web/d
 const OUT = path.resolve(process.env.LLMGW_ADMIN_DENSITY_OUT || path.join(os.tmpdir(), 'llmgw-admin-density'));
 fs.mkdirSync(OUT, { recursive: true });
 if (!fs.existsSync(path.join(DIST, 'index.html'))) throw new Error(`缺少构建产物：${DIST}`);
-const state = { members: 2, bills: 2, failure: '', role: 'owner', mustChange: false, loginFailure: false };
+const state = { members: 2, bills: 2, failure: '', role: 'owner', mustChange: false, loginFailure: false, teamFailure: true, createdTeam: false };
 const TIME = '2026-11-13T08:00:00Z';
 const tenant = () => ({ id: 'fixture', slug: 'fixture', name: '验收租户', isInternal: true, role: state.role, teamIds: ['team-a'] });
 const bill = i => ({ id: `bill-${i}`, provider: '供应商验收', externalRecordId: `账单-${i + 1}`, granularity: 'request', requestId: `request-${i + 1}`, providerRequestId: `upstream-${i}`, estimatedCost: 0.12, estimatedCostCurrency: 'USD', providerReportedCost: 0.13, providerCostCurrency: 'USD', reconciliationDelta: 0.01, deltaCurrency: 'USD', reconciliationStatus: 'reconciled', createdAt: TIME });
@@ -34,12 +34,12 @@ const server = http.createServer((req, res) => {
   if (api === '/auth/tenants') return json(res, [{ ...tenant(), current: true }]);
   if (api === '/auth/account') return json(res, { username: 'fixture-owner', hasLocalPassword: true, requiresOldPassword: true, usernameIsGenerated: false, minPasswordLength: 12, tenant: tenant() });
   if (api === '/auth/change-password') return json(res, { requiresRelogin: true });
-  if (api === '/organization') return json(res, { tenant: { ...tenant(), status: 'active' }, teams: [{ id: 'team-a', name: '验收团队', status: 'active', createdAt: TIME, updatedAt: TIME }], members: Array.from({ length: state.members }, (_, i) => ({ id: `member-${i}`, userId: `user-${i}`, username: i === 0 ? 'fixture-owner' : `member-${i + 1}`, displayName: `验收成员 ${i + 1}`, role: i === 0 ? 'owner' : 'developer', teamIds: ['team-a'], status: 'active', version: 1 })) });
+  if (api === '/organization') return json(res, { tenant: { ...tenant(), status: 'active' }, teams: [{ id: 'team-a', name: '验收团队', status: 'active', createdAt: TIME, updatedAt: TIME }, ...(state.createdTeam ? [{ id: 'team-new', name: '边界验收团队', status: 'active', createdAt: TIME, updatedAt: TIME }] : [])], members: Array.from({ length: state.members }, (_, i) => ({ id: `member-${i}`, userId: `user-${i}`, username: i === 0 ? 'fixture-owner' : `member-${i + 1}`, displayName: `验收成员 ${i + 1}`, role: i === 0 ? 'owner' : 'developer', teamIds: ['team-a'], status: 'active', version: 1 })) });
   if (api === '/logs/summary') return json(res, summary);
   if (api === '/tenant-governance') return json(res, governance);
   if (api === '/cost-reconciliations') return json(res, { totalRecords: state.bills, requestRecords: state.bills, windowRecords: 0, actualUnavailableRequests: 1, providerActualCosts: state.bills ? [{ currency: 'USD', amount: 0.26, requests: state.bills }] : [], statusDistribution: [{ key: 'reconciled', count: state.bills }], items: Array.from({ length: state.bills }, (_, i) => bill(i)) });
   if (api === '/cost-reconciliations/import') return json(res, '账单匹配失败，未写入', false);
-  if (api === '/teams') return json(res, '团队创建失败，未写入', false);
+  if (api === '/teams') { if (state.teamFailure) return json(res, '团队创建失败，未写入', false);state.createdTeam = true;return json(res, { id: 'team-new', name: '边界验收团队', status: 'active' }); }
   if (api === '/system-settings') return json(res, { modelSource: 'auto', modelGroupId: null, modelName: null, teamId: 'system', teamName: '系统内部', teamIsSystemOwned: true, servingBaseUrl: 'https://serving.example.test', servingReachable: true, appCallerCode: 'gateway.internal::chat', credentialState: 'ready', credentialPrefix: 'gwk_fixture', credentialIssuedAt: TIME, pools: [{ id: 'pool-a', name: '验收池', isDefault: true }], models: [{ id: 'model-a', publicId: 'fixture-chat', name: '验收模型' }], modelQuery: '', modelTotal: 1, modelPageSize: 200, consumers: [{ feature: '用途推导', appCallerCode: 'gateway.intent::chat' }] });
   if (api === '/runtime-gates') return json(res, { status: 'blocked', readyForRelease: false, passed: 0, blocked: 1, waiting: 0, generatedAt: TIME, items: [{ id: 'fixture-gate', label: '验收阻塞项', status: 'blocked', blocking: true, detail: '尚缺本次提交的真实调用证据', evidence: 'fixture-only', nextAction: '查看请求记录补齐证据', links: [{ label: '查看请求记录', to: '/logs' }] }] });
   if (api === '/protocol-coverage') return json(res, { sinceHours: 24, generatedAt: TIME, totalLogRequests: 0, totalRegisteredAppCallers: 0, totalActiveAppCallers: 0, coveredProtocols: 0, missingRuntimeProtocols: 0, items: [] });
@@ -67,7 +67,7 @@ try {
  for (const width of [1440, 390]) for (const theme of ['light', 'dark']) {
   const id = `${width}-${theme}`;
   if (process.env.LLMGW_ADMIN_DENSITY_FILTER && !new RegExp(process.env.LLMGW_ADMIN_DENSITY_FILTER).test(id)) continue;
-  Object.assign(state, { members: 2, bills: 2, failure: '', role: 'owner', mustChange: false, loginFailure: false });
+  Object.assign(state, { members: 2, bills: 2, failure: '', role: 'owner', mustChange: false, loginFailure: false, teamFailure: true, createdTeam: false });
   const context = await browser.newContext({ viewport: { width, height: width === 1440 ? 900 : 844 }, colorScheme: theme, isMobile: width === 390, hasTouch: width === 390 });
   const page = await context.newPage();page.setDefaultTimeout(12000);page.on('pageerror', e => errors.push({ name: `${id}:运行异常`, detail: e.message }));
   try {
@@ -83,6 +83,11 @@ try {
    const createTeam = page.locator('summary').filter({ hasText: /^创建团队$/ });
    if (await createTeam.count()) { await createTeam.focus();await page.keyboard.press('Enter');await expect(page.getByPlaceholder('客服组')).toBeVisible(); }
    await page.getByPlaceholder('客服组').fill('边界验收团队');await page.getByRole('button', { name: '创建团队', exact: true }).click();await expect(page.getByText('团队创建失败，未写入', { exact: true })).toBeVisible();
+   if (width === 390 && theme === 'light') {
+    await page.waitForTimeout(6200);await expect(page.getByText('团队创建失败，未写入', { exact: true })).toBeVisible();
+    state.teamFailure = false;await page.getByRole('button', { name: '创建团队', exact: true }).click();await expect(page.getByText('团队“边界验收团队”已创建', { exact: true })).toBeVisible();await expect(page.getByRole('button', { name: '重命名团队 边界验收团队', exact: true })).toBeVisible();
+    await page.waitForTimeout(6200);await expect(page.getByText('团队“边界验收团队”已创建', { exact: true })).toHaveCount(0);state.createdTeam = false;
+   }
    state.members = 35;await page.reload();await page.locator('tbody tr').last().scrollIntoViewIfNeeded();await expect(page.locator('tbody tr').last()).toContainText('验收成员 35');await screenshot(page, `${id}-members-many`);
    state.members = 0;await page.reload();await expect(page.locator('tbody tr')).toHaveCount(0);await screenshot(page, `${id}-members-empty`);state.members = 2;
    state.failure = '/organization';await page.reload();await expect(page.getByText('验收接口不可用，请重试', { exact: true })).toBeVisible();await screenshot(page, `${id}-members-error`);state.failure = '';

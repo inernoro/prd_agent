@@ -33,6 +33,7 @@ import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { invalidateOnboardingCache } from '@/lib/onboarding';
 import { Button, Card, Chip, InlineAlert, SectionLoader } from '@/components/ui';
+import { ActionFeedback } from '@/components/ActionFeedback';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP } from '@/lib/surface';
@@ -79,6 +80,8 @@ export function OrganizationPage() {
   const [data, setData] = useState<OrganizationData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [noticeTransient, setNoticeTransient] = useState(false);
+  const showSuccess = (message: string) => { setNoticeTransient(true); setNotice(message); };
   const [teamName, setTeamName] = useState('');
   const [busy, setBusy] = useState(false);
   const [drawer, setDrawer] = useState<DrawerState>(null);
@@ -113,7 +116,7 @@ export function OrganizationPage() {
     setBusy(false);
     if (!response.success) { setError(response.error.message); return; }
     invalidateOnboardingCache(sessionTenant?.id);
-    setNotice(`团队已改名为“${name}”`);
+    showSuccess(`团队已改名为“${name}”`);
     await load();
   };
 
@@ -128,7 +131,7 @@ export function OrganizationPage() {
     setBusy(false);
     if (!response.success) { setError(response.error.message); return; }
     invalidateOnboardingCache(sessionTenant?.id);
-    setNotice(`团队“${team.name}”已删除`);
+    showSuccess(`团队“${team.name}”已删除`);
     await load();
   };
 
@@ -154,7 +157,7 @@ export function OrganizationPage() {
     setBusy(false);
     if (!response.success) { setError(response.error.message); return; }
     invalidateOnboardingCache(sessionTenant?.id);
-    setNotice(`“${label}”已移出本租户`);
+    showSuccess(`“${label}”已移出本租户`);
     await load();
   };
 
@@ -194,11 +197,12 @@ export function OrganizationPage() {
     }
     setTeamName('');
     invalidateOnboardingCache(sessionTenant?.id);
-    setNotice(`团队“${response.data.name}”已创建`);
+    showSuccess(`团队“${response.data.name}”已创建`);
     await load();
   };
 
-  const afterMemberChange = async (message: string) => {
+  const afterMemberChange = async (message: string, transient = false) => {
+    setNoticeTransient(transient);
     setNotice(message);
     setDrawer(null);
     await load();
@@ -233,7 +237,7 @@ export function OrganizationPage() {
 
       <PageBody>
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
-        {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
+        <ActionFeedback message={notice} transient={noticeTransient} onDismiss={() => setNotice(null)} />
 
         {!data ? (
           error ? null : <SectionLoader text="正在加载组织" />
@@ -422,7 +426,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
   tenantSlug?: string;
   currentRole: string;
   onClose: () => void;
-  onDone: (message: string) => Promise<void>;
+  onDone: (message: string, transient?: boolean) => Promise<void>;
 }) {
   const [failure, setFailure] = useState<string | null>(null);
   const [username, setUsername] = useState('');
@@ -475,7 +479,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
     // 把唯一一个额外成员停用后这一步应当重新亮起。此前只在创建路径失效，
     // 于是 60 秒内回到概览仍认为这一步完成、清单已经消失（Codex P2）。
     invalidateOnboardingCache();
-    await onDone(`成员“${who}”已更新`);
+    await onDone(`成员“${who}”已更新`, true);
   };
 
   const invalidate = async () => {
