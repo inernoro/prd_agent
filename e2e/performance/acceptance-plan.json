@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "overallStatus": "PASS_LOCAL",
+  "overallStatus": "LOCAL_VALIDATED_DELIVERY_NOT_ACCEPTED",
   "goal": "让MAP四条真实核心用户路径的性能退化在进入用户使用前被可重复的隔离CI测试识别",
-  "definitionOfDone": "按用户允许的本地替代，真实页面四场景、权限与恢复、同套性能入口及CI接线全部关键断言已满足；云端与公开预览未执行作为授权边界，不能冒称远程通过",
+  "definitionOfDone": "保留用户允许的本地真实验收：核心路径、性能比较、两类退化识别及恢复具备证据；同时必须让用户直接理解原始目标做到什么程度、怎样证明、哪些尚未验证。用户明确表示看不懂或未验收时，不得仅凭本地技术标签宣称整体完成。",
   "targetApplicationCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
   "startingHarnessCommit": "39d02c10a05f4dc2eedadbb8e30ae9afbeebcb46",
   "scope": {
@@ -41,7 +41,7 @@
     {
       "stage": "交付",
       "action": "全部断言通过才判PASS，提交推送独立分支并给出SHA、基线、容量、失败及预览证据；阻塞优先显示",
-      "status": "DONE",
+      "status": "NOT_ACCEPTED",
       "dependsOn": []
     }
   ],
@@ -126,7 +126,7 @@
       ]
     }
   ],
-  "remaining": "当前验收范围无阻塞；公共预览与GitHub runner未运行，保留为已授权的远程边界，不伪称远程通过",
+  "remaining": "本地测试证据保留；改正用户可读交付，未获用户验收前不宣称整项完成。云端自动运行仍未实际证明，不作超出证据的承诺。",
   "acceptanceAuthority": {
     "userInstruction": "远程无法验收可以本地验收",
     "scope": "允许用本地真实隔离页面与现有CI同套执行入口完成验收；远程入口及云端作业未执行单独如实记边界",
@@ -153,5 +153,12 @@
     }
   ],
   "blockers": [],
-  "finalEvidence": "local-acceptance.reference.json"
+  "finalEvidence": "local-acceptance.reference.json",
+  "deliveryAcceptance": {
+    "status": "NOT_ACCEPTED_BY_USER",
+    "reason": "用户明确表示JSON/Markdown文档链接式交付无法理解，不能据此标记通过或完成",
+    "requirement": "在对话里围绕最初业务目标，直接说明可用能力、真实验证、容量边界和未完成项，技术记录仅作佐证",
+    "technicalEvidencePreserved": true
+  },
+  "technicalVerificationStatus": "PASS_LOCAL"
 }
