@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpRight, Check, Link2, Moon, RotateCcw, Sun } from 'lucide-react';
+import { ArrowUpRight, Check, ChevronDown, Link2, Moon, RotateCcw, Sun } from 'lucide-react';
 import { SiteCard, SITE_CARD_SIZES, type SiteCaps } from '@/components/web-hosting/SiteCard';
 import { Dialog } from '@/components/ui/Dialog';
 import { AskMarkdown } from '@/components/web-hosting/ask/AskMarkdown';
@@ -87,7 +87,7 @@ export default function WebHostingCardsDemo() {
               selected={selected.includes(item.id)} selectionMode={batch} shared={shared.includes(item.id)} caps={item.readOnly ? readCaps : fullCaps}
               activity={item.activity ? { ...item.activity, isNew: item.activity.isNew && !opened.includes(item.id) } : undefined} traffic={item.traffic}
               shareStats={{ activeLinks: shared.includes(item.id) ? item.traffic?.activeShareLinks || 1 : 0 }}
-              relatedNavigation={item.related ? <div className="related-documents-bar related-variant-badge" data-no-drag><button className="related-trigger" type="button" aria-label={`查看 ${item.related} 份关联文档（演示）`} onClick={() => action('关联文档', item)}><Link2 size={12} /><span className="related-count">{item.related}</span></button></div> : null}
+              relatedNavigation={<div className="related-documents-bar related-variant-badge" data-no-drag><button className="related-trigger" type="button" aria-label="查看关联文档与所属合集（演示）" onClick={() => action('关联文档', item)}><Link2 size={12} />{item.related > 0 && <span className="related-count">{item.related}</span>}<ChevronDown size={13} aria-hidden /></button></div>}
               onSelect={() => { setSelected(values => toggle(values, item.id)); setMessage(`已切换「${item.site.title}」的选择状态，三档同步。`); }}
               onVisit={() => { setOpened(values => [...values, item.id]); action('预览', item); }}
               onShare={() => { setShared(values => toggle(values, item.id)); setMessage(`已切换「${item.site.title}」的演示分享状态。`); }}
@@ -102,7 +102,7 @@ export default function WebHostingCardsDemo() {
     </div>
     {dialog && <Dialog open title={`${dialog.title} · 示例`} onOpenChange={value => { if (!value) setDialog(null); }} maxWidth={520} content={<div className="space-y-4 text-sm text-token-secondary">
       <h2 className="font-medium text-token-primary">{dialog.scenario.site.title}</h2>
-      {dialog.title === '预览' ? <img src={dialog.scenario.site.coverImageUrl} alt="示例文档内容" className="w-full rounded-lg" /> : dialog.title === '关联文档' ? <div className="space-y-2">{['项目主文档', '补充阅读资料', '交付验收说明'].slice(0, Math.min(dialog.scenario.related, 3)).map(title => <button key={title} className="flex w-full items-center justify-between rounded border border-token-default p-3" onClick={() => setMessage(`已选择示例关联：${title}`)}>{title}<ArrowUpRight size={14} /></button>)}<p className="text-xs">共 {dialog.scenario.related} 份关联，仅展示示例条目。</p></div> : <p>已触发{dialog.title}，业务记录不会改变。</p>}
+      {dialog.title === '预览' ? <img src={dialog.scenario.site.coverImageUrl} alt="示例文档内容" className="w-full rounded-lg" /> : dialog.title === '关联文档' ? <div className="space-y-2">{['项目主文档', '补充阅读资料', '交付验收说明'].slice(0, Math.min(dialog.scenario.related, 3)).map(title => <button key={title} className="flex w-full items-center justify-between rounded border border-token-default p-3" onClick={() => setMessage(`已选择示例关联：${title}`)}>{title}<ArrowUpRight size={14} /></button>)}<p className="text-xs">{dialog.scenario.related ? `共 ${dialog.scenario.related} 份关联，仅展示示例条目。` : '当前没有关联文档。此入口也用于查看所属合集，不代表已创建分享链接。'}</p></div> : <p>已触发{dialog.title}，业务记录不会改变。</p>}
       <button className="rounded-lg border border-token-default px-3 py-2 text-xs" onClick={() => setDialog(null)}>关闭演示</button>
     </div>} />}
   </main>;

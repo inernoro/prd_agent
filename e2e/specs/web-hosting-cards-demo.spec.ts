@@ -12,6 +12,11 @@ for (const width of [390, 1440]) {
       await expect(page.getByRole('heading', { name: '同一张卡片，三种尺寸。' })).toBeVisible();
       await expect(page.locator('[data-demo-scenario]')).toHaveCount(10);
       await expect(page.locator('[data-hosted-site-id]')).toHaveCount(30);
+      await expect(page.locator('[data-card] .related-trigger')).toHaveCount(30);
+      const plainLink = page.locator('[data-demo-scenario="plain"] [data-demo-size="large"] .related-trigger');
+      await expect(plainLink).toBeVisible();
+      await expect(plainLink.locator('svg.lucide-link2')).toBeVisible();
+      await expect(plainLink.locator('.related-count')).toHaveCount(0);
       if (theme === 'light') await page.getByRole('button', { name: '切换演示主题' }).click();
       const geometry = await page.locator('[data-demo-size]').evaluateAll(elements => elements.map(element => {
         const card = element.querySelector('[data-card]')!;

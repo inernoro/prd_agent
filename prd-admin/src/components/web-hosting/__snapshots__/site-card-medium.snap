@@ -4,7 +4,7 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
     div .overflow-hidden.relative.shrink-0 {height:140px}
       img .absolute.h-full.inset-0.w-full
       div .absolute.gap-1.inline-flex.items-center.left-2.top-2.z-20
-        div .[@media(hover:none)]:flex.group-focus-within:flex.group-hover:flex.hidden
+        div .flex
           div [data-no-drag=true aria-label=关联文档导航]
             button [aria-label=查看「多租户架构设计」的关联文档与所属合集 type=button]
               svg

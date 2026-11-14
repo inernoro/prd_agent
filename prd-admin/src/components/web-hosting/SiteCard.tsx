@@ -363,7 +363,7 @@ export function SiteCard({
           )}
 
           <div data-site-card-badges className="absolute left-2 top-2 z-20 inline-flex items-center gap-1" onClick={event => event.stopPropagation()}>
-            {relatedNavigation === undefined ? <div className={!relatedSummary?.count ? 'hidden group-hover:flex group-focus-within:flex [@media(hover:none)]:flex' : 'flex'}>
+            {relatedNavigation === undefined ? <div className="flex">
               <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionNavigation variant="badge" summary={relatedSummary}
                 onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
             </div> : relatedNavigation}

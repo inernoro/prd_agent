@@ -64,11 +64,13 @@ for (const width of [390, 1440]) {
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
         await page.evaluate(() => document.fonts.ready);
         const zeroRelated = cards.nth(3).locator('.related-trigger');
-        await expect(zeroRelated).toBeHidden();
+        await expect(zeroRelated).toBeVisible();
+        await expect(zeroRelated.locator('.related-count')).toHaveCount(0);
+        await expect(zeroRelated.locator('svg.lucide-link2')).toBeVisible();
         await cards.nth(3).hover();
         await expect(zeroRelated).toBeVisible();
         await page.mouse.move(0, 0);
-        await expect(zeroRelated).toBeHidden();
+        await expect(zeroRelated).toBeVisible();
         const metrics = await cards.evaluateAll(elements => elements.map(card => {
           const bounds = card.getBoundingClientRect();
           const stats = card.querySelector<HTMLElement>('[data-site-card-stats]')!;
