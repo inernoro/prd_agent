@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { runInNewContext } from 'node:vm';
 import { computePreviewSlug } from '../../src/services/preview-slug.js';
 
 describe('ProxyService', () => {
@@ -320,6 +321,29 @@ describe('ProxyService', () => {
       expect(written.body).not.toContain('构建模式 ·');
       expect(written.body).not.toContain('CDS 小提示');
       expect(written.body).not.toContain('非单分支');
+    });
+
+    it.each(['restarting', 'building'])('真实轮询 renderer 在 %s 状态保留摘要语义与空服务占位', (status) => {
+      addBranch('summary-poll', 'restarting', { api: { profileId: 'api', status: 'starting' } });
+      const { res, written } = makeRes();
+      proxy.handleRequest(makeReq({ 'x-branch': 'summary-poll', accept: 'text/html' }), res);
+      const renderer = written.body.match(/  function renderServices[\s\S]+?(?=  \/\/ 百分比状态)/)![0];
+      const root = { children: [] as any[], set innerHTML(_value: string) { this.children = []; }, appendChild(node: any) { this.children.push(node); } };
+      const summary = { textContent: '' };
+      const createElement = () => ({ className: '', textContent: '', style: { setProperty() {} }, setAttribute() {}, appendChild() {} });
+      const context = {
+        document: { querySelector: (selector: string) => selector.includes('service-summary') ? summary : root, createElement },
+        colors: {}, serviceText: (svc: { profileId: string }) => svc.profileId,
+        services: [{ profileId: 'api', status: 'starting' }], status,
+      };
+      runInNewContext(renderer + '\nrenderServices(services,status);', context);
+      expect(summary.textContent).toBe(status === 'restarting' ? '1 个服务重启中' : '1 个服务准备中');
+      expect(root.children).toHaveLength(1);
+      context.services = [];
+      runInNewContext(renderer + '\nrenderServices(services,status);', context);
+      expect(summary.textContent).toBe('正在准备服务');
+      expect(root.children).toHaveLength(1);
+      expect(root.children[0].textContent).toBe('服务尚未创建');
     });
 
     it('keeps waiting progress aligned with elapsed and remaining time when ETA exists', () => {

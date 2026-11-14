@@ -1952,13 +1952,20 @@ ${shouldAutoRefresh ? `;(function(){
     var base=svc.profileId+' · '+label(svc.status);
     return waitingProfile&&waitingProfile===svc.profileId?base+'（正在等待此服务就绪）':base;
   }
-  function renderServices(services){
+  function renderServices(services,status){
     var root=document.querySelector('[data-role="services"]');
     if(!root||!Array.isArray(services))return;
     var ready=services.filter(function(svc){return svc.status==='running';}).length;
     var summary=document.querySelector('[data-role="service-summary"]');
-    if(summary)summary.textContent=services.length===0?'正在准备服务':ready===services.length?services.length+' 个服务已就绪':ready>0?ready+' / '+services.length+' 个服务已就绪':services.length+' 个服务准备中';
+    if(summary)summary.textContent=services.length===0?'正在准备服务':ready===services.length?services.length+' 个服务已就绪':ready>0?ready+' / '+services.length+' 个服务已就绪':services.length+' 个服务'+(status==='restarting'?'重启中':'准备中');
     root.innerHTML='';
+    if(services.length===0){
+      var empty=document.createElement('div');
+      empty.className='svc';
+      empty.textContent='服务尚未创建';
+      root.appendChild(empty);
+      return;
+    }
     services.forEach(function(svc){
       var row=document.createElement('div');
       row.className='svc';
@@ -2084,7 +2091,7 @@ ${shouldAutoRefresh ? `;(function(){
         setLink('[data-role="pr-link"]',data.prUrl,data.prLabel||'PR');
         renderProgress(data.progress);
         applyTiming(data.timing);
-        renderServices(data.services);
+        renderServices(data.services,data.status);
       })
       .catch(function(){});
   }
