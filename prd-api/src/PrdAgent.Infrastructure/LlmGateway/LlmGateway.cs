@@ -4316,6 +4316,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         try
         {
+            // A pool health probe cannot establish that an administrator approved this model.
+            // Keep the precise request rejection; do not create an incident that a probe can close.
+            if (resolution.FailureCode == GatewayRouteFailure.ModelNotInCatalog)
+                return;
+
             var userId = request.Context?.UserId;
             if (string.IsNullOrWhiteSpace(userId) || _failoverNotifier == null)
                 return;

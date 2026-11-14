@@ -12,6 +12,42 @@ namespace PrdAgent.Api.Tests.Services;
 public class PoolFailoverNotifierTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CatalogRejected_DoesNotBecomePoolHealthIncidentOrRecovery(bool stream)
+    {
+        await using var testDb = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
+        var notifier = new PoolFailoverNotifier(testDb.Context, NullLogger<PoolFailoverNotifier>.Instance);
+        // Actual ApplyCatalogGateAsync failure shape: the pool is known, but this is governance.
+        var failed = ModelResolutionResult.NotFound(null, "模型未获名录放行", GatewayRouteFailure.ModelNotInCatalog,
+            "model-catalog", "notification.proof::chat", modelPoolId: "pool-a");
+        var resolver = new Moq.Mock<IModelResolver>(Moq.MockBehavior.Strict);
+        resolver.Setup(x => x.ResolveAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<string>(), Moq.It.IsAny<string?>(),
+                Moq.It.IsAny<string?>(), Moq.It.IsAny<string?>(), Moq.It.IsAny<CancellationToken>())).Returns(Task.FromResult(failed));
+        var http = new Moq.Mock<IHttpClientFactory>(Moq.MockBehavior.Strict);
+        var gateway = new LlmGateway(resolver.Object, http.Object, NullLogger<LlmGateway>.Instance,
+            failoverNotifier: notifier);
+        var request = new GatewayRequest { AppCallerCode = "notification.proof::chat", ModelType = "chat",
+            Context = new GatewayRequestContext { UserId = "fixture-user" } };
+        if (stream)
+        {
+            var chunks = new List<GatewayStreamChunk>();
+            await foreach (var chunk in gateway.StreamAsync(request)) chunks.Add(chunk);
+            chunks.Single(x => x.Type == GatewayChunkType.Error).ErrorCode.ShouldBe(GatewayRouteFailure.ModelNotInCatalog);
+        }
+        else
+        {
+            var response = await gateway.SendAsync(request);
+            response.Success.ShouldBeFalse();
+            response.ErrorCode.ShouldBe(GatewayRouteFailure.ModelNotInCatalog);
+        }
+        http.Verify(x => x.CreateClient(Moq.It.IsAny<string>()), Moq.Times.Never);
+        // A same-pool health event cannot establish that the catalog gate has been cleared.
+        await notifier.CloseUserFailureNotificationsAsync("chat", poolId: "pool-a");
+        (await testDb.Context.AdminNotifications.Find(_ => true).ToListAsync()).ShouldBeEmpty();
+    }
+
+    [Theory]
     [InlineData(false, "pool-a")]
     [InlineData(true, "pool-a")]
     [InlineData(false, null)]
@@ -20,9 +56,9 @@ public class PoolFailoverNotifierTests
     {
         await using var testDb = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
         var notifier = new PoolFailoverNotifier(testDb.Context, NullLogger<PoolFailoverNotifier>.Instance);
-        // Actual factory shape used by production ApplyCatalogGateAsync: success fields stay unset.
-        var failed = ModelResolutionResult.NotFound(null, "模型当前不可用", GatewayRouteFailure.ModelNotInCatalog,
-            "model-catalog", "notification.proof::chat", modelPoolId: failedPoolId);
+        // Existing availability failure contract; use the actual NotFound factory, not InMemoryModelResolver.
+        var failed = ModelResolutionResult.NotFound(null, "模型当前不可用", GatewayRouteFailure.ModelPoolAllUnavailable,
+            "pool-health", "notification.proof::chat", modelPoolId: failedPoolId);
         failed.OriginalPoolId.ShouldBeNull();
         failed.ModelGroupId.ShouldBeNull();
         failed.FailureModelPoolId.ShouldBe(failedPoolId);
@@ -46,7 +82,7 @@ public class PoolFailoverNotifierTests
         {
             var response = await gateway.SendAsync(request);
             response.Success.ShouldBeFalse();
-            response.ErrorCode.ShouldBe(GatewayRouteFailure.ModelNotInCatalog);
+            response.ErrorCode.ShouldBe(GatewayRouteFailure.ModelPoolAllUnavailable);
         }
         http.Verify(x => x.CreateClient(Moq.It.IsAny<string>()), Moq.Times.Never);
         var fault = await testDb.Context.AdminNotifications.Find(x => x.TargetUserId == "fixture-user").SingleAsync();
