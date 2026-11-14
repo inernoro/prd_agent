@@ -61,13 +61,12 @@ for (const width of [390, 1440]) {
         await expect(menu).toHaveCount(0);
         // 格式与选择框均可见时，左右信息互不重叠。
         await card.getByRole('button', { name: '选择', exact: true }).click();
-        const overlap = await card.evaluate(element => {
+        await expect.poll(() => card.evaluate(element => {
           const type = element.querySelector('[data-site-card-type]')!.getBoundingClientRect();
           const select = element.querySelector('[data-site-select]')!.getBoundingClientRect();
           const badges = element.querySelector('[data-site-card-badges]')!.getBoundingClientRect();
           return { typeSelect: type.right > select.left, badgeType: badges.right > type.left };
-        });
-        expect(overlap, size).toEqual({ typeSelect: false, badgeType: false });
+        }), { message: `${size} 格式角标完成避让后不与选择框重叠` }).toEqual({ typeSelect: false, badgeType: false });
         await card.getByRole('button', { name: '取消选择', exact: true }).click();
       }
       await page.getByLabel('筛选演示场景').selectOption('markdown');

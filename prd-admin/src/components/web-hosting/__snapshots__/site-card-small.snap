@@ -4,12 +4,13 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
     div .overflow-hidden.relative.shrink-0 {height:92px}
       img .absolute.h-full.inset-0.w-full
       div .absolute.gap-1.inline-flex.items-center.left-2.top-2.z-20
-        div [data-no-drag=true aria-label=关联文档导航]
-          button [aria-label=查看「多租户架构设计」的关联文档与所属合集 type=button]
-            svg
-            span
-              "关联"
-            svg
+        div .[@media(hover:none)]:flex.group-focus-within:flex.group-hover:flex.hidden
+          div [data-no-drag=true aria-label=关联文档导航]
+            button [aria-label=查看「多租户架构设计」的关联文档与所属合集 type=button]
+              svg
+              span
+                "关联"
+              svg
       div .[@media(hover:none)]:opacity-100.absolute.bottom-[7px].group-focus-within:opacity-100.group-hover:opacity-100.opacity-0.right-[7px].z-20
         button .h-7.inline-flex.items-center.justify-center.max-sm:h-11.max-sm:min-h-11.max-sm:min-w-11.max-sm:w-11.min-h-7.min-w-[26px].pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=更多设置 type=button]
           svg

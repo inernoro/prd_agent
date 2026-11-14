@@ -47,7 +47,7 @@ for (const width of [390, 1440]) {
           let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
           if (path === '/api/web-pages') data = { items: sites, total: sites.length, activity, traffic,
             visitors: Object.fromEntries(sites.map((site, i) => [site.id, views[i]])) };
-          else if (path === '/api/web-pages/related-documents/summaries') data = { items: Object.fromEntries(sites.map((site, i) => [site.id, { count: 3, mainTitle: titles[0], isMain: i === 0, titles: titles.filter(title => title !== site.title) }])) };
+          else if (path === '/api/web-pages/related-documents/summaries') data = { items: Object.fromEntries(sites.map((site, i) => [site.id, { count: i === 3 ? 0 : 3, mainTitle: i === 3 ? undefined : titles[0], isMain: i === 0, titles: i === 3 ? [] : titles.filter(title => title !== site.title) }])) };
           else if (path === '/api/web-pages/tags') data = { tags: tagNames.map((tag, index) => ({ tag, count: tagCounts[index] })) };
           else if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
           else if (path === '/api/web-pages/shares') data = { items: [0, 2].map(i => ({ id: `layout-share-${i}`, token: `layout-share-${i}`, siteId: sites[i].id,
@@ -63,6 +63,12 @@ for (const width of [390, 1440]) {
         await expect(cards.locator('.related-variant-badge')).toHaveCount(4);
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
         await page.evaluate(() => document.fonts.ready);
+        const zeroRelated = cards.nth(3).locator('.related-trigger');
+        await expect(zeroRelated).toBeHidden();
+        await cards.nth(3).hover();
+        await expect(zeroRelated).toBeVisible();
+        await page.mouse.move(0, 0);
+        await expect(zeroRelated).toBeHidden();
         const metrics = await cards.evaluateAll(elements => elements.map(card => {
           const bounds = card.getBoundingClientRect();
           const stats = card.querySelector<HTMLElement>('[data-site-card-stats]')!;
@@ -78,7 +84,7 @@ for (const width of [390, 1440]) {
           const badgeBounds = badge?.getBoundingClientRect();
           const slots = Array.from(stats.children).map(child => child.getBoundingClientRect()).filter(rect => rect.height > 0);
           return {
-            title: card.querySelector('h3')!.textContent, cardTop: bounds.top, cardHeight: bounds.height, metaTop: meta.getBoundingClientRect().top - bounds.top,
+            title: card.querySelector('h3')!.textContent, cardTop: bounds.top, cardWidth: bounds.width, cardHeight: bounds.height, metaTop: meta.getBoundingClientRect().top - bounds.top,
             statsHeight: statsBounds.height, columns, metricCount: slots.length,
             editInFooter: !!editBounds && editBounds.top >= statsBounds.top && editBounds.bottom <= statsBounds.bottom && editBounds.top >= thumbBounds.bottom,
             shareInThumbnail: !sharedBounds || sharedBounds.bottom <= thumbBounds.bottom,
@@ -90,12 +96,15 @@ for (const width of [390, 1440]) {
             badgeGap: badgeBounds ? badgeBounds.left - titleBounds.right : null,
             badgeInCard: !badgeBounds || badgeBounds.right <= bounds.right,
             titleLineHeight: card.querySelector('[data-site-card-title]')!.getBoundingClientRect().height,
+            statsRightGap: meta.getBoundingClientRect().right - slots[slots.length - 1].right,
           };
         }));
         for (const metric of metrics) {
+          if (width === 1440) expect(metric.cardWidth, JSON.stringify(metric)).toBe(({ small: 176, medium: 264, large: 360 })[size]);
           expect(metric.overflow, JSON.stringify(metric)).toBe(false);
           expect(metric.wrapped, JSON.stringify(metric)).toBe(false);
           expect(metric.metricCount).toBe(3);
+          expect(Math.abs(metric.statsRightGap)).toBeLessThan(1);
           expect(metric.statsHeight).toBeCloseTo(16, 0);
           expect(metric.editInFooter).toBe(true);
           expect(metric.shareInThumbnail).toBe(true);
@@ -111,11 +120,7 @@ for (const width of [390, 1440]) {
         }
         await expect(cards.locator('[data-site-edit-badge]')).toHaveCount(4);
         await expect(page.getByLabel('已编辑 0 次', { exact: true })).toHaveCount(2);
-        // 同行卡片等高，统计相对位置一致；不同网格行不为缺失的长描述预留空白。
-        for (const top of new Set(metrics.map(metric => metric.cardTop))) {
-          const row = metrics.filter(metric => metric.cardTop === top);
-          expect(Math.max(...row.map(metric => metric.cardHeight)) - Math.min(...row.map(metric => metric.cardHeight))).toBeLessThan(1);
-        }
+        // 与 Demo 一样按自身内容定高，不为同行长描述或选中边框补空白；统计相对位置保持一致。
         expect(Math.max(...metrics.map(metric => metric.metaTop)) - Math.min(...metrics.map(metric => metric.metaTop))).toBeLessThan(1);
         const shortTitle = cards.filter({ hasText: '活动指南' });
         await shortTitle.scrollIntoViewIfNeeded();

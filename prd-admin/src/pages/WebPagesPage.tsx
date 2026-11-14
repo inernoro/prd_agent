@@ -1194,45 +1194,47 @@ export default function WebPagesPage() {
       <div
         className="grid"
         style={{
-          // 设计稿：minmax(236px,1fr) 拉伸铺满 + gap 14 + 左对齐。
-          // 固定轨道 + 居中会让卡片左缘与上方结论行错开、右侧留一条死区。
-          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), 1fr))`,
+          // 已确认的 Demo：桌面三档使用注册表中的实际宽度，并与内容左缘对齐。
+          // 手机沿用两列自适应；窄容器限制为可用宽度，不额外拉伸卡片。
+          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : `repeat(auto-fill, minmax(0, min(100%, ${cardWidth}px)))`,
           justifyContent: isMobile ? 'stretch' : 'start',
           alignContent: 'start',
+          alignItems: 'start',
           gap: isMobile ? 12 : 14,
         }}
       >
         {items.map(site => (
-          <SiteCard
-            key={site.id}
-            site={site}
-            size={cardSize}
-            selected={selectedIds.has(site.id)}
-            selectionMode={selectionMode}
-            fresh={freshIds.has(site.id)}
-            shared={sharedSiteIds.has(site.id)}
-            shareStats={siteShareStats.get(site.id)}
-            caps={siteCaps(site)}
-            ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
-            traffic={siteTraffic[site.id]}
-            activity={siteActivity[site.id]}
-            relatedSummary={relatedSummaries[site.id]}
-            onNavigateRelated={openRelatedSite}
-            onVisit={() => handleVisitSite(site)}
-            onSelect={() => toggleSelect(site.id)}
-            onTogglePublic={() => handleMakePublic(site)}
-            onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
-            onDelete={() => handleDelete(site.id)}
-            onShare={(anchor) => handleShare(site.id, anchor)}
-            onQrCode={() => setQrSite(site)}
-            onTransferToLibrary={() => setLibraryTargetSite(site)}
-            onReplaceFile={(file) => setReplaceTarget({ site, file })}
-            onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
-            onMove={() => setMovingSite(site)}
-            onComments={() => setCommentSite(site)}
-            onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
-            onAiEdit={() => openSiteEditor(site)}
-          />
+          <div key={site.id} className="min-w-0">
+            <SiteCard
+              site={site}
+              size={cardSize}
+              selected={selectedIds.has(site.id)}
+              selectionMode={selectionMode}
+              fresh={freshIds.has(site.id)}
+              shared={sharedSiteIds.has(site.id)}
+              shareStats={siteShareStats.get(site.id)}
+              caps={siteCaps(site)}
+              ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
+              traffic={siteTraffic[site.id]}
+              activity={siteActivity[site.id]}
+              relatedSummary={relatedSummaries[site.id]}
+              onNavigateRelated={openRelatedSite}
+              onVisit={() => handleVisitSite(site)}
+              onSelect={() => toggleSelect(site.id)}
+              onTogglePublic={() => handleMakePublic(site)}
+              onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
+              onDelete={() => handleDelete(site.id)}
+              onShare={(anchor) => handleShare(site.id, anchor)}
+              onQrCode={() => setQrSite(site)}
+              onTransferToLibrary={() => setLibraryTargetSite(site)}
+              onReplaceFile={(file) => setReplaceTarget({ site, file })}
+              onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
+              onMove={() => setMovingSite(site)}
+              onComments={() => setCommentSite(site)}
+              onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
+              onAiEdit={() => openSiteEditor(site)}
+            />
+          </div>
         ))}
       </div>
     ) : (

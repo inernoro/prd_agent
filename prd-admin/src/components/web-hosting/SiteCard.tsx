@@ -363,8 +363,10 @@ export function SiteCard({
           )}
 
           <div data-site-card-badges className="absolute left-2 top-2 z-20 inline-flex items-center gap-1" onClick={event => event.stopPropagation()}>
-            {relatedNavigation === undefined ? <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionNavigation variant="badge" summary={relatedSummary}
-              onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} /> : relatedNavigation}
+            {relatedNavigation === undefined ? <div className={!relatedSummary?.count ? 'hidden group-hover:flex group-focus-within:flex [@media(hover:none)]:flex' : 'flex'}>
+              <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionNavigation variant="badge" summary={relatedSummary}
+                onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
+            </div> : relatedNavigation}
             {statusItems.length > 0 && <span data-site-shared-badge={shared ? '' : undefined} className="inline-flex items-center">
               <span className="hidden items-center gap-1 @[235px]:inline-flex" aria-label={statusItems.map(item => item.label).join('、')}>
                 {statusItems.map(item => <span key={item.label} title={item.label} className="inline-flex h-4 w-4 items-center justify-center rounded" style={{ color: 'var(--text-secondary)', background: 'var(--scrim-badge-bg)' }}>{item.icon}</span>)}
