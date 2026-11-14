@@ -325,7 +325,7 @@ public partial class DocumentStoreController
             .Find(r => r.EntryId == entryId && r.StoreId == entry.StoreId && r.Publication.Version == version.Value).FirstOrDefaultAsync())?.Publication;
         if (published == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "此文档尚未发布"));
         var affected = new List<string>();
-        if (!overview) foreach (var s in published.Sources) {
+        if (!overview) foreach (var s in published.Sources.Where(source => source.Status == "read")) {
             var current = await _db.DocumentEntries.Find(e => e.Id == s.EntryId && e.StoreId == entry.StoreId).FirstOrDefaultAsync();
             if (current == null) { affected.Add(s.Id); continue; }
             var (_, content) = await LoadEntryMarkdownAsync(current);

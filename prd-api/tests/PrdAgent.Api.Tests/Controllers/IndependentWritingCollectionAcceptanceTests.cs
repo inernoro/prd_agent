@@ -146,6 +146,24 @@ public sealed class IndependentWritingCollectionAcceptanceTests
         Assert.Equal("skipped", actual.Writing.Published!.Sources.Single().Status);
         Assert.Empty(actual.Writing.Published.Sources.Single().Content);
         Assert.Contains("仅按作者输入执行", documents[actual.DocumentId!].RawContent);
+        var read = Assert.IsType<OkObjectResult>(await controller.ReadWritingPublication("writing"));
+        var payload = JsonSerializer.SerializeToElement(read.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Empty(payload.GetProperty("data").GetProperty("affectedSources").EnumerateArray());
+        Assert.Equal("skipped", payload.GetProperty("data").GetProperty("publication").GetProperty("sources")[0].GetProperty("status").GetString());
+        actual.Writing.Published.Sources.Add(new WritingSource {
+            Id = "S2", EntryId = "source", Title = "参与生成的旧快照", Status = "read", Content = "读取时的旧正文",
+            Hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("读取时的旧正文"))).ToLowerInvariant()
+        });
+        await f.Db.DocumentEntries.UpdateOneAsync(e => e.Id == "writing",
+            Builders<DocumentEntry>.Update.Set(e => e.Writing, actual.Writing));
+        foreach (var deleted in new[] { false, true }) {
+            if (deleted) await f.Db.DocumentEntries.DeleteOneAsync(e => e.Id == "source");
+            var changedRead = Assert.IsType<OkObjectResult>(await controller.ReadWritingPublication("writing"));
+            var changedPayload = JsonSerializer.SerializeToElement(changedRead.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var affected = changedPayload.GetProperty("data").GetProperty("affectedSources").EnumerateArray().Select(x => x.GetString()).ToArray();
+            Assert.Equal(new[] { "S2" }, affected);
+            Assert.Equal("读取时的旧正文", changedPayload.GetProperty("data").GetProperty("publication").GetProperty("sources")[1].GetProperty("content").GetString());
+        }
     }
 
     [Theory]

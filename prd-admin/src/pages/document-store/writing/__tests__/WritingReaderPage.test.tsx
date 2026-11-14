@@ -50,6 +50,23 @@ describe('读者来源状态必须真实', () => {
     await click(container.querySelector<HTMLButtonElement>('.writing-reader-info .srow')!);
     expect(container.querySelector('.writing-source-dialog [role="status"]')?.textContent).toContain('打开当前原文核对');
   });
+  it('跳过资料保留身份但不冒充生成依据或丢失的原文快照', async () => {
+    const data = fixture(); data.publication.sources = [
+      { id: 'S1', entryId: 'read', title: '已读资料', content: '先备份再确认', hash: 'read-hash', status: 'read', updatedAt: '2026-11-14T00:00:00Z' },
+      { id: 'S2', entryId: 'skipped', title: '跳过资料', content: '', hash: '', status: 'skipped', updatedAt: '2026-11-14T00:00:00Z' },
+      { id: 'S3', entryId: 'pending', title: '旧版待读资料', content: '', hash: '', status: 'pending', updatedAt: '0001-01-01T00:00:00' },
+    ];
+    api.read.mockResolvedValue(ok(data)); await mount(false);
+    const rows = container.querySelectorAll<HTMLButtonElement>('.writing-reader-info .srow');
+    expect(rows).toHaveLength(3);
+    expect(container.querySelector('.writing-reader-info')?.textContent).toContain('已跳过 1 份');
+    expect(rows[1].textContent).toContain('已跳过 · 未参与本次生成');
+    expect(rows[2].textContent).toContain('未保存原文快照');
+    await click(rows[1]);
+    expect(container.querySelector('.writing-source-dialog')?.textContent).toContain('未参与本次生成');
+    expect(container.querySelector('.writing-source-dialog')?.textContent).not.toContain('没有可核对的来源正文');
+    expect(container.querySelector('.writing-source-dialog')?.textContent).not.toContain('打开当前原文核对');
+  });
   it('已保存的原文完整显示，未知更新时间也不伪造日期', async () => {
     const data = fixture(); data.publication.sources = [{ id: 'S1', entryId: 'source1', title: '已读资料', content: '离岗前3个工作日，不得事后补办。', hash: 'real-hash', status: 'read', updatedAt: '0001-01-01T00:00:00' }];
     api.read.mockResolvedValue(ok(data)); await mount(false); await click(container.querySelector<HTMLButtonElement>('.writing-reader-info .srow')!);
