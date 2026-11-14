@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.ModelPool;
 using Shouldly;
 using Xunit;
@@ -9,6 +11,65 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class PoolFailoverNotifierTests
 {
+    [Theory]
+    [InlineData(false, "pool-a")]
+    [InlineData(true, "pool-a")]
+    [InlineData(false, null)]
+    [InlineData(true, null)]
+    public async Task ResolutionFailure_PreservesKnownPoolThroughGatewayAndScopedRecovery(bool stream, string? failedPoolId)
+    {
+        await using var testDb = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
+        var notifier = new PoolFailoverNotifier(testDb.Context, NullLogger<PoolFailoverNotifier>.Instance);
+        // Actual factory shape used by production ApplyCatalogGateAsync: success fields stay unset.
+        var failed = ModelResolutionResult.NotFound(null, "模型当前不可用", GatewayRouteFailure.ModelNotInCatalog,
+            "model-catalog", "notification.proof::chat", modelPoolId: failedPoolId);
+        failed.OriginalPoolId.ShouldBeNull();
+        failed.ModelGroupId.ShouldBeNull();
+        failed.FailureModelPoolId.ShouldBe(failedPoolId);
+        var resolver = new Moq.Mock<IModelResolver>(Moq.MockBehavior.Strict);
+        resolver.Setup(x => x.ResolveAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<string>(), Moq.It.IsAny<string?>(),
+                Moq.It.IsAny<string?>(), Moq.It.IsAny<string?>(), Moq.It.IsAny<CancellationToken>())).Returns(Task.FromResult(failed));
+        var http = new Moq.Mock<IHttpClientFactory>(Moq.MockBehavior.Strict);
+        var gateway = new LlmGateway(resolver.Object, http.Object, NullLogger<LlmGateway>.Instance,
+            failoverNotifier: notifier);
+        var request = new GatewayRequest {
+            AppCallerCode = "notification.proof::chat", ModelType = "chat",
+            Context = new GatewayRequestContext { UserId = "fixture-user" }
+        };
+        if (stream)
+        {
+            var chunks = new List<GatewayStreamChunk>();
+            await foreach (var chunk in gateway.StreamAsync(request)) chunks.Add(chunk);
+            chunks.ShouldNotBeEmpty();
+        }
+        else
+        {
+            var response = await gateway.SendAsync(request);
+            response.Success.ShouldBeFalse();
+            response.ErrorCode.ShouldBe(GatewayRouteFailure.ModelNotInCatalog);
+        }
+        http.Verify(x => x.CreateClient(Moq.It.IsAny<string>()), Moq.Times.Never);
+        var fault = await testDb.Context.AdminNotifications.Find(x => x.TargetUserId == "fixture-user").SingleAsync();
+        fault.IncidentId.ShouldBe(failedPoolId is null ? null : "model-pool:pool-a");
+        fault.IncidentState.ShouldBe(failedPoolId is null ? "unknown" : "active");
+        fault.RequestOutcome.ShouldBe("request_failed");
+        fault.OccurrenceCount.ShouldBe(1);
+        await notifier.CloseUserFailureNotificationsAsync("chat", poolId: "pool-b");
+        (await testDb.Context.AdminNotifications.Find(x => x.Id == fault.Id).SingleAsync()).Status.ShouldBe("open");
+        await notifier.CloseUserFailureNotificationsAsync("chat", poolId: "pool-a");
+        var current = await testDb.Context.AdminNotifications.Find(x => x.Id == fault.Id).SingleAsync();
+        current.Status.ShouldBe(failedPoolId is null ? "open" : "closed");
+        current.IncidentState.ShouldBe(failedPoolId is null ? "unknown" : "recovered");
+        var recoveries = await testDb.Context.AdminNotifications.Find(x => x.Level == "success").ToListAsync();
+        recoveries.Count.ShouldBe(failedPoolId is null ? 0 : 1);
+        if (failedPoolId is not null)
+        {
+            recoveries[0].IncidentId.ShouldBe(fault.IncidentId);
+            recoveries[0].TargetUserId.ShouldBe("fixture-user");
+            recoveries[0].RequestOutcome.ShouldBe("unknown"); // Pool health does not redo the failed request.
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

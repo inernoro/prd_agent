@@ -4324,7 +4324,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 userId, request.ModelType,
                 resolution.OriginalPoolName ?? resolution.ModelGroupName ?? "所选模型",
                 CancellationToken.None,
-                poolId: resolution.OriginalPoolId ?? resolution.ModelGroupId);
+                poolId: resolution.OriginalPoolId ?? resolution.ModelGroupId ?? resolution.FailureModelPoolId);
         }
         catch (Exception ex)
         {
