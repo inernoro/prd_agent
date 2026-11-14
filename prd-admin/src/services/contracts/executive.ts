@@ -163,7 +163,27 @@ export type TeamInsightHeadline = {
   criticalCount: number;
 };
 
+export type ExecutiveWorkspaceMember = {
+  userId: string; displayName: string; role: string; avatarFileName: string | null;
+  hasActivity: boolean; llmCalls: number; llmErrors: number; pricedCalls: number | null;
+  docs: number; sites: number; reports: number; imagesDone: number; imagesFailed: number;
+  defectsResolved: number; defectsBacklog: number; tokens: number; cost: number;
+  /** 真实每日产出件数；日期范围由 workspace.seriesFrom / seriesTo 给出。 */
+  outputSeries: number[];
+};
+
+export type ExecutiveWorkspaceGroup = {
+  id: string; name: string; userIds: string[]; totalMembers: number; activeMembers: number;
+};
+
 export type TeamInsights = {
+  workspace?: {
+    summary: { key: string; label: string; value: number | null; unit: string; note: string }[];
+    groups: ExecutiveWorkspaceGroup[];
+    members: ExecutiveWorkspaceMember[];
+    seriesFrom: string; seriesTo: string; seriesLabel: string; groupNote: string;
+    costCoverage: { pricedCalls: number; totalCalls: number };
+  };
   headline: TeamInsightHeadline;
   pulse: TeamInsightKpi[];
   attention: TeamInsightAttention[];

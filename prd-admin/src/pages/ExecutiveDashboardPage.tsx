@@ -1,12 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Crown, Users, Bot, DollarSign, Link2, TrendingUp,
+  CalendarDays, Users, Bot, DollarSign, Link2, TrendingUp,
   MessageSquare, Image, Bug, Zap, Activity,
   BarChart3, RefreshCw,
   Info, ChevronUp, ChevronDown,
   Cpu, Sparkles,
 } from 'lucide-react';
-import { TabBar } from '@/components/design/TabBar';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import CountUp from '@/components/reactbits/CountUp';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -25,11 +24,11 @@ import type {
   ExecutiveTeamMember,
   ExecutiveAgentStat,
   ExecutiveModelStat,
-  TeamInsights,
 } from '@/services/contracts/executive';
 import type { EChartsOption } from 'echarts';
 import { Tooltip } from '@/components/ui/Tooltip';
-import TeamInsightsPanel from '@/pages/executive/TeamInsightsPanel';
+import TeamInsightsWorkspace from '@/pages/executive/TeamInsightsWorkspace';
+import { useExecutiveQuery } from '@/pages/executive/useExecutiveQuery';
 
 // ─── Enterprise Dashboard Design Tokens ──────────────────────────────
 // Linear / Vercel inspired: flat, controlled, monochrome primary
@@ -662,84 +661,52 @@ export default function ExecutiveDashboardPage() {
   const { isMobile } = useBreakpoint();
   const [activeTab, setActiveTab] = useState('team');
   const [days, setDays] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-
-  const [overview, setOverview] = useState<ExecutiveOverview | null>(null);
-  const [trends, setTrends] = useState<ExecutiveTrendItem[]>([]);
-  const [team, setTeam] = useState<ExecutiveTeamMember[]>([]);
-  const [agents, setAgents] = useState<ExecutiveAgentStat[]>([]);
-  const [models, setModels] = useState<ExecutiveModelStat[]>([]);
-  const [teamInsights, setTeamInsights] = useState<TeamInsights | null>(null);
-
-  const fetchAll = useCallback(async (d: number, isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    else setLoading(true);
-    try {
-      const [ovRes, trRes, tmRes, agRes, mdRes, tiRes] = await Promise.all([
-        getExecutiveOverview(d),
-        getExecutiveTrends(Math.max(d, 14)),
-        getExecutiveTeam(d),
-        getExecutiveAgents(d),
-        getExecutiveModels(d),
-        getTeamInsights(d),
-      ]);
-      if (ovRes.success) setOverview(ovRes.data);
-      if (trRes.success) setTrends(trRes.data);
-      if (tmRes.success) setTeam(tmRes.data);
-      if (agRes.success) setAgents(agRes.data);
-      if (mdRes.success) setModels(mdRes.data);
-      if (tiRes.success) setTeamInsights(tiRes.data);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => { fetchAll(days); }, [days, fetchAll]);
+  const [revision, setRevision] = useState(0);
+  const overviewQuery = useExecutiveQuery(getExecutiveOverview, days, activeTab === 'overview', revision);
+  const trendsQuery = useExecutiveQuery(getExecutiveTrends, Math.max(days, 14), activeTab === 'overview', revision);
+  const teamQuery = useExecutiveQuery(getExecutiveTeam, days, activeTab === 'agents', revision);
+  const agentsQuery = useExecutiveQuery(getExecutiveAgents, days, activeTab === 'overview' || activeTab === 'agents', revision);
+  const modelsQuery = useExecutiveQuery(getExecutiveModels, days, activeTab === 'cost', revision);
+  const insightsQuery = useExecutiveQuery(getTeamInsights, days, activeTab === 'team', revision);
+  const queryRegistry = {
+    team: [insightsQuery], overview: [overviewQuery, trendsQuery, agentsQuery],
+    agents: [agentsQuery, teamQuery], cost: [modelsQuery], integrations: [],
+  };
+  const activeQueries = queryRegistry[activeTab as keyof typeof queryRegistry] ?? [];
+  const loading = activeQueries.some(query => query.loading);
+  const error = activeQueries.find(query => query.error)?.error;
+  const previous = activeQueries.find(query => query.updatedAt !== undefined);
+  const showingPrevious = activeQueries.some(query => query.stale);
+  const [waitingLong, setWaitingLong] = useState(false);
+  useEffect(() => {
+    setWaitingLong(false);
+    if (!loading) return;
+    const timer = window.setTimeout(() => setWaitingLong(true), 2000);
+    return () => window.clearTimeout(timer);
+  }, [loading, activeTab, days, revision]);
+  const previousLabel = previous?.dataDays === 0 ? '全部时间' : `最近 ${previous?.dataDays} 天`;
 
   return (
-    <div className="space-y-5 relative">
-      {/* Subtle ambient light — top-left radial, 6% max opacity */}
-      <div
-        className="fixed top-0 left-0 w-[700px] h-[700px] pointer-events-none"
-        style={{ background: `radial-gradient(circle at 20% 20%, ${hexAlpha(D.primary, 0.06)}, transparent 70%)` }}
-      />
-
-      <TabBar
-        items={isMobile ? TABS.map(t => ({ ...t, label: t.mobileLabel })) : TABS}
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        icon={<Crown size={16} />}
-        variant="default"
-        actions={isMobile ? undefined : (
-          <div className="flex items-center gap-2">
-            <select
-              value={days}
-              onChange={e => setDays(Number(e.target.value))}
-              className="text-xs px-2.5 py-1 rounded-lg border-0 outline-none cursor-pointer transition-colors"
-              style={{ background: hexAlpha(D.primary, 0.1), color: D.primary, fontWeight: 500 }}
-            >
-              {DAYS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <button
-              onClick={() => fetchAll(days, true)}
-              disabled={refreshing}
-              className="p-1.5 rounded-lg transition-all hover-bg-soft"
-              style={{ color: refreshing ? D.primary : D.text3 }}
-              title="刷新数据"
-            >
-              {refreshing ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
-            </button>
-          </div>
-        )}
-      />
-
-      {activeTab === 'overview' && <OverviewTab overview={overview} trends={trends} agents={agents} loading={loading} />}
-      {activeTab === 'team' && <TeamInsightsPanel data={teamInsights} loading={loading} />}
-      {activeTab === 'agents' && <AgentUsageTab agents={agents} team={team} loading={loading} />}
-      {activeTab === 'cost' && <CostCenterTab models={models} loading={loading} />}
-      {activeTab === 'integrations' && <IntegrationsTab />}
+    <div className="executive-dashboard h-full min-h-0 flex flex-col">
+      <header className="exec-page-header">
+        <div className="exec-page-title"><BarChart3 size={16} /><span>统计中心</span></div>
+        <nav className="exec-page-tabs" aria-label="统计分类">
+          {TABS.map(tab => <button key={tab.key} className={activeTab === tab.key ? 'active' : ''} aria-current={activeTab === tab.key ? 'page' : undefined} onClick={() => setActiveTab(tab.key)}>{tab.icon}{isMobile ? tab.mobileLabel : tab.label}</button>)}
+        </nav>
+        <div className="exec-page-actions">
+          <label className="exec-range-control"><CalendarDays size={13} /><select aria-label="统计时间范围" value={days} onChange={event => setDays(Number(event.target.value))}>{DAYS_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+          <button className="exec-refresh" onClick={() => setRevision(value => value + 1)} disabled={loading} title="刷新数据">{loading ? <MapSpinner size={13} /> : <RefreshCw size={13} />}刷新</button>
+        </div>
+      </header>
+      {loading && <div className="exec-fetch-state" role="status" aria-live="polite"><MapSpinner size={12} /><span>{waitingLong ? '正在汇总历史数据，请稍候…' : '正在更新统计…'}{showingPrevious && previous?.dataDays !== undefined ? ` 当前仍显示${previousLabel}的上次结果。` : ''}</span></div>}
+      {error && <div role="alert" className="exec-fetch-state error"><span>统计加载失败：{error}。{previous?.updatedAt !== undefined ? ` 当前保留${previousLabel}的上次结果。` : ''}</span><button onClick={() => setRevision(value => value + 1)}>重试</button></div>}
+      <div className="exec-page-body">
+        {activeTab === 'team' && <TeamInsightsWorkspace data={insightsQuery.data ?? null} loading={insightsQuery.loading} onOpenTab={setActiveTab} />}
+        {activeTab === 'overview' && <div className="exec-other-tab"><OverviewTab overview={overviewQuery.data ?? null} trends={trendsQuery.data ?? []} agents={agentsQuery.data ?? []} loading={overviewQuery.loading} /></div>}
+        {activeTab === 'agents' && <div className="exec-other-tab"><AgentUsageTab agents={agentsQuery.data ?? []} team={teamQuery.data ?? []} loading={agentsQuery.loading} /></div>}
+        {activeTab === 'cost' && <div className="exec-other-tab"><CostCenterTab models={modelsQuery.data ?? []} loading={modelsQuery.loading} /></div>}
+        {activeTab === 'integrations' && <div className="exec-other-tab"><IntegrationsTab /></div>}
+      </div>
     </div>
   );
 }

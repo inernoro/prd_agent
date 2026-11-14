@@ -688,10 +688,18 @@ public class ExecutiveController : ControllerBase
         public int Docs, Sites, Reports, RunsCompleted;
         public int RunsDone, RunsFailed;
         public int DefectsReported, DefectsAssigned, DefectsResolved, DefectsBacklog;
-        public int LlmCalls, LlmErrors;
+        public int LlmCalls, LlmErrors, PricedCalls;
         public long InputTokens, OutputTokens;
         public decimal Cost;
         public readonly HashSet<DateTime> OutputDays = new();
+        public readonly Dictionary<DateTime, int> DailyOutput = new();
+
+        public void RecordOutput(DateTime at)
+        {
+            var day = at.Date;
+            OutputDays.Add(day);
+            DailyOutput[day] = DailyOutput.GetValueOrDefault(day) + 1;
+        }
     }
 
     /// <summary>需要关注卡片：现象 + 证据 + 建议 + 下钻入口</summary>
@@ -777,24 +785,24 @@ public class ExecutiveController : ControllerBase
         foreach (var r in docRows)
         {
             if (r.CreatedBy == null || !userIds.Contains(r.CreatedBy)) continue;
-            var m = Bucket(r.CreatedBy); m.Docs++; m.OutputDays.Add(r.CreatedAt.Date);
+            var m = Bucket(r.CreatedBy); m.Docs++; m.RecordOutput(r.CreatedAt);
         }
         foreach (var r in siteRows)
         {
             if (r.OwnerUserId == null || !userIds.Contains(r.OwnerUserId)) continue;
-            var m = Bucket(r.OwnerUserId); m.Sites++; m.OutputDays.Add(r.CreatedAt.Date);
+            var m = Bucket(r.OwnerUserId); m.Sites++; m.RecordOutput(r.CreatedAt);
         }
         foreach (var r in reportRows)
         {
             if (r.UserId == null || !userIds.Contains(r.UserId) || r.SubmittedAt == null) continue;
-            var m = Bucket(r.UserId); m.Reports++; m.OutputDays.Add(r.SubmittedAt.Value.Date);
+            var m = Bucket(r.UserId); m.Reports++; m.RecordOutput(r.SubmittedAt.Value);
         }
         foreach (var r in runRows)
         {
             if (r.OwnerAdminId == null || !userIds.Contains(r.OwnerAdminId)) continue;
             var m = Bucket(r.OwnerAdminId);
             m.RunsDone += r.Done; m.RunsFailed += r.Failed;
-            if (r.Status == ImageGenRunStatus.Completed) { m.RunsCompleted++; m.OutputDays.Add(r.CreatedAt.Date); }
+            if (r.Status == ImageGenRunStatus.Completed) { m.RunsCompleted++; m.RecordOutput(r.CreatedAt); }
         }
 
         // ── 缺陷：解决时长 / 积压 / 提交与解决归属 ──
@@ -819,7 +827,7 @@ public class ExecutiveController : ControllerBase
             var owner = d.AssigneeId ?? d.ReporterId;
             if (owner == null || !userIds.Contains(owner)) continue;
             var m = Bucket(owner); m.DefectsResolved++;
-            if (d.ResolvedAt != null) m.OutputDays.Add(d.ResolvedAt.Value.Date);
+            if (d.ResolvedAt != null) m.RecordOutput(d.ResolvedAt.Value);
         }
         foreach (var d in openDefects)
         {
@@ -877,6 +885,7 @@ public class ExecutiveController : ControllerBase
             if (row.UserId == null || !userIds.Contains(row.UserId)) continue;
             var m = Bucket(row.UserId);
             m.LlmCalls += row.C; m.InputTokens += inTok; m.OutputTokens += outTok; m.Cost += cost;
+            if (row.Model != null && pricingLookup.ContainsKey(row.Model)) m.PricedCalls += row.C;
         }
         foreach (var row in llmErrByUser)
         {
@@ -1460,7 +1469,82 @@ public class ExecutiveController : ControllerBase
             },
         };
 
-        return Ok(ApiResponse<object>.Ok(new { headline, pulse, attention = attentionOut, members, flow, meta }));
+        // 工作区只补充轻量团队关系和已读取产出的日分布，不额外扫描 LLM 日志。
+        var teamsTask = _db.Teams.Find(_ => true)
+            .Project(t => new { t.Id, t.Name, t.OwnerUserId }).ToListAsync();
+        var membershipsTask = _db.TeamMembers.Find(_ => true)
+            .Project(m => new { m.TeamId, m.UserId }).ToListAsync();
+        await Task.WhenAll(teamsTask, membershipsTask);
+        var workspaceTeams = await teamsTask;
+        var memberships = (await membershipsTask).ToLookup(m => m.TeamId, m => m.UserId);
+        var groupedIds = new HashSet<string>();
+        var workspaceGroups = new List<object>();
+        foreach (var team in workspaceTeams.OrderBy(t => t.Name).ThenBy(t => t.Id))
+        {
+            var ids = memberships[team.Id].Append(team.OwnerUserId)
+                .Where(userIds.Contains).Distinct().OrderBy(id => id).ToArray();
+            if (ids.Length == 0) continue;
+            groupedIds.UnionWith(ids);
+            workspaceGroups.Add(new
+            {
+                id = team.Id,
+                name = string.IsNullOrWhiteSpace(team.Name) ? "未命名团队" : team.Name,
+                userIds = ids,
+                totalMembers = ids.Length,
+                activeMembers = memberRows.Count(r => ids.Contains(r.U.UserId)),
+            });
+        }
+        var ungrouped = humanUsers.Where(u => !groupedIds.Contains(u.UserId))
+            .Select(u => u.UserId).OrderBy(id => id).ToArray();
+        if (ungrouped.Length > 0)
+            workspaceGroups.Add(new
+            {
+                id = "__ungrouped__", name = "未加入团队的成员", userIds = ungrouped,
+                totalMembers = ungrouped.Length,
+                activeMembers = memberRows.Count(r => ungrouped.Contains(r.U.UserId)),
+            });
+        var trailingStart = end.Date > DateTime.MinValue.AddDays(30) ? end.Date.AddDays(-30) : DateTime.MinValue;
+        var seriesFrom = start > trailingStart ? start.Date : trailingStart;
+        var seriesDates = Enumerable.Range(0, Math.Max(0, (end.Date - seriesFrom).Days))
+            .Select(i => seriesFrom.AddDays(i)).ToArray();
+        var recordedIds = memberRows.Select(r => r.U.UserId).ToHashSet();
+        var humanAggregates = humanUsers.Select(u => agg.GetValueOrDefault(u.UserId) ?? new MemberAgg()).ToList();
+        var workspace = new
+        {
+            summary = new[]
+            {
+                new { key = "members", label = "有产出或调用", value = (double)recordedIds.Count, unit = "人", note = "人工账号中，本窗有可统计产出或模型调用的成员数" },
+                new { key = "calls", label = "模型调用", value = (double)humanAggregates.Sum(a => a.LlmCalls), unit = "次", note = "本窗归属于人工账号且带模型标识的调用次数" },
+                new { key = "tokens", label = "Token 使用", value = (double)humanAggregates.Sum(a => a.InputTokens + a.OutputTokens), unit = "tokens", note = "上述人工账号调用的输入与输出 Token 合计" },
+                new { key = "docs", label = "新增文档", value = (double)humanAggregates.Sum(a => a.Docs), unit = "篇", note = "人工账号在统计窗口内创建的文档数量" },
+                new { key = "images", label = "生成图片", value = (double)humanAggregates.Sum(a => a.RunsDone), unit = "张", note = "人工账号在窗口内创建的生图任务所记录的成功图片数" },
+                new { key = "defects", label = "解决缺陷", value = (double)humanAggregates.Sum(a => a.DefectsResolved), unit = "个", note = "解决时间在窗口内的缺陷，归属沿用受理人优先、提交人兜底的现有口径" },
+            },
+            groups = workspaceGroups,
+            members = humanUsers.OrderBy(u => u.DisplayName).ThenBy(u => u.UserId).Select(u =>
+            {
+                agg.TryGetValue(u.UserId, out var a);
+                a ??= new MemberAgg();
+                return new
+                {
+                    userId = u.UserId,
+                    displayName = string.IsNullOrEmpty(u.DisplayName) ? u.Username : u.DisplayName,
+                    role = u.Role.ToString(), avatarFileName = u.AvatarFileName,
+                    hasActivity = recordedIds.Contains(u.UserId),
+                    llmCalls = a.LlmCalls, llmErrors = a.LlmErrors, pricedCalls = a.PricedCalls,
+                    docs = a.Docs, sites = a.Sites, reports = a.Reports,
+                    imagesDone = a.RunsDone, imagesFailed = a.RunsFailed,
+                    defectsResolved = a.DefectsResolved, defectsBacklog = a.DefectsBacklog,
+                    tokens = a.InputTokens + a.OutputTokens, cost = Math.Round(a.Cost, 2),
+                    outputSeries = seriesDates.Select(day => a.DailyOutput.GetValueOrDefault(day)).ToArray(),
+                };
+            }).ToArray(),
+            seriesFrom, seriesTo = end.AddDays(-1),
+            seriesLabel = $"{seriesFrom:yyyy-MM-dd} 至 {end.AddDays(-1):yyyy-MM-dd} 的每日产出件数",
+            groupNote = "按系统团队当前成员关系分组；同一成员可属于多个团队，团队人数与指标不可直接相加。",
+            costCoverage = new { pricedCalls, totalCalls },
+        };
+        return Ok(ApiResponse<object>.Ok(new { headline, pulse, attention = attentionOut, members, flow, meta, workspace }));
     }
 
     /// <summary>
