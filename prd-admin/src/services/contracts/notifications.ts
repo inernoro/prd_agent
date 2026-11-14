@@ -9,6 +9,16 @@ export type NotificationAttachment = {
 
 export type AdminNotificationItem = {
   id: string;
+  targetUserId?: string | null;
+  pushEpisode?: number;
+  incidentId?: string | null;
+  incidentState?: string | null;
+  requestOutcome?: string | null;
+  occurrenceCount?: number;
+  firstOccurredAt?: string | null;
+  lastOccurredAt?: string | null;
+  recoveredAt?: string | null;
+  evidenceRequestId?: string | null;
   key?: string | null;
   title: string;
   message?: string | null;
@@ -30,6 +40,8 @@ export type AdminNotificationItem = {
 
 export type GetAdminNotificationsResponse = {
   items: AdminNotificationItem[];
+  hasMore?: boolean;
+  summary?: { notificationCount: number; independentIncidentCount: number; unclassifiedCount: number };
 };
 
 export type AdminPushTopicDefinition = {
@@ -169,3 +181,7 @@ export type TestAdminPushSubscriptionContract = (
   topicKey: string,
   request: UpdateAdminPushSubscriptionRequest
 ) => Promise<ApiResponse<{ delivery: AdminPushDeliveryLog }>>;
+
+export type NotificationBatchRequest = { items: { id: string; pushEpisode: number; updatedAt: string }[] };
+export type NotificationBatchResult = { requested: number; handled: number; failed: number; results: { id: string; handled: boolean; reason?: string | null }[] };
+export type HandleBatchAdminNotificationsContract = (request: NotificationBatchRequest) => Promise<ApiResponse<NotificationBatchResult>>;

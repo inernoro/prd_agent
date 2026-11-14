@@ -320,6 +320,7 @@ export const api = {
   // ============ Dashboard 仪表盘 ============
   dashboard: {
     notifications: {
+      handleBatch: () => '/api/dashboard/notifications/handle-batch',
       list: () => '/api/dashboard/notifications',
       handle: (id: string) => `/api/dashboard/notifications/${id}/handle`,
       handleAll: () => '/api/dashboard/notifications/handle-all',

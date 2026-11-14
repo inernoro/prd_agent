@@ -5,6 +5,14 @@ import type { LlmLogListItem } from './types';
 
 export const DASH = '—';
 
+export const MODEL_FALLBACK_LABEL = '模型/模型池回退';
+export const MODEL_FALLBACK_SCOPE = '模型解析回退记录；线路备用见路由尝试';
+
+/** Nullable model-resolution flag; provider-route attempts are a separate fact. */
+export function formatModelFallback(value?: boolean | null): string {
+  return value == null ? '未记录' : value ? '是' : '否';
+}
+
 // ── 数值/时间格式化 ──
 export function computeTokPerSec(outputTokens?: number | null, durationMs?: number | null): number | null {
   if (outputTokens == null || durationMs == null || durationMs <= 0) return null;
@@ -228,7 +236,7 @@ export const UPSTREAM_COLUMNS: ColumnDef[] = [
   { key: 'genId', label: '请求 ID', width: '1.8fr' },
   { key: 'status', label: '状态', width: '0.8fr', align: 'center' },
   { key: 'attempts', label: '尝试次数', width: '0.8fr', align: 'center', tip: '未记录每次重试历史，仅有最终回退标记' },
-  { key: 'fallback', label: '是否回退', width: '0.9fr' },
+  { key: 'fallback', label: MODEL_FALLBACK_LABEL, width: '0.9fr', tip: MODEL_FALLBACK_SCOPE },
   { key: 'latency', label: '耗时', width: '0.9fr', align: 'right' },
 ];
 

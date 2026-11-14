@@ -15,6 +15,7 @@ import { LogTableSettings } from './LogTableSettings';
 import { ConsumptionAlertsPanel } from './ConsumptionAlertsPanel';
 import {
   DASH,
+  formatModelFallback,
   LOGS_SUBTABS,
   type LogsSubTab,
   TIME_RANGE_PRESETS,
@@ -960,10 +961,10 @@ export function LogsView() {
       case 'attempts':
         return <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{DASH}</span>;
       case 'fallback':
-        return it.isFallback ? (
-          <Chip label="已降级" color="#fbbf24" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} />
+        return it.isFallback === true ? (
+          <Chip label={formatModelFallback(it.isFallback)} color="#fbbf24" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} />
         ) : (
-          <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>否</span>
+          <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{formatModelFallback(it.isFallback)}</span>
         );
       case 'latency':
         return <span className="tabular" style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;

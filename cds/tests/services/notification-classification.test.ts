@@ -143,7 +143,7 @@ describe('通知交叉分类与唯一模板目录', () => {
     expect(decodeURIComponent(request.pathname)).toBe('/fixture-only/测试 MAP/问答检查异常，原因未明');
     expect(request.searchParams.get('url')).toBe(url);
     const map = buildNotificationPayload({ ...event, targetId: event.targetId!, type: 'uptime.target.down', boardUrl: url });
-    expect(map.title + ' ' + map.message).toBe('测试 MAP 问答检查异常，原因未明'); expect(map.actionUrl).toBe(url);
+    expect(map.title).toBe('问答检查异常，原因未明 · 测试 MAP'); expect(map.message).toContain('查看监控详情'); expect(map.actionUrl).toBe(url);
   });
   it('同一事件并发回调只归档一次，恢复追加原报告并可持久化重读', async () => {
     const state = new StateService(path.join(dir, crypto.randomUUID() + '.json'), dir); state.load();
@@ -165,11 +165,11 @@ describe('通知交叉分类与唯一模板目录', () => {
     const recorder = new NotificationReportRecorder(state);
     const first = await recorder.record({ ...event, incidentId: 'first-probe-incident' });
     const repeated = await recorder.record({ ...event, incidentId: 'flapping-probe-incident', detectedAt: '2026-11-11T01:30:00.000Z' });
-    expect(repeated).toEqual(first);
+    expect(repeated).toMatchObject({ reportId: first.reportId, eventId: first.eventId, firstOccurredAt: first.firstOccurredAt, occurrenceCount: 2 });
     expect(state.listAcceptanceReports(null)).toHaveLength(1);
     expect(state.getAcceptanceReport(first.reportId)!.monitorEvent!.snapshots).toHaveLength(2);
     const recovered = await recorder.record({ ...event, kind: 'business-recovered', detectedAt: '2026-11-11T01:45:00.000Z' });
-    expect(recovered).toEqual(first);
+    expect(recovered).toMatchObject({ reportId: first.reportId, eventId: first.eventId, occurrenceCount: 2 });
     expect(state.getAcceptanceReport(first.reportId)!.monitorEvent!.snapshots).toHaveLength(3);
     const next = await recorder.record({ ...event, detectedAt: '2026-11-11T02:00:00.000Z' });
     expect(next.reportId).not.toBe(first.reportId);

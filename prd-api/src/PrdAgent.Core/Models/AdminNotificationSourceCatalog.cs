@@ -59,6 +59,7 @@ public static class AdminNotificationSourceCatalog
         new("api-request-alert", "API 请求问题", AdminNotificationSections.Admin, "慢接口、错误率、调用失败和网关异常告警"),
         new("api-request-log", "API 请求日志", AdminNotificationSections.Admin, "API 请求日志和接口观测通知"),
         new("gateway-alert", "网关告警", AdminNotificationSections.Admin, "网关故障、限流和调用链路异常"),
+        new("model-pool-probe", "模型线路", AdminNotificationSections.Admin, "管理员的模型池故障与探活；定向业务结果按个人通知隔离"),
         new("stable-smoke", "稳定冒烟", AdminNotificationSections.Admin, "核心业务双环境复测失败、条件通过、证据和恢复动作"),
         new("uptime-alert", "监控告警", AdminNotificationSections.Admin, "CDS 常设探针发现的服务降级、后台未处理异常与不可用告警"),
         new("user-voice", "用户之声", AdminNotificationSections.Admin, "真实用户反馈、体验痛点和 VOC 运营消息"),
@@ -83,10 +84,18 @@ public static class AdminNotificationSourceCatalog
 
     public static string ResolveSection(string? source, string? explicitSection = null)
     {
-        if (!string.IsNullOrWhiteSpace(explicitSection))
-            return AdminNotificationSections.Normalize(explicitSection);
-
+        if (!string.IsNullOrWhiteSpace(explicitSection)) return AdminNotificationSections.Normalize(explicitSection);
         return Find(source)?.Section ?? AdminNotificationSections.Personal;
+    }
+
+    public static string ResolveSection(string? source, string? explicitSection, string? targetUserId)
+    {
+        if (NormalizeSource(source) == "model-pool-probe")
+        {
+            if (string.IsNullOrWhiteSpace(targetUserId)) return AdminNotificationSections.Admin;
+            if (string.IsNullOrWhiteSpace(explicitSection)) return AdminNotificationSections.Personal;
+        }
+        return ResolveSection(source, explicitSection);
     }
 
     public static string ResolveSourceLabel(string? source)

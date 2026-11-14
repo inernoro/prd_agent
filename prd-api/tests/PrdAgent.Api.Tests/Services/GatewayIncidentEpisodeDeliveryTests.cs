@@ -205,9 +205,9 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
             await watchdog.SweepOnceAsync(default);
         }
         public Task DispatchAsync() => new AdminPushNotificationService(Db, Http, new LoopbackOnlyValidator(), _configuration,
-            NullLogger<AdminPushNotificationService>.Instance, Clock).DispatchPendingAsync(default);
+            NullLogger<AdminPushNotificationService>.Instance, Clock, audience: AdminPushNotificationServiceTests.AllowedAudience).DispatchPendingAsync(default);
         public Task<AdminPushSubscription> SubscribeAsync() => new AdminPushNotificationService(Db, Http, new LoopbackOnlyValidator(), _configuration,
-            NullLogger<AdminPushNotificationService>.Instance, Clock).UpsertSubscriptionAsync("fixture-user", new AdminPushSubscriptionUpsertRequest {
+            NullLogger<AdminPushNotificationService>.Instance, Clock, audience: AdminPushNotificationServiceTests.AllowedAudience).UpsertSubscriptionAsync("fixture-user", new AdminPushSubscriptionUpsertRequest {
                 TopicKey = "api-request-alert", Enabled = true, ChannelType = "url", Method = "GET", UrlTemplate = "http://127.0.0.1:18991/fake"
             }, default);
         public Task<AdminNotification> FaultAsync() => Db.AdminNotifications.Find(n => n.Level == "error").SingleAsync();

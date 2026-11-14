@@ -521,7 +521,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
             {
                 // 向请求失败的用户发送故障通知
-                _ = TryNotifyUserFailureAsync(request, resolution);
+                await TryNotifyUserFailureAsync(request, resolution);
 
                 return GatewayResponse.Fail(resolution.FailureCode ?? "MODEL_NOT_FOUND",
                     resolution.ErrorMessage ?? "未找到可用模型", GatewayRouteFailure.HttpStatusCode(resolution.FailureCode));
@@ -877,7 +877,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
             {
                 // 向请求失败的用户发送故障通知
-                _ = TryNotifyUserFailureAsync(request, resolution);
+                await TryNotifyUserFailureAsync(request, resolution);
 
                 yield return GatewayStreamChunk.Fail(
                     resolution.ErrorMessage ?? "未找到可用模型",
@@ -4310,20 +4310,26 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <summary>
-    /// 尝试向请求失败的用户发送故障通知（fire-and-forget，不阻断主流程）
+    /// 尝试向请求失败的用户发送故障通知；写入失败不阻断主流程。
     /// </summary>
     private async Task TryNotifyUserFailureAsync(GatewayRequest request, ModelResolutionResult resolution)
     {
         try
         {
+            // A pool health probe cannot establish that an administrator approved this model.
+            // Keep the precise request rejection; do not create an incident that a probe can close.
+            if (resolution.FailureCode == GatewayRouteFailure.ModelNotInCatalog)
+                return;
+
             var userId = request.Context?.UserId;
             if (string.IsNullOrWhiteSpace(userId) || _failoverNotifier == null)
                 return;
 
             await _failoverNotifier.NotifyUserFailureAsync(
                 userId, request.ModelType,
-                resolution.OriginalPoolName ?? "未知",
-                CancellationToken.None);
+                resolution.OriginalPoolName ?? resolution.ModelGroupName ?? "所选模型",
+                CancellationToken.None,
+                poolId: resolution.OriginalPoolId ?? resolution.ModelGroupId ?? resolution.FailureModelPoolId);
         }
         catch (Exception ex)
         {

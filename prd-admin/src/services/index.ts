@@ -23,6 +23,7 @@ import type {
 import type {
   GetAdminNotificationsContract,
   HandleAdminNotificationContract,
+  HandleBatchAdminNotificationsContract,
   HandleAllAdminNotificationsContract,
   GetAdminPushSubscriptionsContract,
   UpdateAdminPushProfileContract,
@@ -620,6 +621,7 @@ import {
 import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
+  handleBatchAdminNotificationsReal,
   handleAllAdminNotificationsReal,
   getAdminPushSubscriptionsReal,
   updateAdminPushProfileReal,
@@ -2434,3 +2436,5 @@ export type {
   FrontEndAgentRequest,
   FrontEndAgentTaskType,
 } from '@/services/real/frontEndAgent';
+
+export const handleBatchAdminNotifications: HandleBatchAdminNotificationsContract = withAuth(handleBatchAdminNotificationsReal);

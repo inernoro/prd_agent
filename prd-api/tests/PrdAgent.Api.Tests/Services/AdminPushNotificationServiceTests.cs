@@ -105,7 +105,7 @@ public sealed class AdminPushNotificationServiceTests
         var http = new RecordingHttpClientFactory();
         var clock = new PushTestClock();
         AdminPushNotificationService Push() => new(db.Context, http, new AllowAllUrlValidator(), config,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         await Push().DispatchPendingAsync(default);
         Assert.Single(http.Requests);
 
@@ -189,7 +189,7 @@ public sealed class AdminPushNotificationServiceTests
         var http = new RecordingHttpClientFactory();
         var clock = new PushTestClock();
         var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         await SeedChannelAsync(testDb.Context);
         await testDb.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription {
             UserId = "u1", TopicKey = "api-request-alert", Enabled = true, ChannelType = "url",
@@ -232,7 +232,7 @@ public sealed class AdminPushNotificationServiceTests
         var configuration = new ConfigurationBuilder().AddConfiguration(TestConfiguration)
             .AddInMemoryCollection(new Dictionary<string,string?> { ["AdminPush:AggregationSeconds"] = "0" }).Build();
         var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), configuration,
-            NullLogger<AdminPushNotificationService>.Instance);
+            NullLogger<AdminPushNotificationService>.Instance, audience: AllowedAudience);
         await service.DispatchPendingAsync(default);
         await ExpireRecipientWindowAsync(testDb.Context);
         await service.DispatchPendingAsync(default);
@@ -289,7 +289,7 @@ public sealed class AdminPushNotificationServiceTests
         var http = new RecordingHttpClientFactory();
         var clock = new PushTestClock();
         var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         await testDb.Context.AdminNotifications.InsertManyAsync(Enumerable.Range(0, 100).Select(i => new AdminNotification {
             Id = $"quiet-{i}", Level = "warning", Source = "stable-smoke", TargetUserId = "u1", Title = "检查结果", CreatedAt = clock.GetUtcNow().UtcDateTime,
         }));
@@ -307,7 +307,7 @@ public sealed class AdminPushNotificationServiceTests
         await SeedChannelAsync(testDb.Context);
         var clock = new PushTestClock(); var http = new RecordingHttpClientFactory();
         AdminPushNotificationService Service() => new(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         async Task Add(string key, string level) => await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
             Key = key, Source = "stable-smoke", TargetUserId = "u1", Level = level, Title = key,
             CreatedAt = clock.GetUtcNow().UtcDateTime.AddSeconds(-20),
@@ -336,7 +336,7 @@ public sealed class AdminPushNotificationServiceTests
         await SeedChannelAsync(testDb.Context);
         var clock = new PushTestClock(); var http = new RecordingHttpClientFactory();
         var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         for (var i = 0; i < 60; i++)
         {
             await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
@@ -361,7 +361,7 @@ public sealed class AdminPushNotificationServiceTests
         await SeedChannelAsync(testDb.Context);
         var clock = new PushTestClock(); var http = new RecordingHttpClientFactory();
         AdminPushNotificationService Service() => new(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         async Task Add(string id, string level) => await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
             Id = id, Source = "workflow-agent", TargetUserId = "u1", Level = level, Title = id,
             CreatedAt = clock.GetUtcNow().UtcDateTime.AddSeconds(-20),
@@ -385,7 +385,7 @@ public sealed class AdminPushNotificationServiceTests
         await SeedChannelAsync(testDb.Context);
         var clock = new PushTestClock(); var http = new RecordingHttpClientFactory();
         var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
-            NullLogger<AdminPushNotificationService>.Instance, clock);
+            NullLogger<AdminPushNotificationService>.Instance, clock, audience: AllowedAudience);
         await testDb.Context.AdminNotifications.InsertManyAsync(Enumerable.Range(0, 1100).Select(i => new AdminNotification {
             Key = "ordinary-" + i, Source = "stable-smoke", TargetUserId = "u1", Level = "warning", Title = "普通变化",
             CreatedAt = clock.GetUtcNow().UtcDateTime,
@@ -1284,11 +1284,70 @@ public sealed class AdminPushNotificationServiceTests
         });
 
         Assert.Equal("AI 创作服务需要管理员处理", presentation.Title);
-        Assert.Contains("请稍后重试", presentation.Message);
+        Assert.Contains("结果和当前状态尚未确认", presentation.Message);
         Assert.Contains("管理员需要检查", presentation.Message);
         Assert.DoesNotContain("Key limit exceeded", presentation.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("openrouter", presentation.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("/keys/", presentation.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("unknown", "unknown")]
+    [InlineData("unknown", null)]
+    [InlineData(null, "unknown")]
+    public void Review_ModernUnknownQuotaWithoutIdentity_IsNotMisrepresentedAsHistory(string? incidentState, string? outcome)
+    {
+        var notification = new AdminNotification {
+            Source = "llm-gateway-quota", IncidentState = incidentState, RequestOutcome = outcome,
+            Title = "上游额度不足（对象尚未确认）", Message = "上游拒绝了一次调用，整次请求结果尚未确认。",
+        };
+        var presentation = NotificationsController.ToUserReadablePresentation(notification);
+        Assert.Equal(notification.Title, presentation.Title);
+        Assert.Equal(notification.Message, presentation.Message);
+        Assert.DoesNotContain("历史", presentation.Message);
+        Assert.Null(notification.IncidentId);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Review_CurrentUnknownQuotaProducer_KeepsFactsCurrentAndPreservesObjectPermissions(bool gatewayPermission)
+    {
+        await using var db = await AdminPushTestDatabase.TryCreateAsync();
+        var notifier = new PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier(db.Context,
+            NullLogger<PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>.Instance);
+        // Platform creation accepts this name; existing quota safety rules deliberately
+        // withhold its identity. A missing identity is not evidence this event is historical.
+        await notifier.NotifyQuotaExceededAsync("供应商（欧洲）", "notification-modern-model");
+        var stored = await db.Context.AdminNotifications.Find(_ => true).SingleAsync();
+        Assert.Null(stored.IncidentId);
+        Assert.Equal("unknown", stored.IncidentState);
+        Assert.Equal("unknown", stored.RequestOutcome);
+        var controller = CreateNotificationsController(db.Context, "u1", adminRole: true,
+            adminPermission: true, gatewayPermission: gatewayPermission);
+        var item = Assert.Single(ReadNotificationItems(await controller.List(ct: CancellationToken.None)));
+        var message = item.GetProperty("message").GetString();
+        Assert.DoesNotContain("历史", message);
+        Assert.Contains("结果", message);
+        Assert.Equal("unknown", item.GetProperty("incidentState").GetString());
+        Assert.Equal("unknown", item.GetProperty("requestOutcome").GetString());
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("incidentId").ValueKind);
+        if (gatewayPermission)
+        {
+            Assert.Equal(stored.Title, item.GetProperty("title").GetString());
+            Assert.Equal(stored.Message, message);
+            Assert.Contains("notification-modern-model", message);
+        }
+        else
+        {
+            Assert.Equal("模型服务状态需要网关管理员检查", item.GetProperty("title").GetString());
+            Assert.DoesNotContain("notification-modern-model", message);
+            Assert.DoesNotContain("供应商（欧洲）", message);
+        }
+        var after = await db.Context.AdminNotifications.Find(x => x.Id == stored.Id).SingleAsync();
+        Assert.Equal(stored.Title, after.Title);
+        Assert.Equal(stored.Message, after.Message);
+        Assert.Null(after.IncidentId);
     }
 
     [Theory]
@@ -1395,7 +1454,7 @@ public sealed class AdminPushNotificationServiceTests
         var item = Assert.Single(ReadNotificationItems(await admin.List(ct: CancellationToken.None)));
         var message = item.GetProperty("message").GetString();
         Assert.Equal("AI 创作服务需要管理员处理", item.GetProperty("title").GetString());
-        Assert.Contains("请稍后重试", message);
+        Assert.Contains("结果和当前状态尚未确认", message);
         Assert.Contains("管理员需要检查", message);
         Assert.DoesNotContain("fix/quota-alert", message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("anthropic/claude-sonnet", message, StringComparison.OrdinalIgnoreCase);
@@ -1621,6 +1680,65 @@ public sealed class AdminPushNotificationServiceTests
         }
     }
 
+    internal static readonly IAdminNotificationAudience AllowedAudience = new AllowAdminAudience();
+    private sealed class AllowAdminAudience : IAdminNotificationAudience
+    {
+        public Task<bool> CanReceiveAdminAsync(string userId, CancellationToken ct) => Task.FromResult(true);
+        public Task<bool> CanReceiveGatewayAsync(string userId, CancellationToken ct) => Task.FromResult(true);
+    }
+
+    private sealed class GeneralAdminAudience : IAdminNotificationAudience
+    {
+        public Task<bool> CanReceiveAdminAsync(string userId, CancellationToken ct) => Task.FromResult(true);
+    }
+
+    [Fact]
+    public async Task ExternalGatewayDelivery_RequiresGatewayPermission_BeyondGeneralOperationalPermission()
+    {
+        await using var db = await AdminPushTestDatabase.TryCreateAsync();
+        await SeedChannelAsync(db.Context);
+        await db.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
+            Source = "llm-gateway-quota", IncidentId = "private-route", Title = "私有供应商额度不足", Level = "error",
+            CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+        });
+        var http = new RecordingHttpClientFactory();
+        var service = new AdminPushNotificationService(db.Context, http, new AllowAllUrlValidator(), TestConfiguration,
+            NullLogger<AdminPushNotificationService>.Instance, audience: new GeneralAdminAudience());
+        await service.DispatchPendingAsync(default);
+        Assert.Empty(http.Requests);
+        Assert.Equal(1, await db.Context.AdminNotifications.CountDocumentsAsync(n => n.Status == "open"));
+        Assert.Equal(0, await db.Context.AdminPushDeliveryLogs.CountDocumentsAsync(_ => true));
+    }
+
+    [Theory]
+    [InlineData("llm-gateway-quota")]
+    [InlineData("platform-key-integrity")]
+    public async Task ExternalRootDelivery_UsesReservedIdentityWithoutPersistedUser(string source)
+    {
+        await using var db = await AdminPushTestDatabase.TryCreateAsync();
+        Assert.False(await db.Context.Users.Find(u => u.UserId == AdminPermissionCatalog.RootUserId).AnyAsync());
+        var permissions = new PrdAgent.Infrastructure.Services.AdminPermissionService(
+            db.Context, new Moq.Mock<ISystemRoleCacheService>(Moq.MockBehavior.Strict).Object);
+        var audience = new AdminNotificationAudience(db.Context, permissions);
+        await db.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription {
+            UserId = AdminPermissionCatalog.RootUserId, TopicKey = "system-alert", Enabled = true,
+            ChannelType = "url", Method = "GET", UrlTemplate = "https://example.com/push/{{message}}",
+        });
+        await db.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
+            Source = source, Title = "隔离根账号告警", Level = "error", CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+        });
+        var http = new RecordingHttpClientFactory();
+        var configuration = new ConfigurationBuilder().AddConfiguration(TestConfiguration)
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["AdminPush:AggregationSeconds"] = "0" }).Build();
+        var service = new AdminPushNotificationService(db.Context, http, new AllowAllUrlValidator(), configuration,
+            NullLogger<AdminPushNotificationService>.Instance, audience: audience);
+        await service.DispatchPendingAsync(default);
+        Assert.Single(http.Requests);
+        Assert.True((await db.Context.AdminPushDeliveryLogs.Find(_ => true).SingleAsync()).Success);
+        Assert.False(await audience.CanReceiveAdminAsync("missing-user", default));
+        Assert.False(await audience.CanReceiveGatewayAsync("missing-user", default));
+    }
+
     private static AdminPushNotificationService CreateService(
         MongoDbContext db,
         RecordingHttpClientFactory http,
@@ -1632,7 +1750,7 @@ public sealed class AdminPushNotificationServiceTests
             new AllowAllUrlValidator(),
             new ConfigurationBuilder().AddConfiguration(configuration ?? TestConfiguration)
                 .AddInMemoryCollection(new Dictionary<string, string?> { ["AdminPush:AggregationSeconds"] = "0" }).Build(),
-            NullLogger<AdminPushNotificationService>.Instance);
+            NullLogger<AdminPushNotificationService>.Instance, audience: AllowedAudience);
     }
 
     private static AdminPushNotificationService CreateService(
@@ -1646,7 +1764,7 @@ public sealed class AdminPushNotificationServiceTests
             new AllowAllUrlValidator(),
             new ConfigurationBuilder().AddConfiguration(configuration ?? TestConfiguration)
                 .AddInMemoryCollection(new Dictionary<string, string?> { ["AdminPush:AggregationSeconds"] = "0" }).Build(),
-            NullLogger<AdminPushNotificationService>.Instance);
+            NullLogger<AdminPushNotificationService>.Instance, audience: AllowedAudience);
     }
 
     private static NotificationsController CreateNotificationsController(
@@ -1654,7 +1772,8 @@ public sealed class AdminPushNotificationServiceTests
         string userId,
         bool stableSmoke = false,
         bool adminRole = false,
-        bool adminPermission = false)
+        bool adminPermission = false,
+        bool gatewayPermission = false)
     {
         var push = CreateService(db, new RecordingHttpClientFactory(HttpStatusCode.OK));
         var events = new AdminNotificationEventService(
@@ -1677,6 +1796,7 @@ public sealed class AdminPushNotificationServiceTests
         IReadOnlyList<string> effectivePermissions = adminPermission
             ? [AdminPermissionCatalog.Access, AdminPermissionCatalog.SettingsWrite]
             : [AdminPermissionCatalog.Access];
+        if (gatewayPermission) effectivePermissions = effectivePermissions.Append(AdminPermissionCatalog.LlmGatewayAccess).ToArray();
         var permissions = new Moq.Mock<IAdminPermissionService>(Moq.MockBehavior.Strict);
         permissions.Setup(x => x.GetEffectivePermissionsAsync(userId, false, Moq.It.IsAny<CancellationToken>()))
             .Returns(Task.FromResult(effectivePermissions));
