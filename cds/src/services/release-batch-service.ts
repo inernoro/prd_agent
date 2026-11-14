@@ -179,7 +179,9 @@ export class ReleaseBatchService {
       if (Object.keys(batch.requests).length >= 200) throw new Error('批次操作已达 200 次，请创建新批次；原操作记录仍保留');
       return false;
     }
-    if (receipt.action !== action || receipt.targetId !== targetId) throw new Error('幂等标识已用于其他操作');
+    // Mongo's BSON representation turns an explicit undefined into null.
+    // Both represent a whole-batch action; named target IDs must still match.
+    if (receipt.action !== action || (receipt.targetId ?? undefined) !== targetId) throw new Error('幂等标识已用于其他操作');
     return true;
   }
 

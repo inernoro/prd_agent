@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BSON } from 'mongodb';
 import { ReleaseBatchService } from '../../src/services/release-batch-service.js';
 import { StateService } from '../../src/services/state.js';
 import type { ReleaseService, ReleaseStartInput } from '../../src/services/release-service.js';
@@ -199,6 +200,27 @@ describe('固定验收版本的批次发布协调器', () => {
     expect((await restarted.cancel(created.id, 'late-cancel-user')).status).toBe('success');
     expect(restarted.get(created.id).cancelRequested).not.toBe(true);
     expect(service.cancelRelease).not.toHaveBeenCalled();
+  });
+
+  it('Mongo BSON往返后的空目标回执仍可重放，且不接受同键逐目标操作', async () => {
+    const created = await create();
+    await coordinator.preflight(created.id);
+    await coordinator.start(created.id, 'start-key-0001');
+    const completed = await settled(created.id);
+    const attempts = structuredClone(completed.targets.map(row => row.attempts));
+    // Match the Mongo driver's default ignoreUndefined:false serialization.
+    const persisted = BSON.deserialize(BSON.serialize(completed, { ignoreUndefined: false })) as ReleaseBatch;
+    expect(persisted.requests['start-key-0001'].targetId).toBeNull();
+    state.saveReleaseBatch(persisted);
+    await state.flush();
+    const restarted = new ReleaseBatchService(state, service as unknown as ReleaseService);
+
+    expect((await restarted.start(created.id, 'start-key-0001')).id).toBe(created.id);
+    expect(service.startRelease).toHaveBeenCalledTimes(2);
+    expect(restarted.get(created.id).targets.map(row => row.attempts)).toEqual(attempts);
+    await expect(restarted.start(created.id, 'start-key-0001', 'site-a')).rejects.toThrow('幂等标识已用于其他操作');
+    await expect(restarted.start(created.id, 'start-key-0001', 'site-a', true)).rejects.toThrow('幂等标识已用于其他操作');
+    expect(service.startRollback).not.toHaveBeenCalled();
   });
 
   it('受理回执首次持久化失败不派发，同键重放仍不派发，只有明确的新重试才执行', async () => {
