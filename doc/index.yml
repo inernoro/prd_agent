@@ -305,6 +305,7 @@ docs:
   plan.platform.mcp-capability-completion: "MCP 接入与能力补齐 · 计划"
 
   # 五、计划
+  plan.video-agent.acceptance.handoff: "视频制作台新环境验收续接 · 计划"
   plan.cds.code-review-delivery: "CDS 代码审查需求兑现台账 · 计划"
   plan.platform.background-task-safety.phase0: "平台后台任务与消费最低保护 · 阶段 0 计划"
   plan.platform.background-task-safety.phase1: "平台任务级准入与统一出口 · 阶段 1 计划"

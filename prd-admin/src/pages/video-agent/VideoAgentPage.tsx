@@ -6,6 +6,7 @@ import {
   createVideoGenRunReal,
   createVideoProjectReal,
   getVideoGenRunReal,
+  importVideoClipsReal,
   listVideoGenRunsReal,
   listVideoModelsReal,
   listVideoProjectsReal,
@@ -203,6 +204,30 @@ export const VideoAgentPage: React.FC = () => {
     }
   }, [loadWorkspace, replaceProject, selectedProject]);
 
+  const importClips = useCallback(async (input: VideoProjectInput, files: File[]) => {
+    if (files.length > 16 || files.some(file => file.size > 100 * 1024 * 1024)
+      || files.reduce((size, file) => size + file.size, 0) > 300 * 1024 * 1024) {
+      toast.error('素材超过限制', '最多16个镜头，单个不超过100MB，合计不超过300MB。');
+      return;
+    }
+    setBusy(true);
+    try {
+      const saved = selectedProject
+        ? await updateVideoProjectReal(selectedProject.id, input)
+        : await createVideoProjectReal(input);
+      if (!saved.success) { toast.error('保存项目失败', saved.error?.message); return; }
+      replaceProject(saved.data);
+      const imported = await importVideoClipsReal(saved.data.id, files);
+      if (!imported.success) { toast.error('导入镜头失败，可重新选择素材', imported.error?.message); return; }
+      setResolvedRunMode({ id: imported.data.runId, mode: 'storyboard' });
+      setActiveRunId(imported.data.runId);
+      toast.success('已有镜头已就绪', '可逐镜采用配音与字幕，再预览并导出成片。');
+      await loadWorkspace();
+    } catch (error) {
+      toast.error('导入镜头失败，可重新选择素材', error instanceof Error ? error.message : '网络错误');
+    } finally { setBusy(false); }
+  }, [loadWorkspace, replaceProject, selectedProject]);
+
   const createDirectVideo = useCallback(async (input: VideoProjectInput) => {
     const prompt = input.sourceMarkdown?.trim();
     if (!prompt) {
@@ -283,6 +308,7 @@ export const VideoAgentPage: React.FC = () => {
       onSave={saveProject}
       onAnalyze={analyzeProject}
       onCreateDirect={createDirectVideo}
+      onImportClips={importClips}
       onOpenRun={setActiveRunId}
       onOpenDemo={() => setDemoOpen(true)}
     />

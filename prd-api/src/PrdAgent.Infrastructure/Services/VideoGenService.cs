@@ -585,18 +585,27 @@ public class VideoGenService : IVideoGenService
                 var videoTrack = project.TimelineTracks.FirstOrDefault(track => track.Type == VideoTrackType.Video);
                 if (videoTrack != null)
                 {
+                    var previousClips = videoTrack.Clips;
                     double cursor = 0;
                     videoTrack.Clips = reordered.Select((scene, index) =>
                     {
-                        var duration = scene.Duration ?? run.DirectDuration ?? 5;
+                        var previous = previousClips.FirstOrDefault(clip => clip.SceneIndex == sceneIndexes[index]
+                            && !string.IsNullOrWhiteSpace(clip.AssetUrl) && clip.AssetUrl == scene.VideoUrl
+                            && double.IsFinite(clip.DurationSeconds) && clip.DurationSeconds > 0);
+                        var duration = previous?.DurationSeconds ?? scene.Duration ?? run.DirectDuration ?? 5;
                         var clip = new VideoTimelineClip
                         {
+                            Id = previous?.Id ?? Guid.NewGuid().ToString("N"),
                             SceneIndex = index,
                             StartSeconds = cursor,
                             DurationSeconds = duration,
+                            TrimStartSeconds = previous?.TrimStartSeconds ?? 0,
+                            TrimEndSeconds = previous?.TrimEndSeconds ?? 0,
+                            Text = previous?.Text,
+                            Transition = previous?.Transition,
                             AssetUrl = scene.VideoUrl,
                         };
-                        cursor += duration;
+                        cursor += Math.Max(0.1, duration - Math.Max(0, clip.TrimStartSeconds) - Math.Max(0, clip.TrimEndSeconds));
                         return clip;
                     }).ToList();
                     await _db.VideoProjects.UpdateOneAsync(x => x.Id == project.Id,
