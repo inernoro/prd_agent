@@ -141,6 +141,7 @@ import type { CdsConfig, IShellExecutor, AgentKeyAccess } from './types.js';
 import type { GracefulShutdownController } from './services/graceful-shutdown.js';
 import {
   bodyPreviewFromUnknown,
+  captureHttpLogBody,
   classifyHttpRequestKind,
   createBodyCapture,
   createRequestId,
@@ -884,10 +885,9 @@ export interface ActivityEvent {
 }
 
 /** Map API path patterns to Chinese labels */
-export function resolveApiLabel(method: string, path: string): string {
-  // Normalize: remove /api prefix, trim trailing slash
-  const p = path.replace(/^\/api/, '').replace(/\/$/, '');
-
+// Label definitions are static. Allocate their objects and regular expressions
+// once, rather than on every polled API request. Matching order is unchanged.
+const apiLabelTables = (() => {
   // Static exact matches
   const staticMap: Record<string, string> = {
     'GET /code-reviews/branches': '列出审查分支',
@@ -1209,9 +1209,6 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /workspaces': '列出工作空间',
     'POST /workspaces': '创建工作空间',
   };
-
-  const key = `${method} ${p}`;
-  if (staticMap[key]) return staticMap[key];
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
@@ -1540,6 +1537,17 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/workspaces\/(.+)\/invites\/(.+)$/, '撤销工作空间邀请'],
     [/^GET \/workspaces\/(.+)$/, '查询工作空间'],
   ];
+
+  return { staticMap, patterns };
+})();
+
+export function resolveApiLabel(method: string, path: string): string {
+  // Normalize: remove /api prefix, trim trailing slash
+  const p = path.replace(/^\/api/, '').replace(/\/$/, '');
+
+  const { staticMap, patterns } = apiLabelTables;
+  const key = `${method} ${p}`;
+  if (staticMap[key]) return staticMap[key];
 
   for (const [regex, label] of patterns) {
     if (regex.test(key)) return label;
@@ -2451,11 +2459,11 @@ export function createServer(deps: ServerDeps): express.Express {
     const origWrite = res.write.bind(res);
     const origEnd = res.end.bind(res);
     (res as any).write = function (chunk: unknown, ...args: unknown[]) {
-      if (chunk != null) responseCapture.onChunk(chunk as Buffer | string);
+      if (chunk != null) responseCapture.onChunk(chunk as Buffer | string, captureHttpLogBody(req.method || 'GET', res.statusCode));
       return origWrite(chunk as never, ...(args as never[]));
     };
     (res as any).end = function (chunk?: unknown, ...args: unknown[]) {
-      if (chunk != null) responseCapture.onChunk(chunk as Buffer | string);
+      if (chunk != null) responseCapture.onChunk(chunk as Buffer | string, captureHttpLogBody(req.method || 'GET', res.statusCode));
       if (!res.headersSent) {
         const dur = Math.max(0, Date.now() - start);
         const existing = res.getHeader('Server-Timing');
@@ -2469,10 +2477,12 @@ export function createServer(deps: ServerDeps): express.Express {
       completeActiveRequest();
       // 路由可声明本次请求不值得落 HTTP 日志（2026-09-08：webhook CI 噪声廉价 ack，
       // 每条都写 Mongo 是宿主过载的一部分）。active 表照常收尾。
-      if (res.locals.cdsSkipHttpLog === true) return;
+      if (res.locals.cdsSkipHttpLog === true || !deps.httpLogStore) return;
       const status = res.statusCode || 0;
-      const capturedReqBody = requestCapture.snapshot(req.headers['content-type']);
-      const parsedReqBody = suppressPreviewBody ? {} : bodyPreviewFromUnknown(req.body, req.headers['content-type']);
+      const finishedAt = new Date();
+      const captureBody = captureHttpLogBody(req.method || 'GET', status);
+      const capturedReqBody = requestCapture.snapshot(req.headers['content-type'], captureBody);
+      const parsedReqBody = !captureBody || suppressPreviewBody ? {} : bodyPreviewFromUnknown(req.body, req.headers['content-type']);
       const suppressRequestBodyLog = Boolean(
         (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog,
       );
@@ -2482,7 +2492,7 @@ export function createServer(deps: ServerDeps): express.Express {
         suppressRequestBodyLog || suppressPreviewBody,
       );
       const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
-      const respBody = responseCapture.snapshot(res.getHeader('content-type'));
+      const respBody = responseCapture.snapshot(res.getHeader('content-type'), captureBody);
       deps.httpLogStore?.record({
         layer: 'master',
         requestKind,
@@ -2494,7 +2504,8 @@ export function createServer(deps: ServerDeps): express.Express {
         host: suppressRequestDetails ? undefined : String(req.headers.host || ''),
         path: requestPathForLogs(req, res),
         status,
-        durationMs: Date.now() - start,
+        ts: finishedAt,
+        durationMs: finishedAt.getTime() - start,
         outcome: status >= 500 ? 'server-error' : status >= 400 ? 'client-error' : 'ok',
         remoteAddr: suppressRequestDetails
           ? undefined

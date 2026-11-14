@@ -236,6 +236,7 @@ describe('ContainerService', () => {
       expect(runCmd).toBeDefined();
       expect(runCmd).toContain('--name cds-feature-a-api');
       expect(runCmd).toContain('--network cds-network');
+      expect(dockerArgv(runCmd!)).toContain('--init');
       expect(runCmd).toContain('-p 127.0.0.1:10001:8080');
       expect(runCmd).toContain("--mount 'type=bind,src=/wt/feature-a/prd-api,dst=/.__cds_source_ro,readonly'");
       expect(runCmd).toContain('--env-file');

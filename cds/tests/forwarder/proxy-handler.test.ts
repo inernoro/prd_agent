@@ -61,7 +61,7 @@ interface ForwarderHandle {
 
 async function startForwarder(
   routeFor: (host: string, path: string) => RouteRecord | null,
-  options: Pick<ProxyHandlerOptions, 'upstreamTimeoutMs' | 'llmUpstreamTimeoutMs'> = {},
+  options: Pick<ProxyHandlerOptions, 'upstreamTimeoutMs' | 'llmUpstreamTimeoutMs' | 'httpLogStore'> = {},
 ): Promise<ForwarderHandle> {
   const proxy = new ProxyHandler({ upstreamTimeoutMs: 500, ...options });
   const sockets: import('node:net').Socket[] = [];
@@ -146,6 +146,22 @@ afterEach(async () => {
 });
 
 describe('ProxyHandler — HTTP 透传', () => {
+  it('成功只读转发不采集正文，失败和操作仍采集，客户端正文保持一致', async () => {
+    const rows: any[] = [], text = '{"visible":"forwarded-body"}';
+    const u = await startUpstream((req, res) => { req.resume(); req.on('end', () => {
+      res.writeHead(req.url === '/failed' ? 500 : 200, { 'content-type': 'application/json' }); res.end(text);
+    }); }); upstreams.push(u);
+    const route: RouteRecord = { _id: 'policy', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100 };
+    const f = await startForwarder(() => route, { httpLogStore: { record: row => { rows.push(row); } } }); forwarders.push(f);
+    for (const [method, path] of [['GET', '/ok'], ['POST', '/ok'], ['GET', '/failed']]) {
+      const result = await clientReq(f.port, { method, path }); expect(result.body).toBe(text);
+      expect(result.status).toBe(path === '/failed' ? 500 : 200);
+    }
+    expect(rows).toHaveLength(3); expect(rows[0].response.bodyPreview).toBeUndefined();
+    expect(rows[0].response.bodyBytes).toBe(Buffer.byteLength(text));
+    expect(rows[1].response.bodyPreview).toBe(text); expect(rows[2].response.bodyPreview).toBe(text);
+  });
+
   it('[C-3.3] 简单 GET 请求 P50 转发延迟 < 5ms,P99 < 30ms(本机)', async () => {
     const u = await startUpstream((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/plain' });

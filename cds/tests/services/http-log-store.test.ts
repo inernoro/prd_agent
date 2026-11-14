@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   bodyPreviewFromUnknown,
+  captureHttpLogBody,
   classifyHttpRequestKind,
   createBodyCapture,
   HttpLogStore,
@@ -11,6 +12,24 @@ import {
 } from '../../src/services/http-log-store.js';
 
 describe('http log body redaction', () => {
+  it('counts via the built-in index and deletes only the oldest overflow records', async () => {
+    const store = new HttpLogStore({ uri: 'mongodb://unused', maxDocuments: 50_000 });
+    const cursor = { sort: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
+      toArray: vi.fn().mockResolvedValue([{ _id: 'old-1' }, { _id: 'old-2' }]) };
+    const collection = { countDocuments: vi.fn().mockResolvedValue(50_002),
+      find: vi.fn().mockReturnValue(cursor), deleteMany: vi.fn().mockResolvedValue({ deletedCount: 2 }) };
+    (store as any).collection = collection;
+    await (store as any).pruneByCount();
+    expect(collection.countDocuments).toHaveBeenCalledWith({}, { hint: '_id_' });
+    expect(cursor.sort).toHaveBeenCalledWith({ ts: 1 });
+    expect(cursor.limit).toHaveBeenCalledWith(2);
+    expect(collection.deleteMany).toHaveBeenCalledWith({ _id: { $in: ['old-1', 'old-2'] } });
+    collection.countDocuments.mockResolvedValue(50_000);
+    await (store as any).pruneByCount();
+    expect(collection.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+
   it('redacts sensitive keys in structured JSON without regex scanning', () => {
     const result = bodyPreviewFromUnknown({
       username: 'alice',
@@ -356,4 +375,39 @@ it('P95 原始样本不被其它轮询占走抽样槽，其余 GET 继续抽样'
   await store.flush();
   expect(docs.filter(r => r.requestId.startsWith('p95-'))).toHaveLength(10);
   expect(docs.filter(r => r.requestId.startsWith('poll-'))).toHaveLength(1);
+});
+
+
+describe('成功只读审计的正文减法', () => {
+  it.each([['GET', 200, false], ['HEAD', 204, false], ['OPTIONS', 204, false], ['get', 302, false],
+    ['GET', 400, true], ['GET', 500, true], ['POST', 200, true], ['PUT', 204, true], ['DELETE', 404, true], ['GET', 0, true]])
+  ('%s %i 的正文保留为 %s', (method, status, expected) => {
+    expect(captureHttpLogBody(String(method), Number(status))).toBe(expected);
+  });
+
+  it('只计真实字节而不保留正文，失败仍可按原路径捕获', () => {
+    const text = '正文'.repeat(8000), capture = createBodyCapture();
+    capture.onChunk(text, false); capture.onChunk(Buffer.from(text), false);
+    expect(capture.snapshot('application/json', false)).toEqual({ bodyBytes: 2 * Buffer.byteLength(text) });
+    expect(capture.snapshot().bodyPreview).toBeUndefined();
+    const failed = createBodyCapture(); failed.onChunk('{"password":"private","visible":"failure"}');
+    expect(failed.snapshot().bodyPreview).toContain('failure');
+    expect(failed.snapshot().bodyPreview).not.toContain('private');
+  });
+
+  it('保留完整分支耗时元数据与逐条身份，操作及失败保留脱敏正文', async () => {
+    const docs: any[] = [], store = new HttpLogStore({ uri: 'mongodb://unused' });
+    (store as any).collection = { insertOne: async (doc: unknown) => { docs.push(doc); }, countDocuments: async () => 0 };
+    for (const [method, status] of [['GET', 200], ['POST', 200], ['GET', 500]] as const) {
+      store.record({ layer: 'master', method, status, requestId: method + status, path: '/api/branches',
+        durationMs: 1700, outcome: status === 500 ? 'server-error' : 'ok',
+        request: { bodyPreview: '{"password":"private","visible":"request"}', bodyBytes: 50 },
+        response: { bodyPreview: '{"password":"private","visible":"response"}', bodyBytes: 100, headers: { 'x-sequence': method + status } } });
+    }
+    await store.flush(); expect(docs).toHaveLength(3);
+    expect(docs[0]).toMatchObject({ requestId: 'GET200', durationMs: 1700, request: { bodyBytes: 50 }, response: { bodyBytes: 100 } });
+    expect(docs[0].request.bodyPreview).toBeUndefined(); expect(docs[0].response.bodyPreview).toBeUndefined();
+    for (const doc of docs.slice(1)) { expect(doc.request.bodyPreview).toContain('request'); expect(doc.response.bodyPreview).toContain('response'); }
+    expect(JSON.stringify(docs)).not.toContain('private'); expect(new Set(docs.map(d => d._id)).size).toBe(3);
+  });
 });

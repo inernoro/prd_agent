@@ -2278,6 +2278,10 @@ export class ContainerService {
         // /var/lib/docker/containers 3.5GB）。50m x 3 既够排障回看，又给出硬上界。
         ...DOCKER_LOG_LIMIT_FLAGS,
         ...entrypointFlags,
+        // A shell-launched app must receive TERM as an ordinary process, not
+        // PID 1 whose default signal action Linux ignores. Keep image-owned
+        // ENTRYPOINT/CMD unchanged; Docker init also reaps source descendants.
+        ...(usePrebuiltEntrypoint ? [] : ['--init']),
         // 极速版预构建镜像无 command 时,不覆盖 -w（用镜像自带 WORKDIR）也不 sh -c 包装,
         // 直接让镜像 ENTRYPOINT/CMD 启动。
         ...(usePrebuiltEntrypoint ? [] : [`-w ${this.shellQuote(containerWorkDir)}`]),
