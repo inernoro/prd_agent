@@ -16,6 +16,11 @@ import crypto from 'node:crypto';
 import { createServer } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { StateService } from '../../src/services/state.js';
+import { NotificationReportRecorder } from '../../src/services/notification-report.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+import type { AlarmEvent } from '../../src/services/alarm-route.js';
 import { fileURLToPath } from 'node:url';
 import {
   buildCanonicalRequest,
@@ -269,4 +274,82 @@ describe('通知返回具体检查详情', () => {
     expect(payload.actionLabel).toBe('查看问题与处理建议');
     expect(payload.dedupKey).toBe('uptime:monitor@x:down:2026-09-24T00:00:00Z');
   });
+});
+
+
+it.each(['未归档失败', '旧四字段报告'] as const)('真实恢复only归档可投递且不虚构事故计数：%s', async history => {
+  const { sendAlarm } = await import('../../src/services/alarm-dispatch.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-recovery-only-'));
+  const state = new StateService(path.join(dir, 'state.json'), dir); state.load();
+  const recorder = new NotificationReportRecorder(state);
+  const received: ReturnType<typeof buildNotificationPayload>[] = [];
+  const statuses: number[] = [];
+  // 仅模拟 MAP 的incident count校验；不是实际MAP服务或真实用户送达。
+  const server = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const payload = JSON.parse(raw) as ReturnType<typeof buildNotificationPayload>;
+    received.push(payload);
+    const status = payload.incidentId && !(Number(payload.occurrenceCount) >= 1) ? 400 : 200;
+    if (status === 400) console.info('isolated MAP contract rejection', JSON.stringify({ count: payload.occurrenceCount, incidentId: payload.incidentId, actionUrl: payload.actionUrl }));
+    statuses.push(status); res.writeHead(status, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(status === 200 ? { success: true } : { success: false, error: { message: 'fixture incident count must be >= 1' } }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const channel = { id: 'map-recovery-fixture', name: '本机MAP合同模拟', enabled: true, kind: 'map' as const, projects: [], events: [] as [], createdAt: 0, updatedAt: 0,
+    map: { endpoint: `http://127.0.0.1:${(server.address() as {port: number}).port}/api/dashboard/notifications/events`, keyId: 'fixture', username: 'fixture', privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() } };
+  const event: AlarmEvent = { kind: 'business-down', projectId: 'fixture', targetId: 'monitor@owned-service', targetName: '隔离业务监控', incidentId: 'original-probe-incident',
+    identity: { subject: { id: 'owned-service', name: '隔离服务', environment: '正式' }, observer: { id: 'owned-observer', name: '隔离观测实例', environment: '正式' } },
+    notificationFacts: { system: 'map', environment: 'production', function: '问答' },
+    message: '检查未通过', consecutiveFailures: 3, detectedAt: '2026-11-14T00:00:00.000Z' };
+  let legacyId: string | undefined;
+  try {
+    if (history === '旧四字段报告') {
+      const archived = await recorder.record(event); legacyId = archived.reportId;
+      await state.updateAcceptanceReportAsync(legacyId, { sourcePath: JSON.stringify([event.projectId, event.targetId, event.notificationFacts!.environment, event.identity!.subject.id]) });
+    }
+    const recovery: AlarmEvent = { ...event, kind: 'business-recovered', message: '检查恢复', consecutiveFailures: 0, detectedAt: '2026-11-14T00:11:00.000Z' };
+    const only = await recorder.record(recovery);
+    expect(only.occurrenceCount).toBe(0);
+    const onlyReport = state.getAcceptanceReport(only.reportId)!;
+    expect(onlyReport.monitorEvent!.state).toBe('recovered');
+    expect(onlyReport.monitorEvent!.incidentId).toBe(recovery.incidentId);
+    expect(onlyReport.monitorEvent!.snapshots[0].detectedAt).toBe(recovery.detectedAt);
+    expect(onlyReport.monitorEvent!.snapshots.map(s => s.kind)).toEqual(['business-recovered']);
+    if (legacyId) { expect(only.reportId).not.toBe(legacyId); expect(state.getAcceptanceReport(legacyId)!.monitorEvent!.state).toBe('open'); }
+    const content = await state.readAcceptanceReportContentAsync(only.reportId);
+    expect(content).toContain('告警发生 0 次');
+    const href = content.match(/\[查看同一监控目标\]\(([^)]+)\)/)![1];
+    const boardUrl = new URL(href, 'https://preview.invalid').href;
+    expect(new URL(boardUrl).searchParams.get('target')).toBe(event.targetId);
+    expect(new URL(boardUrl).searchParams.get('incident')).toBe(recovery.incidentId);
+    expect(new URL(boardUrl).searchParams.get('detectedAt')).toBe(recovery.detectedAt);
+    const result = await sendAlarm(channel, { ...recovery, ...only }, { boardUrl });
+    expect(result.ok, `本机合同接收状态 ${statuses.join(',')}`).toBe(true);
+    expect(statuses).toEqual([200]);
+    const payload = received[0];
+    for (const field of ['incidentId', 'incidentState', 'firstOccurredAt', 'lastOccurredAt', 'recoveredAt', 'occurrenceCount', 'requestOutcome']) expect(payload).not.toHaveProperty(field);
+    expect(payload).toMatchObject({ source: 'uptime-alert', section: 'admin', level: 'info', actionUrl: boardUrl });
+    expect(payload.title).toContain('已恢复'); expect(payload.message).toContain('已满足恢复条件');
+    expect(payload).not.toHaveProperty('targetUserId');
+    expect((await sendAlarm(channel, { ...recovery, ...only }, { boardUrl })).ok).toBe(true);
+    expect(received[1].dedupKey).toBe(payload.dedupKey);
+    expect(only.occurrenceCount).toBe(0);
+    const failed: AlarmEvent = { ...event, incidentId: 'current-probe-incident', detectedAt: '2026-11-14T00:20:00.000Z' };
+    const savedFailure = await recorder.record(failed);
+    expect(savedFailure.occurrenceCount).toBe(1);
+    const normalContent = await state.readAcceptanceReportContentAsync(savedFailure.reportId);
+    const normalHref = normalContent.match(/\[查看同一监控目标\]\(([^)]+)\)/)![1];
+    const normalBoardUrl = new URL(normalHref, 'https://preview.invalid').href;
+    expect((await sendAlarm(channel, { ...failed, ...savedFailure }, { boardUrl: normalBoardUrl })).ok).toBe(true);
+    const recovered: AlarmEvent = { ...recovery, incidentId: failed.incidentId, detectedAt: '2026-11-14T00:31:00.000Z' };
+    const savedRecovery = await recorder.record(recovered);
+    expect(savedRecovery.occurrenceCount).toBe(1); expect(savedRecovery.eventId).toBe(savedFailure.eventId);
+    expect((await sendAlarm(channel, { ...recovered, ...savedRecovery }, { boardUrl: normalBoardUrl })).ok).toBe(true);
+    expect(received[2]).toMatchObject({ incidentState: 'active', occurrenceCount: 1 });
+    expect(received[3]).toMatchObject({ incidentId: received[2].incidentId, incidentState: 'recovered', occurrenceCount: 1, firstOccurredAt: failed.detectedAt, lastOccurredAt: failed.detectedAt, recoveredAt: recovered.detectedAt });
+  } finally {
+    server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+    await state.flush(); await flushAllJsonStateStores(); fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

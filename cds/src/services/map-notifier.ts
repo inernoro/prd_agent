@@ -128,7 +128,8 @@ export function buildNotificationPayload(alert: MapNotifierAlert): MapNotificati
   const down = alert.type === 'uptime.target.down';
   const message = renderAlarmMessage({ ...alert, projectId: alert.projectId || '', kind: down ? 'business-down' : 'business-recovered' }, { boardUrl: alert.boardUrl });
   // 归档事件编号跨持续异常与恢复保持不变；缺少归档证据时保留旧幂等键，不猜生命周期。
-  const incidentId = !alert.drill && alert.eventId && alert.firstOccurredAt && (down || alert.lastOccurredAt) ? `uptime:${crypto.createHash('sha256').update(JSON.stringify([
+  // 恢复only报告没有归档失败观测；保留恢复通知，不构造MAP拒绝的零次故障。
+  const incidentId = !alert.drill && alert.occurrenceCount !== 0 && alert.eventId && alert.firstOccurredAt && (down || alert.lastOccurredAt) ? `uptime:${crypto.createHash('sha256').update(JSON.stringify([
     alert.identity?.observer.id, alert.projectId, alert.notificationFacts?.environment, alert.targetId,
     alert.identity?.subject.id, alert.assessment || 'check-failed', alert.eventId,
   ])).digest('hex')}` : undefined;
