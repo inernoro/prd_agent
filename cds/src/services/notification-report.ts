@@ -23,11 +23,15 @@ function markdownText(value: string): string { return value.replace(/[\r\n]/g, '
 function reportContent(name: string, classification: ReportClassification, monitor: ReportMonitorEvent): string {
   const labels = classification.categories.map(k => NOTIFICATION_CATEGORIES[k]).join('、');
   const drill = monitor.state === 'drill';
+  const failureRecords = monitor.snapshots.filter(s => !s.kind.endsWith('-recovered')).length;
+  const historySummary = failureRecords === 0
+    ? `未留存失败记录，仅有恢复观测；首次记录 ${monitor.snapshots[0].detectedAt}；最近记录 ${monitor.snapshots.at(-1)!.detectedAt}`
+    : `告警发生 ${failureRecords} 次；首次 ${monitor.snapshots[0].detectedAt}；最近记录 ${monitor.snapshots.at(-1)!.detectedAt}`;
   return `# ${markdownText(name)}\n\n${monitor.snapshots.at(-1)!.sentence}\n\n`
     + `类别：${labels}\n\n主体系统：${NOTIFICATION_SYSTEMS[classification.primarySystem]}；关联系统：${classification.relatedSystems.map(k => NOTIFICATION_SYSTEMS[k]).join('、') || '无'}\n\n`
     + `环境：${classification.environments.map(k => NOTIFICATION_ENVIRONMENTS[k]).join('、')}\n\n事件编号：${monitor.eventId}\n\n`
     + (monitor.targetId ? `[查看同一监控目标](${monitorIncidentPath(monitor.targetId, monitor.incidentId, monitor.snapshots[0]?.detectedAt)})\n\n` : '')
-    + (drill ? '' : `当前事件：${monitor.state === 'recovered' ? '已按检查证据恢复' : '尚未确认恢复'}；告警发生 ${monitor.snapshots.filter(s => !s.kind.endsWith('-recovered')).length} 次；首次 ${monitor.snapshots[0].detectedAt}；最近记录 ${monitor.snapshots.at(-1)!.detectedAt}。\n\n`)
+    + (drill ? '' : `当前事件：${monitor.state === 'recovered' ? '已按检查证据恢复' : '尚未确认恢复'}；${historySummary}。\n\n`)
     + `## ${drill ? '演练记录' : '发生与恢复记录'}\n\n`
     + monitor.snapshots.map(s => `- ${s.detectedAt}：${s.sentence}${drill ? '' : `；连续失败检查 ${s.consecutiveFailedChecks} 次`}`).join('\n')
     + (drill ? '\n\n本记录为通知演练，不代表服务故障。推送服务受理不代表手机或手表已展示或已读。\n'

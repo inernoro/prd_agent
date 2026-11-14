@@ -318,7 +318,11 @@ it.each(['未归档失败', '旧四字段报告'] as const)('真实恢复only归
     expect(onlyReport.monitorEvent!.snapshots.map(s => s.kind)).toEqual(['business-recovered']);
     if (legacyId) { expect(only.reportId).not.toBe(legacyId); expect(state.getAcceptanceReport(legacyId)!.monitorEvent!.state).toBe('open'); }
     const content = await state.readAcceptanceReportContentAsync(only.reportId);
-    expect(content).toContain('告警发生 0 次');
+    if (!content.includes('未留存失败记录')) console.info('isolated recovery-only report missing history', content);
+    expect(content).toContain('未留存失败记录，仅有恢复观测');
+    expect(content).toContain(`首次记录 ${recovery.detectedAt}；最近记录 ${recovery.detectedAt}`);
+    expect(content).not.toContain('告警发生 0 次');
+    expect(content).not.toContain(`；首次 ${recovery.detectedAt}`);
     const href = content.match(/\[查看同一监控目标\]\(([^)]+)\)/)![1];
     const boardUrl = new URL(href, 'https://preview.invalid').href;
     expect(new URL(boardUrl).searchParams.get('target')).toBe(event.targetId);
@@ -339,6 +343,8 @@ it.each(['未归档失败', '旧四字段报告'] as const)('真实恢复only归
     const savedFailure = await recorder.record(failed);
     expect(savedFailure.occurrenceCount).toBe(1);
     const normalContent = await state.readAcceptanceReportContentAsync(savedFailure.reportId);
+    expect(normalContent).toContain(`告警发生 1 次；首次 ${failed.detectedAt}；最近记录 ${failed.detectedAt}`);
+    expect(normalContent).not.toContain('未留存失败记录');
     const normalHref = normalContent.match(/\[查看同一监控目标\]\(([^)]+)\)/)![1];
     const normalBoardUrl = new URL(normalHref, 'https://preview.invalid').href;
     expect((await sendAlarm(channel, { ...failed, ...savedFailure }, { boardUrl: normalBoardUrl })).ok).toBe(true);
