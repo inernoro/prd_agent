@@ -20,6 +20,7 @@
  *     混在一起、无法按来源筛，已登记进 doc/debt.cds.md「CDS 存活监控（uptime-monitor）」。
  */
 
+import { createHash } from 'node:crypto';
 import type { CdsNoticeRecord } from './notice-ledger.js';
 
 export interface NoticeOutboundConfig {
@@ -131,6 +132,20 @@ export function mapNoticeLevel(level: CdsNoticeRecord['level']): 'info' | 'warni
   return 'info';
 }
 
+/** 旧账本没有轮次；非法存量值也按首轮处理，不使用会随合并变化的 updatedAt。 */
+export function noticeOutboundGeneration(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function noticeOutboundKey(notice: CdsNoticeRecord): string {
+  // 元组避免分隔符歧义；固定长度哈希满足 MAP 的160字符上限，也不暴露项目/目标标识。
+  const identity = JSON.stringify([
+    notice.source, notice.projectId ?? null, notice.dedupeKey, notice.id, notice.createdAt,
+    noticeOutboundGeneration(notice.outboundGeneration),
+  ]);
+  return `cds-notice:v1:${createHash('sha256').update(identity).digest('hex')}`;
+}
+
 /** 组装 MAP `POST /api/dashboard/notifications/events` 的请求体。 */
 export function buildMapNotificationBody(
   notice: CdsNoticeRecord,
@@ -148,7 +163,7 @@ export function buildMapNotificationBody(
     ...(actionUrl && notice.actionLabel ? { actionLabel: notice.actionLabel } : {}),
     ...(actionUrl ? { actionUrl } : {}),
     // 逐字 dedupKey —— 不是 dedupeKey（坑 1）。
-    dedupKey: notice.dedupeKey,
+    dedupKey: noticeOutboundKey(notice),
     expiresInDays: 7,
     ...(config.targetUserId ? { targetUserId: config.targetUserId } : {}),
   };
