@@ -16,3 +16,5 @@
 @media(max-width:760px){.exec-canvas-panel{scroll-margin-top:calc(var(--mobile-header-height,48px) + env(safe-area-inset-top,0px))}}
 /* 团队规模不同，网格按实际成员行数收缩，避免少人数团队留下固定空行。 */
 .exec-root{height:auto}.exec-groups,.exec-density-rows .exec-groups,.exec-density-line .exec-groups{grid-auto-rows:auto;flex:none}.exec-tiles{grid-template-rows:none;grid-auto-rows:minmax(120px,auto);flex:0 0 auto;align-content:start}.exec-group-foot{margin-top:auto}
+/* 桌面通知浮钮占据右下角，口径操作为它保留触达空间。 */
+.exec-rail-foot{padding-right:68px}
