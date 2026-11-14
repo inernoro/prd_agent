@@ -30,6 +30,7 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
   const [videoUrl, setVideoUrl] = useState('');
   const [videoFailure, setVideoFailure] = useState('');
   const [mediaReady, setMediaReady] = useState(false);
+  const [videoAspectRatio, setVideoAspectRatio] = useState<string>();
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [speed, setSpeed] = useState(1);
@@ -112,6 +113,7 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
     previousMedia.current = { publication: publicationKey, id: selectedVideoId };
     setVideoUrl(''); setVideoFailure('');
     setMediaReady(false);
+    setVideoAspectRatio(undefined);
     setPlaying(false);
     if (!selectedVideoId) return;
     let disposed = false;
@@ -240,7 +242,7 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
         {doc.openQuestions.length > 0 && <section className="sec"><h2>待确认事项</h2>{doc.openQuestions.map(q => <p key={q.id}>{q.title}：{q.answer}</p>)}</section>}
       </article></main>
       <aside className="writing-reader-info scroll"><div><div className="cap writing-mb">这份文档</div><div className="kv"><span>版本</span><span>v{doc.version} · {new Date(doc.publishedAt).toLocaleDateString('zh-CN')} 发布</span><span>审核</span><span>{doc.reviewerName}</span><span>作者</span><span>{doc.authorName}</span><span>可见</span><span>沿用知识库权限</span></div></div><div><div className="cap">来源 · {doc.sources.filter(s => s.status === 'read').length} 份{doc.sources.some(s => s.status === 'skipped') && <span> · 已跳过 {doc.sources.filter(s => s.status === 'skipped').length} 份</span>}</div>{doc.sources.map(s => <button className="srow" disabled={bodyPending} key={s.id} onClick={e => openSource(s.id, e.currentTarget)}><span className="sid">{s.id}</span><span><span className="cl1 writing-block">{s.title}</span><span className="hint">{s.status === 'skipped' ? '已跳过 · 未参与本次生成' : bodyPending ? '来源快照尚未载入' : writingSourceHasSnapshot(s) ? `${writingSourceSnapshotDate(s) ?? '更新时间未记录'} · 发布时快照` : '该版本未保存原文快照'}</span></span></button>)}</div><div className="panel writing-learning-card"><div className="cap">教学</div><strong>{doc.title}</strong><p className="hint">章节、操作步骤与字幕，适合培训和第一次操作。</p><Link className="btn pri sm" to={`/document-store/${storeId}/write/${entryId}/learn`}>开始学习</Link></div><div><div className="cap">合集 · {data.store.name} · {index + 1} / {peers.length}</div>{index > 0 && <Link className="btn ghost writing-block" to={`/document-store/${storeId}/write/${peers[index - 1].id}/read`}>上一篇 · {peers[index - 1].title}</Link>}{index >= 0 && index < peers.length - 1 && <Link className="btn ghost writing-block" to={`/document-store/${storeId}/write/${peers[index + 1].id}/read`}>下一篇 · {peers[index + 1].title}</Link>}</div></aside>
-    </div> : <div className="writing-tutorial-layout"><main className="scroll writing-tutorial-body"><div className="writing-tutorial-heading"><div><div className="cap">第 {chapterIndex + 1} / {chapters.length} 章{chapter && selectedVideoId && ` · ${formatted(chapter.start)}–${formatted(chapters[chapterIndex + 1]?.start ?? duration)}`}</div><h1 className="writing-tutorial-title">{chapter?.title ?? doc.title}</h1></div><span className="hint">{doc.title}{selectedVideoId && <> · 共 {duration ? `${Math.floor(duration / 60)} 分 ${Math.floor(duration % 60)} 秒` : '—'}</>}</span></div><div className="player" tabIndex={selectedVideoId ? 0 : -1} aria-label={selectedVideoId ? '教学视频' : '图文教学'} onKeyDown={e => { if ((e.target as HTMLElement).closest('input,textarea,select')) return; if ([' ', 'k', 'K'].includes(e.key)) { e.preventDefault(); togglePlay(); } if (e.key === 'ArrowLeft') { e.preventDefault(); seek(time - 5); } if (e.key === 'ArrowRight') { e.preventDefault(); seek(time + 5); } if (e.key.toLowerCase() === 'c') setCaption(v => !v); const n = Number(e.key); if (n > 0 && n <= chapters.length) pickChapter(n - 1); }}>
+    </div> : <div className="writing-tutorial-layout"><main className="scroll writing-tutorial-body"><div className="writing-tutorial-heading"><div><div className="cap">第 {chapterIndex + 1} / {chapters.length} 章{chapter && selectedVideoId && ` · ${formatted(chapter.start)}–${formatted(chapters[chapterIndex + 1]?.start ?? duration)}`}</div><h1 className="writing-tutorial-title">{chapter?.title ?? doc.title}</h1></div><span className="hint">{doc.title}{selectedVideoId && <> · 共 {duration ? `${Math.floor(duration / 60)} 分 ${Math.floor(duration % 60)} 秒` : '—'}</>}</span></div><div className="player" style={mobileVideo && mediaReady && !videoFailure ? { aspectRatio: videoAspectRatio } : undefined} tabIndex={selectedVideoId ? 0 : -1} aria-label={selectedVideoId ? '教学视频' : '图文教学'} onKeyDown={e => { if ((e.target as HTMLElement).closest('input,textarea,select')) return; if ([' ', 'k', 'K'].includes(e.key)) { e.preventDefault(); togglePlay(); } if (e.key === 'ArrowLeft') { e.preventDefault(); seek(time - 5); } if (e.key === 'ArrowRight') { e.preventDefault(); seek(time + 5); } if (e.key.toLowerCase() === 'c') setCaption(v => !v); const n = Number(e.key); if (n > 0 && n <= chapters.length) pickChapter(n - 1); }}>
       {videoUrl && !videoFailure ? <video ref={video} src={videoUrl} preload="metadata" playsInline onPlay={() => { setPlaying(true); setStarted(true); }} onPause={() => setPlaying(false)} onError={e => { const media = e.currentTarget; if (decodedGeneration.current === mediaGeneration.current) pendingPlayback.current = { time: media.currentTime, rate: media.playbackRate, playing: false, duration: media.duration }; setMediaReady(false); setVideoFailure('视频加载失败，可以继续查看图文步骤'); }} onLoadedMetadata={e => {
         const media = e.currentTarget; if (media !== video.current) return;
         const resume = pendingPlayback.current;
@@ -251,6 +253,7 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
           setVideoFailure('手机视频与默认视频时长不一致，请改用默认视频或核对课程时间轴'); return;
         }
         if (lastAt > media.duration + .5) { setVideoFailure('教学素材时长不一致：无法覆盖已发布的章节、步骤与字幕'); return; }
+        setVideoAspectRatio(media.videoWidth > 0 && media.videoHeight > 0 ? `${media.videoWidth} / ${media.videoHeight}` : undefined);
         decodedGeneration.current = mediaGeneration.current; setMediaReady(true);
         setDuration(media.duration); media.playbackRate = resume?.rate ?? speed;
         if (resume) {
