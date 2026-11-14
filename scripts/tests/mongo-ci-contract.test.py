@@ -146,7 +146,9 @@ class MongoCiContractTests(unittest.TestCase):
     def aggregate_result(self, script, layout_result, release_result="success", overrides=None):
         main = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
         values = {main: "false", "needs.repository-layout.result": layout_result,
-                  "needs.release-script-test.result": release_result}
+                  "needs.release-script-test.result": release_result,
+                  "github.event_name == 'workflow_dispatch' && inputs.llmgw_provider": "false",
+                  "needs.llmgw-provider.result": "skipped"}
         for output in ("server", "admin", "desktop", "cds", "design_runtime", "docs", "acceptance_report"):
             values[f"needs.changes.outputs.{output}"] = "true"
             values[f"needs.changes.outputs.{output} == 'true' || ({main})"] = "true"
