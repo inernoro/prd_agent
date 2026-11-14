@@ -15,6 +15,7 @@ import { LogTableSettings } from './LogTableSettings';
 import { ConsumptionAlertsPanel } from './ConsumptionAlertsPanel';
 import {
   DASH,
+  formatModelFallback,
   LOGS_SUBTABS,
   type LogsSubTab,
   TIME_RANGE_PRESETS,
@@ -960,10 +961,10 @@ export function LogsView() {
       case 'attempts':
         return <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{DASH}</span>;
       case 'fallback':
-        return it.isFallback ? (
-          <Chip label="已降级" color="#fbbf24" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} />
+        return it.isFallback === true ? (
+          <Chip label={formatModelFallback(it.isFallback)} color="#fbbf24" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} />
         ) : (
-          <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>否</span>
+          <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{formatModelFallback(it.isFallback)}</span>
         );
       case 'latency':
         return <span className="tabular" style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;
@@ -1138,6 +1139,7 @@ export function LogsView() {
       <header className="lg-logs-heading">
         <div>
           <h1>Logs</h1>
+          <Link to="/logs/trace">按业务操作或请求编号排查</Link>
           {/* 汇总条：拿不到值的项**整条不渲染**，而不是渲染成「上游调用 —」。
               一排破折号既不承载信息，又和真实数字抢同样的横向位置，
               读起来是「这里坏了」而不是「这里没有」。过滤在 summaryFacts 里做。 */}

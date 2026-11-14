@@ -77,6 +77,7 @@ test('稳定模型升级页签按真实状态保存策略、验证、采用与�
     await mount('owner');
     await openPolicy();
     const panel = () => document.querySelector('[data-testid="model-upgrade-panel"]');
+    assert.doesNotMatch(panel().textContent, /全量使用位置|使用位置覆盖核验|旧引用残留/);
     assert.match(panel().textContent, /image-quality/);
     assert.match(panel().textContent, /image-2-all/);
     assert.match(panel().textContent, /future-image-2/);
@@ -115,7 +116,7 @@ test('稳定模型升级页签按真实状态保存策略、验证、采用与�
     fixture.view.phase = 'candidate'; fixture.view.message = '已发现候选，等待真实验证'; fixture.view.version++;
     await tick(3000);
     assert.equal(fixture.calls.length, actionCount, '轮询只能读取状态，不得重复提交检查或付费验证');
-    await fill(document.querySelector('[aria-label="已有验收请求编号"]'), 'accepted-request');
+    await fill(document.querySelector('[aria-label="已有验证请求编号"]'), 'accepted-request');
     await click('验证候选版本');
     assert.equal(fixture.calls.at(-1).body.requestId, 'accepted-request');
     assert.match(fixture.confirmations.at(-1).description, /不重复发起付费验证/);
@@ -195,7 +196,7 @@ test('稳定模型升级页签按真实状态保存策略、验证、采用与�
     const viewButtons = [...document.querySelectorAll('button')].filter(element => element.textContent.trim() === '查看');
     await act(async () => viewButtons[1].click());
     assert.equal(button('升级策略'), undefined, '固定版本不开放升级策略入口');
-    await click('手动新建');
+    await click('新建模型');
     assert.equal(document.querySelector('[aria-label="模型身份"]').value, 'fixed', '新模型默认保持固定版本语义');
     assert.equal(document.querySelector('[aria-label="兼容旧标识（可选，一行一个）"]'), null);
     await fill(document.querySelector('[aria-label="模型身份"]'), 'stable');
@@ -203,15 +204,15 @@ test('稳定模型升级页签按真实状态保存策略、验证、采用与�
     await fill(document.querySelector('[aria-label="模型身份"]'), 'fixed');
     assert.equal(document.querySelector('[aria-label="兼容旧标识（可选，一行一个）"]'), null);
     const field = text => [...document.querySelectorAll('label')].find(element => element.textContent.trim().startsWith(text))?.querySelector('input');
-    await fill(field('公开模型标识'), 'future-fixed'); await fill(field('显示名称'), '未来固定版');
-    await click('保存逻辑模型');
+    await fill(field('公开标识'), 'future-fixed'); await fill(field('模型名称'), '未来固定版');
+    await click('创建并绑定上游');
     assert.equal(fixture.calls.at(-1).body.identityKind, 'fixed');
     assert.equal('aliases' in fixture.calls.at(-1).body, false, 'fixed模型不得偷带旧别名');
-    await click('手动新建');
+    await click('新建模型');
     await fill(document.querySelector('[aria-label="模型身份"]'), 'stable');
     await fill(document.querySelector('[aria-label="兼容旧标识（可选，一行一个）"]'), 'future-quality-v1\n\nfuture-quality-all ');
-    await fill(field('公开模型标识'), 'future-quality'); await fill(field('显示名称'), '未来质量');
-    await click('保存逻辑模型');
+    await fill(field('公开标识'), 'future-quality'); await fill(field('模型名称'), '未来质量');
+    await click('创建并绑定上游');
     assert.equal(fixture.calls.at(-1).body.identityKind, 'stable');
     assert.equal(fixture.calls.at(-1).body.publicId, 'future-quality');
     assert.deepEqual(fixture.calls.at(-1).body.aliases, ['future-quality-v1', 'future-quality-all']);

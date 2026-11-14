@@ -6,7 +6,7 @@ import type { LiteraryModelOption } from './literaryModelOptions';
 const shortName = (name: string) => name.replace(/^[^/]+\//, '');
 
 /** 页面内展开模型列表；短型号与完整标识分层展示，请求身份保持不变。 */
-export function LiteraryModelPicker({ label, icon, model, options, open, onOpenChange, onSelect, disabled = false }: {
+export function LiteraryModelPicker({ label, icon, model, options, open, onOpenChange, onSelect, disabled = false, unavailable = false }: {
   label: string;
   icon: ReactNode;
   model: LiteraryModelOption | null;
@@ -15,13 +15,14 @@ export function LiteraryModelPicker({ label, icon, model, options, open, onOpenC
   onOpenChange: (open: boolean) => void;
   onSelect: (id: string) => void;
   disabled?: boolean;
+  unavailable?: boolean;
 }) {
   const [query, setQuery] = useState('');
   const visibleOptions = useMemo(() => options.filter(option => option.name.toLowerCase().includes(query.trim().toLowerCase())), [options, query]);
   const title = `${label}模型`;
-  const value = model ? shortName(model.name) : '选择模型';
+  const value = model ? shortName(model.name) : unavailable ? '原模型不可用，请重选' : '选择模型';
   const detail = model?.isAutoResolved ? '自动调度'
-    : model && value !== model.name ? model.name : model?.isDefault ? '系统默认' : model ? '当前使用' : '尚未选择';
+    : model && value !== model.name ? model.name : model?.isDefault ? '系统默认' : model ? '当前使用' : unavailable ? '请从列表重新选择' : '尚未选择';
   const summary = (
     <>
       {icon}
@@ -47,7 +48,7 @@ export function LiteraryModelPicker({ label, icon, model, options, open, onOpenC
       onOpenChange={next => { if (!next) setQuery(''); onOpenChange(next); }}
       search={{ value: query, onChange: setQuery, placeholder: '搜索模型名称' }}
       trigger={
-        <button type="button" disabled={disabled} className="lit-model-trigger" title={`${title}：${model?.name || '尚未选择'}，点击切换`} aria-label={title}>
+        <button type="button" disabled={disabled} className="lit-model-trigger" title={`${title}：${model?.name || value}，点击切换`} aria-label={title}>
           {summary}<ChevronDown size={15} className="lit-settings-chevron" aria-hidden />
         </button>
       }

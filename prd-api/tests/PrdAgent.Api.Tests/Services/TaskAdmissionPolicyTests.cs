@@ -105,6 +105,7 @@ public sealed class TaskAdmissionPolicyTests
         {
             "PrdAgent.Api.Controllers.Api.LabController.SimulateMessage",
             "PrdAgent.Api.Controllers.GroupsController.Create",
+            "PrdAgent.Api.Controllers.Api.DocumentStoreController.UpdateEntryContent",
             reportController + ".CreateReport",
             "PrdAgent.Api.Controllers.Api.DefectAgentController.StreamScores",
             "PrdAgent.Api.Controllers.Api.ReviewAgentController.StreamReviewResult",

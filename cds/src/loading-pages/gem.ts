@@ -91,3 +91,21 @@ export function buildGemStorySvg(mineral: ServerGemMineral, sizePx: number, durS
   }).join('');
   return `<svg class="cds-gem-story" width="${sizePx}" height="${sizePx}" viewBox="0 0 64 64" role="img" aria-label="CDS" style="${durStyle}">${polys}</svg>`;
 }
+
+
+/** 等待页专用常亮宝石：沿用品牌切面，边光流动，不以熄灭表达加载。 */
+export const WAITING_GEM_CSS = `
+.cds-waiting-gem{display:block;overflow:visible;filter:drop-shadow(0 0 5px rgba(255,255,255,.16))}
+.cds-waiting-gem-edge{fill:none;stroke:#fff;stroke-width:1;stroke-linejoin:round;stroke-dasharray:12 88;animation:cds-waiting-edge 3.6s linear infinite;animation-delay:calc(var(--gi)*-.3s)}
+@keyframes cds-waiting-edge{from{stroke-dashoffset:100}to{stroke-dashoffset:0}}
+@media(prefers-reduced-motion:reduce){.cds-waiting-gem-edge{animation:none;stroke-dasharray:none;opacity:.35}}
+`.trim();
+
+export function buildWaitingGemSvg(sizePx: number): string {
+  const shades = ['#ffffff', '#eeeeee', '#ffffff', '#303030', '#fafafa', '#202020'];
+  const facets = SERVER_GEM_FACETS.map((f) =>
+    `<polygon points="${f.points}" fill="${shades[f.shadeIdx]}"/>` +
+    `<polygon class="cds-waiting-gem-edge" points="${f.points}" pathLength="100" style="--gi:${f.i}"/>`
+  ).join('');
+  return `<svg class="cds-waiting-gem" width="${sizePx}" height="${sizePx}" viewBox="0 0 64 64" aria-hidden="true">${facets}</svg>`;
+}

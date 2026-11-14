@@ -36,6 +36,7 @@ import {
 } from './cds-events-bus.js';
 import {
   forwardNoticeToMap,
+  noticeOutboundGeneration,
   type NoticeOutboundConfig,
   type FetchLike,
 } from './notice-outbound-map.js';
@@ -78,6 +79,8 @@ export interface CdsNoticeRecord {
   readAt?: string;
   dismissedAt?: string;
   outbound?: CdsNoticeOutbound;
+  /** 通用通知的外发轮次；超窗重新发生时递增，不表示故障恢复。旧账本缺省为0。 */
+  outboundGeneration?: number;
 }
 
 /** 写入一条通知所需的最小信息（渲染层产出，账本只管归并与落盘）。 */
@@ -202,6 +205,7 @@ export function mergeNotice(
     createdAt: nowIso,
     updatedAt: nowIso,
     occurrences: 1,
+    outboundGeneration: 0,
   };
 
   if (!existing) return { action: 'created', record: base };
@@ -217,6 +221,7 @@ export function mergeNotice(
         id: existing.id,
         createdAt: existing.createdAt,
         occurrences: existing.occurrences + 1,
+        outboundGeneration: noticeOutboundGeneration(existing.outboundGeneration),
         ...(existing.readAt ? { readAt: existing.readAt } : {}),
         ...(existing.dismissedAt ? { dismissedAt: existing.dismissedAt } : {}),
         ...(existing.outbound ? { outbound: existing.outbound } : {}),
@@ -225,7 +230,7 @@ export function mergeNotice(
   }
 
   // 超窗重燃：readAt / dismissedAt 一并清掉，让它重新变成一条要看的新事。
-  return { action: 'relit', record: { ...base, id: existing.id, createdAt: existing.createdAt } };
+  return { action: 'relit', record: { ...base, id: existing.id, createdAt: existing.createdAt, outboundGeneration: noticeOutboundGeneration(existing.outboundGeneration) + 1 } };
 }
 
 export interface NoticeLedgerDeps {
@@ -359,6 +364,7 @@ export class NoticeLedgerService {
         .map((item) => ({
           ...item,
           dedupeKey: typeof item.dedupeKey === 'string' && item.dedupeKey ? item.dedupeKey : item.id,
+          outboundGeneration: noticeOutboundGeneration(item.outboundGeneration),
           occurrences: Number.isFinite(item.occurrences) ? item.occurrences : 1,
           createdAt: item.createdAt || new Date(this.now()).toISOString(),
           updatedAt: item.updatedAt || item.createdAt || new Date(this.now()).toISOString(),
@@ -398,6 +404,7 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
   const copy = cdsEventNoticeCopy(envelope.type);
   if (!copy) return null;
   const data = (envelope.data ?? {}) as {
+    jobId?: string;
     projectId?: string;
     projectName?: string;
     projectSlug?: string;
@@ -415,7 +422,7 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
 
   // 同一目标的同一类事件归成一条。targetId 优先（发布/存活都以目标为单位），
   // 没有目标的系统级事件（infra 熔断 / 自更新）退到项目或全局。
-  const scopeKey = data.targetId || data.branchId || data.projectId || 'system';
+  const scopeKey = data.jobId || data.targetId || data.branchId || data.projectId || 'system';
   const dedupeKey = `${envelope.type}:${scopeKey}`;
 
   // 结构化摘要优先于原始 stderr。原始发布日志可能有数百行，只能去发布记录展开。
@@ -436,6 +443,11 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     if (data.commitSha) params.set('commit', data.commitSha);
     const query = params.toString();
     href = query ? `/release-center?${query}` : '/release-center';
+  } else if (copy.link === 'tasks') {
+    const query = new URLSearchParams();
+    if (data.projectId) query.set('project', data.projectId);
+    if (data.jobId) query.set('job', data.jobId);
+    href = `/task-schedule?${query}`;
   } else if (copy.link === 'status') {
     href = monitorIncidentPath(data.targetId, data.incidentId, data.detectedAt);
   } else if (copy.link === 'maintenance') {

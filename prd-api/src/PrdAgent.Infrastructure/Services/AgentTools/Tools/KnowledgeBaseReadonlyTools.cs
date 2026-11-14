@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -90,7 +92,13 @@ public sealed class KbSearchTool : IAgentTool
 {
     private readonly MongoDbContext _db;
 
-    public KbSearchTool(MongoDbContext db) => _db = db;
+    private readonly IServiceScopeFactory? _scopeFactory;
+
+    public KbSearchTool(MongoDbContext db, IServiceScopeFactory? scopeFactory = null)
+    {
+        _db = db;
+        _scopeFactory = scopeFactory;
+    }
 
     public AgentToolDescriptor Descriptor { get; } = new()
     {
@@ -101,8 +109,9 @@ public sealed class KbSearchTool : IAgentTool
           "type": "object",
           "required": ["query"],
           "properties": {
-            "query": { "type": "string", "description": "搜索关键词，按字面量匹配标题、摘要和内容索引。" },
+            "query": { "type": "string", "description": "自然语言问题。mode=semantic 搜索已入库向量；mode=literal 按字面量匹配标题、摘要和内容索引。" },
             "storeId": { "type": "string", "description": "可选。限制在指定知识库空间内搜索。" },
+            "mode": { "type": "string", "enum": ["literal", "semantic"], "description": "自然语言问答选 semantic；旧调用默认 literal。semantic 不会自动建索引，缺模型或索引会明确失败。" },
             "searchContent": { "type": "boolean", "description": "可选。是否搜索 ContentIndex，默认 true。" },
             "limit": { "type": "integer", "minimum": 1, "maximum": 50, "description": "可选。返回数量上限，默认 20。" }
           }
@@ -112,6 +121,7 @@ public sealed class KbSearchTool : IAgentTool
 
     public async Task<AgentToolInvokeResult> InvokeAsync(JsonElement input, AgentToolInvocationContext context, CancellationToken ct)
     {
+        var watch = Stopwatch.StartNew();
         var query = KnowledgeBaseReadonlyToolSupport.GetString(input, "query");
         if (string.IsNullOrWhiteSpace(query))
             return AgentToolInvokeResult.Fail("kb_query_required", "query is required");
@@ -120,8 +130,20 @@ public sealed class KbSearchTool : IAgentTool
         if (userId == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_search 需要一个明确的用户身份（基础设施 Agent 会话或调用上下文里的用户）");
 
         var storeId = KnowledgeBaseReadonlyToolSupport.GetString(input, "storeId");
+        var mode = KnowledgeBaseReadonlyToolSupport.GetString(input, "mode") ?? "literal";
+        if (mode == "semantic")
+        {
+            if (_scopeFactory == null)
+                return AgentToolInvokeResult.Fail("kb_semantic_unavailable", "语义检索服务未注册");
+            using var scope = _scopeFactory.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<KnowledgeRetrievalService>()
+                .SearchAsync(query, storeId, userId,
+                    KnowledgeBaseReadonlyToolSupport.ClampInt(input, "limit", 5, 1, 50), ct);
+        }
+        if (mode != "literal")
+            return AgentToolInvokeResult.Fail("kb_mode_invalid", "mode 仅支持 literal 或 semantic");
         var stores = await KnowledgeBaseReadonlyToolSupport.ResolveSearchStoresAsync(_db, userId, storeId, ct);
-        if (stores.Count == 0) return AgentToolInvokeResult.Ok(JsonSerializer.Serialize(new { query, readonlyAccess = true, total = 0, items = Array.Empty<object>() }));
+        if (stores.Count == 0) return AgentToolInvokeResult.Ok(JsonSerializer.Serialize(new { query, mode = "literal", readonlyAccess = true, total = 0, contextEntryIds = Array.Empty<string>(), retrievalLatencyMs = watch.ElapsedMilliseconds, items = Array.Empty<object>() }));
 
         var limit = KnowledgeBaseReadonlyToolSupport.ClampInt(input, "limit", 20, 1, 50);
         var escaped = Regex.Escape(query.Trim());
@@ -159,7 +181,10 @@ public sealed class KbSearchTool : IAgentTool
         return AgentToolInvokeResult.Ok(JsonSerializer.Serialize(new
         {
             query,
+            mode = "literal",
             readonlyAccess = true,
+            contextEntryIds = entries.Select(x => x.Id),
+            retrievalLatencyMs = watch.ElapsedMilliseconds,
             total = entries.Count,
             items
         }));
@@ -341,7 +366,8 @@ public static class KnowledgeBaseReadonlyToolSupport
     public static object ToSource(KnowledgeBaseStore store, DocumentEntry entry) => new
     {
         kind = "knowledge_base",
-        uri = $"kb://stores/{store.Id}/entries/{entry.Id}",
+        uri = $"/document-store?store={Uri.EscapeDataString(store.Id)}&entry={Uri.EscapeDataString(entry.Id)}",
+        openPath = $"/document-store?store={Uri.EscapeDataString(store.Id)}&entry={Uri.EscapeDataString(entry.Id)}",
         storeId = store.Id,
         storeName = store.Name,
         entryId = entry.Id,

@@ -23,6 +23,8 @@ folders:
     name: 九、产品决策
 
 docs:
+  plan.knowledge-base.information-delivery: "知识库信息高效传递与复刻验收计划"
+  guide.cds.automation-health: "CDS 自动化任务健康与安全恢复 · 指南"
   plan.web-hosting.related-documents: "网页托管关联文档 · 计划"
   guide.cds.release-scripts: "CDS 项目发布脚本 · 指南"
   # 一、产品规格
@@ -120,6 +122,7 @@ docs:
   design.knowledge-base.store: "文档空间 · 设计"
   design.literary-agent: "文学创作 Agent (Literary Agent) · 设计"
   design.llmgw.model-lifecycle: "稳定模型标识与模型生命周期 · 设计"
+  design.llmgw.model-workbench: "模型工作台与上游绑定 · 设计"
   design.marketplace: "配置市场（海鲜市场） · 设计"
   design.open-platform.open-api: "开放接口（OpenAI 兼容对外网关）技术设计 · 设计"
   design.open-platform: "开放平台功能概要 · 设计"
@@ -302,6 +305,7 @@ docs:
   plan.platform.mcp-capability-completion: "MCP 接入与能力补齐 · 计划"
 
   # 五、计划
+  plan.video-agent.acceptance.handoff: "视频制作台新环境验收续接 · 计划"
   plan.cds.code-review-delivery: "CDS 代码审查需求兑现台账 · 计划"
   plan.platform.background-task-safety.phase0: "平台后台任务与消费最低保护 · 阶段 0 计划"
   plan.platform.background-task-safety.phase1: "平台任务级准入与统一出口 · 阶段 1 计划"

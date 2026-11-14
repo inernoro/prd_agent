@@ -320,6 +320,7 @@ export const api = {
   // ============ Dashboard 仪表盘 ============
   dashboard: {
     notifications: {
+      handleBatch: () => '/api/dashboard/notifications/handle-batch',
       list: () => '/api/dashboard/notifications',
       handle: (id: string) => `/api/dashboard/notifications/${id}/handle`,
       handleAll: () => '/api/dashboard/notifications/handle-all',
@@ -607,6 +608,7 @@ export const api = {
       adapterInfo: (modelId: string) => `/api/literary-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
       runs: {
         create: () => '/api/literary-agent/image-gen/runs',
+        byRequest: (requestId: string) => `/api/literary-agent/image-gen/runs/by-request?requestId=${encodeURIComponent(requestId)}`,
         byId: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}`,
         stream: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}/stream`,
         cancel: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}/cancel`,
@@ -1389,6 +1391,10 @@ export const api = {
 
   // ============ Document Store 文档空间 ============
   documentStore: {
+    trash: {
+      list: () => '/api/document-store/stores/trash',
+      restore: (kind: 'entry' | 'store', id: string) => `/api/document-store/${kind === 'store' ? 'stores' : 'entries'}/${encodeURIComponent(id)}/restore`,
+    },
     stores: {
       list: () => '/api/document-store/stores',
       listWithPreview: () => '/api/document-store/stores/with-preview',
@@ -1454,6 +1460,7 @@ export const api = {
       subscribeGithubBatch: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github/batch`,
       detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
       content: (entryId: string) => `/api/document-store/entries/${entryId}/content`,
+      knowledgeIndex: (entryId: string) => `/api/document-store/entries/${encodeURIComponent(entryId)}/knowledge-index`,
       download: (entryId: string) => `/api/document-store/entries/${encodeURIComponent(entryId)}/download`,
       creativePublish: (entryId: string) => `/api/document-store/entries/${entryId}/creative-publish`,
       // 版本控制：历史版本列表 / 取某版本正文 / 恢复某版本

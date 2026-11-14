@@ -15,6 +15,8 @@ public sealed class SpeechException(string code, string message, int statusCode 
 /// <summary>界面、MCP、Worker 共用的能力约束，不根据供应商品牌或模型名字猜功能。</summary>
 public static class SpeechCapabilityPolicy
 {
+    // 当前两种语音协议的 PCM 统一为 24kHz、16-bit little-endian、单声道。
+    public const int PcmSampleRate = 24000;
     private static readonly HashSet<string> OpenAiFormats = new(StringComparer.Ordinal)
         { "mp3", "opus", "aac", "flac", "wav", "pcm" };
     private static readonly HashSet<string> DoubaoFormats = new(StringComparer.Ordinal)
@@ -77,6 +79,8 @@ public static class SpeechCapabilityPolicy
     public static JsonObject BuildRequestBody(SpeechRun run)
     {
         var result = new JsonObject { ["input"] = run.Text, ["voice"] = run.VoiceId, ["response_format"] = run.Format, ["speed"] = run.Speed };
+        if (run.Format == "pcm" && run.ProfileSnapshot.Protocol == "doubao-tts")
+            result["sample_rate"] = PcmSampleRate;
         if (run.Instructions != null) result["instructions"] = run.Instructions;
         if (run.Emotion != null) result["emotion"] = run.Emotion;
         return result;

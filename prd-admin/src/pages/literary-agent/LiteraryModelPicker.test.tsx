@@ -74,6 +74,15 @@ describe('工作台紧凑模型选择', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it('保留主分支的失效模型提示，允许从新目录重新选择', async () => {
+    const onSelect = await render({ model: null, unavailable: true, open: true });
+    const trigger = container.querySelector<HTMLButtonElement>('.lit-model-trigger')!;
+    expect(trigger.textContent).toContain('原模型不可用，请重选');
+    expect(trigger.disabled).toBe(false);
+    await act(async () => container.querySelector<HTMLButtonElement>('[role="menuitemradio"]')!.click());
+    expect(onSelect).toHaveBeenCalledWith(models[0].id);
+  });
+
   it('没有可选模型时，菜单显示空状态', async () => {
     await render({ model: null, options: [], open: true });
     expect(document.querySelector('[role="menu"]')?.textContent).toContain('暂无可用模型池');

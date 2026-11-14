@@ -21,11 +21,13 @@ public class EmbeddingService : IEmbeddingService
 
     private readonly ILlmGateway _gateway;
     private readonly ILogger<EmbeddingService> _logger;
+    private readonly ILLMRequestContextAccessor _context;
 
-    public EmbeddingService(ILlmGateway gateway, ILogger<EmbeddingService> logger)
+    public EmbeddingService(ILlmGateway gateway, ILogger<EmbeddingService> logger, ILLMRequestContextAccessor context)
     {
         _gateway = gateway;
         _logger = logger;
+        _context = context;
     }
 
     /// <remarks>
@@ -75,6 +77,13 @@ public class EmbeddingService : IEmbeddingService
         if (input.Count > MaxBatchSize)
             return EmbeddingBatch.Fail("EMPTY_INPUT", $"单批最多 {MaxBatchSize} 条，请分批调用");
 
+        // 解析与发送共享同一个可信用户/租户作用域，避免解析阶段落入内部租户。
+        var current = _context.Current;
+        using var scope = _context.BeginScope(current is null
+            ? new LlmRequestContext(Guid.NewGuid().ToString("N"), null, null, userId, null, null, null, null,
+                AppCallerCode: appCallerCode)
+            : current with { UserId = userId, AppCallerCode = appCallerCode });
+
         // ── 算 ──
         //
         // 解析与发送都走 CancellationToken.None，不转发调用方的 ct。
@@ -106,8 +115,12 @@ public class EmbeddingService : IEmbeddingService
             // 过不去，serving 侧拿不到 UserId 会以 "User not found" 拒掉，账单也挂不到人头上。
             Context = new GatewayRequestContext
             {
-                RequestId = Guid.NewGuid().ToString("N"),
+                RequestId = _context.Current?.RequestId ?? Guid.NewGuid().ToString("N"),
                 UserId = userId,
+                TenantId = _context.Current?.TenantId,
+                TeamId = _context.Current?.TeamId,
+                SessionId = _context.Current?.SessionId,
+                RunId = _context.Current?.RunId,
             },
             RequestBody = body,
         }, resolution, CancellationToken.None);
@@ -116,8 +129,9 @@ public class EmbeddingService : IEmbeddingService
         {
             _logger.LogWarning("向量化上游失败 model={Model} status={Status} body={Body}",
                 resolution.ActualModel, raw.StatusCode, Truncate(raw.Content, 300));
-            return EmbeddingBatch.Fail("UPSTREAM_ERROR",
-                $"向量模型调用失败（HTTP {raw.StatusCode}）");
+            var code = raw.ErrorCode ?? "UPSTREAM_ERROR";
+            return EmbeddingBatch.Fail(code,
+                $"向量模型调用失败（{code}，HTTP {raw.StatusCode}）");
         }
 
         // 贴标签用**真正成功的那个候选**，不是发之前算出来的那个。

@@ -62,7 +62,8 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
         await stale;
         var after = await f.Db.AdminNotifications.Find(x => x.Id == current.Id).SingleAsync();
         Assert.Equal("closed", after.Status);
-        Assert.Equal(0, after.PushEpisode);
+        // A real intervening failure and success form one episode; the stale snapshot must not add another.
+        Assert.Equal(1, after.PushEpisode);
         Assert.Equal(successWatermark, after.GatewaySignalVersion);
         Assert.Equal(oldSnapshot, (await f.Db.AdminNotifications.Find(x => x.Id == older.Id).SingleAsync()).ToBsonDocument().ToJson());
         Assert.Equal(2, await f.Db.AdminNotifications.CountDocumentsAsync(x => x.Key == older.Key));

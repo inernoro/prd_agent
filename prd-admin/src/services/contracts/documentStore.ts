@@ -1,8 +1,24 @@
 import type { ApiResponse } from '@/types/api';
 
+/** 后端核验当前文档版本后的问答索引状态，时间目标由服务端判定。 */
+export type KnowledgeIndexStatus = {
+  status: 'not_indexed' | 'stale' | 'pending' | 'ready' | 'failed';
+  displayMessage: string;
+  pollingRecommended: boolean;
+  runId?: string | null;
+  phase?: string | null;
+  sourceUpdatedAt?: string | null;
+  targetSeconds: number;
+  targetAt?: string | null;
+  delayed: boolean;
+  failureCode?: string | null;
+  errorMessage?: string | null;
+};
+
 // ── 数据类型 ──
 
 export type DocumentStore = {
+  pmProjectId?: string;
   id: string;
   name: string;
   description?: string;
@@ -115,6 +131,8 @@ export type DocStoreShareView = {
 };
 
 export type DocumentEntry = {
+  /** 已存在真实发布快照；编辑下一版草稿时仍为 true。 */
+  hasWritingPublication?: boolean;
   id: string;
   storeId: string;
   parentId?: string;
@@ -465,7 +483,7 @@ export type ListDocumentEntriesContract = (
   page?: number,
   pageSize?: number,
   keyword?: string,
-) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number; page: number; pageSize: number; sharedEntryIds?: string[] }>>;
+) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number; page: number; pageSize: number; sharedEntryIds?: string[]; canWrite?: boolean }>>;
 
 export type UpdateDocumentEntryContract = (
   entryId: string,

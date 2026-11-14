@@ -1070,6 +1070,12 @@ public static class DocumentStoreAgent
         public const string Vision = "document-store.subtitle::vision";
     }
 
+    public static class Writing
+    {
+        [AppCallerMetadata("知识库按模版成文", "关联资料、识别缺口并生成可审核的结构化草稿", ModelTypes = new[] { ModelTypes.Chat }, Category = "DocumentStore")]
+        public const string Generate = "document-store.writing::chat";
+    }
+
     public static class Reprocess
     {
         [AppCallerMetadata(

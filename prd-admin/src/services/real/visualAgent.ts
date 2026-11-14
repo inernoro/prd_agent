@@ -399,6 +399,7 @@ export async function updateArticleMarkerReal(params: {
   draftText?: string;
   status?: string;
   runId?: string;
+  generationRequestId?: string;
   errorMessage?: string;
   planItem?: { prompt: string; count: number; size?: string };
   url?: string;

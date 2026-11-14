@@ -2,15 +2,23 @@
  * 故障时间线（全实例）。右栏的第二个页签：按时间倒序，进行中的置顶且带来源标，
  * 点一条就跳到那个目标的详情。
  */
-import { AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import {
   formatClock,
+  INCIDENT_STATE_LABEL,
+  incidentDisplayState,
   formatDuration,
   type UptimeIncidentView,
 } from '@/lib/monitorCenter';
 import { SegmentedControl, SourceBadge } from './primitives';
+
+const INCIDENT_TONE = {
+  ongoing: { Icon: AlertTriangle, dot: 'bg-destructive' },
+  recovered: { Icon: CheckCircle2, dot: 'bg-ok' },
+  unconfirmed: { Icon: Clock, dot: 'bg-muted-foreground' },
+} as const;
 
 export type IncidentFilter = 'all' | 'ongoing' | 'release';
 
@@ -49,12 +57,15 @@ export function IncidentTimeline({ incidents, filter, onFilter, onOpenTarget, sc
           </div>
         ) : (
           <ol className="relative flex flex-col gap-2 pl-4 before:absolute before:bottom-2 before:left-[0.3125rem] before:top-2 before:w-px before:bg-[hsl(var(--hairline))]">
-            {shown.map((incident) => (
+            {shown.map((incident) => {
+              const state = incidentDisplayState(incident);
+              const { Icon, dot } = INCIDENT_TONE[state];
+              return (
               <li key={incident.id} className="relative">
                 <span
                   className={cn(
                     'absolute -left-4 top-3 inline-flex h-2.5 w-2.5 rounded-full border-2 border-[hsl(var(--surface-raised))]',
-                    incident.ongoing ? 'bg-destructive' : 'bg-ok',
+                    dot,
                   )}
                   aria-hidden="true"
                 />
@@ -67,8 +78,8 @@ export function IncidentTimeline({ incidents, filter, onFilter, onOpenTarget, sc
                   )}
                 >
                   <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 font-medium', incident.ongoing ? 'border-destructive/40 bg-destructive/10 text-destructive' : 'border-[hsl(var(--hairline-strong))] text-muted-foreground')}>
-                    {incident.ongoing ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
-                    {incident.ongoing ? '进行中' : '已恢复'}
+                    <Icon className="h-3 w-3" />
+                    {INCIDENT_STATE_LABEL[state]}
                   </span>
                   <SourceBadge source={incident.source} />
                   <span className="min-w-0 break-words font-medium text-foreground">{incident.targetName}</span>
@@ -84,7 +95,8 @@ export function IncidentTimeline({ incidents, filter, onFilter, onOpenTarget, sc
                   ) : null}
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ol>
         )}
       </div>

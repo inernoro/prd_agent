@@ -1,3 +1,4 @@
+import { collectDocumentEntryPages, type DocumentEntryPage } from './documentEntryPages';
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import { toUserReadableErrorMessage } from '@/lib/userReadableError';
@@ -146,11 +147,28 @@ export async function listKnowledgeEntriesPaged(storeId: string, q: KnowledgeEnt
   }>(`${api.documentStore.entries.list(storeId)}?${params.toString()}`, { method: 'GET' });
 }
 
-/** 搜索文档条目（支持内容搜索） */
-export async function searchDocumentEntries(storeId: string, keyword: string, searchContent: boolean) {
-  let url = `${api.documentStore.entries.list(storeId)}?page=1&pageSize=200&all=true&keyword=${encodeURIComponent(keyword)}`;
-  if (searchContent) url += '&searchContent=true';
-  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(url, { method: 'GET' });
+/** 文档树与搜索共用游标遍历；首批可先展示，其余后台补齐。 */
+export async function loadDocumentEntries(
+  storeId: string,
+  keyword?: string,
+  searchContent = false,
+  onFirstPage?: (page: DocumentEntryPage) => void,
+) {
+  return collectDocumentEntryPages(async cursor => {
+    const params = new URLSearchParams({ all: 'true', navigation: 'true', pageSize: '2000' });
+    if (keyword) params.set('keyword', keyword);
+    if (searchContent) params.set('searchContent', 'true');
+    if (cursor) params.set('cursor', cursor);
+    return apiRequest<DocumentEntryPage>(`${api.documentStore.entries.list(storeId)}?${params}`, { method: 'GET' });
+  }, onFirstPage);
+}
+
+/** 全部命中可达；读路径不触发索引回填或写权限。 */
+export async function searchDocumentEntries(storeId: string, keyword: string, searchContent: boolean, cursor?: string) {
+  const params = new URLSearchParams({ all: 'true', navigation: 'true', pageSize: '50', keyword });
+  if (searchContent) params.set('searchContent', 'true');
+  if (cursor) params.set('cursor', cursor);
+  return apiRequest<DocumentEntryPage>(`${api.documentStore.entries.list(storeId)}?${params}`, { method: 'GET' });
 }
 
 export const updateDocumentEntryReal: UpdateDocumentEntryContract = async (entryId, input) => {
@@ -498,9 +516,19 @@ export async function moveDocumentEntry(entryId: string, parentId: string | null
 
 /** 更新文档内容（在线编辑） */
 export async function updateDocumentContent(entryId: string, content: string, contentType?: string) {
-  return await apiRequest<{ updated: boolean; updatedAt?: string; updatedBy?: string; updatedByName?: string }>(
+  return await apiRequest<{
+    updated: boolean; updatedAt?: string; updatedBy?: string; updatedByName?: string;
+    knowledgeIndex?: import('@/services/contracts/documentStore').KnowledgeIndexStatus | null;
+  }>(
     api.documentStore.entries.content(entryId),
     { method: 'PUT', body: contentType ? { content, contentType } : { content } },
+  );
+}
+
+/** 仅观察当前原文对应的索引状态，不重发索引或模型任务。 */
+export async function getKnowledgeIndexStatus(entryId: string, signal?: AbortSignal) {
+  return await apiRequest<import('@/services/contracts/documentStore').KnowledgeIndexStatus>(
+    api.documentStore.entries.knowledgeIndex(entryId), { method: 'GET', signal },
   );
 }
 
@@ -591,7 +619,7 @@ export async function rebuildContentIndex(storeId: string) {
 export async function listPublicDocumentStores(page = 1, pageSize = 24, sort: 'hot' | 'new' | 'popular' | 'viewed' = 'hot') {
   return await apiRequest<{ items: import('@/services/contracts/documentStore').PublicDocumentStore[]; total: number; page: number; pageSize: number }>(
     `${api.documentStore.stores.publicList()}?page=${page}&pageSize=${pageSize}&sort=${sort}`,
-    { method: 'GET' },
+    { method: 'GET', auth: false },
   );
 }
 
@@ -599,16 +627,28 @@ export async function listPublicDocumentStores(page = 1, pageSize = 24, sort: 'h
 export async function getPublicDocumentStore(storeId: string) {
   return await apiRequest<import('@/services/contracts/documentStore').PublicStoreDetail>(
     api.documentStore.stores.publicDetail(storeId),
-    { method: 'GET' },
+    { method: 'GET', auth: false },
   );
 }
 
 /** 获取公开知识库内文档列表 */
+async function loadAnonymousDocumentEntries(url: string) {
+  return collectDocumentEntryPages(cursor => {
+    const params = new URLSearchParams({ pageSize: '2000' });
+    if (cursor) params.set('cursor', cursor);
+    return apiRequest<DocumentEntryPage>(`${url}?${params}`, { method: 'GET', auth: false });
+  });
+}
+
 export async function listPublicStoreEntries(storeId: string) {
-  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(
-    api.documentStore.stores.publicEntries(storeId),
-    { method: 'GET' },
-  );
+  return loadAnonymousDocumentEntries(api.documentStore.stores.publicEntries(storeId));
+}
+
+/** 公开空间的全文检索仍逐页复查 IsPublic。 */
+export async function searchPublicStoreEntries(storeId: string, keyword: string, cursor?: string) {
+  const params = new URLSearchParams({ pageSize: '50', keyword, searchContent: 'true' });
+  if (cursor) params.set('cursor', cursor);
+  return apiRequest<DocumentEntryPage>(`${api.documentStore.stores.publicEntries(storeId)}?${params}`, { method: 'GET', auth: false });
 }
 
 /** 获取公开文档内容 */
@@ -620,7 +660,7 @@ export async function getPublicEntryContent(entryId: string) {
     contentType: string;
     fileUrl: string | null;
     hasContent: boolean;
-  }>(api.documentStore.stores.publicEntryContent(entryId), { method: 'GET' });
+  }>(api.documentStore.stores.publicEntryContent(entryId), { method: 'GET', auth: false });
 }
 
 /** 点赞知识库 */
@@ -712,10 +752,13 @@ export async function getDocStoreShareView(token: string) {
 
 /** 列出分享范围内的文档（匿名；单篇分享只返回该篇） */
 export async function listDocStoreShareEntries(token: string) {
-  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(
-    api.documentStore.stores.publicShareEntries(token),
-    { method: 'GET', auth: false },
-  );
+  return loadAnonymousDocumentEntries(api.documentStore.stores.publicShareEntries(token));
+}
+
+export async function searchDocStoreShareEntries(token: string, keyword: string, cursor?: string) {
+  const params = new URLSearchParams({ pageSize: '50', keyword, searchContent: 'true' });
+  if (cursor) params.set('cursor', cursor);
+  return apiRequest<DocumentEntryPage>(`${api.documentStore.stores.publicShareEntries(token)}?${params}`, { method: 'GET', auth: false });
 }
 
 /** 读取分享范围内某篇文档正文（匿名） */
@@ -1275,4 +1318,31 @@ export function streamSelectionRewrite(
   })();
 
   return () => abortController.abort();
+}
+
+export interface DocumentTrashItem {
+  kind: 'entry' | 'store';
+  id: string;
+  title: string;
+  storeId: string;
+  storeName: string;
+  deletedAt: string;
+  deletedBy: string;
+  expiresAt: string;
+  canRestore: boolean;
+  pending: boolean;
+}
+
+export function listDocumentTrash(storeId?: string) {
+  const query = storeId ? `?storeId=${encodeURIComponent(storeId)}` : '';
+  return apiRequest<{ items: DocumentTrashItem[]; retentionDays: number }>(`${api.documentStore.trash.list()}${query}`, { method: 'GET' });
+}
+
+export function restoreDocumentTrash(item: Pick<DocumentTrashItem, 'kind' | 'id'>) {
+  return apiRequest(api.documentStore.trash.restore(item.kind, item.id), { method: 'POST' });
+}
+
+export function resumeDocumentTrash(item: Pick<DocumentTrashItem, 'kind' | 'id'>) {
+  const url = item.kind === 'store' ? api.documentStore.stores.detail(item.id) : api.documentStore.entries.detail(item.id);
+  return apiRequest(url, { method: 'DELETE' });
 }

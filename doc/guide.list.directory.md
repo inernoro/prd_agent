@@ -18,6 +18,9 @@
 
 ## 文档列表
 
+- [知识库信息高效传递与复刻验收计划](./plan.knowledge-base.information-delivery.md) `plan.knowledge-base.information-delivery`
+
+- [CDS 自动化任务健康与安全恢复 · 指南](./guide.cds.automation-health.md) `guide.cds.automation-health`
 - [网页托管关联文档 · 计划](./plan.web-hosting.related-documents.md) `plan.web-hosting.related-documents`
 
 - [CDS 骨架维护与验收 · 指南](./guide.cds.loading.md) `guide.cds.loading`
@@ -56,6 +59,7 @@
 ### 二、设计文档
 
 - [稳定模型标识与模型生命周期 · 设计](./design.llmgw.model-lifecycle.md) `design.llmgw.model-lifecycle`
+- [模型工作台与上游绑定 · 设计](./design.llmgw.model-workbench.md) `design.llmgw.model-workbench`
 
 - [CDS 项目检查与通知总览 · 设计](./design.cds.project-status.md) `design.cds.project-status`
 
@@ -307,6 +311,7 @@
 
 ### 五、计划
 
+- [视频制作台新环境验收续接 · 计划](./plan.video-agent.acceptance.handoff.md) `plan.video-agent.acceptance.handoff`
 - [CDS 代码审查需求兑现台账 · 计划](./plan.cds.code-review-delivery.md) `plan.cds.code-review-delivery`
   > 用户全部要求逐项对照，区分已上线、已合并和仍未完成的工作。
 

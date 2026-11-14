@@ -60,6 +60,7 @@ export function ServiceDetail({ service: service, category, summary, incidents, 
   const mutedUntil = settings?.mutedUntil?.[service.id] ?? 0;
   const muted = mutedUntil > now;
   const notificationError = notificationMutationError || notifications.error;
+  const canAdjustNotifications = settings !== undefined && !notifications.error;
   const config = effectiveNotifications(notifications, summary, target);
   const measurement = useMemo(() => service.state === 'none' ? null : measurementView(target.lastSample), [service.state, target.lastSample]);
   const serviceIncidents = useMemo(() => incidents.filter((incident) => incident.targetId === service.id), [incidents, service.id]);
@@ -171,7 +172,7 @@ export function ServiceDetail({ service: service, category, summary, incidents, 
     ...(incident.endedAt ? [{ at: incident.endedAt, state: 'ok', text: incident.endedSample?.up && !incident.endedSample.noData ? '满足恢复判据，本次异常已结束' : '本次故障记录已结束；未保留可验证的恢复采样' }] : []),
   ]).sort((a, b) => b.at - a.at).slice(0, 12);
   const notificationText = !config.known ? '通知规则尚未读取成功，当前无法确认此服务会通知谁。'
-    : muted ? `已静默至 ${time(mutedUntil)}，期间不新增通知；已交给通知渠道或独立接收端的消息不保证撤回，观测继续更新。`
+    : muted ? `已免打扰至 ${time(mutedUntil)}，期间不新增通知；已交给通知渠道或独立接收端的消息不保证撤回，观测继续更新。`
     : config.channelIds?.length === 0 ? '此服务未选择通知通道，不新增异常或恢复通知；已交给通知渠道或独立接收端的消息不保证撤回。'
     : config.channels.length === 0 && (!config.legacy || config.legacy.status === 'unconfigured') ? '当前没有可用于此服务的通知通道，请检查通道的项目与事件订阅。'
     : config.verdict.text.replace(/（缺 [^）]*）/g, '');
@@ -193,11 +194,12 @@ export function ServiceDetail({ service: service, category, summary, incidents, 
     <div className="svh">
       <div><p className="eyebrow">{category.name} · {target.environmentLabel} · {service.custom ? '我的服务' : '平台服务'}</p><h2>{service.name}</h2></div>
       <span className={`pill ${service.state}`}><Glyph state={service.state} />当前 · {label}</span><span className="sp" />
-      {service.state === 'bad' ? <><button className="btn ghost sm" disabled={notificationBusy || settings === undefined} onClick={() => void updateNotification({ acknowledged: !acknowledged })}>{acknowledged ? '已确认 · 撤销' : '确认处理'}</button><button className="btn ghost sm" disabled={notificationBusy || settings === undefined} onClick={() => void updateNotification({ muteUntil: muted ? null : Date.now() + 30 * 60_000 })}>{muted ? '取消静默' : '静默 30 分钟'}</button></> : null}
+      {service.state === 'bad' && canAdjustNotifications ? <><button className="btn ghost sm" disabled={notificationBusy || settings === undefined} onClick={() => void updateNotification({ acknowledged: !acknowledged })}>{acknowledged ? '已知悉 · 撤销' : '标记已知悉'}</button><button className="btn ghost sm" disabled={notificationBusy || settings === undefined} onClick={() => void updateNotification({ muteUntil: muted ? null : Date.now() + 30 * 60_000 })}>{muted ? '取消免打扰' : '免打扰 30 分钟'}</button></> : null}
       <a className="btn ghost sm" href={`/reports?target=${encodeURIComponent(target.id)}`}>事件报告</a>
-      <button className="btn ghost sm" onClick={onNotify}>通知设置</button>
+      {canAdjustNotifications ? <button className="btn ghost sm" onClick={onNotify}>通知设置</button> : null}
     </div>
     <div className="svm">
+      {service.state === 'bad' && canAdjustNotifications ? <p className="note" role="status">{acknowledged ? '本项已被标记知悉，监控仍异常。' : '已知悉仅更新本项监控的共享确认记录，不代表故障已修复。'}免打扰只暂停本项通知，监控与恢复判定继续更新。</p> : null}
       {probeError || notificationError ? <p role="alert" className="detail-error">{probeError || notificationError}</p> : null}
       <div className="two rv rv2">
         <div className={`now ${service.state}`}>
@@ -225,7 +227,7 @@ export function ServiceDetail({ service: service, category, summary, incidents, 
     </div>
     <div className="svs rv rv3">
       {related.length ? <div className="card"><div className="card-h"><h3>可能相关</h3><span className="tag">{related.length} 项</span></div><p className="lbl">同一关联发布记录；仅为排查线索，不代表已确认共同原因。</p><div className="rl">{related.map((incident) => <button key={incident.id} className="rli" disabled={!onOpenService} onClick={() => onOpenService?.(incident.targetId)}><Glyph state={incident.ongoing ? 'bad' : 'ok'} /><span className="rl-b"><span className="rl-n">{incident.targetName}</span><span className="rl-l">{incident.releaseId}</span></span><span className={`rl-v ${incident.ongoing ? 'bad' : 'ok'}`}>{incident.ongoing ? '异常未结束' : '记录已结束'}</span></button>)}</div></div> : null}
-      <div className="card"><div className="card-h"><h3>{muted ? '通知已静默' : '异常会通知'}</h3><span className="tag">{notificationScope}</span></div><p className="lbl">已配置的适用通道</p><div className="chips">{config.channels.map((channel) => <span key={channel.id} className="chip">{channel.name}</span>)}{config.legacy && config.legacy.status !== 'unconfigured' ? <span className="chip">{config.legacy.channel}</span> : null}</div><p className="lbl">发到哪里</p><div className="chl-list">{config.channels.map((channel) => <div className="chl" key={channel.id}><span className="chn2">{channel.name}</span><span className="dest">{channel.kind}</span><span className={channel.status === 'healthy' ? 'dl-ok' : 'detail-channel-pending'}>{channel.status === 'healthy' ? '通道最近投递成功' : channel.status === 'failing' ? '通道最近发送失败' : '待验证'}</span></div>)}</div>{config.legacy && config.legacy.status !== 'unconfigured' ? <div className="chl"><span className="chn2">{config.legacy.channel}</span><span className="dest">MAP</span><span className={config.legacy.status === 'healthy' ? 'dl-ok' : 'detail-channel-pending'}>{config.legacy.status === 'healthy' ? '通道最近投递成功' : config.legacy.status === 'failing' ? '通道最近发送失败' : '尚未验证送达'}</span></div> : null}<p className="note">{notificationText}</p><button className="btn ghost sm full" onClick={onNotify}>为此服务调整通知</button></div>
+      <div className="card"><div className="card-h"><h3>{muted ? '通知已免打扰' : '异常会通知'}</h3><span className="tag">{notificationScope}</span></div><p className="lbl">已配置的适用通道</p><div className="chips">{config.channels.map((channel) => <span key={channel.id} className="chip">{channel.name}</span>)}{config.legacy && config.legacy.status !== 'unconfigured' ? <span className="chip">{config.legacy.channel}</span> : null}</div><p className="lbl">发到哪里</p><div className="chl-list">{config.channels.map((channel) => <div className="chl" key={channel.id}><span className="chn2">{channel.name}</span><span className="dest">{channel.kind}</span><span className={channel.status === 'healthy' ? 'dl-ok' : 'detail-channel-pending'}>{channel.status === 'healthy' ? '通道最近投递成功' : channel.status === 'failing' ? '通道最近发送失败' : '待验证'}</span></div>)}</div>{config.legacy && config.legacy.status !== 'unconfigured' ? <div className="chl"><span className="chn2">{config.legacy.channel}</span><span className="dest">MAP</span><span className={config.legacy.status === 'healthy' ? 'dl-ok' : 'detail-channel-pending'}>{config.legacy.status === 'healthy' ? '通道最近投递成功' : config.legacy.status === 'failing' ? '通道最近发送失败' : '尚未验证送达'}</span></div> : null}<p className="note">{notificationText}</p>{canAdjustNotifications ? <button className="btn ghost sm full" onClick={onNotify}>为此服务调整通知</button> : null}</div>
       <div className="card"><h3>如何检查</h3><dl className="kv"><dt>方式</dt><dd>{target.observeMode === 'passive' ? '被动观测' : '主动检查'}</dd><dt>检查说明</dt><dd>{target.probeDescription}</dd>{target.healthCheck ? <Fragment><dt>指标条件</dt><dd>{target.healthCheck.componentId} · {target.healthCheck.field} {target.healthCheck.op} {target.healthCheck.value}</dd></Fragment> : null}<dt>频率</dt><dd>每 {target.intervalSeconds} 秒</dd><dt>超时</dt><dd>{formatMeasurementValue(target.timeoutMs / 1000, '秒')}</dd><dt>最近检查</dt><dd>{target.lastSample ? formatRelative(target.lastSample.t, now) : '尚未检查'}</dd></dl><div className="detail-probe-actions" role="group" aria-label="检查操作"><button className="btn ghost sm" disabled={probing} onClick={() => void check()}>{probing ? '正在检查…' : '立即检查'}</button><button className="linkb" onClick={onManage}>管理此项监控 <ChevronRight className="ic xs" /></button></div></div>
     </div>
   </div>;

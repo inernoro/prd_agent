@@ -20,12 +20,12 @@ public interface IPoolFailoverNotifier
     /// <summary>
     /// 向请求失败的用户发送故障通知（以最新一条为准，避免重复）
     /// </summary>
-    Task NotifyUserFailureAsync(string userId, string modelType, string poolName, CancellationToken ct = default);
+    Task NotifyUserFailureAsync(string userId, string modelType, string poolName, CancellationToken ct = default, string? poolId = null);
 
     /// <summary>
     /// 关闭指定用户的故障通知（模型恢复后）
     /// </summary>
-    Task CloseUserFailureNotificationsAsync(string modelType, CancellationToken ct = default);
+    Task CloseUserFailureNotificationsAsync(string modelType, CancellationToken ct = default, string? poolId = null, DateTime? recoveredAt = null);
 
     /// <summary>
     /// 通知大模型平台额度用尽 / key 被限额（OpenRouter "Key limit exceeded" 等）。
