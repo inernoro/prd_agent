@@ -353,6 +353,25 @@ describe('媒体切换边界回归', () => {
     expect(recovered.playbackRate).toBe(1.25);
   });
 
+  it('手机按真实视频比例呈现操作画面，失败和桌面不残留竖屏比例', async () => {
+    await mountVideo('mobile');
+    await viewportMobile(true);
+    const mobile = container.querySelector('video')!;
+    Object.defineProperties(mobile, { duration: { value: 260 }, videoWidth: { value: 390 }, videoHeight: { value: 844 } });
+    await act(async () => mobile.dispatchEvent(new Event('loadedmetadata')));
+    const player = () => container.querySelector<HTMLElement>('.player')!;
+    expect(player().style.aspectRatio).toBe('390 / 844');
+    await act(async () => mobile.dispatchEvent(new Event('error')));
+    expect(player().style.aspectRatio).toBe('');
+    await click([...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '使用默认视频')!);
+    const fallback = container.querySelector('video')!;
+    Object.defineProperties(fallback, { duration: { value: 260 }, videoWidth: { value: 960 }, videoHeight: { value: 720 } });
+    await act(async () => fallback.dispatchEvent(new Event('loadedmetadata')));
+    expect(player().style.aspectRatio).toBe('960 / 720');
+    await viewportMobile(false);
+    expect(player().style.aspectRatio).toBe('');
+  });
+
   it('手机首次进入遇到短于已发布章节时间轴的素材应明确失败', async () => {
     mobileQuery.matches = true;
     const data = fixture();
