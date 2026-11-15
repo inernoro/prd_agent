@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "overallStatus": "LOCAL_VALIDATED_READABLE_RESULTS_READY",
+  "overallStatus": "GITHUB_PUSH_VALIDATED_READABLE_RESULTS_READY",
   "goal": "让MAP四条真实核心用户路径的性能退化在进入用户使用前被可重复的隔离CI测试识别",
   "definitionOfDone": "保留用户允许的本地真实验收：核心路径、性能比较、两类退化识别及恢复具备证据；同时必须让用户直接理解原始目标做到什么程度、怎样证明、哪些尚未验证。用户明确表示看不懂或未验收时，不得仅凭本地技术标签宣称整体完成。",
   "targetApplicationCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
@@ -88,12 +88,12 @@
     },
     {
       "id": "AC-CI",
-      "condition": "现有CI入口已接线，指定提交的同套测试在本地完整执行，真实页面矩阵可重复",
-      "pass": "现有Preview Acceptance步骤与本地实际执行记录对应；源代码摘要及目标SHA可追溯，三次基线、候选、两类负例及恢复完整；将本地页面矩阵接入同一入口，云端运行状态单独标NOT_EXECUTED",
+      "condition": "相关代码推送独立性能分支后，现有CI自动执行准确提交的同机基线、比较、两类退化证明、恢复和真实页面矩阵",
+      "pass": "实际GitHub事件为push、head_sha等于被测提交，全部隔离性能步骤成功；故障实测被拒绝且非基础设施失败；报告和原始证据成功归档。normal不冒称已在云端执行all。",
       "evidenceType": "integration-live",
-      "status": "PASS",
-      "evidence": "local-acceptance.reference.json",
-      "acceptanceMethod": "USER_AUTHORIZED_LOCAL"
+      "status": "PASS_GITHUB",
+      "evidence": "https://github.com/inernoro/prd_agent/actions/runs/43707785044",
+      "acceptanceMethod": "ACTUAL_GITHUB_PUSH"
     },
     {
       "id": "AC-PREVIEW",
@@ -126,7 +126,7 @@
       ]
     }
   ],
-  "remaining": "可读结果已准备并直接呈现；云端自动运行仍为明确边界，用户接受状态不由技术标签替代",
+  "remaining": "公开预览查询仍403，按用户授权已有本地真实验收；本分支GitHub推送自动运行实测通过。主干未合入，用户接受状态不由技术标签代替。",
   "acceptanceAuthority": {
     "userInstruction": "远程无法验收可以本地验收",
     "scope": "允许用本地真实隔离页面与现有CI同套执行入口完成验收；远程入口及云端作业未执行单独如实记边界",
@@ -144,10 +144,10 @@
     },
     {
       "id": "BLOCK-CI",
-      "status": "UNAVAILABLE_REMOTE",
-      "evidence": "api.github.com 不在当前有效允许列表；上次 Actions 前置查询 Forbidden；没有 workflow dispatch 工具",
-      "impact": "现有 Preview Acceptance 隔离性能作业尚无实际云端运行与artifact",
-      "unblock": "环境维护入口允许 api.github.com；由执行器重新查询和触发既有工作流，并跟踪实际作业及artifact，不要求用户代为测试",
+      "status": "CLOSED_ACTUAL_GITHUB_PUSH",
+      "evidence": "https://github.com/inernoro/prd_agent/actions/runs/43707785044",
+      "impact": "漏配push触发已修复；实际隔离性能作业完成且success，artifact已上传",
+      "unblock": "已由执行器通过GitHub连接核对真实运行；此前工作区API受限不再作为未自动触发原因",
       "originalStatus": "UNAVAILABLE_REMOTE",
       "blockingForAcceptance": false
     }
@@ -160,11 +160,38 @@
     "requirement": "在对话里围绕最初业务目标，直接说明可用能力、真实验证、容量边界和未完成项，技术记录仅作佐证",
     "technicalEvidencePreserved": true
   },
-  "technicalVerificationStatus": "PASS_LOCAL",
+  "technicalVerificationStatus": "PASS_LOCAL_AND_GITHUB_PUSH",
   "readableDelivery": {
     "canDo": "以普通中文直接说明正常、变慢、未完成，四条用户路径等多久及超出多少；随既有开发检查生成",
     "proof": "原始正常、首页注入、后台注入与真实中断数据生成报告，浏览器桌面/窄屏实查；缺少基线时旧显示误报，修正后明确无法判断",
-    "notDone": "云端自动触发尚未实跑验证，未宣称线上自动保护已启用；未擅自认定用户已理解或已接受交付",
+    "notDone": "主干尚未合入，公开预览未取得；本轮云端为normal，未声称云端重测并发/持续容量，未擅自认定用户接受交付。",
     "userAcceptanceClaimed": false
+  },
+  "ciVerification": {
+    "runUrl": "https://github.com/inernoro/prd_agent/actions/runs/43707785044",
+    "runId": 43707785044,
+    "jobId": 132792510459,
+    "event": "push",
+    "conclusion": "success",
+    "candidateCommit": "907e6abb1193daba036ce2d4a11036b29a9d1cd2",
+    "baselineCommit": "40936509a2fc5dc0aefe44441ff87cc15867fd89",
+    "profile": "normal",
+    "artifactId": 14159198541,
+    "artifactSha256": "8d0af0f3a0df3f2a423ac42eebbc9433960535ef6a83c4913a6abcac7363e62c",
+    "baselineCleanRuns": 3,
+    "candidateJourneyP95Ms": 142.6,
+    "candidateErrors": 0,
+    "applicationFaultDetected": true,
+    "homepageFaultDetectedWithHealthyAPI": true,
+    "homepageFaultMs": 11235.00299,
+    "homepageBudgetMs": 2531.98,
+    "recovery": "PASS",
+    "realPageMatrix": [
+      "desktop-dark",
+      "desktop-light",
+      "mobile-dark",
+      "mobile-light"
+    ],
+    "localAcceptanceEvidencePreserved": true
   }
 }
