@@ -37,8 +37,8 @@ export function useDrawerFocus(open: boolean, close: () => void, drawerRef: RefO
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); closeAction.current(); return; }
       if (event.key !== 'Tab') return;
-      const focusable = drawerRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
-      if (!focusable?.length) return;
+      const focusable = drawerRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])');
+      if (!focusable?.length) { event.preventDefault(); drawerRef.current?.focus(); return; }
       const first = focusable[0]; const last = focusable[focusable.length - 1];
       if (!drawerRef.current?.contains(document.activeElement)) { event.preventDefault(); first.focus(); }
       else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
@@ -75,6 +75,7 @@ export function EntityPreviewDrawer({ buttonLabel, title, kicker, icon, summary,
           <button type="button" aria-label="关闭关联详情" onClick={() => setOpen(false)} style={backdropStyle} />
           <aside
             ref={drawerRef}
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-labelledby={titleId}

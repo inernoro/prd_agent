@@ -49,6 +49,7 @@ export function ModelsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [keyEditId, setKeyEditId] = useState<string | null>(null);
+  const [reloadModels, setReloadModels] = useState(0);
   const [editModel, setEditModel] = useState<ModelItem | null>(null);
   const [keyValue, setKeyValue] = useState('');
   const [bulkKeyValue, setBulkKeyValue] = useState('');
@@ -97,7 +98,7 @@ export function ModelsPage() {
     return () => {
       alive = false;
     };
-  }, [platformId, enabledOnly]);
+  }, [platformId, enabledOnly, reloadModels]);
 
   const platformById = useMemo(() => {
     const map = new Map<string, PlatformItem>();
@@ -367,7 +368,7 @@ export function ModelsPage() {
       />
 
       <PageBody>
-        {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+        {error ? <InlineAlert tone="error">{error}<Button size="sm" variant="ghost" onClick={() => setReloadModels(value => value + 1)}>重新读取型号</Button></InlineAlert> : null}
         {toast ? <InlineAlert tone="info">{toast}{createdPublicId ? <Link to={`/logical-models?publicId=${encodeURIComponent(createdPublicId)}`} className="lg-text-link">查看公开模型配置</Link> : null}</InlineAlert> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
 
@@ -763,6 +764,7 @@ export function ModelsPage() {
         <ModelPricingDrawer
           model={editModel}
           onClose={() => setEditModel(null)}
+          onUnknownEnd={() => { setEditModel(null); setReloadModels(value => value + 1); }}
           onSaved={(updated) => {
             setItems((prev) => (prev ? prev.map((x) => (x.id === updated.id ? updated : x)) : prev));
             setEditModel(null);
