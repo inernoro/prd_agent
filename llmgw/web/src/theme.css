@@ -9147,7 +9147,7 @@ a:focus-visible {
   .lg-upstream-model-row > td::before { content: attr(data-label); display: block; margin-bottom: 4px; color: var(--text-muted); font-size: var(--fs-secondary); }
   .lg-upstream-model-row > td:last-child { grid-column: 1 / -1; }
   .lg-upstream-model-row > td:last-child > span { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; }
-  .lg-upstream-model-row > td:last-child button { min-height: 38px; white-space: nowrap; }
+  .lg-upstream-model-row > td:last-child button { min-height: 44px; white-space: nowrap; }
 }
 
 @media (max-width: 860px) {

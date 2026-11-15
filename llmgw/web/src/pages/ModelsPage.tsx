@@ -21,7 +21,7 @@
 // Provider 内联预览的按钮文案。改那处措辞会让 CI 的 dotnet test 变红，动手前先读那个测试。
 // （此处刻意不复制该字面量：注释里再抄一份，会让守卫在 UI 文案被删后仍然误判通过。）
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, createModel, deleteModel, deleteModelApiKey, getModels, getParameterCapabilitiesMeta, getPlatforms, rotateModelApiKey, setModelEnabled, updateModelImageSizeControl } from '@/lib/api';
 import type { CreateModelRequest, ImageSizeControlMode, ImageSizeFieldFormat, ModelCapability, ModelItem, ParameterCapabilityTemplateItem, PlatformItem } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, SectionLoader, ReadOnlyNotice } from '@/components/ui';
@@ -38,6 +38,10 @@ import { BODY_TEXT, FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, TABLE_CELL, 
 const IMAGE_GENERATION_CAPABILITY_TYPES = new Set(['image_generation', 'text_to_image', 'image']);
 
 export function ModelsPage() {
+  const [params, setParams] = useSearchParams();
+  const search = (params.get('search') || '').slice(0, 256);
+  const hasSearch = search.trim().length > 0;
+  function setSearch(value: string) { const next = new URLSearchParams(params); if (value) next.set('search', value.slice(0, 256)); else next.delete('search'); setParams(next, { replace: true }); }
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const { confirm, promptText } = useDialogs();
@@ -91,10 +95,10 @@ export function ModelsPage() {
       if (!alive) return;
       if (res.success) {
         setItems(res.data.items);
-        if (!platformId) setShowCreate(res.data.items.length === 0);
+        if (!platformId && !enabledOnly && !hasSearch) setShowCreate(res.data.items.length === 0);
       }
       else setError(res.error?.message || '加载失败');
-    });
+    }).catch(() => { if (alive) setError('模型目录读取中断，请重新读取。'); });
     return () => {
       alive = false;
     };
@@ -105,6 +109,13 @@ export function ModelsPage() {
     platforms.forEach((p) => map.set(p.id, p));
     return map;
   }, [platforms]);
+
+  const visibleModels = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return (items || []).filter(model => !query || [model.id, model.name, model.modelName, model.platformId && platformById.get(model.platformId)?.name].join(' ').toLocaleLowerCase().includes(query));
+  }, [items, search, platformById]);
+  const filtered = hasSearch || Boolean(platformId) || enabledOnly;
+  function clearFilters() { setSearch(''); setPlatformId(''); setEnabledOnly(false); }
 
   const ownedPlatforms = useMemo(
     () => platforms.filter((item) => item.authority === 'llm_gateway' && item.enabled),
@@ -271,6 +282,7 @@ export function ModelsPage() {
   }
 
   async function applyBulkApiKey() {
+    if (hasSearch) { setToast('批量维护不按关键词限定；请先清除搜索，再确认供应方与启用范围。'); return; }
     const apiKey = bulkKeyValue.trim();
     if (!apiKey) {
       setToast('apiKey 不能为空');
@@ -307,6 +319,7 @@ export function ModelsPage() {
   }
 
   async function applyBulkCapabilities() {
+    if (hasSearch) { setToast('批量维护不按关键词限定；请先清除搜索，再确认供应方与启用范围。'); return; }
     const capabilities = parseCapabilities(capabilityText);
     if (capabilities.length === 0) {
       setToast('能力不能为空');
@@ -508,6 +521,7 @@ export function ModelsPage() {
         ) : null}
 
         <div style={filterRowStyle}>
+          <input type="search" aria-label="搜索上游模型" placeholder="搜索名称、上游标识或供应方" value={search} onChange={event => setSearch(event.target.value)} style={{ ...inputStyle, flex: '1 1 260px' }} />
           <select value={platformId} onChange={(e) => setPlatformId(e.target.value)} style={selectStyle}>
             <option value="">全部平台</option>
             {platforms.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -516,13 +530,14 @@ export function ModelsPage() {
             <input type="checkbox" checked={enabledOnly} onChange={(e) => setEnabledOnly(e.target.checked)} />
             仅启用
           </label>
-          <span style={{ marginLeft: 'auto', ...countStyle }}>{items ? `${items.length} 个模型` : '加载中'}</span>
+          <span style={{ marginLeft: 'auto', ...countStyle }}>{items ? hasSearch ? `${visibleModels.length} / ${items.length} 个模型` : `${items.length} 个模型` : '加载中'}</span>
         </div>
 
         {items && items.length > 0 && canWrite ? (
           <details style={{ flexShrink: 0 }}>
             <summary style={summaryStyle}>高级：批量维护已有模型</summary>
             <div style={bulkStackStyle}>
+              {hasSearch ? <p style={HINT_TEXT}>批量维护不按关键词限定。<Button size="sm" variant="ghost" onClick={() => setSearch('')}>清除搜索后维护</Button></p> : null}
               <Card style={toolbarStyle}>
                 <span style={toolbarTitleStyle}>批量维护模型密钥</span>
                 <input
@@ -541,7 +556,7 @@ export function ModelsPage() {
                   <input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />
                   确认应用到当前筛选模型
                 </label>
-                <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-api-key'} onClick={() => void applyBulkApiKey()}>
+                <Button size="sm" variant="ghost" disabled={hasSearch || busyId === 'bulk-model-api-key'} onClick={() => void applyBulkApiKey()}>
                   {busyId === 'bulk-model-api-key' ? '处理中…' : '批量轮换密钥'}
                 </Button>
               </Card>
@@ -573,7 +588,7 @@ export function ModelsPage() {
                   <input type="checkbox" checked={capabilityConfirm} onChange={(e) => setCapabilityConfirm(e.target.checked)} />
                   确认应用到当前筛选模型
                 </label>
-                <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-capabilities'} onClick={() => void applyBulkCapabilities()}>
+                <Button size="sm" variant="ghost" disabled={hasSearch || busyId === 'bulk-model-capabilities'} onClick={() => void applyBulkCapabilities()}>
                   {busyId === 'bulk-model-capabilities' ? '处理中…' : '批量维护能力'}
                 </Button>
               </Card>
@@ -581,7 +596,7 @@ export function ModelsPage() {
           </details>
         ) : null}
 
-        {error ? null : !items ? <SectionLoader text="正在加载模型…" /> : items.length === 0 ? <Empty text={!canWrite ? '当前租户还没有模型。请联系 Owner 或 Admin 添加。' : ownedPlatforms.length === 0 ? '还没有可用 Provider。请先添加 Provider，再回到这里添加模型。' : '还没有模型。选择上方 Provider、上游模型标识和至少一种用途即可保存。'} /> : (
+        {error ? null : !items ? <SectionLoader text="正在加载模型…" /> : visibleModels.length === 0 ? filtered ? <div role="status"><p style={HINT_TEXT}>当前搜索或筛选下没有上游模型，未据此判断租户目录为空。</p><Button size="sm" variant="ghost" onClick={clearFilters}>清除搜索与筛选</Button></div> : <Empty text={!canWrite ? '当前租户还没有模型。请联系 Owner 或 Admin 添加。' : ownedPlatforms.length === 0 ? '还没有可用 Provider。请先添加 Provider，再回到这里添加模型。' : '还没有模型。选择上方 Provider、上游模型标识和至少一种用途即可保存。'} /> : (
           <div className="lg-config-table-shell" style={tableShellStyle}>
             <table className="lg-data-table lg-upstream-model-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
@@ -598,7 +613,7 @@ export function ModelsPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((m) => {
+                {visibleModels.map((m) => {
                   const en = boolChip(m.enabled, '启用', '停用');
                   const key = boolChip(m.hasKey, '已配置', '继承平台');
                   const caps = m.capabilities.filter((c) => c.value).slice(0, 4);
