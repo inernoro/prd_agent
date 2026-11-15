@@ -2,6 +2,7 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   installOperationsFixtures,
   targetName,
+  run,
 } from "../fixtures/admin-operations.mjs";
 test.beforeEach(async ({ browser, page }, testInfo) => {
   page.on("pageerror", (error) =>
@@ -240,7 +241,7 @@ for (const theme of ["light", "dark"])
     }
     await nav("platforms");
     await page
-      .getByRole("button", { name: "还没有模型", exact: false })
+      .getByRole("button", { name: "尚未接入模型", exact: false })
       .click();
     let pane = page.getByRole("complementary", { name: "清单详情" });
     await pane.getByRole("button", { name: "连接配置", exact: true }).click();
@@ -267,9 +268,11 @@ for (const theme of ["light", "dark"])
     );
     await pane.getByRole("button", { name: "关闭详情", exact: true }).click();
     await nav("logs");
-    await page
-      .getByRole("button", { name: /11-12 00:00 compat-model/ })
-      .click({ position: { x: 5, y: 5 } });
+    const requestRow = page.getByRole("button").filter({
+      has: page.getByRole("link", { name: "compat-model", exact: true }),
+    });
+    await expect(requestRow).toHaveCount(1);
+    await requestRow.click({ position: { x: 5, y: 5 } });
     const detail = page.getByRole("dialog", { name: "请求详情" });
     await expect(detail).toBeVisible();
     await detail.getByRole("tab", { name: "请求与响应", exact: true }).click();
@@ -379,7 +382,7 @@ test("390 隔离发布成功闭环", async ({ page }) => {
     {
       path: "/api/releases/branches/compat-branch/runs",
       method: "POST",
-      body: { targetId: "compat-target", previewUrl: "https://example.test" },
+      body: { targetId: "compat-target", previewUrl: "https://example.test", expectedCommitSha: run.commitSha },
     },
   ]);
 });
