@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity, BookOpen, Bug, Building2, ChevronDown, CircleDollarSign, FileClock, Layers3,
   Check, ExternalLink, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings, SlidersHorizontal,
@@ -29,7 +29,7 @@ const NAV_GROUPS: NavGroup[] = [
   // 物理模型属于上游、在上游详情里展开看；Exchange 是上游的一种、收进上游页的第二段。
   // 旧地址仍然可达（/pools 重定向到 /logical-models），只是不再占导航。
   { label: '路由', items: [
-    { to: '/logical-models', label: '模型', icon: <Layers3 size={16} />, page: 'routeConfig' },
+    { to: '/logical-models', label: '公开模型', icon: <Layers3 size={16} />, page: 'routeConfig' },
     { to: '/platforms', label: '上游', icon: <Server size={16} />, page: 'routeConfig' },
   ] },
   { label: '开发者', items: [
@@ -58,6 +58,32 @@ export function ConsoleLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [narrow, setNarrow] = useState(() => window.matchMedia?.('(max-width: 860px)').matches ?? false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const media = window.matchMedia?.('(max-width: 860px)');
+    if (!media) return;
+    const changed = () => { setNarrow(media.matches); if (!media.matches) setMobileOpen(false); };
+    media.addEventListener('change', changed);
+    return () => media.removeEventListener('change', changed);
+  }, []);
+  useEffect(() => { if (sidebarRef.current) sidebarRef.current.inert = narrow && !mobileOpen; }, [narrow, mobileOpen]);
+  useEffect(() => {
+    if (!narrow || !mobileOpen) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const sidebar = sidebarRef.current;
+    sidebar?.querySelector<HTMLElement>('button, a[href]')?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setMobileOpen(false); return; }
+      if (event.key !== 'Tab' || !sidebar) return;
+      const controls = [...sidebar.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex="0"]')].filter(item => item.getClientRects().length > 0);
+      const first = controls[0], last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener('keydown', keydown);
+    return () => { document.removeEventListener('keydown', keydown); if (previous?.isConnected) previous.focus(); };
+  }, [narrow, mobileOpen]);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [tenants, setTenants] = useState<AvailableTenant[]>([]);
@@ -213,7 +239,7 @@ export function ConsoleLayout() {
 
       <div className="lg-console-body">
         {mobileOpen ? <button className="lg-sidebar-backdrop" type="button" aria-label="关闭导航" onClick={() => setMobileOpen(false)} /> : null}
-        <aside className={`lg-console-sidebar${mobileOpen ? ' is-open' : ''}`} aria-label="主导航">
+        <aside className={`lg-console-sidebar${mobileOpen ? ' is-open' : ''}`} ref={sidebarRef} aria-label="主导航" aria-hidden={narrow && !mobileOpen ? true : undefined}>
           <div className="lg-sidebar-mobile-heading"><span>导航</span><button type="button" aria-label="关闭导航" onClick={() => setMobileOpen(false)}><X size={18} /></button></div>
           {renderTenantSwitcher('lg-mobile-tenant-switcher')}
           <nav>

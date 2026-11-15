@@ -1,3 +1,4 @@
+import { positionToolbarPopover } from '@/lib/toolbarPopover';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { getUpstreamProxy, saveUpstreamProxy, testUpstreamNetwork } from '@/lib/api';
 import type { UpstreamNetworkTestResult, UpstreamProxyDraft, UpstreamProxyView } from '@/lib/types';
@@ -5,6 +6,9 @@ import { Button, Chip, InlineAlert, Spinner } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, SECTION_TITLE } from '@/lib/typography';
+
+const GlobalProxyControlContext = createContext<ReactNode>(null);
+export function GlobalUpstreamProxyControl() { return useContext(GlobalProxyControlContext); }
 
 const GlobalProxyContext = createContext<UpstreamProxyView | null>(null);
 
@@ -74,9 +78,9 @@ export function UpstreamProxyProvider({ children }: { children: ReactNode }) {
       else setError(res.error.message || '保存失败，请重试');
     } finally { setBusy(false); }
   }
-  return <GlobalProxyContext.Provider value={saved}>
-    <details style={{ flexShrink: 0, border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '10px 12px', maxHeight: '55vh', overflow: 'auto' }}>
-      <summary style={{ ...SECTION_TITLE, cursor: 'pointer' }}>全局上游代理 · {saved === null ? '尚未加载' : saved.mode === 'custom' ? saved.address : saved.mode === 'inherit' ? '部署默认' : '强制直连'}</summary>
+  const control = <details onToggle={positionToolbarPopover} className="lg-upstream-global-control" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
+      <summary>全局连接 · {saved === null ? error ? '读取失败' : '加载中' : saved.mode === 'custom' ? saved.address : saved.mode === 'inherit' ? '部署默认' : '强制直连'}</summary>
+      <div className="lg-upstream-global-panel"><h3 style={SECTION_TITLE}>全局上游代理</h3>
       <p style={HINT_TEXT}>应用于当前组织内所有跟随全局设置的上游，也包括之后新增的上游。部署默认保留服务器已有出口设置，强制直连会关闭代理；单个上游也可独立配置。</p>
       {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
       {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
@@ -84,9 +88,9 @@ export function UpstreamProxyProvider({ children }: { children: ReactNode }) {
         <ProxyFields value={draft} onChange={setDraft} stored={saved} global />
         <div><Button size="sm" variant="primary" disabled={busy} onClick={() => void save()}>{busy ? <Spinner size={14} /> : null}应用全局设置</Button></div>
       </div> : null}
-    </details>
-    {children}
-  </GlobalProxyContext.Provider>;
+      </div>
+    </details>;
+  return <GlobalProxyContext.Provider value={saved}><GlobalProxyControlContext.Provider value={control}>{children}</GlobalProxyControlContext.Provider></GlobalProxyContext.Provider>;
 }
 
 export function UpstreamNetworkTest({ kind, id, revision, disabled = false }: { kind: 'platform' | 'exchange'; id: string; revision?: string | null; disabled?: boolean }) {

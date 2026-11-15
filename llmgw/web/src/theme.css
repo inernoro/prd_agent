@@ -7978,11 +7978,16 @@ a:focus-visible {
     z-index: 50;
     transform: translateX(-102%);
     transition: transform 180ms ease;
-    box-shadow: 24px 0 60px rgba(0, 0, 0, 0.35);
+    visibility: hidden;
+    pointer-events: none;
+    box-shadow: none;
   }
 
   .lg-console-sidebar.is-open {
     transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
+    box-shadow: 24px 0 60px rgba(0, 0, 0, 0.35);
   }
 
   .lg-sidebar-backdrop {
@@ -9059,4 +9064,41 @@ a:focus-visible {
 
 .lg-row-actions-item.is-danger:hover:not(:disabled) {
   background: var(--err-bg);
+}
+
+/* Existing low-frequency controls share the current toolbar instead of preceding every data row. */
+.lg-upstream-navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.lg-upstream-navigation > :first-child { flex: 1; min-width: 0; }
+.lg-upstream-global-control, .lg-provider-bulk-control { position: relative; flex-shrink: 0; font-size: var(--fs-secondary); color: var(--text-secondary); }
+.lg-upstream-global-control > summary, .lg-provider-bulk-control > summary { cursor: pointer; min-height: 36px; align-content: center; white-space: nowrap; }
+.lg-upstream-global-panel, .lg-provider-bulk-panel { position: fixed; top: var(--toolbar-popover-top, 160px); right: var(--toolbar-popover-right, 16px); width: min(640px, calc(100vw - 48px)); max-height: min(65vh, calc(100vh - var(--toolbar-popover-top, 160px) - 16px)); overflow: auto; z-index: 25; padding: 16px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); box-shadow: var(--shadow-card); }
+.lg-provider-bulk-panel { display: flex; flex-wrap: wrap; gap: 12px; }
+.lg-provider-bulk-panel input[type="password"] { flex: 1 1 100%; }
+@media (max-width: 680px) { .lg-upstream-navigation { gap: 4px; } .lg-upstream-global-panel, .lg-provider-bulk-panel { left: 16px; right: 16px; width: auto; } }
+@media (max-width: 680px) {
+  .lg-upstream-navigation > :first-child { flex-basis: 100%; width: 100%; }
+  .lg-upstream-global-control { margin-left: auto; }
+  .lg-collection-scroll .lg-collection-provider-table { display: block; min-width: 0; width: 100%; }
+  .lg-collection-provider-table colgroup { display: none; }
+  .lg-collection-provider-table thead { position: absolute !important; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); }
+  .lg-collection-provider-table tbody { display: block; width: 100%; }
+  .lg-collection-provider-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-bottom: 1px solid var(--border-subtle); }
+  .lg-collection-provider-row:last-child { border-bottom: 0; }
+  .lg-collection-provider-table .lg-collection-provider-row td { display: block; min-width: 0; height: auto; border-bottom: 0; padding: 12px !important; }
+  .lg-collection-provider-row td:nth-child(2)::before { content: '已接入模型'; }
+  .lg-collection-provider-row td:nth-child(3)::before { content: '密钥 / 来源'; }
+  .lg-collection-provider-row td:nth-child(4)::before { content: '最近真实调用'; }
+  .lg-collection-provider-row td:nth-child(2)::before,
+  .lg-collection-provider-row td:nth-child(3)::before,
+  .lg-collection-provider-row td:nth-child(4)::before { display: block; color: var(--text-muted); font-size: var(--fs-secondary); margin-bottom: 6px; }
+  .lg-collection-provider-row td:last-child { grid-column: 1 / -1; }
+  .lg-collection-provider-table .lg-collection-provider-row td:last-child button { min-height: 40px; }
+  .lg-collection-provider-row td:first-child > div > span { white-space: normal; overflow: visible; }
+  .lg-collection-provider-table tbody > tr:not(.lg-collection-provider-row), .lg-collection-provider-table tbody > tr:not(.lg-collection-provider-row) > td { display: block; width: 100%; }
+}
+
+@media (max-width: 680px) {
+  .lg-collection-owned-table td:last-child button { white-space: normal !important; overflow-wrap: anywhere; min-height: 36px; max-width: 100%; }
+  .lg-collection-owned-table td { font-size: var(--fs-secondary); }
+  .lg-collection-owned-table strong { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
 }

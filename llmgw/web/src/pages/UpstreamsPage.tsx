@@ -10,7 +10,7 @@ import { useLocation, useSearchParams } from 'react-router-dom';
 import { PlatformsPage } from '@/pages/PlatformsPage';
 import { ExchangesPage } from '@/pages/ExchangesPage';
 import { TabBar } from '@/components/ui';
-import { UpstreamProxyProvider } from '@/components/UpstreamProxySettings';
+import { GlobalUpstreamProxyControl, UpstreamProxyProvider } from '@/components/UpstreamProxySettings';
 import { GAP } from '@/lib/surface';
 
 type UpstreamView = 'provider' | 'exchange' | 'catalog' | 'imagegen';
@@ -36,8 +36,8 @@ export function UpstreamsPage() {
       : 'provider';
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: GAP.section }}>
-      <TabBar
+    <UpstreamProxyProvider><div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: GAP.section }}>
+      <div className="lg-upstream-navigation"><TabBar
         ariaLabel="上游配置分类"
         items={VIEWS}
         activeKey={view}
@@ -48,9 +48,8 @@ export function UpstreamsPage() {
           setParams(next, { replace: true });
         }}
       />
-      <UpstreamProxyProvider>
+      <GlobalUpstreamProxyControl /></div>
         {view === 'exchange' ? <ExchangesPage /> : <PlatformsPage section={view} />}
-      </UpstreamProxyProvider>
-    </div>
+    </div></UpstreamProxyProvider>
   );
 }
