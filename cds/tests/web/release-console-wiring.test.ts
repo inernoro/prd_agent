@@ -37,6 +37,13 @@ function bodyAfter(source: string, marker: string): string {
   throw new Error(`${marker} 的函数体没有闭合`);
 }
 
+/** 新增未确认请求section后，结尾必须从操作组起点查找，不能误取此前section。 */
+function sectionAfter(source: string, marker: string): string {
+  const start = source.indexOf(marker);
+  expect(start).toBeGreaterThanOrEqual(0);
+  return source.slice(start, source.indexOf('</section>', start));
+}
+
 const layoutClasses: Record<string, string> = { RELEASE_CONSOLE_LAYOUT_CLASS, RELEASE_CONSOLE_LEFT_CLASS, RELEASE_CONSOLE_CENTER_CLASS, RELEASE_CONSOLE_RIGHT_CLASS };
 // 展开真实导出的 class 常量后沿用布局守卫；删掉页面的常量接线仍会失败。
 const PAGE = read('pages/ReleaseConsolePage.tsx').replace(/className=\{(RELEASE_CONSOLE_\w+_CLASS)\}/g, (_, key) => `className="${layoutClasses[key]}"`);
@@ -109,10 +116,11 @@ describe('发布控制台 · 数据接线', () => {
     expect(PAGE).toContain("import { resolveReleaseSourceUrls } from '@/lib/releaseDialogAddress'");
     expect(PAGE).toContain('resolveReleaseSourceUrls({ branch })');
     const start = bodyAfter(PAGE, 'const startRelease = async ()');
-    expect(start).toContain('previewUrl }');
+    expect(start).toContain('sourceUrl = previewUrl');
+    expect(start).toContain('previewUrl: sourceUrl, expectedCommitSha: sha');
     expect(start).not.toContain("previewUrl: ''");
-    const preflight = bodyAfter(PAGE, 'const passesPreflight = async ()');
-    expect(preflight).toContain('previewUrl }');
+    const preflight = bodyAfter(PAGE, 'const startRelease = async ()');
+    expect(preflight).toContain('previewUrl: sourceUrl');
     expect(preflight).not.toContain("previewUrl: ''");
     // 前端自己 slugify 预览域名是 CLAUDE.md §11 明令禁止的
     expect(PAGE).not.toContain('.miduo.org');
@@ -182,15 +190,15 @@ describe('发布控制台 · 对齐设计稿的组件', () => {
    */
   it('卡住条在，并给出取证与中止两个出口', () => {
     expect(PAGE).toContain('import { detectStall');
-    expect(PAGE).toContain('{stall.stalled ? (');
-    const strip = PAGE.slice(PAGE.indexOf('{stall.stalled ? ('), PAGE.indexOf('终态结论条'));
+    expect(PAGE).toContain('{stall.stalled && !targetUnconfirmed ? (');
+    const strip = PAGE.slice(PAGE.indexOf('{stall.stalled && !targetUnconfirmed ? ('), PAGE.indexOf('终态结论条'));
     expect(strip).toContain('秒没有新输出了');
     expect(strip).toContain("setSheet('agent')");
     expect(strip).toContain('cancelRun()');
   });
 
   it('终态给结论条，失败挂重发、成功可回滚', () => {
-    const strip = PAGE.slice(PAGE.indexOf('{shown && !running ? ('), PAGE.indexOf('{preflight ? ('));
+    const strip = PAGE.slice(PAGE.indexOf('{shown && !running && !targetUnconfirmed ? ('), PAGE.indexOf('{preflight ? ('));
     expect(strip).toContain('diagnosis?.headline');
     expect(strip).toContain('retryRun(shown)');
     expect(strip).toContain('rollbackRun(shown)');
@@ -388,7 +396,7 @@ describe('发布控制台 · 英文字形与分支卡同源', () => {
     // 除 SectionLabel 自身外，不许再有第二处手写同款标题样式
     expect(PAGE.match(/tracking-\[0\.14em\]/g) || []).toHaveLength(1);
     for (const label of ['PROJECTS', 'ENVIRONMENTS', 'Pipeline', 'Live output']) {
-      expect(PAGE, `${label} 应当走 SectionLabel`).toContain(`<SectionLabel>${label}</SectionLabel>`);
+      expect(PAGE, `${label} 应当走 SectionLabel`).toMatch(new RegExp(`<SectionLabel>[^<]*${label}[^<]*</SectionLabel>`));
     }
   });
 
@@ -452,7 +460,7 @@ describe('发布控制台 · 窄屏与主题纪律', () => {
    * 宽度不够必须换行，不许裁。流水线卡头照参考稿只有一个标签，无此风险。
    */
   it('实时输出卡头可换行，不会把按钮裁在卡片外', () => {
-    const head = PAGE.slice(PAGE.indexOf('<SectionLabel>Live output</SectionLabel>') - 400, PAGE.indexOf('<SectionLabel>Live output</SectionLabel>'));
+    const head = PAGE.slice(PAGE.indexOf('Live output') - 400, PAGE.indexOf('Live output'));
     expect(head).toContain('flex-wrap');
   });
 
@@ -607,18 +615,20 @@ describe('发布控制台 · 节奏', () => {
  */
 describe('发布控制台 · 发布前检查是发布的第一步', () => {
   it('没有单独的试跑按钮，检查在 startRelease 里先跑', () => {
-    const group = PAGE.slice(PAGE.indexOf('flex min-w-0 w-full max-w-full flex-wrap items-center justify-end'), PAGE.indexOf('</section>'));
+    const group = sectionAfter(PAGE, 'flex min-w-0 w-full max-w-full flex-wrap items-center justify-end');
     expect(group, '操作组里不该再有试跑按钮').not.toContain('试跑');
     const start = bodyAfter(PAGE, 'const startRelease = async ()');
-    expect(start, '发布前必须先过检查').toContain('if (!(await passesPreflight())) return;');
+    expect(start.indexOf('/preflight')).toBeLessThan(start.indexOf('await submitRelease'));
+    expect(start).toContain('if (!stillHere(scope)) return;');
+    expect(start).toMatch(/if \(blocking.length\).*return;/);
   });
 
   /** 检查全过时不弹结果面板——它已经继续往下发了，一屏绿勾是噪音。 */
   it('检查全过不打扰，只有被拦下才摊开原因', () => {
-    const fn = bodyAfter(PAGE, 'const passesPreflight = async ()');
-    expect(fn).toContain("check.blocking && check.status === 'fail'");
-    expect(fn).toContain('setPreflight(blocking.length > 0 ? res : null)');
-    expect(PAGE).toContain('发布前检查未通过，已停在发布前');
+    const fn = bodyAfter(PAGE, 'const startRelease = async ()');
+    expect(fn).toContain("item.blocking && item.status === 'fail'");
+    expect(fn).toContain('setPreflight(blocking.length ? check : null)');
+    expect(fn).toContain('尚未发送发布命令');
   });
 
   /**
@@ -626,7 +636,7 @@ describe('发布控制台 · 发布前检查是发布的第一步', () => {
    * 中止常驻时是一个 90% 时间都点不了的灰按钮，占位又没用。
    */
   it('开始在最右，中止只在进行中出现', () => {
-    const group = PAGE.slice(PAGE.indexOf('flex min-w-0 w-full max-w-full flex-wrap items-center justify-end'), PAGE.indexOf('</section>'));
+    const group = sectionAfter(PAGE, 'flex min-w-0 w-full max-w-full flex-wrap items-center justify-end');
     const cancelAt = group.indexOf('中止');
     // 主按钮的文案已收进 buildConsoleStance，锚点换成它的渲染点，
     // 不再依赖「开始发布」这个字面量出现在页面里。

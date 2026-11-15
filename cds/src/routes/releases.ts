@@ -652,11 +652,16 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     }
     if (rejectProjectMismatch(req, res, source.projectId)) return;
     if (rejectUnscopedAiMutation(req, res)) return;
+    if (!source.commitSha?.trim()) {
+      res.status(409).json({ error: '原发布记录缺少可确认的来源版本，不能重发；请重新选择明确的分支版本。' });
+      return;
+    }
     try {
       const run = await service.startRelease({
         branchId: source.branchId,
         targetId: source.targetId,
         previewUrl: source.artifact?.previewUrl || '',
+        expectedCommitSha: source.commitSha,
         operator: resolveActorFromRequest(req),
       });
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
