@@ -48,6 +48,8 @@ const unknownWrite = (code?: string) => !code || !ORGANIZATION_REJECTIONS.has(co
 type MemberRole = CreateMemberRequest['role'];
 type MemberItem = OrganizationData['members'][number];
 type TeamItem = OrganizationData['teams'][number];
+type PendingOrganizationWrite = { label: string; matches: (data: OrganizationData) => boolean };
+
 
 const ROLE_OPTIONS: { value: MemberRole; label: string; detail: string }[] = [
   { value: 'owner', label: 'Owner', detail: '管理租户、成员和全部配置' },
@@ -88,6 +90,7 @@ export function OrganizationPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [memberSearch, setMemberSearch] = useState('');
   const [pageUnknown, setPageUnknown] = useState(false);
+  const pendingWrite = useRef<PendingOrganizationWrite | null>(null);
   const [reading, setReading] = useState(false);
   const readSequence = useRef(0);
   const [teamName, setTeamName] = useState('');
@@ -113,15 +116,24 @@ export function OrganizationPage() {
     const response = await getOrganization().catch(() => ({ success: false as const, data: null, error: { code: 'NETWORK_ERROR', message: '组织信息读取中断，请重试' } }));
     if (seq !== readSequence.current) return;
     setReading(false);
-    if (response.success) { setData(response.data); setPageUnknown(false); }
+    if (response.success) {
+      setData(response.data);
+      const pending = pendingWrite.current;
+      if (pending && !pending.matches(response.data)) {
+        setPageUnknown(true); setError(`${pending.label}仍待核实。当前读取尚未匹配已提交的目标状态，不代表操作未生效，请稍后刷新或联系管理员核对审计，暂不重复提交。`);
+      } else {
+        pendingWrite.current = null; setPageUnknown(false);
+        if (pending) setNotice('已读取到与本次提交匹配的当前状态，请核对目标对象。');
+      }
+    }
     else setError(response.error.message);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
   const beginPageWrite = () => { ++readSequence.current; setReading(false); setBusy(true); setError(null); setNotice(null); };
-  const failPageWrite = (error: { code?: string; message?: string }, operation: string) => {
-    if (unknownWrite(error.code)) { setPageUnknown(true); setError(`${operation}结果未确认，可能已生效。请刷新核对，勿重复提交。${error.message || ''}`); }
+  const failPageWrite = (error: { code?: string; message?: string }, operation: string, matches: PendingOrganizationWrite['matches']) => {
+    if (unknownWrite(error.code)) { pendingWrite.current = { label: operation, matches }; setPageUnknown(true); setError(`${operation}结果未确认，可能已生效。请刷新核对，勿重复提交。${error.message || ''}`); }
     else setError(error.message || `${operation}被拒绝`);
   };
 
@@ -137,7 +149,7 @@ export function OrganizationPage() {
     beginPageWrite();
     const response = await observedWrite(updateTeam(team.id, name));
     setBusy(false);
-    if (!response.success) { failPageWrite(response.error, '修改团队'); return; }
+    if (!response.success) { failPageWrite(response.error, '修改团队', latest => latest.teams.some(candidate => candidate.id === team.id && candidate.name === name)); return; }
     invalidateOnboardingCache(sessionTenant?.id);
     setNotice(`团队已改名为“${name}”`);
     await load();
@@ -151,7 +163,7 @@ export function OrganizationPage() {
     beginPageWrite();
     const response = await observedWrite(deleteTeam(team.id));
     setBusy(false);
-    if (!response.success) { failPageWrite(response.error, '删除团队'); return; }
+    if (!response.success) { failPageWrite(response.error, '删除团队', latest => !latest.teams.some(candidate => candidate.id === team.id)); return; }
     invalidateOnboardingCache(sessionTenant?.id);
     setNotice(`团队“${team.name}”已删除`);
     await load();
@@ -176,7 +188,7 @@ export function OrganizationPage() {
     beginPageWrite();
     const response = await observedWrite(deleteMember(member.id));
     setBusy(false);
-    if (!response.success) { failPageWrite(response.error, '移出成员'); return; }
+    if (!response.success) { failPageWrite(response.error, '移出成员', latest => !latest.members.some(candidate => candidate.id === member.id)); return; }
     invalidateOnboardingCache(sessionTenant?.id);
     setNotice(`“${label}”已移出本租户`);
     await load();
@@ -199,18 +211,19 @@ export function OrganizationPage() {
     beginPageWrite();
     const response = await observedWrite(deleteTenant(data.tenant.id));
     setBusy(false);
-    if (!response.success) { failPageWrite(response.error, '删除租户'); return; }
+    if (!response.success) { failPageWrite(response.error, '删除租户', latest => latest.tenant?.id !== data.tenant?.id); return; }
     // 租户没了，当前会话签发时绑定的租户也就不存在了：走正规登出，别留一个指向空租户的 token。
     logout();
   };
 
   const addTeam = async () => {
     if (!canManage || busy || pageUnknown || reading || teamName.trim().length < 2) return;
+    const submittedName = teamName.trim(), previousIds = new Set(data?.teams.map(team => team.id));
     beginPageWrite();
-    const response = await observedWrite(createTeam({ name: teamName.trim() }));
+    const response = await observedWrite(createTeam({ name: submittedName }));
     setBusy(false);
     if (!response.success) {
-      failPageWrite(response.error, '创建团队');
+      failPageWrite(response.error, '创建团队', latest => latest.teams.some(team => team.name === submittedName && !previousIds.has(team.id)));
       return;
     }
     setTeamName('');
@@ -219,7 +232,8 @@ export function OrganizationPage() {
     await load();
   };
 
-  const afterMemberChange = async (message: string) => {
+  const afterMemberChange = async (message: string, pending?: PendingOrganizationWrite) => {
+    if (pending) { pendingWrite.current = pending; setPageUnknown(true); }
     setNotice(message);
     setDrawer(null);
     await load();
@@ -421,6 +435,7 @@ export function OrganizationPage() {
           teams={data.teams}
           tenantSlug={data.tenant?.slug}
           currentRole={currentRole}
+          existingMemberIds={data.members.map(item => item.id)}
           onClose={() => setDrawer(null)}
           onDone={afterMemberChange}
         />
@@ -444,14 +459,15 @@ export function OrganizationPage() {
  * 抽屉与毛玻璃背板整块盖住：用户只看到表单停止 busy，没有任何可读的失败原因。
  * 抽屉 body 里本来就有 InlineAlert 的用法（校验提示），失败信息归到同一处即可。
  */
-function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, onDone }: {
+function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, existingMemberIds, onClose, onDone }: {
   mode: 'create' | 'edit';
   member?: MemberItem;
   teams: TeamItem[];
   tenantSlug?: string;
   currentRole: string;
+  existingMemberIds: string[];
   onClose: () => void;
-  onDone: (message: string) => Promise<void>;
+  onDone: (message: string, pending?: PendingOrganizationWrite) => Promise<void>;
 }) {
   const [resultUnknown, setResultUnknown] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -465,7 +481,8 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
   const [busy, setBusy] = useState(false);
 
   const dialogRef = useRef<HTMLElement>(null);
-  const closeDrawer = () => { if (resultUnknown) void onDone('成员操作结果未确认，请核对列表中的账号、角色和团队。'); else onClose(); };
+  const submittedState = useRef<PendingOrganizationWrite | null>(null);
+  const closeDrawer = () => { if (resultUnknown) void onDone('成员操作结果未确认，请核对列表中的账号、角色和团队。', submittedState.current || { label: '成员操作', matches: () => false }); else onClose(); };
   useDialogFocus(dialogRef, closeDrawer, busy, '[data-member-primary]');
   const failWrite = (error: { code?: string; message?: string }) => {
     if (unknownWrite(error.code)) { setResultUnknown(true); setFailure('操作结果未确认，可能已生效。已保留本次输入，请返回列表核对，勿重复提交。'); }
@@ -490,6 +507,9 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
     setBusy(true);
     setFailure(null);
     if (isCreate) {
+      const submittedUsername = tenantSlug ? `${tenantSlug}.${username.trim()}` : username.trim();
+      const submittedTeams = [...memberTeamIds], submittedRole = memberRole, previousIds = new Set(existingMemberIds);
+      submittedState.current = { label: '创建成员', matches: latest => latest.members.some(item => !previousIds.has(item.id) && item.username === submittedUsername && item.role === submittedRole && sameTeams(item.teamIds, submittedTeams)) };
       const response = await observedWrite(createMember({
         username: username.trim(),
         displayName: displayName.trim() || undefined,
@@ -507,6 +527,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
     }
     if (!member) return;
     const request: UpdateMemberRequest = { expectedVersion: member.version, role: memberRole, status, teamIds: memberTeamIds };
+    submittedState.current = { label: '编辑成员', matches: latest => latest.members.some(item => item.id === member.id && item.version > member.version && item.role === request.role && item.status === request.status && sameTeams(item.teamIds, request.teamIds || [])) };
     const response = await observedWrite(updateMember(member.id, request));
     setBusy(false);
     if (!response.success) { failWrite(response.error); return; }
@@ -522,6 +543,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
     if (!await confirm({ title: `让“${who}”的现有登录立即失效？`, description: '该成员需要重新登录。', tone: 'danger', confirmLabel: '强制重新登录' })) return;
     setBusy(true);
     setFailure(null);
+    submittedState.current = { label: '强制重新登录', matches: latest => latest.members.some(item => item.id === member.id && item.version > member.version) };
     const response = await observedWrite(invalidateMemberSessions(member.id));
     setBusy(false);
     if (!response.success) { failWrite(response.error); return; }
@@ -717,3 +739,5 @@ const checkStyle: React.CSSProperties = {
   color: 'var(--text-secondary)',
   fontSize: 'var(--fs-body)',
 };
+
+function sameTeams(actual: string[], expected: string[]) { return actual.length === expected.length && expected.every(id => actual.includes(id)); }
