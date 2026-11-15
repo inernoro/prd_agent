@@ -230,8 +230,12 @@ export function TabBar<K extends string>({
   onChange: (k: K) => void;
   ariaLabel?: string;
 }) {
+  const [focusKey, setFocusKey] = useState(activeKey);
+  const tabs = useRef(new Map<K, HTMLButtonElement>());
+  useEffect(() => setFocusKey(activeKey), [activeKey]);
+  const stopKey = items.some(item => item.key === focusKey) ? focusKey : activeKey;
   return (
-    <div role="tablist" aria-label={ariaLabel} style={{ display: 'flex', gap: 2, overflowX: 'auto', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, scrollbarWidth: 'none' }}>
+    <div role="tablist" onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusKey(activeKey); }} aria-label={ariaLabel} style={{ display: 'flex', gap: 2, overflowX: 'auto', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, scrollbarWidth: 'none' }}>
       {items.map((it) => {
         const active = it.key === activeKey;
         return (
@@ -239,8 +243,22 @@ export function TabBar<K extends string>({
             key={it.key}
             type="button"
             role="tab"
+            ref={node => { if (node) tabs.current.set(it.key, node); else tabs.current.delete(it.key); }}
+            tabIndex={it.key === stopKey ? 0 : -1}
             aria-selected={active}
-            onClick={() => onChange(it.key)}
+            onFocus={() => setFocusKey(it.key)}
+            onClick={() => { setFocusKey(it.key); onChange(it.key); }}
+            onKeyDown={event => {
+              const index = items.findIndex(item => item.key === it.key);
+              let next: number | null = null;
+              if (event.key === 'ArrowRight') next = (index + 1) % items.length;
+              if (event.key === 'ArrowLeft') next = (index - 1 + items.length) % items.length;
+              if (event.key === 'Home') next = 0;
+              if (event.key === 'End') next = items.length - 1;
+              if (next !== null) { event.preventDefault(); tabs.current.get(items[next].key)?.focus(); }
+              // Manual activation avoids fetching another workspace while merely exploring tabs.
+              if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onChange(it.key); }
+            }}
             style={{
               background: 'transparent',
               border: 'none',
