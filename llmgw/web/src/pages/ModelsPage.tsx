@@ -582,7 +582,7 @@ export function ModelsPage() {
 
         {error ? null : !items ? <SectionLoader text="正在加载模型…" /> : items.length === 0 ? <Empty text={!canWrite ? '当前租户还没有模型。请联系 Owner 或 Admin 添加。' : ownedPlatforms.length === 0 ? '还没有可用 Provider。请先添加 Provider，再回到这里添加模型。' : '还没有模型。选择上方 Provider、上游模型标识和至少一种用途即可保存。'} /> : (
           <div className="lg-config-table-shell" style={tableShellStyle}>
-            <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table className="lg-data-table lg-upstream-model-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
                 <tr>
                   <th style={th}>模型</th>
@@ -606,16 +606,16 @@ export function ModelsPage() {
                     || m.capabilities.find((capability) =>
                       IMAGE_GENERATION_CAPABILITY_TYPES.has(capability.type.toLowerCase()))?.value === true;
                   return (
-                    <tr key={m.id}>
-                      <td style={td}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, minWidth: 180 }}>
+                    <tr key={m.id} className="lg-upstream-model-row">
+                      <td data-label="型号" style={td}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, minWidth: 0 }}>
                           <span style={{ fontWeight: 600 }}>{m.name || m.modelName}</span>
                           <span style={MONO_META}>{m.modelName || m.id}</span>
                         </div>
                       </td>
-                      <td style={td}>
+                      <td data-label="供应方" style={td}>
                         {provider ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, minWidth: 150 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, minWidth: 0 }}>
                             <span>{provider.name}</span>
                             <EntityPreviewDrawer
                               buttonLabel="查看 Provider"
@@ -651,8 +651,8 @@ export function ModelsPage() {
                           </div>
                         ) : m.platformId ? <code>{m.platformId}</code> : '—'}
                       </td>
-                      <td style={td}>{m.protocol || '继承平台'}</td>
-                      <td style={td}>
+                      <td data-label="协议" style={td}>{m.protocol || '继承平台'}</td>
+                      <td data-label="能力" style={td}>
                         <span style={{ display: 'inline-flex', gap: GAP.tight, flexWrap: 'wrap' }}>
                           {caps.length ? caps.map((c) => <Chip key={`${m.id}:${c.type}`} label={c.type} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                         </span>
@@ -687,20 +687,20 @@ export function ModelsPage() {
                           </div>
                         ) : null}
                       </td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                      <td data-label="价格" style={{ ...td, whiteSpace: 'nowrap' }}>
                         <ModelPriceCell model={m} canWrite={canWrite} onEdit={() => setEditModel(m)} />
                       </td>
-                      <td style={td}>
+                      <td data-label="配置来源" style={td}>
                         {m.authority === 'llm_gateway' ? (
                           <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={m.claimedAt ? `导入于 ${m.claimedAt}` : undefined} />
                         ) : (
                           <Chip label="待导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
                         )}
                       </td>
-                      <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
-                      <td style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                        {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'nowrap' }}>
+                      <td data-label="管理状态" style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
+                      <td data-label="密钥" style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
+                      <td data-label="操作" style={{ ...td, whiteSpace: 'nowrap' }}>
+                        {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
                           {keyEditId === m.id ? (
                             <>
                               <input
@@ -955,9 +955,9 @@ const submitRowStyle: React.CSSProperties = {
   flexWrap: 'wrap',
 };
 
-/** 表格自己滚动 + 表头吸顶：产物要填满 PageBody 剩余高度，不塌成内容高度。 */
+/** 少量型号自然排布；大量型号才占满剩余空间并由表内滚动。 */
 const tableShellStyle: React.CSSProperties = {
-  flex: 1,
+  flex: '0 1 auto',
   minHeight: 0,
   overflow: 'auto',
   overscrollBehavior: 'contain',

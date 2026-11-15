@@ -9135,3 +9135,17 @@ a:focus-visible {
 @media (max-width: 700px) {
   .lg-entity-detail-app-task .lg-entity-detail-hero { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Upstream model maintenance: keep one complete object and its action together on narrow screens. */
+@media (max-width: 860px) {
+  .lg-config-table-shell > table.lg-upstream-model-table { min-width: 0; }
+  .lg-upstream-model-table thead { display: none; }
+  .lg-upstream-model-table tbody { display: block; }
+  .lg-upstream-model-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px; gap: 12px; border-bottom: 1px solid var(--border-subtle); }
+  .lg-upstream-model-row:last-child { border-bottom: 0; }
+  .lg-upstream-model-row > td { display: block; min-width: 0; padding: 0 !important; border: 0 !important; white-space: normal !important; overflow-wrap: anywhere; }
+  .lg-upstream-model-row > td::before { content: attr(data-label); display: block; margin-bottom: 4px; color: var(--text-muted); font-size: var(--fs-secondary); }
+  .lg-upstream-model-row > td:last-child { grid-column: 1 / -1; }
+  .lg-upstream-model-row > td:last-child > span { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; }
+  .lg-upstream-model-row > td:last-child button { min-height: 38px; white-space: nowrap; }
+}
