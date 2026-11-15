@@ -3702,9 +3702,8 @@ public class GatewayDataDomainGuardTests
         var invalidateEnd = gatewaySettings.IndexOf("const save = async () => {", invalidateStart, StringComparison.Ordinal);
         Assert.True(invalidateEnd > invalidateStart, "invalidateTestResult 的取值范围没有正常收尾");
         Assert.Contains("setTesting(false);", gatewaySettings[invalidateStart..invalidateEnd]);
-        Assert.True(
-            CountOccurrences(gatewaySettings, "changeSelection(() =>") >= 3,
-            "三处选择都得走同一个出口，少一处就会留下「配置 B 配着配置 A 的证明」");
+        // 原生来源选择与公开模型选择是现有两种可编辑入口；旧池只读，不增加伪 handler。
+        Assert.Equal(2, CountOccurrences(gatewaySettings, "changeSelection(() =>"));
         // 保存自己也要作废一次：保存换的是「下一次调用按什么走」，旧结论证明不了新的那份。
         Assert.Contains("invalidateTestResult();\n    const editedDuringSave", gatewaySettings.Replace("\r\n", "\n"));
     }
