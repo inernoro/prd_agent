@@ -556,10 +556,10 @@ export function LogsView() {
     window.localStorage.setItem(TABLE_PREFERENCES_KEY, JSON.stringify(tablePreferences));
   }, [tablePreferences]);
 
-  const openLogDetail = useCallback((id: string) => {
+  const openLogDetail = useCallback((id: string, replace = false) => {
     const query = new URLSearchParams(location.search);
-    query.set('transaction', id); query.set('anchor', id);
-    navigate({ pathname: location.pathname, search: `?${query.toString()}` });
+    query.set('transaction', id); query.set('anchor', id); query.delete('openRequest');
+    navigate({ pathname: location.pathname, search: `?${query.toString()}` }, { replace });
   }, [location.pathname, location.search, navigate]);
 
   const closeLogDetail = useCallback(() => {
@@ -808,11 +808,12 @@ export function LogsView() {
       return;
     }
     if (loading || openedRequestIdRef.current === requestId) return;
+    if (selectedLogId) { openedRequestIdRef.current = requestId; if (query.get('openRequest') === '1') openLogDetail(selectedLogId, true); return; }
     const matched = rows.find((item) => item.requestId === requestId || item.id === requestId);
     if (!matched) return;
     openedRequestIdRef.current = requestId;
-    openLogDetail(matched.id);
-  }, [filterRequestId, loading, openLogDetail, rows]);
+    openLogDetail(matched.id, query.get('openRequest') === '1');
+  }, [filterRequestId, loading, selectedLogId, query, openLogDetail, rows]);
 
   // 刷新 = 回到第 1 页重新取并**替换**列表。
   // 之前写的是 loadList(page)：累加语义下，停在第 2 页时刷新会把第 2 页再追加一遍

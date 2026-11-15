@@ -37,9 +37,10 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
     const { MemoryRouter, Routes, Route, useLocation, useNavigate } = globalThis.__journeyRouter;
     const { LogsView } = await server.ssrLoadModule('/src/components/LogsView.tsx');
     const { LogTracePage } = await server.ssrLoadModule('/src/pages/LogTracePage.tsx');
+    const { buildLogRequestHref } = await server.ssrLoadModule('/src/lib/logNavigation.ts');
     const Location = () => { globalThis.__journey.navigate = useNavigate(); return React.createElement('output', { id: 'route' }, useLocation().pathname + useLocation().search); };
     root = createRoot(document.getElementById('root'));
-    await act(async () => root.render(React.createElement(MemoryRouter, { initialEntries: ['/logs?status=failed&model=sample-model'] }, React.createElement(React.Fragment, null, React.createElement(Location), React.createElement(Routes, null, React.createElement(Route, { path: '/logs', element: React.createElement(LogsView) }), React.createElement(Route, { path: '/logs/trace', element: React.createElement(LogTracePage) }))))));
+    await act(async () => root.render(React.createElement(MemoryRouter, { initialEntries: ['/logs?status=failed&model=sample-model'] }, React.createElement(React.Fragment, null, React.createElement(Location), React.createElement(Routes, null, React.createElement(Route, { path: '/usage', element: React.createElement('div', {id:'origin'}, '原账单') }), React.createElement(Route, { path: '/overview', element: React.createElement('div', {id:'origin'}, '原概览') }), React.createElement(Route, { path: '/logs', element: React.createElement(LogsView) }), React.createElement(Route, { path: '/logs/trace', element: React.createElement(LogTracePage) }))))));
     const click = async node => { assert.ok(node, 'expected action exists'); await act(async () => node.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))); };
     await click([...document.querySelectorAll('button')].find(node => node.textContent === '加载更多'));
     assert.equal(document.querySelectorAll('.lg-log-table-row').length, 4);
@@ -74,6 +75,27 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
     assert.equal(document.querySelectorAll('.lg-log-table-row').length, 4, 'late response cannot replace the resumed list');
     assert.equal(document.querySelector('[data-log-row-id="wrong-filter"]'), null);
     assert.equal(document.querySelector('select[aria-label="状态"]').value, 'failed');
+    // An external receipt lookup is one browser entry. Manual drill-down still has its own Back step.
+    for (const origin of ['/usage?from=2026-11-01T00%3A00%3A00Z#billing-original', '/overview?range=7d']) {
+      await act(async () => globalThis.__journey.navigate(origin));
+      await act(async () => globalThis.__journey.navigate(buildLogRequestHref('request-2')));
+      assert.match(document.querySelector('#route').textContent, /transaction=row-2/);
+      assert.doesNotMatch(document.querySelector('#route').textContent, /openRequest=/);
+      await act(async () => globalThis.__journey.navigate(-1));
+      assert.ok(document.querySelector('#origin'), 'one Back returns to the originating task');
+    }
+    await act(async () => globalThis.__journey.navigate('/logs?requestId=request-2&transaction=row-1&openRequest=1'));
+    assert.match(document.querySelector('#route').textContent, /transaction=row-1/); assert.doesNotMatch(document.querySelector('#route').textContent, /openRequest=/, 'existing selected record has priority and consumes the intent');
+    await act(async () => globalThis.__journey.navigate('/overview?range=7d'));
+    await act(async () => globalThis.__journey.navigate('/logs?requestId=not-retained&openRequest=1'));
+    assert.doesNotMatch(document.querySelector('#route').textContent, /transaction=/, 'no match does not open or push another entry');
+    await act(async () => globalThis.__journey.navigate(-1)); assert.ok(document.querySelector('#origin'));
+    await act(async () => globalThis.__journey.navigate('/logs'));
+    await click(document.querySelector('.lg-log-table-row'));
+    assert.match(document.querySelector('#route').textContent, /transaction=row-1/);
+    await act(async () => globalThis.__journey.navigate(-1));
+    assert.match(document.querySelector('#route').textContent, /^\/logs/); assert.doesNotMatch(document.querySelector('#route').textContent, /transaction=/, 'manual detail Back closes one list drill-down');
+
 
   } finally {
     if (root) await act(async () => root.unmount()); await server.close(); dom.window.close();

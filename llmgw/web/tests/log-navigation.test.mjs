@@ -24,6 +24,9 @@ test('请求任务上下文只携带白名单、保持范围和筛选，调用�
     const entity = new URL(entityHref, 'https://local');assert.equal(entity.searchParams.get('requestType'),'chat');assert.deepEqual(nav.getLogTaskContext(entity.search),context);assert.match(nav.getLogReturnTarget(nav.getLogTaskContext(entity.search)).href,/anchor=row-65/);
     assert.throws(()=>nav.withLogTaskContext('https://evil.test',new URLSearchParams(),context),/Unsupported/);
     assert.doesNotMatch(nav.buildLogListHref({ ...context, model: undefined }), /undefined/);
+    const lookup = new URL(nav.buildLogRequestHref(' receipt /2 ', { view: 'physical', context }), 'https://local');
+    assert.equal(lookup.searchParams.get('requestId'), 'receipt /2'); assert.equal(lookup.searchParams.get('openRequest'), '1'); assert.equal(lookup.searchParams.get('view'), 'physical'); assert.deepEqual(nav.getLogTaskContext(lookup.search), context);
+    for (const invalid of ['', 'x'.repeat(257), 'bad\nrequest']) assert.equal(nav.buildLogRequestHref(invalid), '/logs');
   } finally { await server.close(); }
 });
 

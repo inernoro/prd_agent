@@ -39,6 +39,14 @@ export function withLogTaskContext(path: '/app-callers/view' | '/models/view' | 
   if (!['/app-callers/view', '/models/view', '/platforms/view'].includes(path)) throw new Error('Unsupported log task destination');
   return withContext(path, new URLSearchParams(query), context);
 }
+/** A precise external request lookup opens one task entry; manual list drill-down keeps history. */
+export function buildLogRequestHref(requestId: string, options: { view?: 'physical'; context?: LogTaskContext } = {}): string {
+  const value = requestId.trim();
+  if (!value || value.length > 256 || /[\u0000-\u001f]/.test(value)) return '/logs';
+  const query = new URLSearchParams({ requestId: value, openRequest: '1' });
+  if (options.view) query.set('view', options.view);
+  return withContext('/logs', query, options.context || {});
+}
 export function buildLogDetailHref(id: string, context: LogTaskContext = {}): string {
   return withContext(`/logs/${encodeURIComponent(id)}`, new URLSearchParams(), context);
 }
