@@ -1,5 +1,28 @@
 import { expect, test } from '@playwright/test';
 
+test.describe('触屏卡片选择', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 1000 } });
+  test('三档选择入口常显且可轻触，格式角标保持避让', async ({ page }) => {
+    await page.goto('/_dev/web-hosting-cards');
+    await page.getByLabel('筛选演示场景').selectOption('crowded');
+    expect(await page.evaluate(() => matchMedia('(hover:none)').matches)).toBe(true);
+    for (const size of ['large', 'medium', 'small']) {
+      const card = page.locator(`[data-demo-size="${size}"] [data-card]`);
+      const select = card.getByRole('button', { name: '选择', exact: true });
+      await card.scrollIntoViewIfNeeded();
+      await expect(select).toHaveCSS('opacity', '1');
+      await expect(select).toHaveCSS('pointer-events', 'auto');
+      const typeBounds = await card.locator('[data-site-card-type]').boundingBox();
+      const selectBounds = await select.boundingBox();
+      expect(typeBounds!.x + typeBounds!.width).toBeLessThanOrEqual(selectBounds!.x);
+      await select.tap();
+      await expect(card.locator('[data-site-select]')).toHaveAttribute('aria-pressed', 'true');
+      await card.getByRole('button', { name: '取消选择', exact: true }).tap();
+      await expect(card.locator('[data-site-select]')).toHaveCSS('opacity', '1');
+    }
+  });
+});
+
 for (const width of [390, 1440]) {
   for (const theme of ['dark', 'light']) {
     test(`三档实际卡片演示 ${width}px ${theme}：布局与操作`, async ({ page }, testInfo) => {

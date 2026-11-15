@@ -20,7 +20,7 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
       div .[@media(hover:none)]:block.absolute.bottom-[7px].hidden.right-[7px].z-20
         button .h-7.inline-flex.items-center.justify-center.max-sm:h-11.max-sm:min-h-11.max-sm:min-w-11.max-sm:w-11.min-h-7.min-w-[26px].pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=更多设置 type=button]
           svg
-      button .absolute.group-focus-within:opacity-100.group-focus-within:pointer-events-auto.group-hover:opacity-100.group-hover:pointer-events-auto.h-7.inline-flex.items-center.justify-center.max-sm:h-11.max-sm:right-[-4px].max-sm:top-[-4px].max-sm:w-11.opacity-0.pointer-events-none.right-1.top-1.w-7.z-30 [data-no-drag=true aria-label=选择 type=button]
+      button .[@media(hover:none)]:opacity-100.[@media(hover:none)]:pointer-events-auto.absolute.group-focus-within:opacity-100.group-focus-within:pointer-events-auto.group-hover:opacity-100.group-hover:pointer-events-auto.h-7.inline-flex.items-center.justify-center.max-sm:h-11.max-sm:right-[-4px].max-sm:top-[-4px].max-sm:w-11.opacity-0.pointer-events-none.right-1.top-1.w-7.z-30 [data-no-drag=true aria-label=选择 type=button]
         span .group-hover:opacity-100.h-5.inline-flex.items-center.justify-center.w-5 {opacity:1}
       div .[@media(hover:hover)]:flex.absolute.bottom-1.gap-[5px].group-focus-within:opacity-100.group-focus-within:translate-y-0.group-hover:opacity-100.group-hover:translate-y-0.hidden.inset-x-0.items-center.opacity-0.pointer-events-none.translate-y-[6px].z-20 {padding:7px} [data-hoverbar=true]
         button .gap-1.h-7.inline-flex.items-center.justify-center.max-sm:h-11.max-sm:min-h-11.min-h-7.pointer-events-auto.px-[9px].shrink-0 [data-no-drag=true aria-label=预览 type=button]

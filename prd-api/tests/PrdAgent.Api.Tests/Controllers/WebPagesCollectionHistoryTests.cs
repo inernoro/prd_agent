@@ -19,6 +19,34 @@ namespace PrdAgent.Api.Tests.Controllers;
 public sealed class WebPagesCollectionHistoryTests
 {
     [Theory]
+    [InlineData("active", true)]
+    [InlineData("rotated", false)]
+    [InlineData("dissolved", false)]
+    [InlineData("missing", false)]
+    [InlineData("hybrid-active", true)]
+    [InlineData("hybrid-stopped", false)]
+    public async Task HistoryUsesChapterRouteAndTheSameSnapshotGenerationStatus(string state, bool active)
+    {
+        var share = new WebPageShareLink { Id = "chapter-link", Token = "chapter-token", CreatedBy = "owner-user", ShareType = "collection", SiteIds = new() { "site-a" },
+            CollectionId = state.StartsWith("hybrid-") ? "directory" : null, CollectionShareGeneration = 1,
+            CollectionSnapshot = new() { CollectionId = "chapters", ShareGeneration = 1 } };
+        var shares = new Mock<IMongoCollection<WebPageShareLink>>(MockBehavior.Strict);
+        shares.Setup(x => x.CountDocumentsAsync(It.IsAny<FilterDefinition<WebPageShareLink>>(), It.IsAny<CountOptions>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        shares.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<WebPageShareLink>>(), It.IsAny<FindOptions<WebPageShareLink, WebPageShareLink>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(Cursor(share)));
+        var documents = state == "missing" ? Array.Empty<HostedDocumentCollection>() : new[] {
+            new HostedDocumentCollection { Id = "chapters", Name = "章节合集", OwnerUserId = "owner-user", ShareGeneration = state == "rotated" ? 2 : 1,
+                DissolvedAt = state == "dissolved" ? DateTime.UtcNow : null } };
+        var directories = new Mock<IMongoCollection<HostedCollection>>(MockBehavior.Strict);
+        directories.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<HostedCollection>>(), It.IsAny<FindOptions<HostedCollection, HostedCollection>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(Cursor(new HostedCollection { Id = "directory", OwnerUserId = "owner-user", ShareGeneration = state == "hybrid-stopped" ? 2 : 1 })));
+        var row = Result(await ContextController(directories.Object, shares.Object, documents).CollectionHistory("site-a")).GetProperty("items")[0];
+        Assert.Equal("/s/collection/chapter-token", row.GetProperty("shareUrl").GetString());
+        Assert.Equal(active, row.GetProperty("isActive").GetBoolean());
+        Assert.Equal(active ? "有效" : "已停止", row.GetProperty("statusLabel").GetString());
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("other-directory")]
     public async Task CompatibilityLookupAndAdoptionRejectChapterSnapshotsBeforeAnyCollectionWrite(string? directoryId)

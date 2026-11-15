@@ -59,16 +59,17 @@ public partial class WebPagesController
         var collectionIds = shares.Where(x => x.CollectionId != null).Select(x => x.CollectionId!).Distinct().ToList();
         var collections = collectionIds.Count == 0 ? new Dictionary<string, HostedCollection>()
             : (await _db.HostedCollections.Find(x => collectionIds.Contains(x.Id) && x.OwnerUserId == userId).ToListAsync()).ToDictionary(x => x.Id);
-        var now = DateTime.UtcNow;
+        var documentIds = shares.Where(x => x.CollectionSnapshot != null).Select(x => x.CollectionSnapshot!.CollectionId).Distinct().ToList();
+        var documents = documentIds.Count == 0 ? new Dictionary<string, HostedDocumentCollection>()
+            : (await Collections.Find(x => documentIds.Contains(x.Id) && x.OwnerUserId == userId).ToListAsync()).ToDictionary(x => x.Id);
         var items = shares.Select(share =>
         {
             var collection = share.CollectionId == null ? null : collections.GetValueOrDefault(share.CollectionId);
-            var stopped = share.CollectionId != null && !HostedCollectionRules.AllowsShare(collection, share);
-            var expired = share.ExpiresAt.HasValue && share.ExpiresAt.Value <= now;
-            var active = !share.IsRevoked && !stopped && !expired;
-            return new { share.Id, title = string.IsNullOrWhiteSpace(share.Title) ? collection?.Title ?? "未命名合集" : share.Title, shareUrl = $"/s/wp/{Uri.EscapeDataString(share.Token)}",
-                share.CreatedAt, share.ExpiresAt, share.AccessLevel, memberCount = share.TargetSiteIds().Count, isActive = active,
-                statusLabel = share.IsRevoked ? "已撤销" : stopped ? "已停止" : expired ? "已过期" : "有效" };
+            var document = share.CollectionSnapshot == null ? null : documents.GetValueOrDefault(share.CollectionSnapshot.CollectionId);
+            var link = ContextLink(share, collection, document);
+            return new { share.Id, title = link.Title, shareUrl = link.ShareUrl,
+                share.CreatedAt, share.ExpiresAt, share.AccessLevel, memberCount = link.MemberCount, isActive = link.IsActive,
+                statusLabel = link.StatusLabel };
         });
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
     }

@@ -66,6 +66,7 @@ export function HostedCollectionEditor({ collectionId, shareToken, initialSites 
   const drag = useRef<number | null>(null);
   const shareDetails = useRef<HTMLDetailsElement>(null);
   const collection = detail?.collection;
+  const targetUnavailable = !demo && !!(collectionId || shareToken) && !detail;
   const legacy = !!detail?.legacyShare && !collection;
   const dirty = !collection || title !== collection.title || main !== collection.mainSiteId || members.map(x => x.id).join() !== collection.siteIds.join();
   const apply = useCallback((data: CollectionDetails) => {
@@ -73,9 +74,12 @@ export function HostedCollectionEditor({ collectionId, shareToken, initialSites 
     setMembers(data.sites); setMain(data.collection?.mainSiteId || '');
   }, []);
   const reload = async () => {
-    if (demo) return;
-    const result = collection ? await getCollection(collection.id) : collectionId ? await getCollection(collectionId) : shareToken ? await getCollectionByShare(shareToken) : null;
-    if (result?.success) apply(result.data); else if (result) setError(result.error?.message || '无法加载合集，请重试');
+    if (demo || !(collection || collectionId || shareToken)) return;
+    setLoading(true);
+    try {
+      const result = collection ? await getCollection(collection.id) : collectionId ? await getCollection(collectionId) : await getCollectionByShare(shareToken!);
+      if (result.success) { apply(result.data); setError(''); } else setError(result.error?.message || '无法加载合集，请重试');
+    } catch { setError('合集加载失败，请重试'); } finally { setLoading(false); }
   };
   useEffect(() => {
     let alive = true;
@@ -95,6 +99,7 @@ export function HostedCollectionEditor({ collectionId, shareToken, initialSites 
     return () => { alive = false; };
   }, [keyword, candidatePage, demo, initialSites]);
   const save = async () => {
+    if (busy || loading || targetUnavailable) return;
     setBusy(true); setError(''); setStatus('');
     try {
       const draft = { title: title.trim(), siteIds: members.map(x => x.id), mainSiteId: main, version: collection?.version || 0 };
@@ -121,10 +126,10 @@ export function HostedCollectionEditor({ collectionId, shareToken, initialSites 
     } catch { setError('操作未完成，请刷新后核对实际结果'); } finally { setBusy(false); }
   };
   if (sharing && collection) return <CollectionShareForm collection={collection} demoSites={demo ? members : undefined} onCreated={link => { if (demo) setDetail(current => current ? { ...current, shares: [{ id: crypto.randomUUID(), visibility: 'public', active: true, isRevoked: false, needsUpdate: false, memberCount: members.length, collectionVersion: collection.version, ...link }, ...current.shares] } : current); }} onClose={() => { setSharing(false); void reload(); }} />;
-  return <><Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }} title={legacy ? '将旧分享设为可管理合集' : collection ? '管理合集' : '创建合集'} maxWidth={1060} zIndex={850} contentClassName="hosted-collection-dialog" contentStyle={{ position: 'fixed', top: 0, right: 0, bottom: 0, height: '100dvh', maxHeight: '100dvh', width: 'min(1060px, 100vw)', maxWidth: '100vw', borderRadius: 0 }}
+  return <><Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }} title={legacy ? '将旧分享设为可管理合集' : collection || collectionId || shareToken ? '管理合集' : '创建合集'} maxWidth={1060} zIndex={850} contentClassName="hosted-collection-dialog" contentStyle={{ position: 'fixed', top: 0, right: 0, bottom: 0, height: '100dvh', maxHeight: '100dvh', width: 'min(1060px, 100vw)', maxWidth: '100vw', borderRadius: 0 }}
     description={demo ? "示例数据 · 修改仅保存在本次预览中" : "修改后，新链接使用新成员；已分享链接保持原快照"}
     content={<div className="collection-manager collection-editor" style={{ height: '100%', minHeight: 0, overflow: 'hidden' }}>
-      {loading ? <MapSpinner size={22} /> : pending ? <div className="collection-confirm"><h3>{pending === 'dissolve' ? '解散这个合集？' : '停止分享？'}</h3><p>{pending === 'dissolve' ? '合集的全部分享入口将失效。原文档及其独立分享保留，已有手动关联组不会被解除。' : pending === 'stop' ? '本合集当前全部分享入口将失效，合集和原文档保留。以后可重新生成新链接。' : '仅停止这一条链接，其他分享和原文档保留。'}</p><p>已下载或缓存的副本无法收回。</p></div> : <>
+      {loading ? <MapSpinner size={22} /> : targetUnavailable ? null : pending ? <div className="collection-confirm"><h3>{pending === 'dissolve' ? '解散这个合集？' : '停止分享？'}</h3><p>{pending === 'dissolve' ? '合集的全部分享入口将失效。原文档及其独立分享保留，已有手动关联组不会被解除。' : pending === 'stop' ? '本合集当前全部分享入口将失效，合集和原文档保留。以后可重新生成新链接。' : '仅停止这一条链接，其他分享和原文档保留。'}</p><p>已下载或缓存的副本无法收回。</p></div> : <>
         <div className="collection-editor-grid"><section className="collection-editor-primary">        {legacy && <p className="collection-notice">旧链接和原授权范围保留。先确认名称与主文档完成导入，再调整成员；不会自动合并已有的关联组。</p>}
         <label className="collection-field">合集名称（必填）<input aria-label="合集名称" maxLength={100} value={title} onChange={e => setTitle(e.target.value)} placeholder="例如：项目发布资料" disabled={busy} /></label>
         <div className="collection-section"><strong>合集成员 · {members.length} / 90</strong><span>点击编号设为主文档 · 拖动或用箭头调整</span></div>
@@ -153,7 +158,7 @@ export function HostedCollectionEditor({ collectionId, shareToken, initialSites 
       {error && <div className="collection-error" role="alert">{error}<Button disabled={busy} onClick={() => void reload()}>刷新实际状态</Button></div>}
     </div>}
     actions={pending ? <><Button disabled={busy} onClick={() => setPending(null)}>取消</Button><Button variant="danger" disabled={busy} onClick={() => void execute()}>{busy && <MapSpinner size={13} />}{pending === 'dissolve' ? '确认解散合集' : '确认停止分享'}</Button></>
-      : <>{collection && <button className="collection-lifecycle-shortcut" disabled={busy} onClick={() => { if (shareDetails.current) { shareDetails.current.open = true; shareDetails.current.scrollIntoView({ block: 'end', behavior: 'smooth' }); } }}>停止分享或解散合集…</button>}<Button disabled={busy} onClick={onClose}>关闭</Button>{collection && <Button disabled={busy || dirty} onClick={() => setSharing(true)}>生成分享链接</Button>}<Button variant="primary" disabled={busy || loading || !title.trim() || !main || !members.length || (!!collection && !dirty)} onClick={() => void save()}>{busy && <MapSpinner size={13} />}{legacy ? '确认导入' : '保存合集'}</Button></>} />
+      : <>{collection && <button className="collection-lifecycle-shortcut" disabled={busy} onClick={() => { if (shareDetails.current) { shareDetails.current.open = true; shareDetails.current.scrollIntoView({ block: 'end', behavior: 'smooth' }); } }}>停止分享或解散合集…</button>}<Button disabled={busy} onClick={onClose}>关闭</Button>{collection && <Button disabled={busy || dirty} onClick={() => setSharing(true)}>生成分享链接</Button>}<Button variant="primary" disabled={busy || loading || targetUnavailable || !title.trim() || !main || !members.length || (!!collection && !dirty)} onClick={() => void save()}>{busy && <MapSpinner size={13} />}{legacy ? '确认导入' : '保存合集'}</Button></>} />
     {permissions && demo && <Dialog open onOpenChange={open => { if (!open) setPermissions(false); }} title="示例权限差异" zIndex={1000} content={<div className="collection-manager"><p>示例数据 · 所有成员当前均为页面受限，与主文档一致。</p>{members.map(member => <div key={member.id} className="collection-share-row">{member.title}<span>页面权限一致</span></div>)}</div>} actions={<Button onClick={() => setPermissions(false)}>关闭</Button>} />}
     {permissions && collection && !demo && <RelatedPermissionsDialog siteId={collection.mainSiteId} collectionId={collection.id} onClose={() => setPermissions(false)} />}
   </>;

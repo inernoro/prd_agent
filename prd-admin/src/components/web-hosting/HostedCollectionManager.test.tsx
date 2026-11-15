@@ -37,6 +37,25 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); element.remove(); vi.unstubAllGlobals(); });
 
+it.each(['collection', 'share'] as const)('打开已有 %s 目标失败时不切换为创建，重试后仍更新原合集', async target => {
+  const load = target === 'collection' ? vi.mocked(api.getCollection) : vi.mocked(api.getCollectionByShare);
+  load.mockRejectedValueOnce(new Error('network')).mockResolvedValue({ success: true, data: details, error: null });
+  vi.mocked(api.updateCollection).mockResolvedValue({ success: true, data: details, error: null });
+  await act(async () => root.render(<HostedCollectionEditor {...(target === 'collection' ? { collectionId: 'col' } : { shareToken: 'old-token' })} initialSites={sites} onClose={vi.fn()} />));
+  expect(element.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('管理合集');
+  expect(element.querySelector('[aria-label="合集名称"]')).toBeNull();
+  expect([...element.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '保存合集')?.disabled).toBe(true);
+  await click('保存合集');
+  expect(api.createCollection).not.toHaveBeenCalled();
+  expect(api.adoptCollection).not.toHaveBeenCalled();
+  await click('刷新实际状态');
+  expect(element.querySelector<HTMLInputElement>('[aria-label="合集名称"]')?.value).toBe(collection.title);
+  await input('更新原合集');
+  await click('保存合集');
+  expect(api.updateCollection).toHaveBeenCalledWith('col', expect.objectContaining({ title: '更新原合集', version: 4 }));
+  expect(api.createCollection).not.toHaveBeenCalled();
+});
+
 it('创建时明确名称和主文档，保存顺序且不会自动创建外部分享', async () => {
   vi.mocked(api.createCollection).mockResolvedValue({ success: true, data: details, error: null });
   await act(async () => root.render(<HostedCollectionEditor initialSites={sites} onClose={vi.fn()} />));

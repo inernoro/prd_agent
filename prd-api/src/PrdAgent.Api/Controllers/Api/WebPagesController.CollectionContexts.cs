@@ -14,8 +14,8 @@ public partial class WebPagesController
     private static CollectionContextLink ContextLink(WebPageShareLink share, HostedCollection? collection, HostedDocumentCollection? documentCollection = null)
     {
         var stopped = share.CollectionSnapshot is { } snapshot
-            ? documentCollection == null || documentCollection.DissolvedAt != null || snapshot.ShareGeneration != documentCollection.ShareGeneration
-            : share.CollectionId != null && !HostedCollectionRules.AllowsShare(collection, share);
+            && (documentCollection == null || documentCollection.DissolvedAt != null || snapshot.ShareGeneration != documentCollection.ShareGeneration);
+        stopped |= share.CollectionId != null && !HostedCollectionRules.AllowsShare(collection, share);
         var expired = share.ExpiresAt.HasValue && share.ExpiresAt.Value <= DateTime.UtcNow;
         return new(share.Id, string.IsNullOrWhiteSpace(share.Title) ? documentCollection?.Name ?? collection?.Title ?? "未命名合集" : share.Title,
             share.CollectionSnapshot != null ? $"/s/collection/{Uri.EscapeDataString(share.Token)}" : $"/s/wp/{Uri.EscapeDataString(share.Token)}", share.CreatedAt, share.ExpiresAt, share.AccessLevel,

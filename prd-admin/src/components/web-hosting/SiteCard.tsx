@@ -379,7 +379,7 @@ export function SiteCard({
             </span>}
           </div>
           {form !== 'html' && <span data-site-card-type
-            className={`absolute top-2 z-20 inline-flex items-center gap-[3px] backdrop-blur-md transition-[right] group-hover:right-11 group-focus-within:right-11 ${selected || selectionMode ? 'right-11' : 'right-2'}`}
+            className={`absolute top-2 z-20 inline-flex items-center gap-[3px] backdrop-blur-md transition-[right] [@media(hover:none)]:right-11 group-hover:right-11 group-focus-within:right-11 ${selected || selectionMode ? 'right-11' : 'right-2'}`}
             style={{ height: 20, padding: '0 4px', borderRadius: 'var(--radius-chip)', fontFamily: 'var(--font-code)', fontSize: 9,
               background: 'var(--scrim-badge-bg)', color: 'var(--text-secondary)', border: '1px solid var(--scrim-badge-border)' }}
             title={[formConfig.hint, formBadge].filter(Boolean).join(' · ')}><FormIcon size={10} />{formConfig.label}</span>}
@@ -418,7 +418,7 @@ export function SiteCard({
             data-no-drag
             data-site-select
             aria-pressed={selected}
-            className={`absolute right-1 top-1 z-30 inline-flex h-7 w-7 items-center justify-center transition-opacity max-sm:right-[-4px] max-sm:top-[-4px] max-sm:h-11 max-sm:w-11 ${selected || selectionMode ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto'}`}
+            className={`absolute right-1 top-1 z-30 inline-flex h-7 w-7 items-center justify-center transition-opacity max-sm:right-[-4px] max-sm:top-[-4px] max-sm:h-11 max-sm:w-11 ${selected || selectionMode ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto'}`}
           >
             <span
               className="inline-flex h-5 w-5 items-center justify-center transition-opacity hover:!opacity-100 group-hover:opacity-100"
