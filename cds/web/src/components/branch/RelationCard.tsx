@@ -288,7 +288,7 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
           <DialogTitle className="min-w-0 flex-1 text-base font-bold [overflow-wrap:anywhere]">{data.branch} · 服务关系</DialogTitle>
           {data.lint.findings.length === 0 ? <span className="shrink-0 text-sm text-foreground-muted">体检无发现</span> : null}
           {errors ? <span className="shrink-0 text-sm text-bad">{errors} 错误</span> : null}
-          {warnings ? <span className="shrink-0 text-sm text-warn">{warnings} 警告</span> : null}
+          {warnings ? <span className="shrink-0 text-sm text-[hsl(var(--warn-ink))]">{warnings} 警告</span> : null}
           <Button variant="ghost" size="sm" style={{ minHeight: '3.25rem' }} onClick={showFullScreen} title="在独立页面查看完整关系图，可复制链接"><Maximize2 />全屏</Button>
         </div>
         <RelationWorkspace data={data} entryHost={entryHost} onConfigure={onConfigure ? () => { setOpen(false); onConfigure(); } : undefined} />
