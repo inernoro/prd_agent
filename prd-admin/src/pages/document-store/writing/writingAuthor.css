@@ -1,0 +1,27 @@
+/* v14作者确认态：补回原稿信息层级，保持真实来源和作者复核语义。 */
+.writing-author .writing-source-item{border-bottom:1px solid var(--writing-ln)}
+.writing-author .src-h>span:nth-child(2){min-width:0}
+.writing-author .writing-source-conflict{margin:0 14px 10px 50px;max-width:calc(100% - 64px);height:auto;white-space:normal}
+.writing-author .writing-draft-summary{margin-top:8px;margin-bottom:0}
+.writing-author .writing-draft-summary:before{display:none}
+.writing-author .writing-draft-summary .pt{color:var(--writing-ink2)}
+.writing-author .writing-question-detail{padding:16px;gap:12px}
+.writing-author .writing-question-detail .writing-question-why{font-size:12.5px}
+.writing-author .writing-question-answer{font:13px/1.7 'Noto Serif SC',serif;color:var(--writing-ink2)}
+.writing-author .writing-author-note{display:block;width:100%;padding:6px 0;border:0;background:none;color:var(--writing-ink2);font:13px/1.6 Inter,'Noto Sans SC',sans-serif;text-align:left;cursor:pointer}
+.writing-author .writing-author-note>.mono{color:var(--writing-ac);margin-right:8px}
+.writing-author .writing-question-list .qc>strong{font-size:14px;font-weight:600;line-height:1.5}
+@media(min-width:761px){
+  .writing-author .writing-source-excerpts .ex{font-size:13px;margin-bottom:8px}
+  .writing-author .writing-excerpt-location{margin-top:0}
+  .writing-author .writing-document-column .writing-legend .hint{display:block;font-size:11px;white-space:nowrap}
+  .writing-author .writing-document-column .writing-legend{flex-wrap:wrap;height:auto;min-height:48px;padding-top:8px;padding-bottom:8px}
+  .writing-author .writing-legend>.cap{font-size:11px}
+}
+@media(max-width:760px){
+  .writing-author .writing-title-input{font-size:21px;line-height:1.4}
+  .writing-author .writing-doc-section h2{font-size:17px;font-weight:600;margin:20px 0 6px}
+  .writing-author .pt{font-size:16px;line-height:1.85}
+  .writing-author .writing-source-excerpts .ex{font-size:14px;line-height:1.75;padding:10px 12px}
+  .writing-author .writing-question-detail{padding:12px 16px;gap:10px}
+}

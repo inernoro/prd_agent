@@ -232,5 +232,38 @@
         "Noto Serif SC"
       ]
     }
+  },
+  "authorConfirmV14Measurements": {
+    "source": "10-作者-选模版与资料、生成、补充确认、审核发布.html / 10b-作者-移动端.html",
+    "desktopColumns": "300px minmax(0,1fr) 352px",
+    "sourceExcerptFontPx": 13,
+    "sourceExcerptLineHeight": 1.7,
+    "questionWhyFontPx": 12.5,
+    "questionDetailPaddingPx": 16,
+    "questionDetailGapPx": 12,
+    "paragraphFontPx": 15.5,
+    "paragraphLineHeight": 1.85,
+    "authorNoteFontPx": 13,
+    "authorNoteLineHeight": 1.6,
+    "summary": "显示真实state.summary；缺少摘要级引文合同，不冒充来源已支持或捏造来源chip",
+    "questionState": "真实5份资料/冲突待确认/来源展开/正文焦点/处理面板；不再用0问题初稿对照活动冲突",
+    "mobile": {
+      "sourceExcerptFontPx": 14,
+      "sourceExcerptLineHeight": 1.75,
+      "sourceExcerptPaddingPx": [
+        10,
+        12
+      ],
+      "paragraphFontPx": 16,
+      "paragraphLineHeight": 1.85,
+      "titleFontPx": 21,
+      "titleLineHeight": 1.4,
+      "sectionTitleFontPx": 17,
+      "sectionTitleMarginPx": [
+        20,
+        0,
+        6
+      ]
+    }
   }
 }
