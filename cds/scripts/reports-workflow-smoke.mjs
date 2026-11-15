@@ -21,7 +21,8 @@ const { startViteDevServer } = await import(pathToFileURL(path.join(source, 'scr
 const server = await startViteDevServer();
 const browser = await chromium.launch({ headless: true, executablePath: process.env.CDS_CHROMIUM_PATH }).catch(error => { server.stop(); throw error; });
 const now = new Date('2026-11-15T12:00:00Z');
-const projects = [{ id: 'fixture-project', name: '阅读样例', slug: 'reading-fixture' }, { id: 'fixture-other', name: '另一个项目', slug: 'other-fixture' }];
+const projectFacts = resolveFixture('/api/projects').projects[0];
+const projects = [{ ...projectFacts, id: 'fixture-project', name: '阅读样例', aliasName: '阅读样例', slug: 'reading-fixture' }, { ...projectFacts, id: 'fixture-other', name: '另一个项目', aliasName: '另一个项目', slug: 'other-fixture' }];
 const makeReports = n => Array.from({ length: n }, (_, i) => ({ id: `r${i}`, title: `功能验收 · 阅读对象${String(i).padStart(2,'0')} · 2026-11-15`, format: 'html', sizeBytes: 1234, createdAt: new Date(now.getTime() - (i + 1) * 60000).toISOString(), projectId: 'fixture-project', folderId: i === 0 ? 'f1' : null, verdict: i % 3 === 0 ? 'fail' : 'pass', defectCounts: { p0: 0, p1: i % 3 === 0 ? 1 : 0, p2: 0 }, tier: 'L2', branch: `feature/reading-${i}`, commitSha: (i + 1).toString(16).padStart(40, 'a'), reportType: 'acceptance' }));
 const makeBranches = reports => reports.map((report, i) => ({ id: `b${i}`, projectId: report.projectId, branch: report.branch, commitSha: report.commitSha, status: 'running', createdAt: report.createdAt, lastDeployAt: report.createdAt, services: { web: { status: 'running' } } }));
 const folders = [{ id: 'f1', name: '回归证据', projectId: 'fixture-project', createdAt: now.toISOString() }];
@@ -34,6 +35,7 @@ async function fixture({ width = 1440, theme = 'light', count = 2, reviews = 2, 
   await context.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url()), pathname = url.pathname.replace(/^\/_cds/, '');
     if (url.origin !== server.url) { await route.abort(); throw new Error('Fixture attempted non-local access: ' + url.origin); }
+    if (pathname === '/fixture-download') return route.fulfill({ contentType: 'text/plain', headers: { 'Content-Disposition': 'attachment; filename=fixture.txt' }, body: 'synthetic download only' });
     if (!pathname.startsWith('/api/')) return route.continue();
     if (request.method() !== 'GET') { writes.push(pathname); return route.fulfill({ status: 405, json: { error: 'fixture forbids writes' } }); }
     if (isEventStream(pathname)) return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });
@@ -44,7 +46,7 @@ async function fixture({ width = 1440, theme = 'light', count = 2, reviews = 2, 
     if (pathname === '/api/reports/overview') return state.failOverview ? error() : route.fulfill({ json: { overview: buildReportsOverview(reports, [], { to: now, days: Number(url.searchParams.get('days') || 7) }) } });
     if (pathname === '/api/reports/pipeline') return route.fulfill({ json: { pipeline: buildPipelineOverview(projects, makeBranches(reports), [], reports, { now, recentDays: Number(url.searchParams.get('recentDays') || 7) }), series: buildPipelineSeries(projects, makeBranches(reports), reports, { now, days: 90 }) } });
     if (/^\/api\/reports\/[^/]+\/raw$/.test(pathname)) return route.fulfill({ contentType: 'text/html', body: '<!doctype html><html lang="zh"><body><h1>阅读正文已到达</h1><p>合成报告证据</p></body></html>' });
-    if (pathname === '/api/projects') return route.fulfill({ json: { projects } });
+    if (pathname === '/api/projects') return route.fulfill({ json: { projects, canManageProjects: true } });
     if (pathname === '/api/code-reviews') {
       if (state.failReview) return error();
       const offset = Number(url.searchParams.get('offset') || 0), total = state.reviews;
@@ -55,7 +57,7 @@ async function fixture({ width = 1440, theme = 'light', count = 2, reviews = 2, 
     if (body === null) unknown.add(pathname);
     return route.fulfill({ json: body ?? {} });
   });
-  const page = await context.newPage(); page.setDefaultTimeout(8000);
+  const page = await context.newPage(); page.setDefaultTimeout(8000); page.setDefaultNavigationTimeout(30000); // Vite cold startup is not the layout latency assertion.
   page.on('pageerror', error => pageErrors.push(error.message));
   return { page, context, state };
 }
@@ -174,6 +176,174 @@ try {
     } finally { await context.close(); }
   });
 
+
+  await check('directory-nested-menu-keyboard-and-hit-targets', async () => {
+    const { page, context } = await fixture({ width: 390, count: 4 });
+    try {
+      await page.goto(server.url + '/reports'); await row(page).waitFor();
+      await page.locator('#reports-ledger tbody tr').nth(1).click();
+      await page.frameLocator('iframe').getByRole('heading', { name: '阅读正文已到达' }).waitFor();
+      await page.getByRole('button', { name: '打开报告目录', exact: true }).click();
+      const directory = page.locator('[role="dialog"][aria-label="报告目录"]');
+      await directory.waitFor();
+      const records = directory.locator('[aria-label^="打开报告："]');
+      const boxes = await records.evaluateAll(rows => rows.map(row => {
+        const r = row.getBoundingClientRect(), menu = row.querySelector('button[aria-label="打开报告操作菜单"]')?.getBoundingClientRect();
+        return { y: r.y, bottom: r.bottom, height: r.height, menu: menu ? { y: menu.y, bottom: menu.bottom, height: menu.height } : null };
+      }));
+      for (let i = 0; i < boxes.length; i++) {
+        const item = boxes[i]; assert(item.menu && item.menu.height >= 44 && item.menu.y >= item.y - 1 && item.menu.bottom <= item.bottom + 1, 'menu target fits its own report row');
+        if (i + 1 < boxes.length) assert(item.menu.bottom <= boxes[i + 1].y + 1, 'neighboring report targets do not overlap');
+      }
+      const otherReport = directory.locator('[aria-label="打开报告：功能验收 · 阅读对象00 · 2026-11-15"]');
+      const trigger = otherReport.getByRole('button', { name: '打开报告操作菜单', exact: true });
+      await trigger.focus(); await page.keyboard.press('Enter');
+      const menu = page.getByRole('menu'); await menu.waitFor();
+      assert(await directory.isVisible(), 'Enter opens the menu without opening a report');
+      assert(await page.locator('span[title="功能验收 · 阅读对象01 · 2026-11-15"]').isVisible(), 'selected report remains unchanged');
+      await page.keyboard.press('ArrowDown'); await page.keyboard.press('Tab');
+      assert(await menu.evaluate(el => el.contains(document.activeElement)), 'menu owns its keyboard focus');
+      await shot(page, 'directory-menu-keyboard');
+      await page.keyboard.press('Escape'); await menu.waitFor({ state: 'hidden' });
+      assert(await directory.isVisible(), 'first Escape only closes the menu');
+      await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '打开报告操作菜单');
+      await page.keyboard.press('Escape'); await directory.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '打开报告目录');
+      assert.notEqual(await page.locator('body').evaluate(el => getComputedStyle(el).pointerEvents), 'none');
+    } finally { await context.close(); }
+  });
+  await check('directory-folder-menu-dialog-cancel', async () => {
+    const { page, context } = await fixture({ width: 390, count: 4 });
+    try {
+      await page.goto(server.url + '/reports'); await row(page).waitFor(); await row(page).click();
+      await page.frameLocator('iframe').getByRole('heading', { name: '阅读正文已到达' }).waitFor();
+      await page.getByRole('button', { name: '打开报告目录', exact: true }).click();
+      const directory = page.locator('[role="dialog"][aria-label="报告目录"]');
+      const folder = directory.locator('[role="button"]').filter({ has: page.locator('span', { hasText: /^回归证据$/ }) });
+      const trigger = folder.getByRole('button', { name: '打开文件夹操作菜单', exact: true });
+      await trigger.focus(); await page.keyboard.press('Enter'); await page.getByRole('menu').waitFor();
+      await page.getByRole('menuitem', { name: '重命名文件夹', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: '重命名文件夹', exact: true }); await dialog.waitFor();
+      await page.waitForFunction(() => document.activeElement?.tagName === 'INPUT');
+      await shot(page, 'directory-rename-dialog');
+      await dialog.getByRole('button', { name: '取消', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => getComputedStyle(document.body).pointerEvents !== 'none');
+      assert(await page.evaluate(() => document.activeElement !== document.body && document.activeElement?.isConnected), 'cancel returns focus to a connected control');
+      assert.notEqual(await page.locator('.cds-main').evaluate(el => el.style.overflow), 'hidden');
+      await page.getByRole('button', { name: '打开报告目录', exact: true }).click(); await directory.waitFor();
+      await directory.locator('[aria-label="打开报告：功能验收 · 阅读对象00 · 2026-11-15"]').waitFor();
+    } finally { await context.close(); }
+  });
+
+
+  await check('report-create-folder-cancel-returns-to-filter', async () => {
+    const { page, context } = await fixture({ width: 390 });
+    try {
+      await page.goto(server.url + '/reports'); await row(page).waitFor();
+      const trigger = page.getByRole('button', { name: '打开报告库筛选', exact: true });
+      await trigger.focus(); await page.keyboard.press('Enter');
+      await page.getByRole('menuitem', { name: '新建文件夹', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: '新建文件夹', exact: true }); await dialog.waitFor();
+      await page.waitForFunction(() => document.activeElement?.tagName === 'INPUT');
+      await dialog.getByRole('button', { name: '取消', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '打开报告库筛选');
+      assert.notEqual(await page.locator('body').evaluate(el => getComputedStyle(el).pointerEvents), 'none');
+    } finally { await context.close(); }
+  });
+
+  await check('shared-dropdown-link-origin-disabled-and-native-contracts', async () => {
+    const { page, context } = await fixture();
+    try {
+      await page.goto(server.url + '/reports'); await row(page).waitFor();
+      // Test-only consumer of the actual loaded components; no product route or substitute menu.
+      await page.evaluate(async () => {
+        const urls = performance.getEntriesByType('resource').map(entry => entry.name);
+        const find = pattern => { const url = urls.find(value => pattern.test(value)); if (!url) throw Error('Actual component module not loaded: ' + pattern); return url; };
+        const RM = await import(find(/\/react\.js\?/)), DM = await import(find(/\/react-dom_client\.js\?/));
+        const Router = await import(find(/\/react-router-dom\.js\?/));
+        const Menu = await import(find(/\/src\/components\/ui\/dropdown-menu\.tsx/));
+        const Motion = await import(find(/\/src\/components\/layout\/RouteMotion\.tsx/));
+        const R = RM.default ?? RM, RD = DM.default ?? DM, h = R.createElement;
+        window.__dropdownContract = { routes: [], origin: '', actions: 0 };
+        function RouteProbe() { const location = Router.useLocation(); R.useEffect(() => { window.__dropdownContract.routes.push(location.pathname + location.search); }, [location.key]); return h('p', { id: 'dropdown-contract-route' }, location.pathname + location.search); }
+        function OriginProbe() { const origin = R.useContext(Motion.SurfaceOriginContext); R.useEffect(() => { window.__dropdownContract.origin = origin?.id || ''; }, [origin]); return h('span', null, '共享来源'); }
+        function Harness() {
+          const [busy, setBusy] = R.useState(false); window.__setDropdownBusy = setBusy;
+          return h(Router.MemoryRouter, { initialEntries: ['/reports?fixture=one'] },
+            h(RouteProbe), h(Menu.DropdownMenu, { trigger: h('button', { id: 'dropdown-contract-trigger', disabled: busy, style: { minHeight: '3.25rem', padding: '0.5rem' } }, '共享契约菜单') },
+              h(Menu.DropdownLabel, null, h(OriginProbe)),
+              h(Menu.DropdownItem, { asChild: true, href: '/reports?fixture=one&folder=f1' }, '同页目标'),
+              h(Menu.DropdownItem, { asChild: true, href: '/reports?fixture=forbidden', disabled: true }, '不可用链接'),
+              h(Menu.DropdownItem, { asChild: true, href: '/fixture-download', download: 'fixture.txt' }, '下载样本'),
+              h(Menu.DropdownItem, { asChild: true, href: 'https://example.invalid/help', target: '_blank', rel: 'noopener noreferrer' }, '外链属性'),
+              h(Menu.DropdownItem, { onSelect: () => { window.__dropdownContract.actions++; } }, '普通命令')));
+        }
+        const mount = document.createElement('div'); mount.id = 'dropdown-contract-consumer';
+        Object.assign(mount.style, { position: 'fixed', inset: '0', zIndex: '40', background: 'hsl(var(--background))', padding: '1rem' });
+        document.body.append(mount); RD.createRoot(mount).render(h(Harness));
+      });
+      const trigger = page.locator('#dropdown-contract-trigger'); await trigger.waitFor();
+      const open = async () => { await trigger.focus(); await page.keyboard.press('Enter'); await page.getByRole('menu').waitFor(); };
+      const unlocked = () => page.waitForFunction(() => getComputedStyle(document.body).pointerEvents !== 'none');
+      await page.setViewportSize({ width: 1440, height: 180 });
+      await open(); await settled(page);
+      const constrained = await page.getByRole('menu').evaluate(el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight }; });
+      assert(constrained.top >= 0 && constrained.bottom <= 180 && constrained.scrollHeight > constrained.clientHeight, 'a short viewport bounds the menu while retaining scrollable items: ' + JSON.stringify(constrained));
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const disabled = page.getByRole('menuitem', { name: '不可用链接', exact: true });
+      assert.equal(await disabled.getAttribute('aria-disabled'), 'true'); assert.equal(await disabled.getAttribute('href'), null);
+      await disabled.dispatchEvent('click'); assert.equal(await page.locator('#dropdown-contract-route').innerText(), '/reports?fixture=one');
+      await page.keyboard.press('Home');
+      await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '同页目标');
+      await page.keyboard.press('ArrowDown');
+      await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '下载样本');
+      assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '下载样本', 'keyboard skips disabled links');
+      const external = page.getByRole('menuitem', { name: '外链属性', exact: true });
+      assert.equal(await external.getAttribute('target'), '_blank'); assert.equal(await external.getAttribute('rel'), 'noopener noreferrer');
+      assert.equal(await page.evaluate(() => window.__dropdownContract.origin), 'dropdown-contract-trigger', 'SurfaceOrigin is the persistent trigger');
+      await page.getByRole('menuitem', { name: '同页目标', exact: true }).click();
+      await page.waitForFunction(() => window.__dropdownContract.routes.at(-1) === '/reports?fixture=one&folder=f1');
+      await page.getByRole('menu').waitFor({ state: 'hidden' }); await unlocked();
+      assert.equal(await page.evaluate(() => window.__dropdownContract.routes.length), 2, 'same-path navigation occurs once and retains its query');
+      await open();
+      const downloadEvent = page.waitForEvent('download'); await page.getByRole('menuitem', { name: '下载样本', exact: true }).click();
+      const download = await downloadEvent; assert.equal(download.suggestedFilename(), 'fixture.txt'); assert.equal(await download.failure(), null);
+      await page.getByRole('menu').waitFor({ state: 'hidden' }); await unlocked();
+      await open();
+      const popupEvent = context.waitForEvent('page'); await page.getByRole('menuitem', { name: '同页目标', exact: true }).click({ modifiers: ['Control'] });
+      const popup = await popupEvent; await popup.waitForURL('**/reports?fixture=one&folder=f1'); await popup.close();
+      await page.getByRole('menu').waitFor({ state: 'hidden' }); await unlocked();
+      assert.equal(await page.evaluate(() => window.__dropdownContract.routes.length), 2, 'Ctrl click keeps the current route unchanged');
+      await open(); await page.evaluate(() => window.__setDropdownBusy(true));
+      await page.getByRole('menu').waitFor({ state: 'hidden' }); assert(await trigger.isDisabled()); await unlocked();
+      await page.evaluate(() => window.__setDropdownBusy(false)); assert.equal(await page.getByRole('menu').count(), 0, 're-enabling never reopens a stale menu');
+      await open(); await page.getByRole('menuitem', { name: '普通命令', exact: true }).click();
+      await page.getByRole('menu').waitFor({ state: 'hidden' }); await unlocked();
+      assert.equal(await page.evaluate(() => window.__dropdownContract.actions), 1);
+      await shot(page, 'shared-dropdown-contract');
+    } finally { await context.close(); }
+  });
+
+
+  await check('shared-dropdown-project-page-navigation', async () => {
+    const { page, context } = await fixture();
+    try {
+      await page.goto(server.url + '/project-list');
+      const trigger = page.getByRole('button', { name: '阅读样例 项目操作', exact: true }); await trigger.waitFor();
+      await trigger.focus(); await page.keyboard.press('Enter');
+      const link = page.getByRole('menuitem', { name: '查看分支', exact: true }); await link.waitFor();
+      assert.equal(await link.getAttribute('href'), '/branches/fixture-project'); await link.click();
+      await page.waitForURL('**/branches/fixture-project'); await page.getByText('feature/alpha', { exact: true }).first().waitFor({ timeout: 30000 }); // Lazy Vite module startup is not a measured task latency.
+      assert.equal(await page.getByRole('menu').count(), 0);
+      await page.waitForFunction(() => getComputedStyle(document.body).pointerEvents !== 'none');
+      await page.goBack(); await trigger.waitFor(); await shot(page, 'shared-dropdown-project-return');
+    } catch (error) {
+      await shot(page, 'shared-dropdown-project-blocked');
+      await fs.writeFile(path.join(out, 'shared-dropdown-project-blocked.json'), JSON.stringify({ url: page.url(), text: await page.locator('body').innerText(), unknown: [...unknown], pageErrors }, null, 2));
+      throw error;
+    } finally { await context.close(); }
+  });
+
   await check('report-read-failure-retains-list-and-retries', async () => {
     const { page, context, state } = await fixture({ failReports: true });
     try {
@@ -243,6 +413,8 @@ try {
     const { page, context, state } = await fixture({ failReview: true });
     try {
       await page.goto(server.url + '/code-reviews'); await page.getByRole('button', { name: '重试读取', exact: true }).waitFor();
+      assert(await page.getByRole('alert').getByText('审查记录暂时无法读取', { exact: true }).isVisible(), 'the primary message identifies the failed reading task');
+      assert(await page.getByRole('alert').locator('p').isVisible(), 'the recovery instruction is visible without opening technical details');
       await shot(page, 'code-reviews-read-error');
       assert.equal(await page.getByRole('heading', { name: '还没有代码审查记录' }).count(), 0);
       state.failReview = false; await page.getByRole('button', { name: '重试读取', exact: true }).click();
@@ -261,7 +433,7 @@ try {
   assert.deepEqual(pageErrors, [], 'no page runtime errors');
 } finally {
   await browser.close(); server.stop();
-  const files = ['web/src/pages/ReportsPage.tsx', 'web/src/pages/CodeReviewsPage.tsx', 'web/src/pages/reports/CompactStrip.tsx', 'web/src/pages/code-reviews/ReviewUi.tsx'];
+  const files = ['web/src/pages/ReportsPage.tsx', 'web/src/pages/CodeReviewsPage.tsx', 'web/src/pages/reports/CompactStrip.tsx', 'web/src/pages/code-reviews/ReviewUi.tsx', 'web/src/components/ui/dropdown-menu.tsx', 'web/src/components/layout/AppShell.tsx', 'web/src/pages/code-reviews/ReviewTaskDetails.tsx', 'web/src/pages/reports/ReportsOverview.tsx', 'web/src/pages/reports/TrendCharts.tsx'];
   const hashes = Object.fromEntries(await Promise.all(files.map(async file => [file, createHash('sha256').update(await fs.readFile(path.join(source, file))).digest('hex')])));
   await fs.writeFile(path.join(out, 'result.json'), JSON.stringify({ provenance: 'deterministic-fixture', commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: source, encoding: 'utf8' }).trim(), source, hashes, scriptSha256: createHash('sha256').update(await fs.readFile(fileURLToPath(import.meta.url))).digest('hex'), results, metrics, unknown: [...unknown], writes, pageErrors }, null, 2));
 }

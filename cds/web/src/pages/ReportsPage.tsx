@@ -170,6 +170,7 @@ export function ReportsPage(): JSX.Element {
   const [refreshing, setRefreshing] = useState(false);
   const readingPosition = useRef({ scroll: 0, reportId: '' });
   const navPanel = useRef<HTMLDivElement>(null);
+  const reportActionOrigin = useRef<HTMLElement | null>(null);
 
   const [state, setState] = useState<ListState>({ status: 'loading' });
   const [projects, setProjects] = useState<ProjectLite[]>([]);
@@ -187,8 +188,8 @@ export function ReportsPage(): JSX.Element {
     const main = document.querySelector<HTMLElement>('.cds-main'), overflow = main?.style.overflow;
     if (main) main.style.overflow = 'hidden';
     const close = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) { event.stopPropagation(); setNavDrawerOpen(false); } };
-    document.addEventListener('keydown', close);
-    return () => { document.removeEventListener('keydown', close); if (main) main.style.overflow = overflow || ''; };
+    window.addEventListener('keydown', close);
+    return () => { window.removeEventListener('keydown', close); if (main) main.style.overflow = overflow || ''; };
   }, [navDrawerOpen]);
   const [toast, setToast] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -484,28 +485,45 @@ export function ReportsPage(): JSX.Element {
     }));
   };
 
+  const rememberReportActionOrigin = useCallback(() => {
+    reportActionOrigin.current = navDrawerOpen
+      ? document.querySelector<HTMLElement>('button[aria-label="打开报告目录"]')
+      : document.querySelector<HTMLElement>('[aria-haspopup="menu"][aria-expanded="true"]');
+  }, [navDrawerOpen]);
+  const restoreReportActionFocus = (event: Event) => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body && !(event.target instanceof HTMLElement && event.target.contains(active))) return;
+    const candidates = [reportActionOrigin.current, document.querySelector<HTMLElement>('button[aria-label="打开报告目录"]'), document.querySelector<HTMLElement>('#reports-ledger h2')];
+    const target = candidates.find(node => node?.isConnected && node.getClientRects().length && !node.matches(':disabled, [aria-disabled="true"]') && !node.closest('[inert]'));
+    if (target) { event.preventDefault(); target.focus({ preventScroll: true }); }
+  };
+
   // 从列表发起的弹窗动作先关移动端抽屉：抽屉 z-[90] 高于 Dialog(z-50)，不关的话
   // 删除确认/重命名/新建文件夹弹窗会被抽屉整体盖住（Codex review P2）。z-index 刻度
   // 不回头抬高抽屉（见 .claude/rules/cds-theme-tokens.md §4 已知取舍），桌面路径无感。
   const requestDeleteReport = useCallback((report: AcceptanceReport) => {
+    rememberReportActionOrigin();
     setNavDrawerOpen(false);
     setPendingDeleteReport(report);
-  }, []);
+  }, [rememberReportActionOrigin]);
   const requestDeleteFolder = useCallback((folder: ReportFolder) => {
     if (foldersError) { setToast('目录尚未确认，请先重试读取目录'); return; }
+    rememberReportActionOrigin();
     setNavDrawerOpen(false);
     setPendingDeleteFolder(folder);
-  }, [foldersError]);
+  }, [foldersError, rememberReportActionOrigin]);
   const requestRenameFolder = useCallback((folder: ReportFolder) => {
     if (foldersError) { setToast('目录尚未确认，请先重试读取目录'); return; }
+    rememberReportActionOrigin();
     setNavDrawerOpen(false);
     setRenamingFolder(folder);
-  }, [foldersError]);
+  }, [foldersError, rememberReportActionOrigin]);
   const requestCreateFolder = useCallback(() => {
     if (foldersError) { setToast('目录尚未确认，请先重试读取目录'); return; }
+    rememberReportActionOrigin();
     setNavDrawerOpen(false);
     setFolderCreateOpen(true);
-  }, [foldersError]);
+  }, [foldersError, rememberReportActionOrigin]);
 
   const handleCreated = useCallback((report: AcceptanceReport) => {
     setCreateOpen(false);
@@ -813,7 +831,7 @@ export function ReportsPage(): JSX.Element {
                   <div ref={navPanel} role="dialog" aria-modal="true" aria-label="报告目录" className="absolute left-0 top-0 flex h-full w-[min(88vw,26.25rem)] flex-col border-r border-[hsl(var(--hairline))] bg-[hsl(var(--background))] shadow-2xl">
                     <div className="flex h-11 shrink-0 items-center justify-between border-b border-[hsl(var(--hairline))] px-3 text-sm font-medium">
                       <span>报告目录</span>
-                      <Button variant="ghost" size="sm" onClick={() => setNavDrawerOpen(false)}>关闭</Button>
+                      <Button variant="ghost" size="sm" className="min-h-[3.25rem]" aria-label="收起报告目录" onClick={() => setNavDrawerOpen(false)}>关闭</Button>
                     </div>
                     <ReportList
                       folderActionsAvailable={!foldersError}
@@ -863,16 +881,19 @@ export function ReportsPage(): JSX.Element {
         onCreated={handleCreated}
       />
       <CreateFolderDialog
+        onCloseAutoFocus={restoreReportActionFocus}
         open={folderCreateOpen}
         onOpenChange={setFolderCreateOpen}
         onCreate={handleCreateFolder}
       />
       <RenameFolderDialog
+        onCloseAutoFocus={restoreReportActionFocus}
         folder={renamingFolder}
         onOpenChange={(open) => { if (!open) setRenamingFolder(null); }}
         onRename={handleRenameFolder}
       />
       <DeleteConfirmDialog
+        onCloseAutoFocus={restoreReportActionFocus}
         open={Boolean(pendingDeleteReport)}
         title={`删除报告「${pendingDeleteReport?.title ?? ''}」？`}
         description="报告内容与截图资产会一并删除，无法恢复。"
@@ -883,6 +904,7 @@ export function ReportsPage(): JSX.Element {
         }}
       />
       <DeleteConfirmDialog
+        onCloseAutoFocus={restoreReportActionFocus}
         open={Boolean(pendingDeleteFolder)}
         title={`删除文件夹「${pendingDeleteFolder?.name ?? ''}」？`}
         description="其中的报告会移到未归类，子文件夹会上移一层，不会删除任何报告内容。"
@@ -1111,7 +1133,7 @@ function ReportsHome({
         */}
         <div className="flex flex-col gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2.5">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-[0.9375rem] font-semibold tracking-tight">报告台账</h2>
+            <h2 tabIndex={-1} className="text-[0.9375rem] font-semibold tracking-tight">报告台账</h2>
             <span className="flex-1" />
             {filterMenu}
             <div className="flex h-7 w-[12.5rem] items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-card px-2 transition-colors focus-within:border-primary/60">
@@ -1193,20 +1215,20 @@ function ReportsHome({
                     <tr
                       key={r.id}
                       data-report-id={r.id}
-                      className={`group grid cursor-pointer gap-2 border-t border-[hsl(var(--hairline))] p-3 align-top transition-colors hover:bg-[hsl(var(--surface-sunken))] lg:table-row lg:p-0 ${superseded ? 'opacity-60' : ''}`}
+                      className={`group grid grid-cols-[minmax(0,1fr)_auto] cursor-pointer gap-2 border-t border-[hsl(var(--hairline))] p-3 align-top transition-colors hover:bg-[hsl(var(--surface-sunken))] lg:table-row lg:p-0 ${superseded ? 'opacity-60' : ''}`}
                       style={{ boxShadow: `inset 3px 0 0 ${rail}` }}
                       onClick={() => onSelect(r)}
-                      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(r); } }}
+                      onKeyDown={(event) => { if (event.target !== event.currentTarget) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(r); } }}
                       role="button"
                       tabIndex={0}
                       title={reportTooltip(r, projectLabel)}
                     >
-                      <td className="block whitespace-nowrap lg:table-cell lg:px-3 lg:py-3">
+                      <td className="col-span-2 block whitespace-nowrap lg:table-cell lg:px-3 lg:py-3">
                         {/* 走生效结论：一份写着通过却带 P0 的报告，聚合那边已经算作未通过，
                             这一列若还显示「通过」，同一屏就自己打自己（Codex 第二十三轮）。 */}
                         <span className="inline-flex items-center gap-1.5 text-[0.78125rem] font-semibold"><VerdictIcon verdict={rowVerdict} />{rowVerdict === 'pass' ? '通过' : rowVerdict === 'fail' ? '未通过' : rowVerdict === 'conditional' ? '原则性通过' : <span className="text-muted-foreground">无结论</span>}</span>
                       </td>
-                      <td className="order-first block min-w-0 lg:order-none lg:table-cell lg:px-3 lg:py-3">
+                      <td className="order-first col-span-2 block min-w-0 lg:order-none lg:table-cell lg:px-3 lg:py-3">
                         <div className="break-words font-semibold text-foreground">{r.title}</div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[0.71875rem] text-muted-foreground">
                           {superseded ? <span>已被更新的版本取代</span> : ref && ref.version > 1 ? <span>v{ref.version} · 取代 {ref.supersedes.length} 份早期版本</span> : null}
@@ -1214,8 +1236,8 @@ function ReportsHome({
                           <FormatBadge format={r.format} />
                         </div>
                       </td>
-                      <td className="block empty:hidden lg:table-cell lg:px-3 lg:py-3">{r.tier ? <span className="inline-flex h-5 items-center rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 text-[0.6875rem] font-semibold">{r.tier}</span> : null}</td>
-                      <td className="block whitespace-nowrap lg:table-cell lg:px-3 lg:py-3">
+                      <td className="col-span-2 block empty:hidden lg:table-cell lg:px-3 lg:py-3">{r.tier ? <><span className="mr-2 text-muted-foreground lg:hidden">档位</span><span className="inline-flex h-5 items-center rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 text-[0.6875rem] font-semibold">{r.tier}</span></> : null}</td>
+                      <td className="col-span-2 block whitespace-nowrap lg:table-cell lg:px-3 lg:py-3">
                         <span className="mr-2 text-muted-foreground lg:hidden">缺陷</span>
                         {r.defectCounts ? (
                           <span className="inline-flex gap-1 font-mono text-[0.6875rem]">
@@ -1225,7 +1247,7 @@ function ReportsHome({
                           </span>
                         ) : <span className="text-[0.6875rem] text-muted-foreground">未记录</span>}
                       </td>
-                      <td className="block min-w-0 lg:table-cell lg:px-3 lg:py-3">
+                      <td className="col-span-2 block min-w-0 lg:table-cell lg:px-3 lg:py-3">
                         <div className="flex flex-wrap gap-1">
                           {r.branch ? <ChangeKeyChip icon={GitBranch} text={r.branch} /> : null}
                           {r.commitSha ? <ChangeKeyChip icon={GitCommitHorizontal} text={r.commitSha.slice(0, 8)} /> : null}
@@ -1233,8 +1255,8 @@ function ReportsHome({
                           {!r.branch && !r.commitSha && r.prNumber == null ? <span className="text-[0.6875rem] text-muted-foreground">未记录部署上下文</span> : null}
                         </div>
                       </td>
-                      <td className="block font-mono text-[0.71875rem] text-muted-foreground lg:table-cell lg:whitespace-nowrap lg:px-3 lg:py-3">
-                        {formatTime(r.createdAt)}
+                      <td className="block self-center font-mono text-[0.71875rem] text-muted-foreground lg:table-cell lg:whitespace-nowrap lg:px-3 lg:py-3">
+                        <span className="mr-1 font-sans lg:hidden">归档</span>{formatTime(r.createdAt)}
                         {r.shareToken ? <Share2 className="ml-1.5 inline h-3.5 w-3.5 text-info" aria-label="已分享" /> : null}
                       </td>
                       <td className="block text-right lg:table-cell lg:px-2 lg:py-2" onClick={(event) => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
@@ -1398,17 +1420,18 @@ function KnowledgeBaseDialog({
 
 /** 删除类操作的统一确认弹窗（替代原生 window.confirm，风格与其余 Dialog 一致）。 */
 function DeleteConfirmDialog({
-  open, title, description, onOpenChange, onConfirm,
+  open, title, description, onOpenChange, onConfirm, onCloseAutoFocus,
 }: {
   open: boolean;
   title: string;
   description: string;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
+  onCloseAutoFocus?: (event: Event) => void;
 }): JSX.Element {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -1832,7 +1855,7 @@ function ReportList({
     const projectLabel = report.projectId ? projectName.get(report.projectId) ?? report.projectId : undefined;
     return (
       <div key={report.id}
-        className={`group flex h-8 cursor-pointer items-center gap-2 rounded px-2 text-sm transition-colors ${active ? 'bg-primary/10 text-primary' : 'hover:bg-[hsl(var(--surface-sunken))]'}`}
+        className={`group flex min-h-[3.25rem] cursor-pointer items-center gap-2 lg:min-h-8 rounded px-2 text-sm transition-colors ${active ? 'bg-primary/10 text-primary' : 'hover:bg-[hsl(var(--surface-sunken))]'}`}
         style={{ paddingLeft: `${(8 + depth * 16) / 16}rem` }}
         onClick={() => onSelect(report)}
         onContextMenu={(event) => {
@@ -1841,6 +1864,7 @@ function ReportList({
           setContextMenu({ x: event.clientX, y: event.clientY, report });
         }}
         onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
           if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
           onSelect(report);
@@ -1851,7 +1875,7 @@ function ReportList({
         aria-label={`打开报告：${report.title}`}>
         <VerdictIcon verdict={report.verdict} />
         <span className="min-w-0 flex-1 truncate">{report.title}</span>
-        <div className="shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100" onClick={(event) => event.stopPropagation()}>
+        <div className="shrink-0 opacity-100 transition-opacity lg:opacity-0 lg:group-hover:opacity-100 lg:focus-within:opacity-100" onClick={(event) => event.stopPropagation()}>
           <ReportRowActions
                           folderActionsAvailable={folderActionsAvailable}
             report={report}
@@ -1874,13 +1898,14 @@ function ReportList({
     const collapsed = collapsedFolderIds.has(folder.id);
     const rows: JSX.Element[] = [
       <div key={folder.id}
-        className="group flex h-8 cursor-pointer items-center gap-1.5 rounded px-2 text-sm text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
+        className="group flex min-h-[3.25rem] cursor-pointer items-center gap-1.5 lg:min-h-8 rounded px-2 text-sm text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
         style={{ paddingLeft: `${(6 + depth * 16) / 16}rem` }}
         title={`${folder.name}\n${count} 份报告`}
         onClick={() => toggleFolder(folder.id)}
         role="button"
         tabIndex={0}
         onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
           if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
           toggleFolder(folder.id);
@@ -1889,7 +1914,7 @@ function ReportList({
         <FolderOpen className="h-4 w-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate">{folder.name}</span>
         <span className="shrink-0 text-[0.6875rem] text-muted-foreground">{count}</span>
-        <div className="shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100" onClick={(event) => event.stopPropagation()}>
+        <div className="shrink-0 opacity-100 transition-opacity lg:opacity-0 lg:group-hover:opacity-100 lg:focus-within:opacity-100" onClick={(event) => event.stopPropagation()}>
           <FolderRowActions
             onRename={() => onRenameFolderRequest(folder)}
             onDelete={() => onDeleteFolder(folder)}
@@ -1915,12 +1940,13 @@ function ReportList({
     const collapsed = collapsedFolderIds.has(key);
     const rows: JSX.Element[] = [
       <div key={key}
-        className="group flex h-8 cursor-pointer items-center gap-1.5 rounded px-2 text-sm font-medium transition-colors hover:bg-[hsl(var(--surface-sunken))]"
+        className="group flex min-h-[3.25rem] cursor-pointer items-center gap-1.5 lg:min-h-8 rounded px-2 text-sm font-medium transition-colors hover:bg-[hsl(var(--surface-sunken))]"
         title={`${label}\n${count} 份报告`}
         onClick={() => toggleFolder(key)}
         role="button"
         tabIndex={0}
         onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
           if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
           toggleFolder(key);
@@ -1943,11 +1969,12 @@ function ReportList({
     const collapsed = collapsedFolderIds.has(collapseKey);
     const rows: JSX.Element[] = [
       <div key={collapseKey}
-        className="group flex h-8 cursor-pointer items-center gap-1.5 rounded px-2 text-sm font-medium transition-colors hover:bg-[hsl(var(--surface-sunken))]"
+        className="group flex min-h-[3.25rem] cursor-pointer items-center gap-1.5 lg:min-h-8 rounded px-2 text-sm font-medium transition-colors hover:bg-[hsl(var(--surface-sunken))]"
         onClick={() => toggleFolder(collapseKey)}
         role="button"
         tabIndex={0}
         onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
           if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
           toggleFolder(collapseKey);
@@ -2242,7 +2269,7 @@ function FolderRowActions({
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+          className="h-[3.25rem] w-[3.25rem] [&_svg]:size-7 lg:h-7 lg:w-7 lg:[&_svg]:size-4 text-muted-foreground opacity-100 transition-opacity lg:opacity-0 lg:group-hover:opacity-100 lg:focus:opacity-100"
           aria-label="打开文件夹操作菜单"
           title="文件夹操作"
         >
@@ -2263,11 +2290,12 @@ function FolderRowActions({
 }
 
 function CreateFolderDialog({
-  open, onOpenChange, onCreate,
+  open, onOpenChange, onCreate, onCloseAutoFocus,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (name: string) => Promise<boolean>;
+  onCloseAutoFocus?: (event: Event) => void;
 }): JSX.Element {
   const [name, setName] = useState('');
   const [error, setError] = useState('');
@@ -2295,7 +2323,7 @@ function CreateFolderDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>新建文件夹</DialogTitle>
           <DialogDescription>用于把验收报告按项目、功能或批次归档。</DialogDescription>
@@ -2323,9 +2351,10 @@ function CreateFolderDialog({
 }
 
 function RenameFolderDialog({
-  folder, onOpenChange, onRename,
+  folder, onOpenChange, onRename, onCloseAutoFocus,
 }: {
   folder: ReportFolder | null;
+  onCloseAutoFocus?: (event: Event) => void;
   onOpenChange: (open: boolean) => void;
   onRename: (folder: ReportFolder, name: string) => Promise<boolean>;
 }): JSX.Element {
@@ -2356,7 +2385,7 @@ function RenameFolderDialog({
 
   return (
     <Dialog open={Boolean(folder)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>重命名文件夹</DialogTitle>
           <DialogDescription>只修改文件夹名称，已有报告与子文件夹会保持原位置。</DialogDescription>
@@ -2453,12 +2482,12 @@ function ReportViewer({
                /reports 的默认画面是结论头条而不是列表；这个按钮原来带 lg:hidden，
                桌面端一旦打开报告就再也回不到首页——点左栏「报告」是同一条路由，
                组件不重挂载、selected 不复位，用户只能刷新整页。故去掉断点限制。 */
-            <Button variant="ghost" size="icon" className="-ml-1 h-8 w-8 shrink-0" aria-label="返回报告首页" title="返回报告首页" onClick={onBack}>
+            <Button variant="ghost" size="icon" className="-ml-1 h-[3.25rem] w-[3.25rem] shrink-0 [&_svg]:size-7 lg:h-8 lg:w-8 lg:[&_svg]:size-5" aria-label="返回报告首页" title="返回报告首页" onClick={onBack}>
               <ArrowLeft />
             </Button>
           ) : null}
           {onOpenNav ? (
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 lg:hidden" aria-label="打开报告目录" title="打开报告目录" onClick={onOpenNav}>
+            <Button variant="ghost" size="icon" className="h-[3.25rem] w-[3.25rem] shrink-0 [&_svg]:size-7 lg:hidden" aria-label="打开报告目录" title="打开报告目录" onClick={onOpenNav}>
               <Layers />
             </Button>
           ) : null}

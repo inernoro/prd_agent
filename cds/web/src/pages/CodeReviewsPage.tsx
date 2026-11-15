@@ -147,7 +147,7 @@ export function CodeReviewsPage(): JSX.Element {
           <label className="cr-search cr-filter-query"><Search aria-hidden="true" /><span className="sr-only">搜索审查任务</span><input type="search" className="cr-input" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索报告、分支、SHA" maxLength={300} /></label>
           <ReviewButton tone="ghost" className="cr-end" onClick={() => updateList({ history: history ? undefined : '1' })}>{history ? '仅看最近审查' : '全部执行（含历史）'}</ReviewButton>
         </div>
-        {listError ? <div className="cr-row-inline"><ErrorNotice message={listError} /><ReviewButton onClick={requestRefresh}>重试读取</ReviewButton></div> : null}
+        {listError ? <div className="cr-row-inline"><ErrorNotice message={listError} title="审查记录暂时无法读取" next={data ? "以下保留上次读取结果，可继续阅读或重试读取。" : "请重试读取，或稍后返回。"} /><ReviewButton onClick={requestRefresh}>重试读取</ReviewButton></div> : null}
         {data?.newCount ? <div className="cr-notice cr-row-inline" role="status">有 {data.newCount} 条新记录<ReviewButton tone="ghost" onClick={() => { cutoff.current = { scope: requestScope }; updateList({ page: '1' }); requestRefresh(); }}>显示</ReviewButton></div> : null}
         {history ? <p className="cr-form-note">历史执行保留各自的源码范围，不能将不同批次相加视为整仓完成。</p> : null}
         {data && dataScope.current !== requestScope ? <p role="status" className="cr-form-note">当前筛选结果尚未确认，以下保留上次读取的列表。</p> : null}

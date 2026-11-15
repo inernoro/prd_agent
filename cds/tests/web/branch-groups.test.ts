@@ -229,9 +229,10 @@ describe('前后端枚举一致', () => {
     expect(page).toContain('const verdict = pinVerdict(branchId, groupId);');
     // 只读项目的空分组不提示「拖到这里 / 编辑规则」
     expect(page).toContain("'这一组现在没有分支（分组只读，要在父实例上调整）'");
-    // 下拉菜单限高只取实际剩余空间，不垫最小高度（矮视口里会伸出视口）
+    // 现有 Radix 碰撞引擎提供实际可用高度；浏览器 reports-workflow-smoke 对矮视口实测，不依赖旧手写算法。
     const dropdown = read('components/ui/dropdown-menu.tsx');
-    expect(dropdown).toContain('maxHeight = Math.max(spaceBelow, 0);');
+    expect(dropdown).toContain('@radix-ui/react-dropdown-menu');
+    expect(dropdown).toContain('var(--radix-dropdown-menu-content-available-height)');
     expect(dropdown).not.toContain('Math.max(spaceBelow, 120)');
     // 「归了别组」的分行按组 id 作 key（组名可重复）
     expect(editor).toContain('<div key={entry.groupId}');
