@@ -1,0 +1,21 @@
+.lg-members-mobile { display: none; }
+.lg-member-search { max-width: 380px; margin-bottom: 12px; }
+@media (max-width: 680px) {
+  .lg-members-desktop { display: none; }
+  .lg-members-mobile { display: grid; }
+  .lg-members-mobile article { display: grid; gap: 8px; padding-block: 12px; border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+  .lg-members-mobile article:last-child { border-bottom: 0; }
+  .lg-member-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .lg-member-actions { display: flex; gap: 8px; align-items: center; }
+  .lg-member-actions a { color: var(--accent); min-height: 36px; display: inline-flex; align-items: center; }
+}
+
+.lg-team-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 20px; margin-bottom: 16px; }
+.lg-team-item { display: flex; align-items: center; min-width: 0; justify-content: space-between; border-bottom: 1px solid var(--border-subtle); }
+.lg-team-rename { min-width: 0; min-height: 36px; display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--text-primary); font: inherit; text-align: left; cursor: pointer; padding: 4px 0; }
+.lg-team-rename span { overflow-wrap: anywhere; }
+.lg-team-rename svg { flex-shrink: 0; color: var(--text-muted); }
+.lg-team-rename:hover { color: var(--accent); }
+.lg-team-rename:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 1100px) { .lg-team-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 680px) { .lg-team-list { grid-template-columns: minmax(0, 1fr); } .lg-team-rename, .lg-team-item > button { min-height: 44px !important; } }
