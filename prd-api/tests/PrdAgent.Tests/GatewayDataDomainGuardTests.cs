@@ -3509,7 +3509,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("width: 'min(820px, 100vw)'", drawer);
         Assert.DoesNotContain("width: 'min(820px, 96vw)'", drawer);
         Assert.Contains("openedRequestIdRef", logs);
-        Assert.Contains("openLogDetail(matched.id)", logs);
+        Assert.Contains("openLogDetail(matched.id, query.get('openRequest') === '1')", logs);
+        Assert.Contains("query.delete('openRequest')", logs);
         Assert.Contains("Provider 实际费用", drawer);
         Assert.Contains("汇率快照", drawer);
         Assert.Contains("请求内容", drawer);
