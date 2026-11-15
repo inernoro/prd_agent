@@ -215,7 +215,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
     const requestScope = authScope; setBusyAction(id);
     try {
       const res = await apiRequest<{ cascadedCount: number }>(`/api/identity/user-credentials/${id}/revoke`, { method: 'POST', body: {} });
-      if (currentScope.current !== requestScope) return;
+      if (!alive.current || currentScope.current !== requestScope) return;
       onToast(res.cascadedCount > 0 ? `已撤销，并同时撤销 ${res.cascadedCount} 张下游凭证` : '凭证已撤销');
       await load(true);
     } catch (err) {
@@ -230,7 +230,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
     const requestScope = authScope; setBusyAction(id);
     try {
       await apiRequest(`/api/identity/principals/${id}/status`, { method: 'POST', body: { status } });
-      if (currentScope.current !== requestScope) return;
+      if (!alive.current || currentScope.current !== requestScope) return;
       onToast(status === 'disabled' ? '主体已停用，名下凭证立即不可用' : '主体已恢复');
       await load(true);
     } catch (err) {

@@ -101,9 +101,9 @@ export function AccessKeysTab({ onToast }: { onToast: (message: string) => void 
     const requestScope = scope; generation.current++; setRevoking(key.id); setRevokeError('');
     try {
       await apiRequest(`/api/global-agent-keys/${encodeURIComponent(key.id)}`, { method: 'DELETE' });
-      if (currentScope.current !== requestScope) return;
-      generation.current++;
+      if (alive.current && currentScope.current === requestScope) generation.current++;
       setState(current => current.status === 'ok' && current.scope === requestScope ? { ...current, keys: current.keys.map(item => item.id === key.id ? { ...item, revokedAt: new Date().toISOString() } : item) } : current);
+      if (!alive.current || currentScope.current !== requestScope) return;
       onToast(`已吊销 ${key.label || key.id}`); void loadKeys(true);
     } catch (err) {
       const unknown = !knownRejection(err); if (unknown) setRevokeUnknown(current => [...current, key.id]);

@@ -7,7 +7,7 @@ import { consoleAccountIdentity } from '@/lib/consoleIdentity';
 const sessions = new WeakMap<object, Map<string, { value: unknown; expiresAt: number; protectReload: boolean; keepSession: boolean; expireTo?: (value: unknown) => unknown }>>();
 const listeners = new WeakMap<object, Map<string, Set<(value: unknown) => void>>>();
 const TTL = 30 * 60_000;
-const LIMIT = 64;
+const LIMIT = 128;
 let activeOwner: object | null = null;
 if (typeof window !== 'undefined') window.addEventListener('beforeunload', event => {
   const entries = activeOwner ? sessions.get(activeOwner) : undefined;
@@ -39,8 +39,16 @@ function write<T>(owner: object | null, key: string, value: T, protectReload: bo
   let entries = sessions.get(owner);
   if (!entries) { entries = new Map(); sessions.set(owner, entries); }
   entries.delete(key); entries.set(key, { value, expiresAt: Date.now() + TTL, protectReload, keepSession: options?.keepSession ?? (protectReload && !options?.expireTo), expireTo: options?.expireTo as ((value: unknown) => unknown) | undefined });
-  while (entries.size > LIMIT) entries.delete(entries.keys().next().value!);
+  while (entries.size > LIMIT) {
+    const candidate = [...entries].find(([, entry]) => !entry.protectReload && !entry.keepSession);
+    if (!candidate) break; // Critical metadata is bounded by fixed fields and the template write limit, never silently evicted.
+    entries.delete(candidate[0]);
+  }
   listeners.get(owner)?.get(key)?.forEach(listener => listener(value));
+}
+
+export function countProtectedSettingsEntries(owner: object | null, prefix: string): number {
+  return owner ? [...(sessions.get(owner)?.entries() || [])].filter(([key, entry]) => key.startsWith(prefix) && entry.protectReload).length : 0;
 }
 
 /** A settings draft/receipt, isolated before render and retained through normal tab/route unmounts. */
@@ -49,26 +57,26 @@ export function useSettingsSessionState<T>(key: string, initial: T, protectReloa
   const initialValue = useRef(initial);
   const protection = useRef(protectReload); protection.current = protectReload;
   const retention = useRef(options); retention.current = options;
-  const [scoped, setScoped] = useState(() => ({ owner, value: read(owner, key, initialValue.current) }));
-  const visible = scoped.owner === owner ? scoped : { owner, value: read(owner, key, initialValue.current) };
+  const [scoped, setScoped] = useState(() => ({ owner, key, value: read(owner, key, initialValue.current) }));
+  const visible = scoped.owner === owner && scoped.key === key ? scoped : { owner, key, value: read(owner, key, initialValue.current) };
   const latest = useRef(visible); latest.current = visible;
   useEffect(() => {
-    if (scoped.owner !== owner) setScoped({ owner, value: read(owner, key, initialValue.current) });
-  }, [owner, key, scoped.owner]);
+    if (scoped.owner !== owner || scoped.key !== key) setScoped({ owner, key, value: read(owner, key, initialValue.current) });
+  }, [owner, key, scoped.owner, scoped.key]);
   useEffect(() => {
     if (!owner) return;
     let channels = listeners.get(owner);
     if (!channels) { channels = new Map(); listeners.set(owner, channels); }
     let channel = channels.get(key);
     if (!channel) { channel = new Set(); channels.set(key, channel); }
-    const listener = (value: unknown) => setScoped({ owner, value: value as T });
+    const listener = (value: unknown) => setScoped({ owner, key, value: value as T });
     channel.add(listener);
     return () => { channel.delete(listener); if (channel.size === 0) channels.delete(key); };
   }, [owner, key]);
   const setValue: Dispatch<SetStateAction<T>> = useCallback(update => {
-    const current = latest.current.owner === owner ? latest.current.value : read(owner, key, initialValue.current);
+    const current = latest.current.owner === owner && latest.current.key === key ? latest.current.value : read(owner, key, initialValue.current);
     const next = typeof update === 'function' ? (update as (value: T) => T)(current) : update;
-    const value = { owner, value: next };
+    const value = { owner, key, value: next };
     latest.current = value; write(owner, key, next, protection.current?.(next) ?? false, retention.current); setScoped(value);
   }, [owner, key]);
   return [visible.value, setValue];

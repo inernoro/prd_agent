@@ -9,6 +9,7 @@ export async function verifySettingsWorkflow(browser, base, out, { baseline = fa
   const context = await browser.newContext({ viewport: { width: 1440, height: 940 } });
   const pages = [], results = [], writes = [], errors = [];
   let template = '## Preview {{pr_number}}\n{{preview_url}}', templateGate, releaseTemplate, previewGate, releasePreview;
+  let templateReadOverride;
   let env = { FIXTURE_SAMPLE_KEY: '合成值', FIXTURE_SECOND: '第二条合成值' }, failEnvRead = false, rejectTemplate = false, unknownTemplate = false;
   const vars = Array.from({length:9},(_,i)=>({key:`variable_${i}`,label:`示例变量 ${i}`,example:`合成示例 ${i}`}));
   await context.route('**/api/**', async route => {
@@ -16,14 +17,15 @@ export async function verifySettingsWorkflow(browser, base, out, { baseline = fa
     const p = url.pathname.replace(/^\/_cds/, ''), method = request.method();
     if (isEventStream(p) || p === '/api/activity-stream') return route.fulfill({ contentType: 'text/event-stream', body: ': deterministic fixture\n\n' });
     if (method !== 'GET') writes.push({method,path:p});
-    if (p === '/api/comment-template' && method === 'GET') return route.fulfill({ json: { body: template, defaultBody: '默认模板 {{preview_url}}', isDefault: !template, updatedAt: null, variables: vars } });
+    if (p === '/api/auth/status') return route.fulfill({json:{authenticated:true,enabled:true,user:{id:'fixture-owner',authProvider:'local',username:'fixture-owner',isSystemOwner:true}}});
+    if (p === '/api/comment-template' && method === 'GET') return route.fulfill({ json: { body: templateReadOverride ?? template, defaultBody: '默认模板 {{preview_url}}', isDefault: !(templateReadOverride ?? template), updatedAt: null, variables: vars } });
     if (/\/comment-template$/.test(p) && method === 'PUT') {
       const body = request.postDataJSON().body;
       if (templateGate) await templateGate;
       if (rejectTemplate) return route.fulfill({status:400,json:{error:'合成校验拒绝'}});
-      template = body;
+      template = body.slice(0,16*1024);
       if (unknownTemplate) return route.fulfill({status:500,json:{error:'合成响应中断，写入结果未确认'}});
-      return route.fulfill({json:{ok:true,body,updatedAt:'2026-11-15T00:00:00Z'}});
+      return route.fulfill({json:{ok:true,body:template,updatedAt:'2026-11-15T00:00:00Z'}});
     }
     if (p === '/api/comment-template/preview') {
       const body = request.postDataJSON().body;
@@ -51,6 +53,7 @@ export async function verifySettingsWorkflow(browser, base, out, { baseline = fa
     const editor = page.locator('[role="tabpanel"][data-state="active"] textarea').first(); await editor.waitFor();
     results.push({case:'template-initial-custom', source:'deterministic-fixture', editor:await metrics('[role="tabpanel"][data-state="active"] textarea'), preview:await metrics(baseline ? '[role="tabpanel"] section:last-child' : '[aria-labelledby="comment-preview-title"]')});
     await page.screenshot({path:path.join(out,'template-desktop.png')});
+    if(!baseline){const count=writes.filter(write=>write.method==='PUT').length;await editor.fill('x'.repeat(17000));await page.getByRole('alert').filter({hasText:'超过上限 16384'}).waitFor();assert.equal((await editor.inputValue()).length,17000);assert(await page.getByRole('button',{name:'保存模板',exact:true}).isDisabled());assert.equal(writes.filter(write=>write.method==='PUT').length,count);results.push({case:'over-limit-body-retained-and-zero-put-before-server-slice',pass:true});await editor.fill('## Preview {{pr_number}}\n{{preview_url}}');}
     for (const theme of ['dark','light']) for (const width of [1440,390]) {
       await page.setViewportSize({width,height:940});
       await page.evaluate(theme=>{document.documentElement.setAttribute('data-theme',theme);document.documentElement.classList.toggle('dark',theme==='dark');localStorage.setItem('cds-theme',theme);},theme);
@@ -87,14 +90,14 @@ export async function verifySettingsWorkflow(browser, base, out, { baseline = fa
       await page.getByText('已恢复未保存草稿',{exact:false}).waitFor();
       assert.equal(await editor.inputValue(),'保存进行中继续编辑');
       results.push({case:'tab-navigation-restores-project-draft',pass:true});
-      unknownTemplate=true;
+      templateReadOverride=template;unknownTemplate=true;
       await page.getByRole('button',{name:'保存模板',exact:true}).click();
       await page.getByRole('alert').filter({hasText:'保存结果未确认'}).waitFor();
       assert(await page.getByRole('button',{name:'保存模板',exact:true}).isDisabled());
       await editor.fill('未知结果后继续编辑');
       await page.getByRole('alert').filter({hasText:'保存结果未确认'}).waitFor();
       unknownTemplate=false;
-      await page.getByRole('button',{name:'重新读取并核对',exact:true}).click();
+      await page.getByRole('button',{name:'重新读取并核对',exact:true}).click();await page.getByRole('alert').filter({hasText:'保存结果未确认'}).waitFor();assert(await page.getByRole('button',{name:'保存模板',exact:true}).isDisabled());await page.getByRole('tab',{name:'项目环境变量',exact:true}).click();await page.getByText('FIXTURE_SAMPLE_KEY',{exact:true}).waitFor();await page.getByRole('tab',{name:'评论模板',exact:true}).click();await page.getByRole('alert').filter({hasText:'保存结果未确认'}).waitFor();assert(await page.getByRole('button',{name:'保存模板',exact:true}).isDisabled());assert.equal(await editor.inputValue(),'未知结果后继续编辑');templateReadOverride=undefined;await page.getByRole('button',{name:'重新读取并核对',exact:true}).click();results.push({case:'template-old-get-and-real-tabs-do-not-resolve-submitted-snapshot',pass:true});
       await page.getByRole('alert').filter({hasText:'保存结果未确认'}).waitFor({state:'hidden'});
       assert.equal(await editor.inputValue(),'未知结果后继续编辑');
       results.push({case:'unknown-save-requires-readback-and-keeps-new-draft',pass:true});
