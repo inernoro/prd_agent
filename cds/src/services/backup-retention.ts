@@ -60,8 +60,8 @@ export class BackupRetentionService {
     try { return JSON.parse(result.stdout); } catch { throw new Error('备份资源核查结果未知，相关文件已保留。'); }
   }
   async captureSource(projectId: string, serviceId: string): Promise<string | undefined> {
-    const service = this.options.state.getInfraService(serviceId);
-    if (!service || service.projectId !== projectId) return undefined;
+    const service = this.options.state.getInfraServiceForProjectAndId(projectId, serviceId);
+    if (!service) return undefined;
     for (const directory of this.directories()) {
       try { return (await this.run(directory, { action: 'source', containerName: service.containerName, projectId, serviceId })).sourceFingerprint; } catch { /* Unknown provenance never displaces a business recovery point. */ }
     }

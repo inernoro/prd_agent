@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { BackupRetentionService } from '../../src/services/backup-retention.js';
+import { StateService } from '../../src/services/state.js';
 
 function fixture() {
   const service = new BackupRetentionService({ shell: {} as any, state: {} as any, repoRoot: '/owned', instanceId: 'lineage-test' });
@@ -9,6 +13,26 @@ function fixture() {
   return { service, run, capture };
 }
 describe('backup lineage cannot be inferred from a current container name', () => {
+  it('captures the requested project when infrastructure IDs overlap, including legacy default ownership', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-project-source-'));
+    const state = new StateService(path.join(root, 'state.json'), root);state.load();
+    try {
+      for (const [projectId, containerName] of [['first', 'first-mysql'], ['second', 'second-mysql']]) state.addInfraService({
+        id: 'db', projectId, containerName, name: 'db', dockerImage: 'mysql:8', containerPort: 3306,
+        hostPort: 0, status: 'running', volumes: [], env: {}, createdAt: new Date().toISOString(),
+      });
+      const service = new BackupRetentionService({ shell: {} as any, state, repoRoot: root, instanceId: 'scope-test' });
+      vi.spyOn(service as any, 'directories').mockReturnValue([root]);
+      const run = vi.spyOn(service as any, 'run').mockResolvedValue({ sourceFingerprint: 'b'.repeat(64) });
+      expect(await service.captureSource('second', 'db')).toBe('b'.repeat(64));
+      expect(run).toHaveBeenLastCalledWith(root, expect.objectContaining({ projectId: 'second', containerName: 'second-mysql' }));
+      expect(await service.captureSource('missing', 'db')).toBeUndefined();expect(run).toHaveBeenCalledTimes(1);
+      // Persisted legacy entries predate the projectId field; exercise the real composite lookup.
+      const legacy = state.getInfraServiceForProjectAndId('first', 'db')!;legacy.projectId = undefined;
+      expect(await service.captureSource('default', 'db')).toBe('b'.repeat(64));
+      expect(run).toHaveBeenLastCalledWith(root, expect.objectContaining({ projectId: 'default', containerName: 'first-mysql' }));
+    } finally { await state.flush();fs.rmSync(root, { recursive: true, force: true }); }
+  });
   it('registers a historical manual archive as unconfirmed without querying the current source', async () => {
     const f = fixture();await f.service.register('/owned/old.gz', 'p', 'db', 'historical', { attestedBy: 'owner' });
     expect(f.capture).not.toHaveBeenCalled();expect(f.run).toHaveBeenCalledWith('/owned', expect.objectContaining({ origin: 'historical', sourceFingerprint: undefined, requireManagedOutput: false }));

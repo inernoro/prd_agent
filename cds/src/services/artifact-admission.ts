@@ -117,8 +117,9 @@ export async function inspectDeploymentArtifacts(
     const cached = inspections.get(key); if (cached) return cached;
     const promise = (async (): Promise<Inspection> => {
       const cache = configuredImageCacheGovernance();let pin: { token: string } | undefined;
+      const digestPinned = /^.+@sha256:[0-9a-f]{64}$/.test(image);
       if (cache) {
-        try { const prepared = await cache.prepare(image, assertCurrent, !needsPull);if (prepared.token) pin = prepared; }
+        try { const prepared = await cache.prepare(image, assertCurrent, !needsPull, needsPull && !digestPinned);if (prepared.token) pin = prepared; }
         catch (error) { assertCurrent();return { reason: error instanceof ImageCacheBudgetError ? 'cache-budget' : 'verification-unavailable' }; }
       }
       const pull = needsPull ? await exec(`docker pull ${shellQuoteArg(image)}`, 90_000).catch(() => undefined) : { exitCode: 0, stdout: '', stderr: '' };
@@ -141,7 +142,7 @@ export async function inspectDeploymentArtifacts(
       const immutable = metadata?.Id;
       if (typeof immutable !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(immutable)) return { reason: 'verification-unavailable' };
       // 已按固定仓库digest查询并核验内容，保留可跨执行器取回的引用。
-      const digest = /^.+@sha256:[0-9a-f]{64}$/.test(image) ? `${imageRepositoryOf(image)}@${image.split('@')[1]}`
+      const digest = digestPinned ? `${imageRepositoryOf(image)}@${image.split('@')[1]}`
         : !needsPull ? immutable : Array.isArray(metadata.RepoDigests)
         ? metadata.RepoDigests.find((value: unknown) => typeof value === 'string' && /^.+@sha256:[0-9a-f]{64}$/.test(value)
           && imageRepositoryOf(value) === imageRepositoryOf(image)) : undefined;

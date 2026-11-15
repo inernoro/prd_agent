@@ -1,5 +1,6 @@
 import { branchVersionFacts } from '../../src/services/running-version.js';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { configureImageCacheGovernance, ImageCacheGovernance, ImageCacheBudgetError } from '../../src/services/image-cache-governance.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { admittedArtifactProfile, inspectDeploymentArtifacts } from '../../src/services/artifact-admission.js';
 import type { BuildProfile } from '../../src/types.js';
@@ -10,6 +11,7 @@ const id = `sha256:${'c'.repeat(64)}`;
 const digest = `ghcr.io/owned/worker@${id}`;
 const profile = (role: string): BuildProfile => ({ id: role, name: role, dockerImage: image, workDir: '.', command: '',
   containerPort: 3000, prebuiltImage: true });
+afterEach(() => configureImageCacheGovernance(undefined));
 function fixture() {
   const shell = new MockShellExecutor();
   shell.addResponsePattern(/docker info/, () => ({ stdout: JSON.stringify({ Architecture: 'x86_64', OSType: 'linux' }), stderr: '', exitCode: 0 }));
@@ -20,6 +22,24 @@ function fixture() {
 }
 
 describe('完整预构建产物准入', () => {
+  it('本地已有可变标签仍在拉取前预留新内容，预算不足时不执行pull', async () => {
+    const shell = fixture();const cache = new ImageCacheGovernance({ shell, catalog: '/unused', instanceId: 'tag-budget', budgetBytes: 1, protectedReferences: () => [] });
+    const prepare = vi.spyOn(cache, 'prepare').mockImplementation(async (_image, _current, _present, forceNew) => {
+      if (forceNew) throw new ImageCacheBudgetError('new content would exceed budget');return { token: 'cached-tag-pin' };
+    });
+    vi.spyOn(cache, 'confirm').mockResolvedValue({});configureImageCacheGovernance(cache);
+    expect(await inspectDeploymentArtifacts(shell, [profile('api')], target)).toMatchObject({ state: 'waiting', reason: 'cache-budget' });
+    expect(prepare).toHaveBeenCalledWith(image, expect.any(Function), false, true);
+    expect(shell.commands.filter(command => command.startsWith('docker pull '))).toEqual([]);
+  });
+  it('已缓存固定digest和纯本地产物保持原有复用，不预留不存在的新内容', async () => {
+    const shell = fixture();const cache = new ImageCacheGovernance({ shell, catalog: '/unused', instanceId: 'immutable-budget', budgetBytes: 1, protectedReferences: () => [] });
+    const prepare = vi.spyOn(cache, 'prepare').mockResolvedValue({ token: 'immutable-pin' });vi.spyOn(cache, 'confirm').mockResolvedValue({});configureImageCacheGovernance(cache);
+    expect((await inspectDeploymentArtifacts(shell, [{ ...profile('api'), dockerImage: digest }], target)).state).toBe('ready');
+    expect(prepare).toHaveBeenLastCalledWith(digest, expect.any(Function), false, false);
+    expect((await inspectDeploymentArtifacts(shell, [{ ...profile('api'), localArtifact: true }], target, () => {}, { inspectLocalArtifacts: true })).state).toBe('ready');
+    expect(prepare).toHaveBeenLastCalledWith(image, expect.any(Function), true, false);
+  });
   it('共用镜像的四个逻辑角色只核验一次，并以固定内容启动而不保留源码回退', async () => {
     const shell = fixture(); const roles = ['generation', 'code-return', 'product-batch', 'common'];
     const result = await inspectDeploymentArtifacts(shell, roles.map(profile), target);

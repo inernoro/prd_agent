@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
-import { OwnedResourceLifecycle } from '../src/services/owned-resource-task.js';
+import { OwnedResourceLifecycle, OwnedTask } from '../src/services/owned-resource-task.js';
 import { ShellExecutor } from '../src/services/shell-executor.js';
 
 // This script cannot use a developer or production daemon. It runs inside its own file-backed VM.
@@ -43,6 +43,28 @@ const reclaim=async(id:string)=>{
  }
  throw new Error('Native retirement did not settle within five bounded batches');
 };
+const abandonedCreator = async () => {
+ const producer=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{cwd:'/data',detached:true,stdio:'ignore'});await once(producer,'spawn');
+ let creator:ReturnType<typeof spawn>|undefined;
+ const kill=async(child:ReturnType<typeof spawn>)=>{if(child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}};
+ try {
+  const handle=await lifecycle.request('begin',{projectId,owner:'resource-lifecycle-drill',createdBy:'native-creator-crash',ttlSeconds:3600,dataDisposition:'ephemeral-test',producerPid:producer.pid});
+  const task=new OwnedTask(lifecycle,handle);const volume=await task.createVolume('before-failed-creator');await fs.writeFile(path.join(handle.workspace,'synthetic-payload'),payload);
+  const name='cds-owned-'+handle.taskId+'-failed-network';const intent=await lifecycle.request('intent',{taskId:handle.taskId,token:handle.token,kind:'network',name,role:'failed-network'});
+  const gate=path.join(handle.workspace,'creator-gate'),failed=path.join(handle.workspace,'creator-failed');
+  const code=`const fs=require('fs'),cp=require('child_process');const timer=setInterval(()=>{if(!fs.existsSync(${JSON.stringify(gate)}))return;clearInterval(timer);const r=cp.spawnSync('docker',['network','create','--subnet','invalid-subnet',${JSON.stringify(name)}]);fs.writeFileSync(${JSON.stringify(failed)},String(r.status));setInterval(()=>{},1000);},20);`;
+  creator=spawn(process.execPath,['-e',code,'cds-owned-launcher-v1'],{cwd:handle.workspace,detached:true,stdio:'ignore'});await once(creator,'spawn');
+  await lifecycle.request('process',{taskId:handle.taskId,token:handle.token,pid:creator.pid,resourceId:intent.resourceId,role:'resource-creator'});
+  await fs.writeFile(gate,'G');const until=Date.now()+15000;
+  while(true){try{const status=Number(await fs.readFile(failed,'utf8'));assert.notEqual(status,0);break;}catch(error){if(Date.now()>until)throw error;await new Promise(r=>setTimeout(r,20));}}
+  await lifecycle.request('finish',{taskId:handle.taskId,token:handle.token,outcome:'failed'});await kill(producer);
+  const live:any=await lifecycle.inspect(false,handle.taskId);assert(live.held.some((row:any)=>row.reason==='creation-still-unconfirmed'));assert((await fs.stat(handle.workspace)).isDirectory());await native(`docker volume inspect ${volume.identity}`);
+  await kill(creator);const before=await sample();const settled=await reclaim(handle.taskId);const released=await sample()-before;
+  assert(settled.removed.some((row:any)=>row.kind==='workspace'));assert(!await fs.stat(handle.workspace).then(()=>true,()=>false));
+  const catalog=JSON.parse(await fs.readFile('/data/catalog/tasks.json','utf8'));assert.equal(catalog.tasks[handle.taskId].state,'retired');assert(released>3*1024**2);
+  return { liveCreatorProtected:true,deadProducerAndCreatorRecovered:true,failedNativeCreationConfirmedAbsent:true,creatorRecoveryNetAvailableBytesDelta:released };
+ } finally {await kill(producer);if(creator)await kill(creator);}
+};
 if(process.argv.includes('--crash-producer')){
  const task=await begin();const data=await writeData(task);const daemon=await task.startPrivateDaemon();
  for(const args of [['load','-i','/alpine.tar'],['volume','create','nested-data'],['run','-d','--network','none','--name','nested-fixture','--mount','type=volume,source=nested-data,target=/data','alpine:3.21','sh','-c','dd if=/dev/zero of=/data/nested bs=1M count=4; sleep 3600']]){const r=await daemon.exec(args);assert.equal(r.exitCode,0,r.stderr);}
@@ -64,6 +86,7 @@ if(process.argv.includes('--crash-producer')){
  const core=await begin();console.log('NATIVE_DRILL_STAGE','protected-task-born');const protectedData=await writeData(core);const before=await sample();console.log('NATIVE_DRILL_STAGE','protected-data-confirmed');
  const active=await lifecycle.inspect();assert(active.held.some((r:any)=>r.taskId===core.handle.taskId&&r.reason==='active-lease'));evidence.activeLeaseProtected=true;
  if(!resume){
+ Object.assign(evidence,await abandonedCreator());console.log('NATIVE_DRILL_STAGE','abandoned-creator-recovered');
  const ordinary=await begin();await fs.symlink(path.join(JSON.parse(await native(`docker volume inspect ${protectedData.volume}`))[0].Mountpoint,'payload'),path.join(ordinary.handle.workspace,'outside-link'));
  await ordinary.finish('completed');assert.equal((await core.exec(protectedData.container,['sha256sum','/data/payload'])).stdout.split(' ')[0],hash);evidence.symlinkTargetPreserved=true;
  const stopped=await begin();const volume=await stopped.createVolume('foreign-reference-guard');

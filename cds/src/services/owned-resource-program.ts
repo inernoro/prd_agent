@@ -88,6 +88,12 @@ def active_task():
 def process_identity(pid):
  p=pathlib.Path('/proc',str(pid));parts=(p/'stat').read_text().split(') ',1)[1].split()
  return {'pid':pid,'start':parts[19],'group':int(parts[2]),'session':int(parts[3]),'uid':p.stat().st_uid,'boot':pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
+def process_gone(recorded):
+ try:observed=process_identity(recorded['pid'])
+ except FileNotFoundError:return True
+ # Session/UID changes do not prove exit; a different birth does, without
+ # granting authority to signal the replacement process.
+ return observed['boot']!=recorded['boot'] or observed['start']!=recorded['start']
 def private_docker(resource,*args,write=False):
  endpoint=resource['endpoint'];p=native(['docker','--host',endpoint,*args])
  if p.returncode:
@@ -479,9 +485,9 @@ for task in ordered:
    value=get(resource['kind'],resource.get('identity') or resource['name'])
    if value is None:
     if resource['stage']=='issued':
-     producer=task.get('producer');observed_producer=process_identity(producer['pid']) if producer and pathlib.Path('/proc',str(producer['pid'])).exists() else None
-     if producer and observed_producer!=producer and not any(v.get('relatedResourceId')==resource['id'] for v in task['resources']):
-      if action=='reconcile':resource['stage']='retired';resource['creationOutcome']='producer-gone-before-creator-handshake';save()
+     producer=task.get('producer');creators=[v for v in task['resources'] if v.get('relatedResourceId')==resource['id']]
+     if producer and process_gone(producer) and all(v['kind']=='process' and process_gone(v['identity']) for v in creators):
+      if action=='reconcile':resource['stage']='retired';resource['creationOutcome']='producer-and-creators-gone-before-confirmation';save()
       continue
      raise ValueError('creation-still-unconfirmed')
     continue

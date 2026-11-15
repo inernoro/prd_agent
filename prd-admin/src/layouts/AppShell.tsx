@@ -752,8 +752,9 @@ export default function AppShell() {
   }, []);
 
   const refreshNotifications = useCallback(() => loadNotifications(), [loadNotifications]);
+  const closeNotificationAfterNavigation = useCallback(() => setNotificationDialogOpen(false), []);
   const { openNotification, confirmNotifications, handlingId, handlingAll } = useNotificationActions({
-    refresh: refreshNotifications, resolveGatewayHref: resolveLlmGatewayHref,
+    refresh: refreshNotifications, resolveGatewayHref: resolveLlmGatewayHref, onNavigated: closeNotificationAfterNavigation,
   });
   const handleNotification = useCallback(async (id: string, actionUrl?: string | null) => {
     const item = activeNotifications.find(notification => notification.id === id);

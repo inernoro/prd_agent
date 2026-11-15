@@ -3,7 +3,8 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { OwnedResourceLifecycle } from '../src/services/owned-resource-task.js';
-import { ImageCacheGovernance } from '../src/services/image-cache-governance.js';
+import { ImageCacheGovernance, configureImageCacheGovernance } from '../src/services/image-cache-governance.js';
+import { inspectDeploymentArtifacts } from '../src/services/artifact-admission.js';
 import { ShellExecutor } from '../src/services/shell-executor.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../src/services/server-event-log-store.js';
 
@@ -39,7 +40,8 @@ const payload = randomBytes(4 * 1024 ** 2), checksum = createHash('sha256').upda
 const context=path.join(server.handle.workspace,'build-context');await fs.mkdir(context);await fs.writeFile(path.join(context,'payload'),payload);
 await fs.writeFile(path.join(context,'Dockerfile'),'FROM alpine:3.21\nCOPY payload /payload\n');
 await docker(['load','-i','/alpine.tar']);
-await docker(['build','--quiet','--label','cds.acceptance.owner=native-image-cache-drill','-t',seed,context]);
+const revision='a'.repeat(40);
+await docker(['build','--quiet','--label','cds.acceptance.owner=native-image-cache-drill','--label','org.opencontainers.image.revision='+revision,'-t',seed,context]);
 await docker(['push',seed]);await docker(['tag',seed,alias]);await docker(['push',alias]);
 const image=JSON.parse(await docker(['image','inspect',seed]))[0], built={identity:image.Id};
 const digest:string=image.RepoDigests.find((value:string)=>value.startsWith(repository+'@sha256:'));assert(digest);
@@ -64,8 +66,9 @@ const audit: ServerEventLogSink = {
     return rows.filter(row => (!filter?.requestId || row.requestId === filter.requestId) && (!filter?.projectId || row.projectId === filter.projectId)).slice(-(filter?.limit || 100)) as ServerEventRecord[];
   },
 };
-let connectionFailure = false, afterManifest: (() => Promise<void>) | undefined;
+let connectionFailure = false, afterManifest: (() => Promise<void>) | undefined, admittedPulls=0;
 const shell = { exec: async (command: string, options?: Parameters<ShellExecutor['exec']>[1]) => {
+  if(command.startsWith('docker pull '))admittedPulls++;
   // Transport exception is confined to this guest's synthetic loopback registry.
   if (command.startsWith("docker manifest inspect '127.0.0.1:19587/")) command = command.replace('docker manifest inspect ', 'docker manifest inspect --insecure ');
   const result = await raw.exec(command, { ...options, env:{...options?.env,DOCKER_HOST:connectionFailure?'unix://'+server.handle.workspace+'/missing.sock':daemon.endpoint} });
@@ -77,6 +80,14 @@ const cache = new ImageCacheGovernance({ shell, catalog: path.join(server.handle
 for (const reference of [seed, alias]) {
   const pin = await cache.prepare(reference, () => {});await privateNative(`docker pull ${reference}`);await cache.confirm(pin.token, () => {});
 }
+const bounded=new ImageCacheGovernance({...cache.options,budgetBytes:1});configureImageCacheGovernance(bounded);
+try{
+ const pullsBefore=admittedPulls;
+ const mutable=await inspectDeploymentArtifacts(shell,[{id:'native-tag',name:'native-tag',dockerImage:seed,workDir:'.',command:'',containerPort:8080,prebuiltImage:true}],revision);
+ assert.equal(mutable.state,'waiting');assert.equal(mutable.reason,'cache-budget');assert.equal(admittedPulls,pullsBefore);
+ const fixed=await inspectDeploymentArtifacts(shell,[{id:'native-digest',name:'native-digest',dockerImage:digest,workDir:'.',command:'',containerPort:8080,prebuiltImage:true}],revision);
+ assert.equal(fixed.state,'ready');assert.equal(admittedPulls,pullsBefore+1);
+}finally{configureImageCacheGovernance(undefined);}
 // Accelerated bridge-window expiry, not ten minutes of real production observation.
 await cache.request('publish', { references: [], nowMs: Date.now() + 600001 });
 const plan = await cache.inspect();assert(plan.candidates.some((row: any) => row.identity === built.identity && row.aliases.length === 2));
@@ -112,6 +123,7 @@ assert(records.some(row => String(row.details?.snapshot).includes(built.identity
 await docker(['image','inspect','alpine:3.21']);
 const result = { provenance: 'integration-live', scope: 'actual private XFS/Docker/loopback OCI registry, production governance and audit factory, durable file test sink; production Mongo sink is not replaced in application code',
   exactRegistryIdentityVerified: true, sameIdAliasesRetiredOnce: true, stoppedContainerCreatedAfterPlanProtected: true, currentRollbackAndOtherMasterProtected: true,
+  cachedMutableTagReservesPeakBeforePull:true,cachedImmutableDigestReusedWithoutNewPeak:true,
   realConnectionFailureRetained: true, realAuditWriteFailureRetained: true, rehydratedIdAndPayloadChecksumPreserved: true, explicitLegacyAdoptionValidated: true,
   registryAuditEvents: records.length, filesystemNetAvailableBytesDelta: removed.filesystem.netAvailableBytesDelta, bridgeWindowAccelerated: true };
 await fs.writeFile('/data/image-cache-integration-result.json', JSON.stringify(result));
