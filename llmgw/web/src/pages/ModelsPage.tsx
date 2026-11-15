@@ -372,7 +372,7 @@ export function ModelsPage() {
     <PageShell>
       <PageHeader
         title="上游模型"
-        subtitle="维护供应方型号、协议与价格；业务调用使用关联的公开模型标识。"
+        subtitle="维护上游型号与价格；调用时使用公开模型标识。"
         actions={canWrite && ownedPlatforms.length > 0 ? (
           <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>{showCreate ? '收起配置' : '添加模型'}</Button>
         ) : canWrite ? (
@@ -537,7 +537,7 @@ export function ModelsPage() {
           <details style={{ flexShrink: 0 }}>
             <summary style={summaryStyle}>高级：批量维护已有模型</summary>
             <div style={bulkStackStyle}>
-              {hasSearch ? <p style={HINT_TEXT}>批量维护不按关键词限定。<Button size="sm" variant="ghost" onClick={() => setSearch('')}>清除搜索后维护</Button></p> : null}
+              {hasSearch ? <p style={HINT_TEXT}>搜索结果不能批量维护。<Button size="sm" variant="ghost" onClick={() => setSearch('')}>清除搜索后维护</Button></p> : null}
               <Card style={toolbarStyle}>
                 <span style={toolbarTitleStyle}>批量维护模型密钥</span>
                 <input
@@ -596,7 +596,7 @@ export function ModelsPage() {
           </details>
         ) : null}
 
-        {error ? null : !items ? <SectionLoader text="正在加载模型…" /> : visibleModels.length === 0 ? filtered ? <div role="status"><p style={HINT_TEXT}>当前搜索或筛选下没有上游模型，未据此判断租户目录为空。</p><Button size="sm" variant="ghost" onClick={clearFilters}>清除搜索与筛选</Button></div> : <Empty text={!canWrite ? '当前租户还没有模型。请联系 Owner 或 Admin 添加。' : ownedPlatforms.length === 0 ? '还没有可用 Provider。请先添加 Provider，再回到这里添加模型。' : '还没有模型。选择上方 Provider、上游模型标识和至少一种用途即可保存。'} /> : (
+        {error ? null : !items ? <SectionLoader text="正在加载模型…" /> : visibleModels.length === 0 ? filtered ? <div role="status"><p style={HINT_TEXT}>没有匹配的上游模型。</p><Button size="sm" variant="ghost" onClick={clearFilters}>清除搜索与筛选</Button></div> : <Empty text={!canWrite ? '当前租户还没有模型。请联系 Owner 或 Admin 添加。' : ownedPlatforms.length === 0 ? '还没有可用 Provider。请先添加 Provider，再回到这里添加模型。' : '还没有模型。选择上方 Provider、上游模型标识和至少一种用途即可保存。'} /> : (
           <div className="lg-config-table-shell" style={tableShellStyle}>
             <table className="lg-data-table lg-upstream-model-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
@@ -655,7 +655,7 @@ export function ModelsPage() {
                                 },
                                 {
                                   title: '运行边界',
-                                  description: '当前状态只说明配置是否具备调用条件；真实可用性仍由模型池健康和请求记录确认。',
+                                  description: '启用不代表当前可用；请结合最近请求核对。',
                                   fields: [
                                     { label: 'Provider 最大并发', value: provider.maxConcurrency ?? '未配置' },
                                     { label: '模型状态', value: m.enabled ? '已启用' : '已停用' },
