@@ -1,6 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
+# Installed on production hosts; local development keeps the existing behavior.
+if [ "${PRD_AGENT_PRODUCTION_LOCK_HELD:-0}" != 1 ] && [ -x /usr/local/sbin/prd-agent-with-release-lock ]; then
+  exec /usr/local/sbin/prd-agent-with-release-lock "$0" "$@"
+fi
+
 # 生产部署脚本：
 # - 从 GitHub Release 下载 prd-admin dist 压缩包
 # - 在稳定的 deploy/web/dist bind 根内离线校验并原子切换 current/previous
