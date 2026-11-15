@@ -22,6 +22,7 @@ import {
   redisProbeStdin,
   buildRedisAppendOnlyScript,
   buildRedisRestorePlan,
+  buildRedisSnapshotCopyArgv,
   buildSizeCappedCommand,
   backupKindOf,
   isAutoBackupFile,
@@ -343,8 +344,8 @@ describe('自动备份真的被启动了', () => {
 
   it('离机校验成功后才把临时备份提升到正式保留集', () => {
     const upload = CODE.indexOf('await uploadAndVerifyR2Backup({');
-    const promote = CODE.indexOf('mv -f ${shq(out)} ${shq(finalOut)}');
-    const cleanup = CODE.indexOf('rm -f ${shq(out)}', promote);
+    const promote = CODE.indexOf('backupRetentionService.promoteOutput(out, finalOut)');
+    const cleanup = CODE.indexOf('backupRetentionService.closeOutput(out)', promote);
 
     expect(upload).toBeGreaterThan(0);
     expect(promote).toBeGreaterThan(upload);
@@ -580,7 +581,7 @@ describe('备份不许静默成功', () => {
     expect(CODE).toContain('buildRedisBackupProbeScript()');
     expect(CODE).toContain('拒绝拷贝可能过期的 dump.rdb');
     const probe = CODE.indexOf('redisProbe');
-    const cp = CODE.indexOf('docker cp');
+    const cp = CODE.indexOf('cmd = buildRedisSnapshotCopyArgv(');
     expect(probe).toBeGreaterThan(0);
     expect(cp).toBeGreaterThan(probe);
     // 「探测失败」必须真的抛出去，而不是记一笔继续拷。
@@ -623,9 +624,9 @@ describe('查历史不许创建备份目录', () => {
     // 否则「一份都没有过」会被自己刚建出来的空目录报成「目录在、只是没有匹配项」。
     //
     // 断言按**条数**而不是按行号：新增第三条只读路径时，这里必须一起改，
-    // 逼着人回来确认它也走了只读档（写盘那档仍然只有一处）。
+    // 备份与恢复各有一个明确写入入口，历史与设置仍只读。
     expect(SRC.match(/resolveBackupDir\(\{ create: false \}\)/g) || []).toHaveLength(2);
-    expect(SRC.match(/await resolveBackupDir\(\)/g) || []).toHaveLength(1);
+    expect(SRC.match(/await resolveBackupDir\(\)/g) || []).toHaveLength(2);
   });
 });
 
@@ -991,7 +992,7 @@ describe('MySQL 导出脚本', () => {
     const src = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
     expect(src).toContain('gzip -t ${shq(out)}');
     const check = src.indexOf('gzip -t ${shq(out)}');
-    const promote = src.indexOf('mv -f ${shq(out)} ${shq(finalOut)}');
+    const promote = src.indexOf('backupRetentionService.promoteOutput(out, finalOut)');
     expect(check).toBeGreaterThan(0);
     expect(promote).toBeGreaterThan(check);   // 校验必须排在转正之前
   });
@@ -1173,6 +1174,25 @@ describe('redis 凭据只走 stdin', () => {
  * 「跑一遍看看」发现——恰好是空库时结果看起来完全正确（2026-08-18 线上就是这么
  * 侥幸躲过的）。能钉住它的只有对**顺序**的断言。
  */
+describe('Redis归档流写入既有inode', () => {
+  it.each(['copy', 'tar'])('任一环节失败都不把输出当成成功：%s', failed => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'redis-copy-pipeline-'));
+    try {
+      const input = path.join(root, 'snapshot.rdb'), archive = path.join(root, 'snapshot.tar'), output = path.join(root, 'registered.rdb');
+      fs.writeFileSync(input, 'REDIS synthetic fixture'); fs.writeFileSync(output, '', { mode: 0o600 });
+      execFileSync('tar', ['-cf', archive, '-C', root, 'snapshot.rdb']);
+      fs.writeFileSync(path.join(root, 'docker'), failed === 'copy'
+        ? '#!/bin/sh\ncat "$CDS_COPY_FIXTURE_ARCHIVE"\nexit 7\n'
+        : '#!/bin/sh\nprintf invalid-archive\nexit 0\n', { mode: 0o700 });
+      const before = fs.statSync(output, { bigint: true });
+      const argv = buildRedisSnapshotCopyArgv('owned-container', '/data/snapshot.rdb', output);
+      const result = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8', env: { PATH: root + ':' + process.env.PATH, CDS_COPY_FIXTURE_ARCHIVE: archive } });
+      expect(result.status).not.toBe(0); expect(result.stdout).toBe('');
+      const after = fs.statSync(output, { bigint: true }); expect(after.ino).toBe(before.ino); expect(after.birthtimeNs).toBe(before.birthtimeNs);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
 describe('Redis 恢复顺序', () => {
   const plan = buildRedisRestorePlan({
     containerName: 'cds-infra-redis',
@@ -1195,17 +1215,25 @@ describe('Redis 恢复顺序', () => {
     expect(idx('save-current')).toBeLessThan(idx('overwrite'));
   });
 
-  it('全程不碰运行中的容器（没有 docker exec，只有 cp 与生命周期）', () => {
+  it('停止后只以cp读取快照，不依赖已停止容器的exec', () => {
     for (const step of plan) {
-      expect(step.argv[0]).toBe('docker');
-      expect(['stop', 'start', 'cp']).toContain(step.argv[1]);
+      if (step.id === 'save-current') {
+        expect(step.argv.slice(0, 2)).toEqual(['sh', '-c']);
+        expect(step.argv[2]).toContain('docker cp "$1:$2" -');
+        expect(step.argv[2]).not.toContain('docker exec');
+      } else {
+        expect(step.argv[0]).toBe('docker');
+        expect(['stop', 'start', 'cp']).toContain(step.argv[1]);
+      }
     }
   });
 
   it('拷贝方向没写反', () => {
     const save = plan[idx('save-current')].argv;
     const over = plan[idx('overwrite')].argv;
-    expect(save.slice(2)).toEqual(['cds-infra-redis:/data/dump.rdb', '/backups/pre.rdb']);   // 容器 → 宿主
+    expect(save.slice(3)).toEqual(['cds-redis-snapshot-copy', 'cds-infra-redis', '/data/dump.rdb', '/backups/pre.rdb']);
+    expect(save[2]).toContain('docker cp "$1:$2" -');
+    expect(save[2]).toContain('exec 3>"$3"');
     expect(over.slice(2)).toEqual(['/tmp/up.rdb', 'cds-infra-redis:/data/dump.rdb']);        // 宿主 → 容器
   });
 
@@ -1262,7 +1290,7 @@ describe('宿主按探测回传的路径拷贝', () => {
 
   it('docker cp 用 rdbPath，且不再拼默认路径', () => {
     expect(SRC).toContain('const rdbPath = (redisProbe.stdout');
-    expect(SRC).toContain('docker cp ${shq(`${t.containerName}:${rdbPath}`)}');
+    expect(SRC).toContain('buildRedisSnapshotCopyArgv(t.containerName, rdbPath, out)');
     expect(SRC).not.toContain('${t.containerName}:/data/dump.rdb');
     // 回传缺失时宁可失败，也不许悄悄猜一个默认路径。
     expect(SRC).toContain('拒绝按默认路径猜');
@@ -1480,14 +1508,16 @@ describe('执行层真的保留了本地副本', () => {
     expect(SRC).toContain('localOnly: offsiteError !== null,');
   });
 
-  it('转正与保留策略排在离机之后、且不受离机成败影响', () => {
-    // 保留策略是「保留本地」不会把盘写满的唯一上界，必须照常执行。
+  it('转正后登记完整性与来源，独立保留任务不依赖下一次备份成功', () => {
+    // 导出成功只登记恢复点；失败输出与过期备份由独立租约回收器处理。
     const upload = SRC.indexOf('shouldSkipOffsiteThisRound(offsiteConsecutiveFailures)');
-    const promote = SRC.indexOf('mv -f ${shq(out)} ${shq(finalOut)}');
-    const prune = SRC.indexOf('selectExpiredBackups(existing');
+    const promote = SRC.indexOf('backupRetentionService.promoteOutput(out, finalOut)');
+    const registration = SRC.indexOf('backupRetentionService.register(finalOut', promote);
     expect(upload).toBeGreaterThan(0);
     expect(promote).toBeGreaterThan(upload);
-    expect(prune).toBeGreaterThan(promote);
+    expect(registration).toBeGreaterThan(promote);
+    expect(SRC).toContain('setInterval(() => void reconcileBackups(), 60 * 60_000)');
+    expect(SRC).not.toContain('selectExpiredBackups(existing');
   });
 });
 

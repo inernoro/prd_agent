@@ -18,6 +18,9 @@
 
 ## 文档列表
 
+- [CDS / LLMGW 磁盘治理与交接 · 计划](./plan.cds.disk-governance-20261113.md) `plan.cds.disk-governance-20261113`
+
+
 - [MAP 与 CDS 磁盘容量治理 · 指南](./guide.platform.capacity.md) `guide.platform.capacity`
 
 - [知识库信息高效传递与复刻验收计划](./plan.knowledge-base.information-delivery.md) `plan.knowledge-base.information-delivery`

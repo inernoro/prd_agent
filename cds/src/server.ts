@@ -77,6 +77,8 @@ import { defaultEnvFilePath } from './services/env-file.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
+import { createBackupRetentionRouter } from './routes/backup-retention.js';
+import { createOwnedResourceRetentionRouter } from './routes/owned-resource-retention.js';
 import { createInfraDataRouter } from './routes/infra-data.js';
 import { createInfraCredentialRotationRouter } from './routes/infra-credential-rotation.js';
 import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
@@ -544,6 +546,9 @@ async function collectActiveHttpRequests(
 }
 
 export interface ServerDeps {
+  backupRetentionService?: import('./services/backup-retention.js').BackupRetentionService;
+  ownedResourceLifecycle?: import('./services/owned-resource-task.js').OwnedResourceLifecycle;
+  imageCacheGovernance?: import('./services/image-cache-governance.js').ImageCacheGovernance;
   branchLifecycleService?: BranchLifecycleService;
   stateService: StateService;
   worktreeService: WorktreeService;
@@ -890,6 +895,24 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Static exact matches
   const staticMap: Record<string, string> = {
+    'GET /janitor/backups': '预览备份回收',
+    'GET /janitor/backups/state': '查询备份回收',
+    'GET /janitor/backups/owners': '查询备份归属',
+    'POST /janitor/backups/adopt': '登记备份归属',
+    'POST /janitor/backups/reconcile': '执行备份回收',
+    'POST /janitor/backups/cancel': '停止备份回收',
+    'GET /janitor/tasks': '预览验收退役',
+    'GET /janitor/tasks/state': '查询验收退役',
+    'POST /janitor/tasks/reconcile': '执行验收退役',
+    'POST /janitor/tasks/cancel': '停止验收退役',
+    'GET /janitor/tasks/data-cases': '查询历史数据',
+    'POST /janitor/tasks/data-cases/:id/confirm': '登记数据处置',
+    'GET /janitor/tasks/images': '预览镜像回收',
+    'GET /janitor/tasks/images/state': '查询镜像回收',
+    'GET /janitor/tasks/images/owners': '查询镜像归属',
+    'POST /janitor/tasks/images/adopt': '登记镜像归属',
+    'POST /janitor/tasks/images/reconcile': '执行镜像回收',
+    'POST /janitor/tasks/images/cancel': '停止镜像回收',
     'GET /code-reviews/branches': '列出审查分支',
     // shared 基础设施服务远程主机（系统级，2026-05-06）
     'GET /cds-system/remote-hosts': '列出远程主机',
@@ -963,6 +986,16 @@ export function resolveApiLabel(method: string, path: string): string {
     // 取消在途发布（阶段一 · 止血）：路由与 label 同期落地，避免又漏一条。
     'POST /releases/runs/:id/cancel': '取消进行中发布',
     'GET /releases/runs/:id/stream': '订阅发布日志流',
+    'GET /releases/batches': '列出发布批次',
+    'GET /releases/batches/accepted-versions': '列出验收版本',
+    'POST /releases/batches': '创建发布批次',
+    'GET /releases/batches/:id': '查看发布批次',
+    'POST /releases/batches/:id/preflight': '批次发布预检',
+    'POST /releases/batches/:id/start': '执行发布批次',
+    'POST /releases/batches/:id/cancel': '取消发布批次',
+    'POST /releases/batches/:id/refresh': '核对批次版本',
+    'POST /releases/batches/:id/targets/:targetId/retry': '重试失败目标',
+    'POST /releases/batches/:id/targets/:targetId/rollback': '恢复目标原版',
     'GET /releases/center': '查看发布中心',
     'GET /deployment-runs': '列出部署运行',
     'GET /deployment-versions': '列出部署版本',
@@ -1215,6 +1248,7 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^POST \/janitor\/tasks\/data-cases\/[^/]+\/confirm$/, '登记数据处置'],
     [/^GET \/uptime\/incidents\/[^/]+$/, '查看故障通知上下文'],
     [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
@@ -1246,6 +1280,13 @@ export function resolveApiLabel(method: string, path: string): string {
     // 原样比对）；真实调用带的是具体 id，必须靠这里的 pattern 才有 label，否则
     // Activity Monitor 上整条发布链路都是裸 URL。一律用 segment-safe `[^/]+`
     // （PR #522 的教训：贪婪 `(.+)` 会跨 `/` 把子路径截胡），子路径排在裸 id 之前。
+    [/^GET \/releases\/batches\/[^/]+$/, '查看发布批次'],
+    [/^POST \/releases\/batches\/[^/]+\/preflight$/, '批次发布预检'],
+    [/^POST \/releases\/batches\/[^/]+\/start$/, '执行发布批次'],
+    [/^POST \/releases\/batches\/[^/]+\/cancel$/, '取消发布批次'],
+    [/^POST \/releases\/batches\/[^/]+\/refresh$/, '核对批次版本'],
+    [/^POST \/releases\/batches\/[^/]+\/targets\/[^/]+\/retry$/, '重试失败目标'],
+    [/^POST \/releases\/batches\/[^/]+\/targets\/[^/]+\/rollback$/, '恢复目标原版'],
     [/^POST \/releases\/runs\/[^/]+\/rollback$/, '回滚发布记录'],
     [/^POST \/releases\/runs\/[^/]+\/retry$/, '重试发布记录'],
     [/^POST \/releases\/runs\/[^/]+\/cancel$/, '取消进行中发布'],
@@ -1363,6 +1404,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/container-exec$/, '容器内执行命令'],
     [/^GET \/branches\/(.+)\/extra-services$/, '查看分支额外服务'],
     [/^PUT \/branches\/(.+)\/extra-services$/, '设置分支额外服务'],
+    [/^GET \/branches\/(.+)\/service-isolation$/, '查看分支隔离'],
+    [/^PUT \/branches\/(.+)\/service-isolation$/, '设置分支隔离'],
     [/^GET \/branches\/(.+)\/git-log$/, '查看 Git 提交历史'],
     [/^PUT \/env\/(.+)$/, '设置环境变量'],
     [/^DELETE \/env\/(.+)$/, '删除环境变量'],
@@ -4876,7 +4919,9 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
   app.use('/api', createDockerNetworkHealthRouter({ shell: deps.shell }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
-  app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any, repoRoot: deps.config.repoRoot }));
+  app.use('/api', createBackupRetentionRouter(deps.backupRetentionService));
+  app.use('/api', createOwnedResourceRetentionRouter(deps.ownedResourceLifecycle, deps.stateService, deps.imageCacheGovernance, deps.config.worktreeBase));
+  app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any, repoRoot: deps.config.repoRoot, retention: deps.backupRetentionService }));
   app.use('/api', createInfraDataRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any }));
   app.use('/api', createInfraCredentialRotationRouter({
     stateService: deps.stateService,

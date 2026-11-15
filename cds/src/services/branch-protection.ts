@@ -1,4 +1,5 @@
 import type { BranchEntry, Project } from '../types.js';
+import { releaseBatchProtectsInputs, type ReleaseBatch } from '../domain/release-batch.js';
 
 /**
  * branch-protection —— 「这条分支能不能被自动回收/驱逐」的**唯一判定源**（SSOT）。
@@ -30,6 +31,7 @@ export type BranchProtectionReason =
   | 'color-marked'
   | 'default-branch'
   | 'config-pinned'
+  | 'release-batch-input'
   | 'trunk-branch';
 
 /**
@@ -40,6 +42,7 @@ export interface BranchProtectionLookup {
   getProject(idOrSlug: string): Project | undefined;
   /** per-project 默认分支（项目级值优先，未设回落到旧 state.defaultBranch）。 */
   getDefaultBranchFor(projectId?: string | null): string | null;
+  getReleaseBatches?(projectId?: string): ReleaseBatch[];
 }
 
 export interface BranchProtection {
@@ -57,6 +60,7 @@ export function describeBranchProtectionReason(reason: BranchProtectionReason): 
     case 'color-marked': return '标记调试中（isColorMarked）';
     case 'default-branch': return '项目默认分支（defaultBranch）';
     case 'config-pinned': return '配置固定名单（pinnedBranches）';
+    case 'release-batch-input': return '固定批次正在准备、发布或恢复，保留其输入分支';
     case 'trunk-branch': return '主干分支（仓库默认分支，永不自动删除）';
   }
 }
@@ -94,6 +98,9 @@ export function resolveBranchProtection(
     return { protected: true, reason: 'default-branch' };
   }
   if (configPinned.includes(branch.id)) return { protected: true, reason: 'config-pinned' };
+  if (lookup.getReleaseBatches?.(branch.projectId).some(batch => batch.branchId === branch.id && releaseBatchProtectsInputs(batch))) {
+    return { protected: true, reason: 'release-batch-input' };
+  }
   const project = branch.projectId ? lookup.getProject(branch.projectId) : undefined;
   if (isTrunkBranch(branch, project)) return { protected: true, reason: 'trunk-branch' };
   return { protected: false, reason: null };
