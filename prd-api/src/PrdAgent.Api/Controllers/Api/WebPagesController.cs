@@ -1795,6 +1795,7 @@ public partial class WebPagesController : ControllerBase
             x.Id,
             x.Token,
             x.ShortSeq,
+            documentCollectionId = x.CollectionSnapshot?.CollectionId,
             x.SiteId,
             x.SiteIds,
             x.ShareType,
@@ -1948,6 +1949,7 @@ public partial class WebPagesController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
+            result.DocumentCollectionId,
             result.CollectionId,
             result.MainSiteId,
             result.CollectionVersion,

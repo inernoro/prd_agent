@@ -3388,6 +3388,7 @@ public class HostedSiteService : IHostedSiteService
             : await _db.HostedCollections.Find(x => x.Id == share.CollectionId).FirstOrDefaultAsync(ct);
         return new ShareViewResult
         {
+            DocumentCollectionId = share.CollectionSnapshot?.CollectionId,
             CollectionId = share.CollectionId,
             MainSiteId = sites.Any(x => x.Id == share.MainSiteId) ? share.MainSiteId : null,
             CollectionVersion = share.CollectionVersion,

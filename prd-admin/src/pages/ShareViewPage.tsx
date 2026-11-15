@@ -841,12 +841,19 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   if (!data) return null;
 
   const isOwner = isAuthenticated && currentUserId && data.createdBy === currentUserId;
+  const openCollectionManager = (sharing = false) => {
+    if (data.documentCollectionId) {
+      navigate(`/web-pages/collections/${encodeURIComponent(data.documentCollectionId)}${sharing ? '/share' : ''}`);
+      return;
+    }
+    setCollectionShareFirst(sharing); setCollectionManagerOpen(true);
+  };
 
   if (!embedded && data.shareType === 'collection' && !requestedRelatedSiteId) {
   // Keep the original share token: member pages use the same authorization scope.
   return <HostedShareCollection data={data} collectionPath={`/s/wp/${encodeURIComponent(token!)}`}
     selectedSiteId={requestedRelatedSiteId} onSelect={id => navigate(id ? `/s/wp/${encodeURIComponent(token!)}?${new URLSearchParams({ siteId: id })}` : `/s/wp/${encodeURIComponent(token!)}`)}
-    action={isOwner ? <><button className="hosted-share-save" onClick={() => { setCollectionShareFirst(true); setCollectionManagerOpen(true); }}>分享</button><button className="hosted-share-save" onClick={() => { setCollectionShareFirst(false); setCollectionManagerOpen(true); }}>管理合集</button>
+    action={isOwner ? <><button className="hosted-share-save" onClick={() => openCollectionManager(true)}>分享</button><button className="hosted-share-save" onClick={() => openCollectionManager()}>管理合集</button>
       {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}</> : <button className="hosted-share-save" onClick={handleSave} disabled={saving || saveStatus !== 'idle'}>
       {saving ? <><MapSpinner size={13} />保存中...</>
         : saveStatus === 'saved' ? <><Check size={13} />已保存</>
@@ -944,7 +951,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
             {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
               {!embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>返回合集</a>}
-              {!embedded && isOwner && data.shareType === 'collection' && <button className="share-topbar-btn" onClick={() => setCollectionManagerOpen(true)}>管理合集</button>}
+              {!embedded && isOwner && data.shareType === 'collection' && <button className="share-topbar-btn" onClick={() => openCollectionManager()}>管理合集</button>}
               {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}
               <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" source={{ token, password: password || undefined }}
                 onNavigate={openRelatedDocument} />

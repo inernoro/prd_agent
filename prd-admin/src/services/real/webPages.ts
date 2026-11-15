@@ -403,6 +403,8 @@ export function getPendingSiteOptimizationSession(): PendingOptimizationSession 
 }
 
 export interface ShareLinkItem {
+  /** 章节合集身份；与兼容目录的 collectionId 分开。 */
+  documentCollectionId?: string;
   id: string;
   token: string;
   /** 统一短链 Seq（数字 ID）；旧记录可能为 0，UI 此时退回老 /s/wp/{token} 链接 */
@@ -1341,6 +1343,7 @@ export interface SharedSiteInfo {
 }
 
 export interface ShareViewData {
+  documentCollectionId?: string;
   collectionId?: string;
   mainSiteId?: string;
   collectionVersion?: number;

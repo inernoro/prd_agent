@@ -18,6 +18,54 @@ namespace PrdAgent.Api.Tests.Controllers;
 
 public sealed class WebPagesCollectionHistoryTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData("other-directory")]
+    public async Task CompatibilityLookupAndAdoptionRejectChapterSnapshotsBeforeAnyCollectionWrite(string? directoryId)
+    {
+        var share = new WebPageShareLink { Token = "chapter-token", CreatedBy = "owner-user", ShareType = "collection",
+            CollectionId = directoryId, CollectionSnapshot = new() { CollectionId = "chapters", ShareGeneration = 2 }, SiteIds = new() { "site-a" } };
+        var shares = new Mock<IMongoCollection<WebPageShareLink>>(MockBehavior.Strict);
+        shares.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<WebPageShareLink>>(), It.IsAny<FindOptions<WebPageShareLink, WebPageShareLink>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(Cursor(share)));
+        var collections = new Mock<IMongoCollection<HostedCollection>>(MockBehavior.Strict);
+        var controller = ContextController(collections.Object, shares.Object);
+        Assert.IsType<NotFoundObjectResult>(await controller.CollectionByShare(share.Token));
+        Assert.IsType<NotFoundObjectResult>(await controller.AdoptCollection(share.Token, new("不要重复导入", "site-a")));
+        Assert.Empty(collections.Invocations);
+        Assert.Equal(directoryId, share.CollectionId);
+        Assert.Equal("chapters", share.CollectionSnapshot.CollectionId);
+        Assert.All(shares.Invocations, call => Assert.Equal("FindAsync", call.Method.Name));
+    }
+
+    [Fact]
+    public async Task UnmanagedHistoricalShareStillOffersItsExistingCompatibilityImport()
+    {
+        var share = new WebPageShareLink { Token = "old-token", CreatedBy = "owner-user", ShareType = "collection", SiteIds = new() { "site-a" } };
+        var shares = new Mock<IMongoCollection<WebPageShareLink>>(MockBehavior.Strict);
+        shares.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<WebPageShareLink>>(), It.IsAny<FindOptions<WebPageShareLink, WebPageShareLink>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(Cursor(share)));
+        var data = Result(await ContextController(Mock.Of<IMongoCollection<HostedCollection>>(), shares.Object).CollectionByShare(share.Token));
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("collection").ValueKind);
+        Assert.Equal("site-a", data.GetProperty("legacyShare").GetProperty("siteIds")[0].GetString());
+        Assert.Equal(1, data.GetProperty("sites").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task ShareListKeepsChapterIdentityDistinctFromHistoricalDirectoryLinks()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(x => x.ListSharesAsync("owner-user", default, false, null)).ReturnsAsync(new List<WebPageShareLink> {
+            new() { Id = "old", Token = "old-token", ShareType = "collection", CollectionId = "directory" },
+            new() { Id = "new", Token = "new-token", ShareType = "collection", CollectionSnapshot = new() { CollectionId = "chapters" } } });
+        sites.Setup(x => x.GetTitlesByIdsAsync(It.IsAny<IEnumerable<string>>(), default)).ReturnsAsync(new Dictionary<string, string>());
+        var db = (MongoDbContext)RuntimeHelpers.GetUninitializedObject(typeof(MongoDbContext));
+        var data = Result(await Build(sites.Object, db).ListShares());
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("items")[0].GetProperty("documentCollectionId").ValueKind);
+        Assert.Equal("chapters", data.GetProperty("items")[1].GetProperty("documentCollectionId").GetString());
+        sites.VerifyAll();
+    }
+
     [Fact]
     public async Task HistoryUsesOwnerAndMemberQueryWithoutRecentWindowAndPreservesOriginalLinks()
     {

@@ -95,7 +95,7 @@ public partial class WebPagesController
     public async Task<IActionResult> CollectionByShare(string token)
     {
         var share = await _db.WebPageShareLinks.Find(x => x.Token == token && x.CreatedBy == GetUserId()).FirstOrDefaultAsync();
-        if (share == null || share.ShareType != "collection") return CollectionMissing();
+        if (share == null || share.ShareType != "collection" || share.CollectionSnapshot != null) return CollectionMissing();
         if (share.CollectionId != null) return await GetCollection(share.CollectionId);
         var sites = await CollectionSitesAsync(share.TargetSiteIds());
         return Ok(ApiResponse<object>.Ok(new { collection = (HostedCollection?)null, sites,
@@ -165,14 +165,14 @@ public partial class WebPagesController
     public async Task<IActionResult> AdoptCollection(string token, [FromBody] CollectionAdoptRequest req)
     {
         var share = await _db.WebPageShareLinks.Find(x => x.Token == token && x.CreatedBy == GetUserId() && !x.IsRevoked).FirstOrDefaultAsync();
-        if (share == null || share.ShareType != "collection") return CollectionMissing();
+        if (share == null || share.ShareType != "collection" || share.CollectionSnapshot != null) return CollectionMissing();
         if (share.CollectionId != null) return await GetCollection(share.CollectionId);
         var ids = share.TargetSiteIds();
         var error = await ValidateCollectionAsync(new(req.Title, ids, req.MainSiteId));
         if (error != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, error));
         var collection = new HostedCollection { OwnerUserId = GetUserId(), Title = req.Title.Trim(), SiteIds = HostedCollectionRules.OrderedIds(ids, req.MainSiteId), MainSiteId = req.MainSiteId };
         await _db.HostedCollections.InsertOneAsync(collection, cancellationToken: CancellationToken.None);
-        var attached = await _db.WebPageShareLinks.UpdateOneAsync(x => x.Id == share.Id && x.CreatedBy == GetUserId() && !x.IsRevoked && x.CollectionId == null,
+        var attached = await _db.WebPageShareLinks.UpdateOneAsync(x => x.Id == share.Id && x.CreatedBy == GetUserId() && !x.IsRevoked && x.CollectionId == null && x.CollectionSnapshot == null,
             Builders<WebPageShareLink>.Update.Set(x => x.CollectionId, collection.Id).Set(x => x.MainSiteId, collection.MainSiteId)
                 .Set(x => x.CollectionVersion, collection.Version).Set(x => x.CollectionShareGeneration, collection.ShareGeneration)
                 .Set(x => x.Title, collection.Title).Set(x => x.SiteIds, collection.SiteIds), cancellationToken: CancellationToken.None);

@@ -4,6 +4,35 @@ import { readFile } from 'node:fs/promises';
 // 布局与阅读回归使用静止背景；动态画布单独由三档演示用例验证。
 test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
 
+for (const action of ['管理合集', '分享']) {
+  test(`章节分享旧阅读地址的${action}进入原章节入口`, async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
+      isAuthenticated: true, user: { userId: 'chapter-owner', username: 'chapter-owner', displayName: '章节验收', role: 'ADMIN' },
+      token: 'chapter-test-token', refreshToken: 'chapter-test-refresh', sessionKey: 'chapter-test-session',
+      permissions: ['access', 'web-pages.read'], permissionsLoaded: true, isRoot: false,
+      menuCatalog: [], menuCatalogLoaded: true, cdnBaseUrl: '', permFingerprint: 'chapter-test',
+    }, version: 0 })));
+    const calls: string[] = [];
+    await page.route('**/api/**', async route => {
+      const request = route.request(), path = new URL(request.url()).pathname;
+      calls.push(`${request.method()} ${path}`);
+      let data: unknown = { items: [], total: 0 };
+      if (path === '/api/web-pages/shares/view/chapter-token') data = {
+        title: '章节分享验收', shareType: 'collection', documentCollectionId: 'chapters', createdBy: 'chapter-owner', createdAt: '2026-11-15T00:00:00Z',
+        sites: [{ id: 'chapter-member', title: '章节成员', siteUrl: '', files: [], totalSize: 0 }],
+      };
+      else if (path.startsWith('/api/web-pages/collections/')) { await route.abort(); return; }
+      else if (path.endsWith('/comments')) data = { comments: [], commentsEnabled: true, canComment: false };
+      await route.fulfill({ json: { success: true, data, error: null } });
+    });
+    await page.goto('/s/wp/chapter-token');
+    await page.getByRole('button', { name: action, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/web-pages/collections/chapters${action === '分享' ? '/share' : ''}$`));
+    expect(calls.some(call => call.includes('/collections/compat/'))).toBe(false);
+    expect(calls.some(call => !call.startsWith('GET '))).toBe(false);
+  });
+}
+
 // 验证真实列表路由的生产组件；API 使用隔离测试数据，不操作用户站点。
 for (const width of [390, 1440]) {
   for (const theme of ['light', 'dark'] as const) {
