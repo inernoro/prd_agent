@@ -35,7 +35,7 @@ test('提示词草稿预览、读取恢复、冲突与网络未知结果保留�
   const {PromptPolicyPage}=await server.ssrLoadModule('/src/pages/PromptPolicyPage.tsx');const {MemoryRouter,Routes,Route}=globalThis.__promptRouter;
   root=createRoot(document.getElementById('root'));await act(async()=>root.render(React.createElement(MemoryRouter,{initialEntries:['/app-callers/a0/prompt-policy?callerReturn=search%3Dsummary%26page%3D2']},React.createElement(Routes,{},React.createElement(Route,{path:'/app-callers/:id/prompt-policy',element:React.createElement(PromptPolicyPage)})))));
   assert.ok(document.body.textContent.includes('读取失败'));f.readFailure=false;await click('重新读取');
-  assert.equal(field('固定开场要求').value,'固定前缀');
+  assert.equal(field('固定开场要求').value,'固定前缀');assert.ok(button('回滚到 v1'),'操作本身必须标明目标版本，不能等确认弹层才知道');
   await click('预览');assert.ok(document.querySelector('pre').textContent.includes('预览：固定前缀'));
   await type(field('固定开场要求'),'新草稿');assert.equal(document.querySelector('pre'),null,'编辑草稿后旧预览不可继续冒充当前输入');
   f.deferred=true;await click('预览');await type(field('示例请求'),'新示例');await act(async()=>f.resolvePreview());assert.equal(document.querySelector('pre'),null,'在途旧响应也不能恢复陈旧预览');

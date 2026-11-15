@@ -298,7 +298,7 @@ export function PromptPolicyPage() {
                           <td style={TABLE_CELL}>{item.policyChars}</td>
                           <td style={TABLE_CELL}>{formatPlatformTime(item.updatedAt)}</td>
                           <td style={{ ...TABLE_CELL, textAlign: 'right' }}>
-                            <Button size="sm" variant="ghost" style={{ whiteSpace: 'nowrap' }} disabled={busy || reading || needsReconcile || conflict || item.version === data.current?.version} onClick={() => void rollback(item.version)}>回滚</Button>
+                            <Button size="sm" variant="ghost" style={{ whiteSpace: 'nowrap' }} disabled={busy || reading || needsReconcile || conflict || item.version === data.current?.version} onClick={() => void rollback(item.version)}>回滚到 v{item.version}</Button>
                           </td>
                         </tr>
                       ))}
