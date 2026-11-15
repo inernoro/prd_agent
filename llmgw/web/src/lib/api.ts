@@ -721,6 +721,7 @@ export function bulkClaimConfigAuthority(req: BulkClaimConfigAuthorityRequest): 
   return apiRequest<BulkClaimConfigAuthorityResult>('/config-authority/bulk-claim', { method: 'POST', body: req });
 }
 export function getGatewayAppCallers(params?: {
+  id?: string;
   page?: number;
   pageSize?: number;
   status?: string;
@@ -733,6 +734,7 @@ export function getGatewayAppCallers(params?: {
 }): Promise<ApiResponse<GatewayAppCallersData>> {
   return apiRequest<GatewayAppCallersData>('/app-callers', {
     query: {
+      id: params?.id,
       page: params?.page,
       pageSize: params?.pageSize,
       status: params?.status,

@@ -4233,6 +4233,26 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void AppCallerDetail_IdLookupRemainsExactAndInsideExistingReadScope()
+    {
+        var source = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = source.IndexOf("app.MapGet(\"/gw/app-callers\",", StringComparison.Ordinal);
+        var end = source.IndexOf("}).RequireAuthorization(\"LogsRead\");", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var endpoint = source[start..end];
+        Assert.Contains("string? id,", endpoint);
+        Assert.Contains("if (!string.IsNullOrWhiteSpace(id)) filters.Add(fb.Eq(\"_id\", id.Trim()));", endpoint);
+        Assert.Contains("TenantAccess.FilterTeamScope(http, filters.Count > 0 ? fb.And(filters) : fb.Empty)", endpoint);
+        Assert.Contains("CountDocumentsAsync(filter)", endpoint);
+        Assert.Contains("gwAppCallers.Find(filter)", endpoint);
+        Assert.DoesNotContain("fb.Or(fb.Eq(\"_id\"", endpoint);
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var apiStart = api.IndexOf("export function getGatewayAppCallers(", StringComparison.Ordinal);
+        var apiEnd = api.IndexOf("export function updateGatewayAppCaller", apiStart, StringComparison.Ordinal);
+        Assert.Contains("id: params?.id", api[apiStart..apiEnd]);
+    }
+
+    [Fact]
     public void TenantHardening_EnforcesTeamReadScopeAndIdentityLifecycle()
     {
         var access = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");

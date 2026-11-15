@@ -9244,6 +9244,7 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
 // GW 自有 appCaller 注册表：由 llmgw-serve 入口层被动发现，控制台先只读展示。
 app.MapGet("/gw/app-callers", async (
     HttpContext http,
+    string? id,
     string? status,
     string? sourceSystem,
     string? ingressProtocol,
@@ -9258,6 +9259,7 @@ app.MapGet("/gw/app-callers", async (
     var ps = Math.Clamp(pageSize ?? 50, 1, 200);
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>();
+    if (!string.IsNullOrWhiteSpace(id)) filters.Add(fb.Eq("_id", id.Trim()));
     if (!string.IsNullOrWhiteSpace(status)) filters.Add(fb.Eq("Status", status.Trim()));
     if (!string.IsNullOrWhiteSpace(sourceSystem)) filters.Add(fb.Eq("SourceSystem", sourceSystem.Trim()));
     if (!string.IsNullOrWhiteSpace(ingressProtocol))

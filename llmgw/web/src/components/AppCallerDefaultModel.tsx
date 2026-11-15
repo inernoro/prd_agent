@@ -23,7 +23,7 @@ export function AppCallerDefaultsProvider({ children, returnSearch }: { children
   return <DefaultsContext.Provider value={{ models, failed, returnSearch, reload: () => setRevision(value => value + 1) }}>{children}</DefaultsContext.Provider>;
 }
 
-export function AppCallerDefaultModel({ item }: { item: GatewayAppCaller }) {
+export function AppCallerDefaultModel({ item }: { item: Pick<GatewayAppCaller, 'appCallerCode' | 'requestType'> }) {
   const { models, failed, returnSearch, reload } = useContext(DefaultsContext);
   if (failed) return <div className="lg-app-caller-stack"><span>默认模型读取失败</span><Button size="sm" variant="ghost" onClick={reload}>重新读取</Button></div>;
   if (!models) return <span>正在读取默认模型…</span>;

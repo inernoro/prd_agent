@@ -7,6 +7,7 @@ import type { GatewayAppCaller, GatewayAppCallersData, ModelPool } from '@/lib/t
 import { Button, Chip, InlineAlert, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
+import { callerManagementState } from '@/lib/appCallerIdentity';
 import { formatPlatformTime } from '@/lib/platformTime';
 import { canUseCapability } from '@/lib/access';
 import { AppCallerDefaultModel, AppCallerDefaultsProvider, AppCallerPromptPolicyLink } from '@/components/AppCallerDefaultModel';
@@ -44,7 +45,7 @@ type BulkDraft = {
 
 function statusChip(status: string) {
   const key = (status || '').toLowerCase();
-  if (['discovered', 'configured', 'active'].includes(key)) return { label: '允许调用', color: 'var(--text-primary)', bg: 'var(--bg-elevated)' };
+  if (['discovered', 'configured', 'active'].includes(key)) return { label: callerManagementState(status).label, color: 'var(--text-primary)', bg: 'var(--bg-elevated)' };
   if (key === 'disabled') return { label: '已停用', color: 'var(--warn)', bg: 'var(--warn-bg)' };
   if (key === 'archived') return { label: '已归档', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' };
   return { label: '状态未知', color: 'var(--warn)', bg: 'var(--warn-bg)' };
