@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useSettingsSessionOwner, useSettingsSessionState } from '../useSettingsSessionState';
 import { useEffect, useRef, useState } from 'react';
 import { Bot, KeyRound, LogOut, ShieldCheck, ShieldOff } from 'lucide-react';
@@ -243,7 +244,7 @@ export function AuthTab(): JSX.Element {
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-3"><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={ssoDenied} onClick={() => requestAgentAccess('auth')}><Bot />交给 Agent 配置</Button><span className="text-xs text-muted-foreground">客户端密钥只在受保护的输入框中填写，不会回显。</span></div>
-          {ssoLoading ? <p role="status" className="mt-3 text-sm text-muted-foreground">正在读取 SSO 配置…</p> : null}
+          {ssoLoading ? <ContentLoading label="读取 SSO 配置" variant="rows" className="mt-3 max-w-2xl" /> : null}
           {ssoReadError ? <div role="alert" className="mt-3 space-y-2 text-sm text-destructive"><p>{ssoDenied ? '当前会话无权读取 SSO 配置，请联系系统所有者。' : `SSO 配置读取失败：${ssoReadError}。当前状态未确认，可重试。`}</p><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={ssoLoading || ssoSaveState === 'running'} onClick={() => setSsoAttempt(value => value + 1)}>重新读取 SSO 配置</Button></div> : null}
           {sso ? (
             <div className="mt-4 grid gap-4 md:grid-cols-2">
