@@ -509,7 +509,7 @@ export function ServiceKeysPage() {
       />
 
       <PageBody className="lg-collection-page">
-        {lifecycleReceipt ? <InlineAlert tone="info">已确认{lifecycleReceipt.kind === 'revoke' ? '撤销' : '客户端切换'}「{lifecycleReceipt.name}」，当前清单待刷新；不会重发。<Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重读密钥清单</Button></InlineAlert> : null}
+        {lifecycleReceipt ? <InlineAlert tone="info">已确认{lifecycleReceipt.kind === 'revoke' ? '撤销' : '客户端切换'}「{lifecycleReceipt.name}」，{reading ? '正在刷新清单' : '当前清单待刷新，请重读'}；不会重发。<Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重读密钥清单</Button></InlineAlert> : null}
         {lifecycleUnknown ? <InlineAlert tone="error">
           「{lifecycleUnknown.name}」的{lifecycleUnknown.kind === 'revoke' ? '撤销' : '客户端切换确认'}结果未确认，可能已生效；未重提。
           <code>{lifecycleUnknown.id}</code>
@@ -520,7 +520,7 @@ export function ServiceKeysPage() {
         </InlineAlert> : null}
         {creationUnknown ? <InlineAlert tone="error">{creationUnknown.stage === 'caller' ? '调用身份登记结果未确认，密钥尚未签发。' : '密钥签发结果未确认，可能已生效；本次表单已保留，不会重复签发。'}<Button size="sm" variant="ghost" disabled={checkingCreation} onClick={() => void reconcileCreation()}>核对本次步骤</Button>{creationUnknown.stage === 'caller' ? <Link className="lg-text-link" to={callerWorkspaceReturnHref(creationUnknown.caller, creationUnknown.requestType, '')}>查看调用方治理</Link> : <Link className="lg-text-link" to={`/service-keys?${new URLSearchParams({ client: creationUnknown.request.clientCode, appCaller: creationUnknown.request.appCallerCodes[0] || '' })}`}>查看可能相关的密钥</Link>}</InlineAlert> : null}
         {creationCheck ? <InlineAlert tone="info">{creationCheck}</InlineAlert> : null}
-        {error ? <InlineAlert tone="error">{error}{!items ? <Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重新读取</Button> : null}</InlineAlert> : null}
+        {error && !lifecycleReceipt ? <InlineAlert tone="error">{error}{!items ? <Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重新读取</Button> : null}</InlineAlert> : null}
 
         {created ? (
           <div style={createdPanelStyle}>
