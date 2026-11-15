@@ -33,7 +33,7 @@ const NAV_GROUPS: NavGroup[] = [
     { to: '/platforms', label: '上游', icon: <Server size={16} />, page: 'routeConfig' },
   ] },
   { label: '开发者', items: [
-    { to: '/quickstart', label: 'Quickstart', icon: <BookOpen size={16} />, page: 'quickstart' },
+    { to: '/quickstart', label: '快速接入', icon: <BookOpen size={16} />, page: 'quickstart' },
     { to: '/service-keys', label: '接入密钥', icon: <KeyRound size={16} />, page: 'serviceKeys' },
     { to: '/learn', label: '学习中心', icon: <BookOpen size={16} />, page: 'learn' },
   ] },

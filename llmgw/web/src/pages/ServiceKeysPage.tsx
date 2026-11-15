@@ -15,7 +15,7 @@
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, KeyRound, Plus, RefreshCw, X } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { confirmServiceKeyClientCutover, createGatewayAppCaller, createServiceKey, getGatewayAppCallers, getLegacyKeyCutover, getOrganization, getServiceKeys, revokeServiceKey, updateLegacyKeyCutover } from '@/lib/api';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
@@ -23,6 +23,8 @@ import { invalidateOnboardingCache } from '@/lib/onboarding';
 import type { CreatedServiceKey, LegacyKeyCutoverData, OrganizationData, ServiceKeyItem } from '@/lib/types';
 import { Button, Chip, InlineAlert, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
+import { formatPlatformTime } from '@/lib/platformTime';
+import { serviceKeyValidity } from '@/lib/serviceKeyValidity';
 import { canCreateWildcardServiceKey, canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP, INSET_PADDING } from '@/lib/surface';
 import { BODY_TEXT, FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE, TABLE_CELL, TABLE_HEAD_CELL } from '@/lib/typography';
@@ -83,16 +85,29 @@ function ScopeHelp() {
 }
 
 export function ServiceKeysPage() {
+  const [params] = useSearchParams();
+  const contextClient = (params.get('client') || '').trim();
+  const contextCaller = (params.get('appCaller') || '').trim();
   const { tenant } = useAuth();
   const { confirm } = useDialogs();
   const isInternalTenant = tenant?.isInternal === true;
   // Developer 的密钥必须绑团队（服务端硬性要求），Owner/Admin 留空则是租户级密钥。
   const isDeveloper = tenant?.role === 'developer';
   const canManageLegacyCutover = canUseCapability(tenant?.role, 'configWrite');
+  const [validityNow, setValidityNow] = useState(Date.now);
+  const keyValidity = (item: ServiceKeyItem) => serviceKeyValidity(item, validityNow);
   const [scopeCopied, setScopeCopied] = useState(false);
   const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
+  useEffect(() => setSelectedKeyId(null), [contextClient, contextCaller]);
   const [keyTab, setKeyTab] = useState("permissions");
   const [items, setItems] = useState<ServiceKeyItem[] | null>(null);
+  useEffect(() => {
+    const now = Date.now();
+    const upcoming = (items ?? []).filter(item => item.enabled && item.expiresAt).map(item => new Date(item.expiresAt!).getTime()).filter(time => Number.isFinite(time) && time > now);
+    if (!upcoming.length) return;
+    const timer = window.setTimeout(() => setValidityNow(Date.now()), Math.min(30_000, Math.max(1, Math.min(...upcoming) - now + 1)));
+    return () => window.clearTimeout(timer);
+  }, [items, validityNow]);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -132,11 +147,13 @@ export function ServiceKeysPage() {
 
   const load = useCallback(async () => {
     setError(null);
+    try {
     const res = await getServiceKeys();
-    if (res.success) setItems(res.data);
+    if (res.success) { setItems(res.data); setValidityNow(Date.now()); }
     else setError(res.error?.message || '加载接入密钥失败');
     if (canManageLegacyCutover) {
       const legacyRes = await getLegacyKeyCutover();
+      if (!legacyRes.success) setError(legacyRes.error?.message || '旧共享密钥状态未读取，请刷新核对。');
       if (legacyRes.success && legacyRes.data.applicable) {
         setLegacy(legacyRes.data);
         setLegacyStatus(legacyRes.data.status === 'not-applicable' ? 'observing' : legacyRes.data.status);
@@ -146,6 +163,7 @@ export function ServiceKeysPage() {
         setLegacyRequired(String(legacyRes.data.requiredSuccessorObservations));
       }
     }
+    } catch { setError('密钥配置读取未完成，请刷新后核对。'); }
   }, [canManageLegacyCutover]);
 
   useEffect(() => {
@@ -377,7 +395,7 @@ export function ServiceKeysPage() {
     // ::intent 这些内部类型，只能引用已登记的 code —— 切到 map 就锁回「选择已有」。
     if (nextIsMap) setAppCallerMode('existing');
   };
-  const activeKeys = (items ?? []).filter((item) => item.enabled);
+  const activeKeys = (items ?? []).filter((item) => keyValidity(item).value === 'active');
   const mapCoverage = (['runtime', 'release-gate', 'canary'] as const).map((requiredPurpose) => ({
     purpose: requiredPurpose,
     ready: activeKeys.some((item) => item.sourceSystem.toLowerCase() === 'map' && item.environment === 'production' && item.purpose === requiredPurpose),
@@ -407,21 +425,14 @@ export function ServiceKeysPage() {
 
   const selectedKey = items?.find((item) => item.id === selectedKeyId);
   const keyOverview = <>
-        {items ? <div className="lg-collection-key-overview" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: GAP.normal }}>
-          {isInternalTenant ? <div style={coverageCardStyle}>
-            <strong style={SECTION_TITLE}>MAP 生产 key 覆盖</strong><HelpPopover label="MAP 生产 key 覆盖">runtime、release-gate、canary 各用一把 production scoped key。</HelpPopover>
-            <div style={chipRowStyle}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? 'var(--ok)' : 'var(--warn)'} bg={item.ready ? 'var(--ok-bg)' : 'var(--warn-bg)'} />)}</div>
-
-          </div> : null}
-          <div style={coverageCardStyle}>
-            <strong style={SECTION_TITLE}>外部平台独立身份</strong><HelpPopover label="外部平台独立身份">每个 clientCode 与环境各一把 key，不跨 purpose 或 environment。</HelpPopover>
-            <div style={chipRowStyle}>{externalIdentities.length ? externalIdentities.map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={HINT_TEXT}>暂无外部平台 key</span>}</div>
-
-          </div>
-        </div> : null}
+        {items && isInternalTenant ? <details className="lg-key-coverage" style={{ padding: '6px 0', fontSize: 'var(--fs-secondary)' }}>
+          <summary style={{ cursor: 'pointer' }}>MAP 生产密钥 · {mapCoverage.some(item => !item.ready) ? `${mapCoverage.filter(item => !item.ready).length} 类用途缺失` : '配置覆盖完整'}</summary>
+          <div style={chipRowStyle}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? 'var(--ok)' : 'var(--warn)'} bg={item.ready ? 'var(--ok-bg)' : 'var(--warn-bg)'} />)}</div>
+          <p style={HINT_TEXT}>runtime、release-gate、canary 各用一把 production scoped key；仅核对有效凭据覆盖，未验证业务。</p>
+        </details> : null}
 
         {legacy ? <details className="lg-collection-key-legacy" style={legacyBlockStyle}>
-          <summary style={legacySummaryStyle}>Legacy shared key 收口 · {legacy.status} · 后继观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}</summary>
+          <summary style={legacySummaryStyle}>旧共享密钥 · {legacy.status === 'revoked' ? '已撤销' : legacy.status === 'ready' ? '等待撤销' : '替换观察中'} · 替代密钥观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}{legacy.status !== 'revoked' ? ` · ${legacy.deadlineAt ? formatTime(legacy.deadlineAt) + ' 后拒绝旧密钥调用' : '尚未设置截止时间'}` : ''}</summary>
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap', marginTop: GAP.section }}>
             <span style={HINT_TEXT}>
               收口判定
@@ -610,7 +621,7 @@ export function ServiceKeysPage() {
         ) : (
           <>
           <div className="lg-collection-workspace lg-collection-key-workspace"><div className="lg-collection-list">{keyOverview}
-          <CollectionView items={items} placeholder="搜索密钥名称、客户端或调用用途" searchText={(item) => [item.name, item.keyPrefix, item.clientCode, item.environment, item.purpose, ...item.appCallerCodes].join(' ')} filters={[{ value: 'active', label: '有效', matches: (item) => item.enabled }, { value: 'revoked', label: '已撤销', matches: (item) => !item.enabled }]}>
+          <CollectionView key={`${contextClient}:${contextCaller}`} initialFilter={contextClient || contextCaller ? 'context' : 'active'} allFilterLabel="全部密钥（含历史）" emptyText="当前条件没有密钥，可切换状态或清除筛选" items={items} placeholder="搜索密钥名称、客户端或调用用途" searchText={(item) => [item.name, item.keyPrefix, item.clientCode, item.environment, item.purpose, ...item.appCallerCodes].join(' ')} filters={[...(contextClient || contextCaller ? [{ value: 'context', label: '同用途（含历史）', matches: (item: ServiceKeyItem) => (!contextClient || item.clientCode === contextClient) && (!contextCaller || item.appCallerCodes.some(code => code.toLowerCase() === contextCaller.toLowerCase())) }] : []), { value: 'active', label: '有效', matches: (item) => keyValidity(item).value === 'active' }, { value: 'expired', label: '已过期', matches: (item) => keyValidity(item).value === 'expired' }, { value: 'unknown', label: '有效期未知', matches: (item) => keyValidity(item).value === 'unknown' }, { value: 'revoked', label: '已撤销', matches: (item) => !item.enabled }]}>
           {(pageItems) => <>
           <div className="lg-service-key-desktop">
             <table className="lg-service-key-table lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -623,7 +634,7 @@ export function ServiceKeysPage() {
                 <td style={td}><Button size="sm" variant="ghost" onClick={() => { setKeyTab("permissions"); setScopeCopied(false); setSelectedKeyId(item.id); }}>{item.appCallerCodes.length} 个调用用途</Button><div style={HINT_TEXT}>协议 {item.ingressProtocols.length} · Scope {item.scopes.length}</div></td>
                 <td style={td} title={item.teamId || '租户级'}>{item.teamId || '租户级'}<div style={mutedMono}>{item.createdByUsername || '历史密钥'}</div></td>
                 <td style={td}><div title={formatTime(item.lastUsedAt)}>{formatTime(item.lastUsedAt)}</div><div style={HINT_TEXT} title={formatTime(item.expiresAt)}>过期：{formatTime(item.expiresAt)}</div></td>
-                <td style={td}><div className="lg-collection-key-status"><Chip label={item.enabled ? '有效' : '已撤销'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} /><Button size="sm" variant="ghost" onClick={() => { setKeyTab("permissions"); setScopeCopied(false); setSelectedKeyId(item.id); }}>详情</Button></div></td>
+                <td style={td}><div className="lg-collection-key-status"><Chip label={keyValidity(item).label} color={keyValidity(item).color} bg={keyValidity(item).bg} /><Button size="sm" variant="ghost" onClick={() => { setKeyTab("permissions"); setScopeCopied(false); setSelectedKeyId(item.id); }}>详情</Button></div></td>
               </tr>)}</tbody>
             </table>
           </div>
@@ -631,7 +642,7 @@ export function ServiceKeysPage() {
             {pageItems.map((item) => <article key={item.id} className="lg-service-key-card">
               <div className="lg-service-key-card-heading">
                 <div><strong>{item.name}</strong><code>{item.keyPrefix}</code></div>
-                <Chip label={item.enabled ? '有效' : '已撤销'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} />
+                <Chip label={keyValidity(item).label} color={keyValidity(item).color} bg={keyValidity(item).bg} />
               </div>
               <div className="lg-service-key-card-identity">
                 <span>工作负载身份</span>
@@ -725,9 +736,7 @@ function buildAppCallerCode(clientCode: string, feature: string, requestType: Se
 }
 
 function formatTime(value?: string | null) {
-  if (!value) return '未设置';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return value ? formatPlatformTime(value) : '—';
 }
 
 function toLocalInput(value: string) {
@@ -762,7 +771,6 @@ const surfaceCardStyle: React.CSSProperties = {
   borderRadius: 'var(--radius)',
   background: 'var(--bg-surface)',
 };
-const coverageCardStyle: React.CSSProperties = surfaceCardStyle;
 const legacyBlockStyle: React.CSSProperties = surfaceCardStyle;
 const chipRowStyle: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginTop: GAP.normal };
 const legacySummaryStyle: React.CSSProperties = {

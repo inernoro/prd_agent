@@ -9078,6 +9078,7 @@ a:focus-visible {
 .lg-upstream-global-panel, .lg-provider-bulk-panel { position: fixed; top: var(--toolbar-popover-top, 160px); right: var(--toolbar-popover-right, 16px); width: min(640px, calc(100vw - 48px)); max-height: min(65vh, calc(100vh - var(--toolbar-popover-top, 160px) - 16px)); overflow: auto; z-index: 25; padding: 16px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); box-shadow: var(--shadow-card); }
 .lg-provider-bulk-panel { display: flex; flex-wrap: wrap; gap: 12px; }
 .lg-provider-bulk-panel input[type="password"] { flex: 1 1 100%; }
+.lg-qs-step-card > button.lg-text-link { border: 0; background: transparent; color: var(--accent); padding: 8px 0; min-height: 36px; font-size: var(--fs-secondary); cursor: pointer; text-align: left; }
 @media (max-width: 680px) { .lg-upstream-navigation { gap: 4px; } .lg-upstream-global-panel, .lg-provider-bulk-panel { left: 16px; right: 16px; width: auto; } }
 @media (max-width: 680px) {
   .lg-upstream-navigation > :first-child { flex-basis: 100%; width: 100%; }
@@ -9106,3 +9107,4 @@ a:focus-visible {
   .lg-collection-owned-table td { font-size: var(--fs-secondary); }
   .lg-collection-owned-table strong { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
 }
+.lg-qs-single-team { min-height: 44px; display: flex; align-items: center; color: var(--text-primary); font-size: var(--fs-body); }
