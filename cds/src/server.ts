@@ -53,7 +53,7 @@ import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
 import { createCodeReviewsRouter } from './routes/code-reviews.js';
 import { CodeReviewService } from './services/code-review.js';
-import { codeReviewRepositoryRoot } from './services/code-review-source.js';
+import { codeReviewGithubToken, codeReviewRepositoryRoot } from './services/code-review-source.js';
 import { createCodeReviewInputs } from './services/code-review-inputs.js';
 import { createCodeReviewMail } from './services/code-review-mail.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
@@ -4969,14 +4969,10 @@ export function createServer(deps: ServerDeps): express.Express {
     publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL || deps.config.publicBaseUrl || 'http://localhost:9900',
     ownerScope: process.env.CDS_CODE_REVIEW_OWNER || (process.env.CDS_PROJECT_ID
       ? `${process.env.CDS_PROJECT_ID}::${process.env.VITE_GIT_BRANCH || 'default'}` : 'cds-master'),
-    githubToken: async (projectId, githubUrl) => {
-      const project = deps.stateService.getProject(projectId);
-      // Installation grants are project-bound; never borrow a different project's authorization.
-      if (!project?.githubInstallationId || !githubAppClient) return undefined;
-      const repo = new URL(githubUrl).pathname.replace(/^\//, '').replace(/\/$/, '').replace(/\.git$/, '');
-      if (project.githubRepoFullName?.toLowerCase() !== repo.toLowerCase()) return undefined;
-      return githubAppClient.getInstallationToken(project.githubInstallationId);
-    },
+    githubToken: (projectId, githubUrl) => codeReviewGithubToken(deps.stateService.getProject(projectId), githubUrl, {
+      getInstallationToken: githubAppClient ? id => githubAppClient.getInstallationToken(id) : undefined,
+      getDeviceToken: userId => deps.stateService.getGithubDeviceAuth(userId)?.token,
+    }),
     cdsSnapshot: async input => {
       const project = deps.stateService.getProject(input.projectId);
       const branch = deps.stateService.getBranch(input.branchId);
