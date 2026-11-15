@@ -55,7 +55,7 @@ createRoot(document.getElementById('root')).render(<ScopeFixture/>);`);
 }
 
 /** Non-settings consumer regression: open/cancel a branch deletion, never perform deletion. */
-export async function verifyBranchConfirmationKeyboard(browser,base,out){
+export async function verifyBranchConfirmationKeyboard(browser,base,out,{baseline=false}={}){
   const {resolveFixture,isEventStream}=await import('./fixtures/mobile-layout-fixtures.mjs');
   await fs.mkdir(out,{recursive:true});const context=await browser.newContext({viewport:{width:1440,height:940}});const errors=[],writes=[];
   await context.route('**/api/**',async route=>{
@@ -68,6 +68,9 @@ export async function verifyBranchConfirmationKeyboard(browser,base,out){
   const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
   try{
     await page.goto(`${base}/branches/fixture-project`);const trigger=page.getByRole('button',{name:'删除分支',exact:true}).first();await trigger.waitFor();
+    if(baseline){
+      await trigger.focus();await page.keyboard.press('Enter');await page.waitForTimeout(250);const confirmation=page.getByRole('dialog',{name:/^删除分支/});const visible=await confirmation.count()>0;const focusedCancel=visible && await confirmation.getByRole('button',{name:'取消',exact:true}).evaluate(element=>element===document.activeElement);const result={provenance:'deterministic-fixture-baseline-source-c0bdf9c54',case:'branch-delete-keyboard-opens-confirmation-and-focuses-safe-cancel',pass:visible&&focusedCancel,confirmationVisible:visible,focusedCancel,activeText:await page.evaluate(()=>document.activeElement?.textContent),writes,errors};await page.screenshot({path:path.join(out,'branch-keyboard-baseline.png')});assert.equal(result.pass,false,'旧布局未暴露代表行为问题');assert.deepEqual(writes,[]);await fs.writeFile(path.join(out,'branch-baseline-results.json'),JSON.stringify(result,null,2));return result;
+    }
     await assertConfirmationKeyboard(page,trigger,/CDS|分支/);assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);
     const result={provenance:'deterministic-fixture',case:'branch-delete-consumer-keyboard-cancel-without-write',pass:true,writes,errors};await fs.writeFile(path.join(out,'branch-results.json'),JSON.stringify(result,null,2));return result;
   }catch(error){await page.screenshot({path:path.join(out,'branch-failure.png')});await fs.writeFile(path.join(out,'branch-failure.txt'),`${error.stack}\n${errors.join('\n')}\n${await page.locator('body').innerText()}`);throw error;}finally{await context.close();}
