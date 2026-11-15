@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import {
   buildReleaseInventoryCommand,
@@ -263,6 +267,27 @@ describe('远端命令', () => {
     expect(command).not.toContain('readlink -f');
     // ls 在目录不存在时非零退出，会被 sshExec 判成「读不回来」，故必须 exit 0 收尾。
     expect(command.trimEnd().endsWith('exit 0')).toBe(true);
+  });
+
+  it('实际提交只读当前远端worktree，缺少current时不借祖先仓库HEAD冒充', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-release-observed-'));
+    try {
+      const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+      git('init'); git('config', 'user.email', 'release@example.test'); git('config', 'user.name', 'release test');
+      fs.writeFileSync(path.join(root, 'version'), 'original'); git('add', 'version'); git('commit', '-m', 'original');
+      const original = git('rev-parse', 'HEAD');
+      fs.writeFileSync(path.join(root, 'version'), 'advanced'); git('add', 'version'); git('commit', '-m', 'advanced');
+      const app = path.join(root, 'app'); fs.mkdirSync(app);
+      const releaseRoot = path.join(root, '.cds-releases', target.id);
+      const worktrees = path.join(releaseRoot, 'worktrees'); fs.mkdirSync(worktrees, { recursive: true });
+      const actualTarget = { ...target, ssh: { ...target.ssh!, appPath: app } };
+      const read = () => parseRemoteReleaseInventory(execFileSync('bash', ['-c', buildReleaseInventoryCommand(actualTarget, composeStrategy)!], { encoding: 'utf8' }));
+      expect(read().currentCommitSha).toBeUndefined();
+      const worktree = path.join(worktrees, RUN_A); git('worktree', 'add', '--detach', worktree, original);
+      fs.symlinkSync(worktree, path.join(releaseRoot, 'current'));
+      expect(read().currentCommitSha).toBe(original);
+      expect(original).not.toBe(git('rev-parse', 'HEAD'));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
   it('static 盘点额外取回成品目录，compose 不取', () => {

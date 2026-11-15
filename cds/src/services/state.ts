@@ -69,7 +69,7 @@ import type {
   InfraMaintenanceJobKind,
 } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
-import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
+import { mergeBranchProfiles, isValidExtraProfileId, assertBranchServiceIsolation } from './branch-extra-services.js';
 import { MAX_OBSERVATIONS } from './uptime-custom-monitor.js'; // monitor-observation-import
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -1587,6 +1587,13 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     branches: readonly BranchEntry[] = Object.values(this.state.branches || {}),
     profiles: readonly BuildProfile[] = this.state.buildProfiles,
   ): void {
+    for (const branch of branches) {
+      const projectId = branch.projectId || 'default';
+      const slug = this.getProject(projectId)?.slug;
+      assertBranchServiceIsolation(profiles.filter(p => (p.projectId || 'default') === projectId), branch,
+        (this.state.infraServices || []).filter(s => !s.projectId || s.projectId === projectId).map(s => s.id),
+        slug ? `-${slug}` : '');
+    }
     const targets = new Map<string, ProfileStorageTarget>();
     const add = (t: ProfileStorageTarget) => targets.set(profileStorageTargetKey(t), t);
     for (const row of Object.values(this.state.storageBirths || {})) if (row.binding.scope === 'branch-private')
@@ -1602,6 +1609,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       const original = this.getBranch(t.branchId);
       const members = (branch: BranchEntry | undefined, rows: readonly BuildProfile[]) => ({
         projectId:branch?.projectId || 'default',
+        excluded:branch?.excludedProjectProfileIds?.includes(t.serviceId) || false,
         project:rows.filter(p=>(p.projectId || 'default')===t.projectId && p.id===t.serviceId),
         extra:(branch?.extraProfiles || []).filter(p=>p.id===t.serviceId),
         override:branch?.profileOverrides?.[t.serviceId] || {},
@@ -3312,6 +3320,24 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     return plan;
   }
 
+  getReleaseBatches(projectId?: string): import('../domain/release-batch.js').ReleaseBatch[] {
+    return Object.values(this.state.releaseBatches || {})
+      .filter(batch => !projectId || batch.projectId === projectId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map(batch => structuredClone(batch));
+  }
+
+  getReleaseBatch(id: string): import('../domain/release-batch.js').ReleaseBatch | undefined {
+    const batch = this.state.releaseBatches && Object.hasOwn(this.state.releaseBatches, id) ? this.state.releaseBatches[id] : undefined;
+    return batch ? structuredClone(batch) : undefined;
+  }
+
+  saveReleaseBatch(batch: import('../domain/release-batch.js').ReleaseBatch): void {
+    this.state.releaseBatches ||= {};
+    this.state.releaseBatches[batch.id] = structuredClone(batch);
+    this.save(HINT_GLOBAL);
+  }
+
   getReleaseRuns(filter: { projectId?: string; targetId?: string; branchId?: string } = {}): ReleaseRun[] {
     if (!this.state.releaseRuns) return [];
     return Object.values(this.state.releaseRuns)
@@ -3437,8 +3463,11 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const runs = Object.values(this.state.releaseRuns).filter((run) => run.targetId === targetId);
     const doomed = selectReleaseRunsToPrune({ runs, nowMs: Date.now() });
     if (doomed.length === 0) return;
-    for (const releaseId of doomed) delete this.state.releaseRuns[releaseId];
-    console.warn(`[release] 保留策略淘汰目标 ${targetId} 的 ${doomed.length} 条历史发布记录: ${doomed.join(', ')}`);
+    const batchReferences = new Set(this.getReleaseBatches().flatMap(batch => batch.targets.flatMap(row =>
+      [row.previousReleaseId, row.runId, row.rollbackRunId, ...row.attempts.map(attempt => attempt.runId)])));
+    const pruned = doomed.filter(releaseId => !batchReferences.has(releaseId));
+    for (const releaseId of pruned) delete this.state.releaseRuns[releaseId];
+    if (pruned.length) console.warn(`[release] 保留策略淘汰目标 ${targetId} 的 ${pruned.length} 条历史发布记录: ${pruned.join(', ')}`);
   }
 
   // ── 发布前检查结论（阶段三记账）──
@@ -4309,6 +4338,58 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       this.getBuildProfilesForProject(branch.projectId || 'default'),
       branch,
     );
+  }
+
+  /** Opaque compare-and-set token: configuration values never leave this method. */
+  getBranchServiceIsolationRevision(branch: BranchEntry): string {
+    return storageProvisionDigest({
+      projectId: branch.projectId, profiles: this.getBuildProfilesForProject(branch.projectId),
+      extraProfiles: branch.extraProfiles || [], overrides: branch.profileOverrides || {},
+      excluded: branch.excludedProjectProfileIds || [],
+    });
+  }
+
+  /** One atomic branch-only change; no deployment, container or volume operation. */
+  setBranchServiceIsolation(branchId: string, input: {
+    expectedRevision: string; excludedProjectProfileIds: string[];
+    dependsOnOverrides?: Record<string, string[] | null>;
+  }): BranchEntry {
+    const branch = this.getBranch(branchId);
+    if (!branch) throw new Error('分支不存在');
+    if (input.expectedRevision !== this.getBranchServiceIsolationRevision(branch)) throw new Error('分支配置已变化，请重新读取');
+    if (branch.status !== 'idle' || branch.deleting || branch.remoteDeployment
+      || Object.values(branch.services || {}).some(s => s.status !== 'stopped')) {
+      throw new Error('须先停止并对账本分支全部操作');
+    }
+    if (!Array.isArray(input.excludedProjectProfileIds)
+      || input.excludedProjectProfileIds.some(id => !isValidExtraProfileId(id))) throw new Error('排除清单必须是服务标识数组');
+    const candidate = structuredClone(branch);
+    candidate.excludedProjectProfileIds = [...input.excludedProjectProfileIds];
+    const changes = input.dependsOnOverrides || {};
+    if (typeof changes !== 'object' || Array.isArray(changes)) throw new Error('依赖覆盖必须是对象');
+    const available = new Set(mergeBranchProfiles(this.getBuildProfilesForProject(branch.projectId),
+      { ...branch, excludedProjectProfileIds: [] }).map(p => p.id));
+    for (const [id, deps] of Object.entries(changes)) {
+      if (!available.has(id) || !isValidExtraProfileId(id) || candidate.excludedProjectProfileIds.includes(id)
+        || (deps !== null && (!Array.isArray(deps) || new Set(deps).size !== deps.length || deps.some(d => !isValidExtraProfileId(d))))) {
+        throw new Error('依赖覆盖包含非法服务或依赖');
+      }
+      candidate.profileOverrides ||= {};
+      const override = { ...candidate.profileOverrides[id] };
+      if (deps === null) delete override.dependsOn;
+      else override.dependsOn = [...deps];
+      candidate.profileOverrides[id] = override;
+    }
+    for (const id of candidate.excludedProjectProfileIds) {
+      if (branch.services?.[id] || branch.replicaSets?.[id]) throw new Error('被排除服务仍有容器或复制集记录，请先对账');
+    }
+    this.assertProfileStorageDeclarationsPreserved([candidate]);
+    if (candidate.excludedProjectProfileIds.length) branch.excludedProjectProfileIds = candidate.excludedProjectProfileIds;
+    else delete branch.excludedProjectProfileIds;
+    if (Object.keys(changes).length) branch.profileOverrides = candidate.profileOverrides;
+    try { this.save([{ kind: 'branches', id: branch.id }]); }
+    catch { throw new Error('service_isolation_save_unconfirmed'); }
+    return branch;
   }
 
   /**
@@ -6084,10 +6165,12 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       if (params.projectId && (branch.projectId || 'default') !== params.projectId) continue;
       const hasOverrides = branch.profileOverrides && Object.keys(branch.profileOverrides).length > 0;
       const hasExtras = branch.extraProfiles && branch.extraProfiles.length > 0;
-      if (!hasOverrides && !hasExtras && !branch.derivedFromBranchId) continue;
+      const hasExclusions = !!branch.excludedProjectProfileIds?.length;
+      if (!hasOverrides && !hasExtras && !hasExclusions && !branch.derivedFromBranchId) continue;
       branchConfigs[branchId] = JSON.parse(JSON.stringify({
         ...(hasOverrides ? { profileOverrides: branch.profileOverrides } : {}),
         ...(hasExtras ? { extraProfiles: branch.extraProfiles } : {}),
+        ...(hasExclusions ? { excludedProjectProfileIds: branch.excludedProjectProfileIds } : {}),
         ...(branch.derivedFromBranchId ? {
           derivedFromBranchId: branch.derivedFromBranchId,
           derivedFromBranchName: branch.derivedFromBranchName,
@@ -6134,6 +6217,22 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * This is a pure preflight before even the pre-rollback backup snapshot.
    */
   private assertStorageSnapshotRollbackAllowed(target: ConfigSnapshot): void {
+    // A global snapshot cannot silently reinstate a deliberately omitted legacy service.
+    for (const branch of Object.values(this.state.branches)) {
+      if (target.projectId && branch.projectId !== target.projectId) continue;
+      const before = branch.excludedProjectProfileIds || [];
+      const after = target.payload.branchConfigs?.[branch.id]?.excludedProjectProfileIds || [];
+      if (before.length || after.length) {
+        const snap = target.payload.branchConfigs?.[branch.id];
+        if (JSON.stringify(before) !== JSON.stringify(after)
+          || JSON.stringify(branch.profileOverrides || {}) !== JSON.stringify(snap?.profileOverrides || {})
+          || JSON.stringify(branch.extraProfiles || []) !== JSON.stringify(snap?.extraProfiles || [])
+          || JSON.stringify(this.getBuildProfilesForProject(branch.projectId)) !== JSON.stringify(target.payload.buildProfiles.filter(p => p.projectId === branch.projectId))) {
+          throw new Error('请先沿本分支隔离入口停止并对账，再恢复不同的服务配置');
+        }
+      }
+    }
+
     const refuse = () => { throw new Error('storage_retained_service_delete_refused: 回滚会覆盖已分配或待确认存储的完整配置，请保留原配置并使用停止'); };
     const same = (left: unknown, right: unknown) => storageProvisionDigest(left) === storageProvisionDigest(right);
     const infraTargets = new Map<string, {projectId: string; id: string}>();
@@ -6177,6 +6276,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
           const pick = (row: typeof branch | NonNullable<ConfigSnapshot['payload']['branchConfigs']>[string]) => ({
             profileOverrides: row.profileOverrides && Object.keys(row.profileOverrides).length ? row.profileOverrides : undefined,
             extraProfiles: row.extraProfiles?.length ? row.extraProfiles : undefined,
+            excludedProjectProfileIds: row.excludedProjectProfileIds?.length ? row.excludedProjectProfileIds : undefined,
             ...(row.derivedFromBranchId ? {derivedFromBranchId:row.derivedFromBranchId,derivedFromBranchName:row.derivedFromBranchName,derivedAt:row.derivedAt} : {}),
           });
           if (!same(pick(branch),pick(target.payload.branchConfigs[branch.id] || {}))) refuse();
@@ -6212,6 +6312,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
         if (snap) {
           if (snap.profileOverrides) branch.profileOverrides = JSON.parse(JSON.stringify(snap.profileOverrides));
           else delete branch.profileOverrides;
+          if (snap.excludedProjectProfileIds?.length) branch.excludedProjectProfileIds = [...snap.excludedProjectProfileIds];
+          else delete branch.excludedProjectProfileIds;
           if (snap.extraProfiles) branch.extraProfiles = JSON.parse(JSON.stringify(snap.extraProfiles));
           else delete branch.extraProfiles;
           if (snap.derivedFromBranchId) {
@@ -6227,6 +6329,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
           // 拍照时该分支没有任何分支层配置 → 恢复为无配置
           delete branch.profileOverrides;
           delete branch.extraProfiles;
+          delete branch.excludedProjectProfileIds;
           delete branch.derivedFromBranchId;
           delete branch.derivedFromBranchName;
           delete branch.derivedAt;

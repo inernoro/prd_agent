@@ -1073,6 +1073,32 @@ describe('MongoSplitStateBackingStore', () => {
     expect(Object.keys(global.containerLogArchives || {}).length).toBeLessThan(260);
   });
 
+  it('keeps batch receipts and referenced release evidence when diagnostic state is compacted', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+    const state = emptyState();
+    state.releaseRuns = Object.fromEntries(Array.from({ length: 260 }, (_, index) => [
+      `rel-${index}`, { releaseId: `rel-${index}`, projectId: 'p1', targetId: 'target-a',
+        status: 'success', startedAt: `t-${index}`, commitSha: String(index), logs: [] },
+    ])) as any;
+    state.releaseBatches = { batch: { id: 'batch', status: 'interrupted', requests: { 'start-request': { action: 'start' } },
+      targets: [{ previousReleaseId: 'rel-0', runId: 'rel-1', rollbackRunId: 'rel-2', attempts: [{ runId: 'rel-3' }] }] } } as any;
+    state.logs = Object.fromEntries(Array.from({ length: 260 }, (_, index) => [String(index), [{ type: 'build',
+      startedAt: 't', status: 'completed', events: Array.from({ length: 6 }, () => ({
+        step: 'log', status: 'info', chunk: 'x'.repeat(20 * 1024) })),
+      containerLogSnapshots: [{ profileId: 'api', containerName: 'c', logs: 'y'.repeat(64 * 1024) }] }]])) as any;
+    store.save(state);
+    await store.flush();
+    const persisted = handle.global.docs.get('global')!.state;
+    expect(Buffer.byteLength(JSON.stringify(persisted))).toBeLessThanOrEqual(12 * 1024 * 1024);
+    for (const runId of ['rel-0', 'rel-1', 'rel-2', 'rel-3']) expect(persisted.releaseRuns?.[runId]).toBeDefined();
+    expect(persisted.releaseBatches?.batch.requests['start-request']).toEqual({ action: 'start' });
+    const reopened = new MongoSplitStateBackingStore(handle);
+    await reopened.init();
+    expect(reopened.load()?.releaseBatches?.batch.status).toBe('interrupted');
+  });
+
   it('moves webhook deliveries and activity logs into split collections and round-trips them on init', async () => {
     const handle = new FakeSplitHandle();
     const store = new MongoSplitStateBackingStore(handle);

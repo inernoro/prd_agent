@@ -165,6 +165,8 @@ const EXACT = {
   '/api/infra/catalog': { services: [] },
   '/api/cds-system/operator/requests': { requests: [] },
   '/api/cds-system/perf-health': { status: 'ok', samples: [] },
+  '/api/releases/batches/accepted-versions': { versions: [] },
+  '/api/releases/batches': { batches: [] },
   '/api/releases/targets': { targets: [] },
   '/api/github/app': { configured: false },
   '/api/github/installations': { installations: [] },

@@ -161,6 +161,8 @@ export function stripAutoRestoreSuffix(name: string): { id: string; autoRestore:
 
 /** 远端一次只读盘点的结果。路径一律是远端复算出来的绝对路径，basename 才是 releaseId。 */
 export interface RemoteReleaseInventory {
+  /** Full commit read from the current remote worktree, never inferred from the run ledger. */
+  currentCommitSha?: string;
   /** readlink current 的原值；空字符串 = 链接不存在。 */
   currentTarget: string;
   /** readlink previous 的原值；空字符串 = 链接不存在。 */
@@ -447,6 +449,7 @@ for p,kind in zip(sys.argv[1:],['WORKTREE','VERSION']):
       `printf 'CDS_RELEASE_CURRENT=%s\\n' "$(readlink "$root/current" 2>/dev/null)"`,
       `printf 'CDS_RELEASE_PREVIOUS=%s\\n' "$(readlink "$root/previous" 2>/dev/null)"`,
       scan,
+      `active_name="$(basename "$(readlink "$root/current" 2>/dev/null)")"; case "$active_name" in rel_*) if [ -e "$wt/$active_name/.git" ]; then printf 'CDS_RELEASE_COMMIT=%s\\n' "$(git -C "$wt/$active_name" rev-parse HEAD 2>/dev/null)"; fi;; esac`,
       'exit 0',
     ].join('; ');
   }
@@ -459,6 +462,7 @@ for p,kind in zip(sys.argv[1:],['WORKTREE','VERSION']):
     `printf 'CDS_RELEASE_CURRENT=%s\\n' "$(readlink "$root/current" 2>/dev/null)"`,
     `printf 'CDS_RELEASE_PREVIOUS=%s\\n' "$(readlink "$root/previous" 2>/dev/null)"`,
     scan,
+    `active_name="$(basename "$(readlink "$root/current" 2>/dev/null)")"; case "$active_name" in rel_*) if [ -e "$wt/$active_name/.git" ]; then printf 'CDS_RELEASE_COMMIT=%s\\n' "$(git -C "$wt/$active_name" rev-parse HEAD 2>/dev/null)"; fi;; esac`,
     'exit 0',
   ].join('; ');
 }
@@ -523,6 +527,7 @@ export function parseRemoteReleaseInventory(stdout: string): RemoteReleaseInvent
     if (eq <= 0) continue;
     const key = line.slice(0, eq);
     const value = line.slice(eq + 1).trim();
+    if (key === 'CDS_RELEASE_COMMIT' && /^[a-f0-9]{40}$/.test(value)) inventory.currentCommitSha = value;
     if (key === 'CDS_RELEASE_CURRENT') inventory.currentTarget = value;
     else if (key === 'CDS_RELEASE_PREVIOUS') inventory.previousTarget = value;
     else if (key === 'CDS_RELEASE_ROOT') inventory.releaseRoot = value;
