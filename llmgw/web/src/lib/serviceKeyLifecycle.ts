@@ -11,7 +11,11 @@ export function keyLifecycleGoalObserved(intent: KeyLifecycleIntent, items: read
   const target = items.find(item => item.id === intent.id);
   if (!target) return false;
   const next = items.find(item => item.id === intent.successorId);
-  if (intent.kind === 'cutover') return Boolean(target.enabled && target.rotationState === 'client-switched' && next?.enabled && next.rotatesKeyId === target.id && target.rotatedByKeyId === next.id && next.rotationState === 'client-switched');
+  if (intent.kind === 'cutover') {
+    if (!next || next.rotatesKeyId !== target.id || target.rotatedByKeyId !== next.id) return false;
+    return target.enabled === true && target.rotationState === 'client-switched' && next.enabled === true && next.rotationState === 'client-switched'
+      || target.enabled === false && target.rotationState === 'old-key-revoked' && next.enabled === true && next.rotationState === 'completed';
+  }
   if (target.enabled) return false;
   if (intent.successorId) return Boolean(target.rotationState === 'old-key-revoked' && target.rotatedByKeyId === intent.successorId && next?.enabled && next.rotatesKeyId === target.id && next.rotationState === 'completed');
   if (intent.predecessorId) {

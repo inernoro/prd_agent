@@ -133,6 +133,19 @@ export function ServiceKeysPage() {
   const [lifecycleReadAt, setLifecycleReadAt] = useState<string | null>(null);
   const [lifecycleCheck, setLifecycleCheck] = useState<string | null>(null);
   const [checkingLifecycle, setCheckingLifecycle] = useState(false);
+  const checkingLifecycleRef = useRef(false);
+  const [lifecycleResolved, setLifecycleResolved] = useState<{ intent: KeyLifecycleIntent; target: ServiceKeyItem; related: ServiceKeyItem[]; readAt: string } | null>(null);
+  useEffect(() => {
+    if (!lifecycleResolved) return;
+    let timer: number;
+    const dismissWhenIdle = () => {
+      const feedback = document.querySelector('[data-lifecycle-resolved]')?.closest('[role="status"]');
+      if (feedback?.contains(document.activeElement)) { timer = window.setTimeout(dismissWhenIdle, 8000); return; }
+      setLifecycleResolved(null);
+    };
+    timer = window.setTimeout(dismissWhenIdle, 8000);
+    return () => window.clearTimeout(timer);
+  }, [lifecycleResolved]);
   const [name, setName] = useState('');
   const [sourceSystem, setSourceSystem] = useState('external');
   const [clientCode, setClientCode] = useState('');
@@ -301,7 +314,7 @@ export function ServiceKeysPage() {
 
   const runLifecycle = async (item: ServiceKeyItem, kind: KeyLifecycleIntent['kind']) => {
     if (!canUseCapability(tenant?.role, 'serviceKeyWrite') || lifecycleRef.current || lifecycleUnknown || lifecycleReceipt || creatingRef.current || creationUnknown) return;
-    lifecycleRef.current = true; setBusyId(item.id);
+    lifecycleRef.current = true; setBusyId(item.id); setLifecycleResolved(null);
     const intent: KeyLifecycleIntent = { kind, id: item.id, name: item.name, predecessorId: item.rotatesKeyId, successorId: item.rotatedByKeyId };
     const markUnknown = () => { setLifecycleUnknown(intent); setLifecycleRead(null); setLifecycleReadAt(null); setLifecycleCheck(null); setError(null); };
     try {
@@ -331,17 +344,25 @@ export function ServiceKeysPage() {
   const revoke = (item: ServiceKeyItem) => runLifecycle(item, 'revoke');
   const confirmClientCutover = (item: ServiceKeyItem) => runLifecycle(item, 'cutover');
   const reconcileLifecycle = async () => {
-    if (!lifecycleUnknown || checkingLifecycle) return;
+    if (!lifecycleUnknown || checkingLifecycleRef.current) return;
+    const intent = lifecycleUnknown; checkingLifecycleRef.current = true;
     setCheckingLifecycle(true); setLifecycleRead(null); setLifecycleReadAt(null);
     try {
       const response = await getServiceKeys();
       if (!response.success) { setLifecycleCheck('读取失败，原操作结果仍未确认。'); return; }
-      setLifecycleRead(response.data); setLifecycleReadAt(new Date().toISOString()); setItems(response.data); setValidityNow(Date.now());
-      setLifecycleCheck(keyLifecycleGoalObserved(lifecycleUnknown, response.data)
-        ? null
-        : '当前读取尚未满足完整目标，或相关密钥不在可见范围；原操作仍待核，不会重提。');
+      const readAt = new Date().toISOString();
+      setItems(response.data); setValidityNow(Date.now());
+      const target = response.data.find(item => item.id === intent.id);
+      if (target && keyLifecycleGoalObserved(intent, response.data)) {
+        setLifecycleResolved({ intent, target, related: response.data.filter(item => item.id !== target.id && [intent.predecessorId, intent.successorId].includes(item.id)), readAt });
+        setLifecycleUnknown(null); setLifecycleRead(null); setLifecycleCheck(null);
+        invalidateOnboardingCache(tenant?.id);
+        return;
+      }
+      setLifecycleRead(response.data); setLifecycleReadAt(readAt);
+      setLifecycleCheck('当前读取尚未满足完整目标，或相关密钥不在可见范围；原操作仍待核，不会重提。');
     } catch { setLifecycleCheck('读取中断，原操作结果仍未确认。'); }
-    finally { setCheckingLifecycle(false); }
+    finally { checkingLifecycleRef.current = false; setCheckingLifecycle(false); }
   };
   const copyCreatedKey = async () => {
     if (!created) return;
@@ -449,7 +470,6 @@ export function ServiceKeysPage() {
   };
 
   const selectedKey = items?.find((item) => item.id === selectedKeyId);
-  const lifecycleGoalObserved = Boolean(lifecycleUnknown && lifecycleRead && keyLifecycleGoalObserved(lifecycleUnknown, lifecycleRead));
   const keyOverview = <>
         {items && isInternalTenant ? <details className="lg-key-coverage" style={{ padding: '6px 0', fontSize: 'var(--fs-secondary)' }}>
           <summary style={{ cursor: 'pointer' }}>MAP 生产密钥 · {mapCoverage.some(item => !item.ready) ? `${mapCoverage.filter(item => !item.ready).length} 类用途缺失` : '配置覆盖完整'}</summary>
@@ -515,17 +535,23 @@ export function ServiceKeysPage() {
 
       <PageBody className="lg-collection-page">
         {lifecycleReceipt ? <InlineAlert tone="info">已确认{lifecycleReceipt.kind === 'revoke' ? '撤销' : '客户端切换'}「{lifecycleReceipt.name}」，{reading ? '正在刷新清单' : '当前清单待刷新，请重读'}；不会重发。{listError ? <span>{listError}</span> : null}<Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重读密钥清单</Button></InlineAlert> : null}
-        {lifecycleUnknown ? <InlineAlert tone={lifecycleGoalObserved ? 'info' : 'error'}>
-          <strong data-lifecycle-summary>{lifecycleGoalObserved ? <>当前已读取：「{lifecycleUnknown.name}」{lifecycleUnknown.kind === 'revoke' ? '已撤销' : '与后继均已确认切换'}</> : <>「{lifecycleUnknown.name}」的{lifecycleUnknown.kind === 'revoke' ? '撤销' : '客户端切换确认'}结果未确认，可能已生效；未重提。</>}</strong>
+        {lifecycleResolved ? <InlineAlert tone="info">
+          <strong data-lifecycle-resolved>已核对：「{lifecycleResolved.target.name}」{lifecycleResolved.target.enabled ? '已进入可撤销旧钥阶段' : rotationLabel(lifecycleResolved.target.rotationState)}</strong>
+          <span style={{ display: 'block', ...HINT_TEXT }}>读取于 {formatTime(lifecycleResolved.readAt)}</span>
+          {lifecycleResolved.related.map(key => <span key={key.id} style={{ display: 'block' }}>{key.id === lifecycleResolved.intent.successorId ? '后继密钥' : '前钥'}：{key.name} · {keyValidity(key).label}{rotationLabel(key.rotationState) !== keyValidity(key).label ? ` · ${rotationLabel(key.rotationState)}` : ''}</span>)}
+          <Button size="sm" variant="ghost" onClick={() => { setKeyTab('usage'); setSelectedKeyId(lifecycleResolved.target.id); }}>查看该密钥</Button>
+          <span style={{ display: 'block', ...HINT_TEXT }}>原操作回执与审计状态未确认。</span>
+        </InlineAlert> : null}
+        {lifecycleUnknown ? <InlineAlert tone="error">
+          <strong data-lifecycle-summary>「{lifecycleUnknown.name}」的{lifecycleUnknown.kind === 'revoke' ? '撤销' : '客户端切换确认'}结果未确认，可能已生效；未重提。</strong>
           {lifecycleReadAt ? <span style={{ display: 'block', ...HINT_TEXT }}>读取于 {formatTime(lifecycleReadAt)}</span> : null}
           {!lifecycleRead ? <code style={{ display: 'block', overflowWrap: 'anywhere' }}>{lifecycleUnknown.id}</code> : null}
           {lifecycleRead ? <CollectionFacts items={[lifecycleUnknown.id, lifecycleUnknown.predecessorId, lifecycleUnknown.successorId].filter((id): id is string => Boolean(id)).map(id => {
-            const key = lifecycleRead.find(item => item.id === id); const target = id === lifecycleUnknown.id;
-            return { label: target ? '目标密钥' : id === lifecycleUnknown.predecessorId ? '前钥' : '后继密钥', value: <>{!(lifecycleGoalObserved && target) ? <span>{key ? `${key.name} · ${keyValidity(key).label} · ${rotationLabel(key.rotationState)}` : '当前可见范围未找到，未改用同名密钥'}</span> : null}<code style={{ display: 'block', overflowWrap: 'anywhere' }}>{id}</code></> };
+            const key = lifecycleRead.find(item => item.id === id);
+            return { label: id === lifecycleUnknown.id ? '目标密钥' : id === lifecycleUnknown.predecessorId ? '前钥' : '后继密钥', value: <>{key ? <span>{key.name} · {keyValidity(key).label}{rotationLabel(key.rotationState) !== keyValidity(key).label ? ` · ${rotationLabel(key.rotationState)}` : ''}</span> : <span>当前可见范围未找到，未改用同名密钥</span>}<code style={{ display: 'block', overflowWrap: 'anywhere' }}>{id}</code></> };
           })} /> : null}
           {lifecycleCheck ? <span style={{ display: 'block' }}>{lifecycleCheck}</span> : null}
           <Button size="sm" variant="ghost" disabled={checkingLifecycle} onClick={() => void reconcileLifecycle()}>读取相关密钥状态</Button>
-          {lifecycleGoalObserved ? <><Button size="sm" variant="ghost" disabled={checkingLifecycle} onClick={() => { setLifecycleUnknown(null); setLifecycleRead(null); setLifecycleCheck(null); }}>依据已读状态继续维护</Button><span style={{ display: 'block', ...HINT_TEXT }}>原操作回执与审计状态未确认。</span></> : null}
         </InlineAlert> : null}
         {creationUnknown ? <InlineAlert tone="error">{creationUnknown.stage === 'caller' ? '调用身份登记结果未确认，密钥尚未签发。' : '密钥签发结果未确认，可能已生效；本次表单已保留，不会重复签发。'}<Button size="sm" variant="ghost" disabled={checkingCreation} onClick={() => void reconcileCreation()}>核对本次步骤</Button>{creationUnknown.stage === 'caller' ? <Link className="lg-text-link" to={callerWorkspaceReturnHref(creationUnknown.caller, creationUnknown.requestType, '')}>查看调用方治理</Link> : <Link className="lg-text-link" to={`/service-keys?${new URLSearchParams({ client: creationUnknown.request.clientCode, appCaller: creationUnknown.request.appCallerCodes[0] || '' })}`}>查看可能相关的密钥</Link>}</InlineAlert> : null}
         {creationCheck ? <InlineAlert tone="info">{creationCheck}</InlineAlert> : null}
@@ -708,7 +734,7 @@ export function ServiceKeysPage() {
             <div className={keyTab === "permissions" ? "lg-collection-key-permissions" : "lg-collection-hidden"}><div className="lg-collection-key-facts"><div className="lg-collection-key-meta"><div><span>客户端 / 环境</span><p>{selectedKey.clientCode} · {selectedKey.environment} · {selectedKey.purpose}</p></div><div><span>状态 / 过期</span><p>{rotationLabel(selectedKey.rotationState)} · {formatTime(selectedKey.expiresAt)}</p></div></div><div className="lg-collection-key-heading"><h3>调用用途 <Chip label={String(selectedKey.appCallerCodes.length)} color="var(--accent)" bg="var(--accent-soft)"/></h3><Button size="sm" variant="ghost" onClick={() => void navigator.clipboard.writeText(selectedKey.appCallerCodes.join('\n')).then(() => setScopeCopied(true), () => setError('复制失败，请选中调用用途后手动复制'))}>{scopeCopied ? '已复制' : '复制全部调用用途'}</Button></div></div>
             <CollectionView className="lg-collection-codes" items={selectedKey.appCallerCodes} searchText={(code) => code} placeholder="搜索 appCaller 标识">{(codes) => <>{codes.map((code) => <div key={code} className="lg-collection-code" title={code}>{code}</div>)}</>}</CollectionView>
             <div className="lg-collection-key-facts lg-collection-key-permission-summary"><div><h3>入口协议</h3><p>{selectedKey.ingressProtocols.map((protocol) => <Chip key={protocol} label={protocol} color="var(--text-secondary)" bg="var(--bg-elevated)"/>)}</p></div><div><h3>Scope</h3><p>{selectedKey.scopes.map((scope) => <Chip key={scope} label={scope} color="var(--text-secondary)" bg="var(--bg-elevated)"/>)}</p></div></div></div>
-            {keyTab === "usage" ? <div className="lg-collection-key-facts"><CollectionFacts items={[{label:'轮换阶段',value:rotationLabel(selectedKey.rotationState)},{label:'过期时间',value:formatTime(selectedKey.expiresAt)},{label:'网络与速率',value:<>{selectedKey.allowedCidrs.length ? selectedKey.allowedCidrs.join('、') : '不限 CIDR'} · {selectedKey.rateLimitPerMinute ? `${selectedKey.rateLimitPerMinute}/分钟` : '不限速'}</>},{label:'团队与创建者',value:<>{selectedKey.teamId || '租户级'} · {selectedKey.createdByUsername || '历史密钥'}</>},{label:'最后使用',value:formatTime(selectedKey.lastUsedAt)},{label:'前钥',value:selectedKey.rotatesKeyId || '无'},{label:'后钥',value:selectedKey.rotatedByKeyId || '无'},{label:'来源',value:selectedKey.sourceSystem}]}/></div> : null}
+            {keyTab === "usage" ? <div className="lg-collection-key-facts"><CollectionFacts items={[{label:'密钥 ID',value:<code style={{ overflowWrap: 'anywhere' }}>{selectedKey.id}</code>},{label:'轮换阶段',value:rotationLabel(selectedKey.rotationState)},{label:'过期时间',value:formatTime(selectedKey.expiresAt)},{label:'网络与速率',value:<>{selectedKey.allowedCidrs.length ? selectedKey.allowedCidrs.join('、') : '不限 CIDR'} · {selectedKey.rateLimitPerMinute ? `${selectedKey.rateLimitPerMinute}/分钟` : '不限速'}</>},{label:'团队与创建者',value:<>{selectedKey.teamId || '租户级'} · {selectedKey.createdByUsername || '历史密钥'}</>},{label:'最后使用',value:formatTime(selectedKey.lastUsedAt)},{label:'前钥',value:selectedKey.rotatesKeyId || '无'},{label:'后钥',value:selectedKey.rotatedByKeyId || '无'},{label:'来源',value:selectedKey.sourceSystem}]}/></div> : null}
 
           </CollectionDetailPane> : null}
 </div>
@@ -794,7 +820,7 @@ function rotationLabel(state: string) {
     active: '未轮换',
     'new-key-created': '新钥已创建',
     'awaiting-client-cutover': '等待客户端切换',
-    'client-switched': '客户端已切换',
+    'client-switched': '已确认切换',
     'old-key-revoked': '旧钥已撤销',
     completed: '轮换完成',
     revoked: '已撤销',
