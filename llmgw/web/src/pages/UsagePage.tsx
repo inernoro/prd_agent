@@ -37,6 +37,7 @@ export function UsagePage() {
   const [budgetReservation, setBudgetReservation] = useState('');
   const [tenantRateLimit, setTenantRateLimit] = useState('');
   const [reconciliationLoading, setReconciliationLoading] = useState(true);
+  const reconciliationRead = useRef(0);
   const [reconciliationError, setReconciliationError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<CostReconciliationItem | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -105,8 +106,9 @@ export function UsagePage() {
       if (res.success) setSummary(res.data);
       else setError(res.error.message);
     });
-    getCostReconciliations(params).then((res) => {
-      if (!active) return;
+    const billSeq = ++reconciliationRead.current;
+    getCostReconciliations(params).catch(() => ({ success: false as const, data: null, error: { code: 'NETWORK_ERROR', message: '供应商账单读取中断' } })).then((res) => {
+      if (!active || billSeq !== reconciliationRead.current) return;
       if (res.success) setReconciliation(res.data);
       else { setReconciliation(null); setReconciliationError(res.error.message || '供应商账单读取失败'); }
       setReconciliationLoading(false);
@@ -149,10 +151,12 @@ export function UsagePage() {
   };
 
   const readImportedBill = async (checkSubmitted = false) => {
+    const seq = ++reconciliationRead.current;
     setImportChecking(true); setReconciliationLoading(true); setReconciliationError(null);
     try {
       const to = new Date(), from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
       const res = await getCostReconciliations({ from: from.toISOString(), to: to.toISOString() });
+      if (seq !== reconciliationRead.current) return;
       if (!res.success) throw new Error(res.error.message || '供应商账单读取失败');
       setReconciliation(res.data);
       if (checkSubmitted && importSubmission.current) {
@@ -164,9 +168,10 @@ export function UsagePage() {
         } else setImportError('当前近30天可见记录中尚未找到匹配账单，不能据此认定导入未生效。已保留提交内容，请核对供应商流水及账单范围，暂不重复导入。');
       }
     } catch (error) {
+      if (seq !== reconciliationRead.current) return;
       setReconciliationError(error instanceof Error ? error.message : '供应商账单读取中断');
       if (checkSubmitted) setImportError('账单核对未完成，导入结果仍未确认。提交内容已保留，请稍后重新读取。');
-    } finally { setImportChecking(false); setReconciliationLoading(false); }
+    } finally { if (seq === reconciliationRead.current) { setImportChecking(false); setReconciliationLoading(false); } }
   };
 
   const openImport = () => {
