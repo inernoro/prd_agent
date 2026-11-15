@@ -106,6 +106,16 @@ export function calibrate(results) {
 export function compare(result, baseline) {
   const failures = executionErrors(result);
   if (failures.length) return { pass: false, failures };
+  const normalNames = Object.keys(result.phases.find(p => p.name === 'normal')?.metrics ?? {});
+  if (!baseline || baseline.sourceRuns?.length < 3 || !baseline.sourceRuns
+      || !normalNames.length || normalNames.some(name => {
+        const limit = baseline.limits?.[name];
+        return !limit || !Number.isFinite(limit.clientP95) || limit.clientP95 <= 0
+          || !Number.isFinite(limit.minThroughput) || limit.minThroughput <= 0
+          || !Number.isFinite(limit.errorRate) || limit.errorRate < 0 || limit.errorRate > 1
+          || (['journey', 'write'].includes(name) ? limit.appP95 !== null
+            : !Number.isFinite(limit.appP95) || limit.appP95 <= 0);
+      })) return { pass: false, failures: ['基线缺少完整API阈值或三次校准来源，须重新校准'] };
   if (digest(result.contract) !== digest(baseline.contract)) return { pass: false, failures: ['运行契约不一致，须在同机重新校准'] };
   for (const name of browserScenarios) {
     const limit = baseline.browserLimits?.[name]?.readyP95Ms;
@@ -120,6 +130,9 @@ export function compare(result, baseline) {
     for (const [name, limit] of Object.entries(baseline.limits)) {
       const m = phase.metrics[name];
       if (!m || m.attempts < 30) { failures.push(`${phase.name}/${name}: 样本不足`); continue; }
+      if (limit.appP95 !== null && (!Number.isFinite(m.app?.n) || m.app.n < 30)) {
+        failures.push(`${phase.name}/${name}: 应用耗时样本不足`); continue;
+      }
       if (m.errorRate > limit.errorRate) failures.push(`${phase.name}/${name}: errorRate ${m.errorRate} > ${limit.errorRate}`);
       if (m.client.p95 > limit.clientP95) failures.push(`${phase.name}/${name}: client p95 ${m.client.p95.toFixed(2)} > ${limit.clientP95.toFixed(2)} ms`);
       if (limit.appP95 !== null && (!m.app.n || m.app.p95 > limit.appP95)) failures.push(`${phase.name}/${name}: app p95 ${m.app.p95.toFixed(2)} > ${limit.appP95.toFixed(2)} ms`);
