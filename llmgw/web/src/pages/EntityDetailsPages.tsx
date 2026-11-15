@@ -281,10 +281,10 @@ export function ModelDetailsPage() {
         { label: capabilities.length ? `${capabilities.length} 项能力` : '能力未标注', tone: capabilities.length ? 'good' : 'warning' },
       ]}
       metrics={[
-        { label: '上下文', value: formatContext(primaryModel?.maxTokens), hint: '来自模型权威配置', icon: <Gauge size={17} /> },
-        { label: '输入 / 输出价格', value: formatPrice(primaryModel), hint: '每百万 Token 或每次', icon: <CircleDollarSign size={17} /> },
+        { label: '上下文', value: primaryModel ? formatContext(primaryModel.maxTokens) : '未取得', hint: primaryModel ? '来自上游型号配置' : '未取得上游型号配置', icon: <Gauge size={17} /> },
+        { label: '输入 / 输出价格', value: primaryModel ? formatPrice(primaryModel) : '未取得', hint: '每百万 Token 或每次', icon: <CircleDollarSign size={17} /> },
         { label: primaryModel ? '历史调用' : '已载入记录', value: fmtCompact(primaryModel?.callCount ?? recent.length), hint: primaryModel ? '当前租户可见范围' : '最多8条，非窗口总量', icon: <Route size={17} /> },
-        { label: '成功率', value: modelSuccessRate(primaryModel), hint: '模型累计统计', icon: <ShieldCheck size={17} /> },
+        { label: '成功率', value: modelSuccessRate(primaryModel), hint: primaryModel ? '上游型号累计统计' : '未取得上游型号累计统计', icon: <ShieldCheck size={17} /> },
       ]}
       backHref={back.href} backLabel={back.label}
             primaryHref={`/logs?model=${encodeURIComponent(identifier || requestedModel)}`}
@@ -320,12 +320,12 @@ export function ModelDetailsPage() {
           id: 'capabilities',
           title: '模型能力',
           description: '能力来自模型或逻辑模型权威配置，不根据名称猜测。',
-          content: capabilities.length ? <div className="lg-entity-detail-capabilities">{capabilities.map((item) => <span key={item}>{item}</span>)}</div> : <div className="lg-entity-detail-empty">当前模型尚未声明能力。</div>,
+          content: capabilities.length ? <div className="lg-entity-detail-capabilities">{capabilities.map((item) => <span key={item}>{item}</span>)}</div> : <div className="lg-entity-detail-empty">{registeredModel ? '当前模型尚未声明能力。' : '未取得当前配置的能力声明。'}</div>,
         },
         {
           id: 'routing',
           title: '能力与路由',
-          content: <Facts items={[
+          content: !registeredModel ? <Facts items={[{ label: '解析结果', value: '未取得当前配置；不推断供应方、协议或路由参数。' }]} /> : <Facts items={[
             { label: '路由策略', value: logical?.routingStrategy || '未解析公开模型配置' },
             { label: '上游协议', value: primaryModel?.protocol || '继承 Provider' },
             { label: '优先级', value: primaryModel?.priority ?? logical?.displayOrder ?? '未配置' },
