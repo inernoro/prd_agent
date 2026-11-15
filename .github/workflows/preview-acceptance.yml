@@ -1,6 +1,13 @@
 name: Preview Acceptance
 
 on:
+  push:
+    branches: [main, develop, 'perf/**']
+    paths:
+      - 'prd-api/**'
+      - 'prd-admin/**'
+      - 'e2e/performance/**'
+      - '.github/workflows/preview-acceptance.yml'
   pull_request:
     branches: [main, develop]
     paths:
@@ -43,14 +50,14 @@ env:
 jobs:
   performance-isolated:
     name: MAP Performance (Isolated)
-    if: github.event_name == 'pull_request' || github.event.inputs.perf_ref != ''
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event.inputs.perf_ref != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
       contents: read
     env:
-      PERF_REF: ${{ github.event.inputs.perf_ref || github.event.pull_request.head.sha }}
-      PERF_BASE_REF: ${{ github.event.inputs.perf_base_ref || github.event.pull_request.base.sha || 'origin/main' }}
+      PERF_REF: ${{ github.event.inputs.perf_ref || github.event.pull_request.head.sha || github.sha }}
+      PERF_BASE_REF: ${{ github.event.inputs.perf_base_ref || github.event.pull_request.base.sha || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || 'origin/main' }}
       PERF_PROFILE: ${{ github.event.inputs.perf_profile || 'normal' }}
     steps:
       - uses: actions/checkout@v4
