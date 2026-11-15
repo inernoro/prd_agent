@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSettingsSessionOwner, useSettingsSessionState } from '../useSettingsSessionState';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Loader2, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
 
 import { useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
@@ -32,15 +33,21 @@ function formatRelativeTime(iso?: string): string {
 }
 
 export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) => void }): JSX.Element {
-  const [state, setState] = useState<LoadState>({ status: 'idle' });
-  const [owners, setOwners] = useState<string[]>([]);
-  const [draft, setDraft] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [readError, setReadError] = useState('');
-  const [saveError, setSaveError] = useState('');
-  const [needsRead, setNeedsRead] = useState(false);
-  const unconfirmedOwners = useRef<string[] | null>(null);
-  const savedOwners = useRef<string[]>([]);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const owner = useSettingsSessionOwner();
+  const currentOwner = useRef(owner); currentOwner.current = owner;
+  const [state, setState] = useSettingsSessionState<LoadState>('whitelist:state', { status: 'idle' });
+  const [owners, setOwners] = useSettingsSessionState<string[]>('whitelist:owners', []);
+  const [draft, setDraft] = useSettingsSessionState<string>('whitelist:draft', '');
+  const [saving, setSaving] = useSettingsSessionState<boolean>('whitelist:saving', false, Boolean);
+  const [readError, setReadError] = useSettingsSessionState<string>('whitelist:read-error', '');
+  const [saveError, setSaveError] = useSettingsSessionState<string>('whitelist:saveError', '', undefined, { keepSession: true });
+  const [needsRead, setNeedsRead] = useSettingsSessionState<boolean>('whitelist:needsRead', false, Boolean);
+  const [pendingOwners, setPendingOwners] = useSettingsSessionState<string[] | null>('whitelist:pending', null, undefined, { keepSession: true });
+  const unconfirmedOwners = useRef(pendingOwners); unconfirmedOwners.current = pendingOwners;
+  const [savedOwnerList, setSavedOwnerList] = useSettingsSessionState<string[]>('whitelist:saved', []);
+  const savedOwners = useRef(savedOwnerList); savedOwners.current = savedOwnerList;
   const beginRead = useSettingsReadRequest();
   const sameOwners = (left: string[], right: string[]) => JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
 
@@ -53,19 +60,19 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
       if (!Array.isArray(data.allowedOwners) || data.allowedOwners.some(owner => typeof owner !== 'string')) throw new Error('服务未返回可核对的白名单，请重新读取确认。');
       const previous = savedOwners.current;
       const next = data.allowedOwners || [];
-      savedOwners.current = next;
+      savedOwners.current = next; setSavedOwnerList(next);
       setOwners(current => preserve && !sameOwners(current, previous) ? current : next);
       setState({ status: 'ok', data }); setReadError('');
-      if (!unconfirmedOwners.current || sameOwners(next, unconfirmedOwners.current)) { unconfirmedOwners.current = null; setNeedsRead(false); setSaveError(''); }
+      if (!unconfirmedOwners.current || sameOwners(next, unconfirmedOwners.current)) { unconfirmedOwners.current = null; setPendingOwners(null); setNeedsRead(false); setSaveError(''); }
     } catch (err) {
       if (signal.aborted) return;
       setReadError(apiMessage(err));
       setState(current => preserve && current.status === 'ok' ? current : { status: 'error', message: apiMessage(err) });
     }
-  }, [beginRead]);
+  }, [beginRead, setState, setOwners, setPendingOwners, setSavedOwnerList, setNeedsRead, setSaveError]);
 
   useEffect(() => {
-    void load();
+    void load(true);
   }, [load]);
 
   const allowedSet = useMemo(() => new Set(owners.map(normalizeOwner)), [owners]);
@@ -98,15 +105,20 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
       beginRead.cancel();
       if (!Array.isArray(data.allowedOwners)) throw new Error('服务未返回保存后的名单，请重新读取核对。');
       const next = data.allowedOwners || [];
-      savedOwners.current = next; setOwners(next); setDraft('');
+      savedOwners.current = next; setSavedOwnerList(next); setOwners(next); setDraft('');
       setState(current => current.status === 'ok' ? { status: 'ok', data: { ...current.data, ...data } } : current);
-      onToast(data.message || 'GitHub App 白名单已保存并生效');
+      if (alive.current && currentOwner.current === owner) onToast(data.message || 'GitHub App 白名单已保存并生效');
     } catch (err) {
       const unknown = !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408);
-      setNeedsRead(unknown); unconfirmedOwners.current = unknown ? submitted : null;
+      setNeedsRead(unknown); unconfirmedOwners.current = unknown ? submitted : null; setPendingOwners(unconfirmedOwners.current);
       setSaveError(`${unknown ? '保存结果未确认，请先重新读取核对，勿重复提交' : '本次保存被拒绝'}：${apiMessage(err)}。当前草稿已保留。`);
     } finally { setSaving(false); }
   };
+  useEffect(() => {
+    if (!needsRead && !saving) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
+  }, [needsRead, saving]);
   const dirty = !sameOwners(owners, savedOwners.current) || Boolean(draft.trim());
   const savedCount = state.status === 'ok' ? state.data.allowedOwners.length : 0;
 
@@ -124,6 +136,7 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
           <div className="space-y-5">
             <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm" role="status"><span>{needsRead || readError ? '上次读取门禁' : '已保存门禁'}：<strong>{savedCount > 0 ? '限制为名单内组织' : '兼容放行'}</strong></span><span className="text-muted-foreground">已保存 {savedCount} 个组织</span><span className="text-muted-foreground">{needsRead ? '保存结果未确认' : dirty ? '当前草稿未保存' : '与已保存名单一致'}</span></div>
             {readError ? <p role="alert" className="text-sm text-destructive">读取失败：{readError}。当前草稿和上次读取结果已保留。</p> : null}
+            {needsRead && pendingOwners ? <p className="break-words text-sm text-muted-foreground">未确认的提交名单：{pendingOwners.length ? pendingOwners.join('、') : '空名单（兼容放行）'}。重新读取旧名单不能证明该请求未执行。</p> : null}
             {saveError ? <p role="alert" className="text-sm text-destructive">{saveError}</p> : null}
 
             {savedCount === 0 || owners.length === 0 ? <div className="rounded-md border border-warn/30 bg-warn-soft px-4 py-3 text-sm leading-6 text-warn ">
