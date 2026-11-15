@@ -293,7 +293,7 @@ export function UsagePage() {
       <Card style={CARD_BODY} aria-labelledby="cost-state-title">
         <div style={cardHeadStyle}>
           <h2 id="cost-state-title" style={SECTION_TITLE}>
-            金额证据四状态
+            费用证据
             {/* 四张卡原本各挂一整句解释，一屏就是四段说明。解释收进这里，卡片只留数字。 */}
             <HelpPopover label="金额证据四状态">
               <dl>
@@ -322,7 +322,7 @@ export function UsagePage() {
             </span>
           </div>
           <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)', lineHeight: 'var(--lh-body)' }}>
-            缺价调用不计入限额，补价后计入。
+            历史估算沿用请求时的价格快照。
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, marginTop: GAP.normal }}>
             {(summary?.topUnpricedModels ?? []).map((item) => (

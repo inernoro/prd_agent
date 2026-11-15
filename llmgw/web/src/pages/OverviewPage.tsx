@@ -122,8 +122,8 @@ export function GovernancePage() {
         <Card style={{ ...CARD_BODY, display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap' }}>
           <span style={SECTION_TITLE}>调用方路由</span>
           <span style={BODY_TEXT}>{configAuthority!.status === 'unknown' ? '调用方默认模型状态暂不可用' : configAuthority!.activeMissingGatewayPool > 0 ? `${configAuthority!.activeMissingGatewayPool} 个已登记为启用的调用方缺少可用默认模型（未指定 model 时无法解析）` : configAuthority!.activeAppCallers > 0 ? '已登记为启用的调用方默认模型可解析' : '当前没有登记为启用的调用方（不代表没有请求）'}</span>
-          <Link to="/app-callers?status=active" style={{ textDecoration: 'none' }}><Button size="sm" variant="secondary">查看调用方</Button></Link>
-          <Link to="/logical-models" style={{ textDecoration: 'none' }}><Button size="sm" variant="secondary">{canWrite ? '设置模型与默认项' : '查看模型与默认项'}</Button></Link>
+          <Link to="/app-callers?status=active" className="lg-secondary-action">查看调用方</Link>
+          <Link to="/logical-models" className="lg-secondary-action">{canWrite ? '设置模型与默认项' : '查看模型与默认项'}</Link>
           {mapOnlyTotal > 0 ? <>
             <span style={BODY_TEXT}>有 {mapOnlyTotal} 项已有 MAP 配置可导入</span>
             <HelpPopover label="导入已有配置">将已有上游、模型与转接配置复制到网关；保留密钥，跳过已存在的配置。</HelpPopover>

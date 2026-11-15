@@ -60,7 +60,7 @@ export function LearningCenterPage() {
   const location = useLocation();
   useEffect(() => {
     const id = location.hash.slice(1);
-    if (id === 'first-request' || TOPICS.some(topic => topic.id === id)) document.getElementById(id)?.scrollIntoView({ block: 'start' });
+    if (id === 'first-request' || id === 'existing-key' || TOPICS.some(topic => topic.id === id)) document.getElementById(id)?.scrollIntoView({ block: 'start' });
   }, [location.hash]);
   const canUseQuickstart = canAccessPage(tenant, 'quickstart');
   const canManageKeys = canUseCapability(tenant?.role, 'serviceKeyWrite');
@@ -91,7 +91,7 @@ export function LearningCenterPage() {
                 <small style={BODY_TEXT}>在快速接入中一次创建调用身份与密钥，并完成不调用付费上游的安全验证。</small>
                 {canStartNew ? <Link to="/quickstart" style={stepLinkStyle}><Rocket size={13} />创建并验证接入 <ArrowRight size={13} /></Link> : <em style={stepFallbackStyle}>请由具备调用方与密钥管理权限的角色创建接入。</em>}
               </Step>
-              <Step title="使用已有密钥">
+              <Step id="existing-key" title="使用已有密钥">
                 <small style={BODY_TEXT}>使用已安全保存的密钥在应用或现有客户端中调用；真实模型请求可能计费。</small>
                 {canManageKeys ? <Link to="/service-keys" style={stepLinkStyle}>核对权限与轮换 <ArrowRight size={13} /></Link> : <em style={stepFallbackStyle}>接入配置与授权范围请联系密钥签发人。</em>}
               </Step>
@@ -143,9 +143,9 @@ export function LearningCenterPage() {
 }
 
 /** 步骤卡：序号 + 标题 + 一句说明 + 一个去处。字号与内边距不再吃 theme.css 的旧值。 */
-function Step({ title, children }: { title: string; children: ReactNode }) {
+function Step({ id, title, children }: { id?: string; title: string; children: ReactNode }) {
   return (
-    <div>
+    <div id={id} style={{ scrollMarginTop: 24 }}>
       <span><strong style={stepTitleStyle}>{title}</strong>{children}</span>
     </div>
   );
