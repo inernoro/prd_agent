@@ -125,6 +125,7 @@ export function ServiceKeysPage() {
   const [copied, setCopied] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const lifecycleRef = useRef(false);
+  const [lifecycleReceipt, setLifecycleReceipt] = useState<KeyLifecycleIntent | null>(null);
   const [lifecycleUnknown, setLifecycleUnknown] = useState<KeyLifecycleIntent | null>(null);
   const [lifecycleRead, setLifecycleRead] = useState<ServiceKeyItem[] | null>(null);
   const [lifecycleReadAt, setLifecycleReadAt] = useState<string | null>(null);
@@ -164,7 +165,7 @@ export function ServiceKeysPage() {
     setError(null); setReading(true);
     try {
     const res = await getServiceKeys();
-    if (res.success) { setItems(res.data); setValidityNow(Date.now()); }
+    if (res.success) { setItems(res.data); setValidityNow(Date.now()); setLifecycleReceipt(null); }
     else setError(res.error?.message || '加载接入密钥失败');
     if (canManageLegacyCutover) {
       const legacyRes = await getLegacyKeyCutover();
@@ -202,7 +203,7 @@ export function ServiceKeysPage() {
   }, [load]);
 
   const submit = async () => {
-    if (!canUseCapability(tenant?.role, 'serviceKeyWrite') || !canSubmit || creatingRef.current || creationUnknown || Boolean(rotatesKeyId && (lifecycleRef.current || lifecycleUnknown))) return;
+    if (!canUseCapability(tenant?.role, 'serviceKeyWrite') || !canSubmit || creatingRef.current || creationUnknown || Boolean(rotatesKeyId && (lifecycleRef.current || lifecycleUnknown || lifecycleReceipt))) return;
     if (expiresAt && !Number.isFinite(Date.parse(expiresAt))) { setError('过期时间无效，请重新选择。'); return; }
     creatingRef.current = true; setCreating(true); setError(null); setCreationCheck(null); setCreated(null);
     const request: CreateServiceKeyRequest = {
@@ -296,7 +297,7 @@ export function ServiceKeysPage() {
   };
 
   const runLifecycle = async (item: ServiceKeyItem, kind: KeyLifecycleIntent['kind']) => {
-    if (!canUseCapability(tenant?.role, 'serviceKeyWrite') || lifecycleRef.current || lifecycleUnknown || creatingRef.current || creationUnknown) return;
+    if (!canUseCapability(tenant?.role, 'serviceKeyWrite') || lifecycleRef.current || lifecycleUnknown || lifecycleReceipt || creatingRef.current || creationUnknown) return;
     lifecycleRef.current = true; setBusyId(item.id);
     const intent: KeyLifecycleIntent = { kind, id: item.id, name: item.name, predecessorId: item.rotatesKeyId, successorId: item.rotatedByKeyId };
     const markUnknown = () => { setLifecycleUnknown(intent); setLifecycleRead(null); setLifecycleReadAt(null); setLifecycleCheck(null); setError(null); };
@@ -311,6 +312,13 @@ export function ServiceKeysPage() {
         else setError(response.error?.message || '操作在写入前被拒绝，请读取当前状态。');
         return;
       }
+      if (response.data.id !== intent.id || kind === 'revoke' && (!('revoked' in response.data) || response.data.revoked !== true)) { markUnknown(); return; }
+      if (kind === 'cutover' && (!('rotationState' in response.data) || response.data.rotationState !== 'client-switched')) { markUnknown(); return; }
+      if (kind === 'cutover' && 'successorKeyId' in response.data && response.data.successorKeyId !== intent.successorId) { markUnknown(); setLifecycleCheck(`服务端回报的后继 ${response.data.successorKeyId} 与操作前不同；请核对完整配对。`); return; }
+      setLifecycleReceipt(intent);
+      // Apply only the target outcome confirmed in this response. Full pairing/stage
+      // facts still come from the subsequent read; a failed read retains the receipt.
+      setItems(current => current?.map(key => key.id !== intent.id ? key : kind === 'revoke' ? { ...key, enabled: false, rotationState: 'revoked' } : { ...key, rotationState: 'client-switched' }) ?? current);
       invalidateOnboardingCache(tenant?.id);
       await load();
     } catch { markUnknown(); }
@@ -338,7 +346,7 @@ export function ServiceKeysPage() {
   };
 
   const startRotation = (item: ServiceKeyItem) => {
-    if (creatingRef.current || creationUnknown || lifecycleRef.current || lifecycleUnknown) return;
+    if (creatingRef.current || creationUnknown || lifecycleRef.current || lifecycleUnknown || lifecycleReceipt) return;
     setName(`${item.name} rotation`);
     setSourceSystem(item.sourceSystem);
     setClientCode(item.clientCode);
@@ -471,9 +479,9 @@ export function ServiceKeysPage() {
   </>;
 
   const renderActions = (item: ServiceKeyItem) => item.enabled ? <div className="lg-service-key-actions">
-    {item.rotationState === 'active' || item.rotationState === 'completed' ? <Button size="sm" variant="ghost" disabled={creating || Boolean(creationUnknown) || Boolean(busyId) || Boolean(lifecycleUnknown)} onClick={() => startRotation(item)}>轮换</Button> : null}
-    {item.rotationState === 'awaiting-client-cutover' ? <Button size="sm" variant="ghost" disabled={Boolean(busyId) || Boolean(lifecycleUnknown) || creating || Boolean(creationUnknown)} onClick={() => void confirmClientCutover(item)}>确认已切换</Button> : null}
-    <Button size="sm" variant="ghost" disabled={Boolean(busyId) || Boolean(lifecycleUnknown) || creating || Boolean(creationUnknown) || item.rotationState === 'awaiting-client-cutover' || item.rotationState === 'client-switched' && Boolean(item.rotatesKeyId) && !item.rotatedByKeyId} onClick={() => void revoke(item)}>{item.rotationState === 'client-switched' && item.rotatedByKeyId ? '撤销旧钥并完成' : item.rotationState === 'client-switched' ? '等待旧钥撤销' : '撤销'}</Button>
+    {item.rotationState === 'active' || item.rotationState === 'completed' ? <Button size="sm" variant="ghost" disabled={creating || Boolean(creationUnknown) || Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt)} onClick={() => startRotation(item)}>轮换</Button> : null}
+    {item.rotationState === 'awaiting-client-cutover' ? <Button size="sm" variant="ghost" disabled={Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt) || creating || Boolean(creationUnknown)} onClick={() => void confirmClientCutover(item)}>确认已切换</Button> : null}
+    <Button size="sm" variant="ghost" disabled={Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt) || creating || Boolean(creationUnknown) || item.rotationState === 'awaiting-client-cutover' || item.rotationState === 'client-switched' && Boolean(item.rotatesKeyId) && !item.rotatedByKeyId} onClick={() => void revoke(item)}>{item.rotationState === 'client-switched' && item.rotatedByKeyId ? '撤销旧钥并完成' : item.rotationState === 'client-switched' ? '等待旧钥撤销' : '撤销'}</Button>
   </div> : null;
 
   return (
@@ -501,6 +509,7 @@ export function ServiceKeysPage() {
       />
 
       <PageBody className="lg-collection-page">
+        {lifecycleReceipt ? <InlineAlert tone="info">已确认{lifecycleReceipt.kind === 'revoke' ? '撤销' : '客户端切换'}「{lifecycleReceipt.name}」，当前清单待刷新；不会重发。<Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重读密钥清单</Button></InlineAlert> : null}
         {lifecycleUnknown ? <InlineAlert tone="error">
           「{lifecycleUnknown.name}」的{lifecycleUnknown.kind === 'revoke' ? '撤销' : '客户端切换确认'}结果未确认，可能已生效；未重提。
           <code>{lifecycleUnknown.id}</code>
@@ -568,7 +577,7 @@ export function ServiceKeysPage() {
               )}
               <datalist id="llmgw-app-callers">{knownAppCallers.map((code) => <option key={code} value={code} />)}</datalist>
               <datalist id="llmgw-app-caller-features">{FEATURE_PRESETS.map((item) => <option key={item.value} value={item.value} label={item.label} />)}</datalist>
-              <div className="lg-service-key-fast-action">{appCallerMode === 'generate' ? <span style={HINT_TEXT}>登记此调用身份并签发密钥，不修改已有预算。</span> : null}<Button variant="primary" disabled={!canSubmit || creating || Boolean(creationUnknown) || Boolean(rotatesKeyId && (busyId || lifecycleUnknown))} onClick={() => void submit()}>{creating ? '创建中' : '生成 API Key'}</Button></div>
+              <div className="lg-service-key-fast-action">{appCallerMode === 'generate' ? <span style={HINT_TEXT}>登记此调用身份并签发密钥，不修改已有预算。</span> : null}<Button variant="primary" disabled={!canSubmit || creating || Boolean(creationUnknown) || Boolean(rotatesKeyId && (busyId || lifecycleUnknown || lifecycleReceipt))} onClick={() => void submit()}>{creating ? '创建中' : '生成 API Key'}</Button></div>
             </div>
             {/*
               自动设置这一行是「系统替你填了什么」的唯一交代口：clientCode、生成出来的
