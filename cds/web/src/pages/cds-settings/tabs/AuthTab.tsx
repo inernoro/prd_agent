@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bot, KeyRound, LogOut, ShieldCheck, ShieldOff } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import {
   type TicketSsoConfig,
 } from '@/lib/api';
 import { requestAgentAccess } from '@/lib/agent-onboarding';
-import { CodePill, ErrorBlock, Field, LoadingBlock, Section } from '../components';
+import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
 import type { AuthStatusResponse, LoadState } from '../types';
 
 function loginHref(mode?: string): string {
@@ -30,6 +30,7 @@ function authModeLabel(mode?: string): string {
 }
 
 export function AuthTab(): JSX.Element {
+  const [statusAttempt, setStatusAttempt] = useState(0);
   const [state, setState] = useState<LoadState<AuthStatusResponse>>({ status: 'loading' });
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   const [logoutError, setLogoutError] = useState('');
@@ -37,28 +38,66 @@ export function AuthTab(): JSX.Element {
   const [ssoSecret, setSsoSecret] = useState('');
   const [ssoSaveState, setSsoSaveState] = useState<'idle' | 'running' | 'saved' | 'error'>('idle');
   const [ssoSaveError, setSsoSaveError] = useState('');
+  const [ssoReadError, setSsoReadError] = useState('');
+  const [ssoDenied, setSsoDenied] = useState(false);
+  const [ssoLoading, setSsoLoading] = useState(true);
+  const [ssoUnknown, setSsoUnknown] = useState(false);
+  const [ssoAttempt, setSsoAttempt] = useState(0);
+  const unconfirmedSso = useRef<{ config: TicketSsoConfig; secretChanged: boolean } | null>(null);
+  const [ssoReadAfterUnknown, setSsoReadAfterUnknown] = useState(false);
+  const savedSso = useRef<TicketSsoConfig | null>(null);
+  const editableKeys = ['enabled', 'providerId', 'label', 'authorizationUrl', 'tokenUrl', 'clientId', 'defaultRedirect'] as const;
 
   useEffect(() => {
     const ctrl = new AbortController();
+    setState({ status: 'loading' });
     apiRequest<AuthStatusResponse>('/api/auth/status', { signal: ctrl.signal })
-      .then((data) => setState({ status: 'ok', data }))
+      .then((data) => { if (typeof data.enabled !== 'boolean' && !data.mode) throw new Error('未取得可确认的认证状态'); setState({ status: 'ok', data }); })
       .catch((err: unknown) => {
         if ((err as DOMException)?.name === 'AbortError') return;
         setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
       });
     return () => ctrl.abort();
-  }, []);
+  }, [statusAttempt]);
 
   useEffect(() => {
     let alive = true;
+    setSsoLoading(true); setSsoReadError(''); setSsoDenied(false);
     fetchTicketSsoConfig()
-      .then((config) => { if (alive) setSso(config); })
-      .catch(() => { if (alive) setSso(null); });
+      .then((config) => {
+        if (!alive) return;
+        const previous = savedSso.current;
+        setSso(current => {
+          if (!current || !previous || config.managedByEnvironment) return config;
+          const next = { ...config };
+          for (const key of editableKeys) if (current[key] !== previous[key]) Object.assign(next, { [key]: current[key] });
+          return next;
+        });
+        savedSso.current = config;
+        if (config.managedByEnvironment) setSsoSecret('');
+        setSsoReadAfterUnknown(true);
+        const pending = unconfirmedSso.current;
+        if (!pending || !pending.secretChanged && editableKeys.every(key => config[key] === pending.config[key])) { unconfirmedSso.current = null; setSsoUnknown(false); if (pending) { setSsoSaveState('idle'); setSsoSaveError(''); } }
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setSsoDenied(err instanceof ApiError && err.status === 403);
+        setSsoReadError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => { if (alive) setSsoLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [ssoAttempt]);
+
+  function updateSso(change: Partial<TicketSsoConfig>): void {
+    setSso(current => current ? { ...current, ...change } : current);
+    if (!ssoUnknown) { setSsoSaveState('idle'); setSsoSaveError(''); }
+  }
 
   const saveSso = async (): Promise<void> => {
-    if (!sso) return;
+    if (!sso || ssoLoading || ssoReadError || ssoUnknown || ssoSaveState === 'running') return;
+    const submitted = { ...sso };
+    const changedSecret = Boolean(ssoSecret);
+    setSsoReadAfterUnknown(false);
     setSsoSaveState('running');
     setSsoSaveError('');
     try {
@@ -72,12 +111,14 @@ export function AuthTab(): JSX.Element {
         clientSecret: ssoSecret || undefined,
         defaultRedirect: sso.defaultRedirect || '/project-list',
       });
-      setSso(saved);
+      setSso(saved); savedSso.current = saved;
       setSsoSecret('');
       setSsoSaveState('saved');
     } catch (err) {
       setSsoSaveState('error');
-      setSsoSaveError(err instanceof ApiError ? err.message : String(err));
+      const unknown = !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408);
+      setSsoUnknown(unknown); unconfirmedSso.current = unknown ? { config: submitted, secretChanged: changedSecret } : null;
+      setSsoSaveError(unknown ? '保存结果未确认，请先重新读取核对，勿重复提交。密钥不会回传，修改密钥后仍需通过正常 SSO 登录确认有效性。' : err instanceof ApiError ? err.message : String(err));
     }
   };
 
@@ -95,7 +136,7 @@ export function AuthTab(): JSX.Element {
   };
 
   if (state.status === 'loading') return <LoadingBlock />;
-  if (state.status === 'error') return <ErrorBlock message={state.message} />;
+  if (state.status === 'error') return <div className="space-y-3"><ErrorBlock message={state.message} /><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" onClick={() => setStatusAttempt(value => value + 1)}>重试读取认证状态</Button></div>;
 
   const auth = state.data;
   const enabled = auth.enabled !== false && auth.mode !== 'disabled';
@@ -106,8 +147,7 @@ export function AuthTab(): JSX.Element {
       title="登录与认证"
       description={
         <>
-          CDS Dashboard 自身的访问控制与退出入口。持久配置仍写入 <code>cds/.cds.env</code>，修改后执行{' '}
-          <code>./exec_cds.sh restart</code> 生效。
+          管理 Dashboard 登录方式与可信 SSO 入口。环境托管项修改后需重启；页面保存的 SSO 设置立即生效。
         </>
       }
     >
@@ -141,7 +181,7 @@ export function AuthTab(): JSX.Element {
               </div>
             </div>
             {auth.logoutEndpoint ? (
-              <Button
+              <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs"
                 type="button"
                 variant="outline"
                 disabled={logoutState === 'running'}
@@ -159,27 +199,6 @@ export function AuthTab(): JSX.Element {
           ) : null}
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <Field label="模式">
-            <CodePill>{auth.mode || 'unknown'}</CodePill>
-          </Field>
-          <Field label="退出接口">
-            <CodePill>{auth.logoutEndpoint || '无需退出'}</CodePill>
-          </Field>
-        </div>
-
-        <div className="rounded-md border border-border bg-card px-4 py-4">
-          <div className="flex items-start gap-3 text-sm leading-6 text-muted-foreground">
-            <KeyRound className="mt-0.5 h-4 w-4 shrink-0" />
-            <div>
-              账号密码模式保留 <code>CDS_USERNAME</code> / <code>CDS_PASSWORD</code> 作为原始管理员凭据，
-              并可在「用户管理」中创建本地账号；生产环境需同时使用持久化认证存储。GitHub OAuth 使用{' '}
-              <code>CDS_GITHUB_CLIENT_ID</code> / <code>CDS_GITHUB_CLIENT_SECRET</code> /{' '}
-              <code>CDS_ALLOWED_ORGS</code>。这些变量由初始化流程或运维脚本写入环境文件，页面只负责查看状态和退出当前会话。
-            </div>
-          </div>
-        </div>
-
         <div
           className="rounded-md border border-border bg-card px-4 py-4"
           data-agent-capability="auth.sso.configure"
@@ -192,38 +211,20 @@ export function AuthTab(): JSX.Element {
                 CDS 使用通用一次性票据协议，不识别具体平台，可连接任意实现该协议的可信身份入口。
               </p>
             </div>
-            <label className="flex items-center gap-2 text-sm">
+            {sso ? <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={sso?.enabled === true}
-                disabled={!sso || sso.managedByEnvironment}
-                onChange={(event) => setSso((current) => current ? { ...current, enabled: event.target.checked } : current)}
+                disabled={!sso || sso.managedByEnvironment || ssoSaveState === 'running' || ssoLoading}
+                onChange={(event) => updateSso({ enabled: event.target.checked })}
               />
               允许 SSO 登录
-            </label>
+            </label> : null}
           </div>
 
-          <div className="mt-4 flex flex-col gap-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-start gap-3">
-              <Bot className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-              <div>
-                <div className="text-sm font-medium text-foreground">不需要先学习 SSO 协议</div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Agent 会读取脱敏状态、准备回调与票据配置并完成验证。客户端密钥只在受保护的输入框中填写。
-                </p>
-              </div>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="shrink-0 border-primary/35 text-primary hover:text-foreground"
-              onClick={() => requestAgentAccess('auth')}
-            >
-              <Bot />
-              交给 Agent 配置
-            </Button>
-          </div>
-
+          <div className="mt-3 flex flex-wrap items-center gap-3"><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={ssoDenied} onClick={() => requestAgentAccess('auth')}><Bot />交给 Agent 配置</Button><span className="text-xs text-muted-foreground">客户端密钥仅在受保护输入框填写，不会回显。</span></div>
+          {ssoLoading ? <p role="status" className="mt-3 text-sm text-muted-foreground">正在读取 SSO 配置…</p> : null}
+          {ssoReadError ? <div role="alert" className="mt-3 space-y-2 text-sm text-destructive"><p>{ssoDenied ? '当前会话无权读取 SSO 配置，请联系系统所有者。' : `SSO 配置读取失败：${ssoReadError}。当前状态未确认，可重试。`}</p><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={ssoLoading || ssoSaveState === 'running'} onClick={() => setSsoAttempt(value => value + 1)}>重新读取 SSO 配置</Button></div> : null}
           {sso ? (
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               {sso.managedByEnvironment ? (
@@ -243,10 +244,10 @@ export function AuthTab(): JSX.Element {
                   <span className="mb-1.5 block text-sm text-muted-foreground">{label}</span>
                   <input
                     className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
-                    disabled={sso.managedByEnvironment}
+                    disabled={sso.managedByEnvironment || ssoSaveState === 'running' || ssoLoading}
                     value={sso[key]}
                     placeholder={placeholder}
-                    onChange={(event) => setSso((current) => current ? { ...current, [key]: event.target.value } : current)}
+                    onChange={(event) => updateSso({ [key]: event.target.value })}
                   />
                 </label>
               ))}
@@ -256,28 +257,41 @@ export function AuthTab(): JSX.Element {
                   type="password"
                   autoComplete="new-password"
                   className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
-                  disabled={sso.managedByEnvironment}
+                  disabled={sso.managedByEnvironment || ssoSaveState === 'running' || ssoLoading}
                   value={ssoSecret}
                   placeholder={sso.hasClientSecret ? '已安全保存，留空保持不变' : '输入客户端密钥'}
-                  onChange={(event) => setSsoSecret(event.target.value)}
+                  onChange={(event) => { setSsoSecret(event.target.value); if (!ssoUnknown) setSsoSaveState('idle'); }}
                 />
               </label>
-              <div className="flex items-center gap-3 md:col-span-2">
-                <Button
+              <div className="flex flex-wrap items-center gap-3 md:col-span-2">
+                <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs"
                   type="button"
-                  disabled={sso.managedByEnvironment || ssoSaveState === 'running'}
+                  disabled={sso.managedByEnvironment || ssoSaveState === 'running' || ssoLoading || Boolean(ssoReadError) || ssoUnknown}
                   onClick={() => void saveSso()}
                 >
                   {ssoSaveState === 'running' ? '保存中' : '保存 SSO 配置'}
                 </Button>
+                <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" disabled={ssoLoading || ssoSaveState === 'running'} onClick={() => setSsoAttempt(value => value + 1)}>重新读取核对</Button>
+                {ssoUnknown && ssoReadAfterUnknown && !ssoReadError ? <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" onClick={() => { setSsoUnknown(false); unconfirmedSso.current = null; setSsoSaveError('原保存结果仍未确认。你已选择在核对配置及正常登录后准备新的修改，不会自动重复提交。'); }}>已核对配置与登录，准备新修改</Button> : null}
                 {ssoSaveState === 'saved' ? <span className="text-sm text-ok">配置已保存并立即生效</span> : null}
                 {ssoSaveState === 'error' ? <span className="text-sm text-destructive">{ssoSaveError || '保存失败'}</span> : null}
               </div>
             </div>
           ) : (
-            <p className="mt-4 text-sm text-muted-foreground">当前会话无权读取 SSO 配置。</p>
+            <p className="mt-4 text-sm text-muted-foreground">{ssoReadError ? '尚未取得 SSO 配置，不能判断是否启用。' : '等待配置读取结果。'}</p>
           )}
         </div>
+        <details className="border-t border-border pt-3"><summary className="cursor-pointer text-sm font-medium">账号密码与 GitHub OAuth 配置参考</summary><div className="mt-3">
+          <div className="flex items-start gap-3 text-sm leading-6 text-muted-foreground">
+            <KeyRound className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              账号密码模式保留 <code>CDS_USERNAME</code> / <code>CDS_PASSWORD</code> 作为原始管理员凭据，
+              并可在「用户管理」中创建本地账号；生产环境需同时使用持久化认证存储。GitHub OAuth 使用{' '}
+              <code>CDS_GITHUB_CLIENT_ID</code> / <code>CDS_GITHUB_CLIENT_SECRET</code> /{' '}
+              <code>CDS_ALLOWED_ORGS</code>。这些变量由初始化流程或运维脚本写入环境文件，页面只负责查看状态和退出当前会话。
+            </div>
+          </div>
+        </div></details>
       </div>
     </Section>
   );
