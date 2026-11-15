@@ -18,7 +18,8 @@ export async function verifyComparisonLayout(surface,keyboard){
  }
  const doc=await surface.locator('body').evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));assert(doc.scroll<=doc.width+1,'报告正文横向溢出');
  // Both portrait and wide evidence use one activation to open their own native-size original.
- const sample=[0,...(count>3?[3]:[])],originals=[];
+ const wide=await pairs.locator('figure[data-phase="after"] img').evaluateAll(images=>images.findIndex(img=>img.naturalWidth>=img.naturalHeight));
+ const sample=[0,...(wide>0?[wide]:[])],originals=[];
  for(const i of sample){
   const trigger=pairs.nth(i).locator('figure[data-phase="after"] button');await trigger.click({trial:true});await trigger.focus();
   if(i===0)await trigger.click();else await trigger.press('Enter');
