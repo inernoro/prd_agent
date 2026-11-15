@@ -103,6 +103,18 @@ jobs:
         run: node e2e/performance/run.mjs --ref "$PERF_BASE_REF" --profile normal --baseline work/performance/baseline.json --out work/performance/recovered
       - name: Accept real local pages across themes and mobile viewport
         run: node e2e/performance/local-acceptance.mjs --prepared work/performance/candidate/result.json --out work/performance/local-acceptance
+      - name: Show readable performance results
+        if: always()
+        run: |
+          if [[ -f work/performance/baseline.json && -f work/performance/candidate/result.json ]]; then
+            for name in candidate injected injected-browser recovered; do
+              if [[ -f "work/performance/$name/result.json" ]]; then
+                node e2e/performance/report.mjs "work/performance/$name/result.json" work/performance/baseline.json --out "work/performance/reports/$name.html" --summary "$GITHUB_STEP_SUMMARY"
+              fi
+            done
+          else
+            echo 'MAP 性能检查尚未形成完整基线和候选结果，不能判为通过。' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Upload performance evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -116,6 +128,7 @@ jobs:
             work/performance/*/fixture.json
             work/performance/*/browser-*.png
             work/performance/local-acceptance/*.png
+            work/performance/reports/*.html
             work/performance/*/*-build.log
 
   smoke-preview:
