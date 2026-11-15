@@ -3,6 +3,7 @@ import { AlertTriangle, Eye, EyeOff, ChevronRight, Info } from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { getRoleMeta } from '@/lib/roleConfig';
 import { UserAvatar } from '@/components/ui/UserAvatar';
+import { ExecutiveMemberAvatar } from './ExecutiveMemberAvatar';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import type {
@@ -1126,7 +1127,7 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
               <tbody>
                 {members.map(m => (
                   <tr key={m.userId} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <td className="px-3 py-2 text-left" style={{ color: 'var(--text-primary)' }}>{maskName(m.displayName, masked)}</td>
+                    <td className="px-3 py-2 text-left" style={{ color: 'var(--text-primary)' }}><span className="exec-person-cell"><ExecutiveMemberAvatar member={m} label={maskName(m.displayName, masked)} anonymous={masked} />{maskName(m.displayName, masked)}</span></td>
                     <td className="px-3 py-2 text-right tabular-nums font-semibold" style={{ color: 'var(--text-primary)' }}>{m.output}</td>
                     <td className="px-3 py-2 text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>{m.quality ?? '—'}</td>
                     <td className="px-3 py-2 text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>{m.outputDays}</td>
