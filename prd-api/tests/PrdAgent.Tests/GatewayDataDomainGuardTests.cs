@@ -5358,7 +5358,9 @@ public class GatewayDataDomainGuardTests
         */
         var drawer = ReadRepoFile("llmgw/web/src/components/ModelPricingDrawer.tsx");
         Assert.DoesNotContain("真正参与计费的是模型池成员里的那份价格", drawer, StringComparison.Ordinal);
-        Assert.Contains("线上计费读的就是上面这份价", drawer, StringComparison.Ordinal);
+        Assert.Contains("后续请求的Gateway费用估算和预算判定", drawer, StringComparison.Ordinal);
+        Assert.Contains("历史估算不追溯重算", drawer, StringComparison.Ordinal);
+        Assert.Contains("实际结算以供应商账单为准", drawer, StringComparison.Ordinal);
         Assert.Contains("回滚备份", drawer, StringComparison.Ordinal);
         // 默认一个都不勾：勾选是明明白白的额外动作。
         Assert.Contains("setSyncPoolIds([]);", drawer, StringComparison.Ordinal);

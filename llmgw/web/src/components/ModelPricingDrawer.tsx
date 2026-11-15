@@ -199,12 +199,11 @@ export function ModelPricingDrawer({ model, onClose, onSaved, onUnknownEnd }: Pr
           <label style={FIELD_LABEL}>缓存写<input type="number" min={0} step="any" value={cacheWritePrice} onChange={(e) => setCacheWritePrice(e.target.value)} style={FIELD_INPUT} placeholder="Anthropic 一类协议才用得上" /></label>
           <label style={FIELD_LABEL}>每次调用固定费<input type="number" min={0} step="any" value={pricePerCall} onChange={(e) => setPricePerCall(e.target.value)} style={FIELD_INPUT} placeholder="按次计费的模型才填" /></label>
           <p style={hintStyle}>
-            缓存价留空不等于免费，计价时按输入全价算：宁可高估催人来补，也不低估放大真实开销——限额靠的就是这个数。
+            缓存单价留空时，费用估算按输入单价计算，不视为免费。
           </p>
           {optionalNumber(pricePerCall) !== undefined ? (
             <p style={hintStyle}>
-              填了「每次调用固定费」就只按次收费，上面那几个 token 单价不参与计价。
-              两种价同时生效是另一种计费模式，这里不靠「两个字段都填了」去猜——真要那样，得先有一个明确的计费模式开关。
+              配置每次调用固定费后，Gateway按次估算，Token单价不叠加；供应商实际收费规则以账单为准。
             </p>
           ) : null}
 
@@ -220,24 +219,23 @@ export function ModelPricingDrawer({ model, onClose, onSaved, onUnknownEnd }: Pr
               <Chip label="没有来源可考" color="var(--warn)" bg="var(--warn-bg)" />
             )}
             <span style={hintStyle}>
-              {model.priceObservedAt ? `观测于 ${model.priceObservedAt.slice(0, 16).replace('T', ' ')}` : '没有观测时间'}
+              {model.priceObservedAt ? `观测于 ${formatPlatformTime(model.priceObservedAt)}` : '没有观测时间'}
               {model.priceUpdatedBy ? ` · ${model.priceUpdatedBy}` : ''}
             </span>
           </div>
           {staleNotice ? <InlineAlert tone="info">{staleNotice}</InlineAlert> : null}
-          <p style={hintStyle}>改动任一价格后，来源会记成「人工录入」，观测时间刷成此刻。</p>
+          <p style={hintStyle}>保存价格改动后，来源记为「人工录入」，并更新观测时间。</p>
 
           <div style={{ ...SECTION_TITLE, marginTop: GAP.section }}>生效范围</div>
           <p style={hintStyle}>
-            {unknownWrite ? '本次提交是否生效仍未确认；后续计费以服务端实际保存的字段为准。' : '线上计费读的就是上面这份价——运行时解析直接从这条模型文档取价，保存即生效。'}
+            {unknownWrite ? '本次提交是否保存仍待核对；费用估算以请求解析时读取的服务端价格为准。' : '本次价格用于后续请求的Gateway费用估算和预算判定，每次按解析时的价格快照计算。历史估算不追溯重算，实际结算以供应商账单为准。'}
           </p>
           {usageError ? <InlineAlert tone="error">{usageError}</InlineAlert> : null}
           {usage && usage.pools.length === 0 ? null : (
             <>
-              <div style={{ ...SECTION_TITLE, marginTop: GAP.section }}>回滚备份 · 旧模型池（不参与计费）</div>
+              <div style={{ ...SECTION_TITLE, marginTop: GAP.section }}>回滚备份 · 旧模型池</div>
               <p style={hintStyle}>
-                模型池已经不在计费链路上，勾选只是把这份价也写进那几个池，留给「万一要回滚到池路由」那一天。
-                不勾不影响线上任何一笔账。
+                旧模型池不参与当前费用估算。勾选仅将价格同步到所选旧池备份，供回滚到旧池路由时使用。
               </p>
             </>
           )}
@@ -267,7 +265,7 @@ export function ModelPricingDrawer({ model, onClose, onSaved, onUnknownEnd }: Pr
             <p style={hintStyle}>托管的只追加池不接受从这里改价，已跳过。</p>
           ) : null}
           {usage && usage.pools.length > 0 ? (
-            <p style={hintStyle}>不勾的池保留它自己的价格，并在模型池页面显示为「与档案价不同」——这不影响计费。</p>
+            <p style={hintStyle}>未勾选的旧池保留原有备份价格，不影响当前模型的费用估算。</p>
           ) : null}
           </fieldset>
         </div>
