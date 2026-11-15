@@ -1,0 +1,1 @@
+Operator retest source branch progress. The running batch must keep its explicitly accepted S1 commit.
