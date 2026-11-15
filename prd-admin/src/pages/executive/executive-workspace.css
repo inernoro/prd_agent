@@ -40,7 +40,7 @@
 .exec-member-name>span:nth-child(2){flex:1}.exec-member-name{gap:8px}
 .exec-profile-identity{display:flex;align-items:center;gap:12px;min-width:0}.exec-profile-identity>.exec-avatar{--exec-avatar-size:48px}
 .exec-profile-identity>div{min-width:0}
-.exec-crumb-item strong{display:inline-flex;align-items:center;gap:6px}.exec-crumb-item strong>.exec-avatar{--exec-avatar-size:18px}
+.exec-crumb-item strong,.exec-crumb-item button{display:inline-flex;align-items:center;gap:6px}.exec-crumb-item strong>.exec-avatar,.exec-crumb-item button>.exec-avatar{--exec-avatar-size:18px}
 .exec-person-cell{display:inline-flex;align-items:center;gap:8px}.exec-person-cell>.exec-avatar{--exec-avatar-size:22px}
 .exec-people-chips{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;margin:1px 0 6px}
 .exec-people-chips:empty{display:none}.exec-people-chips>span{display:inline-flex;align-items:center;gap:5px;color:var(--exec-muted);font-size:10px}

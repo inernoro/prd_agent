@@ -83,6 +83,9 @@ describe('CDS 风格真实统计工作区', () => {
     person.focus(); await click(person);
     expect(container.querySelector('.exec-profile-identity img')?.getAttribute('alt')).toBe('林测试的头像');
     expect(container.querySelector('.exec-crumb-item strong img')).not.toBeNull();
+    await click(buttons('完整分析')[0]);
+    expect(container.querySelector('.exec-crumb-item button img')).not.toBeNull();
+    await click(buttons('返回')[0]);
     await click(buttons('返回')[0]);
     expect(document.activeElement?.getAttribute('data-exec-anchor')).toBe('member:u1');
   });
