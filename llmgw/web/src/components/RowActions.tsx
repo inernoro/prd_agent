@@ -188,7 +188,7 @@ export function RowActions({
                     className={cls}
                     disabled={action.disabled}
                     title={action.title}
-                    onClick={() => { setOpen(false); action.onSelect?.(); }}
+                    onClick={() => { setOpen(false); triggerRef.current?.focus(); action.onSelect?.(); }}
                   >
                     {action.label}
                   </button>
