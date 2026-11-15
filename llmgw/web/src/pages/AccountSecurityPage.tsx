@@ -7,6 +7,8 @@
 // 这里只渲染它给的结论，不在前端复写一份。
 import { useCallback, useEffect, useState } from 'react';
 import { Check, KeyRound, UserRound } from 'lucide-react';
+import { isPasswordChangeUncertain } from '@/lib/passwordRecovery';
+import { resolveMapHomeHref } from '@/lib/mapNavigation';
 import { getAccountProfile } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import type { AccountProfile } from '@/lib/types';
@@ -26,12 +28,14 @@ export function AccountSecurityPage() {
   const [confirm, setConfirm] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const [done, setDone] = useState(false);
   // 口令改成功了、但会话在这中间到期：既不是失败也不是普通成功，单独一种终态。
   const [reloginNotice, setReloginNotice] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await getAccountProfile();
+    setLoadError(null);
+    const res = await getAccountProfile().catch(() => ({ success: false as const, data: null, error: { code: 'NETWORK_ERROR', message: '读取账号信息失败' } }));
     if (res.success && res.data) {
       setProfile(res.data);
       // 预填 MAP 登录名：一键登录进来的人不该被迫再想一个名字。
@@ -58,7 +62,7 @@ export function AccountSecurityPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile) return;
+    if (!profile || outcomeUnknown || reloginNotice || submitting) return;
     if (needsOld && !oldPassword) return setError('请填写当前口令');
     if (newPassword.length < minLength) return setError(`新口令至少 ${minLength} 位`);
     if (newPassword !== confirm) return setError('两次输入的新口令不一致');
@@ -67,13 +71,16 @@ export function AccountSecurityPage() {
     setSubmitting(true);
     setError(null);
     const trimmed = username.trim();
-    const res = await changePassword({
-      oldPassword: needsOld ? oldPassword : undefined,
-      newPassword,
-      username: trimmed && trimmed !== profile.username ? trimmed : undefined,
-    });
-    setSubmitting(false);
-    if (!res.success) return setError(res.error?.message || '设置失败，请重试');
+    let res: Awaited<ReturnType<typeof changePassword>>;
+    try {
+      res = await changePassword({ oldPassword: needsOld ? oldPassword : undefined, newPassword, username: trimmed && trimmed !== profile.username ? trimmed : undefined });
+    } catch { res = { success: false, data: null, error: { code: 'NETWORK_ERROR', message: '口令修改响应读取中断' } }; }
+    finally { setSubmitting(false); }
+    if (!res.success) {
+      if (isPasswordChangeUncertain(res.error?.code)) setOutcomeUnknown(true);
+      else setError(res.error?.message || '设置被拒绝');
+      return;
+    }
 
     // 后端把「改成功了但会话到期」回成 success + requiresRelogin，
     // 因为报失败会让用户拿着**已经作废的旧口令**反复重试。这里要如实转述这件事，
@@ -97,7 +104,7 @@ export function AccountSecurityPage() {
     return (
       <PageShell>
         <PageHeader title="账号与安全" />
-        <PageBody><InlineAlert tone="error">{loadError}</InlineAlert></PageBody>
+        <PageBody><InlineAlert tone="error">{loadError} <Button variant="ghost" onClick={() => void load()}>重新读取账号</Button></InlineAlert></PageBody>
       </PageShell>
     );
   }
@@ -153,6 +160,7 @@ export function AccountSecurityPage() {
               <KeyRound size={15} />{profile.hasLocalPassword ? '修改口令' : '设置口令'}
             </div>
             <form onSubmit={submit} style={{ display: 'grid', gap: GAP.section }}>
+              <fieldset disabled={submitting || outcomeUnknown || reloginNotice} style={{ margin: 0, padding: 0, border: 0, minWidth: 0 }}>
               <FormGrid>
                 {/* 有建议登录名时也要放出这个输入框：MAP 那边改了名的老联邦账号
                     usernameIsGenerated 是 false（自动改名只认 map-... 那种生成名），
@@ -168,7 +176,7 @@ export function AccountSecurityPage() {
                       value={username}
                       autoComplete="username"
                       placeholder="小写字母、数字、点、下划线、连字符"
-                      onChange={(e) => setUsername(e.target.value)}
+                      onChange={(e) => { setUsername(e.target.value); setDone(false); }}
                     />
                     {profile.suggestedUsernameTaken && profile.suggestedUsername ? (
                       <span style={{ ...HINT_TEXT, color: 'var(--warn)' }}>
@@ -187,7 +195,7 @@ export function AccountSecurityPage() {
                       type="password"
                       autoComplete="current-password"
                       value={oldPassword}
-                      onChange={(e) => setOldPassword(e.target.value)}
+                      onChange={(e) => { setOldPassword(e.target.value); setDone(false); }}
                     />
                   </label>
                 ) : null}
@@ -199,7 +207,7 @@ export function AccountSecurityPage() {
                     autoComplete="new-password"
                     placeholder={`至少 ${minLength} 位`}
                     value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
+                    onChange={(e) => { setNewPassword(e.target.value); setDone(false); }}
                   />
                 </label>
                 <label style={{ display: 'grid', gap: 4 }}>
@@ -209,10 +217,11 @@ export function AccountSecurityPage() {
                     type="password"
                     autoComplete="new-password"
                     value={confirm}
-                    onChange={(e) => setConfirm(e.target.value)}
+                    onChange={(e) => { setConfirm(e.target.value); setDone(false); }}
                   />
                 </label>
               </FormGrid>
+              </fieldset>
 
               {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
               {reloginNotice ? (
@@ -229,14 +238,15 @@ export function AccountSecurityPage() {
                   </Button>
                 </InlineAlert>
               ) : null}
-              {done && !error && !reloginNotice ? (
+              {outcomeUnknown ? <InlineAlert tone="error">修改结果未确认，可能已生效。请用本次设置的登录名和新口令重新登录核实，勿重复提交。<Button type="button" variant="ghost" onClick={logout}>重新登录核实</Button>{federated ? <a href={resolveMapHomeHref()}>从 MAP 重新进入恢复</a> : null}</InlineAlert> : null}
+              {done && !error && !reloginNotice && !outcomeUnknown ? (
                 <InlineAlert tone="ok">
                   <Check size={14} style={{ verticalAlign: -2 }} /> 已生效，下次可用「{profile.username}」直接登录网关。
                 </InlineAlert>
               ) : null}
 
               <div>
-                <Button type="submit" variant="primary" size="sm" disabled={submitting}>
+                <Button type="submit" variant="primary" size="sm" disabled={submitting || outcomeUnknown || reloginNotice}>
                   {submitting ? '提交中…' : profile.hasLocalPassword ? '保存' : '设置口令'}
                 </Button>
               </div>
