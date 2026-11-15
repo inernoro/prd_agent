@@ -13,17 +13,20 @@
 //     声明作废（报错文字根本没变红），通配确认框那处更是连 color-mix 底色和边框一起丢了。
 //     语义色只有 --ok / --warn / --err / --info，全部改过来——边框底色重新出现是修复，不是回归。
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, KeyRound, Plus, RefreshCw, X } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { confirmServiceKeyClientCutover, createGatewayAppCaller, createServiceKey, getGatewayAppCallers, getLegacyKeyCutover, getOrganization, getServiceKeys, revokeServiceKey, updateLegacyKeyCutover } from '@/lib/api';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { invalidateOnboardingCache } from '@/lib/onboarding';
-import type { CreatedServiceKey, LegacyKeyCutoverData, OrganizationData, ServiceKeyItem } from '@/lib/types';
+import type { CreateServiceKeyRequest, CreatedServiceKey, LegacyKeyCutoverData, OrganizationData, ServiceKeyItem } from '@/lib/types';
 import { Button, Chip, InlineAlert, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { formatPlatformTime } from '@/lib/platformTime';
+import { mutationOutcomeUnknown } from '@/lib/mutationOutcome';
+import { CALLER_CREATE_REJECTED, KEY_CREATE_REJECTED } from '@/lib/serviceKeyIssuance';
+import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
 import { serviceKeyValidity } from '@/lib/serviceKeyValidity';
 import { canCreateWildcardServiceKey, canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP, INSET_PADDING } from '@/lib/surface';
@@ -111,6 +114,10 @@ export function ServiceKeysPage() {
   const [reading, setReading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
+  const [creationUnknown, setCreationUnknown] = useState<{ stage: 'caller' | 'key'; request: CreateServiceKeyRequest; caller: string; requestType: SelfServiceRequestType; callerTeam: string } | null>(null);
+  const [creationCheck, setCreationCheck] = useState<string | null>(null);
+  const [checkingCreation, setCheckingCreation] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [created, setCreated] = useState<CreatedServiceKey | null>(null);
@@ -188,62 +195,10 @@ export function ServiceKeysPage() {
   }, [load]);
 
   const submit = async () => {
-    setCreating(true);
-    setError(null);
-    // 自动生成的调用用途在签发密钥之前先登记：密钥的 appCaller 允许清单是精确匹配，
-    // 登记之后这条用途才会出现在「调用方」页上，能绑模型池、能被 Quickstart 直测
-    // （直测对未登记的 code 返回 APP_CALLER_NOT_FOUND）。登记失败就不签发，
-    // 免得留下一把指向无主 code 的密钥。
-    /*
-      「这个码此刻是什么状态」必须现问服务端，不能翻手上那一页。
-      页面开屏拉的是第一页（上限 200 条），租户的调用用途多过这个数时，一条**已停用**的同码
-      落在页外就查不到：状态判空 → 这道闸整条跳过 → 幂等创建把那条停用的原样返回 → 密钥照签，
-      而 serving 当场回 APP_CALLER_DISABLED。判据只覆盖了「最直观的那一页」，
-      正是 predicate-and-wiring-discipline 形状 1；而它上一轮刚被我按同一个理由修过一次。
-      顺带把「要不要登记」也改由这一次探测回答：两个判断问同一个来源，不会一个说有、一个说没有。
-    */
-    let existingCaller: { appCallerCode: string; status: string } | undefined;
-    if (appCallerMode === 'generate') {
-      const probe = await getGatewayAppCallers({ page: 1, pageSize: 200, search: generatedAppCallerCode });
-      if (!probe.success) {
-        setCreating(false);
-        setError(`没能确认调用用途「${generatedAppCallerCode}」当前是什么状态（${probe.error?.message || '读取失败'}），密钥未创建。`
-          + '这一步不敢猜：万一它已被停用，签出来的密钥一调用就会被拒。请重试，或先去「调用用途」页确认。');
-        return;
-      }
-      existingCaller = probe.data.items.find(
-        (item) => item.appCallerCode.trim().toLowerCase() === generatedAppCallerCode.trim().toLowerCase());
-      // 与 serving 的 GatewayAppCallerPolicy 同一套枚举：只有这三种状态放行真实流量。
-      const existingStatus = existingCaller?.status;
-      if (existingStatus !== undefined
-        && !['discovered', 'configured', 'active'].includes(existingStatus.trim().toLowerCase())) {
-        setCreating(false);
-        setError(`调用用途「${generatedAppCallerCode}」已存在但处于「${existingStatus}」状态，不接受流量。`
-          + '先去「调用用途」把它恢复，或换一个用途名——现在签出来的密钥一调用就会被拒。');
-        return;
-      }
-    }
-    if (appCallerMode === 'generate' && !existingCaller) {
-      if (!appCallerTeamId) {
-        setCreating(false);
-        setError('当前租户还没有可用团队，无法登记调用用途。请先在组织与团队里建一个团队。');
-        return;
-      }
-      const callerRes = await createGatewayAppCaller({
-        teamId: appCallerTeamId,
-        appCallerCode: generatedAppCallerCode,
-        requestType: appCallerRequestType,
-        title: name.trim() || generatedAppCallerCode,
-        ingressProtocol: 'openai-compatible',
-      });
-      if (!callerRes.success) {
-        setCreating(false);
-        setError(callerRes.error?.message || '登记调用用途失败，密钥未创建');
-        return;
-      }
-      setKnownAppCallers((current) => current.includes(generatedAppCallerCode) ? current : [...current, generatedAppCallerCode].sort());
-    }
-    const res = await createServiceKey({
+    if (!canUseCapability(tenant?.role, 'serviceKeyWrite') || !canSubmit || creatingRef.current || creationUnknown) return;
+    if (expiresAt && !Number.isFinite(Date.parse(expiresAt))) { setError('过期时间无效，请重新选择。'); return; }
+    creatingRef.current = true; setCreating(true); setError(null); setCreationCheck(null); setCreated(null);
+    const request: CreateServiceKeyRequest = {
       name: name.trim(),
       sourceSystem: sourceSystem.trim(),
       clientCode: clientCode.trim().toLowerCase(),
@@ -263,34 +218,74 @@ export function ServiceKeysPage() {
       rotatesKeyId,
       expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
       confirmWildcardRisk,
-    });
-    setCreating(false);
-    if (!res.success) {
-      setError(res.error?.message || '创建接入密钥失败');
-      return;
-    }
-    setCreated(res.data);
-    // 新人清单的「签一把密钥」与老手轨的密钥前缀都读缓存，签发成功必须主动失效，
-    // 否则已挂载的组件会一直显示旧事实（60 秒 TTL 只在下次加载才被查）。
-    invalidateOnboardingCache(tenant?.id);
-    setShowCreate(false);
-    setName('');
-    setClientCode('');
-    // 复位回默认路径，但 MAP 身份没有自助登记这一档，留在「选择已有」。
-    setAppCallerMode(sourceIsMap ? 'existing' : 'generate');
-    setAppCallerFeature('');
-    // 标识跟着用途一起清。留着它，下一次新建时它会顶上那个还没填的用途段——
-    // code 拼得出来、按钮可点，用户以为自己填过了；名称也是中文的话还会拼出与上一把
-    // 完全相同的 code，于是两把钥匙静默共用一条路由身份与一份预算。
-    setIdentitySlug('');
-    setAppCallerCodes('');
-    setTeamId('');
-    setAllowedCidrs('');
-    setRateLimitPerMinute('');
-    setRotatesKeyId(undefined);
-    setConfirmWildcardRisk(false);
-    setExpiresAt('');
-    await load();
+    };
+    let stage: 'caller' | 'key' = appCallerMode === 'generate' ? 'caller' : 'key';
+    const snapshot = () => ({ stage, request, caller: generatedAppCallerCode, requestType: appCallerRequestType, callerTeam: appCallerTeamId });
+    try {
+      if (appCallerMode === 'generate') {
+        if (!appCallerTeamId) { setError('当前租户还没有可用团队，无法登记调用用途。请先在组织与团队里建一个团队。'); return; }
+        // Always let the authoritative idempotent endpoint resolve exact code+type, team
+        // and traffic permission. A paged code-only list is not this decision's authority.
+        const callerRes = await createGatewayAppCaller({ teamId: appCallerTeamId, appCallerCode: generatedAppCallerCode, requestType: appCallerRequestType, title: name.trim() || generatedAppCallerCode, ingressProtocol: 'openai-compatible' });
+        if (!callerRes.success) {
+          if (mutationOutcomeUnknown(callerRes.error?.code, CALLER_CREATE_REJECTED)) setCreationUnknown(snapshot());
+          else setError(callerRes.error?.message || '调用身份登记被拒绝，密钥未签发');
+          return;
+        }
+        setKnownAppCallers(current => current.includes(generatedAppCallerCode) ? current : [...current, generatedAppCallerCode].sort());
+      }
+      stage = 'key';
+      const res = await createServiceKey(request);
+      if (!res.success) {
+        if (mutationOutcomeUnknown(res.error?.code, KEY_CREATE_REJECTED)) setCreationUnknown(snapshot());
+        else setError(res.error?.message || '密钥签发请求被拒绝');
+        return;
+      }
+      setCreated(res.data);
+      // 新人清单的「签一把密钥」与老手轨的密钥前缀都读缓存，签发成功必须主动失效，
+      // 否则已挂载的组件会一直显示旧事实（60 秒 TTL 只在下次加载才被查）。
+      invalidateOnboardingCache(tenant?.id);
+      setShowCreate(false);
+      setName('');
+      setClientCode('');
+      // 复位回默认路径，但 MAP 身份没有自助登记这一档，留在「选择已有」。
+      setAppCallerMode(sourceIsMap ? 'existing' : 'generate');
+      setAppCallerFeature('');
+      // 标识跟着用途一起清。留着它，下一次新建时它会顶上那个还没填的用途段——
+      // code 拼得出来、按钮可点，用户以为自己填过了；名称也是中文的话还会拼出与上一把
+      // 完全相同的 code，于是两把钥匙静默共用一条路由身份与一份预算。
+      setIdentitySlug('');
+      setAppCallerCodes('');
+      setTeamId('');
+      setAllowedCidrs('');
+      setRateLimitPerMinute('');
+      setRotatesKeyId(undefined);
+      setConfirmWildcardRisk(false);
+      setExpiresAt('');
+      await load();
+    } catch { setCreationUnknown(snapshot()); }
+    finally { creatingRef.current = false; setCreating(false); }
+  };
+
+  const reconcileCreation = async () => {
+    const pending = creationUnknown; if (!pending || checkingCreation) return;
+    setCheckingCreation(true);
+    try {
+      if (pending.stage === 'caller') {
+        const result = await getGatewayAppCallers({ search: pending.caller, requestType: pending.requestType, page: 1, pageSize: 200 });
+        if (!result.success) { setCreationCheck('调用身份核对读取失败，原提交结果仍未确认。'); return; }
+        const found = result.data.items.find(item => item.appCallerCode.toLowerCase() === pending.caller.toLowerCase() && item.requestType === pending.requestType && item.teamId === pending.callerTeam);
+        if (found && ['discovered', 'configured', 'active'].includes(found.status.toLowerCase())) { setCreationUnknown(null); setCreationCheck('已确认同一调用身份和团队，密钥尚未签发，可继续。'); }
+        else setCreationCheck('尚未确认可继续的调用身份；请到调用方治理核对团队、用途和管理状态。');
+      } else {
+        const result = await getServiceKeys();
+        if (!result.success) { setCreationCheck('密钥核对读取失败，签发结果仍未确认。'); return; }
+        setItems(result.data); setValidityNow(Date.now());
+        const candidates = result.data.filter(item => item.clientCode === pending.request.clientCode && pending.request.appCallerCodes.every(code => item.appCallerCodes.some(value => value.toLowerCase() === code.toLowerCase())));
+        setCreationCheck(candidates.length ? `找到 ${candidates.length} 把可能相关的密钥；不能确认哪把属于本次签发，明文无法重现。请核对并撤销不再使用的候选。` : '尚未找到可确认的签发记录；结果仍未知，不会再次签发。');
+      }
+    } catch { setCreationCheck('核对读取中断，原提交结果仍未确认，请重试读取。'); }
+    finally { setCheckingCreation(false); }
   };
 
   const revoke = async (item: ServiceKeyItem) => {
@@ -329,6 +324,7 @@ export function ServiceKeysPage() {
   };
 
   const startRotation = (item: ServiceKeyItem) => {
+    if (creatingRef.current || creationUnknown) return;
     setName(`${item.name} rotation`);
     setSourceSystem(item.sourceSystem);
     setClientCode(item.clientCode);
@@ -357,6 +353,7 @@ export function ServiceKeysPage() {
   };
 
   const toggleCreate = () => {
+    if (creatingRef.current || creationUnknown) return;
     setShowCreate((current) => {
       if (!current) setShowAdvanced(false);
       return !current;
@@ -460,7 +457,7 @@ export function ServiceKeysPage() {
   </>;
 
   const renderActions = (item: ServiceKeyItem) => item.enabled ? <div className="lg-service-key-actions">
-    {item.rotationState === 'active' || item.rotationState === 'completed' ? <Button size="sm" variant="ghost" onClick={() => startRotation(item)}>轮换</Button> : null}
+    {item.rotationState === 'active' || item.rotationState === 'completed' ? <Button size="sm" variant="ghost" disabled={creating || Boolean(creationUnknown)} onClick={() => startRotation(item)}>轮换</Button> : null}
     {item.rotationState === 'awaiting-client-cutover' ? <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void confirmClientCutover(item)}>确认已切换</Button> : null}
     <Button size="sm" variant="ghost" disabled={busyId === item.id || item.rotationState === 'awaiting-client-cutover' || item.rotationState === 'client-switched' && Boolean(item.rotatesKeyId) && !item.rotatedByKeyId} onClick={() => void revoke(item)}>{item.rotationState === 'client-switched' && item.rotatedByKeyId ? '撤销旧钥并完成' : item.rotationState === 'client-switched' ? '等待旧钥撤销' : '撤销'}</Button>
   </div> : null;
@@ -490,6 +487,8 @@ export function ServiceKeysPage() {
       />
 
       <PageBody className="lg-collection-page">
+        {creationUnknown ? <InlineAlert tone="error">{creationUnknown.stage === 'caller' ? '调用身份登记结果未确认，密钥尚未签发。' : '密钥签发结果未确认，可能已生效；本次表单已保留，不会重复签发。'}<Button size="sm" variant="ghost" disabled={checkingCreation} onClick={() => void reconcileCreation()}>核对本次步骤</Button>{creationUnknown.stage === 'caller' ? <Link className="lg-text-link" to={callerWorkspaceReturnHref(creationUnknown.caller, creationUnknown.requestType, '')}>查看调用方治理</Link> : <Link className="lg-text-link" to={`/service-keys?${new URLSearchParams({ client: creationUnknown.request.clientCode, appCaller: creationUnknown.request.appCallerCodes[0] || '' })}`}>查看可能相关的密钥</Link>}</InlineAlert> : null}
+        {creationCheck ? <InlineAlert tone="info">{creationCheck}</InlineAlert> : null}
         {error ? <InlineAlert tone="error">{error}{!items ? <Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重新读取</Button> : null}</InlineAlert> : null}
 
         {created ? (
@@ -501,13 +500,13 @@ export function ServiceKeysPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
               <code style={createdKeyStyle}>{created.key}</code>
               <Button size="sm" onClick={() => void copyCreatedKey()}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? '已复制' : '复制'}</Button>
-              <Link className="lg-text-link" to="/quickstart">打开 Quickstart</Link>
+              <Link className="lg-text-link" to="/learn#existing-key">查看已有密钥接入说明</Link>
             </div>
           </div>
         ) : null}
 
         {showCreate ? (
-          <div className="lg-service-key-form">
+          <fieldset className="lg-service-key-form" disabled={creating || Boolean(creationUnknown)} style={{ minWidth: 0, margin: 0, border: 0, padding: 0 }}>
             <div className="lg-service-key-fast-fields">
               <Field label="密钥名称" value={name} onChange={updateName} placeholder="例如 cherry-studio" />
               {appCallerMode === 'generate' ? (
@@ -547,7 +546,7 @@ export function ServiceKeysPage() {
               )}
               <datalist id="llmgw-app-callers">{knownAppCallers.map((code) => <option key={code} value={code} />)}</datalist>
               <datalist id="llmgw-app-caller-features">{FEATURE_PRESETS.map((item) => <option key={item.value} value={item.value} label={item.label} />)}</datalist>
-              <div className="lg-service-key-fast-action"><Button variant="primary" disabled={!canSubmit || creating} onClick={() => void submit()}>{creating ? '创建中' : '生成 API Key'}</Button></div>
+              <div className="lg-service-key-fast-action">{appCallerMode === 'generate' ? <span style={HINT_TEXT}>登记此调用身份并签发密钥，不修改已有预算。</span> : null}<Button variant="primary" disabled={!canSubmit || creating || Boolean(creationUnknown)} onClick={() => void submit()}>{creating ? '创建中' : '生成 API Key'}</Button></div>
             </div>
             {/*
               自动设置这一行是「系统替你填了什么」的唯一交代口：clientCode、生成出来的
@@ -608,7 +607,7 @@ export function ServiceKeysPage() {
             ) : null}
             {usesWildcard && !canCreateWildcard ? <InlineAlert tone="error">Developer 只能创建明确限定 appCaller、协议和 scope 的团队密钥。</InlineAlert> : null}
             {rotatesKeyId ? <Prose>正在轮换 {rotatesKeyId}，新旧密钥并行有效。</Prose> : null}
-          </div>
+          </fieldset>
         ) : null}
 
         {!items || items.length === 0 ? keyOverview : null}

@@ -16,6 +16,7 @@ import { AlertCircle, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from '
 import { Link } from 'react-router-dom';
 import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, draftAppCallerIntent, getOrganization, getLogicalModels, getGatewayAppCallers, getServiceKeys, updateGatewayAppCaller } from '@/lib/api';
 import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
+import { CALLER_CREATE_REJECTED, KEY_CREATE_REJECTED } from '@/lib/serviceKeyIssuance';
 import { mutationOutcomeUnknown } from '@/lib/mutationOutcome';
 import type { OrganizationData } from '@/lib/types';
 import { Button, Card, Chip, ReadOnlyNotice, SectionLoader, Spinner } from '@/components/ui';
@@ -29,13 +30,6 @@ import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP } from '@/lib/surface';
 import { BODY_TEXT, FIELD_INPUT, FIELD_LABEL } from '@/lib/typography';
-
-// Program.cs: create appCaller rejects these before InsertOne (or on a unique-key collision).
-// Audit/compensation and unrecognised failures do not prove the result and stay unknown.
-const CALLER_CREATE_REJECTED = ['INVALID_INPUT', 'INVALID_APP_CALLER', 'INVALID_INGRESS_PROTOCOL', 'TEAM_SCOPE_REQUIRED', 'TEAM_SCOPE_DENIED', 'APP_CALLER_IDENTITY_CONFLICT', 'APP_CALLER_DISABLED'] as const;
-// Create service-key scope validation precedes the initial serviceKeys.InsertOne.
-// Deliberately exclude issuance/audit/rotation failures after writes.
-const KEY_CREATE_REJECTED = ['INVALID_SERVICE_KEY_SCOPE', 'INVALID_CLIENT_CODE', 'INVALID_KEY_ENVIRONMENT', 'INVALID_KEY_PURPOSE', 'INVALID_KEY_SOURCE', 'INTERNAL_KEY_PURPOSE_FORBIDDEN', 'KEY_PURPOSE_SOURCE_MISMATCH', 'INVALID_SOURCE_CIDR', 'INVALID_RATE_LIMIT', 'INVALID_EXPIRY', 'TEAM_SCOPE_DENIED', 'WILDCARD_SCOPE_DENIED', 'WILDCARD_CONFIRMATION_REQUIRED', 'TEAM_SCOPE_REQUIRED', 'TEAM_WILDCARD_DENIED', 'APP_CALLER_TEAM_MISMATCH'] as const;
 
 type Protocol = 'native' | 'openai' | 'claude' | 'gemini';
 type RequestType = 'chat' | 'vision';
