@@ -67,6 +67,13 @@ public class RequestResponseLoggingMiddleware
     /// </summary>
     private static readonly string[] CredentialBearingPathPrefixes =
     {
+        // 正常认证与用户管理会收发密码、会话或令牌；整族请求/响应体均不进入共享日志。
+        // 仍按路径段匹配，不能把 /api/users-history 或 /api/v1/authorizations 一起挡掉。
+        "/api/v1/auth",
+        "/api/users",
+        // 本轮知识问答：消息/回答与 kb_read、kb_search 的正文只留在有权限的业务记录。
+        "/api/chat-agent",
+        "/api/agent-tools",
         "/api/product/claim-webhook",
         "/api/product/settings/scheduled-notifications",
         "/api/llm-gateway/sso/ticket",

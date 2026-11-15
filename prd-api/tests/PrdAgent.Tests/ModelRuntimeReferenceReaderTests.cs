@@ -49,7 +49,7 @@ public sealed class ModelRuntimeReferenceReaderTests
             case "missing-consumer": row["Entries"].AsBsonArray.RemoveAt(0); break;
             case "required-none": first["State"] = "none"; first["Value"] = BsonNull.Value; break;
             case "unknown": first["State"] = "unknown"; break;
-            case "wrong-kind": first["IdentityKind"] = "public-id"; break;
+            case "wrong-kind": first["IdentityKind"] = "upstream-model-id"; break;
             case "wrong-provider": first["PlatformId"] = "p"; break;
             case "expired": row["ExpiresAt"] = DateTime.UtcNow.AddSeconds(-1); break;
             case "foreign-tenant": row["TenantId"] = "another"; break;
@@ -57,6 +57,21 @@ public sealed class ModelRuntimeReferenceReaderTests
         }
         Assert.False(Validate(Row(DateTime.UtcNow, "current-instance"), row).Complete);
     }
+    [Fact]
+    public void ChatDefaultMatchesItsGatewayPublicIdRatherThanAnOfferingModel()
+    {
+        var row = Row(DateTime.UtcNow);
+        row["Entries"].AsBsonArray.Select(x => x.AsBsonDocument)
+            .Single(x => x["ConsumerKey"] == "chat-agent.default")["Value"] = "default-chat-curated";
+        var snapshot = Validate(row);
+        Assert.True(snapshot.Complete);
+        var chat = snapshot.Items.Single(x => x.ConsumerKey == "chat-agent.default");
+        Assert.True(MongoRuntimeModelReferenceSnapshotProvider.Matches(
+            new ReferenceIdentity { PublicId = "default-chat-curated", UpstreamModelId = "actual-provider-model" }, chat));
+        Assert.False(MongoRuntimeModelReferenceSnapshotProvider.Matches(
+            new ReferenceIdentity { PublicId = "another-public-id", UpstreamModelId = "default-chat-curated" }, chat));
+    }
+
     [Fact]
     public void MissingSnapshotOrRepeatedInstanceDoesNotProveCoverage()
     {

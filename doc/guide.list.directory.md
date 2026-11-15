@@ -20,6 +20,12 @@
 
 - [CDS / LLMGW 磁盘治理与交接 · 计划](./plan.cds.disk-governance-20261113.md) `plan.cds.disk-governance-20261113`
 
+
+- [MAP 与 CDS 磁盘容量治理 · 指南](./guide.platform.capacity.md) `guide.platform.capacity`
+
+- [知识库信息高效传递与复刻验收计划](./plan.knowledge-base.information-delivery.md) `plan.knowledge-base.information-delivery`
+
+- [CDS 自动化任务健康与安全恢复 · 指南](./guide.cds.automation-health.md) `guide.cds.automation-health`
 - [网页托管关联文档 · 计划](./plan.web-hosting.related-documents.md) `plan.web-hosting.related-documents`
 
 - [CDS 骨架维护与验收 · 指南](./guide.cds.loading.md) `guide.cds.loading`
@@ -310,6 +316,7 @@
 
 ### 五、计划
 
+- [视频制作台新环境验收续接 · 计划](./plan.video-agent.acceptance.handoff.md) `plan.video-agent.acceptance.handoff`
 - [CDS 代码审查需求兑现台账 · 计划](./plan.cds.code-review-delivery.md) `plan.cds.code-review-delivery`
   > 用户全部要求逐项对照，区分已上线、已合并和仍未完成的工作。
 

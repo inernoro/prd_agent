@@ -57,7 +57,8 @@ describe('通知实例身份', () => {
   it('MAP 跨实例相同目标与时刻不会碰撞去重键', () => {
     const alert={...event,type:'uptime.target.down' as const,targetId:event.targetId!};
     const a=buildNotificationPayload(alert),b=buildNotificationPayload({...alert,identity:{...event.identity!,observer:{...settings.instance,id:'another-instance'}}});
-    expect(a.dedupKey).not.toBe(b.dedupKey);expect(a.message).toContain('入口检查');
+    expect(a.dedupKey).not.toBe(b.dedupKey);expect(a.title).toContain('入口检查');
+    expect(a.message).toContain('影响范围尚未确认');expect(a.message).toContain('查看监控详情');
   });
   it('实际 Bark 传输使用对象分组与身份文案', async () => {
     const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('{}',{status:200}));

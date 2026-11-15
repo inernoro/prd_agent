@@ -101,6 +101,20 @@ function outboundHint(notice: SiteNotice): string | null {
   return null;
 }
 
+/** 账本记录时刻；不是上游故障发生时刻，跨轮次也不重写首次记录。 */
+export function NoticeRecordTimes({ createdAt, updatedAt }: Pick<SiteNotice, 'createdAt' | 'updatedAt'>): JSX.Element {
+  const stamp = (label: string, value: string): JSX.Element => {
+    const at = typeof value === 'string' ? Date.parse(value) : NaN;
+    return <span>{label}：{Number.isFinite(at)
+      ? <time dateTime={value} title={value}>{new Date(at).toLocaleString('zh-CN', { hour12: false })}</time>
+      : '时间未记录'}</span>;
+  };
+  return <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[0.6875rem] leading-4 text-muted-foreground">
+    {stamp('首次记录', createdAt)}
+    {stamp('最近记录', updatedAt)}
+  </div>;
+}
+
 export function SiteNoticeInbox({ canReadAccessRequests = false }: { canReadAccessRequests?: boolean } = {}): JSX.Element {
   const host = useOverlayDock('#cds-information-center-host');
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -421,6 +435,7 @@ export function SiteNoticeInbox({ canReadAccessRequests = false }: { canReadAcce
                             ) : null}
                           </div>
                         ) : null}
+                        <NoticeRecordTimes createdAt={notice.createdAt} updatedAt={notice.updatedAt} />
                         <div className={`mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground ${bodyExpanded ? '' : 'line-clamp-3'}`}>
                           {notice.body}
                         </div>

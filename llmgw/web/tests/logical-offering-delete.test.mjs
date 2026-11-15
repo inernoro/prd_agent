@@ -52,8 +52,12 @@ test('真实线路删除入口确认、局部移除、409保护、busy及只读�
   try {
     const { LogicalModelsPage } = await server.ssrLoadModule('/src/pages/LogicalModelsPage.tsx');
     root = createRoot(document.getElementById('root'));
-    const render = key => act(async () => root.render(React.createElement(globalThis.__offeringDeleteRouter.MemoryRouter, {}, React.createElement(LogicalModelsPage, { key }))));
+    const render = key => act(async () => root.render(React.createElement(globalThis.__offeringDeleteRouter.MemoryRouter, { initialEntries: ['/logical-models?references=old-model'] }, React.createElement(LogicalModelsPage, { key }))));
     await render('admin');
+    assert.doesNotMatch(document.body.textContent, /升级与引用|升级记录与遗漏|修复失效引用|全量使用位置|旧引用残留|待处理/);
+    assert.equal(document.querySelector('[data-testid="model-reference-migration-panel"]'), null);
+    assert.ok(buttons('新建模型').length);
+    assert.ok(buttons('绑定上游').length && buttons('测试').length && buttons('删除').length);
     await click(buttons('绑定上游')[0]); assert.ok(buttons('保存绑定').length);
     await click(document.querySelector('[aria-label="关闭详情"]'));
     await click(buttons('测试')[0]);

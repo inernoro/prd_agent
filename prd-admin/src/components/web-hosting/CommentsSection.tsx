@@ -16,6 +16,7 @@ type Props = (
   | { mode: 'share'; token: string; password?: string; siteId?: string }
   | { mode: 'site'; siteId: string; token?: never; password?: never }
 ) & {
+  threadKind?: 'annotation' | 'discussion';
   onStateLoaded?: (commentsEnabled: boolean) => void;
   onCountChange?: (count: number) => void;
   annotations?: HostedAnnotations;
@@ -73,7 +74,7 @@ export default function CommentsSection(props: Props) {
     || previousDraftScope.replyTo !== replyTo || previousDraftScope.anchor !== annotations?.draftAnchor)
     draftScopeRef.current = { key: draftScope, draft, replyTo, anchor: annotations?.draftAnchor };
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const allRoots = comments.filter(c => !c.parentId);
+  const allRoots = comments.filter(c => !c.parentId && (!props.threadKind || (props.threadKind === 'annotation' ? !!c.anchor : !c.anchor)));
   const versionRoots = review ? allRoots.filter(c => c.contentVersion === versionKey && !!versionKey) : allRoots;
   const outsideRoots = review ? allRoots.filter(c => c.contentVersion !== versionKey || !versionKey) : [];
   const roots = otherVersions ? outsideRoots : versionRoots;

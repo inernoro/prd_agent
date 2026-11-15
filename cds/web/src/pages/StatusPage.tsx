@@ -31,7 +31,7 @@ import './status/status-home.css';
 import './status/monitor-fonts.css';
 import './status/monitor-design-fonts.css';
 import { Plus, RefreshCw } from 'lucide-react';
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -106,6 +106,7 @@ function describeProbeResult(target: UptimeTargetSummary, sample: UptimeSample, 
 }
 
 export function StatusPage(): JSX.Element {
+  const canManageNotifications = useCanManageConsole();
   const [searchParams, setSearchParams] = useSearchParams();
   const location = readStatusLocation(searchParams);
   const workspaceEntry = useMemo(() => {
@@ -375,9 +376,9 @@ export function StatusPage(): JSX.Element {
                 <RefreshCw className={refreshing ? 'animate-spin' : undefined} />
                 {refreshing ? '刷新中' : '刷新'}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setWorkspacePanel({ panel: 'notify' })} disabled={phase !== 'ready'}>
+              {canManageNotifications ? <Button variant="outline" size="sm" onClick={() => setWorkspacePanel({ panel: 'notify' })} disabled={phase !== 'ready'}>
                 通知设置
-              </Button>
+              </Button> : null}
               <Button size="sm" onClick={() => setWorkspacePanel({ panel: 'connect' })} disabled={phase !== 'ready'}>
                 <Plus />接入我的服务
               </Button>

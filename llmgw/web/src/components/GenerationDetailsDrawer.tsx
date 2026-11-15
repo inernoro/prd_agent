@@ -10,7 +10,7 @@ import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
 import { Chip, SectionLoader } from './ui';
 import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityIcon';
-import { DASH, appDisplayName, computeTokPerSec, costKindBadgeLabel, costKindLabel, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
+import { MODEL_FALLBACK_LABEL, MODEL_FALLBACK_SCOPE, formatModelFallback, DASH, appDisplayName, computeTokPerSec, costKindBadgeLabel, costKindLabel, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
 
 function MetricCard({ title, value, note, icon }: { title: string; value: string; note?: ReactNode; icon: ReactNode }) {
   return (
@@ -601,9 +601,9 @@ export function GenerationDetailsDrawer({
                       icon={detail.imageSuccessCount ? <ImageIcon size={15} aria-hidden="true" /> : <Coins size={15} aria-hidden="true" />}
                     />
                     <MetricCard
-                      title="回退"
-                      value={detail.isFallback ? '是' : '否'}
-                      note={detail.isFallback ? detail.fallbackReason ?? undefined : undefined}
+                      title={MODEL_FALLBACK_LABEL}
+                      value={formatModelFallback(detail.isFallback)}
+                      note={[MODEL_FALLBACK_SCOPE, detail.isFallback === true ? detail.fallbackReason : null].filter(Boolean).join('；')}
                       icon={<RotateCcw size={15} aria-hidden="true" />}
                     />
                     {detail.upstreamCallCount > 1 || detail.operation !== 'invoke' ? (

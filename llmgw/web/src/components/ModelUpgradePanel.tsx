@@ -7,7 +7,6 @@ import { canUseCapability } from '@/lib/access';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { CollectionFacts, CollectionView } from '@/components/CollectionView';
 import { capabilityLabel } from '@/components/ProviderSetup';
-import { isReferenceCoverageVerified } from '@/components/ModelReferenceMigrationPanel';
 import { DetailsBlock, FormGrid } from '@/components/PageShell';
 import { Button, Chip, InlineAlert, ReadOnlyNotice, SectionLoader, Spinner } from '@/components/ui';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, SECTION_TITLE } from '@/lib/typography';
@@ -32,7 +31,7 @@ const BUSY_LABELS: Record<string, string> = { ...ACTIONS, save: '正在保存策
 const HISTORY_ACTIONS: Record<string, string> = { check: '检查版本', validate: '验证候选', promote: '采用候选', rollback: '回滚升级', policy: '更新策略', policy_update: '更新策略', 'policy.update': '更新策略' };
 const HISTORY_STATUS: Record<string, string> = { queued: '等待执行', running: '执行中', succeeded: '成功', success: '成功', completed: '已完成', failed: '未完成', blocked: '已阻止' };
 
-export function ModelUpgradePanel({ logicalModelId, onRoutingChanged, onReferenceCoverage }: { logicalModelId: string; onRoutingChanged?: () => void; onReferenceCoverage?: () => void }) {
+export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logicalModelId: string; onRoutingChanged?: () => void }) {
   const { tenant } = useAuth();
   const { confirm } = useDialogs();
   const [view, setView] = useState<ModelUpgradeView | null>(null);
@@ -48,8 +47,6 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged, onReferenc
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
-  const [coverageNow, setCoverageNow] = useState(Date.now());
-  useEffect(() => { const timer = window.setInterval(() => setCoverageNow(Date.now()), 30000); return () => window.clearInterval(timer); }, []);
   const [evidenceRequestId, setEvidenceRequestId] = useState('');
   const [validationMode, setValidationMode] = useState<'evidence' | 'canary'>('evidence');
   const [modelLookupFailed, setModelLookupFailed] = useState(false);
@@ -134,9 +131,9 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged, onReferenc
   async function actOnUpgrade(action: ModelUpgradeAction) {
     if (!view || !canWrite || unavailable) return;
     if (action === 'validate') {
-      if (validationMode === 'evidence' && !evidenceRequestId.trim()) { setError('请填写已有真实验收请求编号'); return; }
+      if (validationMode === 'evidence' && !evidenceRequestId.trim()) { setError('请填写已有真实验证请求编号'); return; }
       const description = validationMode === 'evidence'
-        ? '将核对这条已有真实验收记录，不重复发起付费验证。'
+        ? '将核对这条已有真实验证记录，不重复发起付费验证。'
         : `将向候选版本发起一次真实请求，可能产生费用。单次预算 ${budget(view.policy.maxValidationCostUsd)}，每日预算 ${budget(view.policy.maxDailyCostUsd)}，本次费用预留上界 ${budget(view.policy.canaryUnitCostUpperBoundUsd)}。结果未确认时请先查看记录，系统不会自动重复这次验证。`;
       if (!await confirm({ title: '验证候选版本？', description, confirmLabel: '开始验证' })) return;
     }
@@ -202,8 +199,6 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged, onReferenc
   }
 
   return <section data-testid="model-upgrade-panel" aria-label="升级策略" style={{ display: 'flex', flexDirection: 'column', gap: GAP.section, padding: 14, minWidth: 0 }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>{onReferenceCoverage ? <Button size="sm" onClick={onReferenceCoverage}>全量使用位置</Button> : <Link to={`/logical-models?references=${encodeURIComponent(logicalModelId)}`}>全量使用位置</Link>}<span style={HINT_TEXT}>采用新版本时也需通过使用位置覆盖核验。</span></div>
-    {view?.referenceCoverage ? <InlineAlert tone={(!error && !loading && isReferenceCoverageVerified(view.referenceCoverage, coverageNow)) ? 'ok' : 'info'}>{(!error && !loading && isReferenceCoverageVerified(view.referenceCoverage, coverageNow)) ? '使用位置核验在有效期内' : '使用位置需重新核对'} · 阻断 {view.referenceCoverage.blocked} · 未确认 {view.referenceCoverage.unknown} · 残留 {view.referenceCoverage.residual}</InlineAlert> : null}
     {loading ? <SectionLoader text="正在读取升级策略" /> : null}
     {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
     {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
@@ -229,7 +224,7 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged, onReferenc
         <div style={{ display: 'flex', gap: GAP.tight, flexWrap: 'wrap' }}>{([
           ['capabilities', '能力兼容'], ['price', '价格变化'], ['budget', '验证预算'], ['validation', '真实验证'],
         ] as const).map(([key, label]) => <Chip key={key} label={`${label} · ${key === 'validation' ? VALIDATION_STATUS[view.validationStatus] || '结果未知' : view.gates[key] ? '通过' : '待满足'}`} color={view.gates[key] ? 'var(--ok)' : 'var(--warn)'} bg={view.gates[key] ? 'var(--ok-bg)' : 'var(--warn-bg)'} />)}</div>
-        {view.candidate ? <span style={HINT_TEXT}>最近验证：{formatTime(view.candidate.validatedAt)}{view.candidate.validationRequestId ? <> · <Link to={`/logs?requestId=${encodeURIComponent(view.candidate.validationRequestId)}`}>查看验收记录</Link></> : null}</span> : null}
+        {view.candidate ? <span style={HINT_TEXT}>最近验证：{formatTime(view.candidate.validatedAt)}{view.candidate.validationRequestId ? <> · <Link to={`/logs?requestId=${encodeURIComponent(view.candidate.validationRequestId)}`}>查看验证记录</Link></> : null}</span> : null}
         {view.actionDisabledReason ? <span style={HINT_TEXT}>{view.actionDisabledReason}</span> : null}
       </div>
       {view.identityKind !== 'stable' ? <InlineAlert tone="info">固定版本保持原始标识，不参与自动升级。</InlineAlert> : !canWrite ? <ReadOnlyNotice /> : null}
@@ -244,10 +239,10 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged, onReferenc
           <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
             <label style={{ ...HINT_TEXT, display: 'flex', alignItems: 'center', gap: GAP.tight }}><input type="checkbox" aria-label="允许自动付费验证" disabled={!canWrite || busy !== null || running} checked={draft.autoValidate} onChange={event => setDraft({ ...draft, autoValidate: event.target.checked })} />自动模式允许在预算内发起真实验证</label>
             <FormGrid>{([
-              ['maxValidationCostUsd', '单次验证预算（美元）'], ['canaryUnitCostUpperBoundUsd', '验收费用保守上界（美元）'], ['maxDailyCostUsd', '每日验证预算（美元）'], ['maxPriceIncreasePercent', '允许涨价上限（%）'],
+              ['maxValidationCostUsd', '单次验证预算（美元）'], ['canaryUnitCostUpperBoundUsd', '验证费用保守上界（美元）'], ['maxDailyCostUsd', '每日验证预算（美元）'], ['maxPriceIncreasePercent', '允许涨价上限（%）'],
             ] as const).map(([key, label]) => <label key={key} style={FIELD_LABEL}><span>{label}</span><input aria-label={label} type="number" min={0} step="any" style={FIELD_INPUT} disabled={!canWrite || busy !== null || running} value={draft[key] ?? ''} onChange={event => setDraft({ ...draft, [key]: event.target.value === '' ? null : Number(event.target.value) })} /></label>)}</FormGrid>
-            <span style={HINT_TEXT}>真实验证可能产生费用。费用上界用于预留验收预算，不代表供应商按次收费；未知价格不会自动升级。</span>
-            <span style={HINT_TEXT}>验收场景：{draft.validationAppCallerCode || '尚未设置'}</span>
+            <span style={HINT_TEXT}>真实验证可能产生费用。费用上界用于预留验证预算，不代表供应商按次收费；未知价格不会自动升级。</span>
+            <span style={HINT_TEXT}>验证场景：{draft.validationAppCallerCode || '尚未设置'}</span>
           </div>
         </DetailsBlock>
         <section aria-label="版本继任关系" style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
@@ -276,8 +271,8 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged, onReferenc
       </form>
       {dirty ? <InlineAlert tone="info">策略有未保存的修改，请先保存或还原，再执行版本检查。</InlineAlert> : null}
       {canWrite ? <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
-        <label style={FIELD_LABEL}><span>验证方式</span><select aria-label="验证方式" value={validationMode} style={FIELD_INPUT} disabled={unavailable} onChange={event => setValidationMode(event.target.value as 'evidence' | 'canary')}>{(view.validationModes || ['evidence']).map(mode => <option key={mode} value={mode}>{mode === 'evidence' ? '核对已有真实验收记录' : '在预算内执行一次真实验收'}</option>)}</select></label>
-        {validationMode === 'evidence' ? <label style={FIELD_LABEL}><span>已有验收请求编号</span><input aria-label="已有验收请求编号" style={FIELD_INPUT} value={evidenceRequestId} disabled={unavailable} onChange={event => setEvidenceRequestId(event.target.value)} placeholder="填写此候选版本的真实验收记录" /></label> : <span style={HINT_TEXT}>真实验收受系统预算与调用权限保护；未执行或结果未知都不会标记为验证成功。</span>}
+        <label style={FIELD_LABEL}><span>验证方式</span><select aria-label="验证方式" value={validationMode} style={FIELD_INPUT} disabled={unavailable} onChange={event => setValidationMode(event.target.value as 'evidence' | 'canary')}>{(view.validationModes || ['evidence']).map(mode => <option key={mode} value={mode}>{mode === 'evidence' ? '核对已有真实验证记录' : '在预算内执行一次真实验证'}</option>)}</select></label>
+        {validationMode === 'evidence' ? <label style={FIELD_LABEL}><span>已有验证请求编号</span><input aria-label="已有验证请求编号" style={FIELD_INPUT} value={evidenceRequestId} disabled={unavailable} onChange={event => setEvidenceRequestId(event.target.value)} placeholder="填写此候选版本的真实验证记录" /></label> : <span style={HINT_TEXT}>真实验证受系统预算与调用权限保护；未执行或结果未知都不会标记为验证成功。</span>}
         <div style={{ display: 'flex', gap: GAP.tight, flexWrap: 'wrap' }}>
           <Button size="sm" disabled={unavailable} onClick={() => void actOnUpgrade('check')}>检查新版本</Button>
           <Button size="sm" disabled={unavailable || !view.candidate || (validationMode === 'evidence' && !evidenceRequestId.trim())} onClick={() => void actOnUpgrade('validate')}>验证候选版本</Button>

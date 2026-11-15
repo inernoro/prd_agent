@@ -44,6 +44,7 @@ describe('notificationTypeRegistry', () => {
       expect(getNotificationType({ source: 'report-agent', level: 'info', title: '' }).label).toBe('周报月报');
       expect(getNotificationType({ source: 'system-alert', level: 'warning', title: '' }).popupStyle).toBe('alert');
       expect(getNotificationType({ source: 'stable-smoke', level: 'error', title: '' }).label).toBe('稳定冒烟');
+      expect(getNotificationType({ source: 'model-pool-probe', level: 'error', title: '' }).label).toBe('模型线路');
     });
 
     it('缺陷解决(success)走庆祝气质', () => {

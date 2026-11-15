@@ -143,7 +143,7 @@ describe('项目总览实际通知分类与调度请求', () => {
     const app = express();
     app.use('/api', createScheduledJobsRouter({ stateService: { listScheduledJobs: (id?: string) => {
       receivedScope = id; return allJobs.filter(job => !id || job.projectId === id);
-    } } as never, scheduledJobService: {} as never, assertProjectAccess: () => null }));
+    } } as never, scheduledJobService: { health: () => ({ state: 'paused', message: '已暂停', recoveryRequired: false }) } as never, assertProjectAccess: () => null }));
     const server = app.listen(0); servers.push(server); const port = (server.address() as { port: number }).port;
     const response = await fetch(`http://127.0.0.1:${port}${page.url}`);
     expect(response.status).toBe(200);
