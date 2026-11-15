@@ -336,7 +336,7 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
     assert.ok(button('复制密钥'));
     await click(button('cURL'));
     assert.ok(document.querySelector('pre').textContent.includes('gwk_fixture_only_not_a_real_credential'),'产物中可直接运行的接入片段使用此次签发密钥');
-    assert.ok([...document.querySelectorAll('a')].some(a=>a.href.includes('fixture-safe-record')&&a.href.includes('view=physical')),'安全记录承接到物理视图，不能误导为模型结果');
+    assert.ok([...document.querySelectorAll('a')].some(a=>a.href.includes('fixture-safe-record')&&a.href.includes('view=physical')&&a.href.includes('openRequest=1')),'安全记录承接到物理视图，不能误导为模型结果');
     assert.ok(safeRequests.length>=2);assert.equal(fixture.calls.some(call=>call.paidIntent),false);
     await act(async()=>root.unmount());root=null;globalThis.fetch=originalFetch;
     const { Card } = await server.ssrLoadModule('/src/components/ui.tsx');

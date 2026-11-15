@@ -15,6 +15,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, draftAppCallerIntent, getOrganization, getLogicalModels, getGatewayAppCallers, getServiceKeys, updateGatewayAppCaller } from '@/lib/api';
+import { buildLogRequestHref } from '@/lib/logNavigation';
 import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
 import { CALLER_CREATE_REJECTED, KEY_CREATE_REJECTED } from '@/lib/serviceKeyIssuance';
 import { mutationOutcomeUnknown } from '@/lib/mutationOutcome';
@@ -1577,7 +1578,7 @@ export function QuickstartPage() {
             {phase === 'issued' && testResult?.ok ? (
               <div className="lg-test-result is-ok" role="status">
                 <CheckCircle2 size={14} />{testResult.message}
-                {testResult.requestId ? <Link to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}${testResult.mode === 'safe' ? '&view=physical' : ''}`}>打开 requestId 请求记录</Link> : null}
+                {testResult.requestId ? <Link to={buildLogRequestHref(testResult.requestId, { view: testResult.mode === 'safe' ? 'physical' : undefined })}>打开 requestId 请求记录</Link> : null}
               </div>
             ) : null}
             {diagnosis ? (
@@ -1595,7 +1596,7 @@ export function QuickstartPage() {
                   {diagnosis.action === 'bind-pool' && canCreateAccess ? <Button size="sm" variant="secondary" disabled={binding} onClick={() => void openThisCaller()}>{binding ? '正在绑定' : diagnosis.actionLabel}</Button> : null}
                   {diagnosis.to && diagnosis.actionLabel ? <Link className="lg-secondary-link" to={diagnosis.to}>{diagnosis.actionLabel}</Link> : null}
                   {canCreateAccess ? <Button size="sm" variant="ghost" disabled={testing} onClick={() => void runTest()}>重试验证</Button> : null}
-                  {testResult?.requestId ? <Link className="lg-text-link" to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}${testResult.mode === 'safe' ? '&view=physical' : ''}`}>{testResult.requestId}</Link> : null}
+                  {testResult?.requestId ? <Link className="lg-text-link" to={buildLogRequestHref(testResult.requestId, { view: testResult.mode === 'safe' ? 'physical' : undefined })}>{testResult.requestId}</Link> : null}
                 </div>
                 {bindNotice ? <span className="lg-qs-failure-reason">{bindNotice}</span> : null}
               </div>
@@ -1786,7 +1787,7 @@ export function QuickstartPage() {
                               </small>
                             ) : null}
                             {liveOutput?.done && testResult?.requestId ? (
-                              <a className="lg-qs-io-link" href={`/llmgw/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>requestId</a>
+                              <Link className="lg-qs-io-link" to={buildLogRequestHref(testResult.requestId, { view: testResult.mode === 'safe' ? 'physical' : undefined })}>requestId</Link>
                             ) : null}
                             {liveOutput ? <button type="button" className="lg-text-link" onClick={() => setLiveOutput(null)}>清除</button> : null}
                           </div>
