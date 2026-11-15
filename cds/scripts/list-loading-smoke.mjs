@@ -51,6 +51,10 @@ try {
   });
   const page = await context.newPage();
   page.on('pageerror', e => errors.push(e.message));
+  // 原生 ViewTransition 的旧截图仍可覆盖已稳定的 DOM；量具应等实际过渡收尾。
+  const settledMotion = () => page.waitForFunction(() =>
+    !document.documentElement.classList.contains('cds-surface-motion')
+    && !document.documentElement.classList.contains('cds-theme-motion'));
   const noEffect = async () => {
     assert.deepEqual((await page.evaluate(() => window.__loadingTrace)).filter(f => f.overlays || f.modifiedCards), [], 'no construction overlay, clipping or hidden real cards at any frame');
     assert.equal(await page.locator('.t-gen').count(), 0);
@@ -74,6 +78,7 @@ try {
     assert(style.opacity >= .7, 'breathing remains legible at its dimmest phase');
   };
   const geometry = async selector => {
+    await settledMotion();
     await page.mouse.move(0, 0);
     return page.evaluate(async selector => {
       const current = () => [...document.querySelectorAll(selector)].find(el => el.getBoundingClientRect().width > 0);
@@ -136,6 +141,9 @@ try {
   console.log('PASS project skeleton -> real project -> refresh retains content -> branch skeleton -> real branches; no effects');
 
   await page.getByRole('button', { name: '切换到黑天主题', exact: true }).click();
+  // 主题经 ViewTransition 回调提交；立刻 goto 会取消尚未执行的回调，文件名并非主题证据。
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+  await settledMotion();
   await page.setViewportSize({ width: 390, height: 844 });
   for (const [route, pending, real, label] of [
     ['/project-list', '[aria-busy="true"] .cds-card-grid article', '[data-list-loading-boundary] article', 'projects dark390'],
@@ -143,6 +151,7 @@ try {
   ]) {
     holdData();
     await page.goto(base + route);
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     await page.waitForSelector(pending);
     const before = await geometry(pending);
     await filledPulse();
@@ -150,6 +159,7 @@ try {
     releaseData();
     await page.waitForSelector(route === '/project-list' ? 'article a[href="/branches/fixture-project"]' : real);
     aligned(label, before, await geometry(real));
+    await page.screenshot({ path: out + '/' + label.replaceAll(' ', '-') + '-real.png' });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await noEffect();
   }
