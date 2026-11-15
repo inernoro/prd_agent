@@ -5,7 +5,7 @@
 // 一整句解释、两块 .lg-trust-explanation 是纯说明、10 字段的账单导入表单直接摊在页面上。
 // 现在：解释收进 HelpPopover 与 DetailsBlock，导入表单改成抽屉（本路由未被漂移检测监测，
 // 允许抽屉），「对账覆盖」那句原本是派生数据冒充说明，改成页头的一行汇总指标。
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowRight, CheckCircle2, CircleDollarSign, FileSearch, Gauge, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
@@ -25,6 +25,12 @@ export function UsagePage() {
   const [reconciliation, setReconciliation] = useState<CostReconciliationSummary | null>(null);
   const [governance, setGovernance] = useState<TenantGovernanceData | null>(null);
   const [governanceError, setGovernanceError] = useState<string | null>(null);
+  const governanceRead = useRef(0);
+  const [governanceUncertain, setGovernanceUncertain] = useState(false);
+  const [governanceDraftNotice, setGovernanceDraftNotice] = useState<string | null>(null);
+  const [governanceSavedAt, setGovernanceSavedAt] = useState<number | null>(null);
+  const [governanceLoading, setGovernanceLoading] = useState(true);
+  const [refresh, setRefresh] = useState(0);
   const [governanceSaving, setGovernanceSaving] = useState(false);
   const [monthlyBudget, setMonthlyBudget] = useState('');
   const [budgetReservation, setBudgetReservation] = useState('');
@@ -52,44 +58,73 @@ export function UsagePage() {
   const canImportActual = canUseCapability(tenant?.role, 'configWrite');
   const canReadLogs = canUseCapability(tenant?.role, 'logsRead');
 
+  const loadGovernance = useCallback(async (preserveDraft = false) => {
+    const seq = ++governanceRead.current;
+    setGovernanceSavedAt(null);
+    setGovernanceLoading(true); setGovernance(null); setGovernanceError(null);
+    const res = await getTenantGovernance().catch(() => ({ success: false as const, data: null, error: { code: 'NETWORK_ERROR', message: '租户硬限制连接失败' } }));
+    if (seq !== governanceRead.current) return;
+    setGovernanceLoading(false);
+    if (!res.success || !res.data) {
+      setGovernanceError(res.error?.message || '租户硬限制读取失败');
+      return;
+    }
+    setGovernance(res.data);
+    setGovernanceUncertain(false);
+    if (preserveDraft) { setGovernanceDraftNotice('已重新读取服务端限制。本次草稿仍保留，请核对后再保存。'); return; }
+    setGovernanceDraftNotice(null);
+    setMonthlyBudget(res.data.monthlyBudgetUsd != null ? String(res.data.monthlyBudgetUsd) : '');
+    setBudgetReservation(res.data.budgetReservationUsd != null ? String(res.data.budgetReservationUsd) : '');
+    setTenantRateLimit(res.data.rateLimitPerMinute != null ? String(res.data.rateLimitPerMinute) : '');
+  }, [tenant?.id]);
+
+  useEffect(() => { void loadGovernance(); return () => { ++governanceRead.current; }; }, [loadGovernance]);
   useEffect(() => {
+    let active = true;
     const to = new Date();
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
     const params = { from: from.toISOString(), to: to.toISOString() };
+    setError(null); setSummary(null); setReconciliationLoading(true); setReconciliationError(null);
     getLogsSummary({ ...params, view: 'logical' }).then((res) => {
+      if (!active) return;
       if (res.success) setSummary(res.data);
       else setError(res.error.message);
     });
     getCostReconciliations(params).then((res) => {
+      if (!active) return;
       if (res.success) setReconciliation(res.data);
-      else setReconciliationError(res.error.message || '供应商账单读取失败');
+      else { setReconciliation(null); setReconciliationError(res.error.message || '供应商账单读取失败'); }
       setReconciliationLoading(false);
     });
-    getTenantGovernance().then((res) => {
-      if (!res.success) {
-        setGovernanceError(res.error.message || '租户硬限制读取失败');
-        return;
-      }
-      setGovernance(res.data);
-      setMonthlyBudget(res.data.monthlyBudgetUsd ? String(res.data.monthlyBudgetUsd) : '');
-      setBudgetReservation(res.data.budgetReservationUsd ? String(res.data.budgetReservationUsd) : '');
-      setTenantRateLimit(res.data.rateLimitPerMinute ? String(res.data.rateLimitPerMinute) : '');
-    });
-  }, []);
+    return () => { active = false; };
+  }, [refresh]);
 
   const saveTenantGovernance = async () => {
+    if (!governance || governanceUncertain || governanceLoading || governanceSaving || !canImportActual) return;
     setGovernanceSaving(true);
+    setGovernanceSavedAt(null);
+    setGovernanceDraftNotice(null);
     setGovernanceError(null);
-    const res = await updateTenantGovernance({
-      monthlyBudgetUsd: monthlyBudget ? Number(monthlyBudget) : null,
-      budgetReservationUsd: budgetReservation ? Number(budgetReservation) : null,
-      rateLimitPerMinute: tenantRateLimit ? Number(tenantRateLimit) : null,
-    });
-    setGovernanceSaving(false);
+    let res: Awaited<ReturnType<typeof updateTenantGovernance>>;
+    try {
+      res = await updateTenantGovernance({
+        monthlyBudgetUsd: monthlyBudget ? Number(monthlyBudget) : null,
+        budgetReservationUsd: budgetReservation ? Number(budgetReservation) : null,
+        rateLimitPerMinute: tenantRateLimit ? Number(tenantRateLimit) : null,
+      });
+    } catch {
+      res = { success: false, data: null, error: { code: 'NETWORK_ERROR', message: '保存响应读取中断' } };
+    } finally { setGovernanceSaving(false); }
     if (!res.success) {
-      setGovernanceError(res.error.message || '租户硬限制保存失败');
+      // Only validation/authorization rejections prove no write happened. A lost response does not.
+      const rejected = ['INVALID_INPUT', 'TENANT_NOT_FOUND', 'FORBIDDEN', 'UNAUTHORIZED'].includes(res.error.code);
+      if (!rejected) {
+        setGovernanceUncertain(true); setGovernance(null);
+        setGovernanceError('保存结果未确认，服务端可能已更新。草稿已保留，请重新读取限制核对。');
+      } else setGovernanceError(res.error.message || '租户硬限制保存被拒绝');
       return;
     }
+    setGovernanceSavedAt(Date.now());
     setGovernance((current) => current ? {
       ...current,
       monthlyBudgetUsd: res.data.monthlyBudgetUsd,
@@ -171,7 +206,7 @@ export function UsagePage() {
         )}
       />
       <PageBody>
-      {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+      {error ? <InlineAlert tone="error">用量暂不可用：{error} <Button size="sm" variant="ghost" onClick={() => setRefresh(value => value + 1)}>重新读取用量</Button></InlineAlert> : null}
       <Card style={CARD_BODY} aria-labelledby="tenant-governance-title">
         <div style={cardHeadStyle}>
           <h2 id="tenant-governance-title" style={SECTION_TITLE}>
@@ -183,24 +218,28 @@ export function UsagePage() {
           </h2>
           <span style={countStyle}>服务端原子预占</span>
         </div>
-        {governanceError ? <InlineAlert tone="error">{governanceError}</InlineAlert> : null}
+        {governanceError ? <InlineAlert tone="error">{governanceError}{!governance && !governanceUncertain ? '。当前限制未知，不能按空值保存。' : ''} <Button size="sm" variant="ghost" disabled={governanceLoading || governanceSaving} onClick={() => void loadGovernance(governanceUncertain)}>重新读取限制</Button></InlineAlert> : null}
         <div className="lg-usage-grid">
-          <Card><div className="lg-card-kicker">本月预算占用</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.monthlyBudgetUsd ? fmtCost(governance.spentUsd, 'USD') : '未设上限'}</strong><p>{governance?.monthlyBudgetUsd ? `Gateway 估算口径，剩余 ${fmtCost(governance.remainingBudgetUsd ?? 0, 'USD')}` : '不代表供应商实际结算，不影响 appCaller 自身预算'}</p></Card>
-          <Card><div className="lg-card-kicker">并发预占</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.monthlyBudgetUsd ? fmtCost(governance.reservedUsd, 'USD') : '未启用'}</strong><p>{governance?.budgetReservationUsd ? `每请求保守预占 ${fmtCost(governance.budgetReservationUsd, 'USD')}` : '设置总月预算时必须同时设置'}</p></Card>
-          <Card><div className="lg-card-kicker"><Gauge size={15} /> 当前分钟</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.rateLimitPerMinute ? `${fmtCompact(governance.currentMinuteCount)} / ${fmtCompact(governance.rateLimitPerMinute)}` : '未设上限'}</strong><p>所有实际调用合计，分钟窗口原子计数</p></Card>
+          <Card><div className="lg-card-kicker">本月预算占用</div><strong className="lg-large-value">{!governance ? (governanceLoading ? '正在读取' : '未知') : governance.monthlyBudgetUsd ? fmtCost(governance.spentUsd, 'USD') : '未设上限'}</strong><p>{governance?.monthlyBudgetUsd ? `预算 ${fmtCost(governance.monthlyBudgetUsd, 'USD')}，剩余 ${fmtCost(governance.remainingBudgetUsd, 'USD')}` : '不代表供应商实际结算，不影响 appCaller 自身预算'}</p></Card>
+          <Card><div className="lg-card-kicker">并发预占</div><strong className="lg-large-value">{!governance ? (governanceLoading ? '正在读取' : '未知') : governance.monthlyBudgetUsd ? fmtCost(governance.reservedUsd, 'USD') : '未启用'}</strong><p>{governance?.budgetReservationUsd ? `每请求保守预占 ${fmtCost(governance.budgetReservationUsd, 'USD')}` : '设置总月预算时必须同时设置'}</p></Card>
+          <Card><div className="lg-card-kicker"><Gauge size={15} /> 当前分钟</div><strong className="lg-large-value">{!governance ? (governanceLoading ? '正在读取' : '未知') : governance.rateLimitPerMinute ? `${fmtCompact(governance.currentMinuteCount)} / ${fmtCompact(governance.rateLimitPerMinute)}` : '未设上限'}</strong><p>所有实际调用合计，分钟窗口原子计数</p></Card>
         </div>
-        {canImportActual ? <div style={{ marginTop: GAP.section }}>
+        {canImportActual ? <DetailsBlock title="调整租户硬限制">
+          {governanceDraftNotice ? <div role="status">{governanceDraftNotice}</div> : null}
+          <fieldset disabled={!governance || governanceUncertain || governanceLoading || governanceSaving} style={{ margin: 0, padding: 0, border: 0, minWidth: 0 }}>
           <FormGrid>
-            <label style={labelStyle}>租户总月预算（USD）<input type="number" min="0" step="any" value={monthlyBudget} onChange={(e) => setMonthlyBudget(e.target.value)} style={inputStyle} placeholder="留空表示不限制" /></label>
-            <label style={labelStyle}>单请求原子预占（USD）<input type="number" min="0" step="any" value={budgetReservation} onChange={(e) => setBudgetReservation(e.target.value)} style={inputStyle} placeholder="总预算启用时必填" /></label>
-            <label style={labelStyle}>租户每分钟总请求数<input type="number" min="0" step="1" value={tenantRateLimit} onChange={(e) => setTenantRateLimit(e.target.value)} style={inputStyle} placeholder="留空表示不限制" /></label>
-            <Button variant="primary" size="sm" disabled={governanceSaving || (!!monthlyBudget !== !!budgetReservation)} onClick={() => void saveTenantGovernance()}>{governanceSaving ? '保存中' : '保存硬限制'}</Button>
+            <label style={labelStyle}>租户总月预算（USD）<input type="number" min="0" step="any" value={monthlyBudget} onChange={(e) => { setMonthlyBudget(e.target.value); setGovernanceSavedAt(null); }} style={inputStyle} placeholder="留空表示不限制" /></label>
+            <label style={labelStyle}>单请求原子预占（USD）<input type="number" min="0" step="any" value={budgetReservation} onChange={(e) => { setBudgetReservation(e.target.value); setGovernanceSavedAt(null); }} style={inputStyle} placeholder="总预算启用时必填" /></label>
+            <label style={labelStyle}>租户每分钟总请求数<input type="number" min="0" step="1" value={tenantRateLimit} onChange={(e) => { setTenantRateLimit(e.target.value); setGovernanceSavedAt(null); }} style={inputStyle} placeholder="留空表示不限制" /></label>
+            <Button variant="primary" size="sm" disabled={!governance || governanceUncertain || governanceLoading || governanceSaving || (!!monthlyBudget !== !!budgetReservation)} onClick={() => void saveTenantGovernance()}>{governanceSaving ? '保存中' : '保存硬限制'}</Button>
+            {governanceSavedAt ? <span role="status">已保存 · {new Date(governanceSavedAt).toLocaleTimeString('zh-CN', { hourCycle: 'h23' })}</span> : null}
           </FormGrid>
-        </div> : <div style={{ marginTop: GAP.section }}><ReadOnlyNotice>Owner 或 Admin 可修改租户总限制；当前角色仍可查看实时使用量。</ReadOnlyNotice></div>}
+          </fieldset>
+        </DetailsBlock> : <div style={{ marginTop: GAP.section }}><ReadOnlyNotice>Owner 或 Admin 可修改租户总限制；当前角色仍可查看实时使用量。</ReadOnlyNotice></div>}
       </Card>
       <div className="lg-usage-grid">
         <Card><div className="lg-card-kicker"><CircleDollarSign size={15} /> 请求用量</div><strong className="lg-large-value">{fmtCompact(summary?.total)}</strong><p>{fmtCompact(summary?.totalTokens)} tokens</p></Card>
-        <Card><div className="lg-card-kicker">价格覆盖率</div><strong className="lg-large-value">{summary?.total ? `${summary.priceCoveragePercent}%` : '暂无请求'}</strong><p>{fmtCompact(summary?.pricedRequests)} 可估算 · {fmtCompact(summary?.unknownCostRequests)} 未知</p></Card>
+        <Card><div className="lg-card-kicker">价格覆盖率</div><strong className="lg-large-value">{!summary ? '未知' : summary.total ? `${summary.priceCoveragePercent}%` : '暂无请求'}</strong><p>{fmtCompact(summary?.pricedRequests)} 可估算 · {fmtCompact(summary?.unknownCostRequests)} 未知</p></Card>
         {summary?.cacheSavingsUsd != null ? (
           <Card>
             <div className="lg-card-kicker">缓存节省</div>
@@ -228,9 +267,9 @@ export function UsagePage() {
           <span style={countStyle}>只看记录数量，不合并币种</span>
         </div>
         <div className="lg-cost-state-grid">
-          <CostStateCard state="estimated" title="可估算" value={summary?.total ? fmtCompact(summary.pricedRequests) : '暂无请求'} />
+          <CostStateCard state="estimated" title="可估算" value={!summary ? '未知' : summary.total ? fmtCompact(summary.pricedRequests) : '暂无请求'} />
           <CostStateCard state="actual" kicker="供应商账单" title="供应商实际" value={reconciliationStateValue(reconciliation, reconciliationLoading, reconciliationError, (data) => data.totalRecords)} />
-          <CostStateCard state="unknown" title="估算未知" value={summary?.total ? fmtCompact(summary.unknownCostRequests) : '暂无请求'} />
+          <CostStateCard state="unknown" title="估算未知" value={!summary ? '未知' : summary.total ? fmtCompact(summary.unknownCostRequests) : '暂无请求'} />
           <CostStateCard state="reconciled" kicker="可比较记录" title="已对账" value={reconciliationStateValue(reconciliation, reconciliationLoading, reconciliationError, () => reconciledCount)} />
         </div>
       </Card>
@@ -257,8 +296,8 @@ export function UsagePage() {
                 </span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.tight, flexWrap: 'nowrap' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>{fmtCompact(item.requests)} 次</span>
-                  <Link to="/models" style={{ color: 'var(--accent)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
-                    {item.status === 'stale_currency' ? '去换算币种' : '去补价格'}
+                  <Link to={`/models/view?model=${encodeURIComponent(item.model)}`} style={{ color: 'var(--accent)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                    查看模型详情
                     <ArrowRight size={13} style={{ verticalAlign: 'middle', marginLeft: 3 }} />
                   </Link>
                 </span>
@@ -281,7 +320,7 @@ export function UsagePage() {
         {reconciliationLoading ? (
           <SectionLoader text="正在读取供应商账单…" />
         ) : reconciliationError ? (
-          <InlineAlert tone="error">{reconciliationError}。费用估算仍可查看，但当前不能宣称已完成供应商对账。</InlineAlert>
+          <InlineAlert tone="error">{reconciliationError}。费用估算仍可查看，但当前不能宣称已完成供应商对账。 <Button size="sm" variant="ghost" onClick={() => setRefresh(value => value + 1)}>重新读取账单</Button></InlineAlert>
         ) : reconciliation && reconciliation.items.length > 0 ? (
           <div className="lg-reconciliation-list">
             {reconciliation.items.map((item) => <ReconciliationRecord key={item.id} item={item} canReadLogs={canReadLogs} />)}
