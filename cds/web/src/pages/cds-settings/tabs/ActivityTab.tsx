@@ -26,16 +26,20 @@ function actionLabel(action: string): string {
 export function ActivityTab({ canViewAll }: { canViewAll: boolean }): JSX.Element {
   const [rows, setRows] = useState<CdsUserActivity[] | null>(null);
   const [error, setError] = useState('');
+  const [errorDetail, setErrorDetail] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const beginRead = useSettingsReadRequest();
   const load = useCallback(async (): Promise<void> => {
-    const signal = beginRead(); setError(''); setRefreshing(true);
+    const signal = beginRead(); setError(''); setErrorDetail(''); setRefreshing(true);
     try {
       const next = await listUserActivity({ limit: 200 });
       if (!signal.aborted) setRows(next);
     } catch (err) {
-      if (!signal.aborted) setError(err instanceof ApiError && err.status === 403 ? '没有读取操作记录的权限，请联系系统所有者。' : `操作记录读取失败：${err instanceof Error ? err.message : String(err)}`);
+      if (!signal.aborted) {
+        setError(err instanceof ApiError && err.status === 403 ? '没有读取操作记录的权限，请联系系统所有者。' : err instanceof ApiError && err.status === 401 ? '未登录，请登录后重新读取操作记录。' : '操作记录读取失败，请重新读取。');
+        setErrorDetail(err instanceof Error ? err.message : String(err));
+      }
     } finally { if (!signal.aborted) setRefreshing(false); }
   }, [beginRead]);
   useEffect(() => { void load(); }, [load]);
@@ -62,7 +66,7 @@ export function ActivityTab({ canViewAll }: { canViewAll: boolean }): JSX.Elemen
         </div>
 
         {error ? (
-          <ErrorBlock message={error} />
+          <div className="space-y-2"><ErrorBlock message={error} />{errorDetail?<details className="text-sm text-muted-foreground"><summary className="flex min-h-[3.25rem] cursor-pointer items-center">查看读取错误详情</summary><pre className="whitespace-pre-wrap break-all font-mono text-xs">{errorDetail}</pre></details>:null}</div>
         ) : rows === null ? (
           <LoadingBlock label="加载操作记录" />
         ) : rows.length === 0 ? (

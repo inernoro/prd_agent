@@ -1,3 +1,4 @@
+import { ConfirmAction } from '@/components/ui/confirm-action';
 import { SettingsDirectory } from '@/pages/cds-settings/SettingsDirectory';
 import { useSettingsTabVisibility } from '@/pages/cds-settings/useSettingsTabVisibility';
 import { MotionLink as Link } from '@/components/layout/RouteMotion';
@@ -1925,11 +1926,7 @@ function GithubProjectTab({
 
   return (
     <div className="space-y-8">
-      <Section title="GitHub App" description="CDS 用 GitHub App 接收 webhook、写入 Check Run，并把仓库绑定到项目。">
-        {appState.status === 'loading' ? <LoadingBlock label="加载 GitHub App 状态" /> : null}
-        {appState.status === 'error' ? <ErrorBlock message={appState.message} /> : null}
-        {appState.status === 'ok' ? <GithubAppCard app={appState.app} /> : null}
-      </Section>
+      {appState.status === 'loading' ? <ContentLoading label="读取 GitHub 接入状态" variant="inline" /> : appState.status === 'error' ? <div className="space-y-2"><ErrorBlock message={`GitHub 接入状态未确认：${appState.message}`} /><Button type="button" variant="outline" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" onClick={()=>void loadApp()}>重试读取 GitHub 接入状态</Button></div> : !appState.app.configured ? <p role="alert" className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-warn">GitHub App 尚未配置，暂不能绑定新仓库；已有绑定与策略显示如下，配置步骤见本页下方。</p> : null}
 
       <Section
         title="项目仓库绑定"
@@ -1952,17 +1949,17 @@ function GithubProjectTab({
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button asChild variant="outline">
+                <Button asChild variant="outline" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs">
                   <a href={`https://github.com/${project.githubRepoFullName}`} target="_blank" rel="noreferrer">
                     <Github />
                     打开仓库
                   </a>
                 </Button>
-                <Button variant="outline" onClick={() => setRepoPickerOpen(true)} disabled={!appConfigured}>
+                <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" variant="outline" onClick={() => setRepoPickerOpen(true)} disabled={!appConfigured}>
                   <Link2 />
                   重新绑定
                 </Button>
-                <Button variant="outline" onClick={() => setUnlinkOpen(true)}>
+                <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" variant="outline" onClick={() => setUnlinkOpen(true)}>
                   <Unlink />
                   解除绑定
                 </Button>
@@ -1993,7 +1990,7 @@ function GithubProjectTab({
                 </div>
               </div>
             </div>
-            <Button onClick={() => setRepoPickerOpen(true)} disabled={!appConfigured}>
+            <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" onClick={() => setRepoPickerOpen(true)} disabled={!appConfigured}>
               <Link2 />
               绑定 GitHub 仓库
             </Button>
@@ -2043,6 +2040,8 @@ function GithubProjectTab({
         </div>
       </Section>
 
+      {appState.status === 'ok' ? <Section title="GitHub App" description="CDS 用 GitHub App 接收 webhook、写入 Check Run，并把仓库绑定到项目。"><GithubAppCard app={appState.app} /></Section> : null}
+
       <GithubRepoPickerDialog
         open={repoPickerOpen}
         onOpenChange={setRepoPickerOpen}
@@ -2053,8 +2052,8 @@ function GithubProjectTab({
         }}
       />
       <Dialog open={unlinkOpen} onOpenChange={setUnlinkOpen}>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="border-border [&>button:last-child]:min-h-[3.25rem] [&>button:last-child]:min-w-[3.25rem]">
+          <DialogHeader className="pr-10">
             <DialogTitle>解除 GitHub 仓库绑定</DialogTitle>
             <DialogDescription>
               解除后，GitHub webhook 不再把该仓库事件路由到此项目。已有分支和 Check Run 不会被删除。
@@ -2073,10 +2072,10 @@ function GithubProjectTab({
             </p>
           ) : null}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setUnlinkOpen(false)}>
+            <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" onClick={() => setUnlinkOpen(false)}>
               取消
             </Button>
-            <Button type="button" variant="destructive" onClick={() => void unlinkRepo()} disabled={unlinking}>
+            <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="destructive" onClick={() => void unlinkRepo()} disabled={unlinking}>
               {unlinking ? <Loader2 className="animate-spin" /> : <Unlink />}
               解除绑定
             </Button>
@@ -2113,7 +2112,7 @@ export CDS_PUBLIC_BASE_URL="https://cds.your-domain.com"`}
       <InfoRow label="Public Base URL" value={app.publicBaseUrl || '暂无'} />
       <InfoRow label="Webhook URL" value={app.webhookUrl || '暂无'} />
       {app.installUrl ? (
-        <Button asChild variant="outline">
+        <Button asChild variant="outline" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs">
           <a href={app.installUrl} target="_blank" rel="noreferrer">
             <Github />
             在 GitHub 管理安装
@@ -2253,7 +2252,7 @@ function GithubRepoPickerDialog({
       }}
     >
       <DialogContent className="max-w-2xl">
-        <DialogHeader>
+        <DialogHeader className="pr-10">
           <DialogTitle>绑定 GitHub 仓库</DialogTitle>
           <DialogDescription>先选择 GitHub App 安装，再选择仓库并确认绑定到当前项目。</DialogDescription>
         </DialogHeader>
@@ -2489,7 +2488,7 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
   }
 
   if (state.status === 'loading') return <LoadingBlock label="加载缓存诊断" />;
-  if (state.status === 'error') return <ErrorBlock message={state.message} />;
+  if (state.status === 'error') return <div className="space-y-3"><ErrorBlock message={`实例共享缓存读取失败：${state.message}`} /><Button type="button" variant="outline" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" onClick={()=>void load()}>重新读取实例共享缓存</Button></div>;
 
   const data = state.data;
   const rows: DisplayCacheDir[] = [
@@ -2500,15 +2499,11 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
   return (
     <div className="space-y-8">
       <Section
-        title="缓存诊断"
-        description="检查 BuildProfile cacheMount 的宿主机目录、容器路径、目录大小和最近写入，定位 restore 或 install 反复冷下载的问题。"
+        title="实例共享缓存诊断"
+        description="这里管理整个 CDS 实例的共享构建缓存，不按当前项目筛选。清空会影响所有引用该目录的服务；不会主动停止容器，后续 restore 或 install 需要重新下载依赖。"
       >
         <div className="space-y-5">
-          <div className="grid gap-3 md:grid-cols-3">
-            <InfoRow label="项目 slug" value={data.projectSlug || '暂无'} />
-            <InfoRow label="缓存根目录" value={data.cacheBase || '暂无'} />
-            <InfoRow label="总占用" value={data.totalBytesHuman || formatBytes(data.totalBytes)} />
-          </div>
+          <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm"><div><dt className="inline text-muted-foreground">实例共享缓存根目录：</dt><dd className="inline break-all font-mono">{data.cacheBase || '未提供'}</dd></div><div><dt className="inline text-muted-foreground">总占用：</dt><dd className="inline">{data.totalBytesHuman || formatBytes(data.totalBytes)}</dd></div><div><dt className="inline text-muted-foreground">配置标记（非项目筛选）：</dt><dd className="inline break-all font-mono">{data.projectSlug || '未提供'}</dd></div></dl>
 
           {data.warnings?.length ? (
             <div className="rounded-md border border-warn/40 bg-warn-soft px-4 py-3">
@@ -2527,11 +2522,8 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
           ) : null}
 
           <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={() => void repair()} disabled={repairing}>
-              {repairing ? <Loader2 className="animate-spin" /> : <Wrench />}
-              修复缓存挂载
-            </Button>
-            <Button type="button" variant="outline" onClick={() => void load()}>
+            <ConfirmAction scopeKey={JSON.stringify([data.cacheBase,rows.map(row=>[row.name,row.usedByProfiles])])} title="更新实例共享缓存挂载配置？" description="这会核对本 CDS 实例全部项目的构建配置，按当前构建方式退役自动生成的旧宿主缓存挂载声明。原宿主目录和数据不移动、不删除；不会立即重建容器。" confirmLabel="更新共享挂载配置" disabled={repairing} onConfirm={repair} trigger={<Button type="button" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" disabled={repairing}>{repairing ? <Loader2 className="animate-spin" /> : <Wrench />}核对共享挂载配置</Button>} />
+            <Button type="button" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" variant="outline" onClick={() => void load()}>
               <RefreshCw />
               刷新
             </Button>
@@ -2541,11 +2533,8 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
         </div>
       </Section>
 
-      <Section
-        title="导入缓存包"
-        description="迁移服务器时，可把旧 CDS 导出的 tar.gz 缓存包导入到当前缓存根目录。"
-      >
-        <div className="max-w-3xl cds-surface-raised cds-hairline px-4 py-4">
+      <details><summary className="flex min-h-[3.25rem] cursor-pointer items-center text-sm font-medium">导入实例共享缓存包</summary><p className="mt-2 text-sm text-muted-foreground">迁移服务器时，可把旧 CDS 导出的 tar.gz 缓存包导入本 CDS 实例的共享缓存根目录。同名路径可能被覆盖，所有引用者都能读取导入内容。</p>
+        <div className="mt-3 max-w-3xl">
           <div className="grid gap-3 md:grid-cols-[11.25rem_minmax(0,1fr)_auto] md:items-end">
             <label className="block space-y-1.5">
               <span className="text-sm font-medium">缓存名称</span>
@@ -2575,26 +2564,26 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
             {importFile ? `${importFile.name}，${formatBytes(importFile.size)}` : '尚未选择文件。'}
           </div>
         </div>
-      </Section>
+      </details>
 
       <Dialog open={Boolean(purgeTarget)} onOpenChange={(open) => !open && setPurgeTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="border-border [&>button:last-child]:min-h-[3.25rem] [&>button:last-child]:min-w-[3.25rem]">
+          <DialogHeader className="pr-10">
             <DialogTitle>清空缓存目录</DialogTitle>
             <DialogDescription>
-              这会清空缓存 {purgeTarget?.name ? `“${purgeTarget.name}”` : ''}，下次 restore 或 install 会重新下载依赖。
+              这会清空本 CDS 实例的共享缓存 {purgeTarget?.name ? `“${purgeTarget.name}”` : ''}，影响全部引用服务；下次 restore 或 install 会重新下载依赖。
             </DialogDescription>
           </DialogHeader>
           {purgeTarget ? (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {purgeTarget.hostPath}
+              <p className="break-all">{purgeTarget.hostPath}</p><p className="mt-2 break-all">引用服务：{purgeTarget.usedByProfiles.length ? purgeTarget.usedByProfiles.join('、') : '当前没有已声明的引用服务'}</p>
             </div>
           ) : null}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setPurgeTarget(null)}>
+            <Button type="button" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" variant="outline" onClick={() => setPurgeTarget(null)}>
               取消
             </Button>
-            <Button type="button" variant="destructive" onClick={() => void purgeCache()} disabled={purging}>
+            <Button type="button" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" variant="destructive" onClick={() => void purgeCache()} disabled={purging}>
               {purging ? <Loader2 className="animate-spin" /> : <Trash2 />}
               清空缓存
             </Button>
@@ -2627,7 +2616,7 @@ function CacheTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-md border border-border">
+    <><div className="hidden overflow-x-auto rounded-md border border-border xl:block">
       <table className="w-full min-w-[57.5rem] border-collapse text-sm">
         <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
           <tr>
@@ -2647,7 +2636,7 @@ function CacheTable({
           ))}
         </tbody>
       </table>
-    </div>
+    </div><div className="divide-y divide-border xl:hidden">{rows.map(cache=><article key={cache.hostPath+cache.containerPath} data-cache-name={cache.name} className="space-y-2 py-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium">{cache.name}</h3><span className={`text-xs ${getCacheStatus(cache).className}`}>{getCacheStatus(cache).label}</span></div><p className="text-sm text-muted-foreground">{formatBytes(cache.sizeBytes)} · {cache.fileCount ?? '未确认'} 个文件 · {formatDate(cache.lastModified)}</p><dl className="space-y-1 text-sm"><div><dt className="text-muted-foreground">实例共享宿主路径</dt><dd className="break-all font-mono">{cache.hostPath}</dd></div><div><dt className="text-muted-foreground">容器路径</dt><dd className="break-all font-mono">{cache.containerPath}</dd></div><div><dt className="text-muted-foreground">全部引用服务</dt><dd className="break-all">{cache.usedByProfiles.length?cache.usedByProfiles.join('、'):'当前没有已声明的引用服务'}</dd></div></dl><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" className="min-h-[3.25rem] text-base" onClick={()=>onExport(cache.name)} disabled={!cache.exists}><Download/>导出</Button><Button type="button" variant="outline" className="min-h-[3.25rem] text-base" onClick={()=>onPurge(cache)} disabled={!cache.exists}><Trash2/>清空</Button></div></article>)}</div></>
   );
 }
 
@@ -2710,54 +2699,54 @@ function StatsTab({ project, projectId }: { project: ProjectSummary; projectId: 
   return (
     <div className="space-y-8">
       <Section title="项目运营汇总" description="计数来自项目和分支状态，随 MongoDB split store 持久化。">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <MetricTile
             label="分支数"
             value={numberValue(project.branchCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="运行分支"
             value={numberValue(project.runningBranchCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="运行服务"
             value={numberValue(project.runningServiceCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="最近部署"
             value={formatDate(project.lastDeployedAt)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="累计部署"
             value={numberValue(project.deployCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="累计拉取"
             value={numberValue(project.pullCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="停止容器"
             value={numberValue(project.stopCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="AI 占用"
             value={numberValue(project.aiOpCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
         </div>
       </Section>
