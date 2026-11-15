@@ -1668,6 +1668,12 @@ export default function WebPagesPage() {
                 <Upload size={17} />
               </button>
             </div>
+            {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
+              <nav aria-label="文档与合集" data-tour-id="webpages-mobile-document-actions" className="flex items-center gap-2">
+                <Button size="sm" variant="secondary" className="min-h-11 flex-1" onClick={() => navigate('/web-pages/new-document')}>按模版新建文档</Button>
+                <Button size="sm" variant="secondary" className="min-h-11" onClick={() => navigate('/web-pages/collections')}>合集</Button>
+              </nav>
+            )}
             <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12px] text-token-muted">
               <span className="truncate">{activeSpaceLabel}</span>
               <span className="opacity-45">·</span>
