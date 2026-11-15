@@ -1,3 +1,4 @@
+import { SettingsDirectory } from '@/pages/cds-settings/SettingsDirectory';
 import { useSettingsTabVisibility } from '@/pages/cds-settings/useSettingsTabVisibility';
 import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { ProjectSettingsRefreshContext, useProjectSettingsRefresh, useSettingsReadRequest, type SettingsRead, mergeCleanSettings } from '@/components/project/ProjectSettingsRefresh';
@@ -704,6 +705,8 @@ export function ProjectSettingsPage(): JSX.Element {
              * workspace 的 1240 上限把整页缩到中间。
              */}
             <div className="cds-settings-layout">
+              <SettingsDirectory groups={tabGroups} value={activeTab} label="项目设置目录" onChange={value => setActiveTab(value as TabValue)} />
+              <div className="cds-settings-desktop-directory">
               <TabsList ref={tabsListRef} aria-label="项目设置分区" className="cds-settings-nav cds-settings-rail">
                 <div className="cds-settings-rail-head">
                   <div className="text-sm font-semibold">项目设置</div>
@@ -726,6 +729,7 @@ export function ProjectSettingsPage(): JSX.Element {
                   </div>
                 ))}
               </TabsList>
+              </div>
 
               <div className="cds-settings-content min-w-0">
                 <div className="cds-settings-section-body">

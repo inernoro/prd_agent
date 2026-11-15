@@ -14,9 +14,9 @@ export async function assertConfirmationKeyboard(page, trigger, expectedObject) 
   await page.waitForFunction(()=>document.querySelector('[role="dialog"] [data-confirm-cancel]')===document.activeElement,{},{timeout:3000}).catch(async error=>{throw Error(`${error.message}; active=${await page.evaluate(()=>document.activeElement?.outerHTML)}`)});
   for(let i=0;i<8;i++){await page.keyboard.press(i%3===0?'Shift+Tab':'Tab');assert(await dialog.evaluate(element=>element.contains(document.activeElement)),'确认焦点逃到背景');}
   await page.keyboard.press('Escape');await dialog.waitFor({state:'detached'});
-  assert(await trigger.evaluate(element=>element===document.activeElement),'Esc没有返回触发者');
+  await page.waitForFunction(element=>element===document.activeElement,await trigger.elementHandle(),{timeout:2000}).catch(async error=>{throw Error(`Esc没有返回触发者：${await page.evaluate(()=>document.activeElement?.outerHTML)}; ${error.message}`);});
   await page.keyboard.press('Enter');await dialog.waitFor();await dialog.getByRole('button',{name:'取消',exact:true}).click();await dialog.waitFor({state:'detached'});
-  assert(await trigger.evaluate(element=>element===document.activeElement),'取消没有返回触发者');
+  await page.waitForFunction(element=>element===document.activeElement,await trigger.elementHandle(),{timeout:2000}).catch(async error=>{throw Error(`取消没有返回触发者：${await page.evaluate(()=>document.activeElement?.outerHTML)}; ${error.message}`);});
 }
 
 /** Controlled component fixture. It proves scope/focus only and is never a live product flow. */

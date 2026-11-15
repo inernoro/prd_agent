@@ -1,3 +1,5 @@
+import { consoleAccountIdentity } from '@/lib/consoleIdentity';
+import { SettingsDirectory } from '@/pages/cds-settings/SettingsDirectory';
 import { useSettingsTabVisibility } from '@/pages/cds-settings/useSettingsTabVisibility';
 import { lazy, Suspense, useContext, useEffect, useState } from 'react';
 import { SettingsContentSkeleton, SettingsLoadingContext, SettingsPageSkeleton } from '@/components/skeletons/SettingsSkeleton';
@@ -377,7 +379,9 @@ export function CdsSettingsPage(): JSX.Element {
           className="cds-settings-shell"
         >
           <div className="cds-settings-layout">
-            <TabsList ref={tabsListRef} aria-label="CDS 系统设置分区" className="cds-settings-nav cds-settings-rail">
+            <SettingsDirectory groups={visibleTabGroups} value={activeTab} label="CDS 系统设置目录" onChange={value => setActiveTab(value as TabValue)} />
+              <div className="cds-settings-desktop-directory">
+              <TabsList ref={tabsListRef} aria-label="CDS 系统设置分区" className="cds-settings-nav cds-settings-rail">
               <div className="cds-settings-rail-head">
                 <div className="text-sm font-semibold">{canManageSettings ? 'CDS 系统设置' : '个人痕迹'}</div>
                 <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{canManageSettings ? 'system' : 'account'}</div>
@@ -399,6 +403,7 @@ export function CdsSettingsPage(): JSX.Element {
                 </div>
               ))}
             </TabsList>
+              </div>
 
             <div className="cds-settings-content min-w-0">
               <ButtonSizeProvider value="sm">
@@ -429,7 +434,7 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="activity">
                   {activeTab !== 'activity' ? null : activityVisible ? (
-                    <ActivityTab />
+                    <ActivityTab key={consoleAccountIdentity(viewerStatus) || 'unconfirmed'} canViewAll={canManageSettings} />
                   ) : !canManageSettings ? (
                     <p className="text-sm text-muted-foreground">当前认证方式不提供个人操作记录，请联系系统所有者。</p>
                   ) : (

@@ -66,7 +66,7 @@ export async function verifySettingsManagement(browser, base, out, {baseline=fal
         const member=page.locator('[data-user-card="fixture-member"]');await member.waitFor();
         for(const label of ['项目授权','重置密码','禁用']){const box=await member.getByRole('button',{name:label,exact:true}).boundingBox();assert(box.x>=0&&box.x+box.width<=390&&box.height>=40,`成员动作${label}未达到可见热区`);}
         if(theme==='dark')await assertConfirmationKeyboard(page,member.getByRole('button',{name:'禁用',exact:true}),/fixture-member/);
-        const active=page.getByRole('tab',{name:'用户管理',exact:true});await page.waitForFunction(()=>{const e=[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.trim()==='用户管理');if(!e)return false;const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;});
+        const directory=page.getByRole('combobox',{name:'CDS 系统设置目录',exact:true});await directory.waitFor();assert.equal(await directory.inputValue(),'users');const directoryBox=await directory.boundingBox();assert(directoryBox.x>=0&&directoryBox.x+directoryBox.width<=390&&directoryBox.height>=40);
         await page.screenshot({path:path.join(out,`users-${theme}-390.png`)});
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
         await page.getByRole('button',{name:'创建账号',exact:true}).click();await page.getByRole('dialog').waitFor();
