@@ -74,7 +74,7 @@ export function StorageTab(): JSX.Element {
           <Field label="Mongo 连接">
             <div className="space-y-2 text-muted-foreground">
               <div>
-                URI：<CodePill>{storage.mongoUri || '未连接'}</CodePill>
+                URI：<CodePill>{storage.mongoUri || '未提供连接地址'}</CodePill>
               </div>
               <div>
                 DB：<CodePill>{storage.mongoDb || startup.processEnvMongoDb || '-'}</CodePill>

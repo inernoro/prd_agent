@@ -387,7 +387,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
             <div className="flex flex-col gap-2 px-4 py-3">
               {row.grants.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="text-muted-foreground">可自助补发凭证的项目：</span>
+                  <span className="text-muted-foreground">已记录项目授权：</span>
                   {row.grants.map((grant) => (
                     <span
                       key={grant.id}
@@ -403,7 +403,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
                 </div>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  尚无项目授权。可创建新项目；访问既有项目需在对应项目中获得授权。
+                  {disabled ? '主体已停用，名下凭证不可用于访问；授权记录保留。' : '暂无项目授权。'}
                 </p>
               )}
 
