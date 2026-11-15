@@ -104,3 +104,25 @@ for (const width of [390, 320]) for (const theme of ["light", "dark"]) {
     expect(errors).toEqual([]);
   });
 }
+
+for (const theme of ["light", "dark"]) test(`390 ${theme} 菜单导航后新任务无遮挡`, async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installOperationsFixtures(page);
+  await page.addInitScript(value => localStorage.setItem("llmgw.theme", value), theme);
+  await page.goto(gateway + "/login");
+  await page.locator("#llmgw-username").fill("demo");
+  await page.locator("#llmgw-password").fill("demo");
+  await page.locator("button[type=submit]").click();
+  const menu = page.locator(".lg-user-menu");
+  await menu.locator("summary").click();
+  await expect(menu).toHaveAttribute("open", "");
+  await menu.getByRole("link", { name: "账号与安全", exact: true }).click();
+  await expect(page).toHaveURL(/\/account$/);
+  await expect(menu).not.toHaveAttribute("open", "");
+  const heading = page.getByRole("heading", { name: "账号与安全", exact: true });
+  await expect(heading).toBeVisible();
+  await expect(heading).toBeFocused();
+  expect(errors).toEqual([]);
+});

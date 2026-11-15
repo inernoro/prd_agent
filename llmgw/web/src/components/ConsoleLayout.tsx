@@ -58,6 +58,21 @@ export function ConsoleLayout() {
   const { user, tenant, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const headerRef = useRef<HTMLElement>(null);
+  const previousLocation = useRef(location);
+  useEffect(() => {
+    if (previousLocation.current === location) return;
+    previousLocation.current = location;
+    const header = headerRef.current;
+    const menus = [...(header?.querySelectorAll<HTMLDetailsElement>('details[open]') ?? [])];
+    const ownedFocus = menus.some(menu => menu.contains(document.activeElement));
+    menus.forEach(menu => { menu.open = false; });
+    if (ownedFocus) {
+      const shell = header?.parentElement;
+      const target = shell?.querySelector<HTMLElement>('main h1') ?? shell?.querySelector<HTMLElement>('main');
+      if (target) { if (!target.hasAttribute('tabindex')) target.tabIndex = -1; target.focus({ preventScroll: true }); }
+    }
+  }, [location]);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [narrow, setNarrow] = useState(() => window.matchMedia?.('(max-width: 860px)').matches ?? false);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -171,7 +186,7 @@ export function ConsoleLayout() {
 
   return (
     <div className="lg-console-shell">
-      <header className="lg-console-header">
+      <header ref={headerRef} className="lg-console-header">
         <div className="lg-console-brand">
           <button className="lg-mobile-menu-button" type="button" aria-label="打开导航" onClick={() => setMobileOpen(true)}><Menu size={18} /></button>
           <span className="lg-brand-mark"><Activity size={17} /></span>
