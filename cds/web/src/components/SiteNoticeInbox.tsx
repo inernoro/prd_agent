@@ -115,7 +115,11 @@ export function NoticeRecordTimes({ createdAt, updatedAt }: Pick<SiteNotice, 'cr
   </div>;
 }
 
-export function SiteNoticeInbox({ canReadAccessRequests = false }: { canReadAccessRequests?: boolean } = {}): JSX.Element {
+export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPendingCount = 0, onOpenOperatorRequests }: {
+  canReadAccessRequests?: boolean;
+  operatorPendingCount?: number;
+  onOpenOperatorRequests?: () => void;
+} = {}): JSX.Element {
   const host = useOverlayDock('#cds-information-center-host');
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -277,7 +281,8 @@ export function SiteNoticeInbox({ canReadAccessRequests = false }: { canReadAcce
     + sourceCounts.access
     + sourceCounts.commit
     + sourceCounts.import
-    + sourceCounts.update;
+    + sourceCounts.update
+    + operatorPendingCount;
 
   const dismissNotice = useCallback((id: string): void => {
     const now = new Date().toISOString();
@@ -394,6 +399,10 @@ export function SiteNoticeInbox({ canReadAccessRequests = false }: { canReadAcce
           ) : null}
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3" style={{ overscrollBehavior: 'contain' }}>
+            {operatorPendingCount > 0 ? <button type="button" className="flex w-full items-center justify-between gap-3 rounded-md border border-warn/35 bg-warn-soft p-3 text-left text-sm" onClick={() => { setOpen(false); onOpenOperatorRequests?.(); }}>
+              <span><strong className="block font-medium">运维操作待授权</strong><span className="text-xs text-muted-foreground">{operatorPendingCount} 项请求尚未批准或拒绝</span></span>
+              <span className="shrink-0 text-primary">查看请求</span>
+            </button> : null}
             {canReadAccessRequests ? <AccessRequestInbox /> : null}
             <PendingImportInbox onCountChange={handleImportCount} />
             <GlobalUpdateBadge onCountChange={handleUpdateCount} />

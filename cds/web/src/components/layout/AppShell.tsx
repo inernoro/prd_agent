@@ -333,6 +333,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
    * page gets the palette for free, regardless of which page added the rail.
    */
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [operatorPendingCount, setOperatorPendingCount] = useState(0);
+  const [operatorOpenRequest, setOperatorOpenRequest] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
   const [authPending, setAuthPending] = useState(true);
@@ -505,10 +507,10 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {canManageSettings ? <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /> : null}
       {canManageSettings ? <BugReportDialog /> : null}
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
-      {canPollOperatorApprovals ? <OperatorApprovalModal /> : null}
+      {canPollOperatorApprovals ? <OperatorApprovalModal onCountChange={setOperatorPendingCount} openRequest={operatorOpenRequest} /> : null}
       {/* 信息中心常驻在壳层，状态与 SSE 不随页面切换重建；视觉入口 portal 到
           当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
-      {canManageSettings ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} /> : null}
+      {canManageSettings ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount} onOpenOperatorRequests={() => setOperatorOpenRequest(value => value + 1)} /> : null}
     </div>
     </MobileNavContext.Provider>
     </ConsoleAuthContext.Provider>
