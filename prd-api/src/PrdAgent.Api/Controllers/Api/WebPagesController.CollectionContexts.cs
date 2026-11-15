@@ -27,6 +27,23 @@ public partial class WebPagesController
         Builders<WebPageShareLink>.Filter.Where(x => x.CreatedBy == GetUserId() && x.ShareType == "collection"
             && x.Purpose != "visit" && (x.SiteId == siteId || x.SiteIds.Contains(siteId)));
 
+    private async Task<(Dictionary<string, HostedCollection> Directories, Dictionary<string, HostedDocumentCollection> Documents)> ContextLinkRecordsAsync(
+        IEnumerable<WebPageShareLink> shares, IReadOnlyDictionary<string, HostedCollection>? knownDirectories = null,
+        IReadOnlyDictionary<string, HostedDocumentCollection>? knownDocuments = null)
+    {
+        var batch = shares.ToList();
+        var directories = knownDirectories?.ToDictionary(x => x.Key, x => x.Value) ?? new Dictionary<string, HostedCollection>();
+        var documents = knownDocuments?.ToDictionary(x => x.Key, x => x.Value) ?? new Dictionary<string, HostedDocumentCollection>();
+        var userId = GetUserId();
+        var directoryIds = batch.Where(x => x.CollectionId != null && !directories.ContainsKey(x.CollectionId)).Select(x => x.CollectionId!).Distinct().ToList();
+        if (directoryIds.Count > 0)
+            foreach (var item in await _db.HostedCollections.Find(x => directoryIds.Contains(x.Id) && x.OwnerUserId == userId).ToListAsync()) directories[item.Id] = item;
+        var documentIds = batch.Where(x => x.CollectionSnapshot != null && !documents.ContainsKey(x.CollectionSnapshot.CollectionId)).Select(x => x.CollectionSnapshot!.CollectionId).Distinct().ToList();
+        if (documentIds.Count > 0)
+            foreach (var item in await Collections.Find(x => documentIds.Contains(x.Id) && x.OwnerUserId == userId).ToListAsync()) documents[item.Id] = item;
+        return (directories, documents);
+    }
+
     // 当前归属读取合集实体；历史未命名实体的合集沿用原分享身份，绝不按成员相同猜测合并。
     [HttpGet("{siteId}/collection-contexts")]
     public async Task<IActionResult> CollectionContexts(string siteId, [FromQuery] int page = 1, [FromQuery] string? keyword = null)
@@ -47,23 +64,26 @@ public partial class WebPagesController
         // 按当前文档、当前创建者流式读取；只保留每个合集的摘要，不把全部分享历史发送给浏览器。
         using var cursor = await _db.WebPageShareLinks.Find(ContextShares(siteId)).ToCursorAsync();
         while (await cursor.MoveNextAsync())
-        foreach (var share in cursor.Current)
         {
-            var documentCollectionId = share.CollectionSnapshot?.CollectionId;
-            var id = documentCollectionId != null ? "document-collection:" + documentCollectionId
-                : share.CollectionId == null ? "legacy:" + share.Id : "collection:" + share.CollectionId;
-            if (documentCollectionId != null && !documentsById.ContainsKey(documentCollectionId)) continue;
-            if (documentCollectionId == null && share.CollectionId != null && !byId.ContainsKey(share.CollectionId)) continue;
-            var link = ContextLink(share, share.CollectionId == null ? null : byId.GetValueOrDefault(share.CollectionId),
-                documentCollectionId == null ? null : documentsById[documentCollectionId]);
-            if (!contexts.TryGetValue(id, out var context))
-                context = new(id, link.Title, link.MemberCount, share.CreatedAt, null, share.Id, 0, null);
-            var best = context.PrimaryLink;
-            if (best == null || (link.IsActive && !best.IsActive) || (link.IsActive == best.IsActive
-                && (link.CreatedAt > best.CreatedAt || (link.CreatedAt == best.CreatedAt && string.CompareOrdinal(link.Id, best.Id) > 0)))) best = link;
-            contexts[id] = context with { ShareCount = context.ShareCount + 1, PrimaryLink = best };
-            if (!string.IsNullOrEmpty(query) && (share.Token.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || share.Title?.Contains(query, StringComparison.OrdinalIgnoreCase) == true)) matched.Add(id);
+            var (linkDirectories, linkDocuments) = await ContextLinkRecordsAsync(cursor.Current, byId, documentsById);
+            foreach (var share in cursor.Current)
+            {
+                var documentCollectionId = share.CollectionSnapshot?.CollectionId;
+                var id = documentCollectionId != null ? "document-collection:" + documentCollectionId
+                    : share.CollectionId == null ? "legacy:" + share.Id : "collection:" + share.CollectionId;
+                if (documentCollectionId != null && !documentsById.ContainsKey(documentCollectionId)) continue;
+                if (documentCollectionId == null && share.CollectionId != null && !byId.ContainsKey(share.CollectionId)) continue;
+                var link = ContextLink(share, share.CollectionId == null ? null : linkDirectories.GetValueOrDefault(share.CollectionId),
+                    documentCollectionId == null ? null : linkDocuments.GetValueOrDefault(documentCollectionId));
+                if (!contexts.TryGetValue(id, out var context))
+                    context = new(id, link.Title, link.MemberCount, share.CreatedAt, null, share.Id, 0, null);
+                var best = context.PrimaryLink;
+                if (best == null || (link.IsActive && !best.IsActive) || (link.IsActive == best.IsActive
+                    && (link.CreatedAt > best.CreatedAt || (link.CreatedAt == best.CreatedAt && string.CompareOrdinal(link.Id, best.Id) > 0)))) best = link;
+                contexts[id] = context with { ShareCount = context.ShareCount + 1, PrimaryLink = best };
+                if (!string.IsNullOrEmpty(query) && (share.Token.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || share.Title?.Contains(query, StringComparison.OrdinalIgnoreCase) == true)) matched.Add(id);
+            }
         }
         var ordered = contexts.Values.Where(x => string.IsNullOrEmpty(query) || x.Title.Contains(query, StringComparison.OrdinalIgnoreCase) || matched.Contains(x.Id))
             .OrderBy(x => x.CollectionId == null).ThenByDescending(x => x.UpdatedAt).ThenBy(x => x.Id, StringComparer.Ordinal).ToList();
@@ -124,6 +144,9 @@ public partial class WebPagesController
         var skip = (long)(page - 1) * 20;
         var shares = skip > int.MaxValue ? new List<WebPageShareLink>() : await _db.WebPageShareLinks.Find(filter)
             .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((int)skip).Limit(20).ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { items = shares.Select(x => ContextLink(x, collection, documentCollection)), total, page, pageSize = 20 }));
+        var (directories, documents) = await ContextLinkRecordsAsync(shares);
+        return Ok(ApiResponse<object>.Ok(new { items = shares.Select(x => ContextLink(x,
+            x.CollectionId == null ? null : directories.GetValueOrDefault(x.CollectionId),
+            x.CollectionSnapshot == null ? null : documents.GetValueOrDefault(x.CollectionSnapshot.CollectionId))), total, page, pageSize = 20 }));
     }
 }

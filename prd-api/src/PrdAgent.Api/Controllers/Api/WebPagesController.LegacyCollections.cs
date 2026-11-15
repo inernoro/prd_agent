@@ -56,12 +56,7 @@ public partial class WebPagesController
         var offset = (long)(page - 1) * pageSize;
         var shares = offset > int.MaxValue ? new List<WebPageShareLink>() : await _db.WebPageShareLinks.Find(filter)
             .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((int)offset).Limit(pageSize).ToListAsync();
-        var collectionIds = shares.Where(x => x.CollectionId != null).Select(x => x.CollectionId!).Distinct().ToList();
-        var collections = collectionIds.Count == 0 ? new Dictionary<string, HostedCollection>()
-            : (await _db.HostedCollections.Find(x => collectionIds.Contains(x.Id) && x.OwnerUserId == userId).ToListAsync()).ToDictionary(x => x.Id);
-        var documentIds = shares.Where(x => x.CollectionSnapshot != null).Select(x => x.CollectionSnapshot!.CollectionId).Distinct().ToList();
-        var documents = documentIds.Count == 0 ? new Dictionary<string, HostedDocumentCollection>()
-            : (await Collections.Find(x => documentIds.Contains(x.Id) && x.OwnerUserId == userId).ToListAsync()).ToDictionary(x => x.Id);
+        var (collections, documents) = await ContextLinkRecordsAsync(shares);
         var items = shares.Select(share =>
         {
             var collection = share.CollectionId == null ? null : collections.GetValueOrDefault(share.CollectionId);

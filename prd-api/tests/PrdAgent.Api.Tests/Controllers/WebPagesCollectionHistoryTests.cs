@@ -19,6 +19,35 @@ namespace PrdAgent.Api.Tests.Controllers;
 public sealed class WebPagesCollectionHistoryTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HybridPrimaryExpandedListAndHistoryUseBothStoredIdentities(bool stopped)
+    {
+        var directory = new HostedCollection { Id = "directory", OwnerUserId = "owner-user", SiteIds = new() { "site-a" }, ShareGeneration = stopped ? 2 : 1 };
+        var document = new HostedDocumentCollection { Id = "chapters", OwnerUserId = "owner-user", SiteIds = new() { "site-a" }, ShareGeneration = 1 };
+        var share = new WebPageShareLink { Id = "link", Token = "original-token", CreatedBy = "owner-user", ShareType = "collection", SiteIds = new() { "site-a" },
+            CollectionId = directory.Id, CollectionShareGeneration = 1, CollectionSnapshot = new() { CollectionId = document.Id, ShareGeneration = 1 } };
+        var directories = new Mock<IMongoCollection<HostedCollection>>(MockBehavior.Strict);
+        directories.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<HostedCollection>>(), It.IsAny<FindOptions<HostedCollection, HostedCollection>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(Cursor(directory)));
+        var shares = new Mock<IMongoCollection<WebPageShareLink>>(MockBehavior.Strict);
+        shares.Setup(x => x.CountDocumentsAsync(It.IsAny<FilterDefinition<WebPageShareLink>>(), It.IsAny<CountOptions>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        shares.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<WebPageShareLink>>(), It.IsAny<FindOptions<WebPageShareLink, WebPageShareLink>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(Cursor(share)));
+        var controller = ContextController(directories.Object, shares.Object, document);
+        var contexts = Result(await controller.CollectionContexts("site-a")).GetProperty("items").EnumerateArray().ToArray();
+        var primary = contexts.Single(x => x.GetProperty("id").GetString() == "document-collection:chapters").GetProperty("primaryLink");
+        var expanded = Result(await controller.CollectionContextLinks("site-a", "document-collection:chapters")).GetProperty("items")[0];
+        var history = Result(await controller.CollectionHistory("site-a")).GetProperty("items")[0];
+        foreach (var item in new[] { primary, expanded, history })
+        {
+            Assert.Equal(!stopped, item.GetProperty("isActive").GetBoolean());
+            Assert.Equal(stopped ? "已停止" : "有效", item.GetProperty("statusLabel").GetString());
+            Assert.Equal("/s/collection/original-token", item.GetProperty("shareUrl").GetString());
+        }
+    }
+
+    [Theory]
     [InlineData("active", true)]
     [InlineData("rotated", false)]
     [InlineData("dissolved", false)]
