@@ -1096,6 +1096,8 @@ export interface BranchEntry {
    * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
    */
   extraProfiles?: BuildProfile[];
+  /** Explicit branch-local omission of baseline services; absent/empty preserves inheritance. */
+  excludedProjectProfileIds?: string[];
   /**
    * 复制集模式（2026-07-23，design.cds.replica-set）：按 profileId 粒度，
    * 让单个服务在同一入口下并排跑多个历史版本。absent/空 = 普通模式（现状零回归）。
@@ -3664,6 +3666,7 @@ export interface ConfigSnapshot {
     branchConfigs?: Record<string, {
       profileOverrides?: Record<string, BuildProfileOverride>;
       extraProfiles?: BuildProfile[];
+      excludedProjectProfileIds?: string[];
       derivedFromBranchId?: string;
       derivedFromBranchName?: string;
       derivedAt?: string;

@@ -3466,6 +3466,24 @@ export class ContainerService {
     );
   }
 
+  /** Read only the target branch's container metadata; never inspect volume contents or env. */
+  async assertBranchStoppedForIsolation(entry: BranchEntry, excluded: readonly string[]): Promise<void> {
+    const format = '{{.State}}|{{.Label "cds.profile.id"}}';
+    const result = await this.shell.exec(`docker ps -a --filter "label=cds.managed=true" --filter ${this.shellQuote('label=cds.branch.id=' + entry.id)} --format ${this.shellQuote(format)}`,
+      { timeout: 5000, executionLane: 'observation' });
+    if (result.exitCode !== 0) throw new Error('无法确认容器运行状态，请先对账');
+    for (const line of result.stdout.trim().split('\n').filter(Boolean)) {
+      const [status, profileId, extra] = line.split('|');
+      if (!profileId || extra !== undefined || status !== 'exited' || excluded.includes(profileId)) {
+        throw new Error('本分支仍有运行、未知或被排除服务的保留容器，请先对账');
+      }
+    }
+    const listeners = new Set(this.staticSites?.names() || []);
+    if (Object.values(entry.services || {}).some(s => serviceRuntimeRefs(s).some(r => listeners.has(r.containerName)))) {
+      throw new Error('本分支仍有静态服务运行，请先停止并对账');
+    }
+  }
+
   /**
    * 批量取一组容器的 `docker stats --no-stream` 瞬时值(2026-05-04 Phase B)。
    *

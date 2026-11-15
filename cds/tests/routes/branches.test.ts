@@ -2650,6 +2650,21 @@ describe('Branch Routes', () => {
         await request(server, 'PUT', `/api/branches/${id}/profile-overrides/api`, { env: { KEY: 'from-source' }, dbScope: 'per-branch' });
       };
 
+      it('isolated source cannot be derived or copied, and isolated targets cannot be overwritten', async () => {
+        await seedSourceWithConfig('isolated-source'); seedBranch('ordinary-target');
+        stateService.getBranch('isolated-source')!.excludedProjectProfileIds = ['api'];
+        const beforeSource = JSON.stringify(stateService.getBranch('isolated-source'));
+        const beforeTarget = JSON.stringify(stateService.getBranch('ordinary-target'));
+        const snapshots = stateService.getConfigSnapshots().length;
+        expect((await request(server, 'POST', '/api/branches', { branch: 'unsafe-child', sourceBranchId: 'isolated-source' })).status).toBe(409);
+        expect(stateService.getBranch('unsafe-child')).toBeUndefined();
+        expect((await request(server, 'POST', '/api/branches/ordinary-target/copy-config-from/isolated-source?redeploy=1')).status).toBe(409);
+        expect((await request(server, 'POST', '/api/branches/isolated-source/copy-config-from/ordinary-target')).status).toBe(409);
+        expect(JSON.stringify(stateService.getBranch('isolated-source'))).toBe(beforeSource);
+        expect(JSON.stringify(stateService.getBranch('ordinary-target'))).toBe(beforeTarget);
+        expect(stateService.getConfigSnapshots().length).toBe(snapshots);
+      });
+
       it('POST /branches 带 sourceBranchId:深拷贝 overrides+extraProfiles,写派生指针,改新不串旧', async () => {
         await seedSourceWithConfig('src-branch');
         const res = await request(server, 'POST', '/api/branches', { branch: 'derived-x', sourceBranchId: 'src-branch' });
