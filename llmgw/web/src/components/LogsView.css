@@ -10,3 +10,10 @@
   .lg-logs-view .lg-log-page-actions { grid-template-areas: 'filter range refresh'; grid-template-columns: 44px minmax(0, 1fr) 44px; }
   .lg-logs-view .lg-log-page-actions > button { justify-self: end; }
 }
+
+/* Empty results carry guidance, not a viewport-sized placeholder. */
+.lg-logs-view .lg-log-empty { min-height: 0; padding: 32px 24px; }
+
+/* Keep empty guidance in the viewport while the column header remains horizontally scrollable. */
+.lg-logs-view .lg-log-table-scroll[data-empty] { container-type: inline-size; }
+.lg-logs-view .lg-log-table-scroll[data-empty] .lg-log-empty { width: 100cqw; box-sizing: border-box; position: sticky; left: 0; }

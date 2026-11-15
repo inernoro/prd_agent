@@ -295,7 +295,7 @@ export function LogTable<T>({
   const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
 
   return (
-    <div className="lg-log-table-scroll">
+    <div className="lg-log-table-scroll" data-empty={items.length === 0 || undefined}>
       <div className="lg-log-table" data-density={preferences.density} style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: tableMinWidth || undefined }}>
         <div
           className="lg-log-table-head"
@@ -1340,7 +1340,7 @@ export function LogsView() {
         </div>
       ) : null}
 
-      <Card className="lg-log-table-card" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
+      <Card className="lg-log-table-card" style={{ flex: '0 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
         {subtab === 'generations' && (
           <>
             {/* 趋势是余光信息：无边框、无标题、无坐标轴，直接坐在表头上方，可折叠。

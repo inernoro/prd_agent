@@ -61,6 +61,11 @@ jobs:
           pnpm -C e2e typecheck
       - name: Verify isolated management operations across browser engines
         run: pnpm -C e2e exec playwright test -c admin-operations.config.ts --workers=2
+      - name: Verify natural request results and retained log scrolling
+        env:
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/e2e/node_modules/@playwright/test/index.mjs
+          CHECK_OUT: ${{ github.workspace }}/work/compat/log-result-height
+        run: pnpm -C llmgw/web exec node scripts/check-log-result-height.mjs
       - name: Retain browser evidence
         if: always()
         uses: actions/upload-artifact@v4
