@@ -510,7 +510,7 @@ public static class McpBuiltinTools
             Params = new List<McpToolParam>
             {
                 new() { Name = "workspaceId", In = "path", Required = true, Description = "文学工作区 id" },
-                new() { Name = "markerIndexes", In = "body", Type = "array", ItemsType = "integer", Description = "批量：要生成的标记序号列表（illustrations[].index，从 0 开始），最多 20 个" },
+                new() { Name = "markerIndexes", In = "body", Type = "array", ItemsType = "integer", Description = $"批量：要生成的标记序号列表（illustrations[].index，从 0 开始），每批最多 {PrdAgent.Core.LlmGateway.GatewayTaskPermitRecord.MaximumRuns} 个；更多配图分批提交，每批使用不同 clientRequestId，同一批重试保持原值" },
                 new() { Name = "markerIndex", In = "body", Type = "integer", Description = "单张：一个标记序号；与 markerIndexes 二选一" },
                 new() { Name = "workflowVersion", In = "body", Type = "integer", Required = true, Description = "建稿 / 读取工作区返回的 workflowVersion，改稿后旧版本不能生成" },
                 new() { Name = "clientRequestId", In = "body", Required = true, Description = "1-200 字的幂等键，一次请求一个值，原样重试使用同一个值" },

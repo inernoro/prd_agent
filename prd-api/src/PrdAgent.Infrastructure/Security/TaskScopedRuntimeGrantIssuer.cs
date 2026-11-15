@@ -119,7 +119,7 @@ public sealed class TaskScopedRuntimeGrantIssuer(
                 "任务保护暂时无法登记，本次运行未启动；请稍后重试。", 503);
         }
 
-        return CopyWithGrant(request, baseUrl, plainKey, context.UserId, continuations?.Issue(identity, request.RunId, context.UserId, expiresAt));
+        return CopyWithGrant(request, baseUrl, plainKey, context.UserId, identity.RunId, continuations?.Issue(identity, request.RunId, context.UserId, expiresAt));
     }
 
     private string GatewayBaseUrl()
@@ -141,9 +141,10 @@ public sealed class TaskScopedRuntimeGrantIssuer(
         return configured;
     }
 
-    private static SidecarRunRequest CopyWithGrant(SidecarRunRequest request, string baseUrl, string key, string subject, string? callbackToken) => new()
+    private static SidecarRunRequest CopyWithGrant(SidecarRunRequest request, string baseUrl, string key, string subject, string gatewayRunId, string? callbackToken) => new()
     {
         RunId = request.RunId,
+        GatewayRunId = gatewayRunId,
         SubjectUserId = subject,
         Model = request.Model,
         SystemPrompt = request.SystemPrompt,

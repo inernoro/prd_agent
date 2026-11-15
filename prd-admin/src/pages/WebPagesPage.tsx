@@ -1453,6 +1453,8 @@ export default function WebPagesPage() {
                 {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
                   <div className="ml-auto flex shrink-0 items-center gap-2">
                     {/* 设计稿 Main：「生成网页」是主操作，下拉选素材来源，旁边齿轮进设置；「上传网页」退为次操作。 */}
+                    <Button size="sm" variant="secondary" onClick={() => navigate("/web-pages/new-document")}>按模版新建文档</Button>
+                    <Button size="sm" variant="secondary" onClick={() => navigate("/web-pages/collections")}>合集</Button>
                     <GenerateSiteMenu
                       onGenerate={openGenerateDialog}
                       onOpenSettings={() => setShowGenerationSettings(true)}

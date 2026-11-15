@@ -201,7 +201,7 @@ describe('ScheduledJobService', () => {
     expect(run.log).not.toContain('清洗入库');
   });
 
-  it('retries a failed action according to retryCount before continuing', async () => {
+  it('does not retry commands or execute later actions after an ambiguous failure', async () => {
     let attempts = 0;
     shell.addResponsePattern(/docker run[\s\S]*flaky/, () => {
       attempts += 1;
@@ -230,13 +230,10 @@ describe('ScheduledJobService', () => {
 
     const run = await service.runJob(job.id, 'manual');
 
-    expect(run.status).toBe('success');
-    expect(attempts).toBe(2);
-    expect(shell.commands).toHaveLength(3);
-    expect(run.log).toContain('尝试 1/2');
-    expect(run.log).toContain('尝试 2/2');
-    expect(run.log).toContain('recovered');
-    expect(run.log).toContain('after-ok');
+    expect(run.status).toBe('failed');
+    expect(attempts).toBe(1);
+    expect(shell.commands).toHaveLength(1);
+    expect(run.steps?.[1].status).toBe('not-run');
   });
 
   it('uses one timeout budget across all actions in a run', async () => {
@@ -330,7 +327,7 @@ describe('ScheduledJobService', () => {
     stateService.upsertScheduledJob({ ...job, lastRunStatus: 'success', lastRunId: 'previous-run' });
 
     const first = service.runJob(job.id, 'manual');
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(releaseExec).not.toBeNull());
     const skipped = await service.runJob(job.id, 'manual');
     expect(stateService.getScheduledJob(job.id)?.lastRunId).toBe('previous-run');
     releaseExec?.({ stdout: 'ok\n', stderr: '', exitCode: 0 });
@@ -372,7 +369,7 @@ describe('ScheduledJobService', () => {
     stateService.upsertScheduledJob({ ...job, nextRunAt: '2026-01-01T00:00:00.000Z' });
 
     const firstTick = service.tick(new Date('2026-01-01T00:00:00.000Z'));
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(blockingShell.commands.length).toBeGreaterThan(0));
     await service.tick(new Date('2026-01-01T00:00:30.000Z'));
     releaseExec?.({ stdout: 'done\n', stderr: '', exitCode: 0 });
     await firstTick;
@@ -383,12 +380,13 @@ describe('ScheduledJobService', () => {
     expect(runs[0].status).toBe('success');
   });
 
-  it('does not run a due job that is disabled while an earlier due job is running', async () => {
+  it('does not execute a due job paused at its durability barrier while another job runs', async () => {
     let releaseExec: ((result: ExecResult) => void) | null = null;
     const blockingShell: IShellExecutor & { commands: string[] } = {
       commands: [],
       exec(command: string, _options?: ExecOptions): Promise<ExecResult> {
         this.commands.push(command);
+        if (!command.includes('first-slow')) return Promise.resolve({ stdout: 'unexpected\n', stderr: '', exitCode: 0 });
         return new Promise((resolve) => {
           releaseExec = resolve;
         });
@@ -428,15 +426,29 @@ describe('ScheduledJobService', () => {
     stateService.upsertScheduledJob({ ...firstJob, nextRunAt: '2026-01-01T00:00:00.000Z' });
     stateService.upsertScheduledJob({ ...disabledDuringTick, nextRunAt: '2026-01-01T00:00:00.000Z' });
 
+    // 不同任务不再串行等待；把存储回执延迟在第二个任务自身的外部动作之前。
+    let resumeClaim!: () => void;
+    const claimReceipt = new Promise<void>(resolve => { resumeClaim = resolve; });
+    let claimHeld = false;
+    const originalFlush = stateService.flush.bind(stateService);
+    vi.spyOn(stateService, 'flush').mockImplementation(async () => {
+      if (!claimHeld && stateService.listScheduledJobRuns({ jobId: disabledDuringTick.id }).some(run => run.status === 'running')) {
+        claimHeld = true; await claimReceipt;
+      }
+      await originalFlush();
+    });
     const tick = service.tick(new Date('2026-01-01T00:00:00.000Z'));
-    await new Promise((resolve) => setImmediate(resolve));
-    stateService.upsertScheduledJob({ ...stateService.getScheduledJob(disabledDuringTick.id)!, enabled: false, nextRunAt: null });
-    releaseExec?.({ stdout: 'done\n', stderr: '', exitCode: 0 });
-    await tick;
-
-    expect(blockingShell.commands).toHaveLength(1);
-    expect(blockingShell.commands[0]).toContain('first-slow');
-    expect(stateService.listScheduledJobRuns({ jobId: disabledDuringTick.id })).toHaveLength(0);
+    try {
+      await vi.waitFor(() => { expect(blockingShell.commands).toHaveLength(1); expect(claimHeld).toBe(true); });
+      stateService.upsertScheduledJob({ ...stateService.getScheduledJob(disabledDuringTick.id)!, enabled: false, nextRunAt: null });
+      resumeClaim(); releaseExec?.({ stdout: 'done\n', stderr: '', exitCode: 0 }); await tick;
+      expect(blockingShell.commands).toHaveLength(1);
+      expect(blockingShell.commands[0]).toContain('first-slow');
+      expect(stateService.listScheduledJobRuns({ jobId: disabledDuringTick.id })).toMatchObject([{ status: 'skipped' }]);
+      expect(stateService.getScheduledJob(disabledDuringTick.id)).toMatchObject({ enabled: false, nextRunAt: null });
+    } finally {
+      resumeClaim(); releaseExec?.({ stdout: 'done\n', stderr: '', exitCode: 0 }); await tick;
+    }
   });
 
   it('does not run a stale due snapshot that another tick already claimed', async () => {
@@ -488,7 +500,7 @@ describe('ScheduledJobService', () => {
     stateService.upsertScheduledJob({ ...secondJob, nextRunAt: '2026-01-01T00:00:00.000Z' });
 
     const firstTick = service.tick(new Date('2026-01-01T00:00:00.000Z'));
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(blockingShell.commands.length).toBeGreaterThan(0));
     await service.tick(new Date('2026-01-01T00:00:30.000Z'));
     releaseFirst?.({ stdout: 'first\n', stderr: '', exitCode: 0 });
     await firstTick;

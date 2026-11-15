@@ -110,7 +110,9 @@ describe('VideoStudioDemo', () => {
 
   it('keeps one stable controllable player and does not preload every version thumbnail', () => {
     expect(videoEditorSource).not.toContain('key={previewUrl}');
-    expect(videoEditorSource).toContain('controls\n                  playsInline');
+    expect(videoEditorSource).toContain('playsInline');
+    expect(videoEditorSource).toContain('<VideoPlaybackControls videoRef={videoRef}');
+    expect(videoEditorSource).not.toContain('controls\n                  playsInline');
     expect(videoEditorSource).not.toContain('<video src={version.videoUrl} muted preload="metadata" />');
     expect(videoEditorSource).toContain('title="预览这个版本"');
   });

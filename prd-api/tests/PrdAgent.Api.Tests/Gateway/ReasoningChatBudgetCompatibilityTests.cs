@@ -16,8 +16,79 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// <summary>真实网关发送到内存 HTTP 替身；不访问供应商、不消费额度。</summary>
 public sealed class ReasoningChatBudgetCompatibilityTests
 {
+    public static IEnumerable<object?[]> StrictGpt56Cases()
+    {
+        foreach (var route in new[] { "native-json", "native-stream", "raw-json", "raw-stream" })
+        foreach (var explicitEffort in new[] { false, true })
+        foreach (bool? support in new bool?[] { null, false, true })
+            yield return new object?[] { route, explicitEffort, support };
+    }
+
+    [Theory]
+    [MemberData(nameof(StrictGpt56Cases))]
+    public async Task StrictGpt56_DistinguishesCallerParametersFromGatewayDefaults(
+        string route, bool explicitEffort, bool? support)
+    {
+        var transport = new StrictReasoningUpstream();
+        var capabilities = new Dictionary<string, bool>();
+        if (support.HasValue) capabilities["reasoning_effort"] = support.Value;
+        var gateway = Gateway(transport, "gpt-5.6-sol", capabilities);
+        var stream = route.EndsWith("stream", StringComparison.Ordinal);
+        var body = new JsonObject
+        {
+            ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "合成验收" }),
+            ["max_tokens"] = 128, ["stream"] = stream
+        };
+        if (explicitEffort) body["reasoning_effort"] = "low";
+        var original = body.ToJsonString();
+        var context = new GatewayRequestContext { ParameterPolicy = "strict-require" };
+        bool success;
+        string? code;
+        if (route.StartsWith("raw", StringComparison.Ordinal))
+        {
+            var resolution = await gateway.ResolveModelAsync(AppCallerRegistry.Desktop.Arena.BattleChat, ModelTypes.Chat);
+            var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+            {
+                AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat, ModelType = ModelTypes.Chat,
+                EndpointPath = "/chat/completions", RequestBody = body, Context = context
+            }, resolution);
+            success = response.Success; code = response.ErrorCode;
+        }
+        else
+        {
+            var request = new GatewayRequest
+            {
+                AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat, ModelType = ModelTypes.Chat,
+                RequestBody = body, Context = context
+            };
+            if (stream)
+            {
+                var chunks = new List<GatewayStreamChunk>();
+                await foreach (var chunk in gateway.StreamAsync(request)) chunks.Add(chunk);
+                var error = chunks.FirstOrDefault(x => x.Type == GatewayChunkType.Error);
+                success = error is null; code = error?.ErrorCode;
+                if (success) Assert.Contains(chunks, x => x.Content == "合成结果");
+            }
+            else
+            {
+                var response = await gateway.SendAsync(request);
+                success = response.Success; code = response.ErrorCode;
+            }
+        }
+        var expectedSuccess = support != false && (!explicitEffort || support == true);
+        Assert.Equal(expectedSuccess, success);
+        Assert.Equal(expectedSuccess ? 1 : 0, transport.Calls);
+        Assert.Equal(original, body.ToJsonString());
+        if (expectedSuccess)
+            Assert.Equal(explicitEffort ? "low" : "none", transport.Body!["reasoning_effort"]!.GetValue<string>());
+        else
+            Assert.Equal(support == false ? "PARAMETER_UNSUPPORTED" : "PARAMETER_UNVERIFIED", code);
+    }
+
     [Theory]
     [InlineData("o3")]
+    [InlineData("gpt-6.1-sol")]
+    [InlineData("openai/gpt-6.1-sol")]
     [InlineData("openai/o3-mini-2025-01-31")]
     [InlineData("o4-mini-2025-04-16")]
     public async Task ArenaClientDefaults_SendOneCompatibleRequestToResolvedReasoningModel(string upstreamModel)
@@ -104,6 +175,78 @@ public sealed class ReasoningChatBudgetCompatibilityTests
         Assert.Equal(0.2, request.RequestBody!["temperature"]!.GetValue<double>());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Gpt61Sol_RawAndOrdinaryChatNormalizeWithoutInjectingNone(bool raw)
+    {
+        var transport = new StrictReasoningUpstream(); var gateway = Gateway(transport, "gpt-6.1-sol");
+        var body = JsonNode.Parse("{\"messages\":[{\"role\":\"user\",\"content\":\"验收\"}],\"max_tokens\":64,\"temperature\":0.2,\"top_p\":0.8,\"logprobs\":true,\"top_logprobs\":2}")!.AsObject();
+        var original = body.ToJsonString();
+        if (raw)
+        {
+            var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+            { AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat, ModelType = ModelTypes.Chat,
+                HttpMethod = "POST", EndpointPath = "/v1/chat/completions", RequestBody = body },
+                new GatewayModelResolution { Success = true, ActualModel = "gpt-6.1-sol", ActualPlatformId = "synthetic-platform",
+                    ApiUrl = "https://api.openai.com/v1", ApiKey = "synthetic", PlatformType = "openai", Protocol = "openai", MaxTokens = 1024 });
+            Assert.True(response.Success, response.ErrorMessage);
+        }
+        else
+        {
+            var response = await gateway.SendAsync(new GatewayRequest { AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat,
+                ModelType = ModelTypes.Chat, ExpectedModel = "stable-reasoning", RequestBody = body });
+            Assert.True(response.Success, response.ErrorMessage);
+        }
+        Assert.Equal(1, transport.Calls); AssertWire(transport.Body!, 64);
+        Assert.False(transport.Body!.ContainsKey("top_p")); Assert.False(transport.Body.ContainsKey("logprobs"));
+        Assert.False(transport.Body.ContainsKey("top_logprobs"));
+        if (!raw) Assert.Equal(original, body.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("temperature", true)]
+    [InlineData("top_p", true)]
+    [InlineData("logprobs", true)]
+    [InlineData("top_logprobs", true)]
+    [InlineData("reasoning_effort", true)]
+    [InlineData("reasoning_effort", false)]
+    public async Task Gpt61Sol_ExplicitUnsupportedIntentIsRejectedWithoutProviderCall(string parameter, bool strict)
+    {
+        var transport = new StrictReasoningUpstream();
+        var body = JsonNode.Parse("{\"messages\":[{\"role\":\"user\",\"content\":\"验收\"}],\"max_tokens\":64}")!.AsObject();
+        body[parameter] = parameter == "reasoning_effort" ? JsonValue.Create("none") : parameter == "logprobs" ? JsonValue.Create(true) : JsonValue.Create(0.2);
+        var response = await Gateway(transport, "gpt-6.1-sol").SendAsync(new GatewayRequest
+        { AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat, ModelType = ModelTypes.Chat,
+            Context = new GatewayRequestContext { ParameterPolicy = strict ? "strict-require" : null }, RequestBody = body });
+        Assert.False(response.Success); Assert.Equal("PARAMETER_UNSUPPORTED", response.ErrorCode); Assert.Equal(0, transport.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Gpt61Sol_ChatToolsRequireResponsesEvenWhenCapabilityMetadataClaimsSupport(bool raw)
+    {
+        var transport = new StrictReasoningUpstream(); var gateway = Gateway(transport, "gpt-6.1-sol");
+        var body = JsonNode.Parse("{\"messages\":[{\"role\":\"user\",\"content\":\"验收\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"test\"}}]}")!.AsObject();
+        if (raw)
+        {
+            var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+            { AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat, ModelType = ModelTypes.Chat,
+                HttpMethod = "POST", EndpointPath = "/v1/chat/completions", RequestBody = body },
+                new GatewayModelResolution { Success = true, ActualModel = "gpt-6.1-sol", ActualPlatformId = "synthetic-platform",
+                    ApiUrl = "https://api.openai.com/v1", ApiKey = "synthetic", PlatformType = "openai", Protocol = "openai", SupportsFunctionCalling = true });
+            Assert.False(response.Success); Assert.Equal("GPT61_TOOLS_REQUIRE_RESPONSES", response.ErrorCode);
+        }
+        else
+        {
+            var response = await gateway.SendAsync(new GatewayRequest { AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat,
+                ModelType = ModelTypes.Chat, RequestBody = body });
+            Assert.False(response.Success); Assert.Equal("GPT61_TOOLS_REQUIRE_RESPONSES", response.ErrorCode);
+        }
+        Assert.Equal(0, transport.Calls);
+    }
+
     private static GatewayRequest Request(bool strict = false) => new()
     {
         AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat,
@@ -120,7 +263,7 @@ public sealed class ReasoningChatBudgetCompatibilityTests
         }
     };
 
-    private static LlmGateway Gateway(StrictReasoningUpstream transport, string model)
+    private static LlmGateway Gateway(StrictReasoningUpstream transport, string model, Dictionary<string, bool>? capabilities = null)
     {
         var resolver = new Mock<IModelResolver>();
         resolver.Setup(r => r.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
@@ -130,7 +273,8 @@ public sealed class ReasoningChatBudgetCompatibilityTests
                 Success = true, ActualModel = model, ActualPlatformId = "synthetic-platform",
                 PlatformType = "openai", Protocol = "openai", ResolutionType = "Pinned",
                 ApiUrl = "https://api.openai.com/v1", ApiKey = "synthetic", MaxTokens = 1024,
-                ParameterCapabilities = new() { ["temperature"] = true }
+                SupportsFunctionCalling = true,
+                ParameterCapabilities = capabilities ?? new() { ["temperature"] = true, ["top_p"] = true, ["logprobs"] = true, ["top_logprobs"] = true, ["reasoning_effort"] = true }
             });
         return new LlmGateway(resolver.Object, transport, NullLogger<LlmGateway>.Instance);
     }

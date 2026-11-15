@@ -218,6 +218,17 @@ public class LocalAssetStorage : IAssetStorage
         return BuildUrlForPath(Path.Combine(dir, $"{sha}.{ext}"));
     }
 
+    public Task<AssetReadHandle?> TryOpenReadByKeyAsync(string key, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var filePath = ResolveKeyPath(key);
+        if (!File.Exists(filePath)) return Task.FromResult<AssetReadHandle?>(null);
+        var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        return Task.FromResult<AssetReadHandle?>(new AssetReadHandle(stream,
+            ExtToMime(Path.GetExtension(filePath).TrimStart('.')), stream.Length));
+    }
+
     public async Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
     {
         var filePath = ResolveKeyPath(key);

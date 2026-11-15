@@ -160,6 +160,9 @@ export interface AlarmEvent {
   notificationFacts?: NotificationFacts;
   reportId?: string;
   eventId?: string;
+  firstOccurredAt?: string;
+  lastOccurredAt?: string;
+  occurrenceCount?: number;
   /** 服务端根据已确认的生产可用性故障判定；不读取标题或推送音效。 */
   urgency?: 'urgent' | 'normal';
   businessName?: string;

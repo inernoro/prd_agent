@@ -105,11 +105,25 @@ public class GatewayMaxTokensCapTests
         Assert.False(body.ContainsKey("max_tokens"));
     }
 
+    [Theory]
+    [InlineData("gpt-6.1-sol")]
+    [InlineData("openai/gpt-6.1-sol")]
+    public void ConfirmedGpt61SolBudgetKeepsSmallestCapAndRemovesLegacyFields(string model)
+    {
+        var body = new JsonObject { ["messages"] = new JsonArray(), ["max_tokens"] = 500,
+            ["max_completion_tokens"] = 300, ["max_output_tokens"] = 100 };
+        LlmGateway.ApplyResolvedMaxTokensCap(body, new ModelResolutionResult
+            { Success = true, ActualModel = model, Protocol = "openai", MaxTokens = 128 });
+        Assert.Equal(100, body["max_completion_tokens"]!.GetValue<int>());
+        Assert.False(body.ContainsKey("max_tokens")); Assert.False(body.ContainsKey("max_output_tokens"));
+    }
+
     // 反面：非 GPT-5 家族仍写 max_tokens，别把改名扩散到不需要的模型上。
     [Theory]
     [InlineData("gpt-4o")]
     [InlineData("gpt-4.1-mini")]
     [InlineData("gpt-50-imaginary")]
+    [InlineData("gpt-6.1-sol-future")]
     [InlineData("anthropic/claude-opus-5")]
     public void ApplyResolvedMaxTokensCap_KeepsMaxTokens_ForNonGpt5Models(string model)
     {

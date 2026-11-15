@@ -33,7 +33,7 @@ describe('零采样与真实故障的边界', () => {
   it.each(['cds-self-monitor', 'prd-agent'])('%s 真实探测台账跨重启保留通知状态：无样本不计可用率、不恢复，连续健康 10 分钟仅向收到故障的通道恢复', async (projectId) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alarm-noise-'));
     const monitor: UptimeCustomMonitor = { id: 'm', name: '首屏', kind: 'http', url: 'https://example.test',
-      enabled: true, projectId, createdAt: '', updatedAt: '', intervalSeconds: 300 };
+      enabled: true, projectId, environment: 'production', createdAt: '', updatedAt: '', intervalSeconds: 300 };
     let at = 100 * MIN;
     let outcome = { up: true, ms: 1, noData: false };
     const alerts: Array<{ type: string; data: any }> = [];
@@ -65,9 +65,10 @@ describe('零采样与真实故障的边界', () => {
       expect(alerts).toHaveLength(2);
       expect(alerts[1]).toMatchObject({ type: 'uptime.target.recovered', data: { recoveryChannelIds: ['phone'] } });
       at += MIN; outcome = { up: false, noData: false, ms: 1 }; await svc.probeNow('monitor@m');
-      expect(alerts).toHaveLength(2); // 30 分钟内同一指标重新抖动被合并。
+      expect(alerts).toHaveLength(3); // 已稳定恢复后的正式严重复发立即告警，不被冷却吞掉。
+      expect(alerts[2]).toMatchObject({ type: 'uptime.target.down', data: { urgency: 'urgent' } });
       at = 131 * MIN; await svc.probeNow('monitor@m');
-      expect(alerts).toHaveLength(3); // 冷却后仍异常必须通知，不能永久吞掉。
+      expect(alerts).toHaveLength(3); // 复发后的持续故障仍是同一事件，不再重复通知。
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

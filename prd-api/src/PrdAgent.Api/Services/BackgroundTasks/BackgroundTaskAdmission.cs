@@ -91,6 +91,7 @@ public sealed class BackgroundTaskAdmissionRegistry
     {
         var result = new Dictionary<Type, BackgroundTaskKind>();
         Add(BackgroundTaskKind.Maintenance,
+            typeof(ModelReferences.ModelRuntimeReferenceSnapshotWorker),
             typeof(AdminPushNotificationWorker), typeof(LlmGatewayIncidentWatchdog),
             typeof(PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker),
             typeof(PrdAgent.Api.Middleware.ApiRequestLogWatchdog),

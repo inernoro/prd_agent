@@ -903,13 +903,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ProtocolCoverageData", webTypes);
         Assert.Contains("ProtocolCoverageItem", webTypes);
         Assert.Contains("getProtocolCoverage", webApi);
-        Assert.Contains("getProtocolCoverage({ releaseCommit: protocolReleaseCommit, sinceHours: 24 })", overviewPage);
-        Assert.Contains("new URLSearchParams(window.location.search).get('releaseCommit')", overviewPage);
+        Assert.Contains("getProtocolCoverage({ sinceHours: 24 })", overviewPage);
         Assert.Contains("ProtocolCoveragePanel", overviewPage);
-        Assert.Contains("协议入口覆盖", overviewPage);
-        Assert.Contains("case 'protocol_runtime_coverage':", overviewPage);
-        Assert.Contains("case 'appcaller_ingress_registry_coverage':", overviewPage);
-        Assert.Contains("appcaller_ingress_registry_coverage: [", overviewPage);
+        Assert.Contains("协议请求", overviewPage);
+        Assert.DoesNotContain("RuntimeGatePanel", overviewPage);
+        Assert.DoesNotContain("protocolReleaseCommit", overviewPage);
         Assert.Contains("app.MapGet(\\\"/gw/protocol-coverage\\\"", protocolAudit);
         Assert.Contains("ProtocolCoveragePanel", protocolAudit);
         Assert.Contains("protocol_runtime_coverage", protocolAudit);
@@ -2142,7 +2140,6 @@ public class GatewayDataDomainGuardTests
         var auditsPage = ReadRepoFile("llmgw/web/src/pages/AuditsPage.tsx");
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         var consoleDtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
-        var consoleTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
         var protocolAudit = ReadRepoFile("scripts/llmgw-protocol-router-audit.py");
 
         Assert.Contains("public List<RuntimeGateLink> Links { get; set; } = new();", consoleDtos);
@@ -2152,20 +2149,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Links = RuntimeGateLinks(id, gateFacts, runtimeCommit)", consoleProgram);
         Assert.Contains("/audits?targetType=llmgw_config_authority", consoleProgram);
 
-        Assert.Contains("function runtimeGateActionLinks", overview);
-        Assert.Contains("item.links && item.links.length > 0 ? item.links : runtimeGateActionLinks", overview);
-        Assert.Contains("const releaseCommit = (facts.releaseCommit || gates.releaseCommit || '').trim();", overview);
-        Assert.Contains("const releaseQuery = releaseCommit ? `?releaseCommit=${encodeURIComponent(releaseCommit)}` : '';", overview);
-        Assert.Contains("case 'current_commit_http_transport':", overview);
-        Assert.Contains("case 'dropped_parameter_runtime_evidence':", overview);
-        Assert.Contains("case 'appcaller_runtime_coverage':", overview);
-        Assert.Contains("case 'appcaller_ingress_registry_coverage':", overview);
-        Assert.Contains("case 'protocol_runtime_coverage':", overview);
-        Assert.Contains("/logs${releaseQuery}", overview);
+        // 发布证据继续由管理接口和脚本读取，业务界面只保留状态和修复入口。
+        Assert.DoesNotContain("RuntimeGatePanel", overview);
+        Assert.DoesNotContain("item.evidence", overview);
+        Assert.DoesNotContain("配置权威迁移", overview);
         Assert.Contains("/app-callers?status=active", overview);
-        Assert.Contains("/app-callers?drift=any", overview);
-        Assert.Contains("/audits?targetType=llmgw_config_authority", overview);
-
+        Assert.Contains("设置模型与默认项", overview);
         Assert.Contains("initialQueryValue('releaseCommit')", logsView);
         Assert.Contains("releaseCommit: filterReleaseCommit.trim() || undefined", logsView);
         Assert.Contains("placeholder=\"发布提交\"", logsView);
@@ -2175,13 +2164,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("searchParams.get('targetType')", auditsPage);
         Assert.Contains("targetType: targetType || undefined", auditsPage);
 
-        Assert.Contains("links?: RuntimeGateLink[]", consoleTypes);
-        Assert.Contains("export type RuntimeGateLink", consoleTypes);
-
-        Assert.Contains("runtimeGateActionLinks", protocolAudit);
         Assert.Contains("Links = RuntimeGateLinks", protocolAudit);
         Assert.Contains("initialQueryValue('releaseCommit')", protocolAudit);
-        Assert.Contains("/audits?targetType=llmgw_config_authority", protocolAudit);
         Assert.Contains("\"runtimeEvidenceComplete\": False", protocolAudit);
         Assert.Contains("\"progressPercent\": None", protocolAudit);
         Assert.Contains("staticEvidencePercent covers code/doc evidence only", protocolAudit);
@@ -3277,8 +3261,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("费用可信度", home);
         Assert.DoesNotContain("RuntimeGatePanel", home);
         Assert.DoesNotContain("TOPOLOGY", home);
-        Assert.Contains("RuntimeGatePanel", governance);
-        Assert.Contains("TOPOLOGY", governance);
+        Assert.DoesNotContain("RuntimeGatePanel", governance);
+        Assert.DoesNotContain("TOPOLOGY", governance);
+        Assert.Contains("密钥自检", governance);
     }
 
     [Fact]
@@ -3353,7 +3338,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Developer 只能创建明确限定 appCaller、协议和 scope 的团队密钥", serviceKeys);
         Assert.Contains("if (canManageLegacyCutover)", serviceKeys);
         Assert.Contains("const canWrite = canUseCapability(tenant?.role, 'configWrite')", governance);
-        Assert.Contains("当前角色可以查看运行状态、配置权威和容器拓扑", governance);
+        Assert.Contains("当前角色可以查看状态；修改配置需要管理员权限。", governance);
     }
 
     [Fact]
@@ -6829,7 +6814,7 @@ public class GatewayDataDomainGuardTests
         Assert.Equal(0, CountOccurrences(overview, "绑定 active 调用方"));
         Assert.Equal(0, CountOccurrences(ReadRepoFile("llmgw/web/src/lib/api.ts"), "bind-active-app-callers"));
         // 换成真能修的那一屏
-        Assert.Contains("去对外模型页设认领或默认", overview, StringComparison.Ordinal);
+        Assert.Contains("设置模型与默认项", overview, StringComparison.Ordinal);
 
         // 端点本身保留（存量脚本还可能在调），但它的回执必须说清「这不会改变路由」
         Assert.Contains("这不会改变路由", console, StringComparison.Ordinal);

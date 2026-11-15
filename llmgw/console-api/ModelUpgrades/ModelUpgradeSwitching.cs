@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.LlmGw.Mongo;
+using PrdAgent.LlmGw.ModelReferences;
 
 namespace PrdAgent.LlmGw.ModelUpgrades;
 
@@ -47,6 +48,19 @@ public sealed partial class ModelUpgradeService
         if (await Offerings.CountDocumentsAsync(Scope(s.TenantId, F.And(F.Eq("LogicalModelId", s.LogicalModelId), F.Eq("Enabled", true))), cancellationToken: CancellationToken.None) != 1)
             throw new ModelUpgradeException("MULTIPLE_ACTIVE_ROUTES", "稳定模型有多条启用线路，请先明确唯一当前版本再切换；系统不会隐式替换其他线路。");
         var old = await RequiredAsync(Offerings, s.TenantId, current.OfferingId);
+        if (!rollback)
+        {
+            if (references is null || referenceCatalog is null)
+                throw new ModelUpgradeException("REFERENCE_COVERAGE_REQUIRED", "尚未接入完整的模型使用位置检查，原线路未改变。");
+            var mapping = await referenceCatalog.BuildSwitchAsync(s.TenantId, s.LogicalModelId, current,
+                s.Candidate ?? throw new ModelUpgradeException("CANDIDATE_REQUIRED", "请先确认升级候选。"));
+            s.ReferenceCoverage = await references.InspectAsync(mapping, CancellationToken.None);
+            var reasons = await referenceCatalog.ValidateAsync(mapping, s.ReferenceCoverage.Consumers.Select(x => x.Key).ToArray(), CancellationToken.None);
+            if (reasons.Count > 0) s.ReferenceCoverage.Consumers.Add(new() { Key = "target.authorization-capabilities", Blocked = reasons.Count, Reasons = reasons.ToList() });
+            await PersistAsync(s);
+            if (!s.ReferenceCoverage.CanComplete || s.ReferenceCoverage.Residual != 0)
+                throw new ModelUpgradeException("REFERENCE_COVERAGE_BLOCKED", "使用位置检查尚有旧引用、未知配置或无法迁移的用途，原线路未改变；请打开使用位置与升级完成迁移后重试。");
+        }
         BsonDocument next;
         if (rollback)
         {

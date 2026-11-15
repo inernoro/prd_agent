@@ -24,6 +24,9 @@ public class ModelPoolForAppResult
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Code { get; set; } = string.Empty;
+    /// <summary>网关明确登记的继承标识，供旧页面提交前核对。</summary>
+    public List<string> Aliases { get; set; } = new();
+    public List<string> LegacyPoolIds { get; set; } = new();
     public int Priority { get; set; }
     public string ModelType { get; set; } = string.Empty;
     public bool IsDefaultForType { get; set; }

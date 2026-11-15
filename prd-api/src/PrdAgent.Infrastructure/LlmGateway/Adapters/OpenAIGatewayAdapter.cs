@@ -61,6 +61,14 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         }
 
+        // require_parameters 已被入口消费为 strict-require。原生 OpenAI 不接受 provider，
+        // 只对真实 OpenRouter 目标保留该路由扩展；其他字段不在这里静默删除。
+        if (!OpenRouterAttribution.IsOpenRouterEndpoint(endpoint) && requestBody["provider"] is JsonObject provider)
+        {
+            provider.Remove("require_parameters");
+            if (provider.Count == 0) requestBody.Remove("provider");
+        }
+
         // 流式响应时请求 usage 统计
         if (requestBody.TryGetPropertyValue("stream", out var streamNode) &&
             streamNode?.GetValue<bool>() == true)

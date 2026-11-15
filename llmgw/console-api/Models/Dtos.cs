@@ -372,6 +372,14 @@ public sealed class RouterTraceDto
 
 public sealed class ProviderAttemptDto
 {
+    public string? AttemptId { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public string? ProviderTaskId { get; set; }
+    public int? InputTokens { get; set; }
+    public int? OutputTokens { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+
     public int Order { get; set; }
     public string Stage { get; set; } = "send";
     public string? Provider { get; set; }
@@ -976,6 +984,9 @@ public sealed class PoolModelItem
 public sealed class PlatformsData { public List<PlatformItem> Items { get; set; } = new(); public long Total { get; set; } }
 public sealed class PlatformItem
 {
+    /// <summary>配置更新后最近一次真实调用的观测，不能当作实时余额。</summary>
+    public string? RecentCallStatus { get; set; }
+    public string? RecentCallAt { get; set; }
     public UpstreamProxyView? Proxy { get; set; }
     public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string PlatformType { get; set; } = "";
     public string? ProviderId { get; set; } public string? ApiUrl { get; set; } public bool Enabled { get; set; }

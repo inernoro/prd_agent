@@ -23,7 +23,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [Route("api/video-agent")]
 [Authorize]
 [AdminController("video-agent", AdminPermissionCatalog.VideoAgentUse)]
-public class VideoAgentController : ControllerBase
+public partial class VideoAgentController : ControllerBase
 {
     internal string? ExportDeploymentScope { get; set; } = DeploymentScope.Current;
     internal string? ExportDurableScope { get; set; } = DeploymentScope.CurrentDurable;

@@ -44,6 +44,8 @@ public class UpdateMarkerRequest
     public string? DraftText { get; set; }
     public string? Status { get; set; }
     public string? RunId { get; set; }
+    [System.ComponentModel.DataAnnotations.StringLength(200)]
+    public string? GenerationRequestId { get; set; }
     public string? ErrorMessage { get; set; }
     public string? Url { get; set; }  // 图片 URL（用于刷新后恢复显示）
     public UpdateMarkerPlanItem? PlanItem { get; set; }  // 意图解析结果

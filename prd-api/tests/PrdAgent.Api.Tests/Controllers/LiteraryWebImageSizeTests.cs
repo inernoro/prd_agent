@@ -11,6 +11,18 @@ namespace PrdAgent.Api.Tests.Controllers;
 public class LiteraryWebImageSizeTests
 {
     [Fact]
+    public void RetiredPublicIdUsesDeclaredSuccessorBeforeQueueingWithoutArbitraryFallback()
+    {
+        var successor = new GatewayImageModel { Model = new() { Code = "image-sunlight", IsDefault = true,
+            Aliases = ["gpt-image-2.5-sunburst"] } };
+        Assert.Same(successor, GatewayImageModelCatalog.Select([successor], "gpt-image-2.5-sunburst"));
+        Assert.Null(GatewayImageModelCatalog.Select([successor], "unknown-old-model"));
+        Assert.Same(successor, GatewayImageModelCatalog.Select([successor], null));
+        var conflict = new GatewayImageModel { Model = new() { Code = "other", Aliases = ["gpt-image-2.5-sunburst"] } };
+        Assert.Null(GatewayImageModelCatalog.Select([successor, conflict], "gpt-image-2.5-sunburst"));
+    }
+
+    [Fact]
     public async Task CatalogKeepsDefaultWithoutAcquiringRouteLease()
     {
         var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);

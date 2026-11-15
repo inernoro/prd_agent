@@ -10,8 +10,8 @@ namespace PrdAgent.LlmGw.LogicalModels;
 /// MAP 会继续保存一个已经不存在的 PublicId，最终出现“仍是默认，但不可用”或在途任务执行失败。
 /// 新增一种 MAP 配置引用时，应把过滤器集中补在这里，并在镜像测试里对照实体字段与状态枚举。
 ///
-/// 历史日志、用户最近选择等非权威引用不阻断删除：它们不会发起未来调用。业务策略、模型绑定密钥
-/// 和未终结任务会阻断，因为它们仍可能把这个 PublicId 送进网关。
+/// 历史日志不改写。用户保存的选择会影响未来调用，必须由 ModelReferences 完整注册表审计；
+/// 此处保留业务策略、模型绑定密钥和未终结任务的专项过滤器，不能单独作为全量覆盖证明。
 /// </summary>
 public static class MapLogicalModelReferencePolicy
 {

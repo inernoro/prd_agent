@@ -215,7 +215,7 @@ class WorkflowAptWiring(unittest.TestCase):
 
     def test_all_host_apt_consumers_explicitly_select_the_fixed_backup(self):
         source = WORKFLOW.read_text()
-        self.assertEqual(source.count('scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror kernel'), 3)
+        self.assertEqual(source.count('scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror canonical'), 3)
 
     def test_all_host_consumers_prepare_sources_before_unchanged_dependency_commands(self):
         source = WORKFLOW.read_text()

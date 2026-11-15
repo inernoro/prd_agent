@@ -172,7 +172,8 @@ public record LlmLogDone(
     List<LlmLogImagePayload>? OutputImagePayloads = null,
     int? ReasoningTokens = null,
     bool? CacheCreationCountedInsideInput = null,
-    string? CostKind = null);
+    string? CostKind = null,
+    string? ProviderTaskId = null);
 
 public sealed record LlmLogImagePayload(
     string? Base64Data,

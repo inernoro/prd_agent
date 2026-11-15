@@ -66,6 +66,7 @@ public class ArticleIllustrationMarker
     public string? DraftText { get; set; }  // 用户编辑的提示词
     public string? Status { get; set; }  // idle/parsing/parsed/running/done/error
     public string? RunId { get; set; }  // 生图任务 ID
+    public string? GenerationRequestId { get; set; } // 创建应答丢失时只读查回原任务
     public string? AssetId { get; set; }  // 已生成的图片资产 ID
     public string? Url { get; set; }  // 图片 URL（用于刷新后恢复显示）
     public ArticleIllustrationPlanItem? PlanItem { get; set; }  // 意图解析结果

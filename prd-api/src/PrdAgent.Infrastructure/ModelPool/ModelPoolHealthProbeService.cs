@@ -222,6 +222,7 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
 
             if (success)
             {
+                var recoveredAt = DateTime.UtcNow;
                 // 恢复健康状态
                 var filter = Builders<ModelGroup>.Filter.And(
                     Builders<ModelGroup>.Filter.Eq(g => g.Id, group.Id),
@@ -232,7 +233,7 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
                     .Set("Models.$.HealthStatus", ModelHealthStatus.Healthy)
                     .Set("Models.$.ConsecutiveFailures", 0)
                     .Inc("Models.$.ConsecutiveSuccesses", 1)
-                    .Set("Models.$.LastSuccessAt", DateTime.UtcNow);
+                    .Set("Models.$.LastSuccessAt", recoveredAt);
 
                 await db.ModelGroups.UpdateOneAsync(filter, update, cancellationToken: ct);
 
@@ -248,7 +249,7 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
                         : TimeSpan.Zero;
 
                     await notifier.NotifyPoolRecoveredAsync(group, model.ModelId, downDuration, ct);
-                    await notifier.CloseUserFailureNotificationsAsync(group.ModelType, ct);
+                    await notifier.CloseUserFailureNotificationsAsync(group.ModelType, ct, poolId: group.Id, recoveredAt: recoveredAt);
                 }
                 catch (Exception ex)
                 {

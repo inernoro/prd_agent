@@ -4,7 +4,7 @@ import { Button } from '@/components/ui';
 import { collectionPage } from '@/lib/collectionPaging';
 import './CollectionView.css';
 
-export function CollectionView<T>({ items, searchText, placeholder, children, pageSize = 10, emptyText = '没有匹配结果', className = '', filters = [], filterLabel = '清单状态筛选', allFilterLabel = '全部状态', afterToolbar }: {
+export function CollectionView<T>({ items, searchText, placeholder, children, pageSize = 10, emptyText = '没有匹配结果', className = '', filters = [], filterLabel = '清单状态筛选', allFilterLabel = '全部状态', afterToolbar, toolbarActions, continuous = false, initialFilter = '' }: {
   items: readonly T[];
   searchText: (item: T) => string;
   placeholder: string;
@@ -13,37 +13,53 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
   emptyText?: string;
   className?: string;
   afterToolbar?: ReactNode;
+  toolbarActions?: ReactNode;
   filterLabel?: string;
   allFilterLabel?: string;
   filters?: Array<{ value: string; label: string; matches: (item: T) => boolean }>;
+  continuous?: boolean;
+  initialFilter?: string;
 }) {
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
-  const [filter, setFilter] = useState('');
+  const [filter, setFilter] = useState(initialFilter);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const selectedFilter = filters.find((item) => item.value === filter);
   const filtered = selectedFilter ? items.filter(selectedFilter.matches) : items;
-  const result = collectionPage(filtered, query, searchText, page, pageSize);
+  const result = collectionPage(filtered, query, searchText, continuous ? 1 : page, continuous ? Math.max(1, filtered.length) : pageSize);
+  const visible = continuous ? result.items.slice(0, page * pageSize) : result.items;
+  const hasMore = continuous && visible.length < result.total;
   // 数据删除或刷新后立刻夹住页码；搜索、筛选和翻页都回到清单顶部。
-  useEffect(() => { if (page !== result.current) setPage(result.current); }, [page, result.current]);
+  useEffect(() => { if (!continuous && page !== result.current) setPage(result.current); }, [page, result.current, continuous]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: 0 }); }, [query, filter, result.current]);
+  useEffect(() => {
+    if (!hasMore || !sentinelRef.current || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) setPage(value => value + 1);
+    }, { root: scrollRef.current, rootMargin: '120px' });
+    observer.observe(sentinelRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, visible.length]);
   return (
     <div className={`lg-collection-view ${className}`}>
       <div className="lg-collection-toolbar">
         <input type="search" aria-label={placeholder} placeholder={placeholder} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
         {filters.length ? <select aria-label={filterLabel} value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }}><option value="">{allFilterLabel}</option>{filters.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select> : null}
+        {toolbarActions}
       </div>
       {afterToolbar}
       <div className="lg-collection-scroll" ref={scrollRef}>
-        {result.total ? children(result.items) : <div className="lg-collection-empty">{emptyText}{query || filter ? <Button size="sm" variant="ghost" onClick={() => { setQuery(''); setFilter(''); setPage(1); }}>清除筛选</Button> : null}</div>}
+        {result.total ? children(visible) : <div className="lg-collection-empty">{emptyText}{query || filter ? <Button size="sm" variant="ghost" onClick={() => { setQuery(''); setFilter(''); setPage(1); }}>清除筛选</Button> : null}</div>}
+        {hasMore ? <div ref={sentinelRef} className="lg-collection-load-more"><Button size="sm" variant="ghost" onClick={() => setPage(value => value + 1)}>继续加载 · 已显示 {visible.length} / {result.total}</Button></div> : null}
       </div>
-      <footer className="lg-collection-pagination">
+      {!continuous ? <footer className="lg-collection-pagination">
         <span>{result.total ? `${result.start + 1}–${Math.min(result.start + pageSize, result.total)}` : '0'} / {result.total}</span>
         <span className="lg-collection-spacer" />
         <span>第 {result.current} / {result.pages} 页</span>
         <Button size="sm" disabled={result.current <= 1} onClick={() => setPage(result.current - 1)}>上一页</Button>
         <Button size="sm" disabled={result.current >= result.pages} onClick={() => setPage(result.current + 1)}>下一页</Button>
-      </footer>
+      </footer> : null}
     </div>
   );
 }

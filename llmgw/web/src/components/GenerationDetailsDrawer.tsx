@@ -10,7 +10,7 @@ import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
 import { Chip, SectionLoader } from './ui';
 import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityIcon';
-import { DASH, appDisplayName, computeTokPerSec, costKindBadgeLabel, costKindLabel, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
+import { MODEL_FALLBACK_LABEL, MODEL_FALLBACK_SCOPE, formatModelFallback, DASH, appDisplayName, computeTokPerSec, costKindBadgeLabel, costKindLabel, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
 
 function MetricCard({ title, value, note, icon }: { title: string; value: string; note?: ReactNode; icon: ReactNode }) {
   return (
@@ -231,26 +231,12 @@ function RouterTracePanel({ detail }: { detail: LlmLogDetail }) {
 }
 
 function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
-  const attempts: NonNullable<LlmLogDetail['providerAttempts']> = detail.providerAttempts?.length
-    ? detail.providerAttempts
-    : [{
-        order: 1,
-        stage: 'provider',
-        status: detail.status,
-        statusCode: detail.statusCode,
-        provider: detail.provider,
-        platformName: detail.platformName,
-        platformId: detail.platformId,
-        model: detail.model,
-        durationMs: detail.durationMs,
-        transport: detail.transport,
-        error: detail.error,
-        reason: detail.resolutionReason,
-      }];
+  const attempts = detail.providerAttempts ?? [];
   const maxDuration = Math.max(1, ...attempts.map((attempt) => attempt.durationMs ?? 0));
   return (
     <section>
       <div style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>上游响应</div>
+      {!attempts.length ? <p>缺少逐次上游尝试证据</p> : null}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {attempts.map((attempt) => {
           const warning = attempt.status === 'skipped' || attempt.status === 'failed';
@@ -615,9 +601,9 @@ export function GenerationDetailsDrawer({
                       icon={detail.imageSuccessCount ? <ImageIcon size={15} aria-hidden="true" /> : <Coins size={15} aria-hidden="true" />}
                     />
                     <MetricCard
-                      title="回退"
-                      value={detail.isFallback ? '是' : '否'}
-                      note={detail.isFallback ? detail.fallbackReason ?? undefined : undefined}
+                      title={MODEL_FALLBACK_LABEL}
+                      value={formatModelFallback(detail.isFallback)}
+                      note={[MODEL_FALLBACK_SCOPE, detail.isFallback === true ? detail.fallbackReason : null].filter(Boolean).join('；')}
                       icon={<RotateCcw size={15} aria-hidden="true" />}
                     />
                     {detail.upstreamCallCount > 1 || detail.operation !== 'invoke' ? (
@@ -640,6 +626,7 @@ export function GenerationDetailsDrawer({
                     <Row k="状态" v={detail.statusCode == null ? detail.status : `${detail.status} · HTTP ${detail.statusCode}`} />
                     <Row k="结束原因" v={detail.finishReason} />
                   </section>
+                  <Link to={`/logs/trace?reference=${encodeURIComponent(detail.id)}`}>查看完整关联调用链</Link>
                   <ProviderResponses detail={detail} />
                   {detail.error ? (
                     <div className="lg-generation-error">

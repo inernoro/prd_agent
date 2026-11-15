@@ -43,6 +43,12 @@ export interface ScheduledJob {
   lastRunAt?: string;
   lastRunStatus?: RunStatus;
   nextRunAt?: string | null;
+  completion?: { type: 'reports'; minCount: number; requireObjectStorage?: boolean; allowedVerdicts?: Array<'pass' | 'conditional' | 'fail'> };
+  scheduleGraceSeconds?: number;
+  recoveryRequiredRunId?: string;
+  health?: { state: string; message: string; recoveryRequired: boolean };
+  lastScheduledRun?: ScheduledJobRun;
+  lastPushRun?: ScheduledJobRun;
   /** 服务端投影的后续触发时刻。前端不自己按 schedule 推算，避免复制一份到期判定。 */
   nextRuns?: string[];
   consecutiveFailureCount?: number;
@@ -67,6 +73,10 @@ export interface ScheduledJobRun {
   projectId: string;
   trigger: 'schedule' | 'manual' | 'push';
   status: RunStatus;
+  scheduledFor?: string;
+  failureKind?: string;
+  recovery?: { failureKind?: string; error?: string; failedAt?: string; verifiedAt: string };
+  artifacts?: Array<{ reportId: string; sha256: string; sizeBytes: number }>;
   queuedAt: string;
   startedAt?: string;
   finishedAt?: string;

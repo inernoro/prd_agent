@@ -5171,7 +5171,6 @@ public static class CapsuleExecutor
         }
 
         var toolRegistry = sp.GetService<IAgentToolRegistry>();
-        var logWriter = sp.GetService<ILlmRequestLogWriter>();
         var ctxAccessor = sp.GetService<ILLMRequestContextAccessor>();
 
         var model = ReplaceVariables(GetConfigString(node, "model") ?? "", variables).Trim();
@@ -5267,6 +5266,7 @@ public static class CapsuleExecutor
 
         var request = new SidecarRunRequest
         {
+            SubjectUserId = variables.GetValueOrDefault("__triggeredBy"),
             RunId = runId,
             Model = effectiveModel,
             SystemPrompt = systemPrompt,
@@ -5307,47 +5307,7 @@ public static class CapsuleExecutor
                 AppCallerCode: appCallerCode));
         }
 
-        // 写一条 llmrequestlogs（D-2 偿还）：让账单页能看到 claude-sdk 调用
-        string? logId = null;
-        var startedAt = DateTime.UtcNow;
-        if (logWriter != null)
-        {
-            try
-            {
-                logId = await logWriter.StartAsync(new LlmLogStart(
-                    RequestId: runId,
-                    Provider: "anthropic-sdk",
-                    Model: effectiveModel,
-                    ApiBase: null,
-                    Path: "/v1/messages",
-                    HttpMethod: "POST",
-                    RequestHeadersRedacted: null,
-                    RequestBodyRedacted: TruncateLog(userPrompt.ToString(), 4000),
-                    RequestBodyHash: null,
-                    QuestionText: TruncateLog(ctx.Prompt ?? string.Empty, 1000),
-                    SystemPromptChars: systemPrompt.Length,
-                    SystemPromptHash: null,
-                    SystemPromptText: TruncateLog(systemPrompt, 4000),
-                    MessageCount: 1,
-                    GroupId: null,
-                    SessionId: null,
-                    UserId: null,
-                    ViewRole: null,
-                    DocumentChars: null,
-                    DocumentHash: null,
-                    UserPromptChars: userPrompt.Length,
-                    StartedAt: startedAt,
-                    RequestType: "agent",
-                    AppCallerCode: appCallerCode,
-                    GatewayTransport: GatewayTransports.Http,
-                    RunId: runId));
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "[claude-sdk] llmlog start 失败 runId={RunId}", runId);
-            }
-        }
-
+        // sidecar 每一轮由 serving 记录物理调用。业务汇总保留在胶囊运行记录，避免重复记账。
         sb.AppendLine($"[claude-sdk] runId={runId} model={request.Model} maxTurns={maxTurns}");
         sb.AppendLine($"[claude-sdk] systemPrompt={systemPrompt.Length}c userPrompt={userPrompt.Length}c tools={tools.Count}");
         sb.AppendLine("[claude-sdk] upstream=llmgw-serve openai-compatible runtimeAdapter=legacy-sidecar");
@@ -5359,20 +5319,12 @@ public static class CapsuleExecutor
         var collected = new StringBuilder();
         long inTokens = 0, outTokens = 0;
         string? errorCode = null, errorMsg = null, sidecarName = null;
-        var firstByteMarked = false;
 
         try
         {
             await foreach (var ev in router.RunStreamAsync(request, CancellationToken.None))
             {
                 sidecarName ??= ev.SidecarName;
-
-                if (!firstByteMarked && ev.Type == SidecarEventType.TextDelta && logWriter != null && logId != null)
-                {
-                    try { logWriter.MarkFirstByte(logId, DateTime.UtcNow); }
-                    catch (Exception ex) { logger.LogWarning(ex, "[claude-sdk] llmlog firstByte 失败"); }
-                    firstByteMarked = true;
-                }
 
                 switch (ev.Type)
                 {
@@ -5442,41 +5394,6 @@ public static class CapsuleExecutor
 
         sw.Stop();
         sb.AppendLine($"[claude-sdk] sidecar={sidecarName ?? "?"} 完成 {sw.ElapsedMilliseconds}ms tokens={inTokens}/{outTokens}");
-
-        // 写 MarkDone / MarkError
-        if (logWriter != null && logId != null)
-        {
-            try
-            {
-                if (errorCode != null)
-                {
-                    logWriter.MarkError(logId, $"{errorCode}: {errorMsg}", null);
-                }
-                else
-                {
-                    logWriter.MarkDone(logId, new LlmLogDone(
-                        StatusCode: 200,
-                        ResponseHeaders: null,
-                        InputTokens: (int)inTokens,
-                        OutputTokens: (int)outTokens,
-                        CacheCreationInputTokens: null,
-                        CacheReadInputTokens: null,
-                        TokenUsageSource: "anthropic-sdk-usage",
-                        ImageSuccessCount: null,
-                        AnswerText: TruncateLog(collected.ToString(), 8000),
-                        ThinkingText: null,
-                        AssembledTextChars: collected.Length,
-                        AssembledTextHash: null,
-                        Status: "success",
-                        EndedAt: DateTime.UtcNow,
-                        DurationMs: sw.ElapsedMilliseconds));
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "[claude-sdk] llmlog mark 失败");
-            }
-        }
 
         if (errorCode != null)
         {

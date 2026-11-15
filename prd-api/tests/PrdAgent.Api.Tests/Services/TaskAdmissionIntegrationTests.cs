@@ -31,6 +31,53 @@ namespace PrdAgent.Api.Tests.Services;
 /// <summary>仅连接本轮启动的独立 Mongo 随机库，经过真实准入中间件与发送授权者；零供应商请求。</summary>
 public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
 {
+    [DesignScopeMongoTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LiteraryFiveImageBatchCanAcquireAllDeclaredRunsWithoutIncreasingCallBudget(bool mcp)
+    {
+        var controller = mcp ? "PrdAgent.Api.Controllers.McpGatewayController" : "PrdAgent.Api.Controllers.Api.LiteraryImageOpenApiController";
+        var http = HttpAction(mcp ? "Handle" : "Generate", "ApiKey", "agent-apikey", controller);
+        const string arguments = "{\"markerIndexes\":[0,1,2,3,4],\"clientRequestId\":\"five-images\"}";
+        var body = mcp ? "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"map_literary_generate_image\",\"arguments\":" + arguments + "}}" : arguments;
+        http.Request.ContentType = "application/json";
+        http.Request.Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(body));
+        var identity = await new TaskAdmissionService(_data, _config).AdmitRequestAsync(http, default);
+        Assert.NotNull(identity);
+        var permit = await Permits.Find(x => x.Id == identity!.PermitId).SingleAsync();
+        Assert.Equal(5, permit.MaxRuns);
+        Assert.Equal(16, permit.MaxCalls);
+        var coordinator = new TaskExecutionCoordinator(_data);
+        for (var index = 0; index < 5; index++)
+        {
+            await using var attempt = await TaskExecutionAttempt.AcquireAsync(coordinator, permit.Id, "image-" + index);
+            Assert.False(attempt.ShouldSkip);
+            Assert.NotNull(attempt.Lease);
+        }
+        var rejected = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
+            TaskExecutionAttempt.AcquireAsync(coordinator, permit.Id, "unrequested-image"));
+        Assert.Equal("TASK_EXECUTION_RUN_LIMIT_REACHED", rejected.Code);
+        var final = await Permits.Find(x => x.Id == permit.Id).SingleAsync();
+        Assert.Equal(5, final.Executions.Count(x => !string.IsNullOrEmpty(x.RunId)));
+        Assert.Equal(0, final.CallCount);
+
+        // 防御性收尾：即使有错误入队者创建了第六条，也不能永远留下 Running。
+        var run = new ImageGenRun { Id = "unrequested-image", TaskPermitId = permit.Id,
+            OwnerAdminId = "actor", Status = ImageGenRunStatus.Running };
+        await _business.ImageGenRuns.InsertOneAsync(run);
+        var factory = new Mock<IServiceScopeFactory>(MockBehavior.Strict);
+        using var worker = new PrdAgent.Api.Services.ImageGenRunWorker(_business, factory.Object,
+            Mock.Of<IRunEventStore>(), NullLogger<PrdAgent.Api.Services.ImageGenRunWorker>.Instance,
+            Mock.Of<ILLMRequestContextAccessor>(), _config, coordinator);
+        var process = typeof(PrdAgent.Api.Services.ImageGenRunWorker).GetMethod("ProcessRunSafeAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        await (Task)process.Invoke(worker, [run, CancellationToken.None])!;
+        var failed = await _business.ImageGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.Equal(ImageGenRunStatus.Failed, failed.Status);
+        Assert.Equal("TASK_EXECUTION_RUN_LIMIT_REACHED", failed.ErrorCode);
+        Assert.NotNull(failed.EndedAt);
+        factory.VerifyNoOtherCalls();
+    }
+
     private const string Controller = "PrdAgent.Api.Controllers.Api.ModelLabController";
     private const string ReportController = "PrdAgent.Api.Controllers.Api.ReportAgentController";
     private const string Caller = "prd-agent-web.model-lab.run::chat";

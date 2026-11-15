@@ -10,6 +10,48 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class TaskBusinessIntentTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LiteraryBatchDeclaresDistinctChildRunsWithoutTrustingClientLimits(bool mcp)
+    {
+        const string args = "{\"markerIndexes\":[0,1,2,3,4,4],\"maxRuns\":999}";
+        var body = mcp ? "{\"method\":\"tools/call\",\"params\":{\"name\":\"map_literary_generate_image\",\"arguments\":" + args + "}}" : args;
+        var http = Json(body, "batch-request");
+        var operation = mcp ? "PrdAgent.Api.Controllers.McpGatewayController.Handle"
+            : "PrdAgent.Api.Controllers.Api.LiteraryImageOpenApiController.Generate";
+        var intent = await TaskBusinessIntent.ResolveAsync(http, operation, TaskExecutionOrigins.Agent, false, default);
+        Assert.Equal(5, intent.DeclaredRunCount);
+        Assert.Equal(0, http.Request.Body.Position);
+        Assert.Null((await TaskBusinessIntent.ResolveAsync(Json(body, "other"), "future.operation", TaskExecutionOrigins.Agent, false, default)).DeclaredRunCount);
+    }
+
+    [Theory]
+    [InlineData("{\"markerIndexes\":[-1]}")]
+    [InlineData("{\"markerIndexes\":[\"1\"]}")]
+    [InlineData("{\"markerIndexes\":[1.5]}")]
+    [InlineData("{\"markerIndexes\":[1],\"markerIndex\":0}")]
+    [InlineData("{\"markerIndexes\":[1],\"MarkerIndexes\":[2]}")]
+    public async Task InvalidLiteraryBatchCannotReceiveAnExpandedPermit(string body)
+    {
+        var http = Json(body, "invalid-batch");
+        var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => TaskBusinessIntent.ResolveAsync(http,
+            "PrdAgent.Api.Controllers.Api.LiteraryImageOpenApiController.Generate", TaskExecutionOrigins.Agent, false, default));
+        Assert.Equal("TASK_LITERARY_BATCH_INVALID", error.Code);
+        Assert.Equal(400, error.StatusCode);
+        Assert.Contains("分批", error.Message);
+        Assert.Equal(0, http.Request.Body.Position);
+    }
+
+    [Fact]
+    public async Task LiteraryBatchOverThePlatformCeilingFailsBeforeAdmission()
+    {
+        var body = JsonSerializer.Serialize(new { markerIndexes = Enumerable.Range(0, GatewayTaskPermitRecord.MaximumRuns + 1) });
+        var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => TaskBusinessIntent.ResolveAsync(Json(body, "large-batch"),
+            "PrdAgent.Api.Controllers.Api.LiteraryImageOpenApiController.Generate", TaskExecutionOrigins.Agent, false, default));
+        Assert.Equal("TASK_LITERARY_BATCH_INVALID", error.Code);
+    }
+
     [Fact]
     public async Task CanonicalJsonAndMultipart_AreIndependentOfPropertyOrderAndBoundary()
     {

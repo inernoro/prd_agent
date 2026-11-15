@@ -148,21 +148,26 @@ describe('incident snapshots and scoped notification landing', () => {
     expect(recovered.endedSample!.t).toBeLessThan(recovered.notificationSamples!.at(-1)!.t);
     await service.flush();
     const cold = new UptimeMonitorService({ ...deps, onAlert: undefined });
-    expect(cold.getIncident(incident.id, 'p-a')?.notificationSamples).toEqual(recovered.notificationSamples);
-    expect(cold.getIncident(incident.id, 'p-b')).toBeUndefined();
-    const app = express();
-    app.use((req, _res, next) => { (req as unknown as { cdsProjectKey?: { projectId: string } }).cdsProjectKey = { projectId: String(req.headers['x-project']) }; next(); });
-    app.use('/api', createUptimeRouter({ monitor: cold, store: {} as never }));
-    const api = await listen(app);
-    const route = `${api}/api/uptime/incidents/${encodeURIComponent(incident.id)}`;
-    expect(resolveApiLabel('GET', `/uptime/incidents/${encodeURIComponent(incident.id)}`)).toBe('查看故障通知上下文');
-    const allowed = await fetch(route, { headers: { 'x-project': 'p-a' } });
-    expect(allowed.status).toBe(200); expect((await allowed.json()).incident.startedSample.measurement.actual).toBe(1240);
-    const denied = await fetch(route, { headers: { 'x-project': 'p-b' } });
-    const missing = await fetch(`${api}/api/uptime/incidents/missing`, { headers: { 'x-project': 'p-a' } });
-    expect(denied.status).toBe(404); expect(await denied.json()).toEqual(await missing.json());
-    cold.forgetTarget(events[0].targetId);
-    expect((await fetch(route, { headers: { 'x-project': 'p-a' } })).status).toBe(404);
+    try {
+      expect(cold.getIncident(incident.id, 'p-a')?.notificationSamples).toEqual(recovered.notificationSamples);
+      expect(cold.getIncident(incident.id, 'p-b')).toBeUndefined();
+      const app = express();
+      app.use((req, _res, next) => { (req as unknown as { cdsProjectKey?: { projectId: string } }).cdsProjectKey = { projectId: String(req.headers['x-project']) }; next(); });
+      app.use('/api', createUptimeRouter({ monitor: cold, store: {} as never }));
+      const api = await listen(app);
+      const route = `${api}/api/uptime/incidents/${encodeURIComponent(incident.id)}`;
+      expect(resolveApiLabel('GET', `/uptime/incidents/${encodeURIComponent(incident.id)}`)).toBe('查看故障通知上下文');
+      const allowed = await fetch(route, { headers: { 'x-project': 'p-a' } });
+      expect(allowed.status).toBe(200); expect((await allowed.json()).incident.startedSample.measurement.actual).toBe(1240);
+      const denied = await fetch(route, { headers: { 'x-project': 'p-b' } });
+      const missing = await fetch(`${api}/api/uptime/incidents/missing`, { headers: { 'x-project': 'p-a' } });
+      expect(denied.status).toBe(404); expect(await denied.json()).toEqual(await missing.json());
+      cold.forgetTarget(events[0].targetId);
+      expect((await fetch(route, { headers: { 'x-project': 'p-a' } })).status).toBe(404);
+    } finally {
+      // forgetTarget 会异步写入；删临时目录前也必须等待冷读实例自己的写入。
+      await cold.flush();
+    }
   });
   it('encodes only identity metadata in current and legacy notification links', () => {
     const targetId = 'monitor@a/b::中文'; const incidentId = `inc_${targetId}_123`;
