@@ -157,7 +157,7 @@ export function RowActions({
             aria-haspopup="menu"
             aria-expanded={open}
             title={label}
-            onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); openAtEnd.current = event.key === 'ArrowUp'; setOpen(true); } }}
+            onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); event.stopPropagation(); openAtEnd.current = event.key === 'ArrowUp'; setOpen(true); } }}
             onClick={() => setOpen((v) => !v)}
           >
             <MoreHorizontal size={15} />
