@@ -190,6 +190,16 @@ function AuditRow({ item, td, expanded, onToggle }: { item: OperationAuditItem; 
 
 function actionLabel(value?: string | null) {
   return ({
+    'platform.create': '添加上游',
+    'platform.update': '修改上游配置',
+    'platform.set_enabled': '修改上游启停状态',
+    'platform.delete': '删除上游',
+    'platform.models.import': '导入上游模型',
+    'platform.claim_to_gateway': '导入上游配置',
+    'platform.rotate_api_key': '轮换上游密钥',
+    'platform.delete_api_key': '删除上游密钥',
+    'platform.bulk_rotate_api_key': '批量轮换上游密钥',
+    'platform.cleanup_unused_models': '清理上游未使用模型',
     'tenant.create': '创建租户',
     'team.create': '创建团队',
     'team.update': '修改团队',
@@ -221,6 +231,7 @@ function actionLabel(value?: string | null) {
 
 function targetTypeLabel(value?: string | null) {
   return ({
+    llmgw_platform: '上游',
     llmgw_tenant: '租户',
     llmgw_team: '团队',
     llmgw_membership: '成员关系',

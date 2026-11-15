@@ -61,6 +61,7 @@ export function LogTracePage() {
       <section className="lg-trace-summary"><p>共 {data.total} 条关联记录{data.total > data.pageSize ? ` · 第 ${data.page} 页` : ''}</p><DetailsBlock title="关联与费用口径">
         <p>每条记录代表一次网关请求；其下按顺序列出调度尝试。相似正文、同一模型和时间接近均不作为重试证据。</p>
         <p>费用逐项保留来源，不累加作业回执或历史汇总。未返回的实际费用显示未知，估算与实际费用分别展示。</p>
+        <p>业务证据仅限当前授权和已保留记录。未取得视频或作业产物证据，不能据此认定业务成功或产物不存在。</p>
         </DetailsBlock>
         {data.business ? <div><h2>MAP 视频业务结果</h2>
           <p>业务操作：{data.business.runId} · 状态：{data.business.status || '未知'}</p>
