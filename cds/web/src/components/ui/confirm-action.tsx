@@ -46,12 +46,12 @@ export function ConfirmAction({
 
   function scopeIsCurrent(): boolean {
     const snapshot = openingScope.current;
-    return Boolean(snapshot && snapshot.auth === authScope && snapshot.key === scopeKey && snapshot.title === titleText && snapshot.description === descriptionText);
+    return Boolean(!disabled && !pending && !trigger.props.disabled && snapshot && snapshot.auth === authScope && snapshot.key === scopeKey && snapshot.title === titleText && snapshot.description === descriptionText);
   }
 
   useLayoutEffect(() => {
     if (open && !scopeIsCurrent()) setOpen(false);
-  }, [open, authScope, scopeKey, titleText, descriptionText]);
+  }, [open, authScope, scopeKey, titleText, descriptionText, disabled, pending, trigger.props.disabled]);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -168,7 +168,7 @@ export function ConfirmAction({
             <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" data-confirm-cancel type="button" variant="ghost" size="sm" onClick={() => setOpen(false)} disabled={pending}>
               {cancelLabel}
             </Button>
-            <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="destructive" size="sm" onClick={() => void confirm()} disabled={pending}>
+            <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="destructive" size="sm" onClick={() => void confirm()} disabled={disabled || pending || trigger.props.disabled}>
               {confirmLabel}
             </Button>
           </div>
