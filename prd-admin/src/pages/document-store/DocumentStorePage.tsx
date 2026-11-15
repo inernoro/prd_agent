@@ -2678,7 +2678,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         {selectedDocEntry && !(isMobile && readerImmersive) && <div className="workspace-context mb-2" aria-label="当前文档上下文">
           <strong className="truncate max-w-[45%]">{selectedDocEntry.title}</strong>
           {(() => { const entry = entries.find(item => item.id === selectedDocEntry.id); return entry ? <>
-            <span className="ws-badge">{({ upload: '上传文件', manual: '手动创建', github: 'GitHub', url: '网页来源', recording: '录音' } as Record<string,string>)[entry.sourceType] || '其他来源'}</span>
+            <span className="ws-badge">{entry.sourceType === 'github_directory' || Object.keys(entry.metadata ?? {}).some(key => key.startsWith('github_')) ? 'GitHub 同步' : ({ upload: '上传文件', manual: '手动创建', github: 'GitHub', url: '网页来源', recording: '录音', subscription: '订阅来源', reference: '引用文档', generated: '生成内容', text: '文本内容' } as Record<string,string>)[entry.sourceType] || '其他来源'}</span>
             {entry.updatedByName && <span className="ws-person"><PersonAvatar person={{displayName:entry.updatedByName}} size={22}/>{entry.updatedByName}</span>}
             <span>更新于 {new Date(entry.updatedAt).toLocaleDateString('zh-CN')}</span>
           </> : <span>文档详情按当前选择加载</span>; })()}
