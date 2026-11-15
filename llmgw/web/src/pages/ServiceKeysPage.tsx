@@ -13,7 +13,7 @@
 //     声明作废（报错文字根本没变红），通配确认框那处更是连 color-mix 底色和边框一起丢了。
 //     语义色只有 --ok / --warn / --err / --info，全部改过来——边框底色重新出现是修复，不是回归。
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Check, Copy, KeyRound, Plus, RefreshCw, X } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { confirmServiceKeyClientCutover, createGatewayAppCaller, createServiceKey, getGatewayAppCallers, getLegacyKeyCutover, getOrganization, getServiceKeys, revokeServiceKey, updateLegacyKeyCutover } from '@/lib/api';
@@ -102,6 +102,8 @@ export function ServiceKeysPage() {
   const keyValidity = (item: ServiceKeyItem) => serviceKeyValidity(item, validityNow);
   const [scopeCopied, setScopeCopied] = useState(false);
   const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
+  const keyListRef = useRef<HTMLDivElement>(null);
+  const detailWasOpen = useRef(false);
   useEffect(() => setSelectedKeyId(null), [contextClient, contextCaller]);
   const [keyTab, setKeyTab] = useState("permissions");
   const [items, setItems] = useState<ServiceKeyItem[] | null>(null);
@@ -470,6 +472,11 @@ export function ServiceKeysPage() {
   };
 
   const selectedKey = items?.find((item) => item.id === selectedKeyId);
+  useLayoutEffect(() => {
+    const open = Boolean(selectedKey);
+    if (detailWasOpen.current && !open && document.activeElement === document.body) keyListRef.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus({ preventScroll: true });
+    detailWasOpen.current = open;
+  }, [Boolean(selectedKey)]);
   const keyOverview = <>
         {items && isInternalTenant ? <details className="lg-key-coverage" style={{ padding: '6px 0', fontSize: 'var(--fs-secondary)' }}>
           <summary style={{ cursor: 'pointer' }}>MAP 生产密钥 · {mapCoverage.some(item => !item.ready) ? `${mapCoverage.filter(item => !item.ready).length} 类用途缺失` : '配置覆盖完整'}</summary>
@@ -689,7 +696,7 @@ export function ServiceKeysPage() {
           </div>
         ) : (
           <>
-          <div className="lg-collection-workspace lg-collection-key-workspace"><div className="lg-collection-list">{keyOverview}
+          <div className="lg-collection-workspace lg-collection-key-workspace"><div ref={keyListRef} className="lg-collection-list">{keyOverview}
           <CollectionView key={`${contextClient}:${contextCaller}`} initialFilter={contextClient || contextCaller ? 'context' : 'active'} allFilterLabel="全部密钥（含历史）" emptyText="当前条件没有密钥，可切换状态或清除筛选" items={items} placeholder="搜索密钥名称、客户端或调用用途" searchText={(item) => [item.name, item.keyPrefix, item.clientCode, item.environment, item.purpose, ...item.appCallerCodes].join(' ')} filters={[...(contextClient || contextCaller ? [{ value: 'context', label: '同用途（含历史）', matches: (item: ServiceKeyItem) => (!contextClient || item.clientCode === contextClient) && (!contextCaller || item.appCallerCodes.some(code => code.toLowerCase() === contextCaller.toLowerCase())) }] : []), { value: 'active', label: '有效', matches: (item) => keyValidity(item).value === 'active' }, { value: 'expired', label: '已过期', matches: (item) => keyValidity(item).value === 'expired' }, { value: 'unknown', label: '有效期未知', matches: (item) => keyValidity(item).value === 'unknown' }, { value: 'revoked', label: '已撤销', matches: (item) => !item.enabled }]}>
           {(pageItems) => <>
           <div className="lg-service-key-desktop">
