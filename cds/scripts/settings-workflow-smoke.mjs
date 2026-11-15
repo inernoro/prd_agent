@@ -49,7 +49,7 @@ export async function verifySettingsWorkflow(browser, base, out, { baseline = fa
   try {
     await open('/settings/fixture-project#comment-template');
     const editor = page.locator('[role="tabpanel"][data-state="active"] textarea').first(); await editor.waitFor();
-    results.push({case:'template-default', source:'deterministic-fixture', editor:await metrics('[role="tabpanel"][data-state="active"] textarea'), preview:await metrics(baseline ? '[role="tabpanel"] section:last-child' : '[aria-labelledby="comment-preview-title"]')});
+    results.push({case:'template-initial-custom', source:'deterministic-fixture', editor:await metrics('[role="tabpanel"][data-state="active"] textarea'), preview:await metrics(baseline ? '[role="tabpanel"] section:last-child' : '[aria-labelledby="comment-preview-title"]')});
     await page.screenshot({path:path.join(out,'template-desktop.png')});
     for (const theme of ['dark','light']) for (const width of [1440,390]) {
       await page.setViewportSize({width,height:940});
@@ -111,6 +111,7 @@ export async function verifySettingsWorkflow(browser, base, out, { baseline = fa
       assert.equal(await page.getByText('合成预览：未知结果后继续编辑',{exact:true}).count(),0);
       results.push({case:'unmounted-preview-cannot-update-returned-session',pass:true});
     }
+    if(!baseline){await editor.fill(Array.from({length:120},(_,i)=>`长模板第${i}行 {{unknown_variable_${i}}}`).join('\n'));results.push({case:'long-template-retains-full-editable-content',pass:(await editor.inputValue()).includes('unknown_variable_119')});}
     for (const theme of ['dark','light']) for (const width of [1440,390]) {
       await page.setViewportSize({width,height:940});
       await page.evaluate(theme=>{document.documentElement.setAttribute('data-theme',theme);document.documentElement.classList.toggle('dark',theme==='dark');localStorage.setItem('cds-theme',theme);},theme);
@@ -146,8 +147,11 @@ export async function verifySettingsWorkflow(browser, base, out, { baseline = fa
         await page.evaluate(theme=>{document.documentElement.setAttribute('data-theme',theme);document.documentElement.classList.toggle('dark',theme==='dark');},theme);
         await page.screenshot({path:path.join(out,`env-${theme}-390.png`)});
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`env ${theme} overflow`);
-        assert(await privateRow.getByRole('button',{name:'显示 PRIVATE_CONFIG'}).isVisible());
+        for(const label of ['显示 PRIVATE_CONFIG','复制 PRIVATE_CONFIG','编辑 PRIVATE_CONFIG','删除 PRIVATE_CONFIG']){const box=await privateRow.getByRole('button',{name:label,exact:true}).boundingBox();assert(box.x>=0&&box.x+box.width<=390&&box.height>=40&&box.width>=40,`变量动作${label}缺可见热区`);}
+        results.push({case:`env-${theme}-390-core-actions-visible-touch-targets`,pass:true});
       }
+      env={};await page.reload();await page.getByText('当前项目没有独有环境变量。添加后重新部署分支即可生效。',{exact:true}).waitFor();assert.equal(await page.locator('[data-env-key]').count(),0);assert(await page.getByRole('button',{name:'新增变量',exact:true}).isVisible());results.push({case:'project-env-empty-has-main-action-without-empty-table',pass:true});
+      env=Object.fromEntries(Array.from({length:80},(_,i)=>[`FIXTURE_VARIABLE_${String(i).padStart(2,'0')}`,`合成长值${i}`]));await page.reload();await page.locator('[data-env-key="FIXTURE_VARIABLE_79"]').waitFor();await page.getByRole('textbox',{name:'搜索变量',exact:true}).fill('FIXTURE_VARIABLE_79');assert.equal(await page.locator('[data-env-key]').count(),1);const manyRow=page.locator('[data-env-key="FIXTURE_VARIABLE_79"]');await manyRow.getByRole('button',{name:'编辑 FIXTURE_VARIABLE_79',exact:true}).click();assert.equal(await manyRow.getByRole('textbox').inputValue(),'合成长值79');await manyRow.getByRole('button',{name:'取消编辑 FIXTURE_VARIABLE_79',exact:true}).click();await page.screenshot({path:path.join(out,'env-many-target-390.png')});results.push({case:'project-env-many-search-locate-edit-cancel',pass:true});
       await page.setViewportSize({width:1440,height:940});
       env={FIXTURE_SAMPLE_KEY:'合成值',FIXTURE_SECOND:'第二条合成值'}; await page.reload();
       await page.getByText('FIXTURE_SAMPLE_KEY',{exact:true}).waitFor();

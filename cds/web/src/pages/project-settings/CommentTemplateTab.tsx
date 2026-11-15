@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Eye, Loader2, Save } from 'lucide-react';
-import { ConsoleAuthContext } from '@/components/layout/AppShell';
+import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
 import { Button } from '@/components/ui/button';
 import { useProjectSettingsRefresh, useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -8,7 +8,7 @@ import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
 type Draft = { mode: 'default' | 'custom'; body: string };
 type Template = { body: string; defaultBody: string; isDefault: boolean; updatedAt: string | null; variables: Array<{ key: string; label: string; example: string }> };
-type Ready = { status: 'ok'; draft: Draft; saved: Draft; template: Template; preview?: { source: string; rendered: string }; previewError?: string; saveError?: string; saveUnconfirmed?: boolean; readError?: string; restoredDraft?: boolean };
+type Ready = { status: 'ok'; scopeIdentity: object | null; draft: Draft; saved: Draft; template: Template; preview?: { source: string; rendered: string }; previewError?: string; saveError?: string; saveUnconfirmed?: boolean; readError?: string; restoredDraft?: boolean };
 // 以服务端认证状态对象作为会话身份；换身份不复用，旧会话可被回收。
 // 草稿不进入 local/sessionStorage，最多保留 20 个项目、30 分钟。
 const draftSessions = new WeakMap<object, Map<string, { state: Ready; expiresAt: number }>>();
@@ -26,7 +26,6 @@ export function CommentTemplateTab({ projectId, onToast }: { projectId: string; 
   const auth = useContext(ConsoleAuthContext);
   const identity = auth.status?.user || (auth.status?.enabled === false ? auth.status : null);
   const projectDrafts = draftsFor(identity);
-  const stateIdentity = useRef(identity);
   const [state, setState] = useState<{ status: 'loading' } | { status: 'error'; message: string } | Ready>({ status: 'loading' });
   const [saving, setSaving] = useState(false);
   const [previewing, setPreviewing] = useState(false);
@@ -40,13 +39,12 @@ export function CommentTemplateTab({ projectId, onToast }: { projectId: string; 
     const signal = beginRead();
     const cachedEntry = projectDrafts?.get(projectId);
     const cached = cachedEntry && cachedEntry.expiresAt > Date.now() ? cachedEntry.state : undefined;
-    if (!preserve) { setState(cached ? { ...cached, restoredDraft: true } : { status: 'loading' }); setSaving(false); setPreviewing(false); }
+    if (!preserve) { setState(cached ? { ...cached, scopeIdentity: identity, restoredDraft: true } : { status: 'loading' }); setSaving(false); setPreviewing(false); }
     try {
       const template = await apiRequest<Template>(`/api/comment-template?projectId=${encodeURIComponent(projectId)}`, { signal });
       if (signal.aborted) return;
-      stateIdentity.current = identity;
       const saved: Draft = { mode: template.isDefault ? 'default' : 'custom', body: template.body || template.defaultBody || '' };
-      setState(current => current.status === 'ok' && preserve ? { ...current, template, saved, saveError: undefined, saveUnconfirmed: false, readError: undefined, draft: same(current.draft, current.saved) ? saved : current.draft } : { status: 'ok', template, saved, draft: cached ? cached.draft : saved, preview: cached?.preview, restoredDraft: Boolean(cached) });
+      setState(current => current.status === 'ok' && current.scopeIdentity === identity && preserve ? { ...current, template, saved, saveError: undefined, saveUnconfirmed: false, readError: undefined, draft: same(current.draft, current.saved) ? saved : current.draft } : { status: 'ok', scopeIdentity: identity, template, saved, draft: cached ? cached.draft : saved, preview: cached?.preview, restoredDraft: Boolean(cached) });
     } catch (err) {
       if (signal.aborted) return;
       setState(current => current.status === 'ok' ? { ...current, readError: message(err) } : { status: 'error', message: message(err) });
@@ -57,7 +55,7 @@ export function CommentTemplateTab({ projectId, onToast }: { projectId: string; 
   useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
-    if (state.status !== 'ok' || stateIdentity.current !== identity) return;
+    if (state.status !== 'ok' || state.scopeIdentity !== identity) return;
     const dirty = !same(state.draft, state.saved);
     if (dirty || state.saveUnconfirmed) {
       projectDrafts?.set(projectId, { state, expiresAt: Date.now() + 30 * 60_000 });
@@ -114,6 +112,7 @@ export function CommentTemplateTab({ projectId, onToast }: { projectId: string; 
     updateDraft({ body: state.draft.body.slice(0, start) + token + state.draft.body.slice(end) });
     requestAnimationFrame(() => { textarea?.focus(); textarea?.setSelectionRange(start + token.length, start + token.length); });
   }
+  if (state.status === 'ok' && state.scopeIdentity !== identity) return <LoadingBlock label="读取当前会话的评论模板" />;
   if (state.status === 'loading') return <LoadingBlock label="加载评论模板" />;
   if (state.status === 'error') return <div className="space-y-3"><ErrorBlock message={state.message} /><Button onClick={() => void load()}>重试</Button></div>;
   const dirty = !same(state.draft, state.saved);
@@ -121,7 +120,7 @@ export function CommentTemplateTab({ projectId, onToast }: { projectId: string; 
   return <section className="space-y-4" aria-labelledby="comment-template-title">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h3 id="comment-template-title" className="text-base font-semibold">PR 评论模板</h3><p className="mt-1 text-sm text-muted-foreground">保存仅修改当前项目；之后打开或重新打开 PR 时使用。示例预览不会发送 GitHub 评论。</p></div>
-      <div className="flex flex-wrap items-center gap-3"><p role="status" className="text-sm text-muted-foreground">{dirty ? state.restoredDraft ? '已恢复未保存草稿' : '有未保存修改' : '与已保存设置一致'}{state.template.updatedAt ? ` · 最近保存 ${new Date(state.template.updatedAt).toLocaleString()}` : ''}</p><Button onClick={() => void save()} disabled={saving || state.saveUnconfirmed || !dirty || (state.draft.mode === 'custom' && !state.draft.body.trim())}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存模板</Button></div>
+      <div className="flex flex-wrap items-center gap-3"><p role="status" className="text-sm text-muted-foreground">{state.saveUnconfirmed ? '草稿保存结果未确认' : dirty ? state.restoredDraft ? '已恢复未保存草稿' : '有未保存修改' : '与已保存设置一致'}{state.template.updatedAt ? ` · 最近保存 ${new Date(state.template.updatedAt).toLocaleString()}` : ''}</p><Button onClick={() => void save()} disabled={saving || state.saveUnconfirmed || !dirty || (state.draft.mode === 'custom' && !state.draft.body.trim())}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存模板</Button></div>
     </div>
     {state.readError ? <p role="alert" className="text-sm text-destructive">读取失败：{state.readError}。当前草稿已保留。<Button variant="outline" size="sm" onClick={() => void load(true).catch(() => undefined)}>重试读取</Button></p> : null}
     {state.saveError ? <div role="alert" className="text-sm text-destructive">{state.saveUnconfirmed ? '保存结果未确认' : '保存被拒绝'}：{state.saveError}。草稿已保留。{state.saveUnconfirmed ? <Button variant="outline" size="sm" onClick={() => void load(true).catch(() => onToast('读取失败，请稍后核对保存结果。'))}>重新读取并核对</Button> : '请修正后重试。'}</div> : null}
