@@ -141,5 +141,96 @@
     "11.5px": 12,
     "10.5px": 10,
     "13.5px": 10
+  },
+  "originalArchiveSha256": "9aa5b68fbe24e17cddff178e83f95cf73d0f2fc7bf4d2648ed82a384f76bfbc9",
+  "readerV14Measurements": {
+    "sourceFiles": [
+      "11-读者-分层阅读页.html",
+      "11b-阅读与教学-移动端.html"
+    ],
+    "desktop": {
+      "columns": [
+        240,
+        "minmax(0,1fr)",
+        288
+      ],
+      "articleMaxWidth": 760,
+      "articlePadding": [
+        32,
+        48,
+        80
+      ],
+      "title": {
+        "family": "Noto Serif SC",
+        "size": 30,
+        "weight": 600,
+        "lineHeight": 1.35,
+        "marginBottom": 22
+      },
+      "conclusions": {
+        "family": "Noto Serif SC",
+        "size": 17,
+        "lineHeight": 1.85
+      },
+      "action": {
+        "size": 14.5,
+        "lineHeight": 1.65
+      },
+      "condition": {
+        "size": 13,
+        "lineHeight": 1.65,
+        "marginTop": 4
+      },
+      "order": {
+        "height": 34,
+        "radius": 8,
+        "numberDiameter": 18
+      }
+    },
+    "mobile": {
+      "width": 390,
+      "articlePadding": [
+        16,
+        16,
+        24
+      ],
+      "title": {
+        "size": 23,
+        "lineHeight": 1.4,
+        "marginBottom": 14
+      },
+      "conclusions": {
+        "size": 16,
+        "lineHeight": 1.85
+      },
+      "condition": {
+        "size": 13,
+        "lineHeight": 1.6,
+        "marginTop": 5
+      },
+      "roleChip": {
+        "height": 36,
+        "radius": 18
+      },
+      "headerHitTarget": 44
+    },
+    "shared": {
+      "flow": [
+        "conclusions",
+        "scope",
+        "all role actions and conditions",
+        "recommended reading order"
+      ],
+      "scopeRadius": 8,
+      "rolePanelRadius": 10,
+      "playCircle": {
+        "background": "#8EA0FF",
+        "foreground": "#0C0E12"
+      },
+      "loadedFamilies": [
+        "Noto Sans SC",
+        "Noto Serif SC"
+      ]
+    }
   }
 }

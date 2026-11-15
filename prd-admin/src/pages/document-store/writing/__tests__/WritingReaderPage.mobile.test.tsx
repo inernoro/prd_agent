@@ -28,7 +28,7 @@ afterEach(async () => { if (root) await act(async () => root.unmount()); contain
 it('当前角色的阅读路径和折叠目录定位真实正文，并更新已读计数', async () => {
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
   await act(async () => root.render(<MemoryRouter><WritingReaderPage storeId="store" entryId="entry" tutorial={false} /></MemoryRouter>));
-  const jump = container.querySelector<HTMLButtonElement>('.writing-focused-actions .ord'); expect(jump).toBeTruthy();
+  const jump = container.querySelector<HTMLButtonElement>('.writing-reading-order .ord'); expect(jump).toBeTruthy();
   await act(async () => jump!.click()); expect(scroll).toHaveBeenCalled();
   const menu = container.querySelector<HTMLButtonElement>('.writing-mobile-toc > button'); expect(menu).toBeTruthy();
   expect(menu!.textContent).toContain('已读 1 / 2 节');
@@ -38,27 +38,36 @@ it('当前角色的阅读路径和折叠目录定位真实正文，并更新已�
   const radios = container.querySelectorAll<HTMLButtonElement>('[role=radio]'); await act(async () => radios[2].click());
   expect(container.querySelector('.writing-focused-actions>.act')?.textContent).toContain('行动2');
   expect(container.querySelector('.writing-focused-actions>.act')?.textContent).toContain('条件2');
-  expect(container.querySelector('.writing-other-roles')?.hasAttribute('open')).toBe(false);
+  expect(container.querySelector('.writing-other-roles')).toBeNull();
   expect(container.querySelectorAll('.act')).toHaveLength(4);
 });
 
-it('首要行动不混入其他角色，完整条件和所有角色仍可展开核对', async () => {
+it('原稿顺序保留结论和范围，切换角色只调整顺序与高亮而不折叠职责', async () => {
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
   await act(async () => root.render(<MemoryRouter><WritingReaderPage storeId="store" entryId="entry" tutorial={false} /></MemoryRouter>));
   const primary = container.querySelector('.writing-focused-actions>.act')!;
   expect(primary.textContent).toContain('行动0'); expect(primary.textContent).toContain('条件0');
   expect(primary.textContent).not.toContain('行动1');
-  const scope = container.querySelector('.writing-focused-actions>.writing-scope-grid')!;
-  const path = container.querySelector('.writing-focused-actions .ord')!;
-  expect(scope.compareDocumentPosition(path) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(scope.textContent).toContain('适用'); expect(scope.textContent).toContain('不适用');
+  const scope = container.querySelector('.writing-reader-overview>.writing-scope-grid')!;
   const conclusions = container.querySelector('.writing-reader-takeaways')!;
-  expect(primary.compareDocumentPosition(conclusions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  const others = container.querySelector<HTMLDetailsElement>('.writing-other-roles')!;
-  expect(others.open).toBe(false);
-  await act(async () => others.querySelector('summary')!.click());
-  expect(others.open).toBe(true);
-  for (const i of [1, 2, 3]) { expect(others.textContent).toContain(`行动${i}`); expect(others.textContent).toContain(`条件${i}`); }
+  expect(conclusions.compareDocumentPosition(scope) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(scope.compareDocumentPosition(primary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(scope.textContent).toContain('适用'); expect(scope.textContent).toContain('不适用');
+  expect(container.querySelector('.writing-other-roles')).toBeNull();
+  expect(container.querySelector('.writing-focused-actions details')).toBeNull();
+  for (const i of [0, 1, 2, 3]) {
+    const row = [...container.querySelectorAll('.act')].find(r => r.textContent?.includes(`行动${i}`))!;
+    expect(row.textContent).toContain(`条件${i}`);
+    expect(row.querySelector('.who')?.textContent).toBe(['交接人', '接手人', '直属主管', '培训学员'][i]);
+  }
+  const radios = container.querySelectorAll<HTMLButtonElement>('[role=radio]');
+  await act(async () => radios[2].click());
+  expect(container.querySelector('.act.on')?.textContent).toContain('行动2');
+  expect(container.querySelectorAll('.act')).toHaveLength(4);
+  const jump = container.querySelector<HTMLButtonElement>('.act.on>.btn')!;
+  expect(jump.querySelector('span:first-child')?.textContent).toBe('01');
+  expect(jump.querySelector('span:last-child')?.textContent).toBe('功能说明');
+  await act(async () => jump.click()); expect(scroll).toHaveBeenCalled();
 });
 it('首部来源入口可直接到达来源记录，跳过状态保留且可返回阅读', async () => {
   const response = await api.read();
