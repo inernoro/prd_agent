@@ -5,6 +5,7 @@ import {
   ShieldCheck, Sun, Tags, UserRound, X,
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { buildLogRequestHref } from '@/lib/logNavigation';
 import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { shortcutHint } from '@/components/BugReportCore';
 import { getAvailableTenants, setSession, switchTenant } from '@/lib/api';
@@ -113,7 +114,7 @@ export function ConsoleLayout() {
     event.preventDefault();
     const query = search.trim();
     if (!query) return;
-    navigate(`/logs?requestId=${encodeURIComponent(query)}`);
+    navigate(buildLogRequestHref(query));
     setMobileOpen(false);
     setMobileSearchOpen(false);
   }
