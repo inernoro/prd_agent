@@ -1,3 +1,6 @@
+import { ConsoleAuthContext, type ShellAuthStatus, type ShellUser } from '@/lib/consoleAuthContext';
+export { ConsoleAuthContext } from '@/lib/consoleAuthContext';
+export type { ShellAuthStatus } from '@/lib/consoleAuthContext';
 import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { RouteMotion, RouteMotionCommit } from './RouteMotion';
 import { InstanceSwitcher } from '@/components/InstanceSwitcher';
@@ -25,7 +28,7 @@ import { cn } from '@/lib/utils';
 import { readStatusLocation } from '@/lib/statusHome';
 import { MonitorViewNav } from './MonitorViewNav';
 import '@/pages/status/monitor-frame.css';
-import { canReadApproval, type ApprovalCapabilities } from '@/hooks/approvalPolling';
+import { canReadApproval } from '@/hooks/approvalPolling';
 
 /*
  * AppShell — single source of layout truth.
@@ -121,24 +124,6 @@ export interface AppShellProps {
   wide?: boolean;
 }
 
-export type ShellAuthStatus = {
-  approvalCapabilities?: ApprovalCapabilities;
-  enabled?: boolean;
-  mode?: string;
-  activeProvider?: string | null;
-  logoutEndpoint?: string | null;
-  postLogoutRedirect?: string | null;
-  user?: ShellUser | null;
-};
-
-type ShellUser = {
-  username?: string | null;
-  githubLogin?: string | null;
-  name?: string | null;
-  avatarUrl?: string | null;
-  isSystemOwner?: boolean;
-};
-
 /** Unknown auth never exposes owner-only controls; disabled local mode stays compatible. */
 export function canManageSystemSettings(status: ShellAuthStatus | null): boolean {
   return status !== null && (status.enabled === false || status.user?.isSystemOwner === true);
@@ -155,12 +140,6 @@ export const MEMBER_PREVIEW_MODE_NOTICE = '当前预览模式暂不支持普通�
 export function canUseConsolePreview(mode: 'simple' | 'port' | 'multi' | undefined, canManageConsole: boolean): boolean {
   return canManageConsole || mode === 'multi';
 }
-
-export const ConsoleAuthContext = createContext<{
-  status: ShellAuthStatus | null;
-  pending: boolean;
-  retry: () => void;
-}>({ status: null, pending: true, retry: () => {} });
 
 /** UI affordances use the same server-authenticated owner decision as route mounting. */
 export function useCanManageConsole(): boolean {
