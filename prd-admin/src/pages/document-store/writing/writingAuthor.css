@@ -12,6 +12,10 @@
 .writing-author .writing-author-note>.mono{color:var(--writing-ac);margin-right:8px}
 .writing-author .writing-question-list .qc>strong{font-size:14px;font-weight:600;line-height:1.5}
 @media(min-width:761px){
+  .writing-author .writing-confirm-column>.col-h{flex-shrink:0}
+  .writing-author .writing-confirm-column>.writing-question-list{flex:1;min-height:0;overflow-y:auto}
+  .writing-author .writing-document-column>.writing-restored-notice{position:sticky;top:56px;left:auto;right:auto;margin:8px 40px 0}
+
   .writing-author .writing-source-excerpts .ex{font-size:13px;margin-bottom:8px}
   .writing-author .writing-excerpt-location{margin-top:0}
   .writing-author .writing-document-column .writing-legend .hint{display:block;font-size:11px;white-space:nowrap}
