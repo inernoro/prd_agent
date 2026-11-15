@@ -64,9 +64,11 @@ for (const viewport of [
       if (await page.getByLabel("打开导航菜单").isVisible())
         await page.getByLabel("打开导航菜单").click();
       await page
-        .getByRole("link", { name: "发布控制台", exact: true })
+        .getByRole("link", { name: "发布工作台", exact: true })
         .first()
         .click();
+      await expect(page.getByRole("heading", { name: "选择版本与目标", exact: true })).toBeVisible();
+      await page.getByRole("navigation", { name: "发布方式" }).getByRole("link", { name: "逐目标发布", exact: true }).click();
       await reachable(page.getByLabel("要发布的版本"));
       await page.getByRole("button", { name: "开始发布", exact: true }).click();
       const confirm = page.getByRole("button", {
@@ -298,7 +300,9 @@ for (const theme of ["light", "dark"]) {
     await page.addInitScript((t) => localStorage.setItem("cds_theme", t), theme);
     await page.goto("http://127.0.0.1:5273/project-list");
     await page.getByLabel("打开导航菜单").click();
-    await page.getByRole("link", { name: "发布控制台", exact: true }).click();
+    await page.getByRole("link", { name: "发布工作台", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "选择版本与目标", exact: true })).toBeVisible();
+    await page.getByRole("navigation", { name: "发布方式" }).getByRole("link", { name: "逐目标发布", exact: true }).click();
     await expect(page.getByLabel("要发布的版本")).toBeVisible();
     await page.evaluate(() => {
       document.documentElement.style.fontSize = "200%";
@@ -358,7 +362,9 @@ test("390 隔离发布成功闭环", async ({ page }) => {
   fixture.setPreflightPass(true);
   await page.goto("http://127.0.0.1:5273/project-list");
   await page.getByLabel("打开导航菜单").click();
-  await page.getByRole("link", { name: "发布控制台", exact: true }).click();
+  await page.getByRole("link", { name: "发布工作台", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "选择版本与目标", exact: true })).toBeVisible();
+  await page.getByRole("navigation", { name: "发布方式" }).getByRole("link", { name: "逐目标发布", exact: true }).click();
   await page.getByRole("button", { name: "开始发布", exact: true }).click();
   const confirm = page.getByRole("button", {
     name: `确认发布到 ${targetName}`,

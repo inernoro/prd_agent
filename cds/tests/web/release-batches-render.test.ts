@@ -140,6 +140,7 @@ describe('批次发布结果 · 保留各目标真实结果', () => {
     expect(html).toContain('本次发布');
     expect(html).not.toContain('0/2 个目标发布成功');
     expect(html).not.toContain('仅重试此目标');
+    expect(html).toContain('处理后重新检查所有目标');
   });
 
   it('成功记录的核对失败仍明确尚未核实，不能显示全部成功', () => {
