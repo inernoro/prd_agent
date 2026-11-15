@@ -513,7 +513,7 @@ export function EnvEditor({
                           <div className="flex justify-end gap-2">
                             {isEditing ? (
                               <>
-                                <Button
+                                <Button className="min-h-[3.25rem] min-w-[3.25rem] [&_svg]:size-[1.875rem] lg:min-h-0 lg:min-w-0 lg:[&_svg]:size-4"
                                   type="button"
                                   variant="outline"
                                   size="icon"
@@ -524,33 +524,34 @@ export function EnvEditor({
                                 >
                                   {rowSavingKey === row.key ? <Loader2 className="animate-spin" /> : <Save />}
                                 </Button>
-                                <Button type="button" variant="outline" size="icon" title="取消" aria-label={`取消编辑 ${row.key}`} disabled={rowSavingKey === row.key} onClick={() => setInlineEdit(null)}>
+                                <Button className="min-h-[3.25rem] min-w-[3.25rem] [&_svg]:size-[1.875rem] lg:min-h-0 lg:min-w-0 lg:[&_svg]:size-4" type="button" variant="outline" size="icon" title="取消" aria-label={`取消编辑 ${row.key}`} disabled={rowSavingKey === row.key} onClick={() => setInlineEdit(null)}>
                                   <X />
                                 </Button>
                               </>
                             ) : (
                               <>
                                 {sensitive ? (
-                                  <Button type="button" variant="outline" size="icon" title={revealed ? '隐藏' : '显示'} aria-label={`${revealed ? '隐藏' : '显示'} ${row.key}`} onClick={() => toggleReveal(row.key)}>
+                                  <Button className="min-h-[3.25rem] min-w-[3.25rem] [&_svg]:size-[1.875rem] lg:min-h-0 lg:min-w-0 lg:[&_svg]:size-4" type="button" variant="outline" size="icon" title={revealed ? '隐藏' : '显示'} aria-label={`${revealed ? '隐藏' : '显示'} ${row.key}`} onClick={() => toggleReveal(row.key)}>
                                     {revealed ? <EyeOff /> : <Eye />}
                                   </Button>
                                 ) : (
                                   <div className="h-9 w-9" aria-hidden="true" />
                                 )}
-                                <Button type="button" variant="outline" size="icon" title="复制" aria-label={`复制 ${row.key}`} onClick={() => void copyValue(row.key, row.value)}>
+                                <Button className="min-h-[3.25rem] min-w-[3.25rem] [&_svg]:size-[1.875rem] lg:min-h-0 lg:min-w-0 lg:[&_svg]:size-4" type="button" variant="outline" size="icon" title="复制" aria-label={`复制 ${row.key}`} onClick={() => void copyValue(row.key, row.value)}>
                                   <Copy />
                                 </Button>
-                                <Button type="button" variant="outline" size="icon" title="编辑" aria-label={`编辑 ${row.key}`} onClick={() => startEdit(row.key, row.value)}>
+                                <Button className="min-h-[3.25rem] min-w-[3.25rem] [&_svg]:size-[1.875rem] lg:min-h-0 lg:min-w-0 lg:[&_svg]:size-4" type="button" variant="outline" size="icon" title="编辑" aria-label={`编辑 ${row.key}`} onClick={() => startEdit(row.key, row.value)}>
                                   <Pencil />
                                 </Button>
                                 <ConfirmAction
+                                  scopeKey={`${scope}:${row.key}`}
                                   title="删除环境变量"
                                   description={<span>从{scope === '_global' ? 'CDS 全局配置' : '当前项目'}删除 <code className="break-all">{row.key}</code>。{scope === '_global' ? '系统配置按各配置项规则生效；继承此变量的项目在重新部署后不再读取该全局值。' : '已运行容器不会立即改变；重新部署后不再读取此项目值，全局继承开启时可能回退到同名全局值。'}</span>}
                                   confirmLabel="删除"
                                   pending={deletingKey === row.key}
                                   onConfirm={() => deleteEnv(row.key)}
                                   trigger={
-                                    <Button
+                                    <Button className="min-h-[3.25rem] min-w-[3.25rem] [&_svg]:size-[1.875rem] lg:min-h-0 lg:min-w-0 lg:[&_svg]:size-4"
                                       type="button"
                                       variant="outline"
                                       size="icon"
