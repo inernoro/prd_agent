@@ -35,6 +35,16 @@ public class ReportAutoGenerateWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        using (var scope = _scopeFactory.CreateScope())
+        {
+            var configuration = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+            if (!PrdAgent.Infrastructure.Security.DeploymentAuthority.CanRunSharedScheduledWork(configuration))
+            {
+                _logger.LogInformation("Report schedule disabled: deployment is not authorized for shared scheduled work");
+                return;
+            }
+        }
+
         _logger.LogInformation("ReportAutoGenerateWorker started");
 
         while (!stoppingToken.IsCancellationRequested)
@@ -125,7 +135,7 @@ public class ReportAutoGenerateWorker : BackgroundService
                             PrdAgent.Core.Security.TaskExecutionContext.Current!.PermitId, $"report:{member.UserId}:{team.Id}:{weekYear}:{weekNumber}");
                         if (execution.ShouldSkip) continue;
                         using var executionScope = PrdAgent.Core.Security.TaskExecutionContext.Enter(execution.Lease?.Identity);
-                        await generationService.GenerateAsync(
+                        var generatedReport = await generationService.GenerateAsync(
                             member.UserId, team.Id, templateId,
                             weekYear, weekNumber, CancellationToken.None);
 
@@ -139,7 +149,7 @@ public class ReportAutoGenerateWorker : BackgroundService
                             Level = "info",
                             Source = "report-agent",
                             ActionLabel = "查看周报",
-                            ActionUrl = "/report-agent",
+                            ActionUrl = ReportNotificationNavigation.OwnReport(generatedReport.Id),
                             ExpiresAt = DateTime.UtcNow.AddDays(7)
                         };
 
@@ -258,7 +268,7 @@ public class ReportAutoGenerateWorker : BackgroundService
 
                     overdueMemberNames.Add(report.UserName ?? report.UserId);
                     await notificationService.NotifyOverdueAsync(
-                        report.UserId, team?.LeaderUserId, prevWeekYear, prevWeekNumber);
+                        report.UserId, team?.LeaderUserId, prevWeekYear, prevWeekNumber, report.TeamId);
                 }
 
                 // Webhook 聚合通知：每个团队只发一次

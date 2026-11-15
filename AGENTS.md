@@ -48,9 +48,12 @@ cd prd-video && pnpm start   # Remotion 4.0
 cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
 ```
 
-### 3. 任务完成交接
+### 3. 项目执行原则与交接
 
-涉及 3+ 文件 / API 端点 / UI 页面变更时，**必须主动**用 `task-handoff-checklist` 技能生成交接清单。1-2 个文件的小修改无需生成。
+- **一次做好，少让用户操心**：先核实目标与问题、确定验证方法，再统筹实现、回归和交付；已授权且可自行判断的事项不逐步请示，不用口头“完成”代替结果。
+- **未完成就持续推进，只因真实阻塞停下**：正常等待、可自行修复的失败不算阻塞；缺授权、凭据或外部资源、用户预算已尽，或安全/范围熔断需要决策时，一次说明证据、最小所需输入与续接动作，并继续不依赖阻塞的工作；用户暂停或取消立即遵从。
+- **做完回看，清场再走**：交付前亲自检查最终产物和真实用户路径、核对证据与遗留项，按归属安全清理本任务临时资源；保留用户改动、共享资源和必要诊断证据，不把自测甩给用户，不把未验证写成完成。
+- **交接**：涉及 3+ 文件 / API 端点 / UI 页面变更时，必须主动用 `task-handoff-checklist` 生成交接清单；1-2 个文件的小修改可简要交付。PR 收尾与评审修复使用 [game-over](.claude/skills/game-over/SKILL.md)。
 
 ### 4. 更新记录：只写碎片，禁止编辑 CHANGELOG.md
 
@@ -71,11 +74,6 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 ### 5. 提交与 PR 工作流
 
 **5.1 Commit message 必须中文**（标题 + 正文）。允许保留英文技术术语（API/SSE/createPortal）和 Conventional Commits 前缀。类型枚举同规则 #4，另加 `build` `release`。
-
-```
-正确：fix(prd-admin): 修复周报弹窗样式错乱
-错误：fix: resolve modal styling issue
-```
 
 **5.2 校验全绿才准 push**，任意一项失败都不得推送：
 
@@ -132,6 +130,8 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 声称完成前必须全部满足：后端编译零错误（判据见 `cds-first-verification.md` 的权威位置表：Branch Image 绿 = API 编得出来，CI 的 `Server Build & Test` 绿 = sln 零 error + 非集成非手工 xUnit；CDS 只负责运行、不负责编译）／前端页面能通过预览地址打开并正常渲染／核心业务流程端到端跑通（不是只有 CRUD）／直连预览域名测试（container-exec 是诊断工具不是验收工具）／依赖的外部服务已确认可用。
 
 禁止：骨架完成就报「已实现」；绕过真实访问路径测试；不主动查系统能力。
+
+**用户能看懂也是完成门槛。** 面向用户交付时，必须按对话模板逐项回答原始业务目标：现在能做什么、怎样证明、还有什么没做到。主结论要用普通中文直接呈现，不能让用户阅读JSON、源码、日志或Markdown文档链接后自行判断。技术文件仅作佐证。用户明确表示看不懂时，交付状态保持未通过，先改正说明与可见证据，不能用测试数量、提交成功或内部验收标签代替用户验收。
 
 **8.1 自测优先——不得把校验责任先交还给用户。** 提交前必须至少跑通一条自测路径，并在交付消息里**写明走了哪条、断言了什么**：
 

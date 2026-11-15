@@ -1,6 +1,77 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
+// 布局与阅读回归使用静止背景；动态画布单独由三档演示用例验证。
+test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
+
+test('合集切换到较早版本成员时不复制上一成员的预览地址', async ({ page }) => {
+  const sites = ['a', 'b'].map((id, index) => ({ id, title: `来源文档 ${id}`, siteUrl: `https://hosting.example/${id}/${id}.html?v=${index ? '10000' : '20000'}`,
+    entryFile: `${id}.html`, contentShape: 'self-contained-html', totalSize: 1024, entrySize: 1024, fileCount: 1 }));
+  const versions: string[] = [];
+  let holdShare = false, release!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  await page.route('https://hosting.example/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>原文</h1>' }));
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url()), path = url.pathname;
+    if (path.endsWith('/annotation-runtime.js')) {
+      await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') }); return;
+    }
+    let data: unknown = { items: [], total: 0 };
+    if (path === '/api/web-pages/shares/view/provenance-token') {
+      if (holdShare) await waiting;
+      data = { title: '版本来源合集', shareType: 'collection', createdBy: 'author', createdAt: '2026-11-15T00:00:00Z', sites };
+    } else if (path.endsWith('/revisions')) {
+      const site = sites.find(item => item.id === url.searchParams.get('siteId'))!;
+      versions.push(site.id);
+      data = [{ id: `${site.id}-current`, siteId: site.id, versionLabel: 'V1', contentVersionKey: site.id === 'a' ? '20000' : '10000',
+        isCurrent: true, canPreview: true, siteUrl: site.siteUrl, entryFile: site.entryFile, contentShape: site.contentShape }];
+    } else if (path.endsWith('/comments')) data = { comments: [], commentsEnabled: true, canComment: false };
+    else if (path.endsWith('/html') || path.endsWith('/content')) data = { html: '<!doctype html><html><head></head><body><h1>原文</h1></body></html>', contentType: 'text/html' };
+    await route.fulfill({ json: { success: true, data, error: null } });
+  });
+  try {
+    await page.goto('/s/wp/provenance-token?siteId=a');
+    await expect.poll(() => versions.includes('a')).toBe(true);
+    await expect(page.locator('iframe[title="来源文档 a"]')).toBeVisible();
+    await expect(page.getByRole('button', { name: '网页版本：V1', exact: true })).toBeVisible();
+    holdShare = true;
+    await page.evaluate(() => { history.pushState(null, '', '/s/wp/provenance-token?siteId=b'); dispatchEvent(new PopStateEvent('popstate')); });
+    await expect.poll(() => versions.includes('b')).toBe(true);
+    const frame = page.locator('iframe[title="来源文档 b"]');
+    await expect(frame).toBeVisible();
+    await expect.poll(() => frame.evaluate(element => element.getAttribute('srcdoc') || element.getAttribute('src') || '')).toContain('hosting.example/b/');
+  } finally { release(); }
+});
+
+for (const action of ['管理合集', '分享']) {
+  test(`章节分享旧阅读地址的${action}进入原章节入口`, async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
+      isAuthenticated: true, user: { userId: 'chapter-owner', username: 'chapter-owner', displayName: '章节验收', role: 'ADMIN' },
+      token: 'chapter-test-token', refreshToken: 'chapter-test-refresh', sessionKey: 'chapter-test-session',
+      permissions: ['access', 'web-pages.read'], permissionsLoaded: true, isRoot: false,
+      menuCatalog: [], menuCatalogLoaded: true, cdnBaseUrl: '', permFingerprint: 'chapter-test',
+    }, version: 0 })));
+    const calls: string[] = [];
+    await page.route('**/api/**', async route => {
+      const request = route.request(), path = new URL(request.url()).pathname;
+      calls.push(`${request.method()} ${path}`);
+      let data: unknown = { items: [], total: 0 };
+      if (path === '/api/web-pages/shares/view/chapter-token') data = {
+        title: '章节分享验收', shareType: 'collection', documentCollectionId: 'chapters', createdBy: 'chapter-owner', createdAt: '2026-11-15T00:00:00Z',
+        sites: [{ id: 'chapter-member', title: '章节成员', siteUrl: '', files: [], totalSize: 0 }],
+      };
+      else if (path.startsWith('/api/web-pages/collections/')) { await route.abort(); return; }
+      else if (path.endsWith('/comments')) data = { comments: [], commentsEnabled: true, canComment: false };
+      await route.fulfill({ json: { success: true, data, error: null } });
+    });
+    await page.goto('/s/wp/chapter-token');
+    await page.getByRole('button', { name: action, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/web-pages/collections/chapters${action === '分享' ? '/share' : ''}$`));
+    expect(calls.some(call => call.includes('/collections/compat/'))).toBe(false);
+    expect(calls.some(call => !call.startsWith('GET '))).toBe(false);
+  });
+}
+
 // 验证真实列表路由的生产组件；API 使用隔离测试数据，不操作用户站点。
 for (const width of [390, 1440]) {
   for (const theme of ['light', 'dark'] as const) {
@@ -44,7 +115,7 @@ for (const width of [390, 1440]) {
           let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
           if (path === '/api/web-pages') data = { items: sites, total: sites.length, activity, traffic,
             visitors: Object.fromEntries(sites.map((site, i) => [site.id, views[i]])) };
-          else if (path === '/api/web-pages/related-documents/summaries') data = { items: Object.fromEntries(sites.map((site, i) => [site.id, { count: 3, mainTitle: titles[0], isMain: i === 0, titles: titles.filter(title => title !== site.title) }])) };
+          else if (path === '/api/web-pages/related-documents/summaries') data = { items: Object.fromEntries(sites.map((site, i) => [site.id, { count: i === 3 ? 0 : 3, mainTitle: i === 3 ? undefined : titles[0], isMain: i === 0, titles: i === 3 ? [] : titles.filter(title => title !== site.title) }])) };
           else if (path === '/api/web-pages/tags') data = { tags: tagNames.map((tag, index) => ({ tag, count: tagCounts[index] })) };
           else if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
           else if (path === '/api/web-pages/shares') data = { items: [0, 2].map(i => ({ id: `layout-share-${i}`, token: `layout-share-${i}`, siteId: sites[i].id,
@@ -60,6 +131,14 @@ for (const width of [390, 1440]) {
         await expect(cards.locator('.related-variant-badge')).toHaveCount(4);
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
         await page.evaluate(() => document.fonts.ready);
+        const zeroRelated = cards.nth(3).locator('.related-trigger');
+        await expect(zeroRelated).toBeVisible();
+        await expect(zeroRelated.locator('.related-count')).toHaveCount(0);
+        await expect(zeroRelated.locator('svg.lucide-link2')).toBeVisible();
+        await cards.nth(3).hover();
+        await expect(zeroRelated).toBeVisible();
+        await page.mouse.move(0, 0);
+        await expect(zeroRelated).toBeVisible();
         const metrics = await cards.evaluateAll(elements => elements.map(card => {
           const bounds = card.getBoundingClientRect();
           const stats = card.querySelector<HTMLElement>('[data-site-card-stats]')!;
@@ -75,11 +154,11 @@ for (const width of [390, 1440]) {
           const badgeBounds = badge?.getBoundingClientRect();
           const slots = Array.from(stats.children).map(child => child.getBoundingClientRect()).filter(rect => rect.height > 0);
           return {
-            title: card.querySelector('h3')!.textContent, cardHeight: bounds.height,
+            title: card.querySelector('h3')!.textContent, cardTop: bounds.top, cardWidth: bounds.width, cardHeight: bounds.height, metaTop: meta.getBoundingClientRect().top - bounds.top,
             statsHeight: statsBounds.height, columns, metricCount: slots.length,
             editInFooter: !!editBounds && editBounds.top >= statsBounds.top && editBounds.bottom <= statsBounds.bottom && editBounds.top >= thumbBounds.bottom,
-            shareInBody: !sharedBounds || sharedBounds.top >= thumbBounds.bottom,
-            selectionAtTop: selectBounds.top <= thumbBounds.top + 2 && selectBounds.bottom <= thumbBounds.top + 44,
+            shareInThumbnail: !sharedBounds || sharedBounds.bottom <= thumbBounds.bottom,
+            selectionAtTop: selectBounds.top <= thumbBounds.top + 8 && selectBounds.bottom <= thumbBounds.top + 44,
             noThumbnailStrip: !card.querySelector('[data-site-thumbnail-meta]'),
             metaFits: meta.scrollWidth <= meta.clientWidth,
             overflow: slots.some(rect => rect.left < bounds.left || rect.right > bounds.right),
@@ -87,15 +166,18 @@ for (const width of [390, 1440]) {
             badgeGap: badgeBounds ? badgeBounds.left - titleBounds.right : null,
             badgeInCard: !badgeBounds || badgeBounds.right <= bounds.right,
             titleLineHeight: card.querySelector('[data-site-card-title]')!.getBoundingClientRect().height,
+            statsRightGap: meta.getBoundingClientRect().right - slots[slots.length - 1].right,
           };
         }));
         for (const metric of metrics) {
+          if (width === 1440) expect(metric.cardWidth, JSON.stringify(metric)).toBe(({ small: 176, medium: 264, large: 360 })[size]);
           expect(metric.overflow, JSON.stringify(metric)).toBe(false);
           expect(metric.wrapped, JSON.stringify(metric)).toBe(false);
-          expect(metric.metricCount).toBe(4);
-          expect(metric.statsHeight).toBeCloseTo(metric.columns === 4 ? 16 : 36, 0);
+          expect(metric.metricCount).toBe(3);
+          expect(Math.abs(metric.statsRightGap)).toBeLessThan(1);
+          expect(metric.statsHeight).toBeCloseTo(16, 0);
           expect(metric.editInFooter).toBe(true);
-          expect(metric.shareInBody).toBe(true);
+          expect(metric.shareInThumbnail).toBe(true);
           expect(metric.selectionAtTop).toBe(true);
           expect(metric.noThumbnailStrip).toBe(true);
           expect(metric.metaFits, JSON.stringify(metric)).toBe(true);
@@ -108,7 +190,8 @@ for (const width of [390, 1440]) {
         }
         await expect(cards.locator('[data-site-edit-badge]')).toHaveCount(4);
         await expect(page.getByLabel('已编辑 0 次', { exact: true })).toHaveCount(2);
-        expect(Math.max(...metrics.map(m => m.cardHeight)) - Math.min(...metrics.map(m => m.cardHeight))).toBeLessThan(1);
+        // 与 Demo 一样按自身内容定高，不为同行长描述或选中边框补空白；统计相对位置保持一致。
+        expect(Math.max(...metrics.map(metric => metric.metaTop)) - Math.min(...metrics.map(metric => metric.metaTop))).toBeLessThan(1);
         const shortTitle = cards.filter({ hasText: '活动指南' });
         await shortTitle.scrollIntoViewIfNeeded();
         const rightGap = await shortTitle.evaluate(card => card.getBoundingClientRect().right - card.querySelector('[aria-label="新创建，尚未打开"]')!.getBoundingClientRect().right);
@@ -128,12 +211,8 @@ for (const width of [390, 1440]) {
         const image = await cards.first().locator('..').screenshot();
         await testInfo.attach(`真实列表-${width}-${theme}-${size}`, { body: image, contentType: 'image/png' });
         await testInfo.attach('布局测量', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });
-        // 三档都提供常驻按钮；属性与文件切换，查看详情不写访问记录。
-        if (size === 'large') {
-          const lastAccess = cards.nth(3).locator('[title^="最近访问"]');
-          await expect(lastAccess).toContainText('刚刚');
-          await expect(cards.nth(3).getByLabel('有效分享链接', { exact: true })).toContainText('0');
-        }
+        // 三档都提供常驻按钮，详情不折叠、不省略；查看详情不是打开网页，不写访问记录。
+
         const visited: string[] = [];
         page.on('request', request => { if (request.url().includes('/record-view')) visited.push(request.url()); });
         const trigger = cards.nth(2).getByRole('button', { name: '查看网页详情' });
@@ -309,7 +388,7 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
         token: 'qa-related-session', permissions: ['access', 'web-pages.read'], permissionsLoaded: true,
         isRoot: false, menuCatalog: [], menuCatalogLoaded: true }, version: 0,
     })); });
-    await page.route('**/api/**', async route => {
+    await page.context().route('**/api/**', async route => {
       const url = new URL(route.request().url()), path = url.pathname;
       apiRequests.push(path);
       if (path.endsWith('/annotation-runtime.js')) {
@@ -322,11 +401,17 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       else if (path === '/api/changelog/current-week') data = { weekStart: sites[0].createdAt, weekEnd: sites[0].createdAt, fetchedAt: sites[0].createdAt, dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
       else if (path === '/api/web-pages') data = { items: sites, total: sites.length };
       else if (path === '/api/web-pages/related-documents/summaries') data = { items: { source: { count: 1, isMain: true, titles: ['关联目标'] } } };
+      else if (path.endsWith('/collection-contexts')) data = { items: [], total: 0, totalContexts: 0, page: 1, pageSize: 20 };
       else if (path.endsWith('/related-documents')) data = { version: 1, mainSiteId: 'source', canManage: false,
         hasPermissionDifferences: false, items: sites.map(site => ({ ...site, isMain: site.id === 'source',
+          // 访客引用同合集成员；账号态关联当前合集以外但本人可读的网页。
+          isManual: !(mode === 'guest-share' && site.id === 'target'),
+          mentions: mode === 'guest-share' && site.id === 'target' ? [{ commentId: 'source-comment', authorName: '引用者', sourceSiteId: 'source', sourceTitle: '来源文档', label: '来源文档中的评论引用' }] : [],
           preview: { ...site, useShareAccess: mode === 'guest-share' },
           href: mode === 'guest-share' ? `/s/wp/qa-related?siteId=${site.id}` : `/web-pages?openSite=${site.id}` })) };
-      else if (path === '/api/web-pages/shares/view/qa-related') data = { title: '来源分享', shareType: 'collection', sites };
+      else if (path === '/api/web-pages/share') data = { token: 'qa-visit', shareUrl: '/s/wp/qa-visit' };
+      else if (path === '/api/web-pages/shares/view/qa-visit') data = { title: '关联目标', shareType: 'single', sites: [sites[1]] };
+      else if (path === '/api/web-pages/shares/view/qa-related') data = { title: '来源分享', shareType: 'collection', sites: mode === 'account-share' ? [sites[0]] : sites };
       else if (path.endsWith('/content')) {
         const id = url.searchParams.get('siteId') || path.split('/')[3];
         data = { siteId: id, siteUrl: `https://hosting.example/${id}/index.html`, contentType: 'text/html',
@@ -336,7 +421,8 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       else if (path === '/api/web-pages/target') data = sites[1];
       await route.fulfill({ json: { success: true, data, error: null } });
     });
-    await page.goto(mode === 'list' ? '/web-pages?keepFilter=1' : '/s/wp/qa-related?siteId=source');
+    await page.goto(mode === 'list' ? '/web-pages?keepFilter=1' : '/s/wp/qa-related');
+    if (mode !== 'list') await page.locator('.hosted-share-member').filter({ hasText: '来源文档' }).click();
     const originalUrl = page.url();
     let sourceFrame;
     if (mode === 'list') {
@@ -345,7 +431,12 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       sourceFrame = page.locator('iframe[title="来源文档"]').contentFrame();
       await sourceFrame.getByLabel('保留输入').fill('原页面状态');
       await sourceFrame.locator('body').evaluate(el => { el.ownerDocument.defaultView!.scrollTo(0, 200); });
+      await expect(page.locator('.share-topbar')).toBeVisible();
+      await expect(page.locator('.ledger-reading-article,.ledger-reading-sidebar,.hosted-ledger')).toHaveCount(0);
+      const frame = await page.locator('iframe[title="来源文档"]').elementHandle();
       await page.locator('.share-topbar .related-trigger').click();
+      expect(await page.locator('iframe[title="来源文档"]').evaluate((node, original) => node === original, frame)).toBe(true);
+      await expect(sourceFrame.getByLabel('保留输入')).toHaveValue('原页面状态');
     }
     const listReads = apiRequests.filter(path => path === '/api/web-pages').length;
     await page.locator('.related-document-card').filter({ hasText: '关联目标' }).click();
@@ -357,6 +448,15 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
     expect(page.context().pages()).toHaveLength(1);
     expect(apiRequests.filter(path => path === '/api/web-pages')).toHaveLength(listReads);
     if (mode === 'guest-share') expect(apiRequests).not.toContain('/api/web-pages/target');
+    if (mode === 'list') {
+      const [external] = await Promise.all([page.context().waitForEvent('page'), modal.getByRole('button', { name: '新窗口打开', exact: true }).click()]);
+      await expect(external).toHaveURL(/\/s\/wp\/qa-visit$/);
+      await expect(external.locator('.share-topbar')).toBeVisible();
+      await expect(external.locator('.hosted-ledger,[role="dialog"]')).toHaveCount(0);
+      await expect(external.locator('iframe').contentFrame().getByRole('heading', { name: '目标正文' })).toBeVisible();
+      expect(apiRequests.filter(path => path === '/api/web-pages')).toHaveLength(listReads);
+      await external.close();
+    }
     // 原生和 Radix 阅读器都必须一次只关闭最上层，不丢失当前正文状态。
     await modal.locator('.related-trigger').click();
     await expect(page.getByRole('dialog', { name: '关联文档', exact: true })).toBeVisible();
@@ -372,5 +472,171 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       expect(await sourceFrame.locator('body').evaluate(el => el.ownerDocument.defaultView!.scrollY)).toBe(200);
     }
     expect(errors).toEqual([]);
+  });
+}
+
+// 合集选择控制同一文档区；单一上下文不显示无意义的选择栏。
+for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const) for (const multiple of [false, true]) {
+  test(`文档合集联动 ${width}px ${theme} ${multiple ? '多个合集' : '单个合集多条分享'}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 960 });
+    const date = '2026-11-11T10:00:00Z';
+    const site = { id: 'context-source', title: '发布指南', description: '合集联动验收', sourceType: 'upload', cosPrefix: '', entryFile: 'index.html', siteUrl: 'https://hosting.example/context-source/index.html',
+      coverImageUrl: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="360" height="190"><rect width="360" height="190" fill="#e1e8ef"/></svg>'),
+      files: [], totalSize: 1024, ownerUserId: 'qa-context-user', visibility: 'private', viewCount: 0, tags: [], createdAt: date, updatedAt: date };
+    const totalContexts = multiple ? 45 : 1;
+    const link = (id: number, index = 0) => ({ id: `link-${id}-${index}`, title: `发布资料 ${id}`, shareUrl: `/s/wp/original-${id}-${index}`, createdAt: date, accessLevel: 'public', memberCount: 2, isActive: true, statusLabel: '有效' });
+    const context = (id: number) => ({ id: `collection:${id}`, title: `发布资料 ${id}`, memberCount: multiple ? 12 : 2, updatedAt: date, collectionId: String(id), legacyShareId: null, shareCount: 3, primaryLink: link(id) });
+    await page.addInitScript(() => {
+      if (window.top !== window) return;
+      localStorage.setItem('webpages.pref.viewMode', 'grid'); localStorage.setItem('webpages.pref.cardSize', 'medium');
+      localStorage.setItem('prd-admin-auth', JSON.stringify({ state: { isAuthenticated: true,
+        user: { userId: 'qa-context-user', username: 'qa-context-user', role: 'ADMIN' }, token: 'qa-context-session',
+        permissions: ['access', 'web-pages.read'], permissionsLoaded: true, isRoot: false, menuCatalog: [], menuCatalogLoaded: true }, version: 0 }));
+    });
+    const errors: string[] = [], platformErrors: string[] = [], writes: string[] = [];
+    // 与上方阅读器回归一致：保留 Playwright 禁用 SW 的沙箱注入错误证据，应用错误仍须为零。
+    page.on('pageerror', error => {
+      if (error.message.includes('Service worker is disabled because the context is sandboxed')) platformErrors.push(error.stack || error.message);
+      else errors.push(error.stack || error.message);
+    });
+    await page.route('https://hosting.example/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>发布指南</h1>' }));
+    await page.route('**/api/**', async route => {
+      const url = new URL(route.request().url()), path = decodeURIComponent(url.pathname);
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(route.request().method()) && path.startsWith('/api/web-pages')) writes.push(path);
+      let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
+      if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
+      else if (path === '/api/web-pages') data = { items: [site], total: 1 };
+      else if (path === '/api/web-pages/related-documents/summaries') data = { items: { 'context-source': { count: 1, isMain: true, titles: ['会议纪要'] } } };
+      else if (path.endsWith('/content')) data = { siteId: site.id, siteUrl: site.siteUrl, contentType: 'text/html', html: '<!doctype html><h1>发布指南</h1>' };
+      else if (path.endsWith('/collection-contexts')) {
+        const current = Number(url.searchParams.get('page') || 1), keyword = url.searchParams.get('keyword') || '';
+        const ids = Array.from({ length: totalContexts }, (_, id) => id).filter(id => !keyword || String(id).includes(keyword));
+        data = { items: ids.slice((current - 1) * 20, current * 20).map(context), total: ids.length, totalContexts, page: current, pageSize: 20 };
+      } else if (path.endsWith('/documents')) {
+        const id = Number(path.match(/collection:(\d+)/)?.[1] || 0);
+        data = { version: 0, mainSiteId: site.id, canManage: false, hasPermissionDifferences: false, contextLabel: '合集成员',
+          items: [{ id: site.id, title: '发布指南', isMain: true, href: '/web-pages?openSite=context-source' },
+            { id: `target-${id}`, title: `关联目标 ${id}`, href: `/web-pages?openSite=target-${id}` },
+            ...(multiple ? Array.from({ length: 10 }, (_, i) => ({ id: `extra-${id}-${i}`, title: `补充文档 ${i}`, href: `/web-pages?openSite=extra-${id}-${i}` })) : [])] };
+      } else if (path.endsWith('/links')) {
+        const id = Number(path.match(/collection:(\d+)/)?.[1] || 0);
+        data = { items: [0, 1, 2].map(index => link(id, index)), total: 3, page: 1, pageSize: 20 };
+      } else if (path === '/api/changelog/current-week') data = { weekStart: date, weekEnd: date, fetchedAt: date, dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
+      await route.fulfill({ json: { success: true, data, error: null } });
+    });
+    await page.goto('/web-pages');
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    const trigger = page.locator('[data-hosted-site-id="context-source"] .related-trigger');
+    await expect(trigger).toHaveCount(1); await trigger.click();
+    const dialog = page.getByRole('dialog', { name: '关联文档', exact: true });
+    await expect(dialog.locator('.related-document-card')).toHaveCount(multiple ? 9 : 2);
+    const footer = dialog.getByRole('region', { name: '合集链接操作', exact: true });
+    await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-0-0', page.url()).href);
+    await expect(footer.getByRole('button', { name: '复制合集链接', exact: true })).toBeEnabled();
+    await expect(dialog.locator('[aria-label="文档关系类型"]')).toHaveCount(0);
+    await expect(footer.getByRole('link', { name: '打开合集', exact: true })).toHaveAttribute('href', new URL('/s/wp/original-0-0', page.url()).href);
+    await expect(footer.getByRole('link', { name: '打开合集', exact: true })).toHaveAttribute('target', '_blank');
+    const sidebar = dialog.getByRole('complementary', { name: '所属合集' });
+    if (multiple) {
+      await expect(sidebar).toBeVisible(); await expect(sidebar.locator('.collection-context-select')).toHaveCount(20);
+      await sidebar.locator('.collection-context-select').nth(1).click();
+      await expect(dialog.locator('.related-document-card').filter({ hasText: '关联目标 1' })).toBeVisible();
+      await expect(sidebar.locator('a')).toHaveCount(0);
+      await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-1-0', page.url()).href);
+      await footer.getByRole('button', { name: '查看全部 3 条链接', exact: true }).click();
+      await expect(footer.locator('.collection-context-link-option')).toHaveCount(3);
+      await footer.locator('.collection-context-link-option').nth(2).click();
+      await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-1-2', page.url()).href);
+      await expect(footer.getByRole('link', { name: '打开合集', exact: true })).toHaveAttribute('href', new URL('/s/wp/original-1-2', page.url()).href);
+      await sidebar.getByLabel('搜索所属合集', { exact: true }).fill('44');
+      await expect(sidebar.locator('.collection-context-select')).toHaveCount(1);
+      await expect(dialog.locator('.related-document-card').filter({ hasText: '关联目标 44' })).toBeVisible();
+      await sidebar.getByRole('button', { name: '清除合集搜索' }).click();
+      await expect(sidebar.locator('.collection-context-select')).toHaveCount(20);
+      await sidebar.getByRole('navigation', { name: '合集分页', exact: true }).getByRole('button', { name: '下一页' }).click();
+      await expect(sidebar.locator('.collection-context-select').first()).toHaveText('发布资料 20');
+      await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-20-0', page.url()).href);
+      const left = await sidebar.boundingBox(), right = await dialog.locator('.collection-context-documents').boundingBox();
+      expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x + 1);
+    } else {
+      await expect(sidebar).toHaveCount(0); await dialog.getByRole('button', { name: '查看全部 3 条链接', exact: true }).click();
+      await expect(footer.locator('.collection-context-link-option')).toHaveCount(3);
+      await footer.locator('.collection-context-link-option').nth(1).click();
+      await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-0-1', page.url()).href);
+      await expect(dialog.locator('[data-collection-layout="single"]')).toBeVisible();
+    }
+    await dialog.getByRole('button', { name: '列表视图', exact: true }).click();
+    await expect(dialog.locator('.related-document-grid.is-list')).toBeVisible();
+    await dialog.getByRole('button', { name: '卡片视图', exact: true }).click();
+    const box = await dialog.boundingBox(); expect(box!.x).toBeGreaterThanOrEqual(0); expect(box!.x + box!.width).toBeLessThanOrEqual(width); expect(box!.y + box!.height).toBeLessThanOrEqual(960);
+    const anchorBox = await trigger.boundingBox();
+    expect(box!.y >= anchorBox!.y + anchorBox!.height || box!.y + box!.height <= anchorBox!.y).toBe(true);
+    const footerBefore = await footer.boundingBox();
+    expect(footerBefore!.y + footerBefore!.height).toBeCloseTo(box!.y + box!.height, 0);
+    expect(footerBefore!.width).toBeCloseTo(box!.width, 0);
+    await dialog.locator('.related-documents-scroll').evaluate(node => { node.scrollTop = node.scrollHeight; });
+    const footerAfter = await footer.boundingBox();
+    expect(footerAfter!.y).toBeCloseTo(footerBefore!.y, 0);
+    const actions = await footer.locator('.collection-context-link-actions').boundingBox();
+    expect(actions!.y + actions!.height).toBeLessThanOrEqual(footerAfter!.y + footerAfter!.height);
+    const overflow = await dialog.evaluate(node => node.scrollWidth > node.clientWidth); expect(overflow).toBe(false);
+    expect(errors).toEqual([]); expect(writes).toEqual([]);
+    await testInfo.attach('sandbox-platform-diagnostics', { body: JSON.stringify(platformErrors), contentType: 'application/json' });
+    await page.screenshot({ path: testInfo.outputPath('collection-context-layout.png'), fullPage: false });
+  });
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`合集原分享阅读 ${theme}：慢响应切换不空白，返回目录不丢成员，迟到请求不覆盖`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const errors: string[] = [];
+    page.on('pageerror', error => { if (!error.message.includes('Service worker is disabled because the context is sandboxed')) errors.push(error.message); });
+    const sites = ['main', 'second', 'third', 'fourth'].map((id, index) => ({ id, title: `阅读文档 ${index + 1}`, siteUrl: `https://hosting.example/${id}/index.html`, entryFile: 'index.html', contentShape: 'self-contained-html', totalSize: 1024, entrySize: 1024, fileCount: 1 }));
+    const shared = { title: '切换验收合集', shareType: 'collection', mainSiteId: 'main', sites, createdAt: '2026-11-15T00:00:00Z', createdBy: 'author' };
+    let requests = 0;
+    let delayNext = false;
+    let release!: () => void;
+    const delayed = new Promise<void>(resolve => { release = resolve; });
+    await page.route('https://hosting.example/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>原文内容</h1>' }));
+    await page.route('**/api/**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/annotation-runtime.js')) {
+        await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') });
+        return;
+      }
+      let data: unknown = { items: [], total: 0 };
+      let stale = false;
+      if (path === '/api/web-pages/shares/view/navigation-token') {
+        requests++;
+        if (delayNext) { delayNext = false; await delayed; stale = true; }
+        data = stale ? { ...shared, title: '迟到的旧响应' } : shared;
+      } else if (path.endsWith('/comments')) data = { comments: [], commentsEnabled: true, canComment: false };
+      else if (path.endsWith('/html') || path.endsWith('/content')) data = { html: '<!doctype html><h1>原文内容</h1>', contentType: 'text/html' };
+      await route.fulfill({ headers: stale ? { 'x-navigation-test': 'stale' } : {}, json: { success: true, data, error: null } });
+    });
+    await page.goto('/s/wp/navigation-token');
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    await expect(page.getByRole('heading', { name: shared.title, exact: true })).toBeVisible();
+    const initialRequests = requests;
+    delayNext = true;
+    await page.locator('.ledger-directory .hosted-share-member').filter({ hasText: '阅读文档 2' }).click();
+    await expect.poll(() => requests).toBe(initialRequests + 1);
+    await expect(page.locator('iframe[title="阅读文档 2"]')).toBeVisible();
+    await expect(page.getByText('正在读取分享文档…', { exact: true })).toHaveCount(0);
+    await testInfo.attach('等待复核时的阅读界面', { body: await page.screenshot(), contentType: 'image/png' });
+    await page.goBack();
+    await expect.poll(() => requests).toBe(initialRequests + 2);
+    await expect(page.locator('.ledger-directory .hosted-share-member')).toHaveCount(4);
+    await expect(page.getByRole('heading', { name: shared.title, exact: true })).toBeVisible();
+    const lateResponse = page.waitForResponse(response => response.headers()['x-navigation-test'] === 'stale');
+    release();
+    await (await lateResponse).finished();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(page.getByRole('heading', { name: shared.title, exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '迟到的旧响应', exact: true })).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await testInfo.attach('完整目录', { body: await page.screenshot(), contentType: 'image/png' });
+    await expect(page.locator('.ledger-directory .hosted-share-member')).toHaveCount(4);
   });
 }

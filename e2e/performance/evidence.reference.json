@@ -1,0 +1,1973 @@
+{
+  "schema": 1,
+  "measuredApplicationCommit": "4c0602cf08916841fe1bd656826970f0a0516665",
+  "baselineCommit": "3035365def7b30a28309b89a21756717fda846dd",
+  "conditions": {
+    "effectiveCgroups": {
+      "mongo": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      },
+      "redis": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      },
+      "api": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      },
+      "web": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      }
+    },
+    "requestedLimitsEnforced": false,
+    "resourceAccounting": "Linux /proc process tree; CPU ticks and summed RSS",
+    "note": "此云实例共享4 CPU/16 GiB；不能把结果当成1 CPU/1 GiB容器容量。单账号临时准入配额提高至100000/min，外部HTTP为零。"
+  },
+  "baseline": {
+    "sourceRuns": [
+      {
+        "environmentId": "map-perf-156d3bcf2641",
+        "commit": "3035365def7b30a28309b89a21756717fda846dd",
+        "startedAt": "2026-11-12T10:00:05.705Z"
+      },
+      {
+        "environmentId": "map-perf-0b06566ef93b",
+        "commit": "3035365def7b30a28309b89a21756717fda846dd",
+        "startedAt": "2026-11-12T10:01:13.438Z"
+      },
+      {
+        "environmentId": "map-perf-20b9db8f6f8c",
+        "commit": "3035365def7b30a28309b89a21756717fda846dd",
+        "startedAt": "2026-11-12T10:02:22.601Z"
+      }
+    ],
+    "limits": {
+      "document-open": {
+        "clientP95": 167.74605700003303,
+        "appP95": 159.47199999999998,
+        "errorRate": 0.025,
+        "minThroughput": 1.3963106563942966
+      },
+      "home": {
+        "clientP95": 99.18826099999569,
+        "appP95": 65.773,
+        "errorRate": 0.025,
+        "minThroughput": 1.3963106563942966
+      },
+      "journey": {
+        "clientP95": 372.1513399999967,
+        "appP95": null,
+        "errorRate": 0.025,
+        "minThroughput": 1.3963106563942966
+      },
+      "knowledge-list": {
+        "clientP95": 101.59613099996204,
+        "appP95": 64.337,
+        "errorRate": 0.025,
+        "minThroughput": 1.3963106563942966
+      },
+      "write": {
+        "clientP95": 326.0486559999845,
+        "appP95": null,
+        "errorRate": 0.025,
+        "minThroughput": 1.3963106563942966
+      },
+      "write-create": {
+        "clientP95": 244.23759099999006,
+        "appP95": 91.499,
+        "errorRate": 0.025,
+        "minThroughput": 1.3963106563942966
+      },
+      "write-delete": {
+        "clientP95": 165.96229399998992,
+        "appP95": 106.7,
+        "errorRate": 0.025,
+        "minThroughput": 1.3963106563942966
+      },
+      "write-readback": {
+        "clientP95": 24.75666700000147,
+        "appP95": 21.923,
+        "errorRate": 0.025,
+        "minThroughput": 1.3963106563942966
+      },
+      "write-save": {
+        "clientP95": 240.4445649999907,
+        "appP95": 165.51,
+        "errorRate": 0.025,
+        "minThroughput": 1.3963106563942966
+      },
+      "write-versions": {
+        "clientP95": 74.8494980000105,
+        "appP95": 42.16,
+        "errorRate": 0.025,
+        "minThroughput": 1.3963106563942966
+      }
+    },
+    "normalJourneyP95Ms": [
+      211.86969999999565,
+      251.9401099999959,
+      225.0119080000004
+    ]
+  },
+  "candidate": {
+    "commit": "4c0602cf08916841fe1bd656826970f0a0516665",
+    "comparison": {
+      "pass": true,
+      "failures": []
+    },
+    "evaluation": {
+      "schema": 1,
+      "evaluatedAt": "2026-11-12T10:15:13.628Z",
+      "policyVersion": 2,
+      "sourceCommit": "4c0602cf08916841fe1bd656826970f0a0516665",
+      "resultSha256": "2da7b4849884e78af113d99be2ee146a07d9b2c0ce8039e8601ede2fc3a06c22",
+      "baselineSha256": "345e0787dc646c4b5701f9e3772575eb16fbf9af18ebe29bf20a027890253279",
+      "originalComparison": {
+        "pass": false,
+        "failures": [
+          "soak/write-readback: client p95 23.35 > 22.97 ms"
+        ]
+      },
+      "comparison": {
+        "pass": true,
+        "failures": []
+      }
+    },
+    "failure": null,
+    "browser": {
+      "home": 1034.6448029999738,
+      "knowledge-list": 321.5007280000136,
+      "document-open": 975.834824999969,
+      "write": 1838.7767710000044,
+      "pass": true
+    },
+    "capacity": {
+      "criterion": "任一场景错误率>1% 或 client p95>正常负载两倍；仅为本隔离配置的相对退化边界",
+      "firstDegradedUsers": 8,
+      "lastTestedUsers": 128,
+      "stages": [
+        {
+          "users": 2,
+          "journeyP95": 120.15009399998235,
+          "journeysPerSecond": 22.92983795091598,
+          "errorRate": 0
+        },
+        {
+          "users": 4,
+          "journeyP95": 146.6487490000436,
+          "journeysPerSecond": 36.57695194501478,
+          "errorRate": 0
+        },
+        {
+          "users": 8,
+          "journeyP95": 203.70792900002562,
+          "journeysPerSecond": 47.719014507473744,
+          "errorRate": 0
+        },
+        {
+          "users": 16,
+          "journeyP95": 399.36636099999305,
+          "journeysPerSecond": 49.14034461227856,
+          "errorRate": 0
+        },
+        {
+          "users": 32,
+          "journeyP95": 667.4976240000105,
+          "journeysPerSecond": 55.68499573919053,
+          "errorRate": 0
+        },
+        {
+          "users": 64,
+          "journeyP95": 1397.7141270000138,
+          "journeysPerSecond": 55.31347123195597,
+          "errorRate": 0
+        },
+        {
+          "users": 128,
+          "journeyP95": 2874.902177000011,
+          "journeysPerSecond": 54.456488492880005,
+          "errorRate": 0
+        }
+      ]
+    },
+    "phases": [
+      {
+        "name": "normal",
+        "users": 2,
+        "seconds": 20.007245167000043,
+        "metrics": {
+          "document-open": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9992757456671753,
+            "client": {
+              "p50": 7.805576000013389,
+              "p95": 11.398668999958318,
+              "p99": 12.68605600000592
+            },
+            "appP95": 8.842,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9992757456671753,
+            "client": {
+              "p50": 12.363358000002336,
+              "p95": 24.81330400001025,
+              "p99": 50.87936500000069
+            },
+            "appP95": 16.213,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9992757456671753,
+            "client": {
+              "p50": 102.88634599995567,
+              "p95": 157.41195199999493,
+              "p99": 191.5364459999837
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9992757456671753,
+            "client": {
+              "p50": 11.438657000020612,
+              "p95": 32.246828000003006,
+              "p99": 45.04133599996567
+            },
+            "appP95": 18.92,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9992757456671753,
+            "client": {
+              "p50": 47.140224999981,
+              "p95": 85.03466900001513,
+              "p99": 109.34345699998084
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9992757456671753,
+            "client": {
+              "p50": 9.499914999993052,
+              "p95": 33.59629700001096,
+              "p99": 38.112664000014775
+            },
+            "appP95": 25.15,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9992757456671753,
+            "client": {
+              "p50": 21.820811000012327,
+              "p95": 28.28910300001735,
+              "p99": 44.89213300001575
+            },
+            "appP95": 26.308,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9992757456671753,
+            "client": {
+              "p50": 7.808490000024904,
+              "p95": 12.862607999995816,
+              "p99": 19.247657000028994
+            },
+            "appP95": 10.704,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9992757456671753,
+            "client": {
+              "p50": 19.28501299995696,
+              "p95": 29.68712499999674,
+              "p99": 63.6973359999829
+            },
+            "appP95": 27.554,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 40,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9992757456671753,
+            "client": {
+              "p50": 8.353516999981366,
+              "p95": 14.698227000015322,
+              "p99": 38.386684000026435
+            },
+            "appP95": 10.366,
+            "externalHttpP95": 0
+          }
+        },
+        "resources": {
+          "api": {
+            "cpuMeanPercent": 30.836095963400993,
+            "cpuPeakPercent": 123.0025604447298,
+            "rssPeakMiB": 925.16015625,
+            "rssFirstMiB": 668.3984375,
+            "rssLastMiB": 925.16015625
+          },
+          "mongo": {
+            "cpuMeanPercent": 5.237262520064061,
+            "cpuPeakPercent": 11.71452956616474,
+            "rssPeakMiB": 183.03125,
+            "rssFirstMiB": 174.90625,
+            "rssLastMiB": 183.03125
+          },
+          "redis": {
+            "cpuMeanPercent": 0.8813951109095366,
+            "cpuPeakPercent": 1.9828707430559687,
+            "rssPeakMiB": 12.2734375,
+            "rssFirstMiB": 11.6484375,
+            "rssLastMiB": 12.2734375
+          },
+          "web": {
+            "cpuMeanPercent": 0.5185439378671006,
+            "cpuPeakPercent": 0.9924904185123616,
+            "rssPeakMiB": 9.06640625,
+            "rssFirstMiB": 9.06640625,
+            "rssLastMiB": 9.06640625
+          }
+        }
+      },
+      {
+        "name": "ramp-2",
+        "users": 2,
+        "seconds": 15.133120467000001,
+        "metrics": {
+          "document-open": {
+            "attempts": 347,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.92983795091598,
+            "client": {
+              "p50": 6.66494300001068,
+              "p95": 12.633136000018567,
+              "p99": 20.4768589999876
+            },
+            "appP95": 9.889,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 347,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.92983795091598,
+            "client": {
+              "p50": 8.057285999995656,
+              "p95": 12.070141999982297,
+              "p99": 23.959585000004154
+            },
+            "appP95": 10.02,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 347,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.92983795091598,
+            "client": {
+              "p50": 80.88613900000928,
+              "p95": 120.15009399998235,
+              "p99": 184.12158699997235
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 347,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.92983795091598,
+            "client": {
+              "p50": 8.351955000020098,
+              "p95": 15.036206000018865,
+              "p99": 38.847352999961004
+            },
+            "appP95": 13.572,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 347,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.92983795091598,
+            "client": {
+              "p50": 37.2393489999813,
+              "p95": 59.01343900000211,
+              "p99": 125.13357000000542
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 347,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.92983795091598,
+            "client": {
+              "p50": 8.366905000002589,
+              "p95": 12.663190999999642,
+              "p99": 20.791611000022385
+            },
+            "appP95": 10.781,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 347,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.92983795091598,
+            "client": {
+              "p50": 18.161447999998927,
+              "p95": 27.396811999962665,
+              "p99": 48.72323000000324
+            },
+            "appP95": 24.854,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 347,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.92983795091598,
+            "client": {
+              "p50": 6.540158999967389,
+              "p95": 11.519741000025533,
+              "p99": 17.98143899999559
+            },
+            "appP95": 8.882,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 347,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.92983795091598,
+            "client": {
+              "p50": 14.388406999991275,
+              "p95": 20.482047000026796,
+              "p99": 66.08332999999402
+            },
+            "appP95": 18.914,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 347,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 22.92983795091598,
+            "client": {
+              "p50": 7.174640000041109,
+              "p95": 11.036340999999084,
+              "p99": 23.075624000048265
+            },
+            "appP95": 9.353,
+            "externalHttpP95": 0
+          }
+        },
+        "resources": {
+          "api": {
+            "cpuMeanPercent": 137.68555486370212,
+            "cpuPeakPercent": 196.15123113645248,
+            "rssPeakMiB": 1098.609375,
+            "rssFirstMiB": 956.53515625,
+            "rssLastMiB": 822.40234375
+          },
+          "mongo": {
+            "cpuMeanPercent": 36.359928058346064,
+            "cpuPeakPercent": 45.700656223075555,
+            "rssPeakMiB": 221.03125,
+            "rssFirstMiB": 183.65625,
+            "rssLastMiB": 221.03125
+          },
+          "redis": {
+            "cpuMeanPercent": 4.865830529094555,
+            "cpuPeakPercent": 5.959719229164306,
+            "rssPeakMiB": 17.8984375,
+            "rssFirstMiB": 12.2734375,
+            "rssLastMiB": 17.8984375
+          },
+          "web": {
+            "cpuMeanPercent": 4.207621097845268,
+            "cpuPeakPercent": 5.9392451686217544,
+            "rssPeakMiB": 9.06640625,
+            "rssFirstMiB": 9.06640625,
+            "rssLastMiB": 9.0546875
+          }
+        }
+      },
+      {
+        "name": "ramp-4",
+        "users": 4,
+        "seconds": 15.09147073900001,
+        "metrics": {
+          "document-open": {
+            "attempts": 552,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 36.57695194501478,
+            "client": {
+              "p50": 8.40590399998473,
+              "p95": 15.140211999998428,
+              "p99": 18.76682299998356
+            },
+            "appP95": 12.705,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 552,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 36.57695194501478,
+            "client": {
+              "p50": 9.910352999984752,
+              "p95": 17.437888999993447,
+              "p99": 24.20918599999277
+            },
+            "appP95": 15.252,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 552,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 36.57695194501478,
+            "client": {
+              "p50": 105.7447449999745,
+              "p95": 146.6487490000436,
+              "p99": 178.47777200001292
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 552,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 36.57695194501478,
+            "client": {
+              "p50": 10.526505000016186,
+              "p95": 18.085713999986183,
+              "p99": 33.01516200002516
+            },
+            "appP95": 15.063,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 552,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 36.57695194501478,
+            "client": {
+              "p50": 48.753229000023566,
+              "p95": 77.49263799999608,
+              "p99": 103.61973600002239
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 552,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 36.57695194501478,
+            "client": {
+              "p50": 10.883162999991328,
+              "p95": 18.812916999973822,
+              "p99": 29.53557299997192
+            },
+            "appP95": 16.168,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 552,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 36.57695194501478,
+            "client": {
+              "p50": 23.180512999999337,
+              "p95": 40.12292500003241,
+              "p99": 52.93897299998207
+            },
+            "appP95": 37.368,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 552,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 36.57695194501478,
+            "client": {
+              "p50": 8.400676999997813,
+              "p95": 16.229784000024665,
+              "p99": 24.896844999981113
+            },
+            "appP95": 13.137,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 552,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 36.57695194501478,
+            "client": {
+              "p50": 17.8652379999985,
+              "p95": 32.55439299996942,
+              "p99": 44.44249200000195
+            },
+            "appP95": 30.061,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 552,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 36.57695194501478,
+            "client": {
+              "p50": 9.826167999999598,
+              "p95": 17.395873000030406,
+              "p99": 27.22657400002936
+            },
+            "appP95": 14.828,
+            "externalHttpP95": 0
+          }
+        },
+        "resources": {
+          "api": {
+            "cpuMeanPercent": 196.62852418595583,
+            "cpuPeakPercent": 207.68829675202224,
+            "rssPeakMiB": 799.2890625,
+            "rssFirstMiB": 799.2890625,
+            "rssLastMiB": 446.65625
+          },
+          "mongo": {
+            "cpuMeanPercent": 63.318317796361114,
+            "cpuPeakPercent": 69.22943225067407,
+            "rssPeakMiB": 278.28125,
+            "rssFirstMiB": 223.53125,
+            "rssLastMiB": 278.28125
+          },
+          "redis": {
+            "cpuMeanPercent": 7.833892164987059,
+            "cpuPeakPercent": 8.922127970426159,
+            "rssPeakMiB": 27.1484375,
+            "rssFirstMiB": 18.5234375,
+            "rssLastMiB": 27.1484375
+          },
+          "web": {
+            "cpuMeanPercent": 5.925042991318109,
+            "cpuPeakPercent": 6.939432865887013,
+            "rssPeakMiB": 9.0546875,
+            "rssFirstMiB": 9.0546875,
+            "rssLastMiB": 9.0546875
+          }
+        }
+      },
+      {
+        "name": "ramp-8",
+        "users": 8,
+        "seconds": 15.109281015999965,
+        "metrics": {
+          "document-open": {
+            "attempts": 721,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 47.719014507473744,
+            "client": {
+              "p50": 13.504527000011876,
+              "p95": 24.550257999973837,
+              "p99": 32.66009800002212
+            },
+            "appP95": 19.95,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 721,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 47.719014507473744,
+            "client": {
+              "p50": 15.559802999952808,
+              "p95": 28.315836999972817,
+              "p99": 38.933109000034165
+            },
+            "appP95": 23.907,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 721,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 47.719014507473744,
+            "client": {
+              "p50": 166.05087899998762,
+              "p95": 203.70792900002562,
+              "p99": 214.23271599999862
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 721,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 47.719014507473744,
+            "client": {
+              "p50": 16.5003630000283,
+              "p95": 29.019344000029378,
+              "p99": 36.294877999986056
+            },
+            "appP95": 23.755,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 721,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 47.719014507473744,
+            "client": {
+              "p50": 77.43550399999367,
+              "p95": 108.66082200000528,
+              "p99": 124.94082200003322
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 721,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 47.719014507473744,
+            "client": {
+              "p50": 16.794812999956775,
+              "p95": 29.673689000017475,
+              "p99": 39.50103200000012
+            },
+            "appP95": 25.959,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 721,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 47.719014507473744,
+            "client": {
+              "p50": 34.740578999975696,
+              "p95": 55.98474299994996,
+              "p99": 63.18858799996087
+            },
+            "appP95": 52.123,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 721,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 47.719014507473744,
+            "client": {
+              "p50": 13.373381999961566,
+              "p95": 24.838037999987137,
+              "p99": 39.29762800002936
+            },
+            "appP95": 19.992,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 721,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 47.719014507473744,
+            "client": {
+              "p50": 28.285579000017606,
+              "p95": 47.13841399998637,
+              "p99": 57.84101400000509
+            },
+            "appP95": 42.503,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 721,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 47.719014507473744,
+            "client": {
+              "p50": 15.015843999979552,
+              "p95": 29.068642000027467,
+              "p99": 39.085269000031985
+            },
+            "appP95": 24.046,
+            "externalHttpP95": 0
+          }
+        },
+        "resources": {
+          "api": {
+            "cpuMeanPercent": 232.6278879101477,
+            "cpuPeakPercent": 242.28140371853192,
+            "rssPeakMiB": 463.2265625,
+            "rssFirstMiB": 446.65625,
+            "rssLastMiB": 463.2265625
+          },
+          "mongo": {
+            "cpuMeanPercent": 89.98255791141506,
+            "cpuPeakPercent": 95.7671673338997,
+            "rssPeakMiB": 346.28125,
+            "rssFirstMiB": 283.15625,
+            "rssLastMiB": 346.28125
+          },
+          "redis": {
+            "cpuMeanPercent": 9.108494529362543,
+            "cpuPeakPercent": 9.941622454929492,
+            "rssPeakMiB": 39.5234375,
+            "rssFirstMiB": 27.7734375,
+            "rssLastMiB": 39.5234375
+          },
+          "web": {
+            "cpuMeanPercent": 7.535657974411436,
+            "cpuPeakPercent": 8.908892110133591,
+            "rssPeakMiB": 9.0546875,
+            "rssFirstMiB": 9.0546875,
+            "rssLastMiB": 9.046875
+          }
+        }
+      },
+      {
+        "name": "ramp-16",
+        "users": 16,
+        "seconds": 15.221708473999984,
+        "metrics": {
+          "document-open": {
+            "attempts": 748,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 49.14034461227856,
+            "client": {
+              "p50": 25.707656000042334,
+              "p95": 49.598410000035074,
+              "p99": 66.46532800002024
+            },
+            "appP95": 41.159,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 748,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 49.14034461227856,
+            "client": {
+              "p50": 30.15931499999715,
+              "p95": 54.907406000013,
+              "p99": 71.06384999997681
+            },
+            "appP95": 45.878,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 748,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 49.14034461227856,
+            "client": {
+              "p50": 320.72261599998455,
+              "p95": 399.36636099999305,
+              "p99": 474.1448289999971
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 748,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 49.14034461227856,
+            "client": {
+              "p50": 31.451585000031628,
+              "p95": 55.27497000002768,
+              "p99": 67.41615800000727
+            },
+            "appP95": 47.521,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 748,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 49.14034461227856,
+            "client": {
+              "p50": 153.24940500000957,
+              "p95": 204.22834599995986,
+              "p99": 247.19238300004508
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 748,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 49.14034461227856,
+            "client": {
+              "p50": 33.0759160000016,
+              "p95": 57.366098000027705,
+              "p99": 74.84392999997362
+            },
+            "appP95": 49.489,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 748,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 49.14034461227856,
+            "client": {
+              "p50": 70.41417699999874,
+              "p95": 103.29845599998953,
+              "p99": 129.47102199995425
+            },
+            "appP95": 94.888,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 748,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 49.14034461227856,
+            "client": {
+              "p50": 25.81860900000902,
+              "p95": 51.35562899999786,
+              "p99": 68.22543900000164
+            },
+            "appP95": 41.452,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 748,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 49.14034461227856,
+            "client": {
+              "p50": 55.20256200002041,
+              "p95": 84.67552300001262,
+              "p99": 104.82044300000416
+            },
+            "appP95": 77.32,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 748,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 49.14034461227856,
+            "client": {
+              "p50": 30.674450999998953,
+              "p95": 56.81403100001626,
+              "p99": 68.96873600000981
+            },
+            "appP95": 47.331,
+            "externalHttpP95": 0
+          }
+        },
+        "resources": {
+          "api": {
+            "cpuMeanPercent": 233.49559838778814,
+            "cpuPeakPercent": 241.3920335310794,
+            "rssPeakMiB": 471.9765625,
+            "rssFirstMiB": 470.9765625,
+            "rssLastMiB": 466.83203125
+          },
+          "mongo": {
+            "cpuMeanPercent": 101.84424355040464,
+            "cpuPeakPercent": 126.10720177362064,
+            "rssPeakMiB": 444.15625,
+            "rssFirstMiB": 351.65625,
+            "rssLastMiB": 444.15625
+          },
+          "redis": {
+            "cpuMeanPercent": 8.339532763201685,
+            "cpuPeakPercent": 9.801851715444089,
+            "rssPeakMiB": 52.3984375,
+            "rssFirstMiB": 40.2734375,
+            "rssLastMiB": 52.3984375
+          },
+          "web": {
+            "cpuMeanPercent": 7.827124835046219,
+            "cpuPeakPercent": 8.90783060546253,
+            "rssPeakMiB": 9.296875,
+            "rssFirstMiB": 9.296875,
+            "rssLastMiB": 9.171875
+          }
+        }
+      },
+      {
+        "name": "ramp-32",
+        "users": 32,
+        "seconds": 15.408100307999995,
+        "metrics": {
+          "document-open": {
+            "attempts": 858,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.68499573919053,
+            "client": {
+              "p50": 49.96629099996062,
+              "p95": 81.953525000019,
+              "p99": 94.37953899998683
+            },
+            "appP95": 69.172,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 858,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.68499573919053,
+            "client": {
+              "p50": 59.41370299999835,
+              "p95": 96.09621699998388,
+              "p99": 109.92648200003896
+            },
+            "appP95": 81.434,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 858,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.68499573919053,
+            "client": {
+              "p50": 569.8300100000342,
+              "p95": 667.4976240000105,
+              "p99": 715.7556010000408
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 858,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.68499573919053,
+            "client": {
+              "p50": 58.0584450000315,
+              "p95": 87.63931400002912,
+              "p99": 102.97047100000782
+            },
+            "appP95": 76.631,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 858,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.68499573919053,
+            "client": {
+              "p50": 273.1408240000019,
+              "p95": 332.1931990000303,
+              "p99": 366.12734700000146
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 858,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.68499573919053,
+            "client": {
+              "p50": 63.17969899997115,
+              "p95": 91.35916100000031,
+              "p99": 108.02978699997766
+            },
+            "appP95": 78.905,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 858,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.68499573919053,
+            "client": {
+              "p50": 122.26200600003358,
+              "p95": 173.88710599998012,
+              "p99": 196.17119799996726
+            },
+            "appP95": 166.579,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 858,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.68499573919053,
+            "client": {
+              "p50": 50.800829000014346,
+              "p95": 83.76393299998017,
+              "p99": 98.21903300000122
+            },
+            "appP95": 72.31,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 858,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.68499573919053,
+            "client": {
+              "p50": 97.52959599997848,
+              "p95": 137.10814900003606,
+              "p99": 155.70000300003449
+            },
+            "appP95": 125.668,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 858,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.68499573919053,
+            "client": {
+              "p50": 54.76716500002658,
+              "p95": 90.94202300003963,
+              "p99": 101.01773800002411
+            },
+            "appP95": 77.327,
+            "externalHttpP95": 0
+          }
+        },
+        "resources": {
+          "api": {
+            "cpuMeanPercent": 235.02846208405228,
+            "cpuPeakPercent": 253.02180966276384,
+            "rssPeakMiB": 515.9453125,
+            "rssFirstMiB": 466.95703125,
+            "rssLastMiB": 515.9453125
+          },
+          "mongo": {
+            "cpuMeanPercent": 107.6047424171224,
+            "cpuPeakPercent": 131.4917636979971,
+            "rssPeakMiB": 450.09375,
+            "rssFirstMiB": 445.15625,
+            "rssLastMiB": 450.09375
+          },
+          "redis": {
+            "cpuMeanPercent": 8.217486305822897,
+            "cpuPeakPercent": 27.694839782814906,
+            "rssPeakMiB": 86.484375,
+            "rssFirstMiB": 53.5234375,
+            "rssLastMiB": 86.484375
+          },
+          "web": {
+            "cpuMeanPercent": 7.535378591985109,
+            "cpuPeakPercent": 9.72659723755423,
+            "rssPeakMiB": 9.54296875,
+            "rssFirstMiB": 9.54296875,
+            "rssLastMiB": 9.49609375
+          }
+        }
+      },
+      {
+        "name": "ramp-64",
+        "users": 64,
+        "seconds": 15.63814348899998,
+        "metrics": {
+          "document-open": {
+            "attempts": 865,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.31347123195597,
+            "client": {
+              "p50": 100.54304899997078,
+              "p95": 172.05291899997974,
+              "p99": 202.29521999997087
+            },
+            "appP95": 131.844,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 865,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.31347123195597,
+            "client": {
+              "p50": 123.97795999998925,
+              "p95": 175.066175999993,
+              "p99": 196.20999000000302
+            },
+            "appP95": 149.29,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 865,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.31347123195597,
+            "client": {
+              "p50": 1126.9156320000184,
+              "p95": 1397.7141270000138,
+              "p99": 1494.7279870000202
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 865,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.31347123195597,
+            "client": {
+              "p50": 119.69263200002024,
+              "p95": 182.34925199998543,
+              "p99": 220.85324100003345
+            },
+            "appP95": 142.333,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 865,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.31347123195597,
+            "client": {
+              "p50": 522.7372759999707,
+              "p95": 712.2201900000218,
+              "p99": 765.5023030000157
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 865,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.31347123195597,
+            "client": {
+              "p50": 117.1948529999936,
+              "p95": 191.95769599999767,
+              "p99": 221.62859099998605
+            },
+            "appP95": 151.062,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 865,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.31347123195597,
+            "client": {
+              "p50": 247.28286799998023,
+              "p95": 340.4382700000424,
+              "p99": 373.3555499999784
+            },
+            "appP95": 307.94,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 865,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.31347123195597,
+            "client": {
+              "p50": 104.81982100004097,
+              "p95": 171.34607600001618,
+              "p99": 206.82018099998822
+            },
+            "appP95": 134.712,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 865,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.31347123195597,
+            "client": {
+              "p50": 184.9693959999713,
+              "p95": 268.76741600001696,
+              "p99": 323.70192900003167
+            },
+            "appP95": 229.704,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 865,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 55.31347123195597,
+            "client": {
+              "p50": 108.86231200001203,
+              "p95": 177.64385299995774,
+              "p99": 218.81827799999155
+            },
+            "appP95": 140.112,
+            "externalHttpP95": 0
+          }
+        },
+        "resources": {
+          "api": {
+            "cpuMeanPercent": 234.06380561653677,
+            "cpuPeakPercent": 254.8299654958788,
+            "rssPeakMiB": 634.0703125,
+            "rssFirstMiB": 532.6953125,
+            "rssLastMiB": 634.0703125
+          },
+          "mongo": {
+            "cpuMeanPercent": 108.77024115419094,
+            "cpuPeakPercent": 126.70150632378467,
+            "rssPeakMiB": 554.34375,
+            "rssFirstMiB": 459.59375,
+            "rssLastMiB": 554.34375
+          },
+          "redis": {
+            "cpuMeanPercent": 4.798051742286198,
+            "cpuPeakPercent": 6.615441082318036,
+            "rssPeakMiB": 80.3984375,
+            "rssFirstMiB": 67.6484375,
+            "rssLastMiB": 80.3984375
+          },
+          "web": {
+            "cpuMeanPercent": 6.8786269582274,
+            "cpuPeakPercent": 8.62206650174026,
+            "rssPeakMiB": 10.171875,
+            "rssFirstMiB": 9.953125,
+            "rssLastMiB": 10.0078125
+          }
+        }
+      },
+      {
+        "name": "ramp-128",
+        "users": 128,
+        "seconds": 16.45350305900001,
+        "metrics": {
+          "document-open": {
+            "attempts": 896,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 54.456488492880005,
+            "client": {
+              "p50": 213.05198799999198,
+              "p95": 334.8107449999661,
+              "p99": 426.8524820000166
+            },
+            "appP95": 256.084,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 896,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 54.456488492880005,
+            "client": {
+              "p50": 242.2949910000316,
+              "p95": 363.30058499996085,
+              "p99": 459.9469050000189
+            },
+            "appP95": 300.674,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 896,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 54.456488492880005,
+            "client": {
+              "p50": 2270.985262000002,
+              "p95": 2874.902177000011,
+              "p99": 3097.437357000017
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 896,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 54.456488492880005,
+            "client": {
+              "p50": 240.36083100002725,
+              "p95": 404.31529699999373,
+              "p99": 472.3131239999784
+            },
+            "appP95": 320.561,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 896,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 54.456488492880005,
+            "client": {
+              "p50": 1046.4050600000191,
+              "p95": 1376.7369539999636,
+              "p99": 1587.3648909999756
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 896,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 54.456488492880005,
+            "client": {
+              "p50": 249.6427740000072,
+              "p95": 394.27674600004684,
+              "p99": 493.0898900000029
+            },
+            "appP95": 295.331,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 896,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 54.456488492880005,
+            "client": {
+              "p50": 511.5109420000226,
+              "p95": 726.8066169999656,
+              "p99": 828.0440439999802
+            },
+            "appP95": 667.363,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 896,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 54.456488492880005,
+            "client": {
+              "p50": 212.5982199999853,
+              "p95": 299.43343500001356,
+              "p99": 351.1946660000249
+            },
+            "appP95": 236.442,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 896,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 54.456488492880005,
+            "client": {
+              "p50": 367.0601490000263,
+              "p95": 532.7297619999736,
+              "p99": 659.2067819999647
+            },
+            "appP95": 435.695,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 896,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 54.456488492880005,
+            "client": {
+              "p50": 220.08869999996386,
+              "p95": 339.265832999954,
+              "p99": 433.7636400000192
+            },
+            "appP95": 270.695,
+            "externalHttpP95": 0
+          }
+        },
+        "resources": {
+          "api": {
+            "cpuMeanPercent": 238.70714168410595,
+            "cpuPeakPercent": 261.52262105925774,
+            "rssPeakMiB": 773.9375,
+            "rssFirstMiB": 631.98046875,
+            "rssLastMiB": 624.3046875
+          },
+          "mongo": {
+            "cpuMeanPercent": 108.17286734896435,
+            "cpuPeakPercent": 118.40373615598669,
+            "rssPeakMiB": 589.53515625,
+            "rssFirstMiB": 557.34375,
+            "rssLastMiB": 589.53515625
+          },
+          "redis": {
+            "cpuMeanPercent": 4.599382355765402,
+            "cpuPeakPercent": 5.512376133325127,
+            "rssPeakMiB": 94.7734375,
+            "rssFirstMiB": 80.7734375,
+            "rssLastMiB": 94.7734375
+          },
+          "web": {
+            "cpuMeanPercent": 7.200850525085709,
+            "cpuPeakPercent": 9.956676021122108,
+            "rssPeakMiB": 11.21484375,
+            "rssFirstMiB": 10.41015625,
+            "rssLastMiB": 11.01171875
+          }
+        }
+      },
+      {
+        "name": "soak",
+        "users": 2,
+        "seconds": 120.016233642,
+        "metrics": {
+          "document-open": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997294758965953,
+            "client": {
+              "p50": 8.459365000016987,
+              "p95": 23.00926999998046,
+              "p99": 31.42649199999869
+            },
+            "appP95": 19.55,
+            "externalHttpP95": 0
+          },
+          "home": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997294758965953,
+            "client": {
+              "p50": 16.005946999997832,
+              "p95": 40.674621999962255,
+              "p99": 59.57619300001534
+            },
+            "appP95": 30.983,
+            "externalHttpP95": 0
+          },
+          "journey": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997294758965953,
+            "client": {
+              "p50": 116.3032789999852,
+              "p95": 175.69174499996006,
+              "p99": 197.69545800000196
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "knowledge-list": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997294758965953,
+            "client": {
+              "p50": 13.263424000004306,
+              "p95": 34.72297400003299,
+              "p99": 54.835278999991715
+            },
+            "appP95": 28.674,
+            "externalHttpP95": 0
+          },
+          "write": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997294758965953,
+            "client": {
+              "p50": 45.86814800009597,
+              "p95": 82.22851600003196,
+              "p99": 94.23097799997777
+            },
+            "appP95": 0,
+            "externalHttpP95": 0
+          },
+          "write-create": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997294758965953,
+            "client": {
+              "p50": 10.263143000018317,
+              "p95": 24.951381000049878,
+              "p99": 35.25451900000917
+            },
+            "appP95": 19.004,
+            "externalHttpP95": 0
+          },
+          "write-delete": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997294758965953,
+            "client": {
+              "p50": 20.674731000035536,
+              "p95": 37.2369470000267,
+              "p99": 55.16331100004027
+            },
+            "appP95": 34.771,
+            "externalHttpP95": 0
+          },
+          "write-readback": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997294758965953,
+            "client": {
+              "p50": 8.254048999981023,
+              "p95": 23.348341000033543,
+              "p99": 31.213135999976657
+            },
+            "appP95": 18.974,
+            "externalHttpP95": 0
+          },
+          "write-save": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997294758965953,
+            "client": {
+              "p50": 17.130044000048656,
+              "p95": 40.20029000000795,
+              "p99": 47.86021900002379
+            },
+            "appP95": 35.914,
+            "externalHttpP95": 0
+          },
+          "write-versions": {
+            "attempts": 240,
+            "errors": 0,
+            "errorRate": 0,
+            "throughput": 1.9997294758965953,
+            "client": {
+              "p50": 8.449855999962892,
+              "p95": 15.718070000002626,
+              "p99": 37.80968000006396
+            },
+            "appP95": 13.01,
+            "externalHttpP95": 0
+          }
+        },
+        "resources": {
+          "api": {
+            "cpuMeanPercent": 20.34800012277126,
+            "cpuPeakPercent": 236.48888628378236,
+            "rssPeakMiB": 643.0546875,
+            "rssFirstMiB": 632.0546875,
+            "rssLastMiB": 470.1484375
+          },
+          "mongo": {
+            "cpuMeanPercent": 7.792255638374855,
+            "cpuPeakPercent": 107.94098544073054,
+            "rssPeakMiB": 647.16015625,
+            "rssFirstMiB": 592.78515625,
+            "rssLastMiB": 647.16015625
+          },
+          "redis": {
+            "cpuMeanPercent": 1.2612691063304153,
+            "cpuPeakPercent": 24.756376141577984,
+            "rssPeakMiB": 191.84765625,
+            "rssFirstMiB": 95.2734375,
+            "rssLastMiB": 98.5234375
+          },
+          "web": {
+            "cpuMeanPercent": 0.5640503696413711,
+            "cpuPeakPercent": 4.906408429124115,
+            "rssPeakMiB": 9.31640625,
+            "rssFirstMiB": 9.31640625,
+            "rssLastMiB": 9.1875
+          }
+        }
+      }
+    ]
+  },
+  "injected": {
+    "commit": "3035365def7b30a28309b89a21756717fda846dd",
+    "injectionMs": 350,
+    "browserPassed": true,
+    "failure": null,
+    "comparison": {
+      "pass": false,
+      "failures": [
+        "normal/document-open: client p95 390.90 > 167.75 ms",
+        "normal/document-open: app p95 372.79 > 159.47 ms",
+        "normal/journey: client p95 1251.84 > 372.15 ms",
+        "normal/write: client p95 794.98 > 326.05 ms",
+        "normal/write-readback: client p95 377.51 > 24.76 ms",
+        "normal/write-readback: app p95 369.29 > 21.92 ms",
+        "normal/write-save: client p95 397.05 > 240.44 ms",
+        "normal/write-save: app p95 381.66 > 165.51 ms"
+      ]
+    },
+    "evaluation": {
+      "schema": 1,
+      "evaluatedAt": "2026-11-12T10:16:29.454Z",
+      "policyVersion": 2,
+      "sourceCommit": "3035365def7b30a28309b89a21756717fda846dd",
+      "resultSha256": "d3fb3e3ba4c024822716aa6b977eba6a7853087277359cbae636c46ee3033263",
+      "baselineSha256": "345e0787dc646c4b5701f9e3772575eb16fbf9af18ebe29bf20a027890253279",
+      "originalComparison": {
+        "pass": false,
+        "failures": [
+          "normal/document-open: client p95 390.90 > 167.75 ms",
+          "normal/document-open: app p95 372.79 > 159.47 ms",
+          "normal/journey: client p95 1251.84 > 372.15 ms",
+          "normal/write: client p95 794.98 > 326.05 ms",
+          "normal/write-readback: client p95 377.51 > 22.97 ms",
+          "normal/write-readback: app p95 369.29 > 21.92 ms",
+          "normal/write-save: client p95 397.05 > 240.44 ms",
+          "normal/write-save: app p95 381.66 > 165.51 ms"
+        ]
+      },
+      "comparison": {
+        "pass": false,
+        "failures": [
+          "normal/document-open: client p95 390.90 > 167.75 ms",
+          "normal/document-open: app p95 372.79 > 159.47 ms",
+          "normal/journey: client p95 1251.84 > 372.15 ms",
+          "normal/write: client p95 794.98 > 326.05 ms",
+          "normal/write-readback: client p95 377.51 > 24.76 ms",
+          "normal/write-readback: app p95 369.29 > 21.92 ms",
+          "normal/write-save: client p95 397.05 > 240.44 ms",
+          "normal/write-save: app p95 381.66 > 165.51 ms"
+        ]
+      }
+    },
+    "metrics": {
+      "document-open": {
+        "attempts": 34,
+        "errors": 0,
+        "errorRate": 0,
+        "throughput": 1.6803250436500186,
+        "client": {
+          "p50": 362.0414080000046,
+          "p95": 390.90072099999816,
+          "p99": 395.6591169999883
+        },
+        "appP95": 372.792,
+        "externalHttpP95": 0
+      },
+      "home": {
+        "attempts": 34,
+        "errors": 0,
+        "errorRate": 0,
+        "throughput": 1.6803250436500186,
+        "client": {
+          "p50": 13.699676999996882,
+          "p95": 36.9570570000069,
+          "p99": 43.259267999994336
+        },
+        "appP95": 21.635,
+        "externalHttpP95": 0
+      },
+      "journey": {
+        "attempts": 34,
+        "errors": 0,
+        "errorRate": 0,
+        "throughput": 1.6803250436500186,
+        "client": {
+          "p50": 1185.6861840000056,
+          "p95": 1251.8439170000056,
+          "p99": 1254.4803079999983
+        },
+        "appP95": 0,
+        "externalHttpP95": 0
+      },
+      "knowledge-list": {
+        "attempts": 34,
+        "errors": 0,
+        "errorRate": 0,
+        "throughput": 1.6803250436500186,
+        "client": {
+          "p50": 13.114998999997624,
+          "p95": 16.454452000005404,
+          "p99": 16.516107999996166
+        },
+        "appP95": 13.879,
+        "externalHttpP95": 0
+      },
+      "write": {
+        "attempts": 34,
+        "errors": 0,
+        "errorRate": 0,
+        "throughput": 1.6803250436500186,
+        "client": {
+          "p50": 761.6383879999921,
+          "p95": 794.9755100000039,
+          "p99": 801.7638579999912
+        },
+        "appP95": 0,
+        "externalHttpP95": 0
+      },
+      "write-create": {
+        "attempts": 34,
+        "errors": 0,
+        "errorRate": 0,
+        "throughput": 1.6803250436500186,
+        "client": {
+          "p50": 11.180252999998629,
+          "p95": 21.564391000007163,
+          "p99": 22.24806399999943
+        },
+        "appP95": 14.917,
+        "externalHttpP95": 0
+      },
+      "write-delete": {
+        "attempts": 34,
+        "errors": 0,
+        "errorRate": 0,
+        "throughput": 1.6803250436500186,
+        "client": {
+          "p50": 25.208085000005667,
+          "p95": 47.398973000003025,
+          "p99": 47.61798700000509
+        },
+        "appP95": 37.901,
+        "externalHttpP95": 0
+      },
+      "write-readback": {
+        "attempts": 34,
+        "errors": 0,
+        "errorRate": 0,
+        "throughput": 1.6803250436500186,
+        "client": {
+          "p50": 362.34157499999856,
+          "p95": 377.5125540000008,
+          "p99": 378.524093
+        },
+        "appP95": 369.287,
+        "externalHttpP95": 0
+      },
+      "write-save": {
+        "attempts": 34,
+        "errors": 0,
+        "errorRate": 0,
+        "throughput": 1.6803250436500186,
+        "client": {
+          "p50": 373.63239499999327,
+          "p95": 397.05162300000666,
+          "p99": 398.57207599999674
+        },
+        "appP95": 381.658,
+        "externalHttpP95": 0
+      },
+      "write-versions": {
+        "attempts": 34,
+        "errors": 0,
+        "errorRate": 0,
+        "throughput": 1.6803250436500186,
+        "client": {
+          "p50": 10.351276000001235,
+          "p95": 37.27010899999004,
+          "p99": 38.885011999998824
+        },
+        "appP95": 33.774,
+        "externalHttpP95": 0
+      }
+    }
+  },
+  "sourceArtifacts": {
+    "measured-base-1": {
+      "environmentId": "map-perf-156d3bcf2641",
+      "startedAt": "2026-11-12T10:00:05.705Z",
+      "resultSha256": "cf9b898428c51a852cc8b600e64aaab23f658d800a7c96b787df0c47a2c558ea",
+      "requestsSha256": "1062ba40b047926e612c614f974e3864ed779813950cdfdf04bd0d08363fa8ff"
+    },
+    "measured-base-2": {
+      "environmentId": "map-perf-0b06566ef93b",
+      "startedAt": "2026-11-12T10:01:13.438Z",
+      "resultSha256": "ec2b88d6060185ebf07b57adc996a515db4c40626673cf41009d1cd34dee0690",
+      "requestsSha256": "c16d30589f11d43c7fd6d0727f243e38e4f8c9fa565f89a5eac7e39f4fe3bee3"
+    },
+    "measured-base-3": {
+      "environmentId": "map-perf-20b9db8f6f8c",
+      "startedAt": "2026-11-12T10:02:22.601Z",
+      "resultSha256": "0a9df209b57600afa0a0e006c0bd1821ecdb89519b1712cc139e6d064cf255b0",
+      "requestsSha256": "2b81f131cfe2570045b789ad4173d3a43fa1fd967ec87a57e370b5a7c550afd3"
+    },
+    "candidate": {
+      "environmentId": "map-perf-0b8b9108dc75",
+      "startedAt": "2026-11-12T10:03:42.159Z",
+      "resultSha256": "2da7b4849884e78af113d99be2ee146a07d9b2c0ce8039e8601ede2fc3a06c22",
+      "requestsSha256": "169affc770fbbce3aa94fcba474f59980607ddf7f6e76e0e839875dcbb01fd03"
+    },
+    "injected": {
+      "environmentId": "map-perf-7804604c279c",
+      "startedAt": "2026-11-12T10:13:56.102Z",
+      "resultSha256": "d3fb3e3ba4c024822716aa6b977eba6a7853087277359cbae636c46ee3033263",
+      "requestsSha256": "4f3dc549981130751c2591a53cebe49b8fee518356e757dd7c27944f9f0b64e8"
+    }
+  },
+  "validation": {
+    "metricsAndResourceUnitTests": 8,
+    "serverTimingProbe": "两个并行150ms本地HttpClient调用按并集统计；350ms应用延迟归于app",
+    "apiAndWebReleaseBuild": "实测基准与候选提交均成功；产品源码没有改动",
+    "ci": "Preview Acceptance 已接入相关PR自动正常负载及手动all入口；本任务未创建PR。云端workflow执行状态另据最终交接记录。"
+  },
+  "limits": [
+    "120秒持续运行不足以证明小时级泄漏不存在",
+    "首页完整渲染由浏览器验证；压力覆盖核心聚合接口",
+    "一个本地管理员，非多租户权限分布",
+    "内存为进程RSS之和，含共享页重复计算"
+  ],
+  "defaultAdmissionFailure": {
+    "originalLimit": {
+      "maxRequestsPerMinute": 600,
+      "maxConcurrentRequests": 100
+    },
+    "note": "初轮数据准备与共享账号争抢默认桶；这份历史反例只证明429错误被记录，不用于CPU容量基线。",
+    "examples": [
+      {
+        "name": "write-create",
+        "ms": 8.372580000002927,
+        "ok": false,
+        "status": 429,
+        "app": 6.742,
+        "external": 0,
+        "error": "POST /api/document-store/stores/988bb23af0bb4c9ea36850c26395e889/entries: HTTP 429 RATE_LIMITED",
+        "phase": "normal",
+        "at": "2026-11-12T09:50:49.395Z"
+      },
+      {
+        "name": "home",
+        "ms": 6.432667000000947,
+        "ok": false,
+        "status": 429,
+        "app": 2.903,
+        "external": 0,
+        "error": "GET /api/home/recent-work?limit=24: HTTP 429 RATE_LIMITED",
+        "phase": "normal",
+        "at": "2026-11-12T09:50:49.398Z"
+      },
+      {
+        "name": "home",
+        "ms": 5.649708000004466,
+        "ok": false,
+        "status": 429,
+        "app": 3.543,
+        "external": 0,
+        "error": "GET /api/home/recent-work?limit=24: HTTP 429 RATE_LIMITED",
+        "phase": "normal",
+        "at": "2026-11-12T09:50:50.361Z"
+      }
+    ],
+    "requestsSha256": "411fd32b34f17b18dfcc523f03946ea5d5c9bf596ebc144cbcdb236e5da918fc"
+  }
+}
