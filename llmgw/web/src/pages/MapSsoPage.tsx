@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, LoaderCircle, ShieldCheck } from 'lucide-react';
+import { Activity, ArrowLeft, LoaderCircle } from 'lucide-react';
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
@@ -56,7 +56,7 @@ export function MapSsoPage() {
     <main className="lg-map-sso-page">
       <section className="lg-map-sso-card" aria-labelledby="map-sso-title">
         <span className="lg-map-sso-mark" aria-hidden="true"><Activity size={22} /></span>
-        {error ? <ShieldCheck size={28} aria-hidden="true" /> : <LoaderCircle className="lg-map-sso-spinner" size={28} aria-hidden="true" />}
+        {!error ? <LoaderCircle className="lg-map-sso-spinner" size={28} aria-hidden="true" /> : null}
         <div>
           <p>MAP 与 LLM Gateway</p>
           <h1 id="map-sso-title">{error ? '需要重新发起安全登录' : '正在从 MAP 安全登录'}</h1>
@@ -68,9 +68,7 @@ export function MapSsoPage() {
           <a className="lg-map-sso-return" href={resolveMapHomeHref()}>
             <ArrowLeft size={16} />返回 MAP 重新打开
           </a>
-        ) : (
-          <div className="lg-map-sso-progress" aria-hidden="true"><span /></div>
-        )}
+        ) : null}
       </section>
     </main>
   );
