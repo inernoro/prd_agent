@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { assertConfirmationKeyboard } from './confirmation-focus-smoke.mjs';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
 /** Deterministic UI only: every API is intercepted, no real authorization or account write. */
 export async function verifySettingsManagement(browser, base, out, {baseline=false}={}) {
   await fs.mkdir(out,{recursive:true});
   const context=await browser.newContext({viewport:{width:1440,height:940}});
-  let failMe=false, failTrust=false, failForwarding=false, createRejected=true;
+  let failMe=false, failTrust=false, failForwarding=false, createRejected=true,createGate,releaseCreate;
   const users=[{id:'fixture-owner',username:'fixture-owner',name:'合成所有者',authProvider:'local',isSystemOwner:true,status:'active',createdAt:'2026-11-15',lastLoginAt:null},{id:'fixture-member',username:'fixture-member',name:'合成成员',authProvider:'local',isSystemOwner:false,status:'active',createdAt:'2026-11-15',lastLoginAt:null}];
   const connections=[{id:'fixture-map',name:'合成MAP连接',partnerName:'合成MAP',partnerKind:'map',partnerBaseUrl:'https://map.example.invalid',status:'active',scopes:['bug-report'],createdAt:'2026-11-15'}];
   const writes=[],errors=[],results=[];
@@ -20,6 +21,7 @@ export async function verifySettingsManagement(browser, base, out, {baseline=fal
     if(p==='/api/me')return route.fulfill(failMe?{status:500,json:{error:'合成身份读取失败'}}:{json:{user:users[0]}});
     if(p==='/api/auth/users'&&method==='GET')return route.fulfill({json:{users}});
     if(p==='/api/auth/users'&&method==='POST'){
+      if(createGate)await createGate;
       if(createRejected)return route.fulfill({status:400,json:{error:'合成用户名已被使用'}});
       const input=request.postDataJSON(),user={...users[1],id:'fixture-created',username:input.username,name:input.name};users.push(user);return route.fulfill({json:{user}});
     }
@@ -30,9 +32,9 @@ export async function verifySettingsManagement(browser, base, out, {baseline=fal
   });
   const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
   async function open(tab){await page.goto(`${base}/cds-settings#${tab}`);await page.locator('[role="tabpanel"][data-state="active"]').waitFor();}
-  async function point(text){return page.getByText(text,{exact:true}).first().evaluate(e=>{const r=e.getBoundingClientRect();return {top:r.top,height:r.height,viewport:innerHeight};});}
+  async function point(text){return page.getByText(text,{exact:true}).filter({visible:true}).first().evaluate(e=>{const r=e.getBoundingClientRect();return {top:r.top,height:r.height,viewport:innerHeight};});}
   try{
-    await open('users');await page.getByText('fixture-member',{exact:true}).waitFor();
+    await open('users');await page.getByText('fixture-member',{exact:true}).filter({visible:true}).waitFor();
     results.push({case:'existing-users-first',firstData:await point('fixture-member')});
     await page.screenshot({path:path.join(out,'users-desktop.png')});
     if(!baseline){
@@ -44,37 +46,81 @@ export async function verifySettingsManagement(browser, base, out, {baseline=fal
       await dialog.getByRole('button',{name:'创建账号',exact:true}).click();
       await dialog.getByText(/合成用户名已被使用/).waitFor();
       assert.equal(await dialog.getByRole('textbox',{name:'用户名',exact:true}).inputValue(),'fixture-created');
-      createRejected=false;await dialog.getByRole('button',{name:'创建账号',exact:true}).click();
-      await dialog.waitFor({state:'hidden'});await page.getByText('fixture-created',{exact:true}).waitFor();
+      createRejected=false;createGate=new Promise(resolve=>releaseCreate=resolve);
+      await dialog.getByRole('button',{name:'创建账号',exact:true}).click();
+      assert(await dialog.getByRole('textbox',{name:'用户名',exact:true}).isDisabled());assert(await dialog.getByLabel('初始密码（至少8位）',{exact:true}).isDisabled());
+      releaseCreate();createGate=null;results.push({case:'slow-create-protects-submitted-input',pass:true});
+      await dialog.waitFor({state:'hidden'});await page.getByText('fixture-created',{exact:true}).filter({visible:true}).waitFor();
       assert.equal(await page.getByRole('tab',{name:'用户管理',exact:true}).getAttribute('data-state'),'active');
       results.push({case:'create-on-demand-reject-retains-draft-success-returns-list',pass:true});
       failMe=true;await page.reload();
       await page.getByText(/当前身份读取失败/).waitFor();
       assert.equal(await page.getByText(/当前账号通过外部身份提供方登录/).count(),0);
-      failMe=false;await page.getByRole('button',{name:'重试读取身份',exact:true}).click();await page.getByText('fixture-member',{exact:true}).waitFor();
+      failMe=false;await page.getByRole('button',{name:'重试读取身份',exact:true}).click();await page.getByText('fixture-member',{exact:true}).filter({visible:true}).waitFor();
       results.push({case:'unknown-identity-never-becomes-external-account',pass:true});
       for(const theme of ['dark','light']){
         await page.setViewportSize({width:390,height:940});await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;document.documentElement.classList.toggle('dark',theme==='dark');},theme);
+        const member=page.locator('[data-user-card="fixture-member"]');await member.waitFor();
+        for(const label of ['项目授权','重置密码','禁用']){const box=await member.getByRole('button',{name:label,exact:true}).boundingBox();assert(box.x>=0&&box.x+box.width<=390&&box.height>=40,`成员动作${label}未达到可见热区`);}
+        if(theme==='dark')await assertConfirmationKeyboard(page,member.getByRole('button',{name:'禁用',exact:true}),/fixture-member/);
+        const active=page.getByRole('tab',{name:'用户管理',exact:true});await page.waitForFunction(()=>{const e=[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.trim()==='用户管理');if(!e)return false;const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;});
         await page.screenshot({path:path.join(out,`users-${theme}-390.png`)});
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-        await page.getByRole('button',{name:'创建账号',exact:true}).click();await page.getByRole('dialog').waitFor();await page.screenshot({path:path.join(out,`users-create-${theme}-390.png`)});await page.keyboard.press('Escape');
+        await page.getByRole('button',{name:'创建账号',exact:true}).click();await page.getByRole('dialog').waitFor();
+        const dialog=page.getByRole('dialog');
+        await dialog.evaluate(async element=>{
+          let previous='',stable=0;
+          for(let frame=0;frame<180;frame++){
+            await new Promise(resolve=>requestAnimationFrame(resolve));
+            const r=element.getBoundingClientRect(),box=[r.left,r.top,r.right,r.bottom].join(':');
+            stable=box===previous&&getComputedStyle(element).opacity==='1'&&r.left>=0&&r.right<=innerWidth?stable+1:0;previous=box;
+            if(stable>=4)return;
+          }
+          throw Error('Dialog did not settle within the viewport');
+        });
+        const bounds=await dialog.boundingBox();assert(bounds.x>=0&&bounds.x+bounds.width<=390,`dialog ${theme} overflow ${JSON.stringify(bounds)}`);
+        assert(await dialog.getByRole('heading',{name:'创建本地账号'}).isVisible());
+        assert(await dialog.getByRole('button',{name:'创建账号',exact:true}).isVisible());assert(await dialog.getByRole('button',{name:'关闭',exact:true}).isVisible());
+        for(let tab=0;tab<8;tab++){await page.keyboard.press('Tab');assert(await dialog.evaluate(element=>element.contains(document.activeElement)),'Dialog focus left to background');}
+        await page.screenshot({path:path.join(out,`users-create-${theme}-390.png`)});await page.keyboard.press('Escape');await dialog.waitFor({state:'detached'});
+        results.push({case:`stable-create-dialog-${theme}-390-bounds-focus`,pass:true,bounds});
       }
     }
     await page.setViewportSize({width:1440,height:940});
-    await open('connections');await page.getByText('合成MAP连接',{exact:true}).waitFor();
+    await open('connections');await page.getByText('合成MAP连接',{exact:true}).filter({visible:true}).waitFor();
     results.push({case:'authorized-connection-records-first',firstData:await point('合成MAP连接')});
     await page.screenshot({path:path.join(out,'connections-desktop.png')});
     if(!baseline){
+      const first={...connections[0]};connections.splice(0,connections.length,...Array.from({length:9},(_,i)=>({...first,id:`fixture-map-${i}`,name:`合成连接 ${i}：长期使用的跨项目自动化与缺陷转发连接`,partnerBaseUrl:`https://map.example.invalid/very-long-path/${'fixture-'.repeat(8)}${i}`,scopes:['bug-report','project:configuration:read','long-scope:permission:description']})));
+      await page.reload();await page.getByText('合成连接 8：长期使用的跨项目自动化与缺陷转发连接',{exact:true}).filter({visible:true}).waitFor();
+      const verify=page.getByRole('button',{name:'验证缺陷转发',exact:true});const verifyBounds=await verify.boundingBox();assert(verifyBounds.y>=0&&verifyBounds.y+verifyBounds.height<=940);
+      assert.equal(await page.getByText('长期有效',{exact:true}).first().evaluate(e=>getComputedStyle(e).whiteSpace),'nowrap');
+      await page.screenshot({path:path.join(out,'connections-many-desktop.png')});
+      await page.setViewportSize({width:390,height:940});
+      const firstCard=page.locator('[data-connection-card="fixture-map-0"]');await firstCard.waitFor();
+      const revoke=firstCard.getByRole('button',{name:'撤销连接 fixture-map-0',exact:true}),remove=firstCard.getByRole('button',{name:'删除连接 fixture-map-0',exact:true});
+      for(const button of [revoke,remove]){const box=await button.boundingBox();assert(box.x>=0&&box.x+box.width<=390&&box.height>=40,'核心连接操作缺少可见热区');}
+      await firstCard.getByText('完整连接地址',{exact:true}).click();await firstCard.locator('details code').waitFor();
+      assert((await firstCard.locator('details code').innerText()).includes('very-long-path'));
+      await firstCard.getByText('完整连接地址',{exact:true}).click();
+      await page.getByRole('textbox',{name:'搜索连接',exact:true}).fill('合成连接 8');
+      const target=page.locator('[data-connection-card="fixture-map-8"]');await target.waitFor();assert.equal(await page.locator('[data-connection-card]').count(),1);
+      const targetAction=target.getByRole('button',{name:'撤销连接 fixture-map-8',exact:true});const actionBox=await targetAction.boundingBox();assert(actionBox.x>=0&&actionBox.x+actionBox.width<=390);
+      await assertConfirmationKeyboard(page,targetAction,/fixture-map-8/);
+      await page.getByRole('textbox',{name:'搜索连接',exact:true}).fill('');
+      await page.screenshot({path:path.join(out,'connections-many-390.png')});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert(await verify.isVisible());
+      results.push({case:'mobile-object-actions-address-and-search-stay-reachable',pass:true,actionBox});
+      await page.setViewportSize({width:1440,height:940});results.push({case:'long-nine-connections-keep-verification-visible-and-badges-unwrapped',pass:true,verifyBounds});
       failTrust=true;await page.reload();await page.getByText('MAP 授权状态未确认',{exact:true}).waitFor();
-      assert.equal(await page.getByText('未确认',{exact:true}).count(),1);
       await page.getByText('已授权',{exact:true}).waitFor();
-      failTrust=false;await page.getByRole('button',{name:'重新读取状态',exact:true}).click();await page.getByText('合成MAP连接',{exact:true}).waitFor();
+      assert.equal(await page.getByText('未确认',{exact:true}).count(),1);
+      failTrust=false;await page.getByRole('button',{name:'重新读取状态',exact:true}).click();await page.getByText('合成连接 0：长期使用的跨项目自动化与缺陷转发连接',{exact:true}).filter({visible:true}).waitFor();
       failForwarding=true;await page.reload();await page.getByText('MAP 授权状态未确认',{exact:true}).waitFor();
-      assert.equal(await page.getByText('未确认',{exact:true}).count(),1);await page.getByText('已授权',{exact:true}).waitFor();
+      await page.getByText('已授权',{exact:true}).waitFor();assert.equal(await page.getByText('未确认',{exact:true}).count(),1);
       results.push({case:'independent-permission-state-failure-stays-unknown',pass:true});
     }
     assert.deepEqual(errors,[]);
     await fs.writeFile(path.join(out,'results.json'),JSON.stringify({provenance:'deterministic-fixture',baseline,results,writes,errors},null,2));
     return results;
-  }catch(error){await page.screenshot({path:path.join(out,'failure.png')});await fs.writeFile(path.join(out,'failure.txt'),`${error.stack}\n${errors.join('\n')}\n${await page.locator('body').innerText()}`);throw error;}finally{await context.close();}
+  }catch(error){await page.screenshot({path:path.join(out,'failure.png')});await fs.writeFile(path.join(out,'failure.txt'),`${error.stack}\n${errors.join('\n')}\n${await page.locator('body').innerText()}`);throw error;}finally{releaseCreate?.();await context.close();}
 }
