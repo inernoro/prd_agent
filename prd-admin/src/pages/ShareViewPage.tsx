@@ -1,3 +1,5 @@
+import { HostedCollectionEditor } from '@/components/web-hosting/HostedCollectionManager';
+import HostedShareCollection from '@/components/web-hosting/HostedShareCollection';
 import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
 import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpener';
@@ -5,14 +7,14 @@ import type { RelatedDocument } from '@/services/real/relatedDocuments';
 import { Dialog } from '@/components/ui/Dialog';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from '@/components/web-hosting/useHostedPdfDownload';
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
 import { listShareComments, getShareSiteContent, downloadShareOfflineHtml, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
-import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, FileDown, Check, LogIn, X, Maximize, Minimize } from 'lucide-react';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { Lock, ExternalLink, Eye, EyeOff, AlertCircle, ShieldCheck, Download, FileDown, Check, LogIn, X, Maximize, Minimize } from 'lucide-react';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
 import { SHARE_FAILURE_REGISTRY, resolveShareFailure } from '@/components/web-hosting/shareFailure';
@@ -101,12 +103,6 @@ function SlideKeyboardInvite({ yield: stepAside }: { yield?: boolean }) {
   );
 }
 
-function fmtSize(b: number) {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 /**
  * 等正文最多等多久，到点就转直链。
  *
@@ -180,7 +176,12 @@ interface ShareViewPageProps {
   onNavigateRelated?: (item: RelatedDocument) => void;
 }
 
-export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordOverride, embedded = false, onNavigateRelated }: ShareViewPageProps = {}) {
+export default function ShareViewPage(props: ShareViewPageProps = {}) {
+  const { token } = useParams<{ token: string }>();
+  return <ShareViewContent key={props.tokenOverride ?? token} {...props} />;
+}
+
+function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, embedded = false, onNavigateRelated }: ShareViewPageProps) {
   const params = useParams<{ token: string }>();
   const token = tokenOverride ?? params.token;
   const navigate = useNavigate();
@@ -188,8 +189,13 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
   const currentUserId = useAuthStore(s => s.user?.userId);
   const isMobile = useIsMobile();
-  const [data, setData] = useState<ShareViewData | null>(null);
+  const [fullData, setData] = useState<ShareViewData | null>(null);
+  const [collectionManagerOpen, setCollectionManagerOpen] = useState(false);
+  const [collectionShareFirst, setCollectionShareFirst] = useState(false);
   const requestedRelatedSiteId = siteIdOverride ?? searchParams.get('siteId');
+  const selectedSite = fullData?.sites.find(item => item.id === requestedRelatedSiteId);
+  const data = useMemo(() => fullData && requestedRelatedSiteId ? selectedSite ? { ...fullData, sites: [selectedSite] } : null : fullData, [fullData, requestedRelatedSiteId, selectedSite]);
+  const readsSingleSite = data?.sites.length === 1 && (embedded || !!requestedRelatedSiteId || data.shareType !== 'collection');
   const [relatedAccountSite, setRelatedAccountSite] = useState<HostedSite | null>(null);
   const [relatedSharedSite, setRelatedSharedSite] = useState<RelatedDocument | null>(null);
   const [relatedOpenError, setRelatedOpenError] = useState('');
@@ -200,11 +206,12 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
       relatedPreview.cancel(); setRelatedAccountSite(null); setRelatedSharedSite(item);
     } else void relatedPreview.open(item.id);
   });
-  const openedSiteId = data?.sites.length === 1 ? data.sites[0].id : undefined;
+  const openedSiteId = readsSingleSite ? data!.sites[0].id : undefined;
   useEffect(() => {
     if (isAuthenticated && currentUserId && openedSiteId) void recordSiteView(openedSiteId);
   }, [isAuthenticated, currentUserId, openedSiteId]);
-  const [error, setError] = useState<{ code: string; message: string } | null>(null);
+  const [loadError, setError] = useState<{ code: string; message: string } | null>(null);
+  const error = loadError ?? (fullData && requestedRelatedSiteId && !selectedSite ? { code: 'NOT_FOUND', message: '文档不存在或无权访问' } : null);
   const [loading, setLoading] = useState(true);
   const [needPassword, setNeedPassword] = useState(false);
   const [password, setPassword] = useState(passwordOverride ?? '');
@@ -303,8 +310,8 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
     } : current);
   }, []);
 
-  const review = useHostedReview(reviewFrameRef, data?.sites.length === 1 ? data.sites[0] : null,
-    token && data?.sites.length === 1 && !data.sites[0].wrappedAssetType ? { mode: 'share', token, siteId: data.sites[0].id, password: password || undefined } : null,
+  const review = useHostedReview(reviewFrameRef, readsSingleSite ? data!.sites[0] : null,
+    token && readsSingleSite && !data!.sites[0].wrappedAssetType ? { mode: 'share', token, siteId: data.sites[0].id, password: password || undefined } : null,
     () => setShowComments(true), handleOwnerSitePublished);
   const pdfDownload = useHostedPdfDownload(review.historical || data?.sites.length !== 1 ? null : { ...data.sites[0], ...review.liveSite },
     token ? { token, password: password || undefined } : undefined, reviewFrameRef);
@@ -331,13 +338,14 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   const reviewLiveUrl = review.liveSite?.siteUrl;
   const reviewEntryFile = review.liveSite?.entryFile;
   const reviewShape = review.liveSite?.contentShape;
+  const reviewMetadataSiteId = review.selected?.siteId;
   useEffect(() => {
-    if (!reviewLiveUrl || !reviewEntryFile) return;
+    if (!openedSiteId || reviewMetadataSiteId !== openedSiteId || !reviewLiveUrl || !reviewEntryFile) return;
     setData(current => {
-      if (!current || current.sites.length !== 1 || current.sites[0].siteUrl === reviewLiveUrl) return current;
-      return { ...current, sites: [{ ...current.sites[0], siteUrl: reviewLiveUrl, entryFile: reviewEntryFile, contentShape: reviewShape }] };
+      if (!current || !openedSiteId || current.sites.find(item => item.id === openedSiteId)?.siteUrl === reviewLiveUrl) return current;
+      return { ...current, sites: current.sites.map(item => item.id === openedSiteId ? { ...item, siteUrl: reviewLiveUrl, entryFile: reviewEntryFile, contentShape: reviewShape } : item) };
     });
-  }, [reviewLiveUrl, reviewEntryFile, reviewShape]);
+  }, [reviewLiveUrl, reviewEntryFile, reviewShape, openedSiteId, reviewMetadataSiteId]);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -371,7 +379,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
    * 落盘仍走同源 Blob（saveBlobAsFile），不给托管直链挂 a[download]。
    */
   const handleDownloadSource = useCallback(async () => {
-    if (!token || !data || data.sites.length !== 1) return;
+    if (!token || !data || !readsSingleSite) return;
     const site = data.sites[0];
     const plan = planSourceDownload(site);
 
@@ -398,25 +406,21 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
       return;
     }
     setDownloadNote({ text: describeOfflineExportResult(outcome.summary).text, tone: 'info' });
-  }, [token, data, password, runOfflineExport]);
+  }, [token, data, password, runOfflineExport, readsSingleSite]);
 
+  const shareRequest = useRef(0);
   const fetchShare = async (pwd?: string) => {
     if (!token) return;
-    setLoading(true);
+    const request = ++shareRequest.current;
+    if (!fullData) setLoading(true);
     setError(null);
     setWrongPassword(false);
     setRateLimitedHint(null);
     const res = await viewSiteShare(token, pwd?.trim());
+    if (request !== shareRequest.current) return;
     setLoading(false);
     if (res.success) {
-      const selectedId = requestedRelatedSiteId;
-      const selected = selectedId ? res.data.sites.find(item => item.id === selectedId) : undefined;
-      if (selectedId && !selected) {
-        setData(null);
-        setError({ code: 'NOT_FOUND', message: '文档不存在或无权访问' });
-        return;
-      }
-      setData(selected ? { ...res.data, sites: [selected] } : res.data);
+      setData(res.data);
       setNeedPassword(false);
     } else if (res.error?.code === 'UNAUTHORIZED') {
       setNeedPassword(true);
@@ -476,13 +480,13 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
 
   // 顶栏「评论 N」初始计数：单站点分享 + token 就绪后拉一次（抽屉打开后由 onCountChange 接管）
   useEffect(() => {
-    if (!token || !data || data.sites.length !== 1) return;
+    if (!token || !data || !readsSingleSite) return;
     let alive = true;
     listShareComments(token, password || undefined, data.sites[0].id)
       .then((res) => { if (alive && res.success && res.data) setCommentCount(res.data.comments.filter(c => !c.parentId).length); })
       .catch(() => {});
     return () => { alive = false; };
-  }, [token, password, data]);
+  }, [token, password, data, readsSingleSite]);
 
   // 取回入口 HTML 走**服务端同源代理**（getShareSiteContent），不是浏览器直接 fetch(site.siteUrl)。
   // 托管内容在独立域名且不返回 Access-Control-Allow-Origin，浏览器侧跨域 fetch 一律被拦，
@@ -490,7 +494,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   // 这就是「三个网页无法预览」的根因之一。改回浏览器 fetch 会让这条兜底再次变成死代码，
   // 守卫见 ShareViewPage.preview.test.ts。
   useEffect(() => {
-    const site = data?.sites.length === 1 ? data.sites[0] : null;
+    const site = readsSingleSite ? data!.sites[0] : null;
     if (!site || !token || !shouldFetchPreviewHtml(site)) {
       // 多文件网站和包装资产站（PDF/视频）走真实地址——直接落到 settled，
       // 让 resolvePreviewSource 立刻给 direct，不要让这类站点白等一个超时窗口。
@@ -565,7 +569,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
       });
 
     return () => { alive = false; window.clearTimeout(fallbackTimer); };
-  }, [data, token, password]);
+  }, [data, token, password, readsSingleSite]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -578,7 +582,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   // ── Loading ── (纯黑背景，无动画，避免闪烁)
   if (loading) {
     return (
-      <div style={{ ...styles.fullScreen, background: '#0a0a0a' }} />
+      <div style={{ ...styles.fullScreen, background: '#0a0a0a' }}><MapSectionLoader text="正在读取分享文档…" /></div>
     );
   }
 
@@ -838,6 +842,27 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   if (!data) return null;
 
   const isOwner = isAuthenticated && currentUserId && data.createdBy === currentUserId;
+  const openCollectionManager = (sharing = false) => {
+    if (data.documentCollectionId) {
+      navigate(`/web-pages/collections/${encodeURIComponent(data.documentCollectionId)}${sharing ? '/share' : ''}`);
+      return;
+    }
+    setCollectionShareFirst(sharing); setCollectionManagerOpen(true);
+  };
+
+  if (!embedded && data.shareType === 'collection' && !requestedRelatedSiteId) {
+  // Keep the original share token: member pages use the same authorization scope.
+  return <HostedShareCollection data={data} collectionPath={`/s/wp/${encodeURIComponent(token!)}`}
+    selectedSiteId={requestedRelatedSiteId} onSelect={id => navigate(id ? `/s/wp/${encodeURIComponent(token!)}?${new URLSearchParams({ siteId: id })}` : `/s/wp/${encodeURIComponent(token!)}`)}
+    action={isOwner ? <><button className="hosted-share-save" onClick={() => openCollectionManager(true)}>分享</button><button className="hosted-share-save" onClick={() => openCollectionManager()}>管理合集</button>
+      {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}</> : <button className="hosted-share-save" onClick={handleSave} disabled={saving || saveStatus !== 'idle'}>
+      {saving ? <><MapSpinner size={13} />保存中...</>
+        : saveStatus === 'saved' ? <><Check size={13} />已保存</>
+        : saveStatus === 'already' ? <><Check size={13} />你已经保存过了</>
+        : !isAuthenticated ? <><LogIn size={13} />登录并保存</>
+        : <><Download size={13} />保存到我的托管</>}
+    </button>} />;
+  }
 
   // Single site -> directly embed in iframe
   if (data.sites.length === 1) {
@@ -926,6 +951,9 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
             </div>
             {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
+              {!embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>返回合集</a>}
+              {!embedded && isOwner && data.shareType === 'collection' && <button className="share-topbar-btn" onClick={() => openCollectionManager()}>管理合集</button>}
+              {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}
               <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" source={{ token, password: password || undefined }}
                 onNavigate={openRelatedDocument} />
               {relatedAccountSite && <SitePreviewModal key={relatedAccountSite.id} site={relatedAccountSite}
@@ -960,9 +988,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
                 if (!token) return;
                 const result = await viewSiteShare(token, password || undefined);
                 if (!result.success) throw new Error('refresh failed');
-                const selectedId = requestedRelatedSiteId;
-                const selected = selectedId ? result.data.sites.find(item => item.id === selectedId) : undefined;
-                setData(selected ? { ...result.data, sites: [selected] } : result.data);
+                setData(result.data);
               }} />
               {/* 下载源文件：登录用户可见。
                   为什么要有：拿到一个分享链接之后，想把这份 HTML 本身要回来（换个人发、
@@ -1019,7 +1045,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
                 <a
                   role="menuitem"
                   className="share-topbar-btn"
-                  href={site.pdfAssetUrl || site.siteUrl || undefined}
+                  href={review.historical ? site.pdfAssetUrl || site.siteUrl || undefined : `/s/wp/${encodeURIComponent(token!)}?${new URLSearchParams({ siteId: site.id })}`}
                   aria-disabled={!site.pdfAssetUrl && !site.siteUrl}
                   tabIndex={!site.pdfAssetUrl && !site.siteUrl ? -1 : undefined}
                   onClick={event => { if (!site.pdfAssetUrl && !site.siteUrl) event.preventDefault(); }}
@@ -1240,112 +1266,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
     );
   }
 
-  // Collection -> list cards
-  return (
-    <div style={{ ...styles.fullScreen, alignItems: 'flex-start', paddingTop: 60 }}>
-      <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}><BlackHoleVortex /></div>
-      <div style={styles.overlay} />
-      <div style={{ maxWidth: 720, width: '100%', padding: '20px 16px', position: 'relative', zIndex: 1 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Unlock size={18} color="rgba(34, 197, 94, 0.8)" />
-            {/* 不再展示「{用户} 分享的」前缀，直接显示合集标题 */}
-            <h1 style={{ color: '#fff', fontSize: 22, margin: 0, fontWeight: 600 }}>
-              {data.title || `${data.sites.length} 个站点合集`}
-            </h1>
-          </div>
-          {!isOwner && (
-            <button
-              onClick={handleSave}
-              disabled={saving || saveStatus !== 'idle'}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
-                padding: '6px 14px', borderRadius: 8, border: 'none',
-                fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
-                background: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
-                  : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
-                  : 'rgba(59, 130, 246, 0.15)',
-                color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
-                  : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.9)'
-                  : 'rgba(59, 130, 246, 0.9)',
-                backdropFilter: 'blur(8px)',
-                WebkitBackdropFilter: 'blur(8px)',
-                transition: 'all 0.2s',
-              }}
-            >
-              {saving ? (
-                <><div style={{ ...styles.miniSpinner }} /> 保存中...</>
-              ) : saveStatus === 'saved' ? (
-                <><Check size={13} /> 已保存</>
-              ) : saveStatus === 'already' ? (
-                <><Check size={13} /> 你已经保存过了</>
-              ) : !isAuthenticated ? (
-                <><LogIn size={13} /> 登录并保存</>
-              ) : (
-                <><Download size={13} /> 保存到我的托管</>
-              )}
-            </button>
-          )}
-        </div>
-        {data.description && <p style={{ color: 'rgba(255,255,255,0.5)', margin: '0 0 16px', fontSize: 14 }}>{data.description}</p>}
-        <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, margin: '0 0 20px' }}>{data.sites.length} 个站点</p>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {data.sites.map(site => (
-            <a
-              key={site.id}
-              href={site.siteUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 14,
-                padding: 16,
-                borderRadius: 14,
-                background: 'var(--nested-block-bg)',
-                border: '1px solid var(--border-subtle)',
-                textDecoration: 'none',
-                backdropFilter: 'blur(24px)',
-                WebkitBackdropFilter: 'blur(24px)',
-                transition: 'border-color 0.2s, background 0.2s',
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)';
-                e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
-                e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
-              }}
-            >
-              {site.coverImageUrl ? (
-                <img src={site.coverImageUrl} alt="" style={{ width: 56, height: 42, objectFit: 'cover', borderRadius: 8 }} />
-              ) : (
-                <div style={{ width: 56, height: 42, borderRadius: 8, background: 'var(--nested-block-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <FileCode2 size={20} color="rgba(255,255,255,0.3)" />
-                </div>
-              )}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ color: '#fff', fontSize: 15, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {site.title}
-                </div>
-                {site.description && (
-                  <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {site.description}
-                  </div>
-                )}
-                <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, marginTop: 4 }}>
-                  {site.fileCount} 个文件 · {fmtSize(site.totalSize)}
-                </div>
-              </div>
-              <ExternalLink size={14} color="rgba(255,255,255,0.3)" />
-            </a>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+  return null;
 }
 
 const styles: Record<string, React.CSSProperties> = {

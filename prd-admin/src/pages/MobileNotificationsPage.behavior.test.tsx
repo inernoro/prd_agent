@@ -31,6 +31,17 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
 describe('通知动作与事实真实组件交互', () => {
+  it('历史故障未记录发生时间时仍显示通知记录时间，不把记录时刻当作故障发生或恢复', async () => {
+    const recordedAt = '2026-11-12T10:17:56Z';
+    api.list.mockResolvedValue({ success: true, data: { items: [{ ...notice, title: '历史额度异常', message: '历史通知记录了服务额度异常。', requestOutcome: 'unknown', incidentId: undefined, incidentState: 'unknown', occurrenceCount: undefined, firstOccurredAt: undefined, lastOccurredAt: undefined, recoveredAt: undefined, createdAt: recordedAt }] } });
+    await render();
+    expect(host.textContent).toContain('故障发生时间未记录；通知记录于');
+    const time = host.querySelector('time');
+    expect(time?.dateTime).toBe(recordedAt);
+    expect(time?.textContent).toContain('2026');
+    expect(host.textContent).not.toContain('已有恢复证据');
+  });
+
   it('进入正确对象只导航，不确认通知或改变故障', async () => {
     await render();
     const title = [...host.querySelectorAll('div')].find(item => item.textContent === notice.title)!;
