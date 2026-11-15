@@ -95,7 +95,7 @@ function getMemberPriority(status?: string): number {
 type ViewMode = 'report_list' | 'ai_summary' | 'issues';
 
 export function TeamDashboard() {
-  const { teams, loadTeams } = useReportAgentStore();
+  const { teams, teamsLoaded, loadTeams } = useReportAgentStore();
   const userId = useAuthStore((s) => s.user?.userId);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -104,7 +104,6 @@ export function TeamDashboard() {
   const statusConfig = useMemo(() => buildStatusConfig(isLight), [isLight]);
 
   const now = useMemo(() => getISOWeek(new Date()), []);
-  const teamScope: 'managed' | 'joined' = searchParams.get('scope') === 'joined' ? 'joined' : 'managed';
   const selectedTeamId = searchParams.get('teamId') ?? '';
   const weekYear = (() => {
     const v = Number.parseInt(searchParams.get('weekYear') ?? '', 10);
@@ -232,6 +231,12 @@ export function TeamDashboard() {
     [teams, userId]
   );
 
+  // 通知目标优先按当前用户的真实团队关系定位，不能被默认管理视图替换。
+  const requestedManaged = managedTeams.some((team) => team.id === selectedTeamId);
+  const requestedJoined = joinedTeams.some((team) => team.id === selectedTeamId);
+  const teamScope: 'managed' | 'joined' = requestedManaged !== requestedJoined
+    ? (requestedJoined ? 'joined' : 'managed')
+    : (searchParams.get('scope') === 'joined' ? 'joined' : 'managed');
   const scopedTeams = teamScope === 'managed' ? managedTeams : joinedTeams;
   const selectedTeam = useMemo(() => teams.find((team) => team.id === selectedTeamId) ?? null, [teams, selectedTeamId]);
   const hasScopedTeams = scopedTeams.length > 0;
@@ -241,7 +246,8 @@ export function TeamDashboard() {
   const canAccessTeamAiSummary = teamScope === 'managed' && !!reportsView?.canGenerateSummary;
 
   const loadReportsView = useCallback(async () => {
-    if (!selectedTeamId) {
+    if (!teamsLoaded || !selectedTeam) {
+      setReportsLoading(false);
       setReportsView(null);
       return;
     }
@@ -257,7 +263,7 @@ export function TeamDashboard() {
       if (res.error?.message) toast.error(res.error.message);
     }
     setReportsLoading(false);
-  }, [selectedTeamId, weekYear, weekNumber]);
+  }, [teamsLoaded, selectedTeam, selectedTeamId, weekYear, weekNumber]);
 
   // 切换团队时清空 per-week 缓存
   useEffect(() => {
@@ -344,8 +350,14 @@ export function TeamDashboard() {
   }, [loadReportsView, loadSummaryView, viewMode]);
 
   useEffect(() => {
+    if (!teamsLoaded) return;
+    if (selectedTeamId && !selectedTeam) {
+      setReportsView(null);
+      setSummaryView(null);
+      closeMemberDrawer(true);
+      return;
+    }
     if (!hasScopedTeams) {
-      if (selectedTeamId) setSelectedTeamId('');
       setReportsView(null);
       setSummaryView(null);
       closeMemberDrawer(true);
@@ -354,7 +366,7 @@ export function TeamDashboard() {
     if (!scopedTeams.some((team) => team.id === selectedTeamId)) {
       setSelectedTeamId(scopedTeams[0].id);
     }
-  }, [closeMemberDrawer, hasScopedTeams, scopedTeams, selectedTeamId, setSelectedTeamId]);
+  }, [closeMemberDrawer, teamsLoaded, selectedTeam, hasScopedTeams, scopedTeams, selectedTeamId, setSelectedTeamId]);
 
   useEffect(() => {
     setViewMode('report_list');
@@ -603,6 +615,18 @@ export function TeamDashboard() {
     });
     navigate(`/report-agent/report/${reportId}?${params.toString()}`);
   };
+
+  if (teamsLoaded && selectedTeamId && !selectedTeam) {
+    return (
+      <GlassCard className="p-4">
+        <p>该团队不可用或你没有查看权限，请刷新团队列表后重试。</p>
+        <div className="mt-3 flex gap-2">
+          <Button variant="secondary" onClick={() => void loadTeams()}>刷新团队列表</Button>
+          <Button variant="secondary" onClick={() => setSelectedTeamId('')}>返回团队列表</Button>
+        </div>
+      </GlassCard>
+    );
+  }
 
   return (
     // 手机端上下堆叠（周导航收成紧凑卡在顶部），lg 起恢复左右双栏——
