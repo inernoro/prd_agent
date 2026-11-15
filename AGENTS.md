@@ -48,9 +48,12 @@ cd prd-video && pnpm start   # Remotion 4.0
 cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
 ```
 
-### 3. 任务完成交接
+### 3. 项目执行原则与交接
 
-涉及 3+ 文件 / API 端点 / UI 页面变更时，**必须主动**用 `task-handoff-checklist` 技能生成交接清单。1-2 个文件的小修改无需生成。
+- **一次做好，少让用户操心**：先核实目标与问题、确定验证方法，再统筹实现、回归和交付；已授权且可自行判断的事项不逐步请示，不用口头“完成”代替结果。
+- **未完成就持续推进，只因真实阻塞停下**：正常等待、可自行修复的失败不算阻塞；缺授权、凭据或外部资源、用户预算已尽，或安全/范围熔断需要决策时，一次说明证据、最小所需输入与续接动作，并继续不依赖阻塞的工作；用户暂停或取消立即遵从。
+- **做完回看，清场再走**：交付前亲自检查最终产物和真实用户路径、核对证据与遗留项，按归属安全清理本任务临时资源；保留用户改动、共享资源和必要诊断证据，不把自测甩给用户，不把未验证写成完成。
+- **交接**：涉及 3+ 文件 / API 端点 / UI 页面变更时，必须主动用 `task-handoff-checklist` 生成交接清单；1-2 个文件的小修改可简要交付。PR 收尾与评审修复使用 [game-over](.claude/skills/game-over/SKILL.md)。
 
 ### 4. 更新记录：只写碎片，禁止编辑 CHANGELOG.md
 
@@ -71,11 +74,6 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 ### 5. 提交与 PR 工作流
 
 **5.1 Commit message 必须中文**（标题 + 正文）。允许保留英文技术术语（API/SSE/createPortal）和 Conventional Commits 前缀。类型枚举同规则 #4，另加 `build` `release`。
-
-```
-正确：fix(prd-admin): 修复周报弹窗样式错乱
-错误：fix: resolve modal styling issue
-```
 
 **5.2 校验全绿才准 push**，任意一项失败都不得推送：
 
