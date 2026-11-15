@@ -6,9 +6,9 @@ import { notificationBatchConfirmation } from '@/lib/notificationPresentation';
 import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
 import { toast } from '@/lib/toast';
 
-type Options = { refresh: () => Promise<void>; resolveGatewayHref?: (returnTo?: string) => Promise<string | null> };
+type Options = { refresh: () => Promise<void>; resolveGatewayHref?: (returnTo?: string) => Promise<string | null>; onNavigated?: () => void };
 
-export function useNotificationActions({ refresh, resolveGatewayHref }: Options) {
+export function useNotificationActions({ refresh, resolveGatewayHref, onNavigated }: Options) {
   const navigate = useNavigate();
   const [handlingId, setHandlingId] = useState<string | null>(null);
   const [handlingAll, setHandlingAll] = useState(false);
@@ -25,7 +25,14 @@ export function useNotificationActions({ refresh, resolveGatewayHref }: Options)
         const opened = window.open(url, '_blank', 'noopener,noreferrer');
         // noopener 下部分浏览器返回 null，并不代表打开失败，不能据此修改通知。
         void opened;
-      } else navigate(url);
+      } else {
+        if (url === '/report-agent' || url.startsWith('/report-agent?')) {
+          navigate(url, { state: { notificationId: item.id } });
+        } else {
+          navigate(url);
+        }
+        onNavigated?.();
+      }
       return;
     }
     setHandlingId(item.id);
@@ -43,7 +50,7 @@ export function useNotificationActions({ refresh, resolveGatewayHref }: Options)
     } catch {
       toast.error('通知入口暂时无法打开', '请稍后重试，通知已保留。');
     } finally { setHandlingId(null); }
-  }, [navigate, resolveGatewayHref]);
+  }, [navigate, resolveGatewayHref, onNavigated]);
 
   const confirmNotifications = useCallback(async (items: AdminNotificationItem[], batch: boolean) => {
     if (!items.length || handlingAll || handlingId) return;
