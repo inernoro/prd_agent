@@ -243,14 +243,15 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
   const [editing, setEditing] = useState<{ id: string | null; draft: CatalogDraft } | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const editorOrigin = useRef<HTMLElement | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const [editorEntry, setEditorEntry] = useState(0);
-  function openEditor(next: { id: string | null; draft: CatalogDraft }) {
-    editorOrigin.current = document.activeElement as HTMLElement;
+  function openEditor(next: { id: string | null; draft: CatalogDraft }, origin?: HTMLElement | null) {
+    editorOrigin.current = origin || document.activeElement as HTMLElement;
     setEditing(next); setEditorEntry(value => value + 1);
   }
   useEffect(() => {
     if (!editorEntry) return;
-    if (editing) { editorRef.current?.scrollIntoView({ block: 'start' }); editorRef.current?.querySelector('input')?.focus({ preventScroll: true }); }
+    if (editing) { editorRef.current?.scrollIntoView({ block: 'start' }); editorRef.current?.querySelector('input:not(:disabled)')?.focus({ preventScroll: true }); }
     else if (editorOrigin.current?.isConnected && editorOrigin.current !== document.body) editorOrigin.current.focus();
     else document.querySelector<HTMLButtonElement>('[data-catalog-create]')?.focus();
   }, [editorEntry, editing !== null]);
@@ -363,7 +364,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
                 </td>
               </tr>
             ) : data.items.map((item) => (
-              <tr key={item.id}>
+              <tr key={item.id} ref={row => { if (!item.id) return; if (row) rowRefs.current.set(item.id, row); else rowRefs.current.delete(item.id); }}>
                 <td style={TABLE_CELL}>
                   <code>{item.canonicalId}</code>
                   {item.enabled === false ? <Chip label="已停用" color="var(--text-muted)" bg="var(--bg-elevated)" /> : null}
@@ -387,7 +388,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
                   {canWrite ? (
                     <RowActions
                       actions={[
-                        { key: 'edit', label: '编辑', onSelect: () => openEditor({ id: item.id ?? null, draft: draftFromEntry(item) }) },
+                        { key: 'edit', label: '编辑', onSelect: () => openEditor({ id: item.id ?? null, draft: draftFromEntry(item) }, item.id ? rowRefs.current.get(item.id)?.querySelector<HTMLButtonElement>('.lg-row-actions-trigger') : null) },
                         { key: 'delete', label: '删除', danger: true, onSelect: () => void remove(item) },
                       ]}
                     />

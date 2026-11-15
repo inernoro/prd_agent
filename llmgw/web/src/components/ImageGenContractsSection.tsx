@@ -139,14 +139,15 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
   const [editing, setEditing] = useState<{ id: string | null; draft: Draft } | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const editorOrigin = useRef<HTMLElement | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const [editorEntry, setEditorEntry] = useState(0);
-  function openEditor(next: { id: string | null; draft: Draft }) {
-    editorOrigin.current = document.activeElement as HTMLElement;
+  function openEditor(next: { id: string | null; draft: Draft }, origin?: HTMLElement | null) {
+    editorOrigin.current = origin || document.activeElement as HTMLElement;
     setEditing(next); setEditorEntry(value => value + 1);
   }
   useEffect(() => {
     if (!editorEntry) return;
-    if (editing) { editorRef.current?.scrollIntoView({ block: 'start' }); editorRef.current?.querySelector('input')?.focus({ preventScroll: true }); }
+    if (editing) { editorRef.current?.scrollIntoView({ block: 'start' }); editorRef.current?.querySelector('input:not(:disabled)')?.focus({ preventScroll: true }); }
     else if (editorOrigin.current?.isConnected && editorOrigin.current !== document.body) editorOrigin.current.focus();
     else document.querySelector<HTMLButtonElement>('[data-imagegen-create]')?.focus();
   }, [editorEntry, editing !== null]);
@@ -298,7 +299,7 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
                 </td>
               </tr>
             ) : data.items.map((item) => (
-              <tr key={item.id}>
+              <tr key={item.id} ref={row => { if (row) rowRefs.current.set(item.id, row); else rowRefs.current.delete(item.id); }}>
                 <td style={TABLE_CELL}>
                   <code>{item.modelIdPattern}</code>
                   {!item.enabled ? <Chip label="已停用" color="var(--text-muted)" bg="var(--bg-elevated)" /> : null}
@@ -314,7 +315,7 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
                   {canWrite ? (
                     <RowActions
                       actions={[
-                        { key: 'edit', label: '编辑', onSelect: () => openEditor({ id: item.id, draft: itemToDraft(item) }) },
+                        { key: 'edit', label: '编辑', onSelect: () => openEditor({ id: item.id, draft: itemToDraft(item) }, rowRefs.current.get(item.id)?.querySelector<HTMLButtonElement>('.lg-row-actions-trigger')) },
                         { key: 'delete', label: '删除', danger: true, onSelect: () => void remove(item) },
                       ]}
                     />
