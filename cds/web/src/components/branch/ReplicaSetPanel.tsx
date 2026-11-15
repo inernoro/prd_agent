@@ -597,7 +597,7 @@ function PlanBoard({ branchId, draft, setDraft, onFailure, setOnFailure, activeP
             <Loader2 className="h-3.5 w-3.5 animate-spin text-warn" />
             <b>执行中</b>
             <span className="text-muted-foreground">失败策略：{activePlan.onFailure === 'rollback' ? '停止并回滚' : '仅停止'}</span>
-            <ConfirmAction title="取消剩余步骤" description="当前执行中的步骤会跑完，其余待执行步骤取消。确认？" confirmLabel="取消剩余"
+            <ConfirmAction scopeKey={`${branchId}:${activePlan.id}`} title="取消剩余步骤" description="当前执行中的步骤会跑完，其余待执行步骤取消。确认？" confirmLabel="取消剩余"
               trigger={<Button type="button" size="sm" variant="ghost" disabled={busy}><X />取消剩余</Button>}
               onConfirm={() => onCall(async () => { await apiRequest(api(`/${encodeURIComponent(activePlan.id)}/cancel`), { method: 'POST' }); }, '剩余步骤已取消')} />
           </div>
