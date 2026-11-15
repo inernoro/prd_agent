@@ -71,6 +71,7 @@ export function LogicalModelsPage() {
   const taskType = (taskParams.get('requestType') || '').trim();
   const requestedPublicId = (taskParams.get('publicId') || '').trim();
   const taskOpened = useRef('');
+  const reloadSerial = useRef(0);
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const { promptText } = useDialogs();
@@ -110,16 +111,18 @@ export function LogicalModelsPage() {
   });
 
   async function reload() {
+    const serial = ++reloadSerial.current;
     setError(null);
+    try {
     const [logicalRes, modelsRes, exchangesRes, usageRes, metaRes, platformsRes] = await Promise.all([
       getLogicalModels(), getModels({ enabled: true }), getExchanges({ enabled: true }), getLogicalModelUsage(30), getExchangeMeta(), getPlatforms(),
     ]);
+    if (serial !== reloadSerial.current) return;
     if (platformsRes.success) setPlatforms(platformsRes.data.items.filter(item => item.authority === 'llm_gateway'));
     setModelTypes(metaRes.success ? metaRes.data.modelTypes : []);
     setModelTypesError(metaRes.success && metaRes.data.modelTypes.length > 0 ? null : '模型用途目录暂不可用，请刷新后再创建。');
     if (!logicalRes.success) {
       setError(logicalRes.error?.message || '加载逻辑模型失败');
-      setItems([]);
       return;
     }
     setItems(logicalRes.data.items);
@@ -128,6 +131,7 @@ export function LogicalModelsPage() {
     if (exchangesRes.success) setExchanges(exchangesRes.data.items.filter((x) => x.authority === 'llm_gateway'));
     // 用量只是锦上添花，取不到不该让整页报错——列表照常渲染，那一列留空。
     setUsage(usageRes.success ? new Map(usageRes.data.items.map((x) => [x.publicId, x])) : null);
+    } catch { if (serial === reloadSerial.current) setError('模型目录读取未完成，请重新读取。'); }
   }
 
   // 一条线路的变更会影响所有兄弟线路的排队位置，只读服务端完整队列，不在客户端拼接。
@@ -647,7 +651,7 @@ export function LogicalModelsPage() {
           <div><strong>{taskCaller}</strong><span>{taskType} · 默认模型配置</span><span>未点名模型时使用；显式指定模型的请求不变。</span></div>
           <Link to={callerWorkspaceReturnHref(taskCaller, taskType, taskParams.get('callerReturn') || '')}>返回调用方并重新读取</Link>
         </section> : null}
-        {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+        {error ? <InlineAlert tone="error">{error}<Button size="sm" variant="ghost" onClick={() => void reload()}>重新读取</Button></InlineAlert> : null}
         {notice ? <InlineAlert tone={notice.tone}>{notice.text}</InlineAlert> : null}
         {routingRefreshFailed ? <Button size="sm" disabled={busy !== null} onClick={async () => { setBusy('refresh-routes'); await refreshRoutes(); setBusy(null); }}>{busy === 'refresh-routes' ? '读取中…' : '刷新线路状态'}</Button> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
@@ -662,7 +666,7 @@ export function LogicalModelsPage() {
           }} />
         </Card> : null}
 
-        {items === null ? <SectionLoader text="正在加载逻辑模型目录" /> : null}
+        {items === null && !error ? <SectionLoader text="正在加载逻辑模型目录" /> : null}
 
         {items !== null && items.length === 0 ? (
           <Card style={{ ...CARD_BODY, flex: 1, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
@@ -699,17 +703,18 @@ export function LogicalModelsPage() {
                     <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
                       {canWrite && !taskCaller ? <input type="checkbox" aria-label={`选择 ${item.name}`} checked={selectedIds.has(item.id)} onChange={event => setSelectedIds(previous => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} /> : null}<UpstreamMark hints={[routes[0]?.providerName, routes[0]?.upstreamModelId, item.publicId]} />
                       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                        <strong title={item.name} style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
+                        <strong title={item.name} style={{ fontSize: 'var(--fs-body)', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{item.name}</strong>
                         <span className="lg-collection-model-identity" title={`${item.publicId} · ${describeScope(item.allowedAppCallerCodes)}`}><code>{item.publicId}</code><Chip label={item.identityKind === 'stable' ? '跟随升级' : '固定版本'} color="var(--text-secondary)" bg="var(--bg-elevated)" />{item.isDefaultForType ? <Chip label="默认" color="var(--accent)" bg="var(--accent-soft)" title="没点名时用它" /> : null}{item.defaultForAppCallerCodes.length ? <Chip label={`指定 ${item.defaultForAppCallerCodes.length}`} color="var(--ok)" bg="var(--ok-bg)" title={item.defaultForAppCallerCodes.join('\n')} /> : null}</span>
                       </span>
                     </span>
 
-                    <span className="lg-collection-routes-summary">
+                    <span className="lg-collection-routes-summary lg-logical-model-routes">
                       <span>{routes.length} 条线路 · {item.routingStrategy === 'weighted' ? '权重负载均衡' : '主备切换'}</span>
                       <span style={HINT_TEXT}>{routes[0] ? `${routes[0].label} · ${routes[0].price}` : '没有上游线路'}</span>
                     </span>
 
                     <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }} aria-label="近 30 天用量">
+                      <span className="lg-logical-model-field-label">近 30 天用量</span>
                       {stat ? (
                         <>
                           <UsageSparkline values={stat.dailyCalls} title={`近 30 天 ${stat.totalCalls} 次调用`} />
@@ -762,7 +767,7 @@ const ROW_GRID: React.CSSProperties = {
   padding: `${GAP.section}px ${CARD_PADDING}px`,
 };
 const ROW_HEAD: React.CSSProperties = { background: 'var(--bg-base)', paddingTop: GAP.normal, paddingBottom: GAP.normal };
-const COL_CAP: React.CSSProperties = { ...METRIC_CAPTION, whiteSpace: 'nowrap' };
+const COL_CAP: React.CSSProperties = { ...METRIC_CAPTION, fontSize: 'var(--fs-secondary)', whiteSpace: 'normal', overflowWrap: 'anywhere' };
 
 /**
  * 团队授权只给数量，不平铺名字。

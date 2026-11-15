@@ -1,6 +1,6 @@
 // GW appCaller 注册表：展示 llmgw-serve 被动发现的调用方。
 // 这是目标架构里“appCaller 权威迁到 GW”的第一步，只读，不修改 MAP 旧配置。
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { bulkUpdateGatewayAppCallers, deleteAppCaller, getGatewayAppCallers, getPools, updateGatewayAppCaller } from '@/lib/api';
 import type { GatewayAppCaller, GatewayAppCallersData, ModelPool } from '@/lib/types';
@@ -43,16 +43,17 @@ type BulkDraft = {
 };
 
 function statusChip(status: string) {
-  const key = (status || 'discovered').toLowerCase();
-  if (key === 'active') return { label: '已启用', color: '#3fb950', bg: 'rgba(63,185,80,0.14)' };
-  if (key === 'configured') return { label: '已配置', color: '#7aa2ff', bg: 'rgba(122,162,255,0.14)' };
-  if (key === 'disabled') return { label: '已停用', color: '#f85149', bg: 'rgba(248,81,73,0.14)' };
+  const key = (status || '').toLowerCase();
+  if (['discovered', 'configured', 'active'].includes(key)) return { label: '允许调用', color: 'var(--text-primary)', bg: 'var(--bg-elevated)' };
+  if (key === 'disabled') return { label: '已停用', color: 'var(--warn)', bg: 'var(--warn-bg)' };
   if (key === 'archived') return { label: '已归档', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' };
-  return { label: '待配置', color: '#d29922', bg: 'rgba(210,153,34,0.14)' };
+  return { label: '状态未知', color: 'var(--warn)', bg: 'var(--warn-bg)' };
 }
-
+function registrationStage(status: string) {
+  return ({ discovered: '自动发现', configured: '已登记配置', active: '已启用' } as Record<string, string>)[status];
+}
 function statusLabel(value: string) {
-  return ({ discovered: '待配置', configured: '已配置', active: '已启用', disabled: '已停用', archived: '已归档' } as Record<string, string>)[value] ?? value;
+  return ({ discovered: '已发现（允许调用）', configured: '已配置（允许调用）', active: '已启用（允许调用）', disabled: '已停用', archived: '已归档' } as Record<string, string>)[value] ?? value;
 }
 
 function modelPolicyLabel(value: string) {
@@ -86,6 +87,7 @@ export function AppCallersPage() {
   const focusedLegacyCode = focusedAppCallerCode.replace(/^G-/, '');
   const [data, setData] = useState<GatewayAppCallersData | null>(null);
   const [pools, setPools] = useState<ModelPool[]>([]);
+  const listRequest = useRef(0);
   const [loadingList, setLoadingList] = useState(true);
   const [focusLookup, setFocusLookup] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,9 +116,10 @@ export function AppCallersPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const loadCurrentPage = async () => {
-    setLoadingList(true);
-    setError(null);
-    const res = await getGatewayAppCallers({
+    const request = ++listRequest.current;
+    setLoadingList(true); setError(null);
+    try {
+      const res = await getGatewayAppCallers({
       page,
       pageSize: PAGE_SIZE,
       search: search || undefined,
@@ -127,13 +130,15 @@ export function AppCallersPage() {
       drift: drift || undefined,
       modelPoolId: modelPoolId || undefined,
     });
-    if (res.success) setData(res.data);
-    else setError(res.error?.message || '加载失败');
-    setLoadingList(false);
+      if (request !== listRequest.current) return;
+      if (res.success) setData(res.data); else setError(res.error?.message || '加载失败');
+    } catch { if (request === listRequest.current) setError('调用方读取未完成，请重新读取。'); }
+    finally { if (request === listRequest.current) setLoadingList(false); }
   };
 
   useEffect(() => {
     let alive = true;
+    const request = ++listRequest.current;
     setLoadingList(true);
     setError(null);
     getGatewayAppCallers({
@@ -147,14 +152,12 @@ export function AppCallersPage() {
       drift: drift || undefined,
       modelPoolId: modelPoolId || undefined,
     }).then((res) => {
-      if (!alive) return;
+      if (!alive || request !== listRequest.current) return;
       if (res.success) setData(res.data);
       else setError(res.error?.message || '加载失败');
-      setLoadingList(false);
-    });
-    return () => {
-      alive = false;
-    };
+    }).catch(() => { if (alive && request === listRequest.current) setError('调用方读取未完成，请重新读取。'); })
+      .finally(() => { if (alive && request === listRequest.current) setLoadingList(false); });
+    return () => { alive = false; listRequest.current++; };
   }, [page, search, status, sourceSystem, ingressProtocol, requestType, drift, modelPoolId]);
 
   useEffect(() => {
@@ -215,7 +218,7 @@ export function AppCallersPage() {
   }
 
   const getDraft = (item: GatewayAppCaller): Draft => drafts[item.id] ?? {
-    status: item.status || 'discovered',
+    status: item.status || '',
     allowedModelPoolIds: item.allowedModelPoolIds?.length ? item.allowedModelPoolIds : (item.modelPoolId ? [item.modelPoolId] : []),
     defaultModelPoolId: item.defaultModelPoolId || item.modelPoolId || '',
     allowCrossPoolFallback: item.allowCrossPoolFallback ?? false,
@@ -232,6 +235,7 @@ export function AppCallersPage() {
   }));
   const saveItem = async (item: GatewayAppCaller) => {
     const draft = getDraft(item);
+    if (!STATUSES.includes(draft.status)) { setActionError('调用方状态未知，请明确选择管理状态后再保存。'); return; }
     setSavingId(item.id);
     setActionError(null);
     setActionNotice(null);
@@ -343,7 +347,7 @@ export function AppCallersPage() {
         <span>共 {data.total} 个</span>
       </header>
       {error ? <InlineAlert tone="error">筛选结果未更新：{error}<Button size="sm" variant="ghost" onClick={() => void loadCurrentPage()}>重新读取</Button></InlineAlert> : null}
-      {focusedAppCallerCode && !loadingList && !focusFound ? <InlineAlert tone="info">当前结果未找到 {focusedAppCallerCode} · {focusedRequestType || '原用途'}，原筛选已保留。<Button size="sm" variant="ghost" onClick={findFocusedCaller}>按此身份查找（切换筛选）</Button></InlineAlert> : null}
+      {focusedAppCallerCode && !loadingList && !focusFound ? <InlineAlert tone="info">当前未找到 {focusedAppCallerCode} · {focusedRequestType || '原用途'}，原筛选已保留。<Button size="sm" variant="ghost" onClick={findFocusedCaller}>按此身份查找（切换筛选）</Button></InlineAlert> : null}
       {focusLookup ? <Button size="sm" variant="ghost" onClick={restoreCallerFilters}>恢复原筛选</Button> : null}
       <div className="lg-app-caller-toolbar">
         <input
@@ -404,7 +408,7 @@ export function AppCallersPage() {
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
             <tr>
               <th style={th}>appCaller</th>
-              <th style={th}>状态</th>
+              <th style={th}>调用管理</th>
               <th style={th}>调用方式</th>
               <th style={th}>未点名默认模型</th>
               <th style={th}>治理</th>
@@ -464,6 +468,10 @@ export function AppCallersPage() {
       </div> : null}
     </div></AppCallerDefaultsProvider>
   );
+}
+
+function StatusOptions() {
+  return <><option value="" disabled>状态未知，请选择</option>{STATUSES.map((x) => <option key={x} value={x}>{statusLabel(x)}</option>)}</>;
 }
 
 function FilterSelect({ label, value, options, onChange, style }: { label: string; value: string; options: string[]; onChange: (v: string) => void; style: React.CSSProperties }) {
@@ -553,7 +561,7 @@ function AppCallerRow({
     <>
       <tr>
         <td style={td}><div className="lg-app-caller-identity"><strong>{item.title?.trim() || item.clientCode || '未命名调用方'}</strong><code>{item.appCallerCode}</code><span>{item.sourceSystem || '未知来源'}</span></div></td>
-        <td style={td}><Chip label={chip.label} color={chip.color} bg={chip.bg} /></td>
+        <td style={td}><div className="lg-app-caller-stack"><Chip label={chip.label} color={chip.color} bg={chip.bg} />{registrationStage(item.status) ? <span>{registrationStage(item.status)}</span> : null}</div></td>
         <td style={td}><div className="lg-app-caller-stack"><strong>{requestTypeLabelForTable(item.requestType)}</strong><span>{observedIngressProtocols.join('、') || '未观察到协议'}</span></div></td>
         <td style={td}><div className="lg-app-caller-stack"><AppCallerDefaultModel item={item} /><span>{parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</span>{routeDrift || parameterDrift ? <span className="lg-app-caller-warning">配置与最近请求不一致</span> : null}</div></td>
         <td style={td}><div className="lg-app-caller-stack"><strong>{item.owner || '未指定负责人'}</strong><span>{formatGovernanceSummary(item)}</span></div></td>
@@ -564,7 +572,7 @@ function AppCallerRow({
         <div className="lg-app-caller-editor">
           <div className="lg-app-caller-editor-heading"><div><strong>{canWrite ? '编辑治理' : '治理详情'}</strong><span>预算、限流与参数策略对新请求生效。</span></div></div>
           <div className="lg-app-caller-editor-grid">
-            <label>状态<select disabled={!canWrite} value={draft.status} onChange={(e) => onDraft({ status: e.target.value })} style={selectStyle}>{STATUSES.map((x) => <option key={x} value={x}>{statusLabel(x)}</option>)}</select></label>
+            <label>状态<select disabled={!canWrite} value={draft.status} onChange={(e) => onDraft({ status: e.target.value })} style={selectStyle}><StatusOptions /></select></label>
             <ModelPoolContractFields compatiblePools={compatiblePools} draft={draft} selectStyle={selectStyle} canWrite={canWrite} onDraft={onDraft} />
             <label>模型策略<select disabled={!canWrite} value={draft.modelPolicy} onChange={(e) => onDraft({ modelPolicy: e.target.value })} style={selectStyle}>{MODEL_POLICIES.map((x) => <option key={x} value={x}>{modelPolicyLabel(x)}</option>)}</select></label>
             <label>参数策略<select disabled={!canWrite} value={draft.parameterPolicy} onChange={(e) => onDraft({ parameterPolicy: e.target.value })} style={selectStyle}>{PARAMETER_POLICIES.map((x) => <option key={x} value={x}>{parameterPolicyLabel(x)}</option>)}</select></label>
@@ -633,7 +641,7 @@ function AppCallerMobileCard({
       {expanded ? <div className="lg-app-caller-mobile-editor">
         <div><strong>{canWrite ? '配置路由与治理' : '路由与治理详情'}</strong><span>保存后从下一条请求开始生效。</span></div>
         <div className="lg-app-caller-editor-grid">
-          <label>状态<select disabled={!canWrite} value={draft.status} onChange={(e) => onDraft({ status: e.target.value })} style={selectStyle}>{STATUSES.map((x) => <option key={x} value={x}>{statusLabel(x)}</option>)}</select></label>
+          <label>状态<select disabled={!canWrite} value={draft.status} onChange={(e) => onDraft({ status: e.target.value })} style={selectStyle}><StatusOptions /></select></label>
           <ModelPoolContractFields compatiblePools={compatiblePools} draft={draft} selectStyle={selectStyle} canWrite={canWrite} onDraft={onDraft} />
           <label>模型策略<select disabled={!canWrite} value={draft.modelPolicy} onChange={(e) => onDraft({ modelPolicy: e.target.value })} style={selectStyle}>{MODEL_POLICIES.map((x) => <option key={x} value={x}>{modelPolicyLabel(x)}</option>)}</select></label>
           <label>参数策略<select disabled={!canWrite} value={draft.parameterPolicy} onChange={(e) => onDraft({ parameterPolicy: e.target.value })} style={selectStyle}>{PARAMETER_POLICIES.map((x) => <option key={x} value={x}>{parameterPolicyLabel(x)}</option>)}</select></label>
