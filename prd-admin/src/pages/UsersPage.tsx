@@ -933,8 +933,8 @@ export default function UsersPage() {
 
       <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
         <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'flex-wrap items-center gap-2.5'}`}>
-          <div className={`flex items-center gap-2.5 ${isMobile ? 'w-full' : 'min-w-0'}`}>
-            <div className={`${isMobile ? 'flex-1 min-w-0' : 'flex-1 min-w-[200px] max-w-[320px]'}`}>
+          <div className={`flex items-center gap-2.5 ${isMobile ? 'w-full flex-wrap' : 'min-w-0'}`}>
+            <div className={`${isMobile ? 'w-full min-w-0' : 'flex-1 min-w-[200px] max-w-[320px]'}`}>
               <div className="relative">
                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
                 <input
@@ -956,7 +956,7 @@ export default function UsersPage() {
                 setPage(1);
               }}
               uiSize="sm"
-              className="min-w-[72px] font-medium"
+              className={`${isMobile ? 'flex-1 min-w-0' : 'min-w-[72px]'} font-medium`}
             >
               <option value="">角色</option>
               {ALL_ROLES.map((r) => (
@@ -971,7 +971,7 @@ export default function UsersPage() {
                 setPage(1);
               }}
               uiSize="sm"
-              className="min-w-[72px] font-medium"
+              className={`${isMobile ? 'flex-1 min-w-0' : 'min-w-[72px]'} font-medium`}
             >
               <option value="">状态</option>
               <option value="Active">已启用</option>
@@ -1063,7 +1063,7 @@ export default function UsersPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-[12px]">
+              <table className="w-full min-w-[1100px] text-[12px]">
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-primary)' }}>
                     <th className="text-left py-2 px-2 font-medium w-8" style={{ color: 'var(--text-tertiary)' }}>
@@ -1178,7 +1178,7 @@ export default function UsersPage() {
                         </td>
 
                         {/* 角色 */}
-                        <td className="py-2 px-2 text-center">
+                        <td className="py-2 px-2 text-center whitespace-nowrap">
                           <span
                             className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-[4px]"
                             style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
@@ -1225,7 +1225,7 @@ export default function UsersPage() {
                         </td>
 
                         {/* 账户启用状态独立于临时登录限制；两者可以同时存在。 */}
-                        <td className="py-2 px-2 text-center">
+                        <td className="py-2 px-2 text-center whitespace-nowrap">
                           {u.status === 'Active' ? (
                             <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--semantic-success-text)' }}>
                               已启用
