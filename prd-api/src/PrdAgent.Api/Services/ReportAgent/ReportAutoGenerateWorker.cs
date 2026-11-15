@@ -125,7 +125,7 @@ public class ReportAutoGenerateWorker : BackgroundService
                             PrdAgent.Core.Security.TaskExecutionContext.Current!.PermitId, $"report:{member.UserId}:{team.Id}:{weekYear}:{weekNumber}");
                         if (execution.ShouldSkip) continue;
                         using var executionScope = PrdAgent.Core.Security.TaskExecutionContext.Enter(execution.Lease?.Identity);
-                        await generationService.GenerateAsync(
+                        var generatedReport = await generationService.GenerateAsync(
                             member.UserId, team.Id, templateId,
                             weekYear, weekNumber, CancellationToken.None);
 
@@ -139,7 +139,7 @@ public class ReportAutoGenerateWorker : BackgroundService
                             Level = "info",
                             Source = "report-agent",
                             ActionLabel = "查看周报",
-                            ActionUrl = "/report-agent",
+                            ActionUrl = ReportNotificationNavigation.OwnReport(generatedReport.Id),
                             ExpiresAt = DateTime.UtcNow.AddDays(7)
                         };
 

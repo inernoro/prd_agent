@@ -469,7 +469,7 @@ public sealed class NotificationsController : ControllerBase
             n.RecoveredAt,
             evidenceRequestId = restrictDiagnostic ? null : n.EvidenceRequestId,
             n.ActionLabel,
-            actionUrl = restrictDiagnostic || n.ActionKind == "llm-gateway" && !canOpenGateway ? null : n.ActionUrl,
+            actionUrl = restrictDiagnostic || n.ActionKind == "llm-gateway" && !canOpenGateway ? null : ReportNotificationNavigation.Resolve(n),
             n.ActionKind,
             n.Source,
             section,

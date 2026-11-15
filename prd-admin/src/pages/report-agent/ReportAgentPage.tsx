@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { FileText, Users, Settings, RefreshCw, CalendarCheck, CalendarRange } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -35,6 +36,8 @@ function readZoomFromStorage(): ZoomLevel {
  *   设置 = 我的数据源 + 模板管理 + 团队管理 + 数据源管理 (一次性配置)
  */
 export default function ReportAgentPage() {
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
   const {
     loading,
     teamsLoaded,
@@ -84,6 +87,11 @@ export default function ReportAgentPage() {
     })();
   }, []);
   useEffect(() => {
+    // 通知的明确目标优先于用户的通用落地偏好，已有报告编辑器由 report query 恢复。
+    if (requestedTab === 'report' || requestedTab === 'team') {
+      setActiveTab(requestedTab);
+      return;
+    }
     if (!teamsLoaded) return;
     if (defaultTabPref === undefined) return; // 等偏好拉完
     if (typeof window === 'undefined') return;
@@ -96,7 +104,7 @@ export default function ReportAgentPage() {
     } else {
       setActiveTab(hasTeamWorkspace ? 'team' : 'report');
     }
-  }, [teamsLoaded, hasTeamWorkspace, setActiveTab, defaultTabPref]);
+  }, [teamsLoaded, hasTeamWorkspace, setActiveTab, defaultTabPref, requestedTab]);
 
   // 离开周报 Agent（包括所有子路由 `/report-agent/*`）时清除会话标记，
   // 这样用户从其他 Agent 切回来才会再次被视为「外部进入」并应用偏好。
