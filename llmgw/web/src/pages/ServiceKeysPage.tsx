@@ -108,6 +108,7 @@ export function ServiceKeysPage() {
     const timer = window.setTimeout(() => setValidityNow(Date.now()), Math.min(30_000, Math.max(1, Math.min(...upcoming) - now + 1)));
     return () => window.clearTimeout(timer);
   }, [items, validityNow]);
+  const [reading, setReading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -146,7 +147,7 @@ export function ServiceKeysPage() {
   const [legacyBusy, setLegacyBusy] = useState(false);
 
   const load = useCallback(async () => {
-    setError(null);
+    setError(null); setReading(true);
     try {
     const res = await getServiceKeys();
     if (res.success) { setItems(res.data); setValidityNow(Date.now()); }
@@ -163,7 +164,8 @@ export function ServiceKeysPage() {
         setLegacyRequired(String(legacyRes.data.requiredSuccessorObservations));
       }
     }
-    } catch { setError('密钥配置读取未完成，请刷新后核对。'); }
+    } catch { setError('密钥配置读取未完成，请重新读取后核对。'); }
+    finally { setReading(false); }
   }, [canManageLegacyCutover]);
 
   useEffect(() => {
@@ -479,7 +481,7 @@ export function ServiceKeysPage() {
           <>
             <Link className="lg-text-link" to="/organization">组织与团队</Link>
             <Link className="lg-text-link" to="/quickstart">Quickstart</Link>
-            <Button size="sm" variant="ghost" onClick={() => void load()}><RefreshCw size={14} />刷新</Button>
+            <Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}><RefreshCw size={14} />{reading ? '读取中…' : '刷新'}</Button>
             <Button size="sm" variant="primary" onClick={toggleCreate}>
               {showCreate ? <X size={14} /> : <Plus size={14} />}{showCreate ? '取消' : '新建密钥'}
             </Button>
@@ -488,7 +490,7 @@ export function ServiceKeysPage() {
       />
 
       <PageBody className="lg-collection-page">
-        {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+        {error ? <InlineAlert tone="error">{error}{!items ? <Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重新读取</Button> : null}</InlineAlert> : null}
 
         {created ? (
           <div style={createdPanelStyle}>
@@ -611,7 +613,7 @@ export function ServiceKeysPage() {
 
         {!items || items.length === 0 ? keyOverview : null}
 
-        {!items ? <SectionLoader text="正在加载接入密钥" /> : items.length === 0 ? (
+        {!items ? reading ? <SectionLoader text="正在加载接入密钥" /> : null : items.length === 0 ? (
           <div className="lg-service-key-empty">
             <KeyRound size={24} />
             <strong>当前租户还没有外部接入密钥</strong>

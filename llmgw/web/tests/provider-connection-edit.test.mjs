@@ -44,7 +44,7 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
           if (name === 'getLogicalModels') return 'export async function getLogicalModels(){if(globalThis.__providerEditFixture.logicalReadThrow)throw new Error("body interrupted");return {success:true,data:{items:globalThis.__providerEditFixture.logicalModels}}}';
           if (name === 'getGatewayAppCallers') return 'export async function getGatewayAppCallers(query){const f=globalThis.__providerEditFixture;(f.callerReads??=[]).push(query);if(f.callersThrow)throw new Error("body interrupted");return {success:true,data:{items:globalThis.__providerEditFixture.appCallers,total:1,page:1,pageSize:50,statuses:[],sourceSystems:[],ingressProtocols:[],requestTypes:[]}}}';
           if (name === 'getUpstreamModels') return 'export async function getUpstreamModels(id){globalThis.__providerEditFixture.calls.push({discovery:id});return {success:false,error:{message:"清单暂时不可用"}}}';
-          if (name === 'getServiceKeys') return 'export async function getServiceKeys(){return {success:true,data:globalThis.__providerEditFixture.serviceKeys}}';
+          if (name === 'getServiceKeys') return 'export async function getServiceKeys(){if(globalThis.__providerEditFixture.keysThrow)throw new Error("body interrupted");return {success:true,data:globalThis.__providerEditFixture.serviceKeys}}';
           if (name === 'getOrganization') return 'export async function getOrganization(){return {success:true,data:{tenant:{id:"tenant",slug:"sample"},teams:[{id:"team",name:"业务团队",status:"active"}],members:[]}}}';
           if (name === 'updateGatewayAppCaller') return 'export async function updateGatewayAppCaller(id,body){const f=globalThis.__providerEditFixture;f.calls.push({governance:{id,body}});return f.governanceResult??{success:true,data:{id,...body}}}';
           if (name === 'createServiceKey') return 'export async function createServiceKey(body){globalThis.__providerEditFixture.calls.push({createKey:body});return globalThis.__providerEditFixture.keyResult??{success:false,error:{code:"UNEXPECTED_ISSUANCE_FAILURE",message:"响应丢失"}}}';
@@ -240,9 +240,11 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
     root = null;
     const key = {name:'有效钥',id:'k0',keyPrefix:'gwk_x',enabled:true,sourceSystem:'external',clientCode:'app',environment:'test',purpose:'external-platform',appCallerCodes:['app.summary::chat'],ingressProtocols:['openai-compatible'],scopes:['invoke'],allowedCidrs:[],rotationState:'active'};
     fixture.serviceKeys = [key,{...key,id:'k1',name:'已过期钥',expiresAt:'2001-01-01T00:00:00Z'},{...key,id:'k2',name:'已撤销钥',enabled:false}];
+    fixture.keysThrow=true;
     const { ServiceKeysPage } = await server.ssrLoadModule('/src/pages/ServiceKeysPage.tsx');
     root = createRoot(document.getElementById('root'));
     await act(async () => root.render(React.createElement(MemoryRouter, {}, React.createElement(ServiceKeysPage))));
+    assert.ok(document.body.textContent.includes('密钥配置读取未完成'));assert.equal(document.body.textContent.includes('正在加载接入密钥'),false,'读取中断不能一直宣称加载中');fixture.keysThrow=false;await click(button('重新读取'));
     assert.equal(document.querySelector('.lg-key-coverage'),null,'外部租户不应看到内部MAP生产用途覆盖');
     const keyFilter = document.querySelector('[aria-label="清单状态筛选"]');
     assert.equal(keyFilter.value,'active','优先维护有效密钥，历史仍可查');
