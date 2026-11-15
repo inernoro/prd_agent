@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Eye, Loader2, Save } from 'lucide-react';
+import { ChevronRight, Eye, Loader2, Save } from 'lucide-react';
 import { countProtectedSettingsEntries, useSettingsSessionOwner, useSettingsSessionState } from '@/pages/cds-settings/useSettingsSessionState';
 import { Button } from '@/components/ui/button';
 import { useProjectSettingsRefresh, useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
@@ -131,6 +131,6 @@ export function CommentTemplateTab({ projectId, onToast }: { projectId: string; 
         <div className="whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-3 font-mono text-sm leading-6">{state.preview?.rendered || '生成预览，检查示例 PR 和分支数据渲染后的正文。'}</div>
       </section>
     </div>
-    <details className="border-t border-border pt-3"><summary className="flex min-h-[3.25rem] cursor-pointer items-center text-sm font-medium lg:min-h-0">插入模板变量</summary><p className="my-2 text-sm text-muted-foreground">自定义模式下点击变量插入光标处；未知变量会原样保留。未保存草稿跨标签最多临时保留 30 分钟，未确认的保存需先读取核对。</p><div className="grid gap-2 md:grid-cols-2">{state.template.variables.map(variable => <button key={variable.key} type="button" disabled={state.draft.mode !== 'custom'} onClick={() => insertVariable(variable.key)} className="min-h-[3.25rem] min-w-0 rounded-md border border-border px-3 py-2 text-left text-sm lg:min-h-0 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"><code>{`{{${variable.key}}}`}</code><span className="ml-2 text-muted-foreground">{variable.label}</span><span className="mt-1 block break-all text-xs text-muted-foreground">{variable.example}</span></button>)}</div></details>
+    <details className="group/template-variables border-t border-border pt-3"><summary className="flex min-h-[3.25rem] cursor-pointer items-center gap-2 text-sm font-medium lg:min-h-0"><ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 transition-transform group-open/template-variables:rotate-90" />插入模板变量</summary><p className="my-2 text-sm text-muted-foreground">自定义模式下点击变量插入光标处；未知变量会原样保留。未保存草稿跨标签最多临时保留 30 分钟，未确认的保存需先读取核对。</p><div className="grid gap-2 md:grid-cols-2">{state.template.variables.map(variable => <button key={variable.key} type="button" disabled={state.draft.mode !== 'custom'} onClick={() => insertVariable(variable.key)} className="min-h-[3.25rem] min-w-0 rounded-md border border-border px-3 py-2 text-left text-sm lg:min-h-0 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"><code>{`{{${variable.key}}}`}</code><span className="ml-2 text-muted-foreground">{variable.label}</span><span className="mt-1 block break-all text-xs text-muted-foreground">{variable.example}</span></button>)}</div></details>
   </section>;
 }

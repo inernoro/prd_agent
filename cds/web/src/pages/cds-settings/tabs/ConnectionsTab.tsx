@@ -170,7 +170,9 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
               <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
                 {!authorizationConfirmed ? '请先读取并确认两项授权状态，再进行授权操作。' : fullyAuthorized
                   ? '系统互联与缺陷转发均已接通。长期凭据永久有效，仅在主动撤销、删除或凭据实际失效时终止。'
-                  : '点击后跳转到 MAP 确认授权。确认完成后，MAP 与 CDS 由服务端自动交换永久有效的长期凭据并返回结果。'}
+                  : integration?.authorizationUrl
+                    ? '点击后跳转到 MAP 确认授权。确认完成后，MAP 与 CDS 由服务端自动交换永久有效的长期凭据并返回结果。'
+                    : '当前未提供可用的 MAP 授权入口。'}
               </p>
             </div>
             {!authorizationConfirmed ? <Button variant="outline" onClick={() => void reload()}>重新读取状态</Button> : fullyAuthorized ? null : integration?.authorizationUrl ? (
@@ -225,7 +227,11 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
           </div>
           {state.status === 'ok' && connections.length === 0 ? (
             <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-              暂无连接记录，请使用上方“前往 MAP 授权”。
+              {!authorizationConfirmed
+                ? '暂无连接记录。授权状态未确认，请先重新读取状态。'
+                : integration?.authorizationUrl
+                  ? '暂无连接记录，可使用上方“前往 MAP 授权”建立连接。'
+                  : '暂无连接记录。请联系系统管理员确认 MAP 接入配置与授权方式，再刷新状态。'}
             </div>
           ) : null}
           {state.status === 'ok' && connections.length > 0 && visibleConnections.length === 0 ? <p className="py-4 text-sm text-muted-foreground">没有匹配的连接，请调整搜索条件。</p> : null}

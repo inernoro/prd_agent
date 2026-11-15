@@ -153,9 +153,9 @@ interface SelfStatusResponse {
   recommendedBranch: string;
   headSha: string;
   headIso: string;
-  fetchOk: boolean;
+  fetchOk?: boolean;
   fetchError?: string;
-  remoteAheadCount: number;
+  remoteAheadCount?: number;
   localAheadCount: number;
   remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }>;
   /** 非空表示后端正在跑 self-update / self-force-sync(任一 session 触发) */
@@ -709,9 +709,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       recommendedBranch: snap.recommendedBranch ?? 'main',
       headSha: snap.headSha ?? '',
       headIso: snap.headIso ?? '',
-      fetchOk: snap.fetchOk ?? true,
+      fetchOk: snap.fetchOk,
       fetchError: snap.fetchError ?? undefined,
-      remoteAheadCount: snap.remoteAheadCount ?? 0,
+      remoteAheadCount: snap.remoteAheadCount,
       localAheadCount: snap.localAheadCount ?? 0,
       remoteAheadSubjects: (snap.remoteAheadSubjects ?? []) as Array<{
         sha: string;
@@ -1502,7 +1502,7 @@ function SelfUpdateStatusPanel({
   const data = state.data;
   const remoteAheadSubjects = Array.isArray(data.remoteAheadSubjects) ? data.remoteAheadSubjects : [];
   const selfUpdateHistory = Array.isArray(data.selfUpdateHistory) ? data.selfUpdateHistory : [];
-  const remoteAheadCount = Number.isFinite(data.remoteAheadCount) ? data.remoteAheadCount : 0;
+  const remoteAheadCount = typeof data.remoteAheadCount === 'number' && Number.isFinite(data.remoteAheadCount) ? data.remoteAheadCount : 0;
   const localAheadCount = Number.isFinite(data.localAheadCount) ? data.localAheadCount : 0;
   const headSha = data.headSha || '';
   const lastHistorySha = data.lastSelfUpdate?.toSha || '';
@@ -1515,7 +1515,7 @@ function SelfUpdateStatusPanel({
   const showHistoryGap = !!data.lastSelfUpdate && !data.activeSelfUpdate && !historyMatchesHead;
   const trackingBranch = data.currentBranch || data.recommendedBranch || 'main';
   const aheadColor =
-    !data.detachedHead && remoteAheadCount === 0
+    data.fetchOk === true && Number.isFinite(data.remoteAheadCount) && !data.detachedHead && remoteAheadCount === 0
       ? 'border-ok/30 bg-ok-soft text-ok'
       : 'border-warn/40 bg-warn-soft text-warn';
 
@@ -1531,15 +1531,17 @@ function SelfUpdateStatusPanel({
         ) : null}
         <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${aheadColor}`}>
           <GitBranch className="h-3.5 w-3.5" />
-          {data.detachedHead
-            ? remoteAheadCount > 0
-              ? `游离提交 · origin/${trackingBranch} 领先 ${remoteAheadCount} 个 commit`
-              : `游离提交 · 更新目标 origin/${trackingBranch}`
-            : data.fetchOk
-              ? remoteAheadCount === 0
-                ? `已与 origin/${trackingBranch} 同步`
-                : `GitHub 领先 ${remoteAheadCount} 个 commit`
-              : 'fetch 失败 / 远端不可达'}
+          {data.fetchOk !== true
+            ? data.fetchOk === false ? '更新检查失败 · 远端状态未确认' : '远端更新状态未确认'
+            : !Number.isFinite(data.remoteAheadCount)
+              ? '远端版本差异未确认'
+              : data.detachedHead
+                ? remoteAheadCount > 0
+                  ? `游离提交 · origin/${trackingBranch} 领先 ${remoteAheadCount} 个 commit`
+                  : `游离提交 · 更新目标 origin/${trackingBranch}`
+                : remoteAheadCount === 0
+                  ? `已与 origin/${trackingBranch} 同步`
+                  : `GitHub 领先 ${remoteAheadCount} 个 commit`}
         </span>
         {localAheadCount > 0 ? (
           <span className="inline-flex items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2 py-0.5 text-xs text-warn">
