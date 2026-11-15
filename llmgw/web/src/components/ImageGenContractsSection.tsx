@@ -281,7 +281,7 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
             {data.items.length === 0 ? (
               <tr>
                 <td colSpan={6} style={{ ...TABLE_CELL, color: 'var(--text-muted)', textAlign: 'center', padding: 24 }}>
-                  暂无生图契约
+                  {data.builtinCount > 0 ? '暂无自定义生图契约；匹配内置模式的模型仍按内置契约处理。' : '暂无自定义生图契约'}
                 </td>
               </tr>
             ) : data.items.map((item) => (
