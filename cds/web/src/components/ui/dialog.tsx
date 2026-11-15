@@ -45,6 +45,8 @@ export const DialogContent = React.forwardRef<
   }
 >(({ className, children, style, frame, ...props }, ref) => {
   const viewport = useVisualViewport();
+  const origin = React.useRef<HTMLElement | null>(null);
+  const container = React.useRef<HTMLElement | null>(null);
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -65,6 +67,31 @@ export const DialogContent = React.forwardRef<
           maxHeight: `min(${typeof style?.maxHeight === 'number' ? `${style.maxHeight}px` : style?.maxHeight || '90dvh'}, ${Math.max(0, viewport.height - 16)}px)`,
         }}
         {...props}
+        onOpenAutoFocus={(event) => {
+          // 手动setOpen的受控调用没有DialogTrigger；先记录打开前的真实焦点。
+          origin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          container.current = event.target instanceof HTMLElement ? event.target : null;
+          props.onOpenAutoFocus?.(event);
+        }}
+        onCloseAutoFocus={(event) => {
+          props.onCloseAutoFocus?.(event);
+          if (event.defaultPrevented) return;
+          const focused = document.activeElement;
+          // 调用方/页面导航已放到新去向时，不把焦点抢回旧页面。
+          if (focused instanceof HTMLElement && focused !== document.body && focused !== document.documentElement
+            && focused !== origin.current && !container.current?.contains(focused)) {
+            event.preventDefault();
+            return;
+          }
+          const target = origin.current;
+          if (!target || target === document.body || target === document.documentElement || !target.isConnected
+            || target.ownerDocument !== document || target.matches(':disabled, [aria-disabled="true"]')
+            || target.closest('[inert]') || target.getClientRects().length === 0) return;
+          const style = getComputedStyle(target);
+          if (style.visibility === 'hidden' || style.opacity === '0') return;
+          event.preventDefault();
+          target.focus();
+        }}
       >
         {frame ? children : (
           <div
