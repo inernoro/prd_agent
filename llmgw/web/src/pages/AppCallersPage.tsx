@@ -9,7 +9,7 @@ import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { formatPlatformTime } from '@/lib/platformTime';
 import { canUseCapability } from '@/lib/access';
-import { AppCallerDefaultModel, AppCallerDefaultsProvider } from '@/components/AppCallerDefaultModel';
+import { AppCallerDefaultModel, AppCallerDefaultsProvider, AppCallerPromptPolicyLink } from '@/components/AppCallerDefaultModel';
 
 const PAGE_SIZE = 50;
 const STATUSES = ['discovered', 'configured', 'active', 'disabled', 'archived'];
@@ -566,7 +566,7 @@ function AppCallerRow({
         <td style={td}><div className="lg-app-caller-stack"><AppCallerDefaultModel item={item} /><span>{parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</span>{routeDrift || parameterDrift ? <span className="lg-app-caller-warning">配置与最近请求不一致</span> : null}</div></td>
         <td style={td}><div className="lg-app-caller-stack"><strong>{item.owner || '未指定负责人'}</strong><span>{formatGovernanceSummary(item)}</span></div></td>
         <td style={td}><div className="lg-app-caller-recent"><TraceLinks item={item} /><span>{item.totalSeen} 次 · {fmtTime(item.lastSeenAt)}</span></div></td>
-        <td style={td}><div className="lg-app-caller-row-actions"><Button size="sm" variant="ghost" onClick={onToggle}>{expanded ? '收起' : canWrite ? '编辑治理' : '查看治理'}</Button>{canManagePromptPolicy && ['chat', 'vision'].includes(item.requestType.toLowerCase()) ? <Link to={`/app-callers/${encodeURIComponent(item.id)}/prompt-policy`}>提示词策略</Link> : null}</div></td>
+        <td style={td}><div className="lg-app-caller-row-actions"><Button size="sm" variant="ghost" onClick={onToggle}>{expanded ? '收起' : canWrite ? '编辑治理' : '查看治理'}</Button>{canManagePromptPolicy && ['chat', 'vision'].includes(item.requestType.toLowerCase()) ? <AppCallerPromptPolicyLink item={item} /> : null}</div></td>
       </tr>
       {expanded ? <tr className="lg-app-caller-expanded-row"><td colSpan={7}>
         <div className="lg-app-caller-editor">
@@ -636,7 +636,7 @@ function AppCallerMobileCard({
       </dl>
       <div className="lg-app-caller-mobile-actions">
         <Button size="sm" variant="secondary" onClick={onToggle}>{expanded ? '收起配置' : canWrite ? '编辑治理' : '查看治理'}</Button>
-        {canManagePromptPolicy && ['chat', 'vision'].includes(item.requestType.toLowerCase()) ? <Link to={`/app-callers/${encodeURIComponent(item.id)}/prompt-policy`}>提示词策略</Link> : null}
+        {canManagePromptPolicy && ['chat', 'vision'].includes(item.requestType.toLowerCase()) ? <AppCallerPromptPolicyLink item={item} /> : null}
       </div>
       {expanded ? <div className="lg-app-caller-mobile-editor">
         <div><strong>{canWrite ? '配置路由与治理' : '路由与治理详情'}</strong><span>保存后从下一条请求开始生效。</span></div>

@@ -35,3 +35,8 @@ export function AppCallerDefaultModel({ item }: { item: GatewayAppCaller }) {
     <Link to={callerModelWorkspaceHref(item.appCallerCode, item.requestType, returnSearch)}>查看默认模型</Link>
   </div>;
 }
+
+export function AppCallerPromptPolicyLink({ item }: { item: GatewayAppCaller }) {
+  const { returnSearch } = useContext(DefaultsContext);
+  return <Link to={`/app-callers/${encodeURIComponent(item.id)}/prompt-policy?${new URLSearchParams({ callerReturn: returnSearch })}`}>提示词策略</Link>;
+}
