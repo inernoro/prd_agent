@@ -831,8 +831,8 @@ export function createServiceKey(req: CreateServiceKeyRequest): Promise<ApiRespo
 export function revokeServiceKey(id: string): Promise<ApiResponse<{ id: string; revoked: boolean }>> {
   return apiRequest<{ id: string; revoked: boolean }>(`/service-keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
-export function confirmServiceKeyClientCutover(id: string): Promise<ApiResponse<{ id: string; successorKeyId: string; rotationState: string }>> {
-  return apiRequest<{ id: string; successorKeyId: string; rotationState: string }>(`/service-keys/${encodeURIComponent(id)}/rotation/client-cutover`, { method: 'POST' });
+export function confirmServiceKeyClientCutover(id: string, expectedSuccessorKeyId: string): Promise<ApiResponse<{ id: string; successorKeyId: string; rotationState: string }>> {
+  return apiRequest<{ id: string; successorKeyId: string; rotationState: string }>(`/service-keys/${encodeURIComponent(id)}/rotation/client-cutover`, { method: 'POST', body: { expectedSuccessorKeyId } });
 }
 export function getCostReconciliations(params?: { from?: string; to?: string }): Promise<ApiResponse<CostReconciliationSummary>> {
   return apiRequest<CostReconciliationSummary>('/cost-reconciliations', { query: params });
@@ -850,12 +850,13 @@ export function getLegacyKeyCutover(): Promise<ApiResponse<LegacyKeyCutoverData>
   return apiRequest<LegacyKeyCutoverData>('/legacy-key-cutover');
 }
 export function updateLegacyKeyCutover(req: {
+  expectedPolicyRevision: number;
   status: 'observing' | 'ready' | 'revoked';
   deadlineAt: string;
   allowedAppCallerCodes: string[];
   successorServiceKeyIds: string[];
   requiredSuccessorObservations: number;
-}): Promise<ApiResponse<{ id: string; status: string; deadlineAt: string; observed: number; required: number }>> {
+}): Promise<ApiResponse<{ id: string; status: string; deadlineAt: string; observed: number; required: number; policyRevision: number }>> {
   return apiRequest('/legacy-key-cutover', { method: 'PUT', body: req });
 }
 export function getOrganization(): Promise<ApiResponse<OrganizationData>> {

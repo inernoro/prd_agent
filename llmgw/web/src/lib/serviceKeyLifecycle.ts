@@ -4,7 +4,7 @@ export type KeyLifecycleIntent = { kind: 'revoke' | 'cutover'; id: string; name:
 // Audited Program.cs exits before this endpoint's first mutation. ROTATION_CONFLICT is
 // deliberately absent: another branch can return it after a different key was updated.
 export const KEY_REVOKE_REJECTED = ['SERVICE_KEY_NOT_FOUND', 'SERVICE_KEY_ISSUANCE_PENDING', 'ROTATION_CLIENT_SWITCH_REQUIRED', 'ROTATION_OLD_KEY_REVOKE_REQUIRED'] as const;
-export const KEY_CUTOVER_REJECTED = ['SERVICE_KEY_NOT_FOUND', 'ROTATION_STAGE_INVALID', 'ROTATION_SUCCESSOR_INVALID', 'ROTATION_SUCCESSOR_STAGE_INVALID'] as const;
+export const KEY_CUTOVER_REJECTED = ['SERVICE_KEY_NOT_FOUND', 'ROTATION_EXPECTATION_REQUIRED', 'ROTATION_PAIR_CHANGED', 'ROTATION_STAGE_INVALID', 'ROTATION_SUCCESSOR_INVALID', 'ROTATION_SUCCESSOR_STAGE_INVALID'] as const;
 
 /** Read-only postcondition, not attribution of this outcome to the lost response. */
 export function keyLifecycleGoalObserved(intent: KeyLifecycleIntent, items: readonly ServiceKeyItem[]) {

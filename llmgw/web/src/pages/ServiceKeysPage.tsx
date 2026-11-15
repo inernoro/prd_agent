@@ -25,6 +25,7 @@ import { Button, Chip, InlineAlert, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { formatPlatformTime } from '@/lib/platformTime';
 import { mutationOutcomeUnknown } from '@/lib/mutationOutcome';
+import { legacyPolicyGoalObserved, LEGACY_POLICY_REJECTED, LEGACY_POLICY_NEEDS_READ, type LegacyPolicyWrite } from '@/lib/legacyKeyPolicy';
 import { CALLER_CREATE_REJECTED, KEY_CREATE_REJECTED } from '@/lib/serviceKeyIssuance';
 import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
 import { keyLifecycleGoalObserved, KEY_CUTOVER_REJECTED, KEY_REVOKE_REJECTED, type KeyLifecycleIntent } from '@/lib/serviceKeyLifecycle';
@@ -178,29 +179,57 @@ export function ServiceKeysPage() {
   const [legacyRequired, setLegacyRequired] = useState('1');
   const [legacyStatus, setLegacyStatus] = useState<'observing' | 'ready' | 'revoked'>('observing');
   const [legacyBusy, setLegacyBusy] = useState(false);
+  const legacyTask = useRef<{ pending: boolean; unknown: LegacyPolicyWrite | null; receipt: boolean; conflict: boolean }>({ pending: false, unknown: null, receipt: false, conflict: false });
+  const legacyDirty = useRef(false);
+  const [legacyDraftRevision, setLegacyDraftRevision] = useState<number | null>(null);
+  const [legacyUnknown, setLegacyUnknown] = useState<LegacyPolicyWrite | null>(null);
+  const [legacyReceipt, setLegacyReceipt] = useState(false);
+  const [legacyConflict, setLegacyConflict] = useState(false);
+  const [legacyChecking, setLegacyChecking] = useState(false);
+  const legacyCheckingRef = useRef(false);
+  const legacyReadSequence = useRef(0);
+  const [legacyReadAt, setLegacyReadAt] = useState<string | null>(null);
+  const [legacyFeedback, setLegacyFeedback] = useState<string | null>(null);
+  const [legacySettledFeedback, setLegacySettledFeedback] = useState(false);
+  useEffect(() => {
+    if (!legacySettledFeedback) return;
+    const timer = window.setTimeout(() => setLegacyFeedback(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [legacySettledFeedback, legacyFeedback]);
+  const adoptLegacy = useCallback((data: LegacyKeyCutoverData) => {
+    setLegacyReadAt(new Date().toISOString());
+    setLegacy(data); setLegacyDraftRevision(Number.isSafeInteger(data.policyRevision) && data.policyRevision >= 0 ? data.policyRevision : null);
+    setLegacyStatus(data.status === 'not-applicable' ? 'observing' : data.status);
+    setLegacyDeadline(data.deadlineAt ? toLocalInput(data.deadlineAt) : '');
+    setLegacyAllowedCallers(data.allowedAppCallerCodes.join(', '));
+    setLegacySuccessorIds(data.successorServiceKeyIds.join(', '));
+    setLegacyRequired(String(data.requiredSuccessorObservations));
+    legacyDirty.current = false;
+  }, []);
 
   const load = useCallback(async () => {
     setListError(null); setLegacyReadError(null); setReading(true);
     let keysRead = false;
+    let legacyRequest = 0;
     try {
     const res = await getServiceKeys();
     if (res.success) { keysRead = true; setItems(res.data); setValidityNow(Date.now()); setLifecycleReceipt(null); }
     else setListError(res.error?.message || '加载接入密钥失败');
     if (canManageLegacyCutover) {
+      if (legacyCheckingRef.current) return;
+      legacyRequest = ++legacyReadSequence.current;
       const legacyRes = await getLegacyKeyCutover();
+      if (legacyRequest !== legacyReadSequence.current) return;
       if (!legacyRes.success) setLegacyReadError(legacyRes.error?.message || '旧共享密钥状态未读取，请刷新核对。');
       if (legacyRes.success && legacyRes.data.applicable) {
-        setLegacy(legacyRes.data);
-        setLegacyStatus(legacyRes.data.status === 'not-applicable' ? 'observing' : legacyRes.data.status);
-        setLegacyDeadline(legacyRes.data.deadlineAt ? toLocalInput(legacyRes.data.deadlineAt) : '');
-        setLegacyAllowedCallers(legacyRes.data.allowedAppCallerCodes.join(', '));
-        setLegacySuccessorIds(legacyRes.data.successorServiceKeyIds.join(', '));
-        setLegacyRequired(String(legacyRes.data.requiredSuccessorObservations));
+        const task = legacyTask.current;
+        if (!legacyDirty.current && !task.pending && !task.unknown && !task.receipt && !task.conflict) adoptLegacy(legacyRes.data);
+        else { setLegacy(legacyRes.data); setLegacyReadAt(new Date().toISOString()); }
       }
     }
-    } catch { if (keysRead) setLegacyReadError('旧共享密钥状态读取中断，请重读。'); else setListError('密钥配置读取未完成，请重新读取后核对。'); }
+    } catch { if (keysRead) { if (legacyRequest === legacyReadSequence.current) setLegacyReadError('旧共享密钥状态读取中断，请重读。'); } else setListError('密钥配置读取未完成，请重新读取后核对。'); }
     finally { setReading(false); }
-  }, [canManageLegacyCutover]);
+  }, [canManageLegacyCutover, adoptLegacy]);
 
   useEffect(() => {
     void load();
@@ -325,7 +354,7 @@ export function ServiceKeysPage() {
         ? { title: `撤销接入密钥「${item.name}」？`, description: '撤销后使用它的客户端会立即收到 401。', tone: 'danger', confirmLabel: '撤销' }
         : { title: `确认「${item.name}」的客户端已经全部切换到新密钥？`, description: '确认后旧密钥进入可撤销状态。', confirmLabel: '已全部切换' });
       if (!confirmed) return;
-      const response = kind === 'revoke' ? await revokeServiceKey(intent.id) : await confirmServiceKeyClientCutover(intent.id);
+      const response = kind === 'revoke' ? await revokeServiceKey(intent.id) : await confirmServiceKeyClientCutover(intent.id, intent.successorId || '');
       if (!response.success) {
         if (mutationOutcomeUnknown(response.error?.code, kind === 'revoke' ? KEY_REVOKE_REJECTED : KEY_CUTOVER_REJECTED)) markUnknown();
         else setError(response.error?.message || '操作在写入前被拒绝，请读取当前状态。');
@@ -453,24 +482,74 @@ export function ServiceKeysPage() {
     .filter((item) => item.purpose === 'external-platform')
     .map((item) => `${item.clientCode} · ${item.environment}`)));
 
-  const saveLegacyCutover = async () => {
-    if (!canManageLegacyCutover || !legacyDeadline) return;
-    if (legacyStatus === 'revoked' && !await confirm({ title: '确认撤销 legacy shared key？', description: '撤销后旧 key 将立即返回 401，且必须已有 scoped key 双 key 观测。', tone: 'danger', confirmLabel: '撤销' })) return;
-    setLegacyBusy(true);
-    const res = await updateLegacyKeyCutover({
-      status: legacyStatus,
-      deadlineAt: new Date(legacyDeadline).toISOString(),
-      allowedAppCallerCodes: splitValues(legacyAllowedCallers),
-      successorServiceKeyIds: splitValues(legacySuccessorIds),
-      requiredSuccessorObservations: Math.max(1, Number(legacyRequired) || 1),
-    });
-    setLegacyBusy(false);
-    if (!res.success) {
-      setError(res.error?.message || '更新 legacy 收口策略失败');
-      return;
-    }
-    await load();
+  const readLegacyPolicy = async (discardDraft = false) => {
+    if (legacyCheckingRef.current || legacyTask.current.pending) return;
+    legacyCheckingRef.current = true; setLegacyChecking(true); setLegacyReadError(null); setLegacySettledFeedback(false);
+    const request = ++legacyReadSequence.current;
+    try {
+      const response = await getLegacyKeyCutover();
+      if (request !== legacyReadSequence.current) return;
+      if (!response.success || !response.data.applicable) {
+        setLegacyFeedback(response.success ? '当前未取得适用策略，原草稿与待核状态保留。' : `策略读取失败，原草稿与待核状态保留：${response.error.message}`);
+        return;
+      }
+      const data = response.data;
+      if (!Number.isSafeInteger(data.policyRevision) || data.policyRevision < 0) { setLegacyFeedback('未取得可校验的策略版本，原草稿保留；请刷新或联系管理员确认服务版本。'); return; }
+      setLegacy(data); setLegacyReadAt(new Date().toISOString());
+      const task = legacyTask.current;
+      const superseded = Boolean(task.unknown && data.policyRevision > task.unknown.expectedPolicyRevision && !legacyPolicyGoalObserved(task.unknown, data));
+      if (task.unknown && !legacyPolicyGoalObserved(task.unknown, data) && !(discardDraft && superseded)) {
+        setLegacyFeedback(superseded ? '当前策略已更新为其他目标，原请求回执未确认；可保留本次草稿核对，或丢弃原草稿并按最新策略编辑。' : '已读取当前策略，但尚未符合本次完整目标；结果仍待核，不会重新提交。');
+        return;
+      }
+      if (task.unknown || task.receipt || discardDraft) {
+        const wasUnknown = Boolean(task.unknown); const wasReceipt = task.receipt;
+        adoptLegacy(data); task.unknown = null; task.receipt = false; task.conflict = false;
+        setLegacyUnknown(null); setLegacyReceipt(false); setLegacyConflict(false);
+        setLegacySettledFeedback(true);
+        setLegacyFeedback(superseded ? '已丢弃原草稿，按最新策略开始新编辑；原请求回执仍未确认。' : wasUnknown ? '已核对当前策略符合本次目标；未确认原请求或审计回执。' : wasReceipt ? '保存已确认，已读取当前策略。' : '已丢弃原草稿，按最新读取版本编辑。');
+      }
+    } catch { setLegacyFeedback('策略读取中断，原草稿与待核状态保留。'); }
+    finally { legacyCheckingRef.current = false; setLegacyChecking(false); }
   };
+  const saveLegacyCutover = async () => {
+    const task = legacyTask.current;
+    if (!canManageLegacyCutover || !legacyDeadline || !Number.isSafeInteger(legacyDraftRevision) || legacyDraftRevision === null || task.pending || task.unknown || task.receipt || task.conflict) return;
+    const deadline = new Date(legacyDeadline);
+    if (!Number.isFinite(deadline.getTime())) { setLegacyFeedback('截止时间无效，请重新填写。'); return; }
+    const snapshot: LegacyPolicyWrite = {
+      expectedPolicyRevision: legacyDraftRevision, status: legacyStatus, deadlineAt: deadline.toISOString(),
+      allowedAppCallerCodes: splitValues(legacyAllowedCallers), successorServiceKeyIds: splitValues(legacySuccessorIds),
+      requiredSuccessorObservations: Math.max(1, Number(legacyRequired) || 1),
+    };
+    task.pending = true; legacyReadSequence.current++; setLegacyBusy(true); setLegacyFeedback(null); setLegacySettledFeedback(false);
+    let submitted = false;
+    const unknown = () => {
+      task.unknown = snapshot; setLegacyUnknown(snapshot);
+      setLegacyFeedback('保存结果未确认，可能已生效；本次草稿已保留。请核对当前策略，不会重新提交。');
+    };
+    try {
+      if (snapshot.status === 'revoked' && !await confirm({ title: '确认撤销旧共享密钥？', description: '撤销后使用旧密钥的客户端立即收到 401，且无法恢复。', tone: 'danger', confirmLabel: '撤销旧共享密钥' })) return;
+      submitted = true;
+      const response = await updateLegacyKeyCutover(snapshot);
+      if (!response.success) {
+        if (mutationOutcomeUnknown(response.error?.code, LEGACY_POLICY_REJECTED)) unknown();
+        else {
+          if (LEGACY_POLICY_NEEDS_READ.some(code => code === response.error?.code)) { task.conflict = true; setLegacyConflict(true); }
+          setLegacyFeedback(`本次未写入，草稿保留：${response.error.message}`);
+        }
+        return;
+      }
+      if (!Number.isSafeInteger(response.data.policyRevision) || response.data.policyRevision !== snapshot.expectedPolicyRevision + 1 || response.data.status !== snapshot.status) { unknown(); return; }
+      task.receipt = true; setLegacyReceipt(true);
+      setLegacyFeedback(`已确认保存策略 v${response.data.policyRevision}，正在读取当前策略。`);
+      // Acknowledged save and subsequent read have separate outcomes.
+      task.pending = false;
+      await readLegacyPolicy();
+    } catch { if (submitted) unknown(); else setLegacyFeedback('确认未完成，本次尚未发送保存请求。'); }
+    finally { task.pending = false; setLegacyBusy(false); }
+  };
+  const legacyLocked = legacyBusy || legacyChecking || Boolean(legacyUnknown) || legacyReceipt || legacyConflict;
 
   const selectedKey = items?.find((item) => item.id === selectedKeyId);
   useLayoutEffect(() => {
@@ -495,7 +574,7 @@ export function ServiceKeysPage() {
         </details> : null}
 
         {legacy ? <details className="lg-collection-key-legacy" style={legacyBlockStyle}>
-          <summary style={legacySummaryStyle}>旧共享密钥 · {legacy.status === 'revoked' ? '已撤销' : legacy.status === 'ready' ? '等待撤销' : '替换观察中'} · 替代密钥观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}{legacy.status !== 'revoked' ? ` · ${legacy.deadlineAt ? formatTime(legacy.deadlineAt) + ' 后拒绝旧密钥调用' : '尚未设置截止时间'}` : ''}</summary>
+          <summary style={legacySummaryStyle}>旧共享密钥 · {legacyBusy || legacyUnknown || legacyReceipt ? '上次读取：' : ''}{legacy.status === 'revoked' ? '已撤销' : legacy.status === 'ready' ? '等待撤销' : '替换观察中'} · 替代密钥观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}{legacy.status !== 'revoked' ? ` · ${legacy.deadlineAt ? formatTime(legacy.deadlineAt) + ' 后拒绝旧密钥调用' : '尚未设置截止时间'}` : ''}</summary>
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap', marginTop: GAP.section }}>
             <span style={HINT_TEXT}>
               收口判定
@@ -507,14 +586,23 @@ export function ServiceKeysPage() {
             </span>
             <span style={HINT_TEXT}>必需协议 {legacy.requiredIngressProtocols.join(', ')} · 必需 scope {legacy.requiredScopes.join(', ')}</span>
           </div>
+          <div style={{ marginTop: GAP.normal }}>
+            <span style={HINT_TEXT}>{legacyBusy || legacyUnknown || legacyReceipt ? '上次读取' : '最近读取'}策略 v{legacy.policyRevision ?? '未提供'} · 草稿基于 v{legacyDraftRevision ?? '未读取'} · 读取于 {formatTime(legacyReadAt)}</span>
+            {legacyReceipt ? <div role="status">已确认保存策略 v{(legacyDraftRevision ?? 0) + 1}，当前策略待读取。</div> : null}
+            {legacyFeedback ? <InlineAlert tone={legacyUnknown || legacyConflict ? 'error' : 'info'}>{legacyFeedback}</InlineAlert> : null}
+            {legacyUnknown || legacyReceipt ? <Button size="sm" variant="ghost" disabled={legacyBusy || legacyChecking} onClick={() => void readLegacyPolicy()}>{legacyChecking ? '正在核对…' : '核对当前策略'}</Button> : null}
+            {legacyConflict || legacyUnknown && legacy.policyRevision > legacyUnknown.expectedPolicyRevision ? <Button size="sm" variant="ghost" disabled={legacyChecking} onClick={() => void readLegacyPolicy(true)}>{legacyUnknown ? '丢弃原草稿并按最新策略编辑' : '丢弃草稿并读取最新策略'}</Button> : null}
+          </div>
+          <fieldset disabled={legacyLocked} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
           <FormGrid style={{ marginTop: GAP.normal }}>
-            <label style={labelStyle}><span>截止时间</span><input type="datetime-local" value={legacyDeadline} onChange={(e) => setLegacyDeadline(e.target.value)} style={inputStyle} /></label>
-            <label style={labelStyle}><span>状态</span><select value={legacyStatus} onChange={(e) => setLegacyStatus(e.target.value as typeof legacyStatus)} style={inputStyle}><option value="observing">观测中</option><option value="ready">待撤销</option><option value="revoked">已撤销</option></select></label>
-            <Field label="允许的 appCaller 清单" value={legacyAllowedCallers} onChange={setLegacyAllowedCallers} placeholder="逗号分隔；空表示先盘点" />
-            <Field label="后继 scoped key IDs" value={legacySuccessorIds} onChange={setLegacySuccessorIds} placeholder="逗号分隔" />
-            <Field label="最低观测次数" value={legacyRequired} onChange={setLegacyRequired} placeholder="1" type="number" />
-            <Button variant="primary" size="sm" disabled={legacyBusy || !legacyDeadline} onClick={() => void saveLegacyCutover()}>{legacyBusy ? '保存中' : '保存收口策略'}</Button>
+            <label style={labelStyle}><span>截止时间</span><input type="datetime-local" value={legacyDeadline} onChange={(e) => { legacyDirty.current = true; setLegacyDeadline(e.target.value); }} style={inputStyle} /></label>
+            <label style={labelStyle}><span>状态</span><select value={legacyStatus} onChange={(e) => { legacyDirty.current = true; setLegacyStatus(e.target.value as typeof legacyStatus); }} style={inputStyle}><option value="observing" disabled={legacy.status === 'revoked'}>观测中</option><option value="ready" disabled={legacy.status === 'revoked'}>待撤销</option><option value="revoked">已撤销</option></select></label>
+            <Field label="允许的 appCaller 清单" value={legacyAllowedCallers} onChange={value => { legacyDirty.current = true; setLegacyAllowedCallers(value); }} placeholder="逗号分隔；空表示先盘点" />
+            <Field label="后继 scoped key IDs" value={legacySuccessorIds} onChange={value => { legacyDirty.current = true; setLegacySuccessorIds(value); }} placeholder="逗号分隔" />
+            <Field label="最低观测次数" value={legacyRequired} onChange={value => { legacyDirty.current = true; setLegacyRequired(value); }} placeholder="1" type="number" />
+            <Button variant="primary" size="sm" disabled={legacyLocked || !legacyDeadline || legacyDraftRevision === null} onClick={() => void saveLegacyCutover()}>{legacyBusy ? '保存中' : '保存收口策略'}</Button>
           </FormGrid>
+          </fieldset>
           {legacy.usage.length ? <div style={{ overflowX: 'auto', marginTop: GAP.section }}><table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['来源', 'appCaller', '协议', '允许', '拒绝', '最后出现', '决定'].map((label) => <th key={label} style={th}>{label}</th>)}</tr></thead><tbody>{legacy.usage.map((item) => <tr key={`${item.sourceSystem}-${item.appCallerCode}-${item.ingressProtocol}`}><td style={td}>{item.sourceSystem}</td><td style={td}>{item.appCallerCode || '缺失'}</td><td style={td}>{item.ingressProtocol}</td><td style={td}>{item.allowedCount}</td><td style={td}>{item.rejectedCount}</td><td style={td}>{formatTime(item.lastSeenAt)}</td><td style={td}>{item.lastDecision}</td></tr>)}</tbody></table></div> : null}
         </details> : null}
 
