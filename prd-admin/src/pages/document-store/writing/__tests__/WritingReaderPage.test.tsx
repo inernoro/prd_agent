@@ -147,6 +147,9 @@ describe('教学转换必须保留已发布的执行约束', () => {
     expect(container.querySelector('.writing-tutorial-steps table')).toBeNull();
     await click([...container.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === '字幕全文')!);
     expect(container.querySelector('.writing-chapter-list .writing-caption-row')?.textContent).toContain('独立字幕，不能替换成步骤');
+    expect(container.querySelector('.writing-chapter-list .writing-learning-card')).toBeNull();
+    await click([...container.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === '章节')!);
+    expect(container.querySelector('.writing-chapter-list .writing-learning-card')?.textContent).toContain('看完以后');
   });
   it('读取失败可重试，成功后显示实际文档约束并清除错误', async () => {
     api.read.mockResolvedValueOnce({ success: false, error: { code: 'FORBIDDEN', message: '没有阅读权限' } });

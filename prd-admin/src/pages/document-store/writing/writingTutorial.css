@@ -110,3 +110,13 @@
 .writing-graphic-tutorial.writing-root .player>.ov>svg{grid-column:1;grid-row:1 / span 2;width:22px;height:22px}
 .writing-graphic-tutorial.writing-root .player>.ov>strong{grid-column:2;grid-row:1;font-size:14px}
 .writing-graphic-tutorial.writing-root .player>.ov>p{grid-column:2;grid-row:2;margin:0;font-size:13px;line-height:1.65;color:var(--writing-ink2)}
+
+/* v14 12: the subtitle list has its own rhythm; the completion card belongs to chapters. */
+.writing-tutorial .writing-chapter-list .writing-caption-list{padding:4px 0 14px}
+.writing-tutorial .writing-chapter-list .writing-caption-row>.mono{line-height:24px}
+.writing-tutorial.writing-root .writing-play-circle{background:var(--writing-play-bg);color:var(--writing-play-ink)}
+.writing-tutorial.writing-root .writing-play-circle>svg{width:22px;height:22px;padding:0;background:none;border-radius:0}
+@media(max-width:760px){.writing-tutorial.writing-root .writing-play-circle>svg{width:20px;height:20px}}
+
+.writing-tutorial.writing-root .writing-play-overlay{background:var(--writing-player-overlay);font:16px/normal Inter,'Noto Sans SC',sans-serif;gap:12px;padding:0 80px}
+@media(max-width:760px){.writing-tutorial.writing-root .writing-play-overlay{background:var(--writing-player-mobile-overlay);font:13px/1.6 Inter,'Noto Sans SC',sans-serif;gap:10px;padding:0 24px}}

@@ -1645,6 +1645,8 @@ html[data-perf-mode="performance"] .app-aurora {
 :root {
   --writing-on-accent: #0C0E12;
   --writing-player-bg: #0F1218;
+  --writing-play-bg: #8EA0FF;
+  --writing-play-ink: #0C0E12;
   --writing-media-ink: #14171C;
   --writing-media-accent: #3046C5;
   --writing-media-muted: #667080;
@@ -1655,10 +1657,13 @@ html[data-perf-mode="performance"] .app-aurora {
   --writing-media-paper: #F7F8FA;
   --writing-caption-bg: rgba(0,0,0,.78);
   --writing-player-overlay: rgba(15,18,24,.82);
+  --writing-player-mobile-overlay: rgba(15,18,24,.84);
 }
 [data-theme="light"] {
   --writing-on-accent: #fff;
   --writing-player-bg: #0F1218;
+  --writing-play-bg: #8EA0FF;
+  --writing-play-ink: #0C0E12;
   --writing-media-ink: #14171C;
   --writing-media-accent: #3046C5;
   --writing-media-muted: #667080;
@@ -1669,6 +1674,7 @@ html[data-perf-mode="performance"] .app-aurora {
   --writing-media-paper: #F7F8FA;
   --writing-caption-bg: rgba(0,0,0,.78);
   --writing-player-overlay: rgba(15,18,24,.82);
+  --writing-player-mobile-overlay: rgba(15,18,24,.84);
 }
 
 /* Original Threads v14 stroke channels. */
