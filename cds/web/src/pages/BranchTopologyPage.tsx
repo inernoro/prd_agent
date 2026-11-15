@@ -968,7 +968,7 @@ export function BranchTopologyPage(): JSX.Element {
               {refreshError ? <div role="alert" className="mb-4 space-y-2 text-sm text-warn"><p>拓扑读取失败：{refreshError}；{mobileObjectAvailable ? '保留原对象的上次快照。' : '原对象当前暂时无法重新确认。'}</p><Button variant="outline" style={{ minHeight: 44 }} disabled={refreshing} onClick={() => void refresh()}>重试读取</Button></div> : null}
               {mobileSelection && mobileObjectAvailable && state.status === 'ok'
                 ? nodeDetails(mobileSelection.node, mobileSelection.branchId ? state.branches.find(branch => branch.id === mobileSelection.branchId) || null : null)
-                : <p role="alert" className="text-sm text-muted-foreground">原选中对象暂时无法确认，当前没有借用其他节点的内容。</p>}
+                : <p role="alert" className="text-sm text-muted-foreground">暂时无法显示该服务详情，请重新读取或返回拓扑。</p>}
             </DialogBody>
             <DialogFooter className="shrink-0 border-t border-border px-5 py-3"><Button variant="outline" style={{ minHeight: 44 }} onClick={() => setMobileDetailsOpen(false)}>返回拓扑</Button></DialogFooter>
           </DialogContent>
