@@ -513,7 +513,7 @@ export function ServiceKeysPage() {
       />
 
       <PageBody className="lg-collection-page">
-        {lifecycleReceipt ? <InlineAlert tone="info">已确认{lifecycleReceipt.kind === 'revoke' ? '撤销' : '客户端切换'}「{lifecycleReceipt.name}」，{reading ? '正在刷新清单' : '当前清单待刷新，请重读'}；不会重发。<Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重读密钥清单</Button></InlineAlert> : null}
+        {lifecycleReceipt ? <InlineAlert tone="info">已确认{lifecycleReceipt.kind === 'revoke' ? '撤销' : '客户端切换'}「{lifecycleReceipt.name}」，{reading ? '正在刷新清单' : '当前清单待刷新，请重读'}；不会重发。{listError ? <span>{listError}</span> : null}<Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重读密钥清单</Button></InlineAlert> : null}
         {lifecycleUnknown ? <InlineAlert tone="error">
           「{lifecycleUnknown.name}」的{lifecycleUnknown.kind === 'revoke' ? '撤销' : '客户端切换确认'}结果未确认，可能已生效；未重提。
           <code>{lifecycleUnknown.id}</code>
