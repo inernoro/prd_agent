@@ -9,7 +9,7 @@ import { ErrorNotice } from './ReviewTaskDetails';
 import { ReportDocument } from './ReportDocument';
 import { ReviewBack, ReviewButton } from './ReviewUi';
 
-export interface ReviewProjectOption { id: string; name: string; aliasName?: string; githubRepoFullName?: string; branchCount?: number }
+export interface ReviewProjectOption { id: string; name: string; aliasName?: string; githubRepoFullName?: string; gitRepoUrl?: string; branchCount?: number }
 export interface ReviewCapabilities { engineConfigured: boolean; userKeyConfigured?: boolean; mailConfigured: boolean; storageConfigured?: boolean; tools?: string[] }
 
 export function ReviewComposer({ mode, projects, projectId: initialProject, capabilities, onBack, onSaved }: {

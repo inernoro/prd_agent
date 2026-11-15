@@ -33,6 +33,10 @@ describe('共享分支选择', () => {
   it('已登记分支使用分支ID，远程分支使用所选项目仓库和原始ref，不创建部署', () => {
     expect(reviewBranchSource({ githubRepoFullName: 'owner/repo' }, tracked[0], '')).toEqual({ sourceType: 'cds', branchId: 'id-0' });
     expect(reviewBranchSource({ githubRepoFullName: 'owner/repo' }, undefined, 'feature/远程')).toEqual({ sourceType: 'github', githubUrl: 'https://github.com/owner/repo', ref: 'feature/远程' });
+    for (const gitRepoUrl of ['https://github.com/owner/repo.git', 'git@github.com:owner/repo.git', 'ssh://git@github.com/owner/repo.git']) {
+      expect(reviewBranchSource({ gitRepoUrl }, undefined, 'main')).toEqual({ sourceType: 'github', githubUrl: 'https://github.com/owner/repo', ref: 'main' });
+    }
+    expect(reviewBranchSource({ gitRepoUrl: 'https://github.com.attacker.invalid/owner/repo.git' }, undefined, 'main')).toBeUndefined();
     expect(reviewBranchSource(undefined, undefined, 'main')).toBeUndefined();
     expect(reviewBranchSource({ githubRepoFullName: 'owner/repo/extra' }, undefined, 'main')).toBeUndefined();
   });

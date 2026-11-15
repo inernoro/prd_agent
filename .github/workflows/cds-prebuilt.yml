@@ -166,6 +166,7 @@ jobs:
           docker run --pull=never --rm -i --entrypoint sh \
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }} -e <<'OPENSSL_SMOKE'
           set -eu
+          git --version
           openssl_smoke_dir="$(mktemp -d)"
           trap 'rm -rf "$openssl_smoke_dir"' EXIT
           openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
