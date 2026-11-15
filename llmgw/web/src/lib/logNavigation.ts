@@ -34,6 +34,11 @@ function withContext(path: string, query: URLSearchParams, context: LogTaskConte
   if (Object.keys(safe).length) query.set('context', new URLSearchParams(safe as Record<string, string>).toString());
   return `${path}${query.size ? `?${query}` : ''}`;
 }
+/** Entity destinations carry the same finite task state; never an arbitrary return URL. */
+export function withLogTaskContext(path: '/app-callers/view' | '/models/view' | '/platforms/view', query: URLSearchParams, context: LogTaskContext): string {
+  if (!['/app-callers/view', '/models/view', '/platforms/view'].includes(path)) throw new Error('Unsupported log task destination');
+  return withContext(path, new URLSearchParams(query), context);
+}
 export function buildLogDetailHref(id: string, context: LogTaskContext = {}): string {
   return withContext(`/logs/${encodeURIComponent(id)}`, new URLSearchParams(), context);
 }

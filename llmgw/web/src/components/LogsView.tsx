@@ -15,7 +15,7 @@ import { LogTableSettings } from './LogTableSettings';
 import { ConsumptionAlertsPanel } from './ConsumptionAlertsPanel';
 import './LogsView.css';
 import { readLogListResume, saveLogListResume } from '@/lib/logListResume';
-import { buildLogTraceHref, LOG_FILTER_KEYS } from '@/lib/logNavigation';
+import { buildLogTraceHref, withLogTaskContext, type LogTaskContext, LOG_FILTER_KEYS } from '@/lib/logNavigation';
 import {
   DASH,
   formatModelFallback,
@@ -169,10 +169,10 @@ function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platform
   return `/platforms/view?${query.toString()}`;
 }
 
-function appDetailsHref(code: string, requestType?: string | null) {
+function appDetailsHref(code: string, requestType?: string | null, context: LogTaskContext = {}) {
   const query = new URLSearchParams({ code });
   if (requestType) query.set('requestType', requestType);
-  return `/app-callers/view?${query}`;
+  return withLogTaskContext('/app-callers/view', query, context);
 }
 
 
@@ -888,7 +888,7 @@ export function LogsView() {
         }
         return (
           <LogEntityHoverCard
-            href={appDetailsHref(code, it.requestType)}
+            href={appDetailsHref(code, it.requestType, { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to, selectedLogId: it.id })}
             label={appDisplayName(it)}
             subtitle={[code, it.sourceSystem || 'App', it.environment].filter(Boolean).join(' · ')}
             description={it.clientCode
@@ -1051,7 +1051,7 @@ export function LogsView() {
       case 'app':
         return it.appCallerCode ? (
           <LogEntityHoverCard
-            href={appDetailsHref(it.appCallerCode)}
+            href={appDetailsHref(it.appCallerCode, undefined, { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to })}
             label={it.appCallerCode}
             subtitle="会话调用 App"
             description="进入详情可查看调用身份、路由、治理和该 App 的最近请求。"

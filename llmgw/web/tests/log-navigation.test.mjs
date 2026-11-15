@@ -20,6 +20,9 @@ test('请求任务上下文只携带白名单、保持范围和筛选，调用�
     assert.equal(nav.getLogReturnTarget(nav.getLogTaskContext('')).href, '/logs');
     const unsafe = nav.getLogTaskContext(`?context=${encodeURIComponent('source=external&from=https://evil.test&return=https://evil.test&password=secret&body=private&range=999&tracePage=-1')}`);
     assert.deepEqual(unsafe, {}); assert.equal(nav.getLogReturnTarget(unsafe).href, '/logs');
+    const entityHref = nav.withLogTaskContext('/app-callers/view', new URLSearchParams({ code: 'shared-code', requestType: 'chat' }), context);
+    const entity = new URL(entityHref, 'https://local');assert.equal(entity.searchParams.get('requestType'),'chat');assert.deepEqual(nav.getLogTaskContext(entity.search),context);assert.match(nav.getLogReturnTarget(nav.getLogTaskContext(entity.search)).href,/anchor=row-65/);
+    assert.throws(()=>nav.withLogTaskContext('https://evil.test',new URLSearchParams(),context),/Unsupported/);
     assert.doesNotMatch(nav.buildLogListHref({ ...context, model: undefined }), /undefined/);
   } finally { await server.close(); }
 });
