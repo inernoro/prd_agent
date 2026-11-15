@@ -1,3 +1,7 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using PrdAgent.Api.Services.ReportAgent;
 using System.Reflection;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Models;
@@ -7,6 +11,25 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class ReportNotificationNavigationTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReportSchedule_RespectsExistingDeploymentAuthority(bool preview)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["CDS_PROJECT_ID"] = preview ? "memory-preview" : null,
+            ["Deployment:Identity"] = "memory-authority",
+            ["Deployment:SharedScheduledWorkEnabled"] = preview ? "false" : "true",
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "true"
+        }).Build();
+        using var services = new ServiceCollection().AddSingleton<IConfiguration>(config).BuildServiceProvider();
+        using var worker = new ReportAutoGenerateWorker(services.GetRequiredService<IServiceScopeFactory>(), NullLogger<ReportAutoGenerateWorker>.Instance);
+        await worker.StartAsync(CancellationToken.None);
+        try { Assert.Equal(preview, worker.ExecuteTask?.IsCompletedSuccessfully == true); }
+        finally { await worker.StopAsync(CancellationToken.None); }
+    }
+
     [Theory]
     [InlineData("report-auto-gen:owner:2026-W46", "/report-agent?tab=report&weekYear=2026&weekNumber=46")]
     [InlineData("report-agent:deadline:owner:2026-46", "/report-agent?tab=report&weekYear=2026&weekNumber=46")]

@@ -35,6 +35,16 @@ public class ReportAutoGenerateWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        using (var scope = _scopeFactory.CreateScope())
+        {
+            var configuration = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+            if (!PrdAgent.Infrastructure.Security.DeploymentAuthority.CanRunSharedScheduledWork(configuration))
+            {
+                _logger.LogInformation("Report schedule disabled: deployment is not authorized for shared scheduled work");
+                return;
+            }
+        }
+
         _logger.LogInformation("ReportAutoGenerateWorker started");
 
         while (!stoppingToken.IsCancellationRequested)
