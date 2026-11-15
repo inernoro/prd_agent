@@ -26,7 +26,11 @@ export function useNotificationActions({ refresh, resolveGatewayHref, onNavigate
         // noopener 下部分浏览器返回 null，并不代表打开失败，不能据此修改通知。
         void opened;
       } else {
-        navigate(url);
+        if (url === '/report-agent' || url.startsWith('/report-agent?')) {
+          navigate(url, { state: { notificationId: item.id } });
+        } else {
+          navigate(url);
+        }
         onNavigated?.();
       }
       return;
