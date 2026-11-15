@@ -1211,11 +1211,41 @@ function ReportsHome({
                   const dc = r.defectCounts ?? {};
                   const p0 = severityCount(dc.p0 ?? dc.P0); const p1 = severityCount(dc.p1 ?? dc.P1); const p2 = severityCount(dc.p2 ?? dc.P2);
                   const superseded = supersededIds.has(r.id);
+                  // 两种视口共用事实与操作，仅重组手机阅读顺序，避免结论/未知值分叉。
+                  const verdictFact = <span className="inline-flex items-center gap-1.5 text-[0.78125rem] font-semibold"><VerdictIcon verdict={rowVerdict} />{rowVerdict === 'pass' ? '通过' : rowVerdict === 'fail' ? '未通过' : rowVerdict === 'conditional' ? '原则性通过' : <span className="text-muted-foreground">无结论</span>}</span>;
+                  const tierFact = r.tier ? <span className="inline-flex items-center gap-1"><span className="text-muted-foreground lg:hidden">档位</span><span className="inline-flex h-5 items-center rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 text-[0.6875rem] font-semibold">{r.tier}</span></span> : null;
+                  const defectFact = <span className="inline-flex flex-wrap items-center gap-1"><span className="mr-1 text-muted-foreground lg:hidden">缺陷</span>{r.defectCounts ? (
+                    <span className="inline-flex gap-1 font-mono text-[0.6875rem]">
+                      <span className={`rounded px-1.5 py-0.5 ${p0 ? 'bg-[hsl(var(--bad-soft))] text-bad' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>P0 {p0}</span>
+                      <span className={`rounded px-1.5 py-0.5 ${p1 ? 'bg-[hsl(var(--bad-soft))] text-bad' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>P1 {p1}</span>
+                      <span className={`rounded px-1.5 py-0.5 ${p2 ? 'bg-[hsl(var(--warn-soft))] text-warn' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>P2 {p2}</span>
+                    </span>
+                  ) : <span className="text-[0.6875rem] text-muted-foreground">未记录</span>}</span>;
+                  const deploymentContext = (
+                    <div className="flex min-w-0 flex-wrap items-center gap-1">
+                      {r.branch ? <ChangeKeyChip icon={GitBranch} text={r.branch} /> : null}
+                      {r.commitSha ? <ChangeKeyChip icon={GitCommitHorizontal} text={r.commitSha.slice(0, 8)} /> : null}
+                      {r.prNumber != null ? <ChangeKeyChip icon={GitPullRequest} text={`#${r.prNumber}`} tone="info" /> : null}
+                      {!r.branch && !r.commitSha && r.prNumber == null ? <span className="text-[0.6875rem] text-muted-foreground">未记录部署上下文</span> : null}
+                    </div>
+                  );
+                  const archiveFact = <span className="font-mono text-[0.71875rem] text-muted-foreground"><span className="mr-1 font-sans lg:hidden">归档</span>{formatTime(r.createdAt)}{r.shareToken ? <Share2 className="ml-1.5 inline h-3.5 w-3.5 text-info" aria-label="已分享" /> : null}</span>;
+                  const rowActions = <ReportRowActions
+                    folderActionsAvailable={folderActionsAvailable}
+                    report={r}
+                    folders={folders}
+                    onOpen={() => onSelect(r)}
+                    onDelete={() => onDelete(r)}
+                    onMove={(folderId) => onMove(r, folderId)}
+                    onCopy={() => onCopy(r)}
+                    onSync={() => onSync(r)}
+                    onManageConnections={() => onManageConnections(r)}
+                  />;
                   return (
                     <tr
                       key={r.id}
                       data-report-id={r.id}
-                      className={`group grid grid-cols-[minmax(0,1fr)_auto] cursor-pointer gap-2 border-t border-[hsl(var(--hairline))] p-3 align-top transition-colors hover:bg-[hsl(var(--surface-sunken))] lg:table-row lg:p-0 ${superseded ? 'opacity-60' : ''}`}
+                      className={`group flex cursor-pointer flex-col gap-2 border-t border-[hsl(var(--hairline))] p-3 align-top transition-colors hover:bg-[hsl(var(--surface-sunken))] lg:table-row lg:p-0 ${superseded ? 'opacity-60' : ''}`}
                       style={{ boxShadow: `inset 3px 0 0 ${rail}` }}
                       onClick={() => onSelect(r)}
                       onKeyDown={(event) => { if (event.target !== event.currentTarget) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(r); } }}
@@ -1223,55 +1253,29 @@ function ReportsHome({
                       tabIndex={0}
                       title={reportTooltip(r, projectLabel)}
                     >
-                      <td className="col-span-2 block whitespace-nowrap lg:table-cell lg:px-3 lg:py-3">
-                        {/* 走生效结论：一份写着通过却带 P0 的报告，聚合那边已经算作未通过，
-                            这一列若还显示「通过」，同一屏就自己打自己（Codex 第二十三轮）。 */}
-                        <span className="inline-flex items-center gap-1.5 text-[0.78125rem] font-semibold"><VerdictIcon verdict={rowVerdict} />{rowVerdict === 'pass' ? '通过' : rowVerdict === 'fail' ? '未通过' : rowVerdict === 'conditional' ? '原则性通过' : <span className="text-muted-foreground">无结论</span>}</span>
-                      </td>
-                      <td className="order-first col-span-2 block min-w-0 lg:order-none lg:table-cell lg:px-3 lg:py-3">
+                      <td className="hidden whitespace-nowrap lg:table-cell lg:px-3 lg:py-3">{verdictFact}</td>
+                      <td className="order-first block min-w-0 lg:order-none lg:table-cell lg:px-3 lg:py-3">
                         <div className="break-words font-semibold text-foreground">{r.title}</div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[0.71875rem] text-muted-foreground">
                           {superseded ? <span>已被更新的版本取代</span> : ref && ref.version > 1 ? <span>v{ref.version} · 取代 {ref.supersedes.length} 份早期版本</span> : null}
-                          {projectLabel ? <span>{projectLabel}</span> : null}
+                          {projectLabel ? <span className="hidden lg:inline">{projectLabel}</span> : null}
                           <FormatBadge format={r.format} />
                         </div>
                       </td>
-                      <td className="col-span-2 block empty:hidden lg:table-cell lg:px-3 lg:py-3">{r.tier ? <><span className="mr-2 text-muted-foreground lg:hidden">档位</span><span className="inline-flex h-5 items-center rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 text-[0.6875rem] font-semibold">{r.tier}</span></> : null}</td>
-                      <td className="col-span-2 block whitespace-nowrap lg:table-cell lg:px-3 lg:py-3">
-                        <span className="mr-2 text-muted-foreground lg:hidden">缺陷</span>
-                        {r.defectCounts ? (
-                          <span className="inline-flex gap-1 font-mono text-[0.6875rem]">
-                            <span className={`rounded px-1.5 py-0.5 ${p0 ? 'bg-[hsl(var(--bad-soft))] text-bad' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>P0 {p0}</span>
-                            <span className={`rounded px-1.5 py-0.5 ${p1 ? 'bg-[hsl(var(--bad-soft))] text-bad' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>P1 {p1}</span>
-                            <span className={`rounded px-1.5 py-0.5 ${p2 ? 'bg-[hsl(var(--warn-soft))] text-warn' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>P2 {p2}</span>
-                          </span>
-                        ) : <span className="text-[0.6875rem] text-muted-foreground">未记录</span>}
+                      <td className="flex flex-wrap items-center gap-x-3 gap-y-1 lg:hidden">{verdictFact}{tierFact}{defectFact}</td>
+                      <td className="hidden lg:table-cell lg:px-3 lg:py-3">{tierFact}</td>
+                      <td className="hidden whitespace-nowrap lg:table-cell lg:px-3 lg:py-3">{defectFact}</td>
+                      <td className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 lg:hidden">
+                        {isGlobalScope ? <span className="break-words text-[0.71875rem] text-muted-foreground">{projectLabel || '未关联项目'}</span> : null}
+                        {deploymentContext}
                       </td>
-                      <td className="col-span-2 block min-w-0 lg:table-cell lg:px-3 lg:py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {r.branch ? <ChangeKeyChip icon={GitBranch} text={r.branch} /> : null}
-                          {r.commitSha ? <ChangeKeyChip icon={GitCommitHorizontal} text={r.commitSha.slice(0, 8)} /> : null}
-                          {r.prNumber != null ? <ChangeKeyChip icon={GitPullRequest} text={`#${r.prNumber}`} tone="info" /> : null}
-                          {!r.branch && !r.commitSha && r.prNumber == null ? <span className="text-[0.6875rem] text-muted-foreground">未记录部署上下文</span> : null}
-                        </div>
+                      <td className="hidden min-w-0 lg:table-cell lg:px-3 lg:py-3">{deploymentContext}</td>
+                      <td className="flex items-center justify-between gap-2 lg:hidden">
+                        {archiveFact}
+                        <span className="shrink-0" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>{rowActions}</span>
                       </td>
-                      <td className="block self-center font-mono text-[0.71875rem] text-muted-foreground lg:table-cell lg:whitespace-nowrap lg:px-3 lg:py-3">
-                        <span className="mr-1 font-sans lg:hidden">归档</span>{formatTime(r.createdAt)}
-                        {r.shareToken ? <Share2 className="ml-1.5 inline h-3.5 w-3.5 text-info" aria-label="已分享" /> : null}
-                      </td>
-                      <td className="block text-right lg:table-cell lg:px-2 lg:py-2" onClick={(event) => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
-                        <ReportRowActions
-                          folderActionsAvailable={folderActionsAvailable}
-                          report={r}
-                          folders={folders}
-                          onOpen={() => onSelect(r)}
-                          onDelete={() => onDelete(r)}
-                          onMove={(folderId) => onMove(r, folderId)}
-                          onCopy={() => onCopy(r)}
-                          onSync={() => onSync(r)}
-                          onManageConnections={() => onManageConnections(r)}
-                        />
-                      </td>
+                      <td className="hidden lg:table-cell lg:whitespace-nowrap lg:px-3 lg:py-3">{archiveFact}</td>
+                      <td className="hidden text-right lg:table-cell lg:px-2 lg:py-2" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>{rowActions}</td>
                     </tr>
                   );
                 })}

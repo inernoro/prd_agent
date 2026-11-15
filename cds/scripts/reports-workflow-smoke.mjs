@@ -24,12 +24,18 @@ const now = new Date('2026-11-15T12:00:00Z');
 const projectFacts = resolveFixture('/api/projects').projects[0];
 const projects = [{ ...projectFacts, id: 'fixture-project', name: '阅读样例', aliasName: '阅读样例', slug: 'reading-fixture' }, { ...projectFacts, id: 'fixture-other', name: '另一个项目', aliasName: '另一个项目', slug: 'other-fixture' }];
 const makeReports = n => Array.from({ length: n }, (_, i) => ({ id: `r${i}`, title: `功能验收 · 阅读对象${String(i).padStart(2,'0')} · 2026-11-15`, format: 'html', sizeBytes: 1234, createdAt: new Date(now.getTime() - (i + 1) * 60000).toISOString(), projectId: 'fixture-project', folderId: i === 0 ? 'f1' : null, verdict: i % 3 === 0 ? 'fail' : 'pass', defectCounts: { p0: 0, p1: i % 3 === 0 ? 1 : 0, p2: 0 }, tier: 'L2', branch: `feature/reading-${i}`, commitSha: (i + 1).toString(16).padStart(40, 'a'), reportType: 'acceptance' }));
+const makeDecisionReports = () => [
+  { ...makeReports(1)[0], title: '演示数据：回归验收（未通过）', tier: 'regression', defectCounts: undefined, branch: 'feat/sample-running', commitSha: undefined },
+  { ...makeReports(2)[1], title: '分支预览 其他系统 监控检查异常，原因未明', format: 'markdown', verdict: undefined, tier: undefined, defectCounts: undefined, branch: undefined, commitSha: undefined },
+];
+const longReportTitle = '功能验收 · 这是一份需要完整阅读才能区分目标和范围的超长报告标题'.repeat(3) + ' · 末尾标识可辨认';
+const longReportBranch = 'feature/long-branch-name-that-must-wrap-without-losing-the-distinguishing-final-suffix-20261115';
 const makeBranches = reports => reports.map((report, i) => ({ id: `b${i}`, projectId: report.projectId, branch: report.branch, commitSha: report.commitSha, status: 'running', createdAt: report.createdAt, lastDeployAt: report.createdAt, services: { web: { status: 'running' } } }));
 const folders = [{ id: 'f1', name: '回归证据', projectId: 'fixture-project', createdAt: now.toISOString() }];
 const task = i => ({ id: `t${i}`, title: `审查样例${i}`, projectId: 'fixture-project', sourceType: 'github', sourceName: `reading-${i}`, branchName: 'feature/reading', status: 'completed', phase: 'completed', progress: { totalFiles: 8, scannedFiles: 8 }, createdAt: now.toISOString(), updatedAt: now.toISOString(), delivery: { status: 'not_requested' }, findingsSummary: { p1: 1 }, reportId: 'r0' });
 const results = [], metrics = [], unknown = new Set(), writes = [], pageErrors = [];
-async function fixture({ width = 1440, theme = 'light', count = 2, reviews = 2, failFolders = false, failReports = false, failReview = false, failOverview = false } = {}) {
-  const state = { count, reviews, failFolders, failReports, failReview, failOverview };
+async function fixture({ width = 1440, theme = 'light', count = 2, reviews = 2, decisionRows = false, failFolders = false, failReports = false, failReview = false, failOverview = false } = {}) {
+  const state = { count, reviews, decisionRows, failFolders, failReports, failReview, failOverview };
   const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 }, colorScheme: theme, reducedMotion: 'reduce' });
   await context.addInitScript(theme => { if (window === window.top) localStorage.setItem('cds_theme', theme); }, theme);
   await context.route('**/*', async route => {
@@ -40,7 +46,9 @@ async function fixture({ width = 1440, theme = 'light', count = 2, reviews = 2, 
     if (request.method() !== 'GET') { writes.push(pathname); return route.fulfill({ status: 405, json: { error: 'fixture forbids writes' } }); }
     if (isEventStream(pathname)) return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });
     const error = () => route.fulfill({ status: 500, headers: { 'x-cds-request-id': 'fixture-error' }, json: { error: '合成读取错误' } });
-    const reports = makeReports(state.count);
+    const reports = state.decisionRows ? makeDecisionReports().map((report, i) => state.decisionRows === 'long' && i === 0
+      ? { ...report, title: longReportTitle, branch: longReportBranch }
+      : state.decisionRows === 'mixed' && i === 1 ? { ...report, projectId: 'fixture-other' } : report) : makeReports(state.count);
     if (pathname === '/api/reports') return state.failReports ? error() : route.fulfill({ json: { reports } });
     if (pathname === '/api/report-folders') return state.failFolders ? error() : route.fulfill({ json: { folders } });
     if (pathname === '/api/reports/overview') return state.failOverview ? error() : route.fulfill({ json: { overview: buildReportsOverview(reports, [], { to: now, days: Number(url.searchParams.get('days') || 7) }) } });
@@ -72,6 +80,91 @@ async function check(name, run) {
 }
 const row = page => page.locator('#reports-ledger tbody tr').first();
 try {
+  for (const width of [390, 1440]) for (const theme of ['light', 'dark']) {
+    await check(`mobile-ledger-facts-${width}-${theme}`, async () => {
+      const { page, context } = await fixture({ width, theme, decisionRows: true });
+      try {
+        await page.goto(server.url + '/reports?project=fixture-project'); await row(page).waitFor(); await settled(page);
+        assert.equal(await page.locator('html').getAttribute('data-theme'), theme, 'actual theme initialized');
+        const record = page.locator('[data-report-id="r0"]');
+        const boxes = await Promise.all([
+          record.getByText(makeDecisionReports()[0].title, { exact: true }),
+          record.getByText('未通过', { exact: true }), record.getByText('regression', { exact: true }),
+          record.getByText('未记录', { exact: true }), record.getByText('feat/sample-running', { exact: true }),
+          record.getByRole('button', { name: '打开报告操作菜单' }),
+        ].map(locator => locator.filter({ visible: true }).boundingBox()));
+        const [title, verdict, tier, defects, target, more] = boxes;
+        const archive = await record.getByText(/\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}/).filter({ visible: true }).boundingBox();
+        const recordBox = await record.boundingBox();
+        const decisionSpread = Math.max(verdict.y, tier.y, defects.y) - Math.min(verdict.y, tier.y, defects.y);
+        const unknownRecord = page.locator('[data-report-id="r1"]');
+        assert.equal(await unknownRecord.getByText('无结论', { exact: true }).filter({ visible: true }).count(), 1);
+        assert.equal(await unknownRecord.getByText('未记录', { exact: true }).filter({ visible: true }).count(), 1);
+        assert.equal(await unknownRecord.getByText('未记录部署上下文', { exact: true }).filter({ visible: true }).count(), 1);
+        assert.equal(await unknownRecord.getByText(/^P[012] 0$/).count(), 0, 'unknown defects never become zero');
+        metrics.push({ case: `mobile-ledger-facts-${width}-${theme}`, rowHeight: recordBox.height, decisionSpread, title, verdict, tier, defects, target, archive, more, actualScroll: await page.locator('.cds-main').evaluate(el => el.scrollTop), paint: await page.locator('body').evaluate(el => getComputedStyle(el).backgroundColor) });
+        await shot(page, `mobile-ledger-facts-${width}-${theme}`);
+        if (width === 390) {
+          assert(decisionSpread <= 24, `same decision facts split vertically by ${decisionSpread}px`);
+          assert(recordBox.height <= 210, `frozen ordinary row is ${recordBox.height}px; useful facts must group naturally`);
+          assert(title.y < verdict.y && title.y < target.y, 'full title leads the report');
+          assert(more.width >= 44 && more.height >= 44, 'More keeps mobile hit area');
+          assert(archive.y >= more.y && archive.y + archive.height <= more.y + more.height && archive.x + archive.width < more.x, 'archive time and More share a clear footer without overlap');
+          assert(title.x >= 0 && title.x + title.width <= width && target.x + target.width <= width);
+          assert.equal(await record.getByText('阅读样例', { exact: true }).filter({ visible: true }).count(), 0, 'project scope already identifies the project');
+        } else {
+          assert.equal(await page.locator('#reports-ledger thead th:visible').count(), 7, 'desktop seven-column contract');
+        }
+      } finally { await context.close(); }
+    });
+  }
+  for (const width of [375, 390]) for (const theme of ['light', 'dark']) {
+    await check(`mobile-ledger-long-${width}-${theme}`, async () => {
+      const { page, context } = await fixture({ width, theme, decisionRows: 'long' });
+      try {
+        await page.goto(server.url + '/reports?project=fixture-project'); await row(page).waitFor(); await settled(page);
+        const record = page.locator('[data-report-id="r0"]');
+        const title = record.getByText(longReportTitle, { exact: true });
+        const branch = record.getByText(longReportBranch, { exact: true }).filter({ visible: true });
+        const titleBox = await title.boundingBox(), branchBox = await branch.boundingBox();
+        assert(titleBox.x >= 0 && titleBox.x + titleBox.width <= width && branchBox.x + branchBox.width <= width, 'long title and branch remain inside viewport');
+        assert(await title.evaluate(el => el.scrollHeight <= el.clientHeight + 1 && getComputedStyle(el).textOverflow !== 'ellipsis'), 'title remains complete, with natural height');
+        assert.equal(await title.innerText(), longReportTitle);
+        const hit = await title.evaluate(el => { const r = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + 8)); });
+        assert(hit, 'full title is genuinely hit-testable from the viewport');
+        const before = await page.locator('.cds-main').evaluate(el => el.scrollTop);
+        await shot(page, `mobile-ledger-long-${width}-${theme}`);
+        await title.click({ position: { x: 12, y: 8 } });
+        await page.frameLocator('iframe').getByRole('heading', { name: '阅读正文已到达' }).waitFor();
+        await page.getByRole('button', { name: '返回报告首页' }).click(); await record.waitFor(); await settled(page);
+        assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-report-id')), 'r0');
+        const after = await page.locator('.cds-main').evaluate(el => el.scrollTop);
+        assert(Math.abs(before - after) < 2, 'return keeps actual list scroll');
+        for (const key of ['Enter', 'Space']) {
+          await record.focus(); await page.keyboard.press(key);
+          await page.frameLocator('iframe').getByRole('heading', { name: '阅读正文已到达' }).waitFor();
+          await page.getByRole('button', { name: '返回报告首页' }).click(); await record.waitFor();
+        }
+        await record.getByRole('button', { name: '打开报告操作菜单' }).click();
+        await page.getByRole('menu').waitFor();
+        assert.equal(await page.locator('iframe:visible').count(), 0, 'More does not accidentally open the report');
+        await page.keyboard.press('Escape'); await page.getByRole('menu').waitFor({ state: 'hidden' });
+        metrics.push({ case: `mobile-ledger-long-${width}-${theme}`, titleBox, branchBox, pointerClicksToRead: 1, wheelGestures: 0, actualScrollBefore: before, actualScrollAfter: after, keyboardOpen: ['Enter', 'Space'], moreDoesNotOpenReader: true });
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      } finally { await context.close(); }
+    });
+  }
+  await check('mobile-ledger-global-project-identity', async () => {
+    const { page, context } = await fixture({ width: 390, decisionRows: 'mixed' });
+    try {
+      await page.goto(server.url + '/reports'); await row(page).waitFor(); await settled(page);
+      for (const [id, name] of [['r0', '阅读样例'], ['r1', '另一个项目']]) {
+        const record = page.locator(`[data-report-id="${id}"]`);
+        assert.equal(await record.getByText(name, { exact: true }).filter({ visible: true }).count(), 1, 'global list identifies every project');
+      }
+      await shot(page, 'mobile-ledger-global-project-identity');
+    } finally { await context.close(); }
+  });
   for (const width of [1440, 390]) for (const theme of ['light', 'dark']) {
     await check(`report-list-${width}-${theme}`, async () => {
       const { page, context } = await fixture({ width, theme });
