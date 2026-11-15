@@ -1237,11 +1237,18 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("deleteMany({ AppCallerCode: caller })", acceptance);
         Assert.DoesNotContain("findOne({ AppCallerCode:", acceptance);
 
+        // 协议说明已收在按需帮助中；守卫检查该实际 JSX 区域，不能要求首页恢复四张说明卡或旧数组格式。
+        var homeHelpStart = home.IndexOf("<DetailsBlock title=\"接入与使用帮助\">", StringComparison.Ordinal);
+        Assert.True(homeHelpStart >= 0, "首页应保留可发现的接入帮助区域");
+        var homeHelpEnd = home.IndexOf("</DetailsBlock>", homeHelpStart, StringComparison.Ordinal);
+        Assert.True(homeHelpEnd > homeHelpStart, "接入帮助区域应有完整的 JSX 边界");
+        var homeHelp = home[homeHelpStart..homeHelpEnd];
         foreach (var protocol in new[] { "GW Native", "OpenAI", "Claude", "Gemini" })
         {
             Assert.Contains($"label: '{protocol}'", quickstart);
-            Assert.Contains($"'{protocol}'", home);
+            Assert.Contains(protocol, homeHelp);
         }
+        Assert.Contains("to=\"/quickstart\"", homeHelp);
 
         Assert.DoesNotContain("'OpenAI Chat'", home);
         Assert.DoesNotContain("'OpenAI Responses'", home);
