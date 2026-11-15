@@ -1204,11 +1204,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 }
 
 export function SelfUpdateHistoryTab(): JSX.Element {
-  const { historyState, manualRefresh } = useSelfUpdateHistory();
+  const { historyState, manualRefresh, refreshing } = useSelfUpdateHistory();
 
   return (
     <Section title="自更新历史" description="最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。">
-      <SelfUpdateHistoryList historyState={historyState} onManualRefresh={manualRefresh} />
+      <SelfUpdateHistoryList historyState={historyState} onManualRefresh={manualRefresh} refreshing={refreshing} />
     </Section>
   );
 }
@@ -1690,12 +1690,13 @@ function StepLevelPrefix({ level }: { level: 'info' | 'warning' | 'error' }): JS
 type HistoryFetchState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ok'; records: SelfUpdateRecord[] };
+  | { status: 'ok'; records: SelfUpdateRecord[]; readError?: string };
 
 // 数据源上移到父组件 useSelfUpdateHistory(与进度条共用,不再自己 fetch)。
-function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
+function SelfUpdateHistoryList({ historyState, onManualRefresh, refreshing }: {
   historyState: HistoryFetchState;
   onManualRefresh: () => void;
+  refreshing: boolean;
 }): JSX.Element {
   const [selectedKey, setSelectedKey] = useState<string>('');
   const [query, setQuery] = useState('');
@@ -1704,31 +1705,36 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
   const returnFocus = useRef<HTMLButtonElement | null>(null);
   const refreshButton = useRef<HTMLButtonElement | null>(null);
   const manualRefresh = onManualRefresh;
+  const recordKey = (rec: SelfUpdateRecord, _idx: number): string => `${rec.ts}-${rec.branch}-${rec.fromSha}-${rec.toSha}-${rec.trigger}`;
+  const currentDetail = mobileRecord && historyState.status==='ok' ? historyState.records.find((record,index)=>recordKey(record,index)===recordKey(mobileRecord,0)) : null;
+  const detailRecord = currentDetail || mobileRecord;
+  const historyReadError = historyState.status==='ok' ? historyState.readError : historyState.status==='error' ? historyState.message : '';
+  const detailDialog = <Dialog open={Boolean(mobileRecord)} onOpenChange={open => { if(!open)setMobileRecord(null); }}><DialogContent className="max-w-2xl border-border [&>button:last-child]:min-h-[3.25rem] [&>button:last-child]:min-w-[3.25rem]" onCloseAutoFocus={event => { event.preventDefault();const target=returnFocus.current;if(target?.isConnected&&target.getClientRects().length)target.focus({preventScroll:true});else refreshButton.current?.focus({preventScroll:true}); }}><DialogHeader className="pr-10"><DialogTitle>更新详情</DialogTitle><DialogDescription className="break-all">{mobileRecord?.branch} · {mobileRecord ? formatAbsoluteTime(mobileRecord.ts) : ''}</DialogDescription></DialogHeader>{historyReadError?<div role="alert" className="space-y-2 text-sm text-warn"><p>更新历史刷新失败，以下仍是上次读取的记录：{historyReadError}。</p><Button type="button" variant="outline" className="min-h-[3.25rem] text-base" disabled={refreshing} onClick={manualRefresh}>重新读取历史</Button></div>:null}{mobileRecord&&!currentDetail&&!historyReadError?<p className="text-sm text-muted-foreground">本轮列表未返回这条记录，以下为打开时的快照。</p>:null}{detailRecord ? <SelfUpdateHistoryDetail selected={detailRecord} /> : null}<DialogFooter><Button type="button" className="min-h-[3.25rem] text-base" onClick={()=>setMobileRecord(null)}>返回历史列表</Button></DialogFooter></DialogContent></Dialog>;
 
   if (historyState.status === 'loading') {
-    return <SettingsContentSkeleton label="读取自更新历史" />;
+    return <><SettingsContentSkeleton label="读取自更新历史" />{detailDialog}</>;
   }
   if (historyState.status === 'error') {
     return (
-      <div className="py-8 text-center text-sm text-destructive">{historyState.message}</div>
+      <><div className="space-y-3 py-4"><p role="alert" className="text-sm text-destructive">更新历史读取失败：{historyState.message}</p><Button ref={refreshButton} type="button" variant="outline" className="min-h-[3.25rem] text-base" disabled={refreshing} onClick={manualRefresh}>{refreshing?'正在读取':'重新读取历史'}</Button></div>{detailDialog}</>
     );
   }
   if (historyState.records.length === 0) {
     return (
-      <div className="py-8 text-center text-sm text-muted-foreground">尚无历史</div>
+      <><div className="space-y-3 py-4">{historyState.readError?<p role="alert" className="text-sm text-warn">上次读取为空，本次更新历史刷新失败：{historyState.readError}。请重试。</p>:<p className="text-sm text-muted-foreground">尚无历史</p>}<Button ref={refreshButton} type="button" variant="outline" className="min-h-[3.25rem] text-base" disabled={refreshing} onClick={manualRefresh}>刷新历史</Button></div>{detailDialog}</>
     );
   }
-  const recordKey = (rec: SelfUpdateRecord, _idx: number): string => `${rec.ts}-${rec.branch}-${rec.fromSha}-${rec.toSha}-${rec.trigger}`;
   const stats = summariseHistory(historyState.records);
   const needle = query.trim().toLocaleLowerCase();
   const visibleRecords = historyState.records.filter(record => (resultFilter === 'all' || record.status === resultFilter) && (!needle || [record.branch, record.fromSha, record.toSha, record.actor, record.failure?.cause, record.error].some(value => value?.toLocaleLowerCase().includes(needle))));
   const activeKey = selectedKey || recordKey(visibleRecords[0] || historyState.records[0], 0);
   return (
     <div className="space-y-3">
+      {historyState.readError?<p role="alert" className="text-sm text-warn">刷新失败，仍显示上次读取的记录：{historyState.readError}。可重新读取核对。</p>:null}
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <SelfUpdateHistoryStats stats={stats} />
-        <Button ref={refreshButton} type="button" variant="outline" size="sm" onClick={manualRefresh} className="min-h-[3.25rem] shrink-0 text-base xl:min-h-0 xl:text-xs">
-          <RefreshCw /> 刷新历史
+        <Button ref={refreshButton} type="button" variant="outline" size="sm" disabled={refreshing} onClick={manualRefresh} className="min-h-[3.25rem] shrink-0 text-base xl:min-h-0 xl:text-xs">
+          <RefreshCw className={refreshing ? 'animate-spin' : undefined} /> 刷新历史
         </Button>
       </div>
       {historyState.records.length > 5 || query || resultFilter !== 'all' ? <div className="flex flex-wrap gap-3"><label className="min-w-0 flex-1"><span className="sr-only">搜索更新记录</span><input aria-label="搜索更新记录" className="min-h-[3.25rem] w-full rounded-md border border-input bg-background px-3 text-sm" placeholder="按分支、版本、操作者或失败原因搜索" value={query} onChange={event => setQuery(event.target.value)} /></label><label className="flex items-center gap-2 text-sm">结果<select aria-label="筛选更新结果" className="min-h-[3.25rem] rounded-md border border-input bg-background px-3" value={resultFilter} onChange={event => setResultFilter(event.target.value)}><option value="all">全部</option><option value="failed">失败</option><option value="success">成功</option><option value="deferred">延后</option><option value="aborted">中止</option></select></label></div> : null}
@@ -1807,7 +1813,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
         </div>
         <div className="divide-y divide-border xl:hidden">{visibleRecords.map((record, index) => <article key={recordKey(record,index)} data-update-record={record.branch} className="space-y-2 py-3"><div className="flex flex-wrap items-center justify-between gap-2"><time className="text-sm font-medium">{formatAbsoluteTime(record.ts)}</time><span className={`rounded px-2 py-1 text-sm ${selfUpdateStatusClass(record.status)}`}>{selfUpdateStatusLabel(record.status)}</span></div><h3 className="break-all font-mono text-sm">{record.branch || '(当前分支)'}</h3><p className="text-sm text-muted-foreground">{selfUpdateTriggerLabel(record.trigger)}{record.actor ? ` · ${record.actor}` : ''} · {fmtMs(record.durationMs)}</p>{record.failure?.cause || record.error ? <p className="break-words text-sm text-destructive">{record.failure?.cause || record.error}</p> : null}<Button type="button" variant="outline" className="min-h-[3.25rem] text-base" onClick={event => { returnFocus.current=event.currentTarget;setSelectedKey(recordKey(record,index));setMobileRecord(record); }}>查看详情</Button></article>)}</div>
       </div>
-      <Dialog open={Boolean(mobileRecord)} onOpenChange={open => { if(!open)setMobileRecord(null); }}><DialogContent className="max-w-2xl border-border [&>button:last-child]:min-h-[3.25rem] [&>button:last-child]:min-w-[3.25rem]" onCloseAutoFocus={event => { event.preventDefault();const target=returnFocus.current;if(target?.isConnected&&target.getClientRects().length)target.focus({preventScroll:true});else refreshButton.current?.focus({preventScroll:true}); }}><DialogHeader className="pr-10"><DialogTitle>更新详情</DialogTitle><DialogDescription className="break-all">{mobileRecord?.branch} · {mobileRecord ? formatAbsoluteTime(mobileRecord.ts) : ''}</DialogDescription></DialogHeader>{mobileRecord ? <SelfUpdateHistoryDetail selected={mobileRecord} /> : null}<DialogFooter><Button type="button" className="min-h-[3.25rem] text-base" onClick={()=>setMobileRecord(null)}>返回历史列表</Button><Button asChild variant="outline" className="min-h-[3.25rem] text-base"><a href="#maintenance">前往 CDS 更新</a></Button></DialogFooter></DialogContent></Dialog>
+      {detailDialog}
     </div>
   );
 }
@@ -2141,8 +2147,9 @@ function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }
 // 自更新历史的统一数据源(进度条 + 历史列表共用,Bugbot #716:避免两处各自
 // fetch 同一 endpoint)。只在三个时刻 re-fetch:首次 mount、一次更新真正结束
 // (events.updating true→false)、用户点刷新。中间的 status/heartbeat/step 不刷。
-function useSelfUpdateHistory(): { historyState: HistoryFetchState; manualRefresh: () => void } {
+function useSelfUpdateHistory(): { historyState: HistoryFetchState; manualRefresh: () => void; refreshing: boolean } {
   const [historyState, setHistoryState] = useState<HistoryFetchState>({ status: 'loading' });
+  const [refreshing, setRefreshing] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const events = useCdsEvents();
   const updatingPrev = useRef<typeof events.updating>(null);
@@ -2154,6 +2161,7 @@ function useSelfUpdateHistory(): { historyState: HistoryFetchState; manualRefres
   }, [events.updating]);
   useEffect(() => {
     let cancelled = false;
+    setRefreshing(true);
     fetch(apiUrl('/api/self-update-history?limit=20'), { credentials: 'include' })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -2164,13 +2172,13 @@ function useSelfUpdateHistory(): { historyState: HistoryFetchState; manualRefres
         if (cancelled) return;
         // eslint-disable-next-line no-console
         console.warn('[self-update-history] 拉取失败:', err.message);
-        // 保留当前状态不变(避免刷成空);仅首次 loading 失败才落 error 态。
-        setHistoryState((cur) => (cur.status === 'loading' ? { status: 'error', message: err.message } : cur));
-      });
+        // 保留已有记录并明确它们不是本轮刷新结果；初读失败保留就地重试。
+        setHistoryState(cur => cur.status === 'ok' ? { ...cur, readError: err.message } : { status: 'error', message: err.message });
+      }).finally(() => { if (!cancelled) setRefreshing(false); });
     return () => { cancelled = true; };
   }, [refreshNonce]);
   const manualRefresh = (): void => setRefreshNonce((n) => n + 1);
-  return { historyState, manualRefresh };
+  return { historyState, manualRefresh, refreshing };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
