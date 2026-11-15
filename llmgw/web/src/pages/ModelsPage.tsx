@@ -21,6 +21,7 @@
 // Provider 内联预览的按钮文案。改那处措辞会让 CI 的 dotnet test 变红，动手前先读那个测试。
 // （此处刻意不复制该字面量：注释里再抄一份，会让守卫在 UI 文案被删后仍然误判通过。）
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, createModel, deleteModel, deleteModelApiKey, getModels, getParameterCapabilitiesMeta, getPlatforms, rotateModelApiKey, setModelEnabled, updateModelImageSizeControl } from '@/lib/api';
 import type { CreateModelRequest, ImageSizeControlMode, ImageSizeFieldFormat, ModelCapability, ModelItem, ParameterCapabilityTemplateItem, PlatformItem } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, SectionLoader, ReadOnlyNotice } from '@/components/ui';
@@ -56,7 +57,9 @@ export function ModelsPage() {
   const [capabilityText, setCapabilityText] = useState('');
   const [capabilityOnlyMissing, setCapabilityOnlyMissing] = useState(true);
   const [capabilityConfirm, setCapabilityConfirm] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [createdPublicId, setCreatedPublicId] = useState<string | null>(null);
+  const [toast, setToastValue] = useState<string | null>(null);
+  function setToast(next: string | null) { setCreatedPublicId(null); setToastValue(next); }
   const [showCreate, setShowCreate] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [createDraft, setCreateDraft] = useState<ModelDraftState>(emptyModelDraft());
@@ -125,6 +128,7 @@ export function ModelsPage() {
       remark: createDraft.remark.trim() || undefined,
     };
     setCreateBusy(true);
+    setCreatedPublicId(null);
     setToast(null);
     const res = await createModel(request);
     setCreateBusy(false);
@@ -141,18 +145,13 @@ export function ModelsPage() {
     });
     setCreateDraft((value) => emptyModelDraft(value.platformId));
     setShowCreate(false);
-    const poolMessage = res.data.modelsAppended > 0
-      ? `已加入 ${res.data.modelsAppended} 个匹配的默认池`
-      : '没有匹配用途的默认池被改动';
-    // 「保存成功」不等于「能调通」：调用方按公开模型名请求，找的是对外模型 + 线路。
-    // 没登上白名单时必须当场说出口，否则用户拿着一个库里看得见、界面报成功、
-    // 实际调不通的模型去排查，而他没做错任何事。
-    const whitelistMessage = res.data.whitelistMessage
-      ? `；${res.data.whitelistMessage}`
+    const association = res.data.whitelistMessage
+      ? res.data.whitelistMessage
       : res.data.publicId
-        ? `；已登上白名单，公开模型名 ${res.data.publicId}${res.data.linkedToExistingPublicId ? '（挂到了已有的公开名下，多一条线路）' : ''}`
-        : '';
-    setToast(`模型「${res.data.item.name || res.data.item.modelName}」已保存；${poolMessage}${whitelistMessage}`);
+        ? `已关联公开模型 ${res.data.publicId}${res.data.linkedToExistingPublicId ? '，新增一条上游线路' : ''}`
+        : '尚未读到公开模型关联，请到公开模型配置核对';
+    setToast(`上游模型「${res.data.item.name || res.data.item.modelName}」已保存；${association}`);
+    setCreatedPublicId(res.data.publicId || null);
   }
 
   function toggleCreateCapability(code: string) {
@@ -358,8 +357,8 @@ export function ModelsPage() {
   return (
     <PageShell>
       <PageHeader
-        title="模型管理"
-        subtitle="模型是 Provider 里可以实际调用的能力。选择用途后，系统只会把它追加到匹配的默认模型池。"
+        title="上游模型"
+        subtitle="维护供应方型号、协议与价格；业务调用使用关联的公开模型标识。"
         actions={canWrite && ownedPlatforms.length > 0 ? (
           <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>{showCreate ? '收起配置' : '添加模型'}</Button>
         ) : canWrite ? (
@@ -369,7 +368,7 @@ export function ModelsPage() {
 
       <PageBody>
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
-        {toast ? <InlineAlert tone="info">{toast}</InlineAlert> : null}
+        {toast ? <InlineAlert tone="info">{toast}{createdPublicId ? <Link to={`/logical-models?publicId=${encodeURIComponent(createdPublicId)}`} className="lg-text-link">查看公开模型配置</Link> : null}</InlineAlert> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
 
         {showCreate && canWrite && ownedPlatforms.length > 0 ? (

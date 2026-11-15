@@ -21,7 +21,7 @@ const NAV_GROUPS: NavGroup[] = [
   { label: '工作区', items: [
     { to: '/', label: '概览', icon: <LayoutDashboard size={16} />, page: 'home', end: true },
     { to: '/logs', label: '请求记录', icon: <Activity size={16} />, page: 'logs' },
-    { to: '/app-callers', label: 'appCaller', icon: <Tags size={16} />, page: 'appCallers' },
+    { to: '/app-callers', label: '调用方', icon: <Tags size={16} />, page: 'appCallers' },
   ] },
   // 路由这一组曾经是五条平级入口（模型白名单 / 模型池 / Provider / 模型 / Exchange），
   // 而它们回答的其实只有两个问题：**调用方能点名什么**（模型）、**东西从哪来**（上游）。

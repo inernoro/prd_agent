@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { bulkUpdateGatewayAppCallers, deleteAppCaller, getGatewayAppCallers, getPools, updateGatewayAppCaller } from '@/lib/api';
 import type { GatewayAppCaller, GatewayAppCallersData, ModelPool } from '@/lib/types';
-import { Button, Chip, SectionLoader, ReadOnlyNotice } from '@/components/ui';
+import { Button, Chip, InlineAlert, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
+import { formatPlatformTime } from '@/lib/platformTime';
 import { canUseCapability } from '@/lib/access';
+import { AppCallerDefaultModel, AppCallerDefaultsProvider } from '@/components/AppCallerDefaultModel';
 
 const PAGE_SIZE = 50;
 const STATUSES = ['discovered', 'configured', 'active', 'disabled', 'archived'];
@@ -62,10 +64,7 @@ function parameterPolicyLabel(value: string) {
 }
 
 function fmtTime(value?: string | null) {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleString();
+  return value ? formatPlatformTime(value) : '—';
 }
 
 function logsHref(key: 'requestId' | 'sessionId' | 'runId', value?: string | null) {
@@ -83,9 +82,12 @@ export function AppCallersPage() {
   // 详情页现在会原样保留真实的 `G-` 开头 code，它的「打开治理配置」链接把该 code
   // 作为 focus 传到这里；这边若无条件削前缀，要么定位不到、要么定位到另一个没前缀的同名记录。
   const focusedAppCallerCode = (searchParams.get('focus') || '').trim();
+  const focusedRequestType = (searchParams.get('focusType') || '').trim();
   const focusedLegacyCode = focusedAppCallerCode.replace(/^G-/, '');
   const [data, setData] = useState<GatewayAppCallersData | null>(null);
   const [pools, setPools] = useState<ModelPool[]>([]);
+  const [loadingList, setLoadingList] = useState(true);
+  const [focusLookup, setFocusLookup] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -112,6 +114,7 @@ export function AppCallersPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const loadCurrentPage = async () => {
+    setLoadingList(true);
     setError(null);
     const res = await getGatewayAppCallers({
       page,
@@ -126,10 +129,12 @@ export function AppCallersPage() {
     });
     if (res.success) setData(res.data);
     else setError(res.error?.message || '加载失败');
+    setLoadingList(false);
   };
 
   useEffect(() => {
     let alive = true;
+    setLoadingList(true);
     setError(null);
     getGatewayAppCallers({
       page,
@@ -145,6 +150,7 @@ export function AppCallersPage() {
       if (!alive) return;
       if (res.success) setData(res.data);
       else setError(res.error?.message || '加载失败');
+      setLoadingList(false);
     });
     return () => {
       alive = false;
@@ -153,10 +159,10 @@ export function AppCallersPage() {
 
   useEffect(() => {
     if (!focusedAppCallerCode || !data?.items.length) return;
-    const focused = data.items.find((item) => item.appCallerCode === focusedAppCallerCode)
-      ?? data.items.find((item) => item.appCallerCode === focusedLegacyCode);
+    const focused = data.items.find((item) => item.appCallerCode === focusedAppCallerCode && (!focusedRequestType || item.requestType === focusedRequestType))
+      ?? data.items.find((item) => item.appCallerCode === focusedLegacyCode && (!focusedRequestType || item.requestType === focusedRequestType));
     if (focused) setExpandedId(focused.id);
-  }, [data?.items, focusedAppCallerCode, focusedLegacyCode]);
+  }, [data?.items, focusedAppCallerCode, focusedLegacyCode, focusedRequestType]);
 
   useEffect(() => {
     let alive = true;
@@ -193,8 +199,20 @@ export function AppCallersPage() {
     fontSize: 'var(--fs-body)',
   };
 
-  if (error) return <Empty text={error} />;
-  if (!data) return <SectionLoader text="正在加载 appCaller 注册表…" />;
+  if (!data) return error ? <InlineAlert tone="error">{error}<Button size="sm" variant="ghost" onClick={() => void loadCurrentPage()}>重新读取</Button></InlineAlert> : <SectionLoader text="正在加载 appCaller 注册表…" />;
+
+  const focusFound = data.items.some(item => (item.appCallerCode === focusedAppCallerCode || item.appCallerCode === focusedLegacyCode) && (!focusedRequestType || item.requestType === focusedRequestType));
+  function findFocusedCaller() {
+    setFocusLookup(true); setPage(1); setSearch(focusedAppCallerCode); setRequestType(focusedRequestType);
+    setStatus(''); setSourceSystem(''); setIngressProtocol(''); setDrift(''); setModelPoolId('');
+  }
+  function restoreCallerFilters() {
+    setFocusLookup(false);
+    setPage(Math.max(1, Number(searchParams.get('page') || '1') || 1)); setSearch(searchParams.get('search') || '');
+    setStatus(searchParams.get('status') || ''); setSourceSystem(searchParams.get('sourceSystem') || '');
+    setIngressProtocol(searchParams.get('ingressProtocol') || ''); setRequestType(searchParams.get('requestType') || '');
+    setDrift(searchParams.get('drift') || ''); setModelPoolId(searchParams.get('modelPoolId') || '');
+  }
 
   const getDraft = (item: GatewayAppCaller): Draft => drafts[item.id] ?? {
     status: item.status || 'discovered',
@@ -278,7 +296,7 @@ export function AppCallersPage() {
   };
 
   const applyBulkGovernance = async () => {
-    if (!hasBulkFilter || !hasBulkUpdate || bulkSaving) return;
+    if (!hasBulkFilter || !hasBulkUpdate || bulkSaving || loadingList || error) return;
     const confirmed = await confirm({ title: `按当前筛选批量更新 ${data.total} 个 appCaller？`, description: '范围内每一条的治理配置都会被改写。', tone: 'danger', confirmLabel: '批量更新' });
     if (!confirmed) return;
     setBulkSaving(true);
@@ -319,11 +337,14 @@ export function AppCallersPage() {
   };
 
   return (
-    <div className="lg-app-caller-page">
+    <AppCallerDefaultsProvider returnSearch={new URLSearchParams({ page: String(page), search, status, sourceSystem, ingressProtocol, requestType, drift, modelPoolId }).toString()}><div className="lg-app-caller-page">
       <header className="lg-app-caller-header">
-        <div><h1>appCaller</h1><p>查看每类业务为什么调用、会走哪个模型，以及预算和速率由谁负责。</p></div>
+        <div><h1>调用方</h1><p>查看调用方的默认模型、预算与限流。</p></div>
         <span>共 {data.total} 个</span>
       </header>
+      {error ? <InlineAlert tone="error">筛选结果未更新：{error}<Button size="sm" variant="ghost" onClick={() => void loadCurrentPage()}>重新读取</Button></InlineAlert> : null}
+      {focusedAppCallerCode && !loadingList && !focusFound ? <InlineAlert tone="info">当前结果未找到 {focusedAppCallerCode} · {focusedRequestType || '原用途'}，原筛选已保留。<Button size="sm" variant="ghost" onClick={findFocusedCaller}>按此身份查找（切换筛选）</Button></InlineAlert> : null}
+      {focusLookup ? <Button size="sm" variant="ghost" onClick={restoreCallerFilters}>恢复原筛选</Button> : null}
       <div className="lg-app-caller-toolbar">
         <input
           value={search}
@@ -369,7 +390,7 @@ export function AppCallersPage() {
         </div>
       ) : null}
 
-      <div className="lg-app-caller-table-wrap">
+      <div className="lg-app-caller-table-wrap" aria-busy={loadingList}>
         <table className="lg-data-table" style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse' }}>
           <colgroup>
             <col style={{ width: 240 }} />
@@ -385,7 +406,7 @@ export function AppCallersPage() {
               <th style={th}>appCaller</th>
               <th style={th}>状态</th>
               <th style={th}>调用方式</th>
-              <th style={th}>路由</th>
+              <th style={th}>未点名默认模型</th>
               <th style={th}>治理</th>
               <th style={th}>最近请求</th>
               <th style={th}>操作</th>
@@ -436,12 +457,12 @@ export function AppCallersPage() {
         {data.items.length === 0 ? <EmptyBlock text="没有匹配的 appCaller" /> : null}
       </div>
 
-      <div className="lg-app-caller-pagination">
+      {pages > 1 ? <div className="lg-app-caller-pagination">
         <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>上一页</Button>
         <span>{page} / {pages}</span>
         <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => setPage((p) => Math.min(pages, p + 1))}>下一页</Button>
-      </div>
-    </div>
+      </div> : null}
+    </div></AppCallerDefaultsProvider>
   );
 }
 
@@ -482,15 +503,12 @@ function ModelPoolContractFields({
     ? selectedPools.map((pool) => pool.name || pool.code || pool.id).join('、')
     : draft.allowedModelPoolIds.join('、');
 
+  if (!hasLegacyBinding) return null;
   return (
-    <div className="lg-app-caller-retired-pool">
-      <strong>模型池绑定已退役，这几项不再影响路由</strong>
-      <p>
-        这个调用方的池绑定{hasLegacyBinding ? `（${poolNames || '未记录名称'}${defaultPool ? `，默认 ${defaultPool.name || defaultPool.code || defaultPool.id}` : ''}）` : '已清空'}
-        不再影响路由：现在按「对外模型」走，先看有没有模型认领它，没有就用该用途的默认模型。
-        要固定走某个模型，去「模型」页把它的「指定调用方」加上这个 appCaller。
-      </p>
-    </div>
+    <details className="lg-app-caller-retired-pool">
+      <summary>旧模型池配置（不参与当前路由）</summary>
+      <p>{poolNames || '未记录名称'}{defaultPool ? `；旧默认：${defaultPool.name || defaultPool.code || defaultPool.id}` : ''}。当前默认模型以上方读取结果为准。</p>
+    </details>
   );
 }
 
@@ -534,17 +552,17 @@ function AppCallerRow({
   return (
     <>
       <tr>
-        <td style={td}><div className="lg-app-caller-identity"><code>{item.appCallerCode}</code><span>{item.title || '未填写标题'} · {item.sourceSystem || '未知来源'}</span></div></td>
+        <td style={td}><div className="lg-app-caller-identity"><strong>{item.title?.trim() || item.clientCode || '未命名调用方'}</strong><code>{item.appCallerCode}</code><span>{item.sourceSystem || '未知来源'}</span></div></td>
         <td style={td}><Chip label={chip.label} color={chip.color} bg={chip.bg} /></td>
         <td style={td}><div className="lg-app-caller-stack"><strong>{requestTypeLabelForTable(item.requestType)}</strong><span>{observedIngressProtocols.join('、') || '未观察到协议'}</span></div></td>
-        <td style={td}><div className="lg-app-caller-stack"><strong>按对外模型</strong><span>{modelPolicyLabel(item.modelPolicy || 'auto')} · {parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</span>{routeDrift || parameterDrift ? <span className="lg-app-caller-warning">配置与最近请求不一致</span> : null}</div></td>
+        <td style={td}><div className="lg-app-caller-stack"><AppCallerDefaultModel item={item} /><span>{parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</span>{routeDrift || parameterDrift ? <span className="lg-app-caller-warning">配置与最近请求不一致</span> : null}</div></td>
         <td style={td}><div className="lg-app-caller-stack"><strong>{item.owner || '未指定负责人'}</strong><span>{formatGovernanceSummary(item)}</span></div></td>
         <td style={td}><div className="lg-app-caller-recent"><TraceLinks item={item} /><span>{item.totalSeen} 次 · {fmtTime(item.lastSeenAt)}</span></div></td>
-        <td style={td}><div className="lg-app-caller-row-actions"><Button size="sm" variant="ghost" onClick={onToggle}>{expanded ? '收起' : canWrite ? '配置' : '查看'}</Button>{canManagePromptPolicy && ['chat', 'vision'].includes(item.requestType.toLowerCase()) ? <Link to={`/app-callers/${encodeURIComponent(item.id)}/prompt-policy`}>提示词策略</Link> : null}</div></td>
+        <td style={td}><div className="lg-app-caller-row-actions"><Button size="sm" variant="ghost" onClick={onToggle}>{expanded ? '收起' : canWrite ? '编辑治理' : '查看治理'}</Button>{canManagePromptPolicy && ['chat', 'vision'].includes(item.requestType.toLowerCase()) ? <Link to={`/app-callers/${encodeURIComponent(item.id)}/prompt-policy`}>提示词策略</Link> : null}</div></td>
       </tr>
       {expanded ? <tr className="lg-app-caller-expanded-row"><td colSpan={7}>
         <div className="lg-app-caller-editor">
-          <div className="lg-app-caller-editor-heading"><div><strong>{canWrite ? '配置路由与治理' : '路由与治理详情'}</strong><span>配置集中在当前 appCaller 内，保存后下一条请求生效。</span></div></div>
+          <div className="lg-app-caller-editor-heading"><div><strong>{canWrite ? '编辑治理' : '治理详情'}</strong><span>预算、限流与参数策略对新请求生效。</span></div></div>
           <div className="lg-app-caller-editor-grid">
             <label>状态<select disabled={!canWrite} value={draft.status} onChange={(e) => onDraft({ status: e.target.value })} style={selectStyle}>{STATUSES.map((x) => <option key={x} value={x}>{statusLabel(x)}</option>)}</select></label>
             <ModelPoolContractFields compatiblePools={compatiblePools} draft={draft} selectStyle={selectStyle} canWrite={canWrite} onDraft={onDraft} />
@@ -599,17 +617,17 @@ function AppCallerMobileCard({
   return (
     <article className="lg-app-caller-mobile-card">
       <div className="lg-app-caller-mobile-heading">
-        <div className="lg-app-caller-identity"><code title={item.appCallerCode}>{item.appCallerCode}</code><span>{item.title || '未填写标题'} · {item.sourceSystem || '未知来源'}</span></div>
+        <div className="lg-app-caller-identity"><strong>{item.title?.trim() || item.clientCode || '未命名调用方'}</strong><code>{item.appCallerCode}</code><span>{item.sourceSystem || '未知来源'}</span></div>
         <Chip label={chip.label} color={chip.color} bg={chip.bg} />
       </div>
       <dl className="lg-app-caller-mobile-facts">
         <div><dt>调用方式</dt><dd>{requestTypeLabelForTable(item.requestType)}<small>{observedIngressProtocols.join('、') || '未观察到协议'}</small></dd></div>
-        <div><dt>当前路由</dt><dd>按对外模型<small>{modelPolicyLabel(item.modelPolicy || 'auto')} · {parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</small>{routeDrift ? <small className="lg-app-caller-warning">配置与最近请求不一致</small> : null}</dd></div>
+        <div><dt>未点名默认模型</dt><dd><AppCallerDefaultModel item={item} /><small>{parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</small>{routeDrift ? <small className="lg-app-caller-warning">配置与最近请求不一致</small> : null}</dd></div>
         <div><dt>治理</dt><dd>{item.owner || '未指定负责人'}<small>{formatGovernanceSummary(item)}</small></dd></div>
         <div><dt>最近请求</dt><dd><TraceLinks item={item} /><small>{item.totalSeen} 次 · {fmtTime(item.lastSeenAt)}</small></dd></div>
       </dl>
       <div className="lg-app-caller-mobile-actions">
-        <Button size="sm" variant="secondary" onClick={onToggle}>{expanded ? '收起配置' : canWrite ? '配置' : '查看'}</Button>
+        <Button size="sm" variant="secondary" onClick={onToggle}>{expanded ? '收起配置' : canWrite ? '编辑治理' : '查看治理'}</Button>
         {canManagePromptPolicy && ['chat', 'vision'].includes(item.requestType.toLowerCase()) ? <Link to={`/app-callers/${encodeURIComponent(item.id)}/prompt-policy`}>提示词策略</Link> : null}
       </div>
       {expanded ? <div className="lg-app-caller-mobile-editor">

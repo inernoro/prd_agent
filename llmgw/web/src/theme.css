@@ -6782,7 +6782,7 @@ a:focus-visible {
 }
 
 .lg-app-caller-table-wrap {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
@@ -6902,14 +6902,14 @@ a:focus-visible {
 }
 
 .lg-app-caller-identity code {
-  max-width: 340px;
-  overflow: hidden;
-  color: var(--text-primary);
-  font-size: var(--fs-body);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 100%;
+  color: var(--text-secondary);
+  font-size: var(--fs-secondary);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
+.lg-app-caller-identity > strong { font-size: var(--fs-body); font-weight: 600; overflow-wrap: anywhere; }
 
 .lg-app-caller-identity span,
 .lg-app-caller-stack span,
