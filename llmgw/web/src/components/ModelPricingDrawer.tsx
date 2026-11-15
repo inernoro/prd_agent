@@ -10,9 +10,10 @@
 // 万一要回滚到池路由，那几个池里的价还得是对的。所以它是**回滚备份**，不是计费依据；
 // 原先那句「真正参与计费的是池成员里的那份价格」现在是假的，照着它去改池、以为改了线上账，
 // 是白改一场（第 60 轮 review）。
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { useDrawerFocus } from '@/components/EntityPreviewDrawer';
 import { getModelPoolUsage, updateModel } from '@/lib/api';
 import type { ModelItem, ModelPoolUsageData, UpdateModelRequest } from '@/lib/types';
 import { Button, Chip, InlineAlert } from '@/components/ui';
@@ -33,6 +34,10 @@ type Props = {
 };
 
 export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
+  const drawerRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const close = () => { if (!saving) onClose(); };
+  useDrawerFocus(true, close, drawerRef, closeButtonRef);
   const [name, setName] = useState(model.name || '');
   const [maxTokens, setMaxTokens] = useState(model.maxTokens != null ? String(model.maxTokens) : '');
   const [remark, setRemark] = useState(model.remark || '');
@@ -137,13 +142,13 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
 
   return createPortal(
     <div className="lg-side-drawer-portal">
-      <button className="lg-side-drawer-backdrop" type="button" aria-label="关闭" onClick={onClose} />
-      <aside className="lg-side-drawer" role="dialog" aria-modal="true" aria-label="编辑模型">
+      <button className="lg-side-drawer-backdrop" type="button" aria-label="关闭" disabled={saving} onClick={close} />
+      <aside ref={drawerRef} className="lg-side-drawer" role="dialog" aria-modal="true" aria-label="编辑模型">
         <header className="lg-side-drawer-header">
           <div className="lg-side-drawer-title">
             <div><small>编辑模型</small><h2>{model.modelName}</h2></div>
           </div>
-          <button type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button>
+          <button ref={closeButtonRef} type="button" aria-label="关闭" disabled={saving} onClick={close}><X size={18} /></button>
         </header>
 
         <div className="lg-side-drawer-body">

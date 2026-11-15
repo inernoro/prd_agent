@@ -9149,3 +9149,9 @@ a:focus-visible {
   .lg-upstream-model-row > td:last-child > span { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; }
   .lg-upstream-model-row > td:last-child button { min-height: 38px; white-space: nowrap; }
 }
+
+@media (max-width: 860px) {
+  .lg-upstream-model-row > td { background: transparent !important; }
+  .lg-upstream-model-row > td:first-child::before,
+  .lg-upstream-model-row > td:last-child::before { display: none; }
+}

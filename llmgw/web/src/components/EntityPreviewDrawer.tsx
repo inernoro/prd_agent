@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, X } from 'lucide-react';
 
@@ -26,6 +26,29 @@ type EntityPreviewDrawerProps = {
   initiallyOpen?: boolean;
 };
 
+export function useDrawerFocus(open: boolean, close: () => void, drawerRef: RefObject<HTMLElement>, closeButtonRef: RefObject<HTMLElement>, returnRef?: RefObject<HTMLElement>) {
+  const closeAction = useRef(close); closeAction.current = close;
+  useEffect(() => {
+    if (!open) return undefined;
+    const origin = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    closeButtonRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); closeAction.current(); return; }
+      if (event.key !== 'Tab') return;
+      const focusable = drawerRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
+      if (!focusable?.length) return;
+      const first = focusable[0]; const last = focusable[focusable.length - 1];
+      if (!drawerRef.current?.contains(document.activeElement)) { event.preventDefault(); first.focus(); }
+      else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => { window.removeEventListener('keydown', onKeyDown); document.body.style.overflow = previousOverflow; const target = returnRef?.current || origin; if (target?.isConnected) target.focus(); };
+  }, [open]);
+}
+
 export function EntityPreviewDrawer({ buttonLabel, title, kicker, icon, summary, sections, status = [], initiallyOpen = false }: EntityPreviewDrawerProps) {
   const [open, setOpen] = useState(initiallyOpen);
   const titleId = useId();
@@ -33,38 +56,7 @@ export function EntityPreviewDrawer({ buttonLabel, title, kicker, icon, summary,
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    closeButtonRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const focusable = drawerRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      );
-      if (!focusable?.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      document.body.style.overflow = previousOverflow;
-      triggerButtonRef.current?.focus();
-    };
-  }, [open]);
+  useDrawerFocus(open, () => setOpen(false), drawerRef, closeButtonRef, triggerButtonRef);
 
   return (
     <>
