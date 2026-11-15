@@ -79,11 +79,18 @@ for (const width of [390, 320]) for (const theme of ["light", "dark"]) {
     await page.getByRole("button", { name: "打开导航", exact: true }).click();
     await page.getByRole("link", { name: "上游", exact: true }).click();
     const models = page.locator(".lg-collection-provider-row td:nth-child(2) button").first();
-    await models.click();
+    const modelEntry = await models.boundingBox();
+    expect(modelEntry).not.toBeNull();
+    expect(modelEntry!.height, "the primary owned-model action needs a real touch area, not a thin metadata line").toBeGreaterThanOrEqual(44);
+    expect(await models.getAttribute("aria-label")).toContain("验收供应方");
+    // Activate the lower part of the real entry, beyond the former 19px text line.
+    await models.click({ position: { x: modelEntry!.width / 2, y: modelEntry!.height - 4 } });
+    await expect(models).toHaveAttribute("aria-expanded", "true");
     await expect(pane.getByRole("heading", { name: "验收供应方", exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(pane).toBeHidden();
     await expect(models).toBeFocused();
+    await expect(models).toHaveAttribute("aria-expanded", "false");
     await models.click();
     await expect(pane).toBeVisible();
     // Adversarial focus stimulus: a subsequent task claims focus in the same

@@ -5,7 +5,7 @@ import { useToolbarPopover } from '@/lib/toolbarPopover';
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
 import { Link, useSearchParams } from 'react-router-dom';
 import { GlobalUpstreamProxyControl, popoverHeadingStyle, ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
-import { Server, X } from 'lucide-react';
+import { ChevronRight, Server, X } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
 import type { CreatePlatformRequest, LogicalModelItem, ModelItem, PlatformItem, PlatformTestResult, ProviderPresetItem, UpdatePlatformRequest, UpstreamModelsData } from '@/lib/types';
@@ -637,6 +637,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
           </thead>
           <tbody>
             {pageProviders.map((p) => {
+              const modelSummary = modelsState === 'ready' ? summarizeProviderModels(ownedRows(p.id)) : modelsState === 'error' ? '模型信息加载失败' : '正在加载模型';
               // 密文在库但解不开（多半轮换过 ApiKeyCrypto:Secret）不能显示成「已配置」——
               // 那会让人以为这条上游能用，实际每次调用都会失败
               const key = p.keyStatus === 'unreadable'
@@ -688,15 +689,16 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                         「2 个没登记」读得出——没登记的模型调用方按名字请求找不到它。 */}
                     <button
                       type="button"
+                      className="lg-provider-owned-models-trigger"
+                      aria-label={`查看 ${p.name} 的已接入模型：${modelSummary}`}
+                      aria-expanded={expandedModelsFor === p.id}
                       onClick={() => {setProviderTab('models');setExpandedModelsFor((x) => (x === p.id ? null : p.id));}}
                       style={{
-                        background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left',
-                        fontSize: 'var(--fs-secondary)',
-                        color: ownedRows(p.id).some((x) => x.publicIds.length === 0) ? 'var(--warn)' : 'var(--text-secondary)',
-                        whiteSpace: 'normal',
+                        color: ownedRows(p.id).some((x) => x.publicIds.length === 0) ? 'var(--warn)' : 'var(--accent)',
                       }}
                     >
-                      {modelsState === 'ready' ? summarizeProviderModels(ownedRows(p.id)) : modelsState === 'error' ? '模型信息加载失败' : '正在加载模型'}
+                      <span>{modelSummary}</span>
+                      <ChevronRight size={14} aria-hidden="true" />
                     </button>
                   </td>
                   <td style={td}><div className="lg-collection-provider-key"><Chip label={key.label} color={key.color} bg={key.bg}/>{p.keyFingerprint ? <code title="当前密钥的脱敏标识，仅配置管理员可见">{p.keyFingerprint}</code> : null}<span style={HINT_TEXT} title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined}>{p.authority === 'llm_gateway' ? '平台配置' : '待导入'}</span></div></td>

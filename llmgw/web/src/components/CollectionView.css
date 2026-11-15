@@ -177,6 +177,10 @@
 .lg-collection-provider-row td:last-child { padding-left: 0 !important; padding-right: 4px !important; }
 .lg-collection-provider-row td:last-child button { min-height: 32px; padding: 4px 8px !important; font-size: var(--fs-secondary) !important; }
 .lg-collection-provider-key { display: flex; align-items: flex-start; flex-direction: column; gap: 3px; }
+.lg-provider-owned-models-trigger { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; max-width: 100%; padding: 4px 0; background: none; border: none; cursor: pointer; text-align: left; font-size: var(--fs-secondary); white-space: normal; text-decoration: underline; text-underline-offset: 3px; }
+.lg-provider-owned-models-trigger > span { min-width: 0; overflow-wrap: anywhere; }
+.lg-provider-owned-models-trigger > svg { flex-shrink: 0; }
+.lg-provider-owned-models-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
 .lg-entity-detail-bounded .lg-entity-detail-hero { grid-template-columns: minmax(0,1fr) auto; }
 .lg-entity-detail-bounded .lg-entity-detail-actions { justify-self: end; }
 .lg-entity-detail-bounded .lg-entity-detail-actions a { min-height: 36px; }
