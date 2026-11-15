@@ -5,7 +5,7 @@
 // 某个 Provider 下面，而是这一页的第三段。
 //
 // 生效不是即时的（prd-api 每 60 秒刷一次），这一点写在界面上而不是让人保存完盯着屏幕猜。
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createImageGenConfig, deleteImageGenConfig, getImageGenConfigs, updateImageGenConfig } from '@/lib/api';
 import type { ImageGenConfigItem, ImageGenConfigsData, UpsertImageGenConfigRequest } from '@/lib/types';
 import { Button, Chip, HelpTip, InlineAlert, SectionLoader } from '@/components/ui';
@@ -137,6 +137,19 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
   const [data, setData] = useState<ImageGenConfigsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string | null; draft: Draft } | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const editorOrigin = useRef<HTMLElement | null>(null);
+  const [editorEntry, setEditorEntry] = useState(0);
+  function openEditor(next: { id: string | null; draft: Draft }) {
+    editorOrigin.current = document.activeElement as HTMLElement;
+    setEditing(next); setEditorEntry(value => value + 1);
+  }
+  useEffect(() => {
+    if (!editorEntry) return;
+    if (editing) { editorRef.current?.scrollIntoView({ block: 'start' }); editorRef.current?.querySelector('input')?.focus({ preventScroll: true }); }
+    else if (editorOrigin.current?.isConnected && editorOrigin.current !== document.body) editorOrigin.current.focus();
+    else document.querySelector<HTMLButtonElement>('[data-imagegen-create]')?.focus();
+  }, [editorEntry, editing !== null]);
   const [busy, setBusy] = useState(false);
   const [showBuiltin, setShowBuiltin] = useState(false);
   // 轮询的心跳。只靠 data 当依赖的话，一次失败的轮询什么都不会变（data 原样、
@@ -248,7 +261,7 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
             {showBuiltin ? '查看自定义契约' : `查看内置契约（${data.builtinCount}）`}
           </Button>
           {canWrite ? (
-            <Button variant="primary" size="sm" onClick={() => setEditing({ id: null, draft: itemToDraft(null) })}>
+            <Button variant="primary" size="sm" data-imagegen-create onClick={() => openEditor({ id: null, draft: itemToDraft(null) })}>
               新增契约
             </Button>
           ) : null}
@@ -301,7 +314,7 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
                   {canWrite ? (
                     <RowActions
                       actions={[
-                        { key: 'edit', label: '编辑', onSelect: () => setEditing({ id: item.id, draft: itemToDraft(item) }) },
+                        { key: 'edit', label: '编辑', onSelect: () => openEditor({ id: item.id, draft: itemToDraft(item) }) },
                         { key: 'delete', label: '删除', danger: true, onSelect: () => void remove(item) },
                       ]}
                     />
@@ -340,7 +353,7 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setEditing({
+                        onClick={() => openEditor({
                           id: null,
                           draft: { ...itemToDraft(item), modelIdPattern: item.modelIdPattern, matchOrder: 50 },
                         })}
@@ -357,7 +370,7 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
       ) : null}
 
       {editing ? (
-        <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div ref={editorRef} style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <strong>{editing.id ? '编辑契约' : '新增契约'}</strong>
 
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

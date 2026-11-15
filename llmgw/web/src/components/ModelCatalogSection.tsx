@@ -11,7 +11,7 @@
 //
 // 与生图契约那份的区别：那份跨进程（console-api 写、prd-api 读）只能轮询、最长 60 秒生效；
 // 这份只有 console-api 自己读，端点每次请求现查，所以**改完立刻生效**，界面上就这么写。
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createCatalogEntry, deleteCatalogEntry, getCatalogEntries, updateCatalogEntry } from '@/lib/api';
 import type { CatalogEntriesData, CatalogEntryItem, UpsertCatalogEntryRequest } from '@/lib/types';
 import { Button, Chip, HelpTip, InlineAlert, SectionLoader } from '@/components/ui';
@@ -86,6 +86,7 @@ export function CatalogEntryEditor({
   onSave,
   onCancel,
   idPrefix = 'catalog',
+  containerRef,
   lockCanonicalId = false,
 }: {
   draft: CatalogDraft;
@@ -95,6 +96,7 @@ export function CatalogEntryEditor({
   onSave: () => void;
   onCancel: () => void;
   idPrefix?: string;
+  containerRef?: React.Ref<HTMLDivElement>;
   lockCanonicalId?: boolean;
 }) {
   const caps = new Set(draft.capabilities ?? []);
@@ -106,7 +108,7 @@ export function CatalogEntryEditor({
   };
 
   return (
-    <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div ref={containerRef} style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 240px' }}>
           <span style={FIELD_LABEL}>模型标识</span>
@@ -239,6 +241,19 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
   const [data, setData] = useState<CatalogEntriesData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string | null; draft: CatalogDraft } | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const editorOrigin = useRef<HTMLElement | null>(null);
+  const [editorEntry, setEditorEntry] = useState(0);
+  function openEditor(next: { id: string | null; draft: CatalogDraft }) {
+    editorOrigin.current = document.activeElement as HTMLElement;
+    setEditing(next); setEditorEntry(value => value + 1);
+  }
+  useEffect(() => {
+    if (!editorEntry) return;
+    if (editing) { editorRef.current?.scrollIntoView({ block: 'start' }); editorRef.current?.querySelector('input')?.focus({ preventScroll: true }); }
+    else if (editorOrigin.current?.isConnected && editorOrigin.current !== document.body) editorOrigin.current.focus();
+    else document.querySelector<HTMLButtonElement>('[data-catalog-create]')?.focus();
+  }, [editorEntry, editing !== null]);
   const [busy, setBusy] = useState(false);
   const [showBuiltin, setShowBuiltin] = useState(false);
 
@@ -311,7 +326,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
             {showBuiltin ? '查看补登名录' : `查看内置名录（${data.builtinCount}）`}
           </Button>
           {canWrite ? (
-            <Button variant="primary" size="sm" onClick={() => setEditing({ id: null, draft: draftFromEntry(null) })}>
+            <Button variant="primary" size="sm" data-catalog-create onClick={() => openEditor({ id: null, draft: draftFromEntry(null) })}>
               补登模型
             </Button>
           ) : null}
@@ -372,7 +387,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
                   {canWrite ? (
                     <RowActions
                       actions={[
-                        { key: 'edit', label: '编辑', onSelect: () => setEditing({ id: item.id ?? null, draft: draftFromEntry(item) }) },
+                        { key: 'edit', label: '编辑', onSelect: () => openEditor({ id: item.id ?? null, draft: draftFromEntry(item) }) },
                         { key: 'delete', label: '删除', danger: true, onSelect: () => void remove(item) },
                       ]}
                     />
@@ -406,7 +421,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
                   <td style={TABLE_CELL}>{item.requiresImageInput ? '必须给图' : item.acceptsImageInput ? '能吃图' : '—'}</td>
                   <td style={TABLE_CELL}>
                     {canWrite ? (
-                      <Button variant="ghost" size="sm" onClick={() => setEditing({ id: null, draft: draftFromEntry(item) })}>
+                      <Button variant="ghost" size="sm" onClick={() => openEditor({ id: null, draft: draftFromEntry(item) })}>
                         补登这条
                       </Button>
                     ) : null}
@@ -420,6 +435,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
 
       {editing ? (
         <CatalogEntryEditor
+          containerRef={editorRef}
           draft={editing.draft}
           onChange={(draft) => setEditing({ ...editing, draft })}
           knownCapabilities={data.knownCapabilities}
