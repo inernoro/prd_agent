@@ -1,11 +1,11 @@
-import { positionToolbarPopover } from '@/lib/toolbarPopover';
+import { useToolbarPopover } from '@/lib/toolbarPopover';
 // Provider（模型供应方）：先完成单个 Provider 的可理解自助配置，再把批量维护收进高级区。
 // 密钥明文只随创建/轮换请求发送，永不回显；列表最多展示头尾打码的指纹（keyFingerprint），
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
 import { Link, useSearchParams } from 'react-router-dom';
-import { GlobalUpstreamProxyControl, ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
-import { Server } from 'lucide-react';
+import { GlobalUpstreamProxyControl, popoverHeadingStyle, ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
+import { Server, X } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
 import type { CreatePlatformRequest, LogicalModelItem, ModelItem, PlatformItem, PlatformTestResult, ProviderPresetItem, UpdatePlatformRequest, UpstreamModelsData } from '@/lib/types';
@@ -28,6 +28,7 @@ type PlatformSection = 'provider' | 'catalog' | 'imagegen';
 
 export function PlatformsPage({ section = 'provider' }: { section?: PlatformSection }) {
   const { tenant } = useAuth();
+  const bulkPopover = useToolbarPopover();
   const [params] = useSearchParams();
   const returnProviderId = params.get('providerId') || '';
   const returnProviderTab = ['connection', 'activity'].includes(params.get('providerTab') || '') ? params.get('providerTab')! : 'models';
@@ -771,10 +772,10 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       <div className="lg-provider-maintenance-actions" aria-label="上游全局与批量维护">
         <GlobalUpstreamProxyControl />
         {canWrite && providerItems.length > 0 ? (
-        <details onToggle={positionToolbarPopover} className="lg-provider-bulk-control" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
+        <details ref={bulkPopover.ref} onToggle={bulkPopover.onToggle} data-toolbar-popover className="lg-provider-bulk-control">
           <summary>批量轮换密钥</summary>
-          <div className="lg-provider-bulk-panel" style={toolbarStyle}>
-            <span style={toolbarTitleStyle}>批量维护 Provider 密钥</span>
+          <div className="lg-provider-bulk-panel" data-toolbar-panel style={toolbarStyle}>
+            <div style={popoverHeadingStyle}><span style={toolbarTitleStyle}>批量维护 Provider 密钥</span><Button size="sm" variant="ghost" aria-label="关闭批量轮换" title="关闭" style={{ minHeight: '3.25rem', minWidth: '3.25rem', padding: 0, flexShrink: 0 }} onClick={() => bulkPopover.close()}><X size={16} aria-hidden="true" /></Button></div>
             <input type="password" autoComplete="new-password" value={bulkKeyValue} onChange={(e) => setBulkKeyValue(e.target.value)} placeholder="新 apiKey" style={inputStyle} />
             <label style={checkStyle}><input type="checkbox" checked={bulkOnlyMissing} onChange={(e) => setBulkOnlyMissing(e.target.checked)} />只补缺失</label>
             <label style={checkStyle}><input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />确认应用全部供应方（不随清单筛选）</label>

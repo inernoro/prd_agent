@@ -1,4 +1,5 @@
-import { positionToolbarPopover } from '@/lib/toolbarPopover';
+import { X } from 'lucide-react';
+import { useToolbarPopover } from '@/lib/toolbarPopover';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { getUpstreamProxy, saveUpstreamProxy, testUpstreamNetwork } from '@/lib/api';
 import type { UpstreamNetworkTestResult, UpstreamProxyDraft, UpstreamProxyView } from '@/lib/types';
@@ -53,6 +54,7 @@ export function ProxyFields({ value, onChange, stored, global = false }: {
 
 export function UpstreamProxyProvider({ children }: { children: ReactNode }) {
   const { tenant } = useAuth();
+  const popover = useToolbarPopover();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const [saved, setSaved] = useState<UpstreamProxyView | null>(null);
   const [draft, setDraft] = useState<UpstreamProxyDraft>({ mode: 'inherit' });
@@ -78,9 +80,9 @@ export function UpstreamProxyProvider({ children }: { children: ReactNode }) {
       else setError(res.error.message || '保存失败，请重试');
     } finally { setBusy(false); }
   }
-  const control = <details onToggle={positionToolbarPopover} className="lg-upstream-global-control" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
+  const control = <details ref={popover.ref} onToggle={popover.onToggle} data-toolbar-popover className="lg-upstream-global-control">
       <summary>全局连接 · {saved === null ? error ? '读取失败' : '加载中' : saved.mode === 'custom' ? saved.address : saved.mode === 'inherit' ? '部署默认' : '强制直连'}</summary>
-      <div className="lg-upstream-global-panel"><h3 style={SECTION_TITLE}>全局上游代理</h3>
+      <div className="lg-upstream-global-panel" data-toolbar-panel><div style={popoverHeadingStyle}><h3 style={SECTION_TITLE}>全局上游代理</h3><Button size="sm" variant="ghost" aria-label="关闭全局连接设置" title="关闭" style={{ minHeight: '3.25rem', minWidth: '3.25rem', padding: 0, flexShrink: 0 }} onClick={() => popover.close()}><X size={16} aria-hidden="true" /></Button></div>
       <p style={HINT_TEXT}>应用于当前组织内所有跟随全局设置的上游，也包括之后新增的上游。部署默认保留服务器已有出口设置，强制直连会关闭代理；单个上游也可独立配置。</p>
       {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
       {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
@@ -130,3 +132,5 @@ export function UpstreamNetworkTest({ kind, id, revision, disabled = false }: { 
     </InlineAlert> : null}
   </div>;
 }
+
+export const popoverHeadingStyle = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, position: 'sticky' as const, top: 0, background: 'var(--bg-surface)', zIndex: 1, width: '100%' };
