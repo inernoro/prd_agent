@@ -82,9 +82,9 @@ public partial class WebPagesController
         }
         var seedIds = visible.Select(x => x.Id).ToList();
         var comments = await _db.HostedSiteComments.Find(x => seedIds.Contains(x.SiteId) && !x.IsDeleted)
-            .SortByDescending(x => x.CreatedAt).Limit(500).ToListAsync();
+            .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Limit(500).ToListAsync();
         var incoming = await _db.HostedSiteComments.Find(x => x.ReferencedSiteIds.Contains(current.Id) && !x.IsDeleted && !seedIds.Contains(x.SiteId))
-            .SortByDescending(x => x.CreatedAt).Limit(100).ToListAsync();
+            .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Limit(100).ToListAsync();
         var allowed = new List<HostedSiteComment>();
         foreach (var comment in comments.Concat(incoming))
         {
@@ -100,7 +100,7 @@ public partial class WebPagesController
             if (!mentions.TryGetValue(target, out var list)) mentions[target] = list = new();
             if (list.All(x => x.CommentId != comment.Id)) list.Add(new(comment.Id, comment.AuthorName, source.Id, source.Title, $"评论区{comment.AuthorName}提到"));
         }
-        foreach (var comment in allowed)
+        foreach (var comment in allowed.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id))
         {
             var ids = parsed[comment.Id].SelectMany(x => resolved.GetValueOrDefault(x) ?? new()).Where(x => x != comment.SiteId).Distinct().ToList();
             // 只修复派生索引，CAS 避免覆盖并发删除或正文变动；原文、授权均不变。

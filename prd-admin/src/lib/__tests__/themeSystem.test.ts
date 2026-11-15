@@ -335,7 +335,8 @@ describe('主题系统契约', () => {
      * 这份白字永远只压在 --button-primary-bg（浅色档苔绿 #3F5D45）上，不可能落到纸面；
      * 对比度由下面「浅色主题语义文字保持可读」那条逐主题算 fg×bg / fg×hover ≥ 4.5 钉住。
      */
-    const PAPER_MEDIA_TOKENS = ['--thumb-gradient', '--glass-edge', '--skeleton-sheen', '--button-primary-fg'];
+    // 用户确认的 Ledger 稿以白色阅读纸面配深色正文；仅这两个专用值可为白色，下面单独验证两档对比度。
+    const PAPER_MEDIA_TOKENS = ['--thumb-gradient', '--glass-edge', '--skeleton-sheen', '--button-primary-fg', '--hosting-surface', '--hosting-on-accent'];
     const lightBlockWithoutPaper = lightBlock
       .split('\n')
       .filter((line) => !PAPER_MEDIA_TOKENS.some((t) => line.trim().startsWith(t)))
@@ -343,6 +344,18 @@ describe('主题系统契约', () => {
     expect(lightBlockWithoutPaper).not.toMatch(/#fff(?:fff)?\b/i);
     expect(lightBlockWithoutPaper).not.toContain('rgba(255, 255, 255');
     expect(lightBlock).not.toContain('!important');
+  });
+
+  it('合集目录专用纸面、正文和按钮在双主题均满足对比度', () => {
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const blocks = [tokens.slice(0, tokens.indexOf('[data-theme="light"]')), tokens.slice(tokens.indexOf('[data-theme="light"]'), tokens.indexOf('/* 固定暗色可视化表面'))];
+    for (const block of blocks) {
+      for (const text of ['hosting-text', 'hosting-secondary', 'hosting-muted']) {
+        for (const layer of ['hosting-bg', 'hosting-surface']) expect(contrastRatio(tokenValue(block, text), tokenValue(block, layer))).toBeGreaterThanOrEqual(4.5);
+      }
+      expect(contrastRatio(tokenValue(block, 'hosting-on-accent'), tokenValue(block, 'hosting-accent'))).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(tokenValue(blocks[1], 'hosting-surface')).toBe('#FFFFFF');
   });
 
   it('正文与选择态文字在明暗卡片表面均满足 WCAG AA', () => {
