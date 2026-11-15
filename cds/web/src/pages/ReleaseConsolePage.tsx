@@ -36,7 +36,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { MotionLink } from '@/components/layout/RouteMotion';
 import { useReleaseRequests } from '@/hooks/useReleaseRequests';
-import { correlateRelease, releaseFailureReason, type ReleaseRequest } from '@/lib/releaseRequest';
+import { correlateRelease, releaseAccountIdentity, releaseFailureReason, type ReleaseRequest } from '@/lib/releaseRequest';
 import { createLatestWinsGate } from '@/lib/latest-wins';
 import { useNowTick } from '@/hooks/useNowTick';
 import { ApiError, apiRequest, apiUrl } from '@/lib/api';
@@ -203,10 +203,9 @@ const LOG_TONE_CLASS: Record<ReturnType<typeof logLineTone>, string> = {
 
 export function ReleaseConsolePage(): JSX.Element {
   const { status, pending, retry } = useContext(ConsoleAuthContext);
-  const principal = status?.user?.githubLogin?.trim() || status?.user?.username?.trim();
+  const account = releaseAccountIdentity(status);
   if (pending) return <AppShell><Workspace><ContentLoading label="确认发布操作身份" /></Workspace></AppShell>;
-  if (!status || status.enabled !== false && !principal) return <AppShell><Workspace><div role="alert" className="space-y-3 py-4"><p>尚未确认发布操作身份，未读取保留的请求，也未开放发布命令。</p><Button variant="outline" onClick={retry}>重新确认身份</Button></div></Workspace></AppShell>;
-  const account = `${status.mode || 'local'}:${status.enabled === false ? 'disabled' : principal}`;
+  if (!account) return <AppShell><Workspace><div role="alert" className="space-y-3 py-4"><p>尚未确认发布操作身份，未读取保留的请求，也未开放发布命令。</p><Button variant="outline" onClick={retry}>重新确认身份</Button></div></Workspace></AppShell>;
   return <ReleaseConsoleWorkspace key={account} account={account} />;
 }
 
@@ -710,7 +709,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
           {recovery.requests.map(request => <div key={request.requestId} className="space-y-2 text-sm">
             <p className="break-all">{request.projectLabel || request.projectId} / {request.targetLabel || request.targetId} · {request.branchLabel || request.branchId} · {request.commitSha.slice(0, 8)}</p>
             <p>{recovery.messages[request.requestId] || '命令结果尚未确认。请保留编号；查不到记录也不能证明没有执行，请勿重复提交。'}</p>
-            <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">请求编号与原操作</summary><p className="mt-1 break-all">{request.requestId} · {{ deploy: '发布', retry: '重发', rollback: '回滚' }[request.kind]} · {request.requestedAt}{request.sourceReleaseId ? ` · 来源记录 ${request.sourceReleaseId}` : ''}</p>{recovery.failureReasons[request.requestId] ? <p className="mt-1">命令响应：{recovery.failureReasons[request.requestId]}</p> : null}</details>
+            <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">请求编号与原操作</summary><p className="mt-1 break-all">{request.commitSha} · {request.requestId} · {{ deploy: '发布', retry: '重发', rollback: '回滚' }[request.kind]} · {request.requestedAt}{request.sourceReleaseId ? ` · 来源记录 ${request.sourceReleaseId}` : ''}</p>{recovery.failureReasons[request.requestId] ? <p className="mt-1">命令响应：{recovery.failureReasons[request.requestId]}</p> : null}</details>
             <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={commandPending || recovery.checking[request.requestId]} onClick={() => void recovery.verify(request)}>{recovery.checking[request.requestId] ? '核对中' : '核对状态'}</Button>{recovery.found[request.requestId] ? <Button size="sm" disabled={commandPending} onClick={() => followRecoveredRun(request, recovery.found[request.requestId])}>查看本次结果</Button> : null}<MotionLink className="inline-flex min-h-9 items-center rounded-md px-2 underline" to={`/release-center?project=${encodeURIComponent(request.projectId)}&target=${encodeURIComponent(request.targetId)}`}>查看原目标记录</MotionLink></div>
           </div>)}
         </section> : null}
@@ -901,7 +900,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
                           {projects.find((item) => item.id === projectId)?.name || projectId}
                           {' → '}
                           <span className="text-foreground/80">{row.target.name}</span>
-                          {shown ? ` · ${targetUnconfirmed ? '上次记录 ' : ''}${shown.commitSha.slice(0, 7)}` : null}
+                          {shown ? ` · ${targetUnconfirmed ? '上次记录 ' : run ? running ? '本次任务 ' : '已完成任务 ' : '历史记录 '}${shown.commitSha.slice(0, 7)}` : null}
                           {!targetUnconfirmed && !shown && commitSha
                             ? (commitSha.slice(0, 7) === (row.currentCommit || '').slice(0, 7)
                               ? ' · 与线上同版'
@@ -915,19 +914,22 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
                         ——参考稿的进度条是横贯整个中段的。原来它连同「来源 / 二次确认」
                         独占 banner 上方两行，那两行正是用户框出来的「过于丑陋」的一半；
                         来源地址收进 title 提示。 */}
+                    {!targetRequest ? <label htmlFor="release-source-version" className="text-sm text-muted-foreground">{run && !running ? '下一次来源' : '发布来源'}</label> : null}
+                    {targetRequest ? <p aria-label="原请求来源版本" className="break-all text-sm text-muted-foreground">原请求：{targetRequest.branchLabel || targetRequest.branchId} · <code>{targetRequest.commitSha.slice(0, 12)}</code></p> : (
                     <select
-                      value={targetRequest?.branchId || branchId}
+                      id="release-source-version"
+                      value={branchId}
                       disabled={commandPending || !!branchesError || targetUnconfirmed}
                       onChange={(event) => { setBranchId(event.target.value); setConfirmTargetId(null); }}
                       title={previewUrl ? `来源 ${previewUrl}${sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}` : '取不到预览地址，发布前检查会拦下这一项'}
                       aria-label="要发布的版本"
-                      className="cds-ident h-7 min-w-0 max-w-full shrink-0 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-[0.6875rem] outline-none focus:border-[hsl(var(--hairline-strong))] sm:max-w-[11.875rem]"
+                      className="cds-ident min-h-11 min-w-0 max-w-full shrink-0 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-sm outline-none focus:border-[hsl(var(--hairline-strong))] sm:max-w-[14rem]"
                     >
-                      {targetRequest && !branches.some(item => item.id === targetRequest.branchId) ? <option value={targetRequest.branchId}>原请求：{targetRequest.branchLabel || targetRequest.branchId} · {targetRequest.commitSha.slice(0, 7)}</option> : branches.length === 0 ? <option value="">没有可发布的分支</option> : null}
+                      {branches.length === 0 ? <option value="">没有可发布的分支</option> : null}
                       {branches.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.branch}
-                          {item.commitSha ? ` · ${item.commitSha.slice(0, 7)}` : ''}
+                          {(item.commitSha || item.githubCommitSha) ? ` · ${(item.commitSha || item.githubCommitSha || '').slice(0, 7)}` : ' · 版本未确认'}
                           {/* 已经在线上的那一版直接标出来——用户问的正是
                               「这些没有被标记为已发布吗」。 */}
                           {!targetUnconfirmed && sameCommit(item.commitSha, row?.currentCommit) ? ' · 线上' : ''}
@@ -935,6 +937,8 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
                         </option>
                       ))}
                     </select>
+                    )}
+                    {!targetRequest && branchId && !commitSha && !branchesError ? <p role="status" className="text-sm text-warn">来源版本未确认，请刷新分支后再发布。</p> : null}
                   </div>
                   {!targetUnconfirmed ? <>
                   <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded bg-[hsl(var(--surface-sunken))]">

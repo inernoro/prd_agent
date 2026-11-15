@@ -149,7 +149,7 @@ const EXACT = {
     { id: 'primary', name: '合成主实例', role: 'primary', url: 'https://primary.example.invalid' },
     { id: 'standby', name: '合成备用实例', role: 'standby', url: 'https://standby.example.invalid' },
   ] },
-  '/api/auth/status': { authenticated: true, enabled: true, user: { name: '布局冒烟', isSystemOwner: true } },
+  '/api/auth/status': { authenticated: true, enabled: true, mode: 'github', activeProvider: 'github', user: { id: 'fixture-owner', authProvider: 'github', githubLogin: 'fixture-owner', name: '布局冒烟', isSystemOwner: true } },
   '/api/instance-mode': { mode: 'master' },
   '/api/notices': { notices: [] },
   '/api/notices/read-all': { ok: true, changed: 0 },

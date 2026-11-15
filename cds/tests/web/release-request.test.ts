@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { correlateRelease, readReleaseRequests, releaseRequestStorageKey, type ReleaseRequest } from '../../web/src/lib/releaseRequest';
+import { correlateRelease, releaseAccountIdentity, readReleaseRequests, releaseRequestStorageKey, type ReleaseRequest } from '../../web/src/lib/releaseRequest';
 import type { ReleaseRun } from '../../web/src/pages/release-center/types';
 const request: ReleaseRequest = { requestId: 'once-only-request', projectId: 'p', targetId: 't', branchId: 'b', commitSha: 'a'.repeat(40), kind: 'deploy', requestedAt: '2026-11-15T10:00:00Z' };
 const run = (overrides: Partial<ReleaseRun> = {}): ReleaseRun => ({ releaseId: 'r1', requestId: request.requestId, projectId: 'p', targetId: 't', branchId: 'b', commitSha: request.commitSha, status: 'running', startedAt: request.requestedAt, logs: [], ...overrides } as ReleaseRun);
@@ -17,5 +17,22 @@ describe('发布未知结果只做唯一正向关联', () => {
   it('浏览器恢复仅保留完整原对象，按账号隔离', () => {
     expect(releaseRequestStorageKey('account-a')).not.toBe(releaseRequestStorageKey('account-b'));
     expect(readReleaseRequests({ getItem: () => JSON.stringify([request, { requestId: 'broken' }]) }, 'key')).toEqual([request]);
+  });
+});
+
+describe('保留请求依真实主体隔离', () => {
+  it('相同全局模式下同名本地和GitHub主体不混用', () => {
+    expect(releaseAccountIdentity({ enabled: true, activeProvider: 'local', user: { id: 'local-a', authProvider: 'local', username: 'alice' } })).not.toBe(releaseAccountIdentity({ enabled: true, activeProvider: 'github', user: { id: 'github-a', authProvider: 'github', githubLogin: 'alice' } }));
+  });
+  it('同一持久id换登录provider仍承接原请求', () => {
+    expect(releaseAccountIdentity({ enabled: true, activeProvider: 'local', user: { id: 'same', username: 'alice' } })).toBe(releaseAccountIdentity({ enabled: true, activeProvider: 'github', user: { id: 'same', githubLogin: 'alice' } }));
+  });
+  it('同provider同名但不同稳定id也隔离', () => {
+    expect(releaseAccountIdentity({ enabled: true, activeProvider: 'local', user: { id: 'a', username: 'alice' } })).not.toBe(releaseAccountIdentity({ enabled: true, activeProvider: 'local', user: { id: 'b', username: 'alice' } }));
+  });
+  it('无稳定id的legacy仍依真实provider隔离，未知provider不读取缓存', () => {
+    expect(releaseAccountIdentity({ enabled: true, activeProvider: 'legacy', user: { username: 'alice' } })).not.toBe(releaseAccountIdentity({ enabled: true, activeProvider: 'github', user: { githubLogin: 'alice' } }));
+    expect(releaseAccountIdentity({ enabled: true, user: { username: 'alice' } })).toBeNull();
+    expect(releaseAccountIdentity(null)).toBeNull();
   });
 });

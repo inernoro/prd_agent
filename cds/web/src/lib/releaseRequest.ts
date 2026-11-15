@@ -61,3 +61,17 @@ export function releaseFailureReason(error: unknown): string {
   if (error instanceof TypeError) return '网络连接中断，尚未收到可确认的结果';
   return error instanceof Error ? error.message : '暂时无法确认结果';
 }
+
+/** 仅用于浏览器请求缓存隔离，不参与权限判断；mode是站点模式，不能代表当前主体。 */
+export function releaseAccountIdentity(status: {
+  enabled?: boolean; activeProvider?: string | null;
+  user?: { id?: string | null; authProvider?: string | null; githubLogin?: string | null; username?: string | null } | null;
+} | null): string | null {
+  if (!status) return null;
+  if (status.enabled === false) return JSON.stringify(['disabled-local']);
+  const provider = status.user?.authProvider?.trim() || status.activeProvider?.trim();
+  const id = status.user?.id?.trim();
+  if (id) return JSON.stringify(['user-id', id]);
+  const username = status.user?.username?.trim() || status.user?.githubLogin?.trim();
+  return provider && username ? JSON.stringify(['legacy-user', provider, username]) : null;
+}
