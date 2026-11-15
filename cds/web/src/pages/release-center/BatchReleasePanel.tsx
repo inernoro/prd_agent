@@ -394,7 +394,9 @@ export function BatchReleaseResult({ batch, runs, busy, rollbackTargetId, onRetr
     </div>
     {active ? <p role="status" className="text-xs text-muted-foreground">正在执行，批次创建至今 {Math.max(0, Math.floor((now - Date.parse(batch.createdAt)) / 1000))} 秒；可离开页面，执行与证据保留在服务端。</p> : null}
     <ol aria-label="各目标发布结果" className="space-y-3">{batch.targets.map((target, index) => {
-      const targetStatus = target.status === 'success' && (target.observedCommitSha !== batch.commitSha || target.observationError)
+      const targetStatus = preparing && target.status === 'failed'
+        ? statusView('blocked', true)
+        : target.status === 'success' && (target.observedCommitSha !== batch.commitSha || target.observationError)
         ? { label: target.observationError || !target.observedCommitSha ? '执行成功，版本待核实' : '执行成功，版本不一致', tone: target.observationError || !target.observedCommitSha ? 'warn' as const : 'bad' as const }
         : statusView(target.status, true);
       const runId = target.rollbackRunId || target.runId;

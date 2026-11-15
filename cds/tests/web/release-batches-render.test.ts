@@ -83,6 +83,7 @@ describe('批次发布结果 · 保留各目标真实结果', () => {
     expect(html).toContain('回滚失败');
     expect(html).toContain('已恢复 1/2 个目标原版本');
     expect(html).not.toContain('0/2 个目标发布成功');
+    expect(html).not.toContain('发布失败');
     expect(html).toContain('恢复原版本后的入口检查失败');
     expect(html).toContain(OTHER_COMMIT);
     expect(html).not.toContain('全部目标发布成功');
