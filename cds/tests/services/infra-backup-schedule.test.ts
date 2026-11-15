@@ -22,6 +22,7 @@ import {
   redisProbeStdin,
   buildRedisAppendOnlyScript,
   buildRedisRestorePlan,
+  buildRedisSnapshotCopyArgv,
   buildSizeCappedCommand,
   backupKindOf,
   isAutoBackupFile,
@@ -580,7 +581,7 @@ describe('备份不许静默成功', () => {
     expect(CODE).toContain('buildRedisBackupProbeScript()');
     expect(CODE).toContain('拒绝拷贝可能过期的 dump.rdb');
     const probe = CODE.indexOf('redisProbe');
-    const cp = CODE.indexOf('docker cp');
+    const cp = CODE.indexOf('cmd = buildRedisSnapshotCopyArgv(');
     expect(probe).toBeGreaterThan(0);
     expect(cp).toBeGreaterThan(probe);
     // 「探测失败」必须真的抛出去，而不是记一笔继续拷。
@@ -1173,6 +1174,25 @@ describe('redis 凭据只走 stdin', () => {
  * 「跑一遍看看」发现——恰好是空库时结果看起来完全正确（2026-08-18 线上就是这么
  * 侥幸躲过的）。能钉住它的只有对**顺序**的断言。
  */
+describe('Redis归档流写入既有inode', () => {
+  it.each(['copy', 'tar'])('任一环节失败都不把输出当成成功：%s', failed => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'redis-copy-pipeline-'));
+    try {
+      const input = path.join(root, 'snapshot.rdb'), archive = path.join(root, 'snapshot.tar'), output = path.join(root, 'registered.rdb');
+      fs.writeFileSync(input, 'REDIS synthetic fixture'); fs.writeFileSync(output, '', { mode: 0o600 });
+      execFileSync('tar', ['-cf', archive, '-C', root, 'snapshot.rdb']);
+      fs.writeFileSync(path.join(root, 'docker'), failed === 'copy'
+        ? '#!/bin/sh\ncat "$CDS_COPY_FIXTURE_ARCHIVE"\nexit 7\n'
+        : '#!/bin/sh\nprintf invalid-archive\nexit 0\n', { mode: 0o700 });
+      const before = fs.statSync(output, { bigint: true });
+      const argv = buildRedisSnapshotCopyArgv('owned-container', '/data/snapshot.rdb', output);
+      const result = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8', env: { PATH: root + ':' + process.env.PATH, CDS_COPY_FIXTURE_ARCHIVE: archive } });
+      expect(result.status).not.toBe(0); expect(result.stdout).toBe('');
+      const after = fs.statSync(output, { bigint: true }); expect(after.ino).toBe(before.ino); expect(after.birthtimeNs).toBe(before.birthtimeNs);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
 describe('Redis 恢复顺序', () => {
   const plan = buildRedisRestorePlan({
     containerName: 'cds-infra-redis',
@@ -1195,17 +1215,25 @@ describe('Redis 恢复顺序', () => {
     expect(idx('save-current')).toBeLessThan(idx('overwrite'));
   });
 
-  it('全程不碰运行中的容器（没有 docker exec，只有 cp 与生命周期）', () => {
+  it('停止后只以cp读取快照，不依赖已停止容器的exec', () => {
     for (const step of plan) {
-      expect(step.argv[0]).toBe('docker');
-      expect(['stop', 'start', 'cp']).toContain(step.argv[1]);
+      if (step.id === 'save-current') {
+        expect(step.argv.slice(0, 2)).toEqual(['sh', '-c']);
+        expect(step.argv[2]).toContain('docker cp "$1:$2" -');
+        expect(step.argv[2]).not.toContain('docker exec');
+      } else {
+        expect(step.argv[0]).toBe('docker');
+        expect(['stop', 'start', 'cp']).toContain(step.argv[1]);
+      }
     }
   });
 
   it('拷贝方向没写反', () => {
     const save = plan[idx('save-current')].argv;
     const over = plan[idx('overwrite')].argv;
-    expect(save.slice(2)).toEqual(['cds-infra-redis:/data/dump.rdb', '/backups/pre.rdb']);   // 容器 → 宿主
+    expect(save.slice(3)).toEqual(['cds-redis-snapshot-copy', 'cds-infra-redis', '/data/dump.rdb', '/backups/pre.rdb']);
+    expect(save[2]).toContain('docker cp "$1:$2" -');
+    expect(save[2]).toContain('exec 3>"$3"');
     expect(over.slice(2)).toEqual(['/tmp/up.rdb', 'cds-infra-redis:/data/dump.rdb']);        // 宿主 → 容器
   });
 
@@ -1262,7 +1290,7 @@ describe('宿主按探测回传的路径拷贝', () => {
 
   it('docker cp 用 rdbPath，且不再拼默认路径', () => {
     expect(SRC).toContain('const rdbPath = (redisProbe.stdout');
-    expect(SRC).toContain('docker cp ${shq(`${t.containerName}:${rdbPath}`)}');
+    expect(SRC).toContain('buildRedisSnapshotCopyArgv(t.containerName, rdbPath, out)');
     expect(SRC).not.toContain('${t.containerName}:/data/dump.rdb');
     // 回传缺失时宁可失败，也不许悄悄猜一个默认路径。
     expect(SRC).toContain('拒绝按默认路径猜');

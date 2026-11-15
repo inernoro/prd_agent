@@ -58,6 +58,9 @@ for name in ['prepare.sh', 'guest-init.sh', 'run.sh']:
     shutil.copy2(here/name, work/name)
 run(['docker', 'image', 'inspect', 'alpine:3.21'], stdout=subprocess.DEVNULL)
 run(['docker', 'save', '-o', str(work/'alpine.tar'), 'alpine:3.21'])
+if args.mode == 'backups':
+    run(['docker', 'image', 'inspect', 'redis:7-alpine'], stdout=subprocess.DEVNULL)
+    run(['docker', 'save', '-o', str(work/'redis.tar'), 'redis:7-alpine'])
 (work/'owned-root.img').touch(mode=0o600)
 with (work/'owned-root.img').open('r+b') as disk:
     disk.truncate(8*1024**3)
@@ -89,7 +92,8 @@ for name in ['guest-init.sh', 'init-real']:
     (work/name).chmod(0o755)
 bind = ['--mount', 'type=bind,source='+str(work)+',target=/input']
 run(['docker', 'run', '--rm', '--network', 'none', '--cpus', '2', '--memory', '2g', *bind, '--entrypoint', 'sh', image, '/input/prepare.sh'])
-large_artifacts = {name: (work/name).lstat() for name in ['owned-root.img', 'alpine.tar', 'extra.gz', 'initramfs.gz', 'vmlinuz']}
+large_names = ['owned-root.img', 'alpine.tar', 'extra.gz', 'initramfs.gz', 'vmlinuz'] + (['redis.tar'] if args.mode == 'backups' else [])
+large_artifacts = {name: (work/name).lstat() for name in large_names}
 def stop_own():
     observed = subprocess.run(['docker', 'inspect', owner], capture_output=True, text=True)
     if observed.returncode == 0:

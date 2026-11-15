@@ -7,7 +7,8 @@ interface Result {
   scanStatus: 'complete' | 'partial'; canExecute?: boolean; maxAgeDays: number; dryRun?: boolean;
   automaticPolicy?: { keepCount: number; keepDays: number };
   counts: Record<string, number>;
-  directories: Array<{ directory: string; error?: string; candidates?: Item[]; removed?: string[]; held?: Item[]; unknown?: Item[]; policyConflicts?: Item[]; filesystems?: Array<{ path: string; netAvailableBytesDelta: number | null }> }>;
+  detailsAvailableInFreshPreview?: boolean;
+  directories?: Array<{ directory: string; error?: string; candidates?: Item[]; removed?: string[]; held?: Item[]; unknown?: Item[]; policyConflicts?: Item[]; filesystems?: Array<{ path: string; netAvailableBytesDelta: number | null }> }>;
 }
 interface Item { path: string; reason?: string; allocatedBytes?: number }
 interface Execution { id: string; status: 'running' | 'completed' | 'failed'; startedAt: string; directory?: string; report?: Result; error?: string; stopRequested?: boolean }
@@ -71,29 +72,30 @@ export function BackupRetentionPanel() {
     catch (err) { setError(err instanceof Error ? err.message : '停止尚未确认。'); }
   }
   const busy = execution?.status === 'running';
+  const summaryOnly = !!result && (result.detailsAvailableInFreshPreview === true || !Array.isArray(result.directories));
   return <div className="space-y-3 text-sm">
     <h3 className="font-medium">备份保留与退役</h3>
     <p>备份最长15天{result?.automaticPolicy ? `；自动备份沿用每服务最近${result.automaticPolicy.keepCount}份、最长${result.automaticPolicy.keepDays}天` : ''}。缺少同物理来源的新有效恢复点时显示策略冲突；在写文件、恢复租约和未知归属保持保护。</p>
     <div className="flex flex-wrap gap-2">
       <Button variant="outline" disabled={loading || busy} onClick={() => void preview()}>预览全局备份回收</Button>
-      {canExecute && result ? <Button variant="outline" disabled={busy || loading || !result.counts.candidates} onClick={() => void execute()}>重新核查并执行一批</Button> : null}
+      {canExecute && result && !summaryOnly ? <Button variant="outline" disabled={busy || loading || !result.counts.candidates} onClick={() => void execute()}>重新核查并执行一批</Button> : null}
       {busy ? <Button variant="outline" disabled={execution?.stopRequested} onClick={() => void cancel()}>{execution?.stopRequested ? '正在安全停止' : '停止后续回收'}</Button> : null}
     </div>
     {loading ? <ContentLoading label="正在核对备份身份、完整性与保留原因" variant="table" /> : null}
     {busy ? <p role="status">正在核查：{execution?.directory || '准备目录'}，已执行 {seconds} 秒。刷新页面可重新读取当前任务。</p> : null}
     {error || execution?.error ? <p role="alert" className="text-destructive">{error || execution?.error} 未确认的对象保持保留，不能据此判断零占用。</p> : null}
     {result ? <>
-      <p>{result.dryRun === false ? '本轮计划' : '候选'} {result.counts.candidates ?? '未确认'}，已回收 {result.counts.removed ?? '未确认'}，保留 {result.counts.held ?? '未确认'}，失败 {result.counts.failed ?? '未确认'}，待处理 {result.counts.pending ?? '未确认'}，策略冲突 {result.counts.policyConflicts ?? '未确认'}。</p>
+      <p>{summaryOnly ? '上次任务摘要：' : ''}{result.dryRun === false ? '本轮计划' : '候选'} {result.counts.candidates ?? '未确认'}，已回收 {result.counts.removed ?? '未确认'}，保留 {result.counts.held ?? '未确认'}，失败 {result.counts.failed ?? '未确认'}，待处理 {result.counts.pending ?? '未确认'}，策略冲突 {result.counts.policyConflicts ?? '未确认'}。</p>
       {result.scanStatus === 'partial' ? <p role="status">盘点尚未完整确认；未知、冲突和待处理项继续保留。</p> : null}
       <p className="text-xs text-muted-foreground">候选分配块仅为估计，不能相加承诺释放量。实际收益读取每轮文件系统可用空间净变化，包含同期写入。</p>
-      <div className="max-h-96 overflow-auto rounded-md border border-border"><table className="w-full text-left text-xs"><thead><tr><th className="p-2">对象</th><th className="p-2">结果与保护原因</th></tr></thead><tbody>
-        {result.directories.flatMap(directory => [
+      {summaryOnly ? <p role="status">上次任务仅保留摘要，目录明细未保存；请重新预览核对当前对象与占用。</p> : <div className="max-h-96 overflow-auto rounded-md border border-border"><table className="w-full text-left text-xs"><thead><tr><th className="p-2">对象</th><th className="p-2">结果与保护原因</th></tr></thead><tbody>
+        {result.directories!.flatMap(directory => [
           ...(directory.error ? [<tr key={directory.directory} className="border-t"><td className="break-all p-2">{directory.directory}</td><td className="p-2">查询失败：{directory.error}</td></tr>] : []),
           ...(directory.candidates || []).map(item => <tr key={`candidate:${item.path}`} className="border-t"><td className="break-all p-2 font-mono">{item.path}</td><td className="p-2">{directory.removed?.includes(item.path) ? '已回收' : '候选'}，分配块估计 {item.allocatedBytes?.toLocaleString() ?? '未知'} 字节</td></tr>),
           ...[...(directory.held || []), ...(directory.unknown || [])].map((item, index) => <tr key={`held:${item.path}:${index}`} className="border-t"><td className="break-all p-2 font-mono">{item.path}</td><td className="p-2">保留：{reasons[item.reason || ''] || item.reason || '尚未确认'}{canExecute && item.reason === 'backup-ownership-not-registered' ? <Button className="ml-2" size="sm" variant="outline" disabled={busy} onClick={() => setAdopting(item.path)}>登记归属</Button> : null}</td></tr>),
           ...(directory.filesystems || []).map(fs => <tr key={`fs:${directory.directory}:${fs.path}`} className="border-t"><td className="break-all p-2">文件系统观测：{fs.path}</td><td className="p-2">实际净变化 {fs.netAvailableBytesDelta?.toLocaleString() ?? '未知'} 字节</td></tr>),
         ])}
-      </tbody></table></div>
+      </tbody></table></div>}
     </> : null}
     {adopting ? <BackupOwnershipForm file={adopting} onCancel={() => setAdopting(null)} onRegistered={() => { setAdopting(null); void preview(); }} /> : null}
   </div>;

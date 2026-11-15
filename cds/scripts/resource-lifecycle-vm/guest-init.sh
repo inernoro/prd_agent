@@ -17,6 +17,7 @@ if [ ! -f /disk/.fixture-root-prepared ]; then
   touch /disk/.fixture-root-prepared
 fi
 cp /driver.mjs /alpine.tar /disk-resource-native.py /backup-retention-native.py /init-real /disk/
+if [ -f /redis.tar ]; then cp /redis.tar /disk/; fi
 mount --move /proc /disk/proc
 mount --move /sys /disk/sys
 mount --move /dev /disk/dev

@@ -83,9 +83,9 @@ for (const reference of [seed, alias]) {
 const bounded=new ImageCacheGovernance({...cache.options,budgetBytes:1});configureImageCacheGovernance(bounded);
 try{
  const pullsBefore=admittedPulls;
- const mutable=await inspectDeploymentArtifacts(shell,[{id:'native-tag',name:'native-tag',dockerImage:seed,workDir:'.',command:'',containerPort:8080,prebuiltImage:true}],revision);
+ const mutable=await inspectDeploymentArtifacts(shell,[{id:'native-tag',projectId:'fixed-native-image-project',name:'native-tag',dockerImage:seed,workDir:'.',command:'',containerPort:8080,prebuiltImage:true}],revision);
  assert.equal(mutable.state,'waiting');assert.equal(mutable.reason,'cache-budget');assert.equal(admittedPulls,pullsBefore);
- const fixed=await inspectDeploymentArtifacts(shell,[{id:'native-digest',name:'native-digest',dockerImage:digest,workDir:'.',command:'',containerPort:8080,prebuiltImage:true}],revision);
+ const fixed=await inspectDeploymentArtifacts(shell,[{id:'native-digest',projectId:'fixed-native-image-project',name:'native-digest',dockerImage:digest,workDir:'.',command:'',containerPort:8080,prebuiltImage:true}],revision);
  assert.equal(fixed.state,'ready');assert.equal(admittedPulls,pullsBefore+1);
 }finally{configureImageCacheGovernance(undefined);}
 // Actual failed native pull, with successful native identity queries against
@@ -95,7 +95,7 @@ pullConnectionFailure=true;
 try{
  for(let retry=0;retry<2;retry++){
   const restarted=new ImageCacheGovernance(cache.options);configureImageCacheGovernance(restarted);
-  const failed=await inspectDeploymentArtifacts(shell,[{id:'failed-refresh',name:'failed-refresh',dockerImage:seed,workDir:'.',command:'',containerPort:8080,prebuiltImage:true}],revision);
+  const failed=await inspectDeploymentArtifacts(shell,[{id:'failed-refresh',projectId:'fixed-native-image-project',name:'failed-refresh',dockerImage:seed,workDir:'.',command:'',containerPort:8080,prebuiltImage:true}],revision);
   assert.equal(failed.state,'waiting');assert.deepEqual((await restarted.inspect()).pullReservations,[]);
  }
 }finally{pullConnectionFailure=false;configureImageCacheGovernance(undefined);}

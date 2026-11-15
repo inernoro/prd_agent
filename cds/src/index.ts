@@ -62,6 +62,7 @@ import {
   backupDirCandidates, buildMysqlDumpScript, buildNacosDumpScript, buildPostgresDumpScript,
   buildRabbitmqDumpScript, extractBackupScopeNote, extractBackupGapNote, backupScopeGaps,
   buildRedisBackupProbeScript,
+  buildRedisSnapshotCopyArgv,
   redisAuthFromServiceDefinition,
   redisUsernameFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups,
@@ -909,7 +910,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             if (!rdbPath.startsWith('/')) {
               throw new Error(`探测脚本没有回传快照路径（拿到 ${JSON.stringify(rdbPath.slice(0, 80))}），拒绝按默认路径猜`);
             }
-            cmd = `docker cp ${shq(`${t.containerName}:${rdbPath}`)} ${shq(out)}`;
+            cmd = buildRedisSnapshotCopyArgv(t.containerName, rdbPath, out).map(shq).join(' ');
           } else {
             /**
              * 这里原来是 redis 的 `else`——**新增一种备份类型而忘了在这里加分支时，
