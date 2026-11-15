@@ -676,6 +676,7 @@ export function LogsView() {
   const sessSeq = useRef(0);
   const insightSeq = useRef(0);
   const openedRequestIdRef = useRef('');
+  const openedExternalIntentRef = useRef('');
 
   // 瀑布加载：第 1 页替换，后续页追加。
   // 序号守卫仍然管用——切筛选/切 tab 会让 seq 前进，过期响应直接丢弃，不会把
@@ -814,15 +815,17 @@ export function LogsView() {
       openedRequestIdRef.current = '';
       return;
     }
-    if (selectedLogId) { openedRequestIdRef.current = requestId; if (query.get('openRequest') === '1') openLogDetail(selectedLogId, true); return; }
-    if (openedRequestIdRef.current === requestId) return;
+    const externalIntent = query.get('openRequest') === '1' ? `${location.key}:${requestId}` : '';
+    if (selectedLogId) { openedRequestIdRef.current = requestId; if (externalIntent && openedExternalIntentRef.current !== externalIntent) { openedExternalIntentRef.current = externalIntent; openLogDetail(selectedLogId, true); } return; }
+    if (externalIntent ? openedExternalIntentRef.current === externalIntent : openedRequestIdRef.current === requestId) return;
     // A weak requestId can cover retries/fallbacks. Only the full filtered result,
     // not the first loaded match or a previous query's rows, establishes uniqueness.
     if (!requestLookupReady || total !== 1 || requestMatches.length !== 1) return;
     const matched = requestMatches[0];
     openedRequestIdRef.current = requestId;
+    if (externalIntent) openedExternalIntentRef.current = externalIntent;
     openLogDetail(matched.id, query.get('openRequest') === '1');
-  }, [filterRequestId, selectedLogId, query, openLogDetail, requestLookupReady, requestMatches, total]);
+  }, [filterRequestId, selectedLogId, query, openLogDetail, requestLookupReady, requestMatches, total, location.key]);
 
   // 刷新 = 回到第 1 页重新取并**替换**列表。
   // 之前写的是 loadList(page)：累加语义下，停在第 2 页时刷新会把第 2 页再追加一遍
@@ -1318,7 +1321,8 @@ export function LogsView() {
         <TabBar items={LOGS_SUBTABS} activeKey={subtab} onChange={(k) => setSubtab(k)} />
       </div>
 
-      {ambiguousRequestLookup ? <p role="status" style={{ margin: 0, padding: '0 12px', flexShrink: 0, fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)' }}>该请求编号匹配多条记录，请在列表中选择具体记录查看详情。</p> : null}
+      {requestLookupReady && subtab === 'generations' && !selectedLogId && !!filterRequestId.trim() && total === 0 && rows.length === 0 ? <div role="status" style={{ flexShrink: 0, padding: '0 12px', fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)' }}>当前时间与权限范围无 <code style={{ overflowWrap: 'anywhere' }}>{filterRequestId}</code> 的业务请求。<Button variant="ghost" size="sm" onClick={() => setSubtab('upstream')}>查看其他调用记录</Button></div> : null}
+      {ambiguousRequestLookup ? <p role="status" style={{ margin: 0, padding: '0 12px', flexShrink: 0, fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)' }}>编号 <code style={{ overflowWrap: 'anywhere' }}>{filterRequestId}</code> 对应多条记录，请选择具体记录。</p> : null}
 
       {metaError || listError ? (
         <div

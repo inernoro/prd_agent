@@ -24,7 +24,7 @@ test('弱请求编号多记录保留候选；精确身份、唯一回执及嵌�
   const server = await createServer({ root: process.env.W2_TEST_ROOT || fileURLToPath(new URL('../', import.meta.url)), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: [] }, ssr: { noExternal: ['react-router-dom'] }, plugins: [{ name: 'request-candidate-api', enforce: 'pre', resolveId(id) { if (id === 'react-router-dom') return '\0candidate-router'; }, load(id) {
     if (id === '\0candidate-router') return Object.keys(globalThis.__candidateRouter).filter(name => name !== 'default').map(name => `export const ${name}=globalThis.__candidateRouter.${name};`).join('\n');
     if (id.endsWith('/src/lib/api.ts')) return [...api.matchAll(/^export (?:async )?function (\w+)/gm)].map(([, name]) => {
-      if (name === 'getLogs') return 'export async function getLogs(params){const f=globalThis.__candidate;f.listCalls.push(params);if(f.delayRequest&&params.requestId)return new Promise(resolve=>{f.resolve=resolve});const rows=f.rows.filter(row=>!params.requestId||row.requestId===params.requestId||row.id===params.requestId);return {success:true,data:{items:f.partial?rows.slice(0,1):rows,total:rows.length}}}';
+      if (name === 'getLogs') return 'export async function getLogs(params){const f=globalThis.__candidate;f.listCalls.push(params);if(f.delayRequest&&params.requestId)return new Promise(resolve=>{f.resolve=resolve});if(f.failLogical&&params.view!=="physical")return {success:false,error:{code:"UNAVAILABLE",message:"业务请求读取失败"}};const rows=(params.view==="physical"?f.rows:f.logicalRows||f.rows).filter(row=>!params.requestId||row.requestId===params.requestId||row.id===params.requestId);return {success:true,data:{items:f.partial?rows.slice(0,1):rows,total:rows.length}}}';
       if (name === 'getLogDetail') return 'export async function getLogDetail(id){const f=globalThis.__candidate;f.detailCalls.push(id);return {success:true,data:f.detail?.id===id?f.detail:f.rows.find(row=>row.id===id)}}';
       return `export async function ${name}(){return {success:true,data:{items:[],statuses:['failed','succeeded'],models:['business-chat']}}}`;
     }).join('\n');
@@ -50,7 +50,7 @@ test('弱请求编号多记录保留候选；精确身份、唯一回执及嵌�
       await mount({ rows }, buildLogRequestHref('shared-retry-01', { view: 'physical' }));
       assert.equal(route().searchParams.has('transaction'), false, 'matching the weak id must not pick the first physical record');
       assert.deepEqual(globalThis.__candidate.detailCalls, [], 'no hidden arbitrary detail fetch');
-      assert.match(document.body.textContent, /匹配多条记录.*选择具体记录/);
+      assert.match(document.body.textContent, /多条记录.*选择具体记录/);
       assert.equal(document.querySelectorAll('.lg-log-table-row').length, 3);
       await click(document.querySelector('[data-log-row-id="retry-second-429"]'));
       assert.equal(route().searchParams.get('transaction'), 'retry-second-429');
@@ -61,10 +61,17 @@ test('弱请求编号多记录保留候选；精确身份、唯一回执及嵌�
       assert.equal(route().searchParams.get('transaction'), 'fallback-final-200'); assert.equal(route().searchParams.has('openRequest'), false, 'explicit identity also consumes an intent when the same request was already opened in this instance');
     }
     for (const data of [fixtures.ordinaryUnique, fixtures.safeUnique, fixtures.nestedAttemptsSinglePhysical]) {
-      await mount(data, buildLogRequestHref(data.rows[0].requestId, { view: 'physical' }));
+      const options = data === fixtures.safeUnique ? { view: 'physical' } : {};
+      await mount(data, buildLogRequestHref(data.rows[0].requestId, options));
       assert.equal(route().searchParams.get('transaction'), data.expectedTransaction); assert.equal(route().searchParams.has('openRequest'), false);
       assert.equal(globalThis.__candidate.detailCalls.at(-1), data.expectedTransaction);
-      await act(async () => globalThis.__candidate.navigate(-1)); assert.equal(route().pathname, '/origin', 'unique external lookup keeps one history entry');
+      await click(document.querySelector('[aria-label="关闭详情"]'));
+      assert.equal(route().searchParams.has('transaction'),false,'manual close does not immediately reopen');
+      await act(async()=>globalThis.__candidate.navigate(buildLogRequestHref(data.rows[0].requestId,options)));
+      assert.equal(route().searchParams.get('transaction'),data.expectedTransaction,'a new external search for the same id opens again');
+      assert.equal(route().searchParams.has('openRequest'),false);
+      await act(async () => globalThis.__candidate.navigate(-1)); assert.equal(route().pathname, '/logs'); assert.equal(route().searchParams.has('transaction'),false,'Back from a repeated external lookup returns the preceding closed search');
+      await act(async () => globalThis.__candidate.navigate(-1)); assert.equal(route().pathname,'/origin','each external lookup contributes only one history entry');
     }
     const explicit = fixtures.explicitExistingTransaction;
     await mount(explicit, buildLogRequestHref('shared-retry-01', { view: 'physical' }) + '&transaction=' + explicit.selectedTransaction);
@@ -73,14 +80,20 @@ test('弱请求编号多记录保留候选；精确身份、唯一回执及嵌�
     await mount({ rows: fixtures.sameIdMultiplePhysical.rows, partial: true }, buildLogRequestHref('shared-retry-01', { view: 'physical' }));
     assert.equal(document.querySelectorAll('.lg-log-table-row').length, 1);
     assert.equal(route().searchParams.has('transaction'), false, 'one returned row with a larger filtered total does not establish uniqueness');
-    assert.match(document.body.textContent, /匹配多条记录/);
+    assert.match(document.body.textContent, /多条记录/);
+    await mount({rows:fixtures.safeUnique.rows,logicalRows:[],failLogical:true},buildLogRequestHref('safe-01'));
+    assert.match(document.body.textContent,/业务请求读取失败/);assert.equal([...document.querySelectorAll('button')].some(n=>n.textContent==='查看其他调用记录'),false,'read failure is not confirmed no match');
+    globalThis.__candidate.failLogical=false;
+    await click(document.querySelector('[aria-label="刷新日志"]'));
+    await click([...document.querySelectorAll('button')].find(n=>n.textContent==='查看其他调用记录'));
+    assert.equal(route().searchParams.get('view'),'physical');assert.equal(route().searchParams.get('transaction'),'safe-log');assert.equal(globalThis.__candidate.detailCalls.at(-1),'safe-log');
     // A newly submitted query cannot use the previous query's only row while its own result is pending.
     await mount(fixtures.ordinaryUnique, '/logs?view=physical');
     globalThis.__candidate.delayRequest = true;
     await act(async () => globalThis.__candidate.navigate(buildLogRequestHref('ordinary-01', { view: 'physical' })));
     assert.equal(route().searchParams.has('transaction'), false); assert.deepEqual(globalThis.__candidate.detailCalls, []);
     await act(async () => globalThis.__candidate.resolve({ success: true, data: { items: [fixtures.ordinaryUnique.rows[0], { ...fixtures.ordinaryUnique.rows[0], id: 'another-physical' }], total: 2 } }));
-    assert.equal(route().searchParams.has('transaction'), false); assert.match(document.body.textContent, /匹配多条记录/);
+    assert.equal(route().searchParams.has('transaction'), false); assert.match(document.body.textContent, /多条记录/);
   } finally {
     if (root) await act(async () => root.unmount()); await server.close(); dom.window.close();
     for (const name of names) globalThis[name] = previous[name]; delete globalThis.IS_REACT_ACT_ENVIRONMENT; delete globalThis.__candidate; delete globalThis.__candidateRouter;
