@@ -724,13 +724,6 @@ function parseOptionalNonNegativeInteger(value: string): number | undefined {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
-function Empty({ text }: { text: string }) {
-  return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>
-      {text}
-    </div>
-  );
-}
 
 function EmptyBlock({ text }: { text: string }) {
   return <div style={{ padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>{text}</div>;
