@@ -4523,33 +4523,33 @@ function ProjectInfraTab({
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1">
+    <div className="space-y-3" data-project-infra>
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0 flex-1">
           <h3 className="text-base font-semibold">项目基础设施</h3>
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
             mongodb / redis / postgres 等 infra 容器,跟随项目独立部署。审批 cds-compose.yml 时自动创建,这里可启停/删除。
           </p>
-          <p className="text-[0.6875rem] text-muted-foreground/80 mt-1">
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
             <span className="font-medium text-foreground/80">数据卷不丢失</span>:删除/停止容器不影响 docker named volume,
             下次同名 infra 创建会自动挂回原数据。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
-          <Button type="button" variant="outline" size="sm"
+          <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm"
             onClick={doStartAll} disabled={busy !== null || stoppedCount === 0}
             title={stoppedCount === 0 ? '没有可启动的服务' : `启动 ${stoppedCount} 个已停止的服务`}>
             全部启动 {stoppedCount > 0 ? `(${stoppedCount})` : ''}
           </Button>
-          <Button type="button" variant="outline" size="sm"
+          <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm"
             onClick={doStopAll} disabled={busy !== null || runningCount === 0}
             title={runningCount === 0 ? '没有正在运行的服务' : `停止 ${runningCount} 个运行中的服务(数据保留)`}>
             全部停止 {runningCount > 0 ? `(${runningCount})` : ''}
           </Button>
-          <Button type="button" variant="default" size="sm" onClick={() => setResyncOpen(true)} disabled={busy !== null}>
+          <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="default" size="sm" onClick={() => setResyncOpen(true)} disabled={busy !== null}>
             重新同步配置
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={busy !== null}>
+          <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm" onClick={refresh} disabled={busy !== null}>
             <RefreshCw /> 刷新
           </Button>
         </div>
@@ -4576,15 +4576,15 @@ function ProjectInfraTab({
             return (
               <div
                 key={svc.id}
+                data-infra-id={svc.id}
                 className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3"
               >
-                <div className="flex items-start justify-between gap-2">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="font-semibold text-foreground">{svc.name}</span>
-                      <CodePill>{svc.id}</CodePill>
+                    <div className="flex flex-wrap items-start gap-x-3 gap-y-1 text-sm">
+                      <span className="min-w-0 break-words font-semibold text-foreground">{svc.name}</span>
                       <span className={
-                        `inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6875rem] ` +
+                        `inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-xs ` +
                         (svc.status === 'running'
                           ? 'bg-ok-soft text-ok'
                           : svc.status === 'error'
@@ -4594,35 +4594,37 @@ function ProjectInfraTab({
                         {svc.status === 'running' ? '运行中' : svc.status === 'error' ? '错误' : '已停止'}
                       </span>
                     </div>
-                    <div className="mt-1 text-xs text-muted-foreground font-mono">
+                    <code className="mt-1 block break-all font-mono text-xs text-muted-foreground">{svc.id}</code>
+                    <div className="mt-1 break-all text-xs text-muted-foreground font-mono">
                       {svc.dockerImage}
                       {' · '}
                       :{svc.hostPort}→{svc.containerPort}
                     </div>
                     {cmdText ? (
-                      <div className="mt-1 text-[0.6875rem] text-foreground/70 font-mono break-all">
+                      <div className="mt-1 text-xs leading-5 text-muted-foreground font-mono break-all">
                         cmd: {cmdText}
                       </div>
                     ) : null}
                     {svc.errorMessage ? (
-                      <div className="mt-1.5 text-[0.6875rem] text-bad">
+                      <div className="mt-1.5 text-xs leading-5 break-words text-bad">
                         {svc.errorMessage}
                       </div>
                     ) : null}
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
                     {svc.status === 'running' ? (
-                      <Button type="button" variant="outline" size="sm" onClick={() => doStop(svc.id)} disabled={isBusy}>
+                      <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm" onClick={() => doStop(svc.id)} disabled={isBusy}>
                         {isBusy ? <Loader2 className="animate-spin" /> : null}
                         停止
                       </Button>
                     ) : (
-                      <Button type="button" variant="outline" size="sm" onClick={() => doStart(svc.id)} disabled={isBusy}>
+                      <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm" onClick={() => doStart(svc.id)} disabled={isBusy}>
                         {isBusy ? <Loader2 className="animate-spin" /> : null}
                         启动
                       </Button>
                     )}
                     <Button
+                      className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0"
                       type="button"
                       variant="destructive"
                       size="sm"
@@ -4648,13 +4650,14 @@ function ProjectInfraTab({
               确认删除 infra 服务
             </DialogTitle>
             <DialogDescription>
-              将停止并删除容器 <code className="font-mono">{confirmDeleteId}</code>,以及对应的持久卷映射记录。
+              将停止并删除容器 <code className="break-all font-mono">{confirmDeleteId}</code>,以及对应的持久卷映射记录。
               数据卷本身不会被删(volumes 由 docker 单独管理),但服务不会再启动。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2">
-            <Button type="button" variant="outline" onClick={() => setConfirmDeleteId(null)}>取消</Button>
+            <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" onClick={() => setConfirmDeleteId(null)}>取消</Button>
             <Button
+                      className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0"
               type="button"
               variant="destructive"
               onClick={() => confirmDeleteId && doDelete(confirmDeleteId)}
