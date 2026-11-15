@@ -37,6 +37,7 @@ import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, P
 import './OrganizationPage.css';
 import { useDialogFocus } from '@/lib/useDialogFocus';
 import { canUseCapability } from '@/lib/access';
+import { canonicalMemberUsername } from '@/lib/organizationIdentity';
 import { CARD_BODY, GAP } from '@/lib/surface';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE, TABLE_CELL, TABLE_CELL_MUTED, TABLE_HEAD_CELL } from '@/lib/typography';
 
@@ -48,7 +49,7 @@ const unknownWrite = (code?: string) => !code || !ORGANIZATION_REJECTIONS.has(co
 type MemberRole = CreateMemberRequest['role'];
 type MemberItem = OrganizationData['members'][number];
 type TeamItem = OrganizationData['teams'][number];
-type PendingOrganizationWrite = { label: string; matches: (data: OrganizationData) => boolean };
+type PendingOrganizationWrite = { label: string; matches: (data: OrganizationData) => boolean; explain?: (data: OrganizationData) => string | null };
 
 
 const ROLE_OPTIONS: { value: MemberRole; label: string; detail: string }[] = [
@@ -59,7 +60,7 @@ const ROLE_OPTIONS: { value: MemberRole; label: string; detail: string }[] = [
   { value: 'billing', label: 'Billing', detail: '只查看预算与用量' },
 ];
 
-const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,47}$/;
+
 
 function roleLabel(role: string) {
   return ROLE_OPTIONS.find((item) => item.value === role)?.label || role;
@@ -120,7 +121,7 @@ export function OrganizationPage() {
       setData(response.data);
       const pending = pendingWrite.current;
       if (pending && !pending.matches(response.data)) {
-        setPageUnknown(true); setError(`${pending.label}仍待核实。当前读取尚未匹配已提交的目标状态，不代表操作未生效，请稍后刷新或联系管理员核对审计，暂不重复提交。`);
+        setPageUnknown(true); setError(`${pending.label}仍待核实。${pending.explain?.(response.data) || '当前读取尚未匹配已提交的目标状态，不代表操作未生效，请稍后刷新或联系管理员核对审计，暂不重复提交。'}`);
       } else {
         pendingWrite.current = null; setPageUnknown(false);
         if (pending) setNotice('已读取到与本次提交匹配的当前状态，请核对目标对象。');
@@ -262,13 +263,13 @@ export function OrganizationPage() {
 
       <PageBody>
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
-        {pageUnknown ? <div role="status">以下为上次读取的数据，上次操作仍待核对。请刷新获取最新状态。</div> : null}
+        {pageUnknown ? <div role="status">以下为上次读取数据，操作结果仍待核对。</div> : null}
         {reading && data ? <div role="status">正在读取最新组织状态…</div> : null}
         {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
 
         {!data ? (
           error
-            ? <div role="status">组织信息暂不可用，请使用“刷新”重新读取；权限拒绝时请联系租户 Owner。</div>
+            ? <div role="status">组织信息未读取，请刷新重试。</div>
             : <SectionLoader text="正在加载组织" />
         ) : (
           <>
@@ -494,7 +495,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, existingMe
   const who = member ? (member.displayName || member.username || member.userId) : '';
   const selectedDisabledTeams = memberTeamIds.filter((teamId) => teams.some((team) => team.id === teamId && team.status !== 'active'));
   const missingDeveloperTeam = memberRole === 'developer' && memberTeamIds.length === 0;
-  const usernameOk = USERNAME_PATTERN.test(username.trim());
+  const usernameOk = canonicalMemberUsername(tenantSlug, username) !== null;
   const blocked = busy || resultUnknown
     || missingDeveloperTeam
     || (isCreate ? (!usernameOk || memberInitialPassword.length < 12) : selectedDisabledTeams.length > 0);
@@ -507,9 +508,9 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, existingMe
     setBusy(true);
     setFailure(null);
     if (isCreate) {
-      const submittedUsername = tenantSlug ? `${tenantSlug}.${username.trim()}` : username.trim();
+      const submittedUsername = canonicalMemberUsername(tenantSlug, username);
       const submittedTeams = [...memberTeamIds], submittedRole = memberRole, previousIds = new Set(existingMemberIds);
-      submittedState.current = { label: '创建成员', matches: latest => latest.members.some(item => !previousIds.has(item.id) && item.username === submittedUsername && item.role === submittedRole && sameTeams(item.teamIds, submittedTeams)) };
+      submittedState.current = { label: '创建成员', matches: latest => latest.members.some(item => !previousIds.has(item.id) && item.username === submittedUsername && item.role === submittedRole && sameTeams(item.teamIds, submittedTeams)), explain: latest => latest.members.some(item => previousIds.has(item.id) && item.username === submittedUsername) ? '当前已有同名成员，列表不能确认本次初始口令或幂等回执。请核对审计及成员本人，勿再次创建。' : null };
       const response = await observedWrite(createMember({
         username: username.trim(),
         displayName: displayName.trim() || undefined,

@@ -107,6 +107,7 @@ export function UsagePage() {
       else setError(res.error.message);
     });
     const billSeq = ++reconciliationRead.current;
+    setImportChecking(false); // This general read supersedes any outstanding import check.
     getCostReconciliations(params).catch(() => ({ success: false as const, data: null, error: { code: 'NETWORK_ERROR', message: '供应商账单读取中断' } })).then((res) => {
       if (!active || billSeq !== reconciliationRead.current) return;
       if (res.success) setReconciliation(res.data);
@@ -235,7 +236,7 @@ export function UsagePage() {
     <PageShell>
       <PageHeader
         title="预算与用量"
-        subtitle="最近 30 天的请求用量、Gateway 估算和供应商账单对照。"
+        subtitle="近30天用量、Gateway 估算与供应商账单。"
         summary={summaryStrip}
         actions={(
           <>
@@ -303,7 +304,7 @@ export function UsagePage() {
               </dl>
             </HelpPopover>
           </h2>
-          <span style={countStyle}>只看记录数量，不合并币种</span>
+          <span style={countStyle}>数量按记录，金额分币种</span>
         </div>
         <div className="lg-cost-state-grid">
           <CostStateCard state="estimated" title="可估算" value={!summary ? '未知' : summary.total ? fmtCompact(summary.pricedRequests) : '暂无请求'} />
@@ -315,13 +316,13 @@ export function UsagePage() {
       {(summary?.topUnpricedModels?.length ?? 0) > 0 ? (
         <Card style={CARD_BODY} aria-labelledby="unpriced-title">
           <div style={cardHeadStyle}>
-            <h2 id="unpriced-title" style={SECTION_TITLE}>这些调用没计上钱</h2>
+            <h2 id="unpriced-title" style={SECTION_TITLE}>待补价调用</h2>
             <span style={countStyle}>
               {fmtCompact(summary?.unpricedRequests)} 次缺价 · {fmtCompact(summary?.staleCurrencyRequests)} 次币种待换算
             </span>
           </div>
           <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)', lineHeight: 'var(--lh-body)' }}>
-            算不出钱的调用不进限额，补上价格才会计入。
+            缺价调用不计入限额，补价后计入。
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, marginTop: GAP.normal }}>
             {(summary?.topUnpricedModels ?? []).map((item) => (
@@ -345,7 +346,7 @@ export function UsagePage() {
           </div>
         </Card>
       ) : null}
-      {importUncertain && !showImport ? <InlineAlert tone="info">账单导入结果未确认，已保留本次提交。<Button size="sm" variant="ghost" onClick={() => setShowImport(true)}>继续核对账单</Button></InlineAlert> : null}
+      {importUncertain && !showImport ? <InlineAlert tone="info">导入结果未确认，提交内容已保留。<Button size="sm" variant="ghost" onClick={() => setShowImport(true)}>继续核对账单</Button></InlineAlert> : null}
       {importNotice && !showImport ? <div role="status">{importNotice}</div> : null}
       {importResult && (reconciliationError || !reconciliation?.items.some(item => item.id === importResult.id)) ? <ImportResult item={importResult} canReadLogs={canReadLogs} /> : null}
       <Card style={CARD_BODY} aria-labelledby="reconciliation-title">
@@ -361,7 +362,7 @@ export function UsagePage() {
         {reconciliationLoading ? (
           <SectionLoader text="正在读取供应商账单…" />
         ) : reconciliationError ? (
-          <InlineAlert tone="error">{reconciliationError}。费用估算仍可查看，但当前不能宣称已完成供应商对账。 <Button size="sm" variant="ghost" onClick={() => setRefresh(value => value + 1)}>重新读取账单</Button></InlineAlert>
+          <InlineAlert tone="error">{reconciliationError}。估算仍可查看，供应商对账状态未知。 <Button size="sm" variant="ghost" onClick={() => setRefresh(value => value + 1)}>重新读取账单</Button></InlineAlert>
         ) : reconciliation && reconciliation.items.length > 0 ? (
           <div className="lg-reconciliation-list">
             {reconciliation.items.map((item) => <ReconciliationRecord key={item.id} item={item} canReadLogs={canReadLogs} selected={item.id === importResult?.id} />)}
@@ -409,7 +410,7 @@ export function UsagePage() {
         <label style={labelStyle}>供应商实际币种<input value={actualCurrency} onChange={(e) => setActualCurrency(e.target.value)} style={inputStyle} maxLength={3} /></label>
         <label style={labelStyle}>汇率凭证编号<input value={fxSnapshotId} onChange={(e) => setFxSnapshotId(e.target.value)} style={inputStyle} placeholder="跨币种时必填" /></label>
         <label style={labelStyle}>
-          实际币种换算到估算币种的汇率
+          实际币种 → 估算币种汇率
           <HelpPopover label="汇率与币种" align="end">
             供应商账单唯一流水号不是 Gateway requestId。CNY 与 USD 不会直接相加；没有汇率凭证时只分别展示，不计算差额。
           </HelpPopover>
@@ -519,7 +520,7 @@ function reconciliationStatusMeta(status: string) {
   if (status === 'reconciled') return { label: '已对账', explanation: '相同币种，或已使用可审计 FX 凭证', color: 'var(--ok)', background: 'var(--ok-bg)' };
   if (status === 'estimated-unavailable') return { label: '估算未知', explanation: '缺少完整 token 或价格快照，差额保持未知', color: 'var(--warn)', background: 'var(--warn-bg)' };
   if (status === 'fx-unavailable') return { label: '缺汇率凭证', explanation: '币种不同且没有可审计 FX，禁止计算差额', color: 'var(--warn)', background: 'var(--warn-bg)' };
-  if (status === 'actual-invalid') return { label: '实际金额无效', explanation: '供应商币种或金额证据无效', color: 'var(--err)', background: 'var(--err-bg)' };
+  if (status === 'actual-invalid') return { label: '金额无效', explanation: '供应商币种或金额证据无效', color: 'var(--err)', background: 'var(--err-bg)' };
   return { label: status || '未知状态', explanation: '状态尚未形成可比较差额', color: 'var(--text-muted)', background: 'var(--bg-elevated)' };
 }
 
