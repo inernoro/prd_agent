@@ -12,7 +12,7 @@ import { DatabasePassPanel } from '@/components/branch/DatabasePassPanel';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
+import { useCanManageConsole, useFocusTrap, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
 import { createLatestWinsGate } from '@/lib/latest-wins';
@@ -877,11 +877,17 @@ export function BranchDetailDrawer({
   onToast,
   onActionComplete,
   onRelease,
+  onOpenRelations,
+  initialRelationExpanded = false,
+  onRelationRestoreConsumed,
 }: {
   branchId: string | null;
   projectId: string;
   open: boolean;
   onClose: () => void;
+  onOpenRelations?: (branchId: string, expanded: boolean) => void;
+  initialRelationExpanded?: boolean;
+  onRelationRestoreConsumed?: () => void;
   deployments?: BranchDeploymentItem[];
   activityEvents?: DrawerActivityEvent[];
   /** 由父页面注入的 toast 函数 — 设置 tab 操作完成后用它反馈结果 */
@@ -915,6 +921,8 @@ export function BranchDetailDrawer({
   branchStatus?: string;
 }): JSX.Element | null {
   const canManageConsole = useCanManageConsole();
+  const drawerPanel = useRef<HTMLDivElement>(null);
+  useFocusTrap(open && Boolean(branchId), drawerPanel);
   const canOpenPreview = canUseConsolePreview(previewMode, canManageConsole);
   // 2026-07-09 性能重构：时钟从父页面 prop 改为抽屉内自持——原先由
   // BranchListPage 顶层 1s tick 供给（那个 tick 会整页重渲染，已删）。
@@ -1904,7 +1912,10 @@ export function BranchDetailDrawer({
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const activeDialog = document.activeElement instanceof Element ? document.activeElement.closest('[role="dialog"]') : null;
+      if (activeDialog && activeDialog !== drawerPanel.current?.closest('[role="dialog"]')) return;
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     const previousOverflow = document.body.style.overflow;
@@ -2260,6 +2271,7 @@ export function BranchDetailDrawer({
         aria-label="关闭分支详情"
       />
       <div
+        ref={drawerPanel}
         className="cds-branch-detail-drawer cds-drawer-anim relative z-10 ml-auto flex h-full w-full flex-col bg-[hsl(var(--surface-base))] shadow-2xl md:w-2/3 md:border-l md:border-[hsl(var(--hairline))]"
         style={{ minHeight: 0 }}
       >
@@ -2878,7 +2890,7 @@ export function BranchDetailDrawer({
                     onRefreshMetrics={() => void loadMetrics()}
                     onConfigureEntries={canManageConsole ? () => setWebEntryConfigOpen(true) : undefined}
                     onOpenDeployments={() => setActiveTab('deployments')}
-                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={canManageConsole ? () => setActiveTab('config') : undefined} variant="row" /> : null}
+                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={canManageConsole ? () => setActiveTab('config') : undefined} variant="row" initialExpanded={initialRelationExpanded} onExpandedRestored={onRelationRestoreConsumed} onFullScreen={onOpenRelations ? expanded => onOpenRelations(branchId, expanded) : undefined} /> : null}
                   />
                 ) : null}
 

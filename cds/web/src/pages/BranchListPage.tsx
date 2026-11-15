@@ -1,5 +1,7 @@
 import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 import { flushSync } from 'react-dom';
+import { consoleAccountIdentity } from '@/lib/consoleIdentity';
+import { rememberRelationReturn, relationRestoreForVisit, consumeRelationRestore } from '@/lib/relationReturn';
 import { runSurfaceMotion } from '@/lib/surfaceMotion';
 import { ArchivedBranchCard, BranchLifecycleControls, type BranchArchiveView } from '@/components/branch/BranchLifecycleControls';
 import { CiImageNotice } from '@/components/branch/CiImageNotice';
@@ -1695,12 +1697,15 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const returnBranchId = branchReturn.get('branch');
   const returnToBranchSettings = branchReturn.get('branchTab') === 'config' && branchReturn.get('configSection') === 'settings';
   const canManageConsole = useCanManageConsole();
-  const { status: authStatus } = useContext(ConsoleAuthContext);
+  const { status: authStatus, pending: authPending } = useContext(ConsoleAuthContext);
+  const relationActor = authPending ? null : consoleAccountIdentity(authStatus);
+  const relationRestore = useMemo(() => relationRestoreForVisit('branches', relationActor, location.key, window.history.state?.idx, projectId), [relationActor, location.key, projectId]);
+  const restoredRelationTask = relationRestore?.task.kind === 'branches' ? relationRestore.task : null;
   const account = authStatus?.enabled === false ? 'local' : authStatus?.user?.githubLogin || authStatus?.user?.username;
   const viewPreferencesKey = account ? branchViewsStorageKey(`${authStatus?.mode ?? 'local'}:${account}`, projectId) : null;
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const canOpenPreview = canUseConsolePreview(state.status === 'ok' ? state.previewMode : undefined, canManageConsole);
-  const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
+  const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>(() => [...(restoredRelationTask?.selectedBranchIds || [])]);
   const [manualBranchName, setManualBranchName] = useState('');
   // 用户从搜索下拉选中已有分支时,使用稳定选中态标记卡片。
   // 不再用短暂 pulse + 计时器,避免分支流刷新/列表重排时动画被吃掉。
@@ -1727,7 +1732,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const [slowHttpState, setSlowHttpState] = useState<SlowHttpState>({ status: 'idle' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
+  const [showArchived, setShowArchived] = useState(() => restoredRelationTask?.showArchived || false);
   const [remoteBranchesLoading, setRemoteBranchesLoading] = useState(false);
   // 项目切换器 — Week 4.8 Round 4d:Crumb 上的项目名变成 1 步切换的 dropdown
   // 不阻塞首屏加载;失败默默静默(降级到只显示项目列表入口)
@@ -1743,7 +1748,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     branch: BranchSummary;
     needSlots: number;
   } | null>(null);
-  const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(() => returnBranchId);
+  const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(() => restoredRelationTask?.branchId || returnBranchId);
   useEffect(() => { if (returnBranchId) setDetailDrawerBranchId(returnBranchId); }, [location.key, returnBranchId]);
   const [detailDrawerResourceFocus, setDetailDrawerResourceFocus] = useState<{
     resourceId: string;
@@ -1763,7 +1768,17 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
   // 标签过滤:用户点击 BranchCard 上某个标签 chip 时切到只显示该标签的分支;
   // 顶部出现"正在过滤:#xxx ×"chip,点 × 清除。单标签过滤(对齐 legacy)。
-  const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
+  const [activeTagFilter, setActiveTagFilter] = useState<string | null>(() => restoredRelationTask?.activeTagFilter || null);
+  const [pendingRelationExpanded, setPendingRelationExpanded] = useState(() => restoredRelationTask?.relationExpanded || false);
+  const appliedRelationRestore = useRef<string | null>(null);
+  useEffect(() => {
+    if (!relationRestore || relationRestore.task.kind !== 'branches' || appliedRelationRestore.current === relationRestore.token) return;
+    appliedRelationRestore.current = relationRestore.token;
+    const task = relationRestore.task;
+    setSelectedBranchIds([...task.selectedBranchIds]); setShowArchived(task.showArchived); setActiveTagFilter(task.activeTagFilter);
+    setDetailDrawerBranchId(task.branchId); setDetailDrawerResourceFocus(null); setPendingRelationExpanded(task.relationExpanded);
+    consumeRelationRestore(relationRestore.token);
+  }, [relationRestore]);
   const [dormantCollapsed, setDormantCollapsed] = useState<boolean>(() => readDormantCollapsed());
   /* 自定义分组（2026-09-29）：分组定义按项目存在服务端、项目内共享；视图模式与收起状态只记本机。 */
   const [viewPreferences, setViewPreferences] = useState(() => ({ key: viewPreferencesKey, settings: loadBranchViewPreferences(viewPreferencesKey, projectId) }));
@@ -2916,10 +2931,10 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   }, [branches, actions, branchResourcesById, projectProfileIds, showArchived]);
   // 当前过滤的标签已被全部分支删除时,自动清除过滤
   useEffect(() => {
-    if (activeTagFilter && !allTags.includes(activeTagFilter)) {
+    if (state.status === 'ok' && activeTagFilter && !allTags.includes(activeTagFilter)) {
       setActiveTagFilter(null);
     }
-  }, [activeTagFilter, allTags]);
+  }, [activeTagFilter, allTags, state.status]);
   const deployments = useMemo<BranchDeploymentItem[]>(() => (
     Object.entries(actions)
       .reduce<BranchDeploymentItem[]>((items, [key, action]) => {
@@ -2963,10 +2978,10 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   }, [branches, selectedBranchId]);
 
   useEffect(() => {
-    if (selectedBranchIds.length === 0) return;
+    if (state.status !== 'ok' || selectedBranchIds.length === 0) return;
     const liveIds = new Set(branches.map((branch) => branch.id));
     setSelectedBranchIds((current) => current.filter((id) => liveIds.has(id)));
-  }, [branches, selectedBranchIds.length]);
+  }, [branches, selectedBranchIds.length, state.status]);
 
   const openRunningPreview = useCallback(async (branch: BranchSummary, target?: PreviewTarget): Promise<void> => {
     if (state.status !== 'ok') return;
@@ -3009,6 +3024,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
       setToast(message);
     }
   }, [canOpenPreview, setAction, state]);
+
+  const openRelations = useCallback((branchId: string, expanded: boolean) => {
+    const token = rememberRelationReturn({ kind: 'branches', projectId, branchId, activeTagFilter, showArchived, selectedBranchIds, relationExpanded: expanded }, relationActor, location.key, window.history.state?.idx);
+    navigate(`/branch-relations/${encodeURIComponent(branchId)}`, { state: token ? { relationReturn: token } : undefined });
+  }, [projectId, activeTagFilter, showArchived, selectedBranchIds, relationActor, location.key, navigate]);
 
   const openBranchDetail = useCallback((branchId: string) => {
     const source = document.querySelector(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
@@ -4547,9 +4567,12 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
           key={detailDrawerBranchId || 'closed'}
           open={!!detailDrawerBranchId}
           branchId={detailDrawerBranchId}
-          initialTab={returnToBranchSettings && detailDrawerBranchId === returnBranchId ? 'config' : undefined}
+          initialTab={restoredRelationTask?.branchId === detailDrawerBranchId ? 'overview' : returnToBranchSettings && detailDrawerBranchId === returnBranchId ? 'config' : undefined}
           initialConfigSection={returnToBranchSettings && detailDrawerBranchId === returnBranchId ? 'settings' : undefined}
           projectId={projectId}
+          onOpenRelations={openRelations}
+          initialRelationExpanded={pendingRelationExpanded && restoredRelationTask?.branchId === detailDrawerBranchId}
+          onRelationRestoreConsumed={() => setPendingRelationExpanded(false)}
           deployments={deployments}
           activityEvents={activityEvents}
           previewUrl={(() => {
@@ -4575,7 +4598,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
           })()}
           onClose={() => {
             const source = detailDrawerBranchId ? document.querySelector(`[data-branch-card-id="${CSS.escape(detailDrawerBranchId)}"]`) : null;
-            runSurfaceMotion(() => flushSync(() => { setDetailDrawerBranchId(null); setDetailDrawerResourceFocus(null); }), source, true, true);
+            runSurfaceMotion(() => { flushSync(() => { setDetailDrawerBranchId(null); setDetailDrawerResourceFocus(null); }); if (source instanceof HTMLElement && source.isConnected) source.focus({ preventScroll: true }); }, source, true, true);
             if (returnBranchId) {
               const next = new URLSearchParams(location.search);
               for (const key of ['branch', 'branchTab', 'configSection']) next.delete(key);

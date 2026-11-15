@@ -4,17 +4,53 @@ import { ContentLoading } from '@/components/skeletons/ContentLoading';
  * BranchRelationsPage — 全屏关系图（plan.cds.service-relations 第四批）。独立路由，可分享。
  * 与总览关系卡、展开视图、cdscli topology 读同一份 service-graph 数据。
  */
-import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useLocation, useParams } from 'react-router-dom';
 import { Copy, Minimize2, RefreshCw } from 'lucide-react';
-import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, ConsoleAuthContext, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { RelationWorkspace, useRelationPayload } from '@/components/branch/RelationCard';
 import { relationHeadline } from '@/components/branch/RelationGraph';
+import { consoleAccountIdentity } from '@/lib/consoleIdentity';
+import { enterRelationReturn, relationReturnKind, type RelationReturnTask } from '@/lib/relationReturn';
+import { copyTextToClipboard } from '@/lib/clipboard';
+import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
 export function BranchRelationsPage(): JSX.Element {
   const { branchId } = useParams<{ branchId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const auth = useContext(ConsoleAuthContext);
+  const actor = auth.pending ? null : consoleAccountIdentity(auth.status);
+  const token = location.state && typeof location.state === 'object' ? (location.state as { relationReturn?: unknown }).relationReturn : undefined;
+  const [returnKind, setReturnKind] = useState<RelationReturnTask['kind'] | null>(null);
+  useLayoutEffect(() => { setReturnKind(enterRelationReturn(token, actor, branchId, location.key, window.history.state?.idx)); }, [token, actor, branchId, location.key]);
+  const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied' | 'error'>('idle');
+  const copyScope = useRef(0);
+  const manualAddress = useRef<HTMLInputElement>(null);
+  const focusManual = useRef(false);
+  const canonical = branchId ? new URL(`/branch-relations/${encodeURIComponent(branchId)}`, window.location.origin).href : '';
+  useEffect(() => { copyScope.current += 1; setCopyState('idle'); }, [branchId, actor]);
+  useEffect(() => { if (copyState !== 'copied') return; const timer = window.setTimeout(() => setCopyState('idle'), 2400); return () => window.clearTimeout(timer); }, [copyState]);
+  useLayoutEffect(() => { if (copyState === 'error' && focusManual.current) { focusManual.current = false; manualAddress.current?.focus({ preventScroll: true }); manualAddress.current?.select(); } }, [copyState]);
+  const copyLink = async (source: HTMLButtonElement) => {
+    const scope = copyScope.current; setCopyState('copying');
+    try {
+      await copyTextToClipboard(canonical);
+      if (scope !== copyScope.current) return;
+      setCopyState('copied');
+      if (document.activeElement === document.body && source.isConnected) source.focus({ preventScroll: true });
+    } catch {
+      if (scope !== copyScope.current) return;
+      const active = document.activeElement;
+      focusManual.current = !(active instanceof HTMLElement) || active === source || active === document.body || !active.isConnected || active.getAttribute('aria-label') === '更多操作';
+      setCopyState('error');
+    }
+  };
+  const returnToTask = () => {
+    if (relationReturnKind(token, actor, branchId, location.key, window.history.state?.idx)) navigate(-1);
+    else navigate(branchId ? `/branch-panel/${encodeURIComponent(branchId)}` : '/branch-list');
+  };
   const { state, reload, refreshing, refreshError } = useRelationPayload(branchId);
   const [onlyProblems, setOnlyProblems] = useState(false);
   const data = state.status === 'ok' ? state.data : null;
@@ -34,15 +70,17 @@ export function BranchRelationsPage(): JSX.Element {
                 </>
               ) : null}
               <Button variant={onlyProblems ? 'default' : 'outline'} size="sm" onClick={() => setOnlyProblems((v) => !v)} title="只列错误与警告">只看问题</Button>
-              <Button variant="outline" size="sm" onClick={() => { void navigator.clipboard?.writeText(window.location.href); }} title="复制本页链接"><Copy />复制链接</Button>
+              <Button variant="outline" size="sm" disabled={!canonical || copyState === 'copying'} onClick={event => { void copyLink(event.currentTarget); }} title="复制此关系图的地址，不包含返回任务状态"><Copy />{copyState === 'copying' ? '正在复制' : '复制链接'}</Button>
               <Button variant="outline" size="sm" onClick={reload} disabled={refreshing}><RefreshCw className={refreshing ? 'animate-spin' : ''} />刷新</Button>
-              <Button variant="outline" size="sm" onClick={() => navigate(branchId ? `/branch-panel/${encodeURIComponent(branchId)}` : '/branch-list')}><Minimize2 />退出全屏</Button>
+              <Button variant="outline" size="sm" onClick={returnToTask}><Minimize2 />{returnKind === 'branches' ? '返回分支总览' : returnKind === 'overview' ? '返回项目关系总览' : '返回分支详情'}</Button>
             </>
           )}
         />
       )}
     >
       <Workspace fluid className="cds-workspace--fill">
+        {copyState === 'error' ? <div role="alert" className="mb-3 space-y-2 text-sm text-warn"><p>自动复制未完成。可再次复制链接，或选中以下完整地址手动复制。</p><input ref={manualAddress} aria-label="关系图完整地址" readOnly value={canonical} onFocus={event => event.currentTarget.select()} className="w-full rounded-md border border-input bg-background px-3 text-foreground" style={{ minHeight: 44 }} /></div> : null}
+        {copyState === 'copied' ? <div role="status" className="fixed z-50 rounded-md border border-border bg-card px-4 py-3 text-sm shadow-lg" style={bottomRightToastStyle}>链接已复制</div> : null}
         {refreshError && data ? <p role="alert" className="py-3 text-sm text-destructive">刷新失败：{refreshError}；当前显示上次读取的内容。</p> : null}
         {state.status === 'loading' ? <ContentLoading label="读取服务关系" variant="panel" /> : null}
         {state.status === 'error' ? <div className="p-6 text-xs text-destructive">读取失败：{state.message}</div> : null}

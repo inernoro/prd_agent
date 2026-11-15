@@ -1,14 +1,18 @@
-import { MotionLink as Link } from '@/components/layout/RouteMotion';
+import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * OverviewPage — 「概览」菜单（plan.cds.service-relations 第四批）：全部项目的关系与体检。
  * 每个项目一张卡（代表分支、体检结论、服务构成），卡之间画跨项目引用边，右侧按严重度列需要处理的事项。
  * 数据：GET /api/overview/topology。
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
+import { useLocation } from 'react-router-dom';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import { consoleAccountIdentity } from '@/lib/consoleIdentity';
+import { rememberRelationReturn, relationRestoreForVisit, consumeRelationRestore } from '@/lib/relationReturn';
 import { RefreshCw } from 'lucide-react';
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, ConsoleAuthContext, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { userErrorMessage } from '@/lib/userErrorMessage';
 import { createLatestWinsGate } from '@/lib/latest-wins';
@@ -30,11 +34,27 @@ interface OverviewResponse { generatedAt: string; summary: { errors: number; war
 const CARD_W = 360, CARD_H = 190, COL_GAP = 220, ROW_GAP = 40;
 
 export function OverviewPage(): JSX.Element {
+  const location = useLocation(), navigate = useNavigate();
+  const auth = useContext(ConsoleAuthContext);
+  const relationActor = auth.pending ? null : consoleAccountIdentity(auth.status);
+  const relationRestore = useMemo(() => relationRestoreForVisit('overview', relationActor, location.key, window.history.state?.idx), [relationActor, location.key]);
+  const appliedRestore = useRef<string | null>(null);
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ok'; data: OverviewResponse } | { status: 'error'; message: string }>({ status: 'loading' });
   const [refreshError, setRefreshError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const readGate = useRef(createLatestWinsGate());
-  const [onlyProblems, setOnlyProblems] = useState(false);
+  const [onlyProblems, setOnlyProblems] = useState(() => relationRestore?.task.kind === 'overview' ? relationRestore.task.onlyProblems : false);
+  useEffect(() => {
+    if (!relationRestore || relationRestore.task.kind !== 'overview' || appliedRestore.current === relationRestore.token) return;
+    appliedRestore.current = relationRestore.token;
+    setOnlyProblems(relationRestore.task.onlyProblems); consumeRelationRestore(relationRestore.token);
+  }, [relationRestore]);
+  const openRelations = (event: ReactMouseEvent<HTMLAnchorElement>, project: OverviewProject) => {
+    if (!project.branch || event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const token = rememberRelationReturn({ kind: 'overview', branchId: project.branch.id, projectId: project.projectId, onlyProblems }, relationActor, location.key, window.history.state?.idx);
+    navigate(`/branch-relations/${encodeURIComponent(project.branch.id)}`, { state: token ? { relationReturn: token } : undefined });
+  };
   const graphRoot = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(0);
   const cardWidth = canvasWidth ? Math.min(CARD_W, Math.max(240, canvasWidth - 32)) : CARD_W;
@@ -175,7 +195,7 @@ export function OverviewPage(): JSX.Element {
                         <div className="mt-2.5 space-y-2">
                           <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">代表分支：{p.branch.name}</p>
                           <div className="flex flex-wrap gap-1.5">
-                          <Button asChild size="sm" variant="outline" className="min-h-11 h-auto text-sm"><Link to={`/branch-relations/${encodeURIComponent(p.branch.id)}`}>打开关系图</Link></Button>
+                          <Button asChild size="sm" variant="outline" className="min-h-11 h-auto text-sm"><Link to={`/branch-relations/${encodeURIComponent(p.branch.id)}`} onClick={event => openRelations(event, p)}>打开关系图</Link></Button>
                           <Button asChild size="sm" variant="ghost" className="min-h-11 h-auto text-sm"><Link to={`/branch-panel/${encodeURIComponent(p.branch.id)}`}>查看分支</Link></Button>
                           </div>
                         </div>
@@ -191,7 +211,7 @@ export function OverviewPage(): JSX.Element {
               {problems.length === 0 ? <div className="rounded-md border border-ok/40 bg-ok-soft p-3 text-xs text-ok">{refreshError ? '上次体检未发现错误与警告；最新结果尚未确认。' : '所有项目体检无错误与警告。'}</div> : (
                 <div className="flex flex-col gap-2">
                   {problems.map((f, i) => (
-                    <Link key={`${f.project.projectId}-${f.rule}-${i}`} to={f.project.branch ? `/branch-relations/${encodeURIComponent(f.project.branch.id)}` : '/project-list'} className="cds-surface-sunken cds-hairline block rounded-md p-2.5 hover:border-[hsl(var(--hairline-strong))]">
+                    <Link key={`${f.project.projectId}-${f.rule}-${i}`} onClick={event => openRelations(event, f.project)} to={f.project.branch ? `/branch-relations/${encodeURIComponent(f.project.branch.id)}` : '/project-list'} className="cds-surface-sunken cds-hairline block rounded-md p-2.5 hover:border-[hsl(var(--hairline-strong))]">
                       <div className="flex items-center gap-1.5 text-xs">
                         <span className={`inline-flex h-[1.125rem] items-center rounded-full border px-1.5 text-[0.625rem] font-semibold ${f.severity === 'error' ? 'border-destructive/60 text-destructive' : 'border-warn/60 bg-warn-soft text-warn'}`}>{f.severity === 'error' ? '错误' : '警告'}</span>
                         <b>{f.project.slug} · {f.rule}</b>
