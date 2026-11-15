@@ -104,6 +104,7 @@ export function ServiceKeysPage() {
   const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
   const keyListRef = useRef<HTMLDivElement>(null);
   const detailWasOpen = useRef(false);
+  const [detailEntry, setDetailEntry] = useState(0);
   useEffect(() => setSelectedKeyId(null), [contextClient, contextCaller]);
   const [keyTab, setKeyTab] = useState("permissions");
   const [items, setItems] = useState<ServiceKeyItem[] | null>(null);
@@ -473,6 +474,11 @@ export function ServiceKeysPage() {
 
   const selectedKey = items?.find((item) => item.id === selectedKeyId);
   useLayoutEffect(() => {
+    if (!detailEntry) return;
+    const close = keyListRef.current?.parentElement?.querySelector<HTMLButtonElement>('.lg-collection-pane .lg-collection-close');
+    close?.scrollIntoView({ block: 'nearest' }); close?.focus({ preventScroll: true });
+  }, [detailEntry]);
+  useLayoutEffect(() => {
     const open = Boolean(selectedKey);
     if (detailWasOpen.current && !open && document.activeElement === document.body) keyListRef.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus({ preventScroll: true });
     detailWasOpen.current = open;
@@ -546,7 +552,7 @@ export function ServiceKeysPage() {
           <strong data-lifecycle-resolved>已核对：「{lifecycleResolved.target.name}」{lifecycleResolved.target.enabled ? '已进入可撤销旧钥阶段' : rotationLabel(lifecycleResolved.target.rotationState)}</strong>
           <span style={{ display: 'block', ...HINT_TEXT }}>读取于 {formatTime(lifecycleResolved.readAt)}</span>
           {lifecycleResolved.related.map(key => <span key={key.id} style={{ display: 'block' }}>{key.id === lifecycleResolved.intent.successorId ? '后继密钥' : '前钥'}：{key.name} · {keyValidity(key).label}{rotationLabel(key.rotationState) !== keyValidity(key).label ? ` · ${rotationLabel(key.rotationState)}` : ''}</span>)}
-          <Button size="sm" variant="ghost" onClick={() => { setKeyTab('usage'); setSelectedKeyId(lifecycleResolved.target.id); }}>查看该密钥</Button>
+          <Button size="sm" variant="ghost" onClick={() => { setKeyTab('usage'); setSelectedKeyId(lifecycleResolved.target.id); setDetailEntry(value => value + 1); }}>查看该密钥</Button>
           <span style={{ display: 'block', ...HINT_TEXT }}>原操作回执与审计状态未确认。</span>
         </InlineAlert> : null}
         {lifecycleUnknown ? <InlineAlert tone="error">
@@ -738,8 +744,8 @@ export function ServiceKeysPage() {
           </>}
           </CollectionView></div>
           {selectedKey ? <CollectionDetailPane key={selectedKey.id} title={selectedKey.name} identifier={selectedKey.keyPrefix} onClose={() => setSelectedKeyId(null)} footer={<div className="lg-collection-key-actions">{!selectedKey.enabled ? <span style={HINT_TEXT}>已撤销，只读<HelpPopover label="已撤销">仅可查看权限与历史记录</HelpPopover></span> : null}{renderActions(selectedKey)}<Button size="sm" variant="ghost" onClick={() => setSelectedKeyId(null)}>关闭</Button></div>} tabs={<><CollectionPaneTab active={keyTab === "permissions"} onClick={() => setKeyTab("permissions")}>权限范围</CollectionPaneTab><CollectionPaneTab active={keyTab === "usage"} onClick={() => setKeyTab("usage")}>轮换与使用</CollectionPaneTab></>}>
-            <div className={keyTab === "permissions" ? "lg-collection-key-permissions" : "lg-collection-hidden"}><div className="lg-collection-key-facts"><div className="lg-collection-key-meta"><div><span>客户端 / 环境</span><p>{selectedKey.clientCode} · {selectedKey.environment} · {selectedKey.purpose}</p></div><div><span>状态 / 过期</span><p>{rotationLabel(selectedKey.rotationState)} · {formatTime(selectedKey.expiresAt)}</p></div></div><div className="lg-collection-key-heading"><h3>调用用途 <Chip label={String(selectedKey.appCallerCodes.length)} color="var(--accent)" bg="var(--accent-soft)"/></h3><Button size="sm" variant="ghost" onClick={() => void navigator.clipboard.writeText(selectedKey.appCallerCodes.join('\n')).then(() => setScopeCopied(true), () => setError('复制失败，请选中调用用途后手动复制'))}>{scopeCopied ? '已复制' : '复制全部调用用途'}</Button></div></div>
-            <CollectionView className="lg-collection-codes" items={selectedKey.appCallerCodes} searchText={(code) => code} placeholder="搜索 appCaller 标识">{(codes) => <>{codes.map((code) => <div key={code} className="lg-collection-code" title={code}>{code}</div>)}</>}</CollectionView>
+            <div className={keyTab === "permissions" ? "lg-collection-key-permissions" : "lg-collection-hidden"}><div className="lg-collection-key-facts"><div className="lg-collection-key-meta"><div><span>客户端 / 环境</span><p>{selectedKey.clientCode} · {selectedKey.environment} · {selectedKey.purpose}</p></div><div><span>状态 / 过期</span><p>{rotationLabel(selectedKey.rotationState)} · {formatTime(selectedKey.expiresAt)}</p></div></div><div className="lg-collection-key-heading"><h3>调用用途</h3><Button size="sm" variant="ghost" onClick={() => void navigator.clipboard.writeText(selectedKey.appCallerCodes.join('\n')).then(() => setScopeCopied(true), () => setError('复制失败，请选中调用用途后手动复制'))}>{scopeCopied ? '已复制' : '复制全部调用用途'}</Button></div></div>
+            <div className="lg-collection-codes">{selectedKey.appCallerCodes.length <= 6 ? selectedKey.appCallerCodes.map(code => <div key={code} className="lg-collection-code" title={code}>{code}</div>) : <CollectionView items={selectedKey.appCallerCodes} searchText={(code) => code} placeholder="搜索 appCaller 标识">{(codes) => <>{codes.map((code) => <div key={code} className="lg-collection-code" title={code}>{code}</div>)}</>}</CollectionView>}</div>
             <div className="lg-collection-key-facts lg-collection-key-permission-summary"><div><h3>入口协议</h3><p>{selectedKey.ingressProtocols.map((protocol) => <Chip key={protocol} label={protocol} color="var(--text-secondary)" bg="var(--bg-elevated)"/>)}</p></div><div><h3>Scope</h3><p>{selectedKey.scopes.map((scope) => <Chip key={scope} label={scope} color="var(--text-secondary)" bg="var(--bg-elevated)"/>)}</p></div></div></div>
             {keyTab === "usage" ? <div className="lg-collection-key-facts"><CollectionFacts items={[{label:'密钥 ID',value:<code style={{ overflowWrap: 'anywhere' }}>{selectedKey.id}</code>},{label:'轮换阶段',value:rotationLabel(selectedKey.rotationState)},{label:'过期时间',value:formatTime(selectedKey.expiresAt)},{label:'网络与速率',value:<>{selectedKey.allowedCidrs.length ? selectedKey.allowedCidrs.join('、') : '不限 CIDR'} · {selectedKey.rateLimitPerMinute ? `${selectedKey.rateLimitPerMinute}/分钟` : '不限速'}</>},{label:'团队与创建者',value:<>{selectedKey.teamId || '租户级'} · {selectedKey.createdByUsername || '历史密钥'}</>},{label:'最后使用',value:formatTime(selectedKey.lastUsedAt)},{label:'前钥',value:selectedKey.rotatesKeyId || '无'},{label:'后钥',value:selectedKey.rotatedByKeyId || '无'},{label:'来源',value:selectedKey.sourceSystem}]}/></div> : null}
 

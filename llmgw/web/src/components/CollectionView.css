@@ -261,3 +261,8 @@
 
 /* The editor can use the workspace height without stretching a short master list's border. */
 .lg-collection-workspace > .lg-collection-list:has(> .lg-collection-short) { align-self: flex-start; max-height: 100%; }
+
+/* Permission scopes are content, not an empty workspace. Larger sets keep search and a bounded list. */
+.lg-collection-key-workspace .lg-collection-codes { flex: 0 0 auto; height: auto; min-height: 0; max-height: none; }
+.lg-collection-codes > .lg-collection-view { max-height: 320px; }
+.lg-collection-key-workspace .lg-collection-code { white-space: normal; overflow: visible; text-overflow: clip; font-size: var(--fs-secondary); }
