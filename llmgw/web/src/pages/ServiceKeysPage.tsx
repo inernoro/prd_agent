@@ -315,10 +315,11 @@ export function ServiceKeysPage() {
       if (response.data.id !== intent.id || kind === 'revoke' && (!('revoked' in response.data) || response.data.revoked !== true)) { markUnknown(); return; }
       if (kind === 'cutover' && (!('rotationState' in response.data) || response.data.rotationState !== 'client-switched')) { markUnknown(); return; }
       if (kind === 'cutover' && 'successorKeyId' in response.data && response.data.successorKeyId !== intent.successorId) { markUnknown(); setLifecycleCheck(`服务端回报的后继 ${response.data.successorKeyId} 与操作前不同；请核对完整配对。`); return; }
+      const confirmedPhase = 'rotationState' in response.data && typeof response.data.rotationState === 'string' ? response.data.rotationState : kind === 'revoke' ? 'revoked' : 'client-switched';
       setLifecycleReceipt(intent);
       // Apply only the target outcome confirmed in this response. Full pairing/stage
       // facts still come from the subsequent read; a failed read retains the receipt.
-      setItems(current => current?.map(key => key.id !== intent.id ? key : kind === 'revoke' ? { ...key, enabled: false, rotationState: 'revoked' } : { ...key, rotationState: 'client-switched' }) ?? current);
+      setItems(current => current?.map(key => key.id !== intent.id ? key : kind === 'revoke' ? { ...key, enabled: false, rotationState: confirmedPhase } : { ...key, rotationState: confirmedPhase }) ?? current);
       invalidateOnboardingCache(tenant?.id);
       await load();
     } catch { markUnknown(); }
