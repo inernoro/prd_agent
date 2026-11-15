@@ -183,7 +183,7 @@ public class AuthController : ControllerBase
             return StatusCode(StatusCodes.Status429TooManyRequests,
                 ApiResponse<object>.Fail(
                     ErrorCodes.ACCOUNT_LOCKED,
-                    $"账号已被锁定，请在 {remainingSeconds} 秒后重试"));
+                    $"当前环境的登录尝试过多，请在 {remainingSeconds} 秒后重试"));
         }
 
         var ct = (request.ClientType ?? string.Empty).Trim().ToLowerInvariant();

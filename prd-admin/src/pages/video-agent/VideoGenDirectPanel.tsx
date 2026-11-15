@@ -219,12 +219,14 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
       ? '已取消，尚未提交生成'
       : currentRun.directVideoReconciledAt ? '已取消，供应商任务已结束' : '已取消；供应商状态与费用尚未核定';
     if (currentRun.status === 'Queued') return '排队中…';
+    if (currentRun.currentPhase === 'generation-recovery-blocked') return currentRun.errorMessage || '上次生成结果待核对，未自动重新提交';
     if (currentRun.currentPhase === 'videogen-submitting') return '正在提交到模型网关…';
     if (currentRun.currentPhase === 'videogen-polling') return 'AI 正在生成视频…';
     if (currentRun.status === 'Completed') return '生成完成';
     if (currentRun.status === 'Failed') return '生成失败';
     return currentRun.currentPhase || currentRun.status;
   })();
+  const isRecoveryBlocked = currentRun?.currentPhase === 'generation-recovery-blocked';
 
   return (
     <div className="flex-1 min-h-0 flex flex-col items-center overflow-y-auto px-4 py-6" style={{ background: 'var(--bg-base)' }}>
@@ -233,7 +235,8 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
         <div
           className="relative w-full aspect-video rounded-[20px] overflow-hidden flex items-center justify-center"
           style={{
-            background: 'linear-gradient(135deg, #0a0c12 0%, #141823 50%, #0a0c12 100%)',
+            background: 'var(--bg-elevated)',
+            minHeight: isRecoveryBlocked ? 280 : undefined,
             border: '1px solid rgba(236, 72, 153, 0.18)',
             boxShadow: '0 10px 60px -10px rgba(236, 72, 153, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.04)',
           }}
@@ -248,8 +251,8 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               style={{ background: '#000' }}
             />
           ) : isActive ? (
-            <div className="flex flex-col items-center gap-4 text-token-primary px-6 text-center">
-              <MapSpinner size={32} />
+            <div className="flex flex-col items-center gap-4 px-6 text-center" style={{ color: 'var(--text-primary)' }}>
+              {isRecoveryBlocked ? <AlertCircle size={32} /> : <MapSpinner size={32} />}
               <div className="text-base font-medium" data-testid="video-generation-stage">{progressText}</div>
               <div className="w-64 h-1.5 rounded-full overflow-hidden bg-token-nested" >
                 <div
@@ -260,10 +263,10 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
                   }}
                 />
               </div>
-              <div className="text-xs text-token-muted" data-testid="video-generation-progress">
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }} data-testid="video-generation-progress">
                 {Math.max(0, Math.min(100, currentRun?.phaseProgress ?? 0))}%
               </div>
-              <div className="text-xs text-token-muted">
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
                 任务编号：{currentRun?.id.slice(0, 12)}…
               </div>
             </div>
@@ -286,9 +289,9 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
           )}
 
           {/* 角标 */}
-          <div className="absolute top-3 left-3 flex items-center gap-1.5 text-[10px] text-token-muted font-mono px-2 py-1 rounded-md" style={{ background: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(8px)' }}>
-            <span className="w-1.5 h-1.5 rounded-full" style={{ background: isActive ? '#ec4899' : (isCompleted ? '#22c55e' : '#64748b') }} />
-            {isActive ? '生成中' : isCompleted ? '已完成' : isCancelled ? '已取消' : isFailed ? '失败' : '待机'}
+          <div className="absolute top-3 left-3 flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded-md" style={{ color: 'var(--text-muted)', background: 'var(--bg-card)', backdropFilter: 'blur(8px)' }}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: isRecoveryBlocked ? '#f59e0b' : isActive ? '#ec4899' : (isCompleted ? '#22c55e' : '#64748b') }} />
+            {isRecoveryBlocked ? '待核对' : isActive ? '生成中' : isCompleted ? '已完成' : isCancelled ? '已取消' : isFailed ? '失败' : '待机'}
           </div>
         </div>
 
@@ -486,7 +489,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
                 onClick={handleGenerate}
                 disabled={isActive || isSubmitting || !prompt.trim()}
               >
-                {isSubmitting || isActive ? (
+                {isRecoveryBlocked ? <><AlertCircle size={12} /> 待核对</> : isSubmitting || isActive ? (
                   <><MapSpinner size={12} /> 生成中…</>
                 ) : (
                   <><Sparkles size={12} /> 立即生成</>

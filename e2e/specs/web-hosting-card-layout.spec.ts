@@ -144,6 +144,7 @@ for (const width of [390, 1440]) {
         await testInfo.attach(`真实列表-${width}-${theme}-${size}`, { body: image, contentType: 'image/png' });
         await testInfo.attach('布局测量', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });
         // 三档都提供常驻按钮，详情不折叠、不省略；查看详情不是打开网页，不写访问记录。
+
         const visited: string[] = [];
         page.on('request', request => { if (request.url().includes('/record-view')) visited.push(request.url()); });
         const trigger = cards.nth(2).getByRole('button', { name: '查看网页详情' });
@@ -166,7 +167,25 @@ for (const width of [390, 1440]) {
         await expect(dialog.getByText('创建时间', { exact: true })).toHaveCount(1);
         await expect(dialog.getByText('更新时间', { exact: true })).toHaveCount(1);
         await expect(dialog.locator('details, [aria-expanded="false"]')).toHaveCount(0);
+        await expect(dialog.getByRole('tab', { name: '基本信息', exact: true })).toHaveAttribute('aria-selected', 'true');
+        await expect(dialog.getByRole('region', { name: '完整文件列表' })).toHaveCount(0);
+        await expect(dialog).toHaveCSS('max-width', '840px');
+        await expect.poll(async () => (await dialog.boundingBox())!.width).toBeCloseTo(Math.min(840, width * 0.92), 1);
+        expect(await dialog.evaluate(el => ({
+          bodyFont: getComputedStyle(el.querySelector('[data-site-details]')!).fontSize,
+          titleFont: getComputedStyle(el.querySelector('[data-site-details] h2')!).fontSize,
+          columns: getComputedStyle(el.querySelector('[data-site-details-columns]')!).gridTemplateColumns.split(/\s+/).length,
+        }))).toMatchObject({ bodyFont: '12px', titleFont: '14px', columns: width >= 768 ? 2 : 1 });
+        if (width >= 768) {
+          const rows = dialog.locator('dt').filter({ hasText: /^(已发布的内容修改|创建时间|更新时间|最近访问)$/ }).locator('..');
+          expect(await rows.evaluateAll(items => items.every(row => Array.from(row.children).every(cell => {
+            return cell.getBoundingClientRect().height <= parseFloat(getComputedStyle(cell).lineHeight) + 1;
+          })))).toBe(true);
+        }
+        await dialog.getByRole('tab', { name: '文件 · 103', exact: true }).click();
         await expect(dialog.getByRole('region', { name: '完整文件列表' }).locator('li')).toHaveCount(103);
+        await expect(allTraffic).toContainText('987654321 次');
+        await expect(externalTraffic).toContainText('2 次');
         expect(await dialog.evaluate(el => {
           const rect = el.getBoundingClientRect();
           const body = el.querySelector('.prd-dialog-body')!;
@@ -496,5 +515,60 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const)
     expect(errors).toEqual([]); expect(writes).toEqual([]);
     await testInfo.attach('sandbox-platform-diagnostics', { body: JSON.stringify(platformErrors), contentType: 'application/json' });
     await page.screenshot({ path: testInfo.outputPath('collection-context-layout.png'), fullPage: false });
+  });
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`合集原分享阅读 ${theme}：慢响应切换不空白，返回目录不丢成员，迟到请求不覆盖`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const errors: string[] = [];
+    page.on('pageerror', error => { if (!error.message.includes('Service worker is disabled because the context is sandboxed')) errors.push(error.message); });
+    const sites = ['main', 'second', 'third', 'fourth'].map((id, index) => ({ id, title: `阅读文档 ${index + 1}`, siteUrl: `https://hosting.example/${id}/index.html`, entryFile: 'index.html', contentShape: 'self-contained-html', totalSize: 1024, entrySize: 1024, fileCount: 1 }));
+    const shared = { title: '切换验收合集', shareType: 'collection', mainSiteId: 'main', sites, createdAt: '2026-11-15T00:00:00Z', createdBy: 'author' };
+    let requests = 0;
+    let delayNext = false;
+    let release!: () => void;
+    const delayed = new Promise<void>(resolve => { release = resolve; });
+    await page.route('https://hosting.example/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>原文内容</h1>' }));
+    await page.route('**/api/**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/annotation-runtime.js')) {
+        await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') });
+        return;
+      }
+      let data: unknown = { items: [], total: 0 };
+      let stale = false;
+      if (path === '/api/web-pages/shares/view/navigation-token') {
+        requests++;
+        if (delayNext) { delayNext = false; await delayed; stale = true; }
+        data = stale ? { ...shared, title: '迟到的旧响应' } : shared;
+      } else if (path.endsWith('/comments')) data = { comments: [], commentsEnabled: true, canComment: false };
+      else if (path.endsWith('/html') || path.endsWith('/content')) data = { html: '<!doctype html><h1>原文内容</h1>', contentType: 'text/html' };
+      await route.fulfill({ headers: stale ? { 'x-navigation-test': 'stale' } : {}, json: { success: true, data, error: null } });
+    });
+    await page.goto('/s/wp/navigation-token');
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    await expect(page.getByRole('heading', { name: shared.title, exact: true })).toBeVisible();
+    const initialRequests = requests;
+    delayNext = true;
+    await page.locator('.ledger-directory .hosted-share-member').filter({ hasText: '阅读文档 2' }).click();
+    await expect.poll(() => requests).toBe(initialRequests + 1);
+    await expect(page.locator('iframe[title="阅读文档 2"]')).toBeVisible();
+    await expect(page.getByText('正在读取分享文档…', { exact: true })).toHaveCount(0);
+    await testInfo.attach('等待复核时的阅读界面', { body: await page.screenshot(), contentType: 'image/png' });
+    await page.goBack();
+    await expect.poll(() => requests).toBe(initialRequests + 2);
+    await expect(page.locator('.ledger-directory .hosted-share-member')).toHaveCount(4);
+    await expect(page.getByRole('heading', { name: shared.title, exact: true })).toBeVisible();
+    const lateResponse = page.waitForResponse(response => response.headers()['x-navigation-test'] === 'stale');
+    release();
+    await (await lateResponse).finished();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(page.getByRole('heading', { name: shared.title, exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '迟到的旧响应', exact: true })).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await testInfo.attach('完整目录', { body: await page.screenshot(), contentType: 'image/png' });
+    await expect(page.locator('.ledger-directory .hosted-share-member')).toHaveCount(4);
   });
 }

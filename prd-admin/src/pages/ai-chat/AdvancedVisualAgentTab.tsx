@@ -70,7 +70,8 @@ import {
   tryParseWxH,
 } from '@/lib/visualAgentPromptUtils';
 import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
-import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
+import { parseVisualMessageDisplay, visualUploadNotice } from '@/lib/visualMessageDisplay';
+import { serializeImageReferenceMessage } from '@/lib/chipTokenText';
 import { glassToolbar } from '@/lib/glassStyles';
 import { canvasSaveCooldownRemaining, CANVAS_SAVE_DEBOUNCE_MS } from '@/lib/canvasSaveSchedule';
 import { CANVAS_GENERATOR_LABEL, CANVAS_SHAPE_LABEL_MAP, CANVAS_TEXT_LABEL } from '@/lib/canvasElementLabels';
@@ -2117,6 +2118,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   type GenJob = {
     id: string;
     displayText: string;
+    /** 含稳定图片身份的消息快照，仅用于用户消息存储，不进入模型或重试提示词。 */
+    messageText: string;
     requestText: string;
     /** 所有引用的图片（按顺序），第一个为主图 */
     imageRefs: CanvasImageItem[];
@@ -4585,7 +4588,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     requestText: string,
     imageRefs: CanvasImageItem[],
     seedSelectedKey?: string,
-    sizeOverride?: string | null
+    sizeOverride?: string | null,
+    messageText?: string
   ) => {
     if (!canEditCanvas()) return;
     const display = String(displayText ?? '').trim();
@@ -4649,6 +4653,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 展示/存储的用户消息绝不回退到 reqText 原文（含【引用图片】文字块 + 文件名，模型层专用）。
     // display 为空时用"@imgN 引用标记 + 清洗后的正文"兜底：引用由渲染层还原为视觉 chip。
     const displayForMsg =
+      String(messageText ?? '').trim() ||
       display ||
       [
         imageRefs
@@ -5750,7 +5755,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       void (async () => {
         try {
-          await runFromText(job.displayText, job.requestText, job.imageRefs, job.seedSelectedKey, job.sizeOverride);
+          await runFromText(job.displayText, job.requestText, job.imageRefs, job.seedSelectedKey, job.sizeOverride, job.messageText);
         } finally {
           runningCountRef.current = Math.max(0, runningCountRef.current - 1);
           setRunningCount(runningCountRef.current);
@@ -5819,6 +5824,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       inlineImage: opts?.inlineImage,
       canvas: contractCanvas,
     });
+    if (!resolveResult.ok) {
+      toast.error('这次没有生成', resolveResult.errors.join(' '));
+      return false;
+    }
 
     // 使用新的 buildRequestText
     const { requestText } = buildRequestText(
@@ -5837,7 +5846,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const sizeOverride = sized.size ?? composerSize ?? autoSizeForSelectedImage ?? null;
     const job: GenJob = {
       id: `job_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      displayText: cleanDisplay,
+      displayText: resolveResult.cleanText,
+      messageText: serializeImageReferenceMessage(resolveResult.cleanText, resolveResult.refs),
       requestText,
       imageRefs,
       seedSelectedKey,
@@ -5859,6 +5869,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }).catch(() => { /* ignore */ });
       }
     }
+    return true;
   };
 
   // ── Keep retryRef in sync with latest sendText + canvas ──────────
@@ -5921,13 +5932,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const clean = String(extractSizeToken(text).cleanText ?? '').trim();
     if (!clean) return;
 
+    // 引用校验通过后再清空，失效图片的恢复操作需要保留原输入。
+    if (!await sendText(text, { chipRefs: imageRefs })) return;
     composer.clear();
     setInput('');
     composerSizeAutoRef.current = true;
     if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
 
-    // 传递 chipRefs 给统一守门员
-    await sendText(text, { chipRefs: imageRefs });
   };
 
   const onSendQuick = async () => {
@@ -5936,10 +5947,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (!raw) return;
     const clean = String(extractSizeToken(raw).cleanText ?? '').trim();
     if (!clean) return;
+    if (!await sendText(raw)) return;
     setQuickInput('');
     composerSizeAutoRef.current = true;
     if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
-    await sendText(raw);
   };
 
   const onUploadImages = async (files: File[]) => {
@@ -6092,9 +6103,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (placedAlongsideSelection) showUploadToast(`已在选中图旁新增 ${added.length} 张，原图保留`);
     pushMsg(
       'Assistant',
-      placedAlongsideSelection
-        ? `已在选中图旁新增 ${added.length} 张（原图保留，不会被覆盖）。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`
-        : `已把 ${added.length} 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`
+      visualUploadNotice(added.length, placedAlongsideSelection)
     );
 
     // 持久化：上传到后端并替换为自托管 URL（避免 dataURL 过大、也方便跨设备恢复）
@@ -7191,7 +7200,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       // 其他类型（shape/text 等）：仅选中
                       setSelectionWithoutChip([it.key]);
                     }}
-                    title={it.prompt}
+                    title={(it.kind ?? 'image') === 'image' ? cleanDisplayTitle(it.prompt, 300) : it.prompt}
                   >
                     {/* 多选 checkbox（开放世界也保留） */}
                     {/* 已移除：左上角“+选择引用”按钮（用户反馈不需要） */}
@@ -7251,7 +7260,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             <img
                               data-testid="canvas-image"
                               src={it.src}
-                              alt={it.prompt}
+                              alt={cleanDisplayTitle(it.prompt, 300) || '画板图片'}
                               className="w-full h-full block"
                               style={{ objectFit: 'contain', borderRadius: 14 }}
                               onLoad={(e) => {
@@ -7400,7 +7409,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             <img
                               data-testid="canvas-image"
                               src={it.src}
-                              alt={it.prompt}
+                              alt={cleanDisplayTitle(it.prompt, 300) || '画板图片'}
                               className="w-full h-full block"
                               style={{
                                 objectFit: 'contain',
@@ -10225,7 +10234,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div className="w-full h-full flex items-center justify-center">
                   <img
                     src={preview.src}
-                    alt={preview.prompt}
+                    alt={cleanDisplayTitle(preview.prompt, 300) || '图片预览'}
                     className="block"
                     style={{ maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain' }}
                   />

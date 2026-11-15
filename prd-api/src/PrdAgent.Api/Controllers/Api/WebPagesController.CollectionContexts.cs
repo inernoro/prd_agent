@@ -11,12 +11,14 @@ public partial class WebPagesController
     private sealed record CollectionContext(string Id, string Title, int MemberCount, DateTime UpdatedAt,
         string? CollectionId, string? LegacyShareId, int ShareCount, CollectionContextLink? PrimaryLink);
 
-    private static CollectionContextLink ContextLink(WebPageShareLink share, HostedCollection? collection)
+    private static CollectionContextLink ContextLink(WebPageShareLink share, HostedCollection? collection, HostedDocumentCollection? documentCollection = null)
     {
-        var stopped = share.CollectionId != null && !HostedCollectionRules.AllowsShare(collection, share);
+        var stopped = share.CollectionSnapshot is { } snapshot
+            ? documentCollection == null || documentCollection.DissolvedAt != null || snapshot.ShareGeneration != documentCollection.ShareGeneration
+            : share.CollectionId != null && !HostedCollectionRules.AllowsShare(collection, share);
         var expired = share.ExpiresAt.HasValue && share.ExpiresAt.Value <= DateTime.UtcNow;
-        return new(share.Id, string.IsNullOrWhiteSpace(share.Title) ? collection?.Title ?? "未命名合集" : share.Title,
-            $"/s/wp/{Uri.EscapeDataString(share.Token)}", share.CreatedAt, share.ExpiresAt, share.AccessLevel,
+        return new(share.Id, string.IsNullOrWhiteSpace(share.Title) ? documentCollection?.Name ?? collection?.Title ?? "未命名合集" : share.Title,
+            share.CollectionSnapshot != null ? $"/s/collection/{Uri.EscapeDataString(share.Token)}" : $"/s/wp/{Uri.EscapeDataString(share.Token)}", share.CreatedAt, share.ExpiresAt, share.AccessLevel,
             share.TargetSiteIds().Count, !share.IsRevoked && !stopped && !expired,
             share.IsRevoked ? "已撤销" : stopped ? "已停止" : expired ? "已过期" : "有效");
     }
@@ -34,8 +36,12 @@ public partial class WebPagesController
         if (keyword?.Trim().Length > 100) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "搜索内容请控制在 100 字以内"));
         var collections = await _db.HostedCollections.Find(x => x.OwnerUserId == GetUserId() && !x.IsDissolved && x.SiteIds.Contains(siteId)).ToListAsync();
         var byId = collections.ToDictionary(x => x.Id);
+        var documentCollections = await Collections.Find(x => x.OwnerUserId == GetUserId() && x.DissolvedAt == null && x.SiteIds.Contains(siteId)).ToListAsync();
+        var documentsById = documentCollections.ToDictionary(x => x.Id);
         var contexts = collections.ToDictionary(x => "collection:" + x.Id, x => new CollectionContext("collection:" + x.Id,
             x.Title, x.SiteIds.Count, x.UpdatedAt, x.Id, null, 0, null));
+        foreach (var item in documentCollections)
+            contexts["document-collection:" + item.Id] = new("document-collection:" + item.Id, item.Name, item.SiteIds.Count, item.UpdatedAt, item.Id, null, 0, null);
         var matched = new HashSet<string>();
         var query = keyword?.Trim();
         // 按当前文档、当前创建者流式读取；只保留每个合集的摘要，不把全部分享历史发送给浏览器。
@@ -43,9 +49,13 @@ public partial class WebPagesController
         while (await cursor.MoveNextAsync())
         foreach (var share in cursor.Current)
         {
-            var id = share.CollectionId == null ? "legacy:" + share.Id : "collection:" + share.CollectionId;
-            if (share.CollectionId != null && !byId.ContainsKey(share.CollectionId)) continue;
-            var link = ContextLink(share, share.CollectionId == null ? null : byId[share.CollectionId]);
+            var documentCollectionId = share.CollectionSnapshot?.CollectionId;
+            var id = documentCollectionId != null ? "document-collection:" + documentCollectionId
+                : share.CollectionId == null ? "legacy:" + share.Id : "collection:" + share.CollectionId;
+            if (documentCollectionId != null && !documentsById.ContainsKey(documentCollectionId)) continue;
+            if (documentCollectionId == null && share.CollectionId != null && !byId.ContainsKey(share.CollectionId)) continue;
+            var link = ContextLink(share, share.CollectionId == null ? null : byId.GetValueOrDefault(share.CollectionId),
+                documentCollectionId == null ? null : documentsById[documentCollectionId]);
             if (!contexts.TryGetValue(id, out var context))
                 context = new(id, link.Title, link.MemberCount, share.CreatedAt, null, share.Id, 0, null);
             var best = context.PrimaryLink;
@@ -63,31 +73,38 @@ public partial class WebPagesController
         return Ok(ApiResponse<object>.Ok(new { items, total = ordered.Count, totalContexts = contexts.Count, page, pageSize = 20 }));
     }
 
-    private async Task<(HostedSite? Site, HostedCollection? Collection, WebPageShareLink? Legacy)> ResolveCollectionContextAsync(string siteId, string contextId)
+    private async Task<(HostedSite? Site, HostedCollection? Collection, WebPageShareLink? Legacy, HostedDocumentCollection? DocumentCollection)> ResolveCollectionContextAsync(string siteId, string contextId)
     {
         var site = await _siteService.GetByIdAsync(siteId, GetUserId(), CancellationToken.None);
-        if (site == null) return (null, null, null);
+        if (site == null) return (null, null, null, null);
+        if (contextId.StartsWith("document-collection:", StringComparison.Ordinal))
+        {
+            var documentId = contextId["document-collection:".Length..];
+            var collection = await Collections.Find(x => x.Id == documentId && x.OwnerUserId == GetUserId() && x.DissolvedAt == null && x.SiteIds.Contains(siteId)).FirstOrDefaultAsync();
+            return collection == null ? (null, null, null, null) : (site, null, null, collection);
+        }
         if (contextId.StartsWith("collection:", StringComparison.Ordinal))
         {
             var collection = await OwnedCollectionAsync(contextId["collection:".Length..]);
-            return collection?.SiteIds.Contains(siteId) == true ? (site, collection, null) : (null, null, null);
+            return collection?.SiteIds.Contains(siteId) == true ? (site, collection, null, null) : (null, null, null, null);
         }
-        if (!contextId.StartsWith("legacy:", StringComparison.Ordinal)) return (null, null, null);
+        if (!contextId.StartsWith("legacy:", StringComparison.Ordinal)) return (null, null, null, null);
         var id = contextId["legacy:".Length..];
         var share = await _db.WebPageShareLinks.Find(ContextShares(siteId) & Builders<WebPageShareLink>.Filter.Eq(x => x.Id, id)
-            & Builders<WebPageShareLink>.Filter.Eq(x => x.CollectionId, null)).FirstOrDefaultAsync();
-        return share == null ? (null, null, null) : (site, null, share);
+            & Builders<WebPageShareLink>.Filter.Eq(x => x.CollectionId, null)
+            & Builders<WebPageShareLink>.Filter.Eq(x => x.CollectionSnapshot, null)).FirstOrDefaultAsync();
+        return share == null ? (null, null, null, null) : (site, null, share, null);
     }
 
     [HttpGet("{siteId}/collection-contexts/{contextId}/documents")]
     public async Task<IActionResult> CollectionContextDocuments(string siteId, string contextId)
     {
         Response.Headers.CacheControl = "no-store";
-        var (site, collection, legacy) = await ResolveCollectionContextAsync(siteId, contextId);
+        var (site, collection, legacy, documentCollection) = await ResolveCollectionContextAsync(siteId, contextId);
         if (site == null) return RelatedNotFound();
         var group = new HostedDocumentGroup { OwnerUserId = GetUserId(),
-            SiteIds = HostedCollectionRules.OrderedIds(collection?.SiteIds ?? legacy!.TargetSiteIds(), collection?.MainSiteId ?? legacy?.MainSiteId),
-            MainSiteId = collection?.MainSiteId ?? legacy?.MainSiteId ?? string.Empty };
+            SiteIds = HostedCollectionRules.OrderedIds(documentCollection?.SiteIds ?? collection?.SiteIds ?? legacy!.TargetSiteIds(), documentCollection?.MainSiteId ?? collection?.MainSiteId ?? legacy?.MainSiteId),
+            MainSiteId = documentCollection?.MainSiteId ?? collection?.MainSiteId ?? legacy?.MainSiteId ?? string.Empty };
         // 管理后台仍逐文档鉴权；合集归属或失效分享均不能授予额外文档访问权。
         return await RelatedViewAsync(site, GetUserId(), new HashSet<string>(), contextGroup: group);
     }
@@ -96,16 +113,17 @@ public partial class WebPagesController
     public async Task<IActionResult> CollectionContextLinks(string siteId, string contextId, [FromQuery] int page = 1)
     {
         Response.Headers.CacheControl = "no-store";
-        var (site, collection, legacy) = await ResolveCollectionContextAsync(siteId, contextId);
+        var (site, collection, legacy, documentCollection) = await ResolveCollectionContextAsync(siteId, contextId);
         if (site == null) return RelatedNotFound();
-        var filter = ContextShares(siteId) & (collection != null
-            ? Builders<WebPageShareLink>.Filter.Eq(x => x.CollectionId, collection.Id)
+        var filter = ContextShares(siteId) & (documentCollection != null
+            ? Builders<WebPageShareLink>.Filter.Eq(x => x.CollectionSnapshot!.CollectionId, documentCollection.Id)
+            : collection != null ? Builders<WebPageShareLink>.Filter.Eq(x => x.CollectionId, collection.Id)
             : Builders<WebPageShareLink>.Filter.Eq(x => x.Id, legacy!.Id));
         var total = await _db.WebPageShareLinks.CountDocumentsAsync(filter);
         page = Math.Max(1, page);
         var skip = (long)(page - 1) * 20;
         var shares = skip > int.MaxValue ? new List<WebPageShareLink>() : await _db.WebPageShareLinks.Find(filter)
             .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((int)skip).Limit(20).ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { items = shares.Select(x => ContextLink(x, collection)), total, page, pageSize = 20 }));
+        return Ok(ApiResponse<object>.Ok(new { items = shares.Select(x => ContextLink(x, collection, documentCollection)), total, page, pageSize = 20 }));
     }
 }

@@ -91,6 +91,7 @@ public sealed class BackgroundTaskAdmissionRegistry
     {
         var result = new Dictionary<Type, BackgroundTaskKind>();
         Add(BackgroundTaskKind.Maintenance,
+            typeof(ModelReferences.ModelRuntimeReferenceSnapshotWorker),
             typeof(AdminPushNotificationWorker), typeof(LlmGatewayIncidentWatchdog),
             typeof(PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker),
             typeof(PrdAgent.Api.Middleware.ApiRequestLogWatchdog),
@@ -102,6 +103,7 @@ public sealed class BackgroundTaskAdmissionRegistry
             typeof(PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarHealthChecker),
             typeof(PrdAgent.Infrastructure.Services.ClaudeSidecar.CdsSidecarSyncService));
         Add(BackgroundTaskKind.UserRunConsumer,
+            typeof(ModelUpgradeCanaryWorker),
             typeof(Speech.SpeechRunWorker),
             typeof(DataSync.DataSyncRunWorker), typeof(Toolbox.ToolboxRunWorker),
             typeof(ImageGenRunWorker), typeof(ProfileAvatarGenerationCleanupService),

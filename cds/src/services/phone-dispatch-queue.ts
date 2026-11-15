@@ -1,3 +1,4 @@
+import { renderNotificationDigest } from '../shared/notification-templates.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -66,9 +67,7 @@ export class PhoneDispatchQueue {
         const items = entries.map(([, p]) => p.item).sort((a, b) => Number(a.message.level === 'passive') - Number(b.message.level === 'passive'));
         const message = { ...items[0].message };
         if (items.length > 1) {
-          const titles = [...new Set(items.map(i => i.message.title))];
-          message.title = urgentReady ? `新增严重故障，共 ${items.length} 项变化` : `有 ${items.length} 项监控变化，请查看`;
-          message.body = titles.slice(0, 3).join('；') + (titles.length > 3 ? `；另有 ${titles.length - 3} 项` : '') + '。各项故障分别保留，点击查看详情。';
+          Object.assign(message, renderNotificationDigest(items.map(i => i.event.notificationFacts), items.length));
           // 直接通道摘要回监控列表；完整原始事件仍在监控及通知台账中。
           if (items[0].boardUrl) {
             const url = new URL(items[0].boardUrl); url.search = ''; url.hash = ''; message.url = url.toString();

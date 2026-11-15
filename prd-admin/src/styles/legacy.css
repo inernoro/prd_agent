@@ -197,7 +197,7 @@ html[data-perf-mode="performance"] .blur-text span {
 /* 遮罩只压暗，不模糊。模糊是给半透明面板「映照底下页面」用的，
    实底面板没有可映照的东西，那层 blur 只是白花 GPU。 */
 .prd-dialog-overlay {
-  animation: fadeIn 150ms ease-out;
+  background: var(--dialog-overlay);
 }
 
 /* 动作条：正文与操作之间有一条实线，操作区自带一层极淡的底。

@@ -20,6 +20,7 @@ import { identityForAlarm, type AlarmIdentitySettings } from '../services/alarm-
  */
 
 import crypto from 'node:crypto';
+import { publicMonitorObservation } from '../services/monitor-evidence.js';
 import { Router, type Request, type Response } from 'express';
 import type { AlarmChannelSnapshot, AlarmChannelStatusView } from '../services/alarm-channel.js';
 
@@ -170,6 +171,8 @@ export interface UptimeMonitorStore {
   getUptimeMonitor(id: string): UptimeCustomMonitor | undefined;
   upsertUptimeMonitor(monitor: UptimeCustomMonitor): UptimeCustomMonitor;
   removeUptimeMonitor(id: string): boolean;
+  getMonitorSubscriptions?(): Record<string, { subscribed: boolean; updatedAt: string; updatedBy: string }>;
+  setMonitorSubscription?(targetId: string, subscribed: boolean, updatedBy: string): void;
   flush?: () => Promise<void>;
   /** 校验归属项目存在；不接则不校验 */
   getProject?(projectId: string): unknown;
@@ -248,7 +251,20 @@ export function createUptimeRouter(deps: {
 
   router.get('/uptime/summary', (req, res) => {
     const segments = resolveBucketCount(req.query.segments, DEFAULT_BAR_SEGMENTS);
-    const summary = deps.monitor.getSummary(segments);
+    const raw = deps.monitor.getSummary(segments);
+    const subscriptions = deps.store?.getMonitorSubscriptions?.() ?? {};
+    const subscribed = (target: typeof raw.targets[number]): boolean => subscriptions[target.id]?.subscribed
+      ?? !!(target.monitorId && deps.store?.getUptimeMonitor(target.monitorId)?.enabled && !target.excluded && target.status !== 'paused');
+    const eligible = (target: typeof raw.targets[number]): boolean => !target.excluded && target.enabled !== false && target.status !== 'paused';
+    const byId = new Map(raw.targets.map(target => [target.id, target]));
+    const annotated = raw.targets.map(target => {
+      const relation = target.collectionMembers
+        ? target.collectionMembers.some(member => { const entry = byId.get(member.id); return entry && eligible(entry) && subscribed(entry); })
+        : subscribed(target);
+      return { ...target, subscribed: relation, overviewIncluded: relation && eligible(target) };
+    });
+    const selected = req.query.subscribed === 'true' ? annotated.filter(target => target.overviewIncluded) : annotated;
+    const summary = { ...raw, targets: selected, overall: tallyTargetSummaries(selected) };
     const scope = projectScopeOf(req);
     if (!scope) {
       res.json(withAlarm(summary));
@@ -267,6 +283,27 @@ export function createUptimeRouter(deps: {
       coverage: deps.monitor.getCoverage(scope),
       projectScope: scope,
     });
+  });
+
+  router.put('/uptime/targets/:id/subscription', async (req, res) => {
+    if (!deps.store?.setMonitorSubscription) { res.status(501).json({ error: '本实例未接入订阅存储' }); return; }
+    if (denyForeignTarget(req, deps.monitor, req.params.id, res)) return;
+    if (projectScopeOf(req)) {
+      const target = deps.monitor.getSummary(1).targets.find(entry => entry.id === req.params.id);
+      const definition = target?.monitorId && deps.store.getUptimeMonitor(target.monitorId);
+      if (!definition || definition.origin !== 'agent-api') { res.status(403).json({ error: '项目级 Key 只能管理自己登记的监控订阅' }); return; }
+    }
+    if (!projectScopeOf(req)) { const guard = assertUnscopedAdmin(req as unknown as Parameters<typeof assertUnscopedAdmin>[0]); if (guard) { res.status(guard.status).json(guard.body); return; } }
+    const requestedTarget = deps.monitor.getSummary(1).targets.find(target => target.id === req.params.id);
+    if (!requestedTarget) {
+      res.status(404).json({ error: '监控目标不存在' }); return;
+    }
+    if (requestedTarget.collectionMembers) { res.status(400).json({ error: '采集通道随其已订阅指标展示，请调整各指标的订阅' }); return; }
+    if (typeof req.body?.subscribed !== 'boolean') { res.status(400).json({ error: 'subscribed 必须为布尔值' }); return; }
+    const username = (req as Request & { cdsUser?: { username?: string } }).cdsUser?.username;
+    deps.store.setMonitorSubscription(req.params.id, req.body.subscribed, username || projectScopeOf(req) || 'global-key');
+    await deps.store.flush?.();
+    res.json({ targetId: req.params.id, subscribed: req.body.subscribed });
   });
 
   /**
@@ -385,6 +422,15 @@ export function createUptimeRouter(deps: {
     res.json({ incidents, generatedAt: Date.now() });
   });
 
+  router.get('/uptime/incidents/:id', (req, res) => {
+    const incident = deps.monitor.getIncident(req.params.id, projectScopeOf(req));
+    if (!incident) {
+      res.status(404).json({ error: '这条故障记录已不存在或当前账号无权查看，请返回监控总览。' });
+      return;
+    }
+    res.json({ incident, generatedAt: Date.now() });
+  });
+
   // ── 自定义监控（写） ──
 
   const store = deps.store;
@@ -421,16 +467,32 @@ export function createUptimeRouter(deps: {
     };
   };
 
+  const denyNotificationAccess = (req: Request, res: Response): boolean => {
+    if (denySystemAlarmAccess(req, res)) return true;
+    const user = (req as Request & { cdsUser?: { isSystemOwner?: boolean } }).cdsUser;
+    if (user && user.isSystemOwner !== true) {
+      res.status(403).json({ error: 'notification_settings_forbidden', message: '通知规则仅限系统管理员查看和调整，请联系管理员。' });
+      return true;
+    }
+    return false;
+  };
   router.get('/uptime/notifications', (req, res) => {
-    if (denySystemAlarmAccess(req, res)) return;
+    if (denyNotificationAccess(req, res)) return;
     res.json(notificationView());
   });
+  let notificationWrite = Promise.resolve();
   router.put('/uptime/notifications', async (req, res) => {
-    if (denySystemAlarmAccess(req, res)) return;
+    if (denyNotificationAccess(req, res)) return;
     if (!deps.setNotifications || !deps.getNotifications) { res.status(503).json({ error: '此实例尚未接入通知规则存储' }); return; }
+    const previousWrite = notificationWrite;
+    let releaseWrite!: () => void;
+    notificationWrite = new Promise<void>(resolve => { releaseWrite = resolve; });
+    await previousWrite;
+    const body = req.body ?? {};
+    const before = structuredClone(deps.getNotifications());
+    const settings = structuredClone(before);
+    let saving = false;
     try {
-      const body = req.body ?? {};
-      const settings = structuredClone(deps.getNotifications());
       if (body.defaultChannelIds !== undefined) settings.defaultChannelIds = readChannelIds(body.defaultChannelIds);
       if (body.targetId !== undefined) {
         if (typeof body.targetId !== 'string' || body.targetId.length > 256) throw new Error('监控目标无效');
@@ -456,10 +518,32 @@ export function createUptimeRouter(deps: {
           else delete settings.acknowledgedAt[targetId];
         }
       } else if (body.channelIds !== undefined || body.muteUntil !== undefined || body.acknowledged !== undefined) throw new Error('请先选择监控目标');
+      saving = true;
       deps.setNotifications(settings);
       await store?.flush?.();
       res.json(notificationView());
-    } catch (err) { res.status(400).json({ error: (err as Error).message }); }
+    } catch (err) {
+      if (!saving) { res.status(400).json({ error: (err as Error).message }); return; }
+      // 保存失败不能在刷新后读到假成功；只回滚本次仍拥有的字段，保留并发接入的其它目标。
+      const current = structuredClone(deps.getNotifications());
+      if (body.defaultChannelIds !== undefined && JSON.stringify(current.defaultChannelIds) === JSON.stringify(settings.defaultChannelIds)) {
+        if (before.defaultChannelIds === undefined) delete current.defaultChannelIds;
+        else current.defaultChannelIds = before.defaultChannelIds;
+      }
+      const fields = { channelIds: 'overrides', muteUntil: 'mutedUntil', acknowledged: 'acknowledgedAt' } as const;
+      for (const [input, field] of Object.entries(fields)) {
+        if (body[input] === undefined || typeof body.targetId !== 'string') continue;
+        const id: string = body.targetId;
+        if (JSON.stringify(current[field]?.[id]) !== JSON.stringify(settings[field]?.[id])) continue;
+        const values: Record<string, string[] | number> = { ...current[field] };
+        if (Object.hasOwn(before[field] ?? {}, id)) Object.assign(values, { [id]: before[field]![id] });
+        else delete values[id];
+        if (!Object.keys(values).length && before[field] === undefined) delete current[field];
+        else Object.assign(current, { [field]: values });
+      }
+      try { deps.setNotifications(current); await store?.flush?.(); } catch { /* 本次不能确认持久化；响应明确要求重新读取。 */ }
+      res.status(503).json({ error: '通知设置未能确认保存，请刷新核对后重试。故障状态未因本操作改变。' });
+    } finally { releaseWrite(); }
   });
 
   router.get('/uptime/mcp/audit', (req, res) => {
@@ -568,7 +652,7 @@ export function createUptimeRouter(deps: {
       monitorId: monitor.id,
       name: monitor.name,
       description: describeMonitorProbe(monitor),
-      observations: monitor.observations || [],
+      observations: (monitor.observations || []).map(publicMonitorObservation),
     });
   });
 

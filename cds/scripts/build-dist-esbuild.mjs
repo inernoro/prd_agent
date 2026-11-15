@@ -56,6 +56,8 @@ await build({
   format: 'esm',
   platform: 'node',
   target: 'node20',
+  // CI 与线上均使用支持 JSON import attributes 的 Node LTS，保留该运行时契约。
+  supported: { 'import-attributes': true },
   bundle: false,
   sourcemap: false,
   // tsc emit 一致的行为:source TS 已经在 import 语句写了 .js 后缀
@@ -64,7 +66,7 @@ await build({
 });
 
 // Assets read at runtime belong in the emitted tree, including source-free prebuilt installs.
-for (const relative of ['services/preview-demo-snapshot.json']) {
+for (const relative of ['services/preview-demo-snapshot.json', 'shared/notification-templates.json']) {
   const destination = path.join(outDir, relative);
   await mkdir(path.dirname(destination), { recursive: true });
   await copyFile(path.join(srcDir, relative), destination);

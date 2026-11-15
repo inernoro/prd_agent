@@ -31,6 +31,7 @@ import {
   bindWatermarkApp,
   unbindWatermarkApp,
   getImageGenRun,
+  getLiteraryAgentRunByRequest,
   listReferenceImageConfigs,
   createReferenceImageConfig,
   updateReferenceImageConfig,
@@ -59,14 +60,20 @@ import {
   type LiteraryIllustrationChoice,
 } from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
-import { buildLiteraryModelOptions, selectLiteraryModelOption, type LiteraryModelOption } from './literaryModelOptions';
+import { buildLiteraryModelOptions, selectLiteraryModelOption, selectFreshLiteraryModel, type LiteraryModelOption } from './literaryModelOptions';
 import { fitLiteraryImageSize, imageRunFailure } from './literaryImageRunContract';
+import { runLiteraryImageBatch, type LiteraryImageAttempt } from './literaryImageBatch';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, ChevronsUpDown, SlidersHorizontal, History, AlertTriangle } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, PenLine, SlidersHorizontal, History, AlertTriangle, Layers, Square } from 'lucide-react';
 import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
-import { PopupButton, QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
+import { ArticleEditorToolbar } from './ArticleEditorToolbar';
+import { LiteraryModelPicker } from './LiteraryModelPicker';
+import { useLiterarySettingSave } from './useLiterarySettingSave';
+import type { LiteraryAgentPreferences } from '@/services/contracts/userPreferences';
+import { LiteraryInlineMenuGroup, LiterarySettingsRow } from './LiteraryInlineMenu';
+import { QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
 import type { WatermarkConfig } from '@/services/contracts/watermark';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
@@ -165,6 +172,7 @@ type MarkerRunItem = {
   planItem?: ImageGenPlanItem | null;
   status: MarkerRunStatus;
   runId?: string | null;
+  generationRequestId?: string | null;
   base64?: string | null;
   url?: string | null;
   assetUrl?: string | null;
@@ -482,12 +490,23 @@ const PanelCard = ({ className, children }: { className?: string; children: Reac
   </GlassCard>
 );
 
+function SettingSaveFeedback({ saving, error, retry }: { saving: boolean; error: string | null; retry: () => Promise<boolean> }) {
+  if (saving) return <div role="status" className="flex items-center gap-2 py-2 text-xs" style={{ color: 'var(--text-secondary)' }}><MapSpinner size={14} />正在保存设置…</div>;
+  if (!error) return null;
+  return <div role="alert" className="flex items-center justify-between gap-2 py-2 text-xs" style={{ color: 'var(--accent-fg-danger)' }}>
+    <span>{error}，当前设置保持不变。</span>
+    <Button size="xs" variant="secondary" onClick={() => void retry()}>重试</Button>
+  </div>;
+}
+
 export default function ArticleIllustrationEditorPage({ workspaceId }: { workspaceId: string }) {
   // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回文学创作
   const goBack = useSmartBack('/literary-agent');
   const { isMobile } = useBreakpoint();
   const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
+  // 迟到的工作区读取不能覆盖本次读取期间已经成功读入的新文章。
+  const articleMutationVersionRef = useRef(0);
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
   const [articleWithImages, setArticleWithImages] = useState('');
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
@@ -637,6 +656,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [chatModelPrefOpen, setChatModelPrefOpen] = useState(false);
   const [chatModelPrefId, setChatModelPrefId] = useState<string>('');
   const [modelPrefReady, setModelPrefReady] = useState(false);
+  const literaryPreferencesRef = useRef<LiteraryAgentPreferences>({});
+  const [modelSettingsReload, setModelSettingsReload] = useState(0);
+  const [modelPrefLoadError, setModelPrefLoadError] = useState(false);
 
   // 生图模型池 → 可选择列表
   type PoolModel = LiteraryModelOption;
@@ -667,6 +689,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const effectiveModel = useMemo<PoolModel | null>(() => {
     const fromPool = selectLiteraryModelOption(enabledImageModels, imageModelPrefId);
     if (fromPool) return fromPool;
+    if (imageModelPrefId) return null;
     // 无可选池时，显示预解析的自动调度模型（isAutoResolved=true 标记，生成时不传 platformId/modelId）
     if (autoResolvedModel) return { ...autoResolvedModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
     return null;
@@ -675,6 +698,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const effectiveChatModel = useMemo<PoolModel | null>(() => {
     const fromPool = selectLiteraryModelOption(enabledChatModels, chatModelPrefId);
     if (fromPool) return fromPool;
+    if (chatModelPrefId) return null;
     if (autoResolvedChatModel) return { ...autoResolvedChatModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
     return null;
   }, [enabledChatModels, chatModelPrefId, autoResolvedChatModel]);
@@ -738,6 +762,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [markerRunItemsRestored, setMarkerRunItemsRestored] = useState(false); // 标记是否已从后端恢复
 
   const genAbortRef = useRef<AbortController | null>(null);
+  const generationGateRef = useRef(false);
+  const modelMigrationNoticeRef = useRef<string | null>(null);
+  useEffect(() => () => { genAbortRef.current?.abort(); }, [workspaceId]);
   const markerListRef = useRef<HTMLDivElement>(null); // 配图列表容器的 ref
   const articlePreviewRef = useRef<HTMLDivElement>(null); // 文章预览区域的 ref
   const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
@@ -948,15 +975,28 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     };
   }, [paragraphCtxMenu.visible]);
 
-  // 选择/取消提示词时同步持久化到后端
-  const setSelectedPrompt = useCallback((prompt: PromptTemplate | null) => {
-    setSelectedPromptRaw(prompt);
-    // 异步持久化，不阻塞 UI
-    void updateVisualAgentWorkspace({
-      id: workspaceId,
-      selectedPromptId: prompt?.id ?? '',
-    }).catch((err) => console.error('Failed to persist selectedPromptId:', err));
-  }, [workspaceId]);
+  const promptSettingSave = useLiterarySettingSave<PromptTemplate | null>({
+    scopeKey: workspaceId,
+    save: (prompt) => updateVisualAgentWorkspace({ id: workspaceId, selectedPromptId: prompt?.id ?? '' }),
+    onSaved: setSelectedPromptRaw,
+    errorMessage: '提示词风格保存失败',
+  });
+  const setSelectedPrompt = promptSettingSave.run;
+
+  const modelSettingSave = useLiterarySettingSave<{ imageModelId: string; chatModelId: string }>({
+    scopeKey: userId,
+    save: (prefs) => updateLiteraryAgentPreferences({
+      ...literaryPreferencesRef.current,
+      imageModelId: prefs.imageModelId || undefined,
+      chatModelId: prefs.chatModelId || undefined,
+    }),
+    onSaved: (prefs) => {
+      literaryPreferencesRef.current = { ...literaryPreferencesRef.current, ...prefs };
+      setImageModelPrefId(prefs.imageModelId);
+      setChatModelPrefId(prefs.chatModelId);
+    },
+    errorMessage: '模型设置保存失败',
+  });
 
   // 所有提示词（只有用户模板）
   const allPrompts = userPrompts;
@@ -976,6 +1016,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     void (async () => {
       setImageGenModelError(null);
       setModelsLoading(true);
+      setModelPrefReady(false);
+      setModelPrefLoadError(false);
 
       const [imgPoolsRes, chatPoolsRes, prefsRes] = await Promise.all([
         getLiteraryAgentModels().catch(() => ({ success: false, data: null as LiteraryAgentModelPool[] | null })),
@@ -995,39 +1037,26 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       }
 
       // 恢复用户模型偏好
+      literaryPreferencesRef.current = prefsRes.success ? prefsRes.data?.literaryAgentPreferences ?? {} : {};
       if (prefsRes.success && prefsRes.data?.literaryAgentPreferences) {
         const prefs = prefsRes.data.literaryAgentPreferences;
         setImageModelPrefId(prefs.imageModelId ?? '');
         setChatModelPrefId(prefs.chatModelId ?? '');
       }
-      setModelPrefReady(true);
+      setModelPrefReady(prefsRes.success);
+      setModelPrefLoadError(!prefsRes.success);
       setModelsLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  // 持久化模型偏好（debounce 500ms）
-  useEffect(() => {
-    if (!modelPrefReady || !userId) return;
-    const timeout = setTimeout(() => {
-      void updateLiteraryAgentPreferences({
-        imageModelId: imageModelPrefId || undefined,
-        chatModelId: chatModelPrefId || undefined,
-      }).catch(() => {});
-    }, 500);
-    return () => clearTimeout(timeout);
-  }, [imageModelPrefId, chatModelPrefId, modelPrefReady, userId]);
+  }, [modelSettingsReload, userId]);
 
   // 验证用户选择的模型是否仍在可用列表中
   useEffect(() => {
     if (modelsLoading) return;
-    if (imageModelPrefId && !enabledImageModels.some((m) => m.id === imageModelPrefId)) {
-      setImageModelPrefId('');
-    }
-    if (chatModelPrefId && !enabledChatModels.some((m) => m.id === chatModelPrefId)) {
-      setChatModelPrefId('');
+    if (imageModelPrefId && !selectLiteraryModelOption(enabledImageModels, imageModelPrefId)) {
+      setImageGenModelError('原配图模型已变更或暂不可用，请从模型菜单重新选择。');
     }
   }, [enabledImageModels, enabledChatModels, imageModelPrefId, chatModelPrefId, modelsLoading]);
 
@@ -1239,6 +1268,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [promptPreviewOpen, configViewMode, loadMarketplaceData]);
 
   async function loadWorkspace() {
+    const articleVersionAtStart = articleMutationVersionRef.current;
     try {
       const res = await getVisualAgentWorkspaceDetail({ id: workspaceId });
       if (res.success && res.data?.workspace) {
@@ -1248,6 +1278,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         autoSubmitSuppressedRef.current = suppressAutoSubmit;
         setAutoSubmitSuppressed(suppressAutoSubmit);
         setAutoSubmitEnabled(!suppressAutoSubmit);
+        if (articleMutationVersionRef.current !== articleVersionAtStart) {
+          pendingSelectedPromptIdRef.current = ws.selectedPromptId || null;
+          await loadLiteraryPrompts();
+          return;
+        }
         const content = ws.articleContent || '';
         setArticleContent(content);
         setArticleWithMarkers(ws.articleContentWithMarkers || '');
@@ -1291,6 +1326,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               size: m.planItem.size || undefined,
             } : null,
             runId: m.runId || null,
+            generationRequestId: m.generationRequestId || null,
             // 恢复图片数据（只使用 URL，不使用 base64 以减少存储压力）
             base64: null, // 前端不从后端恢复 base64
             url: m.url || null,
@@ -1303,12 +1339,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
           // 对于 status === 'running' 且有 runId 的 marker，查询后端 Run 的真实状态
           // 后端是状态的唯一来源，前端只是观察者
-          const runningItems = restoredItems.filter(item => item.status === 'running' && item.runId);
+          const runningItems = restoredItems.filter(item => item.status === 'running' && (item.runId || item.generationRequestId));
           if (runningItems.length > 0) {
             // 异步查询每个 run 的真实状态（不阻塞 UI）
             Promise.all(runningItems.map(async (item) => {
               try {
-                const runRes = await getImageGenRun({ runId: item.runId!, includeItems: true });
+                let recoveredRunId = item.runId;
+                if (!recoveredRunId && item.generationRequestId) {
+                  const found = await getLiteraryAgentRunByRequest(item.generationRequestId);
+                  recoveredRunId = found.success ? found.data?.runId : null;
+                  if (!recoveredRunId) return;
+                  setMarkerRunItems(prev => prev.map(x => x.markerIndex === item.markerIndex ? { ...x, runId: recoveredRunId } : x));
+                  await updateMarkerStatus(item.markerIndex, { status: 'running', runId: recoveredRunId });
+                }
+                const runRes = await getImageGenRun({ runId: recoveredRunId!, includeItems: true });
                 if (runRes.success && runRes.data) {
                   const runStatus = runRes.data.run.status;
                   // 根据后端 Run 状态更新前端显示
@@ -1451,6 +1495,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       const text = await file.text();
+      articleMutationVersionRef.current += 1;
       setArticleContent(text);
       setUploadedFileName(fileName);
 
@@ -1508,6 +1553,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       const text = await file.text();
+      articleMutationVersionRef.current += 1;
       setArticleContent(text);
       setUploadedFileName(file.name);
 
@@ -1887,21 +1933,157 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [markerRunItems, phase, rebuildMergedMarkdown]);
 
-  const runSingleMarker = async (markerIndex: number) => {
+  const observeMarkerRun = async (markerIndex: number, runId: string, plannedPrompt: string, markerText: string): Promise<LiteraryImageAttempt> => {
+    // 3) 订阅 SSE，拿到 base64/url
+    let gotBase64: string | null = null;
+    let gotUrl: string | null = null;
+    let generationFailure: string | null = null;
+    const ac = genAbortRef.current;
+    const res = await streamLiteraryAgentImageGenRunWithRetry({
+      runId,
+      afterSeq: 0,
+      maxAttempts: 20,
+      signal: ac?.signal ?? new AbortController().signal,
+      onEvent: (evt) => {
+        if (ac?.signal.aborted) return;
+        if (!evt.data) return;
+        const obj = safeJsonParse(String(evt.data));
+        if (!obj || typeof obj !== 'object') return;
+        const o = obj as Record<string, unknown>;
+        const t = String(o.type ?? '');
+        if (t === 'imageDone') {
+          const evtRunId = String(o.runId ?? '').trim();
+          if (evtRunId && evtRunId !== runId) return;
+          const b64 = (o.base64 as string | null | undefined) ?? null;
+          const url = (o.url as string | null | undefined) ?? null;
+          gotBase64 = b64;
+          gotUrl = url;
+          setMarkerRunItems((prev) =>
+            prev.map((x) => (x.markerIndex === markerIndex ? { ...x, base64: b64, url: url, errorMessage: null } : x))
+          );
+        }
+        const failure = imageRunFailure(o);
+        if (failure) {
+          generationFailure = failure;
+          const msg = failure;
+          setMarkerRunItems((prev) =>
+            prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: msg } : x))
+          );
+        }
+      },
+    });
+    if (ac?.signal.aborted) return 'pending';
+    if (!res.success) {
+      // SSE 断开只读核对原任务，不能把“没收到结果”当成可以再次付费生成。
+      const confirmed = await getImageGenRun({ runId, includeItems: true, includeImages: true });
+      const status = confirmed.success ? confirmed.data?.run.status : null;
+      if (status === 'Completed') {
+        gotUrl = confirmed.data?.items?.find(item => item.url)?.url ?? null;
+        gotBase64 = confirmed.data?.items?.find(item => item.base64)?.base64 ?? null;
+      } else if (status === 'Failed' || status === 'Cancelled') {
+        const message = confirmed.data?.items?.[0]?.errorMessage || res.error?.message || '生图失败';
+        setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+        await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: message });
+        return 'failed';
+      } else {
+        const message = '暂未确认任务结果，已暂停后续配图；请刷新查看原任务，请勿重复生成。';
+        setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'running', errorMessage: message } : x));
+        await updateMarkerStatus(markerIndex, { status: 'running', runId, errorMessage: message });
+        return 'pending';
+      }
+    }
+
+    // 4) 将结果转为可插入文章的 url：优先 SSE url；否则上传 base64 得到 asset.url
+    const finalUrl = String(gotUrl || '').trim();
+    const finalB64 = String(gotBase64 || '').trim();
+    if (finalUrl) {
+      setMarkerRunItems((prev) =>
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl: finalUrl, url: finalUrl, errorMessage: null } : x))
+      );
+      // 保存图片URL到后端
+      await updateMarkerStatus(markerIndex, { status: 'done' });
+      try {
+        await updateArticleMarker({
+          workspaceId,
+          markerIndex,
+          url: finalUrl,
+        });
+      } catch (error) {
+        console.error('Failed to save image url:', error);
+      }
+      return 'completed';
+    }
+    if (!finalB64) {
+      setMarkerRunItems((prev) =>
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: generationFailure || '图片尚未生成，请稍后重试或选择其他模型。' } : x))
+      );
+      return 'failed';
+    }
+
+    const dataUrl = finalB64.startsWith('data:') ? finalB64 : `data:image/png;base64,${finalB64}`;
+    const up = await uploadVisualAgentWorkspaceAsset({
+      id: workspaceId,
+      data: dataUrl,
+      prompt: plannedPrompt,
+      articleInsertionIndex: markerIndex,
+      originalMarkerText: markerText
+    });
+    if (!up.success) {
+      setMarkerRunItems((prev) =>
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: up.error?.message || '图片持久化失败' } : x))
+      );
+      return 'failed';
+    }
+    const assetUrl = String(up.data?.asset?.url || '').trim();
+    if (!assetUrl) {
+      setMarkerRunItems((prev) =>
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: '图片持久化失败：未返回 url' } : x))
+      );
+      return 'failed';
+    }
+    setMarkerRunItems((prev) =>
+      prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl, url: assetUrl, errorMessage: null } : x))
+    );
+    // 图片已经通过 uploadVisualAgentWorkspaceAsset 上传到腾讯云 COS，assetUrl 就是 COS 的 URL
+    // 保存 URL 到后端（刷新后可恢复）
+    await updateMarkerStatus(markerIndex, { status: 'done' });
+    try {
+      await updateArticleMarker({
+        workspaceId,
+        markerIndex,
+        url: assetUrl,
+      });
+    } catch (error) {
+      console.error('Failed to save asset url:', error);
+    }
+    return 'completed';
+  };
+
+  const runSingleMarker = async (markerIndex: number): Promise<LiteraryImageAttempt> => {
+    const current = markerRunItemsRef.current.find((x) => x.markerIndex === markerIndex) ?? null;
+    if (!current) return 'failed';
+    let resumeOriginalRequest = false;
+    if (current.status === 'running') {
+      const found = !current.runId && current.generationRequestId
+        ? await getLiteraryAgentRunByRequest(current.generationRequestId) : null;
+      const previousRunId = current.runId || (found?.success ? found.data?.runId : null);
+      if (previousRunId) return observeMarkerRun(markerIndex, previousRunId, current.planItem?.prompt || current.draftText, current.markerText);
+      // 仅用户点击“恢复原请求”且只读确认尚未入库时，重放同一幂等请求；不会自动重试。
+      if (found?.error?.code === 'IMAGE_GEN_REQUEST_PENDING' && current.generationRequestId) resumeOriginalRequest = true;
+      else { toast.warning('原请求结果尚未确认，请稍后刷新核对，系统不会再次生成。'); return 'pending'; }
+    }
     if (!imageGenModel) {
       toast.error(imageGenModelError || '未选择生图模型');
-      return;
+      return 'failed';
     }
     if (imageCapabilitiesModel !== (effectiveModel?.modelName || imageGenModel.modelName)) {
       toast.error(imageCapabilitiesError || '正在读取模型的图片能力，请稍后重试。');
-      return;
+      return 'failed';
     }
-    const current = markerRunItems.find((x) => x.markerIndex === markerIndex) ?? null;
-    if (!current) return;
     const text = String(current.draftText || current.markerText || '').trim();
     if (!text) {
       toast.warning('提示词为空');
-      return;
+      return 'failed';
     }
 
     const cachedPlanItem = current.planItem;
@@ -1910,11 +2092,42 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setMarkerRunItems((prev) =>
       prev.map((x) =>
         x.markerIndex === markerIndex
-          ? { ...x, status: 'parsing', errorMessage: null, planItem: null, runId: null, base64: null, url: null, assetUrl: null }
+          ? { ...x, status: 'parsing', errorMessage: null, planItem: null, runId: null }
           : x
       )
     );
     await updateMarkerStatus(markerIndex, { status: 'parsing' }); // 保存到后端
+
+    const freshCatalog = await getLiteraryAgentModels();
+    if (!freshCatalog.success || !freshCatalog.data) {
+      const message = freshCatalog.error?.message || '无法核对最新模型目录，请稍后重试。';
+      setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: message });
+      return 'failed';
+    }
+    const freshModel = selectFreshLiteraryModel(buildLiteraryModelOptions(freshCatalog.data), effectiveModel);
+    setImageGenPools(freshCatalog.data);
+    if (!freshModel) {
+      const message = '原配图模型已退役或暂不可用，请从模型菜单重新选择后继续。';
+      setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: message });
+      return 'failed';
+    }
+    const freshCapabilities = await getLiteraryAgentAdapterInfo(freshModel.modelName);
+    if (!freshCapabilities.success || !freshCapabilities.data?.matched || !freshCapabilities.data.sizesByResolution) {
+      const message = freshCapabilities.error?.message || '无法核对所选模型的图片能力，请稍后重试。';
+      setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: message });
+      return 'failed';
+    }
+    if (effectiveModel && effectiveModel.modelName !== freshModel.modelName) {
+      const notice = `${effectiveModel.modelName}:${freshModel.modelName}`;
+      if (modelMigrationNoticeRef.current !== notice) {
+        toast.info(`配图模型已升级，本次使用 ${freshModel.actualModelId}。`);
+        modelMigrationNoticeRef.current = notice;
+      }
+      setImageModelPrefId(freshModel.id);
+    }
 
     let plannedPrompt = '';
     let plannedSize = '';
@@ -1934,7 +2147,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
         );
         await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-        return;
+        return 'failed';
       }
       const first = (planRes.data?.items ?? [])[0] ?? null;
       if (!first || !String(first.prompt || '').trim()) {
@@ -1943,7 +2156,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
         );
         await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-        return;
+        return 'failed';
       }
       planItem = first;
       plannedPrompt = String(first.prompt || '').trim();
@@ -1951,13 +2164,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     plannedSize = plannedSize || parseSizeFromText(plannedPrompt) || parseSizeFromText(text) || '1024x1024';
-    const fittedSize = fitLiteraryImageSize(plannedSize, sizesByResolutionForPicker, currentModelSizesNotApplicable);
+    const freshSizes = freshCapabilities.data.sizesByResolution;
+    const fittedSize = fitLiteraryImageSize(plannedSize, {
+      '1k': freshSizes['1k'] ?? [], '2k': freshSizes['2k'] ?? [], '4k': freshSizes['4k'] ?? [],
+    }, freshCapabilities.data.sizesNotApplicable === true);
     if (!fittedSize) {
       const errorMsg = '当前模型不支持这个配图比例，请从尺寸菜单重新选择。';
       setMarkerRunItems((prev) => prev.map((x) => x.markerIndex === markerIndex
         ? { ...x, status: 'error', errorMessage: errorMsg, planItem: cachedPlanItem } : x));
       await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-      return;
+      return 'failed';
     }
     plannedSize = fittedSize;
     planItem = { ...(planItem || { prompt: plannedPrompt, count: 1 }), size: plannedSize };
@@ -1987,7 +2203,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         x.markerIndex === markerIndex ? { ...x, status: 'running' } : x
       )
     );
-    const idem = `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const idem = resumeOriginalRequest ? current.generationRequestId! : `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     // 如果用户选择了特定模型池，传入 platformId 和 modelId；自动解析模型（isAutoResolved）不传，Worker 自行 resolve
     const runInput: CreateImageGenRunInput = {
       items: [{ prompt: plannedPrompt, count: 1, size: plannedSize }],
@@ -1997,139 +2213,48 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       workspaceId,
       appKey: 'literary-agent',
       articleMarkerIndex: markerIndex,
-      ...(effectiveModel && !effectiveModel.isAutoResolved ? { platformId: effectiveModel.platformId, modelId: effectiveModel.modelName } : {}),
+      platformId: freshModel.platformId, modelId: freshModel.modelName,
     };
-    const created = await createLiteraryAgentImageGenRun({
-      input: runInput,
-      idempotencyKey: idem,
-    });
-    if (!created.success) {
+    const remembered = await updateArticleMarker({ workspaceId, markerIndex, status: 'running', generationRequestId: idem });
+    if (!remembered.success) {
+      const message = remembered.error?.message || '未能保存配图请求标识，本次没有提交生成，请稍后重试。';
+      setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+      return 'failed';
+    }
+    setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, generationRequestId: idem } : x));
+    const created = await createLiteraryAgentImageGenRun({ input: runInput, idempotencyKey: idem });
+    let recoveredRunId: string | null = null;
+    if (!created.success || !created.data?.runId) {
+      const found = await getLiteraryAgentRunByRequest(idem);
+      recoveredRunId = found.success ? found.data?.runId || null : null;
+      const uncertain = created.success || ['NETWORK_ERROR', 'TIMEOUT', 'SERVER_ERROR', 'SERVER_UNAVAILABLE', 'INTERNAL_ERROR'].includes(created.error?.code || '');
+      if (!recoveredRunId && uncertain) {
+        const message = '创建结果尚未确认，已暂停后续配图；刷新会继续查询原请求，请勿重复生成。';
+        setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'running', generationRequestId: idem, errorMessage: message } : x));
+        return 'pending';
+      }
+    }
+    if (!created.success && !recoveredRunId) {
       const errorMsg = created.error?.message || '生图失败';
       setMarkerRunItems((prev) =>
         prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
       );
       await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-      return;
+      return 'failed';
     }
-    const runId = String(created.data?.runId || '').trim();
+    const runId = String(recoveredRunId || created.data?.runId || '').trim();
     if (!runId) {
       const errorMsg = '生图失败：未返回 runId';
       setMarkerRunItems((prev) =>
         prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
       );
       await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-      return;
+      return 'failed';
     }
     setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === markerIndex ? { ...x, runId } : x)));
     await updateMarkerStatus(markerIndex, { status: 'running', runId }); // 保存
 
-    // 3) 订阅 SSE，拿到 base64/url
-    let gotBase64: string | null = null;
-    let gotUrl: string | null = null;
-    let generationFailure: string | null = null;
-    const ac = genAbortRef.current;
-    const res = await streamLiteraryAgentImageGenRunWithRetry({
-      runId,
-      afterSeq: 0,
-      maxAttempts: 20,
-      signal: ac?.signal ?? new AbortController().signal,
-      onEvent: (evt) => {
-        if (!evt.data) return;
-        const obj = safeJsonParse(String(evt.data));
-        if (!obj || typeof obj !== 'object') return;
-        const o = obj as Record<string, unknown>;
-        const t = String(o.type ?? '');
-        if (t === 'imageDone') {
-          const evtRunId = String(o.runId ?? '').trim();
-          if (evtRunId && evtRunId !== runId) return;
-          const b64 = (o.base64 as string | null | undefined) ?? null;
-          const url = (o.url as string | null | undefined) ?? null;
-          gotBase64 = b64;
-          gotUrl = url;
-          setMarkerRunItems((prev) =>
-            prev.map((x) => (x.markerIndex === markerIndex ? { ...x, base64: b64, url: url, errorMessage: null } : x))
-          );
-        }
-        const failure = imageRunFailure(o);
-        if (failure) {
-          generationFailure = failure;
-          const msg = failure;
-          setMarkerRunItems((prev) =>
-            prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: msg } : x))
-          );
-        }
-      },
-    });
-    if (!res.success) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: res.error?.message || '生图失败' } : x))
-      );
-      return;
-    }
-
-    // 4) 将结果转为可插入文章的 url：优先 SSE url；否则上传 base64 得到 asset.url
-    const finalUrl = String(gotUrl || '').trim();
-    const finalB64 = String(gotBase64 || '').trim();
-    if (finalUrl) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl: finalUrl, url: finalUrl, errorMessage: null } : x))
-      );
-      // 保存图片URL到后端
-      await updateMarkerStatus(markerIndex, { status: 'done' });
-      try {
-        await updateArticleMarker({
-          workspaceId,
-          markerIndex,
-          url: finalUrl,
-        });
-      } catch (error) {
-        console.error('Failed to save image url:', error);
-      }
-      return;
-    }
-    if (!finalB64) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: generationFailure || '图片尚未生成，请稍后重试或选择其他模型。' } : x))
-      );
-      return;
-    }
-
-    const dataUrl = finalB64.startsWith('data:') ? finalB64 : `data:image/png;base64,${finalB64}`;
-    const up = await uploadVisualAgentWorkspaceAsset({
-      id: workspaceId,
-      data: dataUrl,
-      prompt: plannedPrompt,
-      articleInsertionIndex: markerIndex,
-      originalMarkerText: current.markerText
-    });
-    if (!up.success) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: up.error?.message || '图片持久化失败' } : x))
-      );
-      return;
-    }
-    const assetUrl = String(up.data?.asset?.url || '').trim();
-    if (!assetUrl) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: '图片持久化失败：未返回 url' } : x))
-      );
-      return;
-    }
-    setMarkerRunItems((prev) =>
-      prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl, url: assetUrl, errorMessage: null } : x))
-    );
-    // 图片已经通过 uploadVisualAgentWorkspaceAsset 上传到腾讯云 COS，assetUrl 就是 COS 的 URL
-    // 保存 URL 到后端（刷新后可恢复）
-    await updateMarkerStatus(markerIndex, { status: 'done' });
-    try {
-      await updateArticleMarker({
-        workspaceId,
-        markerIndex,
-        url: assetUrl,
-      });
-    } catch (error) {
-      console.error('Failed to save asset url:', error);
-    }
+    return observeMarkerRun(markerIndex, runId, plannedPrompt, current.markerText);
   };
 
   // 新增辅助函数：保存 marker 状态到后端
@@ -2160,6 +2285,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   };
 
   const handleBatchGenerate = async () => {
+    if (generationGateRef.current) return;
     if (!imageGenModel) {
       toast.error(imageGenModelError || '未选择生图模型');
       return;
@@ -2173,6 +2299,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
 
+    generationGateRef.current = true;
     genAbortRef.current?.abort();
     const ac = new AbortController();
     genAbortRef.current = ac;
@@ -2181,45 +2308,49 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setArticleWithImages('');
 
     try {
-      // 并行发起所有生图任务：仅针对未完成（失败或未开始）的项目
+      // 只生成未完成项；等待前一张确认结果后再发下一张。
       const ordered = [...markerRunItemsRef.current]
         .sort((a, b) => a.markerIndex - b.markerIndex)
         .filter(it => it.status !== 'done' && it.status !== 'running');
 
       if (ordered.length === 0) {
         toast.info('没有需要生成的配图');
-        setGenerating(false);
         return;
       }
 
-      const results = await Promise.allSettled(
-        ordered.map(it => runSingleMarker(it.markerIndex))
-      );
-
-      // 检查是否有失败
-      const anyError = results.some(r => r.status === 'rejected') ||
-                       markerRunItemsRef.current.some(x => x.status === 'error');
+      const result = await runLiteraryImageBatch(ordered, item => runSingleMarker(item.markerIndex), ac.signal);
+      if (ac.signal.aborted) return;
+      const anyError = result.failed > 0;
+      if (result.paused && !ac.signal.aborted) {
+        toast.warning(`配图已暂停，${result.remaining} 张尚未提交；已生成的图片保留，请确认服务恢复后继续。`);
+      }
 
       setGenerating(false);
       // 3 状态模式：生图完成后仍保持在 MarkersGenerated
       setPhase(2); // MarkersGenerated
 
-      if (anyError && !ac.signal.aborted) {
+      if (anyError && !result.paused && !ac.signal.aborted) {
         toast.warning('部分配图生成失败：可在右侧逐条修改并重新生成');
       }
-      tryAutoSubmit();
+      if (!result.paused && !ac.signal.aborted) tryAutoSubmit();
     } catch (error) {
+      toast.warning('配图已暂停，请刷新核对原任务状态后继续。');
       console.error('Batch generate error:', error);
       setGenerating(false);
       setPhase(2); // MarkersGenerated
+    } finally {
+      generationGateRef.current = false;
+      setGenerating(false);
     }
   };
 
   const handleRegenerateOne = async (markerIndex: number) => {
-    // 每个配图独立生成，不检查全局 isBusy
+    if (generationGateRef.current) { toast.info('请等待当前配图任务结束。'); return; }
+    generationGateRef.current = true;
+    genAbortRef.current = new AbortController();
     try {
-      await runSingleMarker(markerIndex);
-      tryAutoSubmit();
+      const result = await runSingleMarker(markerIndex);
+      if (result === 'completed') tryAutoSubmit();
     } catch (error) {
       console.error('Regenerate error:', error);
       // 确保在任何错误情况下都设置状态为 error，使按钮立即可用
@@ -2231,6 +2362,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         )
       );
     } finally {
+      generationGateRef.current = false;
       // 3 状态模式：生图完成后仍保持在 MarkersGenerated
       setPhase(2); // MarkersGenerated
     }
@@ -2433,7 +2565,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         setUserPrompts(updated);
 
         if (selectedPrompt?.id === editingPrompt.id) {
-          setSelectedPrompt({ ...selectedPrompt, title: editingPrompt.title, content: editingPrompt.content });
+          setSelectedPromptRaw({ ...selectedPrompt, title: res.data.prompt.title, content: res.data.prompt.content });
         }
 
         setEditingPrompt(null);
@@ -2506,15 +2638,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     try {
+      // 先持久化替代选择；保存失败时保留模板，避免页面继续使用已删除的风格。
+      if (selectedPrompt?.id === prompt.id) {
+        const replacement = userPrompts.find((p) => p.id !== prompt.id) ?? null;
+        if (!await setSelectedPrompt(replacement)) return;
+      }
       const res = await deleteLiteraryPrompt({ id: prompt.id });
 
       if (res.success) {
         const updated = userPrompts.filter((p) => p.id !== prompt.id);
         setUserPrompts(updated);
-
-        if (selectedPrompt?.id === prompt.id) {
-          setSelectedPrompt(updated.length > 0 ? updated[0] : null);
-        }
       } else {
         toast.error('删除失败', res.error?.message || '未知错误');
       }
@@ -2752,9 +2885,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       {/* 左侧：文章编辑器 */}
       <div className={cn("flex-1 min-w-0 flex flex-col gap-4", isMobile && mobileTab !== 'article' && "hidden")}>
         <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
-          {/* 精简头部：标题 + 模型信息 */}
-          <div className={cn("mb-2 flex", isMobile ? "flex-col items-stretch gap-2" : "items-center justify-between")}>
-            <div className={cn("min-w-0 flex", isMobile ? "flex-col gap-2" : "items-center gap-3")}>
+          <ArticleEditorToolbar
+            title={
               <div className="flex min-w-0 items-center gap-2">
                 <button
                   type="button"
@@ -2767,204 +2899,70 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <ArrowLeft size={16} />
                 </button>
                 <FileText size={16} className="shrink-0" style={{ color: 'var(--text-primary)' }} />
-                <div className="min-w-0 truncate text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="min-w-0 truncate text-sm font-semibold" style={{ color: 'var(--text-primary)' }} title={uploadedFileName || '文章内容'}>
                   {uploadedFileName || '文章内容'}
                 </div>
               </div>
-
-              {/* 模型切换器：提示词模型 + 生图模型 */}
-              <div
-                className={cn("flex min-w-0 items-center gap-1.5", isMobile && "overflow-x-auto pb-1")}
-                style={isMobile ? { overscrollBehaviorX: 'contain' } : undefined}
-              >
-                {/* 提示词/标记生成模型切换器 */}
-                {effectiveChatModel?.isAutoResolved ? (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[11px] font-medium truncate max-w-[200px]"
-                    style={{
-                      background: 'rgba(99, 102, 241, 0.08)',
-                      color: 'var(--accent-fg-blue)',
-                    }}
-                    title={`自动调度: ${effectiveChatModel.name}`}
-                  >
-                    <Sparkles size={11} className="shrink-0" />
-                    <span className="truncate">自动: {effectiveChatModel.name}</span>
-                  </span>
-                ) : (
-                <QuickMenu
-                  title="文生提示词模型"
-                  width={280}
-                  open={chatModelPrefOpen}
-                  onOpenChange={setChatModelPrefOpen}
-                  trigger={
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 rounded-full pl-2 pr-1.5 h-6 text-[11px] font-medium max-w-[200px] cursor-pointer transition-colors"
-                      style={{
-                        background: effectiveChatModel ? 'rgba(99, 102, 241, 0.12)' : 'rgba(239, 68, 68, 0.10)',
-                        color: effectiveChatModel ? 'var(--accent-fg-blue)' : 'var(--accent-fg-danger)',
-                      }}
-                      title={effectiveChatModel ? `${effectiveChatModel.name} - 点击切换提示词模型` : '选择提示词模型'}
-                    >
-                      <Sparkles size={11} className="shrink-0" />
-                      <span className="truncate">{effectiveChatModel?.name || '选择模型'}</span>
-                      <ChevronsUpDown size={11} className="shrink-0" style={{ opacity: 0.7 }} />
-                    </button>
-                  }
-                >
-                  {enabledChatModels.length === 0 ? (
-                    <QuickMenuEmpty>暂无可用模型池</QuickMenuEmpty>
-                  ) : (
-                    enabledChatModels.map((m) => (
-                      <QuickMenuItem
-                        key={m.id}
-                        label={
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            <span className="truncate">{m.name}</span>
-                            {m.isDefault && (
-                              <span className="shrink-0 rounded px-1 text-[11px]" style={{ color: 'var(--text-muted)', background: 'var(--bg-input-hover)' }}>
-                                默认模型
-                              </span>
-                            )}
-                          </span>
-                        }
-                        selected={effectiveChatModel?.id === m.id}
-                        onSelect={() => setChatModelPrefId(m.id)}
-                      />
-                    ))
-                  )}
-                </QuickMenu>
+            }
+            actions={
+              <>
+                {phase === 0 && uploadedFileName && (
+                  <Button size="sm" variant="primary" onClick={handleEnterPreview}>
+                    <Edit2 size={14} />
+                    进入预览
+                  </Button>
                 )}
-
-                {/* 生图模型切换器：有可选模型池时显示下拉；无池但有自动解析模型时显示只读标签 */}
-                {effectiveModel?.isAutoResolved ? (
-                  // 自动解析模型：只读显示，无下拉（Worker 自行 resolve，不需用户选择）
-                  <div
-                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[11px] font-medium truncate max-w-[200px]"
-                    style={{
-                      background: 'rgba(34, 197, 94, 0.08)',
-                      color: 'var(--accent-fg-success)',
-                    }}
-                    title={`自动调度: ${effectiveModel.name}（无专属模型池时 Gateway 自动选择）`}
-                  >
-                    <Sparkles size={11} className="shrink-0" />
-                    <span className="truncate">自动: {effectiveModel.name}</span>
-                  </div>
-                ) : (
-                <QuickMenu
-                  title="生图模型"
-                  width={280}
-                  open={imageModelPrefOpen}
-                  onOpenChange={setImageModelPrefOpen}
-                  trigger={
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 rounded-full pl-2 pr-1.5 h-6 text-[11px] font-medium max-w-[200px] cursor-pointer transition-colors"
-                      style={{
-                        background: effectiveModel ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.10)',
-                        color: effectiveModel ? 'var(--accent-fg-success)' : 'var(--accent-fg-danger)',
-                      }}
-                      title={effectiveModel ? `${effectiveModel.name} - 点击切换生图模型` : '选择生图模型'}
-                    >
-                      <Sparkles size={11} className="shrink-0" />
-                      <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
-                      <ChevronsUpDown size={11} className="shrink-0" style={{ opacity: 0.7 }} />
-                    </button>
-                  }
-                >
-                  {enabledImageModels.length === 0 ? (
-                    <QuickMenuEmpty>暂无可用模型池</QuickMenuEmpty>
-                  ) : (
-                    enabledImageModels.map((m) => (
-                      <QuickMenuItem
-                        key={m.id}
-                        label={
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            <span className="truncate">{m.name}</span>
-                            {m.isDefault && (
-                              <span className="shrink-0 rounded px-1 text-[11px]" style={{ color: 'var(--text-muted)', background: 'var(--bg-input-hover)' }}>
-                                默认模型
-                              </span>
-                            )}
-                          </span>
-                        }
-                        selected={effectiveModel?.id === m.id}
-                        onSelect={() => setImageModelPrefId(m.id)}
-                      />
-                    ))
-                  )}
-                </QuickMenu>
-                )}
-
-                {/* 生图错误提示（无池且未能预解析时才显示） */}
-                {imageGenModelError && enabledImageModels.length === 0 && !autoResolvedModel && (
-                  <div className="text-[10px] px-1.5 py-0.5 rounded text-red-400 bg-red-500/10">
-                    生图不可用
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div
-              className={cn("flex items-center gap-2", isMobile && "min-w-0 overflow-x-auto pb-1")}
-              style={isMobile ? { overscrollBehaviorX: 'contain' } : undefined}
-            >
-              {phase === 0 && uploadedFileName && (
-                <Button size="sm" variant="primary" onClick={handleEnterPreview}>
-                  <Edit2 size={14} />
-                  进入预览
-                </Button>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  if (!autoSubmitSuppressed) setAutoSubmitEnabled((v) => !v);
-                }}
-                disabled={autoSubmitSuppressed}
-                className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
-                style={{
-                  // 白天的写法：浅色填充 + 语义深色字，不加彩色描边（彩边是暗色界面的发光手法）
-                  color: autoSubmitSuppressed ? 'var(--text-muted)' : submissionState.submitted || autoSubmitEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)',
-                  background: autoSubmitSuppressed ? 'transparent' : submissionState.submitted ? 'rgba(16, 185, 129, 0.12)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
-                  cursor: autoSubmitSuppressed ? 'not-allowed' : undefined,
-                }}
-                title={autoSubmitSuppressed ? '私有工作区不自动投稿；如需公开，请点击“投稿当前”' : submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
-              >
-                <Send size={13} />
-                <span>{autoSubmitSuppressed ? '私有' : submissionState.submitted ? '已投稿' : autoSubmitEnabled ? '投稿' : '投稿关'}</span>
-              </button>
-              {!submissionState.submitted && (
                 <button
                   type="button"
-                  onClick={handleManualSubmit}
-                  disabled={manualSubmitting}
+                  onClick={() => {
+                    if (!autoSubmitSuppressed) setAutoSubmitEnabled((v) => !v);
+                  }}
+                  disabled={autoSubmitSuppressed}
                   className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
                   style={{
-                    color: 'var(--accent-fg-blue)',
-                    background: 'rgba(59, 130, 246, 0.10)',
-                    opacity: manualSubmitting ? 0.5 : 1,
+                    // 白天的写法：浅色填充 + 语义深色字，不加彩色描边（彩边是暗色界面的发光手法）
+                    color: autoSubmitSuppressed ? 'var(--text-muted)' : submissionState.submitted || autoSubmitEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)',
+                    background: autoSubmitSuppressed ? 'transparent' : submissionState.submitted ? 'rgba(16, 185, 129, 0.12)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
+                    cursor: autoSubmitSuppressed ? 'not-allowed' : undefined,
                   }}
-                  title="手动将当前作品投稿到作品广场"
+                  title={autoSubmitSuppressed ? '私有工作区不自动投稿；如需公开，请点击“投稿当前”' : submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
                 >
                   <Send size={13} />
-                  <span>{manualSubmitting ? '投稿中…' : '投稿当前'}</span>
+                  <span>{autoSubmitSuppressed ? '私有' : submissionState.submitted ? '已投稿' : autoSubmitEnabled ? '投稿' : '投稿关'}</span>
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setHistoryOpen(true)}
-                data-tour-id="literary-editor-history"
-                className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
-                style={{ color: 'var(--text-secondary)' }}
-                title="这篇文章生成过的全部配图，改稿或重新生成前的旧图也在"
-              >
-                <History size={13} />
-                <span>历史配图</span>
-              </button>
-              {/* 本页教程入口(内嵌头部右侧):自动开讲关掉/已消费后,仍可手动重开编辑器教程 */}
-              <TipsEntryButton compact />
-            </div>
-          </div>
+                {!submissionState.submitted && (
+                  <button
+                    type="button"
+                    onClick={handleManualSubmit}
+                    disabled={manualSubmitting}
+                    className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
+                    style={{
+                      color: 'var(--accent-fg-blue)',
+                      background: 'rgba(59, 130, 246, 0.10)',
+                      opacity: manualSubmitting ? 0.5 : 1,
+                    }}
+                    title="手动将当前作品投稿到作品广场"
+                  >
+                    <Send size={13} />
+                    <span>{manualSubmitting ? '投稿中…' : '投稿当前'}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen(true)}
+                  data-tour-id="literary-editor-history"
+                  className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
+                  style={{ color: 'var(--text-secondary)' }}
+                  title="这篇文章生成过的全部配图，改稿或重新生成前的旧图也在"
+                >
+                  <History size={13} />
+                  <span>历史配图</span>
+                </button>
+                {/* 本页教程入口(内嵌头部右侧):自动开讲关掉/已消费后,仍可手动重开编辑器教程 */}
+                <TipsEntryButton compact />
+              </>
+            }
+          />
 
           <div
             ref={articlePreviewRef}
@@ -3518,9 +3516,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       </div>
 
       {/* 右侧：工作台 */}
-      <div className={cn("flex flex-col gap-3", isMobile ? "w-full" : "w-96", isMobile && mobileTab !== 'markers' && "hidden")}>
+      <div className={cn("flex min-w-0 min-h-0 flex-col gap-3 overflow-y-auto", isMobile ? "w-full" : "w-96", isMobile && mobileTab !== 'markers' && "hidden")}>
         {/* 顶部：工作流进度 + 配置折叠区 */}
-        <PanelCard>
+        <PanelCard className="shrink-0">
           <WorkflowProgressBar
             steps={phaseSteps}
             currentStep={phase}
@@ -3561,224 +3559,264 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               variant="primary"
               className="w-full"
               onClick={() => void activeButton.action()}
-              disabled={activeButton.disabled}
+              disabled={activeButton.disabled || promptSettingSave.saving || modelSettingSave.saving}
             >
               <activeButton.icon size={16} />
               {activeButton.label}
             </Button>
           ))}
 
-          {/* 生成设置：四个弹出按钮（图标 + 当前值 + 上下箭头），就地弹出选项菜单；
-              行尾图标按钮打开完整配置页。参照 Apple HIG 的弹出按钮：长得像下拉就必须就地给出选项。 */}
-          <div
-            className="mt-2.5 pt-2.5 border-t flex items-center gap-1.5"
-            style={{ borderColor: 'var(--border-subtle)' }}
-            data-testid="literary-generation-settings"
-          >
-            {/* 两行两列：右栏只有三百来像素，四个挤一行时风格、水印的名字被截成「全域…」「水印…」，
-                看不出用的是哪一套。「这是本文自己的设定」由悬停说明与菜单说明交代，不占按钮文字 */}
-            <div className="grid grid-cols-2 gap-1.5 flex-1 min-w-0">
-              <QuickMenu
-                title="提示词风格"
-                width={260}
-                trigger={
-                  <PopupButton
-                    icon={<FileText size={13} style={{ color: 'var(--accent-fg-blue)', flexShrink: 0 }} />}
-                    value={selectedPrompt?.title || '自动'}
-                    isSet={!!selectedPrompt}
-                    title={`提示词风格：${selectedPrompt?.title || '自动（系统推断）'}`}
-                    aria-label="提示词风格"
-                  />
-                }
-              >
-                <QuickMenuItem
-                  label="自动"
-                  description="由系统按文章内容推断风格"
-                  selected={!selectedPrompt}
-                  onSelect={() => setSelectedPrompt(null)}
-                />
-                {userPrompts.map((p) => (
-                  <QuickMenuItem
-                    key={p.id}
-                    label={p.title || '未命名'}
-                    selected={selectedPrompt?.id === p.id}
-                    onSelect={() => setSelectedPrompt(p)}
-                  />
-                ))}
-                <QuickMenuAction label="管理提示词…" onSelect={() => setPromptPreviewOpen(true)} />
-              </QuickMenu>
-
-              <QuickMenu
-                title="风格参考图"
-                width={260}
-                note={articlePrefNote('风格', articleChoice?.style)}
-                // 还没拿到真实列表（首次读取失败）时，打开菜单就重读一次
-                onOpenChange={(o) => { if (o && !referenceImageListReady && !referenceImageLoading) void loadReferenceImageConfigs(); }}
-                trigger={
-                  <PopupButton
-                    icon={articleChoice?.style.missing
-                      ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
-                      : <ImageIcon size={13} style={{ color: 'var(--accent-fg-violet)', flexShrink: 0 }} />}
-                    warning={!!articleChoice?.style.missing}
-                    value={articleChoice
-                      ? (articleChoice.style.styleId === 'none' ? '无' : articleChoice.style.name)
-                      : !referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中…') : (activeRefConfig?.name || '无')}
-                    isSet={articleChoice ? articleChoice.style.styleId !== 'none' : !!activeRefConfig}
-                    title={articleChoice
-                      ? articlePrefTitle('风格', articleChoice.style)
-                      : `风格参考图：${!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中') : (activeRefConfig?.name || '不使用')}`}
-                    aria-label="风格参考图"
-                  />
-                }
-              >
-                {!referenceImageListReady ? (
-                  <QuickMenuEmpty>
-                    {referenceImageLoadError && !referenceImageLoading
-                      ? `读取风格图失败：${referenceImageLoadError}。关闭菜单再打开即可重试。`
-                      : '正在读取风格图…'}
-                  </QuickMenuEmpty>
-                ) : (
-                  <>
-                    <QuickMenuItem
-                      label="不使用"
-                      selected={articleChoice ? articleChoice.style.styleId === 'none' : !activeRefConfig}
-                      disabled={referenceImageSaving}
-                      onSelect={() => {
-                        if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== 'none') void applyArticleChoice({ style: 'none' }); return; }
-                        if (activeRefConfig) void switchReferenceImage(activeRefConfig, false);
-                      }}
+          {/* 配置与模型共用原位展开区域，同一时间只展开一项。 */}
+          <LiteraryInlineMenuGroup>
+            <div className="lit-settings" data-testid="literary-generation-settings">
+              <section className="lit-settings-section lit-settings-section--rows" aria-label="配图设置">
+                <div className="lit-settings-heading">
+                  <h3>配图设置</h3>
+                  <button type="button" className="lit-settings-manage" onClick={() => setPromptPreviewOpen(true)} title="全部配置" aria-label="全部配置">
+                    <SlidersHorizontal size={15} />
+                  </button>
+                </div>
+                <QuickMenu inline
+                  title="提示词风格"
+                  width={260}
+                  trigger={
+                    <LiterarySettingsRow
+                      icon={<PenLine size={16} />}
+                      label="提示词"
+                      value={promptSettingSave.saving ? '正在保存…' : selectedPrompt?.title || '自动推断'}
+                      disabled={promptSettingSave.saving}
+                      title={`提示词风格：${selectedPrompt?.title || '自动（系统推断）'}`}
+                      aria-label="提示词风格"
                     />
-                    {referenceImageConfigs.map((c) => (
+                  }
+                >
+                  <QuickMenuItem
+                    label="自动"
+                    description="由系统按文章内容推断风格"
+                    selected={!selectedPrompt}
+                    disabled={promptSettingSave.saving}
+                    onSelect={() => void setSelectedPrompt(null)}
+                  />
+                  {userPrompts.map((p) => (
+                    <QuickMenuItem
+                      key={p.id}
+                      label={p.title || '未命名'}
+                      selected={selectedPrompt?.id === p.id}
+                      disabled={promptSettingSave.saving}
+                      onSelect={() => void setSelectedPrompt(p)}
+                    />
+                  ))}
+                  <QuickMenuAction label="管理提示词…" onSelect={() => setPromptPreviewOpen(true)} />
+                </QuickMenu>
+                <SettingSaveFeedback {...promptSettingSave} />
+
+                <QuickMenu inline
+                  title="风格参考图"
+                  width={260}
+                  note={articlePrefNote('风格', articleChoice?.style)}
+                  // 还没拿到真实列表（首次读取失败）时，打开菜单就重读一次
+                  onOpenChange={(o) => { if (o && !referenceImageListReady && !referenceImageLoading) void loadReferenceImageConfigs(); }}
+                  trigger={
+                    <LiterarySettingsRow
+                      icon={articleChoice?.style.missing
+                        ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
+                        : <ImageIcon size={16} />}
+                      label="参考图"
+                      warning={!!articleChoice?.style.missing}
+                      value={articleChoice
+                        ? (articleChoice.style.styleId === 'none' ? '无参考图' : articleChoice.style.name)
+                        : !referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中…') : (activeRefConfig?.name || '无参考图')}
+                      title={articleChoice
+                        ? articlePrefTitle('风格', articleChoice.style)
+                        : `风格参考图：${!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中') : (activeRefConfig?.name || '不使用')}`}
+                      aria-label="风格参考图"
+                    />
+                  }
+                >
+                  {!referenceImageListReady ? (
+                    <QuickMenuEmpty>
+                      {referenceImageLoadError && !referenceImageLoading
+                        ? `读取风格图失败：${referenceImageLoadError}。关闭菜单再打开即可重试。`
+                        : '正在读取风格图…'}
+                    </QuickMenuEmpty>
+                  ) : (
+                    <>
                       <QuickMenuItem
-                        key={c.id}
-                        label={c.name || '未命名'}
-                        selected={articleChoice ? articleChoice.style.styleId === c.id : c.isActive}
+                        label="不使用"
+                        selected={articleChoice ? articleChoice.style.styleId === 'none' : !activeRefConfig}
                         disabled={referenceImageSaving}
                         onSelect={() => {
-                          if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== c.id) void switchReferenceImage(c, true); return; }
-                          if (!c.isActive) void switchReferenceImage(c, true);
+                          if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== 'none') void applyArticleChoice({ style: 'none' }); return; }
+                          if (activeRefConfig) void switchReferenceImage(activeRefConfig, false);
                         }}
                       />
-                    ))}
-                    {articleChoice && (
-                      <QuickMenuItem
-                        label="跟随账号默认（清除本文设定）"
-                        selected={false}
-                        disabled={referenceImageSaving}
-                        onSelect={() => void applyArticleChoice({ clear: true })}
-                      />
-                    )}
-                  </>
-                )}
-                <QuickMenuAction label="管理风格图…" onSelect={() => setPromptPreviewOpen(true)} />
-              </QuickMenu>
+                      {referenceImageConfigs.map((c) => (
+                        <QuickMenuItem
+                          key={c.id}
+                          label={c.name || '未命名'}
+                          selected={articleChoice ? articleChoice.style.styleId === c.id : c.isActive}
+                          disabled={referenceImageSaving}
+                          onSelect={() => {
+                            if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== c.id) void switchReferenceImage(c, true); return; }
+                            if (!c.isActive) void switchReferenceImage(c, true);
+                          }}
+                        />
+                      ))}
+                      {articleChoice && (
+                        <QuickMenuItem
+                          label="跟随账号默认（清除本文设定）"
+                          selected={false}
+                          disabled={referenceImageSaving}
+                          onSelect={() => void applyArticleChoice({ clear: true })}
+                        />
+                      )}
+                    </>
+                  )}
+                  <QuickMenuAction label="管理风格图…" onSelect={() => setPromptPreviewOpen(true)} />
+                </QuickMenu>
 
-              <QuickMenu
-                title="水印"
-                width={240}
-                note={articlePrefNote('水印', articleChoice?.watermark)}
-                onOpenChange={(o) => { if (o) void loadWatermarkOptions(); }}
-                trigger={
-                  <PopupButton
-                    icon={articleChoice?.watermark.missing
-                      ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
-                      : <Sparkles size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />}
-                    warning={!!articleChoice?.watermark.missing}
-                    value={articleChoice
-                      ? (articleChoice.watermark.watermarkId === 'none' ? '关' : articleChoice.watermark.name)
-                      : watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '关'}
-                    isSet={articleChoice ? articleChoice.watermark.watermarkId !== 'none' : watermarkStatus.enabled}
-                    title={articleChoice
-                      ? articlePrefTitle('水印', articleChoice.watermark)
-                      : `水印：${watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'}`}
-                    aria-label="水印"
-                  />
-                }
-              >
-                {watermarkLoadError ? (
-                  <QuickMenuEmpty>{`读取水印失败：${watermarkLoadError}。关闭菜单再打开即可重试。`}</QuickMenuEmpty>
-                ) : watermarkOptions === null ? (
-                  <QuickMenuEmpty>正在读取水印…</QuickMenuEmpty>
-                ) : (
-                  <>
-                    <QuickMenuItem
-                      label="不加水印"
-                      selected={articleChoice ? articleChoice.watermark.watermarkId === 'none' : !watermarkStatus.enabled}
-                      disabled={watermarkSaving}
-                      onSelect={() => void switchWatermark(null)}
+                <QuickMenu inline
+                  title="水印"
+                  width={240}
+                  note={articlePrefNote('水印', articleChoice?.watermark)}
+                  onOpenChange={(o) => { if (o) void loadWatermarkOptions(); }}
+                  trigger={
+                    <LiterarySettingsRow
+                      icon={articleChoice?.watermark.missing
+                        ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
+                        : <Square size={16} />}
+                      label="水印"
+                      warning={!!articleChoice?.watermark.missing}
+                      value={articleChoice
+                        ? (articleChoice.watermark.watermarkId === 'none' ? '不加水印' : articleChoice.watermark.name)
+                        : watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '不加水印'}
+                      title={articleChoice
+                        ? articlePrefTitle('水印', articleChoice.watermark)
+                        : `水印：${watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'}`}
+                      aria-label="水印"
                     />
-                    {watermarkOptions.map((w) => (
+                  }
+                >
+                  {watermarkLoadError ? (
+                    <QuickMenuEmpty>{`读取水印失败：${watermarkLoadError}。关闭菜单再打开即可重试。`}</QuickMenuEmpty>
+                  ) : watermarkOptions === null ? (
+                    <QuickMenuEmpty>正在读取水印…</QuickMenuEmpty>
+                  ) : (
+                    <>
                       <QuickMenuItem
-                        key={w.id}
-                        label={w.name || w.text || '未命名'}
-                        selected={articleChoice ? articleChoice.watermark.watermarkId === w.id : w.appKeys?.includes(LITERARY_APP_KEY)}
+                        label="不加水印"
+                        selected={articleChoice ? articleChoice.watermark.watermarkId === 'none' : !watermarkStatus.enabled}
                         disabled={watermarkSaving}
-                        onSelect={() => void switchWatermark(w)}
+                        onSelect={() => void switchWatermark(null)}
                       />
-                    ))}
-                    {articleChoice && (
-                      <QuickMenuItem
-                        label="跟随账号默认（清除本文设定）"
-                        selected={false}
-                        disabled={watermarkSaving}
-                        onSelect={() => void applyArticleChoice({ clear: true })}
-                      />
-                    )}
-                  </>
-                )}
-                <QuickMenuAction
-                  label="管理水印…"
-                  onSelect={() => { setPendingWatermarkEdit(true); setPromptPreviewOpen(true); }}
+                      {watermarkOptions.map((w) => (
+                        <QuickMenuItem
+                          key={w.id}
+                          label={w.name || w.text || '未命名'}
+                          selected={articleChoice ? articleChoice.watermark.watermarkId === w.id : w.appKeys?.includes(LITERARY_APP_KEY)}
+                          disabled={watermarkSaving}
+                          onSelect={() => void switchWatermark(w)}
+                        />
+                      ))}
+                      {articleChoice && (
+                        <QuickMenuItem
+                          label="跟随账号默认（清除本文设定）"
+                          selected={false}
+                          disabled={watermarkSaving}
+                          onSelect={() => void applyArticleChoice({ clear: true })}
+                        />
+                      )}
+                    </>
+                  )}
+                  <QuickMenuAction
+                    label="管理水印…"
+                    onSelect={() => { setPendingWatermarkEdit(true); setPromptPreviewOpen(true); }}
+                  />
+                </QuickMenu>
+
+                <QuickMenu inline
+                  title="配图位置"
+                  width={260}
+                  open={positionStrategyOpen}
+                  onOpenChange={setPositionStrategyOpen}
+                  note={<>想自己指定位置：在预览里右键段落选「在上方 / 下方插入配图」，或悬停段落左侧点 +；也可在文章里写 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code>。这些位置在「尊重用户锚点」下生效。</>}
+                  trigger={
+                    <LiterarySettingsRow
+                      icon={<Layers size={16} />}
+                      label="插图位置"
+                      value={positionStrategy === 'auto' ? '自动安排' : POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动安排'}
+                      title="配图位置：控制 AI 在哪些段落插入配图标记"
+                      aria-label="配图位置"
+                    />
+                  }
+                >
+                  {POSITION_STRATEGY_OPTIONS.map((opt) => (
+                    <QuickMenuItem
+                      key={opt.value}
+                      label={opt.label}
+                      selected={positionStrategy === opt.value}
+                      onSelect={() => {
+                        setPositionStrategy(opt.value);
+                        // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
+                        if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
+                          setPhase(1);
+                          toast.info('已切到「预览」页，可以开始打锚点了');
+                        } else if (opt.value !== 'auto' && phase === 1) {
+                          toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
+                        }
+                      }}
+                    />
+                  ))}
+                </QuickMenu>
+
+              </section>
+              <section className="lit-model-section" aria-label="模型设置" data-testid="literary-model-settings">
+                <h3 className="lit-settings-heading">模型设置</h3>
+                <LiteraryModelPicker
+                  label="写作"
+                  icon={<PenLine size={16} />}
+                  model={effectiveChatModel}
+                  unavailable={!!chatModelPrefId && !effectiveChatModel}
+                  options={enabledChatModels}
+                  disabled={!modelPrefReady || !userId || modelSettingSave.saving}
+                  open={chatModelPrefOpen}
+                  onOpenChange={(open) => {
+                    setChatModelPrefOpen(open);
+                    if (open) setImageModelPrefOpen(false);
+                  }}
+                  onSelect={(id) => void modelSettingSave.run({ imageModelId: imageModelPrefId, chatModelId: id })}
                 />
-              </QuickMenu>
-
-              <QuickMenu
-                title="配图位置"
-                width={260}
-                open={positionStrategyOpen}
-                onOpenChange={setPositionStrategyOpen}
-                note={<>想自己指定位置：在预览里右键段落选「在上方 / 下方插入配图」，或悬停段落左侧点 +；也可在文章里写 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code>。这些位置在「尊重用户锚点」下生效。</>}
-                trigger={
-                  <PopupButton
-                    icon={<MapPin size={13} style={{ color: 'var(--accent-fg-emerald)', flexShrink: 0 }} />}
-                    value={POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动'}
-                    isSet={positionStrategy !== 'auto'}
-                    title="配图位置：控制 AI 在哪些段落插入配图标记"
-                    aria-label="配图位置"
-                  />
-                }
-              >
-                {POSITION_STRATEGY_OPTIONS.map((opt) => (
-                  <QuickMenuItem
-                    key={opt.value}
-                    label={opt.label}
-                    selected={positionStrategy === opt.value}
-                    onSelect={() => {
-                      setPositionStrategy(opt.value);
-                      // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
-                      if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
-                        setPhase(1);
-                        toast.info('已切到「预览」页，可以开始打锚点了');
-                      } else if (opt.value !== 'auto' && phase === 1) {
-                        toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
-                      }
-                    }}
-                  />
-                ))}
-              </QuickMenu>
+                <LiteraryModelPicker
+                  label="配图"
+                  icon={<ImageIcon size={16} />}
+                  model={effectiveModel}
+                  unavailable={!!imageModelPrefId && !effectiveModel}
+                  options={enabledImageModels}
+                  disabled={!modelPrefReady || !userId || modelSettingSave.saving}
+                  open={imageModelPrefOpen}
+                  onOpenChange={(open) => {
+                    setImageModelPrefOpen(open);
+                    if (open) setChatModelPrefOpen(false);
+                  }}
+                  onSelect={(id) => {
+                    void modelSettingSave.run({ imageModelId: id, chatModelId: chatModelPrefId }).then((saved) => {
+                      if (saved) setImageGenModelError(null);
+                    });
+                  }}
+                />
+                <SettingSaveFeedback {...modelSettingSave} />
+                {modelPrefLoadError && <div role="alert" className="flex items-center justify-between gap-2 py-2 text-xs" style={{ color: 'var(--accent-fg-danger)' }}>
+                  <span>模型偏好读取失败，请重试后再切换模型。</span>
+                  <Button size="xs" variant="secondary" onClick={() => setModelSettingsReload((n) => n + 1)}>重新读取</Button>
+                </div>}
+                {imageGenModelError && enabledImageModels.length === 0 && !autoResolvedModel && (
+                  <div className="mt-2 text-xs" style={{ color: 'var(--accent-fg-danger)' }}>
+                    生图不可用
+                  </div>
+                )}
+              </section>
             </div>
-
-            <button
-              type="button"
-              className="lqm-trigger shrink-0 justify-center"
-              style={{ width: 30, padding: 0 }}
-              onClick={() => setPromptPreviewOpen(true)}
-              title="全部配置"
-              aria-label="全部配置"
-            >
-              <SlidersHorizontal size={14} />
-            </button>
-          </div>
+          </LiteraryInlineMenuGroup>
         </PanelCard>
 
         {/* 配图标记列表 */}
@@ -3966,7 +4004,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 const showPlaceholder = it.status === 'running' || it.status === 'parsing';
                 const canShow = Boolean(src) && it.status === 'done';
                 const hasImage = Boolean(String(it.assetUrl || it.url || '').trim() || it.base64);
-                const genLabel = hasImage ? '重新生成' : '生成图片';
+                const pendingRecovery = it.status === 'running' && Boolean(it.errorMessage) && Boolean(it.runId || it.generationRequestId);
+                const genLabel = pendingRecovery ? '恢复原请求' : hasImage ? '重新生成' : '生成图片';
                 const genTitle = hasImage ? '重新生成该配图（会替换左侧预览中的对应插图）' : '生成该配图（会插入左侧预览中对应 [插图] 位置）';
 
                 const isGlowing = glowingMarkers.has(it.markerIndex);
@@ -4225,9 +4264,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       <Button
                         size="sm"
                         variant="secondary"
-                        disabled={it.status === 'running' || it.status === 'parsing' || !imageGenModel}
+                        disabled={(it.status === 'running' && !pendingRecovery) || it.status === 'parsing' || (!imageGenModel && !pendingRecovery)}
                         onClick={() => void handleRegenerateOne(it.markerIndex)}
-                        title={genTitle}
+                        title={pendingRecovery ? '先查询原任务；尚未入库时仅重放同一请求标识，避免重复生成' : genTitle}
                       >
                         <Sparkles size={14} />
                         {genLabel}
@@ -4707,7 +4746,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     border: isPromptSelected ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
                                     minWidth: 40,
                                   }}
-                                  onClick={() => setSelectedPrompt(isPromptSelected ? null : prompt)}
+                                  disabled={promptSettingSave.saving}
+                                  onClick={() => void setSelectedPrompt(isPromptSelected ? null : prompt)}
                                   title={isPromptSelected ? '取消选择（将使用系统推断风格）' : '选择此风格'}
                                 >
                                   <CheckCircle2 size={16} />
@@ -4720,6 +4760,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   className="p-1.5 rounded-md transition-all duration-200 hover-bg-soft"
                                   style={{ color: 'var(--text-muted)' }}
                                   onClick={() => handleEditPrompt(prompt)}
+                                  disabled={promptSettingSave.saving}
                                   title="编辑"
                                 >
                                   <Edit2 size={14} />
@@ -4729,6 +4770,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   className="p-1.5 rounded-md transition-all duration-200 hover:bg-red-500/10"
                                   style={{ color: 'rgba(239, 68, 68, 0.7)' }}
                                   onClick={() => void handleDeletePrompt(prompt)}
+                                  disabled={promptSettingSave.saving}
                                   title="删除"
                                 >
                                   <Trash2 size={14} />

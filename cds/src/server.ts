@@ -34,6 +34,7 @@ import { createPendingImportRouter } from './routes/pending-import.js';
 import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { isPublicAgentSetupRoute } from './shared/agent-setup.js';
+import { isMonitorOnboardingAgentRoute } from './shared/monitor-onboarding.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { isHumanSystemOwner } from './services/human-auth.js';
@@ -901,6 +902,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 自建存活监控 / 状态页（2026-07-27）
     'GET /uptime/summary': '查看存活总览',
     'GET /uptime/incidents': '列出存活故障',
+    'GET /uptime/incidents/:id': '查看故障通知上下文',
     // 监控中心自定义监控（2026-09-08）
     'GET /uptime/monitors': '列出自定义监控',
     'POST /uptime/monitors': '新增自定义监控',
@@ -918,6 +920,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'PATCH /scheduled-jobs/:id': '更新定时任务',
     'DELETE /scheduled-jobs/:id': '删除定时任务',
     'POST /scheduled-jobs/:id/run': '立即执行任务',
+    'POST /scheduled-jobs/:id/recover': '核实任务产物',
     // 服务端站内信账本（2026-07-29）
     'GET /notices': '列出站内信',
     'POST /notices': '记录站内信',
@@ -1212,11 +1215,13 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/uptime\/incidents\/[^/]+$/, '查看故障通知上下文'],
     [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
     [/^POST \/uptime\/targets\/(.+)\/probe$/, '立即探测目标'],
+    [/^PUT \/uptime\/targets\/[^/]+\/subscription$/, '调整监控总览订阅'],
     [/^PUT \/uptime\/monitors\/[^/]+$/, '修改自定义监控'],
     [/^DELETE \/uptime\/monitors\/[^/]+$/, '删除自定义监控'],
     [/^POST \/cds-system\/alarm-channels\/[^/]+\/drill$/, '演练通知通道'],
@@ -1228,6 +1233,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 定时任务：staticMap 的 `:id` 条目只够 auditApiLabels 比对 express 路由原样，
     // 真实调用带的是具体 id，必须靠 pattern 才有 label。segment-safe `[^/]+`。
     [/^POST \/scheduled-jobs\/[^/]+\/run$/, '立即执行任务'],
+    [/^POST \/scheduled-jobs\/[^/]+\/recover$/, '核实任务产物'],
     [/^PATCH \/scheduled-jobs\/[^/]+$/, '更新定时任务'],
     [/^DELETE \/scheduled-jobs\/[^/]+$/, '删除定时任务'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis\/stream$/, '流式解释部署诊断'],
@@ -1327,6 +1333,12 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/(.+)\/migration\/config-preview$/, '预览可复刻配置'],
     [/^POST \/projects\/(.+)\/migration\/replicate-config$/, '推送配置到目标 CDS'],
     [/^POST \/projects\/(.+)\/migration\/data-plan$/, '扫描数据迁移计划'],
+    [/^GET \/projects\/([^/]+)\/migration\/fingerprint$/, '核对项目指纹'],
+    [/^GET \/projects\/([^/]+)\/migration\/standby$/, '读取分支同步策略'],
+    [/^PUT \/projects\/([^/]+)\/migration\/standby$/, '保存分支同步策略'],
+    [/^POST \/projects\/([^/]+)\/migration\/standby\/audit$/, '核对备用项目'],
+    [/^POST \/projects\/([^/]+)\/migration\/standby\/reconcile$/, '同步项目分支'],
+    [/^GET \/projects\/([^/]+)\/migration\/standby-health$/, '读取备用项目状态'],
     // CDS 配对连接 :id 路径
     [/^POST \/cds-system\/connections\/(.+)\/revoke$/, '撤销配对连接'],
     [/^GET \/cds-system\/connections\/(.+)$/, '查看配对连接'],
@@ -1588,6 +1600,7 @@ function broadcastAiPairing(event: string, data: unknown) {
  * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
  */
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  if (isMonitorOnboardingAgentRoute(method, path)) return true;
   if (method === 'POST' && path === '/api/identity-connections') return true;
   if (method === 'GET' && /^\/api\/identity-connections\/[^/]+$/.test(path)) return true;
   if (method === 'POST' && /^\/api\/identity-connections\/[^/]+\/ack$/.test(path)) return true;
@@ -1950,6 +1963,11 @@ export function createServer(deps: ServerDeps): express.Express {
   // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
   const releaseService = new ReleaseService(deps.stateService, {
     verifyProjectCI: (branch, sha, strategy) => verifyProjectReleaseCI(deps.stateService.getProject(branch.projectId), githubAppClient, branch, sha, strategy),
+    resolveProjectRepository: (projectId) => {
+      const project = deps.stateService.getProject(projectId);
+      if (!project || (project.gitRepoUrl && !project.repoPath)) return undefined;
+      return deps.stateService.getProjectRepoRoot(projectId, deps.config.repoRoot);
+    },
   });
   const releaseReconciler: ReleaseRunReconciler = releaseService;
   startReleaseRunReaper({ service: releaseReconciler });
@@ -4677,6 +4695,7 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
     authMode,
+    serverEventLogStore: deps.serverEventLogStore,
   }));
   // 项目存储面板(infra named volume 大小/挂载关系，feature-emerge E7，2026-05-29)
   app.use('/api', createProjectStorageRouter({
@@ -5481,6 +5500,8 @@ export function installSpaFallback(
       index: false,
       setHeaders: (res, filePath) => {
         if (filePath.endsWith('.html')) {
+          res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+          res.setHeader('X-Frame-Options', 'DENY');
           res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
           res.setHeader('Pragma', 'no-cache');
           res.setHeader('Expires', '0');
@@ -5510,6 +5531,9 @@ export function installSpaFallback(
       return null;
     };
     const sendReactIndex = (res: express.Response): void => {
+      // 管理操作不能被不可信预览页以透明 iframe 诱导点击；报告 raw 嵌入走独立 API。
+      res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+      res.setHeader('X-Frame-Options', 'DENY');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       const selectedIndex = resolveReactIndex();
       if (!selectedIndex) {

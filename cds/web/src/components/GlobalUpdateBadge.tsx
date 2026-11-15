@@ -1,6 +1,7 @@
+import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 import { InstanceSwitcher } from '@/components/InstanceSwitcher';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+
 import { AlertTriangle, ArrowUpCircle, CheckCircle2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiUrl } from '@/lib/api';

@@ -1,7 +1,7 @@
 # AGENTS.md
 
 > PRD Agent 全栈项目（`prd-api` .NET 8 / `prd-admin` React+Vite / `prd-desktop` Tauri / `prd-video` Remotion / `llmgw` LLM 网关 / `cds` 分支预览部署）。
-> 本文件是全体 AI Agent 的共用规则 SSOT，工具中立。各模块构建命令见子目录同名文件；架构规则见 `.claude/rules/`。
+> 本文件是全体 AI Agent 的共用规则 SSOT，工具中立。各模块构建命令见子目录同名文件；架构规则见 `.claude/rules/`。新增或调整 CDS 页面导航前，必读[页面切换动效规范](.claude/rules/cds-page-motion.md)。
 
 <!--
 为什么这份是 SSOT：本仓库曾经并行维护根 CLAUDE.md 与根 AGENTS.md 两份 95% 相同的副本，
@@ -107,9 +107,9 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ### 6. LLM 交互过程必须可视化
 
-任何大模型调用功能都要展示交互过程：SSE 流式逐字渲染 / 批量任务推进度事件 / 支持 thinking 就展示思考 / 长任务拆阶段推状态 / 兜底至少给动画 + 预估耗时。
+任何大模型调用功能都要展示交互过程：SSE 流式逐字渲染 / 批量任务推进度事件 / 支持 thinking 就展示思考 / 长任务拆阶段推状态 / 兜底至少给动画 + 预估耗时。用户等待时屏幕必须有持续变化的内容。**静止的「加载中…」超过 2 秒即为体验缺陷。**
 
-原则：用户等待时屏幕必须有持续变化的内容。**静止的「加载中…」超过 2 秒即为体验缺陷。**
+**6.1 产品展示边界**：产品页面只保留用户完成业务所需的操作、结果、当前状态和恢复指引；迁移详情、研发验收报告、覆盖矩阵、交付台账等内部交付记录不得做成产品入口或面板，也不得改名、折叠或放进帮助浮层后继续展示。归档、业务例外与交付自审见 [UI 规则](.claude/rules/chief-designer-usability.md#产品与内部交付记录的边界)。
 
 ### 7. 新增 Model / service 必须对照现有写法
 

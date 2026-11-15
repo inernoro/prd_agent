@@ -149,11 +149,17 @@ public class GatewayResponse
 /// </summary>
 public class GatewayModelResolution
 {
+    [JsonIgnore]
+    public global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy? UpstreamProxy { get; init; }
+
     /// <summary>调用方选择的逻辑模型 ID。</summary>
     public string? LogicalModelId { get; init; }
 
     /// <summary>调用方稳定使用的逻辑模型公开标识。</summary>
     public string? LogicalModelPublicId { get; init; }
+
+    /// <summary>已解析逻辑模型的显式兼容标识。</summary>
+    public List<string> AcceptedModelAliases { get; init; } = new();
 
     /// <summary>本次实际命中的上游 Offering ID。</summary>
     public string? OfferingId { get; init; }

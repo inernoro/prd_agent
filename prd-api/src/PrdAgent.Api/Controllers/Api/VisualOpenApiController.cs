@@ -1,4 +1,5 @@
 using PrdAgent.Core.Security;
+using PrdAgent.Core.LlmGateway;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -19,7 +20,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 鉴权：Bearer sk-ak-xxxx + scope visual-agent:use（签发时已与用户自己的 visual-agent.use 权限位取过交集）。
 ///
 /// 与 ImageGenController.CreateRun 的关系：这里是它的一个**收窄子集**，不是复制。
-/// 智能体只给 prompt，模型走「视觉创作允许模型」策略里的默认项（与 ImageGenController 同一个
+/// 智能体省略 modelId 时走「视觉创作允许模型」策略里的默认项，也可显式选择开放的稳定标识或固定版本（与 ImageGenController 同一个
 /// VisualModelPolicy.Select 判据），不接受 platformId / configModelId / appCallerCode 这些内部参数 ——
 /// 让智能体填这些只会让它猜到失败（最小输入原则）。
 ///
@@ -42,11 +43,13 @@ public class VisualOpenApiController : ControllerBase
 
     private readonly MongoDbContext _db;
     private readonly IVisualModelPolicyService _visualModels;
+    private readonly ILlmGateway? _gateway;
 
-    public VisualOpenApiController(MongoDbContext db, IVisualModelPolicyService visualModels)
+    public VisualOpenApiController(MongoDbContext db, IVisualModelPolicyService visualModels, ILlmGateway? gateway = null)
     {
         _db = db;
         _visualModels = visualModels;
+        _gateway = gateway;
     }
 
     /// <summary>智能体生图落在哪个工作区：找不到就建一个，用户在视觉创作里能直接看到它。</summary>
@@ -103,22 +106,52 @@ public class VisualOpenApiController : ControllerBase
         return id;
     }
 
-    /// <summary>列出当前开放给智能体的生图模型（就是视觉创作工作区允许的那一个）。</summary>
+    /// <summary>列出当前开放的公开模型及历史兼容别名；不暴露上游、密钥或内部线路。</summary>
     [HttpGet("models")]
     [RequireScope(ScopeUse)]
     public async Task<IActionResult> ListModels(CancellationToken ct)
     {
         var policy = await _visualModels.ReadAsync(ct);
         var selected = policy.Select(null);
+        var catalog = _gateway is null ? [] : await _gateway.GetAvailablePoolsAsync(
+            VisualAgent.Image.Text2Img, ModelTypes.ImageGen, ct);
         return Ok(ApiResponse<object>.Ok(new
         {
             defaultModel = selected,
             configured = !string.IsNullOrWhiteSpace(selected),
+            models = DescribeModels(policy, catalog),
+            selectionHint = "省略 modelId 跟随组织默认；传稳定标识跟随其已验收版本，传具体版本标识固定使用该版本。",
             hint = string.IsNullOrWhiteSpace(selected)
                 ? "管理员还没为视觉创作配默认模型，去「视觉创作 → 模型策略」选一个再来。"
                 : null,
         }));
     }
+
+    /// <summary>先匹配明确公开标识，再接受唯一登记别名；任何未知/歧义/未开放输入都拒绝。</summary>
+    internal static string? SelectModelForRequest(
+        VisualModelPolicy policy, string? requestedModelId, IReadOnlyCollection<AvailableModelPool> catalog)
+    {
+        if (string.IsNullOrWhiteSpace(requestedModelId)) return policy.Select(null);
+        var requested = requestedModelId.Trim();
+        if (requested.Length > 200) return null;
+        var logical = catalog.Where(x => x.ResolutionType == "LogicalModel").ToList();
+        var exact = logical.Where(x => string.Equals(x.Code, requested, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (exact.Count != 0) return exact.Count == 1 ? policy.Select(exact[0].Code) : null;
+        var aliases = logical.Where(x => x.Aliases?.Any(alias =>
+            string.Equals(alias, requested, StringComparison.OrdinalIgnoreCase)) == true).ToList();
+        return aliases.Count == 1 ? policy.Select(aliases[0].Code) : null;
+    }
+
+    internal static IReadOnlyList<OpenImageModel> DescribeModels(
+        VisualModelPolicy policy, IReadOnlyCollection<AvailableModelPool> catalog)
+        => policy.Models.Where(entry => catalog.Any(x => x.Code == entry.ModelId && x.ResolutionType == "LogicalModel"))
+            .Select(entry => new OpenImageModel(
+            entry.ModelId, entry.ResolveDisplayName(catalog.FirstOrDefault(x => x.Code == entry.ModelId)?.Name),
+            entry.Description, policy.DefaultModelId == entry.ModelId,
+            catalog.FirstOrDefault(x => x.Code == entry.ModelId)?.Aliases ?? [])).ToList();
+
+    internal sealed record OpenImageModel(
+        string Id, string DisplayName, string? Description, bool IsDefault, IReadOnlyList<string> Aliases);
 
     public class GenerateImageRequest
     {
@@ -126,6 +159,8 @@ public class VisualOpenApiController : ControllerBase
         /// <summary>如 1024x1024 / 1024x1536；留空用 1024x1024。</summary>
         public string? Size { get; set; }
         public int? Count { get; set; }
+        /// <summary>可选开放的公开模型标识或已登记兼容别名；省略跟随当前默认。</summary>
+        public string? ModelId { get; set; }
         /// <summary>幂等键：智能体重试不会重复烧额度。</summary>
         public string? ClientRequestId { get; set; }
     }
@@ -155,7 +190,9 @@ public class VisualOpenApiController : ControllerBase
     public async Task<IActionResult> Generate([FromBody] GenerateImageRequest req, CancellationToken ct)
     {
         var userId = GetBoundUserId();
-        var prompt = (req?.Prompt ?? string.Empty).Trim();
+        if (req is null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空"));
+        var prompt = (req.Prompt ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(prompt))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空"));
         if (prompt.Length > 4000)
@@ -165,8 +202,8 @@ public class VisualOpenApiController : ControllerBase
         if (countError != null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, countError));
         var count = ResolveImageCount(req);
-        // req 上面已经按可空处理（req?.Prompt），这里保持同一口径：body 缺失时走默认尺寸。
-        var size = string.IsNullOrWhiteSpace(req?.Size) ? "1024x1024" : req.Size!.Trim();
+        // 请求体已判空；省略 size 时仍使用既有默认尺寸。
+        var size = string.IsNullOrWhiteSpace(req.Size) ? "1024x1024" : req.Size.Trim();
         // size 是有限形状，不是自由文本：它会原样落进 ImageGenRun.Size 并被送去上游。
         // 不校验的话，这里就是又一处「调用方给什么就存什么」——上游只会回一个看不懂的错，
         // 而智能体拿不到「你把尺寸写错了」这个能照着改的说法。
@@ -189,15 +226,20 @@ public class VisualOpenApiController : ControllerBase
                 .Find(x => x.OwnerAdminId == userId && x.IdempotencyKey == idemKey)
                 .FirstOrDefaultAsync(ct);
             if (existed != null)
-                return Ok(ApiResponse<object>.Ok(new { runId = existed.Id, deduplicated = true }));
+                return Ok(ApiResponse<object>.Ok(new { runId = existed.Id, deduplicated = true, requestedModelId = existed.RequestedModelId, logicalModelPublicId = existed.LogicalModelPublicId }));
         }
 
         // 模型：与 ImageGenController 同一个判据 —— 视觉创作只跑策略允许的那个模型
         var policy = await _visualModels.ReadAsync(ct);
-        var modelId = policy.Select(null);
+        var catalog = string.IsNullOrWhiteSpace(req.ModelId) || _gateway is null
+            ? []
+            : await _gateway.GetAvailablePoolsAsync(VisualAgent.Image.Text2Img, ModelTypes.ImageGen, ct);
+        var modelId = SelectModelForRequest(policy, req.ModelId, catalog);
         if (string.IsNullOrWhiteSpace(modelId))
             return BadRequest(ApiResponse<object>.Fail("VISUAL_MODEL_NOT_ALLOWED",
-                "视觉创作还没配默认生图模型，智能体没法出图。请管理员到「视觉创作 → 模型策略」选一个模型后重试。"));
+                string.IsNullOrWhiteSpace(req.ModelId)
+                    ? "视觉创作还没配默认生图模型，智能体没法出图。请管理员到「视觉创作 → 模型策略」选一个模型后重试。"
+                    : "所选模型当前不可用或未对智能体开放。请用 map_visual_list_models 获取可选 modelId；需要跟随组织默认时省略 modelId。"));
 
         // 必须绑一个真实工作区。ImageGenRunWorker 只在 run.WorkspaceId 非空时才把结果落进
         // 资产存储并回填画布；不绑的话，配着 ResponseFormat=b64_json 的这条 run 跑完只会把
@@ -214,6 +256,7 @@ public class VisualOpenApiController : ControllerBase
             DeploymentSlug = DeploymentScope.Current,
             PlatformId = "logical-model",
             ModelId = modelId,
+            RequestedModelId = string.IsNullOrWhiteSpace(req.ModelId) ? null : req.ModelId.Trim(),
             LogicalModelPublicId = modelId,
             ModelResolutionType = PrdAgent.Core.Models.ModelResolutionType.LogicalModel,
             Size = size,
@@ -241,7 +284,7 @@ public class VisualOpenApiController : ControllerBase
                 .Find(x => x.OwnerAdminId == userId && x.IdempotencyKey == idemKey)
                 .FirstOrDefaultAsync(ct);
             if (existed != null)
-                return Ok(ApiResponse<object>.Ok(new { runId = existed.Id, deduplicated = true }));
+                return Ok(ApiResponse<object>.Ok(new { runId = existed.Id, deduplicated = true, requestedModelId = existed.RequestedModelId, logicalModelPublicId = existed.LogicalModelPublicId }));
             throw;
         }
 
@@ -250,6 +293,8 @@ public class VisualOpenApiController : ControllerBase
             runId = run.Id,
             total = count,
             status = "queued",
+            requestedModelId = string.IsNullOrWhiteSpace(req.ModelId) ? null : req.ModelId.Trim(),
+            logicalModelPublicId = modelId,
             hint = "生成需要十几秒到一分钟；用 runs/{runId} 查进度与结果地址。",
         }));
     }
@@ -274,6 +319,8 @@ public class VisualOpenApiController : ControllerBase
         {
             runId = run.Id,
             status = run.Status.ToString(),
+            requestedModelId = run.RequestedModelId,
+            logicalModelPublicId = run.LogicalModelPublicId,
             total = run.Total,
             done = run.Done,
             failed = run.Failed,
@@ -283,6 +330,7 @@ public class VisualOpenApiController : ControllerBase
                 status = x.Status.ToString(),
                 url = Request.ResolveAbsoluteUrl(x.Url),
                 revisedPrompt = x.RevisedPrompt,
+                actualModel = x.ActualModel,
                 errorMessage = x.ErrorMessage,
             }),
             // 「跑完了没有」必须先认终态，不能只数计数器：用户中途取消时，还没开始的那几张

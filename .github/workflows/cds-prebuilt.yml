@@ -91,6 +91,7 @@ jobs:
             if curl -fsS http://127.0.0.1:8870/ > /dev/null; then break; fi
             sleep 1
           done
+          pnpm -C cds exec node scripts/notification-classification-smoke.mjs http://127.0.0.1:8870
           pnpm -C cds smoke:loading http://127.0.0.1:8870 --out "$RUNNER_TEMP/cds-loading-continuity"
           CDS_LOADING_EVIDENCE="$RUNNER_TEMP/cds-loading-neighbors" node cds/scripts/loading-coverage-smoke.mjs http://127.0.0.1:8870
           CDS_SKELETON_EVIDENCE="$RUNNER_TEMP/cds-loading-lists" node cds/scripts/list-loading-smoke.mjs http://127.0.0.1:8870

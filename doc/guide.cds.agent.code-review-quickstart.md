@@ -10,6 +10,8 @@
 
 ## 目标
 
+本文描述 `/cds-agent` 官方 SDK 工作台。通过《代码审查报告》使用独立 DeepAudit 引擎时，请阅读[DeepAudit 代码审查使用与维护](./guide.cds.code-review.md)，不要混用两个入口的验收结论。
+
 这份文档回答两个问题：
 
 - 我想让 CDS Agent 审查当前仓库或其他仓库，会经历哪些步骤。

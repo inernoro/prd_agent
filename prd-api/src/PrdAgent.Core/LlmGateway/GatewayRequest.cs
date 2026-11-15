@@ -665,6 +665,7 @@ public sealed class GatewayCanonicalImageRequest
     public int Count { get; init; } = 1;
     public string? Size { get; init; }
     public string? ResponseFormat { get; init; }
+    public string? Quality { get; init; }
     public List<string> Images { get; init; } = new();
     public string? MaskBase64 { get; init; }
 }

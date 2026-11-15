@@ -81,6 +81,7 @@ export default function CommentsSection(props: Props) {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setReplyTo(null); }, [props.threadKind]);
   const allRoots = comments.filter(c => !c.parentId);
+
   const versionRoots = review ? allRoots.filter(c => c.contentVersion === versionKey && !!versionKey) : allRoots;
   const outsideRoots = review ? allRoots.filter(c => c.contentVersion !== versionKey || !versionKey) : [];
   const scopedRoots = otherVersions ? outsideRoots : versionRoots;

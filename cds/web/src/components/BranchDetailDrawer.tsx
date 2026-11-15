@@ -2242,7 +2242,7 @@ export function BranchDetailDrawer({
 
   if (!open || !branchId) return null;
 
-  return (
+  const drawer = (
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="分支详情">
       <button
         type="button"
@@ -3075,6 +3075,7 @@ export function BranchDetailDrawer({
       ) : null}
     </div>
   );
+  return typeof document === 'undefined' ? drawer : createPortal(drawer, document.body);
 }
 
 function DeploymentVersionLedger({

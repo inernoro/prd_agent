@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { runInNewContext } from 'node:vm';
 import { computePreviewSlug } from '../../src/services/preview-slug.js';
 
 describe('ProxyService', () => {
@@ -267,7 +268,7 @@ describe('ProxyService', () => {
       expect(written.body).not.toContain('rings-orbit');
       expect(written.body).not.toContain('class="panel"');
       expect(written.body).toContain('/_cds/waiting-status');
-      expect(written.body).toContain('shiny-text');
+      expect(written.body).toContain('cds-waiting-gem');
       expect(written.body).not.toContain('setTimeout(function(){location.reload');
     });
 
@@ -300,6 +301,49 @@ describe('ProxyService', () => {
       expect(payload.progress.percent).toBeGreaterThan(0);
       expect(payload.waitingProfileId).toBe('admin');
       expect(payload.services).toContainEqual({ profileId: 'admin', status: 'starting' });
+    });
+
+    it('等待首屏收起六个服务并保留真实明细和进度，移除重复状态与内部估算说明', () => {
+      const services = Object.fromEntries(['api', 'admin', 'llmgw', 'serve', 'web', 'design'].map(profileId =>
+        [profileId, { profileId, status: profileId === 'api' ? 'running' : 'starting' }]));
+      addBranch('compact-wait', 'starting', services, 'feature/compact-wait');
+      const { res, written } = makeRes();
+      proxy.handleRequest(makeReq({ 'x-branch': 'compact-wait', accept: 'text/html' }), res);
+      expect(written.statusCode).toBe(503);
+      expect(written.body).toContain('<details class="service-details">');
+      expect(written.body).not.toMatch(/<details[^>]*\bopen\b/);
+      expect(written.body).toContain('1 / 6 个服务已就绪');
+      expect(written.body.match(/class="svc" data-profile=/g)).toHaveLength(6);
+      expect(written.body).toContain('role="progressbar"');
+      expect(written.body).toContain('applyTiming({');
+      expect(written.body).not.toContain('置信度');
+      expect(written.body).not.toContain('分支状态 ·');
+      expect(written.body).not.toContain('构建模式 ·');
+      expect(written.body).not.toContain('CDS 小提示');
+      expect(written.body).not.toContain('非单分支');
+    });
+
+    it.each(['restarting', 'building'])('真实轮询 renderer 在 %s 状态保留摘要语义与空服务占位', (status) => {
+      addBranch('summary-poll', 'restarting', { api: { profileId: 'api', status: 'starting' } });
+      const { res, written } = makeRes();
+      proxy.handleRequest(makeReq({ 'x-branch': 'summary-poll', accept: 'text/html' }), res);
+      const renderer = written.body.match(/  function renderServices[\s\S]+?(?=  \/\/ 百分比状态)/)![0];
+      const root = { children: [] as any[], set innerHTML(_value: string) { this.children = []; }, appendChild(node: any) { this.children.push(node); } };
+      const summary = { textContent: '' };
+      const createElement = () => ({ className: '', textContent: '', style: { setProperty() {} }, setAttribute() {}, appendChild() {} });
+      const context = {
+        document: { querySelector: (selector: string) => selector.includes('service-summary') ? summary : root, createElement },
+        colors: {}, serviceText: (svc: { profileId: string }) => svc.profileId,
+        services: [{ profileId: 'api', status: 'starting' }], status,
+      };
+      runInNewContext(renderer + '\nrenderServices(services,status);', context);
+      expect(summary.textContent).toBe(status === 'restarting' ? '1 个服务重启中' : '1 个服务准备中');
+      expect(root.children).toHaveLength(1);
+      context.services = [];
+      runInNewContext(renderer + '\nrenderServices(services,status);', context);
+      expect(summary.textContent).toBe('正在准备服务');
+      expect(root.children).toHaveLength(1);
+      expect(root.children[0].textContent).toBe('服务尚未创建');
     });
 
     it('keeps waiting progress aligned with elapsed and remaining time when ETA exists', () => {
@@ -379,10 +423,10 @@ describe('ProxyService', () => {
       const match = htmlWritten.body.match(/data-role="progress-percent">([0-9.]+)%/);
       expect(match).not.toBeNull();
       expect(Number(match![1])).toBeGreaterThan(50);
-      // 等待页前景必须携带宝石六芒(组装-碎裂叙事,系统核心叙事,2026-07-22 定稿):
-      // 重启态矿色 = 银河 galaxy(状态设定 v2:starting/restarting → deploy)
-      expect(htmlWritten.body).toContain('cds-gem-story');
-      expect(htmlWritten.body).toContain('#22d3ee');
+      // 等待页保留品牌几何，使用常亮黑白切面及流动边光。
+      expect(htmlWritten.body).toContain('cds-waiting-gem');
+      expect(htmlWritten.body).toContain('cds-waiting-edge 3.6s');
+      expect(htmlWritten.body).not.toContain('fill="#22d3ee"');
     });
 
     it('hot restart with restart history uses elapsed/median as the real progress source', () => {

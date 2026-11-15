@@ -54,14 +54,17 @@ describe('主题水波纹 · JS 侧', () => {
     const classes = new Set<string>();
     let readyResolve: () => void = () => {};
     const ready = new Promise<void>((resolve) => { readyResolve = resolve; });
+    let finishedResolve: () => void = () => {};
+    const finished = new Promise<void>((resolve) => { finishedResolve = resolve; });
+    const start = vi.fn((cb: () => void) => { cb(); return { ready, finished }; });
     const doc = {
       documentElement: {
         style: { setProperty: (k: string, v: string) => props.set(k, v) },
-        classList: { add: (c: string) => classes.add(c), remove: (c: string) => classes.delete(c) },
+        classList: { add: (c: string) => classes.add(c), remove: (c: string) => classes.delete(c), contains: (c: string) => classes.has(c) },
         dataset: {} as Record<string, string>,
       },
       startViewTransition: withViewTransition
-        ? (cb: () => void) => { cb(); return { ready }; }
+        ? start
         : undefined,
     };
     vi.stubGlobal('document', doc);
@@ -70,7 +73,8 @@ describe('主题水波纹 · JS 侧', () => {
       innerHeight: 800,
       matchMedia: () => ({ matches: reducedMotion, addEventListener() {}, removeEventListener() {} }),
     });
-    return { props, classes, flushReady: () => { readyResolve(); return ready; } };
+    return { props, classes, start, flushReady: () => { readyResolve(); return ready; },
+      flushFinished: async () => { finishedResolve(); await finished; await Promise.resolve(); await Promise.resolve(); } };
   }
 
   it('走 startViewTransition，并把波纹原点与半径写进 CSS 变量', async () => {
@@ -105,6 +109,19 @@ describe('主题水波纹 · JS 侧', () => {
     await dom.flushReady();
     await Promise.resolve();
     expect(dom.classes.has('vt-snapshotting')).toBe(false);
+    expect(dom.classes.has('cds-theme-motion')).toBe(true);
+    await dom.flushFinished();
+    expect(dom.classes.has('cds-theme-motion')).toBe(false);
+  });
+
+  it('页面镜头进行时立即应用主题，不争抢已在运行的快照', async () => {
+    const dom = stubDom(true); dom.classes.add('cds-surface-motion');
+    const { runThemeTransition } = await import('../../web/src/lib/theme');
+    const apply = vi.fn(); runThemeTransition(null, apply);
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(dom.start).not.toHaveBeenCalled();
+    expect(dom.classes.has('cds-theme-motion')).toBe(false);
+    expect(dom.classes.has('cds-surface-motion')).toBe(true);
   });
 
   it('浏览器不支持 View Transition 时降级为瞬时切换，不抛错', async () => {

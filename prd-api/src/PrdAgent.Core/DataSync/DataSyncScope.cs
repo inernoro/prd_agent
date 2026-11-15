@@ -206,7 +206,7 @@ public static class DataSyncScope
             new DataSyncCollection("document_store_favorites", System.Array.Empty<string>()),
             new DataSyncCollection("document_store_likes", System.Array.Empty<string>()),
             new DataSyncCollection("document_store_sync_links", new[] { "RemoteToken" }),
-            new DataSyncCollection("document_stores", new[] { "SyncToken" }),
+            new DataSyncCollection("document_stores", new[] { "SyncToken", "TrashLeaseToken", "TrashLeaseUntil" }),
             new DataSyncCollection("documents", System.Array.Empty<string>()),
             new DataSyncCollection("knowledge_base_drafts", System.Array.Empty<string>()),
             new DataSyncCollection("prdcomments", System.Array.Empty<string>()),

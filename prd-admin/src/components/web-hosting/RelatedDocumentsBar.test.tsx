@@ -71,13 +71,14 @@ describe('顶部关联文档', () => {
   });
   it('单个合集直接展示文档和原链接，多条分享不会增加合集选择栏', async () => {
     const context = makeContext('one', 3);
+    vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, items: [data.items[0]] }, error: null });
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     vi.mocked(getCollectionContextLinks).mockResolvedValue({ success: true, data: { items: [context.primaryLink!], total: 3, page: 1, pageSize: 20 }, error: null });
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
     expect(document.querySelector('[data-collection-layout="single"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="所属合集"]')).toBeNull();
     expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', 'collection:one');
-    expect(getRelatedDocuments).not.toHaveBeenCalled();
+    expect(getRelatedDocuments).toHaveBeenCalledWith('a');
     const footer = document.querySelector<HTMLElement>('[aria-label="合集链接操作"]')!;
     expect(footer).toBe(document.querySelector('.collection-context-panel')?.lastElementChild);
     expect(footer.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
@@ -110,14 +111,26 @@ describe('顶部关联文档', () => {
     expect(document.querySelector('[data-collection-layout="split"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="所属合集"] a')).toBeNull();
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
-    await act(async () => document.querySelectorAll<HTMLButtonElement>('.collection-context-select')[1].click());
+    await clickText('合集 two');
     expect(getCollectionContextDocuments).toHaveBeenLastCalledWith('a', 'collection:two');
     expect(document.querySelector('.related-document-card')?.textContent).toContain('collection:two');
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/two');
     expect(document.querySelector('[aria-label="合集链接操作"] a')?.getAttribute('href')).toBe(window.location.origin + '/s/wp/two');
-    await act(async () => document.querySelectorAll<HTMLButtonElement>('.collection-context-select')[2].click());
+    await clickText('合集 unshared');
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe('');
     expect([...document.querySelectorAll<HTMLButtonElement>('.collection-context-link-actions button')].every(button => button.disabled)).toBe(true);
+    expect(saveRelatedDocuments).not.toHaveBeenCalled();
+  });
+  it('手动关联和合集同时存在时都能独立读取，手动关系仍保留管理入口', async () => {
+    const context = makeContext('one', 1);
+    vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', 'collection:one');
+    await clickText('关联文档');
+    expect(document.querySelector('.related-document-card')?.textContent).toContain('总体方案');
+    expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe('');
+    await clickText('管理关联');
+    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('管理关联文档');
     expect(saveRelatedDocuments).not.toHaveBeenCalled();
   });
   it('底部切换同一合集的其他原链接，失效链接可复制但不能打开', async () => {
@@ -142,7 +155,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getCollectionContextLinks).mockReturnValue(new Promise(done => { resolve = done; }));
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
     await clickText('查看全部 2 条链接');
-    await act(async () => document.querySelectorAll<HTMLButtonElement>('.collection-context-select')[1].click());
+    await clickText('合集 two');
     await act(async () => resolve({ success: true, data: { items: [contexts[0].primaryLink!], total: 1, page: 1, pageSize: 20 }, error: null }));
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/two');
     expect(document.querySelector('.collection-context-link-options')).toBeNull();
@@ -181,7 +194,7 @@ describe('顶部关联文档', () => {
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'matched'); input.dispatchEvent(new Event('input', { bubbles: true })); });
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
     expect(getCollectionContexts).toHaveBeenLastCalledWith('a', 1, 'matched');
-    expect(document.querySelectorAll('.collection-context-select')).toHaveLength(1);
+    expect(document.querySelectorAll('.collection-context-select')).toHaveLength(2);
     expect(document.querySelector('[aria-label="所属合集"]')).not.toBeNull();
     await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="清除合集搜索"]')!.click());
     expect(getCollectionContexts).toHaveBeenLastCalledWith('a', 1, '');

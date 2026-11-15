@@ -1,4 +1,7 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { loadDocumentEntries } from '@/services/real/documentStore';
+import { recordDocumentEntryChanges, reconcileDocumentEntries } from '@/services/real/documentEntryPages';
+import { WritingPublicationActions } from './writing/WritingPublicationActions';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type RefObject, type SetStateAction } from 'react';
 import {
   Library,
   Orbit,
@@ -66,7 +69,9 @@ import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
 import { StoreSyncBadge, SyncManagerPanel } from './SyncManagerPanel';
+import { DocumentTrashButton } from './DocumentTrashButton';
 import { RecentEntriesList } from './RecentEntriesList';
+import { KnowledgeIndexStatus } from './KnowledgeIndexStatus';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { GitHubSyncWizard } from './GitHubSyncWizard';
@@ -109,7 +114,6 @@ import {
 } from './documentUploadProgress';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence, motion } from 'motion/react';
-import CountUp from '@/components/reactbits/CountUp';
 import { StoreSizeBadge } from './StoreSizeBadge';
 import {
   listDocumentStoresWithPreview,
@@ -134,7 +138,6 @@ import {
   getEntryVersion,
   restoreEntryVersion,
   setFolderPrimaryChild,
-  rebuildContentIndex,
   addDocumentEntry,
   updateDocumentEntry,
   updateDocumentStore,
@@ -181,7 +184,7 @@ import type {
   DocumentStoreAccountSummary,
   TutorialLinkGraphSnapshot,
 } from '@/services/contracts/documentStore';
-import type { DocBrowserEntry, EntryPreview, DocBrowserSortMode } from '@/components/doc-browser/DocBrowser';
+import type { EntryPreview, DocBrowserSortMode } from '@/components/doc-browser/DocBrowser';
 import { resolveDocBrowserSortMode } from '@/components/doc-browser/docBrowserSort';
 import { ACCEPTANCE_TEMPLATE_KEY } from '@/lib/acceptanceVerdictRegistry';
 import { toast } from '@/lib/toast';
@@ -1062,14 +1065,28 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const readerImmersive = useReaderChromeStore((s) => !!s.override);
   const canManageTutorialGraph = useAuthStore(state => state.isRoot || state.user?.role === 'ADMIN');
   const currentUserId = useAuthStore(state => state.user?.userId ?? null);
+  const hasWritingPermission = useAuthStore(state => state.isRoot || state.permissions.includes('super') || state.permissions.includes('document-store.write'));
+  const [canWriteEntries, setCanWriteEntries] = useState(false);
   const [store, setStore] = useState<DocumentStore | null>(null);
-  const [entries, setEntries] = useState<DocumentEntry[]>([]);
+  const [storeLoadError, setStoreLoadError] = useState('');
+  const [entriesLoadError, setEntriesLoadError] = useState('');
+  const [entries, setEntriesState] = useState<DocumentEntry[]>([]);
+  const entryChangesRef = useRef<Map<string, DocumentEntry | null> | null>(null);
+  const setEntries = useCallback((update: SetStateAction<DocumentEntry[]>) => {
+    const changes = entryChangesRef.current;
+    setEntriesState(previous => {
+      const next = typeof update === 'function' ? update(previous) : update;
+      if (changes) recordDocumentEntryChanges(changes, previous, next);
+      return next;
+    });
+  }, []);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
   /** 已被「单篇分享」的文档 id 集合（文件树标黄用） */
   const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(initialEntryId);
+  const [knowledgeIndexCheck, setKnowledgeIndexCheck] = useState<{ entryId: string; version: number }>();
   const [tutorialGraph, setTutorialGraph] = useState<TutorialLinkGraphSnapshot | null>(null);
   const [showTutorialGraph, setShowTutorialGraph] = useState(false);
   const isTutorialGraphStore = tutorialGraph?.exists === true;
@@ -1079,9 +1096,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   })), [entries]);
   // 当前正在阅读的那一篇（目录不算）。分享与下载都以它作为「当前文章」范围的锚点，
   // 免得用户读着一篇却只能对整库操作。
-  // entries 只是首页 200 条：大库里「后端搜索命中」的条目不在其中，只能靠 DocBrowser 回传的
+  // entries 增量加载期间，后端搜索命中的条目可能尚不在其中，只能靠 DocBrowser 回传的
   // 解析结果兜底，否则读着搜索结果点分享会静默回落到整库范围（Codex P1）。
-  const [browserSelectedEntry, setBrowserSelectedEntry] = useState<{ id: string; title: string; isFolder?: boolean } | undefined>();
+  const [browserSelectedEntry, setBrowserSelectedEntry] = useState<{ id: string; title: string; isFolder?: boolean; hasWritingPublication?: boolean; metadata?: Record<string, string> } | undefined>();
   const selectedDocEntry = useMemo(() => {
     const local = entries.find(e => e.id === selectedEntryId && !e.isFolder);
     if (local) return local;
@@ -1442,18 +1459,65 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   // 加载空间详情和条目
   const loadStore = useCallback(async () => {
+    setStoreLoadError('');
     const res = await getDocumentStore(storeId);
     if (res.success) setStore(res.data);
+    else setStoreLoadError(res.error?.message || '知识库加载失败，请稍后重试');
   }, [storeId]);
 
-  const loadEntries = useCallback(async () => {
-    setLoading(true);
-    const res = await listDocumentEntries(storeId, 1, 200);
-    if (res.success) {
-      setEntries(res.data.items);
-      setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
+  const entriesRequestRef = useRef<Promise<void> | null>(null);
+  const entriesReloadRequestedRef = useRef(false);
+  const [entriesLoadingMore, setEntriesLoadingMore] = useState(false);
+  const loadEntries = useCallback(() => {
+    if (entriesRequestRef.current) {
+      entriesReloadRequestedRef.current = true;
+      return entriesRequestRef.current;
     }
-    setLoading(false);
+    setLoading(true);
+    setEntriesLoadError('');
+    setCanWriteEntries(false);
+    const request = (async () => {
+      try {
+        do {
+          entriesReloadRequestedRef.current = false;
+          const changes = new Map<string, DocumentEntry | null>();
+          entryChangesRef.current = changes;
+          const res = await loadDocumentEntries(storeId, undefined, false, page => {
+            setEntriesState(() => reconcileDocumentEntries(page.items, changes));
+            setCanWriteEntries(page.canWrite === true);
+            setSharedEntryIds(new Set(page.sharedEntryIds ?? []));
+            setLoading(false);
+            setEntriesLoadingMore(!!page.nextCursor);
+          });
+          if (res.success) {
+            setEntriesState(() => reconcileDocumentEntries(res.data.items, changes));
+            setCanWriteEntries(res.data.canWrite === true);
+            setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
+          } else {
+            setEntriesLoadError(res.error?.message || '文档列表尚未加载完整，请重试');
+            setCanWriteEntries(false);
+            if (['UNAUTHORIZED', 'PERMISSION_DENIED', 'NOT_FOUND'].includes(res.error.code)) {
+              setEntriesState([]);
+              setSelectedEntryId(undefined);
+              setSharedEntryIds(new Set());
+            }
+            break;
+          }
+          // 删除、恢复等回调要求重新读库；不能把它们合并成正在完成的旧快照。
+        } while (entriesReloadRequestedRef.current);
+      } catch {
+        setEntriesLoadError('文档列表尚未加载完整，请重试');
+        setCanWriteEntries(false);
+      }
+      finally {
+        setLoading(false);
+        setEntriesLoadingMore(false);
+        entriesRequestRef.current = null;
+        entryChangesRef.current = null;
+      }
+    })();
+    entriesRequestRef.current = request;
+    return request;
   }, [storeId]);
 
   const pendingRecordingArchiveSignature = useMemo(
@@ -1469,11 +1533,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   const applyPolledEntries = useCallback((nextEntries: DocumentEntry[]) => {
     setEntries(previous => {
-      if (previous.length !== nextEntries.length) return nextEntries;
-      const unchanged = previous.every((entry, index) => {
-        const next = nextEntries[index];
-        return entry.id === next?.id
-          && entry.updatedAt === next.updatedAt
+      const byId = new Map(previous.map(entry => [entry.id, entry]));
+      const unchanged = nextEntries.every(next => {
+        const entry = byId.get(next.id);
+        return !!entry && entry.updatedAt === next.updatedAt
           && entry.title === next.title
           // 同步状态也要比：GitHub 目录同步时条目数可能不变、只有状态从 syncing 翻成 idle/error，
           // 漏掉这两个字段轮询就白跑（拉回来了却判「没变化」不应用）
@@ -1483,9 +1546,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           && entry.metadata?.audioArchiveNeedsRetry === next.metadata?.audioArchiveNeedsRetry
           && entry.metadata?.liveTranscript === next.metadata?.liveTranscript;
       });
-      return unchanged ? previous : nextEntries;
+      // 录音状态轮询只取一页，不能把未出现在这一页的目录条目视为删除。
+      return unchanged ? previous : reconcileDocumentEntries(previous, new Map(nextEntries.map(entry => [entry.id, entry])));
     });
-  }, []);
+  }, [setEntries]);
 
   // 待归档录音不能只留一张静态“后台处理中”卡片。只要本库仍有 pending 录音，
   // 就静默刷新条目；归档完成后 updatedAt 改变会驱动 DocBrowser 重拉正式音频，
@@ -1633,7 +1697,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       });
     })();
     return () => { alive = false; };
-  }, [canManageTutorialGraph, isTutorialGraphStore, storeId]);
+  }, [canManageTutorialGraph, isTutorialGraphStore, setEntries, storeId]);
 
   useEffect(() => {
     if (!canManageTutorialGraph || !isTutorialGraphStore || new URLSearchParams(location.search).get('tutorialLinks') !== '1') return;
@@ -1879,7 +1943,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       if (firstUploadedId) setSelectedEntryId(firstUploadedId);
     }
     setUploading(false);
-  }, [storeId]);
+  }, [setEntries, storeId]);
 
   // 替换文件：右键菜单触发 → 打开文件选择器，记录目标 entryId
   const handleReplaceFile = useCallback((entryId: string) => {
@@ -1903,7 +1967,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       toast.error('替换失败', res.error?.message);
     }
     setUploading(false);
-  }, []);
+  }, [setEntries]);
 
   // 仅响应外部文件拖入（排除内部条目拖拽，避免误触发上传遮罩）
   const isFileDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('Files');
@@ -1959,7 +2023,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         toast.success('已设为主文档');
       }
     }
-  }, [storeId, entries]);
+  }, [entries, setEntries, storeId]);
 
   const handleTogglePin = useCallback(async (entryId: string, pin: boolean) => {
     const res = await togglePinnedEntry(storeId, entryId, pin);
@@ -1972,13 +2036,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const handleDeleteEntry = useCallback(async (entryId: string) => {
     const res = await deleteDocumentEntry(entryId);
     if (res.success) {
-      setEntries(prev => prev.filter(e => e.id !== entryId));
-      if (selectedEntryId === entryId) setSelectedEntryId(undefined);
-      toast.success('已删除');
+      await loadEntries();
+      setSelectedEntryId(undefined);
+      toast.success('已移入回收站', '30 天内可在回收站恢复');
     } else {
       toast.error('删除失败', res.error?.message);
     }
-  }, [selectedEntryId]);
+  }, [loadEntries]);
 
   const handleUpdateEntryTags = useCallback(async (entryId: string, tags: string[]) => {
     const res = await updateDocumentEntry(entryId, { tags });
@@ -1989,7 +2053,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     }
     toast.error('标签更新失败', res.error?.message);
     throw new Error(res.error?.message ?? '标签更新失败');
-  }, []);
+  }, [setEntries]);
 
   const handleRenameEntry = useCallback(async (entryId: string, newTitle: string) => {
     const res = await updateDocumentEntry(entryId, { title: newTitle });
@@ -2002,7 +2066,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     }
     toast.error('重命名失败', res.error?.message);
     throw new Error(res.error?.message ?? '重命名失败');
-  }, []);
+  }, [setEntries]);
 
   const handleMoveEntry = useCallback(async (entryId: string, targetFolderId: string | null) => {
     const res = await moveDocumentEntry(entryId, targetFolderId);
@@ -2013,7 +2077,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     } else {
       toast.error('移动失败', res.error?.message);
     }
-  }, []);
+  }, [setEntries]);
 
   // 拖拽自定义排序：乐观更新本地 SortOrder（行立即移动到新位置，变化可感知），
   // 逐条 PUT 落库（后端纯排序写入不 bump UpdatedAt，不会误点亮 NEW / 打乱「最近更新」）。
@@ -2029,7 +2093,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       toast.error('保存自定义顺序失败', '已恢复为服务器上的顺序');
       void loadEntries();
     }
-  }, [loadEntries]);
+  }, [loadEntries, setEntries]);
 
   const handleSaveContent = useCallback(async (entryId: string, newContent: string) => {
     const res = await updateDocumentContent(entryId, newContent);
@@ -2044,14 +2108,20 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           updatedBy: res.data.updatedBy ?? e.updatedBy,
           updatedByName: res.data.updatedByName ?? e.updatedByName,
         } : e));
-      toast.success('已保存');
+      // 搜索命中的条目可能不在 entries 的第一页；保存后同样重新观察服务端索引状态。
+      setKnowledgeIndexCheck(previous => ({ entryId, version: previous?.entryId === entryId ? previous.version + 1 : 1 }));
+      if (res.data.knowledgeIndex?.status === 'failed') {
+        toast.error('正文已保存，问答索引刷新未确认', res.data.knowledgeIndex.displayMessage);
+      } else {
+        toast.success('已保存');
+      }
       // 返回服务端最新 updatedAt：DocBrowser 用它推进 loadedContentKey，短路掉保存后的内容重拉
       return { updatedAt: res.data.updatedAt };
     } else {
       toast.error('保存失败', res.error?.message);
       throw new Error(res.error?.message ?? '保存失败');
     }
-  }, []);
+  }, [setEntries]);
 
   // 版本控制接口：透传给 DocBrowser → VersionHistoryModal
   const versionApi = useMemo(() => ({
@@ -2091,7 +2161,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     } else {
       toast.error('创建失败', res.error?.message);
     }
-  }, [storeId]);
+  }, [setEntries, storeId]);
 
   const handleCreateDocument = useCallback(async () => {
     // 直接创建一个空白文档，后续支持在 Edit 模式中填充
@@ -2110,7 +2180,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     } else {
       toast.error('创建失败', res.error?.message);
     }
-  }, [storeId]);
+  }, [setEntries, storeId]);
 
   const handleOpenVideoParser = useCallback(() => {
     setReprocessTarget({
@@ -2131,14 +2201,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     else if (initialAction.action === 'video') handleOpenVideoParser();
   }, [initialAction, store, loading, handleCreateDocument, handleOpenVideoParser, onInitialActionConsumed]);
 
-  const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
-    // 启用内容搜索时，先触发一次 ContentIndex 回填（后端对已有 ContentIndex 的条目会跳过）
-    if (contentSearch) {
-      await rebuildContentIndex(storeId);
-    }
-    const res = await searchDocumentEntries(storeId, keyword, contentSearch);
-    if (res.success) return res.data.items;
-    return null;
+  const handleSearch = useCallback(async (keyword: string, contentSearch: boolean, cursor?: string) => {
+    const res = await searchDocumentEntries(storeId, keyword, contentSearch, cursor);
+    if (res.success) return res.data;
+    throw new Error(res.error?.message ?? '搜索失败，请重试');
   }, [storeId]);
 
   // 切换发布到智识殿堂
@@ -2272,10 +2338,19 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     }
   }, [store, storeId, selectedDocEntry]);
 
-  if (!store) {
+  if (!store || (entriesLoadError && entries.length === 0)) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 160px)' }}>
-        <MapSpinner size={16} />
+        {storeLoadError || entriesLoadError ? <div role="alert" className="flex flex-col items-center gap-3 px-5 text-center">
+          <AlertCircle size={24} style={{ color: 'var(--text-muted)' }} />
+          {store && <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>{store.name}</p>}
+          <p style={{ color: 'var(--text-primary)' }}>知识库暂时无法加载</p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{storeLoadError || entriesLoadError}</p>
+          <div className="flex items-center gap-2">
+            <Button variant="primary" onClick={() => { void loadStore(); void loadEntries(); }}>重试</Button>
+            <Button onClick={onBack}>返回知识库</Button>
+          </div>
+        </div> : <MapSpinner size={16} />}
       </div>
     );
   }
@@ -2338,18 +2413,18 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       <TabBar
         title={
           <div className="flex items-center gap-2">
-            <button onClick={onBack}
+            <button onClick={onBack} aria-label="返回知识库列表"
               className="hover-bg-soft cursor-pointer rounded-[8px] px-2 py-1 text-[12px] text-token-muted transition-colors duration-200">
               <ArrowLeft size={14} />
             </button>
             {!isMobile && <Library size={14} className="text-token-muted" />}
             <span className="text-[13px] font-semibold text-token-primary">{store.name}</span>
             <span className="text-[11px] text-token-muted tabular-nums">
-              <CountUp to={entries.filter(e => e.sourceType !== 'github_directory').length} from={0} duration={0.8} /> 个文档
+              {entries.filter(e => !e.isFolder && e.sourceType !== 'github_directory').length} 个文档
             </span>
             {/* refreshKey 含各 entry 的 updatedAt：编辑/恢复/替换会 bump updatedAt 但条目数不变，
                 只用 length 会让大小数字停留在旧值；带上 updatedAt 串内容变化即刷新（Codex P2）。 */}
-            {!isMobile && <StoreSizeBadge storeId={store.id} refreshKey={`${entries.length}:${entries.map(e => e.updatedAt ?? '').join('|')}`} />}
+            {!isMobile && !entriesLoadingMore && <StoreSizeBadge storeId={store.id} refreshKey={`${entries.length}:${entries.map(e => e.updatedAt ?? '').join('|')}`} />}
           </div>
         }
         actions={
@@ -2391,6 +2466,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 <Share2 size={13} /> 分享
               </Button>
             </span>
+            <WritingPublicationActions storeId={storeId} entryId={selectedDocEntry?.id} hasPublication={selectedDocEntry?.hasWritingPublication} className="surface-action inline-flex h-7 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold text-token-primary" />
+            {canWriteEntries && hasWritingPermission && <Button variant="secondary" size="xs" onClick={() => navigate(`/document-store/${storeId}/write${entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? `/${selectedDocEntry?.id}` : ''}`)}><FilePlus size={13} />{entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? '继续成文' : '按模版成文'}</Button>}
             {selectedDocEntry && (
               <Button
                 variant="primary"
@@ -2554,6 +2631,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 }
               `}</style>
             </button>}
+            <DocumentTrashButton storeId={storeId} onRestored={async () => { await loadEntries(); await loadStore(); }} />
             {/* 更多：收纳低频管理动作（发布 / 关系图谱 / 统计 / 订阅），折叠屏只占一个位 */}
             <div className="relative" ref={moreRef}>
               <Button variant="secondary" size="xs" onClick={toggleMore} title="更多操作">
@@ -2596,6 +2674,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       {/* 左右分栏文档浏览器 —— 与上方 TabBar 左右边缘对齐（不再额外 px-5 内缩，
           消除左上角空白竖条）；仅留 pt-3 作为与标题栏的视觉间距 */}
       <div className="flex-1 min-h-0 flex flex-col pt-3">
+        <KnowledgeIndexStatus
+          entryId={selectedDocEntry?.id}
+          revision={`${entries.find(entry => entry.id === selectedDocEntry?.id)?.updatedAt ?? ''}:${knowledgeIndexCheck?.entryId === selectedDocEntry?.id ? knowledgeIndexCheck?.version : ''}`}
+        />
         {backgroundTranscriptionBanner && !transcribeFlow && (
           <div
             role="status"
@@ -2613,6 +2695,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             </div>
           </div>
         )}
+        {(entriesLoadingMore || entriesLoadError) && <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-token-muted" role="status">
+          {entriesLoadingMore ? <><MapSpinner size={12} /> 已加载 {entries.length} 条，正在补齐目录…</> : <>
+            文档列表尚未加载完整
+            <button type="button" className="underline" onClick={() => void loadEntries()}>重新加载</button>
+          </>}
+        </div>}
         <DocBrowser
           entries={entries}
           immersiveOnMobile
@@ -2624,8 +2712,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-faint)' }}
                 title={store.name}
               >
-                {store.name} · {entries.filter(e => e.sourceType !== 'github_directory').length} 个文档
+                {store.name} · {entries.filter(e => !e.isFolder && e.sourceType !== 'github_directory').length} 个文档
               </div>
+              <WritingPublicationActions storeId={storeId} entryId={selectedDocEntry?.id} hasPublication={selectedDocEntry?.hasWritingPublication} className="hover-bg-soft flex w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary" />
+              {canWriteEntries && hasWritingPermission && selectedDocEntry && <button type="button" onClick={() => navigate(`/document-store/${storeId}/write${entries.find(e => e.id === selectedDocEntry.id)?.metadata?.['writing_template'] ? `/${selectedDocEntry.id}` : ''}`)} className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary"><FilePlus size={13} />{entries.find(e => e.id === selectedDocEntry.id)?.metadata?.['writing_template'] ? '继续成文' : '按模版成文'}</button>}
               <button
                 type="button"
                 onClick={() => setShowShareDialog(true)}
@@ -2707,6 +2797,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
           onCreateDocument={handleCreateDocument}
+          onCreateWriting={() => navigate(`/document-store/${storeId}/write`)}
           onUploadFile={() => fileInputRef.current?.click()}
           onOpenVideoParser={handleOpenVideoParser}
           onSearch={handleSearch}
@@ -2814,6 +2905,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             <div className="flex-1 flex items-center justify-center">
               <DocEmptyState
                 onCreateDocument={handleCreateDocument}
+          onCreateWriting={() => navigate(`/document-store/${storeId}/write`)}
                 onUploadFile={() => fileInputRef.current?.click()}
                 onAddSubscription={() => setShowSubscribe(true)}
               />
@@ -3783,16 +3875,16 @@ export function DocumentStorePage() {
     const entryCount = s.documentCount ?? 0;
     const confirmed = await systemDialog.confirm({
       title: '确认删除知识库',
-      message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
+      message: `将「${s.name}」及 ${entryCount} 个条目移入回收站。正文、附件和历史记录保留，创建者可在 30 天内恢复。`,
       tone: 'danger',
-      confirmText: '永久删除',
+      confirmText: '移入回收站',
       cancelText: '取消',
     });
     if (!confirmed) return;
     const res = await deleteDocumentStore(s.id);
     if (res.success) {
       setStores(prev => prev.filter(x => x.id !== s.id));
-      toast.success('知识库已删除', '关联数据已全部清理');
+      toast.success('已移入回收站', '创建者可在 30 天内恢复');
     } else {
       toast.error('删除失败', res.error?.message);
     }
@@ -4260,6 +4352,7 @@ export function DocumentStorePage() {
               hideScopeToggle
             />
           )}
+          <DocumentTrashButton onRestored={() => loadStores(tab === 'team' ? 'team' : 'mine', teamScope.teamId)} />
           {/* 统计概览 */}
           {/* 功能区：库数 / 文章数（左侧） */}
           <span data-tour-id="library-stats" className={isMobile ? 'hidden' : 'text-[12px] tabular-nums whitespace-nowrap flex-none'} style={{ color: 'var(--text-muted)' }}>

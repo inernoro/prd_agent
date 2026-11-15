@@ -23,7 +23,7 @@ describe('BranchListPage preview contract', () => {
   });
 
   it('keeps preview visually primary and quick start visually secondary', () => {
-    expect(source).toContain("className={isAiOperated ? '' : 'w-32'}");
+    expect(source).toContain("className={isAiOperated ? '' : 'min-w-0'}");
     expect(source).toContain("previewLabel={isAiOperated ? undefined : '预览'}");
     expect(source).toContain('className="cursor-pointer border-[hsl(var(--hairline-strong))] bg-transparent text-muted-foreground shadow-none hover:bg-muted/40 hover:text-foreground"');
   });

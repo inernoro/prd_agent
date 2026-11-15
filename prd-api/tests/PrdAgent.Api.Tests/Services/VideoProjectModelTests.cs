@@ -40,8 +40,27 @@ public class VideoProjectModelTests
         var task = new VideoExportTask { ProjectId = "project", RunId = "run" };
 
         task.Id.Length.ShouldBe(32);
-        task.Status.ShouldBe(VideoExportTaskStatus.Queued);
+        task.PublicStatus.ShouldBe(VideoExportTaskStatus.Queued);
+        task.Status.ShouldBe(VideoExportTaskStatus.ScopedQueued);
+        foreach (object parent in new object[] { new VideoGenRun { ExportHolderLeaseId = "private-run-holder" },
+            new VideoProject { ExportHolderLeaseId = "private-project-holder" } })
+        {
+            using var parentJson = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(parent));
+            parentJson.RootElement.TryGetProperty("ExportHolderLeaseId",out _).ShouldBeFalse();
+        }
         task.CurrentPhase.ShouldBe("queued");
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ExportQueueProtocol_MustKeepPublicQueuedAndHideInternalLease()
+    {
+        var task = new VideoExportTask { WorkerLeaseId = "private-holder",WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(2) };
+        using var json = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(task));
+        json.RootElement.GetProperty("status").GetString().ShouldBe(VideoExportTaskStatus.Queued);
+        json.RootElement.TryGetProperty("WorkerLeaseId",out _).ShouldBeFalse();
+        json.RootElement.TryGetProperty("WorkerLeaseExpiresAt",out _).ShouldBeFalse();
+        task.Status.ShouldBe(VideoExportTaskStatus.ScopedQueued);
     }
 
     [Fact]

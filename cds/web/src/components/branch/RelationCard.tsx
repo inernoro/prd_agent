@@ -1,3 +1,4 @@
+import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 /*
  * RelationCard — 分支总览页的「关系」卡 + 展开视图（plan.cds.service-relations 第四 / 五批）。
  *
@@ -9,7 +10,7 @@
  * 「入口」一枚节点——文案说 2 个服务挂在壳下面，图里一个都没有。
  */
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
+
 import { Expand, Maximize2, Wrench, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';

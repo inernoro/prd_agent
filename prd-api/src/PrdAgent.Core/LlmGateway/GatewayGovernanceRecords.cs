@@ -181,6 +181,10 @@ public sealed class GatewayRuntimeBudgetScopeRecord
     public List<string> AllowedAppCallerCodes { get; set; } = new();
     public string? PriceVersion { get; set; }
     public string? PriceProtocol { get; set; }
+    /// <summary>仅模型升级canary可用的单次保守价格合同；不可被普通媒体请求借用。</summary>
+    /// <summary>独立候选验收预占上界，既不是供应商按次报价，也不是供应商硬费用上限。</summary>
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? CanaryUnitCostUpperBoundUsd { get; set; }
+    public string? ExpectedOfferingId { get; set; }
     [BsonRepresentation(BsonType.Decimal128)] public decimal? CachedInputUsdPerMillion { get; set; }
     [BsonRepresentation(BsonType.Decimal128)] public decimal? CacheWriteUsdPerMillion { get; set; }
     public string RootOutlineRunId { get; set; } = string.Empty;
@@ -248,6 +252,8 @@ public sealed class GatewayRuntimeBudgetReservationRecord
     public string PricingTier { get; set; } = "standard";
     public string? PriceVersion { get; set; }
     public string? PriceProtocol { get; set; }
+    /// <summary>独立候选验收预占上界，既不是供应商按次报价，也不是供应商硬费用上限。</summary>
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? CanaryUnitCostUpperBoundUsd { get; set; }
     [BsonRepresentation(BsonType.Decimal128)] public decimal? CachedInputUsdPerMillion { get; set; }
     [BsonRepresentation(BsonType.Decimal128)] public decimal? CacheWriteUsdPerMillion { get; set; }
     [BsonRepresentation(BsonType.Decimal128)] public decimal InputUsdPerMillion { get; set; }

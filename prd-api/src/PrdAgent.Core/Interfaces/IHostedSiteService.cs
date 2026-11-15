@@ -277,6 +277,10 @@ public interface IHostedSiteService
         bool allocateShortLink = false,
         List<string>? askSuggestedQuestions = null);
 
+    Task<WebPageShareLink> CreateCollectionShareAsync(string userId, string displayName,
+        HostedCollectionSnapshot snapshot, string? title, string? description, string? password,
+        int expiresInDays, string visibility, CancellationToken ct = default);
+
     /// <summary>
     /// 与 <see cref="CreateShareAsync"/> 同一条路径，另外告诉调用方这次**有没有真的写下什么**。
     /// 只有「复用了既有链接且一个字段都没动」才为 true —— 复用路径会刷新有效期并追一条续期审计，
@@ -447,6 +451,8 @@ public interface IHostedSiteService
     /// 与 ListCommentsByShareAsync 同一套判定源。siteId 为空取分享首站点；指定时必须属于该分享。
     /// 供预览页取回站点入口 HTML 用（浏览器直接 fetch 托管域名会被 CORS 拦掉，必须走服务端同源代理）。
     /// </summary>
+    Task<ShareSiteResolveResult> ResolveCollectionShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default);
+
     Task<ShareSiteResolveResult> ResolveShareSiteAsync(
         string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default);
 }

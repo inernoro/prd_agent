@@ -43,6 +43,16 @@ it('获取失败时关闭等待窗口并提示，不退回资产列表或 COS', 
   });
 });
 
+it('无分享权限的团队只读成员继续使用鉴权阅读入口，不关闭窗口或放宽权限', async () => {
+  vi.mocked(createShareLink).mockResolvedValue({ success: false, data: null, error: { code: 'PERMISSION_DENIED', message: '无分享权限' } } as never);
+  await withOpener(async (click, tab) => {
+    await click();
+    expect(tab.location.replace).toHaveBeenCalledWith('/web-pages?openSite=document-id');
+    expect(tab.close).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+});
+
 it('弹窗被拦截时不创建访问链，网络错误不向用户泄露技术异常', async () => {
   await withOpener(async (click, tab) => {
     vi.mocked(window.open).mockReturnValueOnce(null);

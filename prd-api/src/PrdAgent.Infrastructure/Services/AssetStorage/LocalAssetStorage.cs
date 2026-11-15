@@ -32,7 +32,8 @@ public class LocalAssetStorage : IAssetStorage
         Directory.CreateDirectory(dir);
         var filePath = Path.Combine(dir, $"{sha}.{ext}");
 
-        if (!File.Exists(filePath))
+        var existed = File.Exists(filePath);
+        if (!existed)
         {
             await File.WriteAllBytesAsync(filePath, bytes, ct);
         }
@@ -42,7 +43,7 @@ public class LocalAssetStorage : IAssetStorage
         // 其他 domain/type 会保存成功但读取 404。
         var url = BuildUrlForPath(filePath);
         var key = Path.GetRelativePath(_baseDir, filePath).Replace(Path.DirectorySeparatorChar, '/');
-        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key);
+        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key) { CreatedNew = !existed };
     }
 
     public string? TryBuildContentAddressedKey(
@@ -215,6 +216,17 @@ public class LocalAssetStorage : IAssetStorage
         }
 
         return BuildUrlForPath(Path.Combine(dir, $"{sha}.{ext}"));
+    }
+
+    public Task<AssetReadHandle?> TryOpenReadByKeyAsync(string key, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var filePath = ResolveKeyPath(key);
+        if (!File.Exists(filePath)) return Task.FromResult<AssetReadHandle?>(null);
+        var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        return Task.FromResult<AssetReadHandle?>(new AssetReadHandle(stream,
+            ExtToMime(Path.GetExtension(filePath).TrimStart('.')), stream.Length));
     }
 
     public async Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)

@@ -212,6 +212,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['topology', '服务关系图、拓扑体检与引用切换', 'topology.ts', 'project', 'project', 'write', 'direct', 'cds', 'verify / topology', '体检与读图只读；切换引用（PUT references）会写该服务的分支覆盖并要求重新部署，所以整组按写能力对待；修正 compose 仍回写仓库根再导入'],
   ['alarm-channels', '通知通道：哪些出问题通知谁（Bark / Webhook / MAP）', 'alarm-channels.ts', 'system', 'human-only', 'write', 'guided', 'cds', 'monitor', '通道是系统级的，项目级 Key 一律 403；密钥只写不读（读接口只回名字、末四位与指纹）；「演练」会真的往外发一条通知，不是干跑'],
   ['uptime', '监控中心：存活探测、故障时间线与自定义监控', 'uptime.ts', 'mixed', 'system', 'write', 'direct', 'cds', 'monitor', '探测结果只读，可用率与故障判定以探测器采样为准；自定义监控的增删改与「立即探测」是写操作，项目级 Key 只能改自己项目的目标，不代表可直接重启服务'],
+  ['monitor-onboarding', '监控接入：只读说明、草案与用户确认', 'monitor-onboarding.ts', 'system', 'protocol-token', 'write', 'protocol-only', 'cds', '', '系统所有者管理接入会话，只有所有者确认才持久化监控与所选通知设置；短期会话令牌仅可 GET 只读说明和 POST 监控提议草案，不执行探测、不创建监控，也不授予其他系统 API 权限；令牌到期、撤销或完成后失效，不作为通用 CLI 或 MCP 工具暴露'],
   ['project-inspections', '项目巡检：逐项实测结果与通知回执', 'project-inspections.ts', 'project', 'project', 'write', 'direct', 'cds', '', '仅回填自己项目的实测事实，不创建新调度，不改变通知通道；不能把回填声明当作独立探测或手机已读证明'],
   ['public-status', '公开状态页：匿名只读面板与项目侧开关', 'public-status.ts', 'project', 'project', 'write', 'guided', 'cds', 'monitor', '读取那条是匿名的（token 自鉴权），载荷由白名单构造，只出业务名与红黄绿；开关是写操作且对外可见——开公开页等于把这几条业务的红绿交给任何拿到链接的人，必须由人确认'],
   ['workspaces', '工作区、成员与邀请', 'workspaces.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '成员角色和邀请变更必须由工作区管理员确认'],

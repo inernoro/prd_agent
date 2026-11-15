@@ -91,14 +91,16 @@ public sealed record GatewayTaskBudgetRequest(
     string? PptCompletionId = null,
     string? PptCompletionPhase = null,
     string? TaskPermitId = null,
-    string? Protocol = null);
+    string? Protocol = null,
+    bool BoundedCanaryCall = false);
 
 public sealed record GatewayTaskBudgetPolicy(
     string ScopeId,
     int MaxOutputTokens,
     string ExpectedLogicalModelPublicId,
     string ExpectedProvider,
-    string ExpectedModel);
+    string ExpectedModel,
+    bool BoundedCanaryCall = false);
 
 public interface IGatewayRuntimeGrantCallCounter
 {
@@ -294,7 +296,8 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data, M
             scope.MaxOutputTokens,
             scope.ExpectedLogicalModelPublicId,
             scope.ExpectedProvider,
-            scope.ExpectedModel);
+            scope.ExpectedModel,
+            scope.CanaryUnitCostUpperBoundUsd is > 0);
     }
 
     public async Task FinalizeTaskAsync(
@@ -320,6 +323,7 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data, M
             return;
         }
 
+        var fixedCanary = reservation.CanaryUnitCostUpperBoundUsd is > 0;
         var hasTrustedUsage = usage is not null
             && (usage.InputTokens.GetValueOrDefault() > 0 || usage.OutputTokens.GetValueOrDefault() > 0);
         if (reservation.PriceVersion is not null)
@@ -341,6 +345,13 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data, M
                 true, usage.CacheCreationCountedInsideInput == true);
             hasTrustedUsage = actual.Usd is not null;
             calculated = actual.Usd ?? reservation.ReservedUsd;
+        }
+        if (fixedCanary)
+        {
+            // 图片用量目前不能完整证明文本/图片输入的分类单价；此处仅保留授权上界，
+            // 不是供应商实际价格。权威供应商用量仍由请求日志保留，不虚构按次结算。
+            calculated = reservation.CanaryUnitCostUpperBoundUsd!.Value;
+            hasTrustedUsage = false;
         }
         var invariantFailed = calculated > reservation.ReservedUsd;
         var settled = invariantFailed ? reservation.ReservedUsd : calculated;
@@ -396,6 +407,10 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data, M
             return (new(false, 403, "GATEWAY_TASK_BUDGET_BINDING_INVALID", "task budget is not authorized for this permit and caller"), null);
         if (scope.TaskPermitId is not null && scope.MaxPhysicalCalls is <= 0 or > GatewayTaskPermitRecord.MaximumCalls)
             return (new(false, 409, "GATEWAY_RUNTIME_TASK_BUDGET_POLICY_INVALID", "task physical call envelope is invalid"), null);
+        if (request.BoundedCanaryCall != (scope.CanaryUnitCostUpperBoundUsd is > 0)
+            || request.BoundedCanaryCall && (scope.TaskPermitId is null || scope.MaxPhysicalCalls != 1
+                || string.IsNullOrWhiteSpace(scope.ExpectedOfferingId) || scope.ExpectedOfferingId != request.OfferingId))
+            return (new(false, 403, "GATEWAY_CANARY_BUDGET_SCOPE_DENIED", "canary price contract does not match this physical request"), null);
         var isPptPhysicalCaller = scope.TaskPermitId is null && request.AppCallerCode is
             AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate or
             AppCallerRegistry.MdToPptAgent.Generation.Patch;
@@ -405,7 +420,8 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data, M
             || request.EffectiveMaxOutputTokens > trustedMaxOutputTokens.Value
             || request.EffectiveMaxOutputTokens > scope.MaxOutputTokens)
             return (new(false, 409, "GATEWAY_RUNTIME_TASK_OUTPUT_CAP_INVALID", "runtime task output cap is not enforced"), null);
-        if (!SameRoute(scope.ExpectedLogicalModelPublicId, request.LogicalModelPublicId)
+        if (scope.ExpectedOfferingId is { Length: > 0 } exactOffering && exactOffering != request.OfferingId
+            || !SameRoute(scope.ExpectedLogicalModelPublicId, request.LogicalModelPublicId)
             || !SameRoute(scope.ExpectedProvider, request.Provider)
             || !SameRoute(scope.ExpectedModel, request.Model))
             return (new(false, 409, "GATEWAY_RUNTIME_TASK_ROUTE_MISMATCH", "runtime task route does not match the authorized price baseline"), null);
@@ -424,8 +440,8 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data, M
         var rates = RatesFor(scope, inputUpper);
         var inputCeilingRate = scope.TaskPermitId is null ? rates.Input
             : new[] { rates.Input, scope.CachedInputUsdPerMillion!.Value, scope.CacheWriteUsdPerMillion!.Value }.Max();
-        var amount = Money(inputUpper, inputCeilingRate)
-                     + Money(request.EffectiveMaxOutputTokens, rates.Output);
+        var amount = request.BoundedCanaryCall ? scope.CanaryUnitCostUpperBoundUsd!.Value
+            : Money(inputUpper, inputCeilingRate) + Money(request.EffectiveMaxOutputTokens, rates.Output);
         if (amount <= 0)
             return (new(false, 409, "GATEWAY_RUNTIME_TASK_BUDGET_POLICY_INVALID", "runtime task budget policy is invalid"), null);
         var reservation = new GatewayRuntimeBudgetReservationRecord
@@ -441,7 +457,8 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data, M
             Provider = request.Provider,
             Model = request.Model,
             OfferingId = request.OfferingId,
-            PricingTier = rates.Name,
+            PricingTier = request.BoundedCanaryCall ? "canary-upper-bound" : rates.Name,
+            CanaryUnitCostUpperBoundUsd = request.BoundedCanaryCall ? scope.CanaryUnitCostUpperBoundUsd : null,
             PriceVersion = scope.PriceVersion,
             PriceProtocol = scope.PriceProtocol,
             CachedInputUsdPerMillion = scope.CachedInputUsdPerMillion,

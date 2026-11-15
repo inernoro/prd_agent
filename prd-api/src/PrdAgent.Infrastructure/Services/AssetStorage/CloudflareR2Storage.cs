@@ -89,13 +89,14 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var key = BuildObjectKey(d, t, sha, ext);
 
         // 去重
-        if (!await ExistsAsync(key, ct).ConfigureAwait(false))
+        var existed = await ExistsAsync(key, ct).ConfigureAwait(false);
+        if (!existed)
         {
             await UploadBytesInternalAsync(key, bytes, safeMime, ct).ConfigureAwait(false);
         }
 
         var url = BuildPublicUrl(key);
-        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key);
+        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key) { CreatedNew = !existed };
     }
 
     public string? TryBuildContentAddressedKey(

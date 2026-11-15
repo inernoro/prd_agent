@@ -16,6 +16,11 @@ export function useHostedSiteWindow() {
     pending.current = true; setOpening(true);
     try {
       const result = await createShareLink({ siteId, shareType: 'single', expiresInDays: 0, purpose: 'visit' });
+      if (!result.success && result.error?.code === 'PERMISSION_DENIED') {
+        // 团队只读成员沿用站内阅读鉴权，不为阅读放宽分享权限。
+        tab.location.replace(`/web-pages?${new URLSearchParams({ openSite: siteId })}`);
+        return;
+      }
       if (!result.success || !result.data.shareUrl?.startsWith('/s/')) {
         tab.close();
         toast.error('未能打开阅读页', result.error?.message || '阅读地址暂时无法获取，请重试。');

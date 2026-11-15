@@ -125,6 +125,35 @@
       ]
     },
     {
+      "id": "log-trace",
+      "routes": [
+        "/logs/trace"
+      ],
+      "pagePath": "llmgw/web/src/pages/LogTracePage.tsx",
+      "changeSources": [
+        "llmgw/web/src/pages/LogTracePage.css",
+        "llmgw/console-api/Logs/*.cs"
+      ],
+      "tutorialSourceIds": [
+        "chapter-21"
+      ],
+      "tutorialLinks": [
+        {
+          "sourceId": "chapter-21",
+          "stepIds": [
+            "operation-call-trace"
+          ],
+          "impact": [
+            "content",
+            "screenshot"
+          ],
+          "evidenceIds": [
+            "117-operation-trace"
+          ]
+        }
+      ]
+    },
+    {
       "id": "change-password",
       "routes": [
         "/change-password"

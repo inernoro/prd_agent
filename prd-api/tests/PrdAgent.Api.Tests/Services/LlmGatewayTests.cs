@@ -1228,7 +1228,7 @@ public class LlmGatewayTests
                 ]
             });
         var http = new SequenceHttpClientFactory(
-            (503, "{\"error\":{\"message\":\"provider a unavailable\"}}"),
+            (429, "{\"error\":{\"message\":\"provider a rate limited\"}}"),
             (200, "{\"choices\":[{\"message\":{\"content\":\"ok from b\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}"));
         var logWriter = new CapturingLogWriter();
         var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>(), logWriter);
@@ -1261,7 +1261,7 @@ public class LlmGatewayTests
         var attempts = logWriter.Done!.ProviderAttempts!;
         Assert.Equal(2, attempts.Count(a => a.Stage == "send"));
         Assert.Equal("failed", attempts[0].Status);
-        Assert.Equal(503, attempts[0].StatusCode);
+        Assert.Equal(429, attempts[0].StatusCode);
         Assert.True(attempts[0].ReachedProvider);
         Assert.Equal("succeeded", attempts[1].Status);
         Assert.Equal(200, attempts[1].StatusCode);
@@ -1510,7 +1510,7 @@ public class LlmGatewayTests
 
             """;
         var http = new SequenceHttpClientFactory(
-            (503, "{\"error\":{\"message\":\"provider a unavailable\"}}"),
+            (429, "{\"error\":{\"message\":\"provider a rate limited\"}}"),
             (200, streamBody));
         var logWriter = new CapturingLogWriter();
         var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>(), logWriter);
@@ -1549,7 +1549,7 @@ public class LlmGatewayTests
         var attempts = logWriter.Done.ProviderAttempts!;
         Assert.Equal(2, attempts.Count(a => a.Stage == "send"));
         Assert.Equal("failed", attempts[0].Status);
-        Assert.Equal(503, attempts[0].StatusCode);
+        Assert.Equal(429, attempts[0].StatusCode);
         Assert.True(attempts[0].ReachedProvider);
         Assert.Equal("succeeded", attempts[1].Status);
         Assert.Equal(200, attempts[1].StatusCode);
@@ -1785,8 +1785,10 @@ public class LlmGatewayTests
 
         Assert.Contains(chunks, chunk => chunk.Type == GatewayChunkType.Error);
         Assert.NotNull(logWriter.Error);
-        Assert.Null(logWriter.Done);
-        Assert.Equal(0, logWriter.DoneCount);
+        Assert.NotNull(logWriter.Done);
+        Assert.Equal("failed", logWriter.Done!.Status);
+        Assert.Equal("OK", logWriter.Done.AnswerText);
+        Assert.Equal(1, logWriter.DoneCount);
     }
 
     [Fact]
@@ -1820,8 +1822,10 @@ public class LlmGatewayTests
             ]
         };
         var http = new SequenceHttpClientFactory(
-            (503, "{\"error\":{\"message\":\"provider a unavailable\"}}"),
-            (200, "{\"data\":[{\"url\":\"https://cdn.example.com/image-from-b.png\"}]}"));
+            (429, "{\"error\":{\"message\":\"provider a rate limited\"},\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":1,\"cost\":0.01}}"),
+            (200, "{\"data\":[{\"url\":\"https://cdn.example.com/image-from-b.png\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3,\"cost\":0.04}}"));
+        http.ResponseHeaders.Enqueue(new() { ["x-request-id"] = "receipt-failed" });
+        http.ResponseHeaders.Enqueue(new() { ["x-request-id"] = "receipt-succeeded" });
         var logWriter = new CapturingLogWriter();
         var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), logWriter);
 
@@ -1848,11 +1852,22 @@ public class LlmGatewayTests
         var attempts = logWriter.Done.ProviderAttempts!;
         Assert.Equal(2, attempts.Count(a => a.Stage == "send"));
         Assert.Equal("failed", attempts[0].Status);
-        Assert.Equal(503, attempts[0].StatusCode);
+        Assert.Equal(429, attempts[0].StatusCode);
         Assert.True(attempts[0].ReachedProvider);
         Assert.Equal("succeeded", attempts[1].Status);
         Assert.Equal(200, attempts[1].StatusCode);
         Assert.True(attempts[1].ReachedProvider);
+        Assert.NotNull(attempts[0].AttemptId);
+        Assert.NotNull(attempts[1].AttemptId);
+        Assert.NotEqual(attempts[0].AttemptId, attempts[1].AttemptId);
+        Assert.Equal(0.01m, attempts[0].ProviderReportedCost);
+        Assert.Equal(2, attempts[0].InputTokens);
+        Assert.Equal(1, attempts[0].OutputTokens);
+        Assert.Equal("receipt-failed", attempts[0].ProviderRequestId);
+        Assert.Equal("receipt-succeeded", attempts[1].ProviderRequestId);
+        Assert.Equal(0.04m, attempts[1].ProviderReportedCost);
+        Assert.Equal(5, attempts[1].InputTokens);
+        Assert.Equal(3, attempts[1].OutputTokens);
     }
 
     [Fact]
@@ -1886,7 +1901,7 @@ public class LlmGatewayTests
             ]
         };
         var http = new SequenceHttpClientFactory(
-            (503, "{\"error\":{\"message\":\"provider a unavailable\"}}"));
+            (429, "{\"error\":{\"message\":\"provider a rate limited\"}}"));
         var logWriter = new CapturingLogWriter();
         var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), logWriter);
 
@@ -1945,6 +1960,29 @@ public class LlmGatewayTests
         var attempt = Assert.Single(logWriter.Done!.ProviderAttempts!, a => a.Stage == "send");
         Assert.True(attempt.ReachedProvider);
         Assert.Equal("failed", attempt.Status);
+    }
+
+    [Theory]
+    [InlineData("gpt-5",false)]
+    [InlineData("gpt-5.6-terra",true)]
+    [InlineData("openai/gpt-5.6-terra",true)]
+    public async Task ModelUpgradeCanary_Gpt5FinalWireRetainsBoundedNormalizedParameters(string model,bool reasoningNone)
+    {
+        var http = new SequenceHttpClientFactory((200,"{\"choices\":[{\"message\":{\"content\":\"OK\"}}]}"));
+        var gateway = new LlmGateway(new InMemoryModelResolver(),http,new TestLogger<LlmGateway>());
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest {
+            AppCallerCode=AppCallerRegistry.System.HealthProbe.Chat,ModelType=ModelTypes.Chat,RequiredOfferingId="fixed-route",
+            Context=new GatewayRequestContext { SourceTask="ModelUpgradeCanaryWorker:bounded-request" },
+            RequestBody=new JsonObject { ["messages"]=new JsonArray(new JsonObject { ["role"]="user",["content"]="Reply OK." }),
+                ["max_tokens"]=16,["stream"]=false }
+        },new GatewayModelResolution { Success=true,ActualModel=model,ActualPlatformId="official",ActualPlatformName="OpenAI",
+            PlatformType="openai",Protocol="openai",ApiUrl="https://api.openai.com",ApiKey="test",OfferingId="fixed-route",MaxTokens=1024 });
+        Assert.True(response.Success,response.ErrorMessage);
+        var body=JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.Equal(16,(int?)body["max_completion_tokens"]);
+        Assert.False(body.ContainsKey("max_tokens"));
+        Assert.Equal(reasoningNone,body.ContainsKey("reasoning_effort"));
+        if(reasoningNone) Assert.Equal("none",(string?)body["reasoning_effort"]);
     }
 
     [Fact]
@@ -4420,13 +4458,14 @@ internal sealed class SequenceHttpClientFactory : IHttpClientFactory
     public List<string> RequestBodies { get; } = new();
     public List<string> RequestUris { get; } = new();
     public List<IReadOnlyDictionary<string, string[]>> RequestHeaders { get; } = new();
+    public Queue<Dictionary<string, string>> ResponseHeaders { get; } = new();
 
     public SequenceHttpClientFactory(params (int StatusCode, string Body)[] responses)
     {
         _responses = new Queue<(int StatusCode, string Body)>(responses);
     }
 
-    public HttpClient CreateClient(string name) => new(new SequenceHttpMessageHandler(_responses, RequestBodies, RequestUris, RequestHeaders));
+    public HttpClient CreateClient(string name) => new(new SequenceHttpMessageHandler(_responses, RequestBodies, RequestUris, RequestHeaders, ResponseHeaders));
 }
 
 internal sealed class TrackingModelResolver : IModelResolver
@@ -4481,7 +4520,8 @@ internal sealed class SequenceHttpMessageHandler(
     Queue<(int StatusCode, string Body)> responses,
     List<string> requestBodies,
     List<string> requestUris,
-    List<IReadOnlyDictionary<string, string[]>> requestHeaders) : HttpMessageHandler
+    List<IReadOnlyDictionary<string, string[]>> requestHeaders,
+    Queue<Dictionary<string, string>>? responseHeaders = null) : HttpMessageHandler
 {
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -4497,10 +4537,14 @@ internal sealed class SequenceHttpMessageHandler(
             : (200, "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}");
         var content = new StringContent(next.Item2, System.Text.Encoding.UTF8);
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
-        return Task.FromResult(new HttpResponseMessage((System.Net.HttpStatusCode)next.Item1)
+        var response = new HttpResponseMessage((System.Net.HttpStatusCode)next.Item1)
         {
             Content = content
-        });
+        };
+        if (responseHeaders?.Count > 0)
+            foreach (var header in responseHeaders.Dequeue())
+                response.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        return Task.FromResult(response);
     }
 }
 

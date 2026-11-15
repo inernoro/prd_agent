@@ -18,6 +18,60 @@ static_release_make_web_readable() {
   find "$web_root" -type f -exec chmod 644 {} +
 }
 
+# Reproducible archives may give different, same-sized HTML entries the same
+# mtime. Nginx derives ETag from mtime + size, so each activation (including a
+# rollback) must refresh the deployed entry metadata before the atomic switch.
+static_release_refresh_entry_mtime() {
+  python3 - "$1/index.html" "$2/current/index.html" "$2/index.html" <<'PYTIME'
+import os
+import sys
+import time
+
+entry = sys.argv[1]
+previous = [int(os.stat(path).st_mtime) for path in sys.argv[1:] if os.path.isfile(path)]
+modified = max(int(time.time()), max(previous, default=0) + 1)
+stat = os.stat(entry)
+os.utime(entry, ns=(stat.st_atime_ns, modified * 1_000_000_000))
+PYTIME
+}
+
+# Keep previously published asset URLs reachable across activation and rollback.
+# The destination's own files always win. Hard links retain bytes even if an old
+# release directory is later removed, without duplicating large bundles.
+static_release_retain_assets() {
+  python3 - "$1" "$2" <<'PYASSETS'
+import errno
+import os
+import shutil
+import sys
+from pathlib import Path
+
+destination, root = map(Path, sys.argv[1:])
+target = destination / 'assets'
+sources = [root / 'current/assets', root / 'assets']
+sources += sorted((root / '.releases').glob('*/assets'), reverse=True)
+for source in sources:
+    if not source.exists() or source.resolve() == target.resolve():
+        continue
+    for directory, dirs, files in os.walk(source, followlinks=False):
+        directory = Path(directory)
+        if directory.is_symlink() or any((directory / name).is_symlink() for name in dirs + files):
+            raise ValueError('Static assets must not contain symbolic links')
+        output = target / directory.relative_to(source)
+        output.mkdir(parents=True, exist_ok=True)
+        for name in files:
+            src, dst = directory / name, output / name
+            if dst.exists():
+                continue
+            try:
+                os.link(src, dst)
+            except OSError as error:
+                if error.errno != errno.EXDEV:
+                    raise
+                shutil.copy2(src, dst)
+PYASSETS
+}
+
 static_release_atomic_link() {
   link_path="$1"
   link_target="$2"
@@ -86,8 +140,10 @@ static_release_activate() {
     rollback_target="$legacy_target"
   fi
 
+  static_release_retain_assets "$staging_dir" "$static_root" || return 1
   mv "$staging_dir" "$release_dir"
   static_release_make_web_readable "$release_dir"
+  static_release_refresh_entry_mtime "$release_dir" "$static_root" || return 1
 
   STATIC_RELEASE_TARGET="$release_target"
   STATIC_RELEASE_ROLLBACK_TARGET="$rollback_target"
@@ -107,6 +163,16 @@ static_release_activate() {
   if [ "$activation_failed" != "0" ]; then
     echo "ERROR: static release link switch failed; restoring the original layout" >&2
     if [ -n "$original_current_target" ]; then
+      case "$original_current_target" in
+        /*) original_current_path="$original_current_target" ;;
+        *) original_current_path="$static_root/$original_current_target" ;;
+      esac
+      # A switch may have taken effect before reporting an error. Keep bundles
+      # already seen by clients reachable even after restoring the old pointer.
+      static_release_retain_assets "$original_current_path" "$static_root" || echo "ERROR: restored release assets could not be retained" >&2
+      static_release_make_web_readable "$original_current_path" || echo "ERROR: restored release assets could not be made readable" >&2
+      # Restore the known-good pointer even if its metadata refresh fails.
+      static_release_refresh_entry_mtime "$original_current_path" "$static_root" || echo "ERROR: restored entry metadata could not be refreshed" >&2
       static_release_atomic_link "$static_root/current" "$original_current_target" || true
     else
       rm -f "$static_root/current"
@@ -148,6 +214,12 @@ static_release_rollback() {
   fi
 
   failed_target="$(readlink "$static_root/current" 2>/dev/null || true)"
+  # Compatibility work must never prevent restoring the known-good release.
+  # Keep failures visible, but preserve recovery when a historical tree is
+  # malformed or the filesystem cannot accept extra files/permission updates.
+  static_release_retain_assets "$rollback_path" "$static_root" || echo "WARNING: old-tab asset retention failed; continuing rollback to the known-good release" >&2
+  static_release_make_web_readable "$rollback_path" || echo "WARNING: retained asset permissions could not be normalized; continuing rollback to the known-good release" >&2
+  static_release_refresh_entry_mtime "$rollback_path" "$static_root" || return 1
   static_release_atomic_link "$static_root/current" "$rollback_target"
   if [ -n "$failed_target" ]; then
     static_release_atomic_link "$static_root/previous" "$failed_target"

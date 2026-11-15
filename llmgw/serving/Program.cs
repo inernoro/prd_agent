@@ -94,6 +94,9 @@ builder.Services.AddMemoryCache();
 
 // LLM 请求上下文 + 旁路日志写入
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
+builder.Services.AddSingleton<LlmLogOwner>();
+builder.Services.AddSingleton<LlmLogLifecycleReconciler>();
+builder.Services.AddHostedService<GatewayLogLifecycleWorker>();
 builder.Services.AddSingleton(sp =>
     new LlmRequestLogBackground(
         sp.GetRequiredService<LlmGatewayDataContext>().Context,
@@ -109,7 +112,8 @@ builder.Services.AddSingleton<ILlmRequestLogWriter>(sp =>
         sp.GetRequiredService<PrdAgent.Core.Interfaces.IAppSettingsService>(),
         sp.GetRequiredService<IAssetStorage>(),
         sp.GetRequiredService<IConfiguration>(),
-        sp.GetRequiredService<IHttpContextAccessor>()));
+        sp.GetRequiredService<IHttpContextAccessor>(),
+        sp.GetRequiredService<LlmLogOwner>()));
 
 // GW-owned 运行设置（LlmRequestLogWriter 依赖 IAppSettingsService）。首次只复制 MAP 非敏感日志字段，
 // MAP 不可达时使用默认值，不阻断 serving 启动。
@@ -312,7 +316,7 @@ builder.Services.AddScoped<LiveAsrBatchFallbackService>();
 builder.Services.AddScoped(sp => new LiveAsrSessionOrchestrator(
     sp.GetRequiredService<PrdAgent.Core.LlmGateway.IModelResolver>(), sp.GetRequiredService<DoubaoStreamAsrService>(),
     sp.GetRequiredService<LiveAsrBatchFallbackService>(), sp.GetRequiredService<ILogger<LiveAsrSessionOrchestrator>>(),
-    sp.GetRequiredService<IGatewayInvocationAuthority>()));
+    sp.GetRequiredService<IGatewayInvocationAuthority>(), builder.Configuration));
 
 // serving 侧平台密钥自检（消盲区：serving 到底能不能解密真实平台密文）。
 // 此前密钥完整性 Worker 只在 MAP(api) 侧注册，serving 缺钥时静默用 stub 兜底、无任何自检。

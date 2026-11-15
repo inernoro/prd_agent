@@ -7,14 +7,14 @@ import type { RelatedDocument } from '@/services/real/relatedDocuments';
 import { Dialog } from '@/components/ui/Dialog';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from '@/components/web-hosting/useHostedPdfDownload';
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
 import { listShareComments, getShareSiteContent, downloadShareOfflineHtml, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import { Lock, ExternalLink, Eye, EyeOff, AlertCircle, ShieldCheck, Download, FileDown, Check, LogIn, X, Maximize, Minimize } from 'lucide-react';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
 import { SHARE_FAILURE_REGISTRY, resolveShareFailure } from '@/components/web-hosting/shareFailure';
@@ -176,7 +176,12 @@ interface ShareViewPageProps {
   onNavigateRelated?: (item: RelatedDocument) => void;
 }
 
-export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordOverride, embedded = false, onNavigateRelated }: ShareViewPageProps = {}) {
+export default function ShareViewPage(props: ShareViewPageProps = {}) {
+  const { token } = useParams<{ token: string }>();
+  return <ShareViewContent key={props.tokenOverride ?? token} {...props} />;
+}
+
+function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, embedded = false, onNavigateRelated }: ShareViewPageProps) {
   const params = useParams<{ token: string }>();
   const token = tokenOverride ?? params.token;
   const navigate = useNavigate();
@@ -184,10 +189,12 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
   const currentUserId = useAuthStore(s => s.user?.userId);
   const isMobile = useIsMobile();
-  const [data, setData] = useState<ShareViewData | null>(null);
+  const [fullData, setData] = useState<ShareViewData | null>(null);
   const [collectionManagerOpen, setCollectionManagerOpen] = useState(false);
   const [collectionShareFirst, setCollectionShareFirst] = useState(false);
   const requestedRelatedSiteId = siteIdOverride ?? searchParams.get('siteId');
+  const selectedSite = fullData?.sites.find(item => item.id === requestedRelatedSiteId);
+  const data = useMemo(() => fullData && requestedRelatedSiteId ? selectedSite ? { ...fullData, sites: [selectedSite] } : null : fullData, [fullData, requestedRelatedSiteId, selectedSite]);
   const readsSingleSite = data?.sites.length === 1 && (embedded || !!requestedRelatedSiteId || data.shareType !== 'collection');
   const [relatedAccountSite, setRelatedAccountSite] = useState<HostedSite | null>(null);
   const [relatedSharedSite, setRelatedSharedSite] = useState<RelatedDocument | null>(null);
@@ -203,7 +210,8 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   useEffect(() => {
     if (isAuthenticated && currentUserId && openedSiteId) void recordSiteView(openedSiteId);
   }, [isAuthenticated, currentUserId, openedSiteId]);
-  const [error, setError] = useState<{ code: string; message: string } | null>(null);
+  const [loadError, setError] = useState<{ code: string; message: string } | null>(null);
+  const error = loadError ?? (fullData && requestedRelatedSiteId && !selectedSite ? { code: 'NOT_FOUND', message: '文档不存在或无权访问' } : null);
   const [loading, setLoading] = useState(true);
   const [needPassword, setNeedPassword] = useState(false);
   const [password, setPassword] = useState(passwordOverride ?? '');
@@ -333,10 +341,10 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   useEffect(() => {
     if (!reviewLiveUrl || !reviewEntryFile) return;
     setData(current => {
-      if (!current || current.sites.length !== 1 || current.sites[0].siteUrl === reviewLiveUrl) return current;
-      return { ...current, sites: [{ ...current.sites[0], siteUrl: reviewLiveUrl, entryFile: reviewEntryFile, contentShape: reviewShape }] };
+      if (!current || !openedSiteId || current.sites.find(item => item.id === openedSiteId)?.siteUrl === reviewLiveUrl) return current;
+      return { ...current, sites: current.sites.map(item => item.id === openedSiteId ? { ...item, siteUrl: reviewLiveUrl, entryFile: reviewEntryFile, contentShape: reviewShape } : item) };
     });
-  }, [reviewLiveUrl, reviewEntryFile, reviewShape]);
+  }, [reviewLiveUrl, reviewEntryFile, reviewShape, openedSiteId]);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -399,23 +407,19 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
     setDownloadNote({ text: describeOfflineExportResult(outcome.summary).text, tone: 'info' });
   }, [token, data, password, runOfflineExport, readsSingleSite]);
 
+  const shareRequest = useRef(0);
   const fetchShare = async (pwd?: string) => {
     if (!token) return;
-    setLoading(true);
+    const request = ++shareRequest.current;
+    if (!fullData) setLoading(true);
     setError(null);
     setWrongPassword(false);
     setRateLimitedHint(null);
     const res = await viewSiteShare(token, pwd?.trim());
+    if (request !== shareRequest.current) return;
     setLoading(false);
     if (res.success) {
-      const selectedId = requestedRelatedSiteId;
-      const selected = selectedId ? res.data.sites.find(item => item.id === selectedId) : undefined;
-      if (selectedId && !selected) {
-        setData(null);
-        setError({ code: 'NOT_FOUND', message: '文档不存在或无权访问' });
-        return;
-      }
-      setData(selected ? { ...res.data, sites: [selected] } : res.data);
+      setData(res.data);
       setNeedPassword(false);
     } else if (res.error?.code === 'UNAUTHORIZED') {
       setNeedPassword(true);
@@ -577,7 +581,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   // ── Loading ── (纯黑背景，无动画，避免闪烁)
   if (loading) {
     return (
-      <div style={{ ...styles.fullScreen, background: '#0a0a0a' }} />
+      <div style={{ ...styles.fullScreen, background: '#0a0a0a' }}><MapSectionLoader text="正在读取分享文档…" /></div>
     );
   }
 
@@ -976,9 +980,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
                 if (!token) return;
                 const result = await viewSiteShare(token, password || undefined);
                 if (!result.success) throw new Error('refresh failed');
-                const selectedId = requestedRelatedSiteId;
-                const selected = selectedId ? result.data.sites.find(item => item.id === selectedId) : undefined;
-                setData(selected ? { ...result.data, sites: [selected] } : result.data);
+                setData(result.data);
               }} />
               {/* 下载源文件：登录用户可见。
                   为什么要有：拿到一个分享链接之后，想把这份 HTML 本身要回来（换个人发、

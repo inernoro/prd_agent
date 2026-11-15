@@ -4048,6 +4048,112 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task ClaudeCompatibleEndpoint_FragmentedParallelTools_StayOpenUntilComplete()
+    {
+        static GatewayStreamChunk Tool(int index, string? id, string? name, string args) =>
+            GatewayStreamChunk.ToolCallChunk(new JsonArray { new JsonObject
+            {
+                ["index"] = index, ["id"] = id,
+                ["function"] = new JsonObject { ["name"] = name, ["arguments"] = args }
+            }});
+        var gateway = new EchoingGateway { StreamChunks = new[]
+        {
+            GatewayStreamChunk.Text("Checking."),
+            Tool(0, "call-first", "kb_index", "{\""),
+            Tool(1, "call-second", "future_tool", "{\"count\":"),
+            Tool(0, null, null, "entryId\":\"fixture\"}"),
+            Tool(1, null, null, "2}"),
+            GatewayStreamChunk.Done("tool_calls", null),
+        }};
+        var events = await ReadClaudeStreamAsync(gateway);
+        var open = new Dictionary<int, (string Type, string? Id, string? Name, System.Text.StringBuilder Input)>();
+        var completed = new List<(int Index, string? Id, string? Name, string Input)>();
+        var text = new System.Text.StringBuilder();
+        foreach (var e in events)
+        {
+            var type = e.GetProperty("type").GetString();
+            if (type == "content_block_start")
+            {
+                // Claude blocks must be serial: no parallel block can seal another tool's partial JSON.
+                open.Count.ShouldBe(0);
+                var b = e.GetProperty("content_block");
+                open.Add(e.GetProperty("index").GetInt32(), (b.GetProperty("type").GetString()!,
+                    b.TryGetProperty("id", out var id) ? id.GetString() : null,
+                    b.TryGetProperty("name", out var name) ? name.GetString() : null, new()));
+            }
+            else if (type == "content_block_delta")
+            {
+                var i = e.GetProperty("index").GetInt32();
+                open.ContainsKey(i).ShouldBeTrue();
+                var d = e.GetProperty("delta");
+                if (d.GetProperty("type").GetString() == "input_json_delta")
+                    open[i].Input.Append(d.GetProperty("partial_json").GetString());
+                else text.Append(d.GetProperty("text").GetString());
+            }
+            else if (type == "content_block_stop")
+            {
+                var i = e.GetProperty("index").GetInt32();
+                open.ContainsKey(i).ShouldBeTrue();
+                var b = open[i];
+                if (b.Type == "tool_use")
+                {
+                    using var parsed = JsonDocument.Parse(b.Input.ToString());
+                    parsed.RootElement.ValueKind.ShouldBe(JsonValueKind.Object);
+                    completed.Add((i, b.Id, b.Name, b.Input.ToString()));
+                }
+                open.Remove(i);
+            }
+        }
+        open.Count.ShouldBe(0);
+        text.ToString().ShouldBe("Checking.");
+        completed.ShouldBe(new[] { (1, (string?)"call-first", (string?)"kb_index", "{\"entryId\":\"fixture\"}"),
+            (2, (string?)"call-second", (string?)"future_tool", "{\"count\":2}") });
+        events.Single(x => x.GetProperty("type").GetString() == "message_delta")
+            .GetProperty("delta").GetProperty("stop_reason").GetString().ShouldBe("tool_use");
+    }
+
+    [Theory]
+    [InlineData("stop", "end_turn")]
+    [InlineData("length", "max_tokens")]
+    [InlineData("tool_calls", "tool_use")]
+    public async Task ClaudeCompatibleEndpoint_TextOnly_MapsFinishReason(string finish, string expected)
+    {
+        var events = await ReadClaudeStreamAsync(new EchoingGateway { StreamChunks = new[]
+        {
+            GatewayStreamChunk.Text("one"), GatewayStreamChunk.Text(" two"), GatewayStreamChunk.Done(finish, null),
+        }});
+        events.Count(x => x.GetProperty("type").GetString() == "content_block_start").ShouldBe(1);
+        events.Count(x => x.GetProperty("type").GetString() == "content_block_stop").ShouldBe(1);
+        string.Concat(events.Where(x => x.GetProperty("type").GetString() == "content_block_delta")
+            .Select(x => x.GetProperty("delta").GetProperty("text").GetString())).ShouldBe("one two");
+        events.Single(x => x.GetProperty("type").GetString() == "message_delta")
+            .GetProperty("delta").GetProperty("stop_reason").GetString().ShouldBe(expected);
+        events.Last().GetProperty("type").GetString().ShouldBe("message_stop");
+    }
+
+    private static async Task<List<JsonElement>> ReadClaudeStreamAsync(EchoingGateway gateway)
+    {
+        await using var app = BuildHostWithGateway(gateway);
+        await app.StartAsync();
+        try
+        {
+            var client = GatewayAuthorizedTaskFixture.Client(app);
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/v1/messages")
+            {
+                Content = JsonContent.Create(new { model = "future-logical-model", max_tokens = 64,
+                    messages = new[] { new { role = "user", content = "test tool protocol" } }, stream = true }),
+            };
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", GatewayKey);
+            using var response = await client.SendAsync(req);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var body = await response.Content.ReadAsStringAsync();
+            return body.Split('\n').Where(x => x.StartsWith("data: ", StringComparison.Ordinal))
+                .Select(x => JsonDocument.Parse(x[6..]).RootElement.Clone()).ToList();
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
     public async Task GeminiCompatibleEndpoint_AcceptsBearerGatewayKey()
     {
         var gateway = new EchoingGateway();
@@ -5205,6 +5311,7 @@ public class GatewayKeyGateContractTests
         public EchoingGateway(ILLMRequestContextAccessor? contextAccessor = null) => _contextAccessor = contextAccessor;
 
         public GatewayRequest? LastRequest { get; private set; }
+        public GatewayStreamChunk[]? StreamChunks { get; init; }
         public GatewayRawRequest? LastRawRequest { get; private set; }
         public string? LastResolveTenantId { get; private set; }
         public string? LastCreateClientTenantId { get; private set; }
@@ -5283,6 +5390,11 @@ public class GatewayKeyGateContractTests
             LastRequest = request;
             await Task.Yield();
             yield return GatewayStreamChunk.Start(Resolve(request.ExpectedModel));
+            if (StreamChunks is not null)
+            {
+                foreach (var chunk in StreamChunks) yield return chunk;
+                yield break;
+            }
             if (request.RequestBody?.ContainsKey("tools") == true)
             {
                 yield return GatewayStreamChunk.ToolCallChunk(new JsonArray

@@ -172,6 +172,31 @@ public sealed class WebPageAskFailureControllerTests
         Assert.DoesNotContain(events, e => e.Type == "done");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedRequest_CanBeFollowedBySuccessfulRequest_WithoutLosingFailureRecord(bool share)
+    {
+        await using var fixture = await AskFixture.CreateAsync(share,
+            [GatewayStreamChunk.Fail(DiagnosticCanary, GatewayRouteFailure.ProviderUnavailable)]);
+        AssertError(await fixture.RunAsync(), GatewayRouteFailure.ProviderUnavailable,
+            GatewayRouteFailure.UserMessage(GatewayRouteFailure.ProviderUnavailable));
+        var firstResponse = fixture.ResponseText;
+
+        var recovered = await fixture.ContinueWithAsync(
+            GatewayStreamChunk.Text("恢复后的完整答案"), GatewayStreamChunk.Done("stop", null));
+        Assert.Single(recovered, e => e.Type == "done");
+        Assert.DoesNotContain(recovered, e => e.Type == "error");
+        fixture.AssertInvocationAndRefund(1, 2);
+        Assert.DoesNotContain(DiagnosticCanary, firstResponse + fixture.ResponseText);
+        var stored = await fixture.AllAssistantMessagesAsync();
+        Assert.Equal(2, stored.Count);
+        Assert.Single(stored, m => m.Error == DiagnosticCanary && m.Content.Length == 0);
+        var success = Assert.Single(stored, m => m.Error is null);
+        Assert.StartsWith("恢复后的完整答案", success.Content);
+        Assert.Equal(success.Content, recovered.Single(e => e.Type == "done").Data.GetProperty("text").GetString());
+    }
+
     private sealed record SseFrame(string Type, JsonElement Data);
 
     private sealed class AskFixture : IAsyncDisposable
@@ -229,16 +254,33 @@ public sealed class WebPageAskFailureControllerTests
                 .ReturnsAsync(new SiteContentSnapshot { SiteId = Site.Id, Text = "本页有可读的正文。", FileCount = 1 });
             _controller = new WebPageAskController(sites.Object, snapshots.Object, _quota.Object,
                 _openers.Object, _gateway.Object, _context.Object, Db, NullLogger<WebPageAskController>.Instance);
+            ConfigureRequestContext();
+        }
+
+        private void ConfigureRequestContext()
+        {
             var http = new DefaultHttpContext { RequestServices = _services };
-            var action = share ? nameof(WebPageAskController.AskStreamByShare) : nameof(WebPageAskController.AskStream);
+            var action = _share ? nameof(WebPageAskController.AskStreamByShare) : nameof(WebPageAskController.AskStream);
             var descriptor = new ControllerActionDescriptor { ControllerTypeInfo = typeof(WebPageAskController).GetTypeInfo(),
                 ActionName = action, MethodInfo = typeof(WebPageAskController).GetMethod(action)! };
             http.SetEndpoint(new Endpoint(_ => Task.CompletedTask, new EndpointMetadataCollection(descriptor), action));
             http.Request.Method = "POST";
-            if (!share)
+            if (!_share)
                 http.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", ReaderId)], "test"));
             http.Response.Body = _body;
             _controller.ControllerContext = new ControllerContext { HttpContext = http };
+        }
+
+        public async Task<List<SseFrame>> ContinueWithAsync(params GatewayStreamChunk[] chunks)
+        {
+            foreach (var lease in TaskAdmissionRequestState.Get(_controller.HttpContext).Leases.AsEnumerable().Reverse())
+                await lease.DisposeAsync();
+            _body.SetLength(0);
+            ConfigureRequestContext();
+            _gateway.Setup(g => g.StreamAsync(It.IsAny<GatewayRequest>(), CancellationToken.None))
+                .Callback<GatewayRequest, CancellationToken>((request, _) => _request = request)
+                .Returns(Emit(chunks, null));
+            return await RunAsync();
         }
 
         public static async Task<AskFixture> CreateAsync(bool share, GatewayStreamChunk[] chunks,
@@ -279,9 +321,9 @@ public sealed class WebPageAskFailureControllerTests
             }).ToList();
         }
 
-        public void AssertInvocationAndRefund(int refunds)
+        public void AssertInvocationAndRefund(int refunds, int calls = 1)
         {
-            _gateway.Verify(g => g.StreamAsync(It.IsAny<GatewayRequest>(), CancellationToken.None), Times.Once);
+            _gateway.Verify(g => g.StreamAsync(It.IsAny<GatewayRequest>(), CancellationToken.None), Times.Exactly(calls));
             _quota.Verify(q => q.RefundAsync(_decision, Site.Id, CancellationToken.None), Times.Exactly(refunds));
             _openers.VerifyNoOtherCalls();
             Assert.NotNull(_request);
@@ -299,6 +341,9 @@ public sealed class WebPageAskFailureControllerTests
 
         public Task<HostedSiteAskMessage> AssistantMessageAsync()
             => Db.HostedSiteAskMessages.Find(m => m.SiteId == Site.Id && m.Role == "assistant").SingleAsync();
+
+        public Task<List<HostedSiteAskMessage>> AllAssistantMessagesAsync()
+            => Db.HostedSiteAskMessages.Find(m => m.SiteId == Site.Id && m.Role == "assistant").ToListAsync();
 
         public async ValueTask DisposeAsync()
         {

@@ -12,16 +12,21 @@ public static class TaskBudgetContracts
     public const string ConfigurationRoot = "LlmGateway:TaskBudgets";
 
     public static async Task BindAsync(GatewayTaskPermitRecord permit, IConfiguration configuration,
-        LlmGatewayDataContext data, CancellationToken ct)
+        LlmGatewayDataContext data, CancellationToken ct, TaskBudgetContractPolicy? fixedCanaryPolicy = null)
     {
         var section = configuration.GetSection($"{ConfigurationRoot}:Policies:{permit.Origin}");
-        if (!section.GetChildren().Any())
+        if (fixedCanaryPolicy is null && !section.GetChildren().Any())
         {
             if (configuration.GetValue<bool>($"{ConfigurationRoot}:Required"))
                 throw Denied("TASK_BUDGET_POLICY_REQUIRED", "此任务来源尚未配置金额合同，已停止付费任务；请由平台配置额度与价格版本。");
             return;
         }
-        var policy = section.Get<TaskBudgetContractPolicy>();
+        var policy = fixedCanaryPolicy ?? section.Get<TaskBudgetContractPolicy>();
+        if (fixedCanaryPolicy is not null
+            && (!permit.SourceTask.StartsWith("ModelUpgradeCanaryWorker:", StringComparison.Ordinal)
+                || permit.MaxCalls != 1 || permit.MaxRuns != 1 || policy.AuthorizedLimitUsd <= 0
+                || string.IsNullOrWhiteSpace(policy.ExpectedOfferingId)))
+            throw Denied("TASK_CANARY_BUDGET_SCOPE_DENIED", "候选验收金额合同超出单次执行范围，已停止付费调用。");
         if (policy is null || !policy.Valid())
             throw Denied("TASK_BUDGET_POLICY_INVALID", "任务金额合同不完整，已停止付费任务；请核对额度、路由、输出上限及价格版本。");
         var id = $"task_{permit.Id}";
@@ -39,6 +44,7 @@ public static class TaskBudgetContracts
             ExpectedLogicalModelPublicId = policy.LogicalModelPublicId.Trim(),
             ExpectedProvider = policy.Provider.Trim(), ExpectedModel = policy.Model.Trim(),
             PriceProtocol = policy.Protocol.Trim(), PriceVersion = policy.PriceVersion.Trim(),
+            CanaryUnitCostUpperBoundUsd = policy.CanaryUnitCostUpperBoundUsd, ExpectedOfferingId = policy.ExpectedOfferingId,
             ActivatedByUserId = "platform-task-admission", ExpiresAt = permit.ExpiresAt,
             CreatedAt = permit.CreatedAt, UpdatedAt = permit.CreatedAt,
         };
@@ -59,6 +65,8 @@ public static class TaskBudgetContracts
 public sealed class TaskBudgetContractPolicy
 {
     public decimal AuthorizedLimitUsd { get; set; }
+    public decimal? CanaryUnitCostUpperBoundUsd { get; set; }
+    public string? ExpectedOfferingId { get; set; }
     public decimal InputUsdPerMillion { get; set; }
     public decimal OutputUsdPerMillion { get; set; }
     public decimal? CachedInputUsdPerMillion { get; set; }
@@ -70,8 +78,10 @@ public sealed class TaskBudgetContractPolicy
     public string Protocol { get; set; } = "";
     public string PriceVersion { get; set; } = "";
 
-    public bool Valid() => AuthorizedLimitUsd > 0 && MaxOutputTokens > 0
-        && InputUsdPerMillion > 0 && OutputUsdPerMillion > 0
+    public bool Valid() => AuthorizedLimitUsd > 0 && MaxOutputTokens > 0 && (CanaryUnitCostUpperBoundUsd is null or > 0)
+        && (CanaryUnitCostUpperBoundUsd is > 0
+            ? CanaryUnitCostUpperBoundUsd <= AuthorizedLimitUsd && !string.IsNullOrWhiteSpace(ExpectedOfferingId)
+            : InputUsdPerMillion > 0 && OutputUsdPerMillion > 0)
         && CachedInputUsdPerMillion is >= 0 && CacheWriteUsdPerMillion is >= 0
         && new[] { LogicalModelPublicId, Provider, Model, PriceVersion }.All(x => !string.IsNullOrWhiteSpace(x) && x.Length <= 128)
         && (GatewayProtocolAliases.NormalizeAdapterKey(Protocol) == GatewayProtocolAliases.OpenAI || GatewayProtocolAliases.IsClaudeProtocol(Protocol));

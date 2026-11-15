@@ -54,6 +54,8 @@ public static partial class VideoGenerationUserError
         var normalizedCode = (errorCode ?? string.Empty).Trim().ToUpperInvariant();
         return normalizedCode switch
         {
+            "VIDEO_RECOVERY_OUTCOME_UNKNOWN" => "上次生成结果尚未确认，已停止自动重试以避免重复费用。请核对已有结果后再决定下一步。",
+            "VIDEO_RECOVERY_NOT_ADMITTED" => "这次生成的原执行许可已不可用，系统没有重新提交。请联系管理员核对原任务。",
             "EMPTY_PROMPT" => "视频描述为空，请返回并输入内容后重试。",
             "EMPTY_ARTICLE" => "创作内容为空，请补充文稿后重试。",
             "MODEL_RESOLVE_FAILED" => "当前没有可用的视频生成模型，请联系管理员检查模型配置后重试。",
@@ -118,6 +120,14 @@ public static partial class VideoGenerationUserError
 
     private static string ExportUnavailable(string? diagnostic)
     {
+        if (ContainsAny(diagnostic ?? string.Empty, "配音超过镜头可用时长", "音频超出画面", "音频超过画面"))
+            return "配音或音频超过画面可用时长，请缩短配音或调整镜头后重新导出。";
+        if (ContainsAny(diagnostic ?? string.Empty, "已采用的配音暂不可用", "配音没有有效音轨", "配音时长发生变化"))
+            return "已采用的配音暂不可用或时长发生变化，请打开配音与字幕，重新采用语音后导出。";
+        if (ContainsAny(diagnostic ?? string.Empty, "中文字幕字体不可用"))
+            return "中文字幕字体不可用，请联系管理员恢复字体后重新导出。";
+        if (ContainsAny(diagnostic ?? string.Empty, "采用的视频素材暂不可用", "缺少持久资产标识"))
+            return "采用的视频素材暂不可用，请返回制作台重新导入本镜素材后导出。";
         if (ContainsAny(diagnostic ?? string.Empty, "视频轨已静音"))
             return "视频轨已静音，无法导出可播放视频。请恢复视频轨后重试。";
         if (ContainsAny(diagnostic ?? string.Empty, "尚未生成的视频分镜"))

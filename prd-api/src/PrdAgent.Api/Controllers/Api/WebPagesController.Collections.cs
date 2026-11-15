@@ -1,315 +1,383 @@
-using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using AngleSharp.Html.Parser;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Api.Services;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
 
 public partial class WebPagesController
 {
-    public record CollectionEditRequest(string Title, List<string> SiteIds, string MainSiteId, long Version = 0);
-    public record CollectionVersionRequest(long Version);
-    public class CollectionShareRequest : CreateWebPageShareRequest
-    {
-        public long CollectionVersion { get; set; }
-        public string PermissionFingerprint { get; set; } = string.Empty;
-    }
-    public record CollectionAdoptRequest(string Title, string MainSiteId);
-
-    private async Task<HostedCollection?> OwnedCollectionAsync(string id) => await _db.HostedCollections
-        .Find(x => x.Id == id && x.OwnerUserId == GetUserId() && !x.IsDissolved).FirstOrDefaultAsync();
-    private IActionResult CollectionMissing() => NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "合集不存在或无权管理"));
-    private IActionResult CollectionChanged() => Conflict(ApiResponse<object>.Fail("COLLECTION_CHANGED", "合集已变化，请刷新后重新确认"));
+    private IMongoCollection<HostedDocumentCollection> Collections => _db.Database.GetCollection<HostedDocumentCollection>("hosted_document_collections");
 
     [HttpGet("collections")]
-    public async Task<IActionResult> ListCollections([FromQuery] string? keyword, [FromQuery] int page = 1)
+    public async Task<IActionResult> ListDocumentCollections([FromQuery] bool dissolved = false)
     {
-        page = Math.Max(1, page);
-        var filter = Builders<HostedCollection>.Filter.Where(x => x.OwnerUserId == GetUserId() && !x.IsDissolved);
-        if (!string.IsNullOrWhiteSpace(keyword)) filter &= Builders<HostedCollection>.Filter.Regex(x => x.Title, new MongoDB.Bson.BsonRegularExpression(Regex.Escape(keyword.Trim()), "i"));
-        var total = await _db.HostedCollections.CountDocumentsAsync(filter);
-        var items = await _db.HostedCollections.Find(filter).SortByDescending(x => x.UpdatedAt).Skip((page - 1) * 20).Limit(20).ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize = 20 }));
-    }
-
-    // 从文档找回原合集链接：按成员快照查完整历史，不依赖全局最近 100 条或过期宽限窗。
-    [HttpGet("collections/history")]
-    public async Task<IActionResult> CollectionHistory([FromQuery] string? siteId, [FromQuery] int page = 1, [FromQuery] string? keyword = null)
-    {
-        Response.Headers.CacheControl = "no-store";
-        if (string.IsNullOrWhiteSpace(siteId)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择要查找合集历史的文档"));
-        if (keyword?.Trim().Length > 100) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "搜索内容请控制在 100 字以内"));
-        var userId = GetUserId();
-        if (await _siteService.GetByIdAsync(siteId, userId, CancellationToken.None) == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在或当前无权查看"));
-        page = Math.Max(1, page);
-        const int pageSize = 20;
-        var fb = Builders<WebPageShareLink>.Filter;
-        var filter = fb.Eq(x => x.CreatedBy, userId) & fb.Eq(x => x.ShareType, "collection") & fb.Ne(x => x.Purpose, "visit")
-            & (fb.Eq(x => x.SiteId, siteId) | fb.AnyEq(x => x.SiteIds, siteId));
-        if (!string.IsNullOrWhiteSpace(keyword))
-        {
-            var pattern = new MongoDB.Bson.BsonRegularExpression(Regex.Escape(keyword.Trim()), "i");
-            filter &= fb.Regex(x => x.Title, pattern) | fb.Regex(x => x.Token, pattern);
-        }
-        var total = await _db.WebPageShareLinks.CountDocumentsAsync(filter);
-        var offset = (long)(page - 1) * pageSize;
-        var shares = offset > int.MaxValue ? new List<WebPageShareLink>() : await _db.WebPageShareLinks.Find(filter)
-            .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((int)offset).Limit(pageSize).ToListAsync();
-        var collectionIds = shares.Where(x => x.CollectionId != null).Select(x => x.CollectionId!).Distinct().ToList();
-        var collections = collectionIds.Count == 0 ? new Dictionary<string, HostedCollection>()
-            : (await _db.HostedCollections.Find(x => collectionIds.Contains(x.Id) && x.OwnerUserId == userId).ToListAsync()).ToDictionary(x => x.Id);
-        var now = DateTime.UtcNow;
-        var items = shares.Select(share =>
-        {
-            var collection = share.CollectionId == null ? null : collections.GetValueOrDefault(share.CollectionId);
-            var stopped = share.CollectionId != null && !HostedCollectionRules.AllowsShare(collection, share);
-            var expired = share.ExpiresAt.HasValue && share.ExpiresAt.Value <= now;
-            var active = !share.IsRevoked && !stopped && !expired;
-            return new { share.Id, title = string.IsNullOrWhiteSpace(share.Title) ? collection?.Title ?? "未命名合集" : share.Title, shareUrl = $"/s/wp/{Uri.EscapeDataString(share.Token)}",
-                share.CreatedAt, share.ExpiresAt, share.AccessLevel, memberCount = share.TargetSiteIds().Count, isActive = active,
-                statusLabel = share.IsRevoked ? "已撤销" : stopped ? "已停止" : expired ? "已过期" : "有效" };
-        });
-        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+        var rows = await Collections.Find(c => c.OwnerUserId == GetUserId() && (dissolved ? c.DissolvedAt != null : c.DissolvedAt == null))
+            .SortByDescending(c => c.UpdatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items = rows }));
     }
 
     [HttpGet("collections/candidates")]
-    public async Task<IActionResult> CollectionCandidates([FromQuery] string? keyword, [FromQuery] int page = 1)
+    public async Task<IActionResult> CollectionCandidates()
     {
-        page = Math.Max(1, page);
-        var filter = Builders<HostedSite>.Filter.Eq(x => x.OwnerUserId, GetUserId());
-        if (!string.IsNullOrWhiteSpace(keyword)) filter &= Builders<HostedSite>.Filter.Regex(x => x.Title, new MongoDB.Bson.BsonRegularExpression(Regex.Escape(keyword.Trim()), "i"));
-        var total = await _db.HostedSites.CountDocumentsAsync(filter);
-        var sites = await _db.HostedSites.Find(filter).SortByDescending(x => x.UpdatedAt).Skip((page - 1) * 30).Limit(30).ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { items = sites.Select(x => new { x.Id, x.Title }), total, page, pageSize = 30 }));
+        var user = GetUserId();
+        var teams = (await _teams.GetMyWebHostingTeamRolesAsync(user)).Keys.ToList();
+        var pool = await _db.HostedSites.Find(s => s.OwnerUserId == user || s.SharedTeamIds.Any(id => teams.Contains(id)))
+            .SortByDescending(s => s.UpdatedAt).Limit(1000).ToListAsync();
+        var visible = new List<object>(); var visibleIds = new HashSet<string>();
+        foreach (var site in pool)
+            if (await _siteService.GetByIdAsync(site.Id, user) != null) { visible.Add(await CollectionItem(site, true)); visibleIds.Add(site.Id); }
+        var legacy = await _db.HostedDocumentGroups.Find(g => g.OwnerUserId == user).ToListAsync();
+        var ids = visibleIds;
+        return Ok(ApiResponse<object>.Ok(new { items = visible, legacy = legacy.Select(g => new {
+            g.Id, name = pool.FirstOrDefault(s => s.Id == g.MainSiteId)?.Title ?? "历史关联组",
+            siteIds = g.SiteIds.Where(ids.Contains), g.MainSiteId
+        }), templates = WritingTemplateRegistry.All }));
     }
 
-    [HttpGet("collections/{id}")]
-    public async Task<IActionResult> GetCollection(string id)
+    [HttpGet("collections/members")]
+    public async Task<IActionResult> CollectionMemberDirectory([FromQuery] string keyword)
     {
-        var collection = await OwnedCollectionAsync(id);
-        return collection == null ? CollectionMissing() : await CollectionDetailsAsync(collection);
-    }
-
-    [HttpGet("collections/by-share/{token}")]
-    public async Task<IActionResult> CollectionByShare(string token)
-    {
-        var share = await _db.WebPageShareLinks.Find(x => x.Token == token && x.CreatedBy == GetUserId()).FirstOrDefaultAsync();
-        if (share == null || share.ShareType != "collection") return CollectionMissing();
-        if (share.CollectionId != null) return await GetCollection(share.CollectionId);
-        var sites = await CollectionSitesAsync(share.TargetSiteIds());
-        return Ok(ApiResponse<object>.Ok(new { collection = (HostedCollection?)null, sites,
-            legacyShare = new { share.Id, share.Title, siteIds = share.TargetSiteIds() }, shares = Array.Empty<object>() }));
-    }
-
-    private async Task<List<object>> CollectionSitesAsync(IEnumerable<string> ids)
-    {
-        var sites = new List<object>();
-        foreach (var id in ids)
-        {
-            var site = await _siteService.GetByIdAsync(id, GetUserId(), CancellationToken.None);
-            sites.Add(new { id, title = site?.Title ?? "文档已删除或当前无权访问", available = site != null });
-        }
-        return sites;
-    }
-
-    private async Task<IActionResult> CollectionDetailsAsync(HostedCollection collection)
-    {
-        Response.Headers.CacheControl = "no-store";
-        var shares = await _db.WebPageShareLinks.Find(x => x.CollectionId == collection.Id && x.CreatedBy == GetUserId())
-            .SortByDescending(x => x.CreatedAt).ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { collection,
-            sites = await CollectionSitesAsync(HostedCollectionRules.OrderedIds(collection.SiteIds, collection.MainSiteId)),
-            shares = shares.Select(x => new { x.Id, x.Token, x.Visibility, x.ExpiresAt, x.IsRevoked,
-                active = !x.IsRevoked && HostedCollectionRules.AllowsShare(collection, x) && (x.ExpiresAt == null || x.ExpiresAt > DateTime.UtcNow),
-                needsUpdate = x.CollectionVersion != collection.Version,
-                memberCount = x.TargetSiteIds().Count, x.CollectionVersion }),
-        }));
-    }
-
-    private async Task<string?> ValidateCollectionAsync(CollectionEditRequest req)
-    {
-        var ids = HostedCollectionRules.OrderedIds(req.SiteIds ?? new());
-        var error = HostedCollectionRules.Validate(req.Title, ids, req.MainSiteId);
-        if (error != null) return error;
-        return await _siteService.CanCreateShareAsync(ids, GetUserId(), CancellationToken.None)
-            ? null : "部分文档已删除，或你没有将其加入分享的权限，请移出后重试";
+        var query = (keyword ?? "").Trim();
+        if (query.Length < 2) return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<object>() }));
+        var users = await _db.Users.Find(u => u.Status == UserStatus.Active && (u.DisplayName.Contains(query) || u.Username.Contains(query)))
+            .Limit(30).Project(u => new { id = u.UserId, name = u.DisplayName }).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items = users }));
     }
 
     [HttpPost("collections")]
-    public async Task<IActionResult> CreateCollection([FromBody] CollectionEditRequest req)
+    public async Task<IActionResult> CreateDocumentCollection([FromBody] CollectionSaveRequest request)
     {
-        var error = await ValidateCollectionAsync(req);
-        if (error != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, error));
-        var collection = new HostedCollection { OwnerUserId = GetUserId(), Title = req.Title.Trim(),
-            SiteIds = HostedCollectionRules.OrderedIds(req.SiteIds, req.MainSiteId), MainSiteId = req.MainSiteId };
-        await _db.HostedCollections.InsertOneAsync(collection, cancellationToken: CancellationToken.None);
-        return await CollectionDetailsAsync(collection);
+        var collection = new HostedDocumentCollection { OwnerUserId = GetUserId(), OwnerName = await ResolveDisplayNameAsync(GetUserId()),
+            Name = request.Name.Trim(), Description = request.Description ?? "", SiteIds = request.SiteIds,
+            MainSiteId = request.MainSiteId, Sections = request.Sections ?? new() };
+        var error = await ValidateCollection(collection);
+        if (error != null) return error;
+        await Collections.InsertOneAsync(collection);
+        return await GetDocumentCollection(collection.Id);
     }
 
     [HttpPut("collections/{id}")]
-    public async Task<IActionResult> UpdateCollection(string id, [FromBody] CollectionEditRequest req)
+    public async Task<IActionResult> UpdateDocumentCollection(string id, [FromBody] CollectionSaveRequest request)
     {
-        var collection = await OwnedCollectionAsync(id);
-        if (collection == null) return CollectionMissing();
-        var error = await ValidateCollectionAsync(req);
-        if (error != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, error));
-        var changed = await _db.HostedCollections.UpdateOneAsync(x => x.Id == id && x.OwnerUserId == GetUserId() && !x.IsDissolved && x.Version == req.Version,
-            Builders<HostedCollection>.Update.Set(x => x.Title, req.Title.Trim())
-                .Set(x => x.SiteIds, HostedCollectionRules.OrderedIds(req.SiteIds, req.MainSiteId)).Set(x => x.MainSiteId, req.MainSiteId)
-                .Inc(x => x.Version, 1).Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: CancellationToken.None);
-        return changed.MatchedCount == 0 ? CollectionChanged() : await GetCollection(id);
+        var collection = await Collections.Find(c => c.Id == id && c.OwnerUserId == GetUserId() && c.DissolvedAt == null).FirstOrDefaultAsync();
+        if (collection == null) return RelatedNotFound();
+        if (collection.Version != request.Version) return RelatedConflict();
+        var previousIds = collection.SiteIds.ToHashSet();
+        collection.Name = request.Name.Trim(); collection.Description = request.Description ?? "";
+        collection.SiteIds = request.SiteIds; collection.MainSiteId = request.MainSiteId; collection.Sections = request.Sections ?? new();
+        var error = await ValidateCollection(collection, previousIds);
+        if (error != null) return error;
+        collection.Version++; collection.UpdatedAt = DateTime.UtcNow;
+        var saved = await Collections.UpdateOneAsync(c => c.Id == id && c.OwnerUserId == GetUserId() && c.Version == request.Version && c.DissolvedAt == null,
+            Builders<HostedDocumentCollection>.Update.Set(c => c.Name, collection.Name).Set(c => c.Description, collection.Description)
+                .Set(c => c.SiteIds, collection.SiteIds).Set(c => c.MainSiteId, collection.MainSiteId).Set(c => c.Sections, collection.Sections).Set(c => c.MemberMetadata, collection.MemberMetadata)
+                .Set(c => c.UpdatedAt, collection.UpdatedAt).Inc(c => c.Version, 1));
+        return saved.ModifiedCount == 1 ? await GetDocumentCollection(id) : RelatedConflict();
     }
 
-    [HttpPost("collections/from-share/{token}")]
-    public async Task<IActionResult> AdoptCollection(string token, [FromBody] CollectionAdoptRequest req)
+    [HttpGet("collections/{id}")]
+    public async Task<IActionResult> GetDocumentCollection(string id)
     {
-        var share = await _db.WebPageShareLinks.Find(x => x.Token == token && x.CreatedBy == GetUserId() && !x.IsRevoked).FirstOrDefaultAsync();
-        if (share == null || share.ShareType != "collection") return CollectionMissing();
-        if (share.CollectionId != null) return await GetCollection(share.CollectionId);
-        var ids = share.TargetSiteIds();
-        var error = await ValidateCollectionAsync(new(req.Title, ids, req.MainSiteId));
-        if (error != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, error));
-        var collection = new HostedCollection { OwnerUserId = GetUserId(), Title = req.Title.Trim(), SiteIds = HostedCollectionRules.OrderedIds(ids, req.MainSiteId), MainSiteId = req.MainSiteId };
-        await _db.HostedCollections.InsertOneAsync(collection, cancellationToken: CancellationToken.None);
-        var attached = await _db.WebPageShareLinks.UpdateOneAsync(x => x.Id == share.Id && x.CreatedBy == GetUserId() && !x.IsRevoked && x.CollectionId == null,
-            Builders<WebPageShareLink>.Update.Set(x => x.CollectionId, collection.Id).Set(x => x.MainSiteId, collection.MainSiteId)
-                .Set(x => x.CollectionVersion, collection.Version).Set(x => x.CollectionShareGeneration, collection.ShareGeneration)
-                .Set(x => x.Title, collection.Title).Set(x => x.SiteIds, collection.SiteIds), cancellationToken: CancellationToken.None);
-        if (attached.MatchedCount == 0)
-        {
-            await _db.HostedCollections.DeleteOneAsync(x => x.Id == collection.Id, CancellationToken.None);
-            return CollectionChanged();
-        }
-        return await CollectionDetailsAsync(collection);
-    }
-
-    [HttpPost("collections/{id}/stop-sharing")]
-    public Task<IActionResult> StopCollectionShares(string id, [FromBody] CollectionVersionRequest req) => CloseCollectionSharesAsync(id, req.Version, false);
-
-    [HttpPost("collections/{id}/dissolve")]
-    public Task<IActionResult> DissolveCollection(string id, [FromBody] CollectionVersionRequest req) => CloseCollectionSharesAsync(id, req.Version, true);
-
-    private async Task<IActionResult> CloseCollectionSharesAsync(string id, long version, bool dissolve)
-    {
-        var collection = await OwnedCollectionAsync(id);
-        if (collection == null) return CollectionMissing();
-        var changed = await _db.HostedCollections.UpdateOneAsync(x => x.Id == id && x.OwnerUserId == GetUserId() && !x.IsDissolved && x.Version == version,
-            Builders<HostedCollection>.Update.Inc(x => x.ShareGeneration, 1).Inc(x => x.Version, 1)
-                .Set(x => x.IsDissolved, dissolve).Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: CancellationToken.None);
-        if (changed.MatchedCount == 0) return CollectionChanged();
-        // 先递增授权代次，再撤销记录：并发创建或失败重试都不能使旧代链接重新有效。
-        await _db.WebPageShareLinks.UpdateManyAsync(x => x.CollectionId == id && x.CollectionShareGeneration <= collection.ShareGeneration && !x.IsRevoked,
-            Builders<WebPageShareLink>.Update.Set(x => x.IsRevoked, true).Set(x => x.RevokedAt, DateTime.UtcNow)
-                .Set(x => x.RevokedReason, dissolve ? "合集已解散" : "合集已停止全部分享"), cancellationToken: CancellationToken.None);
-        return Ok(ApiResponse<object>.Ok(new { dissolved = dissolve, sharingStopped = true, documentsDeleted = false }));
-    }
-
-    private async Task<(string Fingerprint, List<HostedSite> Sites)?> CollectionSharingContextAsync(HostedCollection collection)
-    {
-        var sites = new List<HostedSite>();
-        foreach (var id in collection.SiteIds)
-        {
-            var site = await _siteService.GetByIdAsync(id, GetUserId(), CancellationToken.None);
-            if (site == null) return null;
-            sites.Add(site);
-        }
-        var bytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new {
-            collection.Id, collection.Version, collection.ShareGeneration,
-            sites = sites.Select(x => new { x.Id, x.OwnerUserId, x.Visibility, x.GroupId, x.ContentVersion,
-                teams = x.SharedTeamIds.OrderBy(t => t).ToArray() }) });
-        return (Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), sites);
-    }
-
-    [HttpGet("collections/{id}/sharing-preview")]
-    public async Task<IActionResult> PreviewCollectionSharing(string id)
-    {
-        var collection = await OwnedCollectionAsync(id);
-        if (collection == null) return CollectionMissing();
-        var context = await CollectionSharingContextAsync(collection);
-        if (context == null) return BadRequest(ApiResponse<object>.Fail("COLLECTION_UNAVAILABLE", "部分文档已删除或失去访问权限，请先调整合集"));
-        return Ok(ApiResponse<object>.Ok(new { fingerprint = context.Value.Fingerprint, version = collection.Version,
-            canShare = await _siteService.CanCreateShareAsync(collection.SiteIds, GetUserId(), CancellationToken.None),
-            items = context.Value.Sites.Select(x => new { x.Id, x.Title, x.Visibility, teamCount = x.SharedTeamIds.Count, isMain = x.Id == collection.MainSiteId }),
-            notice = "本次分享仅授权下列成员快照，不修改原文档权限。以后新增成员不会自动加入旧链接；其他独立分享继续有效。" }));
-    }
-
-    [HttpPost("collections/{id}/shares")]
-    public async Task<IActionResult> CreateCollectionShare(string id, [FromBody] CollectionShareRequest req)
-    {
-        var collection = await OwnedCollectionAsync(id);
-        if (collection == null) return CollectionMissing();
-        var error = await ValidateCollectionAsync(new(collection.Title, collection.SiteIds, collection.MainSiteId));
-        if (error != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, error));
-        var visibility = req.Visibility ?? "owner-only";
-        if (visibility is not ("owner-only" or "logged-in" or "public")) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择有效的分享访问范围"));
-        var preview = await CollectionSharingContextAsync(collection);
-        if (preview == null || req.CollectionVersion != collection.Version || req.PermissionFingerprint != preview.Value.Fingerprint) return CollectionChanged();
-        if (visibility != "owner-only")
-        {
-            var refusal = await EnforcePrivateSourcesForShareAsync(collection.SiteIds,
-                PrdAgent.Api.Services.HostedSitePrivateSourceActions.ShareCreate, req.ConfirmedPrivateSourceFingerprint);
-            if (refusal != null) return refusal;
-        }
-        WebPageShareLink? share = null;
-        var completed = false;
-        try
-        {
-            // 新链接先仅作者可见；绑定合集代次并完成历史资源发布检查后才对外激活。
-            share = await _siteService.CreateShareAsync(GetUserId(), await ResolveDisplayNameAsync(GetUserId()), null,
-                HostedCollectionRules.OrderedIds(collection.SiteIds, collection.MainSiteId), "collection", collection.Title, req.Description,
-                req.Password, req.ExpiresInDays, CancellationToken.None, forceNew: true, visibility: "owner-only",
-                allocateShortLink: req.AllocateShortLink ?? false, askSuggestedQuestions: req.AskSuggestedQuestions);
-            await _db.WebPageShareLinks.UpdateOneAsync(x => x.Id == share.Id && !x.IsRevoked,
-                Builders<WebPageShareLink>.Update.Set(x => x.CollectionId, collection.Id).Set(x => x.MainSiteId, collection.MainSiteId)
-                    .Set(x => x.CollectionVersion, collection.Version).Set(x => x.CollectionShareGeneration, collection.ShareGeneration), cancellationToken: CancellationToken.None);
-            var current = await OwnedCollectionAsync(id);
-            if (current == null || current.Version != collection.Version || current.ShareGeneration != collection.ShareGeneration) return CollectionChanged();
-            var activated = await _siteService.UpdateShareSettingsAsync(share.Id, GetUserId(), visibility, null, CancellationToken.None);
-            if (!activated.Ok) return Conflict(ApiResponse<object>.Fail("COLLECTION_SHARE_FAILED", activated.Error ?? "分享未完成，请重新生成"));
-            completed = true;
-            return Ok(ApiResponse<object>.Ok(new { share.Id, share.Token, share.Password, share.ExpiresAt,
-                visibility, collectionId = collection.Id, shareUrl = $"/s/wp/{share.Token}", share.ShortSeq }));
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or UnauthorizedAccessException)
-        { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
-        finally
-        {
-            if (!completed && share != null) await _siteService.RevokeShareAsync(share.Id, GetUserId(), "合集分享创建未完成", CancellationToken.None);
-        }
-    }
-
-    private async Task<(HostedDocumentGroup? Group, List<HostedSite> Sites, List<WebPageShareLink> Shares)> CollectionPermissionContextAsync(string id)
-    {
-        var collection = await OwnedCollectionAsync(id);
-        if (collection == null) return (null, new(), new());
-        var sites = new List<HostedSite>();
+        Response.Headers.CacheControl = "no-store";
+        var collection = await Collections.Find(c => c.Id == id && c.DissolvedAt == null).FirstOrDefaultAsync();
+        if (collection == null) return RelatedNotFound();
+        var owner = collection.OwnerUserId == GetUserId();
+        if (!owner && await _siteService.GetByIdAsync(collection.MainSiteId, GetUserId()) == null) return RelatedNotFound();
+        var items = new List<object>(); var visibleIds = new List<string>();
         foreach (var siteId in collection.SiteIds)
         {
-            var site = await _siteService.GetByIdAsync(siteId, GetUserId(), CancellationToken.None);
-            // 同步沿用既有关联权限规则，只处理当前作者实际拥有的全部成员。
-            if (site == null || site.OwnerUserId != GetUserId()) return (null, new(), new());
-            sites.Add(site);
+            var site = await _siteService.GetByIdAsync(siteId, GetUserId());
+            if (site != null) { items.Add(await CollectionItem(site, owner, true)); visibleIds.Add(siteId); }
+            else if (owner) { items.Add(UnavailableCollectionItem(siteId, collection.MemberMetadata)); visibleIds.Add(siteId); }
         }
-        var shares = await _db.WebPageShareLinks.Find(x => !x.IsRevoked && (x.ExpiresAt == null || x.ExpiresAt > DateTime.UtcNow || x.Purpose == "visit") && (collection.SiteIds.Contains(x.SiteId!) || x.SiteIds.Any(s => collection.SiteIds.Contains(s))))
-            .ToListAsync();
-        return (new HostedDocumentGroup { Id = collection.Id, OwnerUserId = collection.OwnerUserId,
-            MainSiteId = collection.MainSiteId, SiteIds = collection.SiteIds, Version = collection.Version }, sites, shares);
+        // 可读一个成员不等于获准得知其他受限成员的标题、数量或章节名称。
+        if (!owner) HostedCollectionPolicy.RestrictVisibleMembers(collection, visibleIds.ToHashSet());
+
+        var main = await _siteService.GetByIdAsync(collection.MainSiteId, GetUserId());
+        var related = main == null ? null : await RelatedViewAsync(main, GetUserId(), new HashSet<string>()) as OkObjectResult;
+        return Ok(ApiResponse<object>.Ok(new { collection, items, canManage = owner,
+            related = (related?.Value as ApiResponse<object>)?.Data,
+            templates = WritingTemplateRegistry.All }));
+    }
+
+    private async Task<object> CollectionItem(HostedSite site, bool manage, bool metadata = false, bool publicRead = false)
+    {
+        if (metadata) await RefreshCollectionMetadata(site);
+        var memberships = publicRead ? new List<object>() : (await Collections.Find(c => c.OwnerUserId == GetUserId() && c.DissolvedAt == null && c.SiteIds.Contains(site.Id))
+            .Project(c => new { c.Id, c.Name }).ToListAsync()).Cast<object>().ToList();
+        var threads = metadata ? await _db.HostedSiteComments.Find(c => c.SiteId == site.Id && !c.IsDeleted && c.ParentId == null).ToListAsync() : new();
+        threads = threads.Where(c => HostedSiteCommentRules.CanViewReviewVersion(HostedSiteCommentRules.StoredVersion(c), site.ContentVersion, false)).ToList();
+        return new { site.Id, site.Title, site.SiteUrl, site.EntryFile, site.WrappedAssetType, site.ContentShape, summary = site.Description, excerpt = site.DocumentTextExcerpt,
+            headings = site.DocumentHeadings, templateId = site.WritingTemplateId,
+            type = CollectionDocumentType(site),
+            ownerUserId = publicRead ? null : site.OwnerUserId, author = await ResolveDisplayNameAsync(site.OwnerUserId), site.UpdatedAt,
+            characterCount = site.DocumentCharacterCount, commentCount = threads.Count,
+            annotationCount = threads.Count(c => c.Anchor != null), discussionCount = threads.Count(c => c.Anchor == null),
+            versionNumber = metadata ? Math.Max(1, await _db.HostedSiteRevisions.CountDocumentsAsync(r => r.SiteId == site.Id && r.Status == HostedSiteRevisionStatuses.Published)) : 1,
+            version = site.ContentVersion, visibility = publicRead ? null : site.Visibility, sharedTeamIds = publicRead ? null : site.SharedTeamIds, groupId = publicRead ? null : site.GroupId,
+            canShare = manage && await _siteService.CanCreateShareAsync(new[] { site.Id }, GetUserId()),
+            canEdit = !publicRead && site.OwnerUserId == GetUserId(), memberships, unavailable = false };
+    }
+
+    private async Task<IActionResult?> ValidateCollection(HostedDocumentCollection collection, HashSet<string>? previousIds = null)
+    {
+        try { HostedCollectionPolicy.Validate(collection); }
+        catch (InvalidOperationException ex) { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+        foreach (var id in collection.SiteIds) {
+            var site = await _siteService.GetByIdAsync(id, GetUserId());
+            if (site == null) { if (previousIds?.Contains(id) != true) return RelatedNotFound(); continue; }
+            collection.MemberMetadata[id] = new HostedCollectionMemberMetadata { Title = site.Title,
+                Author = await ResolveDisplayNameAsync(site.OwnerUserId), Type = CollectionDocumentType(site), UpdatedAt = site.UpdatedAt };
+        }
+        collection.MemberMetadata = collection.MemberMetadata.Where(pair => collection.SiteIds.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value);
+        return null;
+    }
+
+    private static string CollectionDocumentType(HostedSite site) => !string.IsNullOrWhiteSpace(site.DocumentType)
+        ? site.DocumentType : WritingTemplateRegistry.Find(site.WritingTemplateId ?? "")?.Type ?? "文档";
+
+    [HttpPost("collections/{id}/dissolve")]
+    public async Task<IActionResult> DissolveDocumentCollection(string id, [FromBody] CollectionVersionRequest request)
+    {
+        var collection = await Collections.FindOneAndUpdateAsync<HostedDocumentCollection>(Builders<HostedDocumentCollection>.Filter.Where(c => c.Id == id && c.OwnerUserId == GetUserId() && c.DissolvedAt == null && c.Version == request.Version),
+            Builders<HostedDocumentCollection>.Update.Set(c => c.DissolvedAt, DateTime.UtcNow).Set(c => c.UpdatedAt, DateTime.UtcNow).Inc(c => c.Version, 1).Inc(c => c.ShareGeneration, 1),
+            new FindOneAndUpdateOptions<HostedDocumentCollection, HostedDocumentCollection> { ReturnDocument = ReturnDocument.After });
+        if (collection == null) return RelatedConflict();
+        await RevokeEarlierCollectionShares(id, collection.ShareGeneration);
+        return Ok(ApiResponse<object>.Ok(new { dissolved = true }));
+    }
+
+    [HttpPost("collections/{id}/restore")]
+    public async Task<IActionResult> RestoreDocumentCollection(string id, [FromBody] CollectionVersionRequest request)
+    {
+        var earliest = DateTime.UtcNow.AddDays(-30);
+        var result = await Collections.UpdateOneAsync(c => c.Id == id && c.OwnerUserId == GetUserId() && c.DissolvedAt >= earliest && c.Version == request.Version,
+            Builders<HostedDocumentCollection>.Update.Set(c => c.DissolvedAt, null).Set(c => c.UpdatedAt, DateTime.UtcNow).Inc(c => c.Version, 1));
+        return result.ModifiedCount == 1 ? await GetDocumentCollection(id) : RelatedConflict();
+    }
+
+    [HttpGet("collections/{id}/shares")]
+    public async Task<IActionResult> ListCollectionShares(string id)
+    {
+        var collection = await Collections.Find(c => c.Id == id && c.OwnerUserId == GetUserId()).FirstOrDefaultAsync();
+        if (collection == null) return RelatedNotFound();
+        var shares = await _db.WebPageShareLinks.Find(s => s.CollectionSnapshot != null && s.CollectionSnapshot.CollectionId == id && s.CreatedBy == GetUserId())
+            .SortByDescending(s => s.CreatedAt).ToListAsync();
+        // 只为当前所有者已创建的名单补全显示名，不向匿名目录或其他合集暴露用户目录。
+        var memberIds = shares.SelectMany(s => s.CollectionSnapshot!.AccessUserIds).Distinct().ToList();
+        var members = await _db.Users.Find(u => memberIds.Contains(u.UserId))
+            .Project(u => new { u.UserId, u.DisplayName, u.Username }).ToListAsync();
+        var memberNames = members.ToDictionary(u => u.UserId, u => string.IsNullOrWhiteSpace(u.DisplayName) ? u.Username : u.DisplayName);
+        return Ok(ApiResponse<object>.Ok(new { items = shares.Select(s => new { s.Id, s.Token, s.Title, s.Visibility,
+            s.AccessLevel, s.ExpiresAt, s.CreatedAt, s.ViewCount, isRevoked = s.IsRevoked || s.CollectionSnapshot!.ShareGeneration != collection.ShareGeneration, snapshot = s.CollectionSnapshot,
+            accessMembers = s.CollectionSnapshot!.AccessUserIds.Select(memberId => new { id = memberId, name = memberNames.GetValueOrDefault(memberId) ?? memberId }),
+            shareUrl = $"/s/collection/{Uri.EscapeDataString(s.Token)}" }) }));
+    }
+
+    private async Task<string> CollectionFingerprint(HostedDocumentCollection collection)
+    {
+        var sites = await _db.HostedSites.Find(s => collection.SiteIds.Contains(s.Id)).ToListAsync();
+        var groups = sites.Select(s => s.GroupId).Where(g => g != null).ToList();
+        var restrictions = await _db.WebPageGroups.Find(g => groups.Contains(g.Id)).ToListAsync();
+        var json = JsonSerializer.Serialize(new { collection.Version, collection.ShareGeneration, collection.SiteIds, sites = sites.OrderBy(s => s.Id).Select(s => new {
+            s.Id, s.OwnerUserId, s.Visibility, s.SharedTeamIds, s.GroupId, s.ContentVersion
+        }), restrictions = restrictions.Select(g => new { g.Id, g.UpdatedAt }) });
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
     }
 
     [HttpGet("collections/{id}/permissions")]
     public async Task<IActionResult> CollectionPermissions(string id)
     {
-        var (group, sites, shares) = await CollectionPermissionContextAsync(id);
-        return group == null ? BadRequest(ApiResponse<object>.Fail("COLLECTION_PERMISSIONS_UNAVAILABLE", "合集含不可访问或其他作者的文档，请先移出或由文档所有者处理权限"))
-            : await RelatedPermissionsPreviewAsync(group, sites, shares);
+        var collection = await Collections.Find(c => c.Id == id && c.OwnerUserId == GetUserId() && c.DissolvedAt == null).FirstOrDefaultAsync();
+        if (collection == null) return RelatedNotFound();
+        var main = await _siteService.GetByIdAsync(collection.MainSiteId, GetUserId());
+        var items = new List<object>();
+        foreach (var memberId in collection.SiteIds) {
+            var site = await _siteService.GetByIdAsync(memberId, GetUserId());
+            if (site == null) { items.Add(new { id = memberId, title = "不可用文档", canShare = false, canSync = false, matches = false }); continue; }
+            items.Add(new { id = site.Id, site.Title, site.Visibility, site.SharedTeamIds,
+                canShare = await _siteService.CanCreateShareAsync(new[] { site.Id }, GetUserId()),
+                canSync = site.OwnerUserId == GetUserId() && main != null && main.OwnerUserId == GetUserId(),
+                matches = main != null && HostedDocumentPermissionPolicy.SamePageAccess(main, site),
+                differences = main == null ? new List<string>() : HostedDocumentPermissionPolicy.DescribeChanges(main, site) });
+        }
+        return Ok(ApiResponse<object>.Ok(new { fingerprint = await CollectionFingerprint(collection), items }));
+    }
+
+    [HttpPost("collections/{id}/shares")]
+    public async Task<IActionResult> CreateCollectionShare(string id, [FromBody] CollectionShareRequest request)
+    {
+        var collection = await Collections.Find(c => c.Id == id && c.OwnerUserId == GetUserId() && c.DissolvedAt == null).FirstOrDefaultAsync();
+        if (collection == null) return RelatedNotFound();
+        if (collection.Version != request.Version || request.Fingerprint != await CollectionFingerprint(collection)) return RelatedConflict();
+        HostedCollectionSnapshot snapshot;
+        try { snapshot = HostedCollectionPolicy.Snapshot(collection, request.SiteIds); }
+        catch (InvalidOperationException ex) { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+        if (request.AccessUserIds.Count > 100) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "指定成员最多100人"));
+        var userIds = request.AccessUserIds.Distinct().ToList();
+        if (userIds.Count > 0 && await _db.Users.CountDocumentsAsync(u => userIds.Contains(u.UserId) && u.Status == UserStatus.Active) != userIds.Count)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "部分指定成员不可用，请重新选择"));
+        snapshot.AccessUserIds = userIds;
+        // 复用完整的既有分享权限、私有资料确认、密码及有效期规则，不创建绕过门禁的分享。
+        var result = await CreateShareCore(new CreateWebPageShareRequest { SiteIds = snapshot.SiteIds, ShareType = "collection",
+            Title = request.Title ?? collection.Name, Description = collection.Description, Password = request.Password,
+            ExpiresInDays = request.ExpiresInDays, Visibility = userIds.Count > 0 && request.Visibility != "owner-only" ? "logged-in" : request.Visibility, ForceNew = true,
+            ConfirmedPrivateSourceFingerprint = request.ConfirmedPrivateSourceFingerprint }, snapshot);
+        if (result is not OkObjectResult ok || ok.Value is not ApiResponse<object> response || response.Data == null) return result;
+        var json = JsonSerializer.SerializeToElement(response.Data, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var shareId = json.GetProperty("id").GetString()!;
+        var active = await Collections.Find(c => c.Id == id && c.DissolvedAt == null && c.ShareGeneration == snapshot.ShareGeneration).FirstOrDefaultAsync();
+        if (active == null) {
+            await _siteService.RevokeShareAsync(shareId, GetUserId(), "创建期间合集已解散");
+            return RelatedConflict();
+        }
+        var token = json.GetProperty("token").GetString()!;
+        return Ok(ApiResponse<object>.Ok(new { id = shareId, token, shareUrl = $"/s/collection/{Uri.EscapeDataString(token)}", snapshot }));
     }
 
     [HttpPost("collections/{id}/permissions/sync")]
-    public async Task<IActionResult> SyncCollectionPermissions(string id, [FromBody] RelatedPermissionRequest req)
+    public async Task<IActionResult> SyncCollectionPermissions(string id, [FromBody] CollectionSyncRequest request)
     {
-        var (group, sites, shares) = await CollectionPermissionContextAsync(id);
-        return group == null ? BadRequest(ApiResponse<object>.Fail("COLLECTION_PERMISSIONS_UNAVAILABLE", "无法统一其他作者或不可访问文档的权限"))
-            : await ApplyRelatedPermissionsAsync(group, sites, shares, req);
+        var collection = await Collections.Find(c => c.Id == id && c.OwnerUserId == GetUserId() && c.DissolvedAt == null).FirstOrDefaultAsync();
+        if (collection == null) return RelatedNotFound();
+        if (request.Fingerprint != await CollectionFingerprint(collection)) return RelatedConflict();
+        var source = await _db.HostedSites.Find(s => s.Id == collection.MainSiteId && s.OwnerUserId == GetUserId()).FirstOrDefaultAsync();
+        if (source == null || request.SiteIds.Any(s => !collection.SiteIds.Contains(s))) return RelatedNotFound();
+        var targets = await _db.HostedSites.Find(s => request.SiteIds.Contains(s.Id) && s.OwnerUserId == GetUserId()).ToListAsync();
+        if (targets.Count != request.SiteIds.Distinct().Count()) return RelatedNotFound();
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(GetUserId());
+        if (targets.Any(t => source.SharedTeamIds.Except(t.SharedTeamIds).Any(team => !roles.TryGetValue(team, out var role)
+            || role != WebHostingRoles.Owner && role != WebHostingRoles.Editor)))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "你没有向主文档全部团队投放文档的权限"));
+        if (source.GroupId != null) {
+            var group = await _db.WebPageGroups.Find(g => g.Id == source.GroupId).FirstOrDefaultAsync();
+            if (group == null || !source.SharedTeamIds.Contains(group.TeamId)) return RelatedConflict();
+            if (WebPageGroupAccess.IsRestricted(group) && (!roles.TryGetValue(group.TeamId, out var role) || role != WebHostingRoles.Owner))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "受限分组需要团队所有者操作"));
+        }
+        var widening = targets.Where(t => source.Visibility == "public" && t.Visibility != "public").ToList();
+        if (widening.Count > 0 && _privateSources != null) {
+            var decision = await _privateSources.EnforceForSitesAsync(widening, HostedSitePrivateSourceActions.SitePublic, GetUserId(), null, CancellationToken.None);
+            if (!decision.Allowed) return Conflict(ApiResponse<object>.Fail(decision.ErrorCode, decision.Message));
+        }
+        var results = new List<object>();
+        foreach (var target in targets) {
+            var visibilityChanged = false;
+            try {
+                var changed = await _siteService.SetVisibilityAsync(target.Id, GetUserId(), source.Visibility);
+                if (changed == null) { results.Add(new { id = target.Id, success = false, message = "文档已变化，未同步" }); continue; }
+                visibilityChanged = true;
+                var assigned = await _siteService.SetSharedTeamsAndGroupAsync(target.Id, GetUserId(), source.SharedTeamIds, source.GroupId);
+                results.Add(new { id = target.Id, success = assigned != null, message = assigned != null ? "页面权限已同步" : "可见性已同步，团队权限未同步，请重新核对" });
+            } catch (Exception ex) when (ex is not OperationCanceledException) {
+                results.Add(new { id = target.Id, success = false, message = visibilityChanged ? "可见性已同步，团队权限同步失败，请重新核对" : "同步失败，原权限保留，请重试" });
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(new { results, fingerprint = await CollectionFingerprint(collection) }));
     }
+
+    [HttpPost("collections/{id}/shares/stop")]
+    public async Task<IActionResult> StopCollectionShares(string id)
+    {
+        var collection = await Collections.FindOneAndUpdateAsync<HostedDocumentCollection>(Builders<HostedDocumentCollection>.Filter.Where(c => c.Id == id && c.OwnerUserId == GetUserId()),
+            Builders<HostedDocumentCollection>.Update.Inc(c => c.ShareGeneration, 1),
+            new FindOneAndUpdateOptions<HostedDocumentCollection, HostedDocumentCollection> { ReturnDocument = ReturnDocument.After });
+        if (collection == null) return RelatedNotFound();
+        var stopped = await RevokeEarlierCollectionShares(id, collection.ShareGeneration);
+        return Ok(ApiResponse<object>.Ok(new { stopped }));
+    }
+
+    private async Task<int> RevokeEarlierCollectionShares(string id, int cutoffGeneration)
+    {
+        var shares = await _db.WebPageShareLinks.Find(s => s.CollectionSnapshot != null && s.CollectionSnapshot.CollectionId == id
+            && s.CollectionSnapshot.ShareGeneration < cutoffGeneration && s.CreatedBy == GetUserId() && !s.IsRevoked).ToListAsync();
+        foreach (var share in shares) await _siteService.RevokeShareAsync(share.Id, GetUserId(), "停止合集全部分享");
+        return shares.Count;
+    }
+
+    [AllowAnonymous]
+    [HttpGet("shares/view/{token}/collection")]
+    public async Task<IActionResult> ReadCollectionShare(string token, [FromQuery] string? password)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var viewer = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
+        var resolved = await _siteService.ResolveCollectionShareAsync(token, password, viewer);
+        if (resolved.Error != null) return MapCommentError(resolved.Error, resolved.HttpStatus, resolved.ErrorCode, resolved.RetryAfterSeconds);
+        var snapshot = resolved.Share?.CollectionSnapshot;
+        if (snapshot == null) return RelatedNotFound();
+        if (await Collections.Find(c => c.Id == snapshot.CollectionId && c.DissolvedAt == null).FirstOrDefaultAsync() == null)
+            return RelatedNotFound();
+        // 仅返回创建链接时已授权的成员快照，当前合集新增或修改不会扩展旧链接。
+        var allowed = resolved.Share!.TargetSiteIds().ToHashSet();
+        var sites = await _db.HostedSites.Find(s => snapshot.SiteIds.Contains(s.Id) && allowed.Contains(s.Id)).ToListAsync();
+        var byId = sites.ToDictionary(s => s.Id);
+        var items = new List<object>();
+        foreach (var siteId in snapshot.SiteIds.Where(allowed.Contains))
+            items.Add(byId.TryGetValue(siteId, out var site) ? await CollectionItem(site, false, true, true)
+                : UnavailableCollectionItem(siteId, snapshot.MemberMetadata));
+        return Ok(ApiResponse<object>.Ok(new { collection = snapshot, items, canManage = false, shareToken = token }));
+    }
+
+    private static object UnavailableCollectionItem(string id, Dictionary<string, HostedCollectionMemberMetadata> remembered)
+    {
+        var metadata = remembered.GetValueOrDefault(id);
+        return new { id, title = metadata?.Title ?? "不可用文档", author = metadata?.Author, type = metadata?.Type,
+            updatedAt = metadata?.UpdatedAt, unavailable = true, canShare = false, canEdit = false };
+    }
+
+    private static readonly MemoryCache CollectionMetadataCache = new(new MemoryCacheOptions { SizeLimit = 1024 });
+    private record CollectionMetadata(List<string> Headings, string Excerpt, int Characters);
+    private async Task RefreshCollectionMetadata(HostedSite site)
+    {
+        if (_reviewStorage == null) return;
+        var key = $"{site.Id}:{site.ContentVersion.Ticks}";
+        if (!CollectionMetadataCache.TryGetValue(key, out CollectionMetadata? metadata)) {
+            var entry = site.Files.FirstOrDefault(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+            if (entry == null || entry.Size > 2 * 1024 * 1024 || !string.IsNullOrEmpty(site.WrappedAssetType) && site.WrappedAssetType != "markdown") return;
+            var bytes = await _reviewStorage.TryDownloadBytesAsync(entry.CosKey, HttpContext.RequestAborted);
+            if (bytes == null || bytes.Length > 2 * 1024 * 1024) return;
+            var html = Encoding.UTF8.GetString(bytes);
+            var extracted = CollectionDocumentText(html);
+            var parsed = new HtmlParser().ParseDocument(html);
+            foreach (var node in parsed.QuerySelectorAll("script,style,nav,header,footer")) node.Remove();
+            metadata = new CollectionMetadata(extracted.Headings, extracted.Excerpt,
+                System.Text.RegularExpressions.Regex.Replace(parsed.Body?.TextContent ?? "", @"\s+", "").Length);
+            CollectionMetadataCache.Set(key, metadata, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) });
+        }
+        if (metadata == null) return;
+        site.DocumentHeadings = metadata.Headings; site.DocumentTextExcerpt = metadata.Excerpt; site.DocumentCharacterCount = metadata.Characters;
+    }
+
+    internal static (List<string> Headings, string Excerpt) CollectionDocumentText(string html)
+    {
+        var document = new HtmlParser().ParseDocument(html);
+        foreach (var node in document.QuerySelectorAll("script,style,nav,header,footer")) node.Remove();
+        var headings = document.QuerySelectorAll("h2").Select(h => h.TextContent.Trim()).Where(h => h.Length > 0).Take(30).ToList();
+        foreach (var node in document.QuerySelectorAll("h1,h2,h3,h4,h5,h6")) node.Remove();
+        var text = (document.QuerySelector("article,main") ?? document.Body)?.TextContent.Trim() ?? "";
+        text = string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return (headings, text[..Math.Min(60, text.Length)]);
+    }
+
+    public class CollectionVersionRequest { public long Version { get; set; } }
+    public class CollectionSaveRequest : CollectionVersionRequest {
+        public string Name { get; set; } = ""; public string? Description { get; set; }
+        public List<string> SiteIds { get; set; } = new(); public string MainSiteId { get; set; } = "";
+        public List<HostedCollectionSection>? Sections { get; set; }
+    }
+    public class CollectionShareRequest : CollectionVersionRequest {
+        public List<string> AccessUserIds { get; set; } = new();
+        public string Fingerprint { get; set; } = ""; public List<string> SiteIds { get; set; } = new();
+        public string? Title { get; set; } public string? Password { get; set; } public int ExpiresInDays { get; set; }
+        public string Visibility { get; set; } = "owner-only"; public string? ConfirmedPrivateSourceFingerprint { get; set; }
+    }
+    public class CollectionSyncRequest { public string Fingerprint { get; set; } = ""; public List<string> SiteIds { get; set; } = new(); }
 }

@@ -1,19 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
-import { Select } from '@/components/design/Select';
-import type { Platform } from '@/types/admin';
+import { LogicalModelPickerDialog } from '@/components/model/LogicalModelPickerDialog';
+import { ModelReferenceStatus } from '@/components/model/ModelReferenceStatus';
+import type { LogicalModelOption, ModelLabPurpose } from '@/services/contracts/modelReferences';
 import type { ModelLabSelectedModel } from '@/services/contracts/modelLab';
 // lucide icons are used inside shared dialog component
-import { deleteModelLabGroup, listModelLabGroups, upsertModelLabGroup } from '@/services';
+import { deleteModelLabGroup, listModelLabGroups, upsertModelLabGroup, getModelLabModelOptions } from '@/services';
 import type { ModelLabGroup } from '@/services/contracts/modelLabGroups';
-import { PlatformAvailableModelsDialog, type AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 
 type TabKey = 'byPlatform' | 'byLabGroup';
 
-function keyOf(m: Pick<ModelLabSelectedModel, 'platformId' | 'modelId'>) {
+function keyOf(m: Pick<ModelLabSelectedModel, 'platformId' | 'modelId' | 'logicalModelId'>) {
+  if (m.logicalModelId) return `logical:${m.logicalModelId}`;
   return `${m.platformId}:${m.modelId}`.toLowerCase();
 }
 
@@ -23,113 +24,48 @@ function dedupeByPlatformAndModelId(list: ModelLabSelectedModel[]): ModelLabSele
     const pid = String(item.platformId ?? '').trim();
     const mid = String(item.modelId ?? '').trim();
     if (!pid || !mid) continue;
-    const k = `${pid}:${mid}`.toLowerCase();
+    const k = keyOf(item);
     if (!map.has(k)) map.set(k, item);
   }
   return Array.from(map.values());
 }
 
-function toSelectedModelFromAvailable(args: {
-  platformId: string;
-  modelName: string;
-  displayName: string;
-  group?: string;
-}): ModelLabSelectedModel {
-  // 统一业务语义：modelId == 平台侧模型 ID（等价于 modelName）。
-  // 唯一性由 platformId + modelId 保证。
-  return {
-    modelId: args.modelName,
-    platformId: args.platformId,
-    name: args.modelName,
-    modelName: args.modelName,
-    group: args.group ?? null,
-  };
-}
-
-function PlatformAvailableDialog({
-  open,
-  onOpenChange,
-  platform,
-  selected,
-  setSelected,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  platform: Platform | null;
-  selected: ModelLabSelectedModel[];
-  setSelected: (updater: (prev: ModelLabSelectedModel[]) => ModelLabSelectedModel[]) => void;
-}) {
-  useEffect(() => {
-    if (!open) return;
-    // no-op: state handled in shared dialog
-  }, [open]);
-
-  const bulkAddGroup = (ms: AvailableModel[]) => {
-    if (!platform?.id) return;
-    const adds = ms.map((m) =>
-      toSelectedModelFromAvailable({
-        platformId: platform.id,
-        modelName: m.modelName,
-        displayName: m.displayName || m.modelName,
-        group: m.group,
-      })
-    );
-    setSelected((prev) => dedupeByPlatformAndModelId([...prev, ...adds]));
-  };
-
-  const togglePoolModel = (m: AvailableModel) => {
-    if (!platform?.id) return;
-    const k = keyOf({ platformId: platform.id, modelId: m.modelName });
-    const exists = selected.some((x) => keyOf(x) === k);
-    if (exists) {
-      setSelected((prev) => prev.filter((x) => keyOf(x) !== k));
-      return;
-    }
-
-    const selectedItem = toSelectedModelFromAvailable({
-      platformId: platform.id,
-      modelName: m.modelName,
-      displayName: m.displayName || m.modelName,
-      group: m.group,
-    });
-    setSelected((prev) => dedupeByPlatformAndModelId([...prev, selectedItem]));
-  };
-
-  const selectedCount = (selected ?? []).filter((x) => x.platformId === platform?.id).length;
-
-  return (
-    <PlatformAvailableModelsDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      platform={platform}
-      description="从平台可用模型列表中一键添加/移除（仅加入到本次实验的选择池）"
-      selectedCount={selectedCount}
-      selectedCountLabel="已加入"
-      selectedBadgeText="已加入"
-      isSelected={(m) => {
-        if (!platform?.id) return false;
-        const k = keyOf({ platformId: platform.id, modelId: m.modelName });
-        return selected.some((x) => keyOf(x) === k);
-      }}
-      onToggle={(m) => togglePoolModel(m)}
-      onBulkAddGroup={(_, ms) => bulkAddGroup(ms)}
-    />
-  );
+function fromLogicalOption(option: LogicalModelOption): ModelLabSelectedModel {
+  return { logicalModelId: option.logicalModelId, platformId: 'logical-model', modelId: option.publicId, modelName: option.publicId, name: option.name, modelReferenceStatus: 'available', modelReferenceReason: null };
 }
 
 export function ModelPickerDialog({
   open,
   onOpenChange,
   selectedModels,
-  platforms,
   onConfirm,
+  purpose = 'chat',
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   selectedModels: ModelLabSelectedModel[];
-  platforms: Platform[];
+  purpose?: ModelLabPurpose;
   onConfirm: (models: ModelLabSelectedModel[]) => void;
 }) {
+  const [catalog, setCatalog] = useState<LogicalModelOption[] | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const loadOptions = useCallback(() => getModelLabModelOptions(purpose), [purpose]);
+  useEffect(() => {
+    if (!open) return;
+    let active = true; setCatalog(null); setCatalogError(null);
+    void loadOptions().then(result => {
+      if (!active) return;
+      if (result.success) setCatalog(result.data.items);
+      else setCatalogError('当前用途的模型目录暂未读取成功，请重新打开重试。选择已保留。');
+    }).catch(() => { if (active) setCatalogError('当前用途的模型目录暂未读取成功，请重新打开重试。选择已保留。'); });
+    return () => { active = false; };
+  }, [open, loadOptions]);
+  const referenceState = (model: ModelLabSelectedModel): ModelLabSelectedModel => {
+    if (!model.logicalModelId) return { ...model, modelReferenceStatus: 'legacy' };
+    if (!catalog) return { ...model, modelReferenceStatus: 'unknown' };
+    const option = catalog.find(item => item.logicalModelId === model.logicalModelId);
+    return { ...model, modelReferenceStatus: option?.available ? 'available' : 'unavailable', modelReferenceReason: option?.reason || '当前用途没有可用的授权模型线路。' };
+  };
   const [tab, setTab] = useState<TabKey>('byPlatform');
 
   // 下栏共享池：作为“最终会加入到实验”的模型集合（初始化为当前 selectedModels）
@@ -148,7 +84,7 @@ export function ModelPickerDialog({
   }, [open]);
 
   const [availableOpen, setAvailableOpen] = useState(false);
-  const [availablePlatform, setAvailablePlatform] = useState<Platform | null>(null);
+  const [repairingModel, setRepairingModel] = useState<ModelLabSelectedModel | null>(null);
   const [availableTarget, setAvailableTarget] = useState<'pool' | 'group'>('pool');
 
   // 实验室分组
@@ -159,7 +95,6 @@ export function ModelPickerDialog({
   const [activeGroupId, setActiveGroupId] = useState<string>('');
   const [groupDraftName, setGroupDraftName] = useState('');
   const [groupDraftModels, setGroupDraftModelsRaw] = useState<ModelLabSelectedModel[]>([]);
-  const [groupAddPlatformId, setGroupAddPlatformId] = useState<string>('');
 
   const setGroupDraftModels = (updater: (prev: ModelLabSelectedModel[]) => ModelLabSelectedModel[]) => {
     setGroupDraftModelsRaw((prev) => dedupeByPlatformAndModelId(updater(prev)));
@@ -196,65 +131,20 @@ export function ModelPickerDialog({
     setGroupDraftModelsRaw(dedupeByPlatformAndModelId(g.models ?? []));
   }, [activeGroupId, labGroups]);
 
-  const platformList = useMemo(() => {
-    const list = [...(platforms ?? [])];
-    // 启用平台优先
-    list.sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
-    return list;
-  }, [platforms]);
+  const selectionIds = useMemo(() => repairingModel?.logicalModelId ? [repairingModel.logicalModelId] : [], [repairingModel?.logicalModelId]);
+  const middleByPlatform = <div className="flex items-center justify-between gap-3 text-sm">
+    <span style={{ color: 'var(--text-secondary)' }}>从本应用已授权的逻辑模型中选择。旧引用会保留，需明确修复后才能运行。</span>
+    <Button size="sm" variant="primary" onClick={() => { setAvailableTarget('pool'); setRepairingModel(null); setAvailableOpen(true); }}>选择授权模型</Button>
+  </div>;
 
-  const groupAddPlatform = useMemo(() => {
-    const id = groupAddPlatformId || '';
-    return platforms.find((p) => p.id === id) ?? null;
-  }, [groupAddPlatformId, platforms]);
-
-  const middleByPlatform = (
-    <div className="flex-1 min-h-0 overflow-auto">
-      {platformList.length === 0 ? (
-        <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-          暂无平台，请先到 LLM Gateway 控制台（左下角「模型网关」）添加平台
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {platformList.map((p) => (
-            <div
-              key={p.id}
-              className="flex items-center justify-between rounded-[14px] px-3 py-2 bg-token-nested"
-              style={{ border: '1px solid var(--border-subtle)' }}
-            >
-              <div className="min-w-0">
-                <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                  {p.name}
-                  {!p.enabled ? (
-                    <span className="ml-2 text-xs font-normal" style={{ color: 'rgba(239,68,68,0.95)' }}>
-                      未启用
-                    </span>
-                  ) : null}
-                </div>
-                <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                  {p.platformType} · {p.id}
-                </div>
-              </div>
-              <Button
-                size="xs"
-                variant="secondary"
-                className="shrink-0"
-                onClick={() => {
-                  setAvailableTarget('pool');
-                  setAvailablePlatform(p);
-                  setAvailableOpen(true);
-                }}
-                disabled={!p.enabled}
-                title="打开该平台可用模型列表"
-              >
-                批量添加
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  function repair(model: ModelLabSelectedModel, target: 'pool' | 'group') {
+    setAvailableTarget(target); setRepairingModel(model); setAvailableOpen(true);
+  }
+  function applySelection(options: LogicalModelOption[]) {
+    const setTarget = availableTarget === 'pool' ? setPool : setGroupDraftModels;
+    const models = options.map(fromLogicalOption);
+    setTarget(previous => repairingModel ? previous.map(model => keyOf(model) === keyOf(repairingModel) ? models[0] : model) : [...previous, ...models]);
+  }
 
   const middleByLabGroup = (
     <div className="h-full min-h-0 grid gap-3" style={{ gridTemplateColumns: '340px 1fr' }}>
@@ -464,34 +354,7 @@ export function ModelPickerDialog({
                 >
                   从下栏追加
                 </Button>
-                <Select
-                  value={groupAddPlatformId}
-                  onChange={(e) => setGroupAddPlatformId(e.target.value)}
-                  uiSize="sm"
-                  className="h-[30px] rounded-[10px] px-2 text-[12px]"
-                  title="选择平台"
-                >
-                  <option value="">选择平台</option>
-                  {platformList.filter((p) => p.enabled).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </Select>
-                <Button
-                  size="xs"
-                  variant="secondary"
-                  className="shrink-0"
-                  onClick={() => {
-                    if (!groupAddPlatform) return void toast.warning('请先选择平台');
-                    setAvailableTarget('group');
-                    setAvailablePlatform(groupAddPlatform);
-                    setAvailableOpen(true);
-                  }}
-                  disabled={!groupAddPlatform}
-                >
-                  从平台添加
-                </Button>
+                <Button size="xs" variant="secondary" onClick={() => { setAvailableTarget('group'); setRepairingModel(null); setAvailableOpen(true); }}>选择授权模型</Button>
               </div>
             </div>
 
@@ -502,24 +365,11 @@ export function ModelPickerDialog({
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-2">
-                  {groupDraftModels.map((m) => (
-                    <button
-                      key={keyOf(m)}
-                      type="button"
-                      className="px-3 py-1 rounded-[999px] text-xs bg-token-nested"
-                      style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
-                      onClick={() => {
-                        const k = keyOf(m);
-                        setGroupDraftModels((prev) => prev.filter((x) => keyOf(x) !== k));
-                      }}
-                      title="点击移除"
-                    >
-                      {m.name || m.modelName}
-                      <span className="ml-2" style={{ color: 'var(--text-muted)' }}>
-                        ×
-                      </span>
-                    </button>
-                  ))}
+                  {groupDraftModels.map(model => <div key={keyOf(model)} className="rounded-md p-2 bg-token-nested text-xs">
+                    <span>{model.name || model.modelName}</span><span className="block font-mono" style={{ color: 'var(--text-secondary)' }}>{model.modelName || model.modelId}</span><ModelReferenceStatus reference={referenceState(model)} />
+                    {referenceState(model).modelReferenceStatus !== 'available' ? <Button size="xs" variant="ghost" onClick={() => repair(model, 'group')}>修复引用</Button> : null}
+                    <Button size="xs" variant="ghost" onClick={() => setGroupDraftModels(previous => previous.filter(item => keyOf(item) !== keyOf(model)))}>移除</Button>
+                  </div>)}
                 </div>
               )}
             </div>
@@ -550,10 +400,10 @@ export function ModelPickerDialog({
             variant="primary"
             className="shrink-0"
             onClick={() => {
-              onConfirm(pool);
+              onConfirm(pool.map(referenceState));
               onOpenChange(false);
             }}
-            disabled={pool.length === 0}
+            disabled={pool.length === 0 || pool.some(model => referenceState(model).modelReferenceStatus !== 'available')}
           >
             加入到本次实验
           </Button>
@@ -562,28 +412,15 @@ export function ModelPickerDialog({
 
       {pool.length === 0 ? (
         <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-          还没有选择模型。请在上方通过“按平台添加”或“按实验室分组添加”把模型加入到这里。
+          还没有选择模型。请在上方通过“按授权模型添加”或“按实验室分组添加”把模型加入到这里。
         </div>
       ) : (
         <div className="mt-3 flex flex-wrap gap-2">
-          {pool.map((m) => (
-            <button
-              key={keyOf(m)}
-              type="button"
-              className="px-3 py-1 rounded-[999px] text-xs bg-token-nested"
-              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
-              onClick={() => {
-                const k = keyOf(m);
-                setPool((prev) => prev.filter((x) => keyOf(x) !== k));
-              }}
-              title="点击移除"
-            >
-              {m.name || m.modelName}
-              <span className="ml-2" style={{ color: 'var(--text-muted)' }}>
-                ×
-              </span>
-            </button>
-          ))}
+          {pool.map(model => <div key={keyOf(model)} className="rounded-md p-2 bg-token-nested text-xs">
+            <span>{model.name || model.modelName}</span><span className="block font-mono" style={{ color: 'var(--text-secondary)' }}>{model.modelName || model.modelId}</span><ModelReferenceStatus reference={referenceState(model)} />
+            {referenceState(model).modelReferenceStatus !== 'available' ? <Button size="xs" variant="ghost" onClick={() => repair(model, 'pool')}>修复引用</Button> : null}
+            <Button size="xs" variant="ghost" onClick={() => setPool(previous => previous.filter(item => keyOf(item) !== keyOf(model)))}>移除</Button>
+          </div>)}
         </div>
       )}
     </div>
@@ -591,6 +428,7 @@ export function ModelPickerDialog({
 
   const content = (
     <div className="h-full min-h-0 flex flex-col">
+      {catalogError ? <div role="alert" className="text-sm" style={{ color: 'var(--semantic-danger-text)' }}>{catalogError}</div> : null}
       {/* 上栏：tab 切换 */}
       <div className="flex items-center gap-2">
         <Button
@@ -598,7 +436,7 @@ export function ModelPickerDialog({
           variant={tab === 'byPlatform' ? 'primary' : 'secondary'}
           onClick={() => setTab('byPlatform')}
         >
-          按平台添加
+          按授权模型添加
         </Button>
         <Button
           size="xs"
@@ -617,13 +455,9 @@ export function ModelPickerDialog({
       {/* 下栏：共享池 */}
       <div className="mt-4">{bottomPool}</div>
 
-      <PlatformAvailableDialog
-        open={availableOpen}
-        onOpenChange={(o) => setAvailableOpen(o)}
-        platform={availablePlatform}
-        selected={availableTarget === 'pool' ? pool : groupDraftModels}
-        setSelected={availableTarget === 'pool' ? setPool : setGroupDraftModels}
-      />
+      <LogicalModelPickerDialog open={availableOpen} onOpenChange={setAvailableOpen} zIndex={200} loadOptions={loadOptions}
+        selectedModelIds={selectionIds} single={!!repairingModel} onConfirm={applySelection}
+        title={repairingModel ? '修复模型引用' : '选择授权模型'} />
     </div>
   );
 
@@ -632,7 +466,7 @@ export function ModelPickerDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="添加模型"
-      description="通过平台或实验室分组把模型加入下方选择池，确认后一次性加入到本次实验"
+      description="通过授权模型或实验室分组把模型加入下方选择池，确认后一次性加入到本次实验"
       maxWidth={960}
       content={content}
     />

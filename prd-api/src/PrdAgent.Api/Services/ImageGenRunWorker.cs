@@ -171,6 +171,11 @@ public class ImageGenRunWorker : BackgroundService
             // app shutting down：尽量把 run 标记为失败/取消（避免永远 Running）
             await MarkRunFailedSafeAsync(run.Id, "WORKER_STOPPED", "服务正在停止", CancellationToken.None);
         }
+        catch (PrdAgent.Core.Security.TaskExecutionAdmissionException ex)
+        {
+            // 未获得执行资格必须收尾；另有执行者的重复投递仍由 ShouldSkip 保护。
+            await MarkRunFailedSafeAsync(run.Id, ex.Code, ex.Message, CancellationToken.None);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "ImageGenRunWorker process failed: {RunId}", run.Id);
@@ -903,7 +908,7 @@ public class ImageGenRunWorker : BackgroundService
                             run, curItemIndex, imageIndex, curPrompt, reqSize,
                             ImageGenRunItemStatus.Done, base64, url, revisedPrompt,
                             null, null, ct, effSize, sizeAdjusted, ratioAdjusted,
-                            displaySha256);
+                            displaySha256, actualModel: meta?.ActualModel);
                         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Done, 1), cancellationToken: ct);
                         // 服务器权威性：后端自动保存 Assistant 消息到 image_master_messages
                         var doneRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
@@ -1259,7 +1264,7 @@ public class ImageGenRunWorker : BackgroundService
             await UpsertRunItemAsync(
                 run, itemIndex, i, prompt, requestedSize, ImageGenRunItemStatus.Done,
                 base64, url, image.RevisedPrompt, null, null, ct, effSize,
-                meta?.SizeAdjusted ?? false, meta?.RatioAdjusted ?? false, displaySha256);
+                meta?.SizeAdjusted ?? false, meta?.RatioAdjusted ?? false, displaySha256, actualModel: meta?.ActualModel);
             await _db.ImageGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
                 Builders<ImageGenRun>.Update.Inc(x => x.Done, 1),
@@ -1367,7 +1372,8 @@ public class ImageGenRunWorker : BackgroundService
         string? effectiveSize = null,
         bool? sizeAdjusted = null,
         bool? ratioAdjusted = null,
-        string? displaySha256 = null)
+        string? displaySha256 = null,
+        string? actualModel = null)
     {
         var now = DateTime.UtcNow;
         // 不依赖 unique 索引：以确定性 Id 防并发重复插入（仅依赖 _id 唯一）
@@ -1402,6 +1408,7 @@ public class ImageGenRunWorker : BackgroundService
         if (url != null) update = update.Set(x => x.Url, url);
         if (displaySha256 != null) update = update.Set(x => x.DisplaySha256, displaySha256);
         if (revisedPrompt != null) update = update.Set(x => x.RevisedPrompt, revisedPrompt);
+        if (actualModel != null) update = update.Set(x => x.ActualModel, actualModel);
 
         if (errorCode != null) update = update.Set(x => x.ErrorCode, errorCode);
         if (errorMessage != null) update = update.Set(x => x.ErrorMessage, errorMessage);

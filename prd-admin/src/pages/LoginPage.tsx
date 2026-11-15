@@ -5,7 +5,7 @@ import { ArrowRight, Sparkles, Terminal, Lock, User as UserIcon, Eye, EyeOff } f
 import { takeReturnFragment } from '@/app/returnFragment';
 import { useAuthStore } from '@/stores/authStore';
 import { getAdminAuthzMe, getSsoOptions, login, loginWithMiduoPlanetToken, resetPassword } from '@/services';
-import type { SsoLoginOption } from '@/services/contracts/auth';
+import type { SsoLoginOption, SsoOptionsResponse } from '@/services/contracts/auth';
 import { StaticBackdrop } from '@/pages/home/components/StaticBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 
@@ -129,6 +129,7 @@ export default function LoginPage() {
   const [ssoOptions, setSsoOptions] = useState<SsoLoginOption[]>([]);
   const [ssoLoading, setSsoLoading] = useState(false);
   const [passwordLoginDisabled, setPasswordLoginDisabled] = useState(false);
+  const [loginEnvironment, setLoginEnvironment] = useState<SsoOptionsResponse['loginEnvironment']>(null);
 
   // 首次登录重置密码相关状态
   const [showResetPassword, setShowResetPassword] = useState(false);
@@ -157,11 +158,13 @@ export default function LoginPage() {
         if (!alive) return;
         setSsoOptions(res.success ? res.data.items : []);
         setPasswordLoginDisabled(res.success ? res.data.passwordLoginDisabled : false);
+        setLoginEnvironment(res.success ? res.data.loginEnvironment : null);
       })
       .catch(() => {
         if (alive) {
           setSsoOptions([]);
           setPasswordLoginDisabled(false);
+          setLoginEnvironment(null);
         }
       });
     return () => {
@@ -379,6 +382,7 @@ export default function LoginPage() {
               ssoOptions={ssoOptions}
               ssoLoading={ssoLoading}
               passwordLoginDisabled={passwordLoginDisabled}
+              loginEnvironment={loginEnvironment}
               // 给 SSO 的必须是带 fragRef 的那份：它会被拼进外部地址。
               returnUrl={returnUrlWithRef}
               onError={setError}
@@ -726,6 +730,23 @@ function GlassCard({ children }: { children: React.ReactNode }) {
 /* ──────────────────────────────────────────────────────────────────────────
  *  登录卡
  * ────────────────────────────────────────────────────────────────────────── */
+export function LoginEnvironmentNotice({ environment }: { environment: SsoOptionsResponse['loginEnvironment'] }) {
+  if (!environment?.isolatedAccountStore) return null;
+  let primaryLoginUrl: string | null = null;
+  try {
+    const url = new URL(environment.primaryLoginUrl || '');
+    if (url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash) primaryLoginUrl = url.href;
+  } catch { /* 未配置有效主入口时仍显示隔离说明。 */ }
+  return (
+    <aside aria-label="当前登录环境" className="mt-5 rounded-xl border p-4 text-sm leading-relaxed text-white/90"
+      style={{ background: 'var(--login-field-bg)', borderColor: 'var(--login-border-strong)' }}>
+      <strong className="block font-semibold">隔离验收环境</strong>
+      <p className="mt-1">这里使用独立测试账号。账号、密码和登录锁定状态不与主入口互通。</p>
+      {primaryLoginUrl && <a className="mt-2 inline-block underline underline-offset-4" href={primaryLoginUrl}>返回主入口登录</a>}
+    </aside>
+  );
+}
+
 interface LoginCardProps {
   username: string;
   password: string;
@@ -736,6 +757,7 @@ interface LoginCardProps {
   ssoOptions: SsoLoginOption[];
   ssoLoading: boolean;
   passwordLoginDisabled: boolean;
+  loginEnvironment?: SsoOptionsResponse['loginEnvironment'];
   returnUrl: string;
   onError: (message: string) => void;
   onUsernameChange: (v: string) => void;
@@ -754,6 +776,7 @@ function LoginCard({
   ssoOptions,
   ssoLoading,
   passwordLoginDisabled,
+  loginEnvironment,
   returnUrl,
   onError,
   onUsernameChange,
@@ -848,6 +871,7 @@ function LoginCard({
       </Reveal>
 
       {/* Form */}
+      <LoginEnvironmentNotice environment={loginEnvironment} />
       <div className="mt-7 grid gap-4">
         {!passwordLoginDisabled && (
           <>

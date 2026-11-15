@@ -126,13 +126,54 @@ public sealed class WebPagesCollectionHistoryTests
         Assert.Equal(1, last.GetProperty("total").GetInt32()); Assert.Equal("legacy:legacy-44", last.GetProperty("items")[0].GetProperty("id").GetString());
     }
 
+    [Fact]
+    public async Task ContextsKeepBothCollectionStoresAndOriginalShareRoutesIncludingUnsharedRecords()
+    {
+        var old = new HostedCollection { Id = "same-id", Title = "原合集", OwnerUserId = "owner-user", SiteIds = new() { "site-a" } };
+        var current = new HostedDocumentCollection { Id = "same-id", Name = "带章节合集", OwnerUserId = "owner-user", SiteIds = new() { "site-a" }, ShareGeneration = 3 };
+        var unshared = new HostedDocumentCollection { Id = "unshared", Name = "尚未分享", OwnerUserId = "owner-user", SiteIds = new() { "site-a" } };
+        var collections = new Mock<IMongoCollection<HostedCollection>>(MockBehavior.Strict);
+        collections.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<HostedCollection>>(), It.IsAny<FindOptions<HostedCollection, HostedCollection>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(Cursor(old)));
+        var shares = new Mock<IMongoCollection<WebPageShareLink>>(MockBehavior.Strict);
+        shares.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<WebPageShareLink>>(), It.IsAny<FindOptions<WebPageShareLink, WebPageShareLink>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(Cursor(
+                new WebPageShareLink { Id = "old-link", Token = "old-token", CollectionId = old.Id, CollectionShareGeneration = 1, SiteIds = new() { "site-a" } },
+                new WebPageShareLink { Id = "new-link", Token = "new-token", CollectionSnapshot = new() { CollectionId = current.Id, ShareGeneration = 3 }, SiteIds = new() { "site-a" } })));
+        var data = Result(await ContextController(collections.Object, shares.Object, current, unshared).CollectionContexts("site-a"));
+        Assert.Equal(3, data.GetProperty("totalContexts").GetInt32());
+        var items = data.GetProperty("items").EnumerateArray().ToArray();
+        Assert.Equal("/s/wp/old-token", items.Single(x => x.GetProperty("id").GetString() == "collection:same-id").GetProperty("primaryLink").GetProperty("shareUrl").GetString());
+        var modern = items.Single(x => x.GetProperty("id").GetString() == "document-collection:same-id");
+        Assert.Equal("/s/collection/new-token", modern.GetProperty("primaryLink").GetProperty("shareUrl").GetString());
+        Assert.True(modern.GetProperty("primaryLink").GetProperty("isActive").GetBoolean());
+        Assert.Equal(0, items.Single(x => x.GetProperty("id").GetString() == "document-collection:unshared").GetProperty("shareCount").GetInt32());
+    }
+
+    [Fact]
+    public void BothCollectionApiContractsKeepDistinctRoutes()
+    {
+        var routes = typeof(WebPagesController).GetMethods().SelectMany(method => method.GetCustomAttributes<Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute>()
+            .Where(attribute => attribute.Template?.StartsWith("collections", StringComparison.Ordinal) == true)
+            .SelectMany(attribute => attribute.HttpMethods.Select(verb => verb + " " + attribute.Template))).ToArray();
+        Assert.Equal(routes.Length, routes.Distinct(StringComparer.Ordinal).Count());
+        Assert.Contains("POST collections", routes);
+        Assert.Contains("POST collections/compat", routes);
+        Assert.Contains("POST collections/{id}/restore", routes);
+        Assert.Contains("POST collections/compat/from-share/{token}", routes);
+    }
+
     private static JsonElement Result(IActionResult response) => JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(response).Value,
         new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("data");
 
-    private static WebPagesController ContextController(IMongoCollection<HostedCollection> collections, IMongoCollection<WebPageShareLink> shares)
+    private static WebPagesController ContextController(IMongoCollection<HostedCollection> collections, IMongoCollection<WebPageShareLink> shares, params HostedDocumentCollection[] documentCollections)
     {
         var db = new Mock<IMongoDatabase>(MockBehavior.Strict);
         db.Setup(x => x.GetCollection<HostedCollection>("hosted_collections", null)).Returns(collections);
+        var documents = new Mock<IMongoCollection<HostedDocumentCollection>>(MockBehavior.Strict);
+        documents.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<HostedDocumentCollection>>(), It.IsAny<FindOptions<HostedDocumentCollection, HostedDocumentCollection>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(Cursor(documentCollections)));
+        db.Setup(x => x.GetCollection<HostedDocumentCollection>("hosted_document_collections", null)).Returns(documents.Object);
         db.Setup(x => x.GetCollection<WebPageShareLink>("web_page_share_links", null)).Returns(shares);
         var context = (MongoDbContext)RuntimeHelpers.GetUninitializedObject(typeof(MongoDbContext));
         typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(context, db.Object);

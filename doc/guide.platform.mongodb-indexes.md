@@ -287,3 +287,20 @@ PRD_GATEWAY_DB=1 mongosh "<connection-uri>/<网关库名>" scripts/mongodb-index
 4. 已知旧定义重建失败时先确认脚本是否已恢复旧索引；若恢复也失败，按备份中的旧定义人工重建。
 5. 恢复服务并核对查询与写入。
 6. 将未解决问题登记到对应 `debt.*`。
+
+
+模型兼容命名空间由专用人工维护脚本预检、条件回填并建立
+`llmgw_logical_models.uniq_llmgw_model_identity_namespace`。索引覆盖同租户、同用途下的公开标识、
+显式兼容标识与历史池身份，阻止并发导入占用旧调用标识。先在目标网关库 dry-run，确认无重复后
+显式执行 apply；应用启动不创建索引，不自动重命名冲突模型。删除索引不会回滚已登记别名，
+需先停用兼容写入，再按审计恢复对应模型的别名配置。
+
+## 实现来源
+
+- [模型兼容命名空间维护脚本](../scripts/migrate-gateway-model-identities.js)
+
+## 调用链排查与写入实例租约（2026-11-12）
+
+调用链通过请求、业务运行、逻辑请求、上游回执／作业及逐次尝试编号覆盖保留期内的日志。网关索引清单对 `RequestId`、`RunId`、`LogicalRequestId`、`ProviderRequestId`、`ProviderTaskId`、`ProviderAttempts.AttemptId`、`ProviderAttempts.ProviderRequestId`、`ProviderAttempts.ProviderTaskId` 分别维护 `TenantId + 字段 + StartedAt + _id` 非唯一索引，名字为 `idx_llmgw_trace_` 加字段名。三个数组字段各建独立多键索引，不将多个数组字段放入同一复合索引。必须覆盖所有 `$or` 身份分支，否则连精确业务编号查询也可能扫描租户历史；`_id` 分支使用原生主键索引。控制台启动只巡检，DBA显式执行清单；缺失时查询仍可用，但可能扫描历史日志。
+
+serving 持久化写入实例租约。`idx_llmgw_logs_writer_lifecycle` 限定需收口的实例与进行中记录，`idx_llmgw_writer_lease_scan` 支持过期实例轮转扫描；均为非唯一索引，不修改日志或历史费用，不自动执行。租约不设 TTL，以保留收口依据。

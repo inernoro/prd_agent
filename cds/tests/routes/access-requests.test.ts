@@ -22,6 +22,8 @@ import ts from 'typescript';
 import { createAccessRequestsRouter } from '../../src/routes/access-requests.js';
 import { StateService } from '../../src/services/state.js';
 import { cdsEventsBus } from '../../src/services/cds-events-bus.js';
+import { isPublicAgentSetupRoute } from '../../src/shared/agent-setup.js';
+import { isMonitorOnboardingAgentRoute } from '../../src/shared/monitor-onboarding.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
@@ -412,10 +414,23 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     const declaration = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'isPublicAccessRequestRoute');
     expect(declaration).toBeDefined();
     const javascript = ts.transpileModule(declaration!.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-    const gate = vm.runInNewContext(javascript + '; isPublicAccessRequestRoute', { isPublicAgentSetupRoute: () => false });
+    const gate = vm.runInNewContext(javascript + '; isPublicAccessRequestRoute', { isPublicAgentSetupRoute, isMonitorOnboardingAgentRoute });
     expect(gate('DELETE', '/api/bootstrap-access-requests/own-ticket')).toBe(true);
     expect(gate('PUT', '/api/bootstrap-access-requests/own-ticket')).toBe(false);
     expect(gate('DELETE', '/api/access-requests/other-ticket')).toBe(false);
+    const session = 'a'.repeat(32);
+    expect(gate('GET', `/api/uptime/onboarding-agent/${session}/instructions`)).toBe(true);
+    expect(gate('POST', `/api/uptime/onboarding-agent/${session}/proposals`)).toBe(true);
+    for (const [method, route] of [
+      ['POST', `/api/uptime/onboarding-agent/${session}/instructions`],
+      ['GET', `/api/uptime/onboarding-agent/${session}/proposals`],
+      ['GET', `/api/uptime/onboarding-agent/${session}/instructions/`],
+      ['POST', `/api/uptime/onboarding-agent/${session}/proposals/other`],
+      ['GET', '/api/uptime/onboarding-agent/other-session/instructions'],
+      ['GET', `/api/uptime/onboarding/${session}`],
+      ['POST', `/api/uptime/onboarding/${session}/confirm`],
+      ['DELETE', `/api/uptime/onboarding/${session}`],
+    ]) expect(gate(method, route), `${method} ${route}`).toBe(false);
   });
 
   it('申请目标只保留项目名和脱敏仓库，不采信客户端创建回执', async () => {
