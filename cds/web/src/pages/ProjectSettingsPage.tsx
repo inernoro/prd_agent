@@ -1,3 +1,4 @@
+import { useSettingsTabVisibility } from '@/pages/cds-settings/useSettingsTabVisibility';
 import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { ProjectSettingsRefreshContext, useProjectSettingsRefresh, useSettingsReadRequest, type SettingsRead, mergeCleanSettings } from '@/components/project/ProjectSettingsRefresh';
 import { SettingsPageSkeleton } from '@/components/skeletons/SettingsSkeleton';
@@ -565,6 +566,7 @@ export function ProjectSettingsPage(): JSX.Element {
   }, [refreshProject]);
   const refreshing = refreshingProject || refreshingTabs;
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
+  const tabsListRef = useSettingsTabVisibility(activeTab);
   const [toast, setToast] = useState('');
   const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
   const [applyingScope, setApplyingScope] = useState(false);
@@ -702,7 +704,7 @@ export function ProjectSettingsPage(): JSX.Element {
              * workspace 的 1240 上限把整页缩到中间。
              */}
             <div className="cds-settings-layout">
-              <TabsList aria-label="项目设置分区" className="cds-settings-nav cds-settings-rail">
+              <TabsList ref={tabsListRef} aria-label="项目设置分区" className="cds-settings-nav cds-settings-rail">
                 <div className="cds-settings-rail-head">
                   <div className="text-sm font-semibold">项目设置</div>
                   <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{project.slug || project.id}</div>
@@ -755,7 +757,7 @@ export function ProjectSettingsPage(): JSX.Element {
                   <RuntimeDefaultsTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="delivery">
-                  <ProjectDeliveryTab projectId={project.id} onToast={setToast} />
+                  <ProjectDeliveryTab key={project.id} projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="compose">
                   <ProjectComposeTab projectId={project.id} onToast={setToast} />
@@ -3099,6 +3101,10 @@ const activityTypeLabels: Record<string, string> = {
 };
 
 interface ProjectDeliveryResponse {
+  revision: string;
+  projectRevision: string;
+  planBranches: Array<{ id: string; branch: string }>;
+  generationSource: { branchId: string; branch: string; commitSha: string | null } | null;
   projectId: string;
   mode: 'managed' | 'compose';
   managedSpec: {
@@ -3125,125 +3131,109 @@ interface ProjectDeliveryResponse {
 
 function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast: (message: string) => void }): JSX.Element {
   const [state, setState] = useState<{ status: 'loading' | 'ok' | 'error'; data?: ProjectDeliveryResponse; message?: string }>({ status: 'loading' });
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [specText, setSpecText] = useState('');
+  const [draftMode, setDraftMode] = useState<'managed' | 'compose'>('compose');
   const [saving, setSaving] = useState(false);
-
+  const [saveError, setSaveError] = useState('');
+  const [resultUnknown, setResultUnknown] = useState(false);
+  const [readError, setReadError] = useState('');
+  const [sourceNotice, setSourceNotice] = useState('');
+  const selectedBranch = useRef(new URLSearchParams(window.location.search).get('fromBranch') || '');
+  const [branchId, setBranchId] = useState(selectedBranch.current);
   const savedSpec = useRef('');
+  const savedMode = useRef<'managed' | 'compose'>('compose');
   const beginRead = useSettingsReadRequest();
-  const load = useCallback(async (preserve = false) => {
+  const load = useCallback(async (preserve = false, sourceId = selectedBranch.current) => {
     const signal = beginRead();
     if (!preserve) setState({ status: 'loading' });
+    setReadError('');
     try {
-      const data = await apiRequest<ProjectDeliveryResponse>(`/api/projects/${encodeURIComponent(projectId)}/delivery`);
+      const endpoint = `/api/projects/${encodeURIComponent(projectId)}/delivery`;
+      let data = await apiRequest<ProjectDeliveryResponse>(`${endpoint}${sourceId ? `?branchId=${encodeURIComponent(sourceId)}` : ''}`, { signal });
+      const branches = data.planBranches || [];
+      const sourceUnavailable = Boolean(sourceId && !branches.some(branch => branch.id === sourceId));
+      if (sourceUnavailable) sourceId = '';
+      let notice = sourceUnavailable ? '原分支已不可用，请重新选择生成依据。' : '';
+      if (!sourceId && branches.length === 1) {
+        sourceId = branches[0].id;
+        if (sourceUnavailable) notice = `原分支已不可用，已改用唯一可用分支 ${branches[0].branch}，保存前请核对。`;
+        data = await apiRequest<ProjectDeliveryResponse>(`${endpoint}?branchId=${encodeURIComponent(sourceId)}`, { signal });
+      }
+      if (!signal.aborted) setSourceNotice(notice);
       if (signal.aborted) return;
-      setState({ status: 'ok', data });
-      const previous = savedSpec.current;
+      selectedBranch.current = sourceId;
+      setBranchId(sourceId);
+      const previousSpec = savedSpec.current, previousMode = savedMode.current;
       const next = JSON.stringify(data.managedSpec || { apps: [], capabilities: [] }, null, 2);
-      savedSpec.current = next;
-      setSpecText(current => preserve && current !== previous ? current : next);
+      savedSpec.current = next; savedMode.current = data.mode;
+      setSpecText(current => preserve && current !== previousSpec ? current : next);
+      setDraftMode(current => preserve && current !== previousMode ? current : data.mode);
+      setState({ status: 'ok', data }); setSaveError(''); setResultUnknown(false);
     } catch (err) {
       if (signal.aborted) return;
-      const message = messageFromError(err);
+      const message = messageFromError(err); setReadError(message);
       setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
       if (preserve) throw err;
     }
   }, [projectId, beginRead]);
   useProjectSettingsRefresh(() => load(true));
-
   useEffect(() => { void load(); }, [load]);
 
-  const saveMode = useCallback(async (mode: 'managed' | 'compose') => {
-    setSaving(true);
-    try {
-      let managedSpec: unknown;
-      if (mode === 'managed') {
-        try {
-          managedSpec = specText.trim() ? JSON.parse(specText) : { apps: [], capabilities: [] };
-        } catch {
-          throw new Error('高级声明不是合法 JSON');
-        }
-      }
-      await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/delivery`, {
-        method: 'PUT',
-        body: { mode, managedSpec },
-      });
-      if (mode === 'managed') {
-        try {
-          await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/managed-plan`, { method: 'POST', body: {} });
-          onToast('已启用托管模式并生成生效配置');
-        } catch (err) {
-          onToast(`托管模式已保存，计划尚未生成:${messageFromError(err)}`);
-        }
-      } else {
-        onToast('已切换到 compose 模式，现有项目配置继续生效');
-      }
-      await load();
-    } catch (err) {
-      onToast(`交付模式保存失败:${messageFromError(err)}`);
-    } finally {
-      setSaving(false);
+  async function save(): Promise<void> {
+    if (state.status !== 'ok' || !state.data || saving || resultUnknown || !state.data.revision || !state.data.projectRevision) return;
+    let managedSpec: ProjectDeliveryResponse['managedSpec'] | undefined;
+    if (draftMode === 'managed') {
+      try { managedSpec = JSON.parse(specText) as ProjectDeliveryResponse['managedSpec']; }
+      catch { setSaveError('应用声明不是有效 JSON，请修正后保存。'); return; }
     }
-  }, [load, onToast, projectId, specText]);
-
+    setSaving(true); setSaveError('');
+    try {
+      const result = await apiRequest<{ mode: 'managed' | 'compose'; managedSpec: ProjectDeliveryResponse['managedSpec']; plan: { profiles: ProjectDeliveryResponse['effectiveProfiles']; generatedAt: string } | null }>(`/api/projects/${encodeURIComponent(projectId)}/delivery`, {
+        method: 'PUT', body: { mode: draftMode, managedSpec, generatePlan: true, branchId: draftMode === 'managed' ? branchId : undefined, expectedRevision: draftMode === 'managed' ? state.data.revision : state.data.projectRevision },
+      });
+      if (!alive.current) return;
+      beginRead.cancel();
+      savedMode.current = result.mode; savedSpec.current = specText;
+      setState(current => current.data ? { status: 'ok', data: { ...current.data, mode: result.mode, managedSpec: result.managedSpec, effectiveProfiles: result.plan?.profiles || [], planUpdatedAt: result.plan?.generatedAt } } : current);
+      onToast(result.mode === 'managed' ? '交付模式与生成配置已保存，重新部署分支后使用。' : 'Compose 交付模式已保存，现有项目配置继续使用。');
+      try { await load(true); } catch { setReadError('保存已确认，重新读取失败。当前显示已保存结果，请稍后刷新核对。'); }
+    } catch (err) {
+      if (!alive.current) return;
+      const knownRejection = err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408;
+      setResultUnknown(!knownRejection || (err instanceof ApiError && [409, 428].includes(err.status)));
+      const body = err instanceof ApiError && err.body && typeof err.body === 'object' ? err.body as {error?:string;message?:string} : null;
+      setSaveError(`${knownRejection ? '未保存，原配置保持不变' : '保存结果未确认，请先重新读取核对，勿重复提交'}：${body?.message || body?.error || messageFromError(err)}`);
+    } finally { if (alive.current) setSaving(false); }
+  }
   if (state.status === 'loading') return <LoadingBlock label="加载交付模式" />;
-  if (state.status === 'error' || !state.data) return <ErrorBlock message={state.message || '交付模式加载失败'} />;
+  if (state.status === 'error' || !state.data) return <div className="space-y-3"><ErrorBlock message={state.message || '交付模式加载失败'} /><Button onClick={() => void load()}>重试</Button></div>;
   const data = state.data;
-
-  return (
-    <div className="space-y-6">
-      <Section
-        title="交付模式"
-        description="托管模式由 CDS 自动检测技术栈、拆分构建与启动并绑定资源；compose 模式保留完整高级控制。"
-      >
-        <div className="grid gap-3 md:grid-cols-2">
-          <button
-            type="button"
-            className={`rounded-md border p-4 text-left transition-colors ${data.mode === 'managed' ? 'border-primary bg-primary/5' : 'border-[hsl(var(--hairline))] hover:border-primary/40'}`}
-            onClick={() => void saveMode('managed')}
-            disabled={saving}
-          >
-            <div className="font-semibold">托管模式</div>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">常规 Web、API、Worker 推荐。无需手写 BuildProfile，重复部署直接复用不可变产物。</p>
-          </button>
-          <button
-            type="button"
-            className={`rounded-md border p-4 text-left transition-colors ${data.mode === 'compose' ? 'border-primary bg-primary/5' : 'border-[hsl(var(--hairline))] hover:border-primary/40'}`}
-            onClick={() => void saveMode('compose')}
-            disabled={saving}
-          >
-            <div className="font-semibold">Compose 模式</div>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">适合特殊网络、多服务和自定义镜像。原有 cds-compose 与 BuildProfile 行为保持不变。</p>
-          </button>
-        </div>
-      </Section>
-
-      {data.mode === 'managed' ? (
-        <>
-          <Section
-            title="最小声明"
-            description="apps 留空时自动扫描仓库；capabilities 只写逻辑资源引用和环境变量名，不写密钥值。"
-          >
-            <textarea
-              className={`${textareaClass} min-h-56 font-mono text-xs leading-5`}
-              value={specText}
-              onChange={(event) => setSpecText(event.target.value)}
-              spellCheck={false}
-            />
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button onClick={() => void saveMode('managed')} disabled={saving}>
-                {saving ? <Loader2 className="animate-spin" /> : <Save />}
-                保存并重新生成
-              </Button>
-              <Button variant="outline" onClick={() => setSpecText(JSON.stringify({ apps: [], capabilities: [] }, null, 2))} disabled={saving}>
-                恢复自动识别
-              </Button>
-            </div>
-          </Section>
-
-          <Section
-            title="最终生效配置"
-            description={data.planUpdatedAt ? `最近生成于 ${new Date(data.planUpdatedAt).toLocaleString()}` : '尚未生成；保存后 CDS 会使用项目第一条分支进行检测。'}
-          >
+  const atomicContractReady = typeof data.revision === 'string' && Boolean(data.revision) && typeof data.projectRevision === 'string' && Boolean(data.projectRevision);
+  const dirty = draftMode !== savedMode.current || (draftMode === 'managed' && specText !== savedSpec.current);
+  const sourceReady = data.generationSource?.branchId === branchId && Boolean(data.generationSource.commitSha);
+  return <div className="space-y-5">
+    <Section title="交付模式" description="设置影响当前项目。保存托管模式会生成并替换项目配置；不会自动部署，分支重新部署后使用。">
+      <p role="status" className="mb-3 text-sm text-muted-foreground">上次读取的已保存模式：{data.mode === 'managed' ? '托管' : 'Compose'}{dirty ? ' · 有未保存修改' : ''}</p>
+      <fieldset className="grid gap-3 md:grid-cols-2" disabled={saving}><legend className="sr-only">选择交付模式（点击不会保存）</legend>
+        {(['managed', 'compose'] as const).map(mode => <label key={mode} className={`flex cursor-pointer items-start gap-3 rounded-md border p-4 ${draftMode === mode ? 'border-primary bg-primary/5' : 'border-border'}`}><input type="radio" name="delivery-mode" className="mt-1 h-4 w-4 accent-primary" checked={draftMode === mode} onChange={() => setDraftMode(mode)} /><span><span className="font-semibold">{mode === 'managed' ? '托管模式' : 'Compose 模式'}</span><span className="mt-1 block text-sm leading-6 text-muted-foreground">{mode === 'managed' ? 'CDS 根据分支代码生成构建与启动配置，适合常规 Web、API 和 Worker。' : '自行维护 cds-compose.yml，适合特殊网络、多服务和自定义镜像。'}</span></span></label>)}
+      </fieldset>
+    </Section>
+    {draftMode === 'managed' ? <Section title="托管应用声明" description="apps 留空时扫描所选分支；capabilities 仅写逻辑资源引用和变量名，不填密钥值。">
+      <div className="mb-3 space-y-2 text-sm">
+        {sourceNotice ? <p role="status" className="text-warn">{sourceNotice}</p> : null}
+        {data.planBranches?.length === 1 ? <p>生成依据：<strong>{data.planBranches[0].branch}</strong></p> : <label className="grid gap-2">生成依据分支<select aria-label="生成依据分支" className={inputClass} value={branchId} disabled={saving} onChange={event => { const id = event.target.value; selectedBranch.current = id; setBranchId(id); void load(true, id).catch(() => undefined); }}><option value="">请选择分支</option>{data.planBranches?.map(branch => <option key={branch.id} value={branch.id}>{branch.branch}</option>)}</select></label>}
+        {sourceReady ? <p className="text-muted-foreground">代码版本 <code>{data.generationSource?.commitSha?.slice(0, 12)}</code></p> : <p className="text-warn">{!data.planBranches?.length ? '项目还没有分支。先创建并同步分支，再生成托管配置。' : branchId ? '分支版本未确认或有未提交文件。请同步并提交或还原变更后重新读取。' : '选择分支后读取代码版本，保存时以该版本生成配置。'}</p>}
+      </div>
+      <textarea aria-label="托管应用声明" className={`${textareaClass} min-h-56 font-mono text-sm leading-5`} value={specText} onChange={event => setSpecText(event.target.value)} disabled={saving} spellCheck={false} />
+      <Button className="mt-2" variant="ghost" onClick={() => setSpecText(JSON.stringify({ apps: [], capabilities: [] }, null, 2))} disabled={saving}>改用自动识别（待保存）</Button>
+    </Section> : null}
+    {!atomicContractReady ? <p role="alert" className="text-sm text-warn">当前服务版本未确认，暂不能保存交付设置。请重新读取；若持续出现，请联系系统管理员确认更新完成。</p> : null}
+    {saveError ? <p role="alert" className="text-sm text-destructive">{saveError}。声明草稿已保留。</p> : null}
+    {readError ? <p role="alert" className="text-sm text-destructive">{readError}</p> : null}
+    <div className="flex flex-wrap gap-2"><Button onClick={() => void save()} disabled={saving || !atomicContractReady || resultUnknown || (!dirty && draftMode === 'compose') || (draftMode === 'managed' && !sourceReady)}>{saving ? <Loader2 className="animate-spin" /> : <Save />}{draftMode === 'managed' ? dirty ? '保存并生成项目配置' : '重新生成项目配置' : '保存交付模式'}</Button><Button variant="outline" disabled={saving} onClick={() => void load(true).catch(() => undefined)}>重新读取并核对</Button></div>
+    {data.mode === 'managed' ? <Section title="已保存的托管配置" description={data.planUpdatedAt ? `生成于 ${new Date(data.planUpdatedAt).toLocaleString()}；修改上方草稿不会改变这些配置。` : '尚未生成项目配置。'}>
             {data.effectiveProfiles.length === 0 ? (
               <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-8 text-center text-sm text-muted-foreground">
                 暂无生效配置。项目至少需要一条已克隆分支，或在 apps 中显式声明应用目录。
@@ -3272,11 +3262,8 @@ function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast
                 ))}
               </div>
             )}
-          </Section>
-        </>
-      ) : null}
-    </div>
-  );
+    </Section> : null}
+  </div>;
 }
 
 // ─────────────────────────────────────────────────────────────
