@@ -251,10 +251,13 @@
 .lg-provider-call-status a { color: var(--accent); min-height: 28px; display: inline-flex; align-items: center; }
 
 /* A short result set ends at its content; workspaces remain scrollable for long lists. */
-.lg-collection-view.lg-collection-short { flex: 0 0 auto; min-height: 0; }
-.lg-collection-short > .lg-collection-scroll { flex: 0 0 auto; }
+.lg-collection-view.lg-collection-short { flex: 0 1 auto; min-height: 0; }
+.lg-collection-short > .lg-collection-scroll { flex: 0 1 auto; }
 .lg-collection-pane-body > .lg-collection-short,
 .lg-collection-pane .lg-logical-model-detail > .lg-collection-short { min-height: 0; }
 .lg-collection-workspace:not(:has(> .lg-collection-pane)):has(.lg-collection-list > .lg-collection-short) { flex: 0 0 auto; min-height: 0; }
 
 .lg-collection-count { align-self: center; white-space: nowrap; flex-shrink: 0; font-size: var(--fs-secondary); color: var(--text-muted); }
+
+/* The editor can use the workspace height without stretching a short master list's border. */
+.lg-collection-workspace > .lg-collection-list:has(> .lg-collection-short) { align-self: flex-start; max-height: 100%; }

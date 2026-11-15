@@ -6957,9 +6957,13 @@ a:focus-visible {
 .lg-app-caller-row-actions {
   gap: 8px;
   white-space: nowrap;
+  flex-wrap: wrap;
 }
 
 .lg-app-caller-row-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
   color: var(--text-secondary);
   font-size: var(--fs-secondary);
   font-weight: 500;
