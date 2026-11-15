@@ -52,6 +52,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
+import { OrbitalWorkspaceSignature } from '@/components/effects/OrbitalInstrument';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -695,7 +696,7 @@ export default function AgentLauncherPage() {
     );
 
   return (
-    <div className="home-desk h-full min-h-0 flex flex-col relative">
+    <div className="home-desk orbital-workspace h-full min-h-0 flex flex-col relative">
       <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
         <div aria-hidden className="home-launcher-color-field" />
 
@@ -713,6 +714,7 @@ export default function AgentLauncherPage() {
           </header>
 
           <div className="home-desk-greet-row">
+            <OrbitalWorkspaceSignature />
             <h1 className={`home-desk-greet ${isMobile ? 'is-compact' : ''}`}>
               {greeting}
               {displayName ? '，' : ''}
