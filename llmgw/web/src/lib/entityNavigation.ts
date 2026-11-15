@@ -20,7 +20,7 @@ export function providerModelDetailHref(identity: { modelId?: string; model?: st
   if (identity.platformId) { query.set('returnKind', origin); query.set('returnProviderId', identity.platformId); writeCollection(query, { ...collection, focus: identity.modelId || collection.focus }); }
   return source?.has('context') ? withLogTaskContext('/models/view', query, getLogTaskContext(source.toString())) : `/models/view?${query}`;
 }
-export function entityBackTarget(params: URLSearchParams): { href: string; label: string } {
+export function entityBackTarget(params: URLSearchParams, fallback = { href: '/logs', label: '返回请求记录' }): { href: string; label: string } {
   const kind = params.get('returnKind');
   const providerId = params.get('returnProviderId')?.trim();
   if (providerId && providerId.length <= 256 && !/[\u0000-\u001f]/.test(providerId)) {
@@ -29,10 +29,22 @@ export function entityBackTarget(params: URLSearchParams): { href: string; label
   }
   // Entity identity requestType/model parameters are not the originating log filters.
   if (params.has('context')) return getLogReturnTarget(getLogTaskContext(params.toString()));
-  return { href: '/logs', label: '返回请求记录' };
+  return fallback;
 }
 
 export function callerCandidateDetailHref(item: { id: string; appCallerCode: string; requestType: string }, origin: URLSearchParams) {
   const query = new URLSearchParams({ id: item.id, code: item.appCallerCode, requestType: item.requestType });
   return origin.has('context') ? withLogTaskContext('/app-callers/view', query, getLogTaskContext(origin.toString())) : `/app-callers/view?${query}`;
+}
+
+/** A model's Provider link carries only the already validated origin for that Provider. */
+export function modelProviderDetailHref(identity: { id: string; name?: string }, source: URLSearchParams) {
+  const query = new URLSearchParams({ id: identity.id });
+  if (identity.name) query.set('name', identity.name);
+  if (source.get('returnKind') === 'upstream-provider' && source.get('returnProviderId') === identity.id) {
+    query.set('returnKind', 'upstream-provider');
+    query.set('returnProviderId', identity.id);
+    writeCollection(query, providerCollectionContext(source));
+  }
+  return source.has('context') ? withLogTaskContext('/platforms/view', query, getLogTaskContext(source.toString())) : `/platforms/view?${query}`;
 }

@@ -74,7 +74,7 @@ export function HelpTip({ label, children }: { label: string; children: ReactNod
   );
 }
 
-export function Chip({ label, color, bg, title }: { label: string; color: string; bg: string; title?: string }) {
+export function Chip({ label, color, bg, title, atomic = false }: { label: string; color: string; bg: string; title?: string; atomic?: boolean }) {
   return (
     <span
       title={title}
@@ -83,7 +83,11 @@ export function Chip({ label, color, bg, title }: { label: string; color: string
         alignItems: 'center',
         borderRadius: 999,
         padding: '0 6px',
-        height: 17,
+        minHeight: 17,
+        maxWidth: '100%',
+        minWidth: 0,
+        whiteSpace: atomic ? 'nowrap' : 'normal',
+        overflowWrap: atomic || label.length <= 8 ? 'normal' : 'anywhere',
         fontSize: 'var(--fs-micro)',
         fontWeight: 600,
         flexShrink: 0,

@@ -120,7 +120,7 @@ export function AuditsPage() {
           </table>
           <div className="lg-audits-mobile">
             {data.items.map(item => <article key={item.id}>
-              <div className="lg-audit-mobile-heading"><strong>{actionLabel(item.action)}</strong><Chip label={item.success ? '成功' : '失败'} color={item.success ? 'var(--ok)' : 'var(--err)'} bg={item.success ? 'var(--ok-bg)' : 'var(--err-bg)'} /></div>
+              <div className="lg-audit-mobile-heading"><strong>{actionLabel(item.action)}</strong><Chip atomic label={item.success ? '成功' : '失败'} color={item.success ? 'var(--ok)' : 'var(--err)'} bg={item.success ? 'var(--ok-bg)' : 'var(--err-bg)'} /></div>
               <div>{item.targetName || item.targetId || '对象未记录'}</div>
               <div className="lg-audit-mobile-meta">{item.actorUsername || item.actorUserId || '操作者未记录'} · {fmtTime(item.createdAt)}</div>
               <button type="button" aria-expanded={expandedId === item.id} onClick={() => setExpandedId(value => value === item.id ? null : item.id)}>{expandedId === item.id ? '收起变更' : '查看变更'}</button>
@@ -164,7 +164,7 @@ function AuditRow({ item, td, expanded, onToggle }: { item: OperationAuditItem; 
           </div>
         </td>
         <td style={td}>{item.actorUsername || item.actorUserId || '—'}</td>
-        <td style={td}><Chip label={result.label} color={result.color} bg={result.bg} /></td>
+        <td style={td}><Chip atomic label={result.label} color={result.color} bg={result.bg} /></td>
         <td style={td}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 130 }}>
             <span>{item.remoteIp || '—'}</span>

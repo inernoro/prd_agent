@@ -713,8 +713,8 @@ export function ModelsPage() {
                           <Chip label="待导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
                         )}
                       </td>
-                      <td data-label="管理状态" style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
-                      <td data-label="密钥" style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
+                      <td data-label="管理状态" style={td}><Chip atomic label={en.label} color={en.color} bg={en.bg} /></td>
+                      <td data-label="密钥" style={td}><Chip atomic label={key.label} color={key.color} bg={key.bg} /></td>
                       <td data-label="操作" style={{ ...td, whiteSpace: 'nowrap' }}>
                         {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
                           {keyEditId === m.id ? (

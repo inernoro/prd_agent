@@ -1,5 +1,5 @@
 import { providerForDetail, logicalForDetail, physicalForDetail, offeringParticipationStatus } from '@/lib/modelDetailIdentity';
-import { callerCandidateDetailHref, entityBackTarget, providerCollectionContext, providerModelDetailHref } from '@/lib/entityNavigation';
+import { callerCandidateDetailHref, entityBackTarget, modelProviderDetailHref, providerCollectionContext, providerModelDetailHref } from '@/lib/entityNavigation';
 import { appCallerDetailCandidates, callerManagementState } from '@/lib/appCallerIdentity';
 import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
 import { AppCallerDefaultModel, AppCallerDefaultsProvider } from '@/components/AppCallerDefaultModel';
@@ -190,7 +190,7 @@ function modelSuccessRate(model?: ModelItem | null) {
 
 export function ModelDetailsPage() {
   const [params] = useSearchParams();
-  const back = entityBackTarget(params);
+  const back = entityBackTarget(params, params.has('logicalModelId') ? { href: '/logical-models', label: '返回公开模型' } : { href: '/models', label: '返回上游模型' });
   const physicalModelId = params.get('modelId') || '';
   const logicalModelId = params.get('logicalModelId') || '';
   const requestedModel = params.get('model') || '';
@@ -298,21 +298,21 @@ export function ModelDetailsPage() {
           description: '同一逻辑模型可以绑定多个上游。Gateway 按优先级、权重、健康和限流选择实际调用目标。',
           content: logical?.offerings.length ? <>
             <div className="lg-collection-supplier-section"><h3 className="lg-collection-section-title">供应方 · {providerGroups.length}</h3><div className="lg-collection-provider-groups">
-              {providerGroups.slice(0, 2).map((group) => <Link key={group.id} to={group.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(group.offerings[0].targetId)}` : group.platformId ? `/platforms/view?id=${encodeURIComponent(group.platformId)}&name=${encodeURIComponent(group.name)}` : '/models'}><Server size={20}/><div><strong>{group.name}</strong><span>{group.offerings.length} 条线路</span></div><small>供应方详情</small></Link>)}
+              {providerGroups.slice(0, 2).map((group) => <Link key={group.id} to={group.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(group.offerings[0].targetId)}` : group.platformId ? modelProviderDetailHref({ id: group.platformId, name: group.name }, params) : '/models'}><Server size={20}/><div><strong>{group.name}</strong><span>{group.offerings.length} 条线路</span></div><small>供应方详情</small></Link>)}
               {providerGroups.length > 2 ? <span style={HINT_TEXT}>全部供应方见下方线路清单</span> : null}
             </div></div>
             <h3 className="lg-collection-section-title">上游线路 · {logical.offerings.length}</h3><CollectionView items={logical.offerings} filterLabel="供应方筛选" allFilterLabel="全部供应方" filters={providerGroups.map((group) => ({ value: group.id, label: group.name, matches: (route: ModelOfferingItem) => providerGroupByRoute.get(route.id)?.id === group.id }))} placeholder="搜索上游模型、供应方或协议" searchText={(item) => [providerGroupByRoute.get(item.id)?.name, item.providerName, item.targetName, item.upstreamModelId, item.protocol, item.notes].filter(Boolean).join(' ')}>
               {(routes) => <table className="lg-collection-entity-table lg-collection-route-table"><colgroup><col style={{width: '38%'}}/><col style={{width: '15%'}}/><col style={{width: '15%'}}/><col style={{width: '15%'}}/><col style={{width: '17%'}}/></colgroup><thead><tr><th>上游模型</th><th>供应方</th><th>协议</th><th>顺位 / 权重</th><th>状态</th></tr></thead><tbody>{routes.map((route) => {
                 const group = providerGroupByRoute.get(route.id)!;
                 const participation = offeringParticipationStatus(route);
-                return <tr key={route.id}><td><strong title={route.upstreamModelId || route.targetName}>{route.upstreamModelId || route.targetName}</strong>{route.skipReason ? <small title={route.skipReason}>{route.skipReason}</small> : null}</td><td><Link to={route.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(route.targetId)}` : group.platformId ? `/platforms/view?id=${encodeURIComponent(group.platformId)}&name=${encodeURIComponent(group.name)}` : '/models'}>{group.name}</Link></td><td>{route.protocol || '继承协议'}</td><td>{route.priority} / {route.weight}</td><td><span title={participation.detail}><StatusPill label={participation.label} tone={participation.tone} /></span></td></tr>;
+                return <tr key={route.id}><td><strong title={route.upstreamModelId || route.targetName}>{route.upstreamModelId || route.targetName}</strong>{route.skipReason ? <small title={route.skipReason}>{route.skipReason}</small> : null}</td><td><Link to={route.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(route.targetId)}` : group.platformId ? modelProviderDetailHref({ id: group.platformId, name: group.name }, params) : '/models'}>{group.name}</Link></td><td>{route.protocol || '继承协议'}</td><td>{route.priority} / {route.weight}</td><td><span title={participation.detail}><StatusPill label={participation.label} tone={participation.tone} /></span></td></tr>;
               })}</tbody></table>}
 
             </CollectionView>
           </> : <CollectionView items={physicalModels} placeholder="搜索上游模型或协议" searchText={(item) => `${item.name} ${item.modelName} ${item.protocol || ''}`}>
             {(pageModels) => <>{pageModels.map((model) => {
               const platform = platforms.find((item) => item.id === model.platformId);
-              return <div key={model.id} className="lg-collection-detail-card"><div><strong>{model.name || model.modelName}</strong><span>{model.protocol || '继承协议'}</span></div><Link to={`/platforms/view?id=${encodeURIComponent(model.platformId || '')}&name=${encodeURIComponent(platform?.name || '')}`}>{platform?.name || model.platformId || '未标注 Provider'}</Link></div>;
+              return <div key={model.id} className="lg-collection-detail-card"><div><strong>{model.name || model.modelName}</strong><span>{model.protocol || '继承协议'}</span></div><Link to={modelProviderDetailHref({ id: model.platformId || '', name: platform?.name }, params)}>{platform?.name || model.platformId || '未标注 Provider'}</Link></div>;
             })}</>}
           </CollectionView>,
         },
@@ -347,7 +347,7 @@ export function ModelDetailsPage() {
 
 export function ProviderDetailsPage() {
   const [params] = useSearchParams();
-  const back = entityBackTarget(params);
+  const back = entityBackTarget(params, { href: '/platforms', label: '返回上游' });
   const restoredCollection = providerCollectionContext(params);
   const [hostedView, setHostedView] = useState({ query: restoredCollection.query, filter: restoredCollection.filter, page: restoredCollection.page });
   const requestedId = params.get('id') || '';
