@@ -24,7 +24,6 @@ import {
   Loader2,
   Plug,
   RefreshCw,
-  RotateCcw,
   Rocket,
   Save,
   Send,
@@ -54,6 +53,7 @@ import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile, Section } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
+import { CommentTemplateTab } from '@/pages/project-settings/CommentTemplateTab';
 import { BackupTab } from '@/pages/project-settings/BackupTab';
 import { DbIsolationTab } from '@/pages/project-settings/DbIsolationTab';
 import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
@@ -198,32 +198,6 @@ interface ActivityLogEntry {
 interface ActivityLogsResponse {
   logs: ActivityLogEntry[];
   total: number;
-}
-
-interface TemplateVariableDef {
-  key: string;
-  label: string;
-  example: string;
-}
-
-interface CommentTemplateResponse {
-  ok: boolean;
-  body: string;
-  updatedAt: string | null;
-  isDefault: boolean;
-  defaultBody: string;
-  variables: TemplateVariableDef[];
-}
-
-interface CommentTemplateSaveResponse {
-  ok: boolean;
-  body: string;
-  updatedAt: string;
-}
-
-interface CommentTemplatePreviewResponse {
-  ok: boolean;
-  rendered: string;
 }
 
 interface GithubEventPolicy {
@@ -425,6 +399,7 @@ function getInitialTab(): TabValue {
   if (tabs.some((tab) => tab.value === hash)) return hash as TabValue;
 
   const queryTab = new URLSearchParams(window.location.search).get('tab') || '';
+  if (queryTab === 'build' || queryTab === 'routing') return 'compose';
   return tabs.some((tab) => tab.value === queryTab) ? (queryTab as TabValue) : 'general';
 }
 
@@ -560,6 +535,8 @@ function useProject(projectId: string | undefined): {
 
 export function ProjectSettingsPage(): JSX.Element {
   const { projectId } = useParams<{ projectId: string }>();
+  const fromBranch = new URLSearchParams(window.location.search).get('fromBranch');
+  const returnToBranch = `/branches/${encodeURIComponent(projectId || '')}${fromBranch ? `?branch=${encodeURIComponent(fromBranch)}&branchTab=config&configSection=settings` : ''}`;
   const { state, refresh: refreshProject, setProject, refreshing: refreshingProject, refreshError } = useProject(projectId);
   const reads = useRef(new Set<SettingsRead>());
   const registerRead = useCallback((read: SettingsRead) => {
@@ -673,10 +650,10 @@ export function ProjectSettingsPage(): JSX.Element {
                   项目
                 </Link>
               </Button>
-              <Button asChild variant="ghost" size="sm" title="分支控制台">
-                <Link to={`/branches/${encodeURIComponent(projectId || '')}`}>
+              <Button asChild variant="ghost" size="sm" title={fromBranch ? "返回分支设置" : "分支控制台"}>
+                <Link to={returnToBranch}>
                   <GitBranch />
-                  <span className="md:hidden">分支控制台</span>
+                  <span className={fromBranch ? undefined : "md:hidden"}>{fromBranch ? '返回分支' : '分支控制台'}</span>
                 </Link>
               </Button>
               <Button
@@ -799,7 +776,7 @@ export function ProjectSettingsPage(): JSX.Element {
                   <ProjectMigrationTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="comment-template">
-                  <CommentTemplateTab projectId={project.id} onToast={setToast} />
+                  <CommentTemplateTab key={project.id} projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="cache">
                   <CacheDiagnosticTab onToast={setToast} />
@@ -877,6 +854,21 @@ function ProjectEnvTab({
 
   return (
     <div className="space-y-4">
+      <EnvEditor
+        scope={project.id}
+        title="项目环境变量"
+        description={
+          <>
+            只注入 <CodePill>{name}</CodePill> 的分支容器，保存后重新部署生效。全局继承目前{project.inheritGlobalEnv ? '已开启' : '已关闭'}，同名项目变量优先。CDS 系统级配置请放到{' '}
+            <Link className="text-primary underline-offset-4 hover:underline" to="/cds-settings#global-vars">
+              CDS 全局变量
+            </Link>
+            。
+          </>
+        }
+        emptyDescription="当前项目没有独有环境变量。添加后重新部署分支即可生效。"
+        onToast={onToast}
+      />
       <div className="flex flex-col gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-1 text-sm">
           <div className="font-semibold text-foreground">继承 CDS 全局变量</div>
@@ -903,28 +895,14 @@ function ProjectEnvTab({
         <div className="space-y-1 text-sm">
           <div className="font-semibold text-foreground">配置向导</div>
           <div className="text-xs text-muted-foreground">
-            按"必填 / CDS 自动 / 推导"三色分组弹窗,适合一次性把缺失项填齐。
+            检查缺失的必填变量，按提示补齐项目配置。
           </div>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={() => setWizardOpen(true)}>
           打开向导
         </Button>
       </div>
-      <EnvEditor
-        scope={project.id}
-        title="项目环境变量"
-        description={
-          <>
-            只注入 <CodePill>{name}</CodePill> 的分支容器。CDS 系统级配置请放到{' '}
-            <Link className="text-primary underline-offset-4 hover:underline" to="/cds-settings#global-vars">
-              CDS 全局变量
-            </Link>
-            。
-          </>
-        }
-        emptyDescription="当前项目没有独有环境变量。添加后重新部署分支即可生效。"
-        onToast={onToast}
-      />
+
       <EnvSetupDialog
         projectId={wizardOpen ? project.id : null}
         projectName={name}
@@ -2387,196 +2365,6 @@ function GithubRepoPickerDialog({
   );
 }
 
-function CommentTemplateTab({
-  projectId,
-  onToast,
-}: {
-  projectId: string;
-  onToast: (message: string) => void;
-}): JSX.Element {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const [state, setState] = useState<
-    | { status: 'loading' }
-    | { status: 'error'; message: string }
-    | {
-        status: 'ok';
-        body: string;
-        defaultBody: string;
-        variables: TemplateVariableDef[];
-        updatedAt: string | null;
-        isDefault: boolean;
-        preview: string;
-      }
-  >({ status: 'loading' });
-  const [saving, setSaving] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
-
-  const savedBody = useRef('');
-  const beginRead = useSettingsReadRequest();
-  const load = useCallback(async (preserve = false) => {
-    const signal = beginRead();
-    if (!preserve) setState({ status: 'loading' });
-    try {
-      const data = await apiRequest<CommentTemplateResponse>(
-        `/api/comment-template?projectId=${encodeURIComponent(projectId)}`, { signal },
-      );
-      if (signal.aborted) return;
-      const previous = savedBody.current;
-      const body = data.body || data.defaultBody || '';
-      savedBody.current = body;
-      setState(current => ({
-        status: 'ok',
-        body: preserve && current.status === 'ok' && current.body !== previous ? current.body : body,
-        defaultBody: data.defaultBody || '',
-        variables: data.variables || [],
-        updatedAt: data.updatedAt || null,
-        isDefault: Boolean(data.isDefault),
-        preview: '',
-      }));
-    } catch (err) {
-      if (signal.aborted) return;
-      const message = messageFromError(err);
-      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
-      if (preserve) throw err;
-    }
-  }, [projectId, beginRead]);
-  useProjectSettingsRefresh(() => load(true));
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  function updateBody(body: string): void {
-    setState((current) => (current.status === 'ok' ? { ...current, body } : current));
-  }
-
-  function insertVariable(key: string): void {
-    if (state.status !== 'ok') return;
-    const textarea = textareaRef.current;
-    const token = `{{${key}}}`;
-    if (!textarea) {
-      updateBody(`${state.body}${token}`);
-      return;
-    }
-    const start = textarea.selectionStart ?? state.body.length;
-    const end = textarea.selectionEnd ?? state.body.length;
-    const next = `${state.body.slice(0, start)}${token}${state.body.slice(end)}`;
-    updateBody(next);
-    window.requestAnimationFrame(() => {
-      textarea.focus();
-      const caret = start + token.length;
-      textarea.setSelectionRange(caret, caret);
-    });
-  }
-
-  async function save(): Promise<void> {
-    if (state.status !== 'ok') return;
-    setSaving(true);
-    try {
-      const result = await apiRequest<CommentTemplateSaveResponse>(
-        `/api/projects/${encodeURIComponent(projectId)}/comment-template`,
-        {
-          method: 'PUT',
-          body: { body: state.body },
-        },
-      );
-      beginRead.cancel();
-      savedBody.current = result.body || '';
-      setState({ ...state, body: result.body || '', updatedAt: result.updatedAt, isDefault: !result.body });
-      onToast(result.body ? '评论模板已保存' : '评论模板已恢复默认');
-    } catch (err) {
-      onToast(messageFromError(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function preview(): Promise<void> {
-    if (state.status !== 'ok') return;
-    setPreviewing(true);
-    try {
-      const source = state.body.trim() ? state.body : state.defaultBody;
-      const result = await apiRequest<CommentTemplatePreviewResponse>('/api/comment-template/preview', {
-        method: 'POST',
-        body: { body: source },
-      });
-      setState({ ...state, preview: result.rendered || '(空)' });
-    } catch (err) {
-      setState({ ...state, preview: `预览失败：${messageFromError(err)}` });
-    } finally {
-      setPreviewing(false);
-    }
-  }
-
-  if (state.status === 'loading') return <LoadingBlock label="加载评论模板" />;
-  if (state.status === 'error') return <ErrorBlock message={state.message} />;
-
-  return (
-    <div className="space-y-8">
-      <Section
-        title="GitHub PR 预览评论模板"
-        description="每当 PR 打开或部署完成时，CDS 会在 PR 下发或刷新预览评论。这里编辑当前项目的 Markdown 模板，留空保存会回到默认模板。"
-      >
-        <div className="space-y-4">
-          <label className="block space-y-1.5">
-            <span className="text-sm font-medium">模板正文</span>
-            <textarea
-              ref={textareaRef}
-              className="min-h-80 w-full resize-y rounded-md border border-input bg-background px-3 py-3 font-mono text-sm leading-6 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-              value={state.body}
-              onChange={(event) => updateBody(event.target.value)}
-              spellCheck={false}
-            />
-          </label>
-          <div className="text-xs text-muted-foreground">
-            {state.isDefault ? '当前使用默认模板。' : `最近保存：${formatDate(state.updatedAt)}`}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={() => void save()} disabled={saving}>
-              {saving ? <Loader2 className="animate-spin" /> : <Save />}
-              保存
-            </Button>
-            <Button type="button" variant="outline" onClick={() => void preview()} disabled={previewing}>
-              {previewing ? <Loader2 className="animate-spin" /> : <Eye />}
-              预览
-            </Button>
-            <Button type="button" variant="outline" onClick={() => updateBody(state.defaultBody)}>
-              <RotateCcw />
-              填入默认模板
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => updateBody('')}>
-              留空使用默认
-            </Button>
-          </div>
-        </div>
-      </Section>
-
-      <Section title="可用变量" description="点击变量会插入到模板光标位置。未识别变量会原样保留，便于排查拼写。">
-        <div className="grid gap-2">
-          {state.variables.map((variable) => (
-            <button
-              key={variable.key}
-              type="button"
-              className="grid gap-2 cds-surface-raised cds-hairline px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground md:grid-cols-[11.25rem_11.25rem_minmax(0,1fr)] md:items-center"
-              onClick={() => insertVariable(variable.key)}
-            >
-              <code className="rounded bg-muted px-2 py-1 font-mono text-xs text-foreground">{`{{${variable.key}}}`}</code>
-              <span className="text-sm font-medium">{variable.label}</span>
-              <span className="min-w-0 break-all font-mono text-xs text-muted-foreground">{variable.example}</span>
-            </button>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="示例预览" description="使用示例 PR 和分支数据渲染当前模板，保存前可先检查 Markdown 效果。">
-        <div className="min-h-32 whitespace-pre-wrap break-words cds-surface-raised cds-hairline px-4 py-4 font-mono text-sm leading-6">
-          {state.preview || '点击“预览”后显示渲染结果。'}
-        </div>
-      </Section>
-    </div>
-  );
-}
-
 type DisplayCacheDir = CacheDirInfo & { orphan: boolean };
 
 function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void }): JSX.Element {
@@ -3542,6 +3330,20 @@ function ProjectComposeTab({
   projectId: string;
   onToast: (message: string) => void;
 }): JSX.Element {
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const query = new URLSearchParams(window.location.search);
+  const section = query.get('section') || (query.get('tab') === 'build' ? 'services' : query.get('tab') === 'routing' ? 'routing' : '');
+  const sectionKey = section === 'services' ? 'services' : section === 'routing' ? 'x-cds-routing' : '';
+  function locateSection(): void {
+    const editor = editorRef.current;
+    if (!editor || !sectionKey) return;
+    const match = new RegExp(`^${sectionKey}:.*$`, 'm').exec(editor.value);
+    if (!match) return;
+    editor.focus({ preventScroll: true });
+    editor.setSelectionRange(match.index, match.index + match[0].length);
+    const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || parseFloat(getComputedStyle(editor).fontSize);
+    editor.scrollTop = editor.value.slice(0, match.index).split('\n').length * lineHeight - editor.clientHeight / 3;
+  }
   const [data, setData] = useState<ProjectComposeResponse | null>(null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -3573,6 +3375,12 @@ function ProjectComposeTab({
 
   useEffect(() => { void refresh(); }, [refresh]);
   useProjectSettingsRefresh(() => refresh(true));
+
+  useEffect(() => {
+    if (data) locateSection();
+    // 定位只在首次读取目标配置后执行，后续编辑不抢焦点。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(data), sectionKey]);
 
   const onSave = useCallback(async () => {
     if (!draft.trim()) { onToast('配置不能为空'); return; }
@@ -3617,12 +3425,19 @@ function ProjectComposeTab({
       <div>
         <h3 className="text-base font-semibold">项目配置(cds-compose.yml)</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          这是本项目的配置 SSOT。build profile / 基础设施都从它派生。
+          修改影响当前项目的所有分支配置；保存不会自动重新部署，构建与路由变更需在相应分支重新部署后生效。
           {data.hasPersisted
             ? <> 当前 <span className="font-mono">v{data.version}</span>{data.updatedAt ? ` · ${new Date(data.updatedAt).toLocaleString()}` : ''}{data.source ? ` · 来源 ${data.source}` : ''}。</>
             : <> 该项目尚未固化配置,下方是从已落库 profile/infra 反向生成的<strong>只读起点</strong>,编辑保存后即成为正式 SSOT。</>}
         </p>
       </div>
+
+      {sectionKey ? <div className="flex flex-wrap items-center gap-2 text-sm" role="status">
+        <strong>{section === 'services' ? '构建与启动' : '自定义路由'}</strong>
+        {new RegExp(`^${sectionKey}:`, 'm').test(draft)
+          ? <><span className="text-muted-foreground">编辑下方 <code>{sectionKey}</code> 配置。</span><Button type="button" variant="outline" size="sm" onClick={locateSection}>定位配置段</Button></>
+          : <span className="text-muted-foreground">当前配置没有 <code>{sectionKey}</code> 段。{section === 'routing' ? '尚未定义额外自定义路由；服务路径也可在 services 的 cds.path-prefix 标签中配置。' : '请先在项目配置中定义服务。'}</span>}
+      </div> : null}
 
       {/* 三级权威图例 */}
       <div className="flex flex-wrap gap-2 text-xs">
@@ -3652,6 +3467,8 @@ function ProjectComposeTab({
       </div>
 
       <textarea
+        ref={editorRef}
+        aria-label="项目配置 YAML"
         value={draft}
         onChange={(e) => { setDraft(e.target.value); setDirty(true); }}
         className="w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-xs"
