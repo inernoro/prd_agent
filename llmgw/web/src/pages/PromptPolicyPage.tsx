@@ -25,6 +25,7 @@ import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, P
 import { CARD_ACTIONS, CARD_BODY, GAP, INSET_BLOCK } from '@/lib/surface';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE, TABLE_CELL, TABLE_HEAD_CELL } from '@/lib/typography';
 import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
+import { formatPlatformTime } from '@/lib/platformTime';
 import { mutationOutcomeUnknown } from '@/lib/mutationOutcome';
 import { useDialogs } from '@/components/ConfirmDialog';
 
@@ -283,8 +284,8 @@ export function PromptPolicyPage() {
                 </span>
               </div>
               {data.versions.length ? (
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <div role="region" aria-label="提示词版本历史，可横向滚动" tabIndex={0} style={{ overflowX: 'auto' }}>
+                  <table className="lg-data-table" style={{ width: '100%', minWidth: 620, borderCollapse: 'collapse' }}>
                     <thead>
                       <tr>{['版本', '状态', 'hash', '模板字符', '更新时间', '操作'].map((x) => <th key={x} style={TABLE_HEAD_CELL}>{x}</th>)}</tr>
                     </thead>
@@ -295,9 +296,9 @@ export function PromptPolicyPage() {
                           <td style={TABLE_CELL}>{item.enabled ? '启用' : '禁用'}</td>
                           <td style={{ ...TABLE_CELL, ...MONO_META }}><code>{item.policyHash.slice(0, 12)}</code></td>
                           <td style={TABLE_CELL}>{item.policyChars}</td>
-                          <td style={TABLE_CELL}>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : '—'}</td>
+                          <td style={TABLE_CELL}>{formatPlatformTime(item.updatedAt)}</td>
                           <td style={{ ...TABLE_CELL, textAlign: 'right' }}>
-                            <Button size="sm" variant="ghost" disabled={busy || reading || needsReconcile || conflict || item.version === data.current?.version} onClick={() => void rollback(item.version)}>回滚</Button>
+                            <Button size="sm" variant="ghost" style={{ whiteSpace: 'nowrap' }} disabled={busy || reading || needsReconcile || conflict || item.version === data.current?.version} onClick={() => void rollback(item.version)}>回滚</Button>
                           </td>
                         </tr>
                       ))}
