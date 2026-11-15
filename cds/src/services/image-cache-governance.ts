@@ -66,7 +66,7 @@ export class ImageCacheGovernance {
   async publish() { return this.request('publish', { references: this.options.protectedReferences() }); }
   async prepare(image: string, assertCurrent: () => void, requirePresent = false, forceNew = false) { await this.publish();return this.request('prepare', { image, requirePresent, forceNew }, assertCurrent); }
   confirm(token: string, assertCurrent: () => void) { return this.request('confirm', { token }, assertCurrent); }
-  abort(token: string, assertCurrent: () => void) { return this.request('abort', { token }, assertCurrent); }
+  abort(token: string, assertCurrent: () => void, completedNativeOperation = false) { return this.request('abort', { token, completedNativeOperation }, assertCurrent); }
   async inspect(dryRun = true, alreadyLocked = false, executionId?: string) {
     if (!dryRun && !this.options.budgetBytes) throw new Error('宿主总量策略尚未启用。');
     const run = async () => {

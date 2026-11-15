@@ -33,7 +33,18 @@ export function runSurfaceMotion(change: () => void | Promise<void>, source?: El
   let camera = rect && content ? surfaceCamera(rect, content.width, content.height) : undefined;
   root.classList.add('cds-surface-motion');
   let transition: Transition;
-  try { transition = doc.startViewTransition(() => ownGeneration === generation ? change() : undefined); active = transition; }
+  try {
+    transition = doc.startViewTransition(async () => {
+      if (ownGeneration !== generation) return;
+      await change();
+      // Keep suppression on the mounted surface. Removing the root flag must not
+      // restart its CSS entry animation after the snapshot camera has finished.
+      document.querySelectorAll('.cds-page-enter, .cds-drawer-anim').forEach(node => {
+        node.setAttribute('data-cds-surface-entered', '');
+      });
+    });
+    active = transition;
+  }
   catch { root.classList.remove('cds-surface-motion'); void change(); return; }
   void transition.ready.then(() => {
     if (active !== transition) return;

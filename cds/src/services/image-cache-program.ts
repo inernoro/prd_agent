@@ -96,7 +96,8 @@ if action=='confirm':
 if action=='abort':
  pull=state['pulls'].get(req['token'])
  if not pull or pull['instanceId']!=instance:raise ValueError('pull-owner-unconfirmed')
- if pull['image'] in by_ref:raise ValueError('failed-pull-created-an-image-needs-confirmation')
+ row=by_ref.get(pull['image'])
+ if row and (row['Id']!=pull.get('beforeId') or not req.get('completedNativeOperation')):raise ValueError('failed-pull-created-an-image-needs-confirmation')
  del state['pulls'][req['token']];save();print(json.dumps({'settled':True}));sys.exit(0)
 if action not in ['preview','reconcile','adopt']:raise ValueError('cache-action-unsupported')
 refs_now=containers();in_use={r['Image'] for r in refs_now};protected={ref for master in state['masters'].values() for ref in master['references']}

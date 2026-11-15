@@ -166,6 +166,46 @@ class StaticWindow(unittest.TestCase):
         self.assertGreaterEqual(result['heldFiles'], 1)
         self.assertEqual(data.read_bytes(), b'owned synthetic persistent data')
 
+    def test_held_versions_do_not_starve_later_expired_versions(self):
+        for i in range(24):
+            version = f'v{i:03d}'
+            self.stage(version)
+            self.assertEqual(self.activate(version).returncode, 0)
+        self.age(40 * 86400)
+        for version in ['v000', 'v001']:
+            (self.root / '.releases' / version / 'index.html').write_text('changed file must stay')
+        command = ['python3', str(TOOL), '--root', str(self.root), '--versions', '--compat-days', '30']
+        first = json.loads(subprocess.check_output(command + ['--apply'], env=self.env))
+        self.assertGreater(first['retiredFiles'], 0)
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file() and not p.is_symlink()}
+        preview = json.loads(subprocess.check_output(command, env=self.env))
+        self.assertGreater(preview['candidateFiles'], 0)
+        self.assertEqual(before, {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file() and not p.is_symlink()})
+        second = json.loads(subprocess.check_output(command + ['--apply'], env=self.env))
+        self.assertGreater(second['retiredFiles'], 0)
+        self.assertFalse((self.root / '.releases/v002/assets/v002.js').exists())
+        for version in ['v000', 'v001']:
+            self.assertEqual((self.root / '.releases' / version / 'index.html').read_text(), 'changed file must stay')
+        self.assertTrue((self.root / 'current/index.html').is_file())
+        self.assertTrue((self.root / 'previous/index.html').is_file())
+
+    def test_unknown_or_symlinked_retirement_cursor_keeps_objects(self):
+        self.stage('A');self.assertEqual(self.activate('A').returncode, 0)
+        cursor = self.root / '.static-assets-retirement-cursor.json'
+        command = ['python3', str(TOOL), '--root', str(self.root), '--versions', '--compat-days', '30', '--apply']
+        for symlink in [False, True]:
+            if symlink:
+                cursor.symlink_to(self.root / 'current/index.html')
+            else:
+                cursor.write_text('{broken metadata')
+            result = json.loads(subprocess.check_output(command, env=self.env))
+            self.assertEqual(result['scanStatus'], 'partial')
+            self.assertEqual(result['queryError'], 'retirement-cursor-unconfirmed')
+            self.assertIsNone(result['filesystemNetAvailableChange'])
+            self.assertEqual(result['retiredFiles'], 0)
+            self.assertTrue((self.root / 'current/assets/A.js').is_file())
+            cursor.unlink()
+
     def test_accelerated_continuous_deploys_bound_managed_assets(self):
         # A private tmpfs fixture avoids unrelated builds changing the root
         # filesystem while measuring actual f_bavail. This is a lifecycle test,

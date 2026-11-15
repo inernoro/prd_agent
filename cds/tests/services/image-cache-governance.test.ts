@@ -70,6 +70,24 @@ describe('image ID governance native protocol with a simulated Docker CLI', () =
     expect(() => f.request({ action: 'prepare', image: 'missing:tag', budgetBytes: 1024, peakBytes: 2048 })).toThrow();
     expect(f.request({}).filesystem.netAvailableBytesDelta).toEqual(expect.any(Number));
   });
+  it('settles completed failed refreshes of unchanged cached IDs across independent worker invocations', () => {
+    const f=fixture();f.values.images=[f.image()];f.save();f.request({action:'publish',references:[]});
+    for(let retry=0;retry<2;retry++){
+      const pin=f.request({action:'prepare',image:'registry.example/test:old',forceNew:true,peakBytes:1024});
+      expect(()=>f.request({action:'abort',token:pin.token})).toThrow(/failed-pull-created-an-image/);
+      expect(f.request({action:'abort',token:pin.token,completedNativeOperation:true}).settled).toBe(true);
+      expect(f.request({}).pullReservations).toEqual([]);
+    }
+  });
+  it('keeps failed pull reservations when contents changed or native identity queries fail', () => {
+    const f=fixture();f.values.images=[f.image()];f.save();f.request({action:'publish',references:[]});
+    const pin=f.request({action:'prepare',image:'registry.example/test:old',forceNew:true,peakBytes:1024});
+    f.values.images[0].Id='sha256:'+'c'.repeat(64);f.save();
+    expect(()=>f.request({action:'abort',token:pin.token,completedNativeOperation:true})).toThrow(/failed-pull-created-an-image/);
+    expect(f.request({}).pullReservations[0].reservedBytesEstimate).toBe(1024);
+    f.values.fail=true;f.save();expect(()=>f.request({action:'abort',token:pin.token,completedNativeOperation:true})).toThrow();
+    f.values.fail=false;f.save();expect(f.request({}).pullReservations[0].reservedBytesEstimate).toBe(1024);
+  });
   it('adopts an explicitly attested legacy build only after exact metadata and registry proof, then keeps fresh native references protected', () => {
     const f=fixture();f.values.images=[f.image()];f.save();f.request({action:'publish',references:[]});
     const adoption={action:'adopt',identity:id,created:f.image().Created,aliases:f.image().RepoTags,digests:[digest],projectId:'retired-project',ownershipEvidence:'Original deployment record and reproducible image artifact',attestedBy:'system-owner-fixture',dataDisposition:'reproducible-artifact',registryProofs:{[digest]:{manifest:{config:{digest:id}},verifiedAt:Date.now()}}};

@@ -1,4 +1,5 @@
 import type { BuildProfile, IShellExecutor } from '../types.js';
+import { randomBytes } from 'node:crypto';
 import type { WorktreeService } from './worktree.js';
 import { shellQuoteArg } from './secure-database-cli.js';
 import { configuredImageCacheGovernance, ImageCacheBudgetError } from './image-cache-governance.js';
@@ -122,12 +123,17 @@ export async function inspectDeploymentArtifacts(
         try { const prepared = await cache.prepare(image, assertCurrent, !needsPull, needsPull && !digestPinned);if (prepared.token) pin = prepared; }
         catch (error) { assertCurrent();return { reason: error instanceof ImageCacheBudgetError ? 'cache-budget' : 'verification-unavailable' }; }
       }
-      const pull = needsPull ? await exec(`docker pull ${shellQuoteArg(image)}`, 90_000).catch(() => undefined) : { exitCode: 0, stdout: '', stderr: '' };
+      const completion = pin && needsPull ? `__CDS_PULL_EXIT_${randomBytes(16).toString('hex')}:` : undefined;
+      const command = `docker pull ${shellQuoteArg(image)}` + (completion
+        ? `; cds_pull_status=$?; printf '\\n${completion}%s\\n' "$cds_pull_status"; exit "$cds_pull_status"` : '');
+      const pull = needsPull ? await exec(command, 90_000).catch(() => undefined) : { exitCode: 0, stdout: '', stderr: '' };
       if (!pull) { assertCurrent(); return { reason: 'verification-unavailable' }; }
       if (pull.exitCode) {
-        // Only a completed native failure may settle absence; timeout/unknown leaves a visible pin.
-        if (pin && typeof pull.exitCode === 'number') await cache!.abort(pin.token, assertCurrent).catch(() => undefined);
-        return { reason: pullFailureReason(pull.stdout, pull.stderr, image) };
+        // Only a completed native failure may settle its reservation; unknown leaves a visible pin.
+        const receipt = completion && typeof pull.exitCode === 'number' ? `\n${completion}${pull.exitCode}\n` : undefined;
+        const completed = receipt && pull.stdout.endsWith(receipt);
+        if (pin && completed) await cache!.abort(pin.token, assertCurrent, true).catch(() => undefined);
+        return { reason: pullFailureReason(completed ? pull.stdout.slice(0, -receipt!.length) : pull.stdout, pull.stderr, image) };
       }
       const inspection = await exec(`docker image inspect ${shellQuoteArg(image)}`).catch(() => undefined);
       if (!inspection || inspection.exitCode) { assertCurrent(); return { reason: 'verification-unavailable' }; }

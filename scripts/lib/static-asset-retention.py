@@ -25,6 +25,7 @@ import time
 
 MANIFEST = '.static-assets-retention.json'
 LOCK = '.static-assets-retention.lock'
+CURSOR = '.static-assets-retirement-cursor.json'
 LIMIT = 100_000
 PROOF_CACHE = {}
 GENERATED_ASSET_SUFFIXES = {'.js', '.mjs', '.css', '.map', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.avif', '.wasm'}
@@ -161,9 +162,9 @@ def files(root: Path, select=None):
     return result
 
 
-def load_manifest(parent: Path):
+def load_manifest(parent: Path, filename=MANIFEST):
     try:
-        p = parent / MANIFEST
+        p = parent / filename
         fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             os.close(fd)
@@ -192,10 +193,10 @@ def valid_record(value, digest: str, now: float):
         and 0 <= value['lastServedAt'] <= now + 300
 
 
-def save_manifest(parent: Path, data, expected):
+def save_manifest(parent: Path, data, expected, filename=MANIFEST):
     import secrets
-    fd, name = open_parent(parent / MANIFEST)
-    temp = MANIFEST + '.tmp-' + secrets.token_hex(16)
+    fd, name = open_parent(parent / filename)
+    temp = filename + '.tmp-' + secrets.token_hex(16)
     try:
         if (os.fstat(fd).st_dev, os.fstat(fd).st_ino) != expected or identity(parent) != expected:
             raise ValueError('static release identity changed')
@@ -340,7 +341,7 @@ def safe_relative(name):
 
 def retire_versions(root: Path, days: int, apply: bool):
     now = time.time()
-    identity(root)
+    root_identity = identity(root)
     if root.resolve() != root.absolute():
         raise ValueError('static root aliases are unconfirmed')
     current = {name: os.readlink(root / name) if (root / name).is_symlink() else None for name in ('current', 'previous')}
@@ -365,6 +366,15 @@ def retire_versions(root: Path, days: int, apply: bool):
     recent = {p for p, meta, _ in sorted(objects, key=lambda row: (row[1] or {}).get('createdAt', 0), reverse=True)[:20] if meta}
     report = {'dryRun': not apply, 'scanned': len(objects), 'eligibleVersions': 0, 'candidateFiles': 0, 'retiredFiles': 0, 'heldFiles': 0, 'failedFiles': 0, 'pendingVersions': 0, 'protected': {}, 'scope': 'verified generated files only; unknown payloads remain'}
     before = os.statvfs(root)
+    cursor, cursor_error = load_manifest(root, CURSOR)
+    after_key = cursor.get('scanAfter') if cursor else None
+    if cursor_error not in (None, 'manifest-missing') or cursor and (
+        tuple(cursor.get('directoryIdentity', [])) != root_identity
+        or not isinstance(after_key, list) or len(after_key) != 2
+        or not isinstance(after_key[0], (int, float)) or not math.isfinite(after_key[0])
+        or not safe_relative(after_key[1]) or '/' in after_key[1]
+    ):
+        return {**report, 'scanStatus': 'partial', 'queryError': 'retirement-cursor-unconfirmed', 'pendingVersions': len(objects), 'filesystemNetAvailableChange': None}
     try:
         ids = subprocess.check_output(['docker', 'ps', '-aq', '--no-trunc'], stderr=subprocess.PIPE, timeout=15).decode().splitlines()
         if len(ids) > 5000 or any(not re.fullmatch('[a-f0-9]{64}', v) for v in ids):
@@ -386,8 +396,11 @@ def retire_versions(root: Path, days: int, apply: bool):
                     mounts.append(Path(m['Source']).resolve(strict=True))
     except Exception:
         return {**report, 'scanStatus': 'partial', 'queryError': 'running-or-stopped-container-references-unconfirmed', 'pendingVersions': len(objects), 'filesystemNetAvailableChange': None}
-    attempted = 0
-    for p, meta, reason in sorted(objects, key=lambda row: ((row[1] or {}).get('createdAt', 0), row[0].name)):
+    attempted, cursor_failed = 0, False
+    key = lambda row: ((row[1] or {}).get('createdAt', 0), row[0].name)
+    ordered = sorted(objects, key=key)
+    start = next((i for i, row in enumerate(ordered) if after_key and key(row) > tuple(after_key)), 0)
+    for p, meta, reason in ordered[start:] + ordered[:start]:
         if p.resolve() in anchors or p in recent:
             report['protected'][p.name] = 'current-previous-or-recent-20'
             continue
@@ -406,9 +419,24 @@ def retire_versions(root: Path, days: int, apply: bool):
             report['protected'][p.name] = 'compatibility-window'
             continue
         report['eligibleVersions'] += 1
-        if attempted >= 2:
+        if attempted >= 2 or cursor_failed:
             report['pendingVersions'] += 1
             continue
+        if apply:
+            try:
+                # Advance before attempting a protected/failed version, under
+                # the activation lock. A crash must not starve later work.
+                latest_cursor, error = load_manifest(root, CURSOR)
+                if error not in (None, 'manifest-missing') or latest_cursor != cursor:
+                    raise ValueError('retirement cursor changed')
+                cursor = {'schema': 1, 'files': {}, 'directoryIdentity': list(root_identity),
+                          'scanAfter': [meta['createdAt'], p.name]}
+                save_manifest(root, cursor, root_identity, CURSOR)
+            except Exception:
+                cursor_failed = True
+                report['queryError'] = 'retirement-cursor-update-unconfirmed'
+                report['pendingVersions'] += 1
+                continue
         attempted += 1
         expected_dir = identity(p)
         known_dirs = meta.get('directories', {})
@@ -447,7 +475,7 @@ def retire_versions(root: Path, days: int, apply: bool):
                 continue
             fd = None
             try:
-                if identity(p) != expected_dir or any((os.readlink(root / n) if (root / n).is_symlink() else None) != v for n,v in current.items()):
+                if identity(root) != root_identity or identity(p) != expected_dir or any((os.readlink(root / n) if (root / n).is_symlink() else None) != v for n,v in current.items()):
                     raise ValueError('version identity or references changed')
                 fd, leaf = open_parent(target)
                 s = os.stat(leaf, dir_fd=fd, follow_symlinks=False)
@@ -479,7 +507,10 @@ def retire_versions(root: Path, days: int, apply: bool):
                 report['protected'][p.name] = 'unknown-or-changed-remaining-content'
     after = os.statvfs(root)
     report['filesystemNetAvailableChange'] = after.f_bavail * after.f_frsize - before.f_bavail * before.f_frsize
-    report['scanStatus'] = 'partial' if report['heldFiles'] or report['failedFiles'] or any(v not in ('current-previous-or-recent-20','compatibility-window') for v in report['protected'].values()) else 'complete'
+    if identity(root) != root_identity:
+        report['filesystemNetAvailableChange'] = None
+        report['queryError'] = 'measurement-root-changed'
+    report['scanStatus'] = 'partial' if report.get('queryError') or report['heldFiles'] or report['failedFiles'] or any(v not in ('current-previous-or-recent-20','compatibility-window') for v in report['protected'].values()) else 'complete'
     return report
 
 

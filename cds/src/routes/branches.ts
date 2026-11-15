@@ -5154,6 +5154,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //   - `git fetch origin --prune` 每个 repoRoot 独立 cache 5 分钟
   //   - 5 分钟内只跑 `for-each-ref`(纯本地读 refs,毫秒级)
   //   - `?nofetch=true` 强制跳过 fetch,纯本地读(用户主动刷新前置场景)
+  //   - `?force=true` 是用户主动刷新，绕过五分钟缓存；nofetch 仍优先
   //   - 响应额外字段 `cachedAt`、`fetched` 让前端能展示"上次同步于 N 分钟前"
 
   const REMOTE_FETCH_CACHE_MS = 5 * 60 * 1000;
@@ -5163,6 +5164,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const projectId = resolveProjectIdParam(req.query.project);
       const noFetch = req.query.nofetch === 'true' || req.query.nofetch === '1';
+      const forceFetch = req.query.force === 'true' || req.query.force === '1';
       const repoRoot = projectId
         ? stateService.getProjectRepoRoot(projectId, config.repoRoot)
         : config.repoRoot;
@@ -5173,7 +5175,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const cacheValid = now - lastFetchedAt < REMOTE_FETCH_CACHE_MS;
 
       let fetched = false;
-      if (!noFetch && !cacheValid) {
+      if (!noFetch && (forceFetch || !cacheValid)) {
         const auth = await gitAuthForRepo(repoRoot);
         const fetchResult = await shell.exec(
           'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
@@ -5230,7 +5232,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branches,
         defaultBranch,
         fetched,
-        cachedAt: cacheValid ? lastFetchedAt : (fetched ? now : null),
+        cachedAt: fetched ? now : cacheValid ? lastFetchedAt : null,
       });
     } catch (err) {
       res.status(500).json(logPayloadForHumanView(req, { error: (err as Error).message }));

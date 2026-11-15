@@ -868,6 +868,41 @@ describe('Branch Routes', () => {
       expect(mock.commands.some(c => c.includes('git fetch origin --prune'))).toBe(false);
     });
 
+    it('explicit refresh fetches newly added refs inside the cache window and updates cachedAt', async () => {
+      let fetches = 0;
+      mock.addResponsePatternFirst(/git fetch origin --prune/, () => {
+        fetches++; return { stdout: '', stderr: '', exitCode: 0 };
+      });
+      mock.addResponsePatternFirst(/git for-each-ref/, () => ({
+        stdout: fetches > 1 ? 'feature/new<SEP>2026-11-14<SEP>Dev<SEP>new' : '', stderr: '', exitCode: 0,
+      }));
+      const first = await request(server, 'GET', '/api/remote-branches');
+      await new Promise(resolve => setTimeout(resolve, 2));
+      const refreshed = await request(server, 'GET', '/api/remote-branches?force=true');
+      expect(refreshed.status).toBe(200);
+      expect(fetches).toBe(2);
+      expect(refreshed.body).toMatchObject({ fetched: true, branches: [{ name: 'feature/new' }] });
+      expect((refreshed.body as any).cachedAt).toBeGreaterThan((first.body as any).cachedAt);
+    });
+
+    it('explicit refresh reports an actual fetch failure even with warm cache, then can recover', async () => {
+      let fail = false;
+      mock.addResponsePatternFirst(/git fetch origin --prune/, () => ({ stdout: '', stderr: fail ? 'origin unavailable' : '', exitCode: fail ? 1 : 0 }));
+      await request(server, 'GET', '/api/remote-branches');
+      fail = true;
+      const failed = await request(server, 'GET', '/api/remote-branches?force=true');
+      expect(failed.status).toBe(502);
+      expect(failed.body).toMatchObject({ error: 'git_fetch_failed', message: 'origin unavailable' });
+      fail = false;
+      expect((await request(server, 'GET', '/api/remote-branches?force=true')).body).toMatchObject({ fetched: true });
+    });
+
+    it('nofetch still prevents Git network work when force is also supplied', async () => {
+      const result = await request(server, 'GET', '/api/remote-branches?nofetch=true&force=true');
+      expect(result.body).toMatchObject({ fetched: false, cachedAt: null });
+      expect(mock.commands.some(command => command.includes('git fetch origin --prune'))).toBe(false);
+    });
+
     it('persists the remote default branch onto the project', async () => {
       const now = new Date().toISOString();
       stateService.addProject({

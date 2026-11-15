@@ -22,6 +22,20 @@ function fixture() {
 }
 
 describe('完整预构建产物准入', () => {
+  it('数字失败状态没有原生完成回执时保留拉取预留，避免把超时当作完成', async () => {
+    const shell=fixture();const cache=new ImageCacheGovernance({shell,catalog:'/unused',instanceId:'pull-failure',budgetBytes:1,protectedReferences:()=>[]});
+    vi.spyOn(cache,'prepare').mockResolvedValue({token:'owned-pin'});const abort=vi.spyOn(cache,'abort').mockResolvedValue({});configureImageCacheGovernance(cache);
+    shell.addResponsePatternFirst(/docker pull/,()=>({stdout:'',stderr:'connection interrupted',exitCode:1}));
+    expect(await inspectDeploymentArtifacts(shell,[profile('api')],target)).toMatchObject({state:'waiting'});
+    expect(abort).not.toHaveBeenCalled();
+  });
+  it('只有匹配本轮原生完成回执的失败才结清拉取预留', async () => {
+    const shell=fixture();const cache=new ImageCacheGovernance({shell,catalog:'/unused',instanceId:'pull-failure',budgetBytes:1,protectedReferences:()=>[]});
+    vi.spyOn(cache,'prepare').mockResolvedValue({token:'owned-pin'});const abort=vi.spyOn(cache,'abort').mockResolvedValue({});configureImageCacheGovernance(cache);
+    shell.addResponsePatternFirst(/docker pull/,match=>({stdout:'\n'+match.input!.match(/__CDS_PULL_EXIT_[a-f0-9]{32}:/)![0]+'1\n',stderr:'registry unavailable',exitCode:1}));
+    expect(await inspectDeploymentArtifacts(shell,[profile('api')],target)).toMatchObject({state:'waiting'});
+    expect(abort).toHaveBeenCalledWith('owned-pin',expect.any(Function),true);
+  });
   it('本地已有可变标签仍在拉取前预留新内容，预算不足时不执行pull', async () => {
     const shell = fixture();const cache = new ImageCacheGovernance({ shell, catalog: '/unused', instanceId: 'tag-budget', budgetBytes: 1, protectedReferences: () => [] });
     const prepare = vi.spyOn(cache, 'prepare').mockImplementation(async (_image, _current, _present, forceNew) => {

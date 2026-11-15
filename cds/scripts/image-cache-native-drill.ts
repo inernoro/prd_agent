@@ -66,12 +66,12 @@ const audit: ServerEventLogSink = {
     return rows.filter(row => (!filter?.requestId || row.requestId === filter.requestId) && (!filter?.projectId || row.projectId === filter.projectId)).slice(-(filter?.limit || 100)) as ServerEventRecord[];
   },
 };
-let connectionFailure = false, afterManifest: (() => Promise<void>) | undefined, admittedPulls=0;
+let connectionFailure = false, pullConnectionFailure=false, afterManifest: (() => Promise<void>) | undefined, admittedPulls=0;
 const shell = { exec: async (command: string, options?: Parameters<ShellExecutor['exec']>[1]) => {
   if(command.startsWith('docker pull '))admittedPulls++;
   // Transport exception is confined to this guest's synthetic loopback registry.
   if (command.startsWith("docker manifest inspect '127.0.0.1:19587/")) command = command.replace('docker manifest inspect ', 'docker manifest inspect --insecure ');
-  const result = await raw.exec(command, { ...options, env:{...options?.env,DOCKER_HOST:connectionFailure?'unix://'+server.handle.workspace+'/missing.sock':daemon.endpoint} });
+  const result = await raw.exec(command, { ...options, env:{...options?.env,DOCKER_HOST:connectionFailure || pullConnectionFailure && command.startsWith('docker pull ')?'unix://'+server.handle.workspace+'/missing.sock':daemon.endpoint} });
   if (command.startsWith('docker manifest inspect ') && result.exitCode === 0 && afterManifest) { const hook = afterManifest;afterManifest = undefined;await hook(); }
   return result;
 } };
@@ -88,6 +88,17 @@ try{
  const fixed=await inspectDeploymentArtifacts(shell,[{id:'native-digest',name:'native-digest',dockerImage:digest,workDir:'.',command:'',containerPort:8080,prebuiltImage:true}],revision);
  assert.equal(fixed.state,'ready');assert.equal(admittedPulls,pullsBefore+1);
 }finally{configureImageCacheGovernance(undefined);}
+// Actual failed native pull, with successful native identity queries against
+// the same private daemon. Each retry reopens the persistent catalog.
+await cache.request('publish', { references: [], nowMs: Date.now() + 600001 });
+pullConnectionFailure=true;
+try{
+ for(let retry=0;retry<2;retry++){
+  const restarted=new ImageCacheGovernance(cache.options);configureImageCacheGovernance(restarted);
+  const failed=await inspectDeploymentArtifacts(shell,[{id:'failed-refresh',name:'failed-refresh',dockerImage:seed,workDir:'.',command:'',containerPort:8080,prebuiltImage:true}],revision);
+  assert.equal(failed.state,'waiting');assert.deepEqual((await restarted.inspect()).pullReservations,[]);
+ }
+}finally{pullConnectionFailure=false;configureImageCacheGovernance(undefined);}
 // Accelerated bridge-window expiry, not ten minutes of real production observation.
 await cache.request('publish', { references: [], nowMs: Date.now() + 600001 });
 const plan = await cache.inspect();assert(plan.candidates.some((row: any) => row.identity === built.identity && row.aliases.length === 2));
@@ -124,6 +135,7 @@ await docker(['image','inspect','alpine:3.21']);
 const result = { provenance: 'integration-live', scope: 'actual private XFS/Docker/loopback OCI registry, production governance and audit factory, durable file test sink; production Mongo sink is not replaced in application code',
   exactRegistryIdentityVerified: true, sameIdAliasesRetiredOnce: true, stoppedContainerCreatedAfterPlanProtected: true, currentRollbackAndOtherMasterProtected: true,
   cachedMutableTagReservesPeakBeforePull:true,cachedImmutableDigestReusedWithoutNewPeak:true,
+  completedFailedCachedPullsSettledAcrossRestart:true,
   realConnectionFailureRetained: true, realAuditWriteFailureRetained: true, rehydratedIdAndPayloadChecksumPreserved: true, explicitLegacyAdoptionValidated: true,
   registryAuditEvents: records.length, filesystemNetAvailableBytesDelta: removed.filesystem.netAvailableBytesDelta, bridgeWindowAccelerated: true };
 await fs.writeFile('/data/image-cache-integration-result.json', JSON.stringify(result));

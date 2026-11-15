@@ -131,6 +131,8 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 **验收技能自动触发**：用户要求「页面验收、功能验收、回归验收、验收报告」或交付需要这些产物时，即使未写斜杠命令，也必须读取 [create-visual-test-to-kb](.claude/skills/create-visual-test-to-kb/SKILL.md)，按其前置要求执行 [acceptance-test-design](.claude/skills/acceptance-test-design/SKILL.md) → [acceptance-scenario-orchestrator](.claude/skills/acceptance-scenario-orchestrator/SKILL.md) → 取证归档。宿主未列出技能时按这些仓库路径读取；`human-verify`、`/uat`、交接清单和 CDS 上传回执均不能替代。执行类验收报告必须经标准 `archive_report.py` 生成、准入校验和 `verify-open.mjs`；缺步骤保持验收未完成，不得手写 HTML、改档位或补模板标记绕过。禁止：骨架完成就报「已实现」；绕过真实访问路径测试；不主动查系统能力。
 
+**用户能看懂也是完成门槛。** 面向用户交付时，必须按对话模板逐项回答原始业务目标：现在能做什么、怎样证明、还有什么没做到。主结论要用普通中文直接呈现，不能让用户阅读JSON、源码、日志或Markdown文档链接后自行判断。技术文件仅作佐证。用户明确表示看不懂时，交付状态保持未通过，先改正说明与可见证据，不能用测试数量、提交成功或内部验收标签代替用户验收。
+
 **8.1 自测优先——不得把校验责任先交还给用户。** 提交前必须至少跑通一条自测路径，并在交付消息里**写明走了哪条、断言了什么**：
 
 1. Vitest / xUnit 集成测试，断言新行为发生（首选，最廉价）
