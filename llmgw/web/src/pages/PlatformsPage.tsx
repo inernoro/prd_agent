@@ -30,6 +30,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   const { tenant } = useAuth();
   const [params] = useSearchParams();
   const returnProviderId = params.get('providerId') || '';
+  const returnProviderTab = ['connection', 'activity'].includes(params.get('providerTab') || '') ? params.get('providerTab')! : 'models';
   const restoredProvider = useRef<string | null>(null);
   const [returnProblem, setReturnProblem] = useState<string | null>(null);
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
@@ -90,11 +91,11 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
 
   useEffect(() => {
     if (!returnProviderId) { restoredProvider.current = null; setReturnProblem(null); return; }
-    if (!items || restoredProvider.current === returnProviderId) return;
-    restoredProvider.current = returnProviderId;
-    if (items.some(item => item.id === returnProviderId)) { setReturnProblem(null); setExpandedModelsFor(returnProviderId); setProviderTab('models'); }
+    if (!items || restoredProvider.current === `${returnProviderId}:${returnProviderTab}`) return;
+    restoredProvider.current = `${returnProviderId}:${returnProviderTab}`;
+    if (items.some(item => item.id === returnProviderId)) { setReturnProblem(null); setExpandedModelsFor(returnProviderId); setProviderTab(returnProviderTab); }
     else setReturnProblem('返回的供应方当前不可见，未改为打开其他供应方。');
-  }, [returnProviderId, items]);
+  }, [returnProviderId, returnProviderTab, items]);
 
   const selectedProvider = items?.find((p) => expandedModelsFor === p.id);
   function renderOwnedModels() {

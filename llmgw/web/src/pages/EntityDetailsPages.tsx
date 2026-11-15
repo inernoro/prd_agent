@@ -289,7 +289,7 @@ export function ModelDetailsPage() {
       backHref={back.href} backLabel={back.label}
             primaryHref={`/logs?model=${encodeURIComponent(identifier || requestedModel)}`}
       primaryLabel="查看模型日志"
-      management={registeredModel ? { href: logical ? "/logical-models" : "/models", label: "管理模型" } : undefined}
+      management={registeredModel ? { href: logical ? `/logical-models?publicId=${encodeURIComponent(logical.publicId)}` : `/models?search=${encodeURIComponent(primaryModel!.id)}`, label: logical ? '查看此公开模型配置' : '查看此上游型号配置' } : undefined}
       sections={[
         {
           id: 'providers',
@@ -443,7 +443,7 @@ export function ProviderDetailsPage() {
       backHref={back.href} backLabel={back.label}
             primaryHref={`/logs?provider=${encodeURIComponent(provider.name)}`}
       primaryLabel="查看 Provider 日志"
-      management={registered ? { href: "/platforms?view=provider", label: "管理供应方" } : undefined}
+      management={registered ? { href: `/platforms?${new URLSearchParams({ view: 'provider', providerId: provider.id, providerTab: 'connection' })}`, label: '管理此供应方连接' } : undefined}
       connectionSummary={registered ? <div className="lg-collection-connection-summary"><Server size={20}/><div><strong>{provider.platformType === "openai" ? "OpenAI compatible" : provider.platformType || "未配置协议"}</strong><code title={provider.apiUrl || "未配置"}>{provider.apiUrl || "未配置"}</code></div><span>{models.length} 个托管模型</span></div> : undefined}
       sections={[
         {
