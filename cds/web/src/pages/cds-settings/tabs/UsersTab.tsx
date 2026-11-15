@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
+import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
+import { consoleAccountIdentity } from '@/lib/consoleIdentity';
 import { KeyRound, ShieldCheck, UserPlus, Users } from 'lucide-react';
 
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -29,13 +31,16 @@ const touchActionClass = 'min-h-[3.25rem] text-base [&_svg]:size-[1.875rem] lg:m
 const inputCls =
   'min-h-[3.25rem] text-base lg:min-h-0 lg:text-sm w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
-export function UsersTab({
-  onToast,
-  durableUsers,
-}: {
-  onToast: (msg: string) => void;
-  durableUsers: boolean;
-}): JSX.Element {
+export function UsersTab(props: { onToast: (msg: string) => void; durableUsers: boolean }): JSX.Element {
+  const { status, retry } = useContext(ConsoleAuthContext);
+  const identity = consoleAccountIdentity(status);
+  if (!identity) return <div className="space-y-3"><ErrorBlock message="当前账号身份未确认，无法承接账号管理操作。" /><Button onClick={retry}>重新读取当前身份</Button></div>;
+  return <UsersTabForAccount key={identity} {...props} />;
+}
+
+function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) => void; durableUsers: boolean }): JSX.Element {
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [me, setMe] = useState<MeUser | null>(null);
   const [meLoaded, setMeLoaded] = useState(false);
   const [meError, setMeError] = useState('');
@@ -47,6 +52,7 @@ export function UsersTab({
   const [resetValue, setResetValue] = useState('');
   const [resetError, setResetError] = useState('');
   const [resetUnknown, setResetUnknown] = useState(false);
+  const [unconfirmedResets, setUnconfirmedResets] = useState<Record<string, { value: string; requestedAt: string }>>({});
 
   // ── My password ──
   const [oldPw, setOldPw] = useState('');
@@ -101,6 +107,7 @@ export function UsersTab({
     setPwBusy(true);
     try {
       await changeMyPassword({ oldPassword: oldPw, newPassword: newPw });
+      if (!alive.current) return;
       onToast('密码已修改，请使用新密码重新登录');
       setOldPw('');
       setNewPw('');
@@ -117,6 +124,7 @@ export function UsersTab({
     setCreateBusy(true);
     try {
       await createLocalUser({ username: newUsername, password: newPassword, name: newName || undefined });
+      if (!alive.current) return;
       onToast(`已创建本地账号 ${newUsername}`);
       setNewUsername('');
       setNewName('');
@@ -135,9 +143,10 @@ export function UsersTab({
     setBusyUser(user.id);
     try {
       await updateUser(user.id, { status: next });
+      if (!alive.current) return;
       onToast(`已${next === 'disabled' ? '禁用' : '启用'} ${user.username || user.githubLogin}`);
       await refreshUsers();
-    } catch (err) { onToast(err instanceof ApiError ? err.message : String(err)); }
+    } catch (err) { if (alive.current) onToast(err instanceof ApiError ? err.message : String(err)); }
     finally { setBusyUser(''); }
   };
 
@@ -148,11 +157,14 @@ export function UsersTab({
     setBusyUser(resetUser.id); setResetError('');
     try {
       await updateUser(resetUser.id, { newPassword: resetValue });
+      if (!alive.current) return;
       onToast(`已重置 ${resetUser.username || resetUser.githubLogin} 的密码`);
+      setUnconfirmedResets(current => { const next = { ...current }; delete next[resetUser.id]; return next; });
       setResetValue(''); setResetUser(null);
     } catch (err) {
       const unknown = !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408);
       setResetUnknown(unknown);
+      if (unknown) setUnconfirmedResets(current => ({ ...current, [resetUser.id]: { value: resetValue, requestedAt: new Date().toISOString() } }));
       setResetError(unknown ? '密码重置结果未确认，请先让该成员验证新密码，勿重复提交。' : err instanceof Error ? err.message : String(err));
     } finally { setBusyUser(''); }
   };
@@ -161,7 +173,7 @@ export function UsersTab({
   function userActions(user: CdsPublicUser): JSX.Element {
     return <div className="flex flex-wrap gap-2">
       {!user.isSystemOwner ? <Button type="button" variant="outline" size="sm" className={touchActionClass} disabled={busyUser === user.id} onClick={() => setGrantUser(user)}>项目授权</Button> : null}
-      {user.authProvider === 'local' ? <Button type="button" variant="outline" size="sm" className={touchActionClass} disabled={busyUser === user.id} onClick={() => { setResetUser(user); setResetValue(''); setResetError(''); setResetUnknown(false); }}>重置密码</Button> : null}
+      {user.authProvider === 'local' ? <Button type="button" variant="outline" size="sm" className={touchActionClass} disabled={busyUser === user.id} onClick={() => { const pending = unconfirmedResets[user.id]; setResetUser(user); setResetValue(pending?.value || ''); setResetError(pending ? `该账号上次密码重置结果未确认（${new Date(pending.requestedAt).toLocaleString()}），请让成员验证新密码。关闭弹窗不代表请求未执行。` : ''); setResetUnknown(Boolean(pending)); }}>重置密码</Button> : null}
       {user.id !== me?.id ? <ConfirmAction scopeKey={user.id} title={`${user.status === 'active' ? '禁用' : '启用'}账号：${user.username || user.githubLogin}`} description={`账号编号：${user.id}。${user.status === 'active' ? '禁用后不能继续访问 CDS，账号和项目授权记录保留。' : '启用后按已有项目授权访问，不会新增项目权限。'}`} confirmLabel={user.status === 'active' ? '禁用账号' : '启用账号'} onConfirm={() => toggleStatus(user)} pending={busyUser === user.id} trigger={<Button type="button" variant="outline" size="sm" className={touchActionClass} disabled={busyUser === user.id}>{busyUser === user.id ? '正在更新' : user.status === 'active' ? '禁用' : '启用'}</Button>} /> : null}
     </div>;
   }
@@ -372,7 +384,7 @@ export function UsersTab({
                 </Button>
               </div>
             </form></DialogContent></Dialog> : null}
-      <Dialog open={Boolean(resetUser)} onOpenChange={open => { if (!open && !busyUser) { setResetUser(null); setResetValue(''); } }}><DialogContent className="[&>button]:min-h-[3.25rem] [&>button]:min-w-[3.25rem] [&>button>svg]:size-[1.875rem]"><DialogHeader className="pr-10"><DialogTitle>重置账号密码</DialogTitle><DialogDescription>账号：{resetUser?.username || resetUser?.githubLogin}。保存后成员需使用新密码登录，账号的项目授权保持不变。</DialogDescription></DialogHeader><form onSubmit={resetPassword} className="space-y-3"><label className="block space-y-2 text-sm">新密码（至少 8 位）<input aria-label="重置后的新密码" type="password" autoComplete="new-password" required minLength={8} className={inputCls} value={resetValue} disabled={Boolean(busyUser)} onChange={event => setResetValue(event.target.value)} /></label>{resetError ? <p role="alert" className="text-sm text-destructive">{resetError}</p> : null}<Button type="submit" className={touchActionClass} disabled={Boolean(busyUser) || resetUnknown}>{busyUser ? '正在重置' : '保存新密码'}</Button></form></DialogContent></Dialog>
+      <Dialog open={Boolean(resetUser)} onOpenChange={open => { if (!open && !busyUser) { setResetUser(null); setResetValue(''); } }}><DialogContent className="[&>button]:min-h-[3.25rem] [&>button]:min-w-[3.25rem] [&>button>svg]:size-[1.875rem]"><DialogHeader className="pr-10"><DialogTitle>重置账号密码</DialogTitle><DialogDescription>账号：{resetUser?.username || resetUser?.githubLogin}（{resetUser?.id}）。保存后成员需使用新密码登录，账号的项目授权保持不变。</DialogDescription></DialogHeader><form onSubmit={resetPassword} className="space-y-3"><label className="block space-y-2 text-sm">新密码（至少 8 位）<input aria-label="重置后的新密码" type="password" autoComplete="new-password" required minLength={8} className={inputCls} value={resetValue} disabled={Boolean(busyUser)} onChange={event => setResetValue(event.target.value)} /></label>{resetError ? <p role="alert" className="text-sm text-destructive">{resetError}</p> : null}{resetUnknown ? <Button type="button" className={touchActionClass} variant="outline" onClick={() => { if (!resetUser) return; setUnconfirmedResets(current => { const next = { ...current }; delete next[resetUser.id]; return next; }); setResetUnknown(false); setResetValue(''); setResetError('原请求的结果仍未确认。你已选择在成员核对后准备新的密码重置；请输入新密码并主动提交。'); }}>已由成员核对，准备新的重置</Button> : null}<Button type="submit" className={touchActionClass} disabled={Boolean(busyUser) || resetUnknown}>{busyUser ? '正在重置' : '保存新密码'}</Button></form></DialogContent></Dialog>
       {isOwner ? <IdentityRecoveryPanel onToast={onToast} /> : null}
       <UserProjectAccessDialog user={grantUser} onClose={() => setGrantUser(null)} onToast={onToast} />
     </div>

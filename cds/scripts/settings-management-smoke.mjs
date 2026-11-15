@@ -8,6 +8,7 @@ import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures
 export async function verifySettingsManagement(browser, base, out, {baseline=false}={}) {
   await fs.mkdir(out,{recursive:true});
   const context=await browser.newContext({viewport:{width:1440,height:940}});
+  let failReset=true;
   let failMe=false, failTrust=false, failForwarding=false, createRejected=true,createGate,releaseCreate;
   const users=[{id:'fixture-owner',username:'fixture-owner',name:'合成所有者',authProvider:'local',isSystemOwner:true,status:'active',createdAt:'2026-11-15',lastLoginAt:null},{id:'fixture-member',username:'fixture-member',name:'合成成员',authProvider:'local',isSystemOwner:false,status:'active',createdAt:'2026-11-15',lastLoginAt:null}];
   const connections=[{id:'fixture-map',name:'合成MAP连接',partnerName:'合成MAP',partnerKind:'map',partnerBaseUrl:'https://map.example.invalid',status:'active',scopes:['bug-report'],createdAt:'2026-11-15'}];
@@ -17,6 +18,8 @@ export async function verifySettingsManagement(browser, base, out, {baseline=fal
     if(isEventStream(p)||p==='/api/activity-stream')return route.fulfill({contentType:'text/event-stream',body:': synthetic fixture\n\n'});
     if(method!=='GET')writes.push({method,path:p});
     if(p==='/api/client-events')return route.fulfill({json:{ok:true}});
+    if(p==='/api/auth/status')return route.fulfill({json:{authenticated:true,enabled:true,user:{id:'fixture-owner',authProvider:'local',username:'fixture-owner',isSystemOwner:true}}});
+    if(p.startsWith('/api/auth/users/')&&method==='PATCH')return route.fulfill(failReset?{status:500,json:{error:'合成重置回包未知'}}:{json:{user:users.find(user=>user.id===decodeURIComponent(p.split('/').at(-1)))}});
     if(p==='/api/identity/connections')return route.fulfill({json:{users:[],requests:[],unclaimed:[]}});
     if(p==='/api/me')return route.fulfill(failMe?{status:500,json:{error:'合成身份读取失败'}}:{json:{user:users[0]}});
     if(p==='/api/auth/users'&&method==='GET')return route.fulfill({json:{users}});
@@ -85,6 +88,12 @@ export async function verifySettingsManagement(browser, base, out, {baseline=fal
         await page.screenshot({path:path.join(out,`users-create-${theme}-390.png`)});await page.keyboard.press('Escape');await dialog.waitFor({state:'detached'});
         results.push({case:`stable-create-dialog-${theme}-390-bounds-focus`,pass:true,bounds});
       }
+    }
+    if(!baseline){
+      const member=page.locator('[data-user-card="fixture-member"]');await member.getByRole('button',{name:'重置密码',exact:true}).click();let reset=page.getByRole('dialog');await reset.getByLabel('重置后的新密码',{exact:true}).fill('synthetic-new-password');await reset.getByRole('button',{name:'保存新密码',exact:true}).click();await reset.getByRole('alert').filter({hasText:'密码重置结果未确认'}).waitFor();const count=writes.filter(item=>item.method==='PATCH').length;await page.keyboard.press('Escape');await reset.waitFor({state:'detached'});
+      await member.getByRole('button',{name:'重置密码',exact:true}).click();reset=page.getByRole('dialog');await reset.getByText(/上次密码重置结果未确认/).waitFor();assert(await reset.getByRole('button',{name:'保存新密码',exact:true}).isDisabled());assert.equal(writes.filter(item=>item.method==='PATCH').length,count);await page.keyboard.press('Escape');await reset.waitFor({state:'detached'});
+      const other=page.locator('[data-user-card="fixture-created"]');await other.getByRole('button',{name:'重置密码',exact:true}).click();reset=page.getByRole('dialog');assert(!(await reset.getByRole('button',{name:'保存新密码',exact:true}).isDisabled()));assert.equal(await reset.getByLabel('重置后的新密码',{exact:true}).inputValue(),'');await page.keyboard.press('Escape');await reset.waitFor({state:'detached'});
+      await member.getByRole('button',{name:'重置密码',exact:true}).click();reset=page.getByRole('dialog');await reset.getByRole('button',{name:'已由成员核对，准备新的重置',exact:true}).click();assert.equal(writes.filter(item=>item.method==='PATCH').length,count);await reset.getByText(/原请求的结果仍未确认/).waitFor();failReset=false;await reset.getByLabel('重置后的新密码',{exact:true}).fill('synthetic-new-intent');await reset.getByRole('button',{name:'保存新密码',exact:true}).click();await reset.waitFor({state:'detached'});assert.equal(writes.filter(item=>item.method==='PATCH').length,count+1);results.push({case:'reset-unknown-survives-close-reopen-scoped-by-user-explicit-new-intent-only',pass:true});
     }
     await page.setViewportSize({width:1440,height:940});
     await open('connections');await page.getByText('合成MAP连接',{exact:true}).filter({visible:true}).waitFor();
