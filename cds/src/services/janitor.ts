@@ -1,4 +1,5 @@
 import { WorktreeService } from './worktree.js';
+import { releaseBatchProtectsInputs } from '../domain/release-batch.js';
 import { SourceInspectionHeldError, sourceHoldReason } from './deployment-source-inspection.js';
 import { reclaimDeploymentSources, summarizeDeploymentSourceHolds, type DeploymentSourceHoldReason, type DeploymentSourceRetentionReport } from './deployment-source-retention.js';
 import fs from 'node:fs';
@@ -1350,6 +1351,7 @@ export class JanitorService {
           projectIds: [...this.stateService.getProjects().map(p => p.id),
             ...this.stateService.getDeletedProjectWorktreeBuckets().map(p => p.projectId)],
           branches: () => this.stateService.getAllBranches(), files: this.orphanWorktreeFs,
+          protectedPaths: () => this.releaseBatchSourcePaths(),
           nowMs: this.clock.now(), afterPath: this.deploymentSourceCursor });
         const sources = report.deploymentSources;
         if (sources.dataObservations?.length) this.stateService.recordLegacyDataObservations(sources.dataObservations, this.clock.now());
@@ -1422,6 +1424,15 @@ export class JanitorService {
     return { wouldRemove, wouldSkip };
   }
 
+  private releaseBatchSourcePaths(): string[] {
+    return (this.stateService.getReleaseBatches?.() || []).filter(releaseBatchProtectsInputs).flatMap(batch => {
+      const artifact = batch.source.artifact;
+      if (artifact.type !== 'branch-preview' && !artifact.artifactPath) return [];
+      if (!artifact.artifactPath) throw new Error('固定批次的源码引用未确认，保持源码保护');
+      return [fs.realpathSync(artifact.artifactPath)];
+    });
+  }
+
   async previewDeploymentSources(projectId?: string, signal?: AbortSignal) {
     if (this.sourcePreviewActive) throw new Error('源码预览正在执行，请稍后重试。');
     this.sourcePreviewActive = true;
@@ -1431,6 +1442,7 @@ export class JanitorService {
     const report = await reclaimDeploymentSources({ base: this.worktreeBase,
       projectIds: projectId ? known.filter(id => id === projectId) : known,
       branches: () => this.stateService.getAllBranches(), files: this.orphanWorktreeFs,
+      protectedPaths: () => this.releaseBatchSourcePaths(),
       nowMs: this.clock.now(), dryRun: true, signal });
     // Only owned relative identities reach the page; never disclose host paths or raw Git errors.
     const relative = (p: string) => path.relative(this.worktreeBase, p) || '.';

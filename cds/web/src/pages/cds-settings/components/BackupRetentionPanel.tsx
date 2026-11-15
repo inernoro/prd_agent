@@ -5,6 +5,7 @@ import { apiRequest } from '@/lib/api';
 
 interface Result {
   scanStatus: 'complete' | 'partial'; canExecute?: boolean; maxAgeDays: number; dryRun?: boolean;
+  automaticPolicy?: { keepCount: number; keepDays: number };
   counts: Record<string, number>;
   directories: Array<{ directory: string; error?: string; candidates?: Item[]; removed?: string[]; held?: Item[]; unknown?: Item[]; policyConflicts?: Item[]; filesystems?: Array<{ path: string; netAvailableBytesDelta: number | null }> }>;
 }
@@ -72,7 +73,7 @@ export function BackupRetentionPanel() {
   const busy = execution?.status === 'running';
   return <div className="space-y-3 text-sm">
     <h3 className="font-medium">备份保留与退役</h3>
-    <p>备份最多保留15天。活跃资源缺少新有效恢复点时显示策略冲突；在写文件、恢复租约和未知归属保持保护。</p>
+    <p>备份最长15天{result?.automaticPolicy ? `；自动备份沿用每服务最近${result.automaticPolicy.keepCount}份、最长${result.automaticPolicy.keepDays}天` : ''}。缺少同物理来源的新有效恢复点时显示策略冲突；在写文件、恢复租约和未知归属保持保护。</p>
     <div className="flex flex-wrap gap-2">
       <Button variant="outline" disabled={loading || busy} onClick={() => void preview()}>预览全局备份回收</Button>
       {canExecute && result ? <Button variant="outline" disabled={busy || loading || !result.counts.candidates} onClick={() => void execute()}>重新核查并执行一批</Button> : null}

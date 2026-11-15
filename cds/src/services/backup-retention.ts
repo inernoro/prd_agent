@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { IShellExecutor } from '../types.js';
 import type { StateService } from './state.js';
 import { BACKUP_RETENTION_PROGRAM } from './backup-retention-program.js';
-import { backupDirCandidates } from './infra-backup-schedule.js';
+import { backupDirCandidates, DEFAULT_KEEP_COUNT, DEFAULT_KEEP_DAYS } from './infra-backup-schedule.js';
 import { reclaimLock, type ReclaimSkip } from './reclaim-lock.js';
 import { shellQuoteArg } from './secure-database-cli.js';
 import { resumedReclaimExecution, recordReclaimExecution } from './reclaim-execution-journal.js';
@@ -12,6 +12,7 @@ export interface BackupRetentionReport {
   dryRun: boolean;
   scanStatus: 'complete' | 'partial';
   maxAgeDays: 15;
+  automaticPolicy: { keepCount: number; keepDays: number };
   directories: Array<Record<string, any>>;
   counts: Record<string, number>;
 }
@@ -52,7 +53,7 @@ export class BackupRetentionService {
   private async run(directory: string, input: Record<string, unknown>): Promise<any> {
     const loader = `import base64;exec(base64.b64decode("${Buffer.from(BACKUP_RETENTION_PROGRAM).toString('base64')}"))`;
     const result = await this.options.shell.exec(`python3 -c ${shellQuoteArg(loader)}`, {
-      stdin: JSON.stringify({ ...input, catalog: path.join(directory, '.cds-retention'), directories: [directory], instanceId: this.options.instanceId }),
+      stdin: JSON.stringify({ ...input, automaticPolicy: { keepCount: DEFAULT_KEEP_COUNT, keepDays: DEFAULT_KEEP_DAYS }, catalog: path.join(directory, '.cds-retention'), directories: [directory], instanceId: this.options.instanceId }),
       timeout: input.action === 'register' ? 905_000 : input.action === 'reconcile' ? 305_000 : 30_000, executionLane: input.action === 'preview' ? 'observation' : 'operation',
     });
     if (result.exitCode !== 0 || result.stdout.length > 4 * 1024 * 1024) throw new Error('备份资源核查未完成，相关文件已保留。');
@@ -113,7 +114,7 @@ export class BackupRetentionService {
   }
   async inspect(dryRun = true, maxRemovals = 8): Promise<BackupRetentionReport | ReclaimSkip> {
     const operation = async (executionId?: string) => {
-      const report: BackupRetentionReport = { dryRun, scanStatus: 'complete', maxAgeDays: 15, directories: [], counts: {} };
+      const report: BackupRetentionReport = { dryRun, scanStatus: 'complete', maxAgeDays: 15, automaticPolicy: { keepCount: DEFAULT_KEEP_COUNT, keepDays: DEFAULT_KEEP_DAYS }, directories: [], counts: {} };
       let remaining = Math.max(0, Math.min(20, Math.floor(maxRemovals)));
       for (const directory of this.directories()) {
         if (executionId && this.execution?.stopRequested) {

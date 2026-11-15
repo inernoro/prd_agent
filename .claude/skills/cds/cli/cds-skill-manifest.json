@@ -1,6 +1,6 @@
 {
   "format": "agent-skills",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "skills": [
     "cds",
     "cds-project-scan",
@@ -9,14 +9,14 @@
     "preview-url"
   ],
   "files": {
-    "cds/SKILL.md": "f91c67438ff75d46a6195a621e18108cca566a9ebb33d2a07d821299586bd270",
+    "cds/SKILL.md": "6b042a027c8e46fcf769195a56bb281a90c04f2fe004559024f7aa0a643b7850",
     "cds/cli/acceptance/.gitignore": "5875f28fb25c8a9449faa5ebb5100a488f79ea807932fb21fb52ce48fcab1db0",
     "cds/cli/acceptance/build_report_html.py": "332ef0716bfc531f3c815acc783695121fb1a6fe25c5001312b4cd34ff7ce9af",
     "cds/cli/acceptance/cds-harness.mjs": "be6a9af00cb5ae704a6f08f295795d3921d9f860447bf9b5dc207faf2e9cef75",
     "cds/cli/acceptance/cds.config.example.json": "0f0aca3f66243fd76f1003d3ae06f076db52650eda60c385491352d9cffa248c",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "6d1dd34f67bd2acc8989d42f5c4eaecf852d17f9dd1071553f4c852fe015d23f",
+    "cds/cli/cdscli.py": "d6bbfaf8753b9ed6ac8df5346397cde99bea07122ce2e809a57fbde53fd2eb11",
     "cds/reference/acceptance-reports.md": "f0467b25fe209ec5a5225c246406704782ae595631abc9221c50cb982e48002e",
     "cds/reference/api.md": "0941f2a742bc1b4f42add9973fbfd1d559dd4d57acb74e5011dd23593019921b",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
@@ -67,5 +67,5 @@
     "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-15T11:15:33.260642+00:00"
+  "generatedAt": "2026-11-15T11:26:17.954881+00:00"
 }

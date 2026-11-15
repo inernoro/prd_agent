@@ -74,6 +74,18 @@ async function sourceFixture() {
  return{...f,base,canonical,branch,make,files,sweep};
 }
 describe('safe detached source retention on real Git and files',()=>{
+ it('revalidates a batch input claimed after preview, then retires it after the batch is cancelled',async()=>{
+  const f=await sourceFixture();const dir=await f.make();let paths:string[]=[];
+  const run=(dryRun=false)=>reclaimDeploymentSources({base:f.base,projectIds:['proj'],branches:()=>[f.branch],files:f.files,nowMs:Date.now(),dryRun,protectedPaths:()=>paths});
+  expect((await run(true)).preview?.map(x=>x.path)).toContain(dir);
+  paths=[dir];expect((await run()).removed).toEqual([]);expect(await fs.readFile(path.join(dir,'source.txt'),'utf8')).toBe('immutable source');
+  paths=[];expect((await run()).removed).toEqual([dir]);expect(f.git('worktree','list','--porcelain')).not.toContain(dir);
+ });
+ it('preserves the source when the batch reference query fails instead of reporting zero references',async()=>{
+  const f=await sourceFixture();const dir=await f.make();
+  await expect(reclaimDeploymentSources({base:f.base,projectIds:['proj'],branches:()=>[f.branch],files:f.files,nowMs:Date.now(),protectedPaths:()=>{throw new Error('batch references unavailable');}})).rejects.toThrow('batch references unavailable');
+  expect(await fs.readFile(path.join(dir,'source.txt'),'utf8')).toBe('immutable source');
+ });
  it('hourly Janitor reclaims an old clean leaf inside a live branch bucket, unregistering Git metadata',async()=>{
   const f=await sourceFixture();const stale=await f.make();const used=await f.make();
   f.branch.services={source:{profileId:'source',status:'stopped',sourceCheckoutPath:used}as any};

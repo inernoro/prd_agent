@@ -54,13 +54,14 @@ export async function reclaimDeploymentSources(input: {
   base: string; projectIds: string[]; branches: () => BranchEntry[];
   files: OrphanWorktreeFs; nowMs: number; maxRemovals?: number; minAgeMs?: number; afterPath?: string;
   dryRun?: boolean; signal?: AbortSignal;
+  protectedPaths?: () => readonly string[];
 }): Promise<DeploymentSourceRetentionReport> {
   const report: DeploymentSourceRetentionReport = { scanned: 0, attempted: 0, removed: [], held: {}, failed: [], deferred: 0 };
   const requested = input.maxRemovals ?? 20;
   const max = Number.isSafeInteger(requested) ? Math.max(1, Math.min(20, requested)) : 20;
   const minAge = input.minAgeMs ?? 2 * 3600_000;
   if (input.dryRun) report.preview = [];
-  const isClaimed = (dir: string) => input.branches().some(b =>
+  const isClaimed = (dir: string) => Boolean(input.protectedPaths?.().some(p => related(dir, path.resolve(p)))) || input.branches().some(b =>
     (BUSY.has(b.status) && b.worktreePath && related(dir, WorktreeService.deploymentSourceRootFor(b.worktreePath)))
     || Object.values(b.services || {}).some(s => s.sourceCheckoutPath && related(dir, path.resolve(s.sourceCheckoutPath))));
   const isMounted = (dir: string, paths: string[]) => paths.some(p => related(dir, path.resolve(p)));

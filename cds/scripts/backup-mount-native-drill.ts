@@ -7,6 +7,7 @@ import { BACKUP_RETENTION_PROGRAM } from '../src/services/backup-retention-progr
 import { OwnedResourceLifecycle } from '../src/services/owned-resource-task.js';
 import { ShellExecutor } from '../src/services/shell-executor.js';
 import { shellQuoteArg } from '../src/services/secure-database-cli.js';
+import { DEFAULT_KEEP_COUNT, DEFAULT_KEEP_DAYS } from '../src/services/infra-backup-schedule.js';
 
 // This test deliberately needs a private, file-backed VM with complete /proc
 // and Docker storage visibility. Never run it against a production daemon.
@@ -26,7 +27,7 @@ await fs.writeFile(archive, bytes);const old = new Date(Date.now() - 20 * 864000
 let disconnected = false;
 const request = async (action: string, extra: Record<string, unknown> = {}) => {
   const result = await shell.exec('python3 -c ' + shellQuoteArg(BACKUP_RETENTION_PROGRAM), {
-    stdin: JSON.stringify({ action, directories: [directory], catalog: path.join(directory, '.cds-retention'), instanceId: 'native-backup-fixture', maxRemovals: 8, ...extra }),
+    stdin: JSON.stringify({ action, directories: [directory], catalog: path.join(directory, '.cds-retention'), instanceId: 'native-backup-fixture', automaticPolicy: { keepCount: DEFAULT_KEEP_COUNT, keepDays: DEFAULT_KEEP_DAYS }, maxRemovals: 8, ...extra }),
     timeout: 305000, env: disconnected ? { DOCKER_HOST: 'unix://' + fixture.handle.workspace + '/missing.sock' } : undefined,
   });
   assert.equal(result.exitCode, 0, result.stderr);return JSON.parse(result.stdout);
@@ -53,10 +54,24 @@ const fd = await fs.open(archive, 'r');
 try { assert((await request('reconcile')).held.some((row: any) => row.reason === 'file-still-open')); } finally { await fd.close(); }
 const removed = await request('reconcile');assert.deepEqual(removed.removed, [archive]);
 assert(removed.filesystems[0].netAvailableBytesDelta > 3 * 1024 ** 2);
+// Synthetic exports of one declared fixture source: exercise the actual native
+// count policy and fresh revalidation across independent worker processes.
+const automatic: string[] = [];
+for (let index = 0; index < DEFAULT_KEEP_COUNT + 2; index++) {
+  const file = path.join(directory, `complete-${index}.gz`);await fs.writeFile(file, gzipSync(randomBytes(128 * 1024)));
+  const time = new Date(Date.now() - index * 60000);await fs.utimes(file, time, time);
+  await request('register', { path: file, projectId, serviceId: 'synthetic-auto-source', origin: 'automatic', sourceFingerprint: 'a'.repeat(64), sourceComplete: true });automatic.push(file);
+}
+const countPlan = await request('preview');assert.deepEqual(countPlan.candidates.map((row: any) => row.path).sort(), automatic.slice(DEFAULT_KEEP_COUNT).sort());
+const bounded = await request('reconcile');assert.deepEqual(bounded.removed.sort(), automatic.slice(DEFAULT_KEEP_COUNT).sort());
+assert.equal((await request('preview')).candidates.length, 0);
+for (const file of automatic.slice(0, DEFAULT_KEEP_COUNT)) assert((await fs.stat(file)).isFile());
+assert(bounded.filesystems[0].netAvailableBytesDelta > 128 * 1024);
 const continuous = await fs.readFile('/data/continuous-deploy-result.json', 'utf8').then(JSON.parse).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return {};throw error; });
 const result = { provenance: 'integration-live', scope: 'Unmodified native backup worker in private XFS/Docker VM, complete proc and all running/stopped container references',
   fileAndAncestorBindProtected: true, stoppedContainerAfterPlanProtected: true, realDockerQueryFailureRetained: true, nativeOpenDescriptorProtected: true,
   checksumPreservedUntilUnreferenced: true, filesystemNetAvailableBytesDelta: removed.filesystems[0].netAvailableBytesDelta,
+  automaticPolicy: { keepCount: DEFAULT_KEEP_COUNT, keepDays: DEFAULT_KEEP_DAYS, syntheticCompletedExports: automatic.length, retired: bounded.removed.length, kept: DEFAULT_KEEP_COUNT, filesystemNetAvailableBytesDelta: bounded.filesystems[0].netAvailableBytesDelta },
   earlierContinuousBaseline: { baselineFiveEndedTasksIncrementBytes: continuous.baselineFiveEndedTasksIncrementBytes ?? null } };
 await fs.writeFile('/data/backup-mount-integration-result.json', JSON.stringify(result));
 await fixture.finish('completed');console.log('BACKUP_MOUNT_NATIVE_RESULT', JSON.stringify(result));console.log('DRILL_COMPLETE');

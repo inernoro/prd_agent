@@ -171,7 +171,10 @@ if action=='register':
  state['files'][p]={**q,'path':p,'instanceId':req['instanceId'],'projectId':req['projectId'],'serviceId':req['serviceId'],'origin':req['origin'],'createdAt':min(now,q['signature'][3]//1000000,req.get('recoveryPointAt',now)),'verifiedAt':now,'disposition':disposition,'attestedBy':req.get('attestedBy'),'dispositionReason':req.get('dispositionReason'),'lineageAttestation':req.get('lineageAttestation'),'sourceFingerprint':fingerprint,'recoveryVerified':req['origin']=='automatic' and req.get('sourceComplete') is True and fingerprint!='unconfirmed','producerIntegrity':integrity if inherited_integrity else None}
  save();print(json.dumps({'registered':True,'receipt':state['files'][p]}));sys.exit(0)
 if action not in ['preview','reconcile']:raise ValueError('unsupported-retention-action')
-out={'maxAgeDays':15,'scanStatus':'complete','candidates':[],'held':[],'removed':[],'failed':[],'pending':[],'unknown':[],'policyConflicts':[],'filesystems':[]}
+automatic_policy=req.get('automaticPolicy',{'keepCount':7,'keepDays':14}) # Preserve the standalone adapter's existing bounds; CDS supplies its producer SSOT.
+if automatic_policy is not None:
+ if not isinstance(automatic_policy,dict) or set(automatic_policy)!={'keepCount','keepDays'} or any(type(automatic_policy.get(k)) is not int or automatic_policy[k]<1 for k in ['keepCount','keepDays']) or automatic_policy['keepDays']>MAX_AGE//DAY:raise ValueError('automatic-retention-policy-unconfirmed')
+out={'maxAgeDays':15,'automaticPolicy':automatic_policy,'scanStatus':'complete','candidates':[],'held':[],'removed':[],'failed':[],'pending':[],'unknown':[],'policyConflicts':[],'filesystems':[]}
 def hold(p,reason):out['held'].append({'path':p,'reason':reason})
 active={key(v['projectId'],v['serviceId']) for v in req.get('activeServices',[])}
 try:mount_references=backup_mount_references();mount_query_error=False
@@ -236,8 +239,14 @@ for row in rows:groups.setdefault(lineage(row),[]).append(row)
 for owner,values in groups.items():
  values.sort(key=lambda r:r['createdAt'],reverse=True)
  fresh=[r for r in values if now-r['createdAt']<=MAX_AGE and r.get('recoveryVerified') and r.get('disposition','business-backup')=='business-backup']
- for index,row in enumerate(values):
+ # Only completed, source-verified automatic exports consume the producer's
+ # existing per-service allowance. Manual/unknown/failed exports cannot evict them.
+ automatic=[r for r in values if r.get('origin')=='automatic' and r.get('recoveryVerified') and r.get('disposition','business-backup')=='business-backup']
+ automatic_ranks={r['path']:i for i,r in enumerate(automatic)}
+ for row in values:
   p=row['path'];age=now-row['createdAt'];expired=age>MAX_AGE
+  rank=automatic_ranks.get(p)
+  automatic_expired=automatic_policy is not None and rank is not None and (rank>=automatic_policy['keepCount'] or (rank>0 and age>automatic_policy['keepDays']*DAY))
   if mount_query_error:hold(p,'container-or-stopped-container-references-unconfirmed')
   elif backup_is_mounted(actual_location(row)):hold(p,'running-or-stopped-container-mount')
   elif key(row['projectId'],row['serviceId']) in leases:hold(p,'active-backup-or-restore-lease');
@@ -245,7 +254,7 @@ for owner,values in groups.items():
    hold(p,'backup-replacement-proof-unconfirmed');out['policyConflicts'].append({'path':p,'projectId':row['projectId'],'serviceId':row['serviceId'],'reason':'15-day-limit-exceeded-original-source-still-unconfirmed'})
   elif expired and row.get('disposition','business-backup')!='reproducible-artifact' and not fresh:
    hold(p,'policy-conflict-no-fresh-recovery-point');out['policyConflicts'].append({'path':p,'projectId':row['projectId'],'serviceId':row['serviceId'],'reason':'15-day-limit-exceeded-create-and-verify-replacement-before-retirement'})
-  elif expired or (index>=7 and len(fresh)>1) or (index>0 and age>14*DAY and len(fresh)>1):out['candidates'].append(row)
+  elif expired or (automatic_expired and len(fresh)>1):out['candidates'].append(row)
   else:hold(p,'within-retention-window-or-required-recovery-point')
 for p,row in list(state['outputs'].items()):
  try:

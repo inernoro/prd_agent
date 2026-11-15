@@ -5,6 +5,7 @@ import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BACKUP_RETENTION_PROGRAM } from '../../src/services/backup-retention-program.js';
+import { DEFAULT_KEEP_COUNT, DEFAULT_KEEP_DAYS } from '../../src/services/infra-backup-schedule.js';
 
 const roots: string[] = [];
 const DAY = 86_400_000;
@@ -17,7 +18,7 @@ function fixture() {
   fs.symlinkSync(`/proc/${process.pid}/fd`, path.join(proc, String(process.pid), 'fd'));
   const program = BACKUP_RETENTION_PROGRAM.replace('def backup_mount_references():\n','def backup_mount_references():\n return [] # Unit descriptor fixture; Docker mounts are exercised in the real VM.\n').replace("pathlib.Path('/proc')", `pathlib.Path(${JSON.stringify(proc)})`);
   const request = (input: Record<string, unknown>) => JSON.parse(execFileSync('python3', ['-c', program], {
-    input: JSON.stringify({ catalog: path.join(directory, '.cds-retention'), directories: [directory], instanceId: 'owned-instance', nowMs: now, ...input }), encoding: 'utf8', timeout: 30_000,
+    input: JSON.stringify({ catalog: path.join(directory, '.cds-retention'), directories: [directory], instanceId: 'owned-instance', automaticPolicy: { keepCount: DEFAULT_KEEP_COUNT, keepDays: DEFAULT_KEEP_DAYS }, nowMs: now, ...input }), encoding: 'utf8', timeout: 30_000,
   }));
   const backup = (name: string, age: number, serviceId = 'retired-db') => {
     const file = path.join(directory, name);fs.writeFileSync(file, gzipSync(Buffer.alloc(1024 * 1024, name)));
@@ -28,6 +29,37 @@ function fixture() {
 }
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 describe('independent native backup retention', () => {
+  it('keeps the producer allowance bounded across repeated exports without counting manual or incomplete copies', () => {
+    const f = fixture();const automatic: string[] = [];
+    for (let index = 0; index < DEFAULT_KEEP_COUNT + 2; index++) automatic.push(f.backup(`automatic-${index}.gz`, index / 10, 'active-db'));
+    for (let index = 0; index < 9; index++) {
+      const manual = f.backup(`manual-${index}.gz`, 0.01, 'active-db');
+      f.request({ action: 'register', path: manual, projectId: 'owned-project', serviceId: 'active-db', origin: 'manual' });
+    }
+    const incomplete = f.backup('unconfirmed-export.gz', 0.02, 'active-db');
+    f.request({ action: 'register', path: incomplete, projectId: 'owned-project', serviceId: 'active-db', origin: 'automatic', sourceComplete: false, sourceFingerprint: 'a'.repeat(64) });
+    const plan = f.request({ action: 'preview' });
+    expect(plan.automaticPolicy).toEqual({ keepCount: DEFAULT_KEEP_COUNT, keepDays: DEFAULT_KEEP_DAYS });
+    expect(plan.candidates.map((row: any) => row.path).sort()).toEqual(automatic.slice(DEFAULT_KEEP_COUNT).sort());
+    expect(f.request({ action: 'reconcile' }).removed.sort()).toEqual(automatic.slice(DEFAULT_KEEP_COUNT).sort());
+    expect(automatic.filter(file => fs.existsSync(file))).toHaveLength(DEFAULT_KEEP_COUNT);
+    expect(fs.existsSync(incomplete)).toBe(true);expect(f.request({ action: 'reconcile' }).removed).toEqual([]);
+  });
+  it('applies the existing automatic day limit with same-source replacement, while preserving the unique recovery point', () => {
+    const f = fixture();const old = f.backup('fourteen-day-automatic.gz', DEFAULT_KEEP_DAYS + 0.5, 'active-db');
+    expect(f.request({ action: 'reconcile' }).removed).toEqual([]);
+    f.backup('new-complete-automatic.gz', 0, 'active-db');
+    expect(f.request({ action: 'reconcile' }).removed).toEqual([old]);
+  });
+  it('does not share automatic slots across physical sources or let replaced exports evict valid ones', () => {
+    const f = fixture();const valid: string[] = [];
+    for (let index = 0; index < DEFAULT_KEEP_COUNT; index++) valid.push(f.backup(`valid-${index}.gz`, index / 10, 'active-db'));
+    const replaced = f.backup('replaced-export.gz', 0, 'active-db');fs.writeFileSync(replaced, 'failed overwritten export');
+    const other = f.backup('other-physical-source.gz', 0, 'active-db');
+    f.request({ action: 'register', path: other, projectId: 'owned-project', serviceId: 'active-db', origin: 'automatic', sourceComplete: true, sourceFingerprint: 'b'.repeat(64) });
+    const report = f.request({ action: 'reconcile' });expect(report.removed).toEqual([]);expect(report.scanStatus).toBe('partial');
+    expect(valid.every(file => fs.existsSync(file))).toBe(true);expect(fs.existsSync(other)).toBe(true);
+  });
   it('resumes a durable retirement intent whose rename never happened', () => {
     const f = fixture();const old = f.backup('interrupted-before-rename.gz', 20);
     const catalog = path.join(f.directory, '.cds-retention/backups.json');

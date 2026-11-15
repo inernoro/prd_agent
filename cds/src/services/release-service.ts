@@ -1992,6 +1992,8 @@ export function buildDiskDiagnosisCommand(appPath: string): string {
     "df -PT -B1 2>/dev/null || echo '挂载点字节读数未确认，不能按零占用处理'",
     "echo; echo '== inode =='",
     "df -Pi 2>/dev/null || echo 'inode 读数未确认'",
+    "echo; echo '== 块设备与分区布局（只读；未挂载不代表空盘） =='",
+    "lsblk -b -J -o NAME,SIZE,START,LOG-SEC,TYPE,FSTYPE,MOUNTPOINT,PKNAME 2>/dev/null || echo '设备或分区布局未确认，不能据此认定可用未分配空间'",
     "echo; echo '== Docker 数据根 =='",
     "docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo 'Docker 数据根未确认'",
     "echo; echo '== 运行及停止容器（前 100） =='",

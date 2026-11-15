@@ -177,7 +177,7 @@ describe('equivalent fourteen-day retention and recovery drill (isolated files o
       accounting:'model of Docker inventory using the production planner; no actual image bytes or Docker deletion' };
   });
 
-  it('bounds real static release files and preserves old current/previous and in-flight runs', async () => {
+  it('preserves unproven static objects, current/previous and in-flight runs without claiming reclamation', async () => {
     const f = await fixture(), publish = path.join(f.root, 'public'), versions = path.join(publish, '.releases');
     await fs.mkdir(versions, {recursive:true});
     const id = (n:number) => 'rel_' + n.toString(16).padStart(16,'0');
@@ -187,18 +187,23 @@ describe('equivalent fourteen-day retention and recovery drill (isolated files o
     await fs.symlink(path.join(versions,id(2)),path.join(publish,'previous'));
     const target = {id:'fixture',ssh:{appPath:f.repo}} as ReleaseTarget;
     const strategy = {mode:'generated-static',publicDirectory:publish} as ReleaseStrategy;
+    const worktreeRoot=path.join(f.root,'.cds-releases/fixture/worktrees');await fs.mkdir(worktreeRoot,{recursive:true});
+    // Explicit empty Docker inventory only: real registry/layer behavior has separate native coverage.
+    const bin=path.join(f.root,'bin');await fs.mkdir(bin);await fs.writeFile(path.join(bin,'docker'),'#!/bin/sh\n[ "$1" = ps ] && exit 0\nexit 1\n',{mode:0o755});
     const ledger: Array<{releaseId:string;status:'success';startedAt:string}> = [];
     const rows: unknown[] = []; let removed=0;
     for (let day=1;day<=14;day++) {
       for (let i=0;i<4;i++) {const n=100*day+i;await make(n);ledger.push({releaseId:id(n),status:'success',startedAt:new Date(start+day*DAY+i).toISOString()});}
       const inventory = {currentTarget:await fs.readlink(path.join(publish,'current')),previousTarget:await fs.readlink(path.join(publish,'previous')),
-        versions:await fs.readdir(versions),worktrees:[],releaseRoot:publish,worktreeRoot:path.join(f.root,'.cds-releases/fixture/worktrees')};
+        versions:await fs.readdir(versions),worktrees:[],releaseRoot:publish,worktreeRoot};
       const plan = computeReleaseArtifactRetentionPlan({mode:'generated-static',inventory,ledgerRuns:ledger,hasInFlightRun:day===4,drift:'in-sync',keepRecent:3});
       if(day===4) {expect(plan.removeVersions).toEqual([]);expect(plan.skippedReason).toBeTruthy();}
       const command=buildReleaseReclaimCommand(target,strategy,plan);
-      if(command) {const outcome=parseRemoteReclaimOutcome(execFileSync('/bin/sh',['-c',command],{encoding:'utf8'}));
-        expect(outcome.failedVersions).toEqual([]);expect(outcome.removedVersions).toEqual(plan.removeVersions);removed+=outcome.removedVersions.length;}
-      const retained=await fs.readdir(versions);expect(retained.length).toBeLessThanOrEqual(day===4?9:5);
+      if(command) {const outcome=parseRemoteReclaimOutcome(execFileSync('/bin/sh',['-c',command],{encoding:'utf8',env:{...process.env,PATH:bin+path.delimiter+process.env.PATH}}));
+        expect(outcome.queryError).toBeUndefined();expect(outcome.failedVersions).toEqual([]);expect(outcome.removedVersions).toEqual([]);
+        for(const name of plan.removeVersions)expect(outcome.heldReasons?.['version:'+name]).toBe('static-object-content-proof-unconfirmed');
+        removed+=outcome.removedVersions.length;}
+      const retained=await fs.readdir(versions);expect(retained.length).toBe(2+day*4);
       await expectPayload(path.join(publish,'current','index.html'),1);
       await expectPayload(path.join(publish,'previous','index.html'),2);
       rows.push({day,retained:retained.length,removed});
@@ -211,8 +216,8 @@ describe('equivalent fourteen-day retention and recovery drill (isolated files o
     await expectPayload(path.join(current, 'index.html'), 2);
     await fs.symlink(path.join(versions, id(1)), next); await fs.rename(next, current);
     await expectPayload(path.join(current, 'index.html'), 1);
-    evidence.releases={equivalentDays:14,generated:56,removed,retained:5,retainedPayloadBytes:5*PAYLOAD,
+    evidence.releases={equivalentDays:14,generated:56,removed,retained:58,retainedPayloadBytes:58*PAYLOAD,
       currentAndPreviousPreserved:true,rollbackSwitchAndRestoreVerified:true,inFlightSweepSkipped:true,rows,
-      accounting:'real static payload files, production plan and shell command, isolated target'};
+      accounting:'real files and native command with explicit empty Docker inventory; unknown static contents stay protected, this is not a convergence result'};
   }, 30000);
 });

@@ -59,6 +59,13 @@ export interface ReleaseBatch {
   targets: ReleaseBatchTarget[];
 }
 
+/** Completed history can rehydrate its cache; preparation and executing recovery cannot. */
+export function releaseBatchProtectsInputs(batch: Pick<ReleaseBatch, 'status' | 'targets'>): boolean {
+  const completed = new Set(['success', 'partial_success', 'failed', 'cancelled', 'interrupted', 'rolled_back', 'rollback_failed', 'inconsistent']);
+  return !completed.has(batch.status)
+    || batch.targets.some(row => ['checking', 'running', 'rollback_running'].includes(row.status));
+}
+
 export interface AcceptedReleaseVersion {
   versionId: string;
   commitSha: string;

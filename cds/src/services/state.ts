@@ -2168,6 +2168,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const protectedIds = new Set([
       ...Object.values(this.state.branches).map((branch) => branch.currentVersionId).filter(Boolean),
       ...Object.values(this.state.deploymentRuns || {}).map((run) => run.versionId).filter(Boolean),
+      ...this.getReleaseBatches(projectId).map(batch => batch.versionId),
     ]);
     for (const version of versions) {
       if (overflow <= 0) break;

@@ -7,6 +7,7 @@ import { resolveBranchProtection } from './branch-protection.js';
 import { readDeploymentIntent } from './deployment-intent.js';
 import { deploymentInputBranch } from './deployment-input.js';
 import { selectDefaultRollbackVersion } from './deployment-version-selection.js';
+import { releaseBatchProtectsInputs } from '../domain/release-batch.js';
 import { createExternalResponseAudit } from './standby-response-audit.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 import { resumedReclaimExecution, recordReclaimExecution, type ReclaimExecutionJournal } from './reclaim-execution-journal.js';
@@ -111,6 +112,8 @@ export function collectImageCacheReferences(state: import('./state.js').StateSer
   const references: string[] = [];
   const groups = new Map<string, string[]>();
   const versions = [...state.getDeploymentVersions()].sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  const batchVersions = new Set(state.getReleaseBatches().filter(releaseBatchProtectsInputs).map(batch => batch.versionId));
+  if ([...batchVersions].some(id => !versions.some(version => version.id === id))) throw new Error('固定批次的版本或镜像引用未确认，保持镜像保护。');
   const byBranch = new Map<string, typeof versions>();
   for (const version of versions) { const entries = byBranch.get(version.branchId) || [];entries.push(version);byBranch.set(version.branchId, entries); }
   const rollbacks = new Set<string>();
@@ -126,7 +129,7 @@ export function collectImageCacheReferences(state: import('./state.js').StateSer
       && Number.isFinite(last) && nowMs-last>idleDays*86_400_000;
     for (const profile of Object.values(version.profiles || {})) {
       if (!profile.artifactImage) continue;
-      if (branch?.currentVersionId === version.id || rollbacks.has(version.id)) references.push(profile.artifactImage);
+      if (branch?.currentVersionId === version.id || rollbacks.has(version.id) || batchVersions.has(version.id)) references.push(profile.artifactImage);
       const key = JSON.stringify([version.projectId,version.branchId,profile.profileId]);
       const kept=groups.get(key)||[];
       if (!kept.includes(profile.artifactImage) && kept.length<(idle?Math.min(2,keepGenerations):keepGenerations)) { kept.push(profile.artifactImage);references.push(profile.artifactImage);groups.set(key,kept); }

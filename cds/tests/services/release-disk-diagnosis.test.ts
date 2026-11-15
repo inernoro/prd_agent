@@ -35,6 +35,8 @@ describe('buildDiskDiagnosisCommand 只许读', () => {
     expect(command).toContain('df -Pm');
     expect(command).toContain('df -PT -B1');
     expect(command).toContain('df -Pi');
+    expect(command).toContain('lsblk -b -J');
+    expect(command).toContain('未挂载不代表空盘');
     expect(command).toContain('{{.DockerRootDir}}');
     expect(command).toContain('docker ps -a --no-trunc');
     expect(command).toContain('org.opencontainers.image.revision');

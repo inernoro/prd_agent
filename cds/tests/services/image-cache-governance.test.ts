@@ -99,17 +99,35 @@ describe('image cache orchestration and durable status', () => {
     expect(request.mock.calls.find(c => c[0] === 'reconcile')?.[1]).toMatchObject({ targetIdentities: [] });
   });
   it('preserves the current ledger anchor independently of idle cache generation order', () => {
-    const state = { getDeploymentVersions: () => Array.from({ length: 8 }, (_, i) => ({ id: String(i), projectId: 'p', branchId: 'b', createdAt: '2026-11-' + String(10 - i).padStart(2, '0'), profiles: [{ profileId: 'web', artifactImage: 'image:' + i, reusable: true }] })), getBranch: () => ({ id: 'b', projectId: 'p', status: 'idle', currentVersionId: '7', lastAccessedAt: '2026-01-01' }), getProject: () => undefined, getDefaultBranchFor: () => undefined, getDeploymentIntents: () => [] };
+    const state = { getDeploymentVersions: () => Array.from({ length: 8 }, (_, i) => ({ id: String(i), projectId: 'p', branchId: 'b', createdAt: '2026-11-' + String(10 - i).padStart(2, '0'), profiles: [{ profileId: 'web', artifactImage: 'image:' + i, reusable: true }] })), getBranch: () => ({ id: 'b', projectId: 'p', status: 'idle', currentVersionId: '7', lastAccessedAt: '2026-01-01' }), getProject: () => undefined, getDefaultBranchFor: () => undefined, getDeploymentIntents: () => [], getReleaseBatches: () => [] };
     const refs = collectImageCacheReferences(state as any);expect(refs).toContain('image:7');expect(refs).toContain('image:0');
   });
   it('pins the real default reusable rollback even when it lies outside both cache-generation windows', () => {
-    const state = { getDeploymentVersions: () => Array.from({ length: 8 }, (_, i) => ({ id: String(i), projectId: 'p', branchId: 'b', createdAt: '2026-11-' + String(10 - i).padStart(2, '0'), profiles: [{ profileId: 'web', artifactImage: 'image:' + i, reusable: i === 7 }] })), getBranch: () => ({ id: 'b', projectId: 'p', status: 'idle', currentVersionId: '0', lastAccessedAt: '2026-01-01' }), getProject: () => undefined, getDefaultBranchFor: () => undefined, getDeploymentIntents: () => [] };
+    const state = { getDeploymentVersions: () => Array.from({ length: 8 }, (_, i) => ({ id: String(i), projectId: 'p', branchId: 'b', createdAt: '2026-11-' + String(10 - i).padStart(2, '0'), profiles: [{ profileId: 'web', artifactImage: 'image:' + i, reusable: i === 7 }] })), getBranch: () => ({ id: 'b', projectId: 'p', status: 'idle', currentVersionId: '0', lastAccessedAt: '2026-01-01' }), getProject: () => undefined, getDefaultBranchFor: () => undefined, getDeploymentIntents: () => [], getReleaseBatches: () => [] };
     const refs = collectImageCacheReferences(state as any);expect(refs).toEqual(expect.arrayContaining(['image:0', 'image:1', 'image:7']));expect(refs).not.toContain('image:3');
   });
   it('restores an interrupted execution honestly and bounds retained evidence', () => {
     let saved: any;const journal = { read: () => saved, write: (v: any) => { saved = v; } };
     recordReclaimExecution(journal, { id: 'a'.repeat(32), status: 'running', report: { held: Array(2000).fill({ reason: 'protected' }), counts: { held: 2000 } } });
     const restored = resumedReclaimExecution(journal);expect(restored.status).toBe('interrupted');expect(restored.report.held).toHaveLength(20);expect(restored.report.counts.held).toBe(2000);
+  });
+  it('pins an old prepared batch version and releases its cache pin after cancellation without removing the version record', () => {
+    const batch: any = { versionId:'7',branchId:'b',projectId:'p',status:'ready',targets:[] };
+    const versions = Array.from({ length:8 },(_,i)=>({id:String(i),projectId:'p',branchId:'b',createdAt:new Date(2026,10,10-i).toISOString(),profiles:[{profileId:'web',artifactImage:'image:'+i,reusable:true}]}));
+    const state = { getDeploymentVersions:()=>versions,getReleaseBatches:()=>[batch],getBranch:()=>({id:'b',projectId:'p',status:'idle',currentVersionId:'0',lastAccessedAt:'2026-01-01'}),getProject:()=>undefined,getDefaultBranchFor:()=>undefined,getDeploymentIntents:()=>[] };
+    expect(collectImageCacheReferences(state as any)).toContain('image:7');
+    batch.status='cancelled';expect(collectImageCacheReferences(state as any)).not.toContain('image:7');
+    expect(versions.find(v=>v.id==='7')).toBeTruthy();
+    batch.status='ready';batch.versionId='missing';expect(()=>collectImageCacheReferences(state as any)).toThrow(/未确认/);
+  });
+  it('preserves a batch fixed version when version-ledger pruning crosses its ordinary limit, including after restart', async () => {
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'batch-version-retention-'));roots.push(root);const file=path.join(root,'state.json');
+    const state=new StateService(file,root);state.load();state.addProject({id:'p',slug:'p',name:'p'} as any);state.addBranch({id:'b',projectId:'p',branch:'feature/batch',status:'idle',services:{}} as any);
+    state.saveReleaseBatch({id:'batch',projectId:'p',branchId:'b',versionId:'v0',status:'ready',targets:[],createdAt:new Date().toISOString()} as any);
+    for(let i=0;i<102;i++)state.addDeploymentVersion({id:'v'+i,projectId:'p',branchId:'b',commitSha:'a'.repeat(40),createdAt:new Date(2026,10,1,0,0,i).toISOString(),profiles:{}} as any);
+    await state.flush();const restarted=new StateService(file,root);restarted.load();
+    expect(restarted.getDeploymentVersion('v0')).toBeTruthy();expect(restarted.getDeploymentVersion('v1')).toBeUndefined();
+    expect(restarted.getReleaseBatch('batch')?.versionId).toBe('v0');
   });
   it('recovers the same job identity from the actual state file after a service restart', async () => {
     const root=fs.mkdtempSync(path.join(os.tmpdir(),'resource-job-restart-'));roots.push(root);const file=path.join(root,'state.json');

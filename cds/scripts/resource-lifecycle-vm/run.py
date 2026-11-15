@@ -2,7 +2,8 @@
 """Reproduce native drills without host root, host devices or privileged Docker.
 
 Requires local Docker, pnpm and installed CDS dependencies. All mutations occur
-in a new file-backed VM. Evidence and the disk are preserved for review.
+in a new file-backed VM. Bounded evidence is preserved; known synthetic large
+artifacts are retired after both successful and failed driver execution.
 """
 import argparse
 import datetime as dt
@@ -23,6 +24,7 @@ parser.add_argument('--cycles', type=int, default=40)
 parser.add_argument('--base-image', help='Explicit prebuilt compatible Debian /vm image; otherwise build the public recipe')
 parser.add_argument('--ca-bundle', type=pathlib.Path, help='Optional build-time CA secret, never written into the guest')
 parser.add_argument('--output-parent', type=pathlib.Path, default=pathlib.Path(tempfile.gettempdir()))
+parser.add_argument('--exercise-driver-failure', action='store_true', help='Fail before the synthetic driver, to verify failed VM artifact retirement')
 args = parser.parse_args()
 if not 1 <= args.cycles <= 1000:
     parser.error('--cycles must be 1..1000')
@@ -49,7 +51,7 @@ if not args.base_image:
     run(command+[str(here)])
 manifest['baseImageId'] = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{.Id}}', image], text=True).strip()
 manifest['sourceHead'] = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
-run(['pnpm', '-C', str(repo/'cds'), 'exec', 'esbuild', 'scripts/'+driver, '--bundle', '--platform=node', '--format=esm', '--packages=external', '--outfile='+str(work/'driver.mjs')])
+run(['pnpm', '-C', str(repo/'cds'), 'exec', 'esbuild', 'scripts/'+driver, '--bundle', '--platform=node', '--format=esm', '--outfile='+str(work/'driver.mjs')])
 for name in ['disk-resource-native.py', 'backup-retention-native.py']:
     shutil.copy2(repo/'cds/src/services'/name, work/name)
 for name in ['prepare.sh', 'guest-init.sh', 'run.sh']:
@@ -60,6 +62,8 @@ run(['docker', 'save', '-o', str(work/'alpine.tar'), 'alpine:3.21'])
 with (work/'owned-root.img').open('r+b') as disk:
     disk.truncate(8*1024**3)
 extra = "if [ -f /data/reboot-checkpoint.json ]; then node /driver.mjs --after-reboot; else node /driver.mjs; fi" if args.mode == 'resources' else 'node /driver.mjs'
+if args.exercise_driver_failure:
+    extra = 'echo CDS_DRIVER_FAILURE_FIXTURE >&2; exit 42'
 (work/'init-real').write_text('''#!/bin/sh
 set -eu
 export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DOCKER_API_VERSION=1.41 CDS_NATIVE_RESOURCE_DRILL=1
@@ -114,21 +118,21 @@ try:
 finally:
     stop_own()
     manifest['artifactRetirement'] = []
-    if manifest['passed']:
-        # Preserve bounded evidence, not another permanent VM/registry cache.
-        assert work.resolve() == work and (work.stat().st_dev, work.stat().st_ino) == workspace_identity
-        fd = os.open(work, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            for name, before in large_artifacts.items():
-                current = os.stat(name, dir_fd=fd, follow_symlinks=False)
-                if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1 or (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
-                    manifest['artifactRetirement'].append({'name': name, 'result': 'held-identity-unconfirmed'})
-                    continue
-                os.unlink(name, dir_fd=fd)
-                manifest['artifactRetirement'].append({'name': name, 'result': 'removed'})
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+    # Failure retains bounded logs, source and driver, rather than an 8GiB VM.
+    # Each large artifact was born in this run; preserve any replaced identity.
+    assert work.resolve() == work and (work.stat().st_dev, work.stat().st_ino) == workspace_identity
+    fd = os.open(work, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for name, before in large_artifacts.items():
+            current = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1 or (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+                manifest['artifactRetirement'].append({'name': name, 'result': 'held-identity-unconfirmed'})
+                continue
+            os.unlink(name, dir_fd=fd)
+            manifest['artifactRetirement'].append({'name': name, 'result': 'removed'})
+        os.fsync(fd)
+    finally:
+        os.close(fd)
     manifest['driverSha256'] = hashlib.sha256((work/'driver.mjs').read_bytes()).hexdigest()
     manifest['finishedAt'] = dt.datetime.now(dt.timezone.utc).isoformat()
     (work/'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
