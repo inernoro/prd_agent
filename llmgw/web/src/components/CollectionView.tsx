@@ -75,11 +75,20 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
 /** 桌面并列、窄屏独立详情态。保持真实编辑表单内联在页面，不复制写入逻辑。 */
 export function CollectionDetailPane({ title, identifier, onClose, children, tabs, icon, footer }: { title: ReactNode; identifier?: string; onClose: () => void; children: ReactNode; tabs?: ReactNode; icon?: ReactNode; footer?: ReactNode }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  // Capture the entry before the master list becomes hidden on narrow screens.
+  const [trigger] = useState(() => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null);
   useLayoutEffect(() => {
-    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const pane = closeRef.current?.closest('.lg-collection-pane');
     closeRef.current?.focus({ preventScroll: true });
-    return () => { if (trigger?.isConnected) trigger.focus({ preventScroll: true }); };
-  }, []);
+    return () => queueMicrotask(() => {
+      // StrictMode effect rehearsal is not a real unmount.
+      if (pane?.isConnected) return;
+      const active = document.activeElement;
+      // A new dialog or an explicit subsequent focus task owns its focus.
+      if (active && active !== document.body && active.isConnected && !pane?.contains(active)) return;
+      if (trigger?.isConnected && trigger.getClientRects().length && !trigger.closest('[inert]')) trigger.focus({ preventScroll: true });
+    });
+  }, [trigger]);
   return <aside className="lg-collection-pane" aria-label="清单详情" onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     <header className="lg-collection-pane-heading">{icon ? <span className="lg-collection-pane-icon">{icon}</span> : null}<div><h2>{title}</h2>{identifier ? <code>{identifier}</code> : null}</div><button ref={closeRef} type="button" className="lg-collection-close" aria-label="关闭详情" onClick={onClose}><X size={16} /></button></header>
     {tabs ? <div className="lg-collection-pane-tabs">{tabs}</div> : null}

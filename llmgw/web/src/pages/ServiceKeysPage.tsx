@@ -480,7 +480,11 @@ export function ServiceKeysPage() {
   }, [detailEntry]);
   useLayoutEffect(() => {
     const open = Boolean(selectedKey);
-    if (detailWasOpen.current && !open && document.activeElement === document.body) keyListRef.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus({ preventScroll: true });
+    if (detailWasOpen.current && !open) queueMicrotask(() => {
+      // The shared pane restores its still-present entry first. Search is the
+      // fallback only when that entry disappeared, for example after a revoke.
+      if (document.activeElement === document.body && !keyListRef.current?.parentElement?.querySelector('.lg-collection-pane')) keyListRef.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus({ preventScroll: true });
+    });
     detailWasOpen.current = open;
   }, [Boolean(selectedKey)]);
   const keyOverview = <>
