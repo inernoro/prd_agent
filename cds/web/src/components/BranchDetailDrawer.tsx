@@ -1,3 +1,5 @@
+import { partialRead } from '@/lib/partialRead';
+import { MotionLink } from '@/components/layout/RouteMotion';
 import { CiImageNotice } from '@/components/branch/CiImageNotice';
 import type { CiDiagnosisView } from '@/lib/ci-image-notice';
 import { TCP_DISABLED_DESCRIPTION } from '@/lib/resourceTcpStatus';
@@ -868,6 +870,8 @@ export function BranchDetailDrawer({
   previewMode = 'multi',
   branchStatus,
   initialResourceId,
+  initialTab,
+  initialConfigSection,
   initialResourceDetailTab,
   resourceWorkbenchDirect = false,
   onToast,
@@ -896,6 +900,8 @@ export function BranchDetailDrawer({
   /** 决定主入口是否需要保留 simple/port 模式下由调用方给出的 host。 */
   previewMode?: PreviewMode;
   initialResourceId?: string | null;
+  initialTab?: DrawerTab;
+  initialConfigSection?: ConfigSection;
   initialResourceDetailTab?: BranchResourceDetailTab | null;
   /* 从分支卡片的数据库 chip 直达工作台：关掉工作台直接退回分支列表，
      不把用户留在中间这层抽屉里。 */
@@ -930,6 +936,7 @@ export function BranchDetailDrawer({
   const [loading, setLoading] = useState(false);
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [readFailures, setReadFailures] = useState<Record<string, string>>({});
   // 2026-07-26 用户拍板：总览承载入口卡就必须坐第一号位——打开抽屉默认总览（仪表盘）
   const [activeTab, setActiveTab] = useState<DrawerTab>('overview');
   // 方案 A：配置页签内三分区（生效变量 / 配置检查器 / 分支设置）
@@ -1098,30 +1105,26 @@ export function BranchDetailDrawer({
 
   const [factsUpdatedAt, setFactsUpdatedAt] = useState<number | null>(null);
   const factsGateRef = useRef(createLatestWinsGate());
-  const load = useCallback(async () => {
+  const sectionGateRef = useRef(createLatestWinsGate());
+  const load = useCallback(async (silent = false) => {
     if (!branchId) return;
     const ticket = factsGateRef.current.begin();
-    setLoading(true);
+    const sectionTicket = sectionGateRef.current.begin();
+    if (!silent) setLoading(true);
     setError('');
+    const failures: Record<string, string> = {};
+    const read = <T,>(source: string, request: Promise<T>) => partialRead(source, request, failures);
     try {
       // The backend exposes /api/branches?project=<id> (list) but no
       // single-branch endpoint, mirroring how BranchDetailPage loads.
       const [branchesRes, logsRes, runsRes, versionsRes, profilesRes, infraRes, resourcesRes, aliasesRes] = await Promise.all([
         apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
-        apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
-        apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
-          .catch(() => ({ runs: [] })),
-        canManageConsole ? apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
-          .catch(() => ({ versions: [] })) : Promise.resolve({ versions: [] }),
-        apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
-          .catch((err) => {
-            setProfileState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
-            return { profiles: [] };
-          }),
-        canManageConsole ? apiRequest<{ services: BranchResourceInfraInput[] }>(`/api/infra?project=${encodeURIComponent(projectId)}&live=false`)
-          .catch(() => ({ services: [] })) : Promise.resolve({ services: [] }),
-        apiRequest<{ resources: BranchResource[] }>(`/api/branches/${encodeURIComponent(branchId)}/resources?live=false`)
-          .catch(() => ({ resources: [] })),
+        read('部署日志', apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`)),
+        read('部署记录', apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)),
+        read('版本记录', canManageConsole ? apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`) : Promise.resolve({ versions: [] })),
+        read('分支配置', apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)),
+        read('基础设施', canManageConsole ? apiRequest<{ services: BranchResourceInfraInput[] }>(`/api/infra?project=${encodeURIComponent(projectId)}&live=false`) : Promise.resolve({ services: [] })),
+        read('资源清单', apiRequest<{ resources: BranchResource[] }>(`/api/branches/${encodeURIComponent(branchId)}/resources?live=false`)),
         apiRequest<{ primaryEntry?: WebEntryUrl; webEntries?: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] }>(`/api/branches/${encodeURIComponent(branchId)}/subdomain-aliases`)
           .catch((): { primaryEntry?: WebEntryUrl; webEntries: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] } => ({ webEntries: [] })),
       ]);
@@ -1136,18 +1139,21 @@ export function BranchDetailDrawer({
       }
       if (acceptFacts) {
         setFactsUpdatedAt(Date.now());
-        setLogs(logsRes.logs || []);
-        setDeploymentRuns(runsRes.runs || []);
-        setDeploymentVersions(versionsRes.versions || []);
+        if (logsRes) setLogs(logsRes.logs || []);
+        if (runsRes) setDeploymentRuns(runsRes.runs || []);
+        if (versionsRes) setDeploymentVersions(versionsRes.versions || []);
       }
-      setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
-      setInfraServices(infraRes.services || []);
-      setResourceSnapshot(resourcesRes.resources || found?.resources || []);
+      if (!sectionGateRef.current.accept(sectionTicket)) return;
+      setReadFailures(failures);
+      if (profilesRes) setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
+      else setProfileState(current => current.status === 'ok' ? current : { status: 'error', message: failures['分支配置'] || '分支配置尚未确认，请重试读取。' });
+      if (infraRes) setInfraServices(infraRes.services || []);
+      if (resourcesRes) setResourceSnapshot(resourcesRes.resources || found?.resources || []);
       setEntryAliases(aliasesRes);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      if (branchIdRef.current === branchId && factsGateRef.current.accept(ticket)) setError(err instanceof ApiError ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (branchIdRef.current === branchId) setLoading(false);
     }
   }, [branchId, projectId, canManageConsole]);
 
@@ -1289,9 +1295,12 @@ export function BranchDetailDrawer({
   useEffect(() => {
     if (!open || !branchId) return;
     factsGateRef.current.newSession();
+    sectionGateRef.current.newSession();
     setFactsUpdatedAt(null);
-    failureAutoSwitchedRef.current = false;
-    setActiveTab(initialResourceId ? 'services' : 'overview');
+    setReadFailures({});
+    failureAutoSwitchedRef.current = !!initialTab;
+    setActiveTab(initialResourceId ? 'services' : initialTab || 'overview');
+    setConfigSection(initialConfigSection || 'variables');
     setLogsMode('system');
     setSelectedBuildLog(null);
     setSelectedServiceId(null);
@@ -1330,7 +1339,7 @@ export function BranchDetailDrawer({
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
     void load();
-  }, [open, branchId, load]);
+  }, [open, branchId, load, initialTab, initialConfigSection]);
 
   useEffect(() => {
     if (!open || !branchId || !projectId) return;
@@ -2348,7 +2357,7 @@ export function BranchDetailDrawer({
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pb-24" style={{ overscrollBehavior: 'contain' }}>
+        <div className="min-h-0 flex-1 overflow-y-auto pb-32 sm:pb-24" style={{ overscrollBehavior: 'contain' }}>
           {/*
                 加载骨架必须是总览的形状（2026-09-17 用户反馈「先出一幅老骨架、三秒后再出一幅更像真实的骨架」）：
                 通用的「四块指标 + 两块内容」和数据到达后的「判断行 / 关系 / 入口 / 曲线」根本不是一个轮廓，
@@ -2520,6 +2529,11 @@ export function BranchDetailDrawer({
               </nav>
 
               <div className={activeTab === 'logs' ? 'flex min-h-0 flex-1 flex-col p-5' : 'p-5'}>
+                {Object.keys(readFailures).length > 0 ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 rounded-md border border-warn/35 bg-warn-soft px-3 py-2 text-sm">
+                  <span>{Object.keys(readFailures).join('、')}读取失败，当前结果不完整；未读取到的内容不能视为不存在。</span>
+                  <Button variant="outline" size="sm" onClick={() => void load(true)}>重试读取</Button>
+                  <details className="basis-full"><summary className="cursor-pointer">查看读取错误</summary><ul className="mt-2 space-y-1">{Object.entries(readFailures).map(([source, message]) => <li key={source}>{source}：{message}</li>)}</ul></details>
+                </div> : null}
                 {activeTab === 'run' ? (
                   canManageConsole ? <ReplicaSetPanel
                     branchId={branch.id}
@@ -2566,7 +2580,7 @@ export function BranchDetailDrawer({
                         置顶——放在部署事实账本与版本账本之上 */}
                     {!activeDeployment && historyDeployments.length === 0 ? (
                       <section className="cds-surface-raised cds-hairline rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-8 text-center text-sm text-muted-foreground">
-                        还没有构建记录。点击部署后，构建计划和日志会出现在这里。
+                        {readFailures['部署日志'] || readFailures['部署记录'] ? '部署记录读取不完整，请重试读取；不能据此判断是否已有部署。' : '还没有构建记录。点击部署后，构建计划和日志会出现在这里。'}
                       </section>
                     ) : null}
 
@@ -2610,13 +2624,13 @@ export function BranchDetailDrawer({
                       </section>
                     ) : null}
 
-                    <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
-                    {canManageConsole ? <DeploymentVersionLedger
+                    {!readFailures['部署记录'] || deploymentRuns.length > 0 ? <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} /> : <p className="text-sm text-muted-foreground">部署记录尚未确认。</p>}
+                    {canManageConsole && (!readFailures['版本记录'] || deploymentVersions.length > 0) ? <DeploymentVersionLedger
                       versions={deploymentVersions}
                       currentVersionId={branch.currentVersionId}
                       busyVersionId={versionBusyId}
                       onDeploy={(version, rollback) => void deployVersion(version, rollback)}
-                    /> : <p className="px-1 text-sm text-muted-foreground">不可变部署版本仅系统所有者可用；你仍可部署此分支并查看上方运行历史。</p>}
+                    /> : <p className="px-1 text-sm text-muted-foreground">{canManageConsole ? '版本记录尚未确认。' : '不可变部署版本仅系统所有者可用；你仍可部署此分支并查看上方运行历史。'}</p>}
                   </div>
                 ) : null}
 
@@ -2741,6 +2755,7 @@ export function BranchDetailDrawer({
                 {activeTab === 'services' ? (
                   <ResourceConsole
                     resources={resources}
+                    readIncomplete={!!(readFailures['资源清单'] || readFailures['基础设施'])}
                     replicaProfileIds={replicaProfileIds}
                     replicaChipInfo={replicaChipInfo}
                     onQuickReplica={canManageConsole ? quickAddReplicas : undefined}
@@ -3032,7 +3047,7 @@ export function BranchDetailDrawer({
               <>
                 {previewUrl && canOpenPreview ? (
                   <PreviewActionSplitButton
-                    className="flex-[2_1_0]"
+                    className="cds-branch-detail-footer-primary flex-[2_1_0]"
                     fill
                     previewHref={previewUrl}
                     previewLabel="打开预览"
@@ -3050,7 +3065,7 @@ export function BranchDetailDrawer({
                 <Button
                   type="button"
                   variant="outline"
-                  className="cds-branch-detail-footer-secondary flex-[1_1_0]"
+                  className="cds-branch-detail-footer-secondary col-span-2 flex-[1_1_0]"
                   onClick={() => { setConfigSection('settings'); setActiveTab('config'); }}
                 >
                   <Settings />
@@ -3812,6 +3827,7 @@ function resourceInitialDetailTab(
 
 function ResourceConsole({
   resources,
+  readIncomplete = false,
   replicaProfileIds,
   replicaChipInfo,
   onQuickReplica,
@@ -3832,6 +3848,7 @@ function ResourceConsole({
   onCopy,
 }: {
   resources: BranchResource[];
+  readIncomplete?: boolean;
   /** 已复制集化（含运行成员）的 profileId 集合 —— 卡片加堆叠徽章特殊标识 */
   replicaProfileIds?: Set<string>;
   /** 芯片级复制集信息：成员数 + 是否有启动中成员（光环动画） */
@@ -3927,7 +3944,7 @@ function ResourceConsole({
   if (resources.length === 0) {
     return (
       <section className="cds-surface-raised cds-hairline px-5 py-8 text-sm text-muted-foreground">
-        当前分支还没有资源。先部署分支，CDS 会把应用容器、数据库、缓存和中间件统一展示在这里。
+        {readIncomplete ? '资源清单尚未确认，请重试读取；不能据此判断是否已部署资源。' : '当前分支还没有资源。先部署分支，CDS 会把应用容器、数据库、缓存和中间件统一展示在这里。'}
       </section>
     );
   }
@@ -7471,29 +7488,30 @@ export function SettingsPanel({
       {/* 跳转 */}
       {canManageConsole ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
         <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          配置入口
+          项目级配置
         </div>
+        <p className="mb-3 text-xs text-muted-foreground">以下入口修改整个项目的配置，不只影响当前分支。请在项目设置中确认生效范围与时机。</p>
         <div className="flex flex-wrap gap-2">
           <Button asChild size="sm" variant="outline">
-            <a href={`/settings/${encodeURIComponent(projectId)}`}>
+            <MotionLink to={`/settings/${encodeURIComponent(projectId)}?fromBranch=${encodeURIComponent(branch.id)}`}>
               <Settings />
               项目设置
-            </a>
+            </MotionLink>
           </Button>
           <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
-            <a href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>
+            <MotionLink to={`/settings/${encodeURIComponent(projectId)}?tab=env&fromBranch=${encodeURIComponent(branch.id)}`}>
               环境变量
-            </a>
+            </MotionLink>
           </Button>
           <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
-            <a href={`/settings/${encodeURIComponent(projectId)}?tab=build`}>
-              构建配置
-            </a>
+            <MotionLink to={`/settings/${encodeURIComponent(projectId)}?tab=compose&section=services&fromBranch=${encodeURIComponent(branch.id)}`}>
+              构建与启动
+            </MotionLink>
           </Button>
           <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
-            <a href={`/settings/${encodeURIComponent(projectId)}?tab=routing`}>
-              路由规则
-            </a>
+            <MotionLink to={`/settings/${encodeURIComponent(projectId)}?tab=compose&section=routing&fromBranch=${encodeURIComponent(branch.id)}`}>
+              自定义路由
+            </MotionLink>
           </Button>
         </div>
       </div> : null}

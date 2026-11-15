@@ -9,7 +9,7 @@ import { projectUnavailable } from '../lib/project-availability.js';
 import { BranchListOverview } from '@/components/branch/BranchListOverview';
 import { Fragment, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Navigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useParams } from 'react-router-dom';
 import {
   Activity,
   Database,
@@ -1689,6 +1689,11 @@ export function BranchListPage(): JSX.Element {
 }
 
 function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const branchReturn = new URLSearchParams(location.search);
+  const returnBranchId = branchReturn.get('branch');
+  const returnToBranchSettings = branchReturn.get('branchTab') === 'config' && branchReturn.get('configSection') === 'settings';
   const canManageConsole = useCanManageConsole();
   const { status: authStatus } = useContext(ConsoleAuthContext);
   const account = authStatus?.enabled === false ? 'local' : authStatus?.user?.githubLogin || authStatus?.user?.username;
@@ -1738,7 +1743,8 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     branch: BranchSummary;
     needSlots: number;
   } | null>(null);
-  const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(null);
+  const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(() => returnBranchId);
+  useEffect(() => { if (returnBranchId) setDetailDrawerBranchId(returnBranchId); }, [location.key, returnBranchId]);
   const [detailDrawerResourceFocus, setDetailDrawerResourceFocus] = useState<{
     resourceId: string;
     detailTab: BranchResourceDetailTab;
@@ -4226,38 +4232,28 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
               /* 一句话汇总（2026-09-29）：先说「所以呢」——几个要处理、几个在动——再把每张卡都
                  重复的共享基础设施、全项目共用的构建槽收到这里说一次。 */
               <BranchListOverview summary={
-                <h2 className="min-w-0 text-[1.625rem] font-bold leading-tight tracking-tight text-foreground">
-                  <span>{showArchived ? `${branchOverview.total} 个归档分支 · 保留30天，可恢复` : `${branchOverview.total} 个分支`}</span>
-                  {branchOverview.parts.length > 0 ? '：' : ''}
-                  {branchOverview.parts.map((part, index) => (
-                    <span key={part.text}>
-                      {index > 0 ? '，' : ''}
-                      <span className={part.tone === 'plain' ? 'text-muted-foreground' : undefined}>{part.text}</span>
-                    </span>
-                  ))}
-                </h2>
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1" data-branch-task-summary>
+                  <h2 className="text-[1.625rem] font-semibold leading-7 tracking-tight text-foreground">{showArchived ? `${branchOverview.total} 个归档分支` : `${branchOverview.total} 个分支`}</h2>
+                  <p className="flex flex-wrap gap-x-3 gap-y-1 text-sm leading-5 text-muted-foreground">
+                    {showArchived ? <span>保留 30 天，可恢复</span> : null}
+                    {branchOverview.parts.map(part => <span key={part.text} className={part.tone === 'plain' ? undefined : 'font-medium text-foreground'}>{part.text}</span>)}
+                  </p>
+                </div>
               }>
                   {branchOverview.sharedInfra.length > 0 ? (() => {
                     const broken = branchOverview.sharedInfra.filter((resource) => resource.status === 'error');
                     const stopped = branchOverview.sharedInfra.filter((resource) => resource.status !== 'running' && resource.status !== 'error');
                     return (
-                      <span
-                        className="inline-flex h-7 max-w-full items-center gap-2 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-2.5 text-xs text-muted-foreground"
-                        title={`共享基础设施：项目内所有分支共用同一组，逐分支的连接面板在卡片「+N」里\n${branchOverview.sharedInfra.map((resource) => `${resource.displayName}（${resource.status}）`).join('\n')}`}
-                      >
-                        <span className="shrink-0 font-medium text-foreground">共享基础设施</span>
-                        <span className={`inline-flex shrink-0 items-center gap-1 ${broken.length > 0 ? 'text-destructive' : stopped.length > 0 ? 'text-muted-foreground' : 'text-ok'}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${broken.length > 0 ? 'bg-destructive' : stopped.length > 0 ? 'bg-muted-foreground' : 'bg-ok'}`} aria-hidden />
-                          {broken.length > 0 ? `${broken.length} 个异常` : stopped.length > 0 ? `${stopped.length} 个未运行` : '全部健康'}
-                        </span>
-                        {branchOverview.sharedInfra.map((resource) => (
-                          <span key={resource.id} className="inline-flex shrink-0 items-center gap-1">
-                            <ResourceIcon resource={resource} className="h-3 w-3 shrink-0" />
-                            <span className="font-medium text-foreground/80">{infraShortName(resource.runtime)}</span>
-                            {typeof resource.port === 'number' ? <span className="font-mono">:{resource.port}</span> : null}
-                          </span>
-                        ))}
-                      </span>
+                      <details className="relative max-w-full" onKeyDown={event => { if (event.key === 'Escape') event.currentTarget.open = false; }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }}>
+                        <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-2.5 text-xs">
+                          <span className="font-medium">共享基础设施 {branchOverview.sharedInfra.length}</span>
+                          <span className={broken.length ? 'font-medium text-destructive' : stopped.length ? 'text-muted-foreground' : 'text-ok'}>{broken.length ? `${broken.length} 个异常` : stopped.length ? `${stopped.length} 个未运行` : '全部运行中'}</span>
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </summary>
+                        <ul className="absolute right-0 top-full z-50 mt-1 min-w-[17rem] max-w-[calc(100vw-3rem)] space-y-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3 text-sm shadow-lg">
+                          {branchOverview.sharedInfra.map(resource => <li key={resource.id} className="flex flex-wrap items-center gap-2"><ResourceIcon resource={resource} className="h-4 w-4" /><span>{resource.displayName}</span><span className="font-mono">{resource.port ? `:${resource.port}` : ''}</span><span className="text-muted-foreground">{resource.status === 'running' ? '运行中' : resource.status === 'error' ? '异常' : '未运行'}</span></li>)}
+                        </ul>
+                      </details>
                     );
                   })() : null}
                   {branchOverview.slot ? (
@@ -4548,8 +4544,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
           setDetailDrawerBranchId(entry.branchId);
         }} />
         <BranchDetailDrawer
+          key={detailDrawerBranchId || 'closed'}
           open={!!detailDrawerBranchId}
           branchId={detailDrawerBranchId}
+          initialTab={returnToBranchSettings && detailDrawerBranchId === returnBranchId ? 'config' : undefined}
+          initialConfigSection={returnToBranchSettings && detailDrawerBranchId === returnBranchId ? 'settings' : undefined}
           projectId={projectId}
           deployments={deployments}
           activityEvents={activityEvents}
@@ -4577,6 +4576,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
           onClose={() => {
             const source = detailDrawerBranchId ? document.querySelector(`[data-branch-card-id="${CSS.escape(detailDrawerBranchId)}"]`) : null;
             runSurfaceMotion(() => flushSync(() => { setDetailDrawerBranchId(null); setDetailDrawerResourceFocus(null); }), source, true, true);
+            if (returnBranchId) {
+              const next = new URLSearchParams(location.search);
+              for (const key of ['branch', 'branchTab', 'configSection']) next.delete(key);
+              navigate(`${location.pathname}${next.size ? `?${next}` : ''}${location.hash}`, { replace: true, preventScrollReset: true });
+            }
           }}
           onToast={setToast}
           onActionComplete={() => void refresh()}
@@ -6246,7 +6250,7 @@ const BranchCard = memo(function BranchCard({
       data-branch-card-id={branch.id}
       data-deploy-phase={deployPhaseAttr}
       draggable={draggableToGroup || undefined}
-      className={`group relative flex h-[15.25rem] cursor-pointer flex-col ${finishAnimating ? 'cds-finish-ring ' : ''}${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : showsIssue ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
+      className={`group relative flex cursor-pointer flex-col ${finishAnimating ? 'cds-finish-ring ' : ''}${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : showsIssue ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
         failedPhase
           // 刚在眼前失败（含单服务部署失败、分支仍 running）：红边框承担「构建失败」信号；
           // 历史错误仍按错误分类配色。
@@ -6261,6 +6265,7 @@ const BranchCard = memo(function BranchCard({
       tabIndex={0}
       onClick={onDetail}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           onDetail();
@@ -6310,7 +6315,7 @@ const BranchCard = memo(function BranchCard({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
               <h3
-                className="cds-branch-name min-w-0 flex-1 truncate text-[1.0625rem] font-semibold leading-7"
+                className="cds-branch-name min-w-0 flex-1 line-clamp-2 break-all group-focus-visible:line-clamp-none text-[1.0625rem] font-semibold leading-7"
                 title={branch.branch}
               >
                 {/* AI 活跃时标题不再扫光：环境光 + 进度轨 + 徽章环已经承担了
@@ -6506,13 +6511,10 @@ const BranchCard = memo(function BranchCard({
           - 启动中 / 异常 时,端口 chip 色统一跟 branch 状态(以前是
             service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
           - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
-      {/* 固定槽位（2026-09-29 等高改版）：卡片 = 标题 / 端口槽 / 信息槽 / 标签槽 / 页脚，
-          每一槽高度写死、内容再多也不换行——高低不齐的根因就是这几处「有时出现、
-          有时不出现」的行（CI 标签挤换行、基础设施托盘、被挤下去的时间行、折两行的名字）。
-          出错卡把端口槽 + 信息槽合成一块两行的原因说明，总高度与其它卡相同。 */}
+      {/* 卡片按实际内容排布，CSS grid 只拉齐同一行；状态和主操作保留固定阅读顺序。 */}
       {showsIssue && !failedPhase ? (
         <div
-          className={`mx-5 mt-3 flex h-[3.375rem] min-w-0 flex-col justify-center gap-0.5 rounded-md border px-2.5 py-1 ${issueClass}`}
+          className={`mx-5 mt-3 flex min-w-0 flex-col gap-0.5 rounded-md border px-2.5 py-1 ${issueClass}`}
           title={deployFailureMessage(branch, projectProfileIds)}
         >
           <div className="flex min-w-0 items-center gap-1.5 text-xs leading-4">
@@ -6520,7 +6522,7 @@ const BranchCard = memo(function BranchCard({
             <span className="min-w-0 truncate">{issueLabel}</span>
             <span className="ml-auto shrink-0 whitespace-nowrap font-normal opacity-75">{statusTimeText}</span>
           </div>
-          <div className="line-clamp-2 break-all text-[0.6875rem] font-normal leading-[0.875rem] text-foreground/85">
+          <div className="break-words text-xs font-normal leading-5 text-foreground/85">
             {deployFailureMessage(branch, projectProfileIds).replace(`${issueLabel}：`, '')}
           </div>
         </div>
@@ -6868,7 +6870,7 @@ const BranchCard = memo(function BranchCard({
       </div>
       )}
       {!showsIssue || failedPhase ? (
-        <div className="mx-5 mt-2.5 flex h-[1.125rem] min-w-0 items-center justify-between gap-3 text-xs leading-[1.125rem] text-muted-foreground">
+        <div className="mx-5 mt-2.5 mb-3 flex min-h-[1.125rem] min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs leading-[1.125rem] text-muted-foreground">
           {failedPhase ? (
             <span className="min-w-0 truncate text-destructive" title={deployFailureMessage(branch, projectProfileIds)}>
               {deployFailureMessage(branch, projectProfileIds).replace(`${issueLabel}：`, '')}
@@ -6899,8 +6901,8 @@ const BranchCard = memo(function BranchCard({
           - 多于 3 个时折叠为"+N",避免撑爆卡片宽度。点击折叠按钮跳到批量编辑。
           - 只有 × / +N / +标签 这些明确按钮 stopPropagation。 */}
       {/* handlers 重构后标签回调恒定存在，原可选 prop 守卫移除 */}
-      {(
-        <div className="relative mx-5 mt-2 flex h-6 min-w-0 flex-nowrap items-center gap-1.5">
+      {(branch.tags?.length || tagEditorOpen || tagDeleteTarget) ? (
+        <div className="relative mx-5 mt-2 mb-3 flex min-h-6 min-w-0 flex-wrap items-center gap-1.5">
           {(branch.tags || []).slice(0, 3).map((tag) => {
             const isActive = activeTagFilter === tag;
             return (
@@ -7047,7 +7049,7 @@ const BranchCard = memo(function BranchCard({
             </div>
           ) : null}
         </div>
-      )}
+      ) : null}
 
       {/* 错误提醒已并入上方端口槽位（与停止/降温提醒同一行、只此一处），不再单独占一行（2026-06-22 用户："只一个提醒"）。 */}
 

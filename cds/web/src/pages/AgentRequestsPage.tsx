@@ -77,6 +77,10 @@ function fmtDuration(ms: number): string {
 
 export function AgentRequestsPage(): JSX.Element {
   const { projectId = '' } = useParams<{ projectId: string }>();
+  return <ProjectAgentRequests key={projectId} projectId={projectId} />;
+}
+
+function ProjectAgentRequests({ projectId }: { projectId: string }): JSX.Element {
   const [data, setData] = useState<AgentRequestsResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +88,8 @@ export function AgentRequestsPage(): JSX.Element {
   const [fApp, setFApp] = useState('');
   const [fStatus, setFStatus] = useState('');
   const [fQ, setFQ] = useState('');
+  const [dataScope, setDataScope] = useState('');
+  const queryScope = JSON.stringify([fUser, fApp, fStatus, fQ.trim()]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [eventsBySession, setEventsBySession] = useState<Record<string, AgentEvent[] | 'loading' | 'error'>>({});
   const fetchSeqRef = useRef(0);
@@ -92,7 +98,7 @@ export function AgentRequestsPage(): JSX.Element {
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!projectId) return;
     const seq = ++fetchSeqRef.current;
-    if (!opts?.silent) setLoading(true);
+    if (!opts?.silent) { setLoading(true); setError(null); }
     try {
       const params = new URLSearchParams();
       if (fUser) params.set('user', fUser);
@@ -105,6 +111,7 @@ export function AgentRequestsPage(): JSX.Element {
       );
       if (seq !== fetchSeqRef.current) return;
       setData(resp);
+      setDataScope(JSON.stringify([fUser, fApp, fStatus, fQ.trim()]));
       setError(null);
     } catch (err) {
       if (seq !== fetchSeqRef.current) return;
@@ -168,12 +175,15 @@ export function AgentRequestsPage(): JSX.Element {
   const toggleExpand = useCallback((sessionId: string) => {
     setExpanded((cur) => {
       const next = cur === sessionId ? null : sessionId;
-      if (next && eventsBySession[next] === undefined) void loadEvents(next);
+      if (next && (eventsBySession[next] === undefined || eventsBySession[next] === 'error')) void loadEvents(next);
       return next;
     });
   }, [eventsBySession, loadEvents]);
 
-  const items = data?.items ?? [];
+  const filtered = !!(fUser || fApp || fStatus || fQ.trim());
+  const clearFilters = (): void => { setFUser(''); setFApp(''); setFStatus(''); setFQ(''); };
+  const currentData = dataScope === queryScope ? data : null;
+  const items = currentData?.items ?? [];
   const sseLive = effectiveConnection === 'connected';
   const statusOptions = useMemo(() => ['', 'running', 'idle', 'stopped', 'failed'], []);
 
@@ -209,6 +219,7 @@ export function AgentRequestsPage(): JSX.Element {
       {/* 筛选条：按用户 / 按应用 / 状态 / 关键字 */}
       <div className="flex items-center gap-2 flex-wrap rounded-lg border border-border bg-card px-3 py-2" data-testid="request-filters">
         <select
+          aria-label="按应用筛选"
           value={fApp}
           onChange={(e) => setFApp(e.target.value)}
           className="h-8 rounded-md border border-border bg-background px-2 text-xs"
@@ -218,6 +229,7 @@ export function AgentRequestsPage(): JSX.Element {
           {(data?.apps ?? []).map((a) => <option key={a} value={a}>{a}</option>)}
         </select>
         <select
+          aria-label="按用户筛选"
           value={fUser}
           onChange={(e) => setFUser(e.target.value)}
           className="h-8 rounded-md border border-border bg-background px-2 text-xs"
@@ -227,6 +239,7 @@ export function AgentRequestsPage(): JSX.Element {
           {(data?.users ?? []).map((u) => <option key={u} value={u}>{u}</option>)}
         </select>
         <select
+          aria-label="按状态筛选"
           value={fStatus}
           onChange={(e) => setFStatus(e.target.value)}
           className="h-8 rounded-md border border-border bg-background px-2 text-xs"
@@ -238,6 +251,7 @@ export function AgentRequestsPage(): JSX.Element {
         <div className="relative flex-1 min-w-[11.25rem]">
           <Search size="0.8125rem" className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
+            aria-label="搜索 Agent 请求"
             value={fQ}
             onChange={(e) => setFQ(e.target.value)}
             placeholder="搜标题 / 模型 / 收发内容..."
@@ -253,20 +267,23 @@ export function AgentRequestsPage(): JSX.Element {
           <RefreshCw size="0.75rem" className={loading ? 'animate-spin' : ''} /> 刷新
         </button>
         <span className="text-[0.6875rem] text-muted-foreground tabular-nums">
-          live {data?.liveCount ?? 0} · 历史 {data?.historyCount ?? 0}
+          实时 {currentData?.liveCount ?? '—'} · 历史 {currentData?.historyCount ?? '—'}
         </span>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-bad/30 bg-bad-soft px-3 py-2 text-sm text-bad">{error}</div>
+        <div role="alert" className="rounded-lg border border-bad/30 bg-bad-soft px-3 py-2 text-sm text-bad">
+          请求读取失败：{error}{currentData ? '；当前显示本次筛选上次成功读取的记录。' : '；尚未确认当前筛选是否有记录。'}
+          <button type="button" className="ml-3 underline" onClick={() => void load()}>重试读取</button>
+        </div>
       )}
 
       {/* 请求列表：一条 = 一次 agent 会话（title/label + 收发预览 + 状态/耗时） */}
       <div className="flex flex-col gap-2" data-testid="request-list">
         {loading && items.length === 0 ? <ContentLoading label="加载 Agent 请求" variant="table" /> : null}
-        {items.length === 0 && !loading && (
+        {items.length === 0 && !loading && !error && (
           <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
-            还没有 Agent 请求。MAP 侧发起生成（如 PPT 创作工作台）后，请求会实时出现在这里。
+            {filtered ? <><p>没有符合当前筛选的请求。</p><button type="button" className="mt-3 text-primary underline" onClick={clearFilters}>清除筛选</button></> : '还没有 Agent 请求。应用发起生成后，请求会实时出现在这里。'}
           </div>
         )}
         {items.map((item) => {
@@ -340,7 +357,8 @@ export function AgentRequestsPage(): JSX.Element {
                     {events === 'loading' && <ContentLoading label="加载事件流" variant="rows" />}
                     {events === 'error' && (
                       <div className="text-[0.6875rem] text-warn">
-                        事件流不可用（会话可能已随 CDS 重启清理，收发摘要见上）
+                        事件流读取失败；收发摘要仍可查看。
+                        <button type="button" className="ml-2 underline" onClick={() => void loadEvents(item.sessionId)}>重试事件流</button>
                       </div>
                     )}
                     {Array.isArray(events) && (
@@ -350,13 +368,12 @@ export function AgentRequestsPage(): JSX.Element {
                             <span className="shrink-0 w-8 text-right tabular-nums text-muted-foreground">#{ev.seq}</span>
                             <span className="shrink-0 w-20 font-mono text-muted-foreground">{ev.type}</span>
                             <span className="min-w-0 break-all text-foreground/80">
-                              {typeof ev.payload.text === 'string'
-                                ? (ev.payload.text as string).slice(0, 300)
-                                : typeof ev.payload.message === 'string'
-                                  ? (ev.payload.message as string).slice(0, 300)
-                                  : typeof ev.payload.finalText === 'string'
-                                    ? (ev.payload.finalText as string).slice(0, 300)
-                                    : JSON.stringify(ev.payload).slice(0, 300)}
+                              {(() => {
+                                const text = typeof ev.payload.text === 'string' ? ev.payload.text
+                                  : typeof ev.payload.message === 'string' ? ev.payload.message
+                                    : typeof ev.payload.finalText === 'string' ? ev.payload.finalText : JSON.stringify(ev.payload);
+                                return text.length > 300 ? <details><summary className="cursor-pointer">{text.slice(0, 300)}… <span className="text-primary">展开完整事件</span></summary><pre className="mt-2 whitespace-pre-wrap break-all font-inherit">{text}</pre></details> : text;
+                              })()}
                             </span>
                             <span className="ml-auto shrink-0 text-[0.625rem] text-muted-foreground tabular-nums">{fmtTime(ev.createdAt)}</span>
                           </div>

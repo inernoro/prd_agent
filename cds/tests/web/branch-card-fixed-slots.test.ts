@@ -235,7 +235,7 @@ describe('卡片等高：固定高度 + 网格拉齐', () => {
     const at = source.indexOf('data-branch-card-id={branch.id}');
     expect(at).toBeGreaterThan(-1);
     const root = source.slice(at, at + 400);
-    expect(root, '卡片根必须是固定高度，只给最低高度就会被内容撑成高低不齐').toMatch(/\bh-\[15\.25rem\]/);
+    expect(root, '卡片按内容自然排布，不得重新强制15.25rem空槽').not.toMatch(/\bh-\[15\.25rem\]/);
     expect(root).not.toMatch(/min-h-\[/);
   };
   const gridStretch = (source: string) => {
@@ -243,13 +243,13 @@ describe('卡片等高：固定高度 + 网格拉齐', () => {
     expect(block).toMatch(/align-items:\s*stretch;/);
   };
 
-  it('卡片根固定高度、网格 stretch', () => {
+  it('卡片按内容排布、网格按行 stretch', () => {
     cardFixed(page);
     gridStretch(css);
   });
 
-  it('红用例：卡片根退回最低高度，守卫变红', () => {
-    expectGuardRedOnMutation(cardFixed, page, mutate(page, 'flex h-[15.25rem] cursor-pointer', 'flex min-h-[15.25rem] cursor-pointer'));
+  it('红用例：卡片退回固定空槽高度，守卫变红', () => {
+    expectGuardRedOnMutation(cardFixed, page, mutate(page, 'flex cursor-pointer flex-col', 'flex h-[15.25rem] cursor-pointer flex-col'));
   });
 
   it('红用例：网格退回 align-items: start，守卫变红', () => {
@@ -489,7 +489,7 @@ describe('构建页脚：阶段条接线', () => {
   };
 
   it('卡片动画时长钉死，不被 duration-150 截短', () => {
-    expect(page).toMatch(/flex h-\[15\.25rem\] cursor-pointer flex-col[\s\S]{0,1200}duration-150/);
+    expect(page).toMatch(/flex cursor-pointer flex-col[\s\S]{0,1200}duration-150/);
     durationsPinned(css);
   });
 

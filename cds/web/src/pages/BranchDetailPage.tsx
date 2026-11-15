@@ -1,3 +1,5 @@
+import { createLatestWinsGate } from '@/lib/latest-wins';
+import { partialRead } from '@/lib/partialRead';
 import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
@@ -68,6 +70,8 @@ interface BranchSummary {
   lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
   errorMessage?: string;
   commitSha?: string;
+  runningCommitSha?: string;
+  targetCommitSha?: string;
   subject?: string;
   previewSlug?: string;
   deployCount?: number;
@@ -257,7 +261,8 @@ type LoadState =
       bridgeActive: boolean;
       bridgeConnection?: BridgeConnection;
       bridgeState?: unknown;
-      previewMode: 'simple' | 'port' | 'multi';
+      previewMode: 'simple' | 'port' | 'multi' | undefined;
+      readFailures: Record<string, string>;
       config: CdsConfigResponse;
     };
 
@@ -558,12 +563,19 @@ function formatRuntimeVerifyResult(result: RuntimeVerifyResponse): string[] {
 }
 
 export function BranchDetailPage(): JSX.Element {
-  const canManageConsole = useCanManageConsole();
   const { branchId: branchIdParam } = useParams();
   const branchId = branchIdParam || queryValue('branch') || queryValue('id');
   const projectId = queryValue('project');
+  return <BranchWorkspace key={`${projectId}:${branchId}`} branchId={branchId} projectId={projectId} />;
+}
+
+function BranchWorkspace({ branchId, projectId }: { branchId: string; projectId: string }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
-  const canOpenPreview = canUseConsolePreview(state.status === 'ok' ? state.previewMode : undefined, canManageConsole);
+  const loadGate = useRef(createLatestWinsGate());
+  const containerLogGate = useRef(createLatestWinsGate());
+  const canOpenPreview = state.status === 'ok' && !!state.previewMode && canUseConsolePreview(state.previewMode, canManageConsole);
+  const previewUnavailableNotice = state.status === 'ok' && !state.previewMode ? '预览模式尚未确认，请重试读取后再打开预览。' : MEMBER_PREVIEW_MODE_NOTICE;
   const [action, setAction] = useState<ActionState | null>(null);
   const [toast, setToast] = useState('');
   const [detailTab, setDetailTab] = useState<'logs' | 'config' | 'history' | 'bridge'>('logs');
@@ -587,6 +599,7 @@ export function BranchDetailPage(): JSX.Element {
   }, [updateAction]);
 
   const load = useCallback(async (showLoading = false, forceLive = false) => {
+    const ticket = loadGate.current.begin();
     if (showLoading) setState({ status: 'loading' });
     try {
       if (!branchId) {
@@ -598,7 +611,7 @@ export function BranchDetailPage(): JSX.Element {
           apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
           apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`),
         ]);
-        setState({ status: 'select', project, branches: branchesRes.branches || [] });
+        if (loadGate.current.accept(ticket)) setState({ status: 'select', project, branches: branchesRes.branches || [] });
         return;
       }
 
@@ -608,44 +621,51 @@ export function BranchDetailPage(): JSX.Element {
       const branchesRes = await apiRequest<BranchesResponse>(branchesPath);
       const branch = (branchesRes.branches || []).find((item) => item.id === branchId);
       if (!branch) {
-        setState({ status: 'error', message: 'branch_not_found', projectId });
+        if (loadGate.current.accept(ticket)) setState({ status: 'error', message: 'branch_not_found', projectId });
         return;
       }
 
       const realProjectId = branch.projectId || projectId;
+      const readFailures: Record<string, string> = {};
+      const read = <T,>(source: string, request: Promise<T>) => partialRead(source, request, readFailures);
       const [project, operationLogs, commits, profiles, aliases, proxyLogs, previewMode, config] = await Promise.all([
         realProjectId
           ? apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(realProjectId)}`).catch(() => undefined)
           : Promise.resolve(undefined),
-        apiRequest<LogsResponse>(`/api/branches/${encodeURIComponent(branch.id)}/logs`).catch(() => ({ logs: [] })),
-        apiRequest<GitLogResponse>(`/api/branches/${encodeURIComponent(branch.id)}/git-log?count=15`).catch(() => ({ commits: [] })),
-        apiRequest<ProfileOverridesResponse>(`/api/branches/${encodeURIComponent(branch.id)}/profile-overrides`).catch(() => ({ profiles: [] })),
-        apiRequest<AliasResponse>(`/api/branches/${encodeURIComponent(branch.id)}/subdomain-aliases`).catch(() => ({ aliases: [] })),
-        canManageConsole ? apiRequest<ProxyLogResponse>('/api/proxy-log?order=desc').catch(() => ({ events: [] })) : Promise.resolve({ events: [] }),
+        read('部署日志', apiRequest<LogsResponse>(`/api/branches/${encodeURIComponent(branch.id)}/logs`)),
+        read('提交历史', apiRequest<GitLogResponse>(`/api/branches/${encodeURIComponent(branch.id)}/git-log?count=15`)),
+        read('分支配置', apiRequest<ProfileOverridesResponse>(`/api/branches/${encodeURIComponent(branch.id)}/profile-overrides`)),
+        read('预览入口', apiRequest<AliasResponse>(`/api/branches/${encodeURIComponent(branch.id)}/subdomain-aliases`)),
+        read('请求日志', canManageConsole ? apiRequest<ProxyLogResponse>('/api/proxy-log?order=desc') : Promise.resolve({ events: [] })),
         realProjectId
-          ? apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(realProjectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const }))
-          : Promise.resolve({ mode: 'multi' as const }),
-        apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
+          ? read('预览模式', apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(realProjectId)}/preview-mode`))
+          : Promise.resolve(undefined),
+        read('实例配置', apiRequest<CdsConfigResponse>('/api/config')),
       ]);
-      setState({
+      if (!loadGate.current.accept(ticket)) return;
+      setState(previous => {
+        const known = previous.status === 'ok' && previous.branch.id === branch.id ? previous : undefined;
+        const knownAliases = aliases ?? known?.aliases ?? { aliases: [] };
+        return {
         status: 'ok',
         project,
         branch,
-        operationLogs: operationLogs.logs || [],
-        commits: commits.commits || [],
-        profiles: profiles.profiles || [],
-        aliases,
-        proxyLogs: filterProxyLogsForBranch(proxyLogs.events || [], branch, aliases),
+        operationLogs: operationLogs?.logs ?? known?.operationLogs ?? [],
+        commits: commits?.commits ?? known?.commits ?? [],
+        profiles: profiles?.profiles ?? known?.profiles ?? [],
+        aliases: knownAliases,
+        proxyLogs: proxyLogs ? filterProxyLogsForBranch(proxyLogs.events || [], branch, knownAliases) : known?.proxyLogs ?? [],
         bridgeActive: false,
         bridgeConnection: undefined,
-        previewMode: previewMode.mode || 'multi',
-        config,
-      });
-      const firstService = Object.keys(branch.services || {})[0] || profiles.profiles?.[0]?.profileId || '';
+        previewMode: previewMode?.mode,
+        readFailures,
+        config: config ?? known?.config ?? {},
+      }; });
+      const firstService = Object.keys(branch.services || {})[0] || profiles?.profiles?.[0]?.profileId || '';
       setSelectedProfileId((current) => current || firstService);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
-      setState({ status: 'error', message, projectId });
+      if (loadGate.current.accept(ticket)) setState(previous => previous.status === 'ok' ? { ...previous, readFailures: { ...previous.readFailures, '分支状态': message } } : { status: 'error', message, projectId });
     }
   }, [branchId, projectId, canManageConsole]);
 
@@ -765,7 +785,7 @@ export function BranchDetailPage(): JSX.Element {
     const baseUrl = state.previewMode === 'simple'
       ? simplePreviewUrl(state.config)
       : (state.aliases.defaultUrl || multiPreviewUrl(state.branch, state.config));
-    return resolveWebEntryPresentation(state.previewMode, baseUrl, state.aliases);
+    return resolveWebEntryPresentation(state.previewMode!, baseUrl, state.aliases);
   }, [canOpenPreview, state]);
 
   const saveAliases = useCallback(async () => {
@@ -1023,18 +1043,23 @@ export function BranchDetailPage(): JSX.Element {
 
   const loadContainerLogs = useCallback(async (profileId: string) => {
     if (state.status !== 'ok') return;
+    const ticket = containerLogGate.current.begin();
     setContainerLogs({ status: 'loading', profileId });
     try {
       const res = await apiRequest<ContainerLogsResponse>(`/api/branches/${encodeURIComponent(state.branch.id)}/container-logs`, {
         method: 'POST',
         body: { profileId },
       });
-      setContainerLogs({ status: 'ok', profileId, logs: res.logs || '' });
+      if (containerLogGate.current.accept(ticket)) setContainerLogs({ status: 'ok', profileId, logs: res.logs || '' });
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
-      setContainerLogs({ status: 'error', profileId, message });
+      if (containerLogGate.current.accept(ticket)) setContainerLogs({ status: 'error', profileId, message });
     }
   }, [state]);
+
+  useEffect(() => {
+    if (detailTab === 'logs' && selectedService?.profileId && containerLogs.status === 'idle') void loadContainerLogs(selectedService.profileId);
+  }, [detailTab, selectedService?.profileId, containerLogs.status, loadContainerLogs]);
 
   const forceRebuild = useCallback(async (profileId: string) => {
     if (state.status !== 'ok') return;
@@ -1089,7 +1114,7 @@ export function BranchDetailPage(): JSX.Element {
   const openPreview = useCallback(async () => {
     if (state.status !== 'ok') return;
     if (!canOpenPreview) {
-      setToast(MEMBER_PREVIEW_MODE_NOTICE);
+      setToast(previewUnavailableNotice);
       return;
     }
     if (state.branch.status !== 'running') {
@@ -1109,14 +1134,14 @@ export function BranchDetailPage(): JSX.Element {
       } else {
         url = multiPreviewUrl(state.branch, state.config);
       }
-      url = resolveWebEntryUrl(state.previewMode, url, primaryEntry);
+      url = resolveWebEntryUrl(state.previewMode!, url, primaryEntry);
       if (!url) throw new Error('缺少预览域名配置');
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setToast(message);
     }
-  }, [canOpenPreview, deploy, load, state]);
+  }, [canOpenPreview, deploy, load, state, previewUnavailableNotice]);
 
   if (!branchId && !projectId) return <Navigate to="/project-list" replace />;
 
@@ -1279,27 +1304,20 @@ export function BranchDetailPage(): JSX.Element {
         {state.status === 'ok' ? (
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22.5rem]">
             <section className="min-w-0 space-y-5">
-              {!canOpenPreview ? <p role="status" className="text-sm text-muted-foreground">{MEMBER_PREVIEW_MODE_NOTICE}</p> : null}
+              {!canOpenPreview ? <p role="status" className="text-sm text-muted-foreground">{!state.previewMode ? '预览模式尚未确认，请重试读取后再打开预览。' : MEMBER_PREVIEW_MODE_NOTICE}</p> : null}
+              {Object.keys(state.readFailures).length > 0 ? <div role="alert" className="rounded-md border border-warn/35 bg-warn-soft p-3 text-sm">{Object.keys(state.readFailures).join('、')}读取失败，当前结果不完整；未读取到的内容不能视为不存在。<Button className="ml-2" size="sm" variant="outline" onClick={() => void load()}>重试读取</Button><details className="mt-2"><summary className="cursor-pointer">查看读取错误</summary><ul className="mt-2 space-y-1">{Object.entries(state.readFailures).map(([source, message]) => <li key={source}>{source}：{message}</li>)}</ul></details></div> : null}
               <Card className="rounded-md">
                 <CardHeader className="p-5">
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0">
-                      <CardTitle className="truncate text-lg">{state.branch.branch}</CardTitle>
+                      <CardTitle className="break-all text-lg">{state.branch.branch}</CardTitle>
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                         <CodePill>{state.branch.id}</CodePill>
                         <span className={`rounded border px-2 py-0.5 ${statusClass(state.branch.status)}`}>
                           {statusLabel(state.branch.status)}
                         </span>
-                        {state.branch.commitSha ? (
-                          // 用户反馈 2026-05-08:原 CodePill text-xs 不够醒目 → 加大字号 + 提对比 + 加边框,
-                          // 仅截短到 8 位(40 位太长喧宾夺主)。font-mono 保留:hex 串靠 mono 防 0/O 混淆。
-                          <code
-                            className="rounded-md border border-primary/30 bg-primary/15 px-2.5 py-1 font-mono text-sm font-semibold tracking-wider text-foreground"
-                            title={state.branch.commitSha}
-                          >
-                            {state.branch.commitSha.slice(0, 8)}
-                          </code>
-                        ) : null}
+                        <span className="text-sm text-muted-foreground">运行 <code className="font-mono text-foreground" title={state.branch.runningCommitSha}>{state.branch.runningCommitSha?.slice(0, 8) || '版本未确认'}</code></span>
+                        {state.branch.targetCommitSha && state.branch.targetCommitSha !== state.branch.runningCommitSha ? <span className="text-sm text-muted-foreground">待部署 <code className="font-mono" title={state.branch.targetCommitSha}>{state.branch.targetCommitSha.slice(0, 8)}</code></span> : null}
                         {state.branch.pinnedCommit ? <CodePill>pinned {state.branch.pinnedCommit}</CodePill> : null}
                       </div>
                     </div>
@@ -1336,7 +1354,7 @@ export function BranchDetailPage(): JSX.Element {
                           ))}
                         </DropdownMenu>
                       ) : (
-                        <Button onClick={openPreview} disabled={state.branch.status !== 'running' || !canOpenPreview} title={!canOpenPreview ? MEMBER_PREVIEW_MODE_NOTICE : undefined}>
+                        <Button onClick={openPreview} disabled={state.branch.status !== 'running' || !canOpenPreview} title={!canOpenPreview ? previewUnavailableNotice : undefined}>
                           <ExternalLink />
                           打开预览
                         </Button>
@@ -1356,12 +1374,12 @@ export function BranchDetailPage(): JSX.Element {
                 </CardHeader>
                 <CardContent className="space-y-4 p-5 pt-0">
                   <p className="text-sm leading-6 text-muted-foreground">{state.branch.subject || '暂无提交摘要'}</p>
-                  <div className="grid gap-3 md:grid-cols-4">
-                    <MetricTile label="服务数" value={services.length} />
-                    <MetricTile label="部署次数" value={state.branch.deployCount || 0} />
-                    <MetricTile label="最近推送" value={formatDate(state.branch.lastPushAt)} />
-                    <MetricTile label="最近部署" value={formatDate(state.branch.lastDeployAt)} />
-                  </div>
+                  <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+                    <div className="flex gap-2"><dt className="text-muted-foreground">服务</dt><dd>{services.length}</dd></div>
+                    <div className="flex gap-2"><dt className="text-muted-foreground">部署次数</dt><dd>{state.branch.deployCount || 0}</dd></div>
+                    <div className="flex gap-2"><dt className="text-muted-foreground">最近推送</dt><dd>{formatDate(state.branch.lastPushAt)}</dd></div>
+                    <div className="flex gap-2"><dt className="text-muted-foreground">最近部署</dt><dd>{formatDate(state.branch.lastDeployAt)}</dd></div>
+                  </dl>
                   {/*
                     2026-05-14 Cursor Bugbot Medium：lastStoppedAt 为历史戳，
                     stop 后又被 deploy/auto-build/调度器唤醒重新 running 时
@@ -1395,13 +1413,13 @@ export function BranchDetailPage(): JSX.Element {
                       <div className="opacity-95">{state.branch.lastStopReason || '原因未记录'}</div>
                     </div>
                   ) : null}
-                  <div className="rounded-md border border-border bg-muted/30 p-3">
-                    <div className="mb-2 text-xs font-medium text-muted-foreground">提交一致性</div>
-                    <div className="grid gap-2 text-xs md:grid-cols-2">
+                  <details className="rounded-md border border-border bg-muted/30 p-3">
+                    <summary className="cursor-pointer text-sm font-medium text-muted-foreground">部署版本与拉取记录</summary>
+                    <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
                       <div className="min-w-0">
                         <div className="text-muted-foreground">当前运行</div>
-                        <code className="mt-1 block truncate font-mono text-foreground" title={state.branch.commitSha || ''}>
-                          {state.branch.commitSha || '未知'}
+                        <code className="mt-1 block truncate font-mono text-foreground" title={state.branch.runningCommitSha || ''}>
+                          {state.branch.runningCommitSha || '未知'}
                         </code>
                       </div>
                       <div className="min-w-0">
@@ -1423,12 +1441,12 @@ export function BranchDetailPage(): JSX.Element {
                         </code>
                       </div>
                     </div>
-                    {state.branch.githubCommitSha && state.branch.commitSha && !sameCommit(state.branch.githubCommitSha, state.branch.commitSha) ? (
+                    {state.branch.githubCommitSha && state.branch.runningCommitSha && !sameCommit(state.branch.githubCommitSha, state.branch.runningCommitSha) ? (
                       <div className="mt-3 rounded border border-warn/30 bg-warn-soft px-2 py-1 text-xs text-warn">
                         当前运行提交与 GitHub 目标提交不一致，请重新部署并观察构建日志中的拉取前后版本。
                       </div>
                     ) : null}
-                  </div>
+                  </details>
                   {state.branch.errorMessage ? (
                     <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                       {state.branch.errorMessage}
@@ -1580,7 +1598,7 @@ export function BranchDetailPage(): JSX.Element {
                     <LogPanel title={action.label} lines={action.log} status={action.status} />
                   ) : state.operationLogs.length === 0 ? (
                     <div className="rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
-                      还没有构建记录。
+                      {state.readFailures['部署日志'] ? '部署日志尚未确认，请重试读取。' : '还没有构建记录。'}
                     </div>
                   ) : (
                     state.operationLogs.slice().reverse().slice(0, 5).map((log) => (
@@ -1611,7 +1629,7 @@ export function BranchDetailPage(): JSX.Element {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3 p-5 pt-0 text-sm">
-                  <Field label={primaryEntry?.name || '主应用入口'} value={primaryEntryUrl || '未配置'} />
+                  <Field label={primaryEntry?.name || '主应用入口'} value={primaryEntryUrl || (state.readFailures['预览入口'] || !state.previewMode ? '尚未确认' : '未配置')} />
                   {state.aliases.aliases.length > 0 ? (
                     <div className="space-y-2">
                       <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">别名</div>
@@ -1684,6 +1702,7 @@ export function BranchDetailPage(): JSX.Element {
               <DisclosurePanel
                 icon={<TerminalSquare className="h-4 w-4" />}
                 title="容器日志"
+                defaultOpen
                 subtitle={selectedService?.profileId || '选择服务后查看'}
                 contentClassName="p-5"
               >
@@ -1740,7 +1759,7 @@ export function BranchDetailPage(): JSX.Element {
                   </div>
                   {state.proxyLogs.length === 0 ? (
                     <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-                      暂无该分支的 worker 转发记录。打开预览或访问接口后这里会自动出现。
+                      {state.readFailures['请求日志'] ? '转发记录尚未确认，请重试读取。' : '暂无该分支的 worker 转发记录。打开预览或访问接口后这里会自动出现。'}
                     </div>
                   ) : null}
                   {state.proxyLogs.length > 0 && filteredProxyLogs.length === 0 ? (
@@ -1772,6 +1791,7 @@ export function BranchDetailPage(): JSX.Element {
               <DisclosurePanel
                 icon={<Settings className="h-4 w-4" />}
                 title="有效配置"
+                defaultOpen
                 subtitle="命令 / 镜像 / 端口"
                 contentClassName="space-y-3 p-5 text-sm"
               >
@@ -1820,7 +1840,7 @@ export function BranchDetailPage(): JSX.Element {
                       </div>
                     </>
                   ) : (
-                    <div className="text-muted-foreground">暂无 profile 信息。</div>
+                    <div className="text-muted-foreground">{state.readFailures['分支配置'] ? '分支配置尚未确认，请重试读取。' : '暂无 profile 信息。'}</div>
                   )}
               </DisclosurePanel>
 
@@ -1830,6 +1850,7 @@ export function BranchDetailPage(): JSX.Element {
               <DisclosurePanel
                 icon={<ShieldCheck className="h-4 w-4" />}
                 title="Bridge 操作"
+                defaultOpen
                 subtitle="paused"
                 contentClassName="space-y-3 p-5 text-sm"
               >
@@ -1868,7 +1889,8 @@ export function BranchDetailPage(): JSX.Element {
               <DisclosurePanel
                 icon={<GitCommitHorizontal className="h-4 w-4" />}
                 title="最近提交"
-                subtitle={`${state.commits.length} 条`}
+                defaultOpen
+                subtitle={state.readFailures['提交历史'] ? '读取未完成' : `${state.commits.length} 条`}
                 contentClassName="space-y-3 p-5"
               >
                   <input
@@ -1883,7 +1905,7 @@ export function BranchDetailPage(): JSX.Element {
                     </div>
                   ) : null}
                   {state.commits.length === 0 ? (
-                    <div className="text-sm text-muted-foreground">暂无 git log。</div>
+                    <div className="text-sm text-muted-foreground">{state.readFailures['提交历史'] ? '提交历史尚未确认，请重试读取。' : '暂无 git log。'}</div>
                   ) : null}
                   {state.commits.length > 0 && filteredCommits.length === 0 ? (
                     <div className="rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
@@ -1894,9 +1916,7 @@ export function BranchDetailPage(): JSX.Element {
                     const latestHash = state.commits[0]?.hash;
                     const isActuallyLatest = sameCommit(commit.hash, latestHash);
                     const isPinned = sameCommit(commit.hash, state.branch.pinnedCommit);
-                    const isCurrent = state.branch.pinnedCommit
-                      ? isPinned
-                      : sameCommit(commit.hash, state.branch.commitSha) || isActuallyLatest;
+                    const isCurrent = sameCommit(commit.hash, state.branch.runningCommitSha);
                     return (
                       <div key={commit.hash} className={`rounded-md border p-3 text-sm ${isCurrent ? 'border-primary/50 bg-primary/5' : 'border-border'}`}>
                         <div className="flex items-start justify-between gap-3">
@@ -1918,9 +1938,9 @@ export function BranchDetailPage(): JSX.Element {
                               恢复最新
                             </Button>
                           ) : (
-                            <Button size="sm" variant="outline" disabled={isCurrent} onClick={() => void checkoutCommit(commit)}>
+                            <Button size="sm" variant="outline" disabled={isPinned} onClick={() => void checkoutCommit(commit)}>
                               <GitCommitHorizontal />
-                              {isCurrent ? '当前' : '固定'}
+                              {isPinned ? '已固定' : '固定'}
                             </Button>
                           )}
                         </div>
