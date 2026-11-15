@@ -88,7 +88,7 @@ function useRuntimePolicy<S extends { config?: object | null }, D extends object
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const currentScope = useRef(scope); currentScope.current = scope;
-  const [state, setState] = useSettingsSessionState<PolicyState<S, D>>(`policy:${readPath}`, { status: 'loading' }, value => value.status === 'ok' && value.unknown);
+  const [state, setState] = useSettingsSessionState<PolicyState<S, D>>(`policy:${readPath}`, { status: 'loading' }, value => value.status === 'ok' && value.unknown, { keepSession: true });
   const [busy, setBusy] = useSettingsSessionState<boolean>(`policy:${readPath}:busy`, false, Boolean);
   const beginRead = useSettingsReadRequest();
   const load = useCallback(async (preserve = false) => {

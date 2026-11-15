@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
 import { consoleAccountIdentity } from '@/lib/consoleIdentity';
 
@@ -17,7 +17,7 @@ if (typeof window !== 'undefined') window.addEventListener('beforeunload', event
 export function useSettingsSessionOwner(): object | null {
   const { status } = useContext(ConsoleAuthContext);
   const owner = consoleAccountIdentity(status) ? status?.user || status : null;
-  useEffect(() => { activeOwner = owner; }, [owner]);
+  useLayoutEffect(() => { activeOwner = owner; }, [owner]);
   return owner;
 }
 function read<T>(owner: object | null, key: string, initial: T): T {
@@ -54,6 +54,8 @@ export function countProtectedSettingsEntries(owner: object | null, prefix: stri
 /** A settings draft/receipt, isolated before render and retained through normal tab/route unmounts. */
 export function useSettingsSessionState<T>(key: string, initial: T, protectReload?: (value: T) => boolean, options?: { keepSession?: boolean; expireTo?: (value: T) => T }): [T, Dispatch<SetStateAction<T>>] {
   const owner = useSettingsSessionOwner();
+  const mounted = useRef(true);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const initialValue = useRef(initial);
   const protection = useRef(protectReload); protection.current = protectReload;
   const retention = useRef(options); retention.current = options;
@@ -63,18 +65,22 @@ export function useSettingsSessionState<T>(key: string, initial: T, protectReloa
   useEffect(() => {
     if (scoped.owner !== owner || scoped.key !== key) setScoped({ owner, key, value: read(owner, key, initialValue.current) });
   }, [owner, key, scoped.owner, scoped.key]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!owner) return;
     let channels = listeners.get(owner);
     if (!channels) { channels = new Map(); listeners.set(owner, channels); }
     let channel = channels.get(key);
     if (!channel) { channel = new Set(); channels.set(key, channel); }
-    const listener = (value: unknown) => setScoped({ owner, key, value: value as T });
+    const listener = (value: unknown) => {
+      if (latest.current.owner !== owner || latest.current.key !== key) return;
+      const next = { owner, key, value: value as T };
+      latest.current = next; setScoped(next);
+    };
     channel.add(listener);
     return () => { channel.delete(listener); if (channel.size === 0) channels.delete(key); };
   }, [owner, key]);
   const setValue: Dispatch<SetStateAction<T>> = useCallback(update => {
-    const current = latest.current.owner === owner && latest.current.key === key ? latest.current.value : read(owner, key, initialValue.current);
+    const current = mounted.current && latest.current.owner === owner && latest.current.key === key ? latest.current.value : read(owner, key, initialValue.current);
     const next = typeof update === 'function' ? (update as (value: T) => T)(current) : update;
     const value = { owner, key, value: next };
     latest.current = value; write(owner, key, next, protection.current?.(next) ?? false, retention.current); setScoped(value);
