@@ -34,6 +34,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly IGatewayInvocationAuthority? _invocationAuthority;
     private readonly string _internalTenantId;
     private readonly string? _openRouterReferer;
+    private readonly int _firstByteTimeoutSeconds;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private static readonly HashSet<string> StrictParameterCapabilityKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -85,6 +86,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
         _openRouterReferer = OpenRouterAttribution.ResolveReferer(configuration);
+        _firstByteTimeoutSeconds = int.TryParse(configuration?["LlmGateway:FirstByteTimeoutSeconds"], out var firstByteSeconds)
+            ? Math.Clamp(firstByteSeconds, 1, 30) : 30;
         _doubaoStreamAsr = doubaoStreamAsr
             ?? new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance, safeWebSocketConnector);
 
@@ -193,6 +196,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             candidates.AddRange(resolution.RetryCandidates.Where(c =>
                 c.Success
                 && !string.IsNullOrWhiteSpace(c.ActualModel)
+                && (string.IsNullOrWhiteSpace(resolution.LogicalModelId)
+                    || string.Equals(c.LogicalModelId, resolution.LogicalModelId, StringComparison.Ordinal))
                 && (!string.Equals(c.ActualPlatformId, resolution.ActualPlatformId, StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase))));
         }
@@ -219,6 +224,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             candidates.AddRange(resolution.RetryCandidates.Where(c =>
                 c.Success
                 && !string.IsNullOrWhiteSpace(c.ActualModel)
+                && (string.IsNullOrWhiteSpace(resolution.LogicalModelId)
+                    || string.Equals(c.LogicalModelId, resolution.LogicalModelId, StringComparison.Ordinal))
                 && (!string.Equals(c.ActualPlatformId, resolution.ActualPlatformId, StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase))));
         }
@@ -321,11 +328,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     private static bool ShouldRetryProviderStatus(int statusCode)
-        // 401-404 均是当前 Offering 的凭据、授权、模型或端点不可用，切换到同一逻辑模型的
-        // 下一 Offering 是安全的；400 保持终止，避免对所有上游重复发送同一份非法请求。
-        => statusCode is >= 401 and <= 404
-           || statusCode is 408 or 409 or 425 or 429
-           || statusCode is >= 500 and <= 599;
+        // 只对明确未执行的拒绝恢复；超时、冲突和 5xx 缺少执行证明时不重放付费请求。
+        => statusCode is >= 401 and <= 404 or 425 or 429;
 
     /// <summary>
     /// 图片请求已经通过 canonical IR 证明包含有效描述时，部分上游仍会把协议或能力不匹配
@@ -495,8 +499,12 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return GatewayResponse.Fail(InvalidAppCallerErrorCode, error, 400);
         }
 
+        var callerCancellation = ct;
+        using var deadline = CreateRequestDeadline(ct, request.TimeoutSeconds);
+        ct = deadline.Token;
         var startedAt = DateTime.UtcNow;
         string? logId = null;
+        List<LlmProviderAttempt>? providerAttempts = null;
         ModelResolutionResult? resolution = null;
 
         var reachedProvider = false;
@@ -513,7 +521,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
             {
                 // 向请求失败的用户发送故障通知
-                _ = TryNotifyUserFailureAsync(request, resolution);
+                await TryNotifyUserFailureAsync(request, resolution);
 
                 return GatewayResponse.Fail(resolution.FailureCode ?? "MODEL_NOT_FOUND",
                     resolution.ErrorMessage ?? "未找到可用模型", GatewayRouteFailure.HttpStatusCode(resolution.FailureCode));
@@ -524,7 +532,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             // 3. 发送请求。候选模型已在 Resolve 阶段一次性算好；发送阶段只消费结果，不再二次 resolve。
             var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
-            var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
+            providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
             var retryResolutions = admit is null ? GetProviderRetryResolutions(resolution, request) : new List<ModelResolutionResult> { resolution };
             using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId));
             var httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
@@ -540,7 +548,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
             {
+                ct.ThrowIfCancellationRequested();
                 activeResolution = retryResolutions[attemptIndex];
+                resolution = activeResolution;
                 httpClient = outboundClients.Get(activeResolution, request.TimeoutSeconds);
                 activeAdapter = GetAdapterForResolution(activeResolution);
                 if (activeAdapter == null)
@@ -573,6 +583,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
 
                 var requestBody = CloneEffectiveRequestBody(request);
+                var suppliedParameterNames = CaptureSuppliedParameterNames(request.Context, requestBody);
                 requestBody["model"] = activeResolution.ActualModel;
                 requestBody["stream"] = false;
                 ApplyOpenAiChatCompletionsCompatibility(requestBody, activeResolution, request.Context);
@@ -584,7 +595,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         request.AppCallerCode, activeResolution.ActualModel, cappedMaxTokens.Value);
                 }
 
-                if (TryBuildCapabilityFailure(request, activeResolution, requestBody, out var capabilityError))
+                if (TryBuildCapabilityFailure(request, activeResolution, requestBody, out var capabilityError, suppliedParameterNames))
                 {
                     var capabilityMessage = capabilityError!.ErrorMessage ?? "模型能力不匹配";
                     if (attemptIndex == 0 && retryResolutions.Count == 1)
@@ -667,17 +678,17 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     var sendAttemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
                     var (sendMessage, sendStatusCode) = ClassifyTransportException(
                         sendException,
-                        ct.IsCancellationRequested);
-                    CompleteLastSendAttempt(providerAttempts, sendStatusCode, sendAttemptDurationMs, sendMessage);
+                        callerCancellation.IsCancellationRequested);
+                    RecordTransportFailure(providerAttempts, sendException, sendStatusCode, sendAttemptDurationMs, sendMessage);
                     _logger.LogWarning(sendException,
                         "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
                         sendStatusCode,
                         activeResolution.ActualModel);
-                    if (HasTrackedHealthRoute(activeResolution))
-                        await _modelResolver.RecordFailureAsync(activeResolution, ct);
+                    if (!callerCancellation.IsCancellationRequested && HasTrackedHealthRoute(activeResolution))
+                        await RecordRecoveryFailureAsync(activeResolution, ct);
 
-                    if (attemptIndex < retryResolutions.Count - 1
-                        && ShouldRetryProviderStatus(sendStatusCode))
+                    if (!ct.IsCancellationRequested && attemptIndex < retryResolutions.Count - 1
+                        && IsConfirmedNotSent(sendException))
                     {
                         AddPendingProviderAttempt(
                             providerAttempts,
@@ -718,8 +729,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     }
                 }
 
+                ExcludeRateLimitedProvider(retryResolutions, attemptIndex, (int)response.StatusCode);
                 var shouldRetry = !response.IsSuccessStatusCode
                                   && attemptIndex < retryResolutions.Count - 1
+                                  && !ct.IsCancellationRequested
+                                  && !IsContentPolicyDenial((int)response.StatusCode, responseBody)
                                   && ShouldRetryProviderStatus((int)response.StatusCode);
                 if (!shouldRetry)
                     break;
@@ -765,17 +779,20 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         (int)response.StatusCode,
                         activeResolution.ToGatewayResolution());
                 }
-                return GatewayResponse.Fail("LLM_ERROR", errorMsg, (int)response.StatusCode);
+                return GatewayResponse.Fail(IsAmbiguousProviderStatus((int)response.StatusCode)
+                    ? OutcomeUnknownErrorCode : "LLM_ERROR", errorMsg, (int)response.StatusCode,
+                    activeResolution.ToGatewayResolution());
             }
 
             // 从原始响应中提取消息文本内容
+            // 纯工具响应允许没有正文；协议封套保留在 RawResponseBody，不伪造为助手文本。
             var messageContent = activeAdapter!.ParseMessageContent(responseBody);
 
             return new GatewayResponse
             {
                 Success = true,
                 StatusCode = (int)response.StatusCode,
-                Content = messageContent ?? responseBody,
+                Content = messageContent ?? (toolCalls is { Count: > 0 } ? null : responseBody),
                 RawResponseBody = responseBody,
                 ToolCalls = toolCalls,
                 Extensions = extensions,
@@ -787,15 +804,17 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
         catch (Exception ex)
         {
-            var (msg, code) = ClassifyTransportException(ex, ct.IsCancellationRequested);
+            var (msg, code) = ClassifyTransportException(ex, callerCancellation.IsCancellationRequested);
             _logger.LogError(ex, "[LlmGateway] 请求失败 status={Code}", code);
-            if (logId != null)
-            {
-                _logWriter?.MarkError(logId, msg, code);
-            }
+            if (providerAttempts?.LastOrDefault(a => a.Stage == "send") is { EndedAt: null })
+                RecordTransportFailure(providerAttempts, ex, code, (long)(DateTime.UtcNow - startedAt).TotalMilliseconds, msg);
+            await FinishFailedRecoveryLogAsync(logId, resolution, providerAttempts, code, msg, startedAt);
             if (ex is TaskExecutionAdmissionException rejected && !reachedProvider)
                 return new GatewaySendRejectedBeforeSend { Success = false, ErrorCode = rejected.Code, ErrorMessage = msg, StatusCode = code };
-            return GatewayResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code : "GATEWAY_ERROR", msg, code);
+            var unknown = providerAttempts?.LastOrDefault(a => a.Stage == "send")?.ReachedProvider == true;
+            return GatewayResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code
+                : unknown ? OutcomeUnknownErrorCode : "GATEWAY_ERROR", unknown ? OutcomeUnknownMessage : msg, code,
+                resolution?.ToGatewayResolution());
         }
     }
 
@@ -829,6 +848,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             yield break;
         }
 
+        var callerCancellation = ct;
+        using var deadline = CreateRequestDeadline(ct, request.TimeoutSeconds);
+        ct = deadline.Token;
+        using var firstByteDeadline = CreateRequestDeadline(ct, Math.Min(_firstByteTimeoutSeconds,
+            request.TimeoutSeconds > 0 ? request.TimeoutSeconds : 120));
         var startedAt = DateTime.UtcNow;
         string? logId = null;
         DateTime? firstByteAt = null;
@@ -853,7 +877,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
             {
                 // 向请求失败的用户发送故障通知
-                _ = TryNotifyUserFailureAsync(request, resolution);
+                await TryNotifyUserFailureAsync(request, resolution);
 
                 yield return GatewayStreamChunk.Fail(
                     resolution.ErrorMessage ?? "未找到可用模型",
@@ -879,6 +903,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
             {
+                if (ct.IsCancellationRequested || firstByteDeadline.IsCancellationRequested) break;
                 resolution = retryResolutions[attemptIndex];
                 httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
                 gatewayResolution = resolution.ToGatewayResolution();
@@ -901,6 +926,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
 
                 var requestBody = CloneEffectiveRequestBody(request);
+                var suppliedParameterNames = CaptureSuppliedParameterNames(request.Context, requestBody);
                 requestBody["model"] = resolution.ActualModel;
                 requestBody["stream"] = true;
                 ApplyOpenAiChatCompletionsCompatibility(requestBody, resolution, request.Context);
@@ -912,7 +938,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         request.AppCallerCode, resolution.ActualModel, cappedMaxTokens.Value);
                 }
 
-                if (TryBuildCapabilityFailure(request, resolution, requestBody, out var capabilityError))
+                if (TryBuildCapabilityFailure(request, resolution, requestBody, out var capabilityError, suppliedParameterNames))
                 {
                     terminalError = capabilityError!.ErrorMessage ?? "模型能力不匹配";
                     terminalErrorCode = capabilityError.ErrorCode;
@@ -1007,7 +1033,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
                     MarkLastSendAttemptReachedProvider(providerAttempts);
-                    rawResponse = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+                    rawResponse = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, firstByteDeadline.Token);
                 }
                 catch (Exception ex)
                 {
@@ -1017,7 +1043,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var attemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
                 if (sendException != null)
                 {
-                    var (sendMsg, sendCode) = ClassifyTransportException(sendException, ct.IsCancellationRequested);
+                    var (sendMsg, sendCode) = ClassifyTransportException(sendException, callerCancellation.IsCancellationRequested);
                     terminalError = sendMsg;
                     terminalErrorCode = (sendException as TaskExecutionAdmissionException)?.Code ?? (sendCode switch
                     {
@@ -1032,10 +1058,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     _logger.LogWarning(sendException,
                         "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
                         sendCode, resolution.ActualModel);
-                    CompleteLastSendAttempt(providerAttempts, sendCode, attemptDurationMs, sendMsg);
-                    if (sendException is not TaskExecutionAdmissionException && HasTrackedHealthRoute(resolution))
-                        await _modelResolver.RecordFailureAsync(resolution, ct);
-                    if (attemptIndex < retryResolutions.Count - 1 && ShouldRetryProviderStatus(sendCode))
+                    RecordTransportFailure(providerAttempts, sendException, sendCode, attemptDurationMs, sendMsg);
+                    if (sendException is not TaskExecutionAdmissionException && !IsConfirmedNotSent(sendException))
+                        terminalErrorCode = OutcomeUnknownErrorCode;
+                    if (sendException is not TaskExecutionAdmissionException && !callerCancellation.IsCancellationRequested
+                        && HasTrackedHealthRoute(resolution))
+                        await RecordRecoveryFailureAsync(resolution, ct);
+                    if (!ct.IsCancellationRequested && !firstByteDeadline.IsCancellationRequested
+                        && attemptIndex < retryResolutions.Count - 1 && IsConfirmedNotSent(sendException))
                     {
                         if (providerLease is not null)
                         {
@@ -1055,16 +1085,30 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     break;
                 }
 
-                var errorBody = await rawResponse.Content.ReadAsStringAsync(ct);
+                string errorBody;
+                try { errorBody = await rawResponse.Content.ReadAsStringAsync(firstByteDeadline.Token); }
+                catch (Exception ex)
+                {
+                    var (message, status) = ClassifyTransportException(ex, callerCancellation.IsCancellationRequested);
+                    RecordTransportFailure(providerAttempts, ex, status, attemptDurationMs, message);
+                    terminalError = message;
+                    terminalErrorCode = OutcomeUnknownErrorCode;
+                    terminalStatusCode = status;
+                    break;
+                }
                 var errorMsg = TryExtractErrorMessage(errorBody) ?? $"HTTP {(int)rawResponse.StatusCode}";
                 terminalError = errorMsg;
-                terminalErrorCode = "LLM_ERROR";
+                terminalErrorCode = IsAmbiguousProviderStatus((int)rawResponse.StatusCode) ? OutcomeUnknownErrorCode : "LLM_ERROR";
                 terminalStatusCode = (int)rawResponse.StatusCode;
                 CompleteLastSendAttempt(providerAttempts, (int)rawResponse.StatusCode, attemptDurationMs, errorMsg);
                 if (HasTrackedHealthRoute(resolution))
                     await _modelResolver.RecordFailureAsync(resolution, ct);
 
-                if (attemptIndex < retryResolutions.Count - 1 && ShouldRetryProviderStatus((int)rawResponse.StatusCode))
+                ExcludeRateLimitedProvider(retryResolutions, attemptIndex, (int)rawResponse.StatusCode);
+                if (!ct.IsCancellationRequested && !firstByteDeadline.IsCancellationRequested
+                    && attemptIndex < retryResolutions.Count - 1
+                    && !IsContentPolicyDenial((int)rawResponse.StatusCode, errorBody)
+                    && ShouldRetryProviderStatus((int)rawResponse.StatusCode))
                 {
                     if (providerLease is not null)
                     {
@@ -1083,8 +1127,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             if (rawResponse == null || !rawResponse.IsSuccessStatusCode)
             {
-                if (logId != null)
-                    _logWriter?.MarkError(logId, terminalError ?? "流式请求失败", terminalStatusCode);
+                await FinishFailedRecoveryLogAsync(logId, resolution, providerAttempts,
+                    terminalStatusCode ?? 504, terminalError ?? "流式请求失败", startedAt);
                 if (terminalStatusCode.HasValue && IsQuotaExceeded(terminalStatusCode.Value, terminalError))
                 {
                     var (_, qMsg) = await HandleQuotaExceededAsync(
@@ -1123,7 +1167,20 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             yield return GatewayStreamChunk.Start(finalGatewayResolution);
 
             // 6. 读取流式响应
-            using var stream = await response.Content.ReadAsStreamAsync(ct);
+            Stream? responseStream = null;
+            Exception? streamOpenException = null;
+            try { responseStream = await response.Content.ReadAsStreamAsync(firstByteDeadline.Token); }
+            catch (Exception ex) { streamOpenException = ex; }
+            if (streamOpenException is not null)
+            {
+                var (message, status) = ClassifyTransportException(streamOpenException, callerCancellation.IsCancellationRequested);
+                RecordTransportFailure(providerAttempts, streamOpenException, status,
+                    (long)(DateTime.UtcNow - startedAt).TotalMilliseconds, message);
+                await FinishFailedRecoveryLogAsync(logId, finalResolution, providerAttempts, status, message, startedAt);
+                yield return GatewayStreamChunk.Fail(OutcomeUnknownMessage, OutcomeUnknownErrorCode, finalGatewayResolution);
+                yield break;
+            }
+            using var stream = responseStream!;
             using var reader = new StreamReader(stream);
             var sseReader = new SseEventReader(reader);
 
@@ -1139,13 +1196,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 6.1 手工迭代 SSE 读取器，把 MoveNextAsync 的传输层异常（上游中途断连、读超时等）
             //     转成日志 MarkError + Fail chunk；否则异常冒泡出 StreamAsync，日志保持 running，
             //     Watchdog 5 分钟后兜底成 "TIMEOUT"，真实原因丢失。
-            using var streamReadCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            using var streamReadCts = CancellationTokenSource.CreateLinkedTokenSource(firstByteDeadline.Token);
             await using var eventEnum = sseReader.ReadEventsAsync(streamReadCts.Token)
                 .GetAsyncEnumerator(streamReadCts.Token);
             bool streamAborted = false;
             string? streamAbortMsg = null;
             int? streamAbortCode = null;
             bool terminalUsageDrainStarted = false;
+            bool protocolCompleted = false;
 
             while (true)
             {
@@ -1180,7 +1238,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         break;
                     }
 
-                    var (readMsg, readCode) = ClassifyTransportException(readException, ct.IsCancellationRequested);
+                    var (readMsg, readCode) = ClassifyTransportException(readException, callerCancellation.IsCancellationRequested);
                     _logger.LogWarning(readException,
                         "[LlmGateway] 流式读取中断 status={Code} model={Model} firstByteAt={FirstByteAt}",
                         readCode, finalResolution.ActualModel, firstByteAt);
@@ -1191,16 +1249,6 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
 
                 if (!hasNext) break;
-
-                // 标记首字节
-                if (firstByteAt == null)
-                {
-                    firstByteAt = DateTime.UtcNow;
-                    if (logId != null)
-                    {
-                        _logWriter?.MarkFirstByte(logId, firstByteAt.Value);
-                    }
-                }
 
                 // 解析 SSE 数据
                 GatewayStreamChunk? chunk;
@@ -1220,13 +1268,32 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     continue;
                 }
 
+                if (chunk.Type == GatewayChunkType.Error)
+                {
+                    streamAborted = true;
+                    streamAbortMsg = chunk.Error ?? "上游流返回错误";
+                    streamAbortCode = 502;
+                    break;
+                }
+                if (chunk.Type == GatewayChunkType.Done) protocolCompleted = true;
+
+                // 空角色帧、注释和用量元数据不是首个可用输出，不能靠心跳延长首字期限。
+                if (firstByteAt is null && (!string.IsNullOrEmpty(chunk.Content)
+                    || chunk.ToolCallDelta is { Count: > 0 }
+                    || chunk.Type == GatewayChunkType.Done || !string.IsNullOrEmpty(chunk.FinishReason)))
+                {
+                    firstByteAt = DateTime.UtcNow;
+                    firstByteDeadline.CancelAfter(Timeout.InfiniteTimeSpan);
+                    if (logId is not null) _logWriter?.MarkFirstByte(logId, firstByteAt.Value);
+                }
+
                 // finish_reason 之后只接受标准 usage 末帧。正文、工具调用等终止后增量不再
                 // 进入业务流，避免为补账改变既有输出或背压语义。
                 if (terminalUsageDrainStarted)
                 {
                     if (chunk.TokenUsage != null)
                     {
-                        tokenUsage = chunk.TokenUsage;
+                        tokenUsage = MergeStreamUsage(tokenUsage, chunk.TokenUsage);
                         break;
                     }
                     continue;
@@ -1306,7 +1373,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 if (chunk.TokenUsage != null)
                 {
-                    tokenUsage = chunk.TokenUsage;
+                    tokenUsage = MergeStreamUsage(tokenUsage, chunk.TokenUsage);
                 }
 
                 // OpenAI 标准流会在 finish_reason 之后再发一条 choices=[] 的 usage 末帧；
@@ -1324,19 +1391,25 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
             }
 
+            // EOF/空响应不是成功证据。未收到协议终止帧时即使 0 token 也不能重放。
+            if (!streamAborted && string.IsNullOrEmpty(finishReason) && !protocolCompleted && !sseReader.Completed)
+            {
+                streamAborted = true;
+                streamAbortMsg = "上游流在完成信号前结束";
+                streamAbortCode = 502;
+            }
+
             // 6.2 流被迫中断时，把真实错误落进日志并推 Fail chunk 出去。
             //     这条路径必须在 Watchdog 扫到之前写，否则 error 会被覆盖成 "TIMEOUT"。
             if (streamAborted)
             {
-                if (logId != null)
-                {
-                    _logWriter?.MarkError(logId, streamAbortMsg!, streamAbortCode);
-                }
-                if (HasTrackedHealthRoute(finalResolution))
-                {
-                    await _modelResolver.RecordFailureAsync(finalResolution, ct);
-                }
-                yield return GatewayStreamChunk.Fail(streamAbortMsg!);
+                RecordTransportFailure(providerAttempts, new IOException(streamAbortMsg), streamAbortCode ?? 502,
+                    (long)(DateTime.UtcNow - startedAt).TotalMilliseconds, streamAbortMsg!);
+                await FinishFailedRecoveryLogAsync(logId, finalResolution, providerAttempts, streamAbortCode ?? 502,
+                    streamAbortMsg!, startedAt, textBuilder.ToString(), thinkingBuilder.ToString(), tokenUsage);
+                if (HasTrackedHealthRoute(finalResolution) && !callerCancellation.IsCancellationRequested)
+                    await RecordRecoveryFailureAsync(finalResolution, ct);
+                yield return GatewayStreamChunk.Fail(OutcomeUnknownMessage, OutcomeUnknownErrorCode, finalGatewayResolution);
                 yield break;
             }
 
@@ -1396,6 +1469,24 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (providerLease is not null)
                 await providerLease.DisposeAsync();
         }
+    }
+
+    private static GatewayTokenUsage MergeStreamUsage(GatewayTokenUsage? previous, GatewayTokenUsage next)
+    {
+        if (previous is null) return next;
+        // Counts are cumulative snapshots, not increments. A final Claude event
+        // omits input/cache counts supplied by message_start; retain those values.
+        return new GatewayTokenUsage
+        {
+            InputTokens = next.InputTokens ?? previous.InputTokens,
+            OutputTokens = next.OutputTokens ?? previous.OutputTokens,
+            ReasoningTokens = next.ReasoningTokens ?? previous.ReasoningTokens,
+            CacheCreationInputTokens = next.CacheCreationInputTokens ?? previous.CacheCreationInputTokens,
+            CacheReadInputTokens = next.CacheReadInputTokens ?? previous.CacheReadInputTokens,
+            CacheCreationCountedInsideInput = next.CacheCreationInputTokens.HasValue
+                ? next.CacheCreationCountedInsideInput : previous.CacheCreationCountedInsideInput,
+            Source = next.Source == "missing" ? previous.Source : next.Source,
+        };
     }
 
     private Task<GatewayProviderConcurrencyAdmission> AcquireProviderConcurrencyAsync(
@@ -1505,7 +1596,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         // GatewayModelResolution 已包含 ApiKey / ExchangeAuthScheme / ExchangeTransformerConfig
         var internalResolution = RestoreRawResolution(resolution);
         var startedAt = DateTime.UtcNow;
-        return await ExecuteRawWithResolutionAsync(request, internalResolution, startedAt, ct);
+        using var deadline = CreateRequestDeadline(ct, request.TimeoutSeconds);
+        return await ExecuteRawWithResolutionAsync(request, internalResolution, startedAt, deadline.Token,
+            callerCancellation: ct);
     }
 
     private static ModelResolutionResult RestoreRawResolution(GatewayModelResolution resolution)
@@ -1815,11 +1908,12 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         else
         {
             var requestBody = request.RequestBody?.DeepClone() as JsonObject ?? new JsonObject();
+            var suppliedParameterNames = CaptureSuppliedParameterNames(request.Context, requestBody);
             requestBody["model"] = resolution.ActualModel;
             if (IsChatCompletionsEndpoint(endpoint))
                 ApplyOpenAiChatCompletionsCompatibility(requestBody, resolution, request.Context);
             ApplyResolvedMaxTokensCap(requestBody, resolution);
-            if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError))
+            if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError, suppliedParameterNames))
             {
                 return capabilityError!;
             }
@@ -2579,7 +2673,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ModelResolutionResult resolution,
         DateTime startedAt,
         CancellationToken ct,
-        bool rebuildCanonicalImageRequest = false)
+        bool rebuildCanonicalImageRequest = false,
+        CancellationToken callerCancellation = default,
+        List<LlmProviderAttempt>? priorAttempts = null)
     {
         // 同一上游沿用调用方通过 ImageGenRequestBuilder 算好的 wire 请求，再叠加显式 image_size 能力；
         // 这样 inherit 不会丢失旧适配器的字段重命名/response_format 约束，端点与尺寸重试也会重新
@@ -2611,19 +2707,37 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             request = PrepareCanonicalImageRequestForResolution(request, null, resolution);
 
             var gatewayResolution = resolution.ToGatewayResolution();
+            rawProviderAttempts = priorAttempts ?? BuildProviderAttempts(resolution, gatewayTransport);
             var concurrency = await AcquireProviderConcurrencyAsync(request.Context?.TenantId, resolution, request.TimeoutSeconds, ct);
             if (!concurrency.Allowed)
             {
                 var admissionMessage = ProviderAdmissionMessage(concurrency.ErrorCode);
-                if (request.CanonicalImageRequest is not null
-                    && resolution.RetryCandidates is { Count: > 0 })
+                CompleteLastSendAttempt(rawProviderAttempts, 429, 0, admissionMessage);
+                var legalCandidates = GetProviderRetryResolutions(resolution, request);
+                if (!ct.IsCancellationRequested && request.CanonicalImageRequest is not null
+                    && legalCandidates.Count > 1)
                 {
-                    var candidate = resolution.RetryCandidates[0];
-                    candidate.RetryCandidates = resolution.RetryCandidates.Skip(1).ToList();
+                    var candidate = legalCandidates[1];
+                    candidate.RetryCandidates = legalCandidates.Skip(2).ToList();
+                    AddPendingProviderAttempt(rawProviderAttempts, candidate, gatewayTransport,
+                        $"previous candidate admission rejected: {concurrency.ErrorCode}");
                     return await ExecuteRawWithResolutionAsync(
-                        request, candidate, startedAt, ct, rebuildCanonicalImageRequest: true);
+                        request, candidate, startedAt, ct, rebuildCanonicalImageRequest: true,
+                        callerCancellation: callerCancellation, priorAttempts: rawProviderAttempts);
                 }
-                return GatewayRawResponse.Fail(concurrency.ErrorCode, admissionMessage, 429);
+                _ = TryBuildRawHttpRequest(request, resolution, out var rejectedBuild);
+                using var rejectedRequest = rejectedBuild?.HttpRequest;
+                logId = await StartRawLogAsync(request, gatewayResolution,
+                    rejectedBuild?.Endpoint ?? resolution.ApiUrl!, rejectedBuild?.RequestBodyForLog ?? "{}",
+                    startedAt, CancellationToken.None);
+                await FinishRawLogAsync(logId, 429, admissionMessage,
+                    (long)(DateTime.UtcNow - startedAt).TotalMilliseconds, resolution, request,
+                    gatewayTransport, CancellationToken.None, rawProviderAttempts);
+                return new GatewayRawResponse
+                {
+                    Success = false, ErrorCode = concurrency.ErrorCode, ErrorMessage = admissionMessage,
+                    StatusCode = 429, LogId = logId, Resolution = gatewayResolution,
+                };
             }
             providerLease = concurrency.Lease;
 
@@ -2768,12 +2882,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             else
             {
                 // JSON 请求
-                var requestBody = request.RequestBody ?? new JsonObject();
+                var requestBody = request.RequestBody?.DeepClone() as JsonObject ?? new JsonObject();
+                var suppliedParameterNames = CaptureSuppliedParameterNames(request.Context, requestBody);
                 requestBody["model"] = resolution.ActualModel;
                 if (IsChatCompletionsEndpoint(endpoint))
                     ApplyOpenAiChatCompletionsCompatibility(requestBody, resolution, request.Context);
                 ApplyResolvedMaxTokensCap(requestBody, resolution);
-                if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError))
+                if (TryBuildRawCapabilityFailure(request, resolution, requestBody, out var capabilityError, suppliedParameterNames))
                 {
                     return capabilityError!;
                 }
@@ -2817,7 +2932,6 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 6. 发送请求
             using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId));
             var httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
-            rawProviderAttempts = BuildProviderAttempts(resolution, gatewayTransport);
             var retryResolutions = GetProviderRetryResolutions(resolution, request);
 
             _logger.LogInformation(
@@ -2834,11 +2948,12 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 request.IsMultipart);
 
             var submitStartedAt = DateTime.UtcNow;
-            MarkLastSendAttemptReachedProvider(rawProviderAttempts);
+            Exception? lastTransportFailure = null;
             HttpResponseMessage response;
             try
             {
                 if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                MarkLastSendAttemptReachedProvider(rawProviderAttempts);
                 response = await httpClient.SendAsync(httpRequest,
                     RequiresBoundedRawRead(request, resolution)
                         ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, ct);
@@ -2847,11 +2962,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 var (sendMessage, sendStatusCode) = ClassifyTransportException(
                     sendException,
-                    ct.IsCancellationRequested);
+                    callerCancellation.IsCancellationRequested);
                 _logger.LogWarning(sendException,
                     "[LlmGateway.SendRaw] HttpClient.SendAsync 失败 status={Code} model={Model}",
                     sendStatusCode,
                     resolution.ActualModel);
+                lastTransportFailure = sendException;
+                RecordTransportFailure(rawProviderAttempts, sendException, sendStatusCode,
+                    (long)(DateTime.UtcNow - submitStartedAt).TotalMilliseconds, sendMessage);
                 response = new HttpResponseMessage((System.Net.HttpStatusCode)sendStatusCode)
                 {
                     Content = new StringContent(sendMessage, Encoding.UTF8, "text/plain")
@@ -2862,7 +2980,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 先无损读出全部字节，再决定按二进制还是文本处理——避免下游把二进制 Content-Type 标错
             // （OpenRouter 视频下载实际回 mp4 却标 application/json）时用 ReadAsString 损坏字节。
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
-            var rawBytes = await ReadRawExchangeContentAsync(response.Content, request, resolution, ct);
+            var rawBytes = await ReadRawExchangeContentAsync(response.Content, request, resolution,
+                lastTransportFailure is null ? ct : CancellationToken.None);
             var submitDurationMs = (long)(DateTime.UtcNow - submitStartedAt).TotalMilliseconds;
             var isBinaryResponse = request.ExpectBinaryResponse ||
                                    contentType.StartsWith("audio/") ||
@@ -2888,11 +3007,21 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 (int)response.StatusCode,
                 submitDurationMs,
                 response.IsSuccessStatusCode ? null : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}");
+            CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(a => a.Stage == "send"), responseBody,
+                response.Headers.ToDictionary(h => h.Key, h => string.Join(", ", h.Value), StringComparer.OrdinalIgnoreCase),
+                request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
+
+            if (lastTransportFailure is not null)
+                RecordTransportFailure(rawProviderAttempts, lastTransportFailure, (int)response.StatusCode,
+                    submitDurationMs, responseBody!);
+            ExcludeRateLimitedProvider(retryResolutions, 0, (int)response.StatusCode);
 
             for (var attemptIndex = 1;
                  !response.IsSuccessStatusCode
+                 && !ct.IsCancellationRequested
                  && attemptIndex < retryResolutions.Count
-                 && ShouldRetryRawProviderResponse((int)response.StatusCode, responseBody, request);
+                 && (lastTransportFailure is not null ? IsConfirmedNotSent(lastTransportFailure)
+                     : ShouldRetryRawProviderResponse((int)response.StatusCode, responseBody, request));
                  attemptIndex++)
             {
                 if (HasTrackedHealthRoute(resolution))
@@ -2960,8 +3089,6 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     CompleteLastSendAttempt(rawProviderAttempts, 429, 0, message);
                     if (attemptIndex < retryResolutions.Count - 1)
                     {
-                        AddPendingProviderAttempt(rawProviderAttempts, retryResolutions[attemptIndex + 1], gatewayTransport,
-                            $"previous candidate admission rejected: {retryConcurrency.ErrorCode}");
                         continue;
                     }
                     await FinishRawLogAsync(logId, 429, message, dur, resolution, request, gatewayTransport, ct, rawProviderAttempts);
@@ -2989,6 +3116,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     retryResolutions.Count);
 
                 submitStartedAt = DateTime.UtcNow;
+                lastTransportFailure = null;
                 try
                 {
                     if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
@@ -3002,18 +3130,22 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     var (sendMessage, sendStatusCode) = ClassifyTransportException(
                         sendException,
-                        ct.IsCancellationRequested);
+                        callerCancellation.IsCancellationRequested);
                     _logger.LogWarning(sendException,
                         "[LlmGateway.SendRaw] retry HttpClient.SendAsync 失败 status={Code} model={Model}",
                         sendStatusCode,
                         resolution.ActualModel);
+                    lastTransportFailure = sendException;
+                    RecordTransportFailure(rawProviderAttempts, sendException, sendStatusCode,
+                        (long)(DateTime.UtcNow - submitStartedAt).TotalMilliseconds, sendMessage);
                     response = new HttpResponseMessage((System.Net.HttpStatusCode)sendStatusCode)
                     {
                         Content = new StringContent(sendMessage, Encoding.UTF8, "text/plain")
                     };
                 }
                 contentType = response.Content.Headers.ContentType?.MediaType ?? "";
-                rawBytes = await ReadRawExchangeContentAsync(response.Content, request, resolution, ct);
+                rawBytes = await ReadRawExchangeContentAsync(response.Content, request, resolution,
+                    lastTransportFailure is null ? ct : CancellationToken.None);
                 submitDurationMs = (long)(DateTime.UtcNow - submitStartedAt).TotalMilliseconds;
                 isBinaryResponse = request.ExpectBinaryResponse ||
                                    contentType.StartsWith("audio/") ||
@@ -3038,6 +3170,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     (int)response.StatusCode,
                     submitDurationMs,
                     response.IsSuccessStatusCode ? null : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}");
+                if (lastTransportFailure is not null)
+                    RecordTransportFailure(rawProviderAttempts, lastTransportFailure, (int)response.StatusCode,
+                        submitDurationMs, responseBody!);
+                ExcludeRateLimitedProvider(retryResolutions, attemptIndex, (int)response.StatusCode);
+                CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(a => a.Stage == "send"), responseBody,
+                    response.Headers.ToDictionary(h => h.Key, h => string.Join(", ", h.Value), StringComparer.OrdinalIgnoreCase),
+                    request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
             }
 
             // 6.5 Exchange 异步轮询（submit+query 模式）
@@ -3118,7 +3257,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         catch (Exception ex)
                         {
                             var failedPollDurationMs = (long)(DateTime.UtcNow - queryStartedAt).TotalMilliseconds;
-                            var (queryMessage, queryStatusCode) = ClassifyTransportException(ex, ct.IsCancellationRequested);
+                            var (queryMessage, queryStatusCode) = ClassifyTransportException(ex, callerCancellation.IsCancellationRequested);
                             AddProviderAttempt(
                                 rawProviderAttempts,
                                 resolution,
@@ -3151,6 +3290,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                                 durationMs: queryDurationMs,
                                 error: null,
                                 reason: $"exchange async poll attempt {pollAttempt} complete");
+                            CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(), responseBody, queryHeaders,
+                                request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
                             _logger.LogInformation(
                                 "[LlmGateway.Exchange.Async] 任务完成, Exchange={ExchangeName}, pollAttempts={Attempts}",
                                 resolution.ExchangeName, pollAttempt);
@@ -3170,6 +3311,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                                 durationMs: queryDurationMs,
                                 error: queryError,
                                 reason: $"exchange async poll attempt {pollAttempt} failed");
+                            CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(), responseBody, queryHeaders,
+                                request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
                             var endedNow = DateTime.UtcNow;
                             var dur = (long)(endedNow - startedAt).TotalMilliseconds;
                             await FinishRawLogAsync(
@@ -3188,6 +3331,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             error: null,
                             reason: $"exchange async poll attempt {pollAttempt} pending",
                             statusOverride: "pending");
+                        CaptureRawAttemptEvidence(rawProviderAttempts.LastOrDefault(), responseBody, queryHeaders,
+                            request.Context?.ProviderTaskId, request.ModelType == ModelTypes.VideoGen);
 
                         if (pollAttempt % 10 == 0)
                         {
@@ -3358,7 +3503,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         resolution.ActualPlatformName ?? resolution.ActualPlatformId,
                         resolution.ActualModel,
                         errorMsg)
-                    : ("LLM_ERROR", errorMsg);
+                    : (IsAmbiguousProviderStatus((int)response.StatusCode)
+                        && (lastTransportFailure is null || !IsConfirmedNotSent(lastTransportFailure))
+                        ? OutcomeUnknownErrorCode : "LLM_ERROR", errorMsg);
                 return new GatewayRawResponse
                 {
                     Success = false,
@@ -3392,13 +3539,17 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
         catch (Exception ex)
         {
-            var (msg, code) = ClassifyTransportException(ex, ct.IsCancellationRequested);
+            var (msg, code) = ClassifyTransportException(ex, callerCancellation.IsCancellationRequested);
             _logger.LogError(ex, "[LlmGateway.SendRaw] 请求失败 status={Code}", code);
             if (logId != null)
             {
                 if (rawProviderAttempts is not null)
                 {
+                    var pendingSend = rawProviderAttempts.Any(a => a.Stage == "send" && a.EndedAt is null);
                     CompletePendingSendAttempt(rawProviderAttempts, code, (long)(DateTime.UtcNow - startedAt).TotalMilliseconds, msg);
+                    if (pendingSend)
+                        RecordTransportFailure(rawProviderAttempts, ex, code,
+                            (long)(DateTime.UtcNow - startedAt).TotalMilliseconds, msg);
                     await FinishRawLogAsync(
                         logId,
                         code,
@@ -3415,7 +3566,15 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     _logWriter?.MarkError(logId, msg, code);
                 }
             }
-            return GatewayRawResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code : "GATEWAY_ERROR", msg, code);
+            var unknown = rawProviderAttempts?.LastOrDefault(a => a.Stage == "send")?.ReachedProvider == true;
+            return new GatewayRawResponse
+            {
+                Success = false, ErrorCode = ex is TaskExecutionAdmissionException task ? task.Code
+                    : unknown ? OutcomeUnknownErrorCode : "GATEWAY_ERROR",
+                ErrorMessage = unknown ? OutcomeUnknownMessage : msg, StatusCode = code,
+                Resolution = resolution.ToGatewayResolution(), LogId = logId,
+                DurationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds,
+            };
         }
         finally
         {
@@ -3929,31 +4088,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// "insufficient credits/quota exceeded/billing" 等）。命中后走专门错误码 + 主动站内告警，便于及时提醒。
     /// </summary>
     private static bool IsQuotaExceeded(int statusCode, string? rawMessage)
-    {
-        var m = (rawMessage ?? string.Empty).ToLowerInvariant();
-
-        // 限流（节流）排除：只把「文本明确指向速率/每分钟请求数」的失败排除掉，不能用「429 一律 false」短路——
-        // 部分供应商（如 OpenAI insufficient_quota）也用 429 返回额度耗尽，需让后面的 quota/credit/balance 文本判定
-        // 继续生效，否则这些额度失败会走泛化 LLM_ERROR、漏掉额度告警（Codex review）。
-        // "Rate limit exceeded" 含 "limit exceeded" 子串，由下面的 rate-limit 文本判定先行排除，不会误判为额度。
-        if (m.Contains("rate limit") || m.Contains("rate-limit")
-            || m.Contains("requests per") || m.Contains("per minute")
-            || m.Contains("too many requests"))
-            return false;
-
-        if (statusCode == 402) return true; // Payment Required = 额度/账单
-        if (m.Length == 0) return false;
-
-        // 只认明确指向「额度/余额/账单/key 限额」的信号；裸 "limit exceeded" 不再单独判定为额度。
-        return m.Contains("quota is not enough")                    // APIyi 403：user quota is not enough
-            || m.Contains("key limit")                                   // OpenRouter "Key limit exceeded"
-            || m.Contains("credit limit")
-            || (m.Contains("limit exceeded") && (m.Contains("credit") || m.Contains("quota") || m.Contains("balance") || m.Contains("key")))
-            || (m.Contains("quota") && (m.Contains("exceed") || m.Contains("insufficient")))
-            || (m.Contains("insufficient") && (m.Contains("credit") || m.Contains("balance")))
-            || m.Contains("exceeded your current")
-            || (m.Contains("billing") && m.Contains("limit"));
-    }
+        => PrdAgent.GatewayTransport.UpstreamQuotaPolicy.IsExceeded(statusCode, rawMessage);
 
     /// <summary>
     /// 命中额度用尽时：发专门错误码 + 触发主动站内告警（去重，复用 IPoolFailoverNotifier）。
@@ -4175,20 +4310,26 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <summary>
-    /// 尝试向请求失败的用户发送故障通知（fire-and-forget，不阻断主流程）
+    /// 尝试向请求失败的用户发送故障通知；写入失败不阻断主流程。
     /// </summary>
     private async Task TryNotifyUserFailureAsync(GatewayRequest request, ModelResolutionResult resolution)
     {
         try
         {
+            // A pool health probe cannot establish that an administrator approved this model.
+            // Keep the precise request rejection; do not create an incident that a probe can close.
+            if (resolution.FailureCode == GatewayRouteFailure.ModelNotInCatalog)
+                return;
+
             var userId = request.Context?.UserId;
             if (string.IsNullOrWhiteSpace(userId) || _failoverNotifier == null)
                 return;
 
             await _failoverNotifier.NotifyUserFailureAsync(
                 userId, request.ModelType,
-                resolution.OriginalPoolName ?? "未知",
-                CancellationToken.None);
+                resolution.OriginalPoolName ?? resolution.ModelGroupName ?? "所选模型",
+                CancellationToken.None,
+                poolId: resolution.OriginalPoolId ?? resolution.ModelGroupId ?? resolution.FailureModelPoolId);
         }
         catch (Exception ex)
         {
@@ -4218,7 +4359,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             foreach (var field in UnsupportedOSeriesParameters(resolution.ActualModel))
                 requestBody.Remove(field);
 
-        // GPT-5 和已确认的 o 系列均使用 max_completion_tokens。
+        // GPT-6.1 Sol 不支持 none，不能沿用 GPT-5.6 的默认推理设置。
+        // https://developers.openai.com/api/docs/guides/latest-model
+        if (IsGpt61SolModel(resolution.ActualModel) && !IsStrictParameterPolicy(context))
+            foreach (var field in Gpt61SolUnsupportedSamplingParameters)
+                requestBody.Remove(field);
+
+        // GPT-5、已确认的 GPT-6.1 Sol 与 o 系列使用 max_completion_tokens。
         // 走共用的那一份，别在这里再写一遍（两份必然漂移，而漂移的表现是上游 400）。
         NormalizeOpenAiChatTokenField(requestBody, resolution);
     }
@@ -4250,8 +4397,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
            && (normalized == "gpt-5" || normalized.StartsWith("gpt-5-", StringComparison.Ordinal)
                || normalized.StartsWith("gpt-5.", StringComparison.Ordinal));
 
+    private static bool IsGpt61SolModel(string? model)
+        => NormalizeModelLeaf(model) == "gpt-6.1-sol";
+
+    private static readonly string[] Gpt61SolUnsupportedSamplingParameters =
+        ["temperature", "top_p", "logprobs", "top_logprobs"];
+
     private static bool UsesCompletionTokenBudget(string? model)
-        => IsGpt5FamilyModel(model) || IsKnownOSeriesModel(model);
+        => IsGpt5FamilyModel(model) || IsKnownOSeriesModel(model) || IsGpt61SolModel(model);
 
     // 仅描述已确认型号的预算与采样规则，不承诺旧型号的 role/stream 等完整协议兼容。
     // 仅接受原名与合法日期快照，不能凭 o 前缀猜未来协议。
@@ -4316,7 +4469,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                || !string.Equals(effortText, "none", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool TryBuildCapabilityFailure(GatewayRequest request, ModelResolutionResult resolution, JsonObject requestBody, out GatewayResponse? error)
+    private static bool TryBuildCapabilityFailure(GatewayRequest request, ModelResolutionResult resolution, JsonObject requestBody, out GatewayResponse? error, IReadOnlySet<string>? suppliedParameterNames = null)
     {
         error = null;
         var strict = IsStrictParameterPolicy(request.Context);
@@ -4327,9 +4480,16 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return true;
         }
 
-        if (TryBuildStrictParameterCapabilityFailure(request.Context, resolution, requestBody, out var parameterError))
+        if (TryBuildStrictParameterCapabilityFailure(request.Context, resolution, requestBody, out var parameterError, suppliedParameterNames))
         {
             error = parameterError;
+            return true;
+        }
+
+        if (UsesOpenAiProtocol(resolution) && IsGpt61SolModel(resolution.ActualModel) && RequestHasTools(requestBody))
+        {
+            error = GatewayResponse.Fail("GPT61_TOOLS_REQUIRE_RESPONSES",
+                "所选模型需要通过 Responses API 使用工具，请切换已配置的 Responses 线路。", 400);
             return true;
         }
 
@@ -4422,7 +4582,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return false;
     }
 
-    private static bool TryBuildRawCapabilityFailure(GatewayRawRequest request, ModelResolutionResult resolution, JsonObject? requestBody, out GatewayRawResponse? error)
+    private static bool TryBuildRawCapabilityFailure(GatewayRawRequest request, ModelResolutionResult resolution, JsonObject? requestBody, out GatewayRawResponse? error, IReadOnlySet<string>? suppliedParameterNames = null)
     {
         error = null;
         var strict = IsStrictParameterPolicy(request.Context);
@@ -4432,9 +4592,17 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return true;
         }
 
-        if (TryBuildStrictParameterCapabilityRawFailure(request.Context, resolution, requestBody, out var parameterError))
+        if (TryBuildStrictParameterCapabilityRawFailure(request.Context, resolution, requestBody, out var parameterError, suppliedParameterNames))
         {
             error = parameterError;
+            return true;
+        }
+
+        if (IsChatCompletionsEndpoint(request.EndpointPath) && requestBody is not null
+            && UsesOpenAiProtocol(resolution) && IsGpt61SolModel(resolution.ActualModel) && RequestHasTools(requestBody))
+        {
+            error = GatewayRawResponse.Fail("GPT61_TOOLS_REQUIRE_RESPONSES",
+                "所选模型需要通过 Responses API 使用工具，请切换已配置的 Responses 线路。", 400);
             return true;
         }
 
@@ -4508,6 +4676,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return false;
     }
 
+    private static IReadOnlySet<string>? CaptureSuppliedParameterNames(GatewayRequestContext? context, JsonObject body)
+        => IsStrictParameterPolicy(context)
+            ? body.Select(p => p.Key).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
+
     private static bool IsStrictParameterPolicy(GatewayRequestContext? context)
         => string.Equals(context?.ParameterPolicy, "strict-require", StringComparison.OrdinalIgnoreCase);
 
@@ -4541,7 +4714,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayRequestContext? context,
         ModelResolutionResult resolution,
         JsonObject? requestBody,
-        out GatewayResponse? error)
+        out GatewayResponse? error,
+        IReadOnlySet<string>? suppliedParameterNames = null)
     {
         error = null;
         if (UnsupportedStrictProtocolParameter(context, resolution, requestBody) is { } unsupported)
@@ -4550,7 +4724,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 $"当前模型协议尚不能保留请求参数 {unsupported}，请调整参数或选择兼容协议", 400);
             return true;
         }
-        if (!TryFindRejectedStrictParameter(context, resolution, requestBody, out var parameter, out var supported))
+        if (!TryFindRejectedStrictParameter(context, resolution, requestBody, out var parameter, out var supported, suppliedParameterNames))
             return false;
 
         error = GatewayResponse.Fail(
@@ -4566,10 +4740,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayRequestContext? context,
         ModelResolutionResult resolution,
         JsonObject? requestBody,
-        out GatewayRawResponse? error)
+        out GatewayRawResponse? error,
+        IReadOnlySet<string>? suppliedParameterNames = null)
     {
         error = null;
-        if (!TryFindRejectedStrictParameter(context, resolution, requestBody, out var parameter, out var supported))
+        if (!TryFindRejectedStrictParameter(context, resolution, requestBody, out var parameter, out var supported, suppliedParameterNames))
             return false;
 
         error = GatewayRawResponse.Fail(
@@ -4596,7 +4771,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ModelResolutionResult resolution,
         JsonObject? requestBody,
         out string parameter,
-        out bool? supported)
+        out bool? supported,
+        IReadOnlySet<string>? suppliedParameterNames = null)
     {
         parameter = string.Empty;
         supported = null;
@@ -4604,6 +4780,17 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return false;
 
         var strict = IsStrictParameterPolicy(context);
+        if (UsesOpenAiProtocol(resolution) && requestBody["messages"] is JsonArray && IsGpt61SolModel(resolution.ActualModel))
+        {
+            var rejected = strict ? Gpt61SolUnsupportedSamplingParameters.FirstOrDefault(key => IsRequestedJsonParameter(requestBody, key)) : null;
+            if (rejected is not null || requestBody["reasoning_effort"] is JsonValue effort
+                && effort.TryGetValue<string>(out var effortText) && string.Equals(effortText, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                parameter = rejected ?? "reasoning_effort";
+                supported = false;
+                return true;
+            }
+        }
         if (strict && UsesOpenAiProtocol(resolution) && requestBody["messages"] is JsonArray
             && IsKnownOSeriesModel(resolution.ActualModel))
         {
@@ -4624,6 +4811,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         && resolution.ParameterCapabilities.TryGetValue(key, out var value)
                 ? value
                 : null;
+            // 未确认参数的严格检查针对调用方意图，不把网关自己补入的兼容默认值当作用户传参。
+            // 明确声明不支持的参数仍然拒绝，不能借默认值绕过。
+            if (supported is null && suppliedParameterNames is not null && !suppliedParameterNames.Contains(key))
+                continue;
             if (CapabilityRejected(supported, strict)) return true;
         }
 
@@ -5450,6 +5641,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
                     ModelGroupName: resolution.ModelGroupName,
+                    ProviderTaskId: providerAttempts?.LastOrDefault(a => !string.IsNullOrWhiteSpace(a.ProviderTaskId))?.ProviderTaskId ?? request.Context?.ProviderTaskId,
                     ProviderReportedCost: rawUsage.ProviderReportedCost,
                     ProviderCostCurrency: rawUsage.ProviderCostCurrency,
                     OutputImagePayloads: rawUsage.OutputImages
@@ -5565,6 +5757,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         attempts.Add(new LlmProviderAttempt
         {
+            AttemptId = stage == "poll" ? Guid.NewGuid().ToString("N") : null,
             Order = attempts.Count + 1,
             Stage = stage,
             Provider = resolution.ExchangeName
@@ -5596,6 +5789,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string transport,
         string? reason)
     {
+        MarkRecoveryToNextCandidate(attempts);
         attempts.Add(new LlmProviderAttempt
         {
             Order = attempts.Count + 1,
@@ -5676,8 +5870,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         attempt.EndedAt = DateTime.UtcNow;
         attempt.Error = string.IsNullOrWhiteSpace(error) ? null : error;
         attempt.Status = !forceFailure && statusCode >= 200 && statusCode < 300 ? "succeeded" : "failed";
-        if (!string.IsNullOrWhiteSpace(error))
-            attempt.Reason = error;
+        var outcome = attempt.ReachedProvider != true ? "not_sent"
+            : statusCode is >= 200 and < 300 ? "succeeded"
+            : IsAmbiguousProviderStatus(statusCode) ? "outcome_unknown" : "rejected";
+        attempt.Reason = $"{outcome}; recovery=stop; {error ?? attempt.Reason}";
     }
 
     private static void CompletePendingSendAttempt(
@@ -5701,11 +5897,39 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             attempt.Reason = error;
     }
 
+    private static void CaptureRawAttemptEvidence(LlmProviderAttempt? attempt, string body,
+        Dictionary<string, string> headers, string? providerTaskId, bool video)
+    {
+        if (attempt is null || attempt.ReachedProvider != true) return;
+        attempt.AttemptId ??= Guid.NewGuid().ToString("N");
+        attempt.ProviderRequestId = LlmCostEvidence.ResolveProviderRequestId(headers);
+        var usage = RawGatewayUsageParser.Parse(body);
+        attempt.InputTokens = usage.InputTokens;
+        attempt.OutputTokens = usage.OutputTokens;
+        attempt.ProviderReportedCost = usage.ProviderReportedCost;
+        attempt.ProviderCostCurrency = usage.ProviderCostCurrency;
+        attempt.ProviderTaskId = providerTaskId;
+        if (video && providerTaskId is null && attempt.StatusCode is >= 200 and < 300)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                if (document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
+                    attempt.ProviderTaskId = id.GetString();
+            }
+            catch (JsonException) { /* 无结构化作业证据就留空 */ }
+        }
+    }
+
     private static void MarkLastSendAttemptReachedProvider(List<LlmProviderAttempt> attempts)
     {
         var attempt = attempts.LastOrDefault(x => string.Equals(x.Stage, "send", StringComparison.OrdinalIgnoreCase));
         if (attempt is not null)
+        {
+            attempt.AttemptId ??= Guid.NewGuid().ToString("N");
             attempt.ReachedProvider = true;
+        }
     }
 
     #endregion

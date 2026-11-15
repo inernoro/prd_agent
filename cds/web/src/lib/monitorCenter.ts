@@ -276,6 +276,16 @@ export interface UptimeIncidentView {
   releaseAgeMs?: number;
 }
 
+/** 结束记录与确认恢复分开；缺失、失败或无数据采样都不是恢复证据。 */
+export function hasIncidentRecoveryEvidence(incident: UptimeIncidentView): boolean {
+  return !incident.ongoing && typeof incident.endedAt === 'number' && Number.isFinite(incident.endedAt)
+    && incident.endedSample?.up === true && incident.endedSample.noData !== true;
+}
+export const INCIDENT_STATE_LABEL = { ongoing: '进行中', recovered: '已恢复', unconfirmed: '记录结束，恢复未确认' } as const;
+export function incidentDisplayState(incident: UptimeIncidentView): keyof typeof INCIDENT_STATE_LABEL {
+  return incident.ongoing ? 'ongoing' : hasIncidentRecoveryEvidence(incident) ? 'recovered' : 'unconfirmed';
+}
+
 export interface UptimeHistory {
   id: string;
   name: string;

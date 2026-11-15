@@ -6388,9 +6388,14 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * a bundle reading many report bodies; doing those reads synchronously stalls
    * the single-process CDS server during a MAP pull (Cursor Bugbot High).
    */
-  async readAcceptanceReportContentAsync(id: string): Promise<string | undefined> {
+  async readAcceptanceReportContentAsync(id: string, options: { requireObjectStorage?: boolean } = {}): Promise<string | undefined> {
     const meta = this.getAcceptanceReport(id);
     if (!meta) return undefined;
+    // 任务要求持久归档时必须核实权威对象，不能用仍在本地的缓存掩盖对象丢失。
+    if (options.requireObjectStorage) {
+      if (meta.storage !== 'object' || !meta.objectKey) return undefined;
+      return (await this.reportObjects.get(meta.objectKey)) ?? undefined;
+    }
     // 本地盘现在只是读缓存：命中就用，未命中不代表正文没了。
     try {
       return await fs.promises.readFile(this.reportFilePath(meta), 'utf-8');
@@ -6545,6 +6550,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     monitorEvent?: import('./notification-report.js').ReportMonitorEvent;
     reportType?: 'acceptance' | 'code-review';
     reviewTaskId?: string;
+    scheduledJobRunId?: string;
     title: string;
     format: 'html' | 'md';
     content: string;
@@ -6664,6 +6670,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       monitorEvent: input.monitorEvent,
       reportType: input.reportType,
       reviewTaskId: input.reviewTaskId,
+      scheduledJobRunId: input.scheduledJobRunId,
       title: input.title,
       format: input.format,
       projectId: input.projectId ?? null,

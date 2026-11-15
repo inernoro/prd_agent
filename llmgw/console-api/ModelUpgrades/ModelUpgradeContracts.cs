@@ -1,5 +1,6 @@
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Bson;
+using PrdAgent.LlmGw.ModelReferences;
 
 namespace PrdAgent.LlmGw.ModelUpgrades;
 
@@ -87,6 +88,7 @@ public sealed class ModelUpgradeDiscoveryItem
 }
 public sealed class ModelUpgradeView
 {
+    public ReferenceCoverage? ReferenceCoverage { get; set; }
     public string LogicalModelId { get; set; } = "";
     public string PublicId { get; set; } = "";
     public string Name { get; set; } = "";
@@ -116,6 +118,7 @@ public sealed class ModelUpgradeView
 [BsonIgnoreExtraElements]
 public sealed class ModelUpgradeState
 {
+    public ReferenceCoverage? ReferenceCoverage { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string TenantId { get; set; } = "";
     public string LogicalModelId { get; set; } = "";

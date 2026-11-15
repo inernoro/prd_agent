@@ -1,0 +1,37 @@
+{
+  "samples": [
+    {
+      "requests": 27,
+      "records": 26,
+      "recordedUpstreamAttempts": 26,
+      "milliseconds": 6636,
+      "recordSetSha256": "e42d69ef7f31b4478b471b0950b9c5b532669067c92a5dcc06205ecff5a3b1bb"
+    },
+    {
+      "requests": 27,
+      "records": 26,
+      "recordedUpstreamAttempts": 26,
+      "milliseconds": 6317,
+      "recordSetSha256": "e42d69ef7f31b4478b471b0950b9c5b532669067c92a5dcc06205ecff5a3b1bb"
+    },
+    {
+      "requests": 27,
+      "records": 26,
+      "recordedUpstreamAttempts": 26,
+      "milliseconds": 6195,
+      "recordSetSha256": "e42d69ef7f31b4478b471b0950b9c5b532669067c92a5dcc06205ecff5a3b1bb"
+    }
+  ],
+  "reference": "d9853faf-0f8e-4d80-a9eb-d1096a85e2af",
+  "mode": "before",
+  "medianMilliseconds": 6317,
+  "measurement": "顺序只读 HTTP 查询耗时，不含人的阅读和操作时间",
+  "sourceRevision": "3035365de",
+  "capturedAt": "2026-11-12T18:29:30.593107+08:00",
+  "cases": {
+    "videoRun": "d9853faf-0f8e-4d80-a9eb-d1096a85e2af",
+    "failedVideoRequest": "126339b1-e77a-41f9-9581-496e60604faa",
+    "historicalRunningLog": "1d470834-a071-492f-8865-8214f859236c",
+    "reportedCost": "unknown"
+  }
+}

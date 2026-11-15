@@ -18,6 +18,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 父 CDS 注入的诊断浮标层级高于应用弹窗；模态操作期间让出操作区，关闭后恢复。 */
+body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) #cds-widget[data-cds-widget-root] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 /*
  * CDS design tokens — single source of truth.
  *

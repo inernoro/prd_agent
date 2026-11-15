@@ -136,6 +136,13 @@ describe('safe detached source retention on real Git and files',()=>{
   const f=await sourceFixture();const dir=await f.make();f.files.listMountedHostPaths=async()=>null;
   expect((await f.sweep()).removed).toEqual([]);expect(await fs.stat(dir)).toBeTruthy();
  });
+ it('exposes unconfirmed native cleanup separately from legitimate protection',async()=>{
+  const f=await sourceFixture();const dir=await f.make();
+  f.files.removeDir=async()=>{throw Object.assign(new Error('controlled missing terminal receipt'),{code:'cleanup'});};
+  const report=await f.sweep();expect(report.cleanupUnconfirmed).toBe(true);expect(report.removed).toEqual([]);
+  expect(report.held[dir]).toBe('源码回收未确认，保留目录与占用');
+  expect(await fs.readFile(path.join(dir,'source.txt'),'utf8')).toBe('immutable source');
+ });
  it('rechecks new branch deployment ownership after asynchronous mount observation',async()=>{
   const f=await sourceFixture();const dir=await f.make();let reads=0;f.files.listMountedHostPaths=async()=>{if(++reads===2)f.branch.status='building';return[];};
   expect((await f.sweep()).removed).toEqual([]);expect(await fs.stat(dir)).toBeTruthy();

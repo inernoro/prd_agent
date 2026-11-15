@@ -23,6 +23,7 @@ import type {
 import type {
   GetAdminNotificationsContract,
   HandleAdminNotificationContract,
+  HandleBatchAdminNotificationsContract,
   HandleAllAdminNotificationsContract,
   GetAdminPushSubscriptionsContract,
   UpdateAdminPushProfileContract,
@@ -528,6 +529,7 @@ import {
   getLiteraryAgentImageGenResolvedModelReal,
   getLiteraryAgentChatResolvedModelReal,
   createLiteraryAgentImageGenRunReal,
+  getLiteraryAgentRunByRequestReal,
   cancelLiteraryAgentImageGenRunReal,
   streamLiteraryAgentImageGenRunWithRetryReal,
   listReferenceImageConfigsMarketplaceReal,
@@ -619,6 +621,7 @@ import {
 import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
+  handleBatchAdminNotificationsReal,
   handleAllAdminNotificationsReal,
   getAdminPushSubscriptionsReal,
   updateAdminPushProfileReal,
@@ -1133,6 +1136,7 @@ export const getLiteraryAgentMainModel: GetLiteraryAgentMainModelContract = with
 export const getLiteraryAgentImageGenResolvedModel = getLiteraryAgentImageGenResolvedModelReal;
 export const getLiteraryAgentChatResolvedModel = getLiteraryAgentChatResolvedModelReal;
 export const createLiteraryAgentImageGenRun: CreateLiteraryAgentImageGenRunContract = withAuth(createLiteraryAgentImageGenRunReal);
+export const getLiteraryAgentRunByRequest = withAuth(getLiteraryAgentRunByRequestReal);
 export const cancelLiteraryAgentImageGenRun: CancelLiteraryAgentImageGenRunContract = withAuth(cancelLiteraryAgentImageGenRunReal);
 export const streamLiteraryAgentImageGenRunWithRetry: StreamLiteraryAgentImageGenRunWithRetryContract = withAuth(streamLiteraryAgentImageGenRunWithRetryReal);
 // Reference Image Configs 海鲜市场
@@ -2432,3 +2436,5 @@ export type {
   FrontEndAgentRequest,
   FrontEndAgentTaskType,
 } from '@/services/real/frontEndAgent';
+
+export const handleBatchAdminNotifications: HandleBatchAdminNotificationsContract = withAuth(handleBatchAdminNotificationsReal);

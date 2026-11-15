@@ -1,6 +1,7 @@
 using System.Globalization;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services.ReportAgent;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Services.ReportAgent;
@@ -221,8 +222,10 @@ public class ReportAutoGenerateWorker : BackgroundService
             }
         }
 
-        // 逾期标记：周一之后，上周的 Draft/NotStarted → Overdue
-        if (chinaTime.DayOfWeek == DayOfWeek.Monday && chinaTime.Hour >= 10)
+        // 逾期标记：上周的 Draft/NotStarted → Overdue。
+        // 截止已统一为「周一 24:00 前」(WeeklyReportSubmissionRules)，所以放到周二再标，
+        // 不能像旧规则那样周一上午就把还在截止前的人标成逾期并发通知。
+        if (chinaTime.DayOfWeek == DayOfWeek.Tuesday)
         {
             var prevWeekNumber = weekNumber - 1;
             var prevWeekYear = weekYear;
@@ -326,12 +329,19 @@ public class ReportAutoGenerateWorker : BackgroundService
                 var hasContent = report.Sections.Any(s => s.Items.Count > 0);
                 if (!hasContent) continue;
 
+                var autoSubmitNow = DateTime.UtcNow;
+                var autoSubmitUpdate = Builders<WeeklyReport>.Update
+                    .Set(r => r.Status, WeeklyReportStatus.Submitted)
+                    .Set(r => r.SubmittedAt, autoSubmitNow)
+                    .Set(r => r.UpdatedAt, autoSubmitNow);
+                // 首次提交时间只写一次，超时判定只认它
+                var firstSubmittedAt = WeeklyReportSubmissionRules.ResolveFirstSubmittedAtToStamp(report, autoSubmitNow);
+                if (firstSubmittedAt.HasValue)
+                    autoSubmitUpdate = autoSubmitUpdate.Set(r => r.FirstSubmittedAt, firstSubmittedAt);
+
                 await db.WeeklyReports.UpdateOneAsync(
                     r => r.Id == report.Id,
-                    Builders<WeeklyReport>.Update
-                        .Set(r => r.Status, WeeklyReportStatus.Submitted)
-                        .Set(r => r.SubmittedAt, DateTime.UtcNow)
-                        .Set(r => r.UpdatedAt, DateTime.UtcNow),
+                    autoSubmitUpdate,
                     cancellationToken: CancellationToken.None);
                 submitted++;
             }

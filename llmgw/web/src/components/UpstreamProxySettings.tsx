@@ -109,7 +109,8 @@ export function UpstreamNetworkTest({ kind, id, revision, disabled = false }: { 
       const res = await testUpstreamNetwork(kind, id);
       if (current !== generation.current) return;
       if (res.success) setResult(res.data); else setError(res.error.message || '测试未完成，请重试');
-    } finally { if (current === generation.current) setBusy(false); }
+    } catch { if (current === generation.current) setError('网络测试未完成，请检查连接后重试。'); }
+    finally { if (current === generation.current) setBusy(false); }
   }
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
     <div><Button size="sm" disabled={disabled || busy} onClick={() => void run()}>{busy ? <Spinner size={14} /> : null}{busy ? `连续测试中 · ${seconds} 秒` : '连续测试网络'}</Button></div>

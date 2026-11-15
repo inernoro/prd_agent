@@ -206,7 +206,7 @@ public static class DataSyncScope
             new DataSyncCollection("document_store_favorites", System.Array.Empty<string>()),
             new DataSyncCollection("document_store_likes", System.Array.Empty<string>()),
             new DataSyncCollection("document_store_sync_links", new[] { "RemoteToken" }),
-            new DataSyncCollection("document_stores", new[] { "SyncToken" }),
+            new DataSyncCollection("document_stores", new[] { "SyncToken", "TrashLeaseToken", "TrashLeaseUntil" }),
             new DataSyncCollection("documents", System.Array.Empty<string>()),
             new DataSyncCollection("knowledge_base_drafts", System.Array.Empty<string>()),
             new DataSyncCollection("prdcomments", System.Array.Empty<string>()),
@@ -317,6 +317,8 @@ public static class DataSyncScope
             new DataSyncCollection("web_folders", System.Array.Empty<string>()),
             new DataSyncCollection("web_page_groups", System.Array.Empty<string>()),
             new DataSyncCollection("hosted_document_groups", System.Array.Empty<string>()),
+            // 内容组织可迁移；实际分享凭证仍在被排除的 web_page_share_links 中。
+            new DataSyncCollection("hosted_collections", System.Array.Empty<string>()),
         }),
         new DataSyncGroup("channel", "渠道与邮件", new[]
         {

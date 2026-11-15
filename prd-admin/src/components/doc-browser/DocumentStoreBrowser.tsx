@@ -1,13 +1,14 @@
+import { loadDocumentEntries } from '@/services/real/documentStore';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FolderOpen, FileText, Upload, FolderPlus, Tags, Layers, Plus, Pencil, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { DocBrowser, type DocBrowserEntry, type EntryPreview } from '@/components/doc-browser/DocBrowser';
+import { DocBrowser, type EntryPreview } from '@/components/doc-browser/DocBrowser';
 import type { DocumentEntry, DocumentStore } from '@/services/contracts/documentStore';
 import {
-  listDocumentEntries, searchDocumentEntries, rebuildContentIndex, getDocumentContent, updateDocumentContent,
+  searchDocumentEntries, getDocumentContent, updateDocumentContent,
   uploadDocumentFile, replaceDocumentFile, deleteDocumentEntry, updateDocumentEntry,
   moveDocumentEntry, createFolder, addDocumentEntry, getDocumentStore, updateDocumentStore,
 } from '@/services';
@@ -50,13 +51,34 @@ export function DocumentStoreBrowser({ storeId, canWrite, enableCategories, cate
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const replaceTargetRef = useRef<string | null>(null);
 
+  const loadSequence = useRef(0);
   const loadEntries = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     setLoading(true);
-    const res = await listDocumentEntries(storeId, 1, 200);
-    if (res.success) setEntries(res.data.items);
-    setLoading(false);
+    try {
+      const res = await loadDocumentEntries(storeId);
+      if (sequence !== loadSequence.current) return;
+      if (res.success) setEntries(res.data.items);
+      else {
+        if (['UNAUTHORIZED', 'PERMISSION_DENIED', 'NOT_FOUND'].includes(res.error.code)) {
+          setEntries([]);
+          setSelectedEntryId(undefined);
+        }
+        toast.error('文档列表未加载完整', res.error?.message);
+      }
+    } catch {
+      if (sequence === loadSequence.current) toast.error('文档列表未加载完整，请重试');
+    } finally {
+      if (sequence === loadSequence.current) setLoading(false);
+    }
   }, [storeId]);
-  useEffect(() => { loadEntries(); }, [loadEntries]);
+  const invalidateLoad = useCallback(() => { loadSequence.current++; }, []);
+  useEffect(() => {
+    setEntries([]);
+    setSelectedEntryId(undefined);
+    void loadEntries();
+    return invalidateLoad;
+  }, [loadEntries, invalidateLoad]);
 
   // 加载 store（取分类清单）；首次无分类时种子化预置分类
   useEffect(() => {
@@ -198,10 +220,10 @@ export function DocumentStoreBrowser({ storeId, canWrite, enableCategories, cate
     toast.success(cat ? `已归入「${cat}」` : '已移出分类');
   }, []);
 
-  const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
-    if (contentSearch) await rebuildContentIndex(storeId);
-    const res = await searchDocumentEntries(storeId, keyword, contentSearch);
-    return res.success ? res.data.items : null;
+  const handleSearch = useCallback(async (keyword: string, contentSearch: boolean, cursor?: string) => {
+    const res = await searchDocumentEntries(storeId, keyword, contentSearch, cursor);
+    if (!res.success) throw new Error(res.error?.message ?? '搜索失败，请重试');
+    return res.data;
   }, [storeId]);
 
   // ── 分类管理（写 store.categories；改名/删除同步条目）──
@@ -357,6 +379,7 @@ export function DocumentStoreBrowser({ storeId, canWrite, enableCategories, cate
       )}
 
       <DocBrowser
+        key={storeId}
         entries={displayEntries}
         selectedEntryId={selectedEntryId}
         onSelectEntry={setSelectedEntryId}

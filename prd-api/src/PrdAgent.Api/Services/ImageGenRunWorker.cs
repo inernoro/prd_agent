@@ -171,6 +171,11 @@ public class ImageGenRunWorker : BackgroundService
             // app shutting down：尽量把 run 标记为失败/取消（避免永远 Running）
             await MarkRunFailedSafeAsync(run.Id, "WORKER_STOPPED", "服务正在停止", CancellationToken.None);
         }
+        catch (PrdAgent.Core.Security.TaskExecutionAdmissionException ex)
+        {
+            // 未获得执行资格必须收尾；另有执行者的重复投递仍由 ShouldSkip 保护。
+            await MarkRunFailedSafeAsync(run.Id, ex.Code, ex.Message, CancellationToken.None);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "ImageGenRunWorker process failed: {RunId}", run.Id);

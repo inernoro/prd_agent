@@ -1,4 +1,4 @@
-import { apiRequest } from './apiClient';
+import { apiMultipartRequest, apiRequest } from './apiClient';
 import { api } from '@/services/api';
 import type {
   CreateVideoGenRunContract,
@@ -37,6 +37,32 @@ export const updateVideoProjectReal = async (projectId: string, input: VideoProj
 
 export const listVideoProjectExportsReal = async (projectId: string) =>
   apiRequest<VideoExportTask[]>(api.videoAgent.projects.exports(projectId), { method: 'GET' });
+
+export interface VideoNarrationItem {
+  sceneIndex: number;
+  text: string;
+  speechRunId?: string;
+  status: string;
+  errorMessage?: string;
+  durationSeconds?: number;
+}
+
+export const getVideoNarrationReal = (runId: string) =>
+  apiRequest<{ items: VideoNarrationItem[] }>(`/api/video-agent/runs/${encodeURIComponent(runId)}/narration`);
+
+export const adoptVideoNarrationReal = (runId: string, sceneIndex: number, speechRunId: string) =>
+  apiRequest(`/api/video-agent/runs/${encodeURIComponent(runId)}/scenes/${sceneIndex}/narration`, {
+    method: 'PUT', body: { speechRunId },
+  });
+
+export const importVideoClipsReal = (projectId: string, files: File[]) =>
+  apiMultipartRequest<{ runId: string }>(`/api/video-agent/projects/${encodeURIComponent(projectId)}/import-scenes`, {
+    createFormData: () => {
+      const form = new FormData();
+      files.forEach(file => form.append('files', file));
+      return form;
+    },
+  });
 
 export const createVideoGenRunReal: CreateVideoGenRunContract = async (input) => {
   return await apiRequest<{ runId: string }>(api.videoAgent.runs.create(), {

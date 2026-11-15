@@ -12,16 +12,18 @@ export const SELF_ALARM_COOLDOWN_MS = 30 * 60_000;
 export const SELF_ALARM_RECOVERY_MS = 10 * 60_000;
 export function decideSelfMonitorAlarm(
   state: SelfMonitorAlarmState,
-  input: { at: number; up: boolean; noData?: boolean; down: boolean; intervalMs: number },
+  input: { at: number; up: boolean; noData?: boolean; down: boolean; intervalMs: number; urgent?: boolean },
 ): { emit?: 'down' | 'recovered'; reason?: string } {
   const previousAt = state.lastObservedAt;
   state.lastObservedAt = input.at;
   if (input.noData || !input.up) state.healthySince = undefined;
   if (input.noData) return { reason: 'no-data' };
   if (input.down && !input.up) {
+    // 已稳定恢复后的新严重故障必须立即通知；同一未稳定事件的抖动继续受冷却保护。
+    const newUrgentIncident = input.urgent === true && !state.reportOpen;
     state.reportOpen = true;
     if (state.open) return { reason: 'same-incident' };
-    if (state.lastDownAttemptAt !== undefined && input.at - state.lastDownAttemptAt < SELF_ALARM_COOLDOWN_MS) return { reason: 'cooldown-30m' };
+    if (!newUrgentIncident && state.lastDownAttemptAt !== undefined && input.at - state.lastDownAttemptAt < SELF_ALARM_COOLDOWN_MS) return { reason: 'cooldown-30m' };
     state.open = true;
     state.lastDownAttemptAt = input.at;
     state.acceptedChannels = [];

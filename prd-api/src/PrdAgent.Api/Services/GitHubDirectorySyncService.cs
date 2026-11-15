@@ -19,6 +19,7 @@ namespace PrdAgent.Api.Services;
 public class GitHubDirectorySyncService
 {
     private readonly ILogger<GitHubDirectorySyncService> _logger;
+    private readonly HttpClient _http;
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
     static GitHubDirectorySyncService()
@@ -27,9 +28,12 @@ public class GitHubDirectorySyncService
         Http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github.v3+json");
     }
 
-    public GitHubDirectorySyncService(ILogger<GitHubDirectorySyncService> logger)
+    public GitHubDirectorySyncService(ILogger<GitHubDirectorySyncService> logger) : this(logger, Http) { }
+
+    internal GitHubDirectorySyncService(ILogger<GitHubDirectorySyncService> logger, HttpClient httpClient)
     {
         _logger = logger;
+        _http = httpClient;
     }
 
     /// <summary>
@@ -113,7 +117,8 @@ public class GitHubDirectorySyncService
         // 但「这一轮没见到」只在**清单完整**时才等于「远端没有了」—— 见下面第 3 步的闸。
 
         // 2) 查找该 Store 下已有的同步子条目（SourceType=subscription + github_parent_id）
-        var existingEntries = await db.DocumentEntries.Find(
+        // 回收条目仍占用同步身份；只识别路径，不读取其正文或自动重新创建。
+        var existingEntries = await db.DocumentEntriesIncludingTrash.Find(
             e => e.StoreId == parentEntry.StoreId &&
                  e.SourceType == DocumentSourceType.Subscription &&
                  e.Metadata.ContainsKey("github_parent_id") &&
@@ -138,6 +143,11 @@ public class GitHubDirectorySyncService
 
             if (existing != null)
             {
+                if (existing.Trash != null)
+                {
+                    diff.SkippedCount++;
+                    continue;
+                }
                 // 已存在 → 比较 SHA 决定是否需要更新（GitHub SHA 即版本号，O(1) 命中判定）
                 var existingSha = existing.Metadata.GetValueOrDefault("github_sha", "");
 
@@ -166,8 +176,10 @@ public class GitHubDirectorySyncService
                         {
                             existing.Metadata["github_last_commit_at"] = backfillDate.Value.ToString("O");
                             existing.UpdatedAt = DateTime.UtcNow;
-                            await db.DocumentEntries.ReplaceOneAsync(
-                                e => e.Id == existing.Id, existing, cancellationToken: CancellationToken.None);
+                            await db.DocumentEntries.UpdateOneAsync(
+                                DocumentEntryWriteGuard.ForCurrentLifecycle(existing),
+                                Builders<DocumentEntry>.Update.Set("Metadata.github_last_commit_at", existing.Metadata["github_last_commit_at"])
+                                    .Set(e => e.UpdatedAt, existing.UpdatedAt), cancellationToken: CancellationToken.None);
                         }
                     }
                     continue;
@@ -253,7 +265,8 @@ public class GitHubDirectorySyncService
             : new List<DocumentEntry>();
         foreach (var entry in staleChildren)
         {
-            await db.DocumentEntries.DeleteOneAsync(e => e.Id == entry.Id, cancellationToken: CancellationToken.None);
+            var deleted = await db.DocumentEntries.DeleteOneAsync(DocumentEntryWriteGuard.ForCurrentLifecycle(entry), cancellationToken: CancellationToken.None);
+            if (deleted.DeletedCount == 0) continue;
             // 级联清理该条目历史版本，和手动 DeleteEntry 一致，避免远端删文件后版本快照残留（Bugbot）
             await db.DocumentEntryVersions.DeleteManyAsync(v => v.EntryId == entry.Id, CancellationToken.None);
             diff.DeletedCount++;
@@ -305,6 +318,8 @@ public class GitHubDirectorySyncService
         var commitDateTask = GetLatestCommitDateAsync(owner, repo, file.Path, reference, accessToken, ct);
         try
         {
+            var previousContent = !isNew && versions != null && !string.IsNullOrEmpty(entry.DocumentId)
+                ? (await documentService.GetByIdAsync(entry.DocumentId))?.RawContent : null;
             // 优化：跨知识库/同文件多次拉取复用检查 (Pooling by SHA)
             var filter = Builders<DocumentEntry>.Filter.Eq("Metadata.github_sha", file.Sha);
             var cachedEntry = await db.DocumentEntries.Find(
@@ -335,16 +350,6 @@ public class GitHubDirectorySyncService
 
                     await documentService.SaveAsync(newDoc);
 
-                    // 覆盖前快照旧正文：SHA 命中缓存复用分支同样会覆盖本地正文，必须和 live-fetch 分支
-                    // 一样先留存旧内容，否则用户本地插入的配图等改动在此路径会被静默覆盖、无法恢复（Codex P2）。
-                    if (versions != null && !isNew && !string.IsNullOrEmpty(entry.DocumentId))
-                    {
-                        var oldCachedDoc = await documentService.GetByIdAsync(entry.DocumentId);
-                        if (oldCachedDoc != null && !string.IsNullOrWhiteSpace(oldCachedDoc.RawContent))
-                            await versions.SnapshotAsync(entry.Id, entry.StoreId, oldCachedDoc.RawContent,
-                                DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
-                    }
-
                     entry.DocumentId = newDoc.Id;
                     entry.ContentType = cachedEntry.ContentType;
                     entry.FileSize = cachedEntry.FileSize;
@@ -368,21 +373,7 @@ public class GitHubDirectorySyncService
                         entry.Metadata["github_last_commit_at"] = cachedCommitDate.Value.ToString("O");
                     }
 
-                    if (isNew)
-                    {
-                        await db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
-                    }
-                    else
-                    {
-                        await db.DocumentEntries.ReplaceOneAsync(
-                            e => e.Id == entry.Id, entry, cancellationToken: CancellationToken.None);
-                    }
-
-                    // 同步后的新正文也快照（与 live-fetch 分支一致，保持「最新版本==当前正文」；去重避免噪音）
-                    if (versions != null && !string.IsNullOrWhiteSpace(newDoc.RawContent))
-                        await versions.SnapshotAsync(entry.Id, entry.StoreId, newDoc.RawContent,
-                            DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
-                    return true; // 跳过后续的外网拉取
+                    return await CommitFileAsync(db, versions, entry, previousContent, newDoc.RawContent, isNew);
                 }
             }
 
@@ -396,16 +387,6 @@ public class GitHubDirectorySyncService
             {
                 _logger.LogWarning("[GitHubSync] Empty content for {Path}", file.Path);
                 return false;
-            }
-
-            // 覆盖已存在文档前，把旧正文快照成版本：订阅文档被远端同步覆盖时，
-            // 用户本地的改动（如插入的配图）不会丢失，可从历史版本恢复。去重保证无变化不产生噪音。
-            if (versions != null && !isNew && !string.IsNullOrEmpty(entry.DocumentId))
-            {
-                var oldDoc = await documentService.GetByIdAsync(entry.DocumentId);
-                if (oldDoc != null && !string.IsNullOrWhiteSpace(oldDoc.RawContent))
-                    await versions.SnapshotAsync(entry.Id, entry.StoreId, oldDoc.RawContent,
-                        DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
             }
 
             // 解析为 ParsedPrd
@@ -435,22 +416,7 @@ public class GitHubDirectorySyncService
                 entry.Metadata["github_last_commit_at"] = freshCommitDate.Value.ToString("O");
             }
 
-            if (isNew)
-            {
-                await db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
-            }
-            else
-            {
-                await db.DocumentEntries.ReplaceOneAsync(
-                    e => e.Id == entry.Id, entry, cancellationToken: CancellationToken.None);
-            }
-
-            // 同步后的新正文也快照成版本，保证「最新版本 == 当前正文」（去重避免重复落库）
-            if (versions != null)
-                await versions.SnapshotAsync(entry.Id, entry.StoreId, content,
-                    DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
-
-            return true;
+            return await CommitFileAsync(db, versions, entry, previousContent, content, isNew);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -463,6 +429,30 @@ public class GitHubDirectorySyncService
             _logger.LogWarning(ex, "[GitHubSync] Failed to sync file {Path}", file.Path);
             return false;
         }
+    }
+
+    // 所有正文分支共用条件提交。未提交时不生成同步成功快照。
+    private static async Task<bool> CommitFileAsync(MongoDbContext db, DocStoreServices.DocumentVersionService? versions,
+        DocumentEntry entry, string? previousContent, string content, bool isNew)
+    {
+        if (isNew)
+            await db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
+        else
+        {
+            var result = await db.DocumentEntries.ReplaceOneAsync(DocumentEntryWriteGuard.ForCurrentLifecycle(entry),
+                entry, cancellationToken: CancellationToken.None);
+            if (result.MatchedCount == 0) return false;
+        }
+        if (versions != null)
+        {
+            if (!string.IsNullOrWhiteSpace(previousContent))
+                await versions.SnapshotAsync(entry.Id, entry.StoreId, previousContent, DocumentVersionSource.Sync,
+                    entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
+            if (!string.IsNullOrWhiteSpace(content))
+                await versions.SnapshotAsync(entry.Id, entry.StoreId, content, DocumentVersionSource.Sync,
+                    entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
+        }
+        return true;
     }
 
     /// <summary>
@@ -710,7 +700,7 @@ public class GitHubDirectorySyncService
         {
             // /commits/{ref} 对分支、标签、提交号一视同仁；/branches/{ref} 只认分支。
             using var request = BuildApiRequest(BuildRefResolveUrl(owner, repo, reference), accessToken);
-            using var response = await Http.SendAsync(request, ct);
+            using var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning(
@@ -801,7 +791,7 @@ public class GitHubDirectorySyncService
         try
         {
             using var request = BuildApiRequest(BuildContentsUrl(owner, repo, path, reference), accessToken);
-            using var response = await Http.SendAsync(request, ct);
+            using var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
                 return new AncestorListing(
@@ -867,7 +857,7 @@ public class GitHubDirectorySyncService
         var reference = new PinnedRef(commitSha);
 
         using var request = BuildApiRequest(BuildContentsUrl(owner, repo, path, reference), accessToken);
-        var response = await Http.SendAsync(request, ct);
+        var response = await _http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
         {
             // 目录整个消失是**最常见的一种删除**：Git 里没有空目录，删光最后一个文件，
@@ -975,7 +965,7 @@ public class GitHubDirectorySyncService
             var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/commits"
                     + $"?path={Uri.EscapeDataString(path)}&sha={Uri.EscapeDataString(reference.CommitSha)}&per_page=1";
             using var request = BuildApiRequest(url, accessToken);
-            var response = await Http.SendAsync(request, ct);
+            var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogDebug("[GitHubSync] commits API {Code} for {Path}", response.StatusCode, path);
@@ -1110,14 +1100,14 @@ public class GitHubDirectorySyncService
     {
         if (string.IsNullOrEmpty(accessToken))
         {
-            return await Http.GetStringAsync(file.DownloadUrl, ct);
+            return await _http.GetStringAsync(file.DownloadUrl, ct);
         }
 
         // 和列目录共用同一个地址构造：此前这里自己拼了一遍，于是「路径逐段转义」这条规矩
         // 在两处各写了一份（形状 3），而参数名一改就露出它还在用旧的那个变量。
         var url = BuildContentsUrl(owner, repo, file.Path, reference);
         using var request = BuildApiRequest(url, accessToken, "application/vnd.github.raw");
-        using var response = await Http.SendAsync(request, ct);
+        using var response = await _http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync(ct);
     }

@@ -2157,15 +2157,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         for (const entryId of createdEntryIds) {
           expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
         }
-        for (const fileUrl of createdFileUrls) {
-          await expect.poll(async () => {
-            const separator = fileUrl.includes('?') ? '&' : '?';
-            return (await page.request.get(`${fileUrl}${separator}cleanup=${Date.now()}`)).status();
-          }, {
-            message: `删除知识库后原始文件必须同步清理：${fileUrl}`,
-            timeout: 15_000,
-          }).toBe(404);
+        const restored = await page.request.post(`/api/document-store/stores/${storeId}/restore`, { headers: authHeaders(token) });
+        expect(restored.ok()).toBe(true);
+        for (const entryId of createdEntryIds) {
+          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).ok()).toBe(true);
         }
+        for (const fileUrl of createdFileUrls) {
+          const retained = await page.request.get(fileUrl);
+          expect(retained.ok(), `恢复后原始文件必须仍可下载：${fileUrl}`).toBe(true);
+        }
+        // 只回收本测试创建的隔离库；不永久清除可恢复附件。
+        expect((await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).ok()).toBe(true);
       }
     }
   });

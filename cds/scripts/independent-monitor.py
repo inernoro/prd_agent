@@ -5,6 +5,7 @@ import concurrent.futures
 import importlib.util
 import datetime as dt
 import json
+import math
 import os
 from pathlib import Path
 import time
@@ -28,6 +29,15 @@ def read_url(url, headers=None, limit=2_000_000):
         return body
 
 
+def sample_expired(target, now):
+    def duration(key):
+        value = target.get(key)
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0 else 0
+    # 保留原十一分钟下限，低频检查则按自身周期、超时与一分钟宽限判断。
+    allowed = max(660, duration('intervalSeconds') + duration('timeoutMs') / 1000 + 60)
+    return now * 1000 - (target.get('lastSample') or {}).get('t', 0) > allowed * 1000
+
+
 def inspect(config, now):
     root_ok = False
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
@@ -42,9 +52,10 @@ def inspect(config, now):
     try:
         summary = json.loads(summary_request.result())
         generated = float(summary['generatedAt']) / 1000
-        targets = [t for t in summary['targets'] if t.get('projectId') == 'cds-self-monitor']
+        targets = [t for t in summary['targets'] if t.get('projectId') == 'cds-self-monitor'
+                   and t.get('enabled') is not False and t.get('status') != 'paused']
         fresh = -60 <= now - generated <= 180
-        unknown = [t for t in targets if (t.get('lastSample') or {}).get('noData') or now * 1000 - (t.get('lastSample') or {}).get('t', 0) > 660_000]
+        unknown = [t for t in targets if (t.get('lastSample') or {}).get('noData') or sample_expired(t, now)]
         collection_down = any(t['id'].startswith('monitor@self-collection-') and t['status'] == 'down' for t in targets)
         # 公开快照只发布结论；内部指标值、地址、异常和其他项目一律不外发。
         metrics = [{'id': t['id'], 'name': t['name'], 'startedAt': iso(t['openIncidentSince']/1000) if t.get('openIncidentSince') else None, 'state': 'unknown' if t in unknown else t['status'], 'lastKnownState': t['status']}
@@ -53,7 +64,7 @@ def inspect(config, now):
         return {'reachable': root_ok, 'dataOk': data_ok, 'metrics': metrics, 'observedAt': iso(now),
                 'summaryAt': iso(generated),
                 # 能取得新鲜汇总时，真实指标/采集告警由 CDS 负责，外部不重复发送。
-                'notifyEligible': not root_ok or not fresh or any(now * 1000 - (t.get('lastSample') or {}).get('t', 0) > 660_000 for t in targets),
+                'notifyEligible': not root_ok or not fresh or any(sample_expired(t, now) for t in targets),
                 'reason': 'unreachable' if not root_ok else 'collection' if not data_ok else None}
     except Exception:
         return {'reachable': root_ok, 'dataOk': False, 'metrics': [], 'observedAt': iso(now),

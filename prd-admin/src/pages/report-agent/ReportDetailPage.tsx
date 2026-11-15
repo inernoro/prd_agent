@@ -66,6 +66,8 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   const [report, setReport] = useState<WeeklyReport | null>(null);
   /** 后端授权:当前用户对该周报是否有审阅权限(Leader/Deputy 或全局 ReportAgentViewAll) */
   const [canReview, setCanReview] = useState(false);
+  // 超时提交(后端判定:首次提交晚于该周截止);准时不展示任何标记
+  const [lateSubmission, setLateSubmission] = useState<{ deadline?: string; firstSubmittedAt?: string } | null>(null);
   const [comments, setComments] = useState<ReportComment[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('content');
   const [replyTo, setReplyTo] = useState<{ sectionIndex: number; parentId?: string; anchor?: ReportCommentAnchor } | null>(null);
@@ -129,6 +131,9 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
       if (res.success && res.data) {
         setReport(res.data.report);
         setCanReview(!!res.data.canReview);
+        setLateSubmission(res.data.isLateSubmission
+          ? { deadline: res.data.submissionDeadline, firstSubmittedAt: res.data.firstSubmittedAt }
+          : null);
       }
     })();
     void loadComments();
@@ -347,7 +352,29 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                   lineHeight: 1.2,
                 }}
               >
-                {report.userName} 的周报
+                <span className="inline-flex items-center gap-2 flex-wrap">
+                  <span>{report.userName} 的周报</span>
+                  {lateSubmission && (
+                    <span
+                      data-late-submission="true"
+                      className="inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-medium"
+                      style={{
+                        color: 'var(--accent-fg-danger)',
+                        background: 'var(--bg-tertiary)',
+                        border: '1px solid var(--border-subtle)',
+                        fontFamily: 'inherit',
+                        letterSpacing: 0,
+                        lineHeight: 1.4,
+                      }}
+                      title={[
+                        lateSubmission.deadline ? `截止 ${formatLateTime(lateSubmission.deadline)}` : null,
+                        lateSubmission.firstSubmittedAt ? `首次提交 ${formatLateTime(lateSubmission.firstSubmittedAt)}` : null,
+                      ].filter(Boolean).join(' · ')}
+                    >
+                      超时提交
+                    </span>
+                  )}
+                </span>
               </div>
               <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
                 {report.teamName} · {formatWeekDateRange({ weekYear: report.weekYear, weekNumber: report.weekNumber })} · W{String(report.weekNumber).padStart(2, '0')}
@@ -725,4 +752,8 @@ function SiblingReportsSidebar({
       </div>
     </aside>
   );
+}
+
+function formatLateTime(iso: string): string {
+  return new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }

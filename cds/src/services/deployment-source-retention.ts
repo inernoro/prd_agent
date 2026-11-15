@@ -10,6 +10,8 @@ export interface DeploymentSourceRetentionReport {
   failed: Array<{ path: string; error: string }>; deferred: number;
   lastAttemptedPath?: string;
   lastScannedPath?: string;
+  /** A native cleanup worker has no confirmed terminal receipt; its claim remains held. */
+  cleanupUnconfirmed?: boolean;
 }
 export type DeploymentSourceHoldReason = 'filesystem-unknown' | 'identity-unknown' | 'age-or-claim-unconfirmed'
   | 'container-mounted' | 'in-use' | 'identity-or-mount-unconfirmed' | 'protected-or-unconfirmed';
@@ -126,7 +128,7 @@ export async function reclaimDeploymentSources(input: {
       if (error) report.failed.push({ path: dir, error }); else report.removed.push(dir);
     } catch (error) {
       uncertain = (error as {code?:string})?.code === 'cleanup';
-      if (uncertain) activity.markUncertain();
+      if (uncertain) { activity.markUncertain(); report.cleanupUnconfirmed = true; }
       report.held[dir] = '源码回收未确认，保留目录与占用';
     } finally { if (!uncertain) activity.release(); }
   }

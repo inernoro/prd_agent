@@ -1246,6 +1246,7 @@ export class UptimeMonitorService {
        * 不接不报错，只是掉线永远没人被通知——所以有源码守卫钉住这行接线。
        */
       onAlarmSuppressed?: (data: { targetId: string; targetName: string; projectId: string; reason: string; at: number }) => void;
+      observeScheduledJobs?: () => void;
       onAlert?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void | Promise<void>;
       /** 状态事实与通知抑制独立：未投递过故障的稳定恢复也须关闭原报告。 */
       onReportEvent?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void | Promise<void>;
@@ -1398,6 +1399,8 @@ export class UptimeMonitorService {
     let customLane: Promise<number> = Promise.resolve(0);
     const cycleStartedAt = this.now();
     try {
+      try { this.deps.observeScheduledJobs?.(); }
+      catch (err) { this.deps.logger?.warn?.(`[uptime] 任务健康观测失败: ${(err as Error).message}`); }
       const now = cycleStartedAt;
       const targets = this.selectTargets();
       const liveIds = new Set(targets.map((t) => t.id));
@@ -1897,8 +1900,11 @@ export class UptimeMonitorService {
     // 所有业务监控共享持久化通知节奏；首次探测成功不等于从故障恢复。
     // 可用性与事件照常记录，通知只在真实故障及持续恢复后发送。
     if (target.source === 'custom' && !record.excluded) {
+      const facet = this.environmentFacet(record, this.previewBranchLookup());
       const decision = decideSelfMonitorAlarm(record.notification ??= {}, {
         at: sample.t, up: sample.up, down: next.status === 'down', intervalMs: target.intervalMs ?? this.deps.config.intervalMs,
+        urgent: facet.environment === 'production' && facet.observeMode === 'active'
+          && !target.collection && target.monitor?.kind !== 'health-json',
       });
       if (decision.emit) this.emitAlert(decision.emit === 'down' ? 'uptime.target.down' : 'uptime.target.recovered', target, record, sample.t,
         decision.emit === 'down' ? cause : '指标连续稳定 10 分钟');
@@ -1943,6 +1949,9 @@ export class UptimeMonitorService {
     if (!callback) return;
     try {
       const incident = [...record.incidents].reverse().find(i => type === 'uptime.target.down' ? i.endedAt === null : i.endedAt !== null);
+      // 首次成功、暂停或旧历史结束记录不能充当本次恢复证据。
+      if (type === 'uptime.target.recovered' && (!incident?.endedSample?.up || incident.endedSample.noData
+        || (target.source !== 'custom' && incident.endedAt !== at))) return;
       if (notify && incident && record.lastSample && record.lastSample.t === at) {
         const evidence = incident.notificationSamples ??= [];
         if (!evidence.some(s => s.t === at)) appendCapped(evidence, snapshotUptimeSample(record.lastSample), 20);

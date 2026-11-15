@@ -258,6 +258,12 @@
     ]
   },
   {
+    "code": "document-store.writing::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "email-agent.draft::chat",
     "modelTypes": [
       "chat"

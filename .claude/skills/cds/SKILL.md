@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.20.6
+  version: 0.21.0
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, checks current-site load and tells users about standby sites with host-isolated credentials, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.20.6 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
+> **版本**：v0.21.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -127,6 +127,10 @@ $CLI init --legacy-env                   # 仅兼容旧用户：写 ~/.cdsrc
 $CLI auth inspect --strict               # 脱敏检查凭据来源；冲突时停止
 $CLI auth check                          # 校验当前项目凭据
 $CLI setup-check --host https://cds.example --project <id> --skills cds  # 支持该接入协议的站点可实测技能与项目
+
+# 发布环境：Agent 接入一次，用户在分支卡片「发布到」选择
+$CLI release-target list --project <id>
+$CLI release-target register --project <id> --file <环境配置.json>  # 登记并读回，不触发发布
 
 # 托管交付真相：运行过程与可复用版本
 $CLI deployment-run list --project <id>

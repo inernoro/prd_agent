@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
-import { buildLiteraryModelOptions, selectLiteraryModelOption } from './literaryModelOptions';
+import { buildLiteraryModelOptions, selectLiteraryModelOption, selectFreshLiteraryModel } from './literaryModelOptions';
 
 function pool(overrides: Partial<LiteraryAgentModelPool> = {}): LiteraryAgentModelPool {
   return {
@@ -123,4 +123,31 @@ describe('恢复试探目录契约', () => {
     expect(options).toHaveLength(enabled ? 1 : 0);
     if (enabled) expect(options[0].modelName).toBe(entry.code);
   });
+});
+
+
+describe('提交前最新目录核验', () => {
+  it('旧页面仅按明确继承关系迁移，未知旧型号不会换成默认', () => {
+    const old = buildLiteraryModelOptions([pool({ code: 'old-image', id: 'old' })])[0];
+    const fresh = buildLiteraryModelOptions([pool({ code: 'image-sunlight', aliases: ['old-image'] })]);
+    expect(selectFreshLiteraryModel(fresh, old)?.modelName).toBe('image-sunlight');
+    expect(selectFreshLiteraryModel(buildLiteraryModelOptions([pool({ code: 'unrelated-default' })]), old)).toBeNull();
+  });
+  it('未点名时使用新目录默认，仍有效的显式选择继续保留', () => {
+    const options = buildLiteraryModelOptions([pool({ code: 'still-valid' })]);
+    expect(selectFreshLiteraryModel(options, options[0])).toBe(options[0]);
+    expect(selectFreshLiteraryModel(options, null)).toBe(options[0]);
+  });
+});
+
+
+it('失效偏好保持可见阻断，不静默切换成系统默认', () => {
+  const options = buildLiteraryModelOptions([pool({ code: 'current-default' })]);
+  expect(selectLiteraryModelOption(options, 'pool_retired-id')).toBeNull();
+});
+
+
+it('已登记的旧池标识仍指向当前逻辑模型，不误判为失效并改用其他默认', () => {
+  const options = buildLiteraryModelOptions([pool({ code: 'current-public', legacyPoolIds: ['old-pool'] })]);
+  expect(selectLiteraryModelOption(options, 'pool_old-pool')?.modelName).toBe('current-public');
 });

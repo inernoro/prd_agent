@@ -224,6 +224,21 @@ public class AgentToolsTests : IDisposable
     }
 
     [Fact]
+    public void IndexIsNotReadonlyAndSourceTargetsExistingReader()
+    {
+        InfraAgentToolPolicies.IsReadonlyTool("kb_index").ShouldBeFalse();
+        InfraAgentToolPolicies.AllowsToolInvocation(InfraAgentToolPolicies.ReadonlyAuto, "kb_index").ShouldBeFalse();
+        var source = KnowledgeBaseReadonlyToolSupport.ToSource(
+            new DocumentStore { Id = "store/one", Name = "评测库" },
+            new DocumentEntry { Id = "entry&two", Title = "原文" });
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(source));
+        json.RootElement.GetProperty("uri").GetString()
+            .ShouldBe("/document-store?store=store%2Fone&entry=entry%26two");
+        json.RootElement.GetProperty("openPath").GetString()
+            .ShouldBe(json.RootElement.GetProperty("uri").GetString());
+    }
+
+    [Fact]
     public void KnowledgeBaseSnippetKeepsCitationSearchContext()
     {
         var entry = new PrdAgent.Core.Models.DocumentEntry

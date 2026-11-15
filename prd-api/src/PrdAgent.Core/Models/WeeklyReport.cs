@@ -58,6 +58,12 @@ public class WeeklyReport
     /// <summary>提交时间</summary>
     public DateTime? SubmittedAt { get; set; }
 
+    /// <summary>
+    /// 首次提交时间：只在第一次提交时写入，退回后再提交不覆盖。用于「超时」判定（截止后才首次提交即超时）。
+    /// 旧数据缺失该字段，读取走 WeeklyReportSubmissionRules.GetFirstSubmittedAt 的回退链。
+    /// </summary>
+    public DateTime? FirstSubmittedAt { get; set; }
+
     /// <summary>审阅时间</summary>
     public DateTime? ReviewedAt { get; set; }
 

@@ -136,6 +136,9 @@ public sealed partial class TaskExecutionCoordinator(LlmGatewayDataContext data)
                 var latest = await Permits.Find(x => x.Id == permitId).FirstOrDefaultAsync(ct);
                 if (latest?.Executions.Any(x => x.RunId == key && x.State == TaskExecutionLeaseStates.OutcomeUnknown) == true)
                     throw Denied("TASK_EXECUTION_OUTCOME_UNKNOWN", "上一次执行已有外部调用但结果尚无法确认，已停止自动重跑；请核对已有结果后重新提交。", 409);
+                if (latest is not null && latest.Executions.All(x => x.RunId != key)
+                    && latest.Executions.Count(x => !string.IsNullOrEmpty(x.RunId)) >= latest.MaxRuns)
+                    throw Denied("TASK_EXECUTION_RUN_LIMIT_REACHED", "本次操作允许的任务数量已用完，新任务未启动；请核对已有任务后分批提交。", 409);
                 throw Denied("TASK_EXECUTION_UNAVAILABLE", "任务已由其它执行者处理、已结束或上次结果待核对，未重复启动；请查看任务状态。", 409);
             }
             var entry = claimed.Executions.Single(x => x.RunId == key);
