@@ -219,7 +219,7 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
   const remove = async (item: ImageGenConfigItem) => {
     const ok = await confirm({
       title: '删掉这条契约？',
-      description: `${item.modelIdPattern} 的契约删掉之后，匹配到它的模型会回落到代码内置那份（如果有）。`,
+      description: `删除 ${item.modelIdPattern} 的自定义契约后，匹配模型将采用适用的内置配置；无内置匹配时不再应用这条尺寸与参数规则。`,
       confirmLabel: '删除',
       tone: 'danger',
     });
@@ -279,8 +279,8 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
       ) : null}
 
       {!showBuiltin ? (
-        <div data-testid="imagegen-contract-table" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div data-testid="imagegen-contract-table" className="lg-upstream-reference-table" tabIndex={0} role="region" aria-label="生图契约字段，可横向滚动" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+          <table style={{ width: '100%', minWidth: 720, borderCollapse: 'collapse' }}>
           <thead>
             <tr>
               <th style={TABLE_HEAD_CELL}>匹配模式</th>
@@ -329,8 +329,8 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
       ) : null}
 
       {showBuiltin ? (
-        <div data-testid="imagegen-contract-table" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div data-testid="imagegen-contract-table" className="lg-upstream-reference-table" tabIndex={0} role="region" aria-label="生图契约字段，可横向滚动" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+          <table style={{ width: '100%', minWidth: 720, borderCollapse: 'collapse' }}>
             <thead>
               <tr>
                 <th style={TABLE_HEAD_CELL}>匹配模式</th>

@@ -281,7 +281,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
   const remove = async (item: CatalogEntryItem) => {
     const ok = await confirm({
       title: '删掉这条补登？',
-      description: `${item.canonicalId} 删掉之后回落到代码内置那张表；内置表里也没有的话，它的用途就重新变成按模型名猜的。`,
+      description: `删除 ${item.canonicalId} 的自定义项后，优先采用匹配的内置配置；无匹配时按名称自动识别用途，结果可能变化。`,
       confirmLabel: '删除',
       tone: 'danger',
     });
@@ -344,8 +344,8 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
       ) : null}
 
       {!showBuiltin ? (
-        <div data-testid="model-catalog-table" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div data-testid="model-catalog-table" className="lg-upstream-reference-table" tabIndex={0} role="region" aria-label="模型名录字段，可横向滚动" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+          <table style={{ width: '100%', minWidth: 720, borderCollapse: 'collapse' }}>
           <thead>
             <tr>
               <th style={TABLE_HEAD_CELL}>模型标识</th>
@@ -402,8 +402,8 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
       ) : null}
 
       {showBuiltin ? (
-        <div data-testid="model-catalog-table" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div data-testid="model-catalog-table" className="lg-upstream-reference-table" tabIndex={0} role="region" aria-label="模型名录字段，可横向滚动" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+          <table style={{ width: '100%', minWidth: 720, borderCollapse: 'collapse' }}>
             <thead>
               <tr>
                 <th style={TABLE_HEAD_CELL}>模型标识</th>

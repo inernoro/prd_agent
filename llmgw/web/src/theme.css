@@ -9155,3 +9155,5 @@ a:focus-visible {
   .lg-upstream-model-row > td:first-child::before,
   .lg-upstream-model-row > td:last-child::before { display: none; }
 }
+
+.lg-upstream-reference-table:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
