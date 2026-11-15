@@ -19,7 +19,7 @@ import './UsagePage.css';
 export function UsagePage() {
   const { tenant } = useAuth();
   const location = useLocation();
-  const [windowRange] = useState(() => usageWindow(location.search));
+  const [windowRange, setWindowRange] = useState(() => usageWindow(location.search));
   const restoredBillingAnchor = useRef('');
   const [returnNotice, setReturnNotice] = useState<string | null>(null);
   const [summary, setSummary] = useState<LogsSummaryData | null>(null);
@@ -39,6 +39,7 @@ export function UsagePage() {
   const [tenantRateLimit, setTenantRateLimit] = useState('');
   const [reconciliationLoading, setReconciliationLoading] = useState(true);
   const reconciliationRead = useRef(0);
+  const nextBillCheck = useRef(false);
   const [reconciliationError, setReconciliationError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<CostReconciliationItem | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +85,7 @@ export function UsagePage() {
     restoredBillingAnchor.current = marker;
     const target = document.getElementById(`billing-${id}`);
     if (target) { target.focus({ preventScroll: true }); target.scrollIntoView?.({ block: 'nearest' }); }
-    else setReturnNotice('刚才的账单不在当前近30天最新500条可见记录中，请核对时间与权限范围。');
+    else setReturnNotice('刚才的账单不在当前时间范围最新500条可见记录中，请核对时间与权限范围。');
   }, [location.key, location.hash, reconciliationLoading, reconciliation, reconciliationError]);
 
   const loadGovernance = useCallback(async (preserveDraft = false) => {
@@ -119,12 +120,22 @@ export function UsagePage() {
       else setError(res.error?.message || '业务用量响应不完整');
     });
     const billSeq = ++reconciliationRead.current;
-    setImportChecking(false); // This general read supersedes any outstanding import check.
-    getCostReconciliations(params).catch(() => ({ success: false as const, data: null, error: { code: 'NETWORK_ERROR', message: '供应商账单读取中断' } })).then((res) => {
+    const checkSubmitted = nextBillCheck.current; nextBillCheck.current = false;
+    setImportChecking(checkSubmitted); // A new window/general refresh owns both slices and check busy state.
+    getCostReconciliations(params).catch(error => ({ success: false as const, data: null, error: { code: 'NETWORK_ERROR', message: error instanceof Error ? error.message : '供应商账单读取中断' } })).then((res) => {
       if (!active || billSeq !== reconciliationRead.current) return;
-      if (res.success) setReconciliation(res.data);
-      else { setReconciliation(null); setReconciliationError(res.error.message || '供应商账单读取失败'); }
-      setReconciliationLoading(false);
+      if (res.success) {
+        setReconciliation(res.data);
+        if (checkSubmitted && importSubmission.current) {
+          const match = res.data.items.find(item => importedBillMatches(item, importSubmission.current!));
+          if (match) { setImportResult(match); setImportUncertain(false); setImportConfirmed(true); setImportError(null); setImportNotice('已找到与本次提交内容匹配的账单记录，请核对金额与关联请求。'); }
+          else setImportError('当前近30天可见记录中尚未找到匹配账单，不能据此认定导入未生效。已保留提交内容，请核对供应商流水及账单范围，暂不重复导入。');
+        }
+      } else {
+        setReconciliation(null); setReconciliationError(res.error.message || '供应商账单读取失败');
+        if (checkSubmitted) setImportError('账单核对未完成，导入结果仍未确认。提交内容已保留，请稍后重新读取。');
+      }
+      setReconciliationLoading(false); setImportChecking(false);
     });
     return () => { active = false; };
   }, [refresh, windowRange]);
@@ -163,28 +174,13 @@ export function UsagePage() {
     } : res.data);
   };
 
-  const readImportedBill = async (checkSubmitted = false) => {
-    const seq = ++reconciliationRead.current;
+  const readImportedBill = (checkSubmitted = false) => {
+    if (importChecking) return;
+    // New imports are billed after the previous "to". Advance one shared window,
+    // then let the same read session refresh request estimates and bills together.
+    nextBillCheck.current = checkSubmitted;
     setImportChecking(true); setReconciliationLoading(true); setReconciliationError(null);
-    try {
-      const to = new Date(), from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
-      const res = await getCostReconciliations({ from: from.toISOString(), to: to.toISOString() });
-      if (seq !== reconciliationRead.current) return;
-      if (!res.success) throw new Error(res.error.message || '供应商账单读取失败');
-      setReconciliation(res.data);
-      if (checkSubmitted && importSubmission.current) {
-        const submitted = importSubmission.current;
-        const match = res.data.items.find(item => importedBillMatches(item, submitted));
-        if (match) {
-          setImportResult(match); setImportUncertain(false); setImportConfirmed(true);
-          setImportError(null); setImportNotice('已找到与本次提交内容匹配的账单记录，请核对金额与关联请求。');
-        } else setImportError('当前近30天可见记录中尚未找到匹配账单，不能据此认定导入未生效。已保留提交内容，请核对供应商流水及账单范围，暂不重复导入。');
-      }
-    } catch (error) {
-      if (seq !== reconciliationRead.current) return;
-      setReconciliationError(error instanceof Error ? error.message : '供应商账单读取中断');
-      if (checkSubmitted) setImportError('账单核对未完成，导入结果仍未确认。提交内容已保留，请稍后重新读取。');
-    } finally { if (seq === reconciliationRead.current) { setImportChecking(false); setReconciliationLoading(false); } }
+    setWindowRange(usageWindow(''));
   };
 
   const openImport = () => {
@@ -246,7 +242,7 @@ export function UsagePage() {
     <PageShell className="lg-usage-page">
       <PageHeader
         title="预算与用量"
-        subtitle="最近30天"
+        subtitle={<><time dateTime={windowRange.from}>{fmtShortTime(windowRange.from)}</time> — <time dateTime={windowRange.to}>{fmtShortTime(windowRange.to)}</time></>}
         summary={summaryStrip}
         actions={(
           <>
@@ -314,7 +310,7 @@ export function UsagePage() {
           </h2>
           <span style={countStyle}>{reconciliationLoading ? '正在读取' : reconciliationError ? '读取失败' : `${fmtCompact(reconciliation?.items.length ?? 0)} 条可见`}</span>
         </div>
-        {reconciliation && reconciliation.totalRecords > reconciliation.items.length ? <div style={countStyle}>近30天仅列最新 {reconciliation.items.length} 条，金额与状态按权限内全量统计。</div> : null}
+        {reconciliation && reconciliation.totalRecords > reconciliation.items.length ? <div style={countStyle}>当前范围仅列最新 {reconciliation.items.length} 条，金额与状态按权限内全量统计。</div> : null}
         {reconciliationLoading ? (
           <SectionLoader text="正在读取供应商账单…" />
         ) : reconciliationError ? (
