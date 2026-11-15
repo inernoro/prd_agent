@@ -67,30 +67,43 @@ export const DialogContent = React.forwardRef<
           maxHeight: `min(${typeof style?.maxHeight === 'number' ? `${style.maxHeight}px` : style?.maxHeight || '90dvh'}, ${Math.max(0, viewport.height - 16)}px)`,
         }}
         {...props}
+        onFocusCapture={(event) => {
+          // React autoFocus 可早于 Radix 的打开回调；只记首次从弹窗外进入的来源。
+          container.current = event.currentTarget;
+          if (!origin.current && event.relatedTarget instanceof HTMLElement
+            && !event.currentTarget.contains(event.relatedTarget)) origin.current = event.relatedTarget;
+          props.onFocusCapture?.(event);
+        }}
         onOpenAutoFocus={(event) => {
           // 手动setOpen的受控调用没有DialogTrigger；先记录打开前的真实焦点。
-          origin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          const active = document.activeElement;
+          if (active instanceof HTMLElement && !(event.target instanceof HTMLElement && event.target.contains(active))) origin.current = active;
           container.current = event.target instanceof HTMLElement ? event.target : null;
           props.onOpenAutoFocus?.(event);
         }}
         onCloseAutoFocus={(event) => {
-          props.onCloseAutoFocus?.(event);
-          if (event.defaultPrevented) return;
-          const focused = document.activeElement;
-          // 调用方/页面导航已放到新去向时，不把焦点抢回旧页面。
-          if (focused instanceof HTMLElement && focused !== document.body && focused !== document.documentElement
-            && focused !== origin.current && !container.current?.contains(focused)) {
+          try {
+            props.onCloseAutoFocus?.(event);
+            if (event.defaultPrevented) return;
+            const focused = document.activeElement;
+            // 调用方/页面导航已放到新去向时，不把焦点抢回旧页面。
+            if (focused instanceof HTMLElement && focused !== document.body && focused !== document.documentElement
+              && focused !== origin.current && !container.current?.contains(focused)) {
+              event.preventDefault();
+              return;
+            }
+            const target = origin.current;
+            if (!target || target === document.body || target === document.documentElement || !target.isConnected
+              || target.ownerDocument !== document || target.matches(':disabled, [aria-disabled="true"]')
+              || target.closest('[inert]') || target.getClientRects().length === 0) return;
+            const style = getComputedStyle(target);
+            if (style.visibility === 'hidden' || style.opacity === '0') return;
             event.preventDefault();
-            return;
+            target.focus();
+          } finally {
+            origin.current = null;
+            container.current = null;
           }
-          const target = origin.current;
-          if (!target || target === document.body || target === document.documentElement || !target.isConnected
-            || target.ownerDocument !== document || target.matches(':disabled, [aria-disabled="true"]')
-            || target.closest('[inert]') || target.getClientRects().length === 0) return;
-          const style = getComputedStyle(target);
-          if (style.visibility === 'hidden' || style.opacity === '0') return;
-          event.preventDefault();
-          target.focus();
         }}
       >
         {frame ? children : (

@@ -33,9 +33,10 @@ try{
     if(!react||!dom||!dialog)throw Error('fixture没有找到已加载React/Dialog模块，不能另造替身');
     const RM=await import(react),D=await import(dialog),DM=await import(dom),R=RM.default??RM,RD=DM.default??DM,h=R.createElement;if(typeof h!=='function'||typeof RD.createRoot!=='function')throw Error('fixture模块interop不完整，未执行Dialog判据');
     function Harness(){
-     const [manual,setManual]=R.useState(false),[inner,setInner]=R.useState(false),[custom,setCustom]=R.useState(false),[newFocus,setNewFocus]=R.useState(false);
+     const [manual,setManual]=R.useState(false),[inner,setInner]=R.useState(false),[custom,setCustom]=R.useState(false),[newFocus,setNewFocus]=R.useState(false),[auto,setAuto]=R.useState(false);
      const content=(title,props,...children)=>h(D.DialogContent,props,h(D.DialogTitle,null,title),h(D.DialogDescription,null,'独立焦点测试，不执行业务操作。'),...children);
      return h(R.Fragment,null,
+      h('button',{id:'auto-open',onClick:()=>setAuto(true)},'自动聚焦打开'),h('button',{id:'auto-second-open',onClick:()=>setAuto(true)},'第二个自动聚焦入口'),h(D.Dialog,{open:auto,onOpenChange:setAuto},content('自动聚焦弹窗',{},h('input',{autoFocus:true,'aria-label':'自动首项'}),h('input',{'aria-label':'自动次项'}))),
       h('button',{id:'manual-open',onClick:()=>setManual(true)},'手动打开'),h(D.Dialog,{open:manual,onOpenChange:setManual},content('手动弹窗',{},h('input',{'aria-label':'手动输入'}))),
       h(D.Dialog,null,h(D.DialogTrigger,{id:'outer-open'},'外层打开'),content('外层弹窗',{},h('input',{'aria-label':'外层首项'}),h('button',{id:'inner-open',onClick:()=>setInner(true)},'打开内层'),h(D.Dialog,{open:inner,onOpenChange:setInner},content('内层弹窗',{},h('input',{'aria-label':'内层输入'}))))),
       h('button',{id:'custom-open',onClick:()=>setCustom(true)},'自定义回焦'),h('button',{id:'custom-destination'},'指定去向'),h(D.Dialog,{open:custom,onOpenChange:setCustom},content('自定义弹窗',{onCloseAutoFocus:e=>{e.preventDefault();document.getElementById('custom-destination').focus()}},h('input',{'aria-label':'自定义输入'}))),
@@ -46,6 +47,8 @@ try{
    });
    const enter=async(id,title)=>{const button=page.locator('#'+id);await button.focus();await page.keyboard.press('Enter');await ready(title)};
    const close=async title=>{await page.keyboard.press('Escape');await page.getByRole('dialog',{name:title,exact:true}).waitFor({state:'hidden'})};
+   await enter('auto-open','自动聚焦弹窗');await page.getByRole('textbox',{name:'自动次项'}).focus();await close('自动聚焦弹窗');await settleFocus(page.locator('#auto-open'),'autoFocus子字段与内部切换后回首次入口');
+   await enter('auto-second-open','自动聚焦弹窗');await close('自动聚焦弹窗');await settleFocus(page.locator('#auto-second-open'),'autoFocus重开不复用上次来源');
    await enter('manual-open','手动弹窗');await close('手动弹窗');await settleFocus(page.locator('#manual-open'),'手动无DialogTrigger关闭后回原入口');
    await enter('outer-open','外层弹窗');await enter('inner-open','内层弹窗');await close('内层弹窗');await settleFocus(page.locator('#inner-open'),'嵌套最上层关闭回父弹窗入口');check(await page.getByRole('dialog',{name:'外层弹窗',exact:true}).isVisible(),'关闭内层不关闭父弹窗');await close('外层弹窗');await settleFocus(page.locator('#outer-open'),'父弹窗关闭回页面入口');
    await enter('custom-open','自定义弹窗');await close('自定义弹窗');await settleFocus(page.locator('#custom-destination'),'尊重调用方preventDefault和自定义去向');
