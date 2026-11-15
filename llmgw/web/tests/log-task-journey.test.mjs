@@ -18,7 +18,7 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
   dom.window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   dom.window.HTMLElement.prototype.scrollTo = () => {};
   const router = await import('react-router-dom'); globalThis.__journeyRouter = { ...router.default, ...router };
-  const base = { status: 'failed', statusCode: 403, model: 'sample-model', provider: 'example-upstream', operation: 'invoke', startedAt: '2026-11-01T12:00:00Z', upstreamCallCount: 1, error: '账户额度不足', providerAttempts: [] };
+  const base = { appCallerCode: 'shared-code', requestType: 'chat', platformId: 'upstream', status: 'failed', statusCode: 403, model: 'sample-model', provider: 'example-upstream', operation: 'invoke', startedAt: '2026-11-01T12:00:00Z', upstreamCallCount: 1, error: '账户额度不足', providerAttempts: [] };
   globalThis.__journey = { calls: [], rows: [1, 2, 3, 4].map(i => ({ ...base, id: `row-${i}`, requestId: `request-${i}` })) };
   const apiSource = await readFile(new URL('../src/lib/api.ts', import.meta.url), 'utf8');
   const apiNames = [...apiSource.matchAll(/^export (?:async )?function (\w+)/gm)].map(match => match[1]);
@@ -43,6 +43,10 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
     const click = async node => { assert.ok(node, 'expected action exists'); await act(async () => node.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))); };
     await click([...document.querySelectorAll('button')].find(node => node.textContent === '加载更多'));
     assert.equal(document.querySelectorAll('.lg-log-table-row').length, 4);
+    const lastRow = document.querySelectorAll('.lg-log-table-row')[3];
+    for (const path of ['/models/view', '/platforms/view', '/app-callers/view']) {
+      const link = lastRow.querySelector(`a[href^="${path}"]`);assert.ok(link,`rendered ${path} entry`);const target=new URL(link.getAttribute('href'),'http://local');const context=new URLSearchParams(target.searchParams.get('context'));assert.equal(context.get('status'),'failed');assert.equal(context.get('model'),'sample-model');assert.equal(context.get('selectedLogId'),'row-4');assert.ok(context.get('from'));assert.ok(context.get('to'));if(path==='/app-callers/view')assert.equal(target.searchParams.get('requestType'),'chat');
+    }
     const body = document.querySelector('.lg-log-table-body'); body.scrollTop = 350; body.dispatchEvent(new dom.window.Event('scroll'));
     await click(document.querySelectorAll('.lg-log-table-row')[3]);
     assert.match(document.querySelector('#route').textContent, /status=failed/);

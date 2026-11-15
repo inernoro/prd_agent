@@ -144,19 +144,19 @@ function formatThroughput(item: LlmLogListItem) {
   return DASH;
 }
 
-function modelDetailsHref(item: Pick<LlmLogListItem, 'logicalModelId' | 'logicalModelPublicId' | 'model' | 'platformId'>) {
+function modelDetailsHref(item: Pick<LlmLogListItem, 'logicalModelId' | 'logicalModelPublicId' | 'model' | 'platformId'>, context: LogTaskContext = {}) {
   const query = new URLSearchParams();
   if (item.logicalModelId) query.set('logicalModelId', item.logicalModelId);
   if (item.logicalModelPublicId || item.model) query.set('model', item.logicalModelPublicId || item.model);
   if (item.platformId) query.set('platformId', item.platformId);
-  return `/models/view?${query.toString()}`;
+  return withLogTaskContext('/models/view', query, context);
 }
 
 function isExchangeProvider(item: Pick<LlmLogListItem, 'platformName' | 'provider'>) {
   return /^exchange\s*:/i.test((item.platformName || item.provider || '').trim());
 }
 
-function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platformName' | 'provider'>) {
+function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platformName' | 'provider'>, context: LogTaskContext = {}) {
   const query = new URLSearchParams();
   if (item.platformId?.startsWith('user-key:')) return `/logs?serviceKeyId=${encodeURIComponent(item.platformId)}&clientCode=cds-user-key`;
   if (isExchangeProvider(item)) {
@@ -166,7 +166,7 @@ function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platform
   }
   if (item.platformId) query.set('id', item.platformId);
   if (item.platformName || item.provider) query.set('name', item.platformName || item.provider);
-  return `/platforms/view?${query.toString()}`;
+  return withLogTaskContext('/platforms/view', query, context);
 }
 
 function appDetailsHref(code: string, requestType?: string | null, context: LogTaskContext = {}) {
@@ -843,7 +843,7 @@ export function LogsView() {
         const modelName = it.logicalModelPublicId || it.model || DASH;
         return (
           <LogEntityHoverCard
-            href={modelDetailsHref(it)}
+            href={modelDetailsHref(it, { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to, selectedLogId: it.id })}
             label={modelName}
             subtitle={[it.logicalModelPublicId ? '逻辑模型' : '上游模型', proto?.label, tp?.label].filter(Boolean).join(' · ')}
             description={it.logicalModelPublicId && it.model !== it.logicalModelPublicId
@@ -864,7 +864,7 @@ export function LogsView() {
         const exchangeProvider = isExchangeProvider(it);
         return (
           <LogEntityHoverCard
-            href={providerDetailsHref(it)}
+            href={providerDetailsHref(it, { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to, selectedLogId: it.id })}
             label={providerName}
             subtitle={[exchangeProvider ? 'Exchange' : it.protocol || 'Provider', it.transport].filter(Boolean).join(' · ')}
             description={exchangeProvider
@@ -974,7 +974,7 @@ export function LogsView() {
       case 'model':
         return (
           <LogEntityHoverCard
-            href={modelDetailsHref(it)}
+            href={modelDetailsHref(it, { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to, selectedLogId: it.id })}
             label={it.logicalModelPublicId || it.model || DASH}
             subtitle={[it.logicalModelPublicId ? '逻辑模型' : '上游模型', it.protocol].filter(Boolean).join(' · ')}
             description="进入详情可查看该模型的能力、Provider、路由和最近请求。"
@@ -992,7 +992,7 @@ export function LogsView() {
         const exchangeProvider = isExchangeProvider(it);
         return (
           <LogEntityHoverCard
-            href={providerDetailsHref(it)}
+            href={providerDetailsHref(it, { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to, selectedLogId: it.id })}
             label={providerName}
             subtitle={[exchangeProvider ? 'Exchange' : it.protocol || 'Provider', it.transport].filter(Boolean).join(' · ')}
             description={exchangeProvider
@@ -1064,7 +1064,7 @@ export function LogsView() {
       case 'primaryModel':
         return it.primaryModel ? (
           <LogEntityHoverCard
-            href={`/models/view?model=${encodeURIComponent(it.primaryModel)}`}
+            href={withLogTaskContext('/models/view', new URLSearchParams({ model: it.primaryModel }), { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to })}
             label={it.primaryModel}
             subtitle="会话主要模型"
             description="进入详情可查看该模型的能力、Provider、路由和最近请求。"
