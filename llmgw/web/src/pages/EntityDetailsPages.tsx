@@ -1,5 +1,5 @@
 import { providerForDetail, logicalForDetail, physicalForDetail, offeringParticipationStatus } from '@/lib/modelDetailIdentity';
-import { entityBackTarget, providerModelDetailHref } from '@/lib/entityNavigation';
+import { callerCandidateDetailHref, entityBackTarget, providerCollectionContext, providerModelDetailHref } from '@/lib/entityNavigation';
 import { appCallerDetailCandidates, callerManagementState } from '@/lib/appCallerIdentity';
 import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
 import { AppCallerDefaultModel, AppCallerDefaultsProvider } from '@/components/AppCallerDefaultModel';
@@ -341,6 +341,8 @@ export function ModelDetailsPage() {
 export function ProviderDetailsPage() {
   const [params] = useSearchParams();
   const back = entityBackTarget(params);
+  const restoredCollection = providerCollectionContext(params);
+  const [hostedView, setHostedView] = useState({ query: restoredCollection.query, filter: restoredCollection.filter, page: restoredCollection.page });
   const requestedId = params.get('id') || '';
   const requestedName = params.get('name') || '';
   const [provider, setProvider] = useState<PlatformItem | null>(null);
@@ -450,8 +452,8 @@ export function ProviderDetailsPage() {
           id: 'models',
           title: '托管模型',
           description: registered ? '该 Provider 下当前可见的模型。点击模型可继续进入模型详情。' : '从最近请求中观察到的模型；只证明实际请求经过这里，不补造托管关系。',
-          content: registered ? <CollectionView items={providerRows} placeholder="搜索模型名称、标识或协议" searchText={({ model, publicIds }) => `${model.name} ${model.modelName} ${model.protocol || ''} ${publicIds.join(' ')}`} filters={logicalModels ? [{ value: 'registered', label: '已登记', matches: (row) => row.publicIds.length > 0 }, { value: 'unregistered', label: '未登记', matches: (row) => row.publicIds.length === 0 }] : []}>
-            {(pageRows) => <table className="lg-collection-entity-table lg-collection-hosted-table"><colgroup><col style={{width: '47%'}}/><col style={{width: '19%'}}/><col style={{width: '19%'}}/><col style={{width: '15%'}}/></colgroup><thead><tr><th>模型</th><th>协议</th><th>登记状态</th><th>操作</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id}><td><strong className="lg-collection-model-id" title={`${model.modelName} · ${model.name}`}>{model.modelName || model.name}</strong></td><td>{model.protocol || '继承协议'}</td><td><StatusPill label={logicalModels ? publicIds.length ? `已登记 · ${publicIds.length}` : '未登记' : '登记状态未读取'} tone={logicalModels ? publicIds.length ? 'good' : 'warning' : 'neutral'} /></td><td><Link to={providerModelDetailHref({ modelId: model.id, model: model.modelName || model.name, platformId: provider.id }, 'provider-detail')}>模型详情<ArrowUpRight size={13} /></Link></td></tr>)}</tbody></table>}
+          content: registered ? <CollectionView initialView={hostedView} onViewChange={setHostedView} items={providerRows} placeholder="搜索模型名称、标识或协议" searchText={({ model, publicIds }) => `${model.name} ${model.modelName} ${model.protocol || ''} ${publicIds.join(' ')}`} filters={logicalModels ? [{ value: 'registered', label: '已登记', matches: (row) => row.publicIds.length > 0 }, { value: 'unregistered', label: '未登记', matches: (row) => row.publicIds.length === 0 }] : []}>
+            {(pageRows) => <table className="lg-collection-entity-table lg-collection-hosted-table"><colgroup><col style={{width: '47%'}}/><col style={{width: '19%'}}/><col style={{width: '19%'}}/><col style={{width: '15%'}}/></colgroup><thead><tr><th>模型</th><th>协议</th><th>登记状态</th><th>操作</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id} className={model.id === restoredCollection.focus ? 'lg-collection-selected-row' : undefined}><td><strong className="lg-collection-model-id" title={`${model.modelName} · ${model.name}`}>{model.modelName || model.name}</strong></td><td>{model.protocol || '继承协议'}</td><td><StatusPill label={logicalModels ? publicIds.length ? `已登记 · ${publicIds.length}` : '未登记' : '登记状态未读取'} tone={logicalModels ? publicIds.length ? 'good' : 'warning' : 'neutral'} /></td><td><Link to={providerModelDetailHref({ modelId: model.id, model: model.modelName || model.name, platformId: provider.id }, 'provider-detail', hostedView, params)}>模型详情<ArrowUpRight size={13} /></Link></td></tr>)}</tbody></table>}
           </CollectionView> : <CollectionView items={observedModels} placeholder="搜索日志观察到的模型" searchText={(model) => model}>
             {(pageModels) => <>{pageModels.map((model) => <Link className="lg-collection-detail-card" key={model} to={`/models/view?model=${encodeURIComponent(model)}`}><ModelEntityIcon model={model} /><div><strong>{model}</strong><span>日志观测 · 非配置关系</span></div><ArrowUpRight size={15} /></Link>)}</>}
           </CollectionView>,
@@ -588,7 +590,7 @@ export function AppCallerDetailsPage() {
 
   if (loading) return <SectionLoader text="正在加载 App 详情" />;
   if (error) return <DetailError message={error} backHref={back.href} backLabel={back.label} retry={() => setRevision(value => value + 1)} />;
-  if (candidates.length) return <div className="lg-entity-detail-page"><h1>选择要查看的调用方用途</h1><div className="lg-entity-detail-request-list">{candidates.map(item => <Link key={item.id} to={`/app-callers/view?${new URLSearchParams({ id: item.id, code: item.appCallerCode, requestType: item.requestType })}`}><div><strong>{item.title || item.appCallerCode}</strong><code>{item.appCallerCode}</code></div><span>{item.requestType}</span></Link>)}</div><Link to={back.href}>{back.label}</Link></div>;
+  if (candidates.length) return <div className="lg-entity-detail-page"><h1>选择要查看的调用方用途</h1><div className="lg-entity-detail-request-list">{candidates.map(item => <Link key={item.id} to={callerCandidateDetailHref(item, params)}><div><strong>{item.title || item.appCallerCode}</strong><code>{item.appCallerCode}</code></div><span>{item.requestType}</span></Link>)}</div><Link to={back.href}>{back.label}</Link></div>;
   if (!app) return <DetailError message="当前租户中没有找到该 App，可能尚未注册或不在你的团队范围内。" backHref={back.href} backLabel={back.label} />;
 
   const displayCode = app.appCallerCode;

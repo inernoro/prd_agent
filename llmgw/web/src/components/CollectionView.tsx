@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { collectionPage } from '@/lib/collectionPaging';
 import './CollectionView.css';
 
-export function CollectionView<T>({ items, searchText, placeholder, children, pageSize = 10, emptyText = '没有匹配结果', className = '', filters = [], filterLabel = '清单状态筛选', allFilterLabel = '全部状态', afterToolbar, toolbarActions, continuous = false, initialFilter = '' }: {
+export type CollectionViewState = { query: string; filter: string; page: number };
+
+export function CollectionView<T>({ items, searchText, placeholder, children, pageSize = 10, emptyText = '没有匹配结果', className = '', filters = [], filterLabel = '清单状态筛选', allFilterLabel = '全部状态', afterToolbar, toolbarActions, continuous = false, initialFilter = '', initialView, onViewChange }: {
   items: readonly T[];
   searchText: (item: T) => string;
   placeholder: string;
@@ -19,10 +21,14 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
   filters?: Array<{ value: string; label: string; matches: (item: T) => boolean }>;
   continuous?: boolean;
   initialFilter?: string;
+  initialView?: Partial<CollectionViewState>;
+  /** Paginated view bookmark; continuous batch/scroll restoration is outside this contract. */
+  onViewChange?: (state: CollectionViewState) => void;
 }) {
-  const [query, setQuery] = useState('');
-  const [page, setPage] = useState(1);
-  const [filter, setFilter] = useState(initialFilter);
+  const [query, setQuery] = useState(initialView?.query || '');
+  const [page, setPage] = useState(Math.max(1, initialView?.page || 1));
+  const [filter, setFilter] = useState(initialView?.filter ?? initialFilter);
+  const notifyView = useRef(onViewChange); notifyView.current = onViewChange;
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const selectedFilter = filters.find((item) => item.value === filter);
@@ -30,6 +36,7 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
   const result = collectionPage(filtered, query, searchText, continuous ? 1 : page, continuous ? Math.max(1, filtered.length) : pageSize);
   const visible = continuous ? result.items.slice(0, page * pageSize) : result.items;
   const hasMore = continuous && visible.length < result.total;
+  useEffect(() => { notifyView.current?.({ query, filter, page: result.current }); }, [query, filter, result.current]);
   // 数据删除或刷新后立刻夹住页码；搜索、筛选和翻页都回到清单顶部。
   useEffect(() => { if (!continuous && page !== result.current) setPage(result.current); }, [page, result.current, continuous]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: 0 }); }, [query, filter, result.current]);
@@ -68,7 +75,7 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
 /** 桌面并列、窄屏独立详情态。保持真实编辑表单内联在页面，不复制写入逻辑。 */
 export function CollectionDetailPane({ title, identifier, onClose, children, tabs, icon, footer }: { title: ReactNode; identifier?: string; onClose: () => void; children: ReactNode; tabs?: ReactNode; icon?: ReactNode; footer?: ReactNode }) {
   const closeRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeRef.current?.focus({ preventScroll: true });
     return () => { if (trigger?.isConnected) trigger.focus({ preventScroll: true }); };

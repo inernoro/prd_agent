@@ -16,7 +16,7 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
   const { createRoot } = await import('react-dom/client');
   const routerModule = await import('react-router-dom');
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-  dom.window.HTMLElement.prototype.scrollTo = () => {};
+  dom.window.HTMLElement.prototype.scrollTo = () => {};dom.window.HTMLElement.prototype.scrollIntoView = () => {};
   const fixture = {
     role: 'owner', calls: [], models: [], logicalModels: [], appCallers: [], serviceKeys: [],
     providers: Array.from({ length: 12 }, (_, i) => ({
