@@ -133,19 +133,17 @@ export function ConfirmAction({
   const popover = open
     ? (
       <DialogPrimitive.Portal>
-        // 2026-05-04 fix(.claude/rules/cds-theme-tokens.md):
-        // 之前 bg-popover / text-popover-foreground 在 cds/web/src/index.css
-        // 完全没定义 → CSS var 解析为空 → popover 透明,下方"更新日志"
-        // 卡片内容直接穿透显示,用户看不清是什么。
-        // 改用 CDS 已确实存在的 surface-raised + hairline + foreground 三 token,
-        // 两个主题(dark/light)都有显式定义,绝不透明。
-        // z-50 → z-[200] 提高,popover 必须高于同 tab 内的 surface 内容。
+        {/* CDS surface tokens are opaque in both themes; the confirmation stays above its workspace. */}
         <DialogPrimitive.Content
           ref={setPopoverNode}
           className="fixed z-[200] w-72 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3 text-left shadow-2xl"
           id={dialogId}
           {...(description ? {} : { 'aria-describedby': undefined })}
-          onOpenAutoFocus={event => event.preventDefault()}
+          onOpenAutoFocus={event => {
+            event.preventDefault();
+            // FocusScope has paused the underlying workspace before this event.
+            popoverNode?.querySelector<HTMLElement>('[data-confirm-cancel]')?.focus({ preventScroll: true });
+          }}
           onCloseAutoFocus={event => {
             event.preventDefault();
             if (returnFocus.current?.isConnected) returnFocus.current.focus({ preventScroll: true });
