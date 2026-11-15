@@ -148,6 +148,7 @@ import { realDbLedgerOps } from '../services/db-ledger-ops.js';
 import { getInfraCatalogPublic, recommendedVolumePathsFromCatalog } from '../services/infra-catalog.js';
 import { assertInfraAuthenticationConfigured } from '../services/infra-auth-policy.js';
 import { assertProjectAccess, assertScopedSweep } from './projects.js';
+import { createBranchServiceIsolationRouter } from './branch-service-isolation.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
@@ -2317,6 +2318,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   if (branchOperationCoordinator && deploymentRunService) deploymentRunService.bindOperationCoordinator(branchOperationCoordinator);
   const router = Router();
+  router.use(createBranchServiceIsolationRouter(stateService, branchOperationCoordinator,
+    (entry, excluded) => containerService.assertBranchStoppedForIsolation(entry, excluded)));
   router.use((req, res, next) => {
     if (req.method === 'POST') {
       const match = /^\/branches\/([^/]+)\/(?:deploy(?:\/[^/]+)?|restart|force-rebuild\/[^/]+|prebuilt-image\/claim)\/?$/.exec(req.path);
@@ -6577,6 +6580,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (!sourceBranch) {
           res.status(400).json({ error: `来源分支 "${sourceBranchId}" 不存在` });
           return;
+        }
+        if (sourceBranch.excludedProjectProfileIds?.length) {
+          res.status(409).json({ error: '隔离测试分支的配置不能直接派生，请单独配置目标分支' }); return;
         }
         // 跨项目派生禁止:profileOverrides 引用的 profileId、extraProfiles 的 projectId
         // 都是项目内语义,跨项目拷贝会产出悬空引用 + 隔离穿透。
@@ -12189,6 +12195,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if ((source.projectId || 'default') !== projectId) {
       res.status(400).json({ error: `来源分支 "${source.id}" 属于项目 "${source.projectId}",不能跨项目拷贝配置(profileId 引用与隔离语义均为项目内)` });
       return;
+    }
+    if (source.excludedProjectProfileIds?.length || entry.excludedProjectProfileIds?.length) {
+      res.status(409).json({ error: '隔离测试分支不能直接复制配置，请沿本分支隔离入口调整' }); return;
     }
     try { stateService.assertProfileStorageDeclarationsPreserved([{...entry,
       profileOverrides:structuredClone(source.profileOverrides || {}),extraProfiles:structuredClone(source.extraProfiles || [])}]); }
