@@ -258,7 +258,7 @@ public class ReportAutoGenerateWorker : BackgroundService
 
                     overdueMemberNames.Add(report.UserName ?? report.UserId);
                     await notificationService.NotifyOverdueAsync(
-                        report.UserId, team?.LeaderUserId, prevWeekYear, prevWeekNumber);
+                        report.UserId, team?.LeaderUserId, prevWeekYear, prevWeekNumber, report.TeamId);
                 }
 
                 // Webhook 聚合通知：每个团队只发一次
