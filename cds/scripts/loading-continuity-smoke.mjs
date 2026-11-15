@@ -115,10 +115,12 @@ try {
       result.dataReplacedSkeleton = true;
       if (!before && scene.kind === 'release-center') {
         await page.getByRole('heading', { name: '还没有站点发布目标', exact: true }).waitFor();
+      }
+      if (!before && scene.kind === 'release-console') {
         await page.getByRole('region', { name: '批次发布', exact: true }).waitFor();
-        await page.getByRole('button', { name: '新建批次', exact: true }).click();
         await page.getByRole('combobox', { name: '已验收版本', exact: true }).waitFor();
-        await page.getByText('需要至少两个已启用的发布目标，可先通过「新建环境」补齐。', { exact: true }).waitFor();
+        await page.getByText('需要至少两个已启用的发布目标，可先通过「环境管理」补齐。', { exact: true }).waitFor();
+        assert(await page.getByRole('link', { name: '逐目标发布', exact: true }).isVisible(), `${route}: per-target release entry missing`);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${route}: batch empty state overflows`);
         result.batchEmptyStateReachable = true;
       }

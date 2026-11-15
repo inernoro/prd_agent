@@ -70,7 +70,6 @@ import {
   strategyFromDraft,
 } from '@/pages/release-center/SiteWizardDialog';
 import { StartReleaseDialog, type StartReleaseIntent } from '@/pages/release-center/StartReleaseDialog';
-import { BatchReleasePanel } from '@/pages/release-center/BatchReleasePanel';
 import type {
   BranchOption,
   CenterResponse,
@@ -222,13 +221,14 @@ export function ReleaseCenterPage(): JSX.Element {
   // replace 而不是 push：切分区不是导航，不该在浏览器后退键上堆五层历史。
   useEffect(() => {
     setSearchParams((current) => {
-      if (releaseCenterSection(current) === section) return current;
+      if (releaseCenterSection(current) === section && current.get('project') === projectId) return current;
       const next = new URLSearchParams(current);
+      next.set('project', projectId);
       if (section === 'fleet') next.delete('section');
       else next.set('section', section);
       return next;
     }, { replace: true });
-  }, [section, setSearchParams]);
+  }, [section, projectId, setSearchParams]);
 
   // 项目列表用于「项目」下拉（best-effort，失败退回手输）。
   useEffect(() => {
@@ -625,7 +625,7 @@ export function ReleaseCenterPage(): JSX.Element {
         <TopBar
           left={(
             <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-              <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布中心' }]} />
+              <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布工作台', href: consoleHref() }, { label: '环境管理' }]} />
               <span className="cds-ident text-[0.7188rem] text-muted-foreground">release center · 环境生命周期</span>
               {/* 项目胶囊：这一页所有数字都在某个项目的语境里，项目必须一眼可见可换。 */}
               {projects.length > 0 ? (
@@ -670,7 +670,7 @@ export function ReleaseCenterPage(): JSX.Element {
               <Button size="sm" asChild>
                 <Link to={consoleHref()}>
                   <Rocket />
-                  发布控制台
+                  发布工作台
                 </Link>
               </Button>
             </>
@@ -793,7 +793,6 @@ export function ReleaseCenterPage(): JSX.Element {
                 </section> : null}
 
                 {/* ══ 分区一：全环境矩阵 ══ */}
-                {section === 'fleet' ? <BatchReleasePanel key={projectId} projectId={projectId} targets={rows.map((row) => row.target)} onOpenLogs={setLogRun} /> : null}
                 {rows.length === 0 ? <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} /> : null}
                 {section === 'fleet' ? (
                   rows.length > 0 ? <FleetMatrix

@@ -132,4 +132,35 @@ describe('批次发布结果 · 保留各目标真实结果', () => {
     expect(html).toContain('首次发布失败');
     expect(html.match(/查看日志/g)).toHaveLength(2);
   });
+
+  it('预检阶段只显示检查统计和版本变化，不把尚未部署写成发布失败或提供重试发布', () => {
+    const html = render(batch([target('A', 'ready'), target('B', 'failed', { error: '同提交 CI 未通过' })], 'blocked'));
+    expect(html).toContain('1/2 个目标预检通过');
+    expect(html).toContain('发布前记录');
+    expect(html).toContain('本次发布');
+    expect(html).not.toContain('0/2 个目标发布成功');
+    expect(html).not.toContain('仅重试此目标');
+  });
+
+  it('成功记录的核对失败仍明确尚未核实，不能显示全部成功', () => {
+    const html = render(batch([
+      target('A', 'success', { observedCommitSha: COMMIT }),
+      target('B', 'success', { observedCommitSha: COMMIT, observationError: '现场连接失败' }),
+    ], 'success'));
+    expect(html).not.toContain('全部目标发布成功');
+    expect(html).toContain('1/2 个目标发布成功');
+    expect(html).toContain('1 个目标的实际版本尚未核实');
+    expect(html).toContain('最近核对未成功');
+    expect(html).toContain('执行成功，版本待核实');
+  });
+
+  it('部分成功同时明确跨目标版本不一致和重试范围', () => {
+    const html = render(batch([
+      target('A', 'success', { observedCommitSha: COMMIT }),
+      target('B', 'failed', { observedCommitSha: OTHER_COMMIT }),
+    ]));
+    expect(html).toContain('各目标版本不一致');
+    expect(html).toContain('已成功目标不会重复部署');
+    expect(html).toContain('重试继续使用本批次固定版本');
+  });
 });
