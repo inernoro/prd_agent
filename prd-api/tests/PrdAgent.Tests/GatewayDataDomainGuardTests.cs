@@ -1455,7 +1455,7 @@ public class GatewayDataDomainGuardTests
         }
 
         Assert.Contains("reconciliation.items.map", usagePage);
-        Assert.Contains("/logs?requestId=", usagePage);
+        Assert.Contains("buildLogRequestHref(item.requestId)", usagePage);
         Assert.Contains("逐条查看 Gateway 估算、供应商实际、差额依据和匹配粒度", usagePage);
         Assert.Contains("汇总记录没有单条 requestId", usagePage);
         Assert.Contains("value == null ? unknownLabel", usagePage);
