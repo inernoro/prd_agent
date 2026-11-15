@@ -1,0 +1,24 @@
+.lg-home-operations { gap: 20px; }
+.lg-home-operations h2 { margin: 0 0 10px; font-size: var(--fs-body); font-weight: 650; display: flex; align-items: center; gap: 6px; }
+.lg-home-pulse { border-block: 1px solid var(--border-subtle); padding-block: 16px 12px; }
+.lg-home-pulse dl { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; margin: 0; }
+.lg-home-pulse dl > div { min-width: 0; }
+.lg-home-pulse dt { font-size: var(--fs-secondary); color: var(--text-secondary); }
+.lg-home-pulse dd { margin: 8px 0 0; font-size: var(--fs-title); font-weight: 650; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.lg-home-pulse-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.lg-home-pulse-footer > span { font-size: var(--fs-secondary); color: var(--text-muted); }
+.lg-home-evidence { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 24px; padding-block: 4px 16px; border-bottom: 1px solid var(--border-subtle); }
+.lg-home-evidence p { margin: 8px 0 0; color: var(--text-secondary); font-size: var(--fs-secondary); }
+.lg-home-evidence p a { color: var(--accent); }
+.lg-home-cost-facts, .lg-home-connectivity { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: var(--fs-secondary); }
+.lg-home-connectivity .lg-text-link { margin-left: auto; }
+.lg-home-distributions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; }
+.lg-home-distributions > div { min-width: 0; }
+.lg-home-key-facts { display: grid; gap: 8px; margin-bottom: 8px; color: var(--text-secondary); font-size: var(--fs-secondary); }
+.lg-home-help { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding-top: 8px; }
+@media (max-width: 1100px) { .lg-home-pulse dl { grid-template-columns: repeat(3, minmax(0, 1fr)); } .lg-home-distributions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 680px) {
+  .lg-home-pulse dl { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+  .lg-home-evidence, .lg-home-distributions { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .lg-home-operations { gap: 16px; }
+}

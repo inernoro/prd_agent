@@ -1384,7 +1384,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("getTenantOverview", webApi);
         Assert.Contains("getTenantOverview({ from: from.toISOString(), to: to.toISOString() })", home);
         Assert.Contains("CNY 与 USD 不做无汇率相加", home);
-        Assert.Contains("无请求时不显示 0%", home);
+        Assert.Contains("!overview.totalRequests ? '暂无请求'", home);
 
         Assert.Contains("path=\"/learn\"", app);
         Assert.Contains("to: '/learn', label: '学习中心'", layout);
@@ -3127,7 +3127,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("sourceSystemDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("ingressProtocolDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("modelPolicyDistribution: LogsBucketItem[]", consoleTypes);
-        Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\">", logsView);
+        Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\"", logsView);
         Assert.Contains("meta.ingressProtocols.map", logsView);
         Assert.Contains("setFilterIngressProtocol", logsView);
         Assert.Contains("meta.modelPolicies.map", logsView);
@@ -3539,7 +3539,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("display: inline-flex;", theme);
         Assert.Contains("width: fit-content;", theme);
         Assert.DoesNotContain(".lg-log-entity-hover-root {\n  display: block;", theme);
-        Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\">", logs);
+        Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\"", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
         Assert.Contains(".lg-log-table {", theme);
         // 字号已收敛为 :root 的七档 token（doc/rule.platform.llm-gateway.console-design-tonality.md）。

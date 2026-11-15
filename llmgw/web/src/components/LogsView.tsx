@@ -13,6 +13,7 @@ import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityI
 import { LogEntityHoverCard } from './LogEntityHoverCard';
 import { LogTableSettings } from './LogTableSettings';
 import { ConsumptionAlertsPanel } from './ConsumptionAlertsPanel';
+import './LogsView.css';
 import { readLogListResume, saveLogListResume } from '@/lib/logListResume';
 import { buildLogTraceHref, LOG_FILTER_KEYS } from '@/lib/logNavigation';
 import {
@@ -168,10 +169,17 @@ function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platform
   return `/platforms/view?${query.toString()}`;
 }
 
-function appDetailsHref(code: string) {
-  return `/app-callers/view?code=${encodeURIComponent(code)}`;
+function appDetailsHref(code: string, requestType?: string | null) {
+  const query = new URLSearchParams({ code });
+  if (requestType) query.set('requestType', requestType);
+  return `/app-callers/view?${query}`;
 }
 
+
+function LogRowTime({ item, withResult }: { item: LlmLogListItem; withResult: boolean }) {
+  const result = deriveLifecycle(item);
+  return <span style={{ color: 'var(--log-text-muted)', whiteSpace: 'nowrap' }} title={fmtDate(item.startedAt)}>{fmtShortTime(item.startedAt)}{withResult ? <span className="lg-log-time-result" style={{ color: item.status === 'failed' ? 'var(--err)' : 'var(--text-secondary)' }}>{item.status ? result.label : '结果未记录'}{item.statusCode != null ? ` · HTTP ${item.statusCode}` : ''}</span> : null}</span>;
+}
 
 const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');
 
@@ -265,7 +273,7 @@ export function LogTable<T>({
     // observer 必须按新的 root 重建，否则会一直用旧断点算出来的那个。
   }, [hasMore, loadingMore, paused, autoLoad, isNarrowViewport]);
 
-  const visibleColumns = resolveLogTableColumns(columns, preferences);
+  const visibleColumns = resolveLogTableColumns(columns, preferences).filter(column => !(isNarrowViewport && tableKey !== 'sessions' && column.key === 'status')).map(column => isNarrowViewport && tableKey !== 'sessions' && column.key === 'date' ? { ...column, label: '时间与结果', width: 'minmax(140px, 1.4fr)' } : column);
   const gridCols = `${visibleColumns.map((column) => column.width).join(' ')} 42px`;
   // 表格最小宽度必须由列自身的下限推出来，不能写死。
   // 以前这里对 generations 硬编码 1832px，无论列怎么配都强制横向滚动，
@@ -818,11 +826,7 @@ export function LogsView() {
   const renderGenerationCell = (col: ColumnDef, it: LlmLogListItem): ReactNode => {
     switch (col.key) {
       case 'date':
-        return (
-          <span style={{ color: 'var(--log-text-muted)', whiteSpace: 'nowrap' }} title={fmtDate(it.startedAt)}>
-            {fmtShortTime(it.startedAt)}
-          </span>
-        );
+        return <LogRowTime item={it} withResult={isNarrowViewport} />;
       case 'generation':
         return (
           <span
@@ -884,7 +888,7 @@ export function LogsView() {
         }
         return (
           <LogEntityHoverCard
-            href={appDetailsHref(code)}
+            href={appDetailsHref(code, it.requestType)}
             label={appDisplayName(it)}
             subtitle={[code, it.sourceSystem || 'App', it.environment].filter(Boolean).join(' · ')}
             description={it.clientCode
@@ -962,7 +966,7 @@ export function LogsView() {
   const renderUpstreamCell = (col: ColumnDef, it: LlmLogListItem): ReactNode => {
     switch (col.key) {
       case 'date':
-        return <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{fmtShortTime(it.startedAt)}</span>;
+        return <LogRowTime item={it} withResult={isNarrowViewport} />;
       case 'operation': {
         const operation = getOperationMeta(it.operation);
         return <Chip label={operation.label} color={operation.color} bg={operation.bg} />;
@@ -1133,6 +1137,11 @@ export function LogsView() {
     filterEnvironment,
     filterPlatformId.trim(),
   ].filter(Boolean).length;
+  const closeFilters = (panel: HTMLDetailsElement | null) => {
+    setRequestIdDraft(filterRequestId);
+    panel?.removeAttribute('open');
+    panel?.querySelector('summary')?.focus();
+  };
   const clearFilters = () => {
     const next = new URLSearchParams(location.search);
     for (const key of LOG_FILTER_KEYS) next.delete(key);
@@ -1178,8 +1187,8 @@ export function LogsView() {
       <ConsumptionAlertsPanel refreshToken={refreshToken} />
       <header className="lg-logs-heading">
         <div>
-          <h1>Logs</h1>
-          <Link to={buildLogTraceHref('', { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to })}>按业务操作或请求编号排查</Link>
+          <div className="lg-logs-title-line"><h1>请求记录</h1><span className="tabular">{subtab === 'sessions' ? sessTotal : total} 条</span></div>
+          <Link className="lg-secondary-link" to={buildLogTraceHref('', { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to })}>按业务操作或请求编号排查</Link>
           {/* 汇总条：拿不到值的项**整条不渲染**，而不是渲染成「上游调用 —」。
               一排破折号既不承载信息，又和真实数字抢同样的横向位置，
               读起来是「这里坏了」而不是「这里没有」。过滤在 summaryFacts 里做。 */}
@@ -1193,16 +1202,16 @@ export function LogsView() {
           ) : null}
         </div>
         <div className="lg-log-page-actions">
-          <span className="tabular">{subtab === 'sessions' ? sessTotal : total} 条</span>
           <Button variant="ghost" size="sm" aria-label="刷新日志" title="刷新日志" onClick={refresh} disabled={loading || sessLoading}>
             {loading || sessLoading ? <Spinner size={15} /> : <RefreshCw size={15} />}
           </Button>
-          <details className="lg-log-filters lg-log-filter-menu">
+          <details className="lg-log-filters lg-log-filter-menu" onKeyDownCapture={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFilters(event.currentTarget); } }}>
             <summary aria-label="筛选日志" title="筛选日志">
               <SlidersHorizontal size={16} aria-hidden="true" />
               {activeFilterCount > 0 ? <span className="lg-log-filter-count">{activeFilterCount}</span> : null}
             </summary>
             <div>
+              <div className="lg-log-filter-header"><strong>筛选请求</strong><button type="button" onClick={event => closeFilters(event.currentTarget.closest('details'))}>关闭筛选</button></div>
               <form
                 className="lg-log-search"
                 onSubmit={(event) => {
