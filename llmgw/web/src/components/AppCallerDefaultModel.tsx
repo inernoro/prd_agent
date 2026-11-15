@@ -32,7 +32,7 @@ export function AppCallerDefaultModel({ item }: { item: Pick<GatewayAppCaller, '
     <strong>{model?.name || model?.publicId || '未配置默认模型'}</strong>
     <span>{model ? source === 'caller' ? '此调用方专属默认' : '沿用用途默认' : '未点名模型的请求无默认目标'}</span>
     {!allowed ? <span className="lg-app-caller-warning">模型未允许此调用方</span> : null}
-    <Link to={callerModelWorkspaceHref(item.appCallerCode, item.requestType, returnSearch)}>查看默认模型</Link>
+    <Link className="lg-text-link" to={callerModelWorkspaceHref(item.appCallerCode, item.requestType, returnSearch)}>查看默认模型</Link>
   </div>;
 }
 

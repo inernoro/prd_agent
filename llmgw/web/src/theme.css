@@ -9130,3 +9130,8 @@ a:focus-visible {
 .lg-qs-form-card .lg-qs-single-team { padding: 0; min-height: 0; }
 .lg-qs-form-card .lg-qs-own-col { gap: 8px; }
 .lg-qs-form-card .lg-qs-create-footer { padding-top: 16px; gap: 12px; }
+
+.lg-entity-detail-app-task .lg-entity-detail-hero { grid-template-columns: minmax(0, 1fr) auto; }
+@media (max-width: 700px) {
+  .lg-entity-detail-app-task .lg-entity-detail-hero { grid-template-columns: minmax(0, 1fr); }
+}
