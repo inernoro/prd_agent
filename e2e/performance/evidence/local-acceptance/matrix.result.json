@@ -1,0 +1,1952 @@
+{
+  "schema": 1,
+  "provenance": "integration-live",
+  "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+  "harnessCommit": "e77358a179dd1e41dd4226d0e5d3ba401673bf2e",
+  "driverDigest": "546cd2f5a16fe0b09692db273fae3138cc47ee544f63950e9e13fc3bf8f5ce63",
+  "preparedResult": {
+    "path": "work/core-goal-closeout/v3/candidate/result.json",
+    "sha256": "f1a26bc4e608a2b76e705f63dfecc9c69c0b7741e5d0da2493e991916031fb43"
+  },
+  "startedAt": "2026-11-13T21:03:38.249Z",
+  "state": "complete",
+  "cases": [
+    {
+      "id": "desktop-dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "dark",
+      "pass": true,
+      "steps": [
+        {
+          "step": "home",
+          "url": "http://127.0.0.1:32775/",
+          "theme": "dark"
+        },
+        {
+          "step": "knowledge-list",
+          "url": "http://127.0.0.1:32775/document-store",
+          "theme": "dark"
+        },
+        {
+          "step": "document-open",
+          "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+          "theme": "dark"
+        },
+        {
+          "step": "saved-refresh",
+          "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+          "theme": "dark"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/api/v1/landing/preview-assets",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:02.842Z"
+        },
+        {
+          "path": "/api/v1/auth/miduo-planet/options",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.191Z"
+        },
+        {
+          "path": "/api/v1/auth/login",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.430Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.483Z"
+        },
+        {
+          "path": "/api/authz/menu-catalog",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.483Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.483Z"
+        },
+        {
+          "path": "/api/daily-tips/visible",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.538Z"
+        },
+        {
+          "path": "/api/dashboard/notifications",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.819Z"
+        },
+        {
+          "path": "/api/daily-tips/progress",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.819Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.819Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.820Z"
+        },
+        {
+          "path": "/api/model-leaderboard/top",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.921Z"
+        },
+        {
+          "path": "/api/mobile/feed",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.945Z"
+        },
+        {
+          "path": "/api/submissions/public",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.951Z"
+        },
+        {
+          "path": "/api/ai-toolbox/items",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.970Z"
+        },
+        {
+          "path": "/api/ai-toolbox/marketplace",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.971Z"
+        },
+        {
+          "path": "/api/submissions/public/creators",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.977Z"
+        },
+        {
+          "path": "/api/mobile/stats",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.977Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:03.977Z"
+        },
+        {
+          "path": "/api/weekly-posters/current",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:04.061Z"
+        },
+        {
+          "path": "/api/submissions/public",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:04.061Z"
+        },
+        {
+          "path": "/api/submissions/public/creators",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:04.061Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:04.061Z"
+        },
+        {
+          "path": "/api/home/recent-work",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:04.061Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.416Z"
+        },
+        {
+          "path": "/api/document-store/stores/with-preview",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.520Z"
+        },
+        {
+          "path": "/api/document-store/stores/analytics-summary",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.520Z"
+        },
+        {
+          "path": "/api/daily-tips/seed-document-store-page-guide/track",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.521Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.649Z"
+        },
+        {
+          "path": "/api/document-store/stores/ffa4cd19c81349f0b23b4e7b2a6b5b50/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.649Z"
+        },
+        {
+          "path": "/api/document-store/stores/a226fe73869b415b9055592d7f80248f/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.649Z"
+        },
+        {
+          "path": "/api/document-store/stores/645056c9abbc4820af44931c9ce3dd58/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.649Z"
+        },
+        {
+          "path": "/api/document-store/stores/e8a65887ba5b418f86a3d97939883f60/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.649Z"
+        },
+        {
+          "path": "/api/document-store/stores/6a3dd098fc0c47c59ccd470618a98b04/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.649Z"
+        },
+        {
+          "path": "/api/daily-tips/seed-document-store-page-guide/mark-learned",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.758Z"
+        },
+        {
+          "path": "/api/daily-tips/progress",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.772Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.843Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/tutorial-link-graph",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.866Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/entries",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.870Z"
+        },
+        {
+          "path": "/api/peer-sync/runs",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.890Z"
+        },
+        {
+          "path": "/api/document-store/transcribe-styles",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.916Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/sync",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.956Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.956Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:05.956Z"
+        },
+        {
+          "path": "/api/document-store/entries/1a631d44d67849528de316f325ce90c9/inline-comments",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:06.039Z"
+        },
+        {
+          "path": "/api/document-store/entries/1a631d44d67849528de316f325ce90c9/agent-runs/latest",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:06.039Z"
+        },
+        {
+          "path": "/api/document-store/entries/1a631d44d67849528de316f325ce90c9/content",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:06.049Z"
+        },
+        {
+          "path": "/api/mentions/documents/1a631d44d67849528de316f325ce90c9/links",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:06.052Z"
+        },
+        {
+          "path": "/api/document-store/entries/1a631d44d67849528de316f325ce90c9/view",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:06.052Z"
+        },
+        {
+          "path": "/api/mentions/documents/1a631d44d67849528de316f325ce90c9/links",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:06.165Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/inline-comments",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:06.287Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:06.287Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/agent-runs/latest",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:06.287Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:06.287Z"
+        },
+        {
+          "path": "/api/document-store/view-events/c2cdb29eaf1e404392c3b8becb176dbb/leave",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:06.287Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/view",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:06.302Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:06.418Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.022Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/size",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.083Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.083Z"
+        },
+        {
+          "path": "/api/daily-tips/progress",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.360Z"
+        },
+        {
+          "path": "/api/dashboard/notifications",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.360Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.360Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.360Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.363Z"
+        },
+        {
+          "path": "/api/daily-tips/visible",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.370Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/tutorial-link-graph",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.622Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.626Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.627Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/agent-runs/latest",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.627Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/entries",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.639Z"
+        },
+        {
+          "path": "/api/peer-sync/runs",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.639Z"
+        },
+        {
+          "path": "/api/document-store/stores/analytics-summary",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.667Z"
+        },
+        {
+          "path": "/api/document-store/stores/with-preview",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.690Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/sync",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.693Z"
+        },
+        {
+          "path": "/api/document-store/transcribe-styles",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.693Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/inline-comments",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.704Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.704Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/view",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.707Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.708Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/size",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.802Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:07.802Z"
+        }
+      ],
+      "pageErrors": [],
+      "preferenceSetup": "各目标视口通过实际外观入口选择主题，不注入存储或修改DOM",
+      "layout": {
+        "width": 1440,
+        "documentWidth": 1440,
+        "theme": "dark"
+      },
+      "unexpectedHttpErrors": [],
+      "persisted": true
+    },
+    {
+      "id": "desktop-light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "theme": "light",
+      "pass": true,
+      "steps": [
+        {
+          "step": "home",
+          "url": "http://127.0.0.1:32775/",
+          "theme": "light"
+        },
+        {
+          "step": "knowledge-list",
+          "url": "http://127.0.0.1:32775/document-store",
+          "theme": "light"
+        },
+        {
+          "step": "document-open",
+          "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+          "theme": "light"
+        },
+        {
+          "step": "saved-refresh",
+          "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+          "theme": "light"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/api/v1/landing/preview-assets",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:09.732Z"
+        },
+        {
+          "path": "/api/v1/auth/miduo-planet/options",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:09.926Z"
+        },
+        {
+          "path": "/api/v1/auth/login",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.150Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.226Z"
+        },
+        {
+          "path": "/api/authz/menu-catalog",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.269Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.269Z"
+        },
+        {
+          "path": "/api/daily-tips/visible",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.269Z"
+        },
+        {
+          "path": "/api/daily-tips/progress",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.532Z"
+        },
+        {
+          "path": "/api/dashboard/notifications",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.532Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.533Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.533Z"
+        },
+        {
+          "path": "/api/submissions/public",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.586Z"
+        },
+        {
+          "path": "/api/submissions/public/creators",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.590Z"
+        },
+        {
+          "path": "/api/model-leaderboard/top",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.592Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.617Z"
+        },
+        {
+          "path": "/api/mobile/stats",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.617Z"
+        },
+        {
+          "path": "/api/ai-toolbox/items",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.617Z"
+        },
+        {
+          "path": "/api/mobile/feed",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.617Z"
+        },
+        {
+          "path": "/api/ai-toolbox/marketplace",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.617Z"
+        },
+        {
+          "path": "/api/weekly-posters/current",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.705Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.712Z"
+        },
+        {
+          "path": "/api/home/recent-work",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.715Z"
+        },
+        {
+          "path": "/api/submissions/public/creators",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.715Z"
+        },
+        {
+          "path": "/api/submissions/public",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:10.715Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.618Z"
+        },
+        {
+          "path": "/api/document-store/stores/analytics-summary",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.618Z"
+        },
+        {
+          "path": "/api/document-store/stores/with-preview",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.619Z"
+        },
+        {
+          "path": "/api/document-store/stores/645056c9abbc4820af44931c9ce3dd58/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.695Z"
+        },
+        {
+          "path": "/api/document-store/stores/a226fe73869b415b9055592d7f80248f/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.695Z"
+        },
+        {
+          "path": "/api/document-store/stores/ffa4cd19c81349f0b23b4e7b2a6b5b50/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.696Z"
+        },
+        {
+          "path": "/api/document-store/stores/e8a65887ba5b418f86a3d97939883f60/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.696Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.696Z"
+        },
+        {
+          "path": "/api/document-store/stores/6a3dd098fc0c47c59ccd470618a98b04/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.696Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.775Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/tutorial-link-graph",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.775Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/entries",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.778Z"
+        },
+        {
+          "path": "/api/peer-sync/runs",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.827Z"
+        },
+        {
+          "path": "/api/document-store/transcribe-styles",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.846Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/sync",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.846Z"
+        },
+        {
+          "path": "/api/document-store/entries/1a631d44d67849528de316f325ce90c9/inline-comments",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.967Z"
+        },
+        {
+          "path": "/api/document-store/entries/1a631d44d67849528de316f325ce90c9/view",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.967Z"
+        },
+        {
+          "path": "/api/document-store/entries/1a631d44d67849528de316f325ce90c9/content",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.967Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.968Z"
+        },
+        {
+          "path": "/api/mentions/documents/1a631d44d67849528de316f325ce90c9/links",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.986Z"
+        },
+        {
+          "path": "/api/document-store/entries/1a631d44d67849528de316f325ce90c9/agent-runs/latest",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:13.987Z"
+        },
+        {
+          "path": "/api/mentions/documents/1a631d44d67849528de316f325ce90c9/links",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:14.084Z"
+        },
+        {
+          "path": "/api/document-store/view-events/c2cdb29eaf1e404392c3b8becb176dbb/leave",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:14.231Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/inline-comments",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:14.232Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:14.232Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:14.232Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/agent-runs/latest",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:14.232Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/view",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:14.254Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:14.376Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.058Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/size",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.123Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.123Z"
+        },
+        {
+          "path": "/api/daily-tips/progress",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.504Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.504Z"
+        },
+        {
+          "path": "/api/dashboard/notifications",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.506Z"
+        },
+        {
+          "path": "/api/daily-tips/visible",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.507Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.507Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.507Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/tutorial-link-graph",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.772Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.772Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/agent-runs/latest",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.783Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/entries",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.783Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.783Z"
+        },
+        {
+          "path": "/api/peer-sync/runs",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.804Z"
+        },
+        {
+          "path": "/api/document-store/stores/analytics-summary",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.804Z"
+        },
+        {
+          "path": "/api/document-store/stores/with-preview",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.804Z"
+        },
+        {
+          "path": "/api/document-store/transcribe-styles",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.835Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/sync",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.836Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/inline-comments",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.901Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.901Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/view",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.904Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/size",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.904Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:15.904Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:16.050Z"
+        }
+      ],
+      "pageErrors": [],
+      "preferenceSetup": "各目标视口通过实际外观入口选择主题，不注入存储或修改DOM",
+      "layout": {
+        "width": 1440,
+        "documentWidth": 1440,
+        "theme": "light"
+      },
+      "unexpectedHttpErrors": [],
+      "persisted": true
+    },
+    {
+      "id": "mobile-dark",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "pass": true,
+      "steps": [
+        {
+          "step": "home",
+          "url": "http://127.0.0.1:32775/",
+          "theme": "dark"
+        },
+        {
+          "step": "knowledge-list",
+          "url": "http://127.0.0.1:32775/document-store",
+          "theme": "dark"
+        },
+        {
+          "step": "document-open",
+          "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+          "theme": "dark"
+        },
+        {
+          "step": "saved-refresh",
+          "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+          "theme": "dark"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/api/v1/landing/preview-assets",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:17.541Z"
+        },
+        {
+          "path": "/api/v1/auth/miduo-planet/options",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:17.733Z"
+        },
+        {
+          "path": "/api/v1/auth/login",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:17.956Z"
+        },
+        {
+          "path": "/api/authz/menu-catalog",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:17.983Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:17.983Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:17.983Z"
+        },
+        {
+          "path": "/api/daily-tips/visible",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:18.025Z"
+        },
+        {
+          "path": "/api/dashboard/notifications",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:18.060Z"
+        },
+        {
+          "path": "/api/daily-tips/progress",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:18.061Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:18.071Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:18.072Z"
+        },
+        {
+          "path": "/api/home/recent-work",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:18.119Z"
+        },
+        {
+          "path": "/api/mobile/feed",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:18.119Z"
+        },
+        {
+          "path": "/api/mobile/stats",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:18.119Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:18.119Z"
+        },
+        {
+          "path": "/api/document-store/stores/analytics-summary",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:19.923Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:19.923Z"
+        },
+        {
+          "path": "/api/document-store/stores/with-preview",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:19.924Z"
+        },
+        {
+          "path": "/api/document-store/stores/645056c9abbc4820af44931c9ce3dd58/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:19.992Z"
+        },
+        {
+          "path": "/api/document-store/stores/a226fe73869b415b9055592d7f80248f/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:19.993Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/tutorial-link-graph",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:20.043Z"
+        },
+        {
+          "path": "/api/peer-sync/runs",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:20.044Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:20.047Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/entries",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:20.047Z"
+        },
+        {
+          "path": "/api/document-store/transcribe-styles",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:20.102Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:20.251Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/view",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:20.252Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/inline-comments",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:20.252Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/agent-runs/latest",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:20.252Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:20.257Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:20.316Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:20.703Z"
+        },
+        {
+          "path": "/api/dashboard/notifications",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.057Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.058Z"
+        },
+        {
+          "path": "/api/daily-tips/progress",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.062Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.089Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.090Z"
+        },
+        {
+          "path": "/api/daily-tips/visible",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.090Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.090Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/tutorial-link-graph",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.316Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.319Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/agent-runs/latest",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.329Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.329Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/entries",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.329Z"
+        },
+        {
+          "path": "/api/peer-sync/runs",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.362Z"
+        },
+        {
+          "path": "/api/document-store/stores/analytics-summary",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.362Z"
+        },
+        {
+          "path": "/api/document-store/stores/with-preview",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.363Z"
+        },
+        {
+          "path": "/api/document-store/transcribe-styles",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.363Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/inline-comments",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.385Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.386Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/view",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.386Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.386Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:21.430Z"
+        }
+      ],
+      "pageErrors": [],
+      "preferenceSetup": "各目标视口通过实际外观入口选择主题，不注入存储或修改DOM",
+      "layout": {
+        "width": 390,
+        "documentWidth": 390,
+        "theme": "dark"
+      },
+      "unexpectedHttpErrors": [],
+      "persisted": true
+    },
+    {
+      "id": "mobile-light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "light",
+      "pass": true,
+      "steps": [
+        {
+          "step": "home",
+          "url": "http://127.0.0.1:32775/",
+          "theme": "light"
+        },
+        {
+          "step": "knowledge-list",
+          "url": "http://127.0.0.1:32775/document-store",
+          "theme": "light"
+        },
+        {
+          "step": "document-open",
+          "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+          "theme": "light"
+        },
+        {
+          "step": "saved-refresh",
+          "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+          "theme": "light"
+        },
+        {
+          "step": "server-restart",
+          "url": "http://127.0.0.1:32775/document-store?store=e96010188c9d4fbcbd01592d096f6001&entry=9d26423b2c2240bc81b31ec3a38f7f77",
+          "theme": "light"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/api/v1/landing/preview-assets",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:22.556Z"
+        },
+        {
+          "path": "/api/v1/auth/miduo-planet/options",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:22.750Z"
+        },
+        {
+          "path": "/api/v1/auth/login",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.016Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.043Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.185Z"
+        },
+        {
+          "path": "/api/authz/menu-catalog",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.185Z"
+        },
+        {
+          "path": "/api/daily-tips/visible",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.186Z"
+        },
+        {
+          "path": "/api/daily-tips/progress",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.252Z"
+        },
+        {
+          "path": "/api/dashboard/notifications",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.252Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.262Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.262Z"
+        },
+        {
+          "path": "/api/mobile/feed",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.324Z"
+        },
+        {
+          "path": "/api/home/recent-work",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.336Z"
+        },
+        {
+          "path": "/api/mobile/stats",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.340Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "entry",
+          "at": "2026-11-13T21:04:23.367Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:24.971Z"
+        },
+        {
+          "path": "/api/document-store/stores/analytics-summary",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:24.973Z"
+        },
+        {
+          "path": "/api/document-store/stores/with-preview",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:24.973Z"
+        },
+        {
+          "path": "/api/document-store/stores/a226fe73869b415b9055592d7f80248f/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.050Z"
+        },
+        {
+          "path": "/api/document-store/stores/645056c9abbc4820af44931c9ce3dd58/size",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.050Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/tutorial-link-graph",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.114Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/entries",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.114Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.116Z"
+        },
+        {
+          "path": "/api/peer-sync/runs",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.117Z"
+        },
+        {
+          "path": "/api/document-store/transcribe-styles",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.186Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/inline-comments",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.335Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.344Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/view",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.354Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/agent-runs/latest",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.354Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.354Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "knowledge-list",
+          "at": "2026-11-13T21:04:25.420Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:25.879Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:25.919Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.222Z"
+        },
+        {
+          "path": "/api/daily-tips/progress",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.222Z"
+        },
+        {
+          "path": "/api/dashboard/notifications",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.222Z"
+        },
+        {
+          "path": "/api/daily-tips/visible",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.222Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.222Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.222Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.222Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.448Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/agent-runs/latest",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.448Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/tutorial-link-graph",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.459Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.460Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/entries",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.460Z"
+        },
+        {
+          "path": "/api/peer-sync/runs",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.462Z"
+        },
+        {
+          "path": "/api/document-store/stores/analytics-summary",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.463Z"
+        },
+        {
+          "path": "/api/document-store/stores/with-preview",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.463Z"
+        },
+        {
+          "path": "/api/document-store/transcribe-styles",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.482Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/inline-comments",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.524Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.525Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.528Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/view",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.546Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "document-open",
+          "at": "2026-11-13T21:04:26.559Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/agent-runs/latest",
+          "status": 502,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:28.937Z"
+        },
+        {
+          "path": "/api/daily-tips/progress",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.099Z"
+        },
+        {
+          "path": "/api/dashboard/notifications",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.099Z"
+        },
+        {
+          "path": "/api/dashboard/user-preferences",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.102Z"
+        },
+        {
+          "path": "/api/authz/me",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.102Z"
+        },
+        {
+          "path": "/api/daily-tips/visible",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.102Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.102Z"
+        },
+        {
+          "path": "/api/changelog/current-week",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.103Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/tutorial-link-graph",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.239Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/agent-runs/latest",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.241Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.252Z"
+        },
+        {
+          "path": "/api/peer-sync/runs",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.287Z"
+        },
+        {
+          "path": "/api/document-store/stores/analytics-summary",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.288Z"
+        },
+        {
+          "path": "/api/document-store/stores/e96010188c9d4fbcbd01592d096f6001/entries",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.291Z"
+        },
+        {
+          "path": "/api/document-store/stores/with-preview",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.298Z"
+        },
+        {
+          "path": "/api/document-store/transcribe-styles",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.313Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/inline-comments",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.512Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.519Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/view",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.531Z"
+        },
+        {
+          "path": "/api/document-store/entries/9d26423b2c2240bc81b31ec3a38f7f77/content",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.536Z"
+        },
+        {
+          "path": "/api/mentions/documents/9d26423b2c2240bc81b31ec3a38f7f77/links",
+          "status": 200,
+          "stage": "api-restart",
+          "at": "2026-11-13T21:04:31.586Z"
+        }
+      ],
+      "pageErrors": [],
+      "preferenceSetup": "各目标视口通过实际外观入口选择主题，不注入存储或修改DOM",
+      "layout": {
+        "width": 390,
+        "documentWidth": 390,
+        "theme": "light"
+      },
+      "unexpectedHttpErrors": [],
+      "persisted": true
+    }
+  ],
+  "anonymous": {
+    "pass": true,
+    "status": 401,
+    "publicRedirect": true,
+    "loginEntryAccessible": true,
+    "contentUnchanged": true
+  },
+  "restartRecovery": {
+    "pass": true,
+    "method": "重启真实API容器后在原浏览器会话刷新，正文与主题保留"
+  },
+  "isolation": {
+    "networkInternal": true,
+    "publishedAddress": "http://127.0.0.1:32775",
+    "freshDatabases": true,
+    "credentials": "random-local-only"
+  },
+  "buildIdentity": {
+    "api": {
+      "actualCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "expectedCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "commitMatch": "match"
+    },
+    "webEntries": [
+      "/assets/index-CqLXP3YQ-dd992d7add2686a83841b0d7a78d3de32e84b85c.js"
+    ]
+  },
+  "fixture": {
+    "stores": 6,
+    "readingDocuments": 120,
+    "contentBytes": 7237,
+    "purpose": "功能与主题验收；不替代248篇文档的性能容量合同"
+  },
+  "browserVersion": "156.0.8078.79",
+  "finishedAt": "2026-11-13T21:04:48.955Z",
+  "pass": true
+}
