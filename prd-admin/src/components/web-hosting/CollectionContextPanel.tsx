@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Copy, ExternalLink, Search, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { copyWithFeedback } from '@/lib/clipboard';
@@ -22,6 +22,7 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
   const [selectedId, setSelectedId] = useState('');
   const [hasRelated, setHasRelated] = useState(false);
   const [relatedError, setRelatedError] = useState('');
+  const relatedRevision = useRef(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const footer = useRef<HTMLDivElement>(null);
@@ -49,10 +50,11 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
         setResult(response.data);
         setSelectedId(current => current === 'related' || response.data.items.some(item => item.id === current) ? current : response.data.items[0]?.id ?? 'related');
         setLoading(false);
+        const revision = relatedRevision.current;
         // 手动关系独立读取；其延迟或失败不能阻止已加载的合集与原链接。
         try {
           const related = await getRelatedDocuments(siteId);
-          if (!alive) return;
+          if (!alive || revision !== relatedRevision.current) return;
           if (!related.success) {
             setHasRelated(true); setRelatedError(related.error?.message || '关联文档暂时无法读取，请重试。'); return;
           }
@@ -60,7 +62,7 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
           setHasRelated(manual);
           if (!manual) setSelectedId(current => current === 'related' ? response.data.items[0]?.id ?? 'related' : current);
         } catch {
-          if (alive) { setHasRelated(true); setRelatedError('关联文档暂时无法读取，请检查网络后重试。'); }
+          if (alive && revision === relatedRevision.current) { setHasRelated(true); setRelatedError('关联文档暂时无法读取，请检查网络后重试。'); }
         }
       } else setError(response.error?.message || '合集暂时无法读取，请重试。');
     }).catch(() => { if (alive) setError('合集暂时无法读取，请检查网络后重试。'); })
@@ -76,6 +78,12 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
     return () => { window.removeEventListener('hosted-comments-changed', refresh); document.removeEventListener('visibilitychange', refresh); };
   }, []);
   const selected = result?.items.find(item => item.id === selectedId);
+  const onRelatedLoaded = useCallback((data: RelatedDocuments) => {
+    relatedRevision.current++;
+    const manual = data.items.some(item => item.id !== siteId);
+    setHasRelated(manual); setRelatedError('');
+    if (!manual) setSelectedId(current => current === 'related' ? result?.items[0]?.id ?? 'related' : current);
+  }, [siteId, result]);
   const split = (result?.totalContexts ?? 0) + (hasRelated ? 1 : 0) > 1;
   useEffect(() => { onSplitChange(split); }, [split, onSplitChange]);
   const pending = loading || search.trim() !== keyword;
@@ -110,7 +118,7 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
     </aside>}
     <div className="collection-context-documents" style={{ minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
       {pending ? <div className="related-empty" role="status"><MapSpinner size={20} />正在读取合集…</div>
-        : selected || selectedId === 'related' || result.totalContexts === 0 ? <ContextDocuments key={`${siteId}:${selected?.id ?? 'related'}:${reload}`} siteId={siteId} maxHeight={contentHeight} context={selected} {...actions} />
+        : selected || selectedId === 'related' || result.totalContexts === 0 ? <ContextDocuments key={`${siteId}:${selected?.id ?? 'related'}:${reload}`} siteId={siteId} maxHeight={contentHeight} context={selected} onRelatedLoaded={onRelatedLoaded} {...actions} />
           : <div className="related-empty">选择左侧合集查看文档。</div>}
     </div></div>
     <div ref={footer} className="collection-context-link-footer" role="region" aria-label="合集链接操作">
@@ -119,7 +127,7 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
   </div>;
 }
 
-function ContextDocuments({ siteId, context, maxHeight, ...actions }: DocumentActions & { siteId: string; context?: CollectionContext; maxHeight: number }) {
+function ContextDocuments({ siteId, context, maxHeight, onRelatedLoaded, ...actions }: DocumentActions & { siteId: string; context?: CollectionContext; maxHeight: number; onRelatedLoaded: (data: RelatedDocuments) => void }) {
   const [data, setData] = useState<RelatedDocuments | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -130,11 +138,11 @@ function ContextDocuments({ siteId, context, maxHeight, ...actions }: DocumentAc
     const request = contextId ? getCollectionContextDocuments(siteId, contextId) : getRelatedDocuments(siteId);
     void request.then(response => {
       if (!alive) return;
-      if (response.success) setData(response.data); else setError(response.error?.message || '文档暂时无法读取，请重试。');
+      if (response.success) { setData(response.data); if (!contextId) onRelatedLoaded(response.data); } else setError(response.error?.message || '文档暂时无法读取，请重试。');
     }).catch(() => { if (alive) setError('文档暂时无法读取，请检查网络后重试。'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [siteId, contextId, reload]);
+  }, [siteId, contextId, reload, onRelatedLoaded]);
   return <RelatedDocumentContent siteId={siteId} maxHeight={maxHeight} data={data} loading={loading} error={error} heading={context?.title ?? '关联文档'}
     onReload={() => setReload(value => value + 1)} onManage={() => { if (data) actions.onManage(data); }} onPermissions={() => { if (data) actions.onPermissions(data); }}
     onTagEdit={actions.onTagEdit} onClose={actions.onClose} onNavigate={actions.onNavigate} />;

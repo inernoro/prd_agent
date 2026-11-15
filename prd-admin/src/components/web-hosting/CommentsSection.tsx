@@ -88,7 +88,8 @@ export default function CommentsSection(props: Props) {
   const roots = scopedRoots.filter(comment => !props.threadKind || (props.threadKind === 'annotation' ? !!comment.anchor : !comment.anchor));
   const openCount = roots.filter(c => !c.isResolved).length;
   const resolvedCount = roots.length - openCount;
-  useEffect(() => { callbacks.current.onCountChange?.(allRoots.length); }, [allRoots.length]);
+  const reportedCount = allRoots.filter(comment => !props.threadKind || (props.threadKind === 'annotation' ? !!comment.anchor : !comment.anchor)).length;
+  useEffect(() => { callbacks.current.onCountChange?.(reportedCount); }, [reportedCount]);
   const annotationCount = versionRoots.filter(comment => !!comment.anchor).length;
   const discussionCount = versionRoots.length - annotationCount;
   useEffect(() => {

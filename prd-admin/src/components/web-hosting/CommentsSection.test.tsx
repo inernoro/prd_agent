@@ -47,13 +47,15 @@ describe('annotation entry availability', () => {
       { ...common, id: 'old', content: '旧版批注', contentVersion: 'old', anchor },
     ] } });
     const counts = vi.fn();
+    const legacyCount = vi.fn();
     const review = { selected: { id: 'v1', versionLabel: 'V1', contentVersionKey: 'current' }, loading: false, versions: [] } as unknown as HostedReview;
     container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
-    const render = (threadKind: 'annotation' | 'discussion') => root.render(<CommentsSection mode="share" token="collection" siteId="member" threadKind={threadKind} onThreadCountsChange={counts} review={review} annotations={annotations()} />);
+    const render = (threadKind?: 'annotation' | 'discussion') => root.render(<CommentsSection mode="share" token="collection" siteId="member" threadKind={threadKind} onCountChange={legacyCount} onThreadCountsChange={counts} review={review} annotations={annotations()} />);
     await act(async () => render('annotation'));
     expect(container.querySelectorAll('.review-thread')).toHaveLength(1);
     expect(container.querySelector('.review-thread')?.textContent).toContain('当前版批注');
     expect(counts).toHaveBeenLastCalledWith({ annotations: 1, discussions: 1 });
+    expect(legacyCount).toHaveBeenLastCalledWith(2);
     await act(async () => button('回复 1').click());
     expect(container.querySelector('textarea')?.getAttribute('aria-label')).toBe('回复内容');
     await act(async () => render('discussion'));
@@ -61,6 +63,9 @@ describe('annotation entry availability', () => {
     expect(container.querySelector('.review-thread')?.textContent).toContain('当前版讨论');
     expect(container.querySelector('textarea')?.getAttribute('aria-label')).toBe('讨论内容');
     expect(container.querySelector('[aria-label="绑定页面元素 / 选中文字"]')).toBeNull();
+    expect(legacyCount).toHaveBeenLastCalledWith(1);
+    await act(async () => render());
+    expect(legacyCount).toHaveBeenLastCalledWith(3);
     expect(list).toHaveBeenCalledTimes(1);
   });
   it('整页讨论不会带入其他批注尚未提交的位置', async () => {

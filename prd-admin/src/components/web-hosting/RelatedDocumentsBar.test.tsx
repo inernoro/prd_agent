@@ -158,9 +158,23 @@ describe('顶部关联文档', () => {
     expect([...document.querySelectorAll('button')].some(button => button.textContent === '管理关联')).toBe(false);
     await clickText('关联文档');
     expect(document.querySelector('.related-document-card')?.textContent).toContain('总体方案');
+    expect(document.querySelector('[aria-label="关联文档"].collection-context-select')?.textContent).not.toContain('暂时无法读取');
     await clickText('管理关联');
     expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('管理关联文档');
     expect(saveRelatedDocuments).not.toHaveBeenCalled();
+  });
+  it('关联重试确认没有其他成员后移除临时入口并回到合集', async () => {
+    const context = makeContext('one', 1);
+    vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
+    vi.mocked(getRelatedDocuments).mockResolvedValueOnce({ success: false, data: null as never, error: { code: 'FAILED', message: '关联暂不可用' } })
+      .mockResolvedValue({ success: true, data: { ...data, items: [data.items[0]] }, error: null });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    expect(document.querySelector('.collection-context-select')?.textContent).toContain('暂时无法读取');
+    await clickText('关联文档');
+    expect(document.querySelector('[aria-label="所属合集"]')).toBeNull();
+    expect(document.querySelector('[data-collection-layout="single"]')).not.toBeNull();
+    expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
   });
   it('底部切换同一合集的其他原链接，失效链接可复制但不能打开', async () => {
     const context = makeContext('one', 2);
