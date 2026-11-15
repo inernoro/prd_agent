@@ -553,6 +553,11 @@ public class TagCountResult
 
 public class ShareViewResult
 {
+    public string? DocumentCollectionId { get; set; }
+    public string? CollectionId { get; set; }
+    public string? MainSiteId { get; set; }
+    public long CollectionVersion { get; set; }
+    public bool CollectionNeedsUpdate { get; set; }
     public string? Title { get; set; }
     public string? Description { get; set; }
     public string ShareType { get; set; } = "single";
