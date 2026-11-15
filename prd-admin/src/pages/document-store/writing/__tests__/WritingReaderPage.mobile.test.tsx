@@ -25,10 +25,10 @@ beforeEach(() => {
   api.read.mockResolvedValue({ success: true, data });
 });
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
-it('角色标签和折叠目录都定位真实正文，并更新已读计数', async () => {
+it('当前角色的阅读路径和折叠目录定位真实正文，并更新已读计数', async () => {
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
   await act(async () => root.render(<MemoryRouter><WritingReaderPage storeId="store" entryId="entry" tutorial={false} /></MemoryRouter>));
-  const jump = container.querySelector<HTMLButtonElement>('button.who'); expect(jump).toBeTruthy();
+  const jump = container.querySelector<HTMLButtonElement>('.writing-focused-actions .ord'); expect(jump).toBeTruthy();
   await act(async () => jump!.click()); expect(scroll).toHaveBeenCalled();
   const menu = container.querySelector<HTMLButtonElement>('.writing-mobile-toc > button'); expect(menu).toBeTruthy();
   expect(menu!.textContent).toContain('已读 1 / 2 节');
@@ -36,5 +36,42 @@ it('角色标签和折叠目录都定位真实正文，并更新已读计数', a
   await act(async () => link.click()); expect(menu!.getAttribute('aria-expanded')).toBe('false');
   expect(menu!.textContent).toContain('已读 2 / 2 节'); expect(scroll).toHaveBeenCalledTimes(2);
   const radios = container.querySelectorAll<HTMLButtonElement>('[role=radio]'); await act(async () => radios[2].click());
-  expect(container.querySelector('.act .who')?.textContent).toBe('直属主管'); expect(container.querySelectorAll('.act')).toHaveLength(4);
+  expect(container.querySelector('.writing-focused-actions>.act')?.textContent).toContain('行动2');
+  expect(container.querySelector('.writing-focused-actions>.act')?.textContent).toContain('条件2');
+  expect(container.querySelector('.writing-other-roles')?.hasAttribute('open')).toBe(false);
+  expect(container.querySelectorAll('.act')).toHaveLength(4);
+});
+
+it('首要行动不混入其他角色，完整条件和所有角色仍可展开核对', async () => {
+  container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+  await act(async () => root.render(<MemoryRouter><WritingReaderPage storeId="store" entryId="entry" tutorial={false} /></MemoryRouter>));
+  const primary = container.querySelector('.writing-focused-actions>.act')!;
+  expect(primary.textContent).toContain('行动0'); expect(primary.textContent).toContain('条件0');
+  expect(primary.textContent).not.toContain('行动1');
+  const scope = container.querySelector('.writing-focused-actions>.writing-scope-grid')!;
+  const path = container.querySelector('.writing-focused-actions .ord')!;
+  expect(scope.compareDocumentPosition(path) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(scope.textContent).toContain('适用'); expect(scope.textContent).toContain('不适用');
+  const conclusions = container.querySelector('.writing-reader-takeaways')!;
+  expect(primary.compareDocumentPosition(conclusions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const others = container.querySelector<HTMLDetailsElement>('.writing-other-roles')!;
+  expect(others.open).toBe(false);
+  await act(async () => others.querySelector('summary')!.click());
+  expect(others.open).toBe(true);
+  for (const i of [1, 2, 3]) { expect(others.textContent).toContain(`行动${i}`); expect(others.textContent).toContain(`条件${i}`); }
+});
+it('首部来源入口可直接到达来源记录，跳过状态保留且可返回阅读', async () => {
+  const response = await api.read();
+  response.data.publication.sources = [{ id: 'S1', entryId: 's', title: '制度原文', status: 'read', content: '执行前先审核', hash: 'hash', updatedAt: '2026-11-13' }, { id: 'S2', entryId: 'skip', title: '未采用资料', status: 'skipped', content: '', hash: '', updatedAt: '' }];
+  api.read.mockResolvedValue(response);
+  container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+  await act(async () => root.render(<MemoryRouter><WritingReaderPage storeId="store" entryId="entry" tutorial={false} /></MemoryRouter>));
+  const shortcut = container.querySelector<HTMLButtonElement>('.writing-source-shortcut')!;
+  expect(shortcut.textContent).toContain('1 份');
+  await act(async () => shortcut.click());
+  expect(document.activeElement?.getAttribute('aria-label')).toBe('文档来源');
+  expect(document.activeElement?.textContent).toContain('已跳过 · 未参与本次生成');
+  await act(async () => container.querySelector<HTMLButtonElement>('.writing-return-reading')!.click());
+  expect(scroll).toHaveBeenCalledTimes(2);
+  expect(document.activeElement).toBe(shortcut);
 });
