@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Boxes,
   CheckCircle2,
+  ChevronRight,
   Clock3,
   Cloud,
   Copy,
@@ -18,7 +19,6 @@ import {
   Layers3,
   Loader2,
   Maximize2,
-  Network,
   Play,
   Plus,
   RefreshCw,
@@ -202,7 +202,7 @@ type LoadState =
       profiles: BuildProfile[];
       infra: InfraService[];
       routingRules: RoutingRule[];
-      previewMode: 'simple' | 'port' | 'multi';
+      previewMode: 'simple' | 'port' | 'multi' | null;
       config: CdsConfigResponse;
       projectWarning?: string;
     };
@@ -318,7 +318,7 @@ function runningBranchCount(branches: BranchSummary[], profileId: string): numbe
 
 function profilePreviewUrl(
   branch: BranchSummary | null,
-  previewMode: 'simple' | 'port' | 'multi',
+  previewMode: 'simple' | 'port' | 'multi' | null,
   config: CdsConfigResponse,
 ): string {
   if (!branch || branch.status !== 'running') return '';
@@ -405,7 +405,7 @@ export function BranchTopologyPage(): JSX.Element {
         apiRequest<BuildProfilesResponse>(`/api/build-profiles?project=${encodeURIComponent(projectId)}`),
         apiRequest<InfraResponse>(`/api/infra?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`),
         apiRequest<RoutingRulesResponse>(`/api/routing-rules?project=${encodeURIComponent(projectId)}`),
-        apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const })),
+        apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`).catch(() => ({ mode: null })),
         apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
       ]);
       let needsEmptyRecheck = false;
@@ -418,7 +418,7 @@ export function BranchTopologyPage(): JSX.Element {
           profiles: profilesRes.profiles || [],
           infra: infraRes.services || [],
           routingRules: routingRulesRes.rules || [],
-          previewMode: previewModeRes.mode || 'multi',
+          previewMode: ['simple', 'port', 'multi'].includes(previewModeRes.mode || '') ? previewModeRes.mode as 'simple' | 'port' | 'multi' : null,
           config,
           projectWarning: current.status === 'ok' ? current.projectWarning : undefined,
         };
@@ -709,13 +709,15 @@ export function BranchTopologyPage(): JSX.Element {
     >
       <Workspace fluid>
         {state.status === 'loading' ? <TopologyPageSkeleton /> : <>
-        <div className="cds-surface-raised cds-hairline mb-4 overflow-hidden">
-          <div className="grid gap-3 px-4 py-4 md:grid-cols-2 xl:grid-cols-5">
-            <TopologyMetric label="应用服务" value={totalProfiles} detail={`${runningServices} 个运行实例`} icon={<Cloud className="h-4 w-4" />} />
-            <TopologyMetric label="基础设施" value={totalInfra} detail="项目共享容器" icon={<Database className="h-4 w-4" />} />
-            <TopologyMetric label="运行分支" value={`${runningBranches}/${totalBranches}`} detail={errorBranches ? `${errorBranches} 个异常` : '状态正常'} icon={<GitBranch className="h-4 w-4" />} tone={errorBranches ? 'warning' : 'default'} />
-            <TopologyMetric label="视图模式" value={activeBranch ? '单分支' : '共享'} detail={activeBranch?.branch || '全部分支'} icon={<Network className="h-4 w-4" />} />
-            <TopologyMetric label="预览模式" value={state.status === 'ok' ? state.previewMode : '-'} detail={state.status === 'ok' ? (state.config.previewDomain || state.config.mainDomain || 'localhost') : '-'} icon={<TerminalSquare className="h-4 w-4" />} />
+        {state.status === 'ok' ? <div className="cds-surface-raised cds-hairline mb-4 overflow-hidden">
+          <div className="space-y-2 px-4 py-3" aria-label="拓扑概况">
+            <dl className="flex flex-wrap items-baseline gap-x-6 gap-y-2 text-sm">
+              <div className="flex flex-wrap items-baseline gap-x-2"><dt className="text-muted-foreground">应用服务</dt><dd><strong>{totalProfiles}</strong><span className="ml-2 text-muted-foreground">{runningServices} 个运行实例</span></dd></div>
+              <div className="flex items-baseline gap-2"><dt className="text-muted-foreground">基础设施</dt><dd><strong>{totalInfra}</strong><span className="ml-2 text-muted-foreground">项目共享</span></dd></div>
+              <div className="flex flex-wrap items-baseline gap-x-2"><dt className="text-muted-foreground">运行分支</dt><dd><strong>{runningBranches}/{totalBranches}</strong>{errorBranches ? <span className="ml-2 text-warn">{errorBranches} 个异常</span> : <span className="ml-2 text-muted-foreground">{totalBranches ? '未记录异常' : '尚无跟踪分支'}</span>}</dd></div>
+            </dl>
+            <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">视图模式：{activeBranch ? '单分支' : '共享'} · 预览模式：{state.previewMode ?? '未确认'} · {state.config.previewDomain || state.config.mainDomain || '域名未配置或未读取'}</p>
+            {!state.previewMode ? <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-warn"><p className="min-w-0 flex-1">预览模式未确认，暂不生成预览入口；服务与关系仍可查看。</p><Button variant="outline" size="sm" className="min-h-11" onClick={() => void refresh()}>重试读取</Button></div> : null}
           </div>
 
           {state.status === 'ok' && state.projectWarning ? (
@@ -733,14 +735,14 @@ export function BranchTopologyPage(): JSX.Element {
                     <input
                       value={branchFilter}
                       onChange={(event) => setBranchFilter(event.target.value)}
-                      className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      className="h-11 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
                       placeholder="搜索分支"
                     />
                   </label>
                   <label className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-[3.25rem_minmax(0,1fr)] sm:items-center">
                     <span>分支</span>
                     <select
-                      className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="h-11 min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       value={selectedBranchId}
                       onChange={(event) => setSelectedBranchId(event.target.value)}
                     >
@@ -752,8 +754,10 @@ export function BranchTopologyPage(): JSX.Element {
                       ))}
                     </select>
                   </label>
+                  <details className="group min-w-0">
+                    <summary className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />按分支名打开预览</summary>
                   <form
-                    className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
+                    className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
                     onSubmit={(event) => {
                       event.preventDefault();
                       openQuickPreview(quickBranchName);
@@ -766,7 +770,7 @@ export function BranchTopologyPage(): JSX.Element {
                         id="topology-quick-branch"
                         value={quickBranchName}
                         onChange={(event) => setQuickBranchName(event.target.value)}
-                        className="h-9 min-w-0 flex-1 border-0 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+                        className="h-11 min-w-0 flex-1 border-0 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0"
                         placeholder="粘贴分支并预览"
                       />
                     </div>
@@ -775,15 +779,12 @@ export function BranchTopologyPage(): JSX.Element {
                       预览
                     </Button>
                   </form>
+                  </details>
                   {branchFilter.trim() && !branchFilterHasMatches ? (
                     <div className="text-xs text-muted-foreground lg:col-start-2 lg:col-span-2">
                       没有匹配的已跟踪分支，可直接粘贴分支名预览，或回分支列表处理批量运维。
                     </div>
-                  ) : (
-                    <div className="text-xs text-muted-foreground lg:col-start-2 lg:col-span-2">
-                      {activeBranch ? `当前分支：${activeBranch.branch}` : '共享视图：按所有分支聚合'}
-                    </div>
-                  )}
+                  ) : null}
                 </div>
                 <TopologyContextBar
                   projectId={projectId}
@@ -796,7 +797,7 @@ export function BranchTopologyPage(): JSX.Element {
               </div>
             </div>
           ) : null}
-        </div>
+        </div> : null}
 
         {state.status === 'error' ? (
           <div className="w-full">
@@ -805,10 +806,10 @@ export function BranchTopologyPage(): JSX.Element {
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_21.25rem]">
-            <section className="min-h-[38.75rem] cds-surface-raised cds-hairline p-4">
+          <div className={`grid gap-4 ${state.profiles.length || state.infra.length ? 'xl:grid-cols-[minmax(0,1fr)_21.25rem]' : ''}`}>
+            <section className={`cds-surface-raised cds-hairline p-4 ${state.profiles.length || state.infra.length ? 'min-h-[38.75rem]' : ''}`}>
               {state.profiles.length === 0 && state.infra.length === 0 ? (
-                <div className="flex min-h-[33.75rem] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
+                <div className="flex flex-col items-center justify-center gap-3 py-8 text-center text-sm text-muted-foreground">
                   <Layers3 className="h-10 w-10" />
                   <div className="text-base font-medium text-foreground">还没有服务节点</div>
                   <div>先完成 clone 自动识别，或直接在拓扑页添加数据库、缓存等基础设施。</div>
@@ -818,7 +819,7 @@ export function BranchTopologyPage(): JSX.Element {
                       新增基础设施
                     </Button>
                     <Button asChild variant="outline">
-                      <a href={`/settings/${encodeURIComponent(projectId)}`}>打开项目设置</a>
+                      <a href={`/settings/${encodeURIComponent(projectId)}?tab=compose&section=services`}>配置应用服务</a>
                     </Button>
                   </div>
                 </div>
@@ -879,7 +880,7 @@ export function BranchTopologyPage(): JSX.Element {
               )}
             </section>
 
-            <aside className="min-h-[38.75rem] cds-surface-raised cds-hairline p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)] xl:overflow-auto">
+            {state.profiles.length || state.infra.length ? <aside className="min-h-[38.75rem] cds-surface-raised cds-hairline p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)] xl:overflow-auto">
               <NodeDetails
                 selectedProfile={selectedProfile}
                 selectedInfra={selectedInfra}
@@ -892,7 +893,7 @@ export function BranchTopologyPage(): JSX.Element {
                 projectId={projectId}
                 onToast={setToast}
               />
-            </aside>
+            </aside> : null}
           </div>
         ) : null}
 
@@ -1186,39 +1187,6 @@ function CreateInfraDialog({
   );
 }
 
-function TopologyMetric({
-  label,
-  value,
-  detail,
-  icon,
-  tone = 'default',
-}: {
-  label: string;
-  value: string | number;
-  detail: string;
-  icon: JSX.Element;
-  tone?: 'default' | 'warning';
-}): JSX.Element {
-  return (
-    <div className="rounded-md border border-border bg-background px-3 py-3">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
-        <span
-          className={
-            tone === 'warning'
-              ? 'inline-flex h-7 w-7 items-center justify-center rounded-md border border-warn/30 bg-warn-soft text-warn'
-              : 'inline-flex h-7 w-7 items-center justify-center cds-surface-sunken cds-hairline text-muted-foreground'
-          }
-        >
-          {icon}
-        </span>
-      </div>
-      <div className="truncate text-lg font-semibold">{value}</div>
-      <div className="mt-1 truncate text-xs text-muted-foreground">{detail}</div>
-    </div>
-  );
-}
-
 function TopologyContextBar({
   projectId,
   activeBranch,
@@ -1236,17 +1204,16 @@ function TopologyContextBar({
 }): JSX.Element {
   if (!activeBranch) {
     return (
-      <div className="flex flex-col gap-3 rounded-md border border-border bg-background px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <div className="font-medium">共享视图</div>
-          <div className="mt-1 text-xs text-muted-foreground">
+          <div className="text-sm text-muted-foreground">
             聚合 {totalBranches} 个分支的部署覆盖，适合检查服务与基础设施关系。
           </div>
         </div>
         <Button asChild variant="outline" size="sm">
           <a href={`/branches/${encodeURIComponent(projectId)}`}>
             <GitBranch />
-            选择或部署分支
+            管理分支
           </a>
         </Button>
       </div>
@@ -1254,7 +1221,7 @@ function TopologyContextBar({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-md border border-border bg-background px-3 py-3 text-sm xl:flex-row xl:items-center xl:justify-between">
+    <div className="flex flex-col gap-2 text-sm xl:flex-row xl:items-center xl:justify-between">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="font-medium">{activeBranch.branch}</span>
         <span className={`rounded-md border px-2 py-1 text-xs ${statusTone(activeBranch.status)}`}>
@@ -1500,7 +1467,7 @@ function NodeDetails({
   activeBranch: BranchSummary | null;
   infra: InfraService[];
   routingRules: RoutingRule[];
-  previewMode: 'simple' | 'port' | 'multi';
+  previewMode: 'simple' | 'port' | 'multi' | null;
   config: CdsConfigResponse;
   projectId: string;
   onToast: (message: string) => void;
@@ -1594,7 +1561,7 @@ function NodeDetails({
           {previewUrl ? <CodePill>可预览</CodePill> : null}
         </div>
         <div className="mt-2 break-words text-muted-foreground">
-          {profile.dockerImage || '未配置镜像'} · {profile.command || '未配置启动命令'}
+          {profile.dockerImage || '未配置镜像'}{!profile.command ? ' · 未配置启动命令' : ''}
         </div>
       </div>
 
@@ -1614,9 +1581,7 @@ function NodeDetails({
           </Button>
         ) : null}
         {!previewUrl && activeBranch ? (
-          <Button type="button" variant="outline" onClick={() => onToast('当前预览模式需要在分支详情页打开')}>
-            预览入口
-          </Button>
+          <p className="basis-full text-sm text-muted-foreground">{previewMode ? '预览请从分支详情进入。' : '预览模式未确认；请重试读取，或打开分支详情核对。'}</p>
         ) : null}
       </div>
 
