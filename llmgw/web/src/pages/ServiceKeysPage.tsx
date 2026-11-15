@@ -590,8 +590,8 @@ export function ServiceKeysPage() {
             <span style={HINT_TEXT}>{legacyBusy || legacyUnknown || legacyReceipt ? '上次读取' : '最近读取'}策略 v{legacy.policyRevision ?? '未提供'} · 草稿基于 v{legacyDraftRevision ?? '未读取'} · 读取于 {formatTime(legacyReadAt)}</span>
             {legacyReceipt ? <div role="status">已确认保存策略 v{(legacyDraftRevision ?? 0) + 1}，当前策略待读取。</div> : null}
             {legacyFeedback ? <InlineAlert tone={legacyUnknown || legacyConflict ? 'error' : 'info'}>{legacyFeedback}</InlineAlert> : null}
-            {legacyUnknown || legacyReceipt ? <Button size="sm" variant="ghost" disabled={legacyBusy || legacyChecking} onClick={() => void readLegacyPolicy()}>{legacyChecking ? '正在核对…' : '核对当前策略'}</Button> : null}
-            {legacyConflict || legacyUnknown && legacy.policyRevision > legacyUnknown.expectedPolicyRevision ? <Button size="sm" variant="ghost" disabled={legacyChecking} onClick={() => void readLegacyPolicy(true)}>{legacyUnknown ? '丢弃原草稿并按最新策略编辑' : '丢弃草稿并读取最新策略'}</Button> : null}
+            {legacyUnknown || legacyReceipt ? <Button size="sm" variant="ghost" style={legacyActionStyle} disabled={legacyBusy || legacyChecking} onClick={() => void readLegacyPolicy()}>{legacyChecking ? '正在核对…' : '核对当前策略'}</Button> : null}
+            {legacyConflict || legacyUnknown && legacy.policyRevision > legacyUnknown.expectedPolicyRevision ? <Button size="sm" variant="ghost" style={legacyActionStyle} disabled={legacyChecking} onClick={() => void readLegacyPolicy(true)}>{legacyUnknown ? '丢弃原草稿并按最新策略编辑' : '丢弃草稿并读取最新策略'}</Button> : null}
           </div>
           <fieldset disabled={legacyLocked} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
           <FormGrid style={{ marginTop: GAP.normal }}>
@@ -600,7 +600,7 @@ export function ServiceKeysPage() {
             <Field label="允许的 appCaller 清单" value={legacyAllowedCallers} onChange={value => { legacyDirty.current = true; setLegacyAllowedCallers(value); }} placeholder="逗号分隔；空表示先盘点" />
             <Field label="后继 scoped key IDs" value={legacySuccessorIds} onChange={value => { legacyDirty.current = true; setLegacySuccessorIds(value); }} placeholder="逗号分隔" />
             <Field label="最低观测次数" value={legacyRequired} onChange={value => { legacyDirty.current = true; setLegacyRequired(value); }} placeholder="1" type="number" />
-            <Button variant="primary" size="sm" disabled={legacyLocked || !legacyDeadline || legacyDraftRevision === null} onClick={() => void saveLegacyCutover()}>{legacyBusy ? '保存中' : '保存收口策略'}</Button>
+            <Button variant="primary" size="sm" style={legacyActionStyle} disabled={legacyLocked || !legacyDeadline || legacyDraftRevision === null} onClick={() => void saveLegacyCutover()}>{legacyBusy ? '保存中' : '保存收口策略'}</Button>
           </FormGrid>
           </fieldset>
           {legacy.usage.length ? <div style={{ overflowX: 'auto', marginTop: GAP.section }}><table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['来源', 'appCaller', '协议', '允许', '拒绝', '最后出现', '决定'].map((label) => <th key={label} style={th}>{label}</th>)}</tr></thead><tbody>{legacy.usage.map((item) => <tr key={`${item.sourceSystem}-${item.appCallerCode}-${item.ingressProtocol}`}><td style={td}>{item.sourceSystem}</td><td style={td}>{item.appCallerCode || '缺失'}</td><td style={td}>{item.ingressProtocol}</td><td style={td}>{item.allowedCount}</td><td style={td}>{item.rejectedCount}</td><td style={td}>{formatTime(item.lastSeenAt)}</td><td style={td}>{item.lastDecision}</td></tr>)}</tbody></table></div> : null}
@@ -946,6 +946,7 @@ const surfaceCardStyle: React.CSSProperties = {
   background: 'var(--bg-surface)',
 };
 const legacyBlockStyle: React.CSSProperties = surfaceCardStyle;
+const legacyActionStyle: React.CSSProperties = { minHeight: '3.25rem', height: 'auto', marginRight: GAP.tight };
 const chipRowStyle: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginTop: GAP.normal };
 const legacySummaryStyle: React.CSSProperties = {
   cursor: 'pointer',

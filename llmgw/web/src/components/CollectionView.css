@@ -126,6 +126,7 @@
 .lg-collection-key-workspace .lg-collection-list { gap: 12px; }
 .lg-collection-key-overview { max-height: 180px; flex-shrink: 0; overflow: auto; }
 .lg-collection-key-legacy { max-height: 220px; flex-shrink: 0; overflow: auto; }
+.lg-collection-key-legacy[open] { max-height: none; overflow: visible; }
 .lg-collection-key-meta, .lg-collection-key-permission-summary { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .lg-collection-key-meta > div { min-width: 0; }
 .lg-collection-key-meta span { font-size: var(--fs-caption); color: var(--text-muted); }
