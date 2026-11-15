@@ -4,6 +4,45 @@ import { readFile } from 'node:fs/promises';
 // 布局与阅读回归使用静止背景；动态画布单独由三档演示用例验证。
 test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
 
+test('合集切换到较早版本成员时不复制上一成员的预览地址', async ({ page }) => {
+  const sites = ['a', 'b'].map((id, index) => ({ id, title: `来源文档 ${id}`, siteUrl: `https://hosting.example/${id}/${id}.html?v=${index ? '10000' : '20000'}`,
+    entryFile: `${id}.html`, contentShape: 'self-contained-html', totalSize: 1024, entrySize: 1024, fileCount: 1 }));
+  const versions: string[] = [];
+  let holdShare = false, release!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  await page.route('https://hosting.example/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>原文</h1>' }));
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url()), path = url.pathname;
+    if (path.endsWith('/annotation-runtime.js')) {
+      await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') }); return;
+    }
+    let data: unknown = { items: [], total: 0 };
+    if (path === '/api/web-pages/shares/view/provenance-token') {
+      if (holdShare) await waiting;
+      data = { title: '版本来源合集', shareType: 'collection', createdBy: 'author', createdAt: '2026-11-15T00:00:00Z', sites };
+    } else if (path.endsWith('/revisions')) {
+      const site = sites.find(item => item.id === url.searchParams.get('siteId'))!;
+      versions.push(site.id);
+      data = [{ id: `${site.id}-current`, siteId: site.id, versionLabel: 'V1', contentVersionKey: site.id === 'a' ? '20000' : '10000',
+        isCurrent: true, canPreview: true, siteUrl: site.siteUrl, entryFile: site.entryFile, contentShape: site.contentShape }];
+    } else if (path.endsWith('/comments')) data = { comments: [], commentsEnabled: true, canComment: false };
+    else if (path.endsWith('/html') || path.endsWith('/content')) data = { html: '<!doctype html><html><head></head><body><h1>原文</h1></body></html>', contentType: 'text/html' };
+    await route.fulfill({ json: { success: true, data, error: null } });
+  });
+  try {
+    await page.goto('/s/wp/provenance-token?siteId=a');
+    await expect.poll(() => versions.includes('a')).toBe(true);
+    await expect(page.locator('iframe[title="来源文档 a"]')).toBeVisible();
+    await expect(page.getByRole('button', { name: '网页版本：V1', exact: true })).toBeVisible();
+    holdShare = true;
+    await page.evaluate(() => { history.pushState(null, '', '/s/wp/provenance-token?siteId=b'); dispatchEvent(new PopStateEvent('popstate')); });
+    await expect.poll(() => versions.includes('b')).toBe(true);
+    const frame = page.locator('iframe[title="来源文档 b"]');
+    await expect(frame).toBeVisible();
+    await expect.poll(() => frame.evaluate(element => element.getAttribute('srcdoc') || element.getAttribute('src') || '')).toContain('hosting.example/b/');
+  } finally { release(); }
+});
+
 for (const action of ['管理合集', '分享']) {
   test(`章节分享旧阅读地址的${action}进入原章节入口`, async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {

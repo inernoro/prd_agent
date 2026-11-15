@@ -338,13 +338,14 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   const reviewLiveUrl = review.liveSite?.siteUrl;
   const reviewEntryFile = review.liveSite?.entryFile;
   const reviewShape = review.liveSite?.contentShape;
+  const reviewMetadataSiteId = review.selected?.siteId;
   useEffect(() => {
-    if (!reviewLiveUrl || !reviewEntryFile) return;
+    if (!openedSiteId || reviewMetadataSiteId !== openedSiteId || !reviewLiveUrl || !reviewEntryFile) return;
     setData(current => {
       if (!current || !openedSiteId || current.sites.find(item => item.id === openedSiteId)?.siteUrl === reviewLiveUrl) return current;
       return { ...current, sites: current.sites.map(item => item.id === openedSiteId ? { ...item, siteUrl: reviewLiveUrl, entryFile: reviewEntryFile, contentShape: reviewShape } : item) };
     });
-  }, [reviewLiveUrl, reviewEntryFile, reviewShape, openedSiteId]);
+  }, [reviewLiveUrl, reviewEntryFile, reviewShape, openedSiteId, reviewMetadataSiteId]);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
