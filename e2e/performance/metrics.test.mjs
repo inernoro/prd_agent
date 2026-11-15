@@ -130,3 +130,14 @@ test('用户可用时间不能缺样本，也不能沿用没有浏览器阈值�
   const legacy = structuredClone(baseline); delete legacy.browserLimits;
   assert.equal(compare(run('normal'), legacy).pass, false);
 });
+
+test('缺少API基线不得通过', () => {
+  const baseline = calibrate([run('a'), run('b'), run('c')]);
+  baseline.limits = {};
+  assert.equal(compare(run('candidate'), baseline).pass, false);
+});
+test('仅有一个应用计时样本不得通过', () => {
+  const baseline = calibrate([run('a'), run('b'), run('c')]);
+  const sparse = run('candidate'); sparse.phases[0].metrics.home.app.n = 1;
+  assert.equal(compare(sparse, baseline).pass, false);
+});
