@@ -460,7 +460,13 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
 
 
   let payload: unknown = null;
-  const text = await res.text();
+  let text = '';
+  try { text = await res.text(); }
+  catch (error) {
+    // 响应头不证明业务写入结果；正文中断与 fetch 失败遵守同一返回契约。
+    // 已知 401 仍由下方唯一会话失效路径处理，不因正文不可读留下旧会话。
+    if (res.status !== 401) return { success: false, data: null, error: { code: 'NETWORK_ERROR', message: error instanceof Error ? error.message : '响应读取中断，请核对结果' } };
+  }
   if (text) {
     try {
       payload = JSON.parse(text);
