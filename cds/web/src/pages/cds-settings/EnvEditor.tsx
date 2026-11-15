@@ -5,7 +5,7 @@ import { Copy, Eye, EyeOff, Loader2, Pencil, Plus, Save, Search, Trash2, Upload,
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
-import { CodePill, ErrorBlock, LoadingBlock, Section, maskSecret } from './components';
+import { CodePill, ErrorBlock, LoadingBlock, Section, isSensitiveEnvKey, maskSecret } from './components';
 import type { EnvResponse, LoadState } from './types';
 
 interface EnvEditorProps {
@@ -33,9 +33,7 @@ function queryForScope(scope: string): string {
   return `scope=${encodeURIComponent(scope)}`;
 }
 
-function isSensitiveKey(key: string): boolean {
-  return /password|secret|token|key|pat|jwt|credential|private/i.test(key);
-}
+
 
 function categoryForKey(key: string): { label: string; order: number } {
   if (/^CDS_|^(ROOT_DOMAINS|SWITCH_DOMAIN|MAIN_DOMAIN|PREVIEW_DOMAIN|DASHBOARD_DOMAIN|JWT_SECRET)$/i.test(key)) {
@@ -43,7 +41,7 @@ function categoryForKey(key: string): { label: string; order: number } {
   }
   if (/GITHUB|^GH_/i.test(key)) return { label: 'GitHub', order: 2 };
   if (/MONGO|REDIS|POSTGRES|MYSQL|DATABASE|DB_/i.test(key)) return { label: '数据库', order: 3 };
-  if (/PASSWORD|SECRET|TOKEN|KEY|AUTH|JWT|PAT/i.test(key)) return { label: '凭证', order: 4 };
+  if (/PASSWORD|SECRET|TOKEN|KEY|AUTH|JWT|PAT|CREDENTIAL|PRIVATE/i.test(key)) return { label: '凭证', order: 4 };
   if (/URL|HOST|DOMAIN|PORT|ORIGIN|ENDPOINT/i.test(key)) return { label: '网络', order: 5 };
   return { label: '项目', order: 9 };
 }
@@ -347,7 +345,7 @@ export function EnvEditor({
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" onClick={() => setEntryMode('single')}><Plus />新增变量</Button>
           <Button type="button" variant="outline" onClick={() => setEntryMode('bulk')}><Upload />批量导入</Button>
-          <span className="text-sm text-muted-foreground">{scope === '_global' ? '仅明确开启继承的项目读取共享变量；系统配置按各配置项规则生效。' : '只影响当前项目，保存后重新部署分支生效。'}</span>
+          <span className="sr-only">{scope === '_global' ? '仅明确开启继承的项目读取共享变量；系统配置按各配置项规则生效。' : '只影响当前项目，保存后重新部署分支生效。'}</span>
         </div>
         {entryMode ? <div className="rounded-md border border-border bg-card">
           <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center md:justify-between">
@@ -482,16 +480,16 @@ export function EnvEditor({
                   <div className="bg-muted/30 px-4 py-2 text-xs font-semibold text-muted-foreground">{group.label}</div>
                   <div className="divide-y divide-border">
                     {group.rows.map((row) => {
-                      const sensitive = isSensitiveKey(row.key);
+                      const sensitive = isSensitiveEnvKey(row.key);
                       const revealed = revealedKeys.has(row.key);
                       const displayValue = sensitive && !revealed ? maskSecret(row.key, row.value) : row.value;
                       const isEditing = inlineEdit?.key === row.key;
                       return (
-                        <div key={row.key} className="grid gap-3 px-4 py-3 text-sm lg:grid-cols-[minmax(13.75rem,18.75rem)_minmax(17.5rem,1fr)_11rem] lg:items-center">
+                        <div key={row.key} data-env-key={row.key} className="grid gap-3 px-4 py-3 text-sm lg:grid-cols-[minmax(13.75rem,18.75rem)_minmax(17.5rem,1fr)_11rem] lg:items-center">
                           <div className="min-w-0">
                             <div className="truncate font-mono font-semibold">{row.key}</div>
                             <div className="mt-1 flex gap-2">
-                              {sensitive ? <span className="text-xs text-muted-foreground">敏感值已遮盖</span> : null}
+                              {sensitive ? <span className="text-xs text-muted-foreground">{isEditing ? '正在编辑明文' : revealed ? '敏感值已显示' : row.value ? '敏感值已遮盖' : '敏感值为空'}</span> : null}
                             </div>
                           </div>
                           {isEditing ? (
