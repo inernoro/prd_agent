@@ -9124,3 +9124,9 @@ a:focus-visible {
 .lg-entity-detail-app-observation .lg-entity-detail-metrics small { margin: 0; }
 .lg-entity-detail-app-observation .lg-entity-detail-metrics strong { font-size: var(--fs-body); line-height: 1.5; }
 .lg-entity-detail-app-observation .lg-entity-detail-metrics p { margin: 0; font-size: var(--fs-secondary); }
+
+/* The deterministic setup form has simple field groups rather than AI draft stages. */
+.lg-qs-form-card { gap: 20px; }
+.lg-qs-form-card .lg-qs-single-team { padding: 0; min-height: 0; }
+.lg-qs-form-card .lg-qs-own-col { gap: 8px; }
+.lg-qs-form-card .lg-qs-create-footer { padding-top: 16px; gap: 12px; }

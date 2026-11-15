@@ -1445,8 +1445,8 @@ export function QuickstartPage() {
                 </div>
               </Card>
             ) : (
-              /* 第三屏：算谁的。只有两个字段，一屏放完。 */
-              <Card className="lg-qs-step-card">
+              /* 表单主线：身份、用途与必要治理；智能建议仍可返回修改。 */
+              <Card className={`lg-qs-step-card${setupMethod === 'form' ? ' lg-qs-form-card' : ''}`}>
                 <div className="lg-qs-step-head">
                   <div className="lg-qs-step-head-row">
                     <div><strong>创建接入凭据</strong></div>
@@ -1494,20 +1494,20 @@ export function QuickstartPage() {
                     </div>}
                   </div>
                   <div className="lg-qs-own-col">
-                    <span className="lg-qs-field-title">月预算<small>留空即不限</small></span>
+                    <span className="lg-qs-field-title">月预算<small>留空不修改</small></span>
                     <div className="lg-qs-budget">
                       <span>USD</span>
                       <input
                         aria-label="月预算（美元）"
                         inputMode="decimal"
-                        placeholder="不限"
+                        placeholder="未设定"
                         value={budgetUsd}
                         disabled={!canCreateAccess || identityLocked}
                         onChange={(event) => setBudgetUsd(event.target.value.replace(/[^\d.]/g, ''))}
                       />
                       <span>/ 月</span>
                     </div>
-                    <small className={`lg-qs-note${budgetPair.error ? ' is-bad' : ''}`}>{budgetPair.error || budgetPair.holdNote}</small>
+                    <small className={`lg-qs-note${budgetPair.error ? ' is-bad' : ''}`}>{budgetPair.error || (budgetPair.monthly === null ? '留空保留已登记用途的预算；新用途不设限额。' : budgetPair.holdNote)}</small>
                   </div>
                 </div>
 

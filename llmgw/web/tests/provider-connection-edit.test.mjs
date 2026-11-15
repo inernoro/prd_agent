@@ -262,7 +262,7 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
     root = createRoot(document.getElementById('root'));
     await act(async () => root.render(React.createElement(MemoryRouter, {}, React.createElement(QuickstartPage))));
     assert.equal(document.querySelector('textarea[aria-label="我想做什么"]'), null, '拿密钥默认不经过意图推导');
-    assert.equal(button('创建密钥').disabled, true);
+    assert.equal(button('创建密钥').disabled, true);assert.ok(document.body.textContent.includes('留空保留已登记用途的预算；新用途不设限额。'));
     await input(document.querySelector('input[placeholder="例如 my-application"]'),'my_application');assert.ok(document.body.textContent.includes('使用字母开头的英文段'));assert.equal(button('创建密钥').disabled,true);await input(document.querySelector('input[placeholder="例如 my-application"]'),'my.application');
     const purpose = document.querySelector('select[aria-label="调用用途"]');
     await act(async () => { purpose.value=purpose.options[1].value; purpose.dispatchEvent(new dom.window.Event('change',{bubbles:true})); });
