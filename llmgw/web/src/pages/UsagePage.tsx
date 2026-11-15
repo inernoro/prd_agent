@@ -15,6 +15,7 @@ import { Button, Card, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/comp
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { fmtCost, fmtCompact, fmtShortTime } from '@/lib/logsHelpers';
 import { useAuth } from '@/lib/auth';
+import { useDialogFocus } from '@/lib/useDialogFocus';
 import { canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP } from '@/lib/surface';
 import { FIELD_INPUT, FIELD_LABEL, SECTION_TITLE } from '@/lib/typography';
@@ -45,6 +46,14 @@ export function UsagePage() {
   // 没有任何解释，然后原样再试一次（Codex P2）。
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [importUncertain, setImportUncertain] = useState(false);
+  const [importConfirmed, setImportConfirmed] = useState(false);
+  const [importChecking, setImportChecking] = useState(false);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
+  const importSubmission = useRef<Parameters<typeof importCostReconciliation>[0] | null>(null);
+  const importDialog = useRef<HTMLElement>(null);
+  useDialogFocus(importDialog, () => setShowImport(false), importing, '[data-import-billing]', showImport);
+
   const [provider, setProvider] = useState('');
   const [externalRecordId, setExternalRecordId] = useState('');
   const [providerRequestId, setProviderRequestId] = useState('');
@@ -57,6 +66,12 @@ export function UsagePage() {
   const [fxRate, setFxRate] = useState('');
   const canImportActual = canUseCapability(tenant?.role, 'configWrite');
   const canReadLogs = canUseCapability(tenant?.role, 'logsRead');
+
+  useEffect(() => {
+    if (showImport || !importResult) return;
+    const receipt = document.getElementById(`billing-${importResult.id}`);
+    receipt?.focus({ preventScroll: true }); receipt?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }, [showImport, importResult]);
 
   const loadGovernance = useCallback(async (preserveDraft = false) => {
     const seq = ++governanceRead.current;
@@ -133,41 +148,60 @@ export function UsagePage() {
     } : res.data);
   };
 
+  const readImportedBill = async (checkSubmitted = false) => {
+    setImportChecking(true); setReconciliationLoading(true); setReconciliationError(null);
+    try {
+      const to = new Date(), from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const res = await getCostReconciliations({ from: from.toISOString(), to: to.toISOString() });
+      if (!res.success) throw new Error(res.error.message || '供应商账单读取失败');
+      setReconciliation(res.data);
+      if (checkSubmitted && importSubmission.current) {
+        const submitted = importSubmission.current;
+        const match = res.data.items.find(item => importedBillMatches(item, submitted));
+        if (match) {
+          setImportResult(match); setImportUncertain(false); setImportConfirmed(true);
+          setImportError(null); setImportNotice('已找到与本次提交内容匹配的账单记录，请核对金额与关联请求。');
+        } else setImportError('当前近30天可见记录中尚未找到匹配账单，不能据此认定导入未生效。已保留提交内容，请核对供应商流水及账单范围，暂不重复导入。');
+      }
+    } catch (error) {
+      setReconciliationError(error instanceof Error ? error.message : '供应商账单读取中断');
+      if (checkSubmitted) setImportError('账单核对未完成，导入结果仍未确认。提交内容已保留，请稍后重新读取。');
+    } finally { setImportChecking(false); setReconciliationLoading(false); }
+  };
+
+  const openImport = () => {
+    if (importConfirmed) {
+      setImportConfirmed(false); setImportResult(null); setImportError(null); setImportNotice(null);
+      setExternalRecordId(''); setProviderRequestId(''); setActualCost(''); importSubmission.current = null;
+    }
+    setShowImport(true);
+  };
   const submitActual = async () => {
-    setImporting(true);
-    setImportError(null);
-    const res = await importCostReconciliation({
-      provider: provider.trim(),
-      externalRecordId: externalRecordId.trim(),
-      providerRequestId: providerRequestId.trim() || undefined,
-      serviceKeyId: serviceKeyId.trim() || undefined,
+    if (importing || importUncertain || importConfirmed || !canImportActual) return;
+    const payload: Parameters<typeof importCostReconciliation>[0] = {
+      provider: provider.trim(), externalRecordId: externalRecordId.trim(),
+      providerRequestId: providerRequestId.trim() || undefined, serviceKeyId: serviceKeyId.trim() || undefined,
       windowFrom: providerRequestId.trim() || !windowFrom ? undefined : new Date(windowFrom).toISOString(),
       windowTo: providerRequestId.trim() || !windowTo ? undefined : new Date(windowTo).toISOString(),
-      providerReportedCost: Number(actualCost),
-      providerCostCurrency: actualCurrency.trim().toUpperCase(),
-      fxSnapshotId: fxSnapshotId.trim() || undefined,
-      providerToEstimatedFxRate: fxRate ? Number(fxRate) : undefined,
-    });
-    setImporting(false);
-    if (!res.success) {
-      // 就地报错，不往页面级 error 抛：抽屉还开着，那条 alert 用户看不见。
-      setImportError(res.error.message || '供应商账单导入失败');
-      return;
-    }
-    setImportResult(res.data);
-    const to = new Date();
-    const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const refreshed = await getCostReconciliations({ from: from.toISOString(), to: to.toISOString() });
-    if (refreshed.success) {
-      setReconciliation(refreshed.data);
-      setReconciliationError(null);
-    } else {
-      setReconciliationError(refreshed.error.message || '供应商账单刷新失败');
-    }
-    setShowImport(false);
-    setExternalRecordId('');
-    setProviderRequestId('');
-    setActualCost('');
+      providerReportedCost: Number(actualCost), providerCostCurrency: actualCurrency.trim().toUpperCase(),
+      fxSnapshotId: fxSnapshotId.trim() || undefined, providerToEstimatedFxRate: fxRate ? Number(fxRate) : undefined,
+    };
+    importSubmission.current = payload;
+    setImporting(true); setImportError(null); setImportNotice(null);
+    try {
+      const res = await importCostReconciliation(payload);
+      if (!res.success) {
+        if (IMPORT_REJECTIONS.has(res.error.code)) setImportError(res.error.message || '账单导入被拒绝');
+        else { setImportUncertain(true); setImportError('导入结果未确认，服务端可能已记录账单。提交内容已保留，请重新读取账单核对，暂不重复导入。'); }
+        return;
+      }
+      setImportResult(res.data); setImportConfirmed(true);
+      setImportNotice('供应商账单已导入。请核对下方回执；列表读取失败不会改变本次已确认结果。');
+      await readImportedBill();
+      setShowImport(false);
+    } catch {
+      setImportUncertain(true); setImportError('导入结果未确认，响应读取中断，服务端可能已记录账单。提交内容已保留，请重新读取账单核对。');
+    } finally { setImporting(false); }
   };
 
   if (!summary && !error) return <SectionLoader text="正在加载用量…" />;
@@ -176,7 +210,7 @@ export function UsagePage() {
 
   const summaryStrip = (
     <>
-      <span>请求 <strong>{fmtCompact(summary?.total)}</strong></span>
+      <span>业务请求 <strong>{fmtCompact(summary?.total)}</strong></span>
       <span>价格覆盖 <strong>{summary?.total ? `${summary.priceCoveragePercent}%` : '—'}</strong></span>
       {/* 原来这一串是「对账覆盖」那段说明文字，其实全是派生数据——数据就该以指标呈现，
           而不是写成一句话让人读。 */}
@@ -187,7 +221,7 @@ export function UsagePage() {
         </span>
       ) : null}
       {reconciliation?.actualUnavailableRequests ? (
-        <span className="lg-summary-warn">{fmtCompact(reconciliation.actualUnavailableRequests)} 个请求无逐请求实际费用</span>
+        <span>未标记对账的调用日志 <strong>{fmtCompact(reconciliation.actualUnavailableRequests)}</strong> 条<HelpPopover label="调用日志对账范围">此处统计同时间范围内未标记对账的非历史汇总调用日志，包含查询、下载及探测等操作；口径与业务请求量不同，不能相减。未标记对账不等于未返回实际费用。</HelpPopover></span>
       ) : null}
     </>
   );
@@ -201,7 +235,7 @@ export function UsagePage() {
         actions={(
           <>
             {canReadLogs ? <Link className="lg-text-link" to="/logs">打开请求记录 <ArrowRight size={14} /></Link> : null}
-            {canImportActual ? <Button size="sm" variant="secondary" onClick={() => setShowImport(true)}>导入供应商账单</Button> : null}
+            {canImportActual ? <Button size="sm" variant="secondary" data-import-billing onClick={openImport}>{importUncertain ? '核对未确认账单' : '导入供应商账单'}</Button> : null}
           </>
         )}
       />
@@ -306,7 +340,9 @@ export function UsagePage() {
           </div>
         </Card>
       ) : null}
-      {importResult ? <ImportResult item={importResult} canReadLogs={canReadLogs} /> : null}
+      {importUncertain && !showImport ? <InlineAlert tone="info">账单导入结果未确认，已保留本次提交。<Button size="sm" variant="ghost" onClick={() => setShowImport(true)}>继续核对账单</Button></InlineAlert> : null}
+      {importNotice && !showImport ? <div role="status">{importNotice}</div> : null}
+      {importResult && (reconciliationError || !reconciliation?.items.some(item => item.id === importResult.id)) ? <ImportResult item={importResult} canReadLogs={canReadLogs} /> : null}
       <Card style={CARD_BODY} aria-labelledby="reconciliation-title">
         <div style={cardHeadStyle}>
           <h2 id="reconciliation-title" style={SECTION_TITLE}>
@@ -323,7 +359,7 @@ export function UsagePage() {
           <InlineAlert tone="error">{reconciliationError}。费用估算仍可查看，但当前不能宣称已完成供应商对账。 <Button size="sm" variant="ghost" onClick={() => setRefresh(value => value + 1)}>重新读取账单</Button></InlineAlert>
         ) : reconciliation && reconciliation.items.length > 0 ? (
           <div className="lg-reconciliation-list">
-            {reconciliation.items.map((item) => <ReconciliationRecord key={item.id} item={item} canReadLogs={canReadLogs} />)}
+            {reconciliation.items.map((item) => <ReconciliationRecord key={item.id} item={item} canReadLogs={canReadLogs} selected={item.id === importResult?.id} />)}
           </div>
         ) : (
           <div className="lg-empty-guidance"><FileSearch size={20} /><div><strong>还没有供应商账单记录</strong><p>{canImportActual ? '点击“导入供应商账单”，有请求编号时按单条请求对账；没有编号时选择明确时间窗。' : '当前角色可以查看费用；请由 Owner 或 Admin 导入供应商账单后再回来核对。'}</p></div></div>
@@ -341,17 +377,19 @@ export function UsagePage() {
 
       {showImport && canImportActual ? createPortal(
         <div className="lg-side-drawer-portal">
-          <button className="lg-side-drawer-backdrop" type="button" aria-label="关闭" onClick={() => setShowImport(false)} />
-          <aside className="lg-side-drawer" role="dialog" aria-modal="true" aria-label="导入供应商账单">
+          <button className="lg-side-drawer-backdrop" type="button" aria-label="关闭" disabled={importing} onClick={() => setShowImport(false)} />
+          <aside ref={importDialog} tabIndex={-1} className="lg-side-drawer" role="dialog" aria-modal="true" aria-label="导入供应商账单">
             <header className="lg-side-drawer-header">
               <div className="lg-side-drawer-title">
                 <span className="lg-side-drawer-icon"><CircleDollarSign size={17} /></span>
                 <div><small>导入供应商账单</small><h2>与 Gateway 估算对账</h2></div>
               </div>
-              <button type="button" aria-label="关闭" onClick={() => setShowImport(false)}><X size={18} /></button>
+              <button type="button" aria-label="关闭" disabled={importing} onClick={() => setShowImport(false)}><X size={18} /></button>
             </header>
             <div className="lg-side-drawer-body">
         {importError ? <InlineAlert tone="error">{importError}</InlineAlert> : null}
+        {importNotice ? <div role="status">{importNotice}</div> : null}
+        <fieldset disabled={importing || importUncertain || importConfirmed} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
         <label style={labelStyle}>
           供应商名称
           <HelpPopover label="匹配方式">
@@ -371,9 +409,12 @@ export function UsagePage() {
             供应商账单唯一流水号不是 Gateway requestId。CNY 与 USD 不会直接相加；没有汇率凭证时只分别展示，不计算差额。
           </HelpPopover>
           <input type="number" min="0" step="any" value={fxRate} onChange={(e) => setFxRate(e.target.value)} style={inputStyle} placeholder="跨币种时必填" /></label>
+        </fieldset>
             </div>
             <div className="lg-side-drawer-footer">
-              <Button variant="primary" size="sm" disabled={importing || !provider.trim() || !externalRecordId.trim() || !actualCost || (!providerRequestId.trim() && (!windowFrom || !windowTo))} onClick={() => void submitActual()}>{importing ? '导入中' : '确认导入'}</Button>
+              <Button variant="primary" size="sm" disabled={importing || importUncertain || importConfirmed || !provider.trim() || !externalRecordId.trim() || !actualCost || (!providerRequestId.trim() && (!windowFrom || !windowTo))} onClick={() => void submitActual()}>{importing ? '导入中' : '确认导入'}</Button>
+              {importUncertain ? <Button size="sm" variant="secondary" disabled={importChecking} onClick={() => void readImportedBill(true)}>{importChecking ? '正在核对' : '重新读取账单核对'}</Button> : null}
+              {importConfirmed ? <Button size="sm" variant="secondary" onClick={() => setShowImport(false)}>查看账单回执</Button> : null}
             </div>
           </aside>
         </div>,
@@ -401,7 +442,7 @@ function CostStateCard({ state, kicker, title, value }: { state: 'estimated' | '
 function ImportResult({ item, canReadLogs }: { item: CostReconciliationItem; canReadLogs: boolean }) {
   const status = reconciliationStatusMeta(item.reconciliationStatus);
   return (
-    <div className="lg-reconciliation-result" role="status">
+    <div id={`billing-${item.id}`} tabIndex={-1} className="lg-reconciliation-result" role="status">
       <CheckCircle2 size={18} />
       <div><strong>供应商账单已导入</strong><span>{item.granularity === 'request' ? '已按单条请求匹配' : '已按明确时间窗记录为汇总账单'} · {item.provider} · {item.externalRecordId}</span></div>
       <div className="lg-reconciliation-result-values"><span>估算 {formatKnownCost(item.estimatedCost, item.estimatedCostCurrency, '未知')}</span><span>实际 {formatKnownCost(item.providerReportedCost, item.providerCostCurrency, '缺失')}</span><span style={{ color: status.color }}>{status.label}</span><span>差额 {formatDelta(item)}</span></div>
@@ -410,15 +451,15 @@ function ImportResult({ item, canReadLogs }: { item: CostReconciliationItem; can
   );
 }
 
-function ReconciliationRecord({ item, canReadLogs }: { item: CostReconciliationItem; canReadLogs: boolean }) {
+function ReconciliationRecord({ item, canReadLogs, selected = false }: { item: CostReconciliationItem; canReadLogs: boolean; selected?: boolean }) {
   const status = reconciliationStatusMeta(item.reconciliationStatus);
   const matchLabel = item.granularity === 'request'
     ? `单条请求${item.providerRequestId ? ` · Provider ${item.providerRequestId}` : ''}`
     : `时间窗汇总 · ${fmtShortTime(item.windowFrom)} 至 ${fmtShortTime(item.windowTo)}`;
   return (
-    <article className="lg-reconciliation-card">
+    <article id={`billing-${item.id}`} tabIndex={-1} className="lg-reconciliation-card" aria-label={selected ? `本次核对账单 ${item.externalRecordId}` : undefined}>
       <div className="lg-reconciliation-card-head">
-        <div><strong>{item.provider}</strong><span>{item.externalRecordId}</span></div>
+        <div><strong>{item.provider}{selected ? ' · 本次核对' : ''}</strong><span>{item.externalRecordId}</span></div>
         <span className="lg-reconciliation-status" style={{ color: status.color, background: status.background }}>{status.label}</span>
       </div>
       <div className="lg-reconciliation-match"><span>{item.granularity === 'request' ? '逐请求' : '时间窗'}</span><strong>{matchLabel}</strong></div>
@@ -489,3 +530,17 @@ const unpricedRowStyle: React.CSSProperties = {
   background: 'var(--bg-elevated)',
   fontSize: 'var(--fs-body)',
 };
+
+// These input/scope rejections occur before writes in the import endpoint. Unfamiliar errors
+// (including network errors and post-write failures) never prove the bill was not recorded.
+const IMPORT_REJECTIONS = new Set(['INVALID_PROVIDER_COST', 'INVALID_FX_SNAPSHOT', 'PROVIDER_REQUEST_NOT_FOUND', 'PROVIDER_REQUEST_AMBIGUOUS', 'PROVIDER_REQUEST_COVERED_BY_WINDOW', 'INVALID_BILLING_WINDOW', 'SERVICE_KEY_NOT_FOUND', 'BILLING_WINDOW_EMPTY', 'BILLING_WINDOW_TOO_LARGE', 'BILLING_WINDOW_TEAM_AMBIGUOUS', 'BILLING_WINDOW_CONTAINS_RECONCILED_REQUEST', 'BILLING_WINDOW_OVERLAP', 'COST_IMPORT_SCOPE_BUSY']);
+function importedBillMatches(item: CostReconciliationItem, submitted: Parameters<typeof importCostReconciliation>[0]) {
+  const sameInstant = (actual: string | null | undefined, expected: string | undefined) => !expected ? !actual : !!actual && new Date(actual).getTime() === new Date(expected).getTime();
+  return item.provider === submitted.provider && item.externalRecordId === submitted.externalRecordId
+    && item.providerReportedCost === submitted.providerReportedCost && item.providerCostCurrency === submitted.providerCostCurrency
+    && (item.providerRequestId || '') === (submitted.providerRequestId || '')
+    && (!submitted.serviceKeyId || item.serviceKeyId === submitted.serviceKeyId)
+    && (item.fxSnapshotId || '') === (submitted.fxSnapshotId || '')
+    && (item.providerToEstimatedFxRate ?? null) === (submitted.providerToEstimatedFxRate ?? null)
+    && (submitted.providerRequestId ? item.granularity === 'request' : item.granularity === 'window' && sameInstant(item.windowFrom, submitted.windowFrom) && sameInstant(item.windowTo, submitted.windowTo));
+}
