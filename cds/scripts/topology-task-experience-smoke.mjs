@@ -16,6 +16,11 @@ const results = [], server = await startViteDevServer(); let browser;
 try {
   browser = await chromium.launch({ executablePath: process.env.PW_CHROMIUM || '/usr/bin/chromium', args: ['--no-sandbox'] });
   for (const width of arg('--widths','1440,390').split(',').map(Number)) for (const theme of arg('--themes','light,dark').split(',')) for (const sample of [
+    { name: 'permission-loss', profiles:2, branches:2, branch:true, permission:true },
+    { name: 'confirmation-race', profiles:2, branches:2, branch:true },
+    { name: 'refresh-failure', profiles: 2, branches: 2, branch: true },
+    { name: 'refresh-close', profiles: 2, branches: 2, branch: true, closeWithoutRetry:true },
+    { name: 'infra-refresh-failure', profiles: 2, branches: 2, branch: true, infra:true },
     { name: 'sparse-one', profiles: 1, branches: 2, infraCount: 0 },
     { name: 'few-shared', profiles: 2, branches: 2 },
     { name: 'few-branch', profiles: 2, branches: 2, branch: true },
@@ -23,22 +28,22 @@ try {
     { name: 'mode-unknown', profiles: 2, branches: 2, branch: true, unknown: true },
     { name: 'read-error', profiles: 2, branches: 2, error: true },
     { name: 'empty', profiles: 0, branches: 0 },
-  ].filter(s=>arg('--cases','all')==='all'||arg('--cases','all').split(',').includes(s.name))) {
+  ].filter(s=>!['permission-loss','confirmation-race','refresh-failure','refresh-close','infra-refresh-failure'].includes(s.name)||width===390).filter(s=>arg('--cases','all')==='all'||arg('--cases','all').split(',').includes(s.name))) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce' }), page = await context.newPage();
     const label = `${sample.name}-${width}-${theme}`; console.log(label); page.setDefaultTimeout(10000);
     const check = (pass, name, measurement) => { results.push({ width, theme, sample: sample.name, name, pass: !!pass, ...(measurement ? { measurement } : {}) }); if (!pass) process.exitCode = 1; };
     const profiles = Array.from({ length: sample.profiles }, (_, i) => ({ id: `profile-${i}`, projectId: 'fixture-project', name: i ? `样例应用 ${i}` : sample.name==='many-shared'?'样例支付 API · 订单与多租户业务可观测服务':'样例支付 API', dockerImage: 'node:22-alpine', workDir: '.', containerPort: 8000 + i, command: 'node server.mjs --require-confirmed-fixture-config ' + ' --synthetic-long-argument=readable-context'.repeat(8), pathPrefixes: ['/api'], dependsOn: sample.infraCount===0?[]:['infra-0'] }));
     const branches = Array.from({ length: sample.branches }, (_, i) => ({ id: `branch-${i}`, projectId: 'fixture-project', branch: i ? `feature/workspace-${i}` : 'main', previewSlug: `sample-${i}`, status: i === 1 ? 'error' : 'running', createdAt: '2026-11-15T09:00:00Z', services: Object.fromEntries(profiles.map(p => [p.id, { profileId: p.id, containerName: `${p.id}-b${i}`, hostPort: p.containerPort, status: i === 1 ? 'error' : 'running', ...(i === 1 ? { errorMessage: '合成启动错误，保留原因' } : {}) }])) }));
     const infra = profiles.length ? Array.from({length:sample.infraCount??2},(_,i)=>i).map(i => ({ id: `infra-${i}`, projectId: 'fixture-project', name: i ? '样例缓存' : '样例数据库', dockerImage: i ? 'redis:7' : 'postgres:16', containerPort: i ? 6379 : 5432, hostPort: 16000 + i, containerName: `fixture-infra-${i}`, status: 'running' })) : [];
-    const writes = [], readonlyPosts = []; let holdProfiles=false, releaseProfiles, nodeRemoved=false;
-    await context.addInitScript(theme => { localStorage.setItem('cds_theme', theme); window.EventSource = class { addEventListener() {} removeEventListener() {} close() {} }; }, theme);
+    const writes = [], readonlyPosts = []; let holdProfiles=false, releaseProfiles, nodeRemoved=false, failTopology=false, emptyConfirmation=false, releaseEmptyConfirmation;
+    await context.addInitScript(theme => { localStorage.setItem('cds_theme', theme); window.__topologyStreams=[];window.EventSource=class{handlers={};constructor(url){this.url=url;window.__topologyStreams.push(this)}addEventListener(type,fn){this.handlers[type]=fn}removeEventListener(){}close(){}emit(type,data){this.handlers[type]?.({data:JSON.stringify(data)})}}; }, theme);
     await context.route('**/api/**', async route => {
       const p = new URL(route.request().url()).pathname.replace(/^\/_cds/, ''), method = route.request().method(); let data;
       if (method !== 'GET') { if (p.endsWith('/container-logs')) { readonlyPosts.push(p); data = { logs: '合成运行日志，仅本地查询' }; } else { writes.push({ path: p, method }); return route.fulfill({ status: 403, body: '{}' }); } }
       else if (p === '/api/auth/status') data = { authenticated: true, enabled: true, mode: 'github', user: { id: 'fixture-owner', githubLogin: 'fixture-owner', isSystemOwner: true } };
-      else if (p === '/api/projects/fixture-project') { if (sample.error) return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"拓扑接口暂不可用"}' }); data = { id: 'fixture-project', name: '拓扑样例项目', slug: 'fixture-project', branchCount: branches.length }; }
-      else if (p === '/api/branches') data = { branches };
-      else if (p === '/api/build-profiles') { if(holdProfiles)await new Promise(resolve=>releaseProfiles=resolve); data = { profiles:nodeRemoved?profiles.slice(1):profiles }; }
+      else if (p === '/api/projects/fixture-project') { if (sample.error) return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"拓扑接口暂不可用"}' }); data = { id: 'fixture-project', name: '拓扑样例项目', slug: 'fixture-project', branchCount: emptyConfirmation?0:branches.length }; }
+      else if(p==='/api/branches'){const capturedEmpty=emptyConfirmation;if(capturedEmpty)await new Promise(resolve=>releaseEmptyConfirmation=resolve);data={branches:capturedEmpty?[]:branches};}
+      else if (p === '/api/build-profiles') { if(holdProfiles)await new Promise(resolve=>releaseProfiles=resolve); if(failTopology)return route.fulfill({status:sample.permission?403:503,contentType:'application/json',body:JSON.stringify({error:sample.permission?'当前账号无权读取拓扑':'拓扑读取暂不可用'})}); data = { profiles:nodeRemoved?profiles.slice(1):profiles }; }
       else if (p === '/api/infra') data = { services: infra };
       else if (p.endsWith('/preview-mode')) { if (sample.unknown) return route.fulfill({ status: 503, body: '{}' }); data = { mode: 'multi' }; }
       else if (p === '/api/config') data = { mainDomain: 'example.invalid', previewDomain: 'preview.example.invalid' };
@@ -60,6 +65,49 @@ try {
         check(await page.getByText('预览模式', { exact: false }).count() > 0 && await page.getByText('应用服务', { exact: true }).count() > 0 && await page.getByText('基础设施', { exact: true }).count() > 0, '模式与应用基础设施事实完整保留');
         await page.screenshot({ path: `${out}/${label}-default.png` });
         const quick=page.getByText('按分支名打开预览',{exact:true});if(await quick.count()){await quick.focus();await page.keyboard.press('Enter');await page.locator('#topology-quick-branch').waitFor();check(await page.locator('#topology-quick-branch').isVisible(),'按名预览替代路径可由键盘按需打开');await quick.focus();await page.keyboard.press('Enter');}else check(false,'按名预览替代路径可由键盘按需打开');
+        if(['permission-loss','confirmation-race','refresh-failure','refresh-close','infra-refresh-failure'].includes(sample.name)){
+          if(sample.name==='confirmation-race'){
+            emptyConfirmation=true;await page.evaluate(()=>window.__topologyStreams.find(stream=>stream.url.includes('/branches/stream')).emit('snapshot',{projectId:'fixture-project',branches:[]}));
+            const confirmDeadline=Date.now()+10000;while(!releaseEmptyConfirmation&&Date.now()<confirmDeadline)await page.waitForTimeout(20);if(!releaseEmptyConfirmation)throw Error('fixture没有触发空列表复核');emptyConfirmation=false;
+          }
+          holdProfiles=true;let refresh=page.getByRole('button',{name:'刷新',exact:true}).first();
+          if(!await refresh.isVisible()){await page.getByRole('button',{name:'更多操作',exact:true}).click();refresh=page.getByRole('button',{name:'刷新',exact:true}).first()}
+          await refresh.click();const more=page.getByRole('button',{name:'更多操作',exact:true});if(await more.count()&&await more.getAttribute('aria-expanded')==='true')await page.keyboard.press('Escape');
+          const deadline=Date.now()+10000;while(!releaseProfiles&&Date.now()<deadline)await page.waitForTimeout(20);if(!releaseProfiles)throw Error('fixture未拦到刷新');
+          const actionNode=sample.infra?page.getByRole('button',{name:/^样例数据库/}).first():firstNode;const objectLabel=sample.infra?'样例数据库':'样例支付 API';
+          await actionNode.focus();await page.keyboard.press('Enter');const dialog=page.getByRole('dialog',{name:/ · 服务详情$/});await dialog.waitFor();
+          failTopology=true;holdProfiles=false;releaseProfiles();await page.waitForTimeout(200);
+          if(sample.name==='confirmation-race'){
+            releaseEmptyConfirmation();await page.waitForTimeout(200);
+            const stillOriginal=await dialog.count()>0&&await dialog.isVisible()&&await dialog.getByText(objectLabel,{exact:true}).count()>0;
+            check(stillOriginal&&await page.getByText('原选中对象已不在当前拓扑中，已返回服务列表。',{exact:true}).count()===0,'旧空确认V1不能在主读取V2失败后删除保留对象或误关详情');
+            await page.screenshot({path:`${out}/${label}-old-confirm.png`});if(!stillOriginal)continue;
+          }
+          if(sample.permission){
+            check(await dialog.getByText('当前账号无权读取拓扑',{exact:false}).count()>0&&await dialog.getByText(objectLabel,{exact:true}).count()===0,'明确403拒读不继续显示旧配置或假作临时离线快照');
+            await page.screenshot({path:`${out}/${label}-denied.png`});
+            await dialog.getByRole('button',{name:'返回拓扑',exact:true}).click();await dialog.waitFor({state:'hidden'});await page.waitForTimeout(1500);
+            check(await page.evaluate(()=>document.activeElement instanceof HTMLButtonElement&&document.activeElement.textContent.trim()==='重试读取'),'权限失败关闭后落合法错误重试，不回已卸载节点或BODY',await page.evaluate(()=>({tag:document.activeElement?.tagName,text:document.activeElement?.textContent?.trim().slice(0,70)})));
+            check(writes.length===0,'无业务写入',{blockedWrites:writes});continue;
+          }
+          const retry=dialog.getByRole('button',{name:'重试读取',exact:true});
+          check(await retry.count()>0&&await dialog.getByText('拓扑读取暂不可用',{exact:false}).count()>0,'选中对象读取失败就近给真实原因与重试，不只无法确认');
+          check(await dialog.getByText(objectLabel,{exact:true}).count()>0,'503保留原对象与上次快照，不静默删除或换对象');
+          if(!sample.infra)check(await dialog.getByRole('link',{name:'打开上次入口',exact:true}).count()>0&&await dialog.getByText('可预览',{exact:true}).count()===0,'读取失败标上次入口，不承诺当前已可预览');
+          await page.screenshot({path:`${out}/${label}-read-failed.png`});
+          if(sample.infra)for(const name of ['启动','重启','停止'])check(await dialog.getByRole('button',{name,exact:true}).count()>0&&await dialog.getByRole('button',{name,exact:true}).isDisabled(),'读取未确认时不从旧快照执行维护：'+name);
+          if(await retry.count()&&!sample.closeWithoutRetry){
+            releaseProfiles=undefined;holdProfiles=true;failTopology=false;await retry.click();
+            const nextDeadline=Date.now()+10000;while(!releaseProfiles&&Date.now()<nextDeadline)await page.waitForTimeout(20);if(!releaseProfiles)throw Error('fixture未拦到重试');
+            check(await dialog.getByText('拓扑读取暂不可用',{exact:false}).count()>0&&await retry.isDisabled(),'重试在途不提前清失败和上次快照范围');
+            holdProfiles=false;releaseProfiles();await page.waitForTimeout(200);
+            check(await dialog.getByText('拓扑读取暂不可用',{exact:false}).count()===0&&await dialog.getByText(objectLabel,{exact:true}).count()>0,'原对象重试成功后恢复新快照与动作');
+          }
+          if(sample.infra&&await retry.count()===0&&await dialog.getByRole('button',{name:'启动',exact:true}).count()>0)for(const name of ['启动','重启','停止'])check(await dialog.getByRole('button',{name,exact:true}).isEnabled(),'重新确认后维护入口恢复：'+name);
+          await dialog.getByRole('button',{name:'返回拓扑',exact:true}).click();await dialog.waitFor({state:'hidden'});await page.waitForTimeout(1500);
+          check(await actionNode.count()>0&&await actionNode.evaluate(e=>e===document.activeElement),'503恢复或关闭后有合法原任务焦点，不落BODY',await page.evaluate(()=>({tag:document.activeElement?.tagName,text:document.activeElement?.textContent?.trim().slice(0,90)})));
+          check(writes.length===0,'无业务写入',{blockedWrites:writes});continue;
+        }
         if(width===390)check(await page.getByRole('dialog').count()===0,'初始选择与读回不自动抢焦点弹窗');
         const scrollPosition=()=>firstNode.evaluate(e=>{const positions=[window.scrollY];for(let p=e.parentElement;p;p=p.parentElement)if(p.scrollHeight>p.clientHeight)positions.push(p.scrollTop);return positions});
         await firstNode.focus(); const beforeScroll=await scrollPosition(); await page.keyboard.press('Enter');

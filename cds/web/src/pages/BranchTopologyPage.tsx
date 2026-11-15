@@ -41,6 +41,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
+import { createLatestWinsGate } from '@/lib/latest-wins';
+import { userErrorMessage } from '@/lib/userErrorMessage';
 import { useInfraCatalog } from '@/lib/infraCatalog';
 import {
   reduceBranchListState,
@@ -361,12 +363,19 @@ function parseEnvText(text: string): Record<string, string> {
 export function BranchTopologyPage(): JSX.Element {
   const projectId = projectIdFromQuery();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const [refreshError, setRefreshError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const readGate = useRef(createLatestWinsGate());
+  const confirmGate = useRef(createLatestWinsGate());
   const [selectedBranchId, setSelectedBranchId] = useState(branchIdFromQuery());
   const [selectedNode, setSelectedNode] = useState<SelectedNode>(null);
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
   const [desktopDetails, setDesktopDetails] = useState(() => window.matchMedia('(min-width: 1280px)').matches);
   const [mobileSelection, setMobileSelection] = useState<{ node: Exclude<SelectedNode, null>; projectId: string; branchId: string; label: string } | null>(null);
   const serviceWorkspace = useRef<HTMLElement>(null);
+  const readErrorTarget = useRef<HTMLButtonElement>(null);
+  const nodeOrigin = useRef<HTMLElement | null>(null);
+  const mobileContainer = useRef<HTMLElement | null>(null);
   const focusWorkspaceOnClose = useRef(false);
   useEffect(() => {
     const query = window.matchMedia('(min-width: 1280px)');
@@ -381,13 +390,15 @@ export function BranchTopologyPage(): JSX.Element {
 
   const confirmEmptyBranchList = useCallback(async (source: string) => {
     if (!projectId) return;
+    const ticket = confirmGate.current.begin();
     try {
       const [project, branchesRes] = await Promise.all([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
       ]);
+      if (!confirmGate.current.accept(ticket)) return;
       setState((current) => {
-        if (current.status !== 'ok') return current;
+        if (current.status !== 'ok' || current.project.id !== projectId) return current;
         return applyTopologyBranchAction(current, {
           type: 'authoritativeLoaded',
           branches: branchesRes.branches || [],
@@ -397,8 +408,9 @@ export function BranchTopologyPage(): JSX.Element {
         }).state;
       });
     } catch (err) {
+      if (!confirmGate.current.accept(ticket)) return;
       setState((current) => {
-        if (current.status !== 'ok') return current;
+        if (current.status !== 'ok' || current.project.id !== projectId) return current;
         return applyTopologyBranchAction(current, {
           type: 'refreshFailed',
           message: err instanceof ApiError ? err.message : String(err),
@@ -409,7 +421,11 @@ export function BranchTopologyPage(): JSX.Element {
 
   const refresh = useCallback(async (showLoading = false, forceLive = false) => {
     if (!projectId) return;
-    if (showLoading) setState({ status: 'loading' });
+    const ticket = readGate.current.begin();
+    // 新的完整读取已承接核查；旧空列表确认不能在其失败后冒充最新结果。
+    confirmGate.current.newSession();
+    setRefreshing(true);
+    if (showLoading) { setState({ status: 'loading' }); setRefreshError(''); }
     try {
       const [project, branchesRes, profilesRes, infraRes, routingRulesRes, previewModeRes, config] = await Promise.all([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
@@ -420,6 +436,9 @@ export function BranchTopologyPage(): JSX.Element {
         apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`).catch(() => ({ mode: null })),
         apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
       ]);
+      if (!readGate.current.accept(ticket)) return;
+      confirmGate.current.newSession();
+      setRefreshError(''); setRefreshing(false);
       let needsEmptyRecheck = false;
       setState((current) => {
         const nextBase: OkLoadState = {
@@ -445,12 +464,18 @@ export function BranchTopologyPage(): JSX.Element {
       });
       if (needsEmptyRecheck) void confirmEmptyBranchList('拓扑分支复核');
     } catch (err) {
-      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      if (!readGate.current.accept(ticket)) return;
+      const denied = err instanceof ApiError && (err.status === 401 || err.status === 403);
+      const reason = userErrorMessage(err);
+      const message = denied ? `访问状态需重新确认：${reason}` : reason;
+      setRefreshError(message); setRefreshing(false);
+      setState(current => !denied && current.status === 'ok' && current.project.id === projectId ? applyTopologyBranchAction(current, { type: 'refreshFailed', message }).state : { status: 'error', message });
     }
   }, [confirmEmptyBranchList, projectId]);
 
   useEffect(() => {
     void refresh(true);
+    return () => { readGate.current.newSession(); confirmGate.current.newSession(); };
   }, [refresh]);
 
   useEffect(() => {
@@ -582,7 +607,8 @@ export function BranchTopologyPage(): JSX.Element {
     ));
   }, [branchFilter, state]);
 
-  const chooseNode = (node: Exclude<SelectedNode, null>, label: string) => {
+  const chooseNode = (node: Exclude<SelectedNode, null>, label: string, source: HTMLButtonElement) => {
+    nodeOrigin.current = source; focusWorkspaceOnClose.current = false;
     setSelectedNode(node);
     if (!desktopDetails) { setMobileSelection({ node, projectId, branchId: selectedBranchId, label }); setMobileDetailsOpen(true); }
   };
@@ -593,12 +619,13 @@ export function BranchTopologyPage(): JSX.Element {
   useEffect(() => {
     if (!mobileSelection || !mobileDetailsOpen) return;
     if (desktopDetails) { setMobileDetailsOpen(false); return; }
+    if (mobileSelection.projectId !== projectId) { setMobileDetailsOpen(false); setToast('当前项目已变更，已关闭原服务详情。'); return; }
     if (state.status === 'ok' && !mobileObjectAvailable) {
       focusWorkspaceOnClose.current = true;
       setMobileDetailsOpen(false);
       setToast('原选中对象已不在当前拓扑中，已返回服务列表。');
     }
-  }, [desktopDetails, mobileDetailsOpen, mobileSelection, mobileObjectAvailable, state.status]);
+  }, [desktopDetails, mobileDetailsOpen, mobileSelection, mobileObjectAvailable, projectId, state.status]);
 
   useEffect(() => {
     if (state.status !== 'ok') return;
@@ -642,7 +669,7 @@ export function BranchTopologyPage(): JSX.Element {
       selectedProfile={node?.kind === 'profile' ? state.profiles.find(profile => profile.id === node.id) || null : null}
       selectedInfra={node?.kind === 'infra' ? state.infra.find(service => service.id === node.id) || null : null}
       branches={state.branches} activeBranch={branch} infra={state.infra} routingRules={state.routingRules}
-      previewMode={state.previewMode} config={state.config} projectId={projectId} onToast={setToast}
+      previewMode={state.previewMode} config={state.config} projectId={projectId} snapshotStale={Boolean(refreshError)} onToast={setToast}
     />
   ) : null;
   const openQuickPreview = (branchName: string): void => {
@@ -710,6 +737,7 @@ export function BranchTopologyPage(): JSX.Element {
                 variant="ghost"
                 size="icon"
                 onClick={() => void refresh(false, true)}
+                disabled={refreshing}
                 aria-label="刷新"
                 title="刷新"
               >
@@ -741,18 +769,20 @@ export function BranchTopologyPage(): JSX.Element {
     >
       <Workspace fluid>
         {state.status === 'loading' ? <TopologyPageSkeleton /> : <>
+        {state.status === 'ok' && refreshError ? <div role="alert" className="mb-3 flex flex-wrap items-center gap-2 text-sm text-warn"><p className="min-w-0 flex-1">拓扑读取失败：{refreshError}；当前显示上次成功读取的快照。</p><Button variant="outline" style={{ minHeight: 44 }} disabled={refreshing} onClick={() => void refresh()}>重试读取</Button></div> : null}
         {state.status === 'ok' ? <div className="cds-surface-raised cds-hairline mb-4 overflow-hidden">
           <div className="space-y-2 px-4 py-3" aria-label="拓扑概况">
+            {refreshError ? <p className="text-sm text-muted-foreground">上次拓扑快照</p> : null}
             <dl className="flex flex-wrap items-baseline gap-x-6 gap-y-2 text-sm">
               <div className="flex flex-wrap items-baseline gap-x-2"><dt className="text-muted-foreground">应用服务</dt><dd><strong>{totalProfiles}</strong><span className="ml-2 text-muted-foreground">{runningServices} 个运行实例</span></dd></div>
               <div className="flex items-baseline gap-2"><dt className="text-muted-foreground">基础设施</dt><dd><strong>{totalInfra}</strong><span className="ml-2 text-muted-foreground">项目共享</span></dd></div>
               <div className="flex flex-wrap items-baseline gap-x-2"><dt className="text-muted-foreground">运行分支</dt><dd><strong>{runningBranches}/{totalBranches}</strong>{errorBranches ? <span className="ml-2 text-warn">{errorBranches} 个异常</span> : <span className="ml-2 text-muted-foreground">{totalBranches ? '未记录异常' : '尚无跟踪分支'}</span>}</dd></div>
             </dl>
             <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">视图模式：{activeBranch ? '单分支' : '共享'} · 预览模式：{state.previewMode ?? '未确认'} · {state.config.previewDomain || state.config.mainDomain || '域名未配置或未读取'}</p>
-            {!state.previewMode ? <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-warn"><p className="min-w-0 flex-1">预览模式未确认，暂不生成预览入口；服务与关系仍可查看。</p><Button variant="outline" size="sm" className="min-h-11" onClick={() => void refresh()}>重试读取</Button></div> : null}
+            {!state.previewMode ? <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-warn"><p className="min-w-0 flex-1">预览模式未确认，暂不生成预览入口；服务与关系仍可查看。</p><Button variant="outline" size="sm" className="min-h-11" disabled={refreshing} onClick={() => void refresh()}>重试读取</Button></div> : null}
           </div>
 
-          {state.status === 'ok' && state.projectWarning ? (
+          {state.status === 'ok' && state.projectWarning && !refreshError ? (
             <div className="border-t border-warn/20 bg-warn-soft px-4 py-2 text-sm text-warn">
               {state.projectWarning}
             </div>
@@ -827,6 +857,7 @@ export function BranchTopologyPage(): JSX.Element {
                   runningServices={activeBranchRunningServices}
                   totalServices={activeBranchServiceTotal}
                   totalBranches={totalBranches}
+                  stale={Boolean(refreshError)}
                 />
               </div>
             </div>
@@ -836,6 +867,7 @@ export function BranchTopologyPage(): JSX.Element {
         {state.status === 'error' ? (
           <div className="w-full">
             <ErrorBlock message={state.message} />
+            <Button ref={readErrorTarget} variant="outline" style={{ minHeight: 44 }} disabled={refreshing} onClick={() => void refresh()}>重试读取</Button>
           </div>
         ) : null}
 
@@ -872,7 +904,7 @@ export function BranchTopologyPage(): JSX.Element {
                           branches={state.branches}
                           activeBranch={activeBranch}
                           selected={selectedNode?.kind === 'profile' && selectedNode.id === profile.id}
-                          onClick={() => chooseNode({ kind: 'profile', id: profile.id }, profile.name || profile.id)}
+                          onClick={source => chooseNode({ kind: 'profile', id: profile.id }, profile.name || profile.id, source)}
                         />
                       ))}
                     </div>
@@ -904,7 +936,7 @@ export function BranchTopologyPage(): JSX.Element {
                             key={service.id}
                             service={service}
                             selected={selectedNode?.kind === 'infra' && selectedNode.id === service.id}
-                            onClick={() => chooseNode({ kind: 'infra', id: service.id }, service.name || service.id)}
+                            onClick={source => chooseNode({ kind: 'infra', id: service.id }, service.name || service.id, source)}
                           />
                         ))}
                       </div>
@@ -921,16 +953,19 @@ export function BranchTopologyPage(): JSX.Element {
         ) : null}
 
         <Dialog open={mobileDetailsOpen && !desktopDetails} onOpenChange={setMobileDetailsOpen}>
-          <DialogContent frame className="max-w-3xl" onCloseAutoFocus={event => {
-            if (focusWorkspaceOnClose.current) {
-              focusWorkspaceOnClose.current = false;
-              event.preventDefault();
-              serviceWorkspace.current?.focus({ preventScroll: true });
-            }
+          <DialogContent ref={node => { if (node) mobileContainer.current = node; }} frame className="max-w-3xl" onCloseAutoFocus={event => {
+            const needsFallback = focusWorkspaceOnClose.current || !nodeOrigin.current?.isConnected;
+            focusWorkspaceOnClose.current = false;
+            if (!needsFallback) return;
+            const active = document.activeElement;
+            if (active instanceof HTMLElement && active !== document.body && active !== document.documentElement && !mobileContainer.current?.contains(active)) return;
+            const target = serviceWorkspace.current || readErrorTarget.current;
+            if (target?.isConnected) { event.preventDefault(); target.focus({ preventScroll: true }); }
           }}>
             <DialogTitle className="sr-only">{mobileSelection?.label || '所选对象'} · 服务详情</DialogTitle>
             <DialogDescription className="sr-only">查看所选服务的运行状态与配置；关闭后返回原节点和列表位置。</DialogDescription>
             <DialogBody className="pt-8">
+              {refreshError ? <div role="alert" className="mb-4 space-y-2 text-sm text-warn"><p>拓扑读取失败：{refreshError}；{mobileObjectAvailable ? '保留原对象的上次快照。' : '原对象当前暂时无法重新确认。'}</p><Button variant="outline" style={{ minHeight: 44 }} disabled={refreshing} onClick={() => void refresh()}>重试读取</Button></div> : null}
               {mobileSelection && mobileObjectAvailable && state.status === 'ok'
                 ? nodeDetails(mobileSelection.node, mobileSelection.branchId ? state.branches.find(branch => branch.id === mobileSelection.branchId) || null : null)
                 : <p role="alert" className="text-sm text-muted-foreground">原选中对象暂时无法确认，当前没有借用其他节点的内容。</p>}
@@ -1236,6 +1271,7 @@ function TopologyContextBar({
   runningServices,
   totalServices,
   totalBranches,
+  stale = false,
 }: {
   projectId: string;
   activeBranch: BranchSummary | null;
@@ -1243,6 +1279,7 @@ function TopologyContextBar({
   runningServices: number;
   totalServices: number;
   totalBranches: number;
+  stale?: boolean;
 }): JSX.Element {
   if (!activeBranch) {
     return (
@@ -1277,7 +1314,7 @@ function TopologyContextBar({
           <Button asChild size="sm">
             <a href={previewUrl} target="_blank" rel="noreferrer">
               <ExternalLink />
-              打开预览
+              {stale ? '打开上次入口' : '打开预览'}
             </a>
           </Button>
         ) : null}
@@ -1303,7 +1340,7 @@ function ProfileNode({
   branches: BranchSummary[];
   activeBranch: BranchSummary | null;
   selected: boolean;
-  onClick: () => void;
+  onClick: (source: HTMLButtonElement) => void;
 }): JSX.Element {
   const activeService = serviceForProfile(activeBranch, profile.id);
   const status = activeBranch ? activeService?.status || 'stopped' : runningBranchCount(branches, profile.id) > 0 ? 'running' : 'stopped';
@@ -1315,7 +1352,7 @@ function ProfileNode({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={event => onClick(event.currentTarget)}
       className={[
         'group min-h-40 rounded-md border bg-background px-4 py-3 text-left transition-colors hover:border-primary/60 hover:bg-accent/20',
         selected ? 'border-primary ring-2 ring-primary/20' : 'border-border',
@@ -1375,12 +1412,12 @@ function InfraNode({
 }: {
   service: InfraService;
   selected: boolean;
-  onClick: () => void;
+  onClick: (source: HTMLButtonElement) => void;
 }): JSX.Element {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={event => onClick(event.currentTarget)}
       className={[
         'group min-h-36 rounded-md border bg-background px-4 py-3 text-left transition-colors hover:border-primary/60 hover:bg-accent/20',
         selected ? 'border-primary ring-2 ring-primary/20' : 'border-border',
@@ -1502,8 +1539,10 @@ function NodeDetails({
   config,
   projectId,
   onToast,
+  snapshotStale = false,
 }: {
   selectedProfile: BuildProfile | null;
+  snapshotStale?: boolean;
   selectedInfra: InfraService | null;
   branches: BranchSummary[];
   activeBranch: BranchSummary | null;
@@ -1566,6 +1605,7 @@ function NodeDetails({
         projectId={projectId}
         branchId={activeBranch?.id}
         onToast={onToast}
+        readOnly={snapshotStale}
       />
     );
   }
@@ -1587,7 +1627,7 @@ function NodeDetails({
 
   return (
     <div className="space-y-5">
-      <DetailHeader icon={<TerminalSquare className="h-5 w-5" />} title={profile.name || profile.id} subtitle={activeBranch ? `应用服务 · ${activeBranch.branch}` : '应用服务 · 共享视图'} />
+      <DetailHeader icon={<TerminalSquare className="h-5 w-5" />} title={profile.name || profile.id} subtitle={`${activeBranch ? `应用服务 · ${activeBranch.branch}` : '应用服务 · 共享视图'}${snapshotStale ? ' · 上次快照' : ''}`} />
 
       <DetailRows columns={2} rows={[
         ['状态', serviceStateLabel], ['配置分支', String(branchesUsingProfile.length)],
@@ -1598,7 +1638,7 @@ function NodeDetails({
         <div className="flex flex-wrap items-center gap-2">
           <CodePill>{profile.id}</CodePill>
           {activeService ? <CodePill>:{activeService.hostPort}</CodePill> : null}
-          {previewUrl ? <CodePill>可预览</CodePill> : null}
+          {previewUrl ? <CodePill>{snapshotStale ? '上次入口已记录' : '可预览'}</CodePill> : null}
         </div>
         <div className="mt-2 break-words text-muted-foreground">
           {profile.dockerImage || '未配置镜像'}{!profile.command ? ' · 未配置启动命令' : ''}
@@ -1616,7 +1656,7 @@ function NodeDetails({
         {previewUrl ? (
           <Button asChild variant="outline" style={{ minHeight: 44 }}>
             <a href={previewUrl} target="_blank" rel="noreferrer">
-              打开预览
+              {snapshotStale ? '打开上次入口' : '打开预览'}
             </a>
           </Button>
         ) : null}
@@ -1790,8 +1830,10 @@ function InfraDetails({
   projectId,
   branchId,
   onToast,
+  readOnly = false,
 }: {
   selectedInfra: InfraService;
+  readOnly?: boolean;
   projectId: string;
   branchId?: string;
   onToast: (message: string) => void;
@@ -1814,6 +1856,7 @@ function InfraDetails({
   }
 
   async function runInfraAction(next: 'start' | 'stop' | 'restart'): Promise<void> {
+    if (readOnly) return;
     setAction(next);
     try {
       await apiRequest(`/api/infra/${encodeURIComponent(selectedInfra.id)}/${next}?project=${encodeURIComponent(projectId)}`, {
@@ -1830,7 +1873,7 @@ function InfraDetails({
 
   return (
     <div className="space-y-5">
-      <DetailHeader icon={<Database className="h-5 w-5" />} title={selectedInfra.name || selectedInfra.id} subtitle="基础设施 · 项目共享" />
+      <DetailHeader icon={<Database className="h-5 w-5" />} title={selectedInfra.name || selectedInfra.id} subtitle={`基础设施 · 项目共享${readOnly ? ' · 上次快照' : ''}`} />
       <DetailRows columns={2}
         rows={[
           ['状态', statusLabel(selectedInfra.status)],
@@ -1841,16 +1884,17 @@ function InfraDetails({
         ]}
       />
       {selectedInfra.errorMessage ? <ErrorBlock message={selectedInfra.errorMessage} /> : null}
+      {readOnly ? <p className="text-sm text-warn">拓扑尚未重新确认，维护操作暂不可用；请先重试读取。</p> : null}
       <div className="grid gap-2 sm:grid-cols-2">
-        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void runInfraAction('start')} disabled={action !== null}>
+        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void runInfraAction('start')} disabled={action !== null || readOnly}>
           {action === 'start' ? <Loader2 className="animate-spin" /> : <Play />}
           启动
         </Button>
-        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void runInfraAction('restart')} disabled={action !== null}>
+        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void runInfraAction('restart')} disabled={action !== null || readOnly}>
           {action === 'restart' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
           重启
         </Button>
-        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void runInfraAction('stop')} disabled={action !== null}>
+        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void runInfraAction('stop')} disabled={action !== null || readOnly}>
           {action === 'stop' ? <Loader2 className="animate-spin" /> : <Square />}
           停止
         </Button>
