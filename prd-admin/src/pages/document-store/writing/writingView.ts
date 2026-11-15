@@ -1,4 +1,4 @@
-import type { WritingRole, WritingSection, WritingState, WritingSource } from '@/services/contracts/writing';
+import type { WritingParagraph, WritingQuestion, WritingRole, WritingSection, WritingState, WritingSource } from '@/services/contracts/writing';
 import { withDocumentStoreEntry } from '../documentStoreDeepLink';
 
 export const writingKnowledgeHref = (storeId: string, entryId?: string) => `/document-store${withDocumentStoreEntry('', storeId, entryId)}`;
@@ -20,6 +20,11 @@ export const WRITING_STAGE_REGISTRY: Record<string, { label: string; step: numbe
   'pending-review': { label: '待审核', step: 3 }, publishing: { label: '发布中', step: 3 }, published: { label: '已发布', step: 3 }, recheck: { label: '版本待复核', step: 3 },
 };
 export function remainingQuestions(state: WritingState) { return state.questions.filter(q => q.status === 'pending').length; }
+export function writingQuestionEvidence(question: WritingQuestion, paragraphs: WritingParagraph[], sources: WritingSource[]) {
+  if (question.evidence?.length) return question.evidence;
+  const paragraph = paragraphs.find(p => p.id === question.paragraphId);
+  return question.citations.map(sourceId => ({ sourceId, location: '', quote: paragraph?.quotes?.[sourceId] ?? sources.find(s => s.id === sourceId)?.content.slice(0, 240) ?? '' }));
+}
 export function writingSaveInput(state: WritingState) {
   return { revision: state.revision, templateId: state.templateId, title: state.title, summary: state.summary,
     manualInput: state.manualInput, sourceEntryIds: state.sources.map(s => s.entryId), sections: state.sections,

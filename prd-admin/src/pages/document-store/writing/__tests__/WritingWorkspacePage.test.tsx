@@ -11,7 +11,6 @@ vi.mock('@/services/real/writing', () => ({ writingContext: api.context, getWrit
 vi.mock('../WritingThreads', () => ({ WritingThreads: () => null }));
 vi.mock('../WritingReaderPage', () => ({ WritingReaderPage: () => null }));
 vi.mock('../WritingReviewPage', () => ({ WritingReviewPage: () => null }));
-vi.mock('../WritingQuestionPanel', () => ({ WritingQuestionPanel: () => null }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSectionLoader: ({ text }: { text: string }) => <p>{text}</p>, MapSpinner: () => null }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -35,8 +34,79 @@ const findButton = (text: string) => [...container.querySelectorAll<HTMLButtonEl
 
 beforeEach(() => {
   vi.clearAllMocks(); localStorage.clear();
+  vi.stubGlobal('matchMedia', () => ({ matches: true }));
+  Element.prototype.scrollIntoView = vi.fn();
   api.context.mockResolvedValue({ success: true, data: context }); api.get.mockResolvedValue({ success: true, data: documentFor(state()) });
   api.save.mockResolvedValue({ success: true, data: documentFor({ ...state(), revision: 7 }) });
+});
+
+describe('补充确认的真实上下文', () => {
+  function pendingState(): WritingState {
+    const value = state();
+    value.summary = '先移交、后签收，回收条件必须确认。';
+    value.sources = ['S1', 'S2'].map((id, i) => ({ ...source, id, entryId: id, status: 'read', title: id, content: i ? '离岗当天回收全部权限。' : '提前三天完成权限移交。', hash: id }));
+    value.sections = [
+      { id: 's1', title: '范围', paragraphs: [{ id: 'p1', text: '确认适用范围', status: 'ask', citations: ['S1'], quotes: { S1: '提前三天完成权限移交。' }, confirmed: false }] },
+      { id: 's2', title: '权限', paragraphs: [{ id: 'p2', text: '确认冲突', status: 'conf', citations: ['S1', 'S2'], quotes: { S1: '提前三天完成权限移交。', S2: '离岗当天回收全部权限。' }, confirmed: false }] },
+    ];
+    value.questions = [
+      { id: 'q1', kind: 'ask', paragraphId: 'p1', sectionTitle: '范围', title: '范围是什么？', why: '资料缺少范围', citations: ['S1'], options: ['只限内部'], status: 'pending', answer: '' },
+      { id: 'q2', kind: 'conf', paragraphId: 'p2', sectionTitle: '权限', title: '采用哪份权限规则？', why: '两份规定不同', citations: ['S1', 'S2'], options: ['保留两项条件'], status: 'pending', answer: '' },
+    ];
+    return value;
+  }
+  it('缺省evidence时仍定位真实摘录，选项不连写两遍，上一项同步正文', async () => {
+    api.get.mockResolvedValue({ success: true, data: documentFor(pendingState()) });
+    await mount();
+    expect(container.querySelectorAll('.writing-conflict-body .side')).toHaveLength(2);
+    expect(container.querySelector('.writing-conflict-body')?.textContent).toContain('离岗当天回收全部权限。');
+    await click(findButton('选择采用哪一条'));
+    expect(container.querySelector('.writing-source-excerpts .ex.on')?.textContent).toBe('提前三天完成权限移交。');
+    expect(container.querySelector('.pa.focus')?.getAttribute('data-paragraph-id')).toBe('p2');
+    expect(container.querySelector('.writing-question-options .opt')?.textContent).toBe('保留两项条件');
+    await click(findButton('上一项'));
+    expect(container.querySelector('.pa.focus')?.getAttribute('data-paragraph-id')).toBe('p1');
+    expect(container.querySelector('#writing-question-title')?.textContent).toBe('范围是什么？');
+  });
+  it('回答后切下一题；刷新恢复题目、来源及高亮引用', async () => {
+    const value = pendingState();
+    api.get.mockResolvedValue({ success: true, data: documentFor(value) });
+    api.save.mockResolvedValue({ success: true, data: documentFor(value) });
+    const next = structuredClone(value); next.questions[0].status = 'answered'; next.questions[0].answer = '只限内部'; next.revision++;
+    api.command.mockResolvedValue({ success: true, data: documentFor(next) });
+    await mount(); await click(findButton('补充'));
+    await click(container.querySelector<HTMLButtonElement>('.writing-question-options .opt')!);
+    await click(container.querySelector<HTMLButtonElement>('.writing-question-footer .pri')!);
+    expect(container.querySelector('#writing-question-title')?.textContent).toBe('采用哪份权限规则？');
+    expect(container.querySelector('.pa.focus')?.getAttribute('data-paragraph-id')).toBe('p2');
+    expect(JSON.parse(localStorage.getItem('map-writing-ui:actor:draft')!)).toMatchObject({ questionId: 'q2', sourceId: 'S1', sourceQuote: '提前三天完成权限移交。' });
+    await act(async () => root.unmount()); container.remove();
+    api.get.mockResolvedValue({ success: true, data: documentFor(next) }); await mount();
+    expect(container.querySelector('#writing-question-title')?.textContent).toBe('采用哪份权限规则？');
+    expect(container.querySelector('.writing-source-excerpts .ex.on')?.textContent).toBe('提前三天完成权限移交。');
+  });
+  it('手机关闭问题面板后保留正文滚动位置和入口焦点', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    api.get.mockResolvedValue({ success: true, data: documentFor(pendingState()) }); await mount();
+    const main = container.querySelector<HTMLElement>('.writing-author-main')!;
+    main.scrollTop = 420;
+    const trigger = findButton('选择采用哪一条');
+    await click(trigger);
+    main.scrollTop = 80;
+    await click(container.querySelector<HTMLButtonElement>('[aria-label="关闭补充面板（Esc）"]')!);
+    await act(async () => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    expect(main.scrollTop).toBe(420);
+    expect(document.activeElement).toBe(trigger);
+  });
+  it('摘要不冒充已有引用，标记可独立开关多类', async () => {
+    api.get.mockResolvedValue({ success: true, data: documentFor(pendingState()) }); await mount();
+    expect(container.querySelector('.writing-draft-summary')?.textContent).toContain('先移交、后签收');
+    expect(container.querySelector('.writing-draft-summary')?.textContent).not.toContain('来源已支持');
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>('.writing-legend .lg')];
+    await click(buttons[0]); await click(buttons[1]);
+    expect(buttons.map(b => b.getAttribute('aria-pressed'))).toEqual(['false', 'false', 'true', 'true']);
+    expect(container.querySelector('.pa.ask')?.classList.contains('dim')).toBe(false);
+  });
 });
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
