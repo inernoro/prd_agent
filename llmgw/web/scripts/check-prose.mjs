@@ -46,6 +46,7 @@ const OUTLET_CALLS = ['confirm', 'promptText'];
  * 而不是「让 CI 过一下」。
  */
 const BUDGETS = [
+  { file: 'pages/AccountSecurityPage.tsx', maxParagraphs: 3, maxCjk: 400, reason: '源码包含自动账户说明、改密成功、结果未知三段；后两为互斥操作状态，同屏最多两段。保留安全反馈，不将未知提示隐藏至帮助。' },
   // 本轮范围外的页面（用户点名的 10 页不含它们），按当前实测值封顶，只减不增。
   // 数值偏大是因为 2026-07-29 加宽了口径：此前只数 `>文本<`，把正文搬进常量数组即可绕过，
   // 学习中心旧版就是靠 TOPICS 数组藏了约 750 汉字。加宽后这些页面的真实文字量才显形。
