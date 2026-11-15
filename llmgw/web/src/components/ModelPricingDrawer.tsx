@@ -185,7 +185,7 @@ export function ModelPricingDrawer({ model, onClose, onSaved, onUnknownEnd }: Pr
           {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
 
           {unknownWrite ? <><Button size="sm" disabled={checking} onClick={() => void readCurrent()}>读取当前型号字段</Button><p style={hintStyle}>结束编辑不会撤销可能已完成或仍在处理的保存；返回清单会重新读取。</p></> : null}
-          {currentRead ? <div><h3 style={SECTION_TITLE}>本次读取的服务端字段</h3><CollectionFacts items={[{ label: '型号', value: currentRead.modelName }, { label: '显示名', value: currentRead.name || '未设置' }, { label: '最大输出', value: currentRead.maxTokens ?? '未限制' }, { label: '备注', value: currentRead.remark || '未设置' }, { label: '输入 / 输出', value: `${currentRead.inputPricePerMillion ?? '未设'} / ${currentRead.outputPricePerMillion ?? '未设'}` }, { label: '缓存读 / 写', value: `${currentRead.cachedInputPricePerMillion ?? '未设'} / ${currentRead.cacheWritePricePerMillion ?? '未设'}` }, { label: '按次价格', value: currentRead.pricePerCall ?? '未设' }, { label: '更新时间', value: formatPlatformTime(currentRead.updatedAt) }]} /></div> : null}
+          {currentRead ? <div><h3 style={SECTION_TITLE}>本次读取的服务端字段</h3><CollectionFacts items={[{ label: '型号', value: currentRead.modelName }, { label: '显示名', value: currentRead.name || '未设置' }, { label: '最大输出', value: currentRead.maxTokens ?? '未限制' }, { label: '备注', value: currentRead.remark || '未设置' }, { label: '币种', value: currentRead.priceCurrency || '未设置' }, { label: '输入 / 输出', value: `${currentRead.inputPricePerMillion ?? '未设'} / ${currentRead.outputPricePerMillion ?? '未设'}` }, { label: '缓存读 / 写', value: `${currentRead.cachedInputPricePerMillion ?? '未设'} / ${currentRead.cacheWritePricePerMillion ?? '未设'}` }, { label: '按次价格', value: currentRead.pricePerCall ?? '未设' }, { label: '更新时间', value: formatPlatformTime(currentRead.updatedAt) }]} /></div> : null}
           <fieldset disabled={saving || Boolean(unknownWrite)} style={{ display: 'contents', border: 0, margin: 0, padding: 0 }}>
           <div style={SECTION_TITLE}>{unknownWrite ? '本次提交的字段（待核对）' : saving ? '正在保存的提交字段' : '基本信息'}</div>
           <label style={FIELD_LABEL}>显示名<input value={name} onChange={(e) => setName(e.target.value)} style={FIELD_INPUT} /></label>
@@ -272,7 +272,8 @@ export function ModelPricingDrawer({ model, onClose, onSaved, onUnknownEnd }: Pr
           </fieldset>
         </div>
 
-        <div className="lg-side-drawer-footer">
+        <div className="lg-side-drawer-footer" style={unknownWrite ? { flexWrap: 'wrap' } : undefined}>
+          {unknownWrite ? <p style={{ ...hintStyle, flexBasis: '100%' }}>结束编辑不撤销已发出的保存，也不证明服务端保存成功。</p> : null}
           {/* 按钮一行排开，不允许换行 */}
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.tight, flexWrap: 'nowrap' }}>
             {unknownWrite ? <Button variant="ghost" size="sm" disabled={checking} onClick={onUnknownEnd}>结束本次编辑</Button> : <Button variant="ghost" size="sm" disabled={saving} onClick={onClose}>取消</Button>}

@@ -3397,7 +3397,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("aria-modal=\"true\"", preview);
         Assert.Contains("event.key === 'Escape'", preview);
         Assert.Contains("event.key !== 'Tab'", preview);
-        Assert.Contains("triggerButtonRef.current?.focus()", preview);
+        // The shared focus hook restores a still-connected origin for both preview and pricing drawers.
+        Assert.Contains("useDrawerFocus(open, () => setOpen(false), drawerRef, closeButtonRef, triggerButtonRef)", preview);
+        Assert.Contains("returnRef?.current || origin", preview);
+        Assert.Contains("target?.isConnected) target.focus()", preview);
         Assert.Contains("密钥明文不会在预览中显示", preview);
 
         Assert.Contains("Provider 接口预览", platforms);
