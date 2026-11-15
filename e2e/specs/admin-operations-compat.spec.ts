@@ -20,6 +20,32 @@ test.afterEach(async ({}, testInfo) => {
     [],
   );
 });
+
+for (const route of ['release-console', 'release-center']) {
+  test(`${route} 失效项目不能冒用首项或读取别的发布上下文`, async ({ page }) => {
+    const invalidRequests: string[] = [];
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith('/api/') && (url.searchParams.get('project') === 'missing-project' || url.searchParams.get('projectId') === 'missing-project' || url.pathname.includes('/missing-project/'))) invalidRequests.push(url.pathname);
+    });
+    await installOperationsFixtures(page);
+    if (route === 'release-console') await page.addInitScript(() => { (window as Window & { __CDS_PREVIEW_INSTANCE__?: boolean }).__CDS_PREVIEW_INSTANCE__ = true; });
+    await page.goto(`http://127.0.0.1:5273/${route}?project=missing-project&mode=batch`);
+    const project = page.getByRole('combobox', { name: route === 'release-console' ? '当前项目' : '项目', exact: true });
+    await expect(page.getByRole('alert')).toContainText('项目不在此实例中');
+    await expect(project).toHaveValue('');
+    if (route === 'release-console') await expect(page.getByRole('note')).toContainText('不能执行真实发布');
+    expect(invalidRequests).toEqual([]);
+    const validProjectId = await project.locator('option:not([value=""])').first().getAttribute('value');
+    expect(validProjectId).toBeTruthy();
+    await project.selectOption(validProjectId!);
+    await expect(project).toHaveValue(validProjectId!);
+    await expect.poll(() => new URL(page.url()).searchParams.get('project')).toBe(validProjectId);
+    if (route === 'release-console') await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
+    else await expect(page.getByRole('button', { name: '新建环境', exact: true })).toBeEnabled();
+    expect(invalidRequests).toEqual([]);
+  });
+}
 async function reachable(locator: Locator) {
   await locator.scrollIntoViewIfNeeded();
   await expect(locator).toBeVisible();

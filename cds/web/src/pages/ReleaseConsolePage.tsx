@@ -36,7 +36,7 @@ import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useNowTick } from '@/hooks/useNowTick';
-import { ApiError, apiRequest, apiUrl } from '@/lib/api';
+import { ApiError, apiRequest, apiUrl, isChildPreviewCdsInstance } from '@/lib/api';
 import { buildReleaseAgentTask } from '@/lib/releaseAgentTask';
 import { detectStall, resolveStepDetails, type ConsolePlanLike } from '@/lib/releaseConsoleView';
 import { buildEnvironmentSections, resolveSelectedTargetId } from '@/lib/releaseEnvironments';
@@ -46,7 +46,7 @@ import { buildConsoleStance, isShownRunCurrent, planRollbackToVersion, sameCommi
 import { PROJECT_TAG_TONE_CLASS, projectTags, type ProjectTagKey } from '@/lib/projectTags';
 import { releaseEtaText } from '@/lib/releaseEta';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
-import { initialReleaseCenterProject, rememberReleaseCenterProject } from '@/lib/releaseCenter';
+import { initialReleaseCenterProject, rememberReleaseCenterProject, resolveReleaseProject, resolveInitialReleaseProject } from '@/lib/releaseCenter';
 import { BatchReleasePanel } from './release-center/BatchReleasePanel';
 import { ReleaseLogDialog } from './release-center/dialogs';
 import { Chip, formatClock, formatDateTime, formatDuration, runTone, statusLabel } from './release-center/shared';
@@ -207,6 +207,8 @@ export function ReleaseConsolePage(): JSX.Element {
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [initialSettled, setInitialSettled] = useState(false);
   const [projectId, setProjectId] = useState(() => initialReleaseCenterProject(params, window.localStorage));
+  const [unavailableProject, setUnavailableProject] = useState(false);
+  const projectAvailable = projectsLoaded && Boolean(resolveReleaseProject(projectId, projects));
   const batchMode = params.get('mode') === 'batch' || (!params.get('mode') && !params.has('target') && !params.has('intent'));
   const [batchLog, setBatchLog] = useState<ReleaseRun | null>(null);
   const [search, setSearch] = useState('');
@@ -258,7 +260,9 @@ export function ReleaseConsolePage(): JSX.Element {
         if (!alive) return;
         const list = res.projects || [];
         setProjects(list);
-        setProjectId((current) => current || list[0]?.id || '');
+        const resolved = resolveInitialReleaseProject(params, window.localStorage, list);
+        if (resolved !== currentProject.current) selectProject(resolved);
+        setUnavailableProject(list.length > 0 && !resolved);
       })
       .catch((err) => { if (alive) setError(err instanceof ApiError ? err.message : String(err)); })
       .finally(() => { if (alive) setProjectsLoaded(true); });
@@ -280,6 +284,7 @@ export function ReleaseConsolePage(): JSX.Element {
   useEffect(() => { currentProject.current = projectId; }, [projectId]);
   const isStaleProject = useCallback((p: string): boolean => currentProject.current !== p, []);
   const selectProject = (id: string): void => {
+    setUnavailableProject(false);
     currentProject.current = id;
     setProjectId(id); setCenter(null); setBranches([]); setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); setBatchLog(null); setTargetId(''); setConfirmTargetId(null);
     setParams((current) => {
@@ -295,7 +300,7 @@ export function ReleaseConsolePage(): JSX.Element {
   };
 
   const loadCenter = useCallback(async (): Promise<void> => {
-    if (!projectId) return;
+    if (!projectAvailable) return;
     const forProject = projectId;
     try {
       const res = await apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`);
@@ -309,12 +314,12 @@ export function ReleaseConsolePage(): JSX.Element {
       if (isStaleProject(forProject)) return;
       setError(err instanceof ApiError ? err.message : String(err));
     }
-  }, [projectId, isStaleProject]);
+  }, [projectId, projectAvailable, isStaleProject]);
 
   useEffect(() => { void loadCenter(); }, [loadCenter]);
 
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectAvailable) return;
     rememberReleaseCenterProject(projectId, window.localStorage);
     setParams((current) => {
       const next = new URLSearchParams(current);
@@ -330,7 +335,7 @@ export function ReleaseConsolePage(): JSX.Element {
         setBranchId((current) => (list.some((b) => b.id === current) ? current : list[0]?.id || ''));
       })
       .catch(() => { if (!isStaleProject(forProject)) setBranches([]); });
-  }, [projectId, setParams, isStaleProject]);
+  }, [projectId, projectAvailable, setParams, isStaleProject]);
 
   /**
    * 选中的目标同步进 URL。发布中心跳过来带的是 `?target=`，这里把用户之后手动切换的
@@ -709,7 +714,7 @@ export function ReleaseConsolePage(): JSX.Element {
           left={<div className="flex min-w-0 flex-wrap items-center gap-3">
             <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布工作台' }]} />
             <label className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">当前项目
-              <select aria-label="当前项目" value={projectId} className="h-9 min-w-0 max-w-[22rem] rounded-md border border-input bg-background px-3 text-sm text-foreground" onChange={(event) => selectProject(event.target.value)}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name || project.id}</option>)}</select>
+              <select aria-label="当前项目" value={projectAvailable ? projectId : ''} className="h-9 min-w-0 max-w-[22rem] rounded-md border border-input bg-background px-3 text-sm text-foreground" onChange={(event) => selectProject(event.target.value)}><option value="" disabled>请选择当前实例中的项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name || project.id}</option>)}</select>
             </label>
           </div>}
           right={(
@@ -720,7 +725,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   ? `发布中 · ${liveRow.target.name}`
                   : '发布通道空闲'}
               </span> : null}
-              <Button variant="outline" size="sm" asChild><Link to={`/release-center?project=${encodeURIComponent(projectId)}`}>环境管理</Link></Button>
+              {projectAvailable ? <Button variant="outline" size="sm" asChild><Link to={`/release-center?project=${encodeURIComponent(projectId)}`}>环境管理</Link></Button> : <Button variant="outline" size="sm" disabled>环境管理</Button>}
               <Button variant="outline" size="sm" onClick={() => void loadCenter()}>
                 <RefreshCw />
                 刷新
@@ -740,12 +745,13 @@ export function ReleaseConsolePage(): JSX.Element {
             aria-current={(item.mode === 'batch') === batchMode ? 'page' : undefined}
             className={`rounded-md px-4 py-2 text-sm font-medium ${(item.mode === 'batch') === batchMode ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted'}`}>{item.label}</Link>)}
         </nav>
+        {isChildPreviewCdsInstance() ? <p role="note" className="border-b border-warn/30 bg-warn-soft px-6 py-3 text-sm">当前是隔离预览，只能查看界面，不能执行真实发布。请在有发布数据与权限的 CDS 实例中操作。</p> : null}
         <div className="min-h-0 flex-1">
         {/* 桌面三栏无间距（分隔线由各栏自己的 border 画），窄屏回落自然流。
             列宽照参考稿 288/380，但参考稿是在宽画布上量的（它自己写死 min-width:1228
             并让页面横滚，本仓库不允许——见 cds/.claude/rules/mobile-layout-fallback.md）。
             所以：xl 收成 240/300，wide(1440) 回到 264/340，2xl 才是参考值 288/380。 */}
-        {initialLoading ? <ReleaseConsoleSkeleton navigation={false} /> : batchMode ? <div className="h-full min-w-0 overflow-y-auto p-4 md:p-6">
+        {initialLoading ? <ReleaseConsoleSkeleton navigation={false} /> : !projectAvailable ? <div role="alert" className="m-6 rounded-md border border-warn/30 bg-warn-soft p-5 text-sm">{unavailableProject ? '当前链接或上次选择的项目不在此实例中，请从上方重新选择项目。' : error || '当前实例还没有可用项目，请先创建项目。'}</div> : batchMode ? <div className="h-full min-w-0 overflow-y-auto p-4 md:p-6">
           {error ? <div role="alert" className="mb-4 rounded-md border border-bad/30 bg-bad-soft p-4 text-sm text-bad">{error}<Button variant="outline" size="sm" onClick={() => void loadCenter()}>重试读取项目</Button></div> : null}
           {center ? <BatchReleasePanel key={projectId} projectId={projectId} targets={center.rows.map((item) => item.target)} currentRows={center.rows} onOpenLogs={setBatchLog} /> : !error ? <ContentLoading label="读取当前项目发布目标" /> : null}
         </div> : <div
