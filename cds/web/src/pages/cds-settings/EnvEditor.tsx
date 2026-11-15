@@ -131,7 +131,7 @@ export function EnvEditor({
 }: EnvEditorProps): JSX.Element {
   const [state, setState] = useState<LoadState<EnvResponse>>({ status: 'loading' });
   const [query, setQuery] = useState('');
-  const [entryMode, setEntryMode] = useState<EntryMode>('single');
+  const [entryMode, setEntryMode] = useState<EntryMode | null>(null);
   const [draft, setDraft] = useState({ key: '', value: '' });
   const [inlineEdit, setInlineEdit] = useState<InlineEditState>(null);
   const [bulkText, setBulkText] = useState('');
@@ -207,6 +207,12 @@ export function EnvEditor({
     setFormError('');
   }
 
+  async function refreshAfterWrite(): Promise<void> {
+    onChanged?.();
+    try { await load(true); }
+    catch { onToast('配置已写入，列表刷新失败。请刷新核对，勿重复提交。'); }
+  }
+
   async function saveNewEnv(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const nextKey = draft.key.trim();
@@ -225,8 +231,7 @@ export function EnvEditor({
       });
       onToast(`${nextKey} 已添加`);
       resetDraft();
-      await load();
-      onChanged?.();
+      await refreshAfterWrite();
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -244,8 +249,7 @@ export function EnvEditor({
       });
       onToast(`${key} 已更新`);
       setInlineEdit(null);
-      await load();
-      onChanged?.();
+      await refreshAfterWrite();
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -297,8 +301,7 @@ export function EnvEditor({
       });
       onToast(`已导入 ${changed} 项，更新 ${updated} 项，新增 ${added} 项${skipped ? `，跳过 ${skipped} 项` : ''}`);
       setBulkText('');
-      await load();
-      onChanged?.();
+      await refreshAfterWrite();
     } catch (err) {
       setBulkError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -312,8 +315,7 @@ export function EnvEditor({
       await apiRequest(`/api/env/${encodeURIComponent(key)}?${queryForScope(scope)}`, { method: 'DELETE' });
       onToast(`${key} 已删除`);
       if (inlineEdit?.key === key) setInlineEdit(null);
-      await load();
-      onChanged?.();
+      await refreshAfterWrite();
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -326,7 +328,7 @@ export function EnvEditor({
       await navigator.clipboard.writeText(value);
       onToast(`${key} 已复制`);
     } catch {
-      onToast(value);
+      onToast('复制失败，请允许剪贴板访问后重试。');
     }
   }
 
@@ -342,15 +344,19 @@ export function EnvEditor({
   return (
     <Section title={title} description={description}>
       <div className="space-y-5">
-        {topContent}
-
-        <div className="rounded-md border border-border bg-card">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" onClick={() => setEntryMode('single')}><Plus />新增变量</Button>
+          <Button type="button" variant="outline" onClick={() => setEntryMode('bulk')}><Upload />批量导入</Button>
+          <span className="text-sm text-muted-foreground">{scope === '_global' ? '仅明确开启继承的项目读取共享变量；系统配置按各配置项规则生效。' : '只影响当前项目，保存后重新部署分支生效。'}</span>
+        </div>
+        {entryMode ? <div className="rounded-md border border-border bg-card">
           <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center md:justify-between">
             <div>
               <div className="text-sm font-semibold">{entryMode === 'single' ? '新增变量' : '导入变量'}</div>
-              <div className="mt-1 text-xs text-muted-foreground">保存后立即写入当前 scope，并在下次部署时进入容器环境。</div>
+              <div className="mt-1 text-xs text-muted-foreground">填写后点击添加或导入才会保存。关闭面板会保留本次输入。</div>
             </div>
             <div className="flex gap-2">
+              <Button type="button" variant="ghost" size="sm" onClick={() => setEntryMode(null)} disabled={saving || bulkSaving}><X />关闭</Button>
               <Button type="button" variant={entryMode === 'single' ? 'secondary' : 'ghost'} size="sm" onClick={() => setEntryMode('single')}>
                 <Plus />
                 单条
@@ -369,6 +375,7 @@ export function EnvEditor({
                   <span className={singleFieldLabelClass}>变量名</span>
                   <input
                     className={`${inputClass} h-12 font-mono text-base leading-none`}
+                    disabled={saving}
                     value={draft.key}
                     onChange={(event) => setDraft({ ...draft, key: event.target.value })}
                     placeholder="AI_ACCESS_KEY"
@@ -379,6 +386,7 @@ export function EnvEditor({
                   <span className={singleFieldLabelClass}>变量值</span>
                   <textarea
                     className={`${textareaClass} h-12 min-h-12 max-h-32 resize-y py-3 text-base leading-5`}
+                    disabled={saving}
                     value={draft.value}
                     onChange={(event) => setDraft({ ...draft, value: event.target.value })}
                     placeholder="value"
@@ -400,6 +408,8 @@ export function EnvEditor({
             <div className="space-y-3 px-4 py-4">
               <textarea
                 className={`${textareaClass} min-h-40 resize-y`}
+                disabled={bulkSaving}
+                aria-label="批量导入内容"
                 value={bulkText}
                 onChange={(event) => {
                   setBulkText(event.target.value);
@@ -436,23 +446,24 @@ export function EnvEditor({
               ) : null}
             </div>
           )}
-        </div>
+        </div> : null}
 
         <div className="rounded-md border border-border bg-card">
           <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
               <div className="text-sm font-semibold">变量列表</div>
               <div className="mt-1 text-xs text-muted-foreground">
-                scope <CodePill>{scope}</CodePill>，当前显示 {rows.length} 项
+                {query ? `搜索结果 ${rows.length} 项` : `共 ${rows.length} 项`}
               </div>
             </div>
-            <label className="relative block min-w-[16.25rem]">
+            <label className="relative block w-full md:w-72">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <input
                 className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索 key / value"
+                aria-label="搜索变量"
+                placeholder="搜索变量名或值"
               />
             </label>
           </div>
@@ -461,7 +472,7 @@ export function EnvEditor({
           {state.status === 'error' ? <div className="p-4"><ErrorBlock message={state.message} /></div> : null}
           {state.status === 'ok' && rows.length === 0 ? (
             <div className="px-4 py-8 text-sm leading-6 text-muted-foreground">
-              {emptyDescription || '当前 scope 没有环境变量。'}
+              {query ? '没有匹配的变量，请调整搜索条件。' : emptyDescription || '尚未添加环境变量。'}
             </div>
           ) : null}
           {state.status === 'ok' && rows.length > 0 ? (
@@ -480,13 +491,14 @@ export function EnvEditor({
                           <div className="min-w-0">
                             <div className="truncate font-mono font-semibold">{row.key}</div>
                             <div className="mt-1 flex gap-2">
-                              <CodePill>{row.category.label}</CodePill>
-                              {sensitive ? <CodePill>masked</CodePill> : null}
+                              {sensitive ? <span className="text-xs text-muted-foreground">敏感值已遮盖</span> : null}
                             </div>
                           </div>
                           {isEditing ? (
                             <textarea
                               className={`${textareaClass} min-h-20 resize-y`}
+                              disabled={rowSavingKey === row.key}
+                              aria-label={`编辑 ${row.key} 的值`}
                               value={inlineEdit.value}
                               onChange={(event) => setInlineEdit({ key: row.key, value: event.target.value })}
                               spellCheck={false}
@@ -514,7 +526,7 @@ export function EnvEditor({
                                 >
                                   {rowSavingKey === row.key ? <Loader2 className="animate-spin" /> : <Save />}
                                 </Button>
-                                <Button type="button" variant="outline" size="icon" title="取消" aria-label={`取消编辑 ${row.key}`} onClick={() => setInlineEdit(null)}>
+                                <Button type="button" variant="outline" size="icon" title="取消" aria-label={`取消编辑 ${row.key}`} disabled={rowSavingKey === row.key} onClick={() => setInlineEdit(null)}>
                                   <X />
                                 </Button>
                               </>
@@ -535,7 +547,7 @@ export function EnvEditor({
                                 </Button>
                                 <ConfirmAction
                                   title="删除环境变量"
-                                  description={<span className="break-all font-mono">{row.key}</span>}
+                                  description={<span>从{scope === '_global' ? 'CDS 全局配置' : '当前项目'}删除 <code className="break-all">{row.key}</code>。{scope === '_global' ? '系统配置按各配置项规则生效；继承此变量的项目在重新部署后不再读取该全局值。' : '已运行容器不会立即改变；重新部署后不再读取此项目值，全局继承开启时可能回退到同名全局值。'}</span>}
                                   confirmLabel="删除"
                                   pending={deletingKey === row.key}
                                   onConfirm={() => deleteEnv(row.key)}
@@ -564,6 +576,7 @@ export function EnvEditor({
             </div>
           ) : null}
         </div>
+        {topContent}
       </div>
     </Section>
   );
