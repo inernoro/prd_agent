@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   Activity, ArrowRight, BookOpen, Bot, CircleDollarSign, Clock3, Gauge, HeartPulse,
   KeyRound, Rocket, UsersRound, Waypoints, Zap,
@@ -10,6 +10,7 @@ import { Card, Chip, SectionLoader } from '@/components/ui';
 import { OnboardingChecklist } from '@/components/OnboardingChecklist';
 import { fmtCost, fmtMs, fmtShortTime, statusBadgeStyle } from '@/lib/logsHelpers';
 import { useAuth } from '@/lib/auth';
+import { buildLogDetailHref, buildLogListHref } from '@/lib/logNavigation';
 import { canAccessPage } from '@/lib/access';
 
 const RANGE_OPTIONS = [
@@ -46,7 +47,12 @@ function RankList({ items, emptyText }: { items: OverviewRankItem[]; emptyText: 
 
 export function OverviewPage() {
   const { tenant } = useAuth();
-  const [rangeDays, setRangeDays] = useState(7);
+  const [params, setParams] = useSearchParams();
+  const rangeDays = params.get('range') === '1d' ? 1 : params.get('range') === '30d' ? 30 : 7;
+  const setRangeDays = (days: number) => setParams({ range: `${days}d` });
+  const fixedFrom = params.get('from');
+  const fixedTo = params.get('to');
+  const [refresh, setRefresh] = useState(0);
   const [health, setHealth] = useState<{ status: string; commit?: string | null } | null>(null);
   const [overview, setOverview] = useState<TenantOverviewData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -54,9 +60,11 @@ export function OverviewPage() {
 
   useEffect(() => {
     let cancelled = false;
-    const to = new Date();
-    const from = new Date(to.getTime() - rangeDays * 24 * 60 * 60 * 1000);
+    const to = fixedTo && Number.isFinite(Date.parse(fixedTo)) ? new Date(fixedTo) : new Date();
+    const from = fixedFrom && Number.isFinite(Date.parse(fixedFrom)) ? new Date(fixedFrom) : new Date(to.getTime() - rangeDays * 24 * 60 * 60 * 1000);
     setLoading(true);
+    setOverview(null);
+    setHealth(null);
     setError(null);
     Promise.all([
       getHealth(),
@@ -77,12 +85,13 @@ export function OverviewPage() {
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [rangeDays]);
+  }, [rangeDays, fixedFrom, fixedTo, refresh]);
 
   if (!health && !overview && loading && !error) return <SectionLoader text="正在加载当前租户工作区…" />;
 
   const hasRequests = (overview?.totalRequests ?? 0) > 0;
-  const coverageLabel = hasRequests ? `${overview?.priceCoveragePercent ?? 0}%` : '暂无请求';
+  const taskContext = { source: 'overview' as const, range: `${rangeDays}d`, from: overview?.from, to: overview?.to };
+  const coverageLabel = !overview ? '—' : hasRequests ? `${overview?.priceCoveragePercent ?? 0}%` : '暂无请求';
   const costs = overview?.estimatedCosts ?? [];
   const recent = overview?.recentRequests ?? [];
   const keys = overview?.serviceKeys;
@@ -97,7 +106,7 @@ export function OverviewPage() {
         <div>
           <div className="lg-eyebrow">{tenant?.name ?? '当前租户'} · 工作区</div>
           <h1>概览</h1>
-          <p>查看当前租户的调用、用户、应用、模型、密钥和费用可信度。</p>
+          <p>查看请求结果与用量，继续排查异常。</p>
         </div>
         <div className="lg-range-switch" aria-label="统计时间范围">
           {RANGE_OPTIONS.map((option) => (
@@ -115,16 +124,41 @@ export function OverviewPage() {
       </div>
 
       {loading && overview ? <div className="lg-refreshing" role="status">正在刷新当前时间范围…</div> : null}
-      {error ? <div className="lg-inline-alert" role="status">部分首页数据不可用：{error}</div> : null}
+      {error ? <div className="lg-inline-alert" role="alert">部分概览数据不可用：{error} <button type="button" onClick={() => setRefresh(value => value + 1)}>重新读取</button></div> : null}
+      {overview ? <div className="lg-section-note">更新于 {new Date(overview.generatedAt).toLocaleString('zh-CN')} {canReadLogs && overview.successRatePercent != null && overview.successRatePercent < 100 ? <Link to={buildLogListHref({ ...taskContext, status: 'failed' })}>查看失败请求</Link> : null}</div> : null}
+
+      <Card className="lg-recent-card">
+        <div className="lg-section-heading">
+          <h2><Activity size={16} aria-hidden="true" /> 最近请求</h2>
+          {canReadLogs ? <Link className="lg-text-link" to={buildLogListHref(taskContext)}>查看全部 <ArrowRight size={14} /></Link> : null}
+        </div>
+        {!overview ? <div className="lg-empty-guidance" role="status"><strong>{loading ? '正在读取最近请求…' : '最近请求暂不可用'}</strong><span>无法据此判断当前范围是否有请求。</span></div> : !overview.canReadRecentRequests ? (
+          <div className="lg-empty-guidance"><strong>当前角色只显示聚合用量</strong><span>最近请求需要请求记录读取权限。</span><Link to="/learn#request-log">了解权限与请求记录</Link></div>
+        ) : recent.length > 0 ? (
+          <div className="lg-recent-list">
+            {recent.map((item) => {
+              const badge = statusBadgeStyle(item.status, item.statusCode);
+              return (
+                <Link key={item.id} to={buildLogDetailHref(item.id, { ...taskContext, selectedLogId: item.id })} className="lg-recent-row">
+                  <span className="lg-recent-time">{fmtShortTime(item.startedAt)}</span>
+                  <span className="lg-recent-model"><strong>{item.model || '未知模型'}</strong><small>{item.appCallerTitle || item.appCallerCode || '未知调用方'}</small></span>
+                  <span className="lg-recent-meta">{fmtMs(item.durationMs)}</span>
+                  <Chip label={badge.label} color={badge.color} bg={badge.bg} />
+                </Link>
+              );
+            })}
+          </div>
+        ) : <div className="lg-empty-guidance"><strong>还没有请求</strong><span>{canUseQuickstart ? '先完成 Quickstart，首个 requestId 会出现在这里。' : '当前时间范围没有可展示的请求。'}</span>{canUseQuickstart ? <Link to="/quickstart">打开接入指南</Link> : null}</div>}
+      </Card>
 
       <div className="lg-home-primary-grid">
         <Card className="lg-home-health-card">
           <div className="lg-card-kicker"><HeartPulse size={15} /> 健康状态</div>
           <div className="lg-health-value">
             <span className={health?.status === 'ok' ? 'lg-status-dot is-ok' : 'lg-status-dot is-warn'} />
-            {health?.status === 'ok' ? '网关运行正常' : '状态未知'}
+            {health?.status === 'ok' ? '网关服务可连接' : '状态未知'}
           </div>
-          <p>{health?.status === 'ok' ? (canManageKeys ? '当前租户可以创建密钥并发送请求。' : '网关可用；当前角色不负责签发密钥。') : '健康信息暂不可用，请稍后刷新。'}</p>
+          <p>{health?.status === 'ok' ? '服务连通不代表所有上游可用，请结合请求结果判断。' : '健康信息暂不可用，请稍后刷新。'}</p>
           {canOpenGovernance ? <Link className="lg-secondary-link" to="/governance">打开系统运维</Link> : null}
         </Card>
 
@@ -160,42 +194,18 @@ export function OverviewPage() {
         </Card>
       </div>
 
-      <Card className="lg-recent-card">
-        <div className="lg-section-heading">
-          <div><div className="lg-card-kicker"><Activity size={15} /> 最近请求</div><h2>当前时间范围</h2></div>
-          {canReadLogs ? <Link className="lg-text-link" to="/logs">查看全部 <ArrowRight size={14} /></Link> : null}
-        </div>
-        {overview && !overview.canReadRecentRequests ? (
-          <div className="lg-empty-guidance"><strong>当前角色只显示聚合用量</strong><span>最近请求需要请求记录读取权限。</span><Link to="/learn#request-log">了解权限与请求记录</Link></div>
-        ) : recent.length > 0 ? (
-          <div className="lg-recent-list">
-            {recent.map((item) => {
-              const badge = statusBadgeStyle(item.status, item.statusCode);
-              return (
-                <Link key={item.id} to={`/logs?requestId=${encodeURIComponent(item.requestId)}`} className="lg-recent-row">
-                  <span className="lg-recent-time">{fmtShortTime(item.startedAt)}</span>
-                  <span className="lg-recent-model"><strong>{item.model || '未知模型'}</strong><small>{item.appCallerTitle || item.appCallerCode || '未知调用方'}</small></span>
-                  <span className="lg-recent-meta">{fmtMs(item.durationMs)}</span>
-                  <Chip label={badge.label} color={badge.color} bg={badge.bg} />
-                </Link>
-              );
-            })}
-          </div>
-        ) : <div className="lg-empty-guidance"><strong>还没有请求</strong><span>{canUseQuickstart ? '先完成 Quickstart，首个 requestId 会出现在这里。' : '当前时间范围没有可展示的请求。'}</span>{canUseQuickstart ? <Link to="/quickstart">打开接入指南</Link> : null}</div>}
-      </Card>
-
       <section className="lg-overview-section" aria-labelledby="usage-heading">
         <div className="lg-section-heading">
           <div><div className="lg-eyebrow">租户使用情况</div><h2 id="usage-heading">关键指标</h2></div>
           <span className="lg-section-note">统计不包含健康探针</span>
         </div>
         <div className="lg-overview-metrics">
-          <Card><Activity size={16} /><span>请求量</span><strong>{formatNumber(overview?.totalRequests ?? 0)}</strong><small>当前时间范围</small></Card>
+          <Card><Activity size={16} /><span>请求量</span><strong>{overview ? formatNumber(overview.totalRequests) : '—'}</strong><small>当前时间范围</small></Card>
           <Card><Gauge size={16} /><span>成功率</span><strong>{overview?.successRatePercent == null ? '—' : `${overview.successRatePercent}%`}</strong><small>无请求时不显示 0%</small></Card>
           <Card><Clock3 size={16} /><span>P95 耗时</span><strong>{overview?.p95DurationMs == null ? '—' : fmtMs(overview.p95DurationMs)}</strong><small>95% 请求不超过此值</small></Card>
           <Card><Zap size={16} /><span>近期速率</span><strong>{overview ? `${overview.requestRatePerMinute} / 分` : '—'}</strong><small>窗口尾部 {overview?.rateWindowMinutes ?? 15} 分钟</small></Card>
-          <Card><Waypoints size={16} /><span>Token</span><strong>{formatNumber(overview?.totalTokens ?? 0)}</strong><small>输入与输出合计</small></Card>
-          <Card><UsersRound size={16} /><span>活跃身份</span><strong>{formatNumber(overview?.activeUsers ?? 0)}</strong><small>存在 UserId 的去重调用身份</small></Card>
+          <Card><Waypoints size={16} /><span>Token</span><strong>{overview ? formatNumber(overview.totalTokens) : '—'}</strong><small>输入与输出合计</small></Card>
+          <Card><UsersRound size={16} /><span>活跃身份</span><strong>{overview ? formatNumber(overview.activeUsers) : '—'}</strong><small>存在 UserId 的去重调用身份</small></Card>
         </div>
       </section>
 
@@ -207,15 +217,15 @@ export function OverviewPage() {
         <div className="lg-overview-insights">
           <Card>
             <div className="lg-insight-heading"><UsersRound size={16} /><div><strong>活跃用户或身份</strong><span>按请求中的 UserId 统计</span></div></div>
-            <RankList items={overview?.topUsers ?? []} emptyText="还没有可识别的用户调用" />
+            <RankList items={overview?.topUsers ?? []} emptyText={overview ? '还没有可识别的用户调用' : '统计暂不可用'} />
           </Card>
           <Card>
             <div className="lg-insight-heading"><Bot size={16} /><div><strong>Top appCaller</strong><span>业务应用调用身份</span></div></div>
-            <RankList items={overview?.topAppCallers ?? []} emptyText="还没有 appCaller 请求" />
+            <RankList items={overview?.topAppCallers ?? []} emptyText={overview ? '还没有 appCaller 请求' : '统计暂不可用'} />
           </Card>
           <Card>
             <div className="lg-insight-heading"><Waypoints size={16} /><div><strong>Top 模型</strong><span>实际执行模型</span></div></div>
-            <RankList items={overview?.topModels ?? []} emptyText="还没有模型调用" />
+            <RankList items={overview?.topModels ?? []} emptyText={overview ? '还没有模型调用' : '统计暂不可用'} />
           </Card>
           <Card>
             <div className="lg-insight-heading"><KeyRound size={16} /><div><strong>租户接入密钥</strong><span>外部系统使用，不含平台内部身份</span></div></div>
@@ -228,7 +238,7 @@ export function OverviewPage() {
                 <div><strong>{keys.expired}</strong><span>已过期</span></div>
                 <div><strong>{keys.neverUsed}</strong><span>从未使用</span></div>
               </div>
-            ) : <div className="lg-overview-empty">当前租户外部密钥为 0</div>}
+            ) : <div className="lg-overview-empty">{overview ? '当前租户外部密钥为 0' : '接入密钥统计暂不可用'}</div>}
             {canManageKeys ? <Link className="lg-secondary-link" to="/service-keys">{keys?.total ? '管理接入密钥' : '创建第一把密钥'} <ArrowRight size={13} /></Link> : null}
           </Card>
         </div>

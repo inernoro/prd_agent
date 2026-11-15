@@ -4,6 +4,8 @@ import { useSearchParams } from 'react-router-dom';
 import { getOperationAudits } from '@/lib/api';
 import type { OperationAuditItem, OperationAuditsData } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
+import { fmtDate } from '@/lib/logsHelpers';
+import './AuditsPage.css';
 import { TABLE_CELL, TABLE_HEAD_CELL, TOOLBAR_CONTROL } from '@/lib/typography';
 
 const PAGE_SIZE = 50;
@@ -25,6 +27,7 @@ export function AuditsPage() {
   const [success, setSuccess] = useState(() => searchParams.get('success') || '');
   const [search, setSearch] = useState(() => searchParams.get('search') || '');
   const [sinceHours, setSinceHours] = useState(() => searchParams.get('sinceHours') || '');
+  const [refresh, setRefresh] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -44,28 +47,29 @@ export function AuditsPage() {
       if (!alive) return;
       if (res.success) setData(res.data);
       else setError(res.error?.message || '加载失败');
-    });
+    }).catch(() => { if (alive) setError('连接失败，请重试。'); });
     return () => {
       alive = false;
     };
-  }, [page, action, targetType, actor, success, search, sinceHours]);
+  }, [page, action, targetType, actor, success, search, sinceHours, refresh]);
 
   const pages = useMemo(() => Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE)), [data?.total]);
   const th = TABLE_HEAD_CELL;
   const td = TABLE_CELL;
 
-  if (error) return <Empty text={error} />;
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <header className="lg-page-heading">
         <div>
           <h1>操作审计</h1>
-          <p>这里记录谁在什么时间修改了租户配置，以及改的是哪个对象。请求内容和提示词正文不会出现在这里；提示词策略只记录策略 id、版本和 hash，其他配置只展示排查所需的状态差异。</p>
+          <p>追溯租户配置的操作者、时间与变更结果。</p>
+          <details><summary>记录与隐私范围</summary><p>请求内容和提示词正文不会出现在这里；提示词策略只记录策略 id、版本和 hash，其他配置只展示排查所需的状态差异。</p></details>
         </div>
       </header>
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <input
+          aria-label="搜索审计记录"
           value={search}
           onChange={(e) => {
             setPage(1);
@@ -77,20 +81,20 @@ export function AuditsPage() {
         <FilterSelect label="全部动作" value={action} options={data?.actions ?? []} onChange={(v) => { setPage(1); setAction(v); }} />
         <FilterSelect label="全部对象" value={targetType} options={data?.targetTypes ?? []} onChange={(v) => { setPage(1); setTargetType(v); }} />
         <FilterSelect label="全部操作者" value={actor} options={data?.actors ?? []} onChange={(v) => { setPage(1); setActor(v); }} />
-        <select value={success} onChange={(e) => { setPage(1); setSuccess(e.target.value); }} style={selectStyle}>
+        <select aria-label="执行结果" value={success} onChange={(e) => { setPage(1); setSuccess(e.target.value); }} style={selectStyle}>
           <option value="">全部结果</option>
           <option value="true">成功</option>
           <option value="false">失败</option>
         </select>
-        <select value={sinceHours} onChange={(e) => { setPage(1); setSinceHours(e.target.value); }} style={selectStyle}>
+        <select aria-label="审计时间范围" value={sinceHours} onChange={(e) => { setPage(1); setSinceHours(e.target.value); }} style={selectStyle}>
           {SINCE_OPTIONS.map((x) => <option key={x.value || 'all'} value={x.value}>{x.label}</option>)}
         </select>
-        <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>{data ? `共 ${data.total} 条` : '加载中'}</span>
+        <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>{data ? `共 ${data.total} 条` : error ? '读取失败' : '加载中'}</span>
       </div>
 
-      {!data ? <SectionLoader text="正在加载操作审计…" /> : data.items.length === 0 ? <Empty text="暂无操作审计" /> : (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-          <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+      {error ? <div role="alert">{error} <Button variant="ghost" onClick={() => setRefresh(value => value + 1)}>重新读取</Button></div> : !data ? <SectionLoader text="正在加载操作审计…" /> : data.items.length === 0 ? <Empty text="暂无操作审计" /> : (
+        <div style={{ flex: data.total > PAGE_SIZE ? 1 : '0 1 auto', minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
+          <table className="lg-data-table lg-audits-desktop" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
               <tr>
                 <th style={th}>时间</th>
@@ -114,14 +118,27 @@ export function AuditsPage() {
               ))}
             </tbody>
           </table>
+          <div className="lg-audits-mobile">
+            {data.items.map(item => <article key={item.id}>
+              <div className="lg-audit-mobile-heading"><strong>{actionLabel(item.action)}</strong><Chip label={item.success ? '成功' : '失败'} color={item.success ? 'var(--ok)' : 'var(--err)'} bg={item.success ? 'var(--ok-bg)' : 'var(--err-bg)'} /></div>
+              <div>{item.targetName || item.targetId || '对象未记录'}</div>
+              <div className="lg-audit-mobile-meta">{item.actorUsername || item.actorUserId || '操作者未记录'} · {fmtTime(item.createdAt)}</div>
+              <button type="button" aria-expanded={expandedId === item.id} onClick={() => setExpandedId(value => value === item.id ? null : item.id)}>{expandedId === item.id ? '收起变更' : '查看变更'}</button>
+              {expandedId === item.id ? <div className="lg-audit-mobile-detail">
+                <div>动作：{item.action || '未记录'}</div><div>对象类型：{item.targetType || '未记录'}</div><div>对象编号：{item.targetId || '未记录'}</div>
+                <div>来源：{item.remoteIp || '未记录'}</div><div>客户端：{item.userAgent || '未记录'}</div>
+                {item.reason ? <div>原因：{item.reason}</div> : null}<pre>{item.changesJson || '{}'}</pre>
+              </div> : null}
+            </article>)}
+          </div>
         </div>
       )}
 
-      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+      {pages > 1 ? <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
         <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>上一页</Button>
         <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>{page} / {pages}</span>
         <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => setPage((p) => Math.min(pages, p + 1))}>下一页</Button>
-      </div>
+      </div> : null}
     </div>
   );
 }
@@ -133,7 +150,7 @@ function AuditRow({ item, td, expanded, onToggle }: { item: OperationAuditItem; 
   return (
     <>
       <tr>
-        <td style={td}>{fmtTime(item.createdAt)}</td>
+        <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtTime(item.createdAt)}</td>
         <td style={td}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span>{actionLabel(item.action)}</span>
@@ -199,7 +216,7 @@ function actionLabel(value?: string | null) {
     'pool.model.update': '修改模型池成员',
     'pool.model.remove': '移除模型池成员',
     'cost.reconciliation.import': '导入供应商账单',
-  } as Record<string, string>)[value ?? ''] ?? '其他配置操作';
+  } as Record<string, string>)[value ?? ''] ?? value ?? '未记录操作';
 }
 
 function targetTypeLabel(value?: string | null) {
@@ -218,7 +235,7 @@ function targetTypeLabel(value?: string | null) {
 
 function FilterSelect({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} style={selectStyle}>
+    <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} style={selectStyle}>
       <option value="">{label}</option>
       {options.map((x) => <option key={x} value={x}>{x}</option>)}
     </select>
@@ -229,12 +246,12 @@ function fmtTime(value?: string | null) {
   if (!value) return '—';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleString();
+  return `${fmtDate(value)} ${d.toLocaleTimeString('zh-CN', { hourCycle: 'h23' })}`;
 }
 
 function Empty({ text }: { text: string }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>
+    <div style={{ padding: '24px 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>
       {text}
     </div>
   );

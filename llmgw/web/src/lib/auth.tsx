@@ -21,6 +21,7 @@ import {
   onSessionRenewed,
   setSession,
 } from './api';
+import { clearLogListResume } from './logListResume';
 import { getToken } from './api';
 import type { SessionExpiredReason } from './api';
 import type { ApiResponse, ChangePasswordRequest, ChangePasswordResult, LoginResult, TenantSession } from './types';
@@ -53,6 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [tenant, setTenant] = useState(() => getStoredTenant());
   const [mustChange, setMustChange] = useState<boolean>(() => readMustChangePassword());
   const [expiredReason, setExpiredReason] = useState<SessionExpiredReason | null>(null);
+  useEffect(() => { clearLogListResume(); }, [authed, user?.username, tenant?.id, tenant?.role]);
   // 每次装入新 token（登录 / 一键登录 / 改密 / 跨标签页交接）都自增，
   // 用来把「到期定时器」重新排一次——改密会换发新 token，旧到期时间必须作废。
   const [sessionEpoch, setSessionEpoch] = useState(0);
@@ -254,6 +256,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return res;
       },
       logout() {
+        clearLogListResume();
         clearSession();
         setAuthed(false);
         setUser(null);

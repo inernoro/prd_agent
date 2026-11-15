@@ -425,7 +425,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("runId: filterRunId.trim() || undefined", logsView);
         Assert.Contains("requestId: filterRequestId.trim() || undefined", logsView);
         Assert.Contains("sessionId: filterSessionId.trim() || undefined", logsView);
-        Assert.Contains("initialQueryValue('requestId')", logsView);
+        Assert.Contains("query.get('requestId')", logsView);
         var appCallersPage = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("logsHref('requestId', item.lastObservedRequestId)", appCallersPage);
         Assert.Contains("logsHref('sessionId', item.lastObservedSessionId)", appCallersPage);
@@ -2155,10 +2155,11 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("配置权威迁移", overview);
         Assert.Contains("/app-callers?status=active", overview);
         Assert.Contains("设置模型与默认项", overview);
-        Assert.Contains("initialQueryValue('releaseCommit')", logsView);
+        Assert.Contains("query.get('releaseCommit')", logsView);
         Assert.Contains("releaseCommit: filterReleaseCommit.trim() || undefined", logsView);
         Assert.Contains("placeholder=\"发布提交\"", logsView);
-        Assert.Contains("setFilterReleaseCommit('')", logsView);
+        Assert.Contains("for (const key of LOG_FILTER_KEYS) next.delete(key)", logsView);
+        Assert.Contains("'releaseCommit'", ReadRepoFile("llmgw/web/src/lib/logNavigation.ts"));
 
         Assert.Contains("useSearchParams", auditsPage);
         Assert.Contains("searchParams.get('targetType')", auditsPage);
@@ -4419,7 +4420,7 @@ public class GatewayDataDomainGuardTests
         // 3) 查得到——按 PlatformId 精确过滤（provider 会重名，本仓库真出现过同名同 URL 两条上游）
         Assert.Contains("fb.Eq(\"PlatformId\", platformId.Trim())", console);
         Assert.Contains("platformId?: string;", ReadRepoFile("llmgw/web/src/lib/types.ts"));
-        Assert.Contains("initialQueryValue('platformId')", logsView);
+        Assert.Contains("query.get('platformId')", logsView);
         // 请求页与会话页共用同一份筛选参数：只有一边收 platformId 的话，用户从深链进来切到
         // 会话页，界面上筛选还亮着、列的却是所有平台的会话——筛选条件在说谎。
         // 判据钉「每个吃这份筛选的端点都要把 platformId 传进同一个 BuildFilter」。

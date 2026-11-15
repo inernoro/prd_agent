@@ -5,7 +5,8 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, ArrowUpRight, ChevronLeft, ChevronRight, Clock3, Coins, Copy, Gauge, Image as ImageIcon, RefreshCw, RotateCcw, Timer, X } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import { buildLogDetailHref, buildLogTraceHref, getLogTaskContext, type LogTaskContext } from '@/lib/logNavigation';
 import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
 import { Chip, SectionLoader } from './ui';
@@ -345,18 +346,25 @@ export function GenerationDetailsDrawer({
   onPrevious,
   onNext,
   presentation = 'drawer',
+  returnLabel = '返回请求记录',
+  navigationContext,
 }: {
   logId: string;
   onClose: () => void;
   onPrevious?: () => void;
   onNext?: () => void;
   presentation?: 'drawer' | 'page';
+  returnLabel?: string;
+  navigationContext?: LogTaskContext;
 }) {
   const isPage = presentation === 'page';
+  const location = useLocation();
+  const context = { ...(navigationContext || getLogTaskContext(location.search)), selectedLogId: getLogTaskContext(location.search).selectedLogId || logId };
   const [detail, setDetail] = useState<LlmLogDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [viewTab, setViewTab] = useState<'overview' | 'content' | 'routing' | 'audit'>('overview');
+  const [reload, setReload] = useState(0);
   const [bodyTab, setBodyTab] = useState<'request' | 'response' | 'raw'>('request');
 
   useEffect(() => {
@@ -383,7 +391,7 @@ export function GenerationDetailsDrawer({
     return () => {
       alive = false;
     };
-  }, [logId]);
+  }, [logId, reload]);
 
   useEffect(() => {
     if (isPage) return;
@@ -472,9 +480,9 @@ export function GenerationDetailsDrawer({
             </div> : <div style={{ marginTop: 3, fontSize: 'var(--fs-secondary)', color: 'var(--text-muted)' }}>{logId}</div>}
           </div>
           <div className="lg-generation-header-actions">
-            {!isPage ? <Link to={`/logs/${encodeURIComponent(logId)}`} title="在独立页面打开">独立页面<ArrowUpRight size={14} /></Link> : null}
-            <button aria-label={isPage ? '返回请求记录' : '关闭详情'} onClick={onClose} style={{ width: isPage ? 'auto' : 44, minWidth: 44, height: 44, padding: isPage ? '0 10px' : 0, gap: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: isPage ? '1px solid var(--border-subtle)' : 'none', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)' }}>
-              {isPage ? <><ArrowLeft size={16} />返回请求记录</> : <X size={18} />}
+            {!isPage ? <Link to={buildLogDetailHref(logId, context)} title="在独立页面打开">独立页面<ArrowUpRight size={14} /></Link> : null}
+            <button aria-label={isPage ? returnLabel : '关闭详情'} onClick={onClose} style={{ width: isPage ? 'auto' : 44, minWidth: 44, height: 44, padding: isPage ? '0 10px' : 0, gap: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: isPage ? '1px solid var(--border-subtle)' : 'none', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)' }}>
+              {isPage ? <><ArrowLeft size={16} />{returnLabel}</> : <X size={18} />}
             </button>
           </div>
         </div>
@@ -486,7 +494,7 @@ export function GenerationDetailsDrawer({
             <div className="lg-generation-load-error" role="alert">
               <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 600, color: 'var(--text-primary)' }}>无法打开这条生成记录</div>
               <div style={{ marginTop: 6, fontSize: 'var(--fs-body)', color: 'var(--text-muted)' }}>{loadError || '这条记录不存在，或当前租户无权查看。'}</div>
-              <button type="button" onClick={onClose}>返回请求记录</button>
+              <button type="button" onClick={() => setReload(value => value + 1)}>重新读取</button> <button type="button" onClick={onClose}>{isPage ? returnLabel : '关闭详情'}</button>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -556,6 +564,13 @@ export function GenerationDetailsDrawer({
 
               {viewTab === 'overview' ? (
                 <div className="lg-generation-tab-panel" role="tabpanel">
+                  {detail.error ? (
+                    <div className="lg-generation-error">
+                      <div>请求失败 · {detail.platformName || detail.provider || '来源未记录'}{detail.statusCode != null ? ` · HTTP ${detail.statusCode}` : ''}</div>
+                      <pre>{detail.error}</pre>
+                      <Link to={buildLogTraceHref(detail.id, context)}>核对上游尝试与失败依据</Link>
+                    </div>
+                  ) : null}
                   <div className="lg-generation-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 7 }}>
                     <MetricCard title="上游耗时" value={fmtMs(detail.durationMs)} icon={<Clock3 size={15} aria-hidden="true" />} />
                     <MetricCard title="首字节" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} icon={<Timer size={15} aria-hidden="true" />} />
@@ -626,14 +641,9 @@ export function GenerationDetailsDrawer({
                     <Row k="状态" v={detail.statusCode == null ? detail.status : `${detail.status} · HTTP ${detail.statusCode}`} />
                     <Row k="结束原因" v={detail.finishReason} />
                   </section>
-                  <Link to={`/logs/trace?reference=${encodeURIComponent(detail.id)}`}>查看完整关联调用链</Link>
+                  <Link to={buildLogTraceHref(detail.id, context)}>查看完整关联调用链</Link>
                   <ProviderResponses detail={detail} />
-                  {detail.error ? (
-                    <div className="lg-generation-error">
-                      <div>错误</div>
-                      <pre>{detail.error}</pre>
-                    </div>
-                  ) : null}
+
                 </div>
               ) : null}
 
