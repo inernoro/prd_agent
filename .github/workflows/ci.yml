@@ -127,6 +127,7 @@ jobs:
               - 'deploy/systemd/prd-agent-*.timer'
               - 'deploy/logrotate/**'
               - 'deploy/journald/**'
+              - 'deploy/compose/production-logging.yml'
               - 'scripts/prd-agent-*-retention.*'
               - 'scripts/prd-agent-container-log-rollout.py'
               - 'scripts/prd-agent-with-release-lock.sh'

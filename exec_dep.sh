@@ -608,6 +608,13 @@ fi
 
 compose_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
 compose_project_directory="${PRD_AGENT_COMPOSE_PROJECT_DIRECTORY:-}"
+# Keep host logging policy even for a rollback to a release without Compose limits.
+if [ -f /etc/prd-agent/compose.logging.yml ]; then
+  case ":${COMPOSE_FILE:-}:" in
+    *:/etc/prd-agent/compose.logging.yml:*) ;;
+    *) export COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}:/etc/prd-agent/compose.logging.yml" ;;
+  esac
+fi
 compose_run() {
   if [ -n "$compose_project_directory" ]; then
     set -- --project-directory "$compose_project_directory" "$@"

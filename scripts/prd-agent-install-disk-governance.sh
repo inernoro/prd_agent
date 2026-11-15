@@ -17,7 +17,7 @@ fi
 [ -d /root/inernoro/prd_agent/.git ]
 command -v flock >/dev/null
 command -v logrotate >/dev/null
-install -d -m 0755 /usr/local/lib/prd-agent /var/lib/prd-agent /etc/systemd/journald.conf.d
+install -d -m 0755 /usr/local/lib/prd-agent /var/lib/prd-agent /etc/systemd/journald.conf.d /etc/prd-agent
 install -m 0755 "$root/scripts/prd-agent-artifact-retention.py" /usr/local/sbin/prd-agent-artifact-retention
 install -m 0755 "$root/scripts/prd-agent-with-release-lock.sh" /usr/local/sbin/prd-agent-with-release-lock
 install -m 0755 "$root/scripts/prd-agent-request-log-retention.sh" /usr/local/sbin/prd-agent-request-log-retention
@@ -28,6 +28,7 @@ for unit in prd-agent-artifact-retention.service prd-agent-artifact-retention.ti
 done
 install -m 0644 "$root/deploy/logrotate/prd-agent-nginx" /etc/logrotate.d/prd-agent-nginx
 install -m 0644 "$root/deploy/journald/prd-agent-disk.conf" /etc/systemd/journald.conf.d/prd-agent-disk.conf
+install -m 0644 "$root/deploy/compose/production-logging.yml" /etc/prd-agent/compose.logging.yml
 logrotate --debug /etc/logrotate.d/prd-agent-nginx
 systemctl daemon-reload
 systemctl enable --now prd-agent-artifact-retention.timer prd-agent-request-log-retention.timer

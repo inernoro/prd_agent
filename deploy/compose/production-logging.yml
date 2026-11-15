@@ -1,0 +1,26 @@
+# Host overlay also applies when rolling back to a commit predating log limits.
+x-production-logging: &production-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+services:
+  gateway:
+    logging: *production-logging
+  api:
+    logging: *production-logging
+  mongodb:
+    logging: *production-logging
+  redis:
+    logging: *production-logging
+  llmgw:
+    logging: *production-logging
+  llmgw-web:
+    logging: *production-logging
+  llmgw-serve:
+    logging: *production-logging
+  llmgw-serve-b:
+    logging: *production-logging
+  design-opendesign:
+    logging: *production-logging
