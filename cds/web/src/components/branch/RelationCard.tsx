@@ -253,8 +253,8 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
         <h2 className="m-0 text-[1.0625rem] font-bold">关系</h2>
         {pill}
         <span className="flex-1" />
-        <Button ref={expandButton} variant="ghost" size="sm" style={{ minHeight: 44 }} onClick={showExpanded} title="展开查看关系图与需要处理的事项"><Expand />展开</Button>
-        <Button variant="ghost" size="sm" style={{ minHeight: 44 }} onClick={showFullScreen} title="在独立页面查看完整关系图，可复制链接"><Maximize2 />全屏</Button>
+        <Button ref={expandButton} variant="ghost" size="sm" style={{ minHeight: '3.25rem' }} onClick={showExpanded} title="展开查看关系图与需要处理的事项"><Expand />展开</Button>
+        <Button variant="ghost" size="sm" style={{ minHeight: '3.25rem' }} onClick={showFullScreen} title="在独立页面查看完整关系图，可复制链接"><Maximize2 />全屏</Button>
       </div>
       <p className="m-0 text-[0.875rem] leading-[1.7] text-foreground-muted [text-wrap:pretty]">{relationHeadline(data)}</p>
       <FlowFacts facts={model.facts} />
@@ -268,8 +268,8 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
       <div className="flex flex-wrap items-center gap-2 text-base font-bold">
         关系{pill}
         <span className="flex-1" />
-        <Button ref={expandButton} variant="ghost" size="sm" style={{ minHeight: 44 }} onClick={showExpanded} title="展开查看关系图与需要处理的事项"><Expand />展开</Button>
-        <Button variant="ghost" size="sm" style={{ minHeight: 44 }} onClick={showFullScreen} title="在独立页面查看完整关系图，可复制链接"><Maximize2 />全屏</Button>
+        <Button ref={expandButton} variant="ghost" size="sm" style={{ minHeight: '3.25rem' }} onClick={showExpanded} title="展开查看关系图与需要处理的事项"><Expand />展开</Button>
+        <Button variant="ghost" size="sm" style={{ minHeight: '3.25rem' }} onClick={showFullScreen} title="在独立页面查看完整关系图，可复制链接"><Maximize2 />全屏</Button>
       </div>
       <div className="text-[0.92rem] leading-relaxed text-foreground-muted transition-colors duration-150">{relationHeadline(data)}</div>
       <FlowFacts facts={model.facts} />
@@ -282,14 +282,14 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       {body}
-      <DialogContent frame className="cds-relation-sheet max-w-none" style={{ width: 'calc(100vw - 16px)', height: 'calc(100dvh - 32px)', maxHeight: 'calc(100dvh - 32px)' }} aria-label="关系图" data-testid="relation-sheet">
+      <DialogContent frame className="cds-relation-sheet max-w-none" style={{ width: 'calc(100vw - 1rem)', height: 'calc(100dvh - 2rem)', maxHeight: 'calc(100dvh - 2rem)' }} aria-label="关系图" data-testid="relation-sheet">
         <DialogDescription className="sr-only">完整服务关系与待处理事项；关闭后返回分支总览。</DialogDescription>
-        <div className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2" style={{ paddingRight: 60 }}>
+        <div className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2" style={{ paddingRight: '4rem' }}>
           <DialogTitle className="min-w-0 flex-1 text-base font-bold [overflow-wrap:anywhere]">{data.branch} · 服务关系</DialogTitle>
           {data.lint.findings.length === 0 ? <span className="shrink-0 text-sm text-foreground-muted">体检无发现</span> : null}
           {errors ? <span className="shrink-0 text-sm text-bad">{errors} 错误</span> : null}
           {warnings ? <span className="shrink-0 text-sm text-warn">{warnings} 警告</span> : null}
-          <Button variant="ghost" size="sm" style={{ minHeight: 44 }} onClick={showFullScreen} title="在独立页面查看完整关系图，可复制链接"><Maximize2 />全屏</Button>
+          <Button variant="ghost" size="sm" style={{ minHeight: '3.25rem' }} onClick={showFullScreen} title="在独立页面查看完整关系图，可复制链接"><Maximize2 />全屏</Button>
         </div>
         <RelationWorkspace data={data} entryHost={entryHost} onConfigure={onConfigure ? () => { setOpen(false); onConfigure(); } : undefined} />
       </DialogContent>

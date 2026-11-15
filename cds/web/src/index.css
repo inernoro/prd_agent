@@ -6617,4 +6617,4 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
 :root.cds-surface-motion::view-transition-new(root) { z-index: 1; }
 
 /* 关系画布保留可用空间；共享Dialog末尾关闭按钮在此工作区提供44px触区。 */
-.cds-relation-sheet > button:last-child { min-width: 44px; min-height: 44px; right: 8px; top: 8px; display: inline-flex; align-items: center; justify-content: center; }
+.cds-relation-sheet > button:last-child { min-width: 3.25rem; min-height: 3.25rem; right: .5rem; top: .5rem; display: inline-flex; align-items: center; justify-content: center; }
