@@ -32,10 +32,6 @@ export type SsoLoginOption = {
 export type SsoOptionsResponse = {
   items: SsoLoginOption[];
   passwordLoginDisabled: boolean;
-  loginEnvironment?: {
-    isolatedAccountStore: boolean;
-    primaryLoginUrl?: string | null;
-  } | null;
 };
 
 export type GetSsoOptionsContract = () => Promise<ApiResponse<SsoOptionsResponse>>;
