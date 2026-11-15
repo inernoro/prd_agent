@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
-import { Activity, RefreshCw } from 'lucide-react';
+import { Activity, RefreshCw, ChevronRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ApiError, listUserActivity, type CdsUserActivity } from '@/lib/api';
@@ -66,7 +66,7 @@ export function ActivityTab({ canViewAll }: { canViewAll: boolean }): JSX.Elemen
         </div>
 
         {error ? (
-          <div className="space-y-2"><ErrorBlock message={error} />{errorDetail?<details className="text-sm text-muted-foreground"><summary className="flex min-h-[3.25rem] cursor-pointer items-center">查看读取错误详情</summary><pre className="whitespace-pre-wrap break-all font-mono text-xs">{errorDetail}</pre></details>:null}</div>
+          <div className="space-y-2"><ErrorBlock message={error} />{errorDetail?<details className="group/activity-error text-sm text-muted-foreground"><summary className="flex min-h-[3.25rem] cursor-pointer items-center gap-2"><ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 transition-transform group-open/activity-error:rotate-90" />查看读取错误详情</summary><pre className="whitespace-pre-wrap break-all font-mono text-xs">{errorDetail}</pre></details>:null}</div>
         ) : rows === null ? (
           <LoadingBlock label="加载操作记录" />
         ) : rows.length === 0 ? (

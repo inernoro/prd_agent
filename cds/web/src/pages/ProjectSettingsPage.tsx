@@ -2533,7 +2533,7 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
         </div>
       </Section>
 
-      <details><summary className="flex min-h-[3.25rem] cursor-pointer items-center text-sm font-medium">导入实例共享缓存包</summary><p className="mt-2 text-sm text-muted-foreground">迁移服务器时，可把旧 CDS 导出的 tar.gz 缓存包导入本 CDS 实例的共享缓存根目录。同名路径可能被覆盖，所有引用者都能读取导入内容。</p>
+      <details className="group/cache-import"><summary className="flex min-h-[3.25rem] cursor-pointer items-center gap-2 text-sm font-medium"><ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 transition-transform group-open/cache-import:rotate-90" />导入实例共享缓存包</summary><p className="mt-2 text-sm text-muted-foreground">迁移服务器时，可把旧 CDS 导出的 tar.gz 缓存包导入本 CDS 实例的共享缓存根目录。同名路径可能被覆盖，所有引用者都能读取导入内容。</p>
         <div className="mt-3 max-w-3xl">
           <div className="grid gap-3 md:grid-cols-[11.25rem_minmax(0,1fr)_auto] md:items-end">
             <label className="block space-y-1.5">
