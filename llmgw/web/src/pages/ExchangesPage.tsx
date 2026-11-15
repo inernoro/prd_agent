@@ -282,6 +282,7 @@ export function ExchangesPage() {
 
   function openCreate() {
     if (!canWrite || blocked) return;
+    setNoticeTone('info');
     setForm(emptyForm());
     setEditingId(null);
     setFormMode('create');
@@ -291,6 +292,7 @@ export function ExchangesPage() {
 
   function openEdit(item: ExchangeItem) {
     if (!canWrite || blocked) return;
+    setNoticeTone('info');
     setForm({
       proxy: proxyDraft(item.proxy),
       storedProxy: item.proxy,
@@ -333,6 +335,7 @@ export function ExchangesPage() {
 
   async function saveExchange() {
     if (!canWrite || blocked) return;
+    setNoticeTone('info');
     if (!form.name.trim() || !form.targetUrl.trim()) {
       setNotice('请填写 Exchange 名称和目标地址');
       return;
@@ -404,6 +407,7 @@ export function ExchangesPage() {
 
   async function claimExchange(item: ExchangeItem) {
     if (!canWrite || blocked) return;
+    setNoticeTone('info');
     setBusyId(item.id);
     setNotice(null); setSavedItem(null);
     pendingTarget.current = null;
@@ -422,6 +426,7 @@ export function ExchangesPage() {
 
   async function saveApiKey(item: ExchangeItem) {
     if (!canWrite || blocked) return;
+    setNoticeTone('info');
     const apiKey = keyValue.trim();
     if (!apiKey) {
       setNotice('通讯密钥不能为空');
@@ -447,6 +452,7 @@ export function ExchangesPage() {
 
   async function clearApiKey(item: ExchangeItem) {
     if (!canWrite || blocked) return;
+    setNoticeTone('info');
     if (!await confirm({ title: `清除「${item.name}」的 Exchange 通讯密钥？`, description: '清除后该映射不能调用上游。', tone: 'danger', confirmLabel: '清除密钥' })) return;
     setBusyId(item.id);
     setNotice(null); setSavedItem(null);
@@ -468,6 +474,7 @@ export function ExchangesPage() {
   // 后端两种引用都查，这里只负责把它报回来的阻挡原文原样端给运维。
   async function removeExchange(item: ExchangeItem) {
     if (!canWrite || blocked) return;
+    setNoticeTone('info');
     const typed = await promptText({
       title: `删除 Exchange「${item.name}」`,
       description: `${item.targetUrl || '无地址'}\n它的地址、通讯密钥与全部模型映射一并消失，无法撤销。`,
@@ -493,6 +500,7 @@ export function ExchangesPage() {
 
   async function applyBulkApiKey() {
     if (!canWrite || blocked) return;
+    setNoticeTone('info');
     const apiKey = bulkKeyValue.trim();
     if (!apiKey) {
       setNotice('通讯密钥不能为空');
@@ -533,6 +541,7 @@ export function ExchangesPage() {
 
   async function installLayeringCapability() {
     if (!canWrite || blocked) return;
+    setNoticeTone('info');
     const apiKey = layeringApiKey.trim();
     if (!apiKey) {
       setNotice('请填写 fal.ai API Key');
