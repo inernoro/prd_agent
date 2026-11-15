@@ -139,16 +139,16 @@ export function AccountSecurityPage() {
             </div>
             <div style={{ display: 'grid', gap: GAP.normal }}>
               <Row label="登录名">
-                <span style={MONO_META}>{profile.username}</span>
+                <span style={MONO_META}>{profile.username}</span>{outcomeUnknown || reloginNotice ? <small style={HINT_TEXT}>上次读取</small> : null}
                 {profile.usernameIsGenerated ? <Chip label="自动生成" color="var(--warn)" bg="var(--warn-bg)" /> : null}
               </Row>
               <Row label="口令登录">
-                {profile.hasLocalPassword
+                {submitting ? <Chip label="正在更新" color="var(--warn)" bg="var(--warn-bg)" /> : outcomeUnknown ? <Chip label="更新待核实" color="var(--warn)" bg="var(--warn-bg)" /> : reloginNotice ? <Chip label="已更新，需重新登录" color="var(--ok)" bg="var(--ok-bg)" /> : profile.hasLocalPassword || done
                   ? <Chip label="可用" color="var(--ok)" bg="var(--ok-bg)" />
                   : <Chip label="尚未设置" color="var(--warn)" bg="var(--warn-bg)" />}
               </Row>
             </div>
-            {profile.hasLocalPassword ? null : (
+            {profile.hasLocalPassword || submitting || outcomeUnknown || reloginNotice || done ? null : (
               <p style={{ ...HINT_TEXT, marginTop: 10 }}>
                 这个账号由一键登录自动创建，口令是随机生成的，因此现在只能从 MAP 进入。在下方设置口令后即可直接登录网关。
               </p>

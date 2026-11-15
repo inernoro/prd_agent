@@ -59,7 +59,7 @@ export function MapSsoPage() {
           <p>MAP 与 LLM Gateway</p>
           <h1 id="map-sso-title">{error ? '需要重新发起安全登录' : '正在从 MAP 安全登录'}</h1>
           <span role={error ? 'alert' : 'status'} aria-live="polite">
-            {error ?? '正在核验一次性授权并建立管理员会话，请稍候。'}
+            {error ?? '正在核验一次性授权并建立网关会话，请稍候。'}
           </span>
         </div>
         {error ? (
