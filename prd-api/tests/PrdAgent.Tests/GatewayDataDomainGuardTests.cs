@@ -3553,7 +3553,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--log-text-entity: #fcfcfe", theme);
         Assert.Contains("--log-text-muted: rgba(252, 252, 254, 0.627)", theme);
         Assert.Matches(@"(?s)\.lg-log-entity\s*\{[^}]*color:\s*var\(--log-text-entity\)", theme);
-        Assert.Contains("observedAppCaller(observed, requestedCode)", entityDetails);
+        // Resolve the registered code+requestType identity first. The old raw-link fallback
+        // could take the first log of another purpose (and even override a missing exact id).
+        Assert.Contains("observedAppCaller(items[0], identityCode)", entityDetails);
+        Assert.Contains("item.requestType?.toLowerCase() === identityType.toLowerCase()", entityDetails);
+        Assert.Contains("if (!matched && requestedId)", entityDetails);
         Assert.Contains("仅日志观测", entityDetails);
         Assert.Contains("不补造预算或速率配置", entityDetails);
         Assert.Contains("observedProvider(observed, requestedName)", entityDetails);
