@@ -1,4 +1,5 @@
 import { providerForDetail, logicalForDetail, physicalForDetail, offeringParticipationStatus } from '@/lib/modelDetailIdentity';
+import { entityBackTarget, providerModelDetailHref } from '@/lib/entityNavigation';
 import { appCallerDetailCandidates, callerManagementState } from '@/lib/appCallerIdentity';
 import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
 import { AppCallerDefaultModel, AppCallerDefaultsProvider } from '@/components/AppCallerDefaultModel';
@@ -150,14 +151,14 @@ function RecentRequests({ items, emptyText }: { items: LlmLogListItem[]; emptyTe
   );
 }
 
-function DetailError({ message, backHref, retry }: { message: string; backHref: string; retry?: () => void }) {
+function DetailError({ message, backHref, backLabel = '返回请求记录', retry }: { message: string; backHref: string; backLabel?: string; retry?: () => void }) {
   return (
     <div className="lg-entity-detail-page">
       <div className="lg-entity-detail-empty lg-entity-detail-empty-page">
         <strong>无法打开实体详情</strong>
         <p>{message}</p>
         {retry ? <Button size="sm" onClick={retry}>重新读取</Button> : null}
-        <Link to={backHref}>返回请求记录</Link>
+        <Link to={backHref}>{backLabel}</Link>
       </div>
     </div>
   );
@@ -189,6 +190,7 @@ function modelSuccessRate(model?: ModelItem | null) {
 
 export function ModelDetailsPage() {
   const [params] = useSearchParams();
+  const back = entityBackTarget(params);
   const physicalModelId = params.get('modelId') || '';
   const logicalModelId = params.get('logicalModelId') || '';
   const requestedModel = params.get('model') || '';
@@ -255,8 +257,8 @@ export function ModelDetailsPage() {
     : primaryModel?.capabilities.filter((item) => item.value).map((item) => item.type) ?? [];
 
   if (loading) return <SectionLoader text="正在加载模型详情" />;
-  if (error) return <DetailError message={error} backHref="/logs" />;
-  if (!logical && !primaryModel && !requestedModel) return <DetailError message="日志没有提供可解析的模型标识。" backHref="/logs" />;
+  if (error) return <DetailError message={error} backHref={back.href} backLabel={back.label} />;
+  if (!logical && !primaryModel && !requestedModel) return <DetailError message="日志没有提供可解析的模型标识。" backHref={back.href} backLabel={back.label} />;
 
   return (
     <EntityDetailsShell
@@ -277,9 +279,8 @@ export function ModelDetailsPage() {
         { label: '历史调用', value: fmtCompact(primaryModel?.callCount ?? recent.length), hint: '当前租户可见范围', icon: <Route size={17} /> },
         { label: '成功率', value: modelSuccessRate(primaryModel), hint: '模型累计统计', icon: <ShieldCheck size={17} /> },
       ]}
-      backHref="/logs"
-      backLabel="返回请求记录"
-      primaryHref={`/logs?model=${encodeURIComponent(identifier || requestedModel)}`}
+      backHref={back.href} backLabel={back.label}
+            primaryHref={`/logs?model=${encodeURIComponent(identifier || requestedModel)}`}
       primaryLabel="查看模型日志"
       management={{ href: logical ? "/logical-models" : "/models", label: "管理模型" }}
       sections={[
@@ -339,6 +340,7 @@ export function ModelDetailsPage() {
 
 export function ProviderDetailsPage() {
   const [params] = useSearchParams();
+  const back = entityBackTarget(params);
   const requestedId = params.get('id') || '';
   const requestedName = params.get('name') || '';
   const [provider, setProvider] = useState<PlatformItem | null>(null);
@@ -394,8 +396,8 @@ export function ProviderDetailsPage() {
   const observedProtocol = recent.find((item) => item.protocol)?.protocol || provider?.platformType || '未标注';
   const observedTransport = recent.find((item) => item.transport)?.transport || '未标注';
   if (loading) return <SectionLoader text="正在加载 Provider 详情" />;
-  if (error) return <DetailError message={error} backHref="/logs" />;
-  if (!provider) return <DetailError message="当前租户中没有找到该 Provider，可能已删除或不在你的权限范围内。" backHref="/logs" />;
+  if (error) return <DetailError message={error} backHref={back.href} backLabel={back.label} />;
+  if (!provider) return <DetailError message="当前租户中没有找到该 Provider，可能已删除或不在你的权限范围内。" backHref={back.href} backLabel={back.label} />;
 
   return (
     <EntityDetailsShell
@@ -425,9 +427,8 @@ export function ProviderDetailsPage() {
         { label: '上游协议', value: observedProtocol, hint: '最近记录', icon: <Gauge size={17} /> },
         { label: '传输方式', value: observedTransport, hint: '最近记录', icon: <KeyRound size={17} /> },
       ]}
-      backHref="/logs"
-      backLabel="返回请求记录"
-      primaryHref={`/logs?provider=${encodeURIComponent(provider.name)}`}
+      backHref={back.href} backLabel={back.label}
+            primaryHref={`/logs?provider=${encodeURIComponent(provider.name)}`}
       primaryLabel="查看 Provider 日志"
       management={registered ? { href: "/platforms?view=provider", label: "管理供应方" } : undefined}
       connectionSummary={registered ? <div className="lg-collection-connection-summary"><Server size={20}/><div><strong>{provider.platformType === "openai" ? "OpenAI compatible" : provider.platformType || "未配置协议"}</strong><code title={provider.apiUrl || "未配置"}>{provider.apiUrl || "未配置"}</code></div><span>{models.length} 个托管模型</span></div> : undefined}
@@ -450,7 +451,7 @@ export function ProviderDetailsPage() {
           title: '托管模型',
           description: registered ? '该 Provider 下当前可见的模型。点击模型可继续进入模型详情。' : '从最近请求中观察到的模型；只证明实际请求经过这里，不补造托管关系。',
           content: registered ? <CollectionView items={providerRows} placeholder="搜索模型名称、标识或协议" searchText={({ model, publicIds }) => `${model.name} ${model.modelName} ${model.protocol || ''} ${publicIds.join(' ')}`} filters={logicalModels ? [{ value: 'registered', label: '已登记', matches: (row) => row.publicIds.length > 0 }, { value: 'unregistered', label: '未登记', matches: (row) => row.publicIds.length === 0 }] : []}>
-            {(pageRows) => <table className="lg-collection-entity-table lg-collection-hosted-table"><colgroup><col style={{width: '47%'}}/><col style={{width: '19%'}}/><col style={{width: '19%'}}/><col style={{width: '15%'}}/></colgroup><thead><tr><th>模型</th><th>协议</th><th>登记状态</th><th>操作</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id}><td><strong className="lg-collection-model-id" title={`${model.modelName} · ${model.name}`}>{model.modelName || model.name}</strong></td><td>{model.protocol || '继承协议'}</td><td><StatusPill label={logicalModels ? publicIds.length ? `已登记 · ${publicIds.length}` : '未登记' : '登记状态未读取'} tone={logicalModels ? publicIds.length ? 'good' : 'warning' : 'neutral'} /></td><td><Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(provider.id)}`}>模型详情<ArrowUpRight size={13} /></Link></td></tr>)}</tbody></table>}
+            {(pageRows) => <table className="lg-collection-entity-table lg-collection-hosted-table"><colgroup><col style={{width: '47%'}}/><col style={{width: '19%'}}/><col style={{width: '19%'}}/><col style={{width: '15%'}}/></colgroup><thead><tr><th>模型</th><th>协议</th><th>登记状态</th><th>操作</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id}><td><strong className="lg-collection-model-id" title={`${model.modelName} · ${model.name}`}>{model.modelName || model.name}</strong></td><td>{model.protocol || '继承协议'}</td><td><StatusPill label={logicalModels ? publicIds.length ? `已登记 · ${publicIds.length}` : '未登记' : '登记状态未读取'} tone={logicalModels ? publicIds.length ? 'good' : 'warning' : 'neutral'} /></td><td><Link to={providerModelDetailHref({ modelId: model.id, model: model.modelName || model.name, platformId: provider.id }, 'provider-detail')}>模型详情<ArrowUpRight size={13} /></Link></td></tr>)}</tbody></table>}
           </CollectionView> : <CollectionView items={observedModels} placeholder="搜索日志观察到的模型" searchText={(model) => model}>
             {(pageModels) => <>{pageModels.map((model) => <Link className="lg-collection-detail-card" key={model} to={`/models/view?model=${encodeURIComponent(model)}`}><ModelEntityIcon model={model} /><div><strong>{model}</strong><span>日志观测 · 非配置关系</span></div><ArrowUpRight size={15} /></Link>)}</>}
           </CollectionView>,
@@ -530,6 +531,7 @@ function observedAppCaller(item: LlmLogListItem, requestedCode: string): AppCall
 
 export function AppCallerDetailsPage() {
   const [params] = useSearchParams();
+  const back = entityBackTarget(params);
   const requestedCode = (params.get('code') || '').trim();
   const requestedType = (params.get('requestType') || '').trim().toLowerCase();
   const requestedId = (params.get('id') || '').trim();
@@ -585,9 +587,9 @@ export function AppCallerDetailsPage() {
   }, [requestedCode, requestedType, requestedId, revision]);
 
   if (loading) return <SectionLoader text="正在加载 App 详情" />;
-  if (error) return <DetailError message={error} backHref="/logs" retry={() => setRevision(value => value + 1)} />;
-  if (candidates.length) return <div className="lg-entity-detail-page"><h1>选择要查看的调用方用途</h1><div className="lg-entity-detail-request-list">{candidates.map(item => <Link key={item.id} to={`/app-callers/view?${new URLSearchParams({ id: item.id, code: item.appCallerCode, requestType: item.requestType })}`}><div><strong>{item.title || item.appCallerCode}</strong><code>{item.appCallerCode}</code></div><span>{item.requestType}</span></Link>)}</div><Link to="/logs">返回请求记录</Link></div>;
-  if (!app) return <DetailError message="当前租户中没有找到该 App，可能尚未注册或不在你的团队范围内。" backHref="/logs" />;
+  if (error) return <DetailError message={error} backHref={back.href} backLabel={back.label} retry={() => setRevision(value => value + 1)} />;
+  if (candidates.length) return <div className="lg-entity-detail-page"><h1>选择要查看的调用方用途</h1><div className="lg-entity-detail-request-list">{candidates.map(item => <Link key={item.id} to={`/app-callers/view?${new URLSearchParams({ id: item.id, code: item.appCallerCode, requestType: item.requestType })}`}><div><strong>{item.title || item.appCallerCode}</strong><code>{item.appCallerCode}</code></div><span>{item.requestType}</span></Link>)}</div><Link to={back.href}>{back.label}</Link></div>;
+  if (!app) return <DetailError message="当前租户中没有找到该 App，可能尚未注册或不在你的团队范围内。" backHref={back.href} backLabel={back.label} />;
 
   const displayCode = app.appCallerCode;
   return (
@@ -598,7 +600,7 @@ export function AppCallerDetailsPage() {
       subtitle={`${app.sourceSystem || '未知来源'} · ${app.requestType || '未标注类型'}`}
       description={app.notes || (registered
         ? '查看此业务用途的调用记录、未点名默认模型与治理设置。允许调用是管理设置，不代表线路健康或保证请求成功。'
-        : '该 App 已出现在请求日志中，但当前租户注册表尚无对应治理记录。这里先保留真实调用来源、路由与最近请求，不补造预算或速率配置。')}
+        : '该 App 已出现在请求日志中，但当前可见范围未找到对应治理记录。这里先保留真实调用来源、路由与最近请求，不补造预算或速率配置。')}
       icon={<AppEntityIcon size="lg" />}
       status={[
         registered ? callerManagementState(app.status) : { label: '仅日志观测', tone: 'warning' },
@@ -607,9 +609,8 @@ export function AppCallerDetailsPage() {
         { label: registered ? '累计请求' : '已载入记录', value: fmtCompact(registered ? app.totalSeen : recent.length), hint: registered ? '注册表累计观察' : '最近30天 · 最多8条', icon: <Route size={17} /> },
         { label: '最近调用', value: app.lastSeenAt ? formatPlatformTime(app.lastSeenAt) : '暂无', hint: '最后一次观察时间', icon: <Clock3 size={17} /> },
       ]}
-      backHref="/logs"
-      backLabel="返回请求记录"
-      primaryHref={callerWorkspaceReturnHref(app.appCallerCode, app.requestType, '')}
+      backHref={back.href} backLabel={back.label}
+            primaryHref={callerWorkspaceReturnHref(app.appCallerCode, app.requestType, '')}
       primaryLabel={registered ? '查看调用方治理' : '查看调用方登记'}
       sections={[
         {

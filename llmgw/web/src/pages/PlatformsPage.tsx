@@ -3,10 +3,10 @@ import { positionToolbarPopover } from '@/lib/toolbarPopover';
 // 密钥明文只随创建/轮换请求发送，永不回显；列表最多展示头尾打码的指纹（keyFingerprint），
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
 import { Server } from 'lucide-react';
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
 import type { CreatePlatformRequest, LogicalModelItem, ModelItem, PlatformItem, PlatformTestResult, ProviderPresetItem, UpdatePlatformRequest, UpstreamModelsData } from '@/lib/types';
 import { formatPlatformTime } from '@/lib/platformTime';
@@ -28,6 +28,10 @@ type PlatformSection = 'provider' | 'catalog' | 'imagegen';
 
 export function PlatformsPage({ section = 'provider' }: { section?: PlatformSection }) {
   const { tenant } = useAuth();
+  const [params] = useSearchParams();
+  const returnProviderId = params.get('providerId') || '';
+  const restoredProvider = useRef<string | null>(null);
+  const [returnProblem, setReturnProblem] = useState<string | null>(null);
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const { confirm, promptText } = useDialogs();
   const [items, setItems] = useState<PlatformItem[] | null>(null);
@@ -83,6 +87,14 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!returnProviderId) { restoredProvider.current = null; setReturnProblem(null); return; }
+    if (!items || restoredProvider.current === returnProviderId) return;
+    restoredProvider.current = returnProviderId;
+    if (items.some(item => item.id === returnProviderId)) { setReturnProblem(null); setExpandedModelsFor(returnProviderId); setProviderTab('models'); }
+    else setReturnProblem('返回的供应方当前不可见，未改为打开其他供应方。');
+  }, [returnProviderId, items]);
 
   const selectedProvider = items?.find((p) => expandedModelsFor === p.id);
   function renderOwnedModels() {
@@ -486,6 +498,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
           {showCreate ? '收起配置' : '添加 Provider'}
         </Button> : null}
       </header>
+      {returnProblem ? <InlineAlert tone="error">{returnProblem}</InlineAlert> : null}
       {showCreate && canWrite ? (
         <section style={createCardStyle}>
           {/* 第一步：选平台。地址、协议、并发都由预设带出来，用户不必去搜供应商文档。 */}
