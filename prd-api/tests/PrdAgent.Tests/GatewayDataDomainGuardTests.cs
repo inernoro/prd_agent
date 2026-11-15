@@ -2166,7 +2166,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("targetType: targetType || undefined", auditsPage);
 
         Assert.Contains("Links = RuntimeGateLinks", protocolAudit);
-        Assert.Contains("initialQueryValue('releaseCommit')", protocolAudit);
+        Assert.Contains("query.get('releaseCommit')", protocolAudit);
         Assert.Contains("\"runtimeEvidenceComplete\": False", protocolAudit);
         Assert.Contains("\"progressPercent\": None", protocolAudit);
         Assert.Contains("staticEvidencePercent covers code/doc evidence only", protocolAudit);
