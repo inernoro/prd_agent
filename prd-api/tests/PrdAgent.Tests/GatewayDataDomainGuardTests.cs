@@ -3670,9 +3670,10 @@ public class GatewayDataDomainGuardTests
         var gatewaySettings = ReadRepoFile("llmgw/web/src/pages/GatewaySettingsPage.tsx");
 
         Assert.Contains("const invalidateTestResult = () => {", gatewaySettings);
-        // 三处选择走同一个出口：记一次「用户动过手」+ 改值 + 作废旧结论。
-        Assert.Contains("onClick={() => changeSelection(() => setSource(item.id))}", gatewaySettings);
-        Assert.Contains("onChange={(event) => changeSelection(() => setPoolId(event.target.value))}", gatewaySettings);
+        // 可编辑的来源与公开模型走同一出口；旧模型池只读兼容，不再作为新配置入口。
+        Assert.Contains("onChange={() => changeSelection(() => setSource(item.id))}", gatewaySettings);
+        Assert.Contains("现有模型池（兼容配置）", gatewaySettings);
+        Assert.DoesNotContain("onChange={(event) => changeSelection(() => setPoolId(event.target.value))}", gatewaySettings);
         Assert.Contains("onChange={(event) => changeSelection(() => setModelName(event.target.value))}", gatewaySettings);
         Assert.Contains("invalidateTestResult();", gatewaySettings[gatewaySettings.IndexOf("const changeSelection = (apply: () => void) => {", StringComparison.Ordinal)..]);
 
@@ -3684,9 +3685,9 @@ public class GatewayDataDomainGuardTests
         */
         Assert.Contains("const selectionAtStart = selectionSeq.current;", gatewaySettings);
         Assert.Contains("const editedDuringSave = selectionSeq.current !== selectionAtStart;", gatewaySettings);
-        Assert.Contains("await load(!editedDuringSave);", gatewaySettings);
+        Assert.Contains("await load(!editedDuringSave, modelQuery, true);", gatewaySettings);
         // 不回填选择时仍要刷新 data，否则 dirty 会拿旧的服务端值比，说不出「这份还没保存」。
-        Assert.Contains("setData(res.data);\n    if (!applySelection) return;", gatewaySettings.Replace("\r\n", "\n"));
+        Assert.True(gatewaySettings.IndexOf("setData(res.data);", StringComparison.Ordinal) < gatewaySettings.IndexOf("if (!applySelection) return;", StringComparison.Ordinal));
         // 在途那次也要按代次丢弃：请求在路上时改了选择，旧结论回来就会给新配置背书。
         Assert.Contains("if (testSeq.current !== runId) return;", gatewaySettings);
         /*
