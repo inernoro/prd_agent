@@ -1568,131 +1568,33 @@ function BranchWorkspace({ branchId, projectId }: { branchId: string; projectId:
                       </button>
                     );
                   })}
-                </CardContent>
-              </Card>
-
               {/* 波1 W1b:分支级临时额外服务(只作用于本分支的实验容器,如 Nacos)。 */}
               <ExtraServicesPanel
                 branchId={state.branch.id}
+                compactWhenEmpty
                 onToast={setToast}
                 onChanged={() => void load(false)}
               />
 
-              {/* 波2:配置检查器(逐 key 溯源 + 部署计划预览)。 */}
-              <DisclosurePanel
-                icon={<Layers className="h-4 w-4" />}
-                title="生效配置"
-                subtitle="每项配置从哪继承、被谁覆盖、部署时 CDS 会做什么"
-                contentClassName="p-5"
-              >
-                <EffectiveConfigPanel branchId={state.branch.id} onToast={setToast} />
-              </DisclosurePanel>
-
-              <DisclosurePanel
-                icon={<FileText className="h-4 w-4" />}
-                title="构建日志"
-                subtitle="部署过程和最近构建记录"
-                contentClassName="space-y-3 p-5"
-              >
-                  {action ? (
-                    <LogPanel title={action.label} lines={action.log} status={action.status} />
-                  ) : state.operationLogs.length === 0 ? (
-                    <div className="rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
-                      {state.readFailures['部署日志'] ? '部署日志尚未确认，请重试读取。' : '还没有构建记录。'}
-                    </div>
-                  ) : (
-                    state.operationLogs.slice().reverse().slice(0, 5).map((log) => (
-                      <div key={`${log.startedAt}-${log.type}`} className="rounded-md border border-border p-3">
-                        <div className="flex flex-wrap items-center gap-2 text-xs">
-                          <span className={`rounded border px-2 py-0.5 ${statusClass(log.status)}`}>{statusLabel(log.status)}</span>
-                          <CodePill>{log.type}</CodePill>
-                          <span className="text-muted-foreground">{formatDate(log.startedAt)}</span>
-                        </div>
-                        <pre className="mt-3 max-h-44 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">
-                          {log.events.slice(-18).map((event) => `[${event.status}] ${event.title || event.step}${event.log ? ` - ${event.log}` : ''}`).join('\n') || '(no log lines)'}
-                        </pre>
-                      </div>
-                    ))
-                  )}
-              </DisclosurePanel>
-            </section>
-
-            <aside className="min-w-0 space-y-5">
-              <Card className="rounded-md">
-                <CardHeader className="p-5">
-                  <div className="flex items-center justify-between gap-3">
-                    <CardTitle className="text-base">预览别名</CardTitle>
-                    {canManageConsole ? <Button size="sm" variant="outline" onClick={() => void saveAliases()}>
-                      <Settings />
-                      编辑
-                    </Button> : null}
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3 p-5 pt-0 text-sm">
-                  <Field label={primaryEntry?.name || '主应用入口'} value={primaryEntryUrl || (state.readFailures['预览入口'] || !state.previewMode ? '尚未确认' : '未配置')} />
-                  {state.aliases.aliases.length > 0 ? (
-                    <div className="space-y-2">
-                      <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">别名</div>
-                      {(state.aliases.previewUrls || state.aliases.aliases).map((url) => (
-                        <div key={url} className="break-all cds-surface-sunken cds-hairline px-3 py-2">
-                          {url}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
-                      暂无别名。别名保存后立即在代理层生效，不需要重部署。
-                    </div>
-                  )}
-
-                  {/* 用户页面由 cds.web-entry-* 显式声明。readiness/health 地址只供机器探测，
-                      不得出现在这里；cds.subdomain 只负责发布路由，不自动创造用户入口。 */}
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-normal text-muted-foreground">
-                      <RouterIcon className="h-3.5 w-3.5" />
-                      其他 Web 页面
-                    </div>
-                    {webEntries.length > 0 ? (
-                      webEntries.map((entry) => (
-                        <a
-                          key={entry.serviceId || entry.subdomain || entry.url}
-                          href={entry.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-2 break-all cds-surface-sunken cds-hairline px-3 py-2 transition-colors hover:bg-[hsl(var(--surface-raised))]"
-                          title={`打开 ${entry.name}`}
-                        >
-                          <span className="min-w-0 flex-1 break-all">{entry.url}</span>
-                          <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 font-mono text-xs text-foreground">{entry.name}</span>
-                        </a>
-                      ))
-                    ) : (
-                      <div className="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
-                        暂无其他 Web 页面。需要展示时，请在 compose 中为对应服务声明 <code className="font-mono">cds.web-entry-name</code> 和页面路径。
-                      </div>
-                    )}
-                  </div>
                 </CardContent>
               </Card>
 
-              {/* Diagnostics tabs — Week 4.6: 6 个 DisclosurePanel 折叠成 4 类
-                  二级视图（日志 / 配置 / 历史 / Bridge）。每个 tab 内仍然
-                  保留 DisclosurePanel 的展开 / 收起，但同时只暴露一类。 */}
-              <Tabs value={detailTab} onValueChange={(value) => setDetailTab(value as typeof detailTab)}>
-                <TabsList aria-label="分支诊断分区" className="cds-surface-raised cds-hairline p-1">
-                  <TabsTrigger value="logs">
+              {/* 选中服务后直接进入诊断工作区；不让低频空态挡在日志与配置之前。 */}
+              <Tabs orientation="horizontal" value={detailTab} onValueChange={(value) => setDetailTab(value as typeof detailTab)}>
+                <TabsList aria-label="分支诊断分区" className="cds-surface-raised cds-hairline grid grid-cols-4 gap-1 p-1">
+                  <TabsTrigger value="logs" className="min-w-0 justify-center gap-1 px-1">
                     <FileText className="h-4 w-4 shrink-0" />
                     日志
                   </TabsTrigger>
-                  <TabsTrigger value="config">
+                  <TabsTrigger value="config" className="min-w-0 justify-center gap-1 px-1">
                     <Wrench className="h-4 w-4 shrink-0" />
                     配置
                   </TabsTrigger>
-                  <TabsTrigger value="history">
+                  <TabsTrigger value="history" className="min-w-0 justify-center gap-1 px-1">
                     <GitCommitHorizontal className="h-4 w-4 shrink-0" />
                     历史
                   </TabsTrigger>
-                  <TabsTrigger value="bridge">
+                  <TabsTrigger value="bridge" className="min-w-0 justify-center gap-1 px-1">
                     <ShieldCheck className="h-4 w-4 shrink-0" />
                     Bridge
                   </TabsTrigger>
@@ -1951,6 +1853,105 @@ function BranchWorkspace({ branchId, projectId }: { branchId: string; projectId:
 
                 </TabsContent>
               </Tabs>
+
+              {/* 波2:配置检查器(逐 key 溯源 + 部署计划预览)。 */}
+              <DisclosurePanel
+                icon={<Layers className="h-4 w-4" />}
+                title="生效配置"
+                subtitle="每项配置从哪继承、被谁覆盖、部署时 CDS 会做什么"
+                contentClassName="p-5"
+              >
+                <EffectiveConfigPanel branchId={state.branch.id} onToast={setToast} />
+              </DisclosurePanel>
+
+              <DisclosurePanel
+                icon={<FileText className="h-4 w-4" />}
+                title="构建日志"
+                subtitle="部署过程和最近构建记录"
+                contentClassName="space-y-3 p-5"
+              >
+                  {action ? (
+                    <LogPanel title={action.label} lines={action.log} status={action.status} />
+                  ) : state.operationLogs.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+                      {state.readFailures['部署日志'] ? '部署日志尚未确认，请重试读取。' : '还没有构建记录。'}
+                    </div>
+                  ) : (
+                    state.operationLogs.slice().reverse().slice(0, 5).map((log) => (
+                      <div key={`${log.startedAt}-${log.type}`} className="rounded-md border border-border p-3">
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className={`rounded border px-2 py-0.5 ${statusClass(log.status)}`}>{statusLabel(log.status)}</span>
+                          <CodePill>{log.type}</CodePill>
+                          <span className="text-muted-foreground">{formatDate(log.startedAt)}</span>
+                        </div>
+                        <pre className="mt-3 max-h-44 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">
+                          {log.events.slice(-18).map((event) => `[${event.status}] ${event.title || event.step}${event.log ? ` - ${event.log}` : ''}`).join('\n') || '(no log lines)'}
+                        </pre>
+                      </div>
+                    ))
+                  )}
+              </DisclosurePanel>
+            </section>
+
+            <aside className="min-w-0 space-y-5">
+              <Card className="rounded-md">
+                <CardHeader className="p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle className="text-base">预览别名</CardTitle>
+                    {canManageConsole ? <Button size="sm" variant="outline" onClick={() => void saveAliases()}>
+                      <Settings />
+                      编辑
+                    </Button> : null}
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3 p-5 pt-0 text-sm">
+                  <Field label={primaryEntry?.name || '主应用入口'} value={primaryEntryUrl || (state.readFailures['预览入口'] || !state.previewMode ? '尚未确认' : '未配置')} />
+                  {state.aliases.aliases.length > 0 ? (
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">别名</div>
+                      {(state.aliases.previewUrls || state.aliases.aliases).map((url) => (
+                        <div key={url} className="break-all cds-surface-sunken cds-hairline px-3 py-2">
+                          {url}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
+                      暂无别名。别名保存后立即在代理层生效，不需要重部署。
+                    </div>
+                  )}
+
+                  {/* 用户页面由 cds.web-entry-* 显式声明。readiness/health 地址只供机器探测，
+                      不得出现在这里；cds.subdomain 只负责发布路由，不自动创造用户入口。 */}
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-normal text-muted-foreground">
+                      <RouterIcon className="h-3.5 w-3.5" />
+                      其他 Web 页面
+                    </div>
+                    {webEntries.length > 0 ? (
+                      webEntries.map((entry) => (
+                        <a
+                          key={entry.serviceId || entry.subdomain || entry.url}
+                          href={entry.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 break-all cds-surface-sunken cds-hairline px-3 py-2 transition-colors hover:bg-[hsl(var(--surface-raised))]"
+                          title={`打开 ${entry.name}`}
+                        >
+                          <span className="min-w-0 flex-1 break-all">{entry.url}</span>
+                          <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 font-mono text-xs text-foreground">{entry.name}</span>
+                        </a>
+                      ))
+                    ) : (
+                      <div className="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
+                        暂无其他 Web 页面。需要展示时，请在 compose 中为对应服务声明 <code className="font-mono">cds.web-entry-name</code> 和页面路径。
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+
             </aside>
           </div>
         ) : null}
