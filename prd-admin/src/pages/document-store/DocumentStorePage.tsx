@@ -1,3 +1,4 @@
+import { PersonAvatar } from '@/components/workspace/Workspace';
 import { loadDocumentEntries } from '@/services/real/documentStore';
 import { recordDocumentEntryChanges, reconcileDocumentEntries } from '@/services/real/documentEntryPages';
 import { WritingPublicationActions } from './writing/WritingPublicationActions';
@@ -2674,6 +2675,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       {/* 左右分栏文档浏览器 —— 与上方 TabBar 左右边缘对齐（不再额外 px-5 内缩，
           消除左上角空白竖条）；仅留 pt-3 作为与标题栏的视觉间距 */}
       <div className="flex-1 min-h-0 flex flex-col pt-3">
+        {selectedDocEntry && !(isMobile && readerImmersive) && <div className="workspace-context mb-2" aria-label="当前文档上下文">
+          <strong className="truncate max-w-[45%]">{selectedDocEntry.title}</strong>
+          {(() => { const entry = entries.find(item => item.id === selectedDocEntry.id); return entry ? <>
+            <span className="ws-badge">{({ upload: '上传文件', manual: '手动创建', github: 'GitHub', url: '网页来源', recording: '录音' } as Record<string,string>)[entry.sourceType] || '其他来源'}</span>
+            {entry.updatedByName && <span className="ws-person"><PersonAvatar person={{displayName:entry.updatedByName}} size={22}/>{entry.updatedByName}</span>}
+            <span>更新于 {new Date(entry.updatedAt).toLocaleDateString('zh-CN')}</span>
+          </> : <span>文档详情按当前选择加载</span>; })()}
+        </div>}
+
         <KnowledgeIndexStatus
           entryId={selectedDocEntry?.id}
           revision={`${entries.find(entry => entry.id === selectedDocEntry?.id)?.updatedAt ?? ''}:${knowledgeIndexCheck?.entryId === selectedDocEntry?.id ? knowledgeIndexCheck?.version : ''}`}

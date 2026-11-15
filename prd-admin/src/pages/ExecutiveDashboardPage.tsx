@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
-  CalendarDays, Users, Bot, DollarSign, Link2, TrendingUp,
-  MessageSquare, Image, Bug, Zap, Activity,
-  BarChart3, RefreshCw,
-  Info, ChevronUp, ChevronDown,
-  Cpu, Sparkles,
+  CalendarDays,
+  Users,
+  Bot,
+  DollarSign,
+  Link2,
+  TrendingUp,
+  BarChart3,
+  RefreshCw,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import CountUp from '@/components/reactbits/CountUp';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { EChart } from '@/components/charts/EChart';
 import {
   getExecutiveOverview,
   getExecutiveTrends,
@@ -18,636 +20,46 @@ import {
   getExecutiveModels,
   getTeamInsights,
 } from '@/services';
-import type {
-  ExecutiveOverview,
-  ExecutiveTrendItem,
-  ExecutiveTeamMember,
-  ExecutiveAgentStat,
-  ExecutiveModelStat,
-} from '@/services/contracts/executive';
-import type { EChartsOption } from 'echarts';
-import { Tooltip } from '@/components/ui/Tooltip';
 import TeamInsightsWorkspace from '@/pages/executive/TeamInsightsWorkspace';
 import { useExecutiveQuery } from '@/pages/executive/useExecutiveQuery';
-
-// ─── Enterprise Dashboard Design Tokens ──────────────────────────────
-// Linear / Vercel inspired: flat, controlled, monochrome primary
-
-const D = {
-  bgCard:        'var(--bg-card)',
-  border:        'var(--border-subtle)',
-  primary:       '#5B8CFF',
-  success:       '#22C55E',
-  warning:       '#F59E0B',
-  danger:        '#EF4444',
-  text1:         'var(--text-primary)',
-  text2:         'var(--text-secondary)',
-  text3:         'var(--text-muted)',
-  chartGrid:     'rgba(255,255,255,0.05)',
-  chartText:     'var(--text-muted)',
-  tooltipBg:     'rgba(15,23,42,0.95)',
-  tooltipBorder: 'rgba(91,140,255,0.15)',
-} as const;
-
-// Monochrome primary palette for chart segments
-const MONO = [
-  '#5B8CFF', '#7BA6FF', '#4171E6', '#9ABDFF', '#3058C7', '#809FD4', 'rgba(91,140,255,0.35)',
-];
-
-function hexAlpha(hex: string, alpha: number): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
-// ─── Chart Helpers ──────────────────────────────────────────────────
-
-function makeTrendOption(data: ExecutiveTrendItem[], field: 'messages' | 'tokens', unit: string): EChartsOption {
-  const values = data.map(d => field === 'messages' ? d.messages : d.tokens);
-  const labels = data.map(d => {
-    const parts = d.date.split('-');
-    return `${parseInt(parts[1])}/${parseInt(parts[2])}`;
-  });
-  return {
-    backgroundColor: 'transparent',
-    tooltip: {
-      trigger: 'axis', backgroundColor: D.tooltipBg,
-      borderColor: D.tooltipBorder, borderWidth: 1,
-      textStyle: { color: '#e2e8f0', fontSize: 12 },
-      formatter: (p: any) => `<span style="color:${D.chartText}">${p[0].name}</span><br/><span style="color:${D.primary};font-weight:600">${p[0].value.toLocaleString()}</span> ${unit}`,
-    },
-    grid: { left: 0, right: 0, top: 12, bottom: 0, containLabel: true },
-    xAxis: {
-      type: 'category', data: labels,
-      axisLine: { lineStyle: { color: D.chartGrid } },
-      axisLabel: { color: D.chartText, fontSize: 10, interval: Math.max(0, Math.floor(labels.length / 8)) },
-      axisTick: { show: false },
-    },
-    yAxis: {
-      type: 'value',
-      splitLine: { lineStyle: { color: D.chartGrid, type: 'dashed' } },
-      axisLabel: { color: D.chartText, fontSize: 10, formatter: (v: number) => v >= 10000 ? `${(v / 10000).toFixed(0)}万` : String(v) },
-    },
-    series: [{
-      type: 'line', data: values, smooth: 0.4, symbol: 'none',
-      lineStyle: { width: 2, color: D.primary },
-      areaStyle: {
-        color: {
-          type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-          colorStops: [
-            { offset: 0, color: hexAlpha(D.primary, 0.12) },
-            { offset: 0.7, color: hexAlpha(D.primary, 0.02) },
-            { offset: 1, color: 'transparent' },
-          ],
-        },
-      },
-    }],
-  };
-}
-
-function makeAgentPieOption(agents: ExecutiveAgentStat[]): EChartsOption {
-  return {
-    backgroundColor: 'transparent',
-    tooltip: {
-      backgroundColor: D.tooltipBg, borderColor: D.tooltipBorder, borderWidth: 1,
-      textStyle: { color: '#e2e8f0', fontSize: 12 },
-    },
-    series: [{
-      type: 'pie', radius: ['50%', '72%'], center: ['50%', '50%'], padAngle: 2,
-      itemStyle: { borderRadius: 4 },
-      label: { show: true, color: D.chartText, fontSize: 11, formatter: '{b}\n{d}%' },
-      emphasis: { scaleSize: 4, label: { fontWeight: 'bold', color: D.text1 } },
-      data: agents.map((a, i) => ({
-        name: a.name, value: a.calls,
-        itemStyle: { color: MONO[i % MONO.length] },
-      })),
-    }],
-  };
-}
-
-function makeModelBarOption(models: ExecutiveModelStat[]): EChartsOption {
-  return {
-    backgroundColor: 'transparent',
-    tooltip: {
-      backgroundColor: D.tooltipBg, borderColor: D.tooltipBorder, borderWidth: 1,
-      textStyle: { color: '#e2e8f0', fontSize: 12 },
-      formatter: (p: any) => `${p.name}<br/><span style="color:${D.primary};font-weight:600">${p.value.toLocaleString()}</span> 次调用`,
-    },
-    grid: { left: 0, right: 0, top: 12, bottom: 0, containLabel: true },
-    xAxis: {
-      type: 'category', data: models.map(m => m.model),
-      axisLine: { lineStyle: { color: D.chartGrid } },
-      axisLabel: { color: D.chartText, fontSize: 10, rotate: 20 }, axisTick: { show: false },
-    },
-    yAxis: {
-      type: 'value',
-      splitLine: { lineStyle: { color: D.chartGrid, type: 'dashed' } },
-      axisLabel: { color: D.chartText, fontSize: 10 },
-    },
-    series: [{
-      type: 'bar', data: models.map(m => m.calls), barWidth: 28,
-      itemStyle: {
-        borderRadius: [4, 4, 0, 0],
-        color: {
-          type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-          colorStops: [
-            { offset: 0, color: D.primary },
-            { offset: 1, color: hexAlpha(D.primary, 0.08) },
-          ],
-        },
-      },
-    }],
-  };
-}
-
-// ─── Utility ────────────────────────────────────────────────────────
-
-function formatTokens(n: number): string {
-  if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}亿`;
-  if (n >= 10_000) return `${(n / 10_000).toFixed(n >= 1_000_000 ? 0 : 1)}万`;
-  return n.toLocaleString();
-}
-
-function trendPct(current: number, previous: number): { label: string; direction: 'up' | 'down' | 'neutral' } {
-  if (previous === 0) return { label: current > 0 ? '新增' : '-', direction: 'neutral' };
-  const pct = ((current - previous) / previous * 100);
-  if (Math.abs(pct) < 1) return { label: '持平', direction: 'neutral' };
-  return {
-    label: `${pct > 0 ? '↑' : '↓'}${Math.abs(pct).toFixed(0)}%`,
-    direction: pct > 0 ? 'up' : 'down',
-  };
-}
-
-// ─── Local Components ───────────────────────────────────────────────
-
-/** Flat enterprise card — no glow, no blur, no gradient */
-function DashCard({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div
-      className={`rounded-xl p-4 relative ${className ?? ''}`}
-      style={{ background: D.bgCard, border: `1px solid ${D.border}` }}
-    >
-      {children}
-    </div>
-  );
-}
-
-/** Flat KPI card — same bg for all, only numbers highlighted */
-function DashKpi({ title, value, icon, trend, trendLabel, info, animated }: {
-  title: string; value: number | string; icon?: React.ReactNode;
-  trend?: 'up' | 'down' | 'neutral'; trendLabel?: string; info?: string; animated?: boolean;
-}) {
-  const display = typeof value === 'number' ? value.toLocaleString() : value;
-  return (
-    <DashCard className="min-h-[88px]">
-      <div className="flex items-center gap-1.5 mb-3">
-        {icon && <span style={{ color: D.text3 }}>{icon}</span>}
-        <span className="text-[11px] font-medium tracking-wide" style={{ color: D.text3 }}>{title}</span>
-        {info && <InfoTip tip={info} />}
-      </div>
-      <div className="text-[26px] font-semibold tracking-[-0.02em] tabular-nums leading-none" style={{ color: D.text1 }}>
-        {animated && typeof value === 'number' ? <CountUp to={value} duration={2} separator="," /> : display}
-      </div>
-      {(trend || trendLabel) && (
-        <div className="mt-2 flex items-center gap-1 text-[11px] font-medium">
-          {trend === 'up' && <ChevronUp size={12} style={{ color: D.success }} />}
-          {trend === 'down' && <ChevronDown size={12} style={{ color: D.danger }} />}
-          <span style={{ color: trend === 'up' ? D.success : trend === 'down' ? D.danger : D.text3 }}>
-            {trendLabel}
-          </span>
-        </div>
-      )}
-    </DashCard>
-  );
-}
-
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-2 mb-3">
-      <div className="w-1 h-4 rounded-full" style={{ background: D.primary, opacity: 0.5 }} />
-      <h3 className="text-[13px] font-semibold tracking-wide" style={{ color: D.text2 }}>{children}</h3>
-    </div>
-  );
-}
-
-function StatRow({ label, value, sub, icon: Icon, accent, info }: { label: string; value: string | number; sub?: string; icon?: any; accent?: string; info?: string }) {
-  return (
-    <div className="flex items-center justify-between py-2.5 group/row" style={{ borderBottom: `1px solid ${D.border}` }}>
-      <div className="flex items-center gap-2.5">
-        {Icon && <Icon size={14} style={{ color: accent || D.text3 }} />}
-        <span className="text-sm" style={{ color: D.text2 }}>{label}</span>
-        {info && <InfoTip tip={info} />}
-      </div>
-      <div className="text-right">
-        <span className="text-sm font-semibold tabular-nums" style={{ color: D.text1 }}>{typeof value === 'number' ? value.toLocaleString() : value}</span>
-        {sub && <span className="text-[11px] ml-1.5" style={{ color: D.text3 }}>{sub}</span>}
-      </div>
-    </div>
-  );
-}
-
-function ProgressBar({ value, max, color }: { value: number; max: number; color: string }) {
-  const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
-  return (
-    <div className="h-1.5 rounded-full w-full bg-token-nested" >
-      <div
-        className="h-full rounded-full transition-all duration-500"
-        style={{ width: `${pct}%`, background: color, opacity: 0.7 }}
-      />
-    </div>
-  );
-}
-
-function LoadingSkeleton({ rows = 3 }: { rows?: number }) {
-  return (
-    <div className="space-y-3 animate-pulse">
-      {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="h-4 rounded-lg bg-token-nested" style={{ width: `${70 + Math.random() * 30}%` }} />
-      ))}
-    </div>
-  );
-}
-
-function EmptyHint({ text }: { text: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-12 text-center">
-      <Sparkles size={20} style={{ color: D.primary, opacity: 0.3, marginBottom: 8 }} />
-      <div className="text-sm" style={{ color: D.text3 }}>{text}</div>
-    </div>
-  );
-}
-
-function InfoTip({ tip }: { tip: string }) {
-  return (
-    <Tooltip content={tip} side="top">
-      <Info size={12} style={{ color: D.text3, opacity: 0.6, flexShrink: 0 }} />
-    </Tooltip>
-  );
-}
-
-// ─── Tab: Overview ──────────────────────────────────────────────────
-
-function OverviewTab({ overview, trends, agents, loading }: {
-  overview: ExecutiveOverview | null;
-  trends: ExecutiveTrendItem[];
-  agents: ExecutiveAgentStat[];
-  loading: boolean;
-}) {
-  if (loading && !overview) return <LoadingSkeleton rows={6} />;
-  if (!overview) return <EmptyHint text="暂无数据" />;
-
-  const msgTrend = trendPct(overview.periodMessages, overview.prevMessages);
-  const tokenTrend = trendPct(overview.periodTokens, overview.prevTokens);
-  const activeTrend = trendPct(overview.activeUsers, overview.prevActiveUsers);
-
-  return (
-    <div className="space-y-5">
-      {/* KPI Row — same flat bg, only numbers + trends use color */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <DashKpi title="总用户数" value={overview.totalUsers} icon={<Users size={13} />} animated info="系统注册的全部用户数（含非活跃）" />
-        <DashKpi title="活跃用户" value={overview.activeUsers} icon={<Activity size={13} />} trend={activeTrend.direction} trendLabel={`${activeTrend.label} vs 上期`} animated info="所选时间范围内有登录记录的用户数（基于 LastActiveAt）" />
-        <DashKpi title="对话消息" value={overview.periodMessages} icon={<MessageSquare size={13} />} trend={msgTrend.direction} trendLabel={`${msgTrend.label} vs 上期`} animated info="PRD 对话 + 缺陷消息 + 视觉创作消息三个来源合计" />
-        <DashKpi title="Token 消耗" value={formatTokens(overview.periodTokens)} icon={<Zap size={13} />} trend={tokenTrend.direction} trendLabel={`${tokenTrend.label} vs 上期`} animated info="PRD 对话中 Assistant 回复的 Input + Output Token 总和" />
-        <DashKpi title="LLM 调用" value={overview.llmCalls} icon={<Cpu size={13} />} animated info="所有 Agent 通过 LLM Gateway 发起的大模型请求总次数" />
-        <DashKpi title="缺陷解决率" value={`${overview.defectResolutionRate}%`} icon={<Bug size={13} />} animated info="已解决或已关闭的缺陷数 ÷ 缺陷总数（全时间段）" />
-      </div>
-
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <DashCard className="lg:col-span-2">
-          <SectionTitle>消息趋势</SectionTitle>
-          {trends.length > 0 ? (
-            <EChart option={makeTrendOption(trends, 'messages', '条消息')} height={260} />
-          ) : <EmptyHint text="暂无趋势数据" />}
-        </DashCard>
-        <DashCard>
-          <SectionTitle>Agent 调用分布</SectionTitle>
-          {agents.length > 0 ? (
-            <EChart option={makeAgentPieOption(agents)} height={260} />
-          ) : <EmptyHint text="暂无 Agent 数据" />}
-        </DashCard>
-      </div>
-
-      {/* Token Trend + Overview Stats */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <DashCard>
-          <SectionTitle>Token 消耗趋势</SectionTitle>
-          {trends.length > 0 ? (
-            <EChart option={makeTrendOption(trends, 'tokens', 'tokens')} height={260} />
-          ) : <EmptyHint text="暂无趋势数据" />}
-        </DashCard>
-        <DashCard>
-          <SectionTitle>业务统计</SectionTitle>
-          <div className="space-y-0.5">
-            <StatRow icon={Users} label="总用户数" value={overview.totalUsers} accent={D.primary} info="系统注册的全部用户数（含非活跃）" />
-            <StatRow icon={Users} label="活跃用户" value={overview.activeUsers} accent={D.primary} info="所选时间范围内有登录活动的用户数" />
-            <StatRow icon={MessageSquare} label="对话消息数" value={overview.periodMessages} accent={D.primary} info="PRD 对话 + 缺陷消息 + 视觉创作消息三个来源合计" />
-            <StatRow icon={Bug} label="缺陷总数" value={overview.totalDefects} accent={D.danger} info="全部时间段内提交的缺陷报告总数" />
-            <StatRow icon={Bug} label="已解决缺陷" value={overview.resolvedDefects} accent={D.success} info="状态为「已解决」或「已关闭」的缺陷数" />
-            <StatRow icon={Image} label="图片生成" value={overview.periodImages} sub="张" accent={D.primary} info="所选时间范围内的图片生成任务数" />
-          </div>
-        </DashCard>
-      </div>
-    </div>
-  );
-}
-
-// ─── Tab: Agent Usage ───────────────────────────────────────────────
-
-const AGENT_COLORS: Record<string, string> = {
-  'prd-agent': D.primary, 'defect-agent': D.danger,
-  'visual-agent': D.primary, 'literary-agent': D.primary,
-  'ai-toolbox': D.warning, 'chat': D.text3, 'open-platform': D.primary,
-};
-
-function AgentUsageTab({ agents, team, loading }: { agents: ExecutiveAgentStat[]; team: ExecutiveTeamMember[]; loading: boolean }) {
-  if (loading && agents.length === 0) return <LoadingSkeleton rows={4} />;
-  if (agents.length === 0) return <EmptyHint text="暂无 Agent 使用数据" />;
-
-  const totalUsers = team.filter(m => m.isActive).length || 1;
-
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {agents.map(agent => {
-          const color = AGENT_COLORS[agent.appKey] ?? D.text3;
-          return (
-            <DashCard key={agent.appKey}>
-              <div className="flex items-center gap-2.5 mb-3">
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: hexAlpha(D.primary, 0.08) }}>
-                  <Bot size={16} style={{ color: D.primary }} />
-                </div>
-                <div>
-                  <span className="text-sm font-semibold" style={{ color: D.text1 }}>{agent.name}</span>
-                  <div className="text-[10px]" style={{ color: D.text3 }}>{agent.appKey}</div>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-[11px]">
-                  <span className="flex items-center gap-1" style={{ color: D.text3 }}>
-                    使用人数
-                    <InfoTip tip="在所选时间范围内使用过该 Agent 的独立用户数（综合 API 调用与 LLM 调用）" />
-                  </span>
-                  <span className="font-semibold" style={{ color: D.text1 }}>{agent.users}/{totalUsers} 人</span>
-                </div>
-                <ProgressBar value={agent.users} max={totalUsers} color={color} />
-                <StatRow label="业务操作" value={agent.apiCalls ?? 0} accent={D.primary} info="该 Agent 在所选时间范围内的写操作次数（POST/PUT/DELETE），反映实际业务使用量" />
-                <StatRow label="LLM 调用" value={agent.llmCalls ?? 0} accent={D.primary} info="该 Agent 触发的大模型请求次数（基于 llm_request_logs）" />
-                <StatRow label="Token 消耗" value={formatTokens(agent.tokens)} accent={D.primary} info="该 Agent 所有 LLM 请求的输入 + 输出 Token 总和" />
-                <StatRow label="平均响应" value={`${(agent.avgDurationMs / 1000).toFixed(1)}s`} accent={D.primary} info="该 Agent 所有已完成 LLM 请求的平均耗时（不含未完成请求）" />
-              </div>
-            </DashCard>
-          );
-        })}
-      </div>
-
-      <DashCard>
-        <SectionTitle>Agent 调用排名</SectionTitle>
-        <div className="overflow-x-auto">
-          <table className="w-full text-[12px]">
-            <thead>
-              <tr style={{ borderBottom: `1px solid ${D.border}` }}>
-                <th className="text-left py-2 pr-4 font-medium" style={{ color: D.text3 }}>Agent</th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: D.text3 }}>
-                  <span className="inline-flex items-center gap-1 justify-end">总调用 <InfoTip tip="业务操作 + LLM 调用合计" /></span>
-                </th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: D.text3 }}>
-                  <span className="inline-flex items-center gap-1 justify-end">业务操作 <InfoTip tip="POST/PUT/DELETE 请求数" /></span>
-                </th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: D.text3 }}>
-                  <span className="inline-flex items-center gap-1 justify-end">LLM <InfoTip tip="大模型调用次数" /></span>
-                </th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: D.text3 }}>
-                  <span className="inline-flex items-center gap-1 justify-end">用户数 <InfoTip tip="去重后的独立用户数" /></span>
-                </th>
-                <th className="text-right py-2 px-3 font-medium" style={{ color: D.text3 }}>
-                  <span className="inline-flex items-center gap-1 justify-end">Token <InfoTip tip="输入 + 输出 Token 总和" /></span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {agents.map(a => (
-                <tr key={a.appKey} style={{ borderBottom: `1px solid ${D.border}` }}>
-                  <td className="py-2.5 pr-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full" style={{ background: D.primary }} />
-                      <span className="text-sm font-medium" style={{ color: D.text1 }}>{a.name}</span>
-                    </div>
-                  </td>
-                  <td className="py-2.5 px-3 text-right tabular-nums font-medium" style={{ color: D.text1 }}>{a.calls.toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: D.text2 }}>{(a.apiCalls ?? 0).toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: D.text2 }}>{(a.llmCalls ?? 0).toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: D.text1 }}>{a.users}</td>
-                  <td className="py-2.5 px-3 text-right tabular-nums" style={{ color: D.text1 }}>{formatTokens(a.tokens)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </DashCard>
-    </div>
-  );
-}
-
-// ─── Tab: Cost Center (Models) ──────────────────────────────────────
-
-function formatCost(v: number): string {
-  if (v === 0) return '-';
-  if (v >= 10000) return `¥${(v / 10000).toFixed(1)}万`;
-  if (v >= 1) return `¥${v.toFixed(2)}`;
-  if (v >= 0.01) return `¥${v.toFixed(2)}`;
-  return `¥${v.toFixed(4)}`;
-}
-
-function CostCenterTab({ models, loading }: { models: ExecutiveModelStat[]; loading: boolean }) {
-  if (loading && models.length === 0) return <LoadingSkeleton rows={4} />;
-  if (models.length === 0) return <EmptyHint text="暂无模型使用数据" />;
-
-  const totalCalls = models.reduce((s, m) => s + m.calls, 0);
-  const totalTokens = models.reduce((s, m) => s + m.totalTokens, 0);
-  const totalImages = models.reduce((s, m) => s + m.imageCount, 0);
-  const totalTokenCost = models.reduce((s, m) => s + m.tokenCost, 0);
-  const totalCallCost = models.reduce((s, m) => s + m.callCost, 0);
-  const totalCost = models.reduce((s, m) => s + m.totalCost, 0);
-  const pricedModels = models.filter(m => m.hasPricing).length;
-
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <DashKpi title="预估总成本" value={formatCost(totalCost)} icon={<DollarSign size={13} />} animated info={`Token 成本 ${formatCost(totalTokenCost)} + 调用成本 ${formatCost(totalCallCost)}（${pricedModels}/${models.length} 个模型已配置定价）`} />
-        <DashKpi title="总调用次数" value={totalCalls} icon={<Cpu size={13} />} animated info="所有模型的 LLM Gateway 请求总次数" />
-        <DashKpi title="总 Token" value={formatTokens(totalTokens)} icon={<Zap size={13} />} animated info="所有模型的 Input + Output Token 合计" />
-        <DashKpi title="生成图片" value={totalImages > 0 ? totalImages : models.length} icon={totalImages > 0 ? <Image size={13} /> : <Bot size={13} />} animated info={totalImages > 0 ? '所有模型成功生成的图片总数' : '在所选时间范围内被调用过的不同模型数'} />
-      </div>
-
-      {/* 成本构成 */}
-      {totalCost > 0 && (
-        <DashCard>
-          <SectionTitle>成本构成</SectionTitle>
-          <div className="grid grid-cols-2 gap-4 py-2">
-            <div className="flex items-center gap-3">
-              <div className="w-3 h-3 rounded-sm" style={{ background: D.primary }} />
-              <div>
-                <div className="text-xs" style={{ color: D.text3 }}>Token 成本</div>
-                <div className="text-sm font-semibold tabular-nums" style={{ color: D.text1 }}>{formatCost(totalTokenCost)}</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-3 h-3 rounded-sm" style={{ background: hexAlpha(D.primary, 0.5) }} />
-              <div>
-                <div className="text-xs" style={{ color: D.text3 }}>调用成本（图片等）</div>
-                <div className="text-sm font-semibold tabular-nums" style={{ color: D.text1 }}>{formatCost(totalCallCost)}</div>
-              </div>
-            </div>
-          </div>
-        </DashCard>
-      )}
-
-      <DashCard>
-        <SectionTitle>按模型调用量</SectionTitle>
-        <EChart option={makeModelBarOption(models.slice(0, 15))} height={300} />
-      </DashCard>
-
-      <DashCard>
-        <SectionTitle>模型使用明细</SectionTitle>
-        <div className="overflow-x-auto">
-          <table className="w-full text-[12px]">
-            <thead>
-              <tr style={{ borderBottom: `1px solid ${D.border}` }}>
-                <th className="text-left py-2 font-medium" style={{ color: D.text3 }}>
-                  <span className="inline-flex items-center gap-1">模型 <InfoTip tip="LLM Gateway 中实际使用的模型名称" /></span>
-                </th>
-                <th className="text-right py-2 font-medium" style={{ color: D.text3 }}>
-                  <span className="inline-flex items-center gap-1 justify-end">调用 <InfoTip tip="该模型在所选时间范围内被调用的总次数" /></span>
-                </th>
-                <th className="text-right py-2 font-medium" style={{ color: D.text3 }}>
-                  <span className="inline-flex items-center gap-1 justify-end">输入 Token <InfoTip tip="发送给该模型的 Prompt Token 总量" /></span>
-                </th>
-                <th className="text-right py-2 font-medium" style={{ color: D.text3 }}>
-                  <span className="inline-flex items-center gap-1 justify-end">输出 Token <InfoTip tip="该模型生成的 Completion Token 总量" /></span>
-                </th>
-                <th className="text-right py-2 font-medium" style={{ color: D.text3 }}>
-                  <span className="inline-flex items-center gap-1 justify-end">图片 <InfoTip tip="该模型成功生成的图片数量" /></span>
-                </th>
-                <th className="text-right py-2 font-medium" style={{ color: D.text3 }}>
-                  <span className="inline-flex items-center gap-1 justify-end">预估成本 <InfoTip tip="Token 成本 + 按次调用成本（需在模型池中配置定价）" /></span>
-                </th>
-                <th className="text-right py-2 font-medium" style={{ color: D.text3 }}>
-                  <span className="inline-flex items-center gap-1 justify-end">平均响应 <InfoTip tip="该模型所有已完成请求的平均耗时（排除未完成请求）" /></span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {models.map(m => (
-                <tr key={m.model} style={{ borderBottom: `1px solid ${D.border}` }}>
-                  <td className="py-2.5 font-medium" style={{ color: D.text1 }}>
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full" style={{ background: D.primary }} />
-                      {m.model}
-                    </div>
-                  </td>
-                  <td className="py-2.5 text-right tabular-nums font-medium" style={{ color: D.text1 }}>{m.calls.toLocaleString()}</td>
-                  <td className="py-2.5 text-right tabular-nums" style={{ color: D.text2 }}>{formatTokens(m.inputTokens)}</td>
-                  <td className="py-2.5 text-right tabular-nums" style={{ color: D.text2 }}>{formatTokens(m.outputTokens)}</td>
-                  <td className="py-2.5 text-right tabular-nums" style={{ color: D.text2 }}>{m.imageCount > 0 ? m.imageCount.toLocaleString() : '-'}</td>
-                  <td className="py-2.5 text-right tabular-nums font-medium" style={{ color: m.hasPricing ? D.primary : D.text3 }}>
-                    {m.hasPricing ? formatCost(m.totalCost) : <span className="text-[10px] opacity-60">未配置</span>}
-                  </td>
-                  <td className="py-2.5 text-right tabular-nums font-medium" style={{ color: D.primary }}>{(m.avgDurationMs / 1000).toFixed(1)}s</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </DashCard>
-    </div>
-  );
-}
-
-// ─── Tab: Integrations (placeholder) ────────────────────────────────
-
-function IntegrationsTab() {
-  const integrations = [
-    { source: 'Claude Code', icon: Zap, desc: '代码变更、Commit 统计自动汇入周报' },
-    { source: 'Jira', icon: BarChart3, desc: '任务进度、Sprint 数据自动同步' },
-    { source: 'GitLab', icon: Activity, desc: 'MR 数量、代码审查、CI/CD 状态' },
-    { source: '飞书', icon: MessageSquare, desc: '周报自动推送、审批流程对接' },
-  ];
-
-  const roadmap = [
-    { phase: 'Phase 1', label: '数据采集层', items: ['Webhook 回调接口', '活动数据标准化', '来源身份验证'] },
-    { phase: 'Phase 2', label: '集成适配器', items: ['Claude Code 适配器', 'GitLab 适配器', 'Jira 适配器'] },
-    { phase: 'Phase 3', label: '数据融合展示', items: ['个人画像跨源合并', '周报自动汇总', '团队协作热力图'] },
-  ];
-
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {integrations.map(int => (
-          <DashCard key={int.source}>
-            <div className="flex items-center gap-2.5 mb-2.5">
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: hexAlpha(D.primary, 0.08) }}>
-                <int.icon size={17} style={{ color: D.primary }} />
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-semibold" style={{ color: D.text1 }}>{int.source}</div>
-                <div className="text-[10px] font-medium" style={{ color: D.text3 }}>规划中</div>
-              </div>
-              <div className="w-2 h-2 rounded-full bg-token-nested"  />
-            </div>
-            <div className="text-[11px] leading-relaxed" style={{ color: D.text2 }}>{int.desc}</div>
-          </DashCard>
-        ))}
-      </div>
-
-      <DashCard>
-        <SectionTitle>集成路线图</SectionTitle>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
-          {roadmap.map((phase, idx) => (
-            <div key={phase.phase} className="relative">
-              {idx < roadmap.length - 1 && (
-                <div className="hidden md:block absolute top-5 -right-2 w-4 h-0.5" style={{ background: `${hexAlpha(D.primary, 0.2)}` }} />
-              )}
-              <div className="p-4 rounded-xl" style={{
-                background: hexAlpha(D.primary, 0.04),
-                border: `1px solid ${hexAlpha(D.primary, 0.08)}`,
-              }}>
-                <div className="flex items-center gap-2.5 mb-3">
-                  <div className="w-7 h-7 rounded-lg flex items-center justify-center text-[11px] font-bold"
-                    style={{ background: hexAlpha(D.primary, 0.1), color: D.primary }}>
-                    {idx + 1}
-                  </div>
-                  <div>
-                    <div className="text-[12px] font-semibold" style={{ color: D.text1 }}>{phase.label}</div>
-                    <div className="text-[10px]" style={{ color: D.text3 }}>{phase.phase}</div>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {phase.items.map(item => (
-                    <div key={item} className="flex items-center gap-2 text-[11px]" style={{ color: D.text2 }}>
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: hexAlpha(D.primary, 0.4) }} />
-                      {item}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </DashCard>
-    </div>
-  );
-}
-
-// ─── Main Page ──────────────────────────────────────────────────────
+import {
+  ExecutiveOverviewWorkspace,
+  ExecutiveAgentsWorkspace,
+  ExecutiveCostWorkspace,
+  ExecutiveIntegrationsWorkspace,
+} from './executive/ExecutiveOperationsWorkspace';
 
 const TABS = [
-  { key: 'team', label: '团队洞察', mobileLabel: '团队', icon: <Users size={14} /> },
-  { key: 'overview', label: '全局概览', mobileLabel: '全局', icon: <TrendingUp size={14} /> },
-  { key: 'agents', label: 'Agent 使用', mobileLabel: 'Agent', icon: <Bot size={14} /> },
-  { key: 'cost', label: '成本中心', mobileLabel: '成本', icon: <DollarSign size={14} /> },
-  { key: 'integrations', label: '外部协作', mobileLabel: '协作', icon: <Link2 size={14} /> },
+  {
+    key: 'team',
+    label: '团队洞察',
+    mobileLabel: '团队',
+    icon: <Users size={14} />,
+  },
+  {
+    key: 'overview',
+    label: '全局概览',
+    mobileLabel: '全局',
+    icon: <TrendingUp size={14} />,
+  },
+  {
+    key: 'agents',
+    label: 'Agent 使用',
+    mobileLabel: 'Agent',
+    icon: <Bot size={14} />,
+  },
+  {
+    key: 'cost',
+    label: '成本中心',
+    mobileLabel: '成本',
+    icon: <DollarSign size={14} />,
+  },
+  {
+    key: 'integrations',
+    label: '外部协作',
+    mobileLabel: '协作',
+    icon: <Link2 size={14} />,
+  },
 ];
 
 const DAYS_OPTIONS = [
@@ -659,24 +71,71 @@ const DAYS_OPTIONS = [
 
 export default function ExecutiveDashboardPage() {
   const { isMobile } = useBreakpoint();
-  const [activeTab, setActiveTab] = useState('team');
+  const [params, setParams] = useSearchParams();
+  const activeTab = TABS.some((tab) => tab.key === params.get('tab'))
+    ? params.get('tab')!
+    : 'team';
+  const setActiveTab = (tab: string) =>
+    setParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.set('tab', tab);
+        next.delete('agent');
+        return next;
+      },
+      { replace: true },
+    );
   const [days, setDays] = useState(0);
   const [revision, setRevision] = useState(0);
-  const overviewQuery = useExecutiveQuery(getExecutiveOverview, days, activeTab === 'overview', revision);
-  const trendsQuery = useExecutiveQuery(getExecutiveTrends, Math.max(days, 14), activeTab === 'overview', revision);
-  const teamQuery = useExecutiveQuery(getExecutiveTeam, days, activeTab === 'agents', revision);
-  const agentsQuery = useExecutiveQuery(getExecutiveAgents, days, activeTab === 'overview' || activeTab === 'agents', revision);
-  const modelsQuery = useExecutiveQuery(getExecutiveModels, days, activeTab === 'cost', revision);
-  const insightsQuery = useExecutiveQuery(getTeamInsights, days, activeTab === 'team', revision);
+  const overviewQuery = useExecutiveQuery(
+    getExecutiveOverview,
+    days,
+    activeTab === 'overview',
+    revision,
+  );
+  const trendsQuery = useExecutiveQuery(
+    getExecutiveTrends,
+    days || 14,
+    activeTab === 'overview',
+    revision,
+  );
+  const teamQuery = useExecutiveQuery(
+    getExecutiveTeam,
+    days,
+    activeTab === 'agents',
+    revision,
+  );
+  const agentsQuery = useExecutiveQuery(
+    getExecutiveAgents,
+    days,
+    activeTab === 'overview' || activeTab === 'agents',
+    revision,
+  );
+  const modelsQuery = useExecutiveQuery(
+    getExecutiveModels,
+    days,
+    activeTab === 'cost',
+    revision,
+  );
+  const insightsQuery = useExecutiveQuery(
+    getTeamInsights,
+    days,
+    activeTab === 'team',
+    revision,
+  );
   const queryRegistry = {
-    team: [insightsQuery], overview: [overviewQuery, trendsQuery, agentsQuery],
-    agents: [agentsQuery, teamQuery], cost: [modelsQuery], integrations: [],
+    team: [insightsQuery],
+    overview: [overviewQuery, trendsQuery, agentsQuery],
+    agents: [agentsQuery, teamQuery],
+    cost: [modelsQuery],
+    integrations: [],
   };
-  const activeQueries = queryRegistry[activeTab as keyof typeof queryRegistry] ?? [];
-  const loading = activeQueries.some(query => query.loading);
-  const error = activeQueries.find(query => query.error)?.error;
-  const previous = activeQueries.find(query => query.updatedAt !== undefined);
-  const showingPrevious = activeQueries.some(query => query.stale);
+  const activeQueries =
+    queryRegistry[activeTab as keyof typeof queryRegistry] ?? [];
+  const loading = activeQueries.some((query) => query.loading);
+  const error = activeQueries.find((query) => query.error)?.error;
+  const previous = activeQueries.find((query) => query.updatedAt !== undefined);
+  const showingPrevious = activeQueries.some((query) => query.stale);
   const [waitingLong, setWaitingLong] = useState(false);
   useEffect(() => {
     setWaitingLong(false);
@@ -684,28 +143,117 @@ export default function ExecutiveDashboardPage() {
     const timer = window.setTimeout(() => setWaitingLong(true), 2000);
     return () => window.clearTimeout(timer);
   }, [loading, activeTab, days, revision]);
-  const previousLabel = previous?.dataDays === 0 ? '全部时间' : `最近 ${previous?.dataDays} 天`;
+  const previousLabel =
+    previous?.dataDays === 0 ? '全部时间' : `最近 ${previous?.dataDays} 天`;
 
   return (
     <div className="executive-dashboard h-full min-h-0 flex flex-col">
       <header className="exec-page-header">
-        <div className="exec-page-title"><BarChart3 size={16} /><span>统计中心</span></div>
+        <div className="exec-page-title">
+          <BarChart3 size={16} />
+          <span>统计中心</span>
+        </div>
         <nav className="exec-page-tabs" aria-label="统计分类">
-          {TABS.map(tab => <button key={tab.key} className={activeTab === tab.key ? 'active' : ''} aria-current={activeTab === tab.key ? 'page' : undefined} onClick={() => setActiveTab(tab.key)}>{tab.icon}{isMobile ? tab.mobileLabel : tab.label}</button>)}
+          {TABS.map((tab) => (
+            <button
+              key={tab.key}
+              className={activeTab === tab.key ? 'active' : ''}
+              aria-current={activeTab === tab.key ? 'page' : undefined}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.icon}
+              {isMobile ? tab.mobileLabel : tab.label}
+            </button>
+          ))}
         </nav>
         <div className="exec-page-actions">
-          <label className="exec-range-control"><CalendarDays size={13} /><select aria-label="统计时间范围" value={days} onChange={event => setDays(Number(event.target.value))}>{DAYS_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-          <button className="exec-refresh" onClick={() => setRevision(value => value + 1)} disabled={loading} title="刷新数据">{loading ? <MapSpinner size={13} /> : <RefreshCw size={13} />}刷新</button>
+          {activeTab !== 'integrations' && (
+            <label className="exec-range-control">
+              <CalendarDays size={13} />
+              <select
+                aria-label="统计时间范围"
+                value={days}
+                onChange={(event) => setDays(Number(event.target.value))}
+              >
+                {DAYS_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button
+            className="exec-refresh"
+            onClick={() => setRevision((value) => value + 1)}
+            disabled={loading}
+            title="刷新数据"
+          >
+            {loading ? <MapSpinner size={13} /> : <RefreshCw size={13} />}刷新
+          </button>
         </div>
       </header>
-      {loading && <div className="exec-fetch-state" role="status" aria-live="polite"><MapSpinner size={12} /><span>{waitingLong ? '正在汇总历史数据，请稍候…' : '正在更新统计…'}{showingPrevious && previous?.dataDays !== undefined ? ` 当前仍显示${previousLabel}的上次结果。` : ''}</span></div>}
-      {error && <div role="alert" className="exec-fetch-state error"><span>统计加载失败：{error}。{previous?.updatedAt !== undefined ? ` 当前保留${previousLabel}的上次结果。` : ''}</span><button onClick={() => setRevision(value => value + 1)}>重试</button></div>}
+      {loading && (
+        <div className="exec-fetch-state" role="status" aria-live="polite">
+          <MapSpinner size={12} />
+          <span>
+            {waitingLong ? '正在汇总历史数据，请稍候…' : '正在更新统计…'}
+            {showingPrevious && previous?.dataDays !== undefined
+              ? ` 当前仍显示${previousLabel}的上次结果。`
+              : ''}
+          </span>
+        </div>
+      )}
+      {error && (
+        <div role="alert" className="exec-fetch-state error">
+          <span>
+            统计加载失败：{error}。
+            {previous?.updatedAt !== undefined
+              ? ` 当前保留${previousLabel}的上次结果。`
+              : ''}
+          </span>
+          <button onClick={() => setRevision((value) => value + 1)}>
+            重试
+          </button>
+        </div>
+      )}
       <div className="exec-page-body">
-        {activeTab === 'team' && <TeamInsightsWorkspace data={insightsQuery.data ?? null} loading={insightsQuery.loading} onOpenTab={setActiveTab} />}
-        {activeTab === 'overview' && <div className="exec-other-tab"><OverviewTab overview={overviewQuery.data ?? null} trends={trendsQuery.data ?? []} agents={agentsQuery.data ?? []} loading={overviewQuery.loading} /></div>}
-        {activeTab === 'agents' && <div className="exec-other-tab"><AgentUsageTab agents={agentsQuery.data ?? []} team={teamQuery.data ?? []} loading={agentsQuery.loading} /></div>}
-        {activeTab === 'cost' && <div className="exec-other-tab"><CostCenterTab models={modelsQuery.data ?? []} loading={modelsQuery.loading} /></div>}
-        {activeTab === 'integrations' && <div className="exec-other-tab"><IntegrationsTab /></div>}
+        {activeTab === 'team' && (
+          <TeamInsightsWorkspace
+            data={insightsQuery.data ?? null}
+            loading={insightsQuery.loading}
+            onOpenTab={setActiveTab}
+          />
+        )}
+        {activeTab === 'overview' && (
+          <div className="exec-other-tab">
+            <ExecutiveOverviewWorkspace
+              overview={overviewQuery.data}
+              trends={trendsQuery.data}
+              agents={agentsQuery.data}
+            />
+          </div>
+        )}
+        {activeTab === 'agents' && (
+          <div className="exec-other-tab">
+            <ExecutiveAgentsWorkspace
+              key={params.get('agent')}
+              initialAgent={params.get('agent')}
+              agents={agentsQuery.data}
+              team={teamQuery.data}
+            />
+          </div>
+        )}
+        {activeTab === 'cost' && (
+          <div className="exec-other-tab">
+            <ExecutiveCostWorkspace models={modelsQuery.data} />
+          </div>
+        )}
+        {activeTab === 'integrations' && (
+          <div className="exec-other-tab">
+            <ExecutiveIntegrationsWorkspace revision={revision} />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -18,6 +18,8 @@
 
 ## 文档列表
 
+- [MAP 运营工作区改造目标 · 计划](./plan.frontend.workspace.md) `plan.frontend.workspace`
+
 - [知识库信息高效传递与复刻验收计划](./plan.knowledge-base.information-delivery.md) `plan.knowledge-base.information-delivery`
 
 - [CDS 自动化任务健康与安全恢复 · 指南](./guide.cds.automation-health.md) `guide.cds.automation-health`

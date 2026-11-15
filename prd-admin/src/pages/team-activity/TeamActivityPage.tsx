@@ -1,3 +1,4 @@
+import { WorkspaceSearch, PersonAvatar } from '@/components/workspace/Workspace';
 /**
  * 团队动态 — 团队脉搏 + 全员工作日志时间线（仅管理员，team-activity.read）。
  * 数据由后端 ActivityLogActionFilter 按白名单自动留痕，本页只读：
@@ -84,6 +85,7 @@ export default function TeamActivityPage() {
 
   const [filterUserId, setFilterUserId] = useState('');
   const [filterModule, setFilterModule] = useState('');
+  const [feedQuery, setFeedQuery] = useState('');
   // 默认「今天」：脉搏回答的是「团队此刻在干嘛」，历史全量是查询场景而非默认视图。
   // 时间范围扩展为「预设 | 自定义[from,to]」，由 TimeRangePicker 驱动。
   const [timeRange, setTimeRange] = useState<TeamRange>({ kind: 'preset', preset: 'today' });
@@ -183,7 +185,7 @@ export default function TeamActivityPage() {
 
   const dayGroups = useMemo(() => {
     const groups: Array<{ key: string; items: TeamActivityItem[] }> = [];
-    for (const item of items) {
+    for (const item of items.filter(item => `${item.targetTitle || ''} ${item.actionLabel}`.toLowerCase().includes(feedQuery.trim().toLowerCase()))) {
       const key = dayKeyOf(item.createdAt);
       const last = groups[groups.length - 1];
       if (last && last.key === key) last.items.push(item);
@@ -191,7 +193,7 @@ export default function TeamActivityPage() {
     }
     // 连续同类动作折叠发生在天分组内部，不跨天合并
     return groups.map((g) => ({ key: g.key, total: g.items.length, rows: aggregateConsecutive(g.items) }));
-  }, [items]);
+  }, [items, feedQuery]);
 
   return (
     // 控制台三栏：左成员统计 / 中时间线 / 右分类统计。限一个上限宽避免巨幕下三栏间距失衡。
@@ -209,6 +211,15 @@ export default function TeamActivityPage() {
         onChange={(key) => switchView(key === 'insights' ? 'insights' : 'feed')}
         actions={<TimeRangePicker value={timeRange} onChange={setTimeRange} />}
       />
+
+      <div className="map-workspace">
+        <div className="workspace-people" aria-label="按成员查看动态">
+          <strong>成员动态</strong><span>{statsLoading ? '读取中' : stats ? `${stats.activeMembers} 人有记录` : '数据尚未就绪'}</span>
+          <div>{stats?.actors.slice(0,8).map(actor=><button type="button" key={actor.actorId} aria-pressed={filterUserId===actor.actorId} onClick={()=>{pickActor(actor.actorId);switchView('feed');}}><PersonAvatar person={{displayName:privacy ? '匿名成员' : actor.actorName || actor.actorId,avatarFileName:privacy ? null : actor.actorAvatarFileName}} size={25}/><span>{privacy ? maskName(actor.actorName || actor.actorId) : actor.actorName || actor.actorId}</span><small>{actor.count}</small></button>)}</div>
+          {filterUserId && <button type="button" className="ws-link" onClick={()=>setFilterUserId('')}>全部成员</button>}
+        </div>
+        {view === 'feed' && <div className="ws-toolbar"><WorkspaceSearch value={feedQuery} onChange={setFeedQuery} placeholder="搜索已载入动态的标题或操作"/><span>已载入 {items.length} / {total} 条 · 支持继续加载</span></div>}
+      </div>
 
       {/* 下方筛选栏：仅动态流视图保留（成员 / 模块 / 隐私脱敏）。行为洞察视图时间已上移页头，无需此栏。
           手机端合并为一条横滚条（成员选择 + 模块 chips + 匿名开关同行，禁换行），sm 起恢复 wrap。 */}
@@ -258,7 +269,7 @@ export default function TeamActivityPage() {
       >
         {/* 左栏：成员统计（窄屏自然高度堆叠，lg 起独立滚动） */}
         <div
-          className="flex flex-col gap-4 min-h-0 lg:overflow-y-auto"
+          className="order-2 lg:order-none flex flex-col gap-4 min-h-0 lg:overflow-y-auto"
           style={{ overscrollBehavior: 'contain' }}
         >
           <MemberStatsPanel
@@ -272,7 +283,7 @@ export default function TeamActivityPage() {
         </div>
 
         {/* 中栏：时间线主体 */}
-        <GlassCard className="flex flex-col" style={{ minHeight: 0 }}>
+        <GlassCard className="order-1 lg:order-none flex flex-col" style={{ minHeight: 0 }}>
         <div
           className="flex-1 px-3 py-3 sm:px-5 sm:py-4"
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
@@ -298,6 +309,7 @@ export default function TeamActivityPage() {
             </div>
           ) : (
             <div className="flex flex-col gap-4">
+              {dayGroups.length === 0 && <div className="workspace-context"><span>已载入动态没有匹配结果。</span><button type="button" onClick={()=>setFeedQuery('')}>清除搜索</button></div>}
               {dayGroups.map((g) => (
                 <div key={g.key} className="flex flex-col">
                   {/* 吸顶日期头：长流滚动时始终知道自己看到哪一天 */}
@@ -334,7 +346,7 @@ export default function TeamActivityPage() {
 
         {/* 右栏：分类统计（窄屏自然高度堆叠，lg 起独立滚动） */}
         <div
-          className="flex flex-col gap-4 min-h-0 lg:overflow-y-auto"
+          className="order-3 lg:order-none flex flex-col gap-4 min-h-0 lg:overflow-y-auto"
           style={{ overscrollBehavior: 'contain' }}
         >
           <CategoryStatsPanel
