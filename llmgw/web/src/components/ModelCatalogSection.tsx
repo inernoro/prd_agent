@@ -251,7 +251,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
   }
   useEffect(() => {
     if (!editorEntry) return;
-    if (editing) { editorRef.current?.scrollIntoView({ block: 'start' }); editorRef.current?.querySelector('input:not(:disabled)')?.focus({ preventScroll: true }); }
+    if (editing) { editorRef.current?.scrollIntoView({ block: 'start' }); editorRef.current?.querySelector<HTMLInputElement>('input:not(:disabled)')?.focus({ preventScroll: true }); }
     else if (editorOrigin.current?.isConnected && editorOrigin.current !== document.body) editorOrigin.current.focus();
     else document.querySelector<HTMLButtonElement>('[data-catalog-create]')?.focus();
   }, [editorEntry, editing !== null]);
