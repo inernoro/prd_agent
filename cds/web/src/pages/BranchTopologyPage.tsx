@@ -1,6 +1,6 @@
 import { TopologyPageSkeleton } from '@/components/skeletons/WorkspaceSkeletons';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
   AlertCircle,
@@ -34,6 +34,7 @@ import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import {
   Dialog,
   DialogContent,
+  DialogBody,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -362,6 +363,17 @@ export function BranchTopologyPage(): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [selectedBranchId, setSelectedBranchId] = useState(branchIdFromQuery());
   const [selectedNode, setSelectedNode] = useState<SelectedNode>(null);
+  const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
+  const [desktopDetails, setDesktopDetails] = useState(() => window.matchMedia('(min-width: 1280px)').matches);
+  const [mobileSelection, setMobileSelection] = useState<{ node: Exclude<SelectedNode, null>; projectId: string; branchId: string; label: string } | null>(null);
+  const serviceWorkspace = useRef<HTMLElement>(null);
+  const focusWorkspaceOnClose = useRef(false);
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 1280px)');
+    const update = () => setDesktopDetails(query.matches);
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
   const [branchFilter, setBranchFilter] = useState('');
   const [quickBranchName, setQuickBranchName] = useState('');
   const [infraDialogOpen, setInfraDialogOpen] = useState(false);
@@ -570,12 +582,23 @@ export function BranchTopologyPage(): JSX.Element {
     ));
   }, [branchFilter, state]);
 
-  const selectedProfile = state.status === 'ok' && selectedNode?.kind === 'profile'
-    ? state.profiles.find((profile) => profile.id === selectedNode.id) || null
-    : null;
-  const selectedInfra = state.status === 'ok' && selectedNode?.kind === 'infra'
-    ? state.infra.find((service) => service.id === selectedNode.id) || null
-    : null;
+  const chooseNode = (node: Exclude<SelectedNode, null>, label: string) => {
+    setSelectedNode(node);
+    if (!desktopDetails) { setMobileSelection({ node, projectId, branchId: selectedBranchId, label }); setMobileDetailsOpen(true); }
+  };
+  const mobileObjectAvailable = Boolean(mobileSelection && state.status === 'ok'
+    && projectId === mobileSelection.projectId && state.project.id === mobileSelection.projectId
+    && (!mobileSelection.branchId || state.branches.some(branch => branch.id === mobileSelection.branchId))
+    && (mobileSelection.node.kind === 'profile' ? state.profiles.some(profile => profile.id === mobileSelection.node.id) : state.infra.some(service => service.id === mobileSelection.node.id)));
+  useEffect(() => {
+    if (!mobileSelection || !mobileDetailsOpen) return;
+    if (desktopDetails) { setMobileDetailsOpen(false); return; }
+    if (state.status === 'ok' && !mobileObjectAvailable) {
+      focusWorkspaceOnClose.current = true;
+      setMobileDetailsOpen(false);
+      setToast('原选中对象已不在当前拓扑中，已返回服务列表。');
+    }
+  }, [desktopDetails, mobileDetailsOpen, mobileSelection, mobileObjectAvailable, state.status]);
 
   useEffect(() => {
     if (state.status !== 'ok') return;
@@ -613,6 +636,15 @@ export function BranchTopologyPage(): JSX.Element {
   const activeBranchServiceTotal = serviceCount(activeBranch);
   const activeBranchRunningServices = runningServiceCount(activeBranch);
   const activePreviewUrl = state.status === 'ok' ? profilePreviewUrl(activeBranch, state.previewMode, state.config) : '';
+  const nodeDetails = (node: SelectedNode, branch: BranchSummary | null) => state.status === 'ok' ? (
+    <NodeDetails
+      key={`${projectId}:${node?.kind}:${node?.id}:${branch?.id || 'shared'}`}
+      selectedProfile={node?.kind === 'profile' ? state.profiles.find(profile => profile.id === node.id) || null : null}
+      selectedInfra={node?.kind === 'infra' ? state.infra.find(service => service.id === node.id) || null : null}
+      branches={state.branches} activeBranch={branch} infra={state.infra} routingRules={state.routingRules}
+      previewMode={state.previewMode} config={state.config} projectId={projectId} onToast={setToast}
+    />
+  ) : null;
   const openQuickPreview = (branchName: string): void => {
     const next = branchName.trim();
     if (!next) return;
@@ -737,12 +769,14 @@ export function BranchTopologyPage(): JSX.Element {
                       onChange={(event) => setBranchFilter(event.target.value)}
                       className="h-11 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
                       placeholder="搜索分支"
+                      style={{ height: 44 }}
                     />
                   </label>
                   <label className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-[3.25rem_minmax(0,1fr)] sm:items-center">
                     <span>分支</span>
                     <select
                       className="h-11 min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      style={{ height: 44 }}
                       value={selectedBranchId}
                       onChange={(event) => setSelectedBranchId(event.target.value)}
                     >
@@ -755,7 +789,7 @@ export function BranchTopologyPage(): JSX.Element {
                     </select>
                   </label>
                   <details className="group min-w-0">
-                    <summary className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />按分支名打开预览</summary>
+                    <summary style={{ minHeight: 44 }} className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />按分支名打开预览</summary>
                   <form
                     className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
                     onSubmit={(event) => {
@@ -807,7 +841,7 @@ export function BranchTopologyPage(): JSX.Element {
 
         {state.status === 'ok' ? (
           <div className={`grid gap-4 ${state.profiles.length || state.infra.length ? 'xl:grid-cols-[minmax(0,1fr)_21.25rem]' : ''}`}>
-            <section className={`cds-surface-raised cds-hairline p-4 ${state.profiles.length || state.infra.length ? 'min-h-[38.75rem]' : ''}`}>
+            <section ref={serviceWorkspace} tabIndex={-1} aria-label="服务与基础设施" className={`cds-surface-raised cds-hairline p-4 ${state.profiles.length || state.infra.length ? 'min-h-[38.75rem]' : ''}`}>
               {state.profiles.length === 0 && state.infra.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 py-8 text-center text-sm text-muted-foreground">
                   <Layers3 className="h-10 w-10" />
@@ -838,7 +872,7 @@ export function BranchTopologyPage(): JSX.Element {
                           branches={state.branches}
                           activeBranch={activeBranch}
                           selected={selectedNode?.kind === 'profile' && selectedNode.id === profile.id}
-                          onClick={() => setSelectedNode({ kind: 'profile', id: profile.id })}
+                          onClick={() => chooseNode({ kind: 'profile', id: profile.id }, profile.name || profile.id)}
                         />
                       ))}
                     </div>
@@ -870,7 +904,7 @@ export function BranchTopologyPage(): JSX.Element {
                             key={service.id}
                             service={service}
                             selected={selectedNode?.kind === 'infra' && selectedNode.id === service.id}
-                            onClick={() => setSelectedNode({ kind: 'infra', id: service.id })}
+                            onClick={() => chooseNode({ kind: 'infra', id: service.id }, service.name || service.id)}
                           />
                         ))}
                       </div>
@@ -880,22 +914,30 @@ export function BranchTopologyPage(): JSX.Element {
               )}
             </section>
 
-            {state.profiles.length || state.infra.length ? <aside className="min-h-[38.75rem] cds-surface-raised cds-hairline p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)] xl:overflow-auto">
-              <NodeDetails
-                selectedProfile={selectedProfile}
-                selectedInfra={selectedInfra}
-                branches={state.branches}
-                activeBranch={activeBranch}
-                infra={state.infra}
-                routingRules={state.routingRules}
-                previewMode={state.previewMode}
-                config={state.config}
-                projectId={projectId}
-                onToast={setToast}
-              />
+            {desktopDetails && (state.profiles.length || state.infra.length) ? <aside className="min-h-[38.75rem] cds-surface-raised cds-hairline p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)] xl:overflow-auto">
+              {nodeDetails(selectedNode, activeBranch)}
             </aside> : null}
           </div>
         ) : null}
+
+        <Dialog open={mobileDetailsOpen && !desktopDetails} onOpenChange={setMobileDetailsOpen}>
+          <DialogContent frame className="max-w-3xl" onCloseAutoFocus={event => {
+            if (focusWorkspaceOnClose.current) {
+              focusWorkspaceOnClose.current = false;
+              event.preventDefault();
+              serviceWorkspace.current?.focus({ preventScroll: true });
+            }
+          }}>
+            <DialogTitle className="sr-only">{mobileSelection?.label || '所选对象'} · 服务详情</DialogTitle>
+            <DialogDescription className="sr-only">查看所选服务的运行状态与配置；关闭后返回原节点和列表位置。</DialogDescription>
+            <DialogBody className="pt-8">
+              {mobileSelection && mobileObjectAvailable && state.status === 'ok'
+                ? nodeDetails(mobileSelection.node, mobileSelection.branchId ? state.branches.find(branch => branch.id === mobileSelection.branchId) || null : null)
+                : <p role="alert" className="text-sm text-muted-foreground">原选中对象暂时无法确认，当前没有借用其他节点的内容。</p>}
+            </DialogBody>
+            <DialogFooter className="shrink-0 border-t border-border px-5 py-3"><Button variant="outline" style={{ minHeight: 44 }} onClick={() => setMobileDetailsOpen(false)}>返回拓扑</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <CreateInfraDialog
           projectId={projectId}
@@ -1283,7 +1325,7 @@ function ProfileNode({
         <div className="flex min-w-0 items-start gap-3">
           <StatusGlyph status={status} />
           <div className="min-w-0">
-            <div className="truncate font-semibold">{profile.name || profile.id}</div>
+            <div className="font-semibold [overflow-wrap:anywhere]">{profile.name || profile.id}</div>
             <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{profile.id}</div>
           </div>
         </div>
@@ -1348,7 +1390,7 @@ function InfraNode({
         <div className="flex min-w-0 items-start gap-3">
           <StatusGlyph status={service.status} />
           <div className="min-w-0">
-            <div className="truncate font-semibold">{service.name || service.id}</div>
+            <div className="font-semibold [overflow-wrap:anywhere]">{service.name || service.id}</div>
             <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{service.id}</div>
           </div>
         </div>
@@ -1545,16 +1587,14 @@ function NodeDetails({
 
   return (
     <div className="space-y-5">
-      <DetailHeader icon={<TerminalSquare className="h-5 w-5" />} title={profile.name || profile.id} subtitle="应用服务" />
+      <DetailHeader icon={<TerminalSquare className="h-5 w-5" />} title={profile.name || profile.id} subtitle={activeBranch ? `应用服务 · ${activeBranch.branch}` : '应用服务 · 共享视图'} />
 
-      <div className="grid gap-2 sm:grid-cols-4">
-        <NodeMiniStat label="状态" value={serviceStateLabel} />
-        <NodeMiniStat label="分支" value={branchesUsingProfile.length} />
-        <NodeMiniStat label="端口" value={profile.containerPort || '-'} />
-        <NodeMiniStat label="路由" value={routeLabel} />
-      </div>
+      <DetailRows columns={2} rows={[
+        ['状态', serviceStateLabel], ['配置分支', String(branchesUsingProfile.length)],
+        ['容器端口', String(profile.containerPort || '-')], ['路由', routeLabel],
+      ]} />
 
-      <div className="cds-surface-sunken cds-hairline px-3 py-3 text-sm">
+      <div className="border-t border-border pt-3 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <CodePill>{profile.id}</CodePill>
           {activeService ? <CodePill>:{activeService.hostPort}</CodePill> : null}
@@ -1567,14 +1607,14 @@ function NodeDetails({
 
       <div className="flex flex-wrap gap-2">
         {activeBranch ? (
-          <Button asChild>
+          <Button asChild style={{ minHeight: 44 }}>
             <a href={`/branch-panel/${encodeURIComponent(activeBranch.id)}?project=${encodeURIComponent(projectId)}`}>
               打开分支详情
             </a>
           </Button>
         ) : null}
         {previewUrl ? (
-          <Button asChild variant="outline">
+          <Button asChild variant="outline" style={{ minHeight: 44 }}>
             <a href={previewUrl} target="_blank" rel="noreferrer">
               打开预览
             </a>
@@ -1790,8 +1830,8 @@ function InfraDetails({
 
   return (
     <div className="space-y-5">
-      <DetailHeader icon={<Database className="h-5 w-5" />} title={selectedInfra.name || selectedInfra.id} subtitle="基础设施" />
-      <DetailRows
+      <DetailHeader icon={<Database className="h-5 w-5" />} title={selectedInfra.name || selectedInfra.id} subtitle="基础设施 · 项目共享" />
+      <DetailRows columns={2}
         rows={[
           ['状态', statusLabel(selectedInfra.status)],
           ['镜像', selectedInfra.dockerImage],
@@ -1802,19 +1842,19 @@ function InfraDetails({
       />
       {selectedInfra.errorMessage ? <ErrorBlock message={selectedInfra.errorMessage} /> : null}
       <div className="grid gap-2 sm:grid-cols-2">
-        <Button type="button" variant="outline" onClick={() => void runInfraAction('start')} disabled={action !== null}>
+        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void runInfraAction('start')} disabled={action !== null}>
           {action === 'start' ? <Loader2 className="animate-spin" /> : <Play />}
           启动
         </Button>
-        <Button type="button" variant="outline" onClick={() => void runInfraAction('restart')} disabled={action !== null}>
+        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void runInfraAction('restart')} disabled={action !== null}>
           {action === 'restart' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
           重启
         </Button>
-        <Button type="button" variant="outline" onClick={() => void runInfraAction('stop')} disabled={action !== null}>
+        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void runInfraAction('stop')} disabled={action !== null}>
           {action === 'stop' ? <Loader2 className="animate-spin" /> : <Square />}
           停止
         </Button>
-        <Button type="button" variant="outline" onClick={() => void loadLogs()} disabled={logsState.status === 'loading'}>
+        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void loadLogs()} disabled={logsState.status === 'loading'}>
           {logsState.status === 'loading' ? <Loader2 className="animate-spin" /> : <FileText />}
           查看日志
         </Button>
@@ -1860,7 +1900,7 @@ function InfraDetails({
           </pre>
         )}
       </DisclosurePanel>
-      <Button asChild variant="outline">
+      <Button asChild variant="outline" style={{ minHeight: 44 }}>
         <a href={`/settings/${encodeURIComponent(projectId)}#cache`}>打开项目设置</a>
       </Button>
     </div>
@@ -1882,20 +1922,20 @@ function DetailHeader({
         {icon}
       </div>
       <div className="min-w-0">
-        <h2 className="truncate text-base font-semibold">{title}</h2>
+        <h2 className="text-base font-semibold [overflow-wrap:anywhere]">{title}</h2>
         <div className="mt-1 text-sm text-muted-foreground">{subtitle}</div>
       </div>
     </div>
   );
 }
 
-function DetailRows({ rows }: { rows: Array<[string, string]> }): JSX.Element {
+function DetailRows({ rows, columns = 1 }: { rows: Array<[string, string]>; columns?: 1 | 2 }): JSX.Element {
   return (
-    <dl className="space-y-3">
+    <dl className={columns === 2 ? 'grid grid-cols-2 gap-x-4 gap-y-3' : 'space-y-3'}>
       {rows.map(([label, value]) => (
-        <div key={label}>
+        <div key={label} className="min-w-0">
           <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">{label}</dt>
-          <dd className="mt-1 break-words text-sm">{value || '-'}</dd>
+          <dd className="mt-1 text-sm [overflow-wrap:anywhere]">{value || '-'}</dd>
         </div>
       ))}
     </dl>
