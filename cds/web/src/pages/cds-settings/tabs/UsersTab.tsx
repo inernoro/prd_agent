@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { KeyRound, ShieldCheck, UserPlus, Users } from 'lucide-react';
 
+import { ConfirmAction } from '@/components/ui/confirm-action';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,8 +25,9 @@ interface MeUser {
   name: string;
 }
 
+const touchActionClass = 'min-h-[3.25rem] text-base [&_svg]:size-[1.875rem] lg:min-h-0 lg:text-xs lg:[&_svg]:size-4';
 const inputCls =
-  'w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
+  'min-h-[3.25rem] text-base lg:min-h-0 lg:text-sm w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
 export function UsersTab({
   onToast,
@@ -39,6 +41,12 @@ export function UsersTab({
   const [meError, setMeError] = useState('');
   const [meAttempt, setMeAttempt] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [busyUser, setBusyUser] = useState('');
+  const [resetUser, setResetUser] = useState<CdsPublicUser | null>(null);
+  const [resetValue, setResetValue] = useState('');
+  const [resetError, setResetError] = useState('');
+  const [resetUnknown, setResetUnknown] = useState(false);
 
   // ── My password ──
   const [oldPw, setOldPw] = useState('');
@@ -124,29 +132,39 @@ export function UsersTab({
 
   const toggleStatus = async (user: CdsPublicUser): Promise<void> => {
     const next = user.status === 'active' ? 'disabled' : 'active';
+    setBusyUser(user.id);
     try {
       await updateUser(user.id, { status: next });
       onToast(`已${next === 'disabled' ? '禁用' : '启用'} ${user.username || user.githubLogin}`);
       await refreshUsers();
-    } catch (err) {
-      onToast(err instanceof ApiError ? err.message : String(err));
-    }
+    } catch (err) { onToast(err instanceof ApiError ? err.message : String(err)); }
+    finally { setBusyUser(''); }
   };
 
-  const resetPassword = async (user: CdsPublicUser): Promise<void> => {
-    const pw = window.prompt(`为 ${user.username || user.githubLogin} 设置新密码（至少 8 位）`);
-    if (pw === null) return;
-    if (pw.length < 8) {
-      onToast('密码长度至少 8 位');
-      return;
-    }
+  const resetPassword = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault();
+    if (!resetUser || resetUnknown) return;
+    if (resetValue.length < 8) { setResetError('新密码长度至少 8 位'); return; }
+    setBusyUser(resetUser.id); setResetError('');
     try {
-      await updateUser(user.id, { newPassword: pw });
-      onToast(`已重置 ${user.username || user.githubLogin} 的密码`);
+      await updateUser(resetUser.id, { newPassword: resetValue });
+      onToast(`已重置 ${resetUser.username || resetUser.githubLogin} 的密码`);
+      setResetValue(''); setResetUser(null);
     } catch (err) {
-      onToast(err instanceof ApiError ? err.message : String(err));
-    }
+      const unknown = !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408);
+      setResetUnknown(unknown);
+      setResetError(unknown ? '密码重置结果未确认，请先让该成员验证新密码，勿重复提交。' : err instanceof Error ? err.message : String(err));
+    } finally { setBusyUser(''); }
   };
+  const needle = query.trim().toLocaleLowerCase();
+  const visibleUsers = users?.filter(user => !needle || [user.username, user.githubLogin, user.name, user.id].some(value => value?.toLocaleLowerCase().includes(needle))) || [];
+  function userActions(user: CdsPublicUser): JSX.Element {
+    return <div className="flex flex-wrap gap-2">
+      {!user.isSystemOwner ? <Button type="button" variant="outline" size="sm" className={touchActionClass} disabled={busyUser === user.id} onClick={() => setGrantUser(user)}>项目授权</Button> : null}
+      {user.authProvider === 'local' ? <Button type="button" variant="outline" size="sm" className={touchActionClass} disabled={busyUser === user.id} onClick={() => { setResetUser(user); setResetValue(''); setResetError(''); setResetUnknown(false); }}>重置密码</Button> : null}
+      {user.id !== me?.id ? <ConfirmAction scopeKey={user.id} title={`${user.status === 'active' ? '禁用' : '启用'}账号：${user.username || user.githubLogin}`} description={`账号编号：${user.id}。${user.status === 'active' ? '禁用后不能继续访问 CDS，账号和项目授权记录保留。' : '启用后按已有项目授权访问，不会新增项目权限。'}`} confirmLabel={user.status === 'active' ? '禁用账号' : '启用账号'} onConfirm={() => toggleStatus(user)} pending={busyUser === user.id} trigger={<Button type="button" variant="outline" size="sm" className={touchActionClass} disabled={busyUser === user.id}>{busyUser === user.id ? '正在更新' : user.status === 'active' ? '禁用' : '启用'}</Button>} /> : null}
+    </div>;
+  }
 
   if (!meLoaded) return <LoadingBlock label="加载用户信息" />;
   if (meError) return <Section title="用户管理"><ErrorBlock message={`当前身份读取失败：${meError}`} /><Button className="mt-3" variant="outline" onClick={() => setMeAttempt(value => value + 1)}>重试读取身份</Button></Section>;
@@ -166,21 +184,22 @@ export function UsersTab({
 
           <Section
             title="用户列表"
-            actions={<Button type="button" onClick={() => setCreateOpen(true)}><UserPlus />创建账号</Button>}
+            actions={<Button type="button" className={touchActionClass} onClick={() => setCreateOpen(true)}><UserPlus />创建账号</Button>}
             description={
               isLegacy
                 ? '持久化用户库中的账号。当前原始管理员由环境变量管理，因此不重复出现在本列表中。'
                 : '系统内所有持久化账号，可管理项目授权、禁用 / 启用账号或重置本地账号密码。'
             }
           >
+            {users && (users.length > 5 || query) ? <label className="mb-3 block sm:max-w-sm"><span className="sr-only">搜索用户</span><input aria-label="搜索用户" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索账号、姓名或编号" className={inputCls} /></label> : null}
             {usersError ? (
-              <ErrorBlock message={usersError} />
+              <div className="space-y-2"><ErrorBlock message={usersError} /><Button variant="outline" onClick={() => void refreshUsers()}>重新读取用户</Button></div>
             ) : users === null ? (
               <LoadingBlock label="加载用户列表" />
             ) : users.length === 0 ? (
               <EmptyBlock title="还没有用户" description="创建第一个本地账号，或邀请成员通过 GitHub 登录。" />
             ) : (
-              <div className="overflow-x-auto rounded-md border border-border">
+              <div className="hidden overflow-x-auto rounded-md border border-border lg:block">
                 <table className="w-full min-w-[42rem] text-sm">
                   <thead className="bg-muted/40 text-left text-xs uppercase tracking-normal text-muted-foreground">
                     <tr>
@@ -192,7 +211,7 @@ export function UsersTab({
                     </tr>
                   </thead>
                   <tbody>
-                    {users.map((u) => (
+                    {visibleUsers.map((u) => (
                       <tr key={u.id} className="border-t border-border">
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2 font-medium text-foreground">
@@ -232,23 +251,7 @@ export function UsersTab({
                           {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '从未登录'}
                         </td>
                         <td className="px-3 py-2">
-                          <div className="flex justify-end gap-2">
-                            {!u.isSystemOwner ? (
-                              <Button type="button" variant="outline" size="sm" onClick={() => setGrantUser(u)}>
-                                项目授权
-                              </Button>
-                            ) : null}
-                            {u.authProvider === 'local' ? (
-                              <Button type="button" variant="outline" size="sm" onClick={() => void resetPassword(u)}>
-                                重置密码
-                              </Button>
-                            ) : null}
-                            {u.id !== me?.id ? (
-                              <Button type="button" variant="outline" size="sm" onClick={() => void toggleStatus(u)}>
-                                {u.status === 'active' ? '禁用' : '启用'}
-                              </Button>
-                            ) : null}
-                          </div>
+                          <div className="flex justify-end">{userActions(u)}</div>
                         </td>
                       </tr>
                     ))}
@@ -256,6 +259,12 @@ export function UsersTab({
                 </table>
               </div>
             )}
+            {users && !usersError && users.length > 0 && visibleUsers.length === 0 ? <p className="py-4 text-sm text-muted-foreground">没有匹配的账号，请调整搜索条件。</p> : null}
+            {users && !usersError ? <ul className="grid gap-3 sm:grid-cols-2 lg:hidden">{visibleUsers.map(user => <li key={user.id} data-user-card={user.id} className="min-w-0 space-y-3 rounded-md border border-border p-3 text-sm">
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="break-words font-semibold">{user.username || user.githubLogin || user.name || user.id}</h3>{user.name && user.name !== (user.username || user.githubLogin) ? <p className="mt-1 break-words text-muted-foreground">{user.name}</p> : null}{user.isSystemOwner ? <p className="mt-1 text-xs text-primary">系统所有者</p> : null}</div><span className={user.status === 'active' ? 'shrink-0 text-ok' : 'shrink-0 text-warn'}>{user.status === 'active' ? '正常' : '已禁用'}</span></div>
+              <p className="text-xs text-muted-foreground">{user.authProvider === 'local' ? '本地账号' : user.authProvider === 'github' ? 'GitHub' : user.authProvider === 'sso' ? 'SSO' : '原始账号'} · {user.lastLoginAt ? `最近登录 ${new Date(user.lastLoginAt).toLocaleString()}` : '从未登录'}</p>
+              {userActions(user)}
+            </li>)}</ul> : null}
           </Section>
         </>
       ) : (
@@ -266,7 +275,7 @@ export function UsersTab({
           </div>
         </Section>
       )}
-      <details className="border-t border-border pt-3"><summary className="cursor-pointer text-sm font-medium">我的登录密码</summary><div className="mt-3">      <Section
+      <details className="pt-3"><summary className="cursor-pointer text-sm font-medium">我的登录密码</summary><div className="mt-3">      <Section
         title="修改密码"
         description={
           isLocal
@@ -281,6 +290,7 @@ export function UsersTab({
             <Field label="原密码">
               <input
                 type="password"
+                disabled={pwBusy}
                 value={oldPw}
                 onChange={(e) => setOldPw(e.target.value)}
                 autoComplete="current-password"
@@ -292,6 +302,7 @@ export function UsersTab({
             <Field label="新密码（至少 8 位）">
               <input
                 type="password"
+                disabled={pwBusy}
                 value={newPw}
                 onChange={(e) => setNewPw(e.target.value)}
                 autoComplete="new-password"
@@ -315,10 +326,11 @@ export function UsersTab({
           </div>
         )}
       </Section></div></details>
-      {isOwner ? <Dialog open={createOpen} onOpenChange={open => { if (!createBusy) setCreateOpen(open); }}><DialogContent><DialogHeader><DialogTitle>创建本地账号</DialogTitle><DialogDescription>新账号默认为普通成员，与 GitHub OAuth 用户共存。{!durableUsers ? '当前认证为内存模式，账号会在 CDS 重启后丢失。' : ''}</DialogDescription></DialogHeader>            <form onSubmit={submitCreate} className="grid gap-3">
+      {isOwner ? <Dialog open={createOpen} onOpenChange={open => { if (!createBusy) setCreateOpen(open); }}><DialogContent className="[&>button]:min-h-[3.25rem] [&>button]:min-w-[3.25rem] [&>button>svg]:size-[1.875rem]"><DialogHeader className="pr-10"><DialogTitle>创建本地账号</DialogTitle><DialogDescription>新账号默认为普通成员，与 GitHub OAuth 用户共存。{!durableUsers ? '当前认证为内存模式，账号会在 CDS 重启后丢失。' : ''}</DialogDescription></DialogHeader>            <form onSubmit={submitCreate} className="grid gap-3">
               <Field label="用户名">
                 <input
                   aria-label="用户名"
+                  disabled={createBusy}
                   value={newUsername}
                   onChange={(e) => setNewUsername(e.target.value)}
                   required
@@ -330,6 +342,7 @@ export function UsersTab({
               <Field label="显示名（可选）">
                 <input
                   aria-label="显示名（可选）"
+                  disabled={createBusy}
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   className={inputCls}
@@ -341,6 +354,7 @@ export function UsersTab({
                 <input
                   type="password"
                   aria-label="初始密码（至少8位）"
+                  disabled={createBusy}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   required
@@ -351,13 +365,14 @@ export function UsersTab({
                 />
               </Field>
               <div className="space-y-2">
-                {createError ? <ErrorBlock message={createError} /> : null}
-                <Button type="submit" disabled={createBusy} className="mt-1">
+                {createError ? <p role="alert" className="text-sm text-destructive">{createError}</p> : null}
+                <Button type="submit" disabled={createBusy} className={`mt-1 ${touchActionClass}`}>
                   <UserPlus />
                   {createBusy ? '创建中' : '创建账号'}
                 </Button>
               </div>
             </form></DialogContent></Dialog> : null}
+      <Dialog open={Boolean(resetUser)} onOpenChange={open => { if (!open && !busyUser) { setResetUser(null); setResetValue(''); } }}><DialogContent className="[&>button]:min-h-[3.25rem] [&>button]:min-w-[3.25rem] [&>button>svg]:size-[1.875rem]"><DialogHeader className="pr-10"><DialogTitle>重置账号密码</DialogTitle><DialogDescription>账号：{resetUser?.username || resetUser?.githubLogin}。保存后成员需使用新密码登录，账号的项目授权保持不变。</DialogDescription></DialogHeader><form onSubmit={resetPassword} className="space-y-3"><label className="block space-y-2 text-sm">新密码（至少 8 位）<input aria-label="重置后的新密码" type="password" autoComplete="new-password" required minLength={8} className={inputCls} value={resetValue} disabled={Boolean(busyUser)} onChange={event => setResetValue(event.target.value)} /></label>{resetError ? <p role="alert" className="text-sm text-destructive">{resetError}</p> : null}<Button type="submit" className={touchActionClass} disabled={Boolean(busyUser) || resetUnknown}>{busyUser ? '正在重置' : '保存新密码'}</Button></form></DialogContent></Dialog>
       {isOwner ? <IdentityRecoveryPanel onToast={onToast} /> : null}
       <UserProjectAccessDialog user={grantUser} onClose={() => setGrantUser(null)} onToast={onToast} />
     </div>

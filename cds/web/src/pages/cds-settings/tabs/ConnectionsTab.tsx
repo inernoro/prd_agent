@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Bug,
+  Copy,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -63,6 +64,7 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
     | { status: 'error'; message: string }
     | { status: 'ok'; data: BugReportIntegrationStatus }
   >({ status: 'loading' });
+  const [query, setQuery] = useState('');
   const generation = useRef(0);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<BugReportIntegrationTestResult | null>(null);
@@ -143,6 +145,8 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
   };
 
   const connections = state.status === 'ok' ? state.connections : [];
+  const needle = query.trim().toLocaleLowerCase();
+  const visibleConnections = connections.filter(connection => !needle || [connection.name, connection.partnerName, connection.partnerBaseUrl, connection.id, ...connection.scopes].some(value => value?.toLocaleLowerCase().includes(needle)));
   const activeMapConnections = connections.filter(
     (connection) => connection.partnerKind === 'map' && connection.status === 'active',
   );
@@ -200,6 +204,7 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
           <StatusCard
             icon={<Bug className="h-5 w-5" />}
             title="MAP 缺陷转发"
+            actions={integration?.configured ? <Button type="button" variant="outline" size="sm" onClick={() => void testConnection()} disabled={testing}><RefreshCw className={testing ? 'animate-spin' : undefined} />{testing ? '验证中' : '验证缺陷转发'}</Button> : undefined}
             ready={integrationState.status === 'ok' ? Boolean(integration?.configured) : undefined}
             detail={integrationState.status !== 'ok' ? '状态未确认，请重试读取' : integration?.configured
               ? `快捷提缺陷将转发到 ${integration.baseUrl}`
@@ -208,11 +213,12 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
         </div>
 
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 flex-1 basis-full sm:basis-auto">
               <h3 className="text-base font-semibold">连接记录</h3>
               <p className="mt-1 text-sm text-muted-foreground">长期授权不按时间自动过期，可在这里明确撤销或删除。</p>
             </div>
+            {connections.length > 5 || query ? <label className="min-w-0 flex-1 sm:max-w-64"><span className="sr-only">搜索连接</span><input aria-label="搜索连接" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索名称、对端或权限" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></label> : null}
             <Button type="button" variant="outline" size="sm" onClick={() => void reload()}>
               <RefreshCw className="mr-1" /> 刷新
             </Button>
@@ -222,8 +228,9 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
               暂无连接记录，请使用上方“前往 MAP 授权”。
             </div>
           ) : null}
-          {connections.length > 0 ? (
-            <div className="overflow-x-auto rounded-md border border-border">
+          {state.status === 'ok' && connections.length > 0 && visibleConnections.length === 0 ? <p className="py-4 text-sm text-muted-foreground">没有匹配的连接，请调整搜索条件。</p> : null}
+          {visibleConnections.length > 0 ? (
+            <div data-connection-view="table" className="hidden overflow-x-auto rounded-md border border-border xl:block">
               <table className="w-full min-w-[45rem] text-sm">
                 <thead className="bg-muted/40 text-xs text-muted-foreground">
                   <tr>
@@ -235,43 +242,26 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
                   </tr>
                 </thead>
                 <tbody>
-                  {connections.map((connection) => (
+                  {visibleConnections.map((connection) => (
                     <tr key={connection.id} className="border-t border-border align-middle">
                       <td className="px-3 py-2.5">
-                        <div className="font-medium">{connection.name}</div>
+                        <div className="max-w-72 break-words font-medium">{connection.name}</div>
                         <div className="font-mono text-xs text-muted-foreground/70">{connection.id}</div>
                       </td>
                       <td className="px-3 py-2.5">
-                        <div>{connection.partnerName || '未登记'}</div>
-                        <div className="font-mono text-xs text-muted-foreground/70">{connection.partnerBaseUrl || '—'}</div>
+                        <div className="max-w-64 break-words">{connection.partnerName || '未登记'}</div>
+                        <ConnectionAddress connection={connection} query={query} onToast={onToast} compact />
                       </td>
                       <td className="px-3 py-2.5"><StatusBadge connection={connection} /></td>
                       <td className="px-3 py-2.5">
                         <div className="flex flex-wrap gap-1">
                           {connection.scopes.map((scope) => (
-                            <span key={scope} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.625rem] text-muted-foreground">{scope}</span>
+                            <span key={scope} className="break-all rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{scope}</span>
                           ))}
                         </div>
                       </td>
                       <td className="px-3 py-2.5 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {connection.status === 'active' ? (
-                            <ConfirmAction
-                              title="撤销长期连接"
-                              description={`撤销与 ${connection.partnerName || connection.name} 的连接后，对方将不能继续调用 CDS。`}
-                              confirmLabel="撤销"
-                              onConfirm={() => handleRevoke(connection)}
-                              trigger={<Button variant="ghost" size="sm" title="撤销" aria-label={`撤销与 ${connection.partnerName || connection.name} 的连接`}><ShieldCheck /></Button>}
-                            />
-                          ) : null}
-                          <ConfirmAction
-                            title="删除连接记录"
-                            description={`删除连接记录 ${connection.name}。`}
-                            confirmLabel="删除"
-                            onConfirm={() => handleDelete(connection)}
-                            trigger={<Button variant="ghost" size="sm" title="删除" aria-label={`删除连接记录 ${connection.name}`}><Trash2 /></Button>}
-                          />
-                        </div>
+                        <ConnectionActions connection={connection} onRevoke={handleRevoke} onDelete={handleDelete} compact />
                       </td>
                     </tr>
                   ))}
@@ -280,6 +270,14 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
             </div>
           ) : null}
         </div>
+        <ul data-connection-view="cards" className="grid gap-3 sm:grid-cols-2 xl:hidden">
+          {visibleConnections.map(connection => <li key={connection.id} data-connection-card={connection.id} className="min-w-0 space-y-3 rounded-md border border-border p-3">
+            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h4 className="break-words text-sm font-semibold">{connection.name}</h4><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{connection.id}</p></div><StatusBadge connection={connection} /></div>
+            <div className="space-y-1 text-sm"><p className="break-words">对端：{connection.partnerName || '未登记'}</p><ConnectionAddress connection={connection} query={query} onToast={onToast} /></div>
+            <div className="text-sm"><span className="text-muted-foreground">授权范围：</span><div className="mt-1 flex flex-wrap gap-1">{connection.scopes.length ? connection.scopes.map(scope => <code key={scope} className="break-all rounded bg-muted px-1.5 py-0.5 text-xs">{scope}</code>) : <span>未声明权限</span>}</div></div>
+            <ConnectionActions connection={connection} onRevoke={handleRevoke} onDelete={handleDelete} />
+          </li>)}
+        </ul>
         {integration ? (
           <div className="space-y-3 rounded-lg border border-border p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -295,12 +293,6 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                {integration.configured ? (
-                  <Button type="button" variant="outline" onClick={() => void testConnection()} disabled={testing}>
-                    <RefreshCw className={testing ? 'animate-spin' : undefined} />
-                    {testing ? '验证中' : '验证连接'}
-                  </Button>
-                ) : null}
                 {integration.source === 'system-settings' ? (
                   <ConfirmAction
                     title="撤销缺陷转发授权"
@@ -328,7 +320,31 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
   );
 }
 
-function StatusCard({ icon, title, ready, detail }: { icon: JSX.Element; title: string; ready: boolean | undefined; detail: string }): JSX.Element {
+function ConnectionAddress({ connection, query, onToast, compact = false }: { connection: CdsConnectionView; query: string; onToast: (message: string) => void; compact?: boolean }): JSX.Element {
+  const value = connection.partnerBaseUrl;
+  if (!value) return <p className="text-xs text-muted-foreground">未登记连接地址</p>;
+  let host = value;
+  try { host = new URL(value).host || value; } catch { /* 保留可核对的原始值。 */ }
+  async function copy(): Promise<void> {
+    try { await navigator.clipboard.writeText(value!); onToast('连接地址已复制'); }
+    catch { onToast('复制失败，请展开完整地址手动复制。'); }
+  }
+  const expandedBySearch = Boolean(query.trim() && value.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()) && !host.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  return <div className="min-w-0 space-y-1 text-xs text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-2"><span className="min-w-0 break-all font-mono">{host}</span><Button type="button" size="sm" variant="ghost" className={compact ? undefined : "min-h-[3.25rem] text-base [&_svg]:size-[1.875rem]"} aria-label={`复制连接地址 ${connection.id}`} onClick={() => void copy()}><Copy />复制地址</Button></div>
+    <details open={expandedBySearch || undefined}><summary className={compact ? "cursor-pointer" : "min-h-[3.25rem] cursor-pointer content-center text-sm"}>完整连接地址</summary><code className="mt-1 block break-all">{value}</code></details>
+  </div>;
+}
+
+function ConnectionActions({ connection, onRevoke, onDelete, compact = false }: { connection: CdsConnectionView; onRevoke: (connection: CdsConnectionView) => Promise<void>; onDelete: (connection: CdsConnectionView) => Promise<void>; compact?: boolean }): JSX.Element {
+  const identity = `${connection.name}（${connection.id}）`;
+  return <div className="flex flex-wrap items-center gap-2">
+    {connection.status === 'active' ? <ConfirmAction scopeKey={connection.id} title={`撤销连接：${connection.name}`} description={`对象：${identity}。撤销后，对方不能再使用此连接调用 CDS；连接记录会保留。`} confirmLabel="撤销连接" onConfirm={() => onRevoke(connection)} trigger={<Button type="button" variant={compact ? 'ghost' : 'outline'} size="sm" className={compact ? undefined : "min-h-[3.25rem] text-base [&_svg]:size-[1.875rem]"} aria-label={`撤销连接 ${connection.id}`}><ShieldCheck />{compact ? null : '撤销连接'}</Button>} /> : null}
+    <ConfirmAction scopeKey={connection.id} title={`删除连接：${connection.name}`} description={`对象：${identity}。删除后此连接不能继续调用 CDS，且连接记录将移除。`} confirmLabel="删除连接" onConfirm={() => onDelete(connection)} trigger={<Button type="button" variant="ghost" size="sm" className={compact ? undefined : "min-h-[3.25rem] text-base [&_svg]:size-[1.875rem]"} aria-label={`删除连接 ${connection.id}`}><Trash2 />{compact ? null : '删除记录'}</Button>} />
+  </div>;
+}
+
+function StatusCard({ icon, title, ready, detail, actions }: { icon: JSX.Element; title: string; ready: boolean | undefined; detail: string; actions?: JSX.Element }): JSX.Element {
   return (
     <div className="min-w-0 border-l-2 border-border pl-3">
       <div className="flex items-start justify-between gap-3">
@@ -343,20 +359,20 @@ function StatusCard({ icon, title, ready, detail }: { icon: JSX.Element; title: 
           {ready === undefined ? '未确认' : ready ? '已授权' : '未授权'}
         </span>
       </div>
-      <p className="mt-1 text-sm leading-6 text-muted-foreground">{detail}</p>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-2"><p className="min-w-0 break-all text-sm leading-6 text-muted-foreground">{detail}</p>{actions}</div>
     </div>
   );
 }
 
 function StatusBadge({ connection }: { connection: CdsConnectionView }): JSX.Element {
   if (connection.status === 'active') {
-    return <span className="inline-flex items-center gap-1 rounded-full bg-ok-soft px-2 py-0.5 text-xs font-medium text-ok"><CheckCircle2 className="h-3 w-3" />长期有效</span>;
+    return <span className="inline-flex whitespace-nowrap items-center gap-1 rounded-full bg-ok-soft px-2 py-0.5 text-xs font-medium text-ok"><CheckCircle2 className="h-3 w-3" />长期有效</span>;
   }
   if (connection.status === 'pending-pairing') {
-    return <span className="inline-flex items-center gap-1 rounded-full bg-warn-soft px-2 py-0.5 text-xs font-medium text-warn"><Clock className="h-3 w-3" />旧版待配对</span>;
+    return <span className="inline-flex whitespace-nowrap items-center gap-1 rounded-full bg-warn-soft px-2 py-0.5 text-xs font-medium text-warn"><Clock className="h-3 w-3" />旧版待配对</span>;
   }
   if (connection.status === 'revoked') {
-    return <span className="inline-flex items-center gap-1 rounded-full bg-bad-soft px-2 py-0.5 text-xs font-medium text-bad"><XCircle className="h-3 w-3" />已撤销</span>;
+    return <span className="inline-flex whitespace-nowrap items-center gap-1 rounded-full bg-bad-soft px-2 py-0.5 text-xs font-medium text-bad"><XCircle className="h-3 w-3" />已撤销</span>;
   }
-  return <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"><X className="h-3 w-3" />未知</span>;
+  return <span className="inline-flex whitespace-nowrap items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"><X className="h-3 w-3" />未知</span>;
 }
