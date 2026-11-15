@@ -426,7 +426,7 @@ export function LogsView() {
   const updateQuery = (key: string, value: string) => {
     const next = new URLSearchParams(location.search);
     if (value) next.set(key, value); else next.delete(key);
-    next.delete('transaction'); next.delete('anchor');
+    next.delete('transaction'); next.delete('anchor'); next.delete('openRequest');
     navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
   };
   const subtab: LogsSubTab = query.get('view') === 'physical' ? 'upstream' : query.get('view') === 'sessions' ? 'sessions' : 'generations';
@@ -435,7 +435,7 @@ export function LogsView() {
   const presetKey = ['1d', '7d', '30d'].includes(query.get('range') || '') ? query.get('range')! : '30d';
   const setPresetKey = (value: string) => {
     const next = new URLSearchParams(location.search);
-    next.set('range', value); next.delete('from'); next.delete('to'); next.delete('transaction'); next.delete('anchor');
+    next.set('range', value); next.delete('from'); next.delete('to'); next.delete('transaction'); next.delete('anchor'); next.delete('openRequest');
     navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
   };
   const filterModel = query.get('model') || '';
@@ -1146,7 +1146,7 @@ export function LogsView() {
   const clearFilters = () => {
     const next = new URLSearchParams(location.search);
     for (const key of LOG_FILTER_KEYS) next.delete(key);
-    next.delete('transaction'); next.delete('anchor');
+    next.delete('transaction'); next.delete('anchor'); next.delete('openRequest');
     navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
   };
   const hasMoreRows = rows.length < total;

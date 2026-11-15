@@ -90,6 +90,16 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
     await act(async () => globalThis.__journey.navigate('/logs?requestId=not-retained&openRequest=1'));
     assert.doesNotMatch(document.querySelector('#route').textContent, /transaction=/, 'no match does not open or push another entry');
     await act(async () => globalThis.__journey.navigate(-1)); assert.ok(document.querySelector('#origin'));
+    await act(async () => globalThis.__journey.navigate('/logs?requestId=not-retained&openRequest=1'));
+    await act(async () => { const range = document.querySelector('[aria-label="时间范围"]'); range.value = '7d'; range.dispatchEvent(new dom.window.Event('change', { bubbles: true })); });
+    assert.doesNotMatch(document.querySelector('#route').textContent, /openRequest=/, 'manual range changes end the prior external intent');
+    await act(async () => globalThis.__journey.navigate('/logs?requestId=not-retained&openRequest=1'));
+    const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set;
+    await act(async () => { const input = document.querySelector('[aria-label="按请求 ID 查找"]'); setter.call(input, 'request-2'); input.dispatchEvent(new dom.window.Event('input', { bubbles: true })); });
+    await act(async () => document.querySelector('form.lg-log-search').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })));
+    assert.match(document.querySelector('#route').textContent, /transaction=row-2/);
+    await act(async () => globalThis.__journey.navigate(-1));
+    assert.match(document.querySelector('#route').textContent, /requestId=request-2/); assert.doesNotMatch(document.querySelector('#route').textContent, /transaction=/, 'a new manual request search must not inherit the unmatched external replace intent');
     await act(async () => globalThis.__journey.navigate('/logs'));
     await click(document.querySelector('.lg-log-table-row'));
     assert.match(document.querySelector('#route').textContent, /transaction=row-1/);
