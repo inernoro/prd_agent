@@ -25,7 +25,10 @@ describe('验收报告主页 · 桌面端返回入口', () => {
   });
 
   it('阅读器的 onBack 复位 selected，让页面回到结论首页', () => {
-    expect(SRC).toContain('onBack={() => setSelected(null)}');
+    expect(SRC).toContain('onBack={closeReport}');
+    const close = SRC.slice(SRC.indexOf('const closeReport ='), SRC.indexOf('// 从列表发起的弹窗动作'));
+    expect(close).toContain('setSelected(null)');
+    expect(close).toContain('readingPosition.current.scroll');
   });
 
   it('未选中报告时渲染结论首页，选中后才回到列表 + 阅读器', () => {

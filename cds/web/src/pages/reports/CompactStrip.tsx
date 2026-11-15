@@ -164,7 +164,7 @@ export const STRIP_CSS = `
   padding:1rem 1.125rem;font-variant-numeric:tabular-nums;}
 @media (min-width:1024px){
   .cs{flex-direction:row;align-items:stretch;justify-content:space-between;gap:1.25rem;
-    height:11rem;padding:1rem 1.375rem;overflow:hidden;}
+    min-height:11rem;padding:1rem 1.375rem;overflow:hidden;}
 }
 
 .cs .z{display:flex;min-width:0;flex-direction:column;justify-content:flex-start;}
@@ -254,6 +254,13 @@ export const STRIP_CSS = `
   background:hsl(var(--surface-sunken));}
 .cs .sbar{display:block;height:100%;background:hsl(var(--hairline-strong));}
 
+/* 横向布局的basis不能在手机column主轴变成固定留白。 */
+@media (max-width:1023px){
+  .cs .z-total,.cs .z-stages,.cs .z-verdict,.cs .z-proj,.cs .z-side{flex:0 0 auto;max-width:none;min-width:0;}
+  .cs .z-stages{margin-left:0;}
+  .cs .stage{justify-content:flex-start;gap:0.5rem;}
+  .cs .z > :last-child{margin-top:0.5rem;}
+}
 @media (prefers-reduced-motion: no-preference){
   .cs[data-play="1"] .d{animation:cs-dot .26s ease-out backwards;animation-delay:var(--d,0ms);}
   .cs[data-play="1"] .rail span,.cs[data-play="1"] .vbar,.cs[data-play="1"] .sbar{
@@ -311,7 +318,7 @@ function Field({ total, lit }: { total: number; lit: string[] }): JSX.Element {
       style={{
         ['--dot' as string]: `${m.dot}px`,
         ['--dg' as string]: `${m.gap}px`,
-        height: m.height,
+        minHeight: m.height,
       }}
     >
       {Array.from({ length: n }, (_, i) => (
