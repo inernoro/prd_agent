@@ -93,6 +93,15 @@ export function getCodeReviewAudit(id: string, signal?: AbortSignal): Promise<Co
 }
 
 export interface CodeReviewBranch { id: string; branch: string; status: string }
+/** Remote-only selections use the existing authenticated, SHA-pinned repository snapshot flow. */
+export function reviewBranchSource(project: { githubRepoFullName?: string } | undefined, tracked: CodeReviewBranch | undefined, remote: string):
+  { sourceType: 'cds'; branchId: string } | { sourceType: 'github'; githubUrl: string; ref: string } | undefined {
+  if (tracked) return { sourceType: 'cds', branchId: tracked.id };
+  if (remote && project?.githubRepoFullName && /^[\w.-]+\/[\w.-]+$/.test(project.githubRepoFullName)) {
+    return { sourceType: 'github', githubUrl: `https://github.com/${project.githubRepoFullName}`, ref: remote };
+  }
+  return undefined;
+}
 export async function listCodeReviewBranches(projectId: string, signal?: AbortSignal): Promise<CodeReviewBranch[]> {
   const response = await apiRequest<{ branches: CodeReviewBranch[] }>(`/api/code-reviews/branches?${new URLSearchParams({ projectId })}`, { signal });
   return response.branches;
