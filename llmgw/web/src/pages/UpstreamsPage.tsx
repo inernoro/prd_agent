@@ -48,7 +48,7 @@ export function UpstreamsPage() {
           setParams(next, { replace: true });
         }}
       />
-      <GlobalUpstreamProxyControl /></div>
+      {view !== 'provider' ? <GlobalUpstreamProxyControl /> : null}</div>
         {view === 'exchange' ? <ExchangesPage /> : <PlatformsPage section={view} />}
     </div></UpstreamProxyProvider>
   );

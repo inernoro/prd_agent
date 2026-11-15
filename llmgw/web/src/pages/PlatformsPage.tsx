@@ -4,7 +4,7 @@ import { positionToolbarPopover } from '@/lib/toolbarPopover';
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
+import { GlobalUpstreamProxyControl, ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
 import { Server } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
@@ -476,8 +476,8 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     }
   }
 
-  if (section === 'provider' && error) return <PageShell><PageBody><Empty text={error} /></PageBody></PageShell>;
-  if (section === 'provider' && !items) return <PageShell><PageBody><SectionLoader text="正在加载平台…" /></PageBody></PageShell>;
+  if (section === 'provider' && error) return <PageShell><PageBody><Empty text={error} /><GlobalUpstreamProxyControl /></PageBody></PageShell>;
+  if (section === 'provider' && !items) return <PageShell><PageBody><SectionLoader text="正在加载平台…" /><GlobalUpstreamProxyControl /></PageBody></PageShell>;
 
   const th = TABLE_HEAD_CELL;
   const td = TABLE_CELL;
@@ -619,20 +619,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       ) : (
       <div className="lg-collection-workspace">
       <div className="lg-config-table-shell lg-collection-list" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-        <CollectionView toolbarActions={canWrite ? (
-        <details onToggle={positionToolbarPopover} className="lg-provider-bulk-control" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
-          <summary>批量轮换密钥</summary>
-          <div className="lg-provider-bulk-panel" style={toolbarStyle}>
-            <span style={toolbarTitleStyle}>批量维护 Provider 密钥</span>
-            <input type="password" autoComplete="new-password" value={bulkKeyValue} onChange={(e) => setBulkKeyValue(e.target.value)} placeholder="新 apiKey" style={inputStyle} />
-            <label style={checkStyle}><input type="checkbox" checked={bulkOnlyMissing} onChange={(e) => setBulkOnlyMissing(e.target.checked)} />只补缺失</label>
-            <label style={checkStyle}><input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />确认应用全部供应方（不随清单筛选）</label>
-            <Button size="sm" variant="ghost" disabled={busyId === 'bulk-platform-api-key'} onClick={() => void applyBulkApiKey()}>
-              {busyId === 'bulk-platform-api-key' ? '处理中…' : '批量轮换密钥'}
-            </Button>
-          </div>
-        </details>
-      ) : null} items={providerItems} placeholder="搜索供应方名称或接口" searchText={(item) => `${item.name} ${item.apiUrl || ''}`} filters={[{ value: 'enabled', label: '已启用', matches: (item) => item.enabled }, { value: 'disabled', label: '已停用', matches: (item) => !item.enabled }]}>
+        <CollectionView items={providerItems} placeholder="搜索供应方名称或接口" searchText={(item) => `${item.name} ${item.apiUrl || ''}`} filters={[{ value: 'enabled', label: '已启用', matches: (item) => item.enabled }, { value: 'disabled', label: '已停用', matches: (item) => !item.enabled }]}>
         {(pageProviders) => <table className="lg-data-table lg-collection-provider-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <colgroup><col style={{ width: '22%' }}/><col style={{ width: '24%' }}/><col style={{ width: '18%' }}/><col style={{ width: '21%' }}/><col style={{ width: '15%' }}/></colgroup>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
@@ -780,6 +767,24 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       {renderOwnedModels()}
       </div>
       )}
+
+      <div className="lg-provider-maintenance-actions" aria-label="上游全局与批量维护">
+        <GlobalUpstreamProxyControl />
+        {canWrite && providerItems.length > 0 ? (
+        <details onToggle={positionToolbarPopover} className="lg-provider-bulk-control" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
+          <summary>批量轮换密钥</summary>
+          <div className="lg-provider-bulk-panel" style={toolbarStyle}>
+            <span style={toolbarTitleStyle}>批量维护 Provider 密钥</span>
+            <input type="password" autoComplete="new-password" value={bulkKeyValue} onChange={(e) => setBulkKeyValue(e.target.value)} placeholder="新 apiKey" style={inputStyle} />
+            <label style={checkStyle}><input type="checkbox" checked={bulkOnlyMissing} onChange={(e) => setBulkOnlyMissing(e.target.checked)} />只补缺失</label>
+            <label style={checkStyle}><input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />确认应用全部供应方（不随清单筛选）</label>
+            <Button size="sm" variant="ghost" disabled={busyId === 'bulk-platform-api-key'} onClick={() => void applyBulkApiKey()}>
+              {busyId === 'bulk-platform-api-key' ? '处理中…' : '批量轮换密钥'}
+            </Button>
+          </div>
+        </details>
+        ) : null}
+      </div>
 
       </PageBody>
       ) : section === 'catalog' ? (

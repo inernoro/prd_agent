@@ -9165,3 +9165,7 @@ a:focus-visible {
   .lg-upstream-reference-table td:first-child { z-index: 1; }
   .lg-upstream-reference-table td:first-child code { white-space: normal; overflow-wrap: anywhere; }
 }
+
+/* Global and bulk maintenance follow Provider data, preserving the per-row connection facts. */
+.lg-provider-maintenance-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; flex-shrink: 0; }
+.lg-provider-maintenance-actions > .lg-upstream-global-control { margin-left: 0; }
