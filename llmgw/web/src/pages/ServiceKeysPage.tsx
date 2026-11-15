@@ -114,6 +114,8 @@ export function ServiceKeysPage() {
   }, [items, validityNow]);
   const [reading, setReading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [legacyReadError, setLegacyReadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
   const [creationUnknown, setCreationUnknown] = useState<{ stage: 'caller' | 'key'; request: CreateServiceKeyRequest; caller: string; requestType: SelfServiceRequestType; callerTeam: string } | null>(null);
@@ -162,14 +164,15 @@ export function ServiceKeysPage() {
   const [legacyBusy, setLegacyBusy] = useState(false);
 
   const load = useCallback(async () => {
-    setError(null); setReading(true);
+    setListError(null); setLegacyReadError(null); setReading(true);
+    let keysRead = false;
     try {
     const res = await getServiceKeys();
-    if (res.success) { setItems(res.data); setValidityNow(Date.now()); setLifecycleReceipt(null); }
-    else setError(res.error?.message || '加载接入密钥失败');
+    if (res.success) { keysRead = true; setItems(res.data); setValidityNow(Date.now()); setLifecycleReceipt(null); }
+    else setListError(res.error?.message || '加载接入密钥失败');
     if (canManageLegacyCutover) {
       const legacyRes = await getLegacyKeyCutover();
-      if (!legacyRes.success) setError(legacyRes.error?.message || '旧共享密钥状态未读取，请刷新核对。');
+      if (!legacyRes.success) setLegacyReadError(legacyRes.error?.message || '旧共享密钥状态未读取，请刷新核对。');
       if (legacyRes.success && legacyRes.data.applicable) {
         setLegacy(legacyRes.data);
         setLegacyStatus(legacyRes.data.status === 'not-applicable' ? 'observing' : legacyRes.data.status);
@@ -179,7 +182,7 @@ export function ServiceKeysPage() {
         setLegacyRequired(String(legacyRes.data.requiredSuccessorObservations));
       }
     }
-    } catch { setError('密钥配置读取未完成，请重新读取后核对。'); }
+    } catch { if (keysRead) setLegacyReadError('旧共享密钥状态读取中断，请重读。'); else setListError('密钥配置读取未完成，请重新读取后核对。'); }
     finally { setReading(false); }
   }, [canManageLegacyCutover]);
 
@@ -521,7 +524,9 @@ export function ServiceKeysPage() {
         </InlineAlert> : null}
         {creationUnknown ? <InlineAlert tone="error">{creationUnknown.stage === 'caller' ? '调用身份登记结果未确认，密钥尚未签发。' : '密钥签发结果未确认，可能已生效；本次表单已保留，不会重复签发。'}<Button size="sm" variant="ghost" disabled={checkingCreation} onClick={() => void reconcileCreation()}>核对本次步骤</Button>{creationUnknown.stage === 'caller' ? <Link className="lg-text-link" to={callerWorkspaceReturnHref(creationUnknown.caller, creationUnknown.requestType, '')}>查看调用方治理</Link> : <Link className="lg-text-link" to={`/service-keys?${new URLSearchParams({ client: creationUnknown.request.clientCode, appCaller: creationUnknown.request.appCallerCodes[0] || '' })}`}>查看可能相关的密钥</Link>}</InlineAlert> : null}
         {creationCheck ? <InlineAlert tone="info">{creationCheck}</InlineAlert> : null}
-        {error && !lifecycleReceipt ? <InlineAlert tone="error">{error}{!items ? <Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重新读取</Button> : null}</InlineAlert> : null}
+        {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+        {listError && !lifecycleReceipt ? <InlineAlert tone="error">{listError}<Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重新读取</Button></InlineAlert> : null}
+        {legacyReadError ? <InlineAlert tone="error">{legacyReadError}<Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重读旧共享密钥状态</Button></InlineAlert> : null}
 
         {created ? (
           <div style={createdPanelStyle}>
