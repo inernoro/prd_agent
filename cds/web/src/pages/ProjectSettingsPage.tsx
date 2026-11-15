@@ -3210,7 +3210,7 @@ function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast
   if (state.status === 'loading') return <LoadingBlock label="加载交付模式" />;
   if (state.status === 'error' || !state.data) return <div className="space-y-3"><ErrorBlock message={state.message || '交付模式加载失败'} /><Button onClick={() => void load()}>重试</Button></div>;
   const data = state.data;
-  const atomicContractReady = typeof data.revision === 'string' && Boolean(data.revision) && typeof data.projectRevision === 'string' && Boolean(data.projectRevision);
+  const atomicContractAvailable = typeof data.revision === 'string' && Boolean(data.revision) && typeof data.projectRevision === 'string' && Boolean(data.projectRevision);
   const dirty = draftMode !== savedMode.current || (draftMode === 'managed' && specText !== savedSpec.current);
   const sourceReady = data.generationSource?.branchId === branchId && Boolean(data.generationSource.commitSha);
   return <div className="space-y-5">
@@ -3229,10 +3229,10 @@ function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast
       <textarea aria-label="托管应用声明" className={`${textareaClass} min-h-56 font-mono text-sm leading-5`} value={specText} onChange={event => setSpecText(event.target.value)} disabled={saving} spellCheck={false} />
       <Button className="mt-2" variant="ghost" onClick={() => setSpecText(JSON.stringify({ apps: [], capabilities: [] }, null, 2))} disabled={saving}>改用自动识别（待保存）</Button>
     </Section> : null}
-    {!atomicContractReady ? <p role="alert" className="text-sm text-warn">当前服务版本未确认，暂不能保存交付设置。请重新读取；若持续出现，请联系系统管理员确认更新完成。</p> : null}
+    {!atomicContractAvailable ? <p role="alert" className="text-sm text-warn">当前服务版本未确认，暂不能保存交付设置。请重新读取；若持续出现，请联系系统管理员确认更新完成。</p> : null}
     {saveError ? <p role="alert" className="text-sm text-destructive">{saveError}。声明草稿已保留。</p> : null}
     {readError ? <p role="alert" className="text-sm text-destructive">{readError}</p> : null}
-    <div className="flex flex-wrap gap-2"><Button onClick={() => void save()} disabled={saving || !atomicContractReady || resultUnknown || (!dirty && draftMode === 'compose') || (draftMode === 'managed' && !sourceReady)}>{saving ? <Loader2 className="animate-spin" /> : <Save />}{draftMode === 'managed' ? dirty ? '保存并生成项目配置' : '重新生成项目配置' : '保存交付模式'}</Button><Button variant="outline" disabled={saving} onClick={() => void load(true).catch(() => undefined)}>重新读取并核对</Button></div>
+    <div className="flex flex-wrap gap-2"><Button onClick={() => void save()} disabled={saving || !atomicContractAvailable || resultUnknown || (!dirty && draftMode === 'compose') || (draftMode === 'managed' && !sourceReady)}>{saving ? <Loader2 className="animate-spin" /> : <Save />}{draftMode === 'managed' ? dirty ? '保存并生成项目配置' : '重新生成项目配置' : '保存交付模式'}</Button><Button variant="outline" disabled={saving} onClick={() => void load(true).catch(() => undefined)}>重新读取并核对</Button></div>
     {data.mode === 'managed' ? <Section title="已保存的托管配置" description={data.planUpdatedAt ? `生成于 ${new Date(data.planUpdatedAt).toLocaleString()}；修改上方草稿不会改变这些配置。` : '尚未生成项目配置。'}>
             {data.effectiveProfiles.length === 0 ? (
               <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-8 text-center text-sm text-muted-foreground">
