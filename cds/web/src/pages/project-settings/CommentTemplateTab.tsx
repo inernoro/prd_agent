@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Eye, Loader2, Save } from 'lucide-react';
+import { ConsoleAuthContext } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { useProjectSettingsRefresh, useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -8,29 +9,42 @@ import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 type Draft = { mode: 'default' | 'custom'; body: string };
 type Template = { body: string; defaultBody: string; isDefault: boolean; updatedAt: string | null; variables: Array<{ key: string; label: string; example: string }> };
 type Ready = { status: 'ok'; draft: Draft; saved: Draft; template: Template; preview?: { source: string; rendered: string }; previewError?: string; saveError?: string; saveUnconfirmed?: boolean; readError?: string; restoredDraft?: boolean };
-// 仅驻留当前浏览器会话；不把用户草稿写入持久化存储或其他项目。
-const projectDrafts = new Map<string, Ready>();
+// 以服务端认证状态对象作为会话身份；换身份不复用，旧会话可被回收。
+// 草稿不进入 local/sessionStorage，最多保留 20 个项目、30 分钟。
+const draftSessions = new WeakMap<object, Map<string, { state: Ready; expiresAt: number }>>();
+function draftsFor(identity: object | null) {
+  if (!identity) return undefined;
+  let drafts = draftSessions.get(identity);
+  if (!drafts) { drafts = new Map(); draftSessions.set(identity, drafts); }
+  return drafts;
+}
 const same = (a: Draft, b: Draft) => a.mode === b.mode && (a.mode === 'default' || a.body === b.body);
 const message = (err: unknown) => err instanceof ApiError || err instanceof Error ? err.message : String(err);
 const sourceOf = (state: Ready) => state.draft.mode === 'default' ? state.template.defaultBody : state.draft.body;
 
 export function CommentTemplateTab({ projectId, onToast }: { projectId: string; onToast: (message: string) => void }): JSX.Element {
+  const auth = useContext(ConsoleAuthContext);
+  const identity = auth.status?.user || (auth.status?.enabled === false ? auth.status : null);
+  const projectDrafts = draftsFor(identity);
+  const stateIdentity = useRef(identity);
   const [state, setState] = useState<{ status: 'loading' } | { status: 'error'; message: string } | Ready>({ status: 'loading' });
   const [saving, setSaving] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const alive = useRef(true);
-  const currentProject = useRef({ id: projectId, generation: 0 });
-  if (currentProject.current.id !== projectId) currentProject.current = { id: projectId, generation: currentProject.current.generation + 1 };
+  const currentProject = useRef({ id: projectId, identity, generation: 0 });
+  if (currentProject.current.id !== projectId || currentProject.current.identity !== identity) currentProject.current = { id: projectId, identity, generation: currentProject.current.generation + 1 };
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const beginRead = useSettingsReadRequest();
   const load = useCallback(async (preserve = false) => {
     const signal = beginRead();
-    const cached = projectDrafts.get(projectId);
+    const cachedEntry = projectDrafts?.get(projectId);
+    const cached = cachedEntry && cachedEntry.expiresAt > Date.now() ? cachedEntry.state : undefined;
     if (!preserve) { setState(cached ? { ...cached, restoredDraft: true } : { status: 'loading' }); setSaving(false); setPreviewing(false); }
     try {
       const template = await apiRequest<Template>(`/api/comment-template?projectId=${encodeURIComponent(projectId)}`, { signal });
       if (signal.aborted) return;
+      stateIdentity.current = identity;
       const saved: Draft = { mode: template.isDefault ? 'default' : 'custom', body: template.body || template.defaultBody || '' };
       setState(current => current.status === 'ok' && preserve ? { ...current, template, saved, saveError: undefined, saveUnconfirmed: false, readError: undefined, draft: same(current.draft, current.saved) ? saved : current.draft } : { status: 'ok', template, saved, draft: cached ? cached.draft : saved, preview: cached?.preview, restoredDraft: Boolean(cached) });
     } catch (err) {
@@ -38,19 +52,21 @@ export function CommentTemplateTab({ projectId, onToast }: { projectId: string; 
       setState(current => current.status === 'ok' ? { ...current, readError: message(err) } : { status: 'error', message: message(err) });
       if (preserve) throw err;
     }
-  }, [projectId, beginRead]);
+  }, [projectId, beginRead, identity, projectDrafts]);
   useEffect(() => { void load(); }, [load]);
   useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
-    if (state.status !== 'ok') return;
+    if (state.status !== 'ok' || stateIdentity.current !== identity) return;
     const dirty = !same(state.draft, state.saved);
-    if (dirty || state.saveUnconfirmed) projectDrafts.set(projectId, state);
-    else projectDrafts.delete(projectId);
+    if (dirty || state.saveUnconfirmed) {
+      projectDrafts?.set(projectId, { state, expiresAt: Date.now() + 30 * 60_000 });
+      if (projectDrafts && projectDrafts.size > 20) projectDrafts.delete(projectDrafts.keys().next().value!);
+    } else projectDrafts?.delete(projectId);
     const warnOnReload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     if (dirty || state.saveUnconfirmed) window.addEventListener('beforeunload', warnOnReload);
     return () => window.removeEventListener('beforeunload', warnOnReload);
-  }, [state, projectId]);
+  }, [state, projectId, identity, projectDrafts]);
 
   function updateDraft(change: Partial<Draft>): void {
     setState(current => current.status === 'ok' ? { ...current, draft: { ...current.draft, ...change }, saveError: current.saveUnconfirmed ? current.saveError : undefined } : current);
@@ -104,7 +120,7 @@ export function CommentTemplateTab({ projectId, onToast }: { projectId: string; 
   const stalePreview = Boolean(state.preview && state.preview.source !== sourceOf(state));
   return <section className="space-y-4" aria-labelledby="comment-template-title">
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h3 id="comment-template-title" className="text-base font-semibold">PR 评论模板</h3><p className="mt-1 text-sm text-muted-foreground">保存仅修改当前项目；之后打开 PR 或部署完成时使用。示例预览不会发送 GitHub 评论。</p></div>
+      <div><h3 id="comment-template-title" className="text-base font-semibold">PR 评论模板</h3><p className="mt-1 text-sm text-muted-foreground">保存仅修改当前项目；之后打开或重新打开 PR 时使用。示例预览不会发送 GitHub 评论。</p></div>
       <div className="flex flex-wrap items-center gap-3"><p role="status" className="text-sm text-muted-foreground">{dirty ? state.restoredDraft ? '已恢复未保存草稿' : '有未保存修改' : '与已保存设置一致'}{state.template.updatedAt ? ` · 最近保存 ${new Date(state.template.updatedAt).toLocaleString()}` : ''}</p><Button onClick={() => void save()} disabled={saving || state.saveUnconfirmed || !dirty || (state.draft.mode === 'custom' && !state.draft.body.trim())}>{saving ? <Loader2 className="animate-spin" /> : <Save />}保存模板</Button></div>
     </div>
     {state.readError ? <p role="alert" className="text-sm text-destructive">读取失败：{state.readError}。当前草稿已保留。<Button variant="outline" size="sm" onClick={() => void load(true).catch(() => undefined)}>重试读取</Button></p> : null}

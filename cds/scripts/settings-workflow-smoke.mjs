@@ -122,6 +122,37 @@ export async function verifySettingsWorkflow(browser, base, out, { baseline = fa
     await open('/settings/fixture-project#env'); await page.getByText('FIXTURE_SAMPLE_KEY',{exact:true}).waitFor();
     results.push({case:'project-env-two-rows',firstData:await metrics('div.font-mono.font-semibold'),source:'deterministic-fixture'});
     await page.screenshot({path:path.join(out,'project-env-desktop.png')});
+    const sampleMasked = await page.locator('code').filter({hasText:'••••••••'}).count() > 0;
+    results.push({case:'short-secret-is-masked',pass:sampleMasked});
+    if (!baseline) {
+      assert(sampleMasked,'短敏感值必须遮盖');
+      env={PRIVATE_CONFIG:'abc',SERVICE_CREDENTIAL:'x',PUBLIC_LABEL:'可见'};
+      await page.reload();
+      const privateRow=page.locator('[data-env-key="PRIVATE_CONFIG"]'), credentialRow=page.locator('[data-env-key="SERVICE_CREDENTIAL"]');
+      await privateRow.getByText('敏感值已遮盖',{exact:true}).waitFor();
+      assert.equal(await privateRow.locator('code').innerText(),'••••••••');
+      assert.equal(await credentialRow.locator('code').innerText(),'••••••••');
+      await privateRow.getByRole('button',{name:'显示 PRIVATE_CONFIG',exact:true}).click();
+      await privateRow.getByText('敏感值已显示',{exact:true}).waitFor();
+      assert.equal(await privateRow.locator('code').innerText(),'abc');
+      await privateRow.getByRole('button',{name:'隐藏 PRIVATE_CONFIG',exact:true}).click();
+      await credentialRow.getByRole('button',{name:'编辑 SERVICE_CREDENTIAL',exact:true}).click();
+      await credentialRow.getByText('正在编辑明文',{exact:true}).waitFor();
+      assert.equal(await credentialRow.getByRole('textbox').inputValue(),'x');
+      await credentialRow.getByRole('button',{name:'取消编辑 SERVICE_CREDENTIAL',exact:true}).click();
+      results.push({case:'private-credential-visible-edit-states-are-truthful',pass:true});
+      for(const theme of ['dark','light']) {
+        await page.setViewportSize({width:390,height:940});
+        await page.evaluate(theme=>{document.documentElement.setAttribute('data-theme',theme);document.documentElement.classList.toggle('dark',theme==='dark');},theme);
+        await page.screenshot({path:path.join(out,`env-${theme}-390.png`)});
+        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`env ${theme} overflow`);
+        assert(await privateRow.getByRole('button',{name:'显示 PRIVATE_CONFIG'}).isVisible());
+      }
+      await page.setViewportSize({width:1440,height:940});
+      env={FIXTURE_SAMPLE_KEY:'合成值',FIXTURE_SECOND:'第二条合成值'}; await page.reload();
+      await page.getByText('FIXTURE_SAMPLE_KEY',{exact:true}).waitFor();
+    }
+
     if (!baseline) {
       assert.equal(await page.getByRole('textbox',{name:'变量名',exact:true}).count(),0,'新增面板默认不挤占列表');
       await page.getByRole('button',{name:'新增变量',exact:true}).click();
