@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
 
+import { useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, LoadingBlock, Section } from '@/pages/cds-settings/components';
@@ -35,17 +36,33 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
   const [owners, setOwners] = useState<string[]>([]);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
+  const [readError, setReadError] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const [needsRead, setNeedsRead] = useState(false);
+  const unconfirmedOwners = useRef<string[] | null>(null);
+  const savedOwners = useRef<string[]>([]);
+  const beginRead = useSettingsReadRequest();
+  const sameOwners = (left: string[], right: string[]) => JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
 
-  const load = useCallback(async (): Promise<void> => {
-    setState({ status: 'loading' });
+  const load = useCallback(async (preserve = false): Promise<void> => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
-      const data = await apiRequest<GitHubAppWhitelistResponse>('/api/cds-system/github/app-whitelist');
-      setOwners(data.allowedOwners || []);
-      setState({ status: 'ok', data });
+      const data = await apiRequest<GitHubAppWhitelistResponse>('/api/cds-system/github/app-whitelist', { signal });
+      if (signal.aborted) return;
+      if (!Array.isArray(data.allowedOwners) || data.allowedOwners.some(owner => typeof owner !== 'string')) throw new Error('服务未返回可核对的白名单，请重新读取确认。');
+      const previous = savedOwners.current;
+      const next = data.allowedOwners || [];
+      savedOwners.current = next;
+      setOwners(current => preserve && !sameOwners(current, previous) ? current : next);
+      setState({ status: 'ok', data }); setReadError('');
+      if (!unconfirmedOwners.current || sameOwners(next, unconfirmedOwners.current)) { unconfirmedOwners.current = null; setNeedsRead(false); setSaveError(''); }
     } catch (err) {
-      setState({ status: 'error', message: apiMessage(err) });
+      if (signal.aborted) return;
+      setReadError(apiMessage(err));
+      setState(current => preserve && current.status === 'ok' ? current : { status: 'error', message: apiMessage(err) });
     }
-  }, []);
+  }, [beginRead]);
 
   useEffect(() => {
     void load();
@@ -53,7 +70,6 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
 
   const allowedSet = useMemo(() => new Set(owners.map(normalizeOwner)), [owners]);
   const suggestions = state.status === 'ok' ? state.data.ownerSuggestions || [] : [];
-  const pendingSuggestions = suggestions.filter((item) => !allowedSet.has(normalizeOwner(item.owner)));
 
   const addOwner = (owner: string): void => {
     const normalized = normalizeOwner(owner);
@@ -72,22 +88,27 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
   };
 
   const save = async (): Promise<void> => {
-    setSaving(true);
+    if (saving || needsRead) return;
+    const pending = normalizeOwner(draft);
+    if (pending && !/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/.test(pending)) { setSaveError('GitHub 组织名格式不正确'); return; }
+    const submitted = pending ? [...new Set([...owners, pending])].sort() : [...owners];
+    setSaving(true); setSaveError('');
     try {
-      const data = await apiRequest<GitHubAppWhitelistResponse>('/api/cds-system/github/app-whitelist', {
-        method: 'PUT',
-        body: { allowedOwners: owners },
-      });
-      setOwners(data.allowedOwners || []);
-      setState((cur) => cur.status === 'ok' ? { status: 'ok', data: { ...cur.data, ...data } } : cur);
-      onToast(data.message || 'GitHub App 白名单已更新');
-      void load();
+      const data = await apiRequest<GitHubAppWhitelistResponse>('/api/cds-system/github/app-whitelist', { method: 'PUT', body: { allowedOwners: submitted } });
+      beginRead.cancel();
+      if (!Array.isArray(data.allowedOwners)) throw new Error('服务未返回保存后的名单，请重新读取核对。');
+      const next = data.allowedOwners || [];
+      savedOwners.current = next; setOwners(next); setDraft('');
+      setState(current => current.status === 'ok' ? { status: 'ok', data: { ...current.data, ...data } } : current);
+      onToast(data.message || 'GitHub App 白名单已保存并生效');
     } catch (err) {
-      onToast(`保存失败：${apiMessage(err)}`);
-    } finally {
-      setSaving(false);
-    }
+      const unknown = !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408);
+      setNeedsRead(unknown); unconfirmedOwners.current = unknown ? submitted : null;
+      setSaveError(`${unknown ? '保存结果未确认，请先重新读取核对，勿重复提交' : '本次保存被拒绝'}：${apiMessage(err)}。当前草稿已保留。`);
+    } finally { setSaving(false); }
   };
+  const dirty = !sameOwners(owners, savedOwners.current) || Boolean(draft.trim());
+  const savedCount = state.status === 'ok' ? state.data.allowedOwners.length : 0;
 
   return (
     <div className="space-y-8">
@@ -98,21 +119,19 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
         {state.status === 'loading' || state.status === 'idle' ? (
           <LoadingBlock />
         ) : state.status === 'error' ? (
-          <ErrorBlock message={state.message} />
+          <div className="space-y-3"><ErrorBlock message={state.message} /><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" onClick={() => void load()}>重试读取</Button></div>
         ) : (
           <div className="space-y-5">
-            <div className="grid gap-3 rounded-md border border-border bg-muted/20 p-4 md:grid-cols-3">
-              <StatusTile label="当前状态" value={owners.length > 0 ? '已启用' : '兼容放行'} />
-              <StatusTile label="允许组织" value={owners.length} />
-              <StatusTile label="日志候选" value={pendingSuggestions.length} />
-            </div>
+            <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm" role="status"><span>{needsRead || readError ? '上次读取门禁' : '已保存门禁'}：<strong>{savedCount > 0 ? '限制为名单内组织' : '兼容放行'}</strong></span><span className="text-muted-foreground">已保存 {savedCount} 个组织</span><span className="text-muted-foreground">{needsRead ? '保存结果未确认' : dirty ? '当前草稿未保存' : '与已保存名单一致'}</span></div>
+            {readError ? <p role="alert" className="text-sm text-destructive">读取失败：{readError}。当前草稿和上次读取结果已保留。</p> : null}
+            {saveError ? <p role="alert" className="text-sm text-destructive">{saveError}</p> : null}
 
-            <div className="rounded-md border border-warn/30 bg-warn-soft px-4 py-3 text-sm leading-6 text-warn ">
+            {savedCount === 0 || owners.length === 0 ? <div className="rounded-md border border-warn/30 bg-warn-soft px-4 py-3 text-sm leading-6 text-warn ">
               白名单为空时不启用 owner 门禁,现有项目和 prd_agent 自身 webhook 会继续放行。需要限制公开 GitHub App 安装时,先从下方日志候选加入你的组织再保存。
-            </div>
+            </div> : null}
 
             <div className="space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">允许的 GitHub owner / 组织</div>
+              <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">允许的 GitHub owner / 组织（待保存名单）</div>
               <div className="flex min-h-12 flex-wrap items-center gap-2 rounded-md border border-border bg-[hsl(var(--surface-sunken))] p-2">
                 {owners.length === 0 ? (
                   <span className="px-2 text-sm text-muted-foreground">尚未允许任何组织</span>
@@ -122,9 +141,10 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
                     <span className="font-mono">{owner}</span>
                     <button
                       type="button"
+                      disabled={saving}
                       aria-label={`移除 ${owner}`}
                       onClick={() => removeOwner(owner)}
-                      className="inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      className="inline-flex h-[3.25rem] w-[3.25rem] items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:h-7 lg:w-7"
                     >
                       <X className="h-4 w-4" />
                     </button>
@@ -135,6 +155,8 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
 
             <div className="flex flex-col gap-2 sm:flex-row">
               <input
+                aria-label="添加 GitHub owner 或组织"
+                disabled={saving}
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
@@ -146,17 +168,17 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
                 placeholder="例如 my-org"
                 className="min-h-11 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
-              <Button type="button" variant="outline" onClick={() => addOwner(draft)}>
+              <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" disabled={saving} onClick={() => addOwner(draft)}>
                 <Plus />
                 加入
               </Button>
-              <Button type="button" onClick={() => void save()} disabled={saving}>
+              <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" onClick={() => void save()} disabled={saving || needsRead || !dirty}>
                 {saving ? <Loader2 className="animate-spin" /> : <ShieldCheck />}
                 保存白名单
               </Button>
-              <Button type="button" variant="ghost" onClick={() => void load()}>
+              <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="ghost" disabled={saving} onClick={() => void load(true)}>
                 <RefreshCw />
-                刷新日志候选
+                重新读取名单与日志
               </Button>
             </div>
           </div>
@@ -165,7 +187,7 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
 
       <Section
         title="从日志加入"
-        description="这里汇总近期 GitHub webhook 命中的 owner。被拦截次数越多越靠前,可以直接加入白名单。"
+        description="近期 GitHub webhook 命中的组织。加入只修改上方草稿，点击保存白名单后才生效。"
       >
         {state.status !== 'ok' ? (
           <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
@@ -176,7 +198,7 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
             暂无 webhook owner 记录。GitHub App 收到投递后会出现在这里。
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-md border border-border">
+          <><div className="hidden overflow-x-auto rounded-md border border-border lg:block">
             <table className="w-full min-w-[45rem] text-sm">
               <thead className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
                 <tr>
@@ -193,24 +215,16 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
                   <OwnerSuggestionRow
                     key={item.owner}
                     item={item}
+                    disabled={saving}
                     allowed={allowedSet.has(normalizeOwner(item.owner))}
                     onAdd={() => addOwner(item.owner)}
                   />
                 ))}
               </tbody>
             </table>
-          </div>
+          </div><div className="divide-y divide-border lg:hidden">{suggestions.map(item => { const allowed = allowedSet.has(normalizeOwner(item.owner)); return <article key={item.owner} className="space-y-2 py-3"><h3 className="break-all font-mono text-sm font-semibold">{item.owner}</h3><p className="text-sm text-muted-foreground">命中 {item.count} · 拦截 {item.blockedCount} · {item.linked ? '已绑定项目' : 'Webhook 日志'}</p><p className="text-sm text-muted-foreground">最近 {formatRelativeTime(item.lastSeenAt)}</p><Button className="min-h-[3.25rem] text-base" type="button" size="sm" variant={allowed ? 'outline' : 'default'} disabled={allowed || saving} onClick={() => addOwner(item.owner)}>{allowed ? '已在名单' : '加入待保存名单'}</Button></article>; })}</div></>
         )}
       </Section>
-    </div>
-  );
-}
-
-function StatusTile({ label, value }: { label: string; value: string | number }): JSX.Element {
-  return (
-    <div>
-      <div className="mb-1 text-xs text-muted-foreground">{label}</div>
-      <div className="text-lg font-semibold">{value}</div>
     </div>
   );
 }
@@ -218,10 +232,12 @@ function StatusTile({ label, value }: { label: string; value: string | number })
 function OwnerSuggestionRow({
   item,
   allowed,
+  disabled,
   onAdd,
 }: {
   item: GithubOwnerSuggestion;
   allowed: boolean;
+  disabled: boolean;
   onAdd: () => void;
 }): JSX.Element {
   return (
@@ -238,8 +254,8 @@ function OwnerSuggestionRow({
       </td>
       <td className="px-3 py-2 text-muted-foreground">{formatRelativeTime(item.lastSeenAt)}</td>
       <td className="px-3 py-2 text-right">
-        <Button type="button" size="sm" variant={allowed ? 'outline' : 'default'} disabled={allowed} onClick={onAdd}>
-          {allowed ? '已允许' : '加入白名单'}
+        <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" size="sm" variant={allowed ? 'outline' : 'default'} disabled={allowed || disabled} onClick={onAdd}>
+          {allowed ? '已在名单' : '加入待保存名单'}
         </Button>
       </td>
     </tr>
