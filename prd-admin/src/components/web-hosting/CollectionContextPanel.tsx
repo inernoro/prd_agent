@@ -21,6 +21,7 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
   const [result, setResult] = useState<CollectionContextPage | null>(null);
   const [selectedId, setSelectedId] = useState('');
   const [hasRelated, setHasRelated] = useState(false);
+  const [relatedError, setRelatedError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const footer = useRef<HTMLDivElement>(null);
@@ -41,17 +42,26 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
     return () => clearTimeout(timer);
   }, [search, keyword]);
   useEffect(() => {
-    let alive = true; setLoading(true); setError('');
+    let alive = true; setLoading(true); setError(''); setRelatedError('');
     void getCollectionContexts(siteId, page, keyword).then(async response => {
       if (!alive) return;
       if (response.success) {
-        const related = await getRelatedDocuments(siteId);
-        if (!alive) return;
-        if (!related.success) { setError(related.error?.message || '关联文档暂时无法读取，请重试。'); return; }
-        const manual = related.data.items.some(item => item.id !== siteId);
-        setHasRelated(manual);
         setResult(response.data);
-        setSelectedId(current => current === 'related' && manual || response.data.items.some(item => item.id === current) ? current : response.data.items[0]?.id ?? 'related');
+        setSelectedId(current => current === 'related' || response.data.items.some(item => item.id === current) ? current : response.data.items[0]?.id ?? 'related');
+        setLoading(false);
+        // 手动关系独立读取；其延迟或失败不能阻止已加载的合集与原链接。
+        try {
+          const related = await getRelatedDocuments(siteId);
+          if (!alive) return;
+          if (!related.success) {
+            setHasRelated(true); setRelatedError(related.error?.message || '关联文档暂时无法读取，请重试。'); return;
+          }
+          const manual = related.data.items.some(item => item.id !== siteId);
+          setHasRelated(manual);
+          if (!manual) setSelectedId(current => current === 'related' ? response.data.items[0]?.id ?? 'related' : current);
+        } catch {
+          if (alive) { setHasRelated(true); setRelatedError('关联文档暂时无法读取，请检查网络后重试。'); }
+        }
       } else setError(response.error?.message || '合集暂时无法读取，请重试。');
     }).catch(() => { if (alive) setError('合集暂时无法读取，请检查网络后重试。'); })
       .finally(() => { if (alive) setLoading(false); });
@@ -83,7 +93,7 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
       </label>
       <nav className="collection-context-list" aria-label="选择合集" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
         {hasRelated && <section className={`collection-context-entry ${selectedId === 'related' ? 'is-selected' : ''}`}>
-          <button type="button" className="collection-context-select" aria-pressed={selectedId === 'related'} onClick={() => setSelectedId('related')}><strong>关联文档</strong></button>
+          <button type="button" className="collection-context-select" aria-label="关联文档" aria-pressed={selectedId === 'related'} onClick={() => setSelectedId('related')}><strong>关联文档</strong>{relatedError && <small title={relatedError}>暂时无法读取</small>}</button>
         </section>}
         {pending ? <div className="related-empty" role="status"><MapSpinner size={16} />正在查找…</div>
           : result.items.map(context => <section className={`collection-context-entry ${context.id === selectedId ? 'is-selected' : ''}`} key={context.id}>

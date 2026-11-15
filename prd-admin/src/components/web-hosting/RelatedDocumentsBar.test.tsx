@@ -133,6 +133,35 @@ describe('顶部关联文档', () => {
     expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('管理关联文档');
     expect(saveRelatedDocuments).not.toHaveBeenCalled();
   });
+  it('手动关联请求未返回时，已加载合集仍可读取、复制与打开', async () => {
+    const context = makeContext('one', 1);
+    vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
+    let resolve!: (value: Awaited<ReturnType<typeof getRelatedDocuments>>) => void;
+    vi.mocked(getRelatedDocuments).mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', context.id);
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
+    expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
+    expect(document.querySelector('.collection-context-link-actions a')?.getAttribute('href')).toBe(window.location.origin + '/s/wp/one');
+    expect(document.querySelector<HTMLButtonElement>('.collection-context-link-actions button')?.disabled).toBe(false);
+    await act(async () => resolve({ success: true, data, error: null }));
+  });
+  it.each(['响应失败', '网络异常'])('手动关联%s不遮挡合集，选择关联后仍能重试原入口', async failure => {
+    const context = makeContext('one', 1);
+    vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
+    if (failure === '响应失败') vi.mocked(getRelatedDocuments).mockResolvedValueOnce({ success: false, data: null as never, error: { code: 'FAILED', message: '关联服务暂不可用' } });
+    else vi.mocked(getRelatedDocuments).mockRejectedValueOnce(new Error('network'));
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    expect(document.querySelector('.collection-context-select')?.textContent).toContain('暂时无法读取');
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
+    expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
+    expect([...document.querySelectorAll('button')].some(button => button.textContent === '管理关联')).toBe(false);
+    await clickText('关联文档');
+    expect(document.querySelector('.related-document-card')?.textContent).toContain('总体方案');
+    await clickText('管理关联');
+    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('管理关联文档');
+    expect(saveRelatedDocuments).not.toHaveBeenCalled();
+  });
   it('底部切换同一合集的其他原链接，失效链接可复制但不能打开', async () => {
     const context = makeContext('one', 2);
     const inactive = { ...context.primaryLink!, id: 'revoked', shareUrl: '/s/wp/revoked', isActive: false, statusLabel: '已撤销' };
