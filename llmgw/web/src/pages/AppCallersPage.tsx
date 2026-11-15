@@ -471,7 +471,7 @@ export function AppCallersPage() {
 }
 
 function StatusOptions() {
-  return <><option value="" disabled>状态未知，请选择</option>{STATUSES.map((x) => <option key={x} value={x}>{statusLabel(x)}</option>)}</>;
+  return <><option value="" disabled>未知，请选择</option>{STATUSES.map((x) => <option key={x} value={x}>{statusLabel(x)}</option>)}</>;
 }
 
 function FilterSelect({ label, value, options, onChange, style }: { label: string; value: string; options: string[]; onChange: (v: string) => void; style: React.CSSProperties }) {
