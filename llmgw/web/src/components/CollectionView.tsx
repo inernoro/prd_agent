@@ -86,7 +86,7 @@ export function CollectionDetailPane({ title, identifier, onClose, children, tab
       const active = document.activeElement;
       // A new dialog or an explicit subsequent focus task owns its focus.
       if (active && active !== document.body && active.isConnected && !pane?.contains(active)) return;
-      if (trigger?.isConnected && trigger.getClientRects().length && !trigger.closest('[inert]')) trigger.focus({ preventScroll: true });
+      if (trigger?.isConnected && trigger.getClientRects().length && !trigger.closest('[inert]')) trigger.focus();
     });
   }, [trigger]);
   return <aside className="lg-collection-pane" aria-label="清单详情" onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>

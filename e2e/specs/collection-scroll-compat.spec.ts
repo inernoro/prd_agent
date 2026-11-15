@@ -67,6 +67,14 @@ for (const width of [390, 320]) for (const theme of ["light", "dark"]) {
     await page.keyboard.press("Escape");
     await expect(pane).toBeHidden();
     await expect(target).toBeFocused();
+    const returned = await target.boundingBox();
+    expect(returned).not.toBeNull();
+    expect(returned!.y).toBeGreaterThanOrEqual(0);
+    expect(returned!.y + returned!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+    expect(await target.evaluate(node => {
+      const rect = node.getBoundingClientRect();
+      return node.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+    }), "return focus must be visibly actionable without another user scroll").toBe(true);
     // Another short-collection consumer keeps the same keyboard return rule.
     await page.getByRole("button", { name: "打开导航", exact: true }).click();
     await page.getByRole("link", { name: "上游", exact: true }).click();
