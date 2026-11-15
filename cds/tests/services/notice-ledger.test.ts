@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,7 +15,7 @@ import {
   type NoticeInput,
 } from '../../src/services/notice-ledger.js';
 import { cdsEventsBus } from '../../src/services/cds-events-bus.js';
-import type { NoticeOutboundConfig } from '../../src/services/notice-outbound-map.js';
+import { buildMapNotificationBody, forwardNoticeToMap, type NoticeOutboundConfig } from '../../src/services/notice-outbound-map.js';
 
 /**
  * 通知账本的行为用例。
@@ -353,6 +354,117 @@ describe('startNoticeLedger — 事件挂钩 + 外发降级', () => {
       expect(ledger.list()[0].occurrences).toBe(1);
     } finally {
       handle.stop();
+    }
+  });
+});
+
+
+describe('通知轮次 — 实际账本到本机 HTTP 外发', () => {
+  it('超窗再次发生必须外发新身份，同窗与落盘后失败重试保留身份', async () => {
+    // sink 仅模拟 MAP 同 key 保留确认的合同，并非真实 MAP 送达证据。
+    const received: Array<Record<string, unknown>> = [];
+    const sinkRows = new Map<string, { id: string; acknowledged: boolean }>();
+    let failNext = false;
+    const server = createServer(async (req, res) => {
+      let raw = '';
+      for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw) as Record<string, unknown>;
+      received.push(body);
+      if (failNext) { failNext = false; res.writeHead(503); res.end('fixture unavailable'); return; }
+      const key = String(body.dedupKey);
+      if (!sinkRows.has(key)) sinkRows.set(key, { id: `n${sinkRows.size + 1}`, acknowledged: false });
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ success: true, data: { id: sinkRows.get(key)!.id } }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('本机 fixture 未启动');
+    const config: NoticeOutboundConfig = { baseUrl: `http://127.0.0.1:${address.port}`, token: 'isolated-fixture', source: 'system-alert' };
+    let now = 1_000_000;
+    const storePath = tempStore();
+    const ledger = new NoticeLedgerService({ storePath, now: () => now });
+    const handle = startNoticeLedger({ ledger, outbound: config });
+    const emit = () => cdsEventsBus.publish('release.failed', { projectId: 'owned-project', targetId: 'owned-target', releaseId: 'owned-release', targetName: '隔离发布', errorMessage: '门禁未通过' });
+    try {
+      emit();
+      await vi.waitFor(() => expect(ledger.list()[0]?.outbound?.status).toBe('sent'));
+      const first = ledger.list()[0];
+      const firstKey = String(received[0].dedupKey);
+      sinkRows.get(firstKey)!.acknowledged = true;
+      ledger.markAllRead();
+      now += 1; emit();
+      expect(ledger.list()[0].readAt).toBeDefined();
+      expect(ledger.list()[0].occurrences).toBe(2);
+      expect(buildMapNotificationBody(ledger.list()[0], config).dedupKey).toBe(firstKey);
+      expect(received).toHaveLength(1);
+      now += NOTICE_MERGE_WINDOW_MS + 1; emit();
+      await vi.waitFor(() => expect(ledger.list()[0]?.outbound?.status).toBe('sent'));
+      const relit = ledger.list()[0];
+      expect(relit.readAt).toBeUndefined(); expect(relit.occurrences).toBe(1);
+      expect(relit.id).toBe(first.id); expect(relit.createdAt).toBe(first.createdAt);
+      expect(received).toHaveLength(2);
+      const relitKey = String(received[1].dedupKey);
+      expect(relitKey).not.toBe(firstKey);
+      expect(sinkRows.size).toBe(2);
+      expect(sinkRows.get(firstKey)!.acknowledged).toBe(true);
+      expect(sinkRows.get(relitKey)!.acknowledged).toBe(false);
+      expect(received[1]).not.toHaveProperty('incidentId');
+      expect(received[1]).not.toHaveProperty('incidentState');
+      now += 1; emit();
+      expect(received).toHaveLength(2);
+      const reloaded = new NoticeLedgerService({ storePath, now: () => now }).list()[0];
+      expect(buildMapNotificationBody(reloaded, config).dedupKey).toBe(relitKey);
+      failNext = true;
+      expect((await forwardNoticeToMap(reloaded, config)).ok).toBe(false);
+      expect((await forwardNoticeToMap(reloaded, config)).ok).toBe(true);
+      expect(received.slice(2).map((body) => body.dedupKey)).toEqual([relitKey, relitKey]);
+      expect(sinkRows.size).toBe(2);
+    } finally {
+      handle.stop(); server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+
+describe('通知轮次 — 兼容与时钟边界', () => {
+  const config: NoticeOutboundConfig = { baseUrl: 'http://127.0.0.1', token: 'unused', source: 'system-alert' };
+  const key = (value: CdsNoticeRecord) => buildMapNotificationBody(value, config).dedupKey;
+
+  it('旧JSON缺字段在同窗合并、保存与重载后保持原轮次身份', () => {
+    const storePath = tempStore();
+    const legacy = record({ readAt: new Date(1_000_001).toISOString() });
+    fs.writeFileSync(storePath, JSON.stringify({ notices: [legacy] }));
+    const ledger = new NoticeLedgerService({ storePath, now: () => 1_000_002 });
+    expect(key(ledger.list()[0])).toBe(key(legacy));
+    const merged = ledger.upsert(input());
+    expect(merged.action).toBe('merged');
+    expect(merged.record.outboundGeneration).toBe(0);
+    expect(merged.record.readAt).toBe(legacy.readAt);
+    expect(key(merged.record)).toBe(key(legacy));
+    expect(key(new NoticeLedgerService({ storePath }).list()[0])).toBe(key(legacy));
+  });
+
+  it('存量无效更新时间即使同毫秒连续relit也生成不同轮次，不伪造createdAt', () => {
+    const legacy = record({ updatedAt: 'invalid' });
+    const first = mergeNotice(legacy, input(), 1_000_000);
+    const next = mergeNotice({ ...first.record, updatedAt: 'invalid' }, input(), 1_000_000);
+    expect(first.action).toBe('relit'); expect(next.action).toBe('relit');
+    expect(first.record.createdAt).toBe(legacy.createdAt);
+    expect(next.record.createdAt).toBe(legacy.createdAt);
+    expect(first.record.outboundGeneration).toBe(1);
+    expect(next.record.outboundGeneration).toBe(2);
+    expect(key(first.record)).not.toBe(key(legacy));
+    expect(key(next.record)).not.toBe(key(first.record));
+  });
+
+  it('存量非法轮次读取时归0，下一轮从1开始', () => {
+    const storePath = tempStore();
+    for (const value of [-1, 0.5, '1', null]) {
+      fs.writeFileSync(storePath, JSON.stringify({ notices: [{ ...record(), outboundGeneration: value }] }));
+      const ledger = new NoticeLedgerService({ storePath, now: () => 1_000_000 + NOTICE_MERGE_WINDOW_MS + 1 });
+      expect(ledger.list()[0].outboundGeneration).toBe(0);
+      expect(ledger.upsert(input()).record.outboundGeneration).toBe(1);
     }
   });
 });

@@ -22,6 +22,16 @@ public class AdminNotification
     public string Level { get; set; } = "info";
     public string Status { get; set; } = "open";
 
+    // 通知确认状态与故障事实分离；缺失字段表示历史数据没有证据，不能推断恢复。
+    public string? IncidentId { get; set; }
+    public string? IncidentState { get; set; }
+    public string? RequestOutcome { get; set; }
+    public long OccurrenceCount { get; set; } = 1;
+    public DateTime? FirstOccurredAt { get; set; }
+    public DateTime? LastOccurredAt { get; set; }
+    public DateTime? RecoveredAt { get; set; }
+    public string? EvidenceRequestId { get; set; }
+
     /// <summary>
     /// 故障关闭后重新打开的投递代次。存量通知为 0，持续故障不递增。
     /// </summary>
