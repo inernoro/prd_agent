@@ -1,6 +1,6 @@
 // 轻量自包含 UI 原语（不复用 prd-admin 的 design/*，本 mini-app 独立组件风格）。
 
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type HTMLAttributes, type CSSProperties, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 
 export function HelpTip({ label, children }: { label: string; children: ReactNode }) {
@@ -164,9 +164,10 @@ export function Button({
   );
 }
 
-export function Card({ children, style, className }: { children: ReactNode; style?: CSSProperties; className?: string }) {
+export function Card({ children, style, className, ...rest }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
+      {...rest}
       className={className}
       style={{
         background: 'var(--bg-surface)',

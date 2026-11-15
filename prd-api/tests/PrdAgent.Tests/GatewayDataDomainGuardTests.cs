@@ -816,7 +816,7 @@ public class GatewayDataDomainGuardTests
 
         // 导航只剩两条。断言的是导航项本身（带 page/icon 的那一行），不是路径出现过没有——
         // 注释和别处的 Link 都会提到这些路径，只查路径必然误判。
-        Assert.Contains("{ to: '/logical-models', label: '模型'", layout);
+        Assert.Contains("{ to: '/logical-models', label: '公开模型'", layout);
         Assert.Contains("{ to: '/platforms', label: '上游'", layout);
         Assert.DoesNotContain("to: '/pools', label:", layout);
         Assert.DoesNotContain("to: '/models', label:", layout);
@@ -841,10 +841,11 @@ public class GatewayDataDomainGuardTests
     public void ProviderRow_ShowsOwnedModelsAndWhetherTheyAreRegistered()
     {
         // 「模型属于上游」这件事在界面上的落地：展开一条上游就看到它卖的货，
-        // 以及每个货登记到白名单没有——没登记的模型躺在库里，调用方按公开名请求找不到它。
+        // 以及是否关联公开模型；关联不表示线路启用或当前可调用。
         // 在这之前这件事只能靠在两个页面之间来回对照才看得出来。
         //
-        // 这条链路整条删掉编译照过、llmgw/web 又整包没有单测，属于「改动删掉测试仍全绿」，
+        // 源码守卫保留关系判据；实际状态、权限与任务路径另由 Web DOM 用例验证。
+        // 这条链路整条删掉编译仍会通过，
         // 所以必须有守卫（predicate-and-wiring-discipline 形状 2）。
         var panel = ReadRepoFile("llmgw/web/src/components/ProviderModelsPanel.tsx");
         var platformsPage = ReadRepoFile("llmgw/web/src/pages/PlatformsPage.tsx");
@@ -853,11 +854,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("offering.targetKind !== 'model'", panel);
         Assert.Contains("byTarget.get(model.id)", panel);
         Assert.DoesNotContain("byTarget.get(model.modelName)", panel);
-        // 没登记的排前面：这一屏唯一需要人动手的就是它们
+        // 未关联模型优先展示，但不据此判定其当前健康。
         Assert.Contains("a.publicIds.length - b.publicIds.length", panel);
         // 结论句而不是一个数字：「3 个模型」读不出该不该管
-        Assert.Contains("个没登记", panel);
-        Assert.Contains("还没登记，调用方找不到它", panel);
+        Assert.Contains("个未关联公开模型", panel);
+        Assert.Contains("尚未关联公开模型", panel);
 
         // 接线：上游页真的渲染了它，而不是只建了组件没人用
         Assert.Contains("ProviderModelsPanel", platformsPage);

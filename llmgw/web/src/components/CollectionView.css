@@ -180,7 +180,7 @@
 .lg-collection-provider-row td:first-child > div { min-width: 0 !important; gap: 2px !important; }
 .lg-collection-provider-row td:first-child > div > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lg-collection-provider-row td:last-child { padding-left: 0 !important; padding-right: 4px !important; }
-.lg-collection-provider-row td:last-child button { padding: 0 4px !important; font-size: var(--fs-caption) !important; }
+.lg-collection-provider-row td:last-child button { min-height: 32px; padding: 4px 8px !important; font-size: var(--fs-secondary) !important; }
 .lg-collection-provider-key { display: flex; align-items: flex-start; flex-direction: column; gap: 3px; }
 .lg-entity-detail-bounded .lg-entity-detail-hero { grid-template-columns: minmax(0,1fr) auto; }
 .lg-entity-detail-bounded .lg-entity-detail-actions { justify-self: end; }
@@ -252,3 +252,16 @@
   .lg-console-body:has(.lg-collection-page, .lg-entity-detail-bounded) .lg-sidebar-footer kbd { font-size: var(--fs-micro); }
 }
 .lg-collection-load-more { display: flex; justify-content: center; padding: 10px; }
+
+.lg-provider-call-status { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; font-size: var(--fs-secondary); overflow-wrap: anywhere; }
+.lg-provider-call-status time, .lg-provider-call-note { color: var(--text-muted); font-size: var(--fs-secondary); }
+.lg-provider-call-status a { color: var(--accent); min-height: 28px; display: inline-flex; align-items: center; }
+
+/* A short result set ends at its content; workspaces remain scrollable for long lists. */
+.lg-collection-view.lg-collection-short { flex: 0 0 auto; min-height: 0; }
+.lg-collection-short > .lg-collection-scroll { flex: 0 0 auto; }
+.lg-collection-pane-body > .lg-collection-short,
+.lg-collection-pane .lg-logical-model-detail > .lg-collection-short { min-height: 0; }
+.lg-collection-workspace:not(:has(> .lg-collection-pane)):has(.lg-collection-list > .lg-collection-short) { flex: 0 0 auto; min-height: 0; }
+
+.lg-collection-count { align-self: center; white-space: nowrap; flex-shrink: 0; font-size: var(--fs-secondary); color: var(--text-muted); }

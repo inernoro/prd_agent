@@ -49,11 +49,11 @@ export function collectProviderModels(
 
 /** 一句话结论，给上游那一行用。「3 个模型」读不出该不该管，「2 个没登记」读得出。 */
 export function summarizeProviderModels(rows: ProviderModelRow[]): string {
-  if (rows.length === 0) return '还没有模型';
+  if (rows.length === 0) return '尚未接入模型';
   const unregistered = rows.filter((x) => x.publicIds.length === 0).length;
   return unregistered === 0
-    ? `${rows.length} 个模型 · 都已登记`
-    : `${rows.length} 个模型 · ${unregistered} 个没登记`;
+    ? `${rows.length} 个 · 均已关联公开模型`
+    : `${rows.length} 个 · ${unregistered} 个未关联公开模型`;
 }
 
 export function ProviderModelsPanel({ rows, onRegister }: { rows: ProviderModelRow[]; onRegister?: () => void }) {
@@ -67,13 +67,13 @@ export function ProviderModelsPanel({ rows, onRegister }: { rows: ProviderModelR
   }, [selected?.model.id]);
   const unregistered = useMemo(() => rows.filter((row) => row.publicIds.length === 0).length, [rows]);
   return <>
-    <CollectionView afterToolbar={<div className="lg-collection-subhead"><Chip label={`${unregistered} 个未登记`} color="var(--warn)" bg="var(--warn-bg)" /><span className="lg-collection-spacer" />{onRegister ? <button type="button" onClick={onRegister} style={linkButton}>从上游批量登记</button> : null}</div>} className={selected ? 'lg-collection-hidden' : ''} items={rows} placeholder="搜索上游模型或公开标识" searchText={({ model, publicIds }) => `${model.name} ${model.modelName} ${publicIds.join(' ')}`} filters={[{ value: 'unregistered', label: '未登记', matches: (row) => row.publicIds.length === 0 }, { value: 'registered', label: '已登记', matches: (row) => row.publicIds.length > 0 }]}>
-      {(pageRows) => <><table className="lg-collection-owned-table"><colgroup><col style={{width:'62%'}}/><col style={{width:'20%'}}/><col style={{width:'18%'}}/></colgroup><thead><tr><th>模型</th><th>登记</th><th>操作</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id}>
-        <td title={`${model.modelName || model.name} · ${publicIds.length ? `已登记到 ${publicIds.length} 个公开模型` : '还没登记，调用方找不到它'}`}><Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(model.platformId || '')}`}><strong>{model.modelName || model.name}</strong></Link></td>
-        <td><Chip label={publicIds.length ? '已登记' : '未登记'} color={publicIds.length ? 'var(--ok)' : 'var(--warn)'} bg={publicIds.length ? 'var(--ok-bg)' : 'var(--warn-bg)'} /></td><td>{publicIds.length ? <button type="button" onClick={(event) => {triggerRef.current=event.currentTarget;setSelectedId(model.id);}} style={linkButton}>登记详情</button> : <Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(model.platformId || '')}`}>详情</Link>}</td>
+    <CollectionView afterToolbar={<div className="lg-collection-subhead"><Chip label={`${unregistered} 个未关联`} color="var(--warn)" bg="var(--warn-bg)" /><span className="lg-collection-spacer" />{onRegister ? <button type="button" onClick={onRegister} style={linkButton}>发现并导入模型</button> : null}</div>} className={selected ? 'lg-collection-hidden' : ''} items={rows} emptyText={rows.length ? '没有匹配模型' : '尚未接入模型'} placeholder="搜索上游模型或公开标识" searchText={({ model, publicIds }) => `${model.name} ${model.modelName} ${publicIds.join(' ')}`} filters={[{ value: 'unregistered', label: '未关联公开模型', matches: (row) => row.publicIds.length === 0 }, { value: 'registered', label: '已关联公开模型', matches: (row) => row.publicIds.length > 0 }]}>
+      {(pageRows) => <><table className="lg-collection-owned-table"><colgroup><col style={{width:'42%'}}/><col style={{width:'18%'}}/><col style={{width:'22%'}}/><col style={{width:'18%'}}/></colgroup><thead><tr><th>模型</th><th>管理状态</th><th>公开模型关联</th><th>操作</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id}>
+        <td title={`${model.modelName || model.name} · ${publicIds.length ? `已登记到 ${publicIds.length} 个公开模型` : '尚未关联公开模型'}`}><Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(model.platformId || '')}`}><strong>{model.modelName || model.name}</strong></Link></td>
+        <td>{model.enabled ? '已启用' : '已停用'}</td><td><Chip label={publicIds.length ? '已关联' : '未关联'} color={publicIds.length ? 'var(--ok)' : 'var(--warn)'} bg={publicIds.length ? 'var(--ok-bg)' : 'var(--warn-bg)'} /></td><td>{publicIds.length ? <button type="button" onClick={(event) => {triggerRef.current=event.currentTarget;setSelectedId(model.id);}} style={linkButton}>查看公开模型</button> : <Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(model.platformId || '')}`}>详情</Link>}</td>
       </tr>)}</tbody></table></>}
     </CollectionView>
-    {selected ? <><div className="lg-collection-toolbar"><button ref={returnRef} type="button" style={linkButton} onClick={() => setSelectedId(null)}>返回名下模型</button><span style={HINT_TEXT}>{selected.publicIds.length} 个公开模型</span></div><CollectionView key={selected.model.id} items={selected.publicIds} searchText={(id) => id} placeholder="搜索登记的公开模型">{(ids) => <>{ids.map((id) => <div className="lg-collection-code" key={id}><Link to={`/models/view?model=${encodeURIComponent(id)}`}>{id}</Link></div>)}</>}</CollectionView></> : null}
+    {selected ? <><div className="lg-collection-toolbar"><button ref={returnRef} type="button" style={linkButton} onClick={() => setSelectedId(null)}>返回已接入模型</button><span style={HINT_TEXT}>{selected.publicIds.length} 个公开模型</span></div><CollectionView key={selected.model.id} items={selected.publicIds} searchText={(id) => id} placeholder="搜索登记的公开模型">{(ids) => <>{ids.map((id) => <div className="lg-collection-code" key={id}><Link to={`/models/view?model=${encodeURIComponent(id)}`}>{id}</Link></div>)}</>}</CollectionView></> : null}
   </>;
 }
 const linkButton: React.CSSProperties = { background: 'none', border: 'none', padding: 0, color: 'var(--accent)', fontSize: 'var(--fs-secondary)', cursor: 'pointer' };

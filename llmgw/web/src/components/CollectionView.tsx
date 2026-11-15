@@ -42,18 +42,19 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
     return () => observer.disconnect();
   }, [hasMore, visible.length]);
   return (
-    <div className={`lg-collection-view ${className}`}>
+    <div className={`lg-collection-view${!hasMore && result.total <= pageSize ? ' lg-collection-short' : ''} ${className}`}>
       <div className="lg-collection-toolbar">
         <input type="search" aria-label={placeholder} placeholder={placeholder} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
         {filters.length ? <select aria-label={filterLabel} value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }}><option value="">{allFilterLabel}</option>{filters.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select> : null}
         {toolbarActions}
+        <span className="lg-collection-count" role="status" aria-label="清单数量">{query || filter ? `${result.total} / ${items.length} 项` : `共 ${items.length} 项`}</span>
       </div>
       {afterToolbar}
       <div className="lg-collection-scroll" ref={scrollRef}>
         {result.total ? children(visible) : <div className="lg-collection-empty">{emptyText}{query || filter ? <Button size="sm" variant="ghost" onClick={() => { setQuery(''); setFilter(''); setPage(1); }}>清除筛选</Button> : null}</div>}
         {hasMore ? <div ref={sentinelRef} className="lg-collection-load-more"><Button size="sm" variant="ghost" onClick={() => setPage(value => value + 1)}>继续加载 · 已显示 {visible.length} / {result.total}</Button></div> : null}
       </div>
-      {!continuous ? <footer className="lg-collection-pagination">
+      {!continuous && result.pages > 1 ? <footer className="lg-collection-pagination">
         <span>{result.total ? `${result.start + 1}–${Math.min(result.start + pageSize, result.total)}` : '0'} / {result.total}</span>
         <span className="lg-collection-spacer" />
         <span>第 {result.current} / {result.pages} 页</span>
