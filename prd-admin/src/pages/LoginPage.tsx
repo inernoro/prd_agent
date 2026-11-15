@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRight, Terminal, Lock, User as UserIcon, Eye, EyeOff, Sun, Moon } from 'lucide-react';
+import { ArrowRight, Terminal, Lock, User as UserIcon, Eye, EyeOff } from 'lucide-react';
 import { takeReturnFragment } from '@/app/returnFragment';
 import { useAuthStore } from '@/stores/authStore';
 import { getAdminAuthzMe, getSsoOptions, login, loginWithMiduoPlanetToken, resetPassword } from '@/services';
 import type { SsoLoginOption } from '@/services/contracts/auth';
-import { OrbitalInstrument } from '@/components/effects/OrbitalInstrument';
-import { useMobileThemeStore, useResolvedThemeMode } from '@/stores/mobileThemeStore';
-import { transitionThemeMode } from '@/lib/themeTransition';
+import { ConsciousnessHud, ConsciousnessScene, IdentityScanner, markConsciousnessArrival, type IdentityPhase } from '@/components/effects/ConsciousnessScene';
+import { prefersReducedMotion } from '@/lib/themeApplier';
 import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
 import { Reveal } from '@/pages/home/components/Reveal';
 
-/** Orbital entry: shared instrument geometry connects authentication and the workspace.
+/** Cinematic entry follows the reference film: fog, identity scan, contour, character.
  * Authentication, SSO return fragments and first-login password reset retain their existing flow.
  */
 
@@ -52,8 +51,6 @@ function createSsoState() {
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const theme = useResolvedThemeMode();
-  const setMode = useMobileThemeStore((state) => state.setMode);
   useApplyDocumentTheme('/login');
   const setAuth = useAuthStore((s) => s.login);
   const setTokens = useAuthStore((s) => s.setTokens);
@@ -105,6 +102,10 @@ export default function LoginPage() {
     return resolved;
   }, [returnUrlWithRef]);
   const [loading, setLoading] = useState(false);
+  const [gatePhase, setGatePhase] = useState<IdentityPhase>('idle');
+  const completingLogin = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const [username, setUsername] = useState(() => {
     try {
@@ -142,7 +143,7 @@ export default function LoginPage() {
   const canResetSubmit = useMemo(() => Boolean(newPassword.trim() && confirmPassword.trim()), [newPassword, confirmPassword]);
 
   useEffect(() => {
-    if (isAuthed) navigate(resolveReturnUrl(), { replace: true });
+    if (isAuthed && !completingLogin.current) navigate(resolveReturnUrl(), { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthed, navigate]);
 
@@ -262,15 +263,22 @@ export default function LoginPage() {
     refreshToken: string,
     sessionKey: string
   ) => {
+    completingLogin.current = true;
     setAuth(user, accessToken);
     setTokens(accessToken, refreshToken, sessionKey);
     setPermissionsLoaded(false);
 
     // 拉取后台权限（决定菜单/路由可见性与准入）
-    const authz = await getAdminAuthzMe();
+    const authz = await getAdminAuthzMe().catch((cause: unknown) => {
+      completingLogin.current = false;
+      logout();
+      throw cause;
+    });
     if (!authz.success) {
       // 若无 admin.access 权限，后端会 403，这里直接回到登录态
       logout();
+      completingLogin.current = false;
+      setGatePhase('idle');
       setError(authz.error?.message || '无权限进入管理后台');
       return;
     }
@@ -292,6 +300,15 @@ export default function LoginPage() {
     } catch {
       // ignore
     }
+    setGatePhase('authorized');
+    if (!prefersReducedMotion()) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 650));
+      if (!mounted.current) return;
+      setGatePhase('entering');
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 500));
+    }
+    if (!mounted.current) return;
+    markConsciousnessArrival();
     navigate(resolveReturnUrl(), { replace: true });
   };
 
@@ -345,22 +362,16 @@ export default function LoginPage() {
     setResetError(null);
   };
 
+  const busy = loading || ssoLoading || resetLoading;
+  const phase: IdentityPhase = gatePhase === 'idle' && busy ? 'verifying' : gatePhase;
+  const authorized = phase === 'authorized' || phase === 'entering';
   return (
-    <div className="orbital-login" data-busy={loading || ssoLoading || resetLoading}>
-      <header className="orbital-login-header">
-        <a className="orbital-wordmark" href="/home" aria-label="MAP 米多智能体平台"><strong>MAP</strong><span>米多智能体平台</span></a>
-        <button className="orbital-theme-toggle" type="button" aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'}
-          onClick={(event) => transitionThemeMode({ mode: theme === 'dark' ? 'light' : 'dark', pathname: '/login', origin: event, commit: setMode })}>
-          {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
-        </button>
-      </header>
-      <main className="orbital-login-main">
-        <section className="orbital-login-stage" aria-label="从想法到现实">
-          <div className="orbital-login-manifesto"><h1>让想法，<br />进入现实。</h1><p>把灵感交给智能体，把时间留给创造。</p></div>
-          <OrbitalInstrument active={loading || ssoLoading || resetLoading} />
-          <div className="orbital-stage-index" aria-hidden="true"><span>01 / IDEA TO REALITY</span><span>MAP WORKSPACE</span></div>
-        </section>
-        <section className="orbital-login-form" aria-label={showResetPassword ? '设置新密码' : '登录 MAP'}>
+    <div className="cinema-login" data-busy={busy} data-phase={phase}>
+      <ConsciousnessScene fog />
+      <ConsciousnessHud login />
+      <IdentityScanner phase={phase} />
+      <main className="cinema-login-center" aria-label={showResetPassword ? '设置新密码' : '登录 MAP'}>
+        {authorized ? <div className="cinema-identity-result" role="status"><p>{phase === 'entering' ? 'WELCOME TO' : '读取完毕 · 核验通过'}</p><small>{phase === 'entering' ? 'YOUR INTELLIGENCE WORKSPACE' : 'READ COMPLETE / VERIFIED'}</small>{phase === 'entering' && <strong>MAP</strong>}</div> : <>
           {!showResetPassword ? (
             <LoginCard
               username={username}
@@ -393,9 +404,12 @@ export default function LoginPage() {
               onBack={onBackToLogin}
             />
           )}
-        </section>
+        </>}
       </main>
-      <footer className="orbital-login-footer"><span>从一个想法，到一次真正的完成。</span><span>MADE FOR WHAT’S NEXT</span></footer>
+      <div className="cinema-login-status" role={phase === 'verifying' ? 'status' : undefined}>
+        {authorized ? '身份已确认，正在进入工作空间' : busy ? '正在读取身份与访问权限' : '身份资料确认 · 等待你的指令'}
+        <small>{authorized ? 'IDENTITY VERIFIED / ENTERING WORKSPACE' : busy ? 'READING IDENTITY / PLEASE WAIT' : 'IDENTITY AWAITING / READY TO CONNECT'}</small>
+      </div>
     </div>
   );
 }
@@ -546,7 +560,7 @@ function ErrorBar({ children }: { children: React.ReactNode }) {
  *  玻璃卡片外壳（遵循 R9）
  * ────────────────────────────────────────────────────────────────────────── */
 function GlassCard({ children }: { children: React.ReactNode }) {
-  return <div className="orbital-form-content">{children}</div>;
+  return <div className="cinema-form-content">{children}</div>;
 }
 
 interface LoginCardProps {
@@ -616,9 +630,9 @@ function LoginCard({
   };
   return (
     <GlassCard>
-      <Reveal delay={0}><div className="orbital-form-index"><span />身份确认 / IDENTITY</div></Reveal>
-      <Reveal delay={60}><h2 className="orbital-form-heading">进入工作空间</h2></Reveal>
-      <Reveal delay={120}><p className="orbital-form-description">{passwordLoginDisabled ? '使用企业单点登录，连接你的工作。' : '欢迎回来，继续你的下一次创造。'}</p></Reveal>
+      <Reveal delay={0}><div className="cinema-form-index"><span />身份资料确认</div></Reveal>
+      <Reveal delay={60}><h2 className="cinema-form-heading">连接你的工作空间</h2></Reveal>
+      <Reveal delay={120}><p className="cinema-form-description">{passwordLoginDisabled ? '使用企业单点登录，连接你的工作。' : '以你的身份，连接无限可能。'}</p></Reveal>
 
       {/* Form */}
       <div className="mt-7 grid gap-4">
@@ -721,7 +735,7 @@ function LoginCard({
           <Reveal delay={360}>
             <div className="mt-2">
               <PrimaryPill onClick={onSubmit} disabled={!canSubmit || loading} loading={loading}>
-                {loading ? '正在确认身份…' : '进入 MAP'}
+                {loading ? '正在确认身份…' : '开始身份确认'}
               </PrimaryPill>
             </div>
           </Reveal>
@@ -831,7 +845,7 @@ function ResetCard({
 
       <Reveal delay={60}>
         <div className="mb-5">
-          <div className="orbital-form-index">首次登录 / 设置密码</div>
+          <div className="cinema-form-index">首次登录 / 设置密码</div>
         </div>
       </Reveal>
 

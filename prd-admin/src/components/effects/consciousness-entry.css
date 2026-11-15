@@ -1,0 +1,162 @@
+/* Reference: 3840×2160 film, 0–14s fog/verification, 15–19s black
+   contour-to-character reveal. UI remains native; the artwork is a separate asset. */
+.consciousness-scene { position: absolute; inset: 0; overflow: hidden; pointer-events: none; background: var(--cinema-night); }
+.consciousness-filter { position: absolute; }
+.consciousness-art, .consciousness-contour, .consciousness-sleeping { position: absolute; width: 100%; height: 100%; object-fit: cover; object-position: center right; }
+.consciousness-art { opacity: .82; }
+.consciousness-sleeping { opacity: 0; }
+.consciousness-mist { position: absolute; inset: 0; background: var(--cinema-paper); opacity: 0; }
+.consciousness-scene.has-fog .consciousness-mist { opacity: .88; backdrop-filter: blur(2px); }
+.consciousness-scene.has-fog .consciousness-art { filter: saturate(.45); }
+.consciousness-ghost { position: absolute; left: 6%; top: 38%; width: 37%; color: var(--cinema-light); }
+.consciousness-ghost > span { font: italic 850 clamp(100px, 15vw, 260px)/1 var(--font-display); letter-spacing: -.075em; background: linear-gradient(165deg, var(--cinema-light), var(--cinema-accent) 70%, transparent); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; opacity: .36; }
+.consciousness-ghost > i { position: absolute; inset: -10% -4% 0; border: 1px solid color-mix(in srgb, var(--cinema-accent) 35%, transparent); border-radius: 50%; transform: rotate(-17deg) scaleY(.32); }
+.consciousness-ghost small { display: block; font-size: 12px; letter-spacing: .55em; white-space: nowrap; opacity: .35; margin-top: 15px; }
+.has-fog .consciousness-ghost { opacity: .8; }
+.has-fog .consciousness-ghost > span { -webkit-text-fill-color: var(--cinema-light); }
+.consciousness-grain { position: absolute; inset: 0; background-image: repeating-linear-gradient(0deg, transparent, transparent 3px, color-mix(in srgb, var(--cinema-accent) 3%, transparent) 4px); opacity: .25; }
+.consciousness-hud { position: absolute; inset: 0; z-index: 2; pointer-events: none; color: var(--cinema-light); font: 9px/1.6 var(--font-mono, monospace); letter-spacing: .15em; }
+.consciousness-hud.is-paper { color: var(--cinema-ink); }
+.consciousness-hud-brand { position: absolute; top: 25px; left: 30px; display: flex; align-items: center; gap: 14px; }
+.consciousness-hud-brand strong { font: 700 18px var(--font-display); letter-spacing: -.04em; }
+.consciousness-hud-brand > i { width: min(13vw, 220px); height: 1px; background: currentColor; opacity: .4; margin-left: 10px; }
+.consciousness-hud-version { position: absolute; top: 25px; right: 28px; text-align: right; }
+.consciousness-hud-version > span { font-size: 7px; opacity: .6; }
+.consciousness-hud-left { position: absolute; left: 30px; top: 20%; font-size: 8px; opacity: .65; }
+.consciousness-hud-right { position: absolute; right: 28px; top: 35%; font-size: 8px; opacity: .6; }
+.consciousness-hud-left i, .consciousness-hud-right i { display: block; width: 25px; height: 2px; margin-top: 10px; background: var(--cinema-accent); }
+.consciousness-hud-bottom { position: absolute; left: 30px; bottom: 30px; font-size: 8px; opacity: .65; }
+.consciousness-hud-bottom > span { position: absolute; width: 60px; height: 1px; background: currentColor; left: 190px; top: 4px; }
+.consciousness-hud-coordinate { position: absolute; right: 28px; bottom: 30px; font-size: 8px; opacity: .6; }
+
+.cinema-login {
+  --bg-base: var(--cinema-paper); --text-primary: var(--cinema-ink);
+  --text-secondary: color-mix(in srgb, var(--cinema-ink) 72%, transparent);
+  --text-muted: color-mix(in srgb, var(--cinema-ink) 65%, transparent);
+  --login-field-bg: transparent; --login-border: color-mix(in srgb, var(--cinema-ink) 30%, transparent);
+  --login-cta-gradient: var(--cinema-ink); --login-cta-shadow: none;
+  color-scheme: light; min-height: 100svh; width: 100%; position: relative; isolation: isolate;
+  display: flex; align-items: center; justify-content: center; overflow: clip;
+  background: var(--cinema-paper); color: var(--cinema-ink); font-family: var(--font-body);
+}
+.cinema-login-center { position: relative; z-index: 3; width: 320px; margin: 100px 24px; }
+.cinema-form-content { width: 100%; }
+.cinema-form-index { font: 9px var(--font-mono, monospace); letter-spacing: .22em; text-align: center; margin-bottom: 17px; }
+.cinema-form-index > span { display: inline-block; width: 3px; height: 9px; background: currentColor; margin-right: 9px; vertical-align: middle; }
+.cinema-form-heading { font-size: 23px; font-weight: 500; letter-spacing: .12em; text-align: center; margin: 0; }
+.cinema-form-description { text-align: center; font-size: 10px; line-height: 1.9; margin-top: 13px; letter-spacing: .08em; color: var(--text-secondary); }
+.cinema-form-content .grid { gap: 14px; }
+.cinema-form-content label > span { font-size: 11px; font-family: var(--font-body) !important; letter-spacing: .05em !important; }
+.cinema-form-content label > div { border-width: 0 0 1px !important; border-radius: 0; backdrop-filter: none !important; }
+.cinema-form-content label > div > span { display: none; }
+.cinema-form-content input:not([type="checkbox"]) { padding-left: 2px; height: 34px; font-size: 13px; color: var(--cinema-ink); min-width: 0; }
+.cinema-form-content input::placeholder { color: var(--text-muted); }
+.cinema-form-content label > div:focus-within { border-color: var(--cinema-ink) !important; box-shadow: 0 1px 0 var(--cinema-ink); }
+.cinema-form-content button.group { border-radius: 4px; width: auto; min-width: 170px; height: 38px; padding: 0 20px; font-size: 12px; color: var(--cinema-light); margin: 5px auto 0; display: flex; }
+.cinema-form-content button.group > svg:first-child { display: none; }
+.cinema-form-content button.group .animate-spin { border-color: currentColor; border-top-color: transparent; }
+.cinema-form-content a[aria-disabled] { border-radius: 4px; }
+.cinema-form-content button:focus-visible, .cinema-form-content a:focus-visible, .consciousness-home button:focus-visible { outline: 2px solid var(--cinema-accent); outline-offset: 4px; }
+.cinema-form-content .map-reveal-active { animation-duration: 650ms !important; }
+.identity-scanner { position: absolute; width: min(540px, 86vw); height: min(540px, 86vw); left: 50%; top: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 2; color: var(--cinema-ink); transition: opacity 500ms, transform 800ms; }
+.identity-scanner svg { width: 100%; height: 100%; overflow: visible; }
+.identity-scanner.is-idle { opacity: .28; }
+.identity-ring-outer, .identity-ring-inner, .identity-ring-dots { transform-origin: 280px 280px; }
+.identity-ring-outer { animation: identity-scan 32s linear infinite; }
+.identity-ring-inner { animation: identity-scan 20s linear infinite reverse; }
+.identity-ring-dots { animation: identity-scan 40s linear infinite; }
+.identity-scanner.is-verifying .identity-ring-outer { animation-duration: 2s; }
+.identity-scanner.is-verifying .identity-ring-inner { animation-duration: 1.6s; }
+.identity-scanner.is-authorized { transform: translate(-50%, -50%) scale(.9); }
+.identity-scanner.is-entering { transform: translate(-50%, -50%) scale(2.8); opacity: 0; }
+.cinema-identity-result { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 360px; text-align: center; }
+.cinema-identity-result p { font-size: 20px; letter-spacing: .25em; }
+.cinema-identity-result small { font: 9px var(--font-mono, monospace); letter-spacing: .35em; margin-top: 12px; }
+.cinema-identity-result strong { font: 800 48px var(--font-display); letter-spacing: -.05em; margin-top: 20px; }
+.cinema-login-status { position: absolute; bottom: 38px; left: 50%; transform: translateX(-50%); z-index: 4; text-align: center; width: 70%; font-size: 10px; letter-spacing: .15em; color: var(--cinema-ink); }
+.cinema-login-status small { display: block; font: 7px var(--font-mono, monospace); letter-spacing: .32em; margin-top: 7px; opacity: .65; }
+.cinema-login-status::after { content: ''; display: block; margin: 18px auto 0; width: 250px; height: 1px; background: currentColor; transform: scaleX(.12); transition: transform 700ms; }
+.cinema-login[data-phase="verifying"] .cinema-login-status::after { animation: identity-read 1.5s ease-in-out infinite; }
+.cinema-login[data-phase="authorized"] .cinema-login-status::after, .cinema-login[data-phase="entering"] .cinema-login-status::after { transform: scaleX(1); }
+.cinema-login[data-phase="entering"] .consciousness-mist { animation: identity-fog-exit 500ms ease-in both; }
+.cinema-login[data-phase="entering"] .cinema-login-center { animation: identity-welcome-exit 500ms ease-in both; }
+
+.consciousness-home { flex: 1; min-height: 0; height: 100%; position: relative; isolation: isolate; overflow: hidden; color: var(--cinema-light); background: var(--cinema-night); font-family: var(--font-body); }
+.consciousness-home-center { position: absolute; left: 50%; top: 49%; transform: translate(-50%, -50%); width: min(650px, 64%); z-index: 4; }
+.consciousness-home-heading { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.consciousness-home-heading h1 { font-size: 25px; font-weight: 450; letter-spacing: .08em; margin: 0; text-shadow: 0 2px 18px var(--cinema-night); }
+.consciousness-sigil { font: italic 800 25px var(--font-display); letter-spacing: -.15em; transform: rotate(-12deg); color: var(--cinema-accent); }
+.consciousness-home-subtitle { text-align: center; margin: 14px 0 30px; font-size: 10px; letter-spacing: .26em; color: var(--cinema-light); }
+.consciousness-search { position: relative; border: 1px solid var(--cinema-border); border-radius: 12px; background: var(--cinema-glass); box-shadow: inset 0 1px 0 var(--cinema-border), 0 14px 55px color-mix(in srgb, var(--cinema-night) 30%, transparent); backdrop-filter: blur(18px); }
+.consciousness-search:focus-within { border-color: var(--cinema-accent); }
+.consciousness-search-field { display: flex; align-items: center; gap: 12px; padding: 18px 19px 10px; color: var(--cinema-accent); }
+.consciousness-search-field input { flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--cinema-light); font-size: 13px; outline: none; font-family: inherit; color-scheme: dark; }
+.consciousness-search-field input::placeholder { color: color-mix(in srgb, var(--cinema-light) 72%, transparent); }
+.consciousness-search-field input::-webkit-search-cancel-button { display: none; }
+.consciousness-search-field button { background: transparent; border: 0; color: var(--cinema-light); padding: 3px; cursor: pointer; }
+.consciousness-search-field kbd { font: 10px var(--font-mono, monospace); color: var(--cinema-light); opacity: .6; border: 1px solid var(--cinema-border); padding: 2px 5px; border-radius: 3px; }
+.consciousness-search-footer { display: flex; justify-content: space-between; padding: 8px 19px 13px; color: color-mix(in srgb, var(--cinema-light) 70%, transparent); font-size: 8px; letter-spacing: .1em; }
+.consciousness-search-results { position: absolute; inset: calc(100% + 8px) 0 auto; max-height: min(350px, 36vh); overflow: auto; border: 1px solid var(--cinema-border); border-radius: 8px; background: color-mix(in srgb, var(--cinema-night) 95%, transparent); box-shadow: 0 18px 60px var(--cinema-night); }
+.consciousness-search-results > button { display: flex; justify-content: space-between; align-items: center; text-align: left; gap: 16px; padding: 13px 16px; width: 100%; border: 0; border-bottom: 1px solid var(--cinema-border); color: var(--cinema-light); background: transparent; cursor: pointer; }
+.consciousness-search-results > button:hover { background: var(--cinema-glass); }
+.consciousness-search-results strong { display: block; font-size: 13px; font-weight: 500; }
+.consciousness-search-results small { display: block; margin-top: 5px; font-size: 11px; line-height: 1.6; opacity: .7; }
+.consciousness-search-results p { padding: 18px; font-size: 12px; }
+.consciousness-shortcuts { display: flex; justify-content: center; gap: 12px; margin-top: 26px; }
+.consciousness-shortcuts button { display: inline-flex; align-items: center; justify-content: center; gap: 12px; background: color-mix(in srgb, var(--cinema-night) 45%, transparent); color: var(--cinema-light); border: 1px solid var(--cinema-border); border-radius: 4px; padding: 9px 16px; font-size: 11px; cursor: pointer; transition: border-color 200ms, background 200ms; }
+.consciousness-shortcuts button:hover { border-color: var(--cinema-accent); background: var(--cinema-glass); }
+.consciousness-open-desk { white-space: nowrap; min-width: 220px; justify-content: center; position: absolute; z-index: 3; bottom: 32px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; background: transparent; border: 0; color: var(--cinema-light); font-size: 10px; letter-spacing: .12em; cursor: pointer; padding: 12px; }
+.consciousness-open-desk > span { height: 1px; width: 40px; background: currentColor; opacity: .35; }
+.consciousness-return { align-self: flex-start; margin: 16px 30px 0; background: var(--bg-card); border: 1px solid var(--border-default); color: var(--text-secondary); border-radius: 5px; padding: 7px 12px; font-size: 11px; cursor: pointer; }
+.consciousness-scene.is-arriving .consciousness-art { animation: companion-reveal 3200ms ease-out both; }
+.consciousness-scene.is-arriving .consciousness-contour { animation: companion-contour 3200ms ease-out both; }
+.consciousness-scene.is-arriving .consciousness-sleeping { animation: companion-awaken 3200ms ease-out both; }
+.consciousness-home.is-arriving .consciousness-home-center { animation: companion-controls 1800ms ease-out both; }
+.consciousness-home.is-arriving .consciousness-ghost { animation: companion-controls 2200ms ease-out both; }
+@keyframes identity-scan { to { transform: rotate(360deg); } }
+@keyframes identity-read { 50% { transform: scaleX(.8); opacity: .35; } }
+@keyframes identity-fog-exit { to { opacity: 0; } }
+@keyframes identity-welcome-exit { to { opacity: 0; filter: blur(12px); transform: scale(1.08); } }
+@keyframes companion-reveal { 0%, 62% { opacity: 0; } 100% { opacity: .82; } }
+@keyframes companion-contour { 0% { opacity: 0; } 15%, 30% { opacity: 1; } 62%, 100% { opacity: 0; } }
+@keyframes companion-awaken { 0%, 20% { opacity: 0; } 48%, 62% { opacity: .82; } 100% { opacity: 0; } }
+@keyframes companion-controls { from { opacity: 0; filter: blur(4px); } to { opacity: 1; filter: blur(0); } }
+@media (max-width: 760px) {
+  .consciousness-hud-brand { left: 18px; top: 20px; }
+  .consciousness-hud-brand > span { font-size: 7px; }
+  .consciousness-hud-brand > i, .consciousness-hud-right, .consciousness-hud-left { display: none; }
+  .consciousness-hud-version { right: 18px; top: 20px; font-size: 8px; }
+  .consciousness-hud-version > span { display: none; }
+  .consciousness-hud-bottom { left: 18px; bottom: 20px; font-size: 7px; }
+  .consciousness-hud-bottom > span, .consciousness-hud-coordinate { display: none; }
+  .consciousness-art, .consciousness-contour, .consciousness-sleeping { object-position: 100% center; }
+  .consciousness-ghost { top: 26%; left: 6%; }
+  .consciousness-ghost > span { font-size: 28vw; }
+  .consciousness-ghost small { display: none; }
+  .cinema-login-center { width: min(290px, 76%); margin: 105px 0 125px; }
+  .cinema-form-heading { font-size: 20px; letter-spacing: .05em; }
+  .cinema-form-description { font-size: 10px; }
+  .identity-scanner { width: 108vw; height: 108vw; max-width: 530px; max-height: 530px; opacity: .25; }
+  .cinema-login-status { bottom: 48px; font-size: 9px; width: 90%; }
+  .cinema-login-status::after { width: 180px; }
+  .consciousness-home-center { width: calc(100% - 36px); top: 46%; }
+  .consciousness-home-heading h1 { font-size: 22px; }
+  .consciousness-home-subtitle { font-size: 10px; letter-spacing: .1em; margin-bottom: 22px; }
+  .consciousness-search-field { padding: 17px 14px 8px; }
+  .consciousness-search-field input { font-size: 12px; }
+  .consciousness-shortcuts { gap: 7px; flex-wrap: wrap; margin-top: 20px; }
+  .consciousness-shortcuts button { padding: 8px 11px; gap: 6px; font-size: 10px; }
+  .consciousness-open-desk { bottom: 60px; }
+  .consciousness-search-results { max-height: 27vh; }
+}
+@media (max-height: 650px) and (min-width: 761px) {
+  .cinema-login-center { margin: 70px 24px; }
+  .cinema-form-content .grid { gap: 10px; margin-top: 18px; }
+  .cinema-login-status { bottom: 18px; }
+  .identity-scanner { width: 470px; height: 470px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cinema-login *, .consciousness-home * { animation: none !important; transition: none !important; }
+  .consciousness-contour, .consciousness-sleeping { display: none; }
+  .consciousness-art { opacity: .82; }
+}

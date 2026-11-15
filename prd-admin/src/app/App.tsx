@@ -12,7 +12,6 @@ import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
 import { NavigationProgressBar } from '@/components/effects/NavigationProgressBar';
-import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
 import { NAV_REGISTRY } from '@/app/navRegistry';
@@ -123,7 +122,6 @@ const PosterDesignerPage = lazy(() => import('@/pages/weekly-poster/PosterDesign
 const ExecutiveDashboardPage = lazy(() => import('@/pages/ExecutiveDashboardPage'));
 
 // 移动端入口
-const MobileHomePage = lazy(() => import('@/pages/MobileHomePage'));
 const DailyPostPage = lazy(() => import('@/pages/mobile-home/DailyPostPage'));
 const MobileProfilePage = lazy(() => import('@/pages/MobileProfilePage'));
 const MobileNotificationsPage = lazy(() => import('@/pages/MobileNotificationsPage'));
@@ -131,12 +129,10 @@ const MobileNotificationsPage = lazy(() => import('@/pages/MobileNotificationsPa
 // 首页 Agent Launcher（既是 / 的 IndexPage，也是 /agent-launcher 的目标）
 const AgentLauncherPage = lazy(() => import('@/pages/AgentLauncherPage'));
 
-/** 首页路由：移动端渲染 MobileHomePage，桌面端渲染 Agent 选择页。 */
+/** 首页路由：桌面与移动共用沉浸入口，可展开完整工作台。 */
 function IndexPage() {
   const loaded = useAuthStore((s) => s.permissionsLoaded);
-  const { isMobile } = useBreakpoint();
   if (!loaded) return null;
-  if (isMobile) return <MobileHomePage />;
   return <AgentLauncherPage />;
 }
 

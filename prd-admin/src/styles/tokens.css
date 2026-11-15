@@ -1681,3 +1681,17 @@ html[data-perf-mode="performance"] .app-aurora {
 :root{--writing-caption-ink:#fff}
 
 :root{--writing-author-scrim:rgba(12,14,18,.45);--writing-sheet-shadow:0 -8px 30px rgba(0,0,0,.18)}
+
+/* Cinematic entry media palette. These are invariant scene colors, like an
+   artwork cover: fog-white authentication reveals the same night-blue scene
+   in both app skins. The expanded workbench follows the normal theme tokens. */
+:root {
+  --cinema-paper: #eff0f1;
+  --cinema-ink: #15171b;
+  --cinema-night: #02050a;
+  --cinema-light: #f0f5ff;
+  --cinema-accent: #71dce7;
+  --cinema-amber: #ff9b3d;
+  --cinema-glass: rgba(23, 37, 54, 0.60);
+  --cinema-border: rgba(185, 218, 250, 0.26);
+}
