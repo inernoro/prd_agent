@@ -1,3 +1,4 @@
+import { useSettingsSessionOwner, useSettingsSessionState } from '../useSettingsSessionState';
 import { useEffect, useRef, useState } from 'react';
 import { Bot, KeyRound, LogOut, ShieldCheck, ShieldOff } from 'lucide-react';
 
@@ -29,23 +30,35 @@ function authModeLabel(mode?: string): string {
   return mode || 'unknown';
 }
 
+/** Compare the readable fields using the same canonical form as ticket-sso.ts. Secrets stay unobservable. */
+export function normalizeSsoReadbackFields(input: TicketSsoConfig): TicketSsoConfig {
+  const cleanUrl = (value: string) => { try { const url = new URL(value.trim()); if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) return ''; url.hash = ''; return url.toString(); } catch { return ''; } };
+  let redirect = input.defaultRedirect.trim();
+  try { if (!redirect.startsWith('/') || redirect.startsWith('//') || redirect.includes('\\') || /%5c/i.test(redirect) || new URL(redirect, 'https://cds.invalid').origin !== 'https://cds.invalid' || ['/login', '/auth/sso'].includes(redirect.split(/[?#]/)[0])) redirect = '/project-list'; } catch { redirect = '/project-list'; }
+  return { ...input, providerId: input.providerId.trim().slice(0, 64) || 'ticket-sso', label: input.label.trim().slice(0, 80) || '使用 SSO 登录', authorizationUrl: cleanUrl(input.authorizationUrl), tokenUrl: cleanUrl(input.tokenUrl), clientId: input.clientId.trim().slice(0, 160), defaultRedirect: redirect };
+}
+
 export function AuthTab(): JSX.Element {
+  const owner = useSettingsSessionOwner();
+  const currentOwner = useRef(owner); currentOwner.current = owner;
   const [statusAttempt, setStatusAttempt] = useState(0);
   const [state, setState] = useState<LoadState<AuthStatusResponse>>({ status: 'loading' });
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   const [logoutError, setLogoutError] = useState('');
-  const [sso, setSso] = useState<TicketSsoConfig | null>(null);
-  const [ssoSecret, setSsoSecret] = useState('');
-  const [ssoSaveState, setSsoSaveState] = useState<'idle' | 'running' | 'saved' | 'error'>('idle');
-  const [ssoSaveError, setSsoSaveError] = useState('');
+  const [sso, setSso] = useSettingsSessionState<TicketSsoConfig | null>('auth:sso', null);
+  const [ssoSecret, setSsoSecret] = useSettingsSessionState<string>('auth:ssoSecret', '', Boolean, { expireTo: () => '' });
+  const [ssoSaveState, setSsoSaveState] = useSettingsSessionState<'idle' | 'running' | 'saved' | 'error'>('auth:ssoSaveState', 'idle', value => value === 'running');
+  const [ssoSaveError, setSsoSaveError] = useSettingsSessionState<string>('auth:ssoSaveError', '', undefined, { keepSession: true });
   const [ssoReadError, setSsoReadError] = useState('');
   const [ssoDenied, setSsoDenied] = useState(false);
   const [ssoLoading, setSsoLoading] = useState(true);
-  const [ssoUnknown, setSsoUnknown] = useState(false);
+  const [ssoUnknown, setSsoUnknown] = useSettingsSessionState<boolean>('auth:ssoUnknown', false, Boolean);
   const [ssoAttempt, setSsoAttempt] = useState(0);
-  const unconfirmedSso = useRef<{ config: TicketSsoConfig; secretChanged: boolean } | null>(null);
+  const [pendingSso, setPendingSso] = useSettingsSessionState<{ config: TicketSsoConfig; secretChanged: boolean } | null>('auth:pending', null, undefined, { keepSession: true });
+  const unconfirmedSso = useRef(pendingSso); unconfirmedSso.current = pendingSso;
   const [ssoReadAfterUnknown, setSsoReadAfterUnknown] = useState(false);
-  const savedSso = useRef<TicketSsoConfig | null>(null);
+  const [savedSsoValue, setSavedSsoValue] = useSettingsSessionState<TicketSsoConfig | null>('auth:saved', null);
+  const savedSso = useRef(savedSsoValue); savedSso.current = savedSsoValue;
   const editableKeys = ['enabled', 'providerId', 'label', 'authorizationUrl', 'tokenUrl', 'clientId', 'defaultRedirect'] as const;
 
   useEffect(() => {
@@ -73,11 +86,11 @@ export function AuthTab(): JSX.Element {
           for (const key of editableKeys) if (current[key] !== previous[key]) Object.assign(next, { [key]: current[key] });
           return next;
         });
-        savedSso.current = config;
+        savedSso.current = config; setSavedSsoValue(config);
         if (config.managedByEnvironment) setSsoSecret('');
         setSsoReadAfterUnknown(true);
         const pending = unconfirmedSso.current;
-        if (!pending || !pending.secretChanged && editableKeys.every(key => config[key] === pending.config[key])) { unconfirmedSso.current = null; setSsoUnknown(false); if (pending) { setSsoSaveState('idle'); setSsoSaveError(''); } }
+        if (!pending || !pending.secretChanged && editableKeys.every(key => config[key] === pending.config[key])) { unconfirmedSso.current = null; setPendingSso(null); setSsoUnknown(false); if (pending) { setSsoSaveState('idle'); setSsoSaveError(''); } }
       })
       .catch((err: unknown) => {
         if (!alive) return;
@@ -86,7 +99,13 @@ export function AuthTab(): JSX.Element {
       })
       .finally(() => { if (alive) setSsoLoading(false); });
     return () => { alive = false; };
-  }, [ssoAttempt]);
+  }, [ssoAttempt, setSso, setSsoSecret, setSavedSsoValue, setPendingSso, setSsoUnknown, setSsoSaveState, setSsoSaveError]);
+
+  useEffect(() => {
+    if (!ssoUnknown && ssoSaveState !== 'running' && !ssoSecret) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
+  }, [ssoUnknown, ssoSaveState, ssoSecret]);
 
   function updateSso(change: Partial<TicketSsoConfig>): void {
     setSso(current => current ? { ...current, ...change } : current);
@@ -95,29 +114,30 @@ export function AuthTab(): JSX.Element {
 
   const saveSso = async (): Promise<void> => {
     if (!sso || ssoLoading || ssoReadError || ssoUnknown || ssoSaveState === 'running') return;
-    const submitted = { ...sso };
+    const submitted = normalizeSsoReadbackFields(sso);
     const changedSecret = Boolean(ssoSecret);
     setSsoReadAfterUnknown(false);
     setSsoSaveState('running');
     setSsoSaveError('');
     try {
       const saved = await updateTicketSsoConfig({
-        enabled: sso.enabled,
-        providerId: sso.providerId,
-        label: sso.label,
-        authorizationUrl: sso.authorizationUrl,
-        tokenUrl: sso.tokenUrl,
-        clientId: sso.clientId,
+        enabled: submitted.enabled,
+        providerId: submitted.providerId,
+        label: submitted.label,
+        authorizationUrl: submitted.authorizationUrl,
+        tokenUrl: submitted.tokenUrl,
+        clientId: submitted.clientId,
         clientSecret: ssoSecret || undefined,
-        defaultRedirect: sso.defaultRedirect || '/project-list',
+        defaultRedirect: submitted.defaultRedirect,
       });
-      setSso(saved); savedSso.current = saved;
+      setSso(saved); if (currentOwner.current === owner) savedSso.current = saved; setSavedSsoValue(saved);
       setSsoSecret('');
       setSsoSaveState('saved');
     } catch (err) {
       setSsoSaveState('error');
       const unknown = !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408);
-      setSsoUnknown(unknown); unconfirmedSso.current = unknown ? { config: submitted, secretChanged: changedSecret } : null;
+      const pending = unknown ? { config: submitted, secretChanged: changedSecret } : null;
+      setSsoUnknown(unknown); if (currentOwner.current === owner) unconfirmedSso.current = pending; setPendingSso(pending);
       setSsoSaveError(unknown ? '保存结果未确认，请先重新读取核对，勿重复提交。密钥不会回传，修改密钥后仍需通过正常 SSO 登录确认有效性。' : err instanceof ApiError ? err.message : String(err));
     }
   };
@@ -222,7 +242,7 @@ export function AuthTab(): JSX.Element {
             </label> : null}
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-3"><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={ssoDenied} onClick={() => requestAgentAccess('auth')}><Bot />交给 Agent 配置</Button><span className="text-xs text-muted-foreground">客户端密钥仅在受保护输入框填写，不会回显。</span></div>
+          <div className="mt-3 flex flex-wrap items-center gap-3"><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={ssoDenied} onClick={() => requestAgentAccess('auth')}><Bot />交给 Agent 配置</Button><span className="text-xs text-muted-foreground">客户端密钥只在受保护的输入框中填写，不会回显。</span></div>
           {ssoLoading ? <p role="status" className="mt-3 text-sm text-muted-foreground">正在读取 SSO 配置…</p> : null}
           {ssoReadError ? <div role="alert" className="mt-3 space-y-2 text-sm text-destructive"><p>{ssoDenied ? '当前会话无权读取 SSO 配置，请联系系统所有者。' : `SSO 配置读取失败：${ssoReadError}。当前状态未确认，可重试。`}</p><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={ssoLoading || ssoSaveState === 'running'} onClick={() => setSsoAttempt(value => value + 1)}>重新读取 SSO 配置</Button></div> : null}
           {sso ? (
@@ -272,7 +292,8 @@ export function AuthTab(): JSX.Element {
                   {ssoSaveState === 'running' ? '保存中' : '保存 SSO 配置'}
                 </Button>
                 <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" disabled={ssoLoading || ssoSaveState === 'running'} onClick={() => setSsoAttempt(value => value + 1)}>重新读取核对</Button>
-                {ssoUnknown && ssoReadAfterUnknown && !ssoReadError ? <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" onClick={() => { setSsoUnknown(false); unconfirmedSso.current = null; setSsoSaveError('原保存结果仍未确认。你已选择在核对配置及正常登录后准备新的修改，不会自动重复提交。'); }}>已核对配置与登录，准备新修改</Button> : null}
+                {ssoUnknown && pendingSso?.secretChanged && !ssoSecret ? <span className="text-sm text-warn">未确认请求涉及客户端密钥，输入明文已不在当前会话保留，无法从读取恢复；请核验登录后再明确准备新修改。</span> : null}
+                {ssoUnknown && ssoReadAfterUnknown && !ssoReadError ? <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" onClick={() => { setSsoUnknown(false); unconfirmedSso.current = null; setPendingSso(null); setSsoSaveError('原保存结果仍未确认。你已选择在核对配置及正常登录后准备新的修改，不会自动重复提交。'); }}>已核对配置与登录，准备新修改</Button> : null}
                 {ssoSaveState === 'saved' ? <span className="text-sm text-ok">配置已保存并立即生效</span> : null}
                 {ssoSaveState === 'error' ? <span className="text-sm text-destructive">{ssoSaveError || '保存失败'}</span> : null}
               </div>

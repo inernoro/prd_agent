@@ -15,6 +15,7 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Copy, KeyRound, Loader2, Plus, RefreshCw, ShieldOff, UserCog } from 'lucide-react';
 
+import { useSettingsSessionOwner, useSettingsSessionState } from '../useSettingsSessionState';
 import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
 import { useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
 import { Button } from '@/components/ui/button';
@@ -120,22 +121,25 @@ function retiredReason(cred: CredentialView): string {
 }
 
 export function IdentityTab({ onToast }: Props): JSX.Element {
-  const [state, setState] = useState<LoadState>({ status: 'idle' });
+  const [state, setState] = useSettingsSessionState<LoadState>('identity:read-state', { status: 'idle' });
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [issued, setIssued] = useState<{ plaintext: string; reach: string; principal: PrincipalRow['principal']; credential: { id: string } } | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useSettingsSessionState<boolean>('identity:creating', false, Boolean);
+  const [newName, setNewName] = useSettingsSessionState<string>('identity:new-name', '');
+  const [issued, setIssued] = useSettingsSessionState<{ plaintext: string; reach: string; principal: PrincipalRow['principal']; credential: { id: string }; owner: object | null; expired?: boolean } | null>('identity:issued', null, Boolean, { expireTo: value => value ? { ...value, plaintext: '', expired: true } : null });
+  const [createOpen, setCreateOpen] = useSettingsSessionState<boolean>('identity:create-open', false);
   const [query, setQuery] = useState('');
   const [readError, setReadError] = useState('');
-  const [issueError, setIssueError] = useState('');
-  const [issueUnknown, setIssueUnknown] = useState(false);
-  const [busyAction, setBusyAction] = useState('');
-  const [uncertainKey, setUncertainKey] = useState('');
-  const uncertainMutation = useRef<{ kind: 'principal' | 'credential'; id: string; status?: 'active' | 'disabled' } | null>(null);
+  const [issueError, setIssueError] = useSettingsSessionState<string>('identity:issue-error', '', undefined, { keepSession: true });
+  const [issueUnknown, setIssueUnknown] = useSettingsSessionState<boolean>('identity:issue-unknown', false, Boolean);
+  const [busyAction, setBusyAction] = useSettingsSessionState<string>('identity:busy-action', '', Boolean);
+  const [uncertainKey, setUncertainKey] = useSettingsSessionState<string>('identity:uncertain-key', '', Boolean);
+  const [pendingMutation, setPendingMutation] = useSettingsSessionState<{ kind: 'principal' | 'credential'; id: string; status?: 'active' | 'disabled' } | null>('identity:pending-mutation', null, undefined, { keepSession: true });
+  const uncertainMutation = useRef(pendingMutation); uncertainMutation.current = pendingMutation;
   const [issueRead, setIssueRead] = useState(false);
-  const [unknownIssue, setUnknownIssue] = useState<{ principal: string; requestedAt: string } | null>(null);
-  const receiptScope = useRef<object | null>(null);
+  const [unknownIssue, setUnknownIssue] = useSettingsSessionState<{ principal: string; requestedAt: string } | null>('identity:unknown-issue', null, undefined, { keepSession: true });
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const sessionOwner = useSettingsSessionOwner();
   const receiptRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { status: authScope } = useContext(ConsoleAuthContext);
@@ -150,25 +154,26 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
       if (signal.aborted) return;
       setState({ status: 'ok', data: res }); setReadError(''); setIssueRead(true);
       const pending = uncertainMutation.current;
-      if (pending && (pending.kind === 'principal' ? res.rows.some(row => row.principal.id === pending.id && row.principal.status === pending.status) : res.rows.some(row => [...row.activeCredentials, ...row.retiredCredentials].some(credential => credential.id === pending.id && credential.status === 'revoked')))) { uncertainMutation.current = null; setUncertainKey(''); }
+      if (pending && (pending.kind === 'principal' ? res.rows.some(row => row.principal.id === pending.id && row.principal.status === pending.status) : res.rows.some(row => [...row.activeCredentials, ...row.retiredCredentials].some(credential => credential.id === pending.id && credential.status === 'revoked')))) { setPendingMutation(null); setUncertainKey(''); }
     } catch (err) {
       if (signal.aborted) return;
       const message = err instanceof ApiError ? err.message : String(err);
       setReadError(message); setState(current => preserve && current.status === 'ok' ? current : { status: 'error', message });
     }
-  }, [beginRead]);
-  useEffect(() => { setIssued(null); setCreateOpen(false); setNewName(''); setCreating(false); setBusyAction(''); setIssueError(''); setIssueUnknown(false); setIssueRead(false); setUnknownIssue(null); setUncertainKey(''); uncertainMutation.current = null; void load(); }, [load, authScope]);
+  }, [beginRead, setState, setPendingMutation, setUncertainKey]);
+  useEffect(() => { setIssueRead(false); void load(true); }, [load, authScope]);
   useEffect(() => {
-    if (issued && receiptScope.current === authScope && state.status === 'ok') { receiptRef.current?.scrollIntoView({ block: 'nearest' }); receiptRef.current?.focus({ preventScroll: true }); }
-  }, [issued, state.status, authScope]);
+    if (issued && issued.owner === sessionOwner && state.status === 'ok') { receiptRef.current?.scrollIntoView({ block: 'nearest' }); receiptRef.current?.focus({ preventScroll: true }); }
+  }, [issued, state.status, sessionOwner]);
+  useEffect(() => { if (issued?.owner === sessionOwner) void load(true); }, [issued?.credential.id, sessionOwner, load]);
   useEffect(() => { if (createOpen && !issued) inputRef.current?.focus(); }, [createOpen, issued]);
 
   useEffect(() => {
-    if (!issued && !creating) return;
+    if (!issued && !creating && !issueUnknown && !uncertainKey) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [issued, creating]);
+  }, [issued, creating, issueUnknown, uncertainKey]);
 
   /**
    * 签一张用户级凭证。
@@ -190,21 +195,18 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
         method: 'POST',
         body: principalId ? { principalId } : { name },
       });
-      if (currentScope.current !== requestScope) return;
       if (!res.plaintext || !res.principal?.id || !res.credential?.id) throw new Error('签发响应不完整，无法确认明文与对象');
-      beginRead.cancel();
-      receiptScope.current = requestScope;
-      setIssued(res); setCreateOpen(true);
+      if (alive.current && currentScope.current === requestScope) beginRead.cancel();
+      setIssued({ ...res, owner: sessionOwner }); setCreateOpen(true);
       if (!principalId) setNewName('');
-      await load(true);
+
     } catch (err) {
-      if (currentScope.current !== requestScope) return;
       const unknown = !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408);
       setIssueUnknown(unknown);
       if (unknown) setUnknownIssue({ principal: principalId || name, requestedAt });
       setIssueError(unknown ? '签发结果未确认，请重新读取列表核对，勿重复签发；未收到的明文不能从列表恢复，可核对后吊销未领取凭证。' : err instanceof Error ? err.message : String(err));
     } finally {
-      if (currentScope.current === requestScope) setCreating(false);
+      setCreating(false);
     }
   }, [newName, load, creating, issueUnknown, authScope, beginRead, busyAction, uncertainKey, issued]);
 
@@ -217,11 +219,10 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
       onToast(res.cascadedCount > 0 ? `已撤销，并同时撤销 ${res.cascadedCount} 张下游凭证` : '凭证已撤销');
       await load(true);
     } catch (err) {
-      if (currentScope.current !== requestScope) return;
       const unknown = !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408);
-      if (unknown) { uncertainMutation.current = { kind: 'credential', id }; setUncertainKey(id); }
-      onToast(unknown ? '凭证撤销结果未确认，请重新读取核对，勿重复提交。' : err instanceof Error ? err.message : String(err));
-    } finally { if (currentScope.current === requestScope) setBusyAction(''); }
+      if (unknown) { setPendingMutation({ kind: 'credential', id }); setUncertainKey(id); }
+      if (alive.current && currentScope.current === requestScope) onToast(unknown ? '凭证撤销结果未确认，请重新读取核对，勿重复提交。' : err instanceof Error ? err.message : String(err));
+    } finally { setBusyAction(''); }
   }, [authScope, creating, busyAction, uncertainKey, onToast, load]);
 
   const setPrincipalStatus = useCallback(async (id: string, status: 'active' | 'disabled') => {
@@ -233,18 +234,17 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
       onToast(status === 'disabled' ? '主体已停用，名下凭证立即不可用' : '主体已恢复');
       await load(true);
     } catch (err) {
-      if (currentScope.current !== requestScope) return;
       const unknown = !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408);
-      if (unknown) { uncertainMutation.current = { kind: 'principal', id, status }; setUncertainKey(id); }
-      onToast(unknown ? '主体状态变更结果未确认，请重新读取核对，勿重复提交。' : err instanceof Error ? err.message : String(err));
-    } finally { if (currentScope.current === requestScope) setBusyAction(''); }
+      if (unknown) { setPendingMutation({ kind: 'principal', id, status }); setUncertainKey(id); }
+      if (alive.current && currentScope.current === requestScope) onToast(unknown ? '主体状态变更结果未确认，请重新读取核对，勿重复提交。' : err instanceof Error ? err.message : String(err));
+    } finally { setBusyAction(''); }
   }, [authScope, creating, busyAction, uncertainKey, onToast, load]);
 
   if (state.status === 'loading' || state.status === 'idle') return <LoadingBlock label="加载权限总览" />;
   if (state.status === 'error') return <div className="space-y-3"><ErrorBlock message={state.message} /><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" onClick={() => void load()}>重试读取</Button></div>;
 
   const { rows, unclaimed, archivedCount } = state.data;
-  const visibleIssued = receiptScope.current === authScope ? issued : null;
+  const visibleIssued = issued?.owner === sessionOwner ? issued : null;
   const needle = query.trim().toLocaleLowerCase();
   const visibleRows = rows.filter(row => !needle || [row.principal.id, row.principal.name, row.principal.createdBy, ...row.activeCredentials.map(credential => credential.id), ...row.grants.map(grant => grant.projectName || grant.projectId)].some(value => value?.toLocaleLowerCase().includes(needle)));
 
@@ -266,7 +266,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
       {readError ? <p role="alert" className="text-sm text-destructive">读取失败：{readError}。当前显示上次结果。</p> : null}
       {issueError ? <p role="alert" className="text-sm text-destructive">{issueError}</p> : null}
       {unknownIssue ? <p className="break-words text-sm text-muted-foreground">未确认签发请求：主体 {unknownIssue.principal} · {formatDate(unknownIssue.requestedAt)}。列表读取不能证明该请求未执行，一次性明文不能从列表找回。</p> : null}
-      {issueUnknown && issueRead && !readError ? <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" onClick={() => { setIssueUnknown(false); setIssueError('原签发结果仍未确认。你已选择在人工核对并处理未领取凭证后准备新的签发；不会自动重复原请求。'); }}>已核对并处理，准备新的签发</Button> : null}
+      {issueUnknown && issueRead && !readError ? <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" disabled={creating} onClick={() => { setIssueUnknown(false); setIssueError('原签发结果仍未确认。你已选择在人工核对并处理未领取凭证后准备新的签发；不会自动重复原请求。'); }}>已核对并处理，准备新的签发</Button> : null}
       {createOpen || visibleIssued ? <section ref={receiptRef} tabIndex={-1} aria-label="凭证签发结果与操作" className="rounded-md border border-border p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         {!visibleIssued ? <div className="flex flex-wrap items-end gap-3">
           <label className="flex min-w-[13.75rem] flex-1 flex-col gap-1 text-xs">
@@ -286,20 +286,21 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
         </div> : null}
         {visibleIssued ? (
           <div className="mt-3 rounded-md border border-[hsl(var(--warn))]/40 bg-[hsl(var(--warn-soft))] p-3">
-            <h4 className="mb-2 break-words text-sm font-semibold">已为 {visibleIssued.principal.name} 签发凭证</h4><p className="mb-2 break-all text-xs">主体编号：{visibleIssued.principal.id} · 凭证编号：{visibleIssued.credential.id}</p><div className="mb-2 text-sm font-semibold text-[hsl(var(--warn))]">明文只显示这一次，请立即复制保存</div>
+            <h4 className="mb-2 break-words text-sm font-semibold">已为 {visibleIssued.principal.name} 签发凭证</h4><p className="mb-2 break-all text-xs">主体编号：{visibleIssued.principal.id} · 凭证编号：{visibleIssued.credential.id}</p><div className="mb-2 text-sm font-semibold text-[hsl(var(--warn))]">{visibleIssued.expired ? '本次明文临时保留已到期，请先核对凭证。' : '请立即安全保存明文；切换标签最多临时保留 30 分钟，刷新或关闭页面无法恢复。'}</div>
             <div className="flex flex-wrap items-center gap-2">
-              <textarea readOnly aria-label="一次性凭证明文" value={visibleIssued.plaintext} rows={2} onFocus={event => event.currentTarget.select()} className="min-w-0 flex-1 resize-y rounded border border-input bg-background p-2 font-mono text-sm" spellCheck={false} />
+              {visibleIssued.expired ? <p role="alert" className="text-sm text-warn">明文临时保留已到期，无法恢复。请按上方主体与凭证编号核对；未领取的凭证应先撤销，再准备新的签发。</p> : <textarea readOnly aria-label="一次性凭证明文" value={visibleIssued.plaintext} rows={2} onFocus={event => event.currentTarget.select()} className="min-w-0 flex-1 resize-y rounded border border-input bg-background p-2 font-mono text-sm" spellCheck={false} />}
               <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs"
                 type="button"
                 size="sm"
                 variant="outline"
+                disabled={visibleIssued.expired}
                 onClick={() => {
                   void (async () => { try { await navigator.clipboard.writeText(visibleIssued.plaintext); onToast('已复制'); } catch { onToast('复制失败，请手动选择明文并保存。'); } })();
                 }}
               >
                 <Copy /> 复制
               </Button>
-              <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" size="sm" variant="ghost" onClick={() => { setIssued(null); setCreateOpen(false); }}>我已存好</Button>
+              <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" size="sm" variant="ghost" onClick={() => { setIssued(null); setCreateOpen(false); }}>{visibleIssued.expired ? '我已核对并处理' : '我已存好'}</Button>
             </div>
             <p className="mt-2 text-xs leading-6 text-muted-foreground">{visibleIssued.reach}</p>
             {/*
@@ -308,7 +309,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
               这一屏只出现一次，所以要在这里就把落地方式说清（Codex P2）。
             */}
             <div className="mt-3 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--muted))]/40 p-3">
-              <p className="mb-1 text-xs font-semibold">在那台机器上执行一次，凭证才真正落地</p>
+              <p className="mb-1 text-xs font-semibold">{visibleIssued.expired ? '若已安全保存明文，可按此方式配置到机器；未领取的凭据应先撤销' : '在那台机器上执行一次，凭证才真正落地'}</p>
               {/*
                 必须带上主机：新机器 / 新 clone 上没有仓库里那份凭据文件，
                 CDS_HOST 也往往没设，命令会在收凭证之前就先失败 —— 而这一屏

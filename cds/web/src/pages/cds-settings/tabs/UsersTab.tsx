@@ -1,5 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
+import { useSettingsSessionState } from '../useSettingsSessionState';
 import { consoleAccountIdentity } from '@/lib/consoleIdentity';
 import { KeyRound, ShieldCheck, UserPlus, Users } from 'lucide-react';
 
@@ -47,12 +48,18 @@ function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) 
   const [meAttempt, setMeAttempt] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [busyUser, setBusyUser] = useState('');
-  const [resetUser, setResetUser] = useState<CdsPublicUser | null>(null);
-  const [resetValue, setResetValue] = useState('');
-  const [resetError, setResetError] = useState('');
-  const [resetUnknown, setResetUnknown] = useState(false);
-  const [unconfirmedResets, setUnconfirmedResets] = useState<Record<string, { value: string; requestedAt: string }>>({});
+  const [busyUser, setBusyUser] = useSettingsSessionState<string>('users:busyUser', '', Boolean);
+  const [resetUser, setResetUser] = useSettingsSessionState<CdsPublicUser | null>('users:resetUser', null);
+  const [resetValue, setResetValue] = useSettingsSessionState<string>('users:resetValue', '');
+  const [resetError, setResetError] = useSettingsSessionState<string>('users:resetError', '');
+  const [resetUnknown, setResetUnknown] = useSettingsSessionState<boolean>('users:resetUnknown', false);
+  const [unconfirmedResets, setUnconfirmedResets] = useSettingsSessionState<Record<string, { value: string; requestedAt: string; expired?: boolean }>>('users:unconfirmed-resets', {}, value => Object.keys(value).length > 0, { expireTo: value => Object.fromEntries(Object.entries(value).map(([id, pending]) => [id, { ...pending, value: '', expired: true }])) });
+
+  useEffect(() => {
+    if (Object.keys(unconfirmedResets).length === 0 && !busyUser) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
+  }, [unconfirmedResets, busyUser]);
 
   // ── My password ──
   const [oldPw, setOldPw] = useState('');
@@ -157,8 +164,7 @@ function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) 
     setBusyUser(resetUser.id); setResetError('');
     try {
       await updateUser(resetUser.id, { newPassword: resetValue });
-      if (!alive.current) return;
-      onToast(`已重置 ${resetUser.username || resetUser.githubLogin} 的密码`);
+      if (alive.current) onToast(`已重置 ${resetUser.username || resetUser.githubLogin} 的密码`);
       setUnconfirmedResets(current => { const next = { ...current }; delete next[resetUser.id]; return next; });
       setResetValue(''); setResetUser(null);
     } catch (err) {

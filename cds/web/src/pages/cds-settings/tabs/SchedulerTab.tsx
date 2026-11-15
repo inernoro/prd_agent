@@ -1,6 +1,7 @@
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef } from 'react';
 import { Flame, HardDrive, Snowflake, Trash2 } from 'lucide-react';
 
+import { useSettingsSessionState } from '../useSettingsSessionState';
 import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
 import { useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -84,13 +85,15 @@ function janitorBody(draft: JanitorDraft) {
 /** 每项策略独立读写、独立确认，不把两次写入伪装为一个事务。 */
 function useRuntimePolicy<S extends { config?: object | null }, D extends object>(name: string, readPath: string, writePath: string, normalize: (snapshot: S) => D, serialize: (draft: D) => object, onToast: (message: string) => void) {
   const { status: scope } = useContext(ConsoleAuthContext);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const currentScope = useRef(scope); currentScope.current = scope;
-  const [state, setState] = useState<PolicyState<S, D>>({ status: 'loading' });
-  const [busy, setBusy] = useState(false);
+  const [state, setState] = useSettingsSessionState<PolicyState<S, D>>(`policy:${readPath}`, { status: 'loading' }, value => value.status === 'ok' && value.unknown);
+  const [busy, setBusy] = useSettingsSessionState<boolean>(`policy:${readPath}:busy`, false, Boolean);
   const beginRead = useSettingsReadRequest();
   const load = useCallback(async (preserve = false) => {
     const signal = beginRead();
-    if (!preserve) { setState({ status: 'loading' }); setBusy(false); }
+    if (!preserve) setState({ status: 'loading' });
     try {
       const snapshot = await apiRequest<S>(readPath, { signal });
       if (signal.aborted) return;
@@ -104,7 +107,7 @@ function useRuntimePolicy<S extends { config?: object | null }, D extends object
       setState(current => current.status === 'ok' && current.scope === scope && preserve ? { ...current, readError: message } : { status: 'error', message });
     }
   }, [beginRead, normalize, readPath, scope]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(true); }, [load]);
   const update = (patch: Partial<D>) => setState(current => current.status === 'ok' && current.scope === scope ? { ...current, draft: { ...current.draft, ...patch }, saveError: current.unknown ? current.saveError : '' } : current);
   async function save(): Promise<void> {
     if (state.status !== 'ok' || state.scope !== scope || !state.snapshot.config || busy || state.unknown || state.readError) return;
@@ -115,18 +118,21 @@ function useRuntimePolicy<S extends { config?: object | null }, D extends object
     setBusy(true);
     try {
       const snapshot = await apiRequest<S>(writePath, { method: 'PUT', body });
-      if (currentScope.current !== requestScope) return;
       if (!snapshot.config) throw new Error('服务没有返回保存后的配置');
-      beginRead.cancel();
+      if (alive.current && currentScope.current === requestScope) beginRead.cancel();
       const saved = normalize(snapshot);
       setState(current => current.status === 'ok' && current.scope === requestScope ? { ...current, snapshot, saved, draft: equalDraft(current.draft, submitted) ? saved : current.draft, readError: '', saveError: '', unknown: false } : current);
-      onToast(`${name}已保存并立即生效`);
+      if (alive.current && currentScope.current === requestScope) onToast(`${name}已保存并立即生效`);
     } catch (err) {
-      if (currentScope.current !== requestScope) return;
       const unknown = !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408);
       setState(current => current.status === 'ok' && current.scope === requestScope ? { ...current, unknown, unconfirmed: unknown ? submitted : undefined, saveError: `${unknown ? '保存结果未确认，请重新读取核对，勿重复提交' : '保存被拒绝'}：${err instanceof Error ? err.message : String(err)}。当前草稿已保留。` } : current);
-    } finally { if (currentScope.current === requestScope) setBusy(false); }
+    } finally { setBusy(false); }
   }
+  useEffect(() => {
+    if (state.status !== 'ok' || !state.unknown && !busy) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
+  }, [state, busy]);
   const ready = state.status === 'ok' && state.scope === scope ? state : null;
   return { state, ready, busy, load, update, save, dirty: ready ? !equalDraft(ready.draft, ready.saved) : false };
 }
