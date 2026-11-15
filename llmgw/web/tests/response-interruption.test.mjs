@@ -17,8 +17,17 @@ test('响应体中断返回网络错误信封，保留已知401与业务拒绝',
       const result = await invoke();
       assert.equal(result.success, false); assert.equal(result.error.code, 'NETWORK_ERROR');
     }
+    const session = token => ({ token, username: 'fixture-user', expiresAt: new Date(Date.now() + 60_000).toISOString(), tenant: { id: 'fixture-tenant', role: 'owner' } });
+    let expired = 0; const unsubscribe = api.onSessionExpired(() => expired++);
+    api.setSession(session('fixture-session-A'));
     globalThis.fetch = async () => interrupted(401);
     assert.equal((await api.getAccountProfile()).error.code, 'UNAUTHORIZED');
+    assert.equal(api.getToken(), null); assert.equal(expired, 1);
+    api.setSession(session('fixture-session-A')); expired = 0;
+    globalThis.fetch = async () => { api.setSession(session('fixture-session-B')); return interrupted(401); };
+    assert.equal((await api.getAccountProfile()).error.code, 'UNAUTHORIZED');
+    assert.equal(api.getToken(), 'fixture-session-B'); assert.equal(expired, 0); unsubscribe();
+    api.clearSession();
     const refused = { success: false, data: null, error: { code: 'INVALID_CREDENTIALS', message: 'fixture refusal' } };
     globalThis.fetch = async () => Response.json(refused, { status: 400 });
     assert.deepEqual(await api.changePassword({ newPassword: 'fixture-only-password' }), refused);
