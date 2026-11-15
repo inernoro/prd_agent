@@ -801,19 +801,28 @@ export function LogsView() {
     void loadInsights();
   }, [loadInsights]);
 
+  const requestMatches = useMemo(() => {
+    const requestId = filterRequestId.trim();
+    return requestId ? rows.filter(item => item.requestId === requestId || item.id === requestId) : [];
+  }, [filterRequestId, rows]);
+  const requestLookupReady = subtab !== 'sessions' && rowsKey.current === resumeKey && !loading && !loadingMore && !listError;
+  const ambiguousRequestLookup = requestLookupReady && !selectedLogId && !!filterRequestId.trim() && (requestMatches.length > 1 || total > 1);
+
   useEffect(() => {
     const requestId = filterRequestId.trim();
     if (!requestId) {
       openedRequestIdRef.current = '';
       return;
     }
-    if (loading || openedRequestIdRef.current === requestId) return;
     if (selectedLogId) { openedRequestIdRef.current = requestId; if (query.get('openRequest') === '1') openLogDetail(selectedLogId, true); return; }
-    const matched = rows.find((item) => item.requestId === requestId || item.id === requestId);
-    if (!matched) return;
+    if (openedRequestIdRef.current === requestId) return;
+    // A weak requestId can cover retries/fallbacks. Only the full filtered result,
+    // not the first loaded match or a previous query's rows, establishes uniqueness.
+    if (!requestLookupReady || total !== 1 || requestMatches.length !== 1) return;
+    const matched = requestMatches[0];
     openedRequestIdRef.current = requestId;
     openLogDetail(matched.id, query.get('openRequest') === '1');
-  }, [filterRequestId, loading, selectedLogId, query, openLogDetail, rows]);
+  }, [filterRequestId, selectedLogId, query, openLogDetail, requestLookupReady, requestMatches, total]);
 
   // 刷新 = 回到第 1 页重新取并**替换**列表。
   // 之前写的是 loadList(page)：累加语义下，停在第 2 页时刷新会把第 2 页再追加一遍
@@ -1308,6 +1317,8 @@ export function LogsView() {
       <div className="lg-logs-tabs">
         <TabBar items={LOGS_SUBTABS} activeKey={subtab} onChange={(k) => setSubtab(k)} />
       </div>
+
+      {ambiguousRequestLookup ? <p role="status" style={{ margin: 0, padding: '0 12px', flexShrink: 0, fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)' }}>该请求编号匹配多条记录，请在列表中选择具体记录查看详情。</p> : null}
 
       {metaError || listError ? (
         <div
