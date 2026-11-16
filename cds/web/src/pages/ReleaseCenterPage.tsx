@@ -51,6 +51,7 @@ import {
   type RollbackState,
 } from '@/pages/release-center/dialogs';
 import { EnvironmentSidebar } from '@/pages/release-center/EnvironmentSidebar';
+import { ReleaseTraceOverview } from '@/pages/release-center/ReleaseTraceOverview';
 import { OverviewTab } from '@/pages/release-center/OverviewTab';
 import { FleetMatrix } from '@/pages/release-center/FleetMatrix';
 import { AutoReleaseTab } from '@/pages/release-center/AutoReleaseTab';
@@ -720,8 +721,8 @@ export function ReleaseCenterPage(): JSX.Element {
 
             {state.status === 'ok' ? (
               <div className="flex flex-col gap-[1.125rem]">
-                {/* ══ 监控条：常驻所有分区，页面第一块 ══ */}
-                {rows.length > 0 ? <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[0.875rem] border px-[1.625rem] py-[1.375rem] max-lg:px-4">
+                {/* 主页面已在版本追溯里显示健康快照，管理分区保留监控摘要。 */}
+                {section !== 'fleet' && rows.length > 0 ? <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[0.875rem] border px-[1.625rem] py-[1.375rem] max-lg:px-4">
                   <div className="flex min-w-0 flex-1 basis-[20rem] items-start gap-3">
                     <span
                       className={`mt-2 h-[0.5625rem] w-[0.5625rem] shrink-0 rounded-full ${
@@ -793,6 +794,7 @@ export function ReleaseCenterPage(): JSX.Element {
                 </section> : null}
 
                 {/* ══ 分区一：全环境矩阵 ══ */}
+                {section === 'fleet' ? <ReleaseTraceOverview rows={rows} rail={rail} commitMeta={commitMeta} selectedTargetId={effectiveTargetId} onSelect={setSelectedTargetId} onOpenLogs={setLogRun} onInspect={inspectEnv} /> : null}
                 {section === 'fleet' ? <BatchReleasePanel key={projectId} projectId={projectId} targets={rows.map((row) => row.target)} onOpenLogs={setLogRun} /> : null}
                 {rows.length === 0 ? <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} /> : null}
                 {section === 'fleet' ? (

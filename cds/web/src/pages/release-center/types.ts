@@ -97,6 +97,7 @@ export interface ReleaseRun {
   startedAt: string;
   finishedAt?: string;
   operator?: string;
+  agentIdentity?: { threadId?: string; confidence?: string };
   previousReleaseId?: string;
   rollbackOf?: string;
   rollbackTargetReleaseId?: string;
@@ -145,7 +146,16 @@ export interface ReleasePromotionCandidate {
   blockedReason?: string;
 }
 
+export interface ReleaseComparison {
+  mainSha: string; productionSha: string; baseSha?: string; comparedAt: string;
+  productionFileCount?: number; mainFileCount?: number; overlapCount?: number;
+  files: Array<{path: string; side: 'production' | 'main' | 'both'}>;
+  truncated?: boolean; reason?: string; conflictStatus: 'not-checked';
+}
+
 export interface CenterRow {
+  currentRun?: ReleaseRun;
+  comparison?: ReleaseComparison;
   target: ReleaseTarget;
   currentVersion: string;
   currentCommit: string;

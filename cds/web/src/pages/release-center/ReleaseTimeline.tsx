@@ -8,6 +8,7 @@
  * 不该再跳一次页面。
  */
 
+import { releaseActorLabel } from '@/lib/releaseProvenance';
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, FileText, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -97,7 +98,7 @@ export function ReleaseTimeline({
                     <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[0.7188rem] text-muted-foreground">
                       <CodeText>{run.commitSha.slice(0, 7)}</CodeText>
                       {run.artifact?.branchName ? <span className="truncate">{run.artifact.branchName}</span> : null}
-                      <span>{run.operator || meta?.authorName || '-'}</span>
+                      <span>{releaseActorLabel(run.operator)}</span>
                       <span>{formatDateTime(run.startedAt)}</span>
                       {duration ? <span>耗时 {duration}</span> : null}
                       {run.rollbackOf ? <Chip tone="warn">回滚</Chip> : null}
