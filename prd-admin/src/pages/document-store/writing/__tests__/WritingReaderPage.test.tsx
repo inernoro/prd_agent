@@ -43,6 +43,12 @@ afterEach(async () => { if (root) await act(async () => root.unmount()); contain
 
 describe('读者来源状态必须真实', () => {
   beforeEach(() => { Object.defineProperty(globalThis, 'IntersectionObserver', { configurable: true, value: class { observe() {} disconnect() {} } }); });
+  it('未编排操作的阅读入口只介绍章节导读，不承诺操作步骤和字幕', async () => {
+    await mount(false);
+    const card = container.querySelector('.writing-learning-card')?.textContent ?? '';
+    expect(card).toContain('章节导读');
+    expect(card).not.toContain('操作步骤与字幕');
+  });
   it('旧发布的pending资料不冒充原文快照或显示缺省日期', async () => {
     const data = fixture(); data.publication.sources = [{ id: 'S1', entryId: 'source1', title: '待读资料', content: '', hash: '', status: 'pending', updatedAt: '0001-01-01T00:00:00' }];
     api.read.mockResolvedValue(ok(data)); await mount(false);
