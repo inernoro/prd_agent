@@ -28,7 +28,7 @@ export function writingQuestionEvidence(question: WritingQuestion, paragraphs: W
 export function writingSaveInput(state: WritingState) {
   return { revision: state.revision, templateId: state.templateId, title: state.title, summary: state.summary,
     manualInput: state.manualInput, sourceEntryIds: state.sources.map(s => s.entryId), sections: state.sections,
-    intentPoints: state.intentPoints, conclusions: state.conclusions, scopeIn: state.scopeIn, scopeOut: state.scopeOut,
+    intentPoints: state.intentPoints, intentCoverage: state.intentCoverage, conclusions: state.conclusions, scopeIn: state.scopeIn, scopeOut: state.scopeOut,
     chapters: state.chapters, captions: state.captions, roles: state.roles, videoEntryId: state.videoEntryId ?? '',
     mobileVideoEntryId: state.mobileVideoEntryId ?? '' };
 }

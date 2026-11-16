@@ -40,6 +40,20 @@ public sealed class TaskAdmissionPolicyTests
     }
 
     [Fact]
+    public void TeachingProductionHasOnlyWritingAndSpeechAuthorityAndApprovalHasNone()
+    {
+        const string controller = "PrdAgent.Api.Controllers.Api.DocumentStoreController";
+        foreach (var action in new[] { "GenerateWritingTeaching", "ResumeWritingTeaching" }) {
+            var policy = TaskAdmissionPolicies.Find(controller, action)!;
+            Assert.Equal(TaskAdmissionTiming.AuthenticatedPaidBranch, policy.Timing);
+            Assert.Equal(new[] { PrdAgent.Core.Models.AppCallerRegistry.DocumentStoreAgent.Writing.Generate, PrdAgent.Core.Models.AppCallerRegistry.McpSpeech.Synthesize }, policy.AppCallers);
+            Assert.False(policy.AllowDelegatedSubjects);
+        }
+        Assert.Null(TaskAdmissionPolicies.Find(controller, "ApproveWritingTeaching"));
+        Assert.Null(TaskAdmissionPolicies.Find(controller, "ReadWritingTeachingMedia"));
+    }
+
+    [Fact]
     public void SpeechRun_PersistsTaskAuthorityWithoutExposingItInJson()
     {
         PrdAgent.Core.Interfaces.ITaskAuthorizedRun task = new PrdAgent.Core.Models.SpeechRun { TaskPermitId = "private-permit" };
@@ -118,6 +132,8 @@ public sealed class TaskAdmissionPolicyTests
             "PrdAgent.Api.Controllers.Api.LabController.SimulateMessage",
             "PrdAgent.Api.Controllers.GroupsController.Create",
             "PrdAgent.Api.Controllers.Api.DocumentStoreController.CommandWritingDocument",
+            "PrdAgent.Api.Controllers.Api.DocumentStoreController.GenerateWritingTeaching",
+            "PrdAgent.Api.Controllers.Api.DocumentStoreController.ResumeWritingTeaching",
             reportController + ".CreateReport",
             "PrdAgent.Api.Controllers.Api.DefectAgentController.StreamScores",
             "PrdAgent.Api.Controllers.Api.ReviewAgentController.StreamReviewResult",

@@ -108,6 +108,28 @@ describe('补充确认的真实上下文', () => {
     expect(container.querySelector('.pa.ask')?.classList.contains('dim')).toBe(false);
   });
 });
+describe('作者确认后的表达与补缺整理', () => {
+  it('上下文模版更新后仍使用文档冻结的章节与提示', async () => {
+    const value = state(); value.stage = 'select'; value.templateSnapshot = { ...context.templates[0], name: '发布时交接模版', version: '0.8', headings: [{ title: '冻结的停止条件', hint: '禁止重复提交' }] };
+    const changed = { ...context, templates: [{ ...context.templates[0], version: '2.0', headings: [{ title: '当前模版新章节', hint: '' }] }] };
+    api.context.mockResolvedValue({ success: true, data: changed });
+    api.get.mockResolvedValue({ success: true, data: documentFor(value) });
+    await mount();
+    expect(container.querySelector('.writing-headings')?.textContent).toContain('冻结的停止条件');
+    expect(container.querySelector('.writing-headings')?.textContent).not.toContain('当前模版新章节');
+  });
+  it('补缺后的预览自动整理派生表达，不让作者手工重写摘要与角色', async () => {
+    const value = state(); value.derivedContentStale = true; value.summary = '整理前摘要';
+    api.get.mockResolvedValue({ success: true, data: documentFor(value) });
+    api.save.mockResolvedValue({ success: true, data: documentFor({ ...value, revision: 7 }) });
+    api.generate.mockResolvedValue({ success: true, data: { state: { ...value, stage: 'generating', revision: 8 }, runId: 'reconcile-run' } });
+    await mount();
+    await click(findButton('检查正文与发布预览'));
+    expect(api.generate).toHaveBeenCalledWith('draft', 7, 'reconcile');
+    expect(api.command).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), 'review', expect.anything());
+  });
+});
+
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('手写草稿来源的读取状态必须真实', () => {

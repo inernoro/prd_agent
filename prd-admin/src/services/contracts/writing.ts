@@ -1,21 +1,24 @@
 import type { DocumentStore } from './documentStore';
 
 export interface WritingTemplate { id: string; name: string; type: string; role: string; useWhen: string; version: string; headings: { title: string; hint: string }[] }
+export interface WritingIntentCoverage { intentIndex: number; paragraphIds: string[]; confirmedContentHash?: string; confirmed?: boolean }
 export interface WritingSource { id: string; entryId: string; title: string; content: string; hash: string; updatedAt: string; status: string }
 export interface WritingParagraph { id: string; text: string; status: 'src' | 'auth' | 'ask' | 'conf'; citations: string[]; quotes?: Record<string, string>; confirmed: boolean }
 export interface WritingSection { id: string; title: string; paragraphs: WritingParagraph[]; condition?: string; detail?: { label: string; rows: string[][] }; metadataConfirmed?: boolean }
 export interface WritingQuestion { id: string; kind: string; paragraphId: string; sectionTitle: string; title: string; why: string; citations: string[]; options: string[]; choices?: { key: string; label: string; text: string }[]; evidence?: { sourceId: string; quote: string; location: string }[]; status: string; answer: string }
 export interface WritingRole { label: string; action: string; condition: string; sectionId: string; orderedSectionIds?: string[] }
-export interface WritingCaption { id: string; text: string; at: number }
+export interface WritingCaption { id: string; text: string; at: number; end?: number }
 export interface WritingChapter { id: string; title: string; start: number; steps: { id: string; text: string; condition: string; at: number }[] }
 export interface WritingPublication {
   version: number; title: string; summary: string; templateId: string; templateVersion: string;
+  templateSnapshot?: WritingTemplate; intentPoints?: string[]; intentCoverage?: WritingIntentCoverage[]; contentFingerprint?: string;
   authorName: string; reviewerName: string; publishedAt: string; conclusions: string[]; scopeIn: string; scopeOut: string;
   sections: WritingSection[]; sources: WritingSource[]; roles: WritingRole[]; openQuestions: WritingQuestion[]; chapters: WritingChapter[]; captions?: WritingCaption[]; videoEntryId?: string; mobileVideoEntryId?: string | null;
 }
 export interface WritingState {
   revision: number; stage: string; templateId: string; templateVersion: string; title: string; summary: string; manualInput: string;
   authorId: string; authorName: string; reviewerId: string; reviewerName: string; scopeIn: string; scopeOut: string;
+  templateSnapshot?: WritingTemplate; contentFingerprint?: string; derivedContentStale?: boolean; previousDerivedView?: Pick<WritingState, 'summary' | 'conclusions' | 'scopeIn' | 'scopeOut' | 'roles'>; intentCoverage?: WritingIntentCoverage[];
   conclusions: string[]; intentPoints: string[]; sources: WritingSource[]; sections: WritingSection[]; questions: WritingQuestion[];
   roles: WritingRole[]; chapters: WritingChapter[]; captions?: WritingCaption[]; videoEntryId?: string; mobileVideoEntryId?: string | null; activeRunId?: string; failure?: string; updatedAt: string; published?: WritingPublication;
 }
@@ -24,4 +27,9 @@ export interface WritingContext {
   sources: { id: string; title: string; summary?: string; contentType: string; updatedAt: string; createdBy: string; authorName?: string; fileSize: number; sortOrder?: number; metadata: Record<string, string>; published: boolean }[];
 }
 export interface WritingDocument { entryId: string; store: DocumentStore; state: WritingState; canApprove: boolean; run?: { id: string; status: string; phase: string; progress: number; createdAt: string; startedAt?: string; generatedText?: string; errorMessage?: string } }
-export interface WritingReader { entryId: string; store: DocumentStore; publication: WritingPublication; template?: WritingTemplate; affectedSources: string[]; entries: { id: string; title: string }[]; canEdit: boolean; bodyPending?: boolean }
+export interface WritingReader { entryId: string; store: DocumentStore; publication: WritingPublication; template?: WritingTemplate; affectedSources: string[]; entries: { id: string; title: string }[]; canEdit: boolean; bodyPending?: boolean; teaching?: WritingTeachingMedia }
+
+export interface WritingTeachingScene { id: string; sectionId: string; paragraphIds: string[]; intentIndexes: number[]; title: string; highlights: string[]; narration: string; pace?: 'normal' | 'slow'; speechRunId?: string; start: number; duration: number }
+export interface WritingTeaching { id: string; entryId: string; storeId: string; ownerId: string; authorId: string; source: WritingPublication; sourceFingerprint: string; instructions: string; status: string; phase: string; progress: number; revision: number; scenes: WritingTeachingScene[]; failure?: string; artifactFingerprint: string; duration: number; approvedAt?: string }
+export interface WritingTeachingInfo { teaching?: WritingTeaching; canApprove: boolean; sourceCurrent: boolean; recoveryPending?: boolean; sourceVersion?: number; sourceFingerprint?: string }
+export interface WritingTeachingMedia { id: string; sourceVersion: number; sourceFingerprint: string; scenes: WritingTeachingScene[]; duration: number; artifactFingerprint: string }

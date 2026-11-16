@@ -16,9 +16,10 @@ public partial class DocumentStoreController
         var (store, error) = await LoadReadableStoreAsync(storeId, GetUserId());
         if (error != null) return error;
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == storeId && !e.IsFolder).SortBy(e => e.SortOrder).ThenBy(e => e.CreatedAt).ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { store, templates = WritingTemplateRegistry.All,
-            entries = entries.Where(e => e.Writing == null || e.Writing.Published != null),
-            canEdit = await CanWriteStoreAsync(store!, GetUserId(), await _teams.GetMyTeamIdsAsync(GetUserId())) }));
+        var canEdit = await CanWriteStoreAsync(store!, GetUserId(), await _teams.GetMyTeamIdsAsync(GetUserId()));
+        var templates = await WritingTemplatesAsync(storeId);
+        if (!canEdit) templates = templates.Select(t => WritingTemplateDisplay(t)!).ToList();
+        return Ok(ApiResponse<object>.Ok(new { store, templates, entries = entries.Where(e => e.Writing == null || e.Writing.Published != null), canEdit }));
     }
     [HttpGet("writing-templates")]
     public IActionResult ListWritingTemplates() => Ok(ApiResponse<object>.Ok(new { items = WritingTemplateRegistry.All }));
@@ -41,7 +42,7 @@ public partial class DocumentStoreController
         return Ok(ApiResponse<object>.Ok(new {
             store, teamNames, projectName, actorId, actorName, reviewerId = store.OwnerId,
             reviewerName = owner?.DisplayName ?? owner?.Username ?? store.OwnerId,
-            templates = WritingTemplateRegistry.All,
+            templates = await WritingTemplatesAsync(storeId),
             sources = entries.Select(e => new { e.Id, e.Title, e.Summary, e.ContentType, e.UpdatedAt, e.CreatedBy, authorName = names.GetValueOrDefault(e.CreatedBy) ?? e.CreatedBy, e.FileSize,
                 e.SortOrder, e.Metadata, published = e.Writing?.Published != null })
         }));
@@ -52,11 +53,11 @@ public partial class DocumentStoreController
     {
         var (store, error) = await LoadWritableStoreAsync(storeId, GetUserId());
         if (error != null) return error;
-        var template = WritingTemplateRegistry.Find(request.TemplateId ?? "prd");
+        var template = await FindWritingTemplateAsync(storeId, request.TemplateId ?? "prd");
         if (template == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未知写作模版"));
         var (actorId, actorName) = await GetActorInfoAsync();
         var owner = await FindUserByAnyIdAsync(store!.OwnerId);
-        var state = new WritingDocumentState { TemplateId = template.Id, AuthorId = actorId, AuthorName = actorName,
+        var state = new WritingDocumentState { TemplateId = template.Id, TemplateVersion = template.Version, TemplateSnapshot = WritingDeliveryPolicy.CopyTemplate(template), AuthorId = actorId, AuthorName = actorName,
             ReviewerId = store.OwnerId, ReviewerName = owner?.DisplayName ?? owner?.Username ?? store.OwnerId };
         var entry = new DocumentEntry { StoreId = storeId, Title = "未命名文档", CreatedBy = actorId,
             ContentType = "text/markdown", SourceType = DocumentSourceType.Upload, Writing = state,
@@ -89,6 +90,7 @@ public partial class DocumentStoreController
                 await SaveWritingState(entry, state, revision);
             }
         }
+        WritingDeliveryPolicy.Refresh(state);
         return Ok(ApiResponse<object>.Ok(new { entryId, store, state, run = run == null ? null : new {
             run.Id, run.Status, run.Phase, run.Progress, run.CreatedAt, run.StartedAt, run.GeneratedText, run.ErrorMessage
         }, canApprove = state.ReviewerId == GetUserId() }));
@@ -102,10 +104,14 @@ public partial class DocumentStoreController
         var state = entry!.Writing;
         if (state == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "草稿不存在"));
         if (state.Revision != request.Revision || state.Stage is "generating" or "pending-review" or "publishing") return WritingConflict();
-        var template = WritingTemplateRegistry.Find(request.TemplateId ?? state.TemplateId);
+        var beforeBody = WritingDeliveryPolicy.Hash(new { state.TemplateId, state.IntentPoints, state.Sections, state.Sources });
+        var template = (request.TemplateId == null || request.TemplateId == state.TemplateId) && state.TemplateSnapshot != null
+            ? state.TemplateSnapshot : await FindWritingTemplateAsync(entry.StoreId, request.TemplateId ?? state.TemplateId);
         if (template == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未知写作模版"));
         if ((request.ManualInput?.Length ?? 0) > 100000) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "输入超过10万字，请拆分资料"));
-        state.TemplateId = template.Id; state.Title = request.Title ?? state.Title; state.Summary = request.Summary ?? state.Summary;
+        if ((request.IntentPoints?.Count(x => !string.IsNullOrWhiteSpace(x)) ?? 0) > 20 || (request.Conclusions?.Count ?? 0) > 20 || (request.Roles?.Count ?? 0) > 20)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "作者要点、结论和角色各最多20项，请拆分后保存；本次未截断内容"));
+        state.TemplateId = template.Id; state.TemplateVersion = template.Version; state.TemplateSnapshot = WritingDeliveryPolicy.CopyTemplate(template); state.Title = request.Title ?? state.Title; state.Summary = request.Summary ?? state.Summary;
         state.ManualInput = request.ManualInput ?? state.ManualInput;
         if (request.SourceEntryIds != null) {
             if (request.SourceEntryIds.Count > 20 || request.SourceEntryIds.Contains(entryId)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "最多关联20份资料，不能引用自身"));
@@ -146,11 +152,11 @@ public partial class DocumentStoreController
             state.Questions.RemoveAll(q => !paragraphIds.Contains(q.ParagraphId));
             if (state.Stage == "published") state.Stage = "confirm";
         }
-        if (request.IntentPoints != null) state.IntentPoints = request.IntentPoints.Where(x => !string.IsNullOrWhiteSpace(x)).Take(20).ToList();
-        if (request.Conclusions != null) state.Conclusions = request.Conclusions.Take(20).ToList();
+        if (request.IntentPoints != null) state.IntentPoints = request.IntentPoints.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+        if (request.Conclusions != null) state.Conclusions = request.Conclusions.ToList();
         if (request.ScopeIn != null) state.ScopeIn = request.ScopeIn;
         if (request.ScopeOut != null) state.ScopeOut = request.ScopeOut;
-        if (request.Roles != null) state.Roles = request.Roles.Take(20).ToList();
+        if (request.Roles != null) state.Roles = request.Roles.ToList();
         if (request.Chapters != null) {
             if (request.Chapters.Count > 40 || request.Chapters.Any(c => c.Start < 0 || c.Steps.Any(s => s.At < c.Start)))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "章节和步骤时间必须非负，步骤不能早于章节"));
@@ -172,6 +178,16 @@ public partial class DocumentStoreController
             if (!string.IsNullOrEmpty(request.MobileVideoEntryId) && (media == null || !media.ContentType.StartsWith("video/"))) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择当前知识库中的手机视频"));
             state.MobileVideoEntryId = string.IsNullOrEmpty(request.MobileVideoEntryId) ? null : request.MobileVideoEntryId;
         }
+        if (request.IntentCoverage != null) {
+            var ids = state.Sections.SelectMany(s => s.Paragraphs).Select(p => p.Id).ToHashSet();
+            if (request.IntentCoverage.Count > 20 || request.IntentCoverage.Select(c => c.IntentIndex).Distinct().Count() != request.IntentCoverage.Count
+                || request.IntentCoverage.Any(c => c.IntentIndex < 0 || c.IntentIndex >= state.IntentPoints.Count || c.ParagraphIds.Count > 50 || c.ParagraphIds.Any(id => !ids.Contains(id))))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "必达点位置无效，请重新整理"));
+            state.IntentCoverage = request.IntentCoverage.Select(c => new WritingIntentCoverage { IntentIndex = c.IntentIndex, ParagraphIds = c.ParagraphIds.Distinct().ToList(),
+                ConfirmedContentHash = state.IntentCoverage.FirstOrDefault(old => old.IntentIndex == c.IntentIndex && old.ParagraphIds.SequenceEqual(c.ParagraphIds))?.ConfirmedContentHash ?? "" }).ToList();
+        }
+        if (state.Sections.Count > 0 && beforeBody != WritingDeliveryPolicy.Hash(new { state.TemplateId, state.IntentPoints, state.Sections, state.Sources })
+            && (state.ActiveRunId != null || state.IntentPoints.Count > 0)) state.DerivedContentStale = true;
         if (!await SaveWritingState(entry, state, request.Revision)) return WritingConflict();
         return Ok(ApiResponse<object>.Ok(new { state }));
     }
@@ -184,10 +200,15 @@ public partial class DocumentStoreController
         var state = entry!.Writing;
         if (state == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "草稿不存在"));
         if (state.Revision != request.Revision || state.Stage is "generating" or "pending-review" or "publishing") return WritingConflict();
-        if (state.Sources.All(s => s.Status == "skipped") && string.IsNullOrWhiteSpace(state.ManualInput)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请关联资料或输入内容，也可以用空白模版开始"));
-        var run = new DocumentStoreAgentRun { Kind = WritingDocumentPolicy.RunKind, SourceEntryId = entryId, StoreId = entry.StoreId,
+        var reconcile = request.Action == "reconcile";
+        if (!reconcile && state.Stage == "failed" && state.ActiveRunId != null)
+            reconcile = (await _db.DocumentStoreAgentRuns.Find(r => r.Id == state.ActiveRunId).FirstOrDefaultAsync())?.Kind == WritingDeliveryPolicy.ReconcileRunKind;
+        if (reconcile && !state.Sections.SelectMany(s => s.Paragraphs).Any(p => !string.IsNullOrWhiteSpace(p.Text)))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先补充正文，再整理摘要与重点"));
+        if (!reconcile && state.Sources.All(s => s.Status == "skipped") && string.IsNullOrWhiteSpace(state.ManualInput)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请关联资料或输入内容，也可以用空白模版开始"));
+        var run = new DocumentStoreAgentRun { Kind = reconcile ? WritingDeliveryPolicy.ReconcileRunKind : WritingDocumentPolicy.RunKind, SourceEntryId = entryId, StoreId = entry.StoreId,
             UserId = GetUserId(), OwnerInstanceId = InstanceIdentity.Get(_config), TaskPermitId = PrdAgent.Core.Security.TaskExecutionContext.Current?.PermitId,
-            Status = DocumentStoreRunStatus.Queued, Phase = "等待读取资料" };
+            Status = DocumentStoreRunStatus.Queued, Phase = reconcile ? "等待整理已补充的正文" : "等待读取资料" };
         state.ActiveRunId = run.Id; state.ActiveExecutionId = ""; state.Stage = "generating"; state.Failure = null;
         if (!await SaveWritingState(entry, state, request.Revision)) return WritingConflict();
         run.CustomPrompt = state.Revision.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -206,8 +227,11 @@ public partial class DocumentStoreController
         if (state.Revision != request.Revision || state.Stage == "publishing") return WritingConflict();
         if (state.Stage == "generating") {
             if (request.Action != "skip-source" || !state.Sources.Any(s => s.Id == request.SourceId)) return WritingConflict();
+            var activeRun = await _db.DocumentStoreAgentRuns.Find(r => r.Id == state.ActiveRunId).FirstOrDefaultAsync();
+            var reconciling = activeRun?.Kind == WritingDeliveryPolicy.ReconcileRunKind;
             // 只有确实会续跑的跳过操作才领取写作许可；确认、审核等普通命令没有付费执行权。
-            var resume = state.Sources.Any(s => s.Id != request.SourceId && s.Status != "skipped") || !string.IsNullOrWhiteSpace(state.ManualInput);
+            var resume = reconciling && state.Sections.SelectMany(s => s.Paragraphs).Any(p => !string.IsNullOrWhiteSpace(p.Text))
+                || state.Sources.Any(s => s.Id != request.SourceId && s.Status != "skipped") || !string.IsNullOrWhiteSpace(state.ManualInput);
             var authority = resume ? await HttpContext.RequestServices
                 .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
                 .AdmitAuthenticatedPaidBranchAsync(HttpContext, HttpContext.RequestAborted) : null;
@@ -218,16 +242,24 @@ public partial class DocumentStoreController
             if (cancelled.ModifiedCount != 1) return WritingConflict();
             var skipped = state.Sources.Single(s => s.Id == request.SourceId);
             skipped.Status = "skipped"; skipped.Content = ""; skipped.Hash = "";
+            if (reconciling) foreach (var paragraph in state.Sections.SelectMany(s => s.Paragraphs).Where(p => p.Citations.Contains(skipped.Id))) {
+                paragraph.Citations.Remove(skipped.Id); paragraph.Quotes.Remove(skipped.Id); paragraph.Status = "auth"; paragraph.Confirmed = false;
+            }
             state.Stage = "failed"; state.Failure = "已跳过该资料，原文与目录位置保留。";
             if (!await SaveWritingState(entry, state, request.Revision)) return WritingConflict();
             if (resume)
-                return await GenerateWritingDraft(entryId, new WritingCommandRequest { Revision = state.Revision });
+                return await GenerateWritingDraft(entryId, new WritingCommandRequest { Revision = state.Revision, Action = reconciling ? "reconcile" : "" });
             return Ok(ApiResponse<object>.Ok(new { state }));
         }
         try {
             var editable = state.Stage is not ("pending-review" or "published");
-            if (request.Action == "blank" && state.Stage == "select") {
-                var template = WritingTemplateRegistry.Find(state.TemplateId)!;
+            if (request.Action == "confirm-intent" && editable) {
+                if (state.AuthorId != GetUserId()) return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "作者必达点需由文档作者核对"));
+                if (request.ContentHash != WritingDeliveryPolicy.Fingerprint(state)) return WritingConflict();
+                WritingDeliveryPolicy.ConfirmIntent(state, request.IntentIndex);
+            }
+            else if (request.Action == "blank" && state.Stage == "select") {
+                var template = state.TemplateSnapshot ?? await FindWritingTemplateAsync(entry.StoreId, state.TemplateId) ?? throw new InvalidOperationException("模版不存在");
                 state.Sections = template.Headings.Select((h, i) => new WritingSection { Id = $"s{i + 1}", Title = h.Title,
                     Paragraphs = new() { new() { Id = $"p{i + 1}", Status = "auth" } } }).ToList(); state.Stage = "confirm";
             }
@@ -314,7 +346,7 @@ public partial class DocumentStoreController
     }
 
     [HttpGet("entries/{entryId}/writing/published")]
-    public async Task<IActionResult> ReadWritingPublication(string entryId, [FromQuery] int? version = null, [FromQuery] bool overview = false)
+    public async Task<IActionResult> ReadWritingPublication(string entryId, [FromQuery] int? version = null, [FromQuery] bool overview = false, [FromQuery] string? course = null)
     {
         var (entry, store, error) = await LoadReadableEntryAsync(entryId, GetUserId());
         if (error != null) return error;
@@ -324,6 +356,15 @@ public partial class DocumentStoreController
         if (version.HasValue && version != published?.Version) published = (await _db.Database.GetCollection<WritingPublicationRecord>("document_writing_publications")
             .Find(r => r.EntryId == entryId && r.StoreId == entry.StoreId && r.Publication.Version == version.Value).FirstOrDefaultAsync())?.Publication;
         if (published == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "此文档尚未发布"));
+        var sourceFingerprint = WritingTeachingPolicy.SourceFingerprint(published);
+        var teachingFilter = Builders<WritingTeaching>.Filter.Where(t => t.EntryId == entryId && t.StoreId == entry.StoreId
+            && t.Status == "approved" && t.Source.Version == published.Version && t.SourceFingerprint == sourceFingerprint);
+        if (!string.IsNullOrEmpty(course)) teachingFilter &= Builders<WritingTeaching>.Filter.Eq(t => t.Id, course);
+        var approvedTeaching = await WritingTeachings.Find(teachingFilter).SortByDescending(t => t.ApprovedAt).FirstOrDefaultAsync();
+        if (!string.IsNullOrEmpty(course) && approvedTeaching == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "该教学不属于此发布版或尚未批准"));
+        var teaching = approvedTeaching == null ? null : new { approvedTeaching.Id, sourceVersion = approvedTeaching.Source.Version,
+            approvedTeaching.SourceFingerprint, approvedTeaching.Scenes, approvedTeaching.Duration, approvedTeaching.ArtifactFingerprint };
         var affected = new List<string>();
         if (!overview) foreach (var s in published.Sources.Where(source => source.Status == "read")) {
             var current = await _db.DocumentEntries.Find(e => e.Id == s.EntryId && e.StoreId == entry.StoreId).FirstOrDefaultAsync();
@@ -334,15 +375,18 @@ public partial class DocumentStoreController
         var peers = await _db.DocumentEntries.Find(e => e.StoreId == entry.StoreId && !e.IsFolder).SortBy(e => e.SortOrder).ToListAsync();
         var entries = peers.Where(e => e.Writing?.Published != null).Select(e => new { e.Id, e.Title });
         var canEdit = await CanWriteStoreAsync(store!, GetUserId(), await _teams.GetMyTeamIdsAsync(GetUserId()));
-        if (overview) return Ok(ApiResponse<object>.Ok(new { entryId, store, publication = WritingPublicationOverview(published),
-            template = WritingTemplateRegistry.Find(published.TemplateId), affectedSources = affected, bodyPending = true, entries, canEdit }));
-        return Ok(ApiResponse<object>.Ok(new { entryId, store, publication = published, template = WritingTemplateRegistry.Find(published.TemplateId), affectedSources = affected,
+        var readerPublication = WritingPublicationForReader(published);
+        var displayTemplate = WritingTemplateDisplay(published.TemplateSnapshot);
+        if (overview) return Ok(ApiResponse<object>.Ok(new { entryId, store, publication = WritingPublicationOverview(readerPublication),
+            template = displayTemplate, teaching, affectedSources = affected, bodyPending = true, entries, canEdit }));
+        return Ok(ApiResponse<object>.Ok(new { entryId, store, publication = readerPublication, template = displayTemplate, teaching, affectedSources = affected,
             entries, canEdit }));
     }
 
     private static WritingPublication WritingPublicationOverview(WritingPublication published) => new() {
         Version = published.Version, Title = published.Title, Summary = published.Summary,
-        TemplateId = published.TemplateId, TemplateVersion = published.TemplateVersion,
+        TemplateId = published.TemplateId, TemplateVersion = published.TemplateVersion, TemplateSnapshot = published.TemplateSnapshot,
+        ContentFingerprint = published.ContentFingerprint, IntentPoints = published.IntentPoints, IntentCoverage = published.IntentCoverage,
         AuthorName = published.AuthorName, ReviewerId = published.ReviewerId, ReviewerName = published.ReviewerName, PublishedAt = published.PublishedAt,
         Conclusions = published.Conclusions, ScopeIn = published.ScopeIn, ScopeOut = published.ScopeOut, Roles = published.Roles,
         Sections = published.Sections.Select(section => new WritingSection { Id = section.Id, Title = section.Title }).ToList(),
@@ -353,6 +397,7 @@ public partial class DocumentStoreController
 
     private async Task<bool> SaveWritingState(DocumentEntry entry, WritingDocumentState state, long expected)
     {
+        WritingDeliveryPolicy.Refresh(state);
         state.Revision = expected + 1; state.UpdatedAt = DateTime.UtcNow;
         var update = Builders<DocumentEntry>.Update.Set(e => e.Writing, state)
             .Set(e => e.Title, state.Published?.Title ?? (string.IsNullOrWhiteSpace(state.Title) ? "未命名文档" : state.Title))
@@ -379,6 +424,7 @@ public class WritingSaveRequest
     public string? MobileVideoEntryId { get; set; }
     public List<string>? SourceEntryIds { get; set; }
     public List<string>? IntentPoints { get; set; }
+    public List<WritingIntentCoverage>? IntentCoverage { get; set; }
     public List<string>? Conclusions { get; set; }
     public List<WritingSection>? Sections { get; set; }
     public List<WritingChapter>? Chapters { get; set; }
@@ -390,6 +436,8 @@ public class WritingCommandRequest
     public long Revision { get; set; }
     public string Action { get; set; } = "";
     public string? QuestionId { get; set; }
+    public int IntentIndex { get; set; }
+    public string? ContentHash { get; set; }
     public string? ParagraphId { get; set; }
     public string? SectionId { get; set; }
     public string? SourceId { get; set; }

@@ -5,6 +5,11 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class DocumentEntry
 {
+    // 制作锁不属于用户可编辑Metadata，条目信息更新不能覆盖运行中的任务。
+    [System.Text.Json.Serialization.JsonIgnore] public string? ActiveWritingTeachingId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore] public string? WritingTeachingRunId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore] public DateTime? WritingTeachingClaimedAt { get; set; }
+
     [System.Text.Json.Serialization.JsonIgnore]
     public WritingDocumentState? Writing { get; set; }
 
