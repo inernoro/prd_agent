@@ -110,7 +110,9 @@ describe('验收中心接线和结论语义', () => {
       new ApiError(409, { error: 'task_claimed' }, ''), new ApiError(401, {}, ''), new ApiError(409, null, '')]) {
       expect(acceptanceLeaseIsInvalid(error)).toBe(false);
     }
-    expect(acceptanceLeaseIsInvalid(new ApiError(409, { error: 'lease_invalid' }, ''))).toBe(true);
+    for (const [status, code] of [[409, 'lease_invalid'], [409, 'task_not_running'], [404, 'task_not_found']] as const) {
+      expect(acceptanceLeaseIsInvalid(new ApiError(status, { error: code }, ''))).toBe(true);
+    }
   });
   it('现有 reports shell 内导航四视图且 report 深链仍优先', () => {
     const html = render(createElement(AcceptanceNavigation, { view: 'templates', onChange: () => {} }));

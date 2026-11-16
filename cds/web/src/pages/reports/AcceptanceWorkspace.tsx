@@ -40,8 +40,9 @@ const TASK_STATUS_LABELS: Record<AcceptanceTask['status'], string> = { pending: 
 const HEARTBEAT_RETRY_MESSAGE = '续期暂时未完成，将自动重试；请保持页面打开，也可释放任务后重新领取。';
 
 export function acceptanceLeaseIsInvalid(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 409 && typeof error.body === 'object' && error.body !== null
-    && 'error' in error.body && error.body.error === 'lease_invalid';
+  if (!(error instanceof ApiError) || typeof error.body !== 'object' || error.body === null || !('error' in error.body)) return false;
+  return (error.status === 409 && (error.body.error === 'lease_invalid' || error.body.error === 'task_not_running'))
+    || (error.status === 404 && error.body.error === 'task_not_found');
 }
 const CASE_STATUS_CLASS: Record<AcceptanceCaseStatus, string> = { pass: 'text-primary bg-primary/5 border-primary/30', fail: 'text-destructive bg-destructive/5 border-destructive/30', blocked: 'text-foreground bg-muted border-border', 'not-run': 'text-muted-foreground bg-background border-border' };
 
@@ -74,6 +75,7 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [heartbeatError, setHeartbeatError] = useState('');
   const [notice, setNotice] = useState('');
   const [editing, setEditing] = useState<AcceptanceTemplate | 'new' | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -96,7 +98,7 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
   const pendingSubmissions = useRef(new Map<string, { signature: string; id: string }>());
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const updateTask = useCallback((next: AcceptanceTask) => { if (!mounted.current) return; if (activeTaskId.current === next.id) setTask(next); setTasks((current) => current.some((value) => value.id === next.id) ? current.map((value) => value.id === next.id ? next : value) : [next, ...current]); }, []);
-  const clearLease = (): void => { leaseRef.current = null; setLease(null); };
+  const clearLease = (): void => { leaseRef.current = null; setLease(null); setHeartbeatError(''); };
 
   const load = useCallback(async (): Promise<void> => {
     if (!projectId) return;
@@ -135,14 +137,15 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
     let cancelled = false;
     const timer = window.setInterval(() => {
       heartbeatAcceptanceTask(lease.taskId, lease.token).then((next) => {
-        if (!cancelled) { updateTask(next); setError((current) => current === HEARTBEAT_RETRY_MESSAGE ? '' : current); }
+        if (!cancelled) { updateTask(next); setHeartbeatError(''); }
       }).catch((err) => {
         if (cancelled) return;
         if (acceptanceLeaseIsInvalid(err)) {
           leaseRef.current = null; setLease(null);
-          setError('领取已失效，已停止回填。请重新领取后从已保存结果继续。');
+          setHeartbeatError('');
+          setError('任务当前不能继续回填。请刷新列表，确认状态后再领取。');
         } else {
-          setError(err instanceof ApiError && [401, 403].includes(err.status) ? errorMessage(err) : HEARTBEAT_RETRY_MESSAGE);
+          setHeartbeatError(err instanceof ApiError && [401, 403].includes(err.status) ? errorMessage(err) : HEARTBEAT_RETRY_MESSAGE);
         }
       });
     }, 30_000);
@@ -203,7 +206,7 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
   return (
     <section className="flex min-h-0 flex-col gap-4 lg:flex-1" aria-label="结构化验收工作区">
       <div className="flex flex-wrap items-end justify-between gap-3"><div className="flex flex-wrap items-end gap-3"><AcceptanceField label="验收项目"><select className={acceptanceInputClass} value={projectId} onChange={(event) => onProjectChange(event.target.value)}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}{!projects.some((project) => project.id === projectId) ? <option value={projectId}>{projectId}</option> : null}</select></AcceptanceField><p className="max-w-2xl pb-2 text-xs text-muted-foreground">正式环境是巡检主体；CDS 只选少量核心项，不作为正式环境开测前置。</p></div><Button variant="outline" size="sm" disabled={loading || busy} onClick={() => void load()}><RefreshCw />刷新清单与结果</Button></div>
-      {error ? <ErrorBlock message={error} /> : null}{notice ? <div role="status" className="rounded-md border border-border bg-muted/50 p-3 text-sm">{notice}</div> : null}
+      {error ? <ErrorBlock message={error} /> : null}{heartbeatError ? <ErrorBlock message={heartbeatError} /> : null}{notice ? <div role="status" className="rounded-md border border-border bg-muted/50 p-3 text-sm">{notice}</div> : null}
       {loading ? <LoadingBlock label="正在读取结构化验收记录" /> : null}
       {view === 'templates' ? editing ? <AcceptanceTemplateEditor key={editing === 'new' ? 'new' : `${editing.id}-${editing.version}`} template={editing === 'new' ? undefined : editing} busy={busy} onCancel={() => setEditing(null)} onPublish={(draft) => action(async () => { const template = await publishAcceptanceTemplate({ projectId, ...draft, cases: normalizeAcceptanceCases(draft.cases), ...(editing !== 'new' ? { templateId: editing.id, expectedVersion: editing.version } : {}) }); setEditing(null); setNotice(`已发布「${template.title}」v${template.version}；历史任务仍使用原快照。`); await load(); })} /> : <div className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-lg font-semibold">重要产品功能测试清单</h2><Button onClick={() => setEditing('new')}><Plus />新建测试清单</Button></div>{!loading && !templates.length ? <div className="rounded-lg border border-dashed border-border bg-card p-6"><h3 className="font-semibold">先建立一张可复用的验收评分表</h3><p className="my-3 text-sm text-muted-foreground">定义重要功能、真人操作步骤、通过断言、证据和清理要求；每轮创建新任务逐项填写，不覆盖历史。</p><Button onClick={() => setEditing('new')}><Plus />新建测试清单</Button></div> : null}{templates.map((template) => <article key={template.id} className="rounded-lg border border-border bg-card p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold">{template.title} <span className="text-xs text-muted-foreground">v{template.version}</span></h3><p className="mt-1 text-sm text-muted-foreground">{template.description}</p><p className="mt-2 text-xs text-muted-foreground">{template.cases.length} 项重要功能 · 发布于 {new Date(template.createdAt).toLocaleString()}</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => setEditing(template)}>编辑并发布新版本</Button><Button size="sm" onClick={() => { setTemplateId(template.id); setCreateOpen(true); const next = new URLSearchParams(searchParams); next.set('view', 'tasks'); next.delete('task'); next.delete('case'); setSearchParams(next); }}>创建验收任务</Button></div></div><ul className="mt-3 grid gap-2 md:grid-cols-2">{template.cases.map((item) => <li key={item.caseId} className="rounded-md bg-muted/40 px-3 py-2 text-sm">{item.title}<span className="ml-2 text-xs text-muted-foreground">{item.caseId} · {item.criticality === 'core' ? '核心必测' : '一般功能'} · {item.environments.map((value) => value === 'production' ? '正式' : 'CDS').join('/')}</span></li>)}</ul></article>)}</div> : null}
       {view === 'tasks' ? <div className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-lg font-semibold">执行任务</h2><Button disabled={!templates.length || busy} onClick={() => setCreateOpen((current) => !current)}><Plus />创建验收任务</Button></div>
