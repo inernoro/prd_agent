@@ -82,8 +82,10 @@ export class SchedulerService {
   private wakeFn: WakeFn | null = null;
   private coolFn: CoolFn | null = null;
   private runtimePresence?: () => ReadonlySet<string> | null;
+  private runtimePresenceFresh?: () => boolean;
   private operationProtection?: (slug: string) => boolean;
   private readonly cooling = new Set<string>();
+  private readonly capacityReservations = new Set<string>();
   /** slug → epoch ms of last persisted touch, used to throttle save() */
   private lastPersistedTouch = new Map<string, number>();
   private activitySource?: { read: () => Promise<unknown>; isProbe: (fingerprint: string) => boolean; masterStartedAt: number };
@@ -157,7 +159,7 @@ export class SchedulerService {
     finally { this.activityRefresh = undefined; }
   }
 
-  setRuntimePresenceProvider(provider: () => ReadonlySet<string> | null): void { this.runtimePresence = provider; }
+  setRuntimePresenceProvider(provider: () => ReadonlySet<string> | null, fresh?: () => boolean): void { this.runtimePresence = provider; this.runtimePresenceFresh = fresh; }
   setOperationProtection(provider: (slug: string) => boolean): void { this.operationProtection = provider; }
 
   private hasResidentRuntime(branch: BranchEntry): boolean {
@@ -221,6 +223,45 @@ export class SchedulerService {
     if (this.config.maxHotBranches === max) return;
     this.config.maxHotBranches = max;
     console.log(`[scheduler] maxHotBranches set to ${max} at runtime (via UI)`);
+  }
+
+  /** 同步准入：读取到名额后，在第一个 await 前占位；不驱逐任何其他分支。 */
+  reserveNoEviction(slug: string, expectedMax: number): (restore?: boolean) => void {
+    if (!this.isEnabled() || expectedMax <= 0 || this.config.maxHotBranches !== expectedMax)
+      throw new Error('运行上限已变化或调度器不可用，请重新核对');
+    if (!this.runtimePresence || this.runtimePresence() === null || !this.runtimePresenceFresh?.()) throw new Error('实际运行容器状态不可确认或已过期');
+    const branch = this.stateService.getBranch(slug);
+    if (!branch || branch.archive || this.capacityReservations.has(slug)) throw new Error('分支不可准入');
+    if (this.getCapacityBranches().filter(b => b.id !== slug).length >= expectedMax)
+      throw new Error('没有空闲运行名额；本请求不会停止其他分支');
+    const previous = { heatState: branch.heatState, capacityYieldFirst: branch.capacityYieldFirst };
+    this.capacityReservations.add(slug);
+    branch.capacityYieldFirst = true;
+    branch.heatState = 'warming';
+    try { this.stateService.save(); }
+    catch (error) { this.capacityReservations.delete(slug); Object.assign(branch, previous); throw error; }
+    return (restore = false) => {
+      this.capacityReservations.delete(slug);
+      if (restore) Object.assign(branch, previous);
+      if (branch.heatState === 'warming') branch.heatState = Object.values(branch.services).some(s => s.status === 'running') ? 'hot' : 'cold';
+      this.stateService.save();
+    };
+  }
+
+  /** 只在当前占用可容纳时调整上限；调用者须同步持久化，不得中途 await。 */
+  assertCapacityChange(expectedMax: number, nextMax: number): void {
+    if (!this.isEnabled() || this.config.maxHotBranches !== expectedMax) throw new Error('运行上限已变化或调度器不可用，请重新核对');
+    if (!this.runtimePresence || this.runtimePresence() === null || !this.runtimePresenceFresh?.()) throw new Error('实际运行容器状态不可确认或已过期');
+    if (nextMax <= 0 || this.getCapacityBranches().length > nextMax)
+      throw new Error('该上限会挤停现有或正在启动的分支，拒绝调整');
+  }
+
+  private getCapacityBranches(): BranchEntry[] {
+    return this.stateService.getAllBranches().filter(b => this.capacityReservations.has(b.id)
+      || b.heatState === 'warming' || b.heatState === 'hot' || this.hasResidentRuntime(b)
+      || (b.heatState === undefined && b.status === 'running')
+      || ['restarting', 'deploying', 'starting', 'building'].includes(b.status)
+      || Object.values(b.services || {}).some(s => ['starting', 'deploying', 'building'].includes(s.status)));
   }
 
   /**
@@ -424,7 +465,10 @@ export class SchedulerService {
    * Returns null if there's nothing to evict.
    */
   selectLruVictim(excludeSlug?: string): BranchEntry | null {
-    const hotBranches = this.getHotBranches().filter(b => b.id !== excludeSlug && !this.isPinned(b));
+    const all = this.getHotBranches();
+    // 临时测试占用在容量不足时先退让；若仍在受保护操作中，暂不选其他分支。
+    const yielding = this.getCapacityBranches().filter(b => b.capacityYieldFirst);
+    const hotBranches = (yielding.length ? yielding : all).filter(b => b.id !== excludeSlug && !this.isPinned(b));
     if (hotBranches.length === 0) return null;
 
     return hotBranches.reduce<BranchEntry | null>((oldest, b) => {
@@ -446,13 +490,17 @@ export class SchedulerService {
     const max = this.config.maxHotBranches;
     if (!max || max <= 0) return 0;
 
-    const hotCount = this.getHotBranches().filter(b => b.id !== excludeSlug).length;
+    const hotCount = this.getCapacityBranches().filter(b => b.id !== excludeSlug).length;
     // +1 for the branch we're about to wake (if it's not already hot).
     if (hotCount + 1 <= max) return 0;
+    if (excludeSlug && this.stateService.getBranch(excludeSlug)?.capacityYieldFirst)
+      throw new Error('临时分支没有空闲名额，不会驱逐其他分支');
     if (!await this.refreshPreviewActivity()) throw new Error('预览访问状态暂不可确认，请稍后重试');
 
+    if (this.getCapacityBranches().filter(b => b.id !== excludeSlug).length + 1 <= this.config.maxHotBranches) return 0;
     const victim = this.selectLruVictim(excludeSlug);
     if (!victim) {
+      if (this.getCapacityBranches().some(b => b.capacityYieldFirst)) throw new Error('临时分支正在操作中，请等待其释放名额');
       if (this.activityUnknown) throw new Error('预览访问状态暂不可确认，且没有可安全降温的分支，请稍后重试');
       console.warn(`[scheduler] capacity overrun: ${hotCount + 1} hot but no evictable branch (all pinned)`);
       return 0;
@@ -491,7 +539,7 @@ export class SchedulerService {
     // 2. Capacity-based cooling (in case external deploys bypassed wake())
     const max = this.config.maxHotBranches;
     if (max > 0) {
-      let hotCount = this.getHotBranches().length;
+      let hotCount = this.getCapacityBranches().length;
       while (hotCount > max) {
         const victim = this.selectLruVictim();
         if (!victim) break;
@@ -545,7 +593,7 @@ export class SchedulerService {
       hot,
       cold,
       capacityUsage: {
-        current: hot.length,
+        current: this.getCapacityBranches().length,
         max: this.config.maxHotBranches,
       },
       ...(this.activitySource ? { previewActivity: { status: this.activityUnknown ? 'unknown' as const : 'ready' as const,

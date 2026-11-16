@@ -834,6 +834,18 @@ export class ContainerService {
   /** Private receipts cannot be asserted by an HTTP profile or transferred across daemons. */
   private readonly admittedProfileStorage = new WeakMap<BuildProfile, { planDigest: string; imageId: string; imageReference: string; checkBindMounts: () => void }>();
   private readonly admittedInfraStorage = new WeakMap<InfraService, { planDigest: string; imageId: string; imageReference: string; originalContainerId?: string }>();
+  /** 有界隔离恢复仅接纳已停止、无挂载、绑定准确镜像摘要的容器。 */
+  async assertStoppedStatelessImage(containerId: string, expectedImage: string): Promise<void> {
+    if (!/^[a-f0-9]{64}$/.test(containerId) || !/@sha256:[a-f0-9]{64}$/.test(expectedImage)) throw new Error('容器与镜像身份不完整');
+    const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"image":{{json .Config.Image}},"mounts":{{json .Mounts}},"tmpfs":{{json .HostConfig.Tmpfs}}}';
+    const result = await this.shell.exec(`docker inspect --format ${this.shellQuote(format)} ${containerId}`, { timeout: 5000, executionLane: 'observation' });
+    if (result.exitCode !== 0) throw new Error('隔离容器实际状态读取失败');
+    const value = JSON.parse(result.stdout);
+    if (value.id !== containerId || value.running !== false || value.image !== expectedImage
+      || !Array.isArray(value.mounts) || value.mounts.length || (value.tmpfs && Object.keys(value.tmpfs).length))
+      throw new Error('隔离容器必须停止、无实际挂载且镜像摘要完全一致');
+  }
+
   async inspectOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef, requireRunning = true): Promise<import('../types.js').ServiceRuntimeRef | null> {
     if (runtime.staticWeb) {
       if (runtime.staticWeb.projectId !== entry.projectId || runtime.staticWeb.branchId !== entry.id || runtime.staticWeb.profileId !== profileId

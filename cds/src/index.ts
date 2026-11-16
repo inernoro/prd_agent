@@ -129,7 +129,7 @@ import { hasYoungActiveLease } from './services/deploy-stuck-reconciler.js';
 import { AsyncStuckDeployReconciler } from './services/async-stuck-deploy-reconciler.js';
 import { createReleaseGitRunner } from './services/release-git-reader.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
-import { ResourceUsageSampler, getObservedRunningContainerNames, forgetConfirmedStoppedContainers } from './services/resource-usage-sampler.js';
+import { ResourceUsageSampler, getObservedRunningContainerNames, getLatestResourceUsage, forgetConfirmedStoppedContainers } from './services/resource-usage-sampler.js';
 import { serviceRuntimeRefs, servingRuntime } from './services/service-runtime.js';
 import { stopServiceForCooling } from './services/scheduler-service-stop.js';
 import { restoreDeploymentMemoryReservations } from './services/deployment-phase-budget.js';
@@ -2932,7 +2932,10 @@ deploymentMemoryReconciler.unref?.();
   }
 }
 const schedulerService = new SchedulerService(stateService, config.scheduler);
-schedulerService.setRuntimePresenceProvider(getObservedRunningContainerNames);
+schedulerService.setRuntimePresenceProvider(getObservedRunningContainerNames, () => {
+  const sample = getLatestResourceUsage();
+  return Boolean(sample && Date.now() >= sample.sampledAt && Date.now() - sample.sampledAt <= 90_000);
+});
 schedulerService.setOperationProtection(slug => branchOperationCoordinator.getActiveOperations(slug)
   .some(operation => operation.request.kind !== 'scheduler-cooling'));
 let previewActivitySelfCheck: SelfCheckDeps['previewActivity'];

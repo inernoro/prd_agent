@@ -16447,6 +16447,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.lastStoppedAt = new Date().toISOString();
       entry.lastStopReason = stopAttribution.reason;
       entry.lastStopSource = stopAttribution.source;
+      if (entry.capacityYieldFirst) { entry.heatState = 'cold'; delete entry.capacityYieldFirst; }
       cleanupPreviewServer(id);
       // PR_C.3: 计数 + activity log
       stateService.incrementBranchStat(id, 'stopCount');
@@ -16539,18 +16540,54 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(409).json({ error: '还没有已构建的容器可重启，请先「重新部署」' });
       return;
     }
+    const guard = req.body?.capacityGuard;
+    if (guard !== undefined && (!guard || typeof guard !== 'object' || Array.isArray(guard)
+      || !Number.isInteger(guard.expectedMaxHotBranches) || guard.expectedMaxHotBranches < 1 || guard.expectedMaxHotBranches > 100
+      || guard.yieldFirst !== true || typeof guard.expectedCommitSha !== 'string'
+      || !/^[a-f0-9]{40}$/.test(guard.expectedCommitSha) || !guard.expectedContainers
+      || typeof guard.expectedContainers !== 'object' || Array.isArray(guard.expectedContainers)
+      || typeof guard.expectedImage !== 'string' || !/@sha256:[a-f0-9]{64}$/.test(guard.expectedImage))) {
+      res.status(400).json({ error: '容量保护参数不完整' }); return;
+    }
+    if (guard && (!schedulerService || entry.status !== 'idle' || entry.githubCommitSha !== guard.expectedCommitSha
+      || services.some(s => s.status !== 'stopped' || !/^[a-f0-9]{64}$/.test(s.containerId || '')
+        || guard.expectedContainers[s.profileId] !== s.containerId)
+      || Object.keys(guard.expectedContainers).sort().join('|') !== services.map(s => s.profileId).sort().join('|') || entry.archive || Object.keys(entry.replicaSets || {}).length)) {
+      res.status(409).json({ error: '仅允许准确提交、全部停止且无副本的当前分支受保护恢复' }); return;
+    }
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'restart',
       source: 'api.restart-branch',
       reason: 'manual branch docker restart',
     });
     if (branchOperationCoordinator && !branchOperationLease) return;
+    let releaseCapacity: ((restore?: boolean) => void) | undefined;
+    let restartAttempted = false;
+    if (guard) {
+      try { releaseCapacity = schedulerService!.reserveNoEviction(id, guard.expectedMaxHotBranches); }
+      catch (error) {
+        completeBranchOperation(branchOperationLease, 'failed');
+        res.status(409).json({ error: (error as Error).message }); return;
+      }
+    }
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
     const actor = resolveActorFromRequest(req);
     const trigger = triggerFromRequest(req);
     try {
       assertBranchOperationCurrent(branchOperationLease, 'restart before state write');
+      if (guard) {
+        await stateService.flush();
+        assertBranchOperationCurrent(branchOperationLease, 'guarded reservation persisted');
+        // 先核对全部旧容器身份，才允许任何一个启动。精确 ID 防止同名替换竞态。
+        for (const svc of services) {
+          const actual = await containerService.inspectOwnedRuntime(entry, svc.profileId, runtimeRef(svc), false);
+          assertBranchOperationCurrent(branchOperationLease, 'guarded restart identity');
+          if (!actual || actual.containerId !== guard.expectedContainers[svc.profileId]) throw new Error('保留容器身份已变化');
+          await containerService.assertStoppedStatelessImage(svc.containerId!, guard.expectedImage);
+          assertBranchOperationCurrent(branchOperationLease, 'guarded restart storage and image');
+        }
+      }
       const restartStartedAt = new Date().toISOString();
       entry.status = 'restarting';
       entry.lastDeployStartedAt = restartStartedAt;
@@ -16560,7 +16597,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const failed: string[] = [];
       for (const svc of services) {
         assertBranchOperationCurrent(branchOperationLease, `restart before ${svc.profileId}`);
-        const ok = await containerService.restartServiceInPlace(svc.containerName, undefined, {
+        restartAttempted = true;
+        const ok = await containerService.restartServiceInPlace(guard ? svc.containerId! : svc.containerName, undefined, {
           projectId: entry.projectId,
           branchId: entry.id,
           profileId: svc.profileId,
@@ -16724,7 +16762,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } catch { /* 状态恢复尽力而为，不掩盖原始错误 */ }
       res.status(branchOperationFinalStatus === 'cancelled' ? 409 : 500).json({ error: (err as Error).message });
     } finally {
-      completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
+      try { releaseCapacity?.(!restartAttempted); }
+      finally { completeBranchOperation(branchOperationLease, branchOperationFinalStatus); }
     }
   });
 
@@ -27028,6 +27067,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       enabled?: unknown;
       idleTTLSeconds?: unknown;
       maxHotBranches?: unknown;
+      expectedMaxHotBranches?: unknown;
+      preserveRunning?: unknown;
     };
 
     if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
@@ -27047,6 +27088,17 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         res.status(400).json({ error: 'maxHotBranches 必须是 0 到 100 之间的整数（0=不限）' });
         return;
       }
+    }
+
+    if (body.expectedMaxHotBranches !== undefined || body.preserveRunning !== undefined) {
+      if (body.preserveRunning !== true || typeof body.expectedMaxHotBranches !== 'number'
+        || !Number.isInteger(body.expectedMaxHotBranches) || body.expectedMaxHotBranches < 1 || body.expectedMaxHotBranches > 100
+        || typeof body.maxHotBranches !== 'number' || body.maxHotBranches < 1
+        || body.enabled !== undefined || body.idleTTLSeconds !== undefined) {
+        res.status(400).json({ error: '保护式调整只能包含有效的原上限、新上限和 preserveRunning=true' }); return;
+      }
+      try { schedulerService.assertCapacityChange(body.expectedMaxHotBranches, body.maxHotBranches); }
+      catch (error) { res.status(409).json({ error: (error as Error).message }); return; }
     }
 
     if (typeof body.enabled === 'boolean') {

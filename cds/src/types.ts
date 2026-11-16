@@ -1036,6 +1036,8 @@ export interface BranchEntry {
    * See `doc/design.cds.resilience.md` §三.
    */
   heatState?: BranchHeatState;
+  /** 临时隔离验收占用：容量不足时优先退让，冷启动不得驱逐其他分支。 */
+  capacityYieldFirst?: boolean;
   /**
    * User explicitly pinned this branch — scheduler must never evict it.
    * The default branch and color-marked branches are also treated as pinned implicitly.

@@ -76,6 +76,65 @@ describe('SchedulerService', () => {
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
+  describe('temporary capacity without eviction', () => {
+    beforeEach(() => scheduler.setRuntimePresenceProvider(() => new Set(), () => true));
+    it('reserves synchronously and rejects a concurrent guarded start without changing peers', () => {
+      stateService.addBranch(makeBranch('a'));
+      stateService.addBranch(makeBranch('b'));
+      stateService.addBranch(makeBranch('test-1', 'idle', { heatState: 'cold' }));
+      stateService.addBranch(makeBranch('test-2', 'idle', { heatState: 'cold' }));
+      const release = scheduler.reserveNoEviction('test-1', 3);
+      expect(scheduler.getSnapshot().capacityUsage.current).toBe(3);
+      expect(() => scheduler.reserveNoEviction('test-2', 3)).toThrow('没有空闲');
+      expect(stateService.getBranch('test-2')!.capacityYieldFirst).toBeUndefined();
+      expect(cooled).toEqual([]);
+      release();
+      expect(scheduler.getSnapshot().capacityUsage.current).toBe(2);
+    });
+    it('rejects stale limits, uncertain observations and unsafe reductions', () => {
+      stateService.addBranch(makeBranch('a'));
+      stateService.addBranch(makeBranch('b', 'idle', { heatState: 'warming' }));
+      stateService.addBranch(makeBranch('c', 'idle', { heatState: 'cold' }));
+      scheduler.setRuntimePresenceProvider(() => null, () => true);
+      expect(() => scheduler.reserveNoEviction('c', 3)).toThrow('不可确认');
+      scheduler.setRuntimePresenceProvider(() => new Set(), () => true);
+      expect(() => scheduler.assertCapacityChange(2, 4)).toThrow('已变化');
+      expect(() => scheduler.assertCapacityChange(3, 1)).toThrow('挤停');
+      expect(() => scheduler.assertCapacityChange(3, 2)).not.toThrow();
+    });
+    it('yields the recent temporary branch before older ordinary branches', async () => {
+      stateService.addBranch(makeBranch('old', 'running', { lastAccessedAt: new Date(clock.now()).toISOString() }));
+      stateService.addBranch(makeBranch('other', 'running', { lastAccessedAt: new Date(clock.now()).toISOString() }));
+      stateService.addBranch(makeBranch('test', 'running', { heatState: 'hot', capacityYieldFirst: true, lastAccessedAt: new Date(clock.now()+1).toISOString() }));
+      scheduler.setCoolFn(async slug => { cooled.push(slug); stateService.getBranch(slug)!.status = 'idle'; });
+      await scheduler.wake('new');
+      expect(cooled).toEqual(['test']);
+    });
+    it('never substitutes another victim while the temporary restart is protected', async () => {
+      for (const id of ['a','b']) stateService.addBranch(makeBranch(id));
+      stateService.addBranch(makeBranch('test','idle',{heatState:'cold'}));
+      const release = scheduler.reserveNoEviction('test', 3);
+      scheduler.setOperationProtection(id => id === 'test');
+      await expect(scheduler.wake('new')).rejects.toThrow('等待');
+      expect(cooled).toEqual([]);
+      release();
+    });
+    it('a cooled temporary branch cannot wake by evicting others', async () => {
+      for (const id of ['a','b','c']) stateService.addBranch(makeBranch(id));
+      stateService.addBranch(makeBranch('test','idle',{heatState:'cold',capacityYieldFirst:true}));
+      await expect(scheduler.wake('test')).rejects.toThrow('不会驱逐');
+      expect(cooled).toEqual([]);
+      expect(woken).toEqual([]);
+    });
+    it('capacity tick yields the temporary branch first', async () => {
+      for (const id of ['a','b','c']) stateService.addBranch(makeBranch(id));
+      stateService.addBranch(makeBranch('test','running',{heatState:'hot',capacityYieldFirst:true}));
+      scheduler.setCoolFn(async slug => { cooled.push(slug); stateService.getBranch(slug)!.status = 'idle'; });
+      await scheduler.tick();
+      expect(cooled).toEqual(['test']);
+    });
+  });
+
   // ── touch ──
 
   describe('touch', () => {
