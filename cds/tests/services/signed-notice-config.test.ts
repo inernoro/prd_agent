@@ -5,6 +5,8 @@ import os from'node:os';
 import crypto from'node:crypto';
 import express from 'express';
 import { once } from 'node:events';
+import { AlarmChannel } from '../../src/services/alarm-channel.js';
+import { readMapNotifierSettings } from '../../src/services/map-notifier.js';
 import { createUptimeRouter } from '../../src/routes/uptime.js';
 import{buildCanonicalRequest,HEADER_KEY_ID,HEADER_TIMESTAMP,HEADER_NONCE,HEADER_SIGNATURE}from'../../src/services/map-notifier.js';
 import{StateService}from'../../src/services/state.js';
@@ -55,6 +57,24 @@ describe('existing signed MAP configuration used by capacity notices',()=>{
   {ok:true,status:200,text:async()=>'<html>proxy</html>'}])('does not confirm delivery on a refusal or an unknown envelope',async(response)=>{
   const cfg=resolveCurrentNoticeOutbound({},()=>null,()=>signing)!;const notice:any={id:'n',dedupeKey:'risk:test',source:'system',level:'warning',title:'隔离',body:'隔离',createdAt:new Date(0).toISOString()};
   expect((await forwardNoticeToMap(notice,cfg,async()=>response)).ok).toBe(false);
+ });
+ it('keeps monitoring status readable when the stored signer is unreadable without selecting fallback',()=>{
+  const env={CDS_MAP_NOTIFY_ENDPOINT:signing.endpoint,CDS_MAP_NOTIFY_KEY_ID:'fallback',CDS_MAP_NOTIFY_USERNAME:'administrator',CDS_MAP_NOTIFY_PRIVATE_KEY:keys.privateKey};
+  const read=()=>readMapNotifierSettings(()=>{throw Error('private-decryption-error');},env);
+  expect(read()).toEqual({config:null,source:'settings',unavailable:true});
+  const channel=new AlarmChannel(()=>Boolean(read().config),'MAP',()=>read().unavailable?['CDS_SECRET_KEY']:[]);
+  channel.record({ok:true},'drill',1);
+  expect(channel.snapshot()).toMatchObject({status:'unconfigured',missing:['CDS_SECRET_KEY']});
+  expect(readMapNotifierSettings(()=>undefined,env)).toMatchObject({source:'env',unavailable:false,config:{keyId:'fallback'}});
+ });
+ it('keeps the actual monitoring callbacks usable after a stored credential decryption failure',()=>{
+  const source=fs.readFileSync(new URL('../../src/index.ts',import.meta.url),'utf8');
+  const block=source.match(/const alarmChannel = new AlarmChannel\([\s\S]*?\n  \);/)![0];
+  const state={getAlarmNotify:()=>{throw Error('unreadable-key');}};
+  const channel=new Function('AlarmChannel','stateService','readMapSettings','missingAlarmEnvKeys','mapNotifierConfigFromEnv',block+';return alarmChannel;')(
+   AlarmChannel,state,()=>readMapNotifierSettings(state.getAlarmNotify),()=>[],()=>signing);
+  expect(()=>channel.snapshot()).not.toThrow();expect(channel.snapshot().status).toBe('unconfigured');
+  expect(channel.snapshot().missing.join(' ')).toContain('CDS_SECRET_KEY');
  });
  it('rejects new plaintext storage and fails closed if an encrypted key cannot be reopened',async()=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'signed-notice-no-seal-'));roots.push(root);const file=path.join(root,'state.json'),state=new StateService(file);state.load();

@@ -345,9 +345,13 @@ export function createUptimeRouter(deps: {
     res.json(deps.readAlarmNotify());
   });
 
-  router.put('/cds-system/alarm-notify', async (req, res) => {
-    (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
+  router.put('/cds-system/alarm-notify', (req, res) => {
     if (denySystemAlarmAccess(req, res)) return;
+    void saveAlarmNotify(req, res).catch(() => {
+      if (!res.headersSent) res.status(503).json({ error: 'storage_unavailable', message: '通知凭据保存结果未能确认，请检查持久存储后重试' });
+    });
+  });
+  async function saveAlarmNotify(req: Request, res: Response): Promise<void> {
     if (!deps.writeAlarmNotify) {
       res.status(501).json({ error: '这个实例没有接通知通道配置' });
       return;
@@ -384,10 +388,10 @@ export function createUptimeRouter(deps: {
     try {
       await deps.writeAlarmNotify({ endpoint, keyId, username, privateKey, targetUsername });
     } catch {
-      res.status(409).json({ error: 'secret_storage_unavailable', message: 'MAP 凭据未保存，请确认密封存储已启用且持久存储可写' }); return;
+      res.status(409).json({ error: 'secret_storage_unavailable', message: 'MAP 凭据保存结果未能确认，请确认密封存储已启用且持久存储可写' }); return;
     }
     res.json({ ...deps.readAlarmNotify?.(), message: '通知通道已配置 —— 建议立刻演练一次确认真能送到' });
-  });
+  }
 
   router.get('/uptime/targets/:id/history', (req, res) => {
     const range = parseRange(req.query.range);
