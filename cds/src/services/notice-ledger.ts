@@ -27,6 +27,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { monitorIncidentPath } from './monitor-incident-link.js';
+import type { MapNotifierConfig } from './map-notifier.js';
 import {
   cdsEventNoticeCopy,
   cdsEventsBus,
@@ -478,10 +479,13 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
 export function resolveCurrentNoticeOutbound(
   env: NodeJS.ProcessEnv,
   readFallback: () => NoticeOutboundFallback | null | undefined,
+  readSigning?: () => MapNotifierConfig | null | undefined,
 ): NoticeOutboundConfig | null {
   const dedicated = resolveNoticeOutboundConfig(env);
   const enabled = (env.CDS_NOTICE_OUTBOUND_ENABLED ?? '1').trim().toLowerCase();
   if (dedicated || enabled === '0' || enabled === 'false') return dedicated;
+  const signing = readSigning?.();
+  if (signing) return resolveNoticeOutboundConfig(env, null, signing);
   return resolveNoticeOutboundConfig(env, readFallback());
 }
 

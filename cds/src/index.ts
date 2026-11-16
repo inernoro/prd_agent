@@ -181,6 +181,7 @@ import { combinedOutput } from './types.js';
 import { backfillReportReadScope } from './services/connection/pairing-service.js';
 import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
 import { MapNotifier, mapNotifierConfigFromEnv, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
+import { isSealedSecret } from './infra/secret-seal.js';
 import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
 import { channelConfigured, classifyAlert, routeAlarm, notificationChannelSelected, renderAlarmMessage } from './services/alarm-route.js';
 import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
@@ -6205,15 +6206,20 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
    * 那等于把「接上铃」这件事又变回一件需要运维在场的事。
    */
   const resolveMapNotifier = (): MapNotifier | null => {
+    try {
     const stored = stateService.getAlarmNotify();
     // 设置里存的是 privateKey（与 githubApp 同名法），MapNotifier 要的是 privateKeyPem。
     // 在这一处显式转换，而不是让两个名字在下游各自漂。
     const cfg = stored
-      ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username, privateKeyPem: stored.privateKey }
+      ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username, privateKeyPem: stored.privateKey, targetUsername: stored.targetUsername }
       : mapNotifierConfigFromEnv();
     return cfg
       ? new MapNotifier(cfg, { warn: (m) => console.warn(m), info: (m) => console.log(m) })
       : null;
+    } catch {
+      console.warn('[map-notifier] 已保存的签名凭据无法读取，未使用备用身份发送');
+      return null;
+    }
   };
   const mapNotifier = resolveMapNotifier();
   if (mapNotifier) {
@@ -6651,6 +6657,8 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         endpoint: eff.endpoint,
         keyId: eff.keyId,
         username: eff.username,
+        targetUsername: stored?.targetUsername || env?.targetUsername || eff.username,
+        secretStorage: stored ? isSealedSecret(stateService.getState().alarmNotify?.privateKey) ? 'encrypted' : 'legacy' : 'env',
         // 指纹而不是私钥：够用来核对「配的是不是我给的那把」，又不构成泄漏面。
         privateKeyFingerprint: createHash('sha256').update(eff.key).digest('hex').slice(0, 16),
       };
@@ -6659,6 +6667,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       stateService.setAlarmNotify(next);
       // 换了凭据（或清掉）就是换了目的地：旧的投递证明作废，回到「没发过」，演练成功一次再算通
       alarmChannel.reset();
+      return stateService.flush();
     },
     // 演练走**真实投递路径**：同一个 MapNotifier、同一条签名、同一个 source。
     // 造一条假的「发送成功」毫无意义——那正好是这条链要防的自欺。

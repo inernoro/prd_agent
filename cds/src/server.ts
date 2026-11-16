@@ -59,6 +59,7 @@ import { createCodeReviewMail } from './services/code-review-mail.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
 import { createNoticesRouter } from './routes/notices.js';
 import { NoticeLedgerService, startNoticeLedger, resolveCurrentNoticeOutbound } from './services/notice-ledger.js';
+import { mapNotifierConfigFromEnv } from './services/map-notifier.js';
 import { HostCapacityObservationService } from './services/host-capacity-observation.js';
 import { createHostCapacityObservationRouter } from './routes/host-capacity-observation.js';
 import { isSealingEnabled } from './infra/secret-seal.js';
@@ -2038,7 +2039,11 @@ export function createServer(deps: ServerDeps): express.Express {
   // 避免同一个 MAP 重复配两套 Token。两条都没有才如实记「未外发」。
   const getNoticeOutbound = () => resolveCurrentNoticeOutbound(process.env, () => (
     deps.stateService.getBugReportForwardingConfig() ?? resolveForwardConfig(process.env)
-  ));
+  ), () => {
+    const stored = deps.stateService.getAlarmNotify();
+    return stored ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username,
+      privateKeyPem: stored.privateKey, targetUsername: stored.targetUsername } : mapNotifierConfigFromEnv(process.env);
+  });
   const noticeLedger = new NoticeLedgerService({
     storePath: path.join(deps.config.repoRoot, '.cds', 'notice-ledger.json'),
     logger: { warn: (m) => console.warn(m) },

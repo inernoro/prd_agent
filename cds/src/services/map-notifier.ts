@@ -35,6 +35,8 @@ export interface MapNotifierConfig {
   keyId: string;
   /** 必须与 MAP 配置里该 keyId 条目的 Username 一致——它进签名载荷。 */
   username: string;
+  /** 独立服务身份与接收人可以不同；MAP 服务端仍强制校验固定目标。 */
+  targetUsername?: string;
   /** PKCS#8 私钥 PEM。公钥在 MAP 配置里，私钥只留在 CDS，不过网络。 */
   privateKeyPem: string;
   timeoutMs?: number;
@@ -193,7 +195,7 @@ export class MapNotifier {
   ) {}
 
   async send(alert: MapNotifierAlert): Promise<MapNotifierSendResult> {
-    const payload = buildNotificationPayload(alert);
+    const payload = { ...buildNotificationPayload(alert), targetUsername: this.config.targetUsername || this.config.username };
     const body = JSON.stringify(payload);
     const timestamp = Math.floor(Date.now() / 1000);
     const nonce = crypto.randomUUID();
