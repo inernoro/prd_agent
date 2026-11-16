@@ -111,6 +111,7 @@ import { getEventLoopLag } from '../services/event-loop-lag.js';
 import { recordMainThreadSection, timeMainThreadSection } from '../services/main-thread-diagnostics.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
+import { branchPinActor, createBranchPin, mayChangePin } from '../services/branch-pin.js';
 import { branchVersionFacts, confirmedRunningRevisionSha } from '../services/running-version.js';
 import { buildStandbyBranchConfiguration } from '../services/standby-mirror.js';
 import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView, resourceForHumanView, logPayloadForHumanView } from '../services/human-project-access.js';
@@ -16959,6 +16960,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     try {
       const { isFavorite, notes, tags, isColorMarked } = req.body as { isFavorite?: boolean; notes?: string; tags?: string[]; isColorMarked?: boolean };
+      const access = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (access) { res.status(403).json({ error: access }); return; }
+      const actor = branchPinActor(req);
+      if (typeof isColorMarked === 'boolean' && !mayChangePin(entry.isColorMarked, entry.colorMarkPin, req, actor)) {
+        res.status(403).json({ error: '旧保护或其他操作者的保护须由人类明确处理' }); return;
+      }
+      if (isColorMarked === true && entry.isColorMarked !== true) entry.colorMarkPin = createBranchPin({}, req, actor);
       // PR_C.3: 调试灯泡切换计数 + activity log（仅 isColorMarked 真正变化时）
       const prevColorMark = entry.isColorMarked === true;
       stateService.updateBranchMeta(id, { isFavorite, notes, tags, isColorMarked });
@@ -16968,7 +16976,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           type: isColorMarked ? 'colormark-on' : 'colormark-off',
           branchId: id,
           branchName: entry.branch,
-          actor: resolveActorForActivity(req),
+          actor,
         });
       }
       stateService.save();
@@ -27057,8 +27065,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     }
     if (body.maxHotBranches !== undefined) {
       const v = body.maxHotBranches;
-      if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 100) {
-        res.status(400).json({ error: 'maxHotBranches 必须是 0 到 100 之间的整数（0=不限）' });
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 25) {
+        res.status(400).json({ error: 'maxHotBranches 必须是 1 到 25 之间的整数' });
         return;
       }
     }
@@ -27086,10 +27094,32 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       return;
     }
     try {
-      schedulerService.pin(req.params.slug);
-      res.json({ ok: true, slug: req.params.slug, pinned: true });
+      const branch = stateService.getBranch(req.params.slug);
+      if (!branch) { res.status(404).json({ error: '分支不存在' }); return; }
+      const access = assertProjectAccess(req as any, branch.projectId || 'default');
+      if (access) { res.status(403).json({ error: access }); return; }
+      const actor = branchPinActor(req);
+      const source = req.body?.source ?? 'user';
+      if (!['user', 'config'].includes(source)) { res.status(400).json({ error: 'source 必须为 user 或 config' }); return; }
+      if (source === 'config' && !isHumanSystemOwner(req)) { res.status(403).json({ error: '配置保护复核须由已登录的系统所有者明确授权' }); return; }
+      if (source === 'user' && !mayChangePin(branch.pinnedByUser, branch.userPin, req, actor)) {
+        res.status(403).json({ error: '旧保护或其他操作者的保护须由人类明确处理' }); return;
+      }
+      const pin = createBranchPin(req.body || {}, req, actor);
+      if (source === 'config') {
+        const ref = req.body?.authorizationRef;
+        if (typeof ref !== 'string' || !ref.trim() || ref.length > 500 || !req.body?.reason?.trim()) {
+          res.status(400).json({ error: '复核配置保护必须提供原因和授权依据' }); return;
+        }
+        pin.authorizationRef = ref.trim();
+        schedulerService.reviewConfigPin(req.params.slug, pin);
+      } else schedulerService.pin(req.params.slug, pin);
+      stateService.appendActivityLog(branch.projectId, { type: 'scheduler-pin', branchId: branch.id, branchName: branch.branch, actor,
+        pin, pinSource: source, note: pin.reason.slice(0, 200) });
+      stateService.save();
+      res.json({ ok: true, slug: req.params.slug, pinned: true, pin });
     } catch (err) {
-      res.status(404).json({ error: (err as Error).message });
+      res.status(400).json({ error: (err as Error).message });
     }
   });
 
@@ -27099,7 +27129,17 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       return;
     }
     try {
+      const branch = stateService.getBranch(req.params.slug);
+      if (!branch) { res.status(404).json({ error: '分支不存在' }); return; }
+      const access = assertProjectAccess(req as any, branch.projectId || 'default');
+      if (access) { res.status(403).json({ error: access }); return; }
+      const actor = branchPinActor(req);
+      if (!mayChangePin(branch.pinnedByUser, branch.userPin, req, actor)) {
+        res.status(403).json({ error: '旧保护或其他操作者的保护须由人类明确处理' }); return;
+      }
       schedulerService.unpin(req.params.slug);
+      stateService.appendActivityLog(branch.projectId, { type: 'scheduler-unpin', branchId: branch.id, branchName: branch.branch, actor });
+      stateService.save();
       res.json({ ok: true, slug: req.params.slug, pinned: false });
     } catch (err) {
       res.status(404).json({ error: (err as Error).message });

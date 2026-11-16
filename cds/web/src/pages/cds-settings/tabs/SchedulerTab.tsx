@@ -29,6 +29,10 @@ interface SchedulerSnapshot {
   hot?: Array<{ slug: string; lastAccessedAt: string | undefined; pinned: boolean }>;
   cold?: Array<{ slug: string; lastAccessedAt: string | undefined }>;
   capacityUsage?: { current: number; max: number };
+  resourcePressure?: 'ample' | 'pressure' | 'unknown';
+  occupancy?: Array<{ slug: string; state: string; reason: string }>;
+  protections?: Array<{ slug: string; source: string; active: boolean; reviewRequired: boolean;
+    pin?: { kind: string; actor: string; reason: string; expiresAt?: string; authorizationRef?: string } }>;
 }
 
 interface JanitorConfig {
@@ -81,7 +85,7 @@ function janitorDraft(snapshot: JanitorSnapshot): JanitorDraft {
 function schedulerBody(draft: SchedulerDraft) {
   const minutes = Number(draft.minutes), maxHot = Number(draft.maxHot);
   if (!draft.minutes.trim() || !Number.isInteger(minutes) || minutes < 1 || minutes > 1440) throw new Error('空闲超时必须为 1–1440 分钟的整数');
-  if (!draft.maxHot.trim() || !Number.isInteger(maxHot) || maxHot < 0 || maxHot > 100) throw new Error('最大热分支数必须为 0–100 的整数，0 表示不限');
+  if (!draft.maxHot.trim() || !Number.isInteger(maxHot) || maxHot < 1 || maxHot > 25) throw new Error('最大热分支数必须为 1–25 的整数');
   return { enabled: draft.enabled, idleTTLSeconds: minutes * 60, maxHotBranches: maxHot };
 }
 function janitorBody(draft: JanitorDraft) {
@@ -155,14 +159,15 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
   const destructiveChange = validJanitorDays && j && j.draft.enabled && (!j.saved.enabled || Number(j.draft.days) < Number(j.saved.days));
   const janitorSave = <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" onClick={() => void janitor.save()} disabled={janitor.busy || !janitor.dirty || !j?.snapshot.config || j.unknown || Boolean(j.readError)}>{janitor.busy ? '正在保存' : '保存过期删除规则'}</Button>;
   return <div className="space-y-5">
-    <Section title="调度器与工作区保留" description="配置影响全部项目。自动冷却停止空闲分支，过期删除会清理容器与工作区；两项规则分别保存，保存后立即生效。">
-      <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground"><span className="inline-flex items-center gap-2"><Flame />热分支 {hot ? hot.length : '未确认'}</span><span className="inline-flex items-center gap-2"><Snowflake />冷分支 {cold ? cold.length : '未确认'}</span><span className="inline-flex items-center gap-2"><Trash2 />当前规则待删除 {removal ? removal.length : '未确认'}</span><span className="inline-flex items-center gap-2"><HardDrive />磁盘 {j?.snapshot.disk ? `${j.snapshot.disk.usedPercent}%` : '未确认'}</span></div>
+    <Section title="调度器与工作区保留" description="配置影响全部项目。热池最多25个分支；资源充裕时保留空闲服务，压力下维持降温保护。过期删除会清理容器与工作区，两项规则分别保存。">
+      <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground"><span className="inline-flex items-center gap-2"><Flame />热池占用 {s?.snapshot.capacityUsage ? s.snapshot.capacityUsage.current : '未确认'}</span><span className="inline-flex items-center gap-2"><Snowflake />冷分支 {cold ? cold.length : '未确认'}</span><span className="inline-flex items-center gap-2"><Trash2 />当前规则待删除 {removal ? removal.length : '未确认'}</span><span className="inline-flex items-center gap-2"><HardDrive />磁盘 {j?.snapshot.disk ? `${j.snapshot.disk.usedPercent}%` : '未确认'}</span></div>
+      <HeatPoolGovernance snapshot={s?.snapshot} />
     </Section>
     <Section title="自动冷却" description="空闲超过时长或热分支超过上限时，停止最久未访问的非固定分支；后续访问可重建。固定分支不自动冷却。" actions={<Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={scheduler.busy} onClick={() => void scheduler.load(true)}>重新读取冷却规则</Button>}>
       {scheduler.state.status === 'loading' ? <LoadingBlock label="读取冷却规则" /> : scheduler.state.status === 'error' ? <ErrorBlock message={scheduler.state.message} /> : !s ? <LoadingBlock label="读取当前会话冷却规则" /> : !s.snapshot.config ? <p className="text-sm text-muted-foreground">调度服务未启动，当前没有可编辑配置。请确认服务运行后重新读取。</p> : <div className="space-y-4">
         <p role="status" className="text-sm text-muted-foreground">{s.unknown ? '保存结果未确认' : `已确认状态：${s.saved.enabled ? '已启用' : '已停用'}`}{scheduler.dirty && !s.unknown ? ' · 草稿未保存' : ''}</p>
         <fieldset disabled={scheduler.busy} className="space-y-4"><label className="flex min-h-[3.25rem] items-center gap-2 text-sm"><input type="checkbox" checked={s.draft.enabled} onChange={event => scheduler.update({ enabled: event.target.checked })} className="h-4 w-4 accent-primary" />允许自动冷却（保存后生效）</label>
-          <div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm">空闲自动下线时长（分钟）<input aria-label="空闲自动下线时长（分钟）" type="number" min={1} max={1440} className={inputClass} value={s.draft.minutes} onChange={event => scheduler.update({ minutes: event.target.value })} /><span className="text-xs text-muted-foreground">已确认值 {s.saved.minutes} 分钟，允许 1–1440 分钟。</span></label><label className="grid gap-2 text-sm">最大热分支数<input aria-label="最大热分支数" type="number" min={0} max={100} className={inputClass} value={s.draft.maxHot} onChange={event => scheduler.update({ maxHot: event.target.value })} /><span className="text-xs text-muted-foreground">已确认值 {s.saved.maxHot}；0 表示不限。</span></label></div>
+          <div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm">空闲自动下线时长（分钟）<input aria-label="空闲自动下线时长（分钟）" type="number" min={1} max={1440} className={inputClass} value={s.draft.minutes} onChange={event => scheduler.update({ minutes: event.target.value })} /><span className="text-xs text-muted-foreground">已确认值 {s.saved.minutes} 分钟，允许 1–1440 分钟。</span></label><label className="grid gap-2 text-sm">最大热分支数<input aria-label="最大热分支数" type="number" min={1} max={25} className={inputClass} value={s.draft.maxHot} onChange={event => scheduler.update({ maxHot: event.target.value })} /><span className="text-xs text-muted-foreground">已确认值 {s.saved.maxHot}；允许 1–25。</span></label></div>
         </fieldset>
         {s.snapshot.config.pinnedBranches.length ? <div className="flex flex-wrap gap-2 text-sm"><span>固定分支：</span>{s.snapshot.config.pinnedBranches.map(slug => <CodePill key={slug}>{slug}</CodePill>)}</div> : null}
         {s.readError ? <p role="alert" className="text-sm text-destructive">读取失败：{s.readError}。当前显示上次结果。</p> : null}{s.saveError ? <p role="alert" className="text-sm text-destructive">{s.saveError}</p> : null}
@@ -193,5 +198,21 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
       <AcceptanceRetentionPanel />
       <ImageCachePanel />
     </Section>
+  </div>;
+}
+
+
+function HeatPoolGovernance({ snapshot }: { snapshot?: SchedulerSnapshot }): JSX.Element {
+  const pressure = snapshot?.resourcePressure;
+  const labels: Record<string, string> = { user: '手动固定', debug: '调试标记', 'config-pinned': '配置固定', 'default-branch': '默认分支', 'trunk-branch': '主分支', 'release-batch-input': '发布与恢复保护' };
+  return <div className="mt-4 space-y-3 text-sm">
+    <p className="text-muted-foreground">资源状态：{pressure === 'ample' ? '充裕，暂不因空闲降温' : pressure === 'pressure' ? '存在压力，保留空闲降温保护' : '未知，继续原有保护'}。</p>
+    <div className="space-y-2"><h3 className="font-medium">热池占用与保护</h3>
+      {snapshot?.occupancy ? <div className="flex flex-wrap gap-2">{snapshot.occupancy.map(row => <span key={row.slug} className="rounded border border-border px-2 py-1">{row.slug} · {row.state} · {row.reason}</span>)}</div> : <p className="text-muted-foreground">占用尚未确认。</p>}
+      {snapshot?.protections ? <ul className="space-y-2">{snapshot.protections.map((row, index) => <li key={`${row.slug}-${row.source}-${index}`} className="rounded border border-border p-3">
+        <strong>{row.slug}</strong> · {labels[row.source] ?? row.source} · {row.active ? '保护中' : '临时保护已到期'}
+        {row.pin ? <div className="mt-1 break-words text-muted-foreground">{row.pin.actor} · {row.pin.reason} · {row.reviewRequired ? '期限及依据待核对' : row.pin.expiresAt ? `到期 ${row.pin.expiresAt}` : '永久固定'}{row.pin.authorizationRef ? ` · 授权 ${row.pin.authorizationRef}` : ''}</div> : row.reviewRequired ? <div className="mt-1 text-muted-foreground">历史记录，期限及依据待核对，继续保留保护。</div> : null}
+      </li>)}</ul> : <p className="text-muted-foreground">保护记录尚未确认。</p>}
+    </div>
   </div>;
 }
