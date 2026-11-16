@@ -285,6 +285,9 @@ export interface ReleaseArtifactRetentionInput {
   drift: ReleaseRemoteDriftStatus;
   keepRecent?: number;
   maxRemovals?: number;
+  /** 上轮已尝试窗口末项；仅改变顺序，所有引用保护仍先计算。 */
+  afterWorktree?: string;
+  afterVersion?: string;
   /**
    * generated-static 的 publicDirectory 是否被同一个 CDS 内的其他启用目标共用。
    * worktree 路径天然按 targetId 隔离，`.releases` **不隔离** —— 两个目标配了同一个
@@ -397,8 +400,13 @@ export function computeReleaseArtifactRetentionPlan(
     return out.sort();
   };
 
-  const worktreeCandidates = pickCandidates(inventory.worktrees, 'worktree');
-  const versionCandidates = pickCandidates(inventory.versions, 'version');
+  const rotateAfter = (names: string[], after?: string): string[] => {
+    if (!after) return names;
+    const next = names.findIndex(name => name > after);
+    return next > 0 ? [...names.slice(next), ...names.slice(0, next)] : names;
+  };
+  const worktreeCandidates = rotateAfter(pickCandidates(inventory.worktrees, 'worktree'), input.afterWorktree);
+  const versionCandidates = rotateAfter(pickCandidates(inventory.versions, 'version'), input.afterVersion);
   const total = worktreeCandidates.length + versionCandidates.length;
   const budget = Math.max(0, Math.floor(input.maxRemovals ?? total));
   // Dirty build worktrees may remain held for many sweeps. Share the existing
