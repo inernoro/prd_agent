@@ -87,3 +87,33 @@ it('旧数据章节数组逆序时目录仍遵循作者保存的全局顺序', a
   await mount(<HostedCollectionPage />);
   expect([...container.querySelectorAll<HTMLElement>('.hc-mobile-directory [data-member]')].map(row => row.dataset.member)).toEqual(['b', 'a']);
 });
+
+async function input(selector: string, value: string) {
+  const element = document.querySelector<HTMLInputElement>(selector)!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+it('候选已载入但搜索无匹配时明确说明结果，清除搜索后可继续选择', async () => {
+  await mount(<HostedCollectionManage onClose={() => undefined} onSaved={() => undefined} />);
+  await input('[aria-label="查找托管文档"]', '不存在的候选');
+  expect(document.querySelector('.hc-picker-list [role="status"]')?.textContent).toContain('没有匹配的文档');
+  expect(document.querySelectorAll('.hc-picker-list .prow')).toHaveLength(0);
+  await input('[aria-label="查找托管文档"]', '');
+  expect(document.querySelectorAll('.hc-picker-list .prow')).toHaveLength(3);
+  expect(document.querySelector('.hc-picker-list [role="status"]')).toBeNull();
+});
+it('补齐成员立即移除已不成立的校验提示，并保留真实保存错误', async () => {
+  await mount(<HostedCollectionManage onClose={() => undefined} onSaved={() => undefined} />);
+  await input('#collection-name', '新合集');
+  await click('创建合集');
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe('至少选择1份文档');
+  await act(async () => document.querySelector<HTMLButtonElement>('.hc-picker-list .prow')!.click());
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  api.request.mockResolvedValueOnce({ success: false, error: { code: 'CONFLICT', message: '合集已更新，请重新加载' } });
+  await click('创建合集');
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe('合集已更新，请重新加载');
+  await input('#collection-name', '修改名称');
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe('合集已更新，请重新加载');
+});
