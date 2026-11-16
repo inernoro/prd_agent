@@ -97,7 +97,12 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
     assert.deepEqual(fixture.calls.pop(), { discovery: 'p0' });
     assert.ok(document.body.textContent.includes('清单暂时不可用'));
     await click(firstRow.querySelector('td:nth-child(2) button'));
+    const modelPane = document.querySelector('.lg-collection-pane');
+    assert.ok(button('导入模型', modelPane).closest('.lg-collection-pane-tab-actions'), '模型导入属于当前对象的工作区，不挤在查询条里');
+    await click(button('导入模型', modelPane));
+    assert.deepEqual(fixture.calls.pop(), { discovery: 'p0' }, '工作区导入仍作用于当前供应方');
     await click(button('连接配置'));
+    assert.equal(button('导入模型', modelPane), undefined, '连接编辑工作流不并列展示模型导入');
     // 详情独立于分页：选中项不在当前父列表页，也能编辑。
     await click(button('下一页', document.querySelector('.lg-collection-list')));
     assert.equal(document.querySelector('.lg-collection-list').textContent.includes('上游 0'), false);
@@ -126,6 +131,7 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
     fixture.role = 'viewer';
     await mount();
     await click(document.querySelector('.lg-collection-provider-row td:nth-child(2) button'));
+    assert.equal(button('导入模型', document.querySelector('.lg-collection-pane')), undefined, '只读角色不显示工作区导入');
     await click(button('连接配置'));
     assert.equal(button('编辑连接'), undefined);
     assert.equal(document.querySelector('[aria-label="平台名称"]'), null);

@@ -6,10 +6,11 @@ import './CollectionView.css';
 
 export type CollectionViewState = { query: string; filter: string; page: number };
 
-export function CollectionView<T>({ items, searchText, placeholder, children, pageSize = 10, emptyText = '没有匹配结果', className = '', filters = [], filterLabel = '清单状态筛选', allFilterLabel = '全部状态', afterToolbar, toolbarActions, continuous = false, initialFilter = '', initialView, onViewChange }: {
+export function CollectionView<T>({ items, searchText, placeholder, searchLabel = placeholder, children, pageSize = 10, emptyText = '没有匹配结果', className = '', filters = [], filterLabel = '清单状态筛选', allFilterLabel = '全部状态', afterToolbar, toolbarActions, continuous = false, initialFilter = '', initialView, onViewChange }: {
   items: readonly T[];
   searchText: (item: T) => string;
   placeholder: string;
+  searchLabel?: string;
   children: (page: T[]) => ReactNode;
   pageSize?: number;
   emptyText?: string;
@@ -51,7 +52,7 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
   return (
     <div className={`lg-collection-view${!hasMore && result.total <= pageSize ? ' lg-collection-short' : ''} ${className}`}>
       <div className="lg-collection-toolbar">
-        <input type="search" aria-label={placeholder} placeholder={placeholder} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
+        <input type="search" aria-label={searchLabel} placeholder={placeholder} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
         {filters.length ? <select aria-label={filterLabel} value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }}><option value="">{allFilterLabel}</option>{filters.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select> : null}
         {toolbarActions}
         <span className="lg-collection-count" role="status" aria-label="清单数量">{query || filter ? `${result.total} / ${items.length} 项` : `共 ${items.length} 项`}</span>
@@ -73,7 +74,7 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
 }
 
 /** 桌面并列、窄屏独立详情态。保持真实编辑表单内联在页面，不复制写入逻辑。 */
-export function CollectionDetailPane({ title, identifier, onClose, children, tabs, icon, footer, closeLabel, headingLevel = 2 }: { headingLevel?: 1 | 2; closeLabel?: string; title: ReactNode; identifier?: string; onClose: () => void; children: ReactNode; tabs?: ReactNode; icon?: ReactNode; footer?: ReactNode }) {
+export function CollectionDetailPane({ title, identifier, onClose, children, tabs, tabActions, icon, footer, closeLabel, headingLevel = 2 }: { headingLevel?: 1 | 2; closeLabel?: string; title: ReactNode; identifier?: string; onClose: () => void; children: ReactNode; tabs?: ReactNode; tabActions?: ReactNode; icon?: ReactNode; footer?: ReactNode }) {
   const Heading = headingLevel === 1 ? 'h1' : 'h2';
   const closeRef = useRef<HTMLButtonElement>(null);
   // Capture the entry before the master list becomes hidden on narrow screens.
@@ -92,7 +93,7 @@ export function CollectionDetailPane({ title, identifier, onClose, children, tab
   }, [trigger]);
   return <aside className="lg-collection-pane" aria-label="清单详情" onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     <header className="lg-collection-pane-heading">{icon ? <span className="lg-collection-pane-icon">{icon}</span> : null}<div><Heading>{title}</Heading>{identifier ? <code>{identifier}</code> : null}</div>{closeLabel ? <button ref={closeRef} type="button" className="lg-collection-close lg-collection-back" onClick={onClose}><ArrowLeft size={16} aria-hidden="true" />{closeLabel}</button> : <button ref={closeRef} type="button" className="lg-collection-close" aria-label="关闭详情" onClick={onClose}><X size={16} /></button>}</header>
-    {tabs ? <div className="lg-collection-pane-tabs">{tabs}</div> : null}
+    {tabs ? <div className="lg-collection-pane-tabs">{tabs}{tabActions ? <div className="lg-collection-pane-tab-actions">{tabActions}</div> : null}</div> : null}
     <div className="lg-collection-pane-body">{children}</div>
     {footer}
   </aside>;

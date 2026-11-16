@@ -82,6 +82,16 @@ try {
             check(actionAlignment <= 1, `${width}/${theme}/action column follows the same header and data alignment`);
         }
         check(listGeometry.firstRow.y <= (width === 390 ? 330 : 300), `${width}/${theme}/first provider appears before baseline packaging`);
+        const queryLayout = async () => p.locator('.lg-collection-view:visible > .lg-collection-toolbar').first().evaluate(e => {
+            const rect = n => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, height: r.height, width: r.width }; };
+            return { search: rect(e.querySelector('input')), filter: rect(e.querySelector('select')), count: rect(e.querySelector('.lg-collection-count')) };
+        });
+        const listQuery = await queryLayout();
+        results.push({ width, theme, stage: 'list-query-layout', ...listQuery });
+        if (width === 390) {
+            check(listGeometry.firstRow.y <= 244, `${width}/${theme}/supplier starts before a second default query row`);
+            check(Math.abs(listQuery.search.y - listQuery.filter.y) <= 1 && listQuery.search.height >= 44 && listQuery.filter.height >= 44, `${width}/${theme}/default search and status share one accessible control row`);
+        } else check(listQuery.search.width >= 280 && listQuery.search.width <= 460, `${width}/${theme}/search has a deliberate width rather than filling the data workspace`);
         const entry = p.getByRole('button', { name: /查看 preview-readability-20261115-alpha 的已接入模型/ });
         await entry.click();
         await p.locator('.lg-collection-close').waitFor();
@@ -94,6 +104,30 @@ try {
         check(modelText.complete && (width !== 390 || modelText.width >= width - 80), `${width}/${theme}/complete model identity has readable width`);
         check(await p.getByText('preview-readability-alpha', { exact: true }).isVisible(), `${width}/${theme}/model full name visible`);
         check(await p.locator('.lg-collection-pagination').count() === 0, `${width}/${theme}/few models no pagination`);
+        const importAction = p.locator('.lg-collection-pane').getByRole('button', { name: '导入模型', exact: true });
+        const importRect = await importAction.boundingBox();
+        const modelQuery = await queryLayout();
+        results.push({ width, theme, stage: 'models-action-layout', importAction: importRect, ...modelQuery });
+        check(importRect.y + importRect.height <= modelQuery.search.y + 1, `${width}/${theme}/model import belongs above the query to the current object workspace`);
+        if (width === 390) {
+            check(geometry.models.y <= 332, `${width}/${theme}/model data starts before the former second query row`);
+            for (const stressWidth of [320, 375, 390]) {
+                await p.setViewportSize({ width: stressWidth, height: 844 });
+                const search = p.getByRole('searchbox', { name: '搜索上游模型或公开标识', exact: true });
+                await search.fill('unmatched-long-query');
+                const filter = p.locator('.lg-collection-provider-models').getByRole('combobox');
+                await filter.selectOption('unregistered');
+                const layout = await queryLayout();
+                const selectedLabelFits = await filter.evaluate(e => {
+                    const c = document.createElement('canvas').getContext('2d'), s = getComputedStyle(e); c.font = s.font;
+                    return c.measureText(e.selectedOptions[0].text).width + 22 <= e.getBoundingClientRect().width;
+                });
+                check(selectedLabelFits && layout.search.width >= 120 && layout.count.right <= stressWidth - 8 && !await p.evaluate(() => document.documentElement.scrollWidth > innerWidth), `${stressWidth}/${theme}/active long filter, editable query and zero count remain readable without overflow`);
+                check(await search.inputValue() === 'unmatched-long-query' && await p.locator('.lg-collection-pane [aria-label="清单数量"]').innerText() === '0 / 1 项', `${stressWidth}/${theme}/search and selected filter retain exact state`);
+                await search.fill(''); await filter.selectOption('');
+            }
+            await p.setViewportSize({ width, height: 844 });
+        }
         const publicLink = p.getByRole('link', { name: '查看公开模型', exact: true });
         check(await publicLink.count() === 1, `${width}/${theme}/single public association skips unnecessary selection`);
         if (await publicLink.count()) {
@@ -104,6 +138,7 @@ try {
         check(await entry.evaluate(e => e === document.activeElement), `${width}/${theme}/return restores trigger focus`);
         await p.getByRole('button', { name: '连接配置', exact: true }).first().click();
         await measure('connection');
+        check(await p.locator('.lg-collection-pane').getByRole('button', { name: '导入模型', exact: true }).count() === 0, `${width}/${theme}/connection task does not expose parallel model import`);
         check(await p.locator('.lg-collection-facts').getByText(provider.apiUrl, { exact: true }).isVisible(), `${width}/${theme}/full endpoint remains directly available in connection details`);
         check((await p.locator('.lg-collection-facts').innerText()).includes('已配置'), `${width}/${theme}/normal key state remains in connection details`);
         await p.getByRole('button', { name: '编辑连接', exact: true }).click();
