@@ -211,7 +211,8 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual(*digests)
             with zipfile.ZipFile(output) as archive:
                 names = archive.namelist()
-                self.assertEqual(len(names), 8)
+                self.assertEqual(len(names), 9)
+                self.assertIn("dechrome/reference/layout-control.md", names)
                 self.assertIn("dechrome/scripts/render_comparisons.py", names)
                 self.assertIn("dechrome/tests/report_layout_smoke.mjs", names)
                 self.assertTrue(all(name.startswith("dechrome/") and ".." not in Path(name).parts for name in names))

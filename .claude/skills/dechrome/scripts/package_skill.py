@@ -8,6 +8,7 @@ import zipfile
 FILES = (
     "SKILL.md",
     "reference/evidence-contract.md",
+    "reference/layout-control.md",
     "reference/install.md",
     "scripts/check_ledger.py",
     "scripts/package_skill.py",
