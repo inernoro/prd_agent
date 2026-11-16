@@ -60,16 +60,56 @@ public class ImageInputNormalizerTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Gateway_SendsTransparentEditRegion_ForOpaqueBusinessMask(bool canonical)
+    [InlineData(4097, 1)]
+    [InlineData(1, 4097)]
+    public void OpenAiMask_RejectsOversizedDimensionsBeforeConversion(int width, int height)
     {
-        var reference = ImageInputTestData.Create();
-        using var maskImage = new Image<Rgba32>(16, 16, new Rgba32(0, 0, 0, 255));
+        using var image = new Image<Rgba32>(width, height, new Rgba32(255, 255, 255, 255));
+        using var bytes = new MemoryStream();
+        image.SaveAsPng(bytes);
+        var input = ImageInputNormalizer.Read(bytes.ToArray());
+        var error = Assert.Throws<ImageInputException>(() => ImageInputNormalizer.ToOpenAiMask(input));
+        Assert.Contains("缩小", error.Message);
+    }
+
+    [Theory]
+    [InlineData(4096, 1)]
+    [InlineData(1, 4096)]
+    public void OpenAiMask_AcceptsTheDimensionBoundary(int width, int height)
+    {
+        using var image = new Image<Rgba32>(width, height, new Rgba32(255, 255, 255, 255));
+        using var bytes = new MemoryStream();
+        image.SaveAsPng(bytes);
+        var result = ImageInputNormalizer.ToOpenAiMask(ImageInputNormalizer.Read(bytes.ToArray(), forMask: true));
+        using var wire = Image.Load<Rgba32>(result.Bytes);
+        Assert.Equal(width, wire.Width);
+        Assert.Equal(height, wire.Height);
+        Assert.Equal(0, wire[0, 0].A);
+    }
+
+    [Fact]
+    public void OpenAiMask_PngEncoderRejectsOutputBeforeGrowingPastItsBound()
+    {
+        using var image = new Image<Rgba32>(1, 1);
+        using var output = new ImageInputNormalizer.MaskEncodingStream(32);
+        Assert.Throws<ImageInputException>(() => image.SaveAsPng(output));
+        Assert.InRange(output.Length, 0, 32);
+        Assert.InRange(output.Capacity, 0, 32);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Gateway_SendsTransparentEditRegion_ForOpaqueBusinessMask(bool canonical, bool oversizedMask)
+    {
+        using var maskImage = new Image<Rgba32>(oversizedMask ? 4097 : 16, 16, new Rgba32(0, 0, 0, 255));
         maskImage[1, 0] = new Rgba32(255, 255, 255, 255);
         using var maskStream = new MemoryStream();
         maskImage.SaveAsPng(maskStream);
         var mask = maskStream.ToArray();
+        var reference = oversizedMask ? mask : ImageInputTestData.Create();
         var http = new InspectingHttpFactory();
         var gateway = new LlmGateway(new Mock<IModelResolver>().Object, http, NullLogger<LlmGateway>.Instance);
         var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
@@ -91,6 +131,14 @@ public class ImageInputNormalizerTests
                 MaskBase64 = $"data:image/png;base64,{Convert.ToBase64String(mask)}",
             } : null,
         }, Resolution());
+        if (oversizedMask)
+        {
+            Assert.False(response.Success);
+            Assert.Equal(ImageInputNormalizer.ErrorCode, response.ErrorCode);
+            Assert.Equal(0, http.Calls);
+            Assert.Contains("4096", Assert.Throws<ImageInputException>(() => ImageInputNormalizer.Read(mask, forMask: true)).Message);
+            return;
+        }
         Assert.True(response.Success, response.ErrorMessage);
         var sent = http.Parts.Single(p => p.Name == "mask.png");
         using var decoded = Image.Load<Rgba32>(sent.Bytes);

@@ -2163,7 +2163,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     }
                     if (!string.IsNullOrWhiteSpace(spec.MaskBase64))
                     {
-                        var mask = ImageInputNormalizer.ToOpenAiMask(ImageInputNormalizer.Read(spec.MaskBase64));
+                        var mask = ImageInputNormalizer.ToOpenAiMask(ImageInputNormalizer.Read(spec.MaskBase64, forMask: true));
                         multipartFiles["mask"] = (mask.FileName("mask"), mask.Bytes, mask.MimeType);
                     }
                 }
@@ -2662,7 +2662,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 if (field != "mask" && field != "image" && field != "image[]"
                     && !IsIndexedMultipartArrayField(field, "image")) continue;
-                var image = ImageInputNormalizer.Read(file.Content);
+                var image = ImageInputNormalizer.Read(file.Content, forMask: field == "mask");
                 if (field == "mask") image = ImageInputNormalizer.ToOpenAiMask(image);
                 var stem = Path.GetFileNameWithoutExtension(file.FileName);
                 files[field] = (image.FileName(string.IsNullOrWhiteSpace(stem) ? "input" : stem), image.Bytes, image.MimeType);
