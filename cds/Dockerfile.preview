@@ -3,7 +3,7 @@ FROM node:20-slim
 
 # Preview branch search reads/fetches Git refs; database passes use OpenSSL.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl ca-certificates git \
+ && apt-get install -y --no-install-recommends python3 coreutils openssl ca-certificates git \
  && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@9 --activate
 WORKDIR /app/cds

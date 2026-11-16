@@ -19,6 +19,22 @@ describe('dashboard api url routing', () => {
     );
   });
 
+  it('keeps a normal hosted dashboard on its own API when the server opts in', () => {
+    vi.stubGlobal('window', { location: { hostname: 'isolated-cds.example.test' }, __CDS_SAME_ORIGIN_API__: true });
+    expect(apiUrl('/api/auth/login')).toBe('/api/auth/login');
+    expect(shouldPreferCdsPassthrough()).toBe(false);
+  });
+
+  it('does not fall back to a parent control plane after an opted-in own API fails', async () => {
+    vi.stubGlobal('window', { location: { hostname: 'isolated-cds.example.test' }, __CDS_SAME_ORIGIN_API__: true });
+    const fetchMock = vi.fn(async () => new Response('', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(apiRequest('/api/self-status')).rejects.toMatchObject({ status: 404 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/self-status');
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ credentials: 'include' });
+  });
+
   it('keeps vite dev proxy paths on localhost', () => {
     expect(apiUrl('/api/self-status', 'localhost')).toBe('/api/self-status');
     expect(apiUrl('/api/self-status', '127.0.0.1')).toBe('/api/self-status');
