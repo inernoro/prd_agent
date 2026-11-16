@@ -2285,6 +2285,9 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     return this.state.schedulerMaxHotOverride;
   }
 
+  getImageRetentionCursor(): string | undefined { return this.state.imageRetentionCursor; }
+  setImageRetentionCursor(image: string): void { this.state.imageRetentionCursor = image; }
+
   setSchedulerMaxHotOverride(value: number | undefined): void {
     if (value === undefined) {
       delete this.state.schedulerMaxHotOverride;
