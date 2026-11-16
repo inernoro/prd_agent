@@ -9,6 +9,8 @@ export function gatewayLoginDestination(candidate?: string | null) {
   if (!candidate || candidate === '/' || !candidate.startsWith('/') || candidate.startsWith('//') || candidate.startsWith('/login') || /[\u0000-\u001f\u007f]/.test(candidate)) return '/quickstart';
   return candidate;
 }
+export const hasQuickstartArrivalAudio = () => arrivalAudio !== null;
+export const isQuickstartArrivalSoundRunning = () => arrivalAudio?.running === true;
 export function stopQuickstartArrivalSound() {
   clearTimeout(soundDeadline); soundDeadline = undefined;
   arrivalAudio?.dispose(); arrivalAudio = null;

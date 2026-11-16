@@ -96,3 +96,52 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
     delete globalThis.__gatewayLogin; delete globalThis.__gatewayRoutes;
   }
 });
+
+test('MAP 单点进入受阻时先显示试听，点击真实激活后才声称音效开启', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/quickstart' });
+  const keys = ['window','document','localStorage','AudioContext','fetch','IS_REACT_ACT_ENVIRONMENT'];
+  const previous = Object.fromEntries(keys.map(key => [key, globalThis[key]]));
+  let permitted = false, started = 0, stopped = 0, root, finish;
+  class Context {
+    state = 'suspended'; destination = {};
+    resume() { if (permitted) this.state = 'running'; return Promise.resolve(); }
+    decodeAudioData() { return Promise.resolve({}); }
+    createBufferSource() { return { connect() {}, disconnect() {}, start() { started++; }, stop() { stopped++; }, onended: null }; }
+    close() { this.state = 'closed'; return Promise.resolve(); }
+  }
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage, AudioContext: Context, IS_REACT_ACT_ENVIRONMENT: true });
+  window.AudioContext = Context; window.matchMedia = () => ({ matches: false });
+  Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+  globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(2) });
+  const server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), cacheDir: '/tmp/llmgw-sound-test-cache', server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: [] } });
+  try {
+    const { createRoot } = await import('react-dom/client');
+    const { markQuickstartArrival } = await server.ssrLoadModule('/src/components/entry/quickstartArrival.ts');
+    ({ finishEntryArrival: finish } = await server.ssrLoadModule('/src/components/entry/entryArrival.ts'));
+    const { GatewaySoundToggle } = await server.ssrLoadModule('/src/components/entry/GatewaySoundToggle.tsx');
+    const { GATEWAY_SOUND_EVENT } = await server.ssrLoadModule('/src/components/entry/gatewaySound.ts');
+    markQuickstartArrival();
+    root = createRoot(document.getElementById('root'));
+    await act(async () => root.render(React.createElement(GatewaySoundToggle)));
+    const button = document.querySelector('button');
+    assert.equal(started, 0);
+    assert.equal(button.getAttribute('aria-label'), '播放进入音效');
+    assert.equal(button.dataset.audioStatus, 'pending');
+    permitted = true;
+    await act(async () => button.click());
+    assert.equal(started, 1);
+    assert.equal(button.dataset.audioStatus, 'ready');
+    assert.equal(button.getAttribute('aria-pressed'), 'true');
+    await act(async () => window.dispatchEvent(new window.CustomEvent(GATEWAY_SOUND_EVENT, { detail: 'scan' })));
+    assert.equal(started, 2);
+    await act(async () => button.click());
+    assert.equal(localStorage.getItem('llmgw-entry-sound'), 'off');
+    assert.equal(button.dataset.audioStatus, 'muted');
+    assert.ok(stopped >= 1);
+    await act(async () => window.dispatchEvent(new window.CustomEvent(GATEWAY_SOUND_EVENT, { detail: 'reveal' })));
+    assert.equal(started, 2);
+  } finally {
+    if (root) await act(async () => root.unmount());
+    finish?.(); await server.close(); dom.window.close(); Object.assign(globalThis, previous);
+  }
+});

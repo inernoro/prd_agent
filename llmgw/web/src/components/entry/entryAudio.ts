@@ -1,5 +1,6 @@
 import { entryAsset } from './entryAsset';
-type Cue = 'scan' | 'verified' | 'reveal';
+export type EntryCue = 'scan' | 'verified' | 'reveal';
+type Cue = EntryCue;
 /** Original local UI cues; no network service or recurring background music. */
 export class EntryAudio {
   private context?: AudioContext;
@@ -24,16 +25,20 @@ export class EntryAudio {
       }
     } catch { /* Sound cannot interrupt authentication. */ }
   }
-  play(cue: Cue) {
-    if (!this.enabled) return;
+  get running() { return !this.disposed && this.context?.state === 'running'; }
+  async play(cue: Cue): Promise<boolean> {
+    if (!this.enabled || this.disposed) return false;
     const epoch = this.epoch;
-    void this.buffers.get(cue)?.then(buffer => {
-      if (!this.enabled || !buffer || !this.context || this.disposed || epoch !== this.epoch || document.visibilityState !== 'visible') return;
+    try {
+      const buffer = await this.buffers.get(cue);
+      // Never queue a silent suspended source and call it enabled.
+      if (!this.enabled || !buffer || !this.context || !this.running || this.disposed || epoch !== this.epoch || document.visibilityState !== 'visible') return false;
       const source = this.context.createBufferSource();
       source.buffer = buffer; source.connect(this.context.destination); this.sources.add(source);
       source.onended = () => { this.sources.delete(source); source.disconnect(); };
       source.start();
-    }).catch(() => {});
+      return true;
+    } catch { return false; }
   }
   stop() {
     this.epoch += 1;

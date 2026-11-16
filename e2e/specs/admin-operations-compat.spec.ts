@@ -424,6 +424,16 @@ for (const width of [390, 1440])
       await expect(page).toHaveURL(/\/quickstart$/);
       await expect(page.locator(".lg-console-header")).toBeVisible({ timeout: 12000 });
 
+      await page.reload();
+      await expect(page.locator(".gateway-identity-card > strong")).toHaveText("demo");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+      const sound = page.locator(".gateway-chrome-sound");
+      await expect(sound).toHaveAttribute("data-audio-status", "pending");
+      if (await sound.getAttribute("data-audio-status") === "ready") await sound.click();
+      await sound.click();
+      await expect(sound).toHaveAttribute("data-audio-status", "ready");
+      await sound.click();
+      await expect(sound).toHaveAttribute("data-audio-status", "muted");
       await page.getByLabel("打开用户菜单", { exact: true }).click();
       await page.locator(".lg-user-popover").getByLabel("切换组织", { exact: true }).click();
       const account = page.locator(".lg-user-popover");

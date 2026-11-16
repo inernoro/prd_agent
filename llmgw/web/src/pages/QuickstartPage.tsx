@@ -1,3 +1,4 @@
+import { playGatewayCue } from '@/components/entry/gatewaySound';
 import { GatewayQuickstartStage } from '@/components/entry/GatewayQuickstartStage';
 // 自助接入：选客户端 → 生成接入配置 → 自动验证。
 //
@@ -532,6 +533,7 @@ export function QuickstartPage() {
     intentDraftAbort.current = abortController;
     const superseded = () => intentDraftSeq.current !== draftId;
     setStage('draft');
+    playGatewayCue('scan');
     setDrafting(true);
     setDraftTrace('');
     setDraftReason('');
@@ -678,6 +680,7 @@ export function QuickstartPage() {
       clientPreset,
     };
     setBundle(nextBundle);
+    playGatewayCue('reveal');
     // 产物屏默认停在「接入信息」：刚签发出来，用户第一件事是把地址、密钥、用途码复制走。
     setResultTab('access');
     void checkRealRoute(nextBundle);
@@ -1377,7 +1380,7 @@ export function QuickstartPage() {
                 <div className="lg-qs-create-footer">
                   <span style={{ ...BODY_TEXT, margin: 0 }}>先确认这条码说的是你要做的事。</span>
                   <Button variant="secondary" disabled={drafting} onClick={() => void submitIntent()}>重新生成</Button>
-                  <Button variant="primary" className="lg-qs-primary" disabled={!purposeReady || drafting} onClick={() => setStage('owner')}>下一步</Button>
+                  <Button variant="primary" className="lg-qs-primary" disabled={!purposeReady || drafting} onClick={() => { playGatewayCue('verified'); setStage('owner'); }}>下一步</Button>
                 </div>
               </Card>
             ) : (
