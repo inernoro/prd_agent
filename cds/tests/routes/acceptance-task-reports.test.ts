@@ -186,18 +186,33 @@ describe('结构化任务 → 既有归档 → 绑定：真实 HTTP 闭环', () 
     const recovered = await request('POST', '/api/reports', payload(source));
     expect(recovered.status).toBe(201); expect(recovered.body.report.storage).toBe('object');
   });
-  it('旧规范 local 草稿恢复后迁入对象存储，保留同一 ID 且可绑定', async () => {
+  it('旧规范 local 草稿恢复后迁入对象存储，固定图片基址并保留同一 ID 可跨域绑定重试', async () => {
+    vi.stubEnv('CDS_PUBLIC_BASE_URL', '');
+    const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j+ioAAAAASUVORK5CYII=';
+    const imageTemplate = await tasks.publishTemplate({ projectId: 'p1', title: '旧图片草稿', cases: [{ ...task.cases[0], inputs: [{ name: '参考图', value: image }] }] });
+    task = await tasks.createTask({ projectId: 'p1', templateId: imageTemplate.id, environment: 'production' });
+    const claim = await tasks.claim(task.id, '旧草稿执行者');
+    await tasks.submit(task.id, 'WEB-001', claim.leaseToken, { submissionId: 'local-image', status: 'pass', actual: '图片已回读', assertions: [{ id: 'body', passed: true, actual: '正文一致' }], evidence: [{ kind: 'image', url: 'https://images.example.test/body.png', caption: '分享页正文' }], cleanup: { status: 'pass', details: '无残留' } });
+    await tasks.complete(task.id, claim.leaseToken); source = tasks.reportSource(task.id);
     state.setReportObjectStore(createReportObjectStore(null));
     const draft = await state.createAcceptanceReportAsync({ ...source, projectId: 'p1', createdBy: 'fixture' });
     expect(draft.storage).toBe('local');
     state.setReportObjectStore(configuredStore);
-    const recovered = await request('POST', '/api/reports', payload(source));
+    const recovered = await request('POST', '/api/reports', payload(source), { 'x-test-project': 'p1', 'x-forwarded-host': 'recovery.example.test' });
     expect(recovered.status).toBe(200); expect(recovered.body.report).toMatchObject({ id: draft.id, storage: 'object' });
+    expect(recovered.body.report.inlineAssetBaseUrl).toBe('http://recovery.example.test');
     expect(state.listAcceptanceReports('p1')).toHaveLength(1);
     // 删除临时缓存，证明迁移确实上传，而不只是改了 storage 标签。
     fs.rmSync(state.getReportsBase(), { recursive: true, force: true });
-    expect(await state.readAcceptanceReportContentAsync(draft.id)).toBe(source.content);
-    const bound = await request('POST', `/api/acceptance/tasks/${task.id}/bind-report`, { reportId: draft.id });
+    const stored = await state.readAcceptanceReportContentAsync(draft.id);
+    expect(stored).not.toContain('data:image/');
+    expect(stored).toContain('http://recovery.example.test/api/reports/assets/');
+    await state.flush();
+    const cold = new StateService(path.join(dir, 'state.json')); cold.load();
+    expect(cold.getAcceptanceReport(draft.id)?.inlineAssetBaseUrl).toBe('http://recovery.example.test');
+    const bound = await request('POST', `/api/acceptance/tasks/${task.id}/bind-report`, { reportId: draft.id }, { 'x-test-project': 'p1', 'x-forwarded-host': 'bind.example.test' });
     expect(bound.status).toBe(200); expect(bound.body.report.verification).toBe('pending');
+    const retried = await request('POST', '/api/reports', payload(source), { 'x-test-project': 'p1', 'x-forwarded-host': 'retry.example.test' });
+    expect(retried.status).toBe(200); expect(retried.body.report.id).toBe(draft.id);
   });
 });

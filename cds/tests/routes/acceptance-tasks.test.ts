@@ -3,11 +3,14 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAcceptanceTasksRouter } from '../../src/routes/acceptance-tasks.js';
 import { AcceptanceTaskService } from '../../src/services/acceptance-tasks.js';
 import { StateService } from '../../src/services/state.js';
-import { resolveApiLabel } from '../../src/server.js';
+import { createServer, installSpaFallback, resolveApiLabel } from '../../src/server.js';
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { WorktreeService } from '../../src/services/worktree.js';
+import type { CdsConfig } from '../../src/types.js';
 import type { AcceptanceCase, AcceptanceTask, AcceptanceTemplate } from '../../src/acceptance-types.js';
 
 const testcase: AcceptanceCase = {
@@ -45,7 +48,7 @@ describe('验收API真实HTTP与项目隔离', () => {
     });
     expect(server.address()).toMatchObject({ address: '127.0.0.1', family: 'IPv4' });
   });
-  afterEach(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); await state.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
+  afterEach(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); await state.flush(); vi.restoreAllMocks(); vi.unstubAllEnvs(); fs.rmSync(dir, { recursive: true, force: true }); });
   async function request(method: string, route: string, body?: unknown, headers: Record<string, string> = { 'x-test-project': 'p1' }) {
     const port = (server.address() as { port: number }).port;
     return new Promise<{ status: number; body: any }>((resolve, reject) => {
@@ -59,6 +62,30 @@ describe('验收API真实HTTP与项目隔离', () => {
       req.on('error', reject); req.end(body === undefined ? undefined : JSON.stringify(body));
     });
   }
+  it('验收租约异常保留专属503诊断但不摘除整个CDS实例', async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    vi.stubEnv('CDS_PUBLIC_HEALTH_DETAILS', '1');
+    vi.stubEnv('CDS_USERNAME', ''); vi.stubEnv('CDS_PASSWORD', ''); vi.stubEnv('CDS_AUTH_MODE', 'none');
+    const shell = new MockShellExecutor();
+    shell.addResponse('docker version --format "{{.Server.Version}}"', { stdout: 'fixture', stderr: '', exitCode: 0 });
+    const config = { repoRoot: dir, worktreeBase: path.join(dir, 'worktrees'), masterPort: 9900, workerPort: 5500, dockerNetwork: 'fixture', portStart: 10001, sharedEnv: {}, jwt: { secret: 'fixture', issuer: 'fixture' }, mode: 'standalone', executorPort: 9901, rootDomains: ['fixture.example.test'] } as CdsConfig;
+    const app = createServer({ stateService: state, shell, config, worktreeService: new WorktreeService(shell, dir), containerService: {} as any, bridgeService: {} as any, proxyService: { getProxyLog: () => [], setOnProxyLog: () => {}, handleSwitchFromExpress: () => {} } as any });
+    installSpaFallback(app);
+    const health = app.locals.acceptanceTaskService.health();
+    vi.spyOn(app.locals.acceptanceTaskService, 'health').mockReturnValue({ ...health, ok: false, lastReconcileOk: false });
+    server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const probe = await fetch(`http://127.0.0.1:${port}/healthz`);
+      const body = await probe.json() as any;
+      expect(body.checks.acceptanceLeases.ok).toBe(false);
+      expect(Object.fromEntries(Object.entries(body.checks).filter(([name, value]) => name !== 'acceptanceLeases' && !(value as { ok: boolean }).ok))).toEqual({});
+      expect(probe.status).toBe(200); expect(body.ok).toBe(true); expect(body.degraded).toBe(true);
+      const dedicated = await fetch(`http://127.0.0.1:${port}/api/acceptance/health?projectId=p1`);
+      expect(dedicated.status).toBe(503);
+    } finally { await app.locals.stopAcceptanceLeaseReaper(); }
+  });
   it('拒绝非字符串状态，数组不能绕过通过条件', async () => {
     const claimed = await request('POST', `/tasks/${tasks.p1.id}/claim`, { agentName: 'A' });
     const sent = await request('POST', `/tasks/${tasks.p1.id}/results/WEB-001`, {

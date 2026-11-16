@@ -2240,7 +2240,7 @@ export function createServer(deps: ServerDeps): express.Express {
       ok: acceptanceHealth.ok,
       detail: acceptanceHealth.ok ? '单权威进程租约收敛正常' : '验收持久层或租约收敛未完成，请检查 /api/acceptance/health',
     };
-    if (!acceptanceHealth.ok) overallOk = false;
+    // 验收收敛是非核心后台状态；专属端点告警，不将整个控制面摘除。
 
     // Check 2: docker reachable (use a lightweight `docker version --format` call)
     try {
@@ -2357,7 +2357,7 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
-      degraded: pressure?.degraded ?? false,
+      degraded: Boolean(pressure?.degraded || !acceptanceHealth.ok),
       checks,
       pressure,
       timestamp: new Date().toISOString(),

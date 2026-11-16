@@ -642,13 +642,14 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (sourceTask) {
         if (existing) {
           const storedContent = await stateService.readAcceptanceReportContentAsync(existing.id);
-          if (existing.format !== format || storedContent !== normalizedContent || existing.title !== cleanTitle
+          const sameContent = storedContent === normalizedContent || (existing.storage !== 'object' && storedContent === content);
+          if (existing.format !== format || !sameContent || existing.title !== cleanTitle
             || existing.verdict !== verdict) {
             throw new Error('已有任务报告与本轮内容或持久化存储不一致，请排查归档链路');
           }
           if (existing.storage !== 'object') {
             // 未绑定的旧规范草稿在依赖恢复后迁入对象存储，保持同一身份。
-            const recovered = await stateService.updateAcceptanceReportAsync(existing.id, { content: normalizedContent });
+            const recovered = await stateService.updateAcceptanceReportAsync(existing.id, { content: normalizedContent, inlineAssetBaseUrl });
             if (!recovered || recovered.storage !== 'object') throw new Error('任务报告仍未进入对象存储，请恢复存储后重试');
             return { meta: recovered, reused: true };
           }

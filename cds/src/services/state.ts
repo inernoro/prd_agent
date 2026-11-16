@@ -6916,6 +6916,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       prNumber?: number | null;
       deployMode?: string | null;
       sourceId?: string | null;
+      inlineAssetBaseUrl?: string;
       sourcePath?: string | null;
       contentHash?: string | null;
       publishedAt?: string | null;
@@ -7056,6 +7057,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     if (updates.prNumber !== undefined) meta.prNumber = updates.prNumber;
     if (updates.deployMode !== undefined) meta.deployMode = updates.deployMode;
     if (updates.sourceId !== undefined) meta.sourceId = updates.sourceId;
+    if (updates.inlineAssetBaseUrl !== undefined) meta.inlineAssetBaseUrl = updates.inlineAssetBaseUrl;
     if (updates.sourcePath !== undefined) meta.sourcePath = updates.sourcePath;
     if (updates.contentHash !== undefined) meta.contentHash = updates.contentHash;
     if (updates.publishedAt !== undefined) meta.publishedAt = updates.publishedAt;
