@@ -55,6 +55,22 @@ export class ReleaseGovernanceService {
     if (!target || !target.isEnabled || target.lifecycle === 'archived') throw new ReleaseGovernanceError('发布环境已停用或不存在');
     return target;
   }
+  private async branchCommit(branchId: string): Promise<string> {
+    const branch = this.state.getBranch(branchId);
+    if (!branch) throw new ReleaseGovernanceError('分支不存在，请刷新后重试');
+    const revision = branch.pinnedCommit || branch.githubCommitSha || '';
+    if (FULL_SHA.test(revision)) return revision;
+    if (!branch.pinnedCommit) throw new ReleaseGovernanceError('分支版本不完整，请同步分支后重新申请');
+    let resolved: string;
+    try { resolved = await this.git.resolveCommit(branch.projectId, revision); }
+    catch { throw new ReleaseGovernanceError('历史固定版本无法唯一核实，请同步分支后重新固定版本'); }
+    const current = this.state.getBranch(branchId);
+    if (!current || current.projectId !== branch.projectId || current.branch !== branch.branch || current.pinnedCommit !== revision) throw new ReleaseGovernanceError('固定版本已变化，请刷新后重试');
+    current.pinnedCommit = resolved;
+    this.state.save();
+    try { await this.state.flush(); } catch { throw new ReleaseGovernanceError('完整固定版本保存未确认，请恢复存储后重试'); }
+    return resolved;
+  }
   list(projectId: string) {
     const data = this.state.getReleaseGovernance();
     return { authorizations: Object.values(data.authorizations).filter(a => a.projectId === projectId).sort((a,b) => b.createdAt.localeCompare(a.createdAt)),
@@ -87,7 +103,7 @@ export class ReleaseGovernanceService {
     const target = this.target(targetId), current = this.state.getLatestSuccessfulReleaseRun(targetId);
     const branch = branchId ? this.state.getBranch(branchId) : undefined;
     if (branchId && (!branch || branch.projectId !== target.projectId)) throw new ReleaseGovernanceError('分支与发布环境不属于同一项目');
-    const sha = branch ? branch.pinnedCommit || branch.githubCommitSha : current?.commitSha;
+    const sha = branch ? await this.branchCommit(branch.id) : current?.commitSha;
     if (!sha || !FULL_SHA.test(sha)) throw new ReleaseGovernanceError('没有可核验的完整版本');
     const check = await this.git.inspect(target.projectId, sha, current?.commitSha);
     await this.saveCheck(targetId, check); return check;
@@ -112,7 +128,7 @@ export class ReleaseGovernanceService {
         pinnedCommit: previous.commitSha, githubCommitSha: previous.commitSha }
       : this.state.getBranch(input.branchId);
     if (!branch || branch.projectId !== target.projectId) throw new ReleaseGovernanceError('分支与发布环境不属于同一项目');
-    const candidate = previous?.commitSha || branch.pinnedCommit || branch.githubCommitSha || '';
+    const candidate = previous?.commitSha || await this.branchCommit(branch.id);
     if (!FULL_SHA.test(candidate)) throw new ReleaseGovernanceError('申请必须绑定完整提交');
     const expires = Date.parse(input.expiresAt), now = this.now();
     if (!Number.isFinite(expires) || expires <= now.getTime() || expires > now.getTime() + 24 * 60 * 60_000) throw new ReleaseGovernanceError('有效期须在当前时间之后，最长 24 小时');
@@ -219,10 +235,6 @@ export class ReleaseGovernanceService {
       const current = this.state.getReleaseGovernance().authorizations[record.id];
       this.validate(current, input);
       if (JSON.stringify(current) !== JSON.stringify(record)) throw new ReleaseGovernanceError('批准记录已变化，请重新发布');
-      if (record.kind === 'single') {
-        const next = this.state.getReleaseGovernance(); next.authorizations[record.id].consumedBy = input.runId;
-        await this.persist(next);
-      }
       return { authorizationId: record.id, kind: record.kind, action: record.action, requestedBy: record.requestedBy,
         approvedBy: record.decidedBy!, approvedAt: record.decidedAt!, expiresAt: record.expiresAt,
         targetFingerprint: record.targetFingerprint, projectFingerprint: record.projectFingerprint,
@@ -232,11 +244,32 @@ export class ReleaseGovernanceService {
       await this.attempt(input, 'denied', (error as Error).message, authorizationId); throw error;
     }
   }
+  /** Consume only after the identified run has a durable record. Admission stays under the target lock. */
+  async accept(run: ReleaseRun): Promise<void> {
+    if (!run.governance) throw new ReleaseGovernanceError('本次运行没有批准凭据');
+    try { await this.state.flush(); }
+    catch { throw new ReleaseGovernanceError('运行记录保存未确认，尚未消耗批准，请恢复存储后重试'); }
+    const current = this.state.getReleaseRun(run.releaseId);
+    if (!current || !isReleaseRunInFlight(current) || current.governance?.authorizationId !== run.governance.authorizationId) {
+      throw new ReleaseGovernanceError('运行记录不存在或已停止，尚未消耗批准');
+    }
+    const data = this.state.getReleaseGovernance(), record = data.authorizations[run.governance.authorizationId];
+    const input: GovernanceAdmission = { runId: current.releaseId, projectId: current.projectId, targetId: current.targetId,
+      branchId: current.branchId, commitSha: current.commitSha, operator: current.operator || 'unknown', action: current.governance!.action };
+    this.validate(record, input);
+    if (record.kind === 'single') record.consumedBy = current.releaseId;
+    data.attempts.push({ id: id('gat_'), projectId: input.projectId, targetId: input.targetId, branchId: input.branchId,
+      candidateSha: input.commitSha, operator: input.operator, at: this.now().toISOString(), authorizationId: record.id,
+      releaseId: current.releaseId, result: 'accepted', reason: '批准与累计范围核验通过，运行记录已保存' });
+    data.attempts = data.attempts.slice(-2000);
+    await this.persist(data);
+  }
   assertExecution(run: ReleaseRun): void {
     if (!this.target(run.targetId).governance?.required) return;
     if (!run.governance) throw new ReleaseGovernanceError('本次运行没有批准凭据，已停止执行');
     const record = this.state.getReleaseGovernance().authorizations[run.governance.authorizationId];
     if (!record) throw new ReleaseGovernanceError('本次批准记录不可用，已停止执行');
+    if (record.kind === 'single' && record.consumedBy !== run.releaseId) throw new ReleaseGovernanceError('本次批准尚未确认受理到该运行，已停止执行');
     this.validate(record, { runId: run.releaseId, projectId: run.projectId, targetId: run.targetId,
       branchId: run.branchId, commitSha: run.commitSha, operator: run.operator || 'unknown', action: run.governance.action });
   }

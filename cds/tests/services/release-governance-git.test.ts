@@ -32,6 +32,11 @@ describe('发布治理的真实隔离合并', () => {
     reader = new ReleaseGovernanceGit(() => repo, () => 'main', native);
   });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  it('从真实仓库解析旧短提交，拒绝未知与非提交输入',async()=>{
+    expect(await reader.resolveCommit('p',basis.slice(0,7))).toBe(basis);
+    await expect(reader.resolveCommit('p','--help')).rejects.toThrow('有效提交');
+    await expect(reader.resolveCommit('p','fffffff')).rejects.toThrow('无法唯一核实');
+  });
   it('真实文本冲突被检出，原索引、未提交内容和分支不变', async () => {
     commit('shared.txt','main\n'); git('push','origin','main');
     git('checkout','-b','hotfix',basis); const candidate = commit('shared.txt','hotfix\n');

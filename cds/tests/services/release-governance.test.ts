@@ -90,6 +90,9 @@ describe('独立批准与连续调试的服务层约束', () => {
     await expect(service.authorize(input({ authorizationId: record.id, commitSha: C }))).rejects.toThrow('版本已变化');
     const receipt = await service.authorize(input({ authorizationId: record.id }));
     expect(receipt?.authorizationId).toBe(record.id);
+    expect(state.getReleaseGovernance().authorizations[record.id].consumedBy).toBeUndefined();
+    state.addReleaseRun(history('new-run',B,{status:'queued',operator:alice,governance:receipt}));
+    await service.accept(state.getReleaseRun('new-run')!);
     const reloaded = new StateService(path.join(root,'state.json'),root); reloaded.load();
     const restarted = new ReleaseGovernanceService(reloaded,git,undefined,() => new Date(now));
     await expect(restarted.authorize(input({ authorizationId: record.id, runId: 'second-run' }))).rejects.toThrow('已使用');
@@ -203,5 +206,43 @@ describe('独立批准与连续调试的服务层约束', () => {
     const run = await release.startRelease({ branchId: 'feature', targetId: 'prod', operator: alice, authorizationId: record.id });
     expect(run.governance?.approvedBy).toBe(reviewer); expect(execution).toHaveBeenCalledOnce();
     state.patchReleaseRun(run.releaseId,{ status: 'success' });
+  });
+  it('运行未保存或保存未确认时不消耗批准，成功受理后批准与运行可一起查回',async()=>{
+    const record=await approve(), receipt=await service.authorize(input({authorizationId:record.id}));
+    const run=history('new-run',B,{status:'queued',operator:alice,governance:receipt});
+    await expect(service.accept(run)).rejects.toThrow('运行记录不存在');
+    expect(state.getReleaseGovernance().authorizations[record.id].consumedBy).toBeUndefined();
+    state.addReleaseRun(run);
+    const flush=vi.spyOn(state,'flush').mockRejectedValueOnce(new Error('private-storage-path'));
+    await expect(service.accept(run)).rejects.toThrow('运行记录保存未确认');flush.mockRestore();
+    expect(state.getReleaseGovernance().authorizations[record.id].consumedBy).toBeUndefined();
+    await service.accept(run);
+    const reloaded=new StateService(path.join(root,'state.json'),root);reloaded.load();
+    expect(reloaded.getReleaseGovernance().authorizations[record.id].consumedBy).toBe('new-run');
+    expect(reloaded.getReleaseRun('new-run')?.governance?.authorizationId).toBe(record.id);
+    await reloaded.flush();
+  });
+  it('SSH 连通检查期间撤销审批，不执行部署也不触发自动恢复',async()=>{
+    const target=state.getReleaseTarget('prod')!;
+    state.upsertReleaseTarget({...target,strategy:{mode:'managed-script',script:'#!/bin/sh\nexit 0\n'}});
+    // Approve against the managed-script configuration, then exercise the actual run path.
+    const fresh=await approve(), freshReceipt=await service.authorize(input({authorizationId:fresh.id}));
+    const run=history('new-run',B,{status:'queued',operator:alice,governance:freshReceipt,previousReleaseId:'baseline'});
+    state.addReleaseRun(run);await service.accept(run);
+    const release=new ReleaseService(state,{governance:service});
+    const ssh=vi.spyOn(release as any,'sshExec').mockImplementation(async()=>{await service.decide(fresh.id,'revoked',reviewer,'连接期间停止发布');return 'connected';});
+    const restore=vi.spyOn(release as any,'restorePreviousAfterFailedProbe').mockResolvedValue(undefined);
+    await expect((release as any).runRelease(run.releaseId)).rejects.toThrow('撤销');
+    expect(ssh).toHaveBeenCalledTimes(1);expect(restore).not.toHaveBeenCalled();
+  });
+  it('旧短提交固定值解析为同一提交的完整身份并持久保存，不借用分支最新提交',async()=>{
+    const branch=state.getBranch('feature')!;branch.pinnedCommit=B.slice(0,7);branch.githubCommitSha=C;
+    vi.spyOn(git,'resolveCommit').mockResolvedValue(B);
+    const record=await request();expect(record.candidateSha).toBe(B);
+    expect(git.resolveCommit).toHaveBeenCalledWith('p',B.slice(0,7));
+    expect(state.getBranch('feature')?.pinnedCommit).toBe(B);
+    branch.pinnedCommit='eeeeeee';vi.mocked(git.resolveCommit).mockRejectedValue(new Error('ambiguous'));
+    await expect(request()).rejects.toThrow('无法唯一核实');
+    expect(state.getBranch('feature')?.pinnedCommit).toBe('eeeeeee');
   });
 });

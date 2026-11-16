@@ -33,6 +33,15 @@ export class ReleaseGovernanceGit {
     private readonly defaultBranch: (projectId: string) => string,
     private readonly run: GovernanceGitRunner) {}
 
+  async resolveCommit(projectId: string, revision: string): Promise<string> {
+    const root = this.root(projectId);
+    if (!root || !/^[a-f0-9]{7,40}$/i.test(revision)) throw new Error('固定版本不是有效提交，请重新固定分支版本');
+    const result = await this.run(['-C', root, 'rev-parse', '--verify', `${revision}^{commit}`], root);
+    const sha = result.stdout.trim().toLowerCase();
+    if (result.exitCode !== 0 || !FULL_SHA.test(sha)) throw new Error('固定版本无法唯一核实，请同步分支后重新固定版本');
+    return sha;
+  }
+
   async includes(projectId: string, ancestor: string, descendant: string): Promise<boolean> {
     const root = this.root(projectId);
     if (!root || !FULL_SHA.test(ancestor) || !FULL_SHA.test(descendant)) throw new Error('缺少完整 Git 版本');

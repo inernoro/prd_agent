@@ -39,7 +39,7 @@ import {
 
 import { releaseTargetConfigFingerprint } from './release-target-history.js';
 import { acquireReleaseTargetLock, peekReleaseTargetLock } from './release-target-lock.js';
-import type { ReleaseGovernanceService, GovernanceAdmission } from './release-governance.js';
+import { ReleaseGovernanceError, type ReleaseGovernanceService, type GovernanceAdmission } from './release-governance.js';
 import {
   buildReleaseInventoryCommand,
   buildReleaseReclaimCommand,
@@ -366,6 +366,8 @@ export interface ReleaseSshExecRequest {
   passphrase?: string;
   password?: string;
   command: string;
+  /** Verified again after SSH authentication, immediately before dispatching the command. */
+  beforeExec?(): void;
   /** 中止信号：执行超时、取消发布、心跳收割都通过它掐断在跑的 SSH。 */
   signal: AbortSignal;
   onOutput(level: 'info' | 'warn', chunk: string): void;
@@ -1033,7 +1035,7 @@ export class ReleaseService {
         catch (error) { this.cancelRelease(releaseId, input.operator || 'user'); throw error; }
       }
       if (run.governance) {
-        await this.governance!.attempt(governanceInput, 'accepted', '批准与累计范围核验通过', run.governance.authorizationId);
+        await this.governance!.accept(run);
         this.governance!.assertExecution(run);
       }
       void this.execute(releaseId, () => this.runRelease(releaseId), 'failed');
@@ -1133,7 +1135,7 @@ export class ReleaseService {
         catch (error) { this.cancelRelease(rollbackId, operator || 'user'); throw error; }
       }
       if (run.governance) {
-        await this.governance!.attempt(governanceInput, 'accepted', '回滚批准核验通过', run.governance.authorizationId);
+        await this.governance!.accept(run);
         this.governance!.assertExecution(run);
       }
       void this.execute(rollbackId, () => this.runRollback(rollbackId, target, previous), 'rollback_failed');
@@ -1610,10 +1612,11 @@ export class ReleaseService {
     }
     this.beginStep(releaseId, 'plan', `${execution.summary} · sha256=${execution.scriptSha256}`);
     this.finishStep(releaseId, 'plan');
+    if (target.governance?.required) this.governance!.assertExecution(run);
     try {
-      if (target.governance?.required) this.governance!.assertExecution(run);
       await this.runDeployCommand(releaseId, executionTarget, run, execution.command);
     } catch (error) {
+      if (error instanceof ReleaseGovernanceError) throw error;
       if (execution.mode === 'project-script' || execution.mode === 'managed-script') {
         await this.restorePreviousAfterFailedProbe(releaseId, target, run, error, '发布脚本执行');
       }
@@ -1952,6 +1955,11 @@ export class ReleaseService {
         passphrase,
         password,
         command: cmd,
+        beforeExec: releaseId && logPhase !== 'auto-restore' && target.governance?.required ? () => {
+          const current = this.stateService.getReleaseRun(releaseId);
+          if (!current || !this.governance) throw new ReleaseGovernanceError('运行审批不可用，已停止执行');
+          this.governance.assertExecution(current);
+        } : undefined,
         signal: controller.signal,
         onOutput: (level, chunk) => {
           if (!releaseId) return;
@@ -2012,6 +2020,7 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
 
     client.on('ready', () => {
       if (settled || req.signal.aborted) return settle(() => reject(abortReasonError(req.signal)));
+      try { req.beforeExec?.(); } catch (error) { return settle(() => reject(error)); }
       execPending = true;
       // 无 PTY 的 OpenSSH exec 断连后可能继续执行。终端把前台作业绑定到
       // 会话生命周期；关闭回显/换行转换，保留机器可读输出和原命令退出码。

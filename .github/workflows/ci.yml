@@ -294,6 +294,13 @@ jobs:
       - name: cdscli release governance contract
         run: python3 scripts/tests/test_cdscli_release_governance.py
 
+      - name: CDS isolated release script check
+        env:
+          CDS_COMMIT_SHA: ${{ github.sha }}
+          CDS_TARGET_ID: ci-cds-governance-isolated
+          CDS_RELEASE_ID: ci-script-check
+        run: bash e2e/fixtures/cds-batch/cds-release.sh check
+
   docs-readability:
     name: Docs Readability Ratchet
     needs: changes
