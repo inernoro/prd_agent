@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 
 export const workload = {
-  version: 3, stores: 6, documentsPerStore: 20, writerDocuments: 128, contentBytes: 8192,
+  version: 4, stores: 6, documentsPerStore: 20, writerDocuments: 128, contentBytes: 8192,
   writeFlow: 'edit-existing-document',
   browserRepetitions: 3,
   rateLimit: { maxRequestsPerMinute: 100000, maxConcurrentRequests: 1024 },
   warmup: { users: 2, iterationsPerUser: 20 },
-  normal: { users: 2, seconds: 60, intervalMs: 1000, minimumBaselineSamples: 100 },
+  normal: { users: 2, seconds: 120, intervalMs: 1000, minimumBaselineSamples: 200 },
   ramp: { users: [2, 4, 8, 16, 32, 64, 128], seconds: 15, intervalMs: 0 },
   soak: { users: 2, seconds: 120, intervalMs: 1000 },
 };
@@ -52,6 +52,10 @@ export function executionErrors(result) {
   failures.push(...buildIdentityErrors(result?.commit, result?.buildIdentity));
   const phases = result?.phases ?? [];
   const names = phases.map(p => p.name);
+  const normal = phases.find(p => p.name === 'normal');
+  const normalSeconds = result?.contract?.workload?.normal?.seconds ?? workload.normal.seconds;
+  if (!Number.isFinite(normal?.seconds) || normal.seconds < normalSeconds)
+    failures.push('正常负载采集时间不足，不能以提前终止的数据比较或校准');
   if (execution?.profile === 'normal' && (names.length !== 1 || names[0] !== 'normal'))
     failures.push('normal档位阶段不完整');
   if (execution?.profile === 'all') {
