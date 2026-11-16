@@ -6,7 +6,6 @@ import {
   compact,
   PersonAvatar,
   WorkspaceEmpty,
-  WorkspaceLink,
   WorkspaceMetric,
   WorkspacePanel,
   WorkspaceSearch,
@@ -239,16 +238,7 @@ export function ExecutiveAgentsWorkspace({
                   <dt>模型平均响应</dt>
                   <dd>{duration(agent.avgDurationMs)}</dd>
                 </dl>
-                <WorkspaceLink
-                  permission="logs.read"
-                  onClick={() =>
-                    navigate(
-                      `/logs?tab=llm&appCallerCode=${encodeURIComponent(agent.appKey)}`,
-                    )
-                  }
-                >
-                  查看调用日志
-                </WorkspaceLink>
+                <p className="ws-muted">按归一后的应用统计，包含历史调用别名。</p>
               </>
             ) : (
               <WorkspaceEmpty title="暂无可选 Agent" />

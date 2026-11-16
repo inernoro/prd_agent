@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { useMemo, useState, useRef, useLayoutEffect } from 'react';
 import { AlertTriangle, Eye, EyeOff, ChevronRight, Info } from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { getRoleMeta } from '@/lib/roleConfig';
@@ -932,20 +932,23 @@ const PANEL_CSS = `
 }
 `;
 
-export default function TeamInsightsPanel({ data, loading }: { data: TeamInsights | null; loading: boolean }) {
-  const [masked, setMasked] = useState(false);
+export function readTeamInsightsMask() {
+  try { return localStorage.getItem(MASK_KEY) === '1'; } catch { return false; }
+}
+
+export function persistTeamInsightsMask(masked: boolean) {
+  try { localStorage.setItem(MASK_KEY, masked ? '1' : '0'); } catch { /* 本次会话仍保持偏好 */ }
+}
+
+export default function TeamInsightsPanel({ data, loading, masked: controlledMask, onMaskedChange }: { data: TeamInsights | null; loading: boolean; masked?: boolean; onMaskedChange?: (masked: boolean) => void }) {
+  const [localMask, setLocalMask] = useState(readTeamInsightsMask);
+  const masked = controlledMask ?? localMask;
   const [pickedId, setPickedId] = useState<string | null>(null);
-
-  useEffect(() => {
-    try { setMasked(localStorage.getItem(MASK_KEY) === '1'); } catch { /* 隐私偏好读不到就按明文 */ }
-  }, []);
-
   const toggleMask = () => {
-    setMasked(prev => {
-      const next = !prev;
-      try { localStorage.setItem(MASK_KEY, next ? '1' : '0'); } catch { /* 存不下不影响本次会话 */ }
-      return next;
-    });
+    const next = !masked;
+    persistTeamInsightsMask(next);
+    setLocalMask(next);
+    onMaskedChange?.(next);
   };
 
   const members = useMemo(() => data?.members ?? [], [data]);

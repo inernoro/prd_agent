@@ -40,6 +40,8 @@ it('图与列表同选一个Agent，选择后保留筛选和时间范围深链',
       ),
     );
     expect(node.querySelectorAll('.op-plot-point')).toHaveLength(2);
+    expect(node.querySelector('.op-agent-inspector')?.textContent).toContain('包含历史调用别名');
+    expect(node.querySelector('.op-agent-inspector')?.textContent).not.toContain('查看调用日志');
     const target = [
       ...node.querySelectorAll<HTMLButtonElement>('.op-plot-point'),
     ].find((button) => button.getAttribute('aria-label')?.startsWith('测试B'))!;
