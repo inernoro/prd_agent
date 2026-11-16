@@ -84,6 +84,19 @@ describe('结构化任务 → 既有归档 → 绑定：真实 HTTP 闭环', () 
     const created = await request('POST', '/api/reports', payload(source));
     expect((await request('PATCH', `/api/reports/${created.body.report.id}`, { sourceId: 'other' })).status).toBe(409);
   });
+  it('普通报告不能通过更新来源冒充任务报告，也不能阻断规范归档', async () => {
+    const ordinary = await request('POST', '/api/reports', { title: '普通说明', format: 'md', content: '# 普通正文', projectId: 'p1', sourceId: 'ordinary-doc' });
+    expect(ordinary.status).toBe(201);
+    const refused = await request('PATCH', `/api/reports/${ordinary.body.report.id}`, { sourceId: task.id });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe('task_report_association_readonly');
+    expect(state.getAcceptanceReport(ordinary.body.report.id)?.sourceId).toBe('ordinary-doc');
+    const archived = await request('POST', '/api/reports', payload(source));
+    expect(archived.status).toBe(201);
+    expect(archived.body.report.id).not.toBe(ordinary.body.report.id);
+    expect((await request('POST', `/api/acceptance/tasks/${task.id}/bind-report`, { reportId: archived.body.report.id })).status).toBe(200);
+    expect((await request('PATCH', `/api/reports/${ordinary.body.report.id}`, { content: '# 普通修订' })).status).toBe(200);
+  });
   it('受限全局身份不能绕过验收任务作用域归档', async () => {
     expect((await request('POST', '/api/reports', payload(source), { 'x-test-global': 'empty' })).status).toBe(403);
     expect(state.listAcceptanceReports('p1')).toHaveLength(0);

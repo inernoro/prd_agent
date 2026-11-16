@@ -1073,6 +1073,9 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (existing.monitorEvent && (content !== undefined || Object.keys(metaUpdates).length > 0)) {
       return res.status(409).json({ error: 'monitor_snapshot_readonly', message: '监控事件事实由监控记录追加，不能改写历史' });
     }
+    if (taskOwnedReport(stateService, metaUpdates.sourceId)) {
+      return res.status(409).json({ error: 'task_report_association_readonly', message: '任务报告请从执行任务生成并归档，不能通过修改报告来源关联' });
+    }
     const hasMeta = Object.keys(metaUpdates).length > 0;
     // folderId: 字符串=移入该文件夹；null / 'none' / '' = 移出文件夹；缺省=不改动。
     const hasFolder = Object.prototype.hasOwnProperty.call(body, 'folderId');
