@@ -38,6 +38,8 @@ async function settle(check: () => void) {
 describe('可信采样桥接', () => {
   it('低于水位的 3.4 天预测进入真实总线/账本/外发，同态去重，恢复不解除回收故障', async () => {
     const f = await fixture(); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] }); vi.setSystemTime(now);
+    const publicEvents: unknown[] = [];
+    stops.push(cdsEventsBus.subscribe(event => { if (event.type.startsWith('capacity.observation.')) publicEvents.push(event.data); }));
     const ledger = new NoticeLedgerService({ storePath: '' });
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ success: true, data: { id: 'fixture-receipt' } }), { status: 200 }));
     const handler = startNoticeLedger({ ledger, outbound: { baseUrl: 'https://map.example.test', token: 'fixture', source: 'system-alert' }, fetchImpl }); stops.push(handler.stop);
@@ -53,6 +55,9 @@ describe('可信采样桥接', () => {
     expect(ledger.list().some(n => n.eventType === 'capacity.risk')).toBe(true);
     expect(ledger.list().some(n => n.eventType === 'capacity.recovered')).toBe(false);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(JSON.stringify(publicEvents)).not.toContain('/isolated/cache');
+    expect(JSON.stringify(publicEvents)).not.toContain('isolated-host');
+    expect(JSON.stringify(publicEvents)).not.toContain('\"report\"');
     service.stop(); await vi.advanceTimersByTimeAsync(3600_000); expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
   it('不完整、过期、未来、身份不符、伪安全均拒绝', () => {

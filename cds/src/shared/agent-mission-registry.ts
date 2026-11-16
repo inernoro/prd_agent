@@ -155,6 +155,7 @@ type CapabilitySeed = readonly [
 ];
 
 const CDS_AGENT_CAPABILITY_SEEDS = [
+  ['host-capacity-observation', '宿主容量来源与增长', 'host-capacity-observation.ts', 'system', 'human-only', 'read-only', 'guided', 'cds', '', '仅正常系统所有者可查看宿主报告；项目凭据、普通成员、SSO及机器身份不能读取。只读缓存，不执行采集、清理或变更保留策略'],
   ['janitor-observation', '部署源码回收候选与保护原因', 'janitor-observation.ts', 'mixed', 'project', 'read-only', 'direct', 'cds', 'disk', '只读预览，不签发删除许可；项目 Key 只能盘点本项目，完整宿主盘点由系统所有者或既有全局只读授权执行；未知引用保持保护，分配块估计不代表实际释放'],
   ['backup-retention', '全局备份保留与退役', 'backup-retention.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', 'disk', '全局 Agent 仅只读盘点；归属登记、有限批次与取消需要系统所有者；唯一业务恢复点或未知来源保持保护并报告15天策略冲突'],
   ['owned-resource-retention', '验收资源与镜像退役', 'owned-resource-retention.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', 'disk', '全局 Agent 仅只读；所有者执行受控批次。任务租约、当前与回滚引用、运行及停止容器、未知归属均保护；数据处置登记不授权删除'],
@@ -260,7 +261,8 @@ export const CDS_AGENT_CAPABILITY_DEFINITIONS: readonly CdsAgentCapabilityDefini
     agentUse,
     preferredSkill,
     ...(cliFamily ? { cliFamily } : {}),
-    mcpExposure: id === 'code-reviews' ? 'available' : deriveMcpExposure(risk, agentUse),
+    mcpExposure: id === 'host-capacity-observation' ? 'not-exposed'
+      : id === 'code-reviews' ? 'available' : deriveMcpExposure(risk, agentUse),
     ...(id === 'code-reviews' ? { mcpTools: CODE_REVIEW_MCP_TOOLS } : {}),
     note,
   }));
@@ -272,7 +274,7 @@ export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, reado
   projects: ['projects', 'managed-projects', 'workspaces'],
   'system-health': ['server-control-plane', 'cds-system-topology', 'cds-system-diagnostics', 'docker-network-health', 'cluster', 'executor-scheduler'],
   'system-observability': ['server-control-plane', 'cds-events', 'operator-console'],
-  maintenance: ['server-control-plane', 'cache', 'snapshots', 'storage-mode', 'legacy-cleanup', 'janitor-observation', 'backup-retention', 'owned-resource-retention'],
+  maintenance: ['server-control-plane', 'cache', 'snapshots', 'storage-mode', 'legacy-cleanup', 'janitor-observation', 'host-capacity-observation', 'backup-retention', 'owned-resource-retention'],
   settings: ['comment-template', 'cds-system-connections', 'cds-system-offsite-backup', 'cds-system-sealed-storage', 'peer-sync', 'remote-hosts'],
   'project-onboarding': ['projects', 'pending-import', 'project-compose'],
   'code-review': ['code-reviews', 'project-compose', 'deployment-runs'],

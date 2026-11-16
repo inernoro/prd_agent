@@ -41,7 +41,7 @@ describe('通知账本接线守卫', () => {
     expect(
       source,
       '外发配置必须由 resolveNoticeOutboundConfig 从 env 解析（凭据只在服务端）',
-    ).toContain('resolveNoticeOutboundConfig(');
+    ).toContain('resolveCurrentNoticeOutbound(');
 
     const call = windowAfter(source, 'startNoticeLedger(', 900);
     expect(call, 'startNoticeLedger 必须拿到账本实例').toContain('ledger:');

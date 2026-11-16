@@ -43,6 +43,28 @@ class CapacityTests(unittest.TestCase):
             self.assertFalse((state / "history.pending").exists())
             self.assertLessEqual(sum(p.stat().st_size for p in state.iterdir()), 12 * 1024**2)
 
+    def test_missing_source_replaces_previous_report_with_unknown_without_erasing_history(self):
+        with tempfile.TemporaryDirectory() as root:
+            source, state = Path(root) / "cache", Path(root) / "state"
+            source.mkdir()
+            command = ["python3", str(SCRIPT), "--source", f"cache={source}", "--state-dir", str(state)]
+            first = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(first.returncode, 3)
+            history = (state / "history.json").read_bytes()
+            # A previously valid flat-growth reading must not remain green after
+            # the selected source disappears before collection can start.
+            previous = json.loads((state / "latest.json").read_text())
+            previous["status"], previous["alerts"] = "ok", []
+            for row in [*previous["sources"].values(), *previous["filesystems"].values()]:
+                row.update(deltaBytes=0, bytesPerDay=0, windowSeconds=3600)
+            (state / "latest.json").write_text(json.dumps(previous))
+            source.rmdir()
+            failed = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(failed.returncode, 3)
+            self.assertEqual(json.loads((state / "latest.json").read_text()), json.loads(failed.stdout))
+            self.assertEqual((state / "history.json").read_bytes(), history)
+            self.assertIn("collector-or-state-failed", [a["code"] for a in json.loads(failed.stdout)["alerts"]])
+
     def test_forecast_warns_below_watermark_before_reserve_exhaustion(self):
         report = cap.analyze(sample(24, 60, 20), [sample(h, 50 + 10*h/24, 10 + 10*h/24) for h in range(24)], reserve_bytes=6 * GIB)
         self.assertEqual(report["status"], "warning")

@@ -58,10 +58,9 @@ import { createCodeReviewInputs } from './services/code-review-inputs.js';
 import { createCodeReviewMail } from './services/code-review-mail.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
 import { createNoticesRouter } from './routes/notices.js';
-import { NoticeLedgerService, startNoticeLedger } from './services/notice-ledger.js';
+import { NoticeLedgerService, startNoticeLedger, resolveCurrentNoticeOutbound } from './services/notice-ledger.js';
 import { HostCapacityObservationService } from './services/host-capacity-observation.js';
 import { createHostCapacityObservationRouter } from './routes/host-capacity-observation.js';
-import { resolveNoticeOutboundConfig } from './services/notice-outbound-map.js';
 import { isSealingEnabled } from './infra/secret-seal.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
@@ -2037,10 +2036,9 @@ export function createServer(deps: ServerDeps): express.Express {
   // 这段就是那根线：订阅总线 → 记进 .cds/notice-ledger.json → 可选外发到 MAP。
   // 专用通知 env 优先；没有时复用 CDS 系统设置里已经加密保存的 MAP 服务端接入，
   // 避免同一个 MAP 重复配两套 Token。两条都没有才如实记「未外发」。
-  const getNoticeOutbound = () => {
-    const stored = deps.stateService.getBugReportForwardingConfig();
-    return resolveNoticeOutboundConfig(process.env, stored ?? resolveForwardConfig(process.env));
-  };
+  const getNoticeOutbound = () => resolveCurrentNoticeOutbound(process.env, () => (
+    deps.stateService.getBugReportForwardingConfig() ?? resolveForwardConfig(process.env)
+  ));
   const noticeLedger = new NoticeLedgerService({
     storePath: path.join(deps.config.repoRoot, '.cds', 'notice-ledger.json'),
     logger: { warn: (m) => console.warn(m) },

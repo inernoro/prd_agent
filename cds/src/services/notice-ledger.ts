@@ -36,6 +36,8 @@ import {
 } from './cds-events-bus.js';
 import {
   forwardNoticeToMap,
+  resolveNoticeOutboundConfig,
+  type NoticeOutboundFallback,
   noticeOutboundGeneration,
   type NoticeOutboundConfig,
   type FetchLike,
@@ -470,6 +472,17 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     ...(href ? { href } : {}),
     ...(copy.actionLabel ? { actionLabel: copy.actionLabel } : {}),
   };
+}
+
+/** 有效专用配置与关闭开关不依赖另一个可损坏的加密集成。 */
+export function resolveCurrentNoticeOutbound(
+  env: NodeJS.ProcessEnv,
+  readFallback: () => NoticeOutboundFallback | null | undefined,
+): NoticeOutboundConfig | null {
+  const dedicated = resolveNoticeOutboundConfig(env);
+  const enabled = (env.CDS_NOTICE_OUTBOUND_ENABLED ?? '1').trim().toLowerCase();
+  if (dedicated || enabled === '0' || enabled === 'false') return dedicated;
+  return resolveNoticeOutboundConfig(env, readFallback());
 }
 
 export interface StartNoticeLedgerDeps {
