@@ -1,3 +1,5 @@
+import { useReviewAutoOpen } from './useReviewAutoOpen';
+import { ReviewSidebarResizeHandle, useReviewSidebarWidth } from './ReviewSidebarResizeHandle';
 import RelatedDocumentsBar from './RelatedDocumentsBar';
 import { useHostedSiteWindow } from './useHostedSiteWindow';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDownload';
@@ -82,6 +84,8 @@ export default function SitePreviewModal({
   // 右侧面板同一时刻只开一个：评论与提问互斥，两个都塞进来会把 iframe 挤成窄条
   const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask'>('none');
   const showComments = rightPanel === 'comments';
+  const autoOpenReview = useReviewAutoOpen(originalSite.id, () => setRightPanel('comments'));
+  const reviewSidebar = useReviewSidebarWidth();
   const setShowComments = (next: boolean | ((v: boolean) => boolean)) => {
     const want = typeof next === 'function' ? next(rightPanel === 'comments') : next;
     setRightPanel(want ? 'comments' : 'none');
@@ -412,9 +416,10 @@ export default function SitePreviewModal({
           {/* 评论面板 */}
           {(
             <aside
-              style={{ display: showComments ? 'flex' : 'none', background: 'var(--bg-elevated)', ...(isMobile ? { top: 'auto', height: '70%', borderTop: '1px solid var(--border-subtle)' } : {}) }}
-              className="absolute inset-0 z-20 flex w-full min-h-0 flex-col bg-token-card sm:static sm:inset-auto sm:z-auto sm:w-[360px] sm:shrink-0 sm:border-l sm:border-token-subtle"
+              style={{ display: showComments ? 'flex' : 'none', position: isMobile ? 'absolute' : 'relative', background: 'var(--bg-elevated)', width: isMobile ? '100%' : reviewSidebar.width, ...(isMobile ? { top: 'auto', height: '70%', borderTop: '1px solid var(--border-subtle)' } : {}) }}
+              className="review-sidebar absolute inset-0 z-20 flex w-full min-h-0 flex-col bg-token-card sm:relative sm:inset-auto sm:z-auto sm:shrink-0"
             >
+              {!isMobile && <ReviewSidebarResizeHandle {...reviewSidebar} />}
               <div className="review-sidebar-heading">
                 <span className="text-token-primary">批注与讨论</span>
                 {canToggleComments && <button type="button" role="switch" aria-label="允许访客评论" aria-checked={commentsEnabled}
@@ -430,6 +435,7 @@ export default function SitePreviewModal({
                     onStateLoaded 用服务端权威值回填开关，消除"开关 ON 但面板显示已关闭"的 stale 偏差（Cursor medium） */}
                 <CommentsSection
                   key={`${site.id}:${commentsEnabled}`}
+                  onCountChange={autoOpenReview}
                   mode="site"
                   siteId={site.id}
                   annotations={annotations}

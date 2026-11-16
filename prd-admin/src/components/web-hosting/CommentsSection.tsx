@@ -41,7 +41,7 @@ export default function CommentsSection(props: Props) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [otherVersions, setOtherVersions] = useState(false);
-  const [filter, setFilter] = useState<'open' | 'resolved' | 'all'>('open');
+  const [filter, setFilter] = useState<'open' | 'resolved' | 'all'>('all');
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fetchId = useRef(0);
@@ -89,7 +89,7 @@ export default function CommentsSection(props: Props) {
   const openCount = roots.filter(c => !c.isResolved).length;
   const resolvedCount = roots.length - openCount;
   const reportedCount = allRoots.filter(comment => !props.threadKind || (props.threadKind === 'annotation' ? !!comment.anchor : !comment.anchor)).length;
-  useEffect(() => { callbacks.current.onCountChange?.(reportedCount); }, [reportedCount]);
+  useEffect(() => { if (!loading && !error) callbacks.current.onCountChange?.(reportedCount); }, [reportedCount, loading, error]);
   const annotationCount = versionRoots.filter(comment => !!comment.anchor).length;
   const discussionCount = versionRoots.length - annotationCount;
   useEffect(() => {
@@ -102,7 +102,7 @@ export default function CommentsSection(props: Props) {
   useEffect(() => {
     const previous = confirmedDraftVersion.current;
     if (previous.identity !== identity || (versionKey && previous.versionKey && versionKey !== previous.versionKey)) {
-      setOtherVersions(false); setReplyTo(null); setDraft(''); setFilter('open');
+      setOtherVersions(false); setReplyTo(null); setDraft(''); setFilter('all');
     }
     // An unresolved metadata response does not change which publication owns the draft.
     if (previous.identity !== identity || versionKey) confirmedDraftVersion.current = { identity, versionKey };

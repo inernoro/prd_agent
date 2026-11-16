@@ -61,7 +61,8 @@ describe('mobile web hosting layout', () => {
     expect(previewSource).toContain('relative flex-1 min-h-0 flex overflow-hidden');
     // 评论、提问两块侧栏；修改不再挤进 440px 侧栏，而是进生成工作台（一个对话 + 一个预览）。
     expect(previewSource.match(/absolute inset-0 z-20 flex w-full/g)).toHaveLength(2);
-    expect(previewSource).toContain('sm:w-[360px]');
+    expect(previewSource).toContain("width: isMobile ? '100%' : reviewSidebar.width");
+    expect(previewSource).toContain('!isMobile && <ReviewSidebarResizeHandle');
     expect(previewSource).toContain('sm:w-[380px]');
     expect(previewSource).not.toContain('sm:w-[440px]');
     expect(previewSource.match(/background: 'var\(--bg-elevated\)'/g)?.length).toBeGreaterThanOrEqual(1);

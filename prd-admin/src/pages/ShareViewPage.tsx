@@ -1,3 +1,5 @@
+import { useReviewAutoOpen } from '@/components/web-hosting/useReviewAutoOpen';
+import { ReviewSidebarResizeHandle, useReviewSidebarWidth } from '@/components/web-hosting/ReviewSidebarResizeHandle';
 import { HostedCollectionEditor } from '@/components/web-hosting/HostedCollectionManager';
 import HostedShareCollection from '@/components/web-hosting/HostedShareCollection';
 import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
@@ -11,7 +13,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
-import { listShareComments, getShareSiteContent, downloadShareOfflineHtml, type HostedSite } from '@/services/real/webPages';
+import { getShareSiteContent, downloadShareOfflineHtml, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import { Lock, ExternalLink, Eye, EyeOff, AlertCircle, ShieldCheck, Download, FileDown, Check, LogIn, X, Maximize, Minimize } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -236,12 +238,15 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
    */
   const [downloadNote, setDownloadNote] = useState<{ text: string; tone: 'info' | 'error'; detail?: string } | null>(null);
   const reviewFrameRef = useRef<HTMLIFrameElement>(null);
-  // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
+  // 批注加载后自动展开，也可从顶栏手动切换。
   const [showComments, setShowComments] = useState(() => searchParams.has('review'));
   /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
   const [askState, setAskState] = useState<AskDockState>('collapsed');
-  // 顶栏按钮上展示的评论数。初始拉一次，抽屉打开后由 CommentsSection 的 onCountChange 接管实时同步
+  // 常驻的 CommentsSection 统一加载批注并同步顶栏计数，避免重复请求。
   const [commentCount, setCommentCount] = useState<number | null>(null);
+  const autoOpenReview = useReviewAutoOpen(`${token}:${openedSiteId}`, () => setShowComments(true));
+  const reviewSidebar = useReviewSidebarWidth();
+  const handleCommentCount = (count: number) => { setCommentCount(count); autoOpenReview(count); };
   const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
   /**
    * 取正文这一趟走到哪了 —— **必须带上它说的是哪个 siteUrl**。
@@ -477,16 +482,6 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
     const target = singleViewRef.current;
     if (!target || !await tryEnterNativeFullscreen(target)) setPageFullscreen(true);
   }, [pageFullscreen]);
-
-  // 顶栏「评论 N」初始计数：单站点分享 + token 就绪后拉一次（抽屉打开后由 onCountChange 接管）
-  useEffect(() => {
-    if (!token || !data || !readsSingleSite) return;
-    let alive = true;
-    listShareComments(token, password || undefined, data.sites[0].id)
-      .then((res) => { if (alive && res.success && res.data) setCommentCount(res.data.comments.filter(c => !c.parentId).length); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [token, password, data, readsSingleSite]);
 
   // 取回入口 HTML 走**服务端同源代理**（getShareSiteContent），不是浏览器直接 fetch(site.siteUrl)。
   // 托管内容在独立域名且不返回 Access-Control-Allow-Origin，浏览器侧跨域 fetch 一律被拦，
@@ -930,7 +925,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
           zIndex: pageFullscreen ? 2147483000 : undefined,
           display: 'grid',
           gridTemplateRows: isFullscreen ? 'minmax(0, 1fr)' : 'auto minmax(0, 1fr)',
-          gridTemplateColumns: !isFullscreen && showComments && !isMobile ? 'minmax(0, 1fr) 380px' : 'minmax(0, 1fr)',
+          gridTemplateColumns: !isFullscreen && showComments && !isMobile ? `minmax(0, 1fr) ${reviewSidebar.width}px` : 'minmax(0, 1fr)',
           background: '#0a0a0a',
           overflow: 'hidden',
         }}
@@ -1207,8 +1202,9 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
           <>
             {/* 右侧抽屉 */}
             <aside
-              className="review-sidebar border-l border-l-token-subtle" style={{ position: isMobile ? 'fixed' : 'relative', right: 0, bottom: 0, zIndex: 61, gridColumn: isMobile ? 1 : 2, gridRow: 2, minHeight: 0, width: isMobile ? '100%' : 380, height: isMobile ? '55dvh' : '100%', display: showComments && !isFullscreen ? 'flex' : 'none', flexDirection: 'column', background: 'var(--bg-elevated)' }}
+              className="review-sidebar" style={{ position: isMobile ? 'fixed' : 'relative', right: 0, bottom: 0, zIndex: 61, gridColumn: isMobile ? 1 : 2, gridRow: 2, minHeight: 0, width: isMobile ? '100%' : reviewSidebar.width, height: isMobile ? '55dvh' : '100%', display: showComments && !isFullscreen ? 'flex' : 'none', flexDirection: 'column', background: 'var(--bg-elevated)' }}
             >
+              {!isMobile && <ReviewSidebarResizeHandle {...reviewSidebar} />}
               <div className="review-sidebar-heading">
                 <span>批注与讨论{commentCount != null && <small>{commentCount}</small>}</span>
                 <button
@@ -1217,14 +1213,14 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                   style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     width: 28, height: 28, borderRadius: 8, border: 'none', cursor: 'pointer',
-                    background: 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.7)',
+                    background: 'var(--nested-block-bg)', color: 'var(--text-secondary)',
                   }}
                 >
                   <X size={16} />
                 </button>
               </div>
               <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                <CommentsSection key={`${token}:${password}:${liveSite.id}`} mode="share" siteId={liveSite.id} token={token} password={password || undefined} onCountChange={setCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} />
+                <CommentsSection key={`${token}:${password}:${liveSite.id}`} mode="share" siteId={liveSite.id} token={token} password={password || undefined} onCountChange={handleCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} />
               </div>
             </aside>
           </>

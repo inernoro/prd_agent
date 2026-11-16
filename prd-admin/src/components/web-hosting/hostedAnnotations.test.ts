@@ -26,6 +26,20 @@ async function setup() {
 }
 
 describe('hosted page annotation runtime', () => {
+  it('编号圆点始终在后插入的高亮边框上方，点击仍能打开对应批注', async () => {
+    const t = await setup();
+    t.init([{ id: 'above-outline', anchor: { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }], false);
+    await expect.poll(() => t.layer()?.querySelector('.outline[data-mark]')).toBeTruthy();
+    const layer = t.layer()!, pin = layer.querySelector<HTMLButtonElement>('.pin')!, box = layer.querySelector<HTMLElement>('.outline[data-mark]')!;
+    // jsdom 不计算 shadowRoot 样式；用同一份运行时样式在普通根中验证层级。
+    const style = t.win.document.createElement('style'); style.textContent = layer.querySelector('style')!.textContent;
+    t.win.document.head.appendChild(style);
+    const samplePin = pin.cloneNode() as HTMLElement, sampleBox = box.cloneNode() as HTMLElement;
+    t.win.document.body.append(samplePin, sampleBox);
+    expect(Number(t.win.getComputedStyle(samplePin).zIndex)).toBeGreaterThan(Number(t.win.getComputedStyle(sampleBox).zIndex));
+    pin.click(); await tick();
+    expect(t.messages.some(message => message.type === 'map-annotation-activate' && message.id === 'above-outline')).toBe(true);
+  });
   it('previews a chat bubble using geometry only, dismisses it and keeps standard numbered markers', async () => {
     const t = await setup();
     const threads = [{ id: 'chat', anchor: { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }];

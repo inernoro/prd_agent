@@ -36,6 +36,15 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('annotation entry availability', () => {
+  it('首次打开默认展示已解决和未解决批注，不因默认筛选隐藏已有意见', async () => {
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+      { id: 'resolved', siteId: 'site', content: '已经解决的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: true },
+      { id: 'open', siteId: 'site', content: '等待处理的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: false },
+    ] } });
+    await mount();
+    expect(container.querySelectorAll('.review-thread')).toHaveLength(2);
+    expect(container.querySelector('[aria-label="讨论状态"] [aria-selected="true"]')?.textContent).toContain('全部');
+  });
   it('合集批注和讨论按真实锚点分开，计数排除回复和其他版本', async () => {
     auth.isAuthenticated = true; auth.token = 'session';
     const anchor = { kind: 'text' as const, pagePath: '/', selector: 'p', tagName: 'p', text: '原文', elementText: '原文', prefix: '', suffix: '', contentVersion: 'current' };

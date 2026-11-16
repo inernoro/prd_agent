@@ -6,8 +6,8 @@ import { SitePreview } from '@/components/SitePreview';
 import { useHostedSiteWindow } from './useHostedSiteWindow';
 import type { RelatedDocument, RelatedDocuments, RelatedDocumentSource } from '@/services/real/relatedDocuments';
 
-export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, maxHeight, onReload, onManage, onPermissions, onTagEdit, onNavigate, onClose, heading = '关联文档' }: {
-  siteId: string; data: RelatedDocuments | null; error?: string; loading: boolean; source?: RelatedDocumentSource; compact?: boolean; maxHeight?: number;
+export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, maxHeight, includeCurrent = false, onReload, onManage, onPermissions, onTagEdit, onNavigate, onClose, heading = '关联文档' }: {
+  siteId: string; data: RelatedDocuments | null; error?: string; loading: boolean; source?: RelatedDocumentSource; compact?: boolean; maxHeight?: number; includeCurrent?: boolean;
   onReload: () => void; onManage: () => void; onPermissions: () => void; onTagEdit: (item: RelatedDocument) => void;
   onNavigate?: (item: RelatedDocument) => void; onClose: () => void; heading?: string;
 }) {
@@ -27,7 +27,7 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
   const openPermissions = onPermissions;
   const setTagTarget = onTagEdit;
   const refresh = onReload;
-  const displayed = data?.items.filter(item => referenceScope === 'all' || (referenceScope === 'members' ? item.isManual !== false : item.isManual === false)) ?? [];
+  const displayed = data?.items.filter(item => (includeCurrent || item.id !== siteId)).filter(item => referenceScope === 'all' || (referenceScope === 'members' ? item.isManual !== false : item.isManual === false)) ?? [];
   const pages = Math.max(1, Math.ceil(displayed.length / 9));
   const currentPage = Math.min(page, pages - 1);
   return <section className="related-document-content" aria-label={heading} style={{ minHeight: 0, maxHeight: maxHeight ?? 'calc(100dvh - 44px)' }}>
@@ -78,7 +78,7 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
                   {item.canEditTags && <button type="button" className="related-tag-edit" aria-label={`编辑标签：${item.title}`} title="编辑文档标签"
                     onClick={() => { close(); setTagTarget(item); }}><Tags size={13} /></button>}
                 </div>; })}
-                {!displayed.length && <p className="related-small-note">没有符合条件的关联文档。</p>}
+                {!displayed.length && <p className="related-small-note">{referenceScope === 'all' ? '暂无关联文档。' : '没有符合条件的关联文档。'}</p>}
               </div>}
 
         </div>

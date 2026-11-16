@@ -42,6 +42,13 @@
 .review-display-option strong { display: block; font-size: 12px; font-weight: 500; color: var(--text-primary); }
 .review-display-option small { display: block; margin-top: 4px; font-size: 10px; color: var(--text-muted); line-height: 1.5; }
 .review-display-option[aria-checked="true"] { background: color-mix(in srgb, var(--accent-fg-amber) 10%, transparent); color: var(--accent-fg-amber); }
+/* 批注侧栏用明确边界和可发现的拖动柄与正文分开。 */
+.review-sidebar { border-left: 2px solid var(--border-default); box-shadow: -6px 0 18px color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.review-resize-handle { position: absolute; top: 0; bottom: 0; left: -7px; width: 12px; z-index: 30; display: flex; align-items: center; justify-content: center; cursor: col-resize; touch-action: none; user-select: none; }
+.review-resize-handle > span { width: 4px; height: 44px; border-radius: 4px; background: var(--text-muted); transition: background 150ms; }
+.review-resize-handle:hover, .review-resize-handle:focus-visible, .review-resize-handle.is-dragging { outline: none; background: color-mix(in srgb, var(--accent-fg-amber) 12%, transparent); }
+.review-resize-handle:hover > span, .review-resize-handle:focus-visible > span, .review-resize-handle.is-dragging > span { background: var(--accent-fg-amber); }
+.review-resize-handle.is-dragging::after { content: ''; position: fixed; inset: 0; cursor: col-resize; }
 .review-sidebar-heading { display: flex; align-items: center; justify-content: space-between; padding: 19px 20px 13px; flex-shrink: 0; gap: 10px; }
 .review-sidebar-heading > span { font-size: 18px; font-weight: 600; letter-spacing: -.3px; color: var(--text-primary); }
 .review-sidebar-heading small { display: inline-block; vertical-align: middle; font-size: 11px; font-weight: 500; padding: 2px 6px; margin-left: 9px; border-radius: 5px; color: var(--text-secondary); background: var(--bg-nested); }
@@ -64,8 +71,9 @@
 .review-status-tabs button span { margin-left: 2px; font-variant-numeric: tabular-nums; }
 .review-status-tabs button[aria-selected="true"] { color: var(--text-primary); font-weight: 600; }
 .review-thread-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 20px 16px; scrollbar-width: thin; scrollbar-color: var(--border-subtle) transparent; }
-.review-thread { position: relative; padding: 17px 0 15px; border-bottom: 1px solid var(--border-subtle); }
-.review-thread.is-active::before { content: ''; position: absolute; top: 18px; bottom: 18px; left: -12px; width: 2px; border-radius: 2px; background: var(--accent-fg-amber); }
+.review-thread { position: relative; padding: 16px; margin-top: 12px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-nested); }
+.review-thread.is-active { border-color: var(--accent-fg-amber); }
+.review-thread.is-active::before { content: ''; position: absolute; top: 18px; bottom: 18px; left: 0; width: 3px; border-radius: 2px; background: var(--accent-fg-amber); }
 .review-message-author { display: flex; align-items: center; gap: 7px; font-size: 10px; min-height: 25px; color: var(--text-muted); }
 .review-message-author img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; margin-right: 1px; background: var(--bg-nested); }
 .review-message-author strong { font-weight: 500; color: var(--text-primary); font-size: 12px; }
@@ -92,9 +100,10 @@
 .review-empty svg { margin: 0 auto 15px; opacity: .5; }
 .review-empty strong { color: var(--text-secondary); font-weight: 500; font-size: 12px; }
 .review-empty p { margin-top: 8px; font-size: 11px; line-height: 1.8; }
-.review-composer { flex-shrink: 0; border-top: 1px solid var(--border-subtle); padding: 13px 16px 14px; background: var(--bg-elevated); }
-.review-composer-label { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; color: var(--text-muted); font-size: 10px; }
-.review-pick-action { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--accent-fg-amber); padding: 3px 0; }
+.review-composer { flex-shrink: 0; border-top: 1px solid var(--border-default); padding: 13px 16px 14px; background: var(--bg-elevated); }
+.review-composer-label { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; color: var(--text-secondary); font-size: 12px; }
+.review-pick-action { display: inline-flex; align-items: center; gap: 5px; min-height: 36px; font-size: 12px; font-weight: 600; color: var(--accent-fg-amber); padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--accent-fg-amber) 50%, var(--border-default)); border-radius: 7px; background: color-mix(in srgb, var(--accent-fg-amber) 10%, var(--bg-elevated)); }
+.review-pick-action:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-fg-amber) 18%, var(--bg-elevated)); }
 .review-pick-action:disabled { color: var(--text-muted); cursor: not-allowed; opacity: .6; }
 .review-composer textarea { display: block; width: 100%; min-height: 87px; max-height: 150px; padding: 11px 12px; resize: none; border-radius: 9px; border: 1px solid var(--border-subtle); background: var(--bg-nested); color: var(--text-primary); font-size: 13px; line-height: 1.7; outline: none; }
 .review-composer textarea::placeholder { color: var(--text-muted); }
@@ -136,6 +145,8 @@
   .review-composer textarea { min-height: 64px; max-height: 110px; }
   .review-composer-hint { display: none; }
   .review-send-action { min-height: 38px; }
+  .review-pick-action { min-height: 44px; }
+  .review-sidebar { border-left: 0; border-top: 2px solid var(--border-default); }
 }
 @media (prefers-reduced-motion: reduce) {
   .review-attention-dot { animation: none; opacity: .8; }

@@ -91,6 +91,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const openPermissions = (next = data) => { setData(next); close(); setPermissions(true); };
   if (variant === 'badge' && !summary?.count && !collectionsEnabled && !open) return null;
   const compact = variant !== 'bar';
+  const relatedCount = data?.items.filter(item => item.id !== siteId).length ?? 0;
   const main = data?.items.find(item => item.isMain);
   const warn = variant === 'toolbar' && data?.canManage && data.hasPermissionDifferences;
   const badgeTitle = collectionsEnabled ? `查看${siteTitle ? '「' + siteTitle + '」的' : ''}关联文档与所属合集`
@@ -106,7 +107,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
       } }}>
       {variant === 'badge' ? <Link2 size={12} /> : <Grid2X2 size={14} />}{variant !== 'badge' && <span>关联文档</span>}
       {variant === 'badge' ? <>{!!summary?.count && <span className="related-count">{summary.count}</span>}<span className="related-badge-name">{summary?.isMain ? '主文档' : summary?.mainTitle || summary?.titles[0] || '关联'}</span></>
-        : loading ? <MapSpinner size={12} /> : <span className="related-count">{data?.items.length ?? '—'}</span>}
+        : loading ? <MapSpinner size={12} /> : <span className="related-count">{data ? relatedCount : '—'}</span>}
       {warn && <ShieldAlert size={12} data-permission-warning aria-hidden />}<ChevronDown size={13} className={open ? 'related-chevron-open' : ''} />
     </button>
     {!compact && main && <span className="related-main-label"><Star size={12} />主文档<span title={main.title}>{main.title}</span></span>}
