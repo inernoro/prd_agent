@@ -1,0 +1,4 @@
+interface:
+  display_name: "First Principles · 第一性原理"
+  short_description: "从事实、必要约束重建最小方案，用十条关键词列表讲清判断和验证动作"
+  default_prompt: "使用 $first-principles 分析这个问题，按十条关键词开头的列表给出具体判断、未知与验证动作，先不实施。"
