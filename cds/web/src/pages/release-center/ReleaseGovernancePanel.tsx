@@ -11,6 +11,12 @@ import type { BranchOption, CenterRow } from './types';
 import type { ReleaseAuthorization, ReleaseConflictCheck, ReleaseGovernanceAttempt, ReleaseMergeBack } from '../../../../src/domain/release-governance';
 
 interface GovernanceView { authorizations: ReleaseAuthorization[]; attempts: ReleaseGovernanceAttempt[]; mergeBacks: ReleaseMergeBack[]; checks?: Array<ReleaseConflictCheck & { targetId: string }> }
+export function readGovernanceView(value: unknown): GovernanceView {
+  const data = value as GovernanceView | null;
+  if (!data || !Array.isArray(data.authorizations) || !Array.isArray(data.attempts) || !Array.isArray(data.mergeBacks)
+    || data.checks !== undefined && !Array.isArray(data.checks)) throw new Error('发布治理响应不完整');
+  return data;
+}
 const inputClass = 'w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm';
 const states = { pending: '等待独立批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
 const prStates = { open: '待合并', closed: '已关闭未合并', merged: 'PR 已合并', unknown: '尚未核实' };
@@ -40,17 +46,20 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const scope = useRef(0);
+  const loadSequence = useRef(0);
+  const observedRefresh = useRef(refreshVersion);
   const now = useNowTick(true);
   const statusLabel = (record: ReleaseAuthorization) => record.status === 'approved' && record.consumedBy ? '本次批准已使用' : ['approved', 'pending'].includes(record.status) && Date.parse(record.expiresAt) <= now ? '已到期' : states[record.status];
   const targetId = row?.target.id || '';
   const load = useCallback(async (signal?: AbortSignal) => {
-    const generation = scope.current;
-    const [result, source] = await Promise.all([
+    const generation = scope.current, sequence = ++loadSequence.current;
+    const response = await Promise.all([
       apiRequest<GovernanceView>(`/api/releases/governance?projectId=${encodeURIComponent(projectId)}`, { signal }),
       apiRequest<{ branches: BranchOption[] }>(`/api/branches?project=${encodeURIComponent(projectId)}`, { signal }),
-    ]);
-    if (signal?.aborted || generation !== scope.current) return;
-    setData(result); setLoaded(true); setBranches(source.branches || []);
+    ]).catch(error => { if (!signal?.aborted && generation === scope.current && sequence === loadSequence.current) throw error; return undefined; });
+    if (!response || signal?.aborted || generation !== scope.current || sequence !== loadSequence.current) return;
+    const [result, source] = response;
+    setData(readGovernanceView(result)); setLoaded(true); setBranches(source.branches || []);
   }, [projectId]);
   useEffect(() => {
     scope.current++; const controller = new AbortController();
@@ -59,7 +68,13 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
     void load(controller.signal).catch(error => { if (!controller.signal.aborted) setError(failure(error)); });
     return () => { scope.current++; controller.abort(); };
   }, [load, targetId]);
-  useEffect(() => { const controller = new AbortController(); void load(controller.signal).catch(error => { if (!controller.signal.aborted) setError(failure(error)); }); return () => controller.abort(); }, [load, refreshVersion]);
+  useEffect(() => {
+    if (observedRefresh.current === refreshVersion) return;
+    observedRefresh.current = refreshVersion;
+    const controller = new AbortController();
+    void load(controller.signal).catch(error => { if (!controller.signal.aborted) setError(failure(error)); });
+    return () => controller.abort();
+  }, [load, refreshVersion]);
   const perform = async (label: string, work: () => Promise<unknown>, message: string) => {
     const generation = scope.current;
     setBusy(label); setError(''); setNotice('');
@@ -95,18 +110,18 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
       <div className="flex flex-wrap gap-2">
         {!row.target.governance?.required ? <Button variant="outline" disabled={!!busy} onClick={() => void perform('启用发布审批', () => apiRequest(`${base}/governance/enable`, { method: 'POST' }), '本环境已启用独立审批，所有发布入口均受约束')}><ShieldCheck />启用本环境审批</Button> : <Chip tone="ok">执行审批已启用</Chip>}
         <Button variant="outline" disabled={!!busy} onClick={() => void perform('刷新审批记录', () => Promise.resolve(), '已刷新审批记录')}><RefreshCw />刷新记录</Button>
-        <Button disabled={!!busy} onClick={() => { setKind(tab === 'debug' ? 'debug' : 'single'); setAction('release'); setBranchId(branches.find(b => b.status === 'running')?.id || branches[0]?.id || ''); setDialog(true); }}><Plus />新建申请</Button>
+        <Button disabled={!!busy || !loaded} onClick={() => { setKind(tab === 'debug' ? 'debug' : 'single'); setAction('release'); setBranchId(branches.find(b => b.status === 'running')?.id || branches[0]?.id || ''); setDialog(true); }}><Plus />新建申请</Button>
       </div>
     </div>
     {busy ? <p role="status" className="mt-3 flex items-center gap-2 text-sm"><RefreshCw className="h-4 w-4 animate-spin" />{busy}，请稍候…</p> : null}
     {error ? <p role="alert" className="mt-3 text-sm text-bad">{error}</p> : null}
     {notice ? <p role="status" className="mt-3 text-sm text-ok">{notice}</p> : null}
     <div className="mt-4 flex gap-1" aria-label="授权类别"><Button variant={tab === 'approval' ? 'secondary' : 'ghost'} size="sm" onClick={() => setTab('approval')}>单次审批</Button><Button variant={tab === 'debug' ? 'secondary' : 'ghost'} size="sm" onClick={() => setTab('debug')}>连续调试</Button></div>
-    {!loaded ? <ContentLoading label="读取审批与调试窗口" variant="panel" /> : <div className="mt-3 grid min-w-0 gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
+    {!loaded && !error ? <ContentLoading label="读取审批与调试窗口" variant="panel" /> : <div className="mt-3 grid min-w-0 gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
       <div className="max-h-80 space-y-1 overflow-auto lg:border-r lg:border-[hsl(var(--hairline))] lg:pr-4">
         {records.length ? records.map(record => <button key={record.id} className={`w-full rounded-md p-3 text-left ${current?.id === record.id ? 'bg-muted' : 'hover:bg-muted/50'}`} onClick={() => { setSelected(record.id); setDecisionReason(''); }}>
           <span className="block truncate text-sm font-medium">{record.branchName}</span><span className="mt-1 block text-xs text-muted-foreground">{statusLabel(record)} · {formatDateTime(record.expiresAt)}</span>
-        </button>) : <p className="py-5 text-sm text-muted-foreground">{tab === 'debug' ? '尚无调试窗口。限定文件或目录、执行分支和有效期后申请批准。' : '尚无审批申请。请选择已部署分支，申请固定版本的批准。'}</p>}
+        </button>) : <p className="py-5 text-sm text-muted-foreground">{error ? '审批记录未读取，请刷新重试。' : tab === 'debug' ? '尚无调试窗口。限定文件或目录、执行分支和有效期后申请批准。' : '尚无审批申请。请选择已部署分支，申请固定版本的批准。'}</p>}
       </div>
       <div className="min-w-0">
         {current ? <>
