@@ -1,7 +1,7 @@
 import { WorktreeService } from './worktree.js';
 import { releaseBatchProtectsInputs } from '../domain/release-batch.js';
 import { SourceInspectionHeldError, sourceHoldReason } from './deployment-source-inspection.js';
-import { reclaimDeploymentSources, summarizeDeploymentSourceHolds, type DeploymentSourceHoldReason, type DeploymentSourceRetentionReport } from './deployment-source-retention.js';
+import { reclaimDeploymentSources, DeploymentSourceFailureTracker, summarizeDeploymentSourceHolds, type DeploymentSourceHoldReason, type DeploymentSourceRetentionReport } from './deployment-source-retention.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -652,6 +652,7 @@ export class JanitorService {
   private lastSweepSummary: JanitorSnapshot['lastSweep'] = null;
   private lastFullSweepSummary: JanitorSnapshot['lastSweep'] = null;
   private deploymentSourceCursor: string | undefined;
+  private readonly deploymentSourceFailures = new DeploymentSourceFailureTracker();
   private sourcePreviewActive = false;
   private imageCacheGovernance?: import('./image-cache-governance.js').ImageCacheGovernance;
   setImageCacheGovernance(service: import('./image-cache-governance.js').ImageCacheGovernance) { this.imageCacheGovernance = service; }
@@ -1033,7 +1034,7 @@ export class JanitorService {
       cdsEventsBus.publish('capacity.risk', { targetId: 'janitor', message, reasons });
       this.lastCapacityAlertAt = this.clock.now();
     } else if (!key && this.lastCapacityRisk) {
-      cdsEventsBus.publish('capacity.recovered', { targetId: 'janitor', message: '本轮容量检查已确认，回收失败与待回收积压已解除',
+      cdsEventsBus.publish('capacity.recovered', { targetId: 'janitor', message: '本轮回收与水位检查已确认，回收失败与待回收积压已解除；增长预测须另行核对',
         autoRestoredAt: new Date(this.clock.now()).toISOString() });
     }
     this.lastCapacityRisk = key;
@@ -1069,6 +1070,9 @@ export class JanitorService {
     }
     if (sources?.failed.length || this.nonSourceReclaimFailed) {
       reasons.push('reclaim-failed'); messages.push('回收存在失败，原记录已保留');
+    }
+    if (sources?.failureRecheckUnconfirmed) {
+      reasons.push('source-failure-recheck-unconfirmed'); messages.push('源码回收失败尚未完成复核，请核对回收记录');
     }
     if (this.sourceCleanupUnconfirmed) {
       reasons.push('source-cleanup-unconfirmed'); messages.push('源码回收进程收尾未确认，保持占用与保护，请核对受管进程及恢复记录');
@@ -1352,7 +1356,7 @@ export class JanitorService {
             ...this.stateService.getDeletedProjectWorktreeBuckets().map(p => p.projectId)],
           branches: () => this.stateService.getAllBranches(), files: this.orphanWorktreeFs,
           protectedPaths: () => this.releaseBatchSourcePaths(),
-          nowMs: this.clock.now(), afterPath: this.deploymentSourceCursor });
+          nowMs: this.clock.now(), afterPath: this.deploymentSourceCursor, failureTracker: this.deploymentSourceFailures });
         const sources = report.deploymentSources;
         if (sources.dataObservations?.length) this.stateService.recordLegacyDataObservations(sources.dataObservations, this.clock.now());
         this.deploymentSourceCursor = sources.lastAttemptedPath ?? sources.lastScannedPath ?? this.deploymentSourceCursor;

@@ -30,6 +30,9 @@ export async function removeOwnedDirectory(input: OwnedDirectoryRemoval,
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(segments[3])
       || identity.entryPath !== path.join(base, relative)) return 'held';
     const proof = await inspectDeploymentSource(input.dir, identity);
+    if (proof.trackedFilesMissing || proof.reason === 'git-query-failed') {
+      throw new Error('部署源码完整性未确认，保留等待复核');
+    }
     if (proof.reason || !proof.common) { onHeld?.(proof.reason ?? 'git-query-failed'); return 'held'; }
     try {
       const finalIdentity = await readWorktreeDirectoryIdentity(input.dir);
