@@ -279,4 +279,13 @@ describe('独立批准与连续调试的服务层约束', () => {
       reason:'测'.repeat(2000),actor:alice,expiresAt:new Date(now+3600000).toISOString()})).rejects.toThrow('本项目审批历史达到存储上限');
     await reloaded.flush();
   });
+  it('首个大变更清单超过容量时提示拆分版本，缩小清单后能正常申请',async()=>{
+    const check={projectId:'p',candidateSha:B,mainSha:MAIN,status:'clean' as const,checkedAt:new Date(now).toISOString(),
+      changedPaths:Array.from({length:2000},(_,i)=>`allowed/${i}-`+'x'.repeat(80)),conflicts:[],includesBaseline:true};
+    vi.mocked(git.inspect).mockResolvedValue(check);
+    await expect(request()).rejects.toThrow('本次核验清单超过项目可用容量，请拆分候选版本');
+    expect(service.list('p').authorizations).toHaveLength(0);
+    vi.mocked(git.inspect).mockResolvedValue({...check,changedPaths:['allowed/file.ts']});
+    await expect(request()).resolves.toMatchObject({status:'pending'});
+  });
 });

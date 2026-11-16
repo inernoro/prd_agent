@@ -55,6 +55,9 @@ export class ReleaseGovernanceService {
       const previous = sizes(this.state.getReleaseGovernance());
       for (const [projectId, bytes] of sizes(value)) {
         if (bytes > 256 * 1024 && bytes > (previous.get(projectId) || 0)) {
+          if (bytes - (previous.get(projectId) || 0) > 128 * 1024) {
+            throw new ReleaseGovernanceError('本次核验清单超过项目可用容量，请拆分候选版本、缩小累计改动后重新申请；尚未放行');
+          }
           throw new ReleaseGovernanceError('本项目审批历史达到存储上限，已停止新增；请联系管理员导出并迁移本项目历史记录后重试');
         }
       }
