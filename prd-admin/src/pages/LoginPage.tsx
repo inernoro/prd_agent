@@ -314,8 +314,9 @@ export default function LoginPage() {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 820));
     }
     if (!mounted.current) return;
-    markConsciousnessArrival();
-    enterWorkspace(() => navigate(resolveReturnUrl(), { replace: true }));
+    const destination = resolveReturnUrl();
+    if (['/', '/agent-launcher'].includes(destination.split(/[?#]/)[0])) markConsciousnessArrival();
+    enterWorkspace(() => navigate(destination, { replace: true }));
   };
 
   const onResetPassword = async () => {

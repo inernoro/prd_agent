@@ -1,37 +1,27 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import './consciousness-entry.css';
+import { ConsciousnessPortrait } from './ConsciousnessPortrait';
+import { beginEntryArrival } from './entryArrival';
+import { prefersReducedMotion } from '@/lib/themeApplier';
 
 export type IdentityPhase = 'idle' | 'verifying' | 'authorized' | 'entering';
 export const COMPANION_ART = '/media/entry/companion.webp';
-const COMPANION_SLEEP = '/media/entry/companion-sleep.webp';
 let arrivalUntil = 0;
 
 /** Visual handoff only; authentication remains server-authoritative. */
-export function markConsciousnessArrival() { arrivalUntil = Date.now() + 10000; }
+export function markConsciousnessArrival() {
+  if (prefersReducedMotion()) { arrivalUntil = 0; return; }
+  arrivalUntil = Date.now() + 10000; beginEntryArrival();
+}
 export function clearConsciousnessArrival() { arrivalUntil = 0; }
 export function isConsciousnessArrival() { return Date.now() < arrivalUntil; }
 
-export function ConsciousnessScene({ fog = false, arriving = false }: { fog?: boolean; arriving?: boolean }) {
-  const [revealed, setRevealed] = useState(false);
-  const playing = arriving && !revealed;
-  const filterId = `companion-contour-${useId().replace(/:/g, '')}`;
+export function ConsciousnessScene({ fog = false, arriving = false, frameTime }: { fog?: boolean; arriving?: boolean; frameTime?: number }) {
   return (
-    <div className={`consciousness-scene${fog ? ' has-fog' : ''}${playing ? ' is-arriving' : ''}`} aria-hidden="true">
-      <svg className="consciousness-filter" width="0" height="0"><defs>
-        <filter id={filterId} colorInterpolationFilters="sRGB">
-          <feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 4 -1 0 -1 0" divisor="1" bias="0" preserveAlpha="true" />
-          <feColorMatrix type="matrix" values="0 0 0 0 0.22  0 0 0 0 0.64  0 0 0 0 1  5 9 3 0 0" />
-        </filter>
-      </defs></svg>
-      <div className="consciousness-camera" onAnimationEnd={event => {
-        if (event.target === event.currentTarget && event.animationName === 'companion-camera') setRevealed(true);
-      }}>
-      <img className="consciousness-art" src={fog ? COMPANION_SLEEP : COMPANION_ART} alt="" loading="eager" decoding="async" />
-      {playing && <img className="consciousness-sleeping" src={COMPANION_SLEEP} alt="" decoding="async" />}
-      {playing && <img className="consciousness-contour" src={COMPANION_ART} alt="" style={{ filter: `url(#${filterId})` }} />}
-      </div>
+    <div className={`consciousness-scene${fog ? ' has-fog' : ''}${arriving || frameTime !== undefined ? ' is-arriving' : ''}`} aria-hidden="true">
+      <div className="consciousness-camera"><ConsciousnessPortrait fog={fog} arriving={arriving} frameTime={frameTime} /></div>
       <div className="consciousness-mist" />
-      <div className="consciousness-ghost"><span>MAP</span><i /><small>欢迎来到智能体工作空间</small></div>
+      <div className="consciousness-ghost"><span data-word="MAP">MAP</span><i /><small>欢迎来到智能体工作空间</small></div>
       <div className="consciousness-grain" />
     </div>
   );

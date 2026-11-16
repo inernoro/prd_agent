@@ -1,4 +1,5 @@
 import { flushSync } from 'react-dom';
+import { loadPortraitImages } from './portraitRenderer';
 import { prefersReducedMotion } from '@/lib/themeApplier';
 
 let preparation: Promise<unknown> | undefined;
@@ -6,11 +7,7 @@ let preparation: Promise<unknown> | undefined;
 export function prepareEntryScene() {
   return preparation ??= Promise.allSettled([
     import('@/pages/AgentLauncherPage'),
-    ...['companion.webp', 'companion-sleep.webp'].map(file => {
-      const image = new Image();
-      image.src = `/media/entry/${file}`;
-      return image.decode?.() ?? Promise.resolve();
-    }),
+    loadPortraitImages(),
   ]);
 }
 
@@ -45,7 +42,7 @@ export function profileEntryMotion() {
     }
     intervals.push(now - previous);
     previous = now;
-    if (now - start < 8000) { requestAnimationFrame(frame); return; }
+    if (now - start < 12000) { requestAnimationFrame(frame); return; }
     const sorted = intervals.slice(1).sort((a, b) => a - b);
     document.documentElement.dataset.entryMotion = JSON.stringify({
       frames: sorted.length, medianMs: sorted[Math.floor(sorted.length * .5)],

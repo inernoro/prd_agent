@@ -1,16 +1,16 @@
 /* Reference: 3840×2160 film, 0–14s fog/verification, 15–19s black
    contour-to-character reveal. UI remains native; the artwork is a separate asset. */
 .consciousness-scene { position: absolute; inset: 0; overflow: hidden; pointer-events: none; background: var(--cinema-night); }
-.consciousness-filter { position: absolute; }
+
 .consciousness-camera { position: absolute; inset: 0; transform-origin: 76% 46%; }
-.consciousness-art, .consciousness-contour, .consciousness-sleeping { position: absolute; width: 100%; height: 100%; object-fit: cover; object-position: center right; }
+.consciousness-art { position: absolute; width: 100%; height: 100%; object-fit: cover; object-position: center right; }
 .consciousness-art { opacity: .82; }
-.consciousness-sleeping { opacity: 0; }
+
 .consciousness-mist { position: absolute; inset: 0; background: var(--cinema-paper); opacity: 0; }
 .consciousness-scene.has-fog .consciousness-mist { opacity: .88; }
 .consciousness-scene.has-fog .consciousness-art { filter: saturate(.45); }
 .consciousness-ghost { position: absolute; left: 6%; top: 38%; width: 37%; color: var(--cinema-light); }
-.consciousness-ghost > span { font: italic 850 clamp(100px, 15vw, 260px)/1 var(--font-display); letter-spacing: -.075em; background: linear-gradient(165deg, var(--cinema-light), var(--cinema-accent) 70%, transparent); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; opacity: .36; }
+.consciousness-ghost > span { display: inline-block; vertical-align: top; font: italic 850 clamp(100px, 15vw, 260px)/1 var(--font-display); letter-spacing: -.075em; background: linear-gradient(165deg, var(--cinema-light), var(--cinema-accent) 70%, transparent); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; opacity: .36; }
 .consciousness-ghost > i { position: absolute; inset: -10% -4% 0; border: 1px solid color-mix(in srgb, var(--cinema-accent) 35%, transparent); border-radius: 50%; transform: rotate(-17deg) scaleY(.32); }
 .consciousness-ghost small { display: block; font-size: 12px; letter-spacing: .55em; white-space: nowrap; opacity: .35; margin-top: 15px; }
 .has-fog .consciousness-ghost { opacity: .8; }
@@ -114,13 +114,29 @@
 .consciousness-open-desk { white-space: nowrap; min-width: 220px; justify-content: center; position: absolute; z-index: 3; bottom: 32px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; background: transparent; border: 0; color: var(--cinema-light); font-size: 10px; letter-spacing: .12em; cursor: pointer; padding: 12px; }
 .consciousness-open-desk > span { height: 1px; width: 40px; background: currentColor; opacity: .35; }
 .consciousness-return { align-self: flex-start; margin: 16px 30px 0; background: var(--bg-card); border: 1px solid var(--border-default); color: var(--text-secondary); border-radius: 5px; padding: 7px 12px; font-size: 11px; cursor: pointer; }
-.consciousness-scene.is-arriving .consciousness-camera { animation: companion-camera 3400ms cubic-bezier(.16, 1, .3, 1) both; will-change: transform; }
-.consciousness-scene.is-arriving .consciousness-art { animation: companion-reveal 2800ms linear both; will-change: opacity; }
-.consciousness-scene.is-arriving .consciousness-contour { animation: companion-contour 2200ms linear both; will-change: opacity; }
-.consciousness-scene.is-arriving .consciousness-sleeping { animation: companion-awaken 2800ms linear both; will-change: opacity; }
-.consciousness-home.is-arriving .consciousness-home-center { animation: companion-controls 1500ms 180ms cubic-bezier(.16, 1, .3, 1) both; }
-.consciousness-home.is-arriving .consciousness-ghost { animation: companion-ghost 2200ms cubic-bezier(.16, 1, .3, 1) both; }
-.consciousness-home.is-arriving .consciousness-hud, .consciousness-home.is-arriving .consciousness-open-desk { animation: entry-route-in 1200ms 300ms ease-out both; }
+.consciousness-portrait { position: absolute; inset: 0; }
+.portrait-material, .portrait-structure { position: absolute; inset: 0; width: 100%; height: 100%; }
+.consciousness-portrait.is-building > .consciousness-art { opacity: 0; }
+.portrait-lines { opacity: var(--portrait-lineOpacity, 1); }
+.portrait-lines path { stroke-dashoffset: calc(1 - clamp(0, calc(var(--portrait-line, 0) * 1.5 - var(--trace-order) * .009), 1)); }
+.portrait-mesh { opacity: var(--portrait-grid, 0); }
+.consciousness-scene.is-arriving .consciousness-camera { transform: scale(var(--portrait-camera, 1.018)); will-change: transform; }
+.consciousness-home.is-arriving .consciousness-home-center { opacity: var(--portrait-controls, 0); visibility: var(--portrait-controls-visibility, hidden); }
+.consciousness-home.is-arriving .consciousness-shortcuts { opacity: var(--portrait-brandFill, 0); visibility: var(--portrait-shortcuts-visibility, hidden); }
+.consciousness-home.is-arriving .consciousness-hud, .consciousness-home.is-arriving .consciousness-open-desk { opacity: var(--portrait-controls, 0); }
+.consciousness-scene.is-arriving .consciousness-ghost { opacity: var(--portrait-brand, 0); }
+.consciousness-scene.is-arriving .consciousness-ghost > span { position: relative; background: none; -webkit-text-fill-color: transparent; -webkit-text-stroke: 1px color-mix(in srgb, var(--cinema-accent) 65%, transparent); opacity: calc(.7 - var(--portrait-brandFill, 0) * .34); }
+.consciousness-scene.is-arriving .consciousness-ghost > span::after { content: attr(data-word); position: absolute; inset: 0; background: linear-gradient(165deg, var(--cinema-light), var(--cinema-accent) 70%, transparent); background-clip: text; -webkit-background-clip: text; -webkit-text-stroke: 0; opacity: var(--portrait-brandFill, 0); }
+.consciousness-scene.is-arriving .consciousness-ghost > i, .consciousness-scene.is-arriving .consciousness-ghost small { opacity: var(--portrait-brandFill, 0); }
+.consciousness-portrait.is-ambient .portrait-lines path { stroke-dasharray: none; stroke-dashoffset: 0; }
+.consciousness-portrait.is-ambient .portrait-lines { opacity: .2; }
+.consciousness-portrait.is-ambient .portrait-mesh { opacity: .24; }
+.portrait-ambient-scan { position: absolute; inset: 0; background: linear-gradient(transparent 47%, color-mix(in srgb, var(--cinema-accent) 20%, transparent) 50%, transparent 53%); animation: portrait-ambient-scan 9s linear infinite; }
+@keyframes portrait-ambient-scan { from { transform: translateY(-100%); } to { transform: translateY(100%); } }
+.entry-shell-chrome { transition: opacity 650ms ease-out, width 220ms ease-out !important; }
+html[data-entry-arriving] .entry-shell-chrome { opacity: var(--entry-chrome, 0); visibility: hidden; pointer-events: none; transition-property: width !important; }
+html[data-entry-arriving][data-entry-chrome-visible] .entry-shell-chrome { visibility: visible; pointer-events: auto; }
+html[data-entry-arriving] .app-aurora { background: var(--cinema-night); }
 @keyframes identity-read { 50% { transform: scaleX(.8); opacity: .35; } }
 @keyframes identity-copy-in { from { opacity: 0; transform: translate3d(0, 10px, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 @keyframes identity-copy-out { to { opacity: 0; transform: translate3d(0, -12px, 0); } }
@@ -129,13 +145,6 @@
 @keyframes identity-camera { to { transform: scale(1.035); } }
 @keyframes entry-route-out { from { opacity: 1; } to { opacity: 0; } }
 @keyframes entry-route-in { from { opacity: 0; } to { opacity: 1; } }
-/* Overlapping exposure curves: every frame changes, without held image poses. */
-@keyframes companion-reveal { 0% { opacity: 0; } 25% { opacity: .04; } 50% { opacity: .18; } 75% { opacity: .55; } 100% { opacity: .82; } }
-@keyframes companion-contour { 0% { opacity: 0; } 22% { opacity: .85; } 45% { opacity: .52; } 75% { opacity: .12; } 100% { opacity: 0; } }
-@keyframes companion-awaken { 0% { opacity: 0; } 25% { opacity: .30; } 46% { opacity: .68; } 70% { opacity: .36; } 100% { opacity: 0; } }
-@keyframes companion-camera { from { transform: scale(1.065) translate3d(10px, 3px, 0); } to { transform: scale(1) translate3d(0, 0, 0); } }
-@keyframes companion-controls { from { opacity: 0; transform: translate3d(-50%, calc(-50% + 20px), 0); } to { opacity: 1; transform: translate3d(-50%, -50%, 0); } }
-@keyframes companion-ghost { from { opacity: 0; transform: translate3d(-16px, 0, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 @media (max-width: 760px) {
   .consciousness-hud-brand { left: 18px; top: 20px; }
   .consciousness-hud-brand > span { font-size: 7px; }
@@ -144,7 +153,7 @@
   .consciousness-hud-version > span { display: none; }
   .consciousness-hud-bottom { left: 18px; bottom: 20px; font-size: 7px; }
   .consciousness-hud-bottom > span, .consciousness-hud-coordinate { display: none; }
-  .consciousness-art, .consciousness-contour, .consciousness-sleeping { object-position: 100% center; }
+  .consciousness-art { object-position: 100% center; }
   .consciousness-ghost { top: 26%; left: 6%; }
   .consciousness-ghost > span { font-size: 28vw; }
   .consciousness-ghost small { display: none; }
@@ -154,7 +163,7 @@
   .identity-scanner { width: 108vw; height: 108vw; max-width: 530px; max-height: 530px; opacity: .25; }
   .cinema-login-status { bottom: 48px; font-size: 9px; width: 90%; }
   .cinema-login-status::after { width: 180px; }
-  .consciousness-home-center { width: calc(100% - 36px); top: 46%; }
+  .consciousness-home-center { width: calc(100% - 36px); top: 72%; }
   .consciousness-home-heading h1 { font-size: 22px; }
   .consciousness-home-subtitle { font-size: 10px; letter-spacing: .1em; margin-bottom: 22px; }
   .consciousness-search-field { padding: 17px 14px 8px; }
@@ -173,6 +182,7 @@
 @media (prefers-reduced-motion: reduce) {
   .cinema-login *, .consciousness-home * { animation: none !important; transition: none !important; }
   .cinema-welcome-copy { display: none; }
-  .consciousness-contour, .consciousness-sleeping { display: none; }
+  .portrait-structure, .portrait-ambient-scan { display: none; }
   .consciousness-art { opacity: .82; }
+  .consciousness-home.is-arriving .consciousness-home-center, .consciousness-home.is-arriving .consciousness-shortcuts, .consciousness-home.is-arriving .consciousness-hud, .consciousness-home.is-arriving .consciousness-open-desk, .consciousness-scene.is-arriving .consciousness-ghost { opacity: 1; }
 }
