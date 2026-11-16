@@ -9,11 +9,11 @@ namespace PrdAgent.Api.Services.ModelLeaderboard;
 /// <summary>
 /// 从 arena.ai 的公开榜单页抓取并解析一个榜单。
 ///
-/// ## 为什么解析 HTML
+/// ## 兼容旧 HTML 来源
 ///
-/// arena.ai（即 LMArena，两个域名同一套部署）没有开放榜单 API：实测
-/// <c>GET /api/leaderboard</c> 返回 403 "Route not allowed"。榜单分数是服务端渲染进
-/// HTML 的，所以只能解析页面——但好处是不需要跑无头浏览器，一次 HTTP 请求就够。
+/// 日常同步优先读取 Arena 官方 Hugging Face 数据集，见
+/// <see cref="HuggingFaceLeaderboardFetcher"/>。本类保留为网络故障时的旧页面/快照镜像备用。
+/// 榜单分数由服务器渲染进 HTML，能取得页面时无需启动无头浏览器。
 ///
 /// ## 解析锚点选的是语义属性，不是 class
 ///
@@ -41,7 +41,7 @@ namespace PrdAgent.Api.Services.ModelLeaderboard;
 /// 所以条目数低于 <see cref="MinimumEntries"/> 一律抛异常，交给调用方保留旧快照并告警
 /// （见 .claude/rules/degradation-must-alarm.md：降级必须响铃）。
 /// </summary>
-public class ArenaLeaderboardFetcher
+public class ArenaLeaderboardFetcher : IModelLeaderboardFetcher
 {
     /// <summary>榜单根地址。分榜路径拼在它后面。</summary>
     public const string BaseUrl = "https://arena.ai/leaderboard";
@@ -156,7 +156,9 @@ public class ArenaLeaderboardFetcher
         List<ModelLeaderboardEntry> Entries,
         long? TotalSessions,
         long? TotalVotes,
-        DateTime? SourceFetchedAt = null);
+        DateTime? SourceFetchedAt = null,
+        string? SourceUrl = null,
+        DateTime? PublishedAt = null);
 
     /// <summary>
     /// 抓取并解析一个分榜。
@@ -218,7 +220,7 @@ public class ArenaLeaderboardFetcher
             snapshot.Entries,
             snapshot.TotalSessions,
             snapshot.TotalVotes,
-            snapshot.FetchedAt);
+            snapshot.FetchedAt, snapshot.SourceUrl, snapshot.PublishedAt);
         EnsureUsable(url, board, result);
         return result;
     }
@@ -233,6 +235,8 @@ public class ArenaLeaderboardFetcher
     {
         public string Kind { get; init; } = BoardKind.Agent;
         public DateTime FetchedAt { get; init; }
+        public DateTime? PublishedAt { get; init; }
+        public string? SourceUrl { get; init; }
         public long? TotalSessions { get; init; }
         public long? TotalVotes { get; init; }
         public List<ModelLeaderboardEntry> Entries { get; init; } = new();
@@ -420,6 +424,13 @@ public class ArenaLeaderboardFetcher
 
         long? totalSessions = ParseGroupedNumber(TotalSessionsRegex, html);
         long? totalVotes = ParseGroupedNumber(TotalVotesRegex, html);
+
+        if (html.Contains(">Bash Reliability<", StringComparison.Ordinal))
+            foreach (var entry in agentEntries)
+            {
+                entry.BashReliability = entry.BashRecovery;
+                entry.BashRecovery = null;
+            }
 
         return scoreEntries.Count > agentEntries.Count
             ? new ParseResult(BoardKind.Score, scoreEntries, totalSessions, totalVotes)

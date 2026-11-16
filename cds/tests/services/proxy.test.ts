@@ -423,9 +423,11 @@ describe('ProxyService', () => {
       const match = htmlWritten.body.match(/data-role="progress-percent">([0-9.]+)%/);
       expect(match).not.toBeNull();
       expect(Number(match![1])).toBeGreaterThan(50);
-      // 等待页保留品牌几何，使用常亮黑白切面及流动边光。
+      // 等待页保留品牌几何与原版动作，只将中央暗面改为纯黑。
       expect(htmlWritten.body).toContain('cds-waiting-gem');
-      expect(htmlWritten.body).toContain('cds-waiting-edge 3.6s');
+      expect(htmlWritten.body).toContain('cds-waiting-core-black');
+      expect(htmlWritten.body).toContain('43%,47%{opacity:1;fill:#000000;stroke:#000000}');
+      expect(htmlWritten.body).not.toContain('cds-waiting-gem-edge');
       expect(htmlWritten.body).not.toContain('fill="#22d3ee"');
     });
 

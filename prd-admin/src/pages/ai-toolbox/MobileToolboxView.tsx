@@ -1,3 +1,4 @@
+import { TaskDiscovery } from './components/TaskDiscovery';
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Plus } from 'lucide-react';
@@ -131,6 +132,7 @@ export function MobileToolboxView() {
 
         {/* 控制条：类型段控 + 权属 chip 合并为一条横滚（mobile-first-density §二.3：进内容前控制条 ≤2 且不换行） */}
         <div className="flex items-center gap-2 overflow-x-auto" style={{ padding: '4px 16px 2px', scrollbarWidth: 'none' }}>
+          <TaskDiscovery items={source} compact />
           <MobileSegmented
             items={KIND_SEG}
             activeKey={funcKindFilter}
