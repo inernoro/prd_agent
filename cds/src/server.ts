@@ -40,6 +40,9 @@ import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { isHumanSystemOwner } from './services/human-auth.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
+import { ClusterIdentityService, clusterProjectRepository } from './services/cluster-identity.js';
+import { trustedClusterIdentity, type ClusterIdentityContext } from './services/cluster-identity-context.js';
+import { canHumanAccessProject as clusterHumanProjectAccess } from './services/human-project-access.js';
 import { createIdentityConnectionsRouter } from './routes/identity-connections.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
@@ -670,6 +673,7 @@ function isDatabasePassCredentialRequest(req: express.Request): boolean {
 
 function requestPathForLogs(req: express.Request, res: express.Response): string {
   const raw = req.originalUrl || req.url || '/';
+  if (/^\/api\/cluster\/identity\//i.test(raw)) return raw.split('?')[0];
   if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
   return normalizedSealedStoragePath(req.url)
     ?? normalizedSealedStoragePath(raw)
@@ -895,6 +899,11 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Static exact matches
   const staticMap: Record<string, string> = {
+    'POST /cluster/identity/resolve': '校验集群身份',
+    'POST /cluster/identity/exchange': '交接集群登录',
+    'GET /cluster/identity/status': '读取身份同步',
+    'PUT /cluster/identity/config': '配置集群身份',
+    'GET /cluster/identity/login': '登录集群成员',
     'GET /janitor/backups': '预览备份回收',
     'GET /janitor/backups/state': '查询备份回收',
     'GET /janitor/backups/owners': '查询备份归属',
@@ -1679,6 +1688,8 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
 
 /** Check if a request is from an approved AI session */
 function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
+  const cluster = trustedClusterIdentity(req);
+  if (cluster) return cluster.aiSession ?? null;
   // Static mode: CDS_AI_ACCESS_KEY (canonical) 或 legacy AI_ACCESS_KEY 二者命中其一即放行；
   // dashboard customEnv 里的 AI_ACCESS_KEY 字段是用户在 UI 上配的另一个层面，
   // 字段名维持 AI_ACCESS_KEY 不动（用户可见，改名会破坏现有表单存档）。
@@ -1918,6 +1929,7 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const clusterIdentity = new ClusterIdentityService(deps.config.repoRoot, deps.stateService, deps.serverEventLogStore);
   const selfMaintenance = deps.selfMaintenanceRuntime ?? new SelfMaintenanceRuntime(deps.shell, deps.config.repoRoot, view => {
     deps.serverEventLogStore?.record({ category: 'system', severity: 'warn', source: 'self-maintenance',
       action: 'self-maintenance.stop-unconfirmed', message: 'CDS 维护写者正在停止或等待清理确认，后继维护请求仍被拒绝。',
@@ -2099,7 +2111,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
-    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req)) {
+    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || /^\/api\/cluster\/identity\//i.test(req.path)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
@@ -2479,7 +2491,8 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
       activeCleanupTimer.unref?.();
     };
-    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
+    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || /^\/api\/cluster\/identity\//i.test(req.path)
+      || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     // Observe bytes without subscribing to `data`: a data listener starts the
     // request flowing before async authentication finishes, draining uploads
@@ -2525,6 +2538,7 @@ export function createServer(deps: ServerDeps): express.Express {
         suppressRequestBodyLog || suppressPreviewBody,
       );
       const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
+      if (responseHeaders?.location?.includes('/api/cluster/identity/callback?')) responseHeaders.location = responseHeaders.location.split('?')[0];
       const respBody = responseCapture.snapshot(res.getHeader('content-type'));
       deps.httpLogStore?.record({
         layer: 'master',
@@ -2661,6 +2675,10 @@ export function createServer(deps: ServerDeps): express.Express {
   const ticketSsoSessionStore = new TicketSsoSessionStore(sessionTtlMs);
   const resolveSsoConfig = () => resolveTicketSsoConfig(deps.stateService);
 
+  // Central identity management runs before every local authentication provider.
+  // A member cannot issue or accept a separate set of credentials.
+  app.use((req, res, next) => { void clusterIdentity.middleware(req, res, next).catch(next); });
+
   // Provider-neutral ticket SSO. Public routes are mounted before either
   // legacy-basic or GitHub gates so an anonymous browser can start/exchange
   // the one-time code. The resulting session is accepted alongside password
@@ -2680,6 +2698,7 @@ export function createServer(deps: ServerDeps): express.Express {
     }),
   );
   app.use((req, res, next) => {
+    if (clusterIdentity.getConfig()?.role === 'member') { next(); return; }
     const ssoSession = ticketSsoSession(req, ticketSsoSessionStore);
     const identity = ssoSession?.identity ?? null;
     if (identity && ssoSession) {
@@ -2738,6 +2757,74 @@ export function createServer(deps: ServerDeps): express.Express {
       };
     }
     next();
+  });
+
+  app.post('/api/cluster/identity/resolve', async (req, res, next) => {
+    res.locals.cdsSuppressRequestBodyLog = true;
+    res.setHeader('Cache-Control', 'no-store');
+    const member = clusterIdentity.memberOf(req);
+    const config = clusterIdentity.getConfig();
+    if (!member || config?.role !== 'authority' || authMode === 'disabled') {
+      res.status(401).json({ error: 'cluster_member_rejected' }); return;
+    }
+    const method = req.body?.method, target = req.body?.path;
+    if (typeof method !== 'string' || !/^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$/.test(method)
+      || typeof target !== 'string' || target.length > 4096 || !target.startsWith('/') || target.startsWith('//')) {
+      res.status(400).json({ error: 'cluster_request_invalid' }); return;
+    }
+    try {
+      const virtual = Object.create(req) as express.Request;
+      virtual.method = method; virtual.url = target; virtual.originalUrl = target;
+      virtual.query = Object.fromEntries(new URL(target, 'http://cluster.local').searchParams);
+      let user = (req as express.Request & { cdsUser?: CdsUser }).cdsUser;
+      let session: ClusterIdentityContext['session'];
+      let basicHuman = false;
+      if (!user && authService) {
+        const token = parseCookie(req.headers.cookie || '', GH_SESSION_COOKIE);
+        const current = await authService.validateSession(token ?? null);
+        if (current) {
+          user = current.user; session = { createdAt: current.session.createdAt, expiresAt: current.session.expiresAt };
+          if (current.renewed && token) res.setHeader('Set-Cookie', buildSessionCookie(token, current.session.expiresAt, cookieSecure));
+        }
+      }
+      if (!user && authEnabled && verifyHumanSessionToken(parseCookie(req.headers.cookie || '', 'cds_token'), cdsUser!, cdsPass!, sessionTtlMs)) {
+        user = legacyAuthUser(cdsUser!, 'basic'); basicHuman = true;
+        res.setHeader('Set-Cookie', basicSessionCookie(issueHumanSessionToken(cdsUser!, cdsPass!), sessionTtlMs, cookieSecure));
+      }
+      if (user && !session) session = { createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + sessionTtlMs).toISOString() };
+      const aiSession = user ? null : resolveAiSession(virtual, deps.stateService);
+      if (!user && !aiSession) { res.status(401).json({ error: 'cluster_credential_rejected' }); return; }
+      const stamps = virtual as express.Request & {
+        cdsProjectKey?: ClusterIdentityContext['projectKey']; cdsAccess?: ClusterIdentityContext['access']; cdsPrincipal?: ClusterIdentityContext['principal'];
+      };
+      const humanReq = { cdsUser: user, cdsSession: session, _cdsBasicHumanAuth: basicHuman };
+      const context: ClusterIdentityContext = {
+        clusterId: config.clusterId, authorityNodeId: config.nodeId, nodeId: member.nodeId,
+        ...(user ? { user: toPublicUser(user) as CdsUser, session, basicHuman,
+          humanProjects: deps.stateService.getProjects().filter(p => clusterHumanProjectAccess(humanReq, deps.stateService, p.id)).map(p => p.id) } : {}),
+        ...(aiSession ? { aiSession: { ...aiSession, token: '' }, projectKey: stamps.cdsProjectKey, access: stamps.cdsAccess, principal: stamps.cdsPrincipal } : {}),
+        ...(stamps.cdsPrincipal ? { principalProjects: deps.stateService.getProjectGrants()
+          .filter(g => g.principalId === stamps.cdsPrincipal!.principalId && !g.revokedAt)
+          .map(g => g.projectId)
+          .filter(id => { const ids = deps.stateService.getUserCredentials().find(c => c.id === stamps.cdsPrincipal!.credentialId)?.projectIds;
+            return !ids || ids.includes(id); }) } : {}),
+      };
+      res.json({ ...context, projects: member.projects, projectRepositories: Object.fromEntries(Object.keys(member.projects)
+        .map(id => [id, clusterProjectRepository(deps.stateService.getProject(id))])) });
+    } catch (error) { next(error); }
+  });
+  app.post('/api/cluster/identity/exchange', (req, res) => {
+    res.locals.cdsSuppressRequestBodyLog = true;
+    clusterIdentity.exchange(req, res);
+  });
+  app.use((req, res, next) => {
+    if (clusterIdentity.getConfig()?.role !== 'member'
+      || isPublicAccessRequestRoute(req.method, req.path)
+      || req.path === '/' || req.path === '/healthz' || req.path === '/api/instance-mode'
+      || /\.(?:css|js|ico|png|svg|woff2?|map)$/i.test(req.path)
+      || req.path.startsWith('/api/peer-sync/') && !req.path.startsWith('/api/peer-sync/admin/')) { next(); return; }
+    if (!req.path.startsWith('/api/') && !req.headers.cookie) { res.redirect(302, '/login'); return; }
+    void clusterIdentity.authenticate(req, res).then(handled => { if (!handled) next(); }).catch(next);
   });
 
   app.get('/api/auth/public-status', (_req, res) => {
@@ -2857,7 +2944,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
-      isPendingReplay: req => pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req),
+      isPendingReplay: req => !!trustedClusterIdentity(req) || pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req),
       isPublicRequest: req => isPublicAccessRequestRoute(req.method, req.path),
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
       cookieSecure,
@@ -2909,6 +2996,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // When both basic auth and SSO are disabled the middleware is a no-op.
   if (authMode !== 'github') {
     app.use(async (req, res, next) => {
+      if (trustedClusterIdentity(req)) return next();
       if (pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req)) return next();
       const ssoGateEnabled = publicTicketSsoConfig(resolveSsoConfig()).enabled;
       if (authMode === 'disabled' && !ssoGateEnabled) return next();
@@ -3579,6 +3667,29 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createInstanceCatalogRouter(deps.config.repoRoot,
     path.resolve(__dirname, '..', 'web', 'dist', 'cds-instances.json')));
 
+  app.get('/api/cluster/identity/status', (req, res) => {
+    const status = clusterIdentity.status();
+    const projectId = (req as express.Request & { cdsProjectKey?: { projectId: string } }).cdsProjectKey?.projectId;
+    if (projectId && 'members' in status && status.members) {
+      status.members = status.members.map(m => ({ ...m, projects: Object.fromEntries(Object.entries(m.projects).filter(([id]) => id === projectId)) }));
+    }
+    if (projectId && 'projects' in status && status.projects) status.projects = Object.fromEntries(Object.entries(status.projects).filter(([, local]) => local === projectId));
+    const access = (req as express.Request & { cdsAccess?: { access: AgentKeyAccess } }).cdsAccess?.access;
+    if (access && access.projects !== 'all' && !projectId && 'members' in status && status.members) {
+      status.members = status.members.map(m => ({ ...m, projects: Object.fromEntries(Object.entries(m.projects).filter(([id]) => access.projects.includes(id))) }));
+    }
+    res.setHeader('Cache-Control', 'no-store'); res.json(status);
+  });
+  app.put('/api/cluster/identity/config', (req, res) => {
+    res.locals.cdsSuppressRequestBodyLog = true;
+    if (!isHumanSystemOwner(req) && resolveAiSession(req, deps.stateService)?.id !== 'static') {
+      res.status(403).json({ error: 'cluster_owner_required', message: '只有系统所有者可以配置集群身份，请联系系统所有者。' }); return;
+    }
+    try { clusterIdentity.configure(req.body); res.json(clusterIdentity.status()); }
+    catch { res.status(400).json({ error: 'cluster_config_invalid', message: '集群身份配置不完整，请核对节点与项目绑定后重试。' }); }
+  });
+  app.get('/api/cluster/identity/login', (req, res) => clusterIdentity.login(req, res));
+
   app.use(createHumanProjectAccessMiddleware(deps.stateService));
   if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));
 
@@ -3702,7 +3813,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // malformed.
   app.use((req, _res, next) => {
     // CDS-CLI-005：同时支持 `X-AI-Access-Key` / `ai-access-key` / Bearer。
-    const h = (req.headers['x-ai-access-key'] as string | undefined)
+    const h = trustedClusterIdentity(req) ? undefined : (req.headers['x-ai-access-key'] as string | undefined)
       || (req.headers['ai-access-key'] as string | undefined)
       || (() => {
           const auth = req.headers['authorization'] as string | undefined;

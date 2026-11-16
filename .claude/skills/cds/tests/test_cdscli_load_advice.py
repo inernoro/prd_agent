@@ -43,7 +43,7 @@ def test_load_states_and_sanitized_audit(workspace, monkeypatch, capsys, status,
     assert calls == [('GET', '/api/host-stats', {'timeout': 3, 'fatal_network_errors': False, 'follow_redirects': False})]
     assert ('notices' in result) == (state == 'high')
     stderr = capsys.readouterr().err
-    assert ('不同站点使用不同密钥' in stderr) == (state == 'high')
+    assert ('已注册集群成员复用统一授权' in stderr) == (state == 'high')
     evidence = list((root / '.cds/instance-load-checks').glob('*.json'))
     assert len(evidence) == 1
     text = evidence[0].read_text()
