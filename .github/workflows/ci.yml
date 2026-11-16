@@ -929,8 +929,56 @@ jobs:
       - name: Type check
         run: pnpm exec tsc --noEmit
 
+      - name: Start isolated loopback OpenSSH for release lifecycle tests
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends openssh-server
+          cds_ssh_dir="$RUNNER_TEMP/cds-release-e2e"
+          mkdir -p "$cds_ssh_dir/evidence"
+          chmod 700 "$cds_ssh_dir"
+          ssh-keygen -q -t ed25519 -N '' -f "$cds_ssh_dir/hostkey"
+          ssh-keygen -q -t ed25519 -N '' -f "$cds_ssh_dir/clientkey"
+          cp "$cds_ssh_dir/clientkey.pub" "$cds_ssh_dir/authorized_keys"
+          chmod 600 "$cds_ssh_dir/authorized_keys"
+          cat > "$cds_ssh_dir/sshd_config" <<CONFIG
+          Port 2222
+          ListenAddress 127.0.0.1
+          HostKey "$cds_ssh_dir/hostkey"
+          PidFile "$cds_ssh_dir/sshd.pid"
+          AuthorizedKeysFile "$cds_ssh_dir/authorized_keys"
+          PubkeyAuthentication yes
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PermitRootLogin no
+          UsePAM yes
+          AllowUsers $(id -un)
+          CONFIG
+          sudo mkdir -p /run/sshd
+          sudo /usr/sbin/sshd -t -f "$cds_ssh_dir/sshd_config"
+          sudo /usr/sbin/sshd -f "$cds_ssh_dir/sshd_config" -E "$cds_ssh_dir/sshd.log"
+          printf '[127.0.0.1]:2222 %s\n' "$(ssh-keygen -y -f "$cds_ssh_dir/hostkey")" > "$cds_ssh_dir/known_hosts"
+          ssh -i "$cds_ssh_dir/clientkey" -p 2222 -o BatchMode=yes -o UserKnownHostsFile="$cds_ssh_dir/known_hosts" "$(id -un)@127.0.0.1" true
+          printf 'CDS_BATCH_E2E=1\nCDS_BATCH_E2E_SSH_KEY=%s\nCDS_RELEASE_E2E_SSH_KEY=%s\nCDS_BATCH_E2E_EVIDENCE_DIR=%s\nCDS_NATIVE_SSH_DIR=%s\n' "$cds_ssh_dir/clientkey" "$cds_ssh_dir/clientkey" "$cds_ssh_dir/evidence" "$cds_ssh_dir" >> "$GITHUB_ENV"
+
       - name: Run tests
         run: pnpm test
+
+      - name: Retain native SSH lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-native-ssh-${{ github.run_id }}
+          path: ${{ runner.temp }}/cds-release-e2e/evidence/
+          retention-days: 14
+
+      - name: Stop owned loopback OpenSSH
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${CDS_NATIVE_SSH_DIR:-}" ] && [ -f "$CDS_NATIVE_SSH_DIR/sshd.pid" ]; then
+            sudo kill "$(sudo cat "$CDS_NATIVE_SSH_DIR/sshd.pid")"
+          fi
 
   # 设计执行服务（design-runtime/opendesign）—— tsc + vitest。
   # 镜像构建在 branch-image.yml 里，而镜像的构建阶段只跑 `pnpm run build`（不编译测试、不跑 vitest），

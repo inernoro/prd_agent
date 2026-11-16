@@ -49,6 +49,14 @@ it('正常认证、真实 Git 和 SSH 发布：独立审批、连续调试、越
     beforeExec:()=>{authenticated=true;throw new Error('鉴权完成后批准已撤销');}})).rejects.toThrow('批准已撤销');
   expect(authenticated).toBe(true);
   await expect(fs.stat(forbidden)).rejects.toMatchObject({code:'ENOENT'});
+  const controller=new AbortController();let commandStarted=false;
+  const cancelled=defaultReleaseSshExecutor({host:sshHost,password:sshHost.sshPasswordEncrypted,
+    command:'printf cds-abort-probe-ready; exec sleep 30 # cds-ignore-ssh-signals',signal:controller.signal,
+    onOutput:(_level:string,text:string)=>{if(text.includes('cds-abort-probe-ready')){commandStarted=true;controller.abort(new Error('受控取消发布'));}}})
+    .then(()=>({outcome:'unexpected-success'}),()=>({outcome:'cancelled'}));
+  let deadline:ReturnType<typeof setTimeout> | undefined;
+  const bounded=await Promise.race([cancelled,new Promise<{outcome:string}>(resolve=>{deadline=setTimeout(()=>resolve({outcome:'timeout'}),5000);})]);
+  clearTimeout(deadline);expect(commandStarted).toBe(true);expect(bounded.outcome).toBe('cancelled');
   const base = `http://127.0.0.1:${port}`;
   async function call(method: string, route: string, body?: unknown, cookie?: string) {
     const response = await fetch(base+'/api'+route,{method,headers:{'Content-Type':'application/json',

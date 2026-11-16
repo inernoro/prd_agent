@@ -70,6 +70,7 @@ type Ssh2Client = {
   connect(opts: Ssh2ConnectOptions): void;
   on(event: 'ready' | 'error' | 'end' | 'close', listener: (...args: unknown[]) => void): unknown;
   end(): void;
+  destroy(): void;
   exec(cmd: string, options: { pty: { term: string; modes: Record<string, number> } }, cb: (err: Error | undefined, stream: Ssh2ExecStream) => void): boolean;
 };
 
@@ -1987,10 +1988,12 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
     let stream: Ssh2ExecStream | undefined;
     let execPending = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
     const settle = (fn: () => void) => {
       if (settled) return;
       settled = true;
       if (killTimer) clearTimeout(killTimer);
+      if (closeTimer) clearTimeout(closeTimer);
       req.signal.removeEventListener('abort', onAbort);
       try { client.end(); } catch { /* ignore */ }
       fn();
@@ -2006,6 +2009,13 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
       try { stream.signal('TERM'); } catch { /* close 回执仍负责最终收尾 */ }
       if (!killTimer) killTimer = setTimeout(() => {
         try { stream?.signal('KILL'); } catch { /* 不以发送信号成功代替退出确认 */ }
+        // OpenSSH can ignore channel signal requests. Closing the PTY session
+        // hangs up its foreground job; a non-responsive peer cannot hold the promise forever.
+        try { client.end(); } catch { /* The bounded transport teardown still follows. */ }
+        if (!settled) closeTimer = setTimeout(() => {
+          try { client.destroy(); } catch { /* Finalize cancellation even if teardown throws. */ }
+          settle(() => reject(abortReasonError(req.signal)));
+        }, 1000);
       }, 1000);
     }
     if (req.signal.aborted) return onAbort();

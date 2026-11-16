@@ -54,7 +54,7 @@ export class ReleaseGovernanceGit {
     const root = this.root(projectId);
     if (!root || !Number.isSafeInteger(number) || number < 1 || !FULL_SHA.test(sourceSha) || !FULL_SHA.test(headSha)) throw new Error('PR 版本依据不完整');
     const reference = `refs/cds/release-pr/${number}`;
-    const fetched = await this.run(['-C',root,'fetch','--no-tags','origin',`refs/pull/${number}/head:${reference}`],root);
+    const fetched = await this.run(['-C',root,'fetch','--no-tags','origin',`+refs/pull/${number}/head:${reference}`],root);
     const observed = await this.run(['-C',root,'rev-parse','--verify',`${reference}^{commit}`],root);
     if (fetched.exitCode !== 0 || observed.exitCode !== 0 || observed.stdout.trim() !== headSha) throw new Error('PR 已变化或源码未取齐，请刷新后重试');
     return this.includes(projectId,sourceSha,headSha);
@@ -76,7 +76,7 @@ export class ReleaseGovernanceGit {
         return value.stdout;
       };
       // Explicit user/preflight operation, never a side effect of reading the release center.
-      await checked(['-C', root, 'fetch', '--no-tags', 'origin', `${branch}:refs/remotes/origin/${branch}`]);
+      await checked(['-C', root, 'fetch', '--no-tags', 'origin', `+${branch}:refs/remotes/origin/${branch}`]);
       result.mainSha = (await checked(['-C', root, 'rev-parse', '--verify', `refs/remotes/origin/${branch}^{commit}`])).trim();
       if (!FULL_SHA.test(result.mainSha)) throw new Error();
       await checked(['-C', root, 'cat-file', '-e', `${candidateSha}^{commit}`]);

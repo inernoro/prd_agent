@@ -69,6 +69,21 @@ describe('发布治理的真实隔离合并', () => {
     await expect(reader.includesPr('p',basis,7,basis)).rejects.toThrow('PR 已变化');
     await expect(reader.includesPr('p',basis,8,head)).rejects.toThrow('PR 已变化');
   });
+  it('PR 和主干改写历史后刷新跟踪引用，不改本地主干或工作区',async()=>{
+    git('checkout','-b','hotfix');const first=commit('allowed/first.txt','first\n');
+    git('push','origin',`${first}:refs/pull/9/head`);
+    expect(await reader.includesPr('p',basis,9,first)).toBe(true);
+    git('checkout','--detach',basis);const rewritten=commit('allowed/rebased.txt','rebased\n');
+    git('push','--force','origin',`${rewritten}:refs/pull/9/head`);
+    expect(await reader.includesPr('p',basis,9,rewritten)).toBe(true);
+    git('push','--force','origin',`${rewritten}:main`);
+    git('update-ref','refs/remotes/origin/main',first);
+    const index=fs.readFileSync(path.join(repo,'.git/index'));
+    const check=await reader.inspect('p',rewritten,basis);
+    expect(check).toMatchObject({status:'clean',mainSha:rewritten});
+    expect(git('rev-parse','main')).toBe(basis);expect(git('rev-parse','HEAD')).toBe(rewritten);
+    expect(fs.readFileSync(path.join(repo,'.git/index'))).toEqual(index);
+  });
   it('主干读取失败或没有仓库时保持未知，不生成通过结论', async () => {
     const broken = new ReleaseGovernanceGit(() => repo, () => 'main', async () => ({ stdout: '', exitCode: 128 }));
     expect((await broken.inspect('p',basis,basis)).status).toBe('unknown');
