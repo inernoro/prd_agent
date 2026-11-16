@@ -469,7 +469,7 @@ public sealed class NotificationsController : ControllerBase
             n.RecoveredAt,
             evidenceRequestId = restrictDiagnostic ? null : n.EvidenceRequestId,
             n.ActionLabel,
-            actionUrl = restrictDiagnostic || n.ActionKind == "llm-gateway" && !canOpenGateway ? null : n.ActionUrl,
+            actionUrl = restrictDiagnostic || n.ActionKind == "llm-gateway" && !canOpenGateway ? null : ReportNotificationNavigation.Resolve(n),
             n.ActionKind,
             n.Source,
             section,
@@ -487,6 +487,22 @@ public sealed class NotificationsController : ControllerBase
     {
         if (IsLegacyQuotaWithoutStructuredFacts(notification))
         {
+            // 只保留网关生成的有限原因标题，不把存量供应商诊断重新暴露给用户。
+            foreach (var code in new[]
+            {
+                PrdAgent.Core.LlmGateway.GatewayBillingFailure.AccountOverdue,
+                PrdAgent.Core.LlmGateway.GatewayBillingFailure.InsufficientBalance,
+                PrdAgent.Core.LlmGateway.GatewayBillingFailure.QuotaExceeded,
+                PrdAgent.Core.LlmGateway.GatewayBillingFailure.PaymentRequired,
+            })
+            {
+                var failure = PrdAgent.Core.LlmGateway.GatewayBillingFailure.FromCode(code)!;
+                if (notification.Title == $"上游 AI 服务{failure.Reason}")
+                    return (notification.Title,
+                        $"某条上游 AI 线路{failure.Reason}，该线路调用被拒绝。" +
+                        "若备用线路已完成任务，可正常使用结果。" +
+                        failure.RecoveryAction + "处理后再使用该线路。诊断信息已保留。");
+            }
             return (
                 "AI 创作服务需要管理员处理",
                 "历史通知记录了服务额度异常，对应请求结果和当前状态尚未确认。管理员需要检查服务额度及最近调用记录，请核对结果后再重试。");

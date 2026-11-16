@@ -856,8 +856,8 @@ public class GatewayDataDomainGuardTests
         // 没登记的排前面：这一屏唯一需要人动手的就是它们
         Assert.Contains("a.publicIds.length - b.publicIds.length", panel);
         // 结论句而不是一个数字：「3 个模型」读不出该不该管
-        Assert.Contains("个没登记", panel);
-        Assert.Contains("还没登记，调用方找不到它", panel);
+        Assert.Contains("个待接入", panel);
+        Assert.Contains("尚未接入公开模型，调用方暂时不可用", panel);
 
         // 接线：上游页真的渲染了它，而不是只建了组件没人用
         Assert.Contains("ProviderModelsPanel", platformsPage);
@@ -2369,7 +2369,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("write_remote_container_snapshot", script);
         Assert.Contains("docker ps --format", script);
         Assert.Contains("env.snapshot.redacted", script);
-        Assert.Contains("gzip -t \"$backup_dir/$db.archive.gz\"", script);
+        Assert.Contains(". \"$script_dir/lib/backup-stream.sh\"", script);
+        Assert.Contains("cds_backup_stream \"$backup_dir/$db.archive.gz\" remote_mongo_dump \"$db\"", script);
+        Assert.Contains("gzip -t \"$stream_archive\"", ReadRepoFile("scripts/lib/backup-stream.sh"));
         Assert.Contains("SHA256SUMS", script);
         Assert.DoesNotContain("rm -", script);
         Assert.DoesNotContain("dropDatabase", script);

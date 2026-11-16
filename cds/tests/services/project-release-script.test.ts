@@ -23,9 +23,9 @@ function fixture() {
   const sha = git('rev-parse', 'HEAD');
   const run = { releaseId: 'rel_test', targetId: 'target', commitSha: sha, artifact: { artifactPath: repo } } as ReleaseRun;
   const target = (strategy: ReleaseStrategy) => ({ strategy, ssh: { appPath: repo } } as ReleaseTarget);
-  const execute = (strategy: ReleaseStrategy, id = 'rel_test') => {
-    const execution = buildReleaseExecution(target(strategy), { ...run, releaseId: id });
-    execFileSync('bash', ['-c', execution.command], { cwd: repo, env: { ...process.env, CDS_COMMIT_SHA: sha, CDS_RELEASE_ID: id, CDS_TARGET_ID: 'target', RELEASE_OUTPUT: path.join(root, 'output') }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const execute = (strategy: ReleaseStrategy, id = 'rel_test', commitSha = sha) => {
+    const execution = buildReleaseExecution(target(strategy), { ...run, commitSha, releaseId: id });
+    execFileSync('bash', ['-c', execution.command], { cwd: repo, env: { ...process.env, CDS_COMMIT_SHA: commitSha, CDS_RELEASE_ID: id, CDS_TARGET_ID: 'target', RELEASE_OUTPUT: path.join(root, 'output') }, stdio: ['pipe', 'pipe', 'pipe'] });
     return execution;
   };
   return { root, repo, git, sha, run, target, content, execute };
@@ -40,6 +40,21 @@ describe('project-owned publishing contract', () => {
     expect(fs.readFileSync(path.join(f.root, 'output'), 'utf8')).toBe('old');
     expect(result.scriptSha256).toBe(crypto.createHash('sha256').update(f.content).digest('hex'));
     expect(fs.realpathSync(path.join(f.root, '.cds-releases/target/current'))).toContain('rel_test');
+  });
+  it('executes committed check/deploy with declared minimal inputs through the real release chain', () => {
+    const f = fixture();
+    fs.mkdirSync(path.join(f.repo, 'scripts')); fs.mkdirSync(path.join(f.repo, 'deploy')); fs.mkdirSync(path.join(f.repo, 'acceptance'));
+    fs.writeFileSync(path.join(f.repo, 'scripts/required'), 'required release input');
+    fs.writeFileSync(path.join(f.repo, 'acceptance/large.bin'), Buffer.alloc(2 * 1024 * 1024, 42));
+    fs.writeFileSync(path.join(f.repo, 'deploy/release-inputs.json'), JSON.stringify({schema:1,kind:'prebuilt-release-inputs',directories:['scripts','deploy']}));
+    fs.writeFileSync(path.join(f.repo, 'cds-release.sh'), f.content.replace('check) :', 'check) test -f scripts/required; test ! -e acceptance'));
+    f.git('add', '.'); f.git('commit', '-m', 'declared release inputs');
+    const sha = f.git('rev-parse', 'HEAD');
+    f.execute({mode:'project-script'}, 'rel_scoped', sha);
+    expect(fs.readFileSync(path.join(f.root, 'output'), 'utf8')).toBe('old');
+    const current = fs.realpathSync(path.join(f.root, '.cds-releases/target/current'));
+    expect(fs.existsSync(path.join(current, 'acceptance'))).toBe(false);
+    expect(fs.readFileSync(path.join(current, 'scripts/required'), 'utf8')).toBe('required release input');
   });
   it('rejects a missing, uncommitted or symlinked release file', () => {
     const f = fixture();

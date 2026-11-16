@@ -875,6 +875,20 @@ export function buildRedisAppendOnlyScript(): string {
  *
  * `docker cp` 对已停止的容器同样有效，这是这套顺序成立的前提。
  */
+export function buildRedisSnapshotCopyArgv(containerName: string, rdbPath: string, outputPath: string): string[] {
+  // Stream the archive into the existing registered inode. docker cp to a
+  // pathname replaces that inode. Capture both pipeline statuses, not only tar.
+  const script = [
+    'exec 3>"$3" || exit 1',
+    'codes=$( { { docker cp "$1:$2" -; echo "copy=$?" >&4; } | { tar -xOf - >&3; echo "tar=$?" >&4; }; } 4>&1 )',
+    'exec 3>&-',
+    `copy=$(echo "$codes" | sed -n 's/^copy=//p')`,
+    `unpack=$(echo "$codes" | sed -n 's/^tar=//p')`,
+    '[ "$copy" = 0 ] && [ "$unpack" = 0 ]',
+  ].join('\n');
+  return ['sh', '-c', script, 'cds-redis-snapshot-copy', containerName, rdbPath, outputPath];
+}
+
 export function buildRedisRestorePlan(opts: {
   containerName: string;
   rdbPath: string;
@@ -886,7 +900,7 @@ export function buildRedisRestorePlan(opts: {
   const c = opts.containerName;
   return [
     { id: 'stop', argv: ['docker', 'stop', c] },
-    { id: 'save-current', argv: ['docker', 'cp', `${c}:${opts.rdbPath}`, opts.preBackupPath] },
+    { id: 'save-current', argv: buildRedisSnapshotCopyArgv(c, opts.rdbPath, opts.preBackupPath) },
     { id: 'overwrite', argv: ['docker', 'cp', opts.uploadPath, `${c}:${opts.rdbPath}`] },
     { id: 'start', argv: ['docker', 'start', c] },
   ];

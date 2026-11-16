@@ -394,7 +394,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 initImageBase64 = inputImage.DataUri;
             }
             if (maskBase64 is not null)
-                maskBase64 = ImageInputNormalizer.Read(maskBase64).DataUri;
+                maskBase64 = ImageInputNormalizer.Read(maskBase64, forMask: true).DataUri;
         }
         catch (ImageInputException ex)
         {

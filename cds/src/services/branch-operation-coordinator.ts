@@ -7,6 +7,7 @@ export type BranchOperationKind =
   | 'deploy'
   | 'deploy-profile'
   | 'database-init'
+  | 'configure-services'
   | 'restart'
   | 'force-rebuild'
   | 'stop'
@@ -449,6 +450,12 @@ export class BranchOperationCoordinator {
 
 
   begin(request: BranchOperationRequest, options: { waitForArtifacts?: boolean; requireImmediate?: boolean } = {}): BranchOperationDecision {
+    // Configuration is a short durable-write critical section, never a deployment to supersede.
+    if (this.findBlockingActives(request).some(item => item.request.kind === 'configure-services')
+      || (request.kind === 'configure-services' && [...this.artifactTargetReads.values()].some(item => this.operationsConflict(request, item.request)))) {
+      return { status: 'rejected', operationId: this.createOperationId(), generation: this.currentGeneration(request.branchId),
+        reason: '分支配置或部署目标正在确认，请先等待原操作完成' };
+    }
     if (options.requireImmediate) this.prunePendingReplayClaims();
     // 实时快照不能在延迟重放中降级成普通人工意图；拒绝而非持久化半份条件。
     if (options.requireImmediate && (options.waitForArtifacts || request.pendingReplay || this.findBlockingActive(request)

@@ -75,23 +75,8 @@ public class MiduoPlanetSsoController : ControllerBase
         return Ok(ApiResponse<SsoOptionsResponse>.Ok(new SsoOptionsResponse
         {
             Items = items,
-            PasswordLoginDisabled = options.PasswordLoginDisabled,
-            LoginEnvironment = ReadLoginEnvironment()
+            PasswordLoginDisabled = options.PasswordLoginDisabled
         }));
-    }
-
-    private LoginEnvironmentInfo? ReadLoginEnvironment()
-    {
-        // 数据范围由部署明确声明，不能从域名或分支名推断。
-        if (!IsTruthy(_cfg["Auth:AccountStoreIsolated"])) return null;
-        var primary = _cfg["Auth:PrimaryLoginUrl"]?.Trim();
-        var safePrimary = Uri.TryCreate(primary, UriKind.Absolute, out var uri)
-            && uri.Scheme == Uri.UriSchemeHttps
-            && string.IsNullOrEmpty(uri.UserInfo)
-            && string.IsNullOrEmpty(uri.Query)
-            && string.IsNullOrEmpty(uri.Fragment)
-            ? uri.AbsoluteUri : null;
-        return new LoginEnvironmentInfo { IsolatedAccountStore = true, PrimaryLoginUrl = safePrimary };
     }
 
     [HttpPost("login")]
@@ -634,13 +619,6 @@ public class SsoOptionsResponse
 {
     public List<SsoLoginOption> Items { get; set; } = new();
     public bool PasswordLoginDisabled { get; set; }
-    public LoginEnvironmentInfo? LoginEnvironment { get; set; }
-}
-
-public class LoginEnvironmentInfo
-{
-    public bool IsolatedAccountStore { get; set; }
-    public string? PrimaryLoginUrl { get; set; }
 }
 
 public class SsoLoginOption

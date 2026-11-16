@@ -44,9 +44,9 @@ public class HostedSiteService : IHostedSiteService
             if (capturedEntry == null && revision.PublishedContentVersion == EffectiveContentVersion(site))
             {
                 var liveEntry = site.Files.FirstOrDefault(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey;
-                if (liveEntry != null && revision.PublishedAssetKeys.Contains(liveEntry)) capturedEntry = liveEntry;
+                if (liveEntry != null && (revision.PublishedAssetKeys ?? []).Contains(liveEntry)) capturedEntry = liveEntry;
             }
-            var keys = revision.PublishedAssetKeys.Append(capturedEntry ?? "")
+            var keys = (revision.PublishedAssetKeys ?? []).Append(capturedEntry ?? "")
                 .Where(k => !string.IsNullOrEmpty(k)).Distinct(StringComparer.Ordinal).ToList();
             var canonicalEntry = capturedEntry == _storage.BuildSiteKey(siteId, revision.PublishedEntryFile ?? "index.html");
             if (!canonicalEntry && !keys.Any(Predictable)) continue;
@@ -95,7 +95,7 @@ public class HostedSiteService : IHostedSiteService
                 .FirstOrDefaultAsync(ct);
             if (snapshot == null) throw new InvalidOperationException("当前版本尚未完成归档，原网页未覆盖");
             {
-                var byPath = snapshot.PublishedAssetKeys.Where(k => LogicalPath(k) != null)
+                var byPath = (snapshot.PublishedAssetKeys ?? []).Where(k => LogicalPath(k) != null)
                     .GroupBy(k => LogicalPath(k)!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
                 var retainedEntry = snapshot.PublishedEntryCosKey
                     ?? throw new InvalidOperationException("当前版本入口尚未归档，请稍后重试");
@@ -117,15 +117,26 @@ public class HostedSiteService : IHostedSiteService
         var retained = await _db.HostedSiteRevisions.Find(r => r.SiteId == siteId)
             .Project(r => r.PublishedAssetKeys).ToListAsync(ct);
         var active = site.Files.Select(f => f.CosKey).ToHashSet(StringComparer.Ordinal);
-        var aliases = retained.SelectMany(keys => keys).Select(LogicalPath).Where(p => !string.IsNullOrEmpty(p))
+        // Scalar Mongo projections return null for legacy documents without this field.
+        var aliases = retained.SelectMany(keys => keys ?? []).Select(LogicalPath).Where(p => !string.IsNullOrEmpty(p))
             .Select(p => _storage.BuildSiteKey(siteId, p!)).Where(k => !active.Contains(k)).Distinct(StringComparer.Ordinal).ToList();
         if (aliases.Count == 0) return;
         await _db.HostedSites.UpdateOneAsync(s => s.Id == siteId,
             Builders<HostedSite>.Update.AddToSetEach(s => s.PendingAssetCleanupKeys, aliases)
                 .Set(s => s.AssetCleanupNextAttemptAt, DateTime.UtcNow), cancellationToken: ct);
         await TryRunHostedSiteAssetCleanupAsync(siteId, DateTime.UtcNow, ignoreSchedule: true, ct);
-        if (await _db.HostedSites.Find(s => s.Id == siteId && s.PendingAssetCleanupKeys.Any(k => aliases.Contains(k))).AnyAsync(ct))
+        var pending = await _db.HostedSites.Find(s => s.Id == siteId)
+            .Project(s => s.PendingAssetCleanupKeys).FirstOrDefaultAsync(ct) ?? [];
+        foreach (var key in pending.Intersect(aliases, StringComparer.Ordinal))
+        {
+            // Content replacement uses fresh immutable keys. A saved share may still own the
+            // legacy alias: keep its bytes and cleanup ledger, without blocking replacement.
+            // New external exposure must still pass the strict alias-retirement gate.
+            if (relocateCurrent && await _db.HostedSites.Find(
+                    Builders<HostedSite>.Filter.ElemMatch(s => s.Files, file => file.CosKey == key)).AnyAsync(ct))
+                continue;
             throw new InvalidOperationException("旧版公开地址尚未完成清理，请稍后重试分享");
+        }
     }
 
     private readonly MongoDbContext _db;
@@ -3118,6 +3129,13 @@ public class HostedSiteService : IHostedSiteService
     private async Task<(string Error, int HttpStatus, string ErrorCode)?> EnforceShareVisibilityAsync(
         WebPageShareLink share, string? viewerUserId, CancellationToken ct)
     {
+        if (share.CollectionId != null)
+        {
+            var collection = await _db.HostedCollections.Find(x => x.Id == share.CollectionId).FirstOrDefaultAsync(ct);
+            if (!HostedCollectionRules.AllowsShare(collection, share))
+                return ("此合集分享已停止，请联系分享者获取新链接", 404, "not_found");
+        }
+
         if (share.CollectionSnapshot is { } collectionSnapshot) {
             var activeCollection = await _db.Database.GetCollection<HostedDocumentCollection>("hosted_document_collections")
                 .Find(c => c.Id == collectionSnapshot.CollectionId && c.DissolvedAt == null).FirstOrDefaultAsync(ct);
@@ -3125,6 +3143,7 @@ public class HostedSiteService : IHostedSiteService
             if (!HostedCollectionPolicy.AudienceAllows(collectionSnapshot, viewerUserId, share.CreatedBy))
                 return ("此链接仅限指定成员访问", 403, "visibility_denied");
         }
+
         // 旧记录 / visit 链 / 默认 public 都识别为可公开访问（不阻断历史链路）
         var effVisibility = string.IsNullOrEmpty(share.Visibility) ? "public" : share.Visibility;
 
@@ -3312,7 +3331,8 @@ public class HostedSiteService : IHostedSiteService
 
         var rawSites = await _db.HostedSites.Find(x => siteIds.Contains(x.Id)).ToListAsync(ct);
         var sites = new List<SharedSiteInfo>(rawSites.Count);
-        foreach (var s in rawSites)
+        foreach (var s in HostedCollectionRules.OrderedIds(siteIds, share.MainSiteId)
+                     .Select(id => rawSites.FirstOrDefault(x => x.Id == id)).OfType<HostedSite>())
         {
             sites.Add(new SharedSiteInfo
             {
@@ -3375,9 +3395,16 @@ public class HostedSiteService : IHostedSiteService
         if (exposeAsk && askSite != null)
             _askOpeners.QueueEnsure(askSite, askOwnerPreferences?.WebPageAskEnabled);
 
+        var sourceCollection = share.CollectionId == null ? null
+            : await _db.HostedCollections.Find(x => x.Id == share.CollectionId).FirstOrDefaultAsync(ct);
         return new ShareViewResult
         {
-            Title = StripLegacySharePrefix(share.Title),
+            DocumentCollectionId = share.CollectionSnapshot?.CollectionId,
+            CollectionId = share.CollectionId,
+            MainSiteId = sites.Any(x => x.Id == share.MainSiteId) ? share.MainSiteId : null,
+            CollectionVersion = share.CollectionVersion,
+            CollectionNeedsUpdate = viewerUserId == share.CreatedBy && sourceCollection != null && sourceCollection.Version != share.CollectionVersion,
+            Title = sourceCollection?.Title ?? StripLegacySharePrefix(share.Title),
             Description = share.Description,
             ShareType = share.ShareType,
             CreatedAt = share.CreatedAt,

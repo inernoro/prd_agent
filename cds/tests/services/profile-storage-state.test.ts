@@ -106,3 +106,11 @@ it('legal workspace edits retain the original v1 publication digest across cold 
  state.setBranchProfileOverride('a','app',{containerWorkDir:'/safe'});await state.flush();
  const cold=new StateService(path.join(root,'state.json'));cold.load();expect(cold.getProfileStorageBinding(f.target(f.entries[0]))?.declarationDigest).toBe(row.declarationDigest);expect(cold.resolvePublishedProfileStorage(f.entries[0],cold.getBuildProfilesForProject('p')[0]).cacheMounts).toHaveLength(1);await cold.flush();
 });
+
+it('cannot exclude a baseline profile that still owns private storage', async () => {
+ const f=own(); await f.run();
+ state.addBuildProfile({...f.profile,id:'safe-support',cacheMounts:undefined});
+ const branch=f.entries[0], before=JSON.stringify(branch), births=JSON.stringify(state.getProfileStorageBirths(f.target(branch)));
+ expect(()=>state.setBranchServiceIsolation(branch.id,{expectedRevision:state.getBranchServiceIsolationRevision(branch),excludedProjectProfileIds:['app']})).toThrow('storage_retained_profile_mutation_refused');
+ expect(JSON.stringify(branch)).toBe(before); expect(JSON.stringify(state.getProfileStorageBirths(f.target(branch)))).toBe(births);
+});

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import type { ReleaseRun, ReleaseStrategy } from '../types.js';
 import { DEFAULT_RELEASE_SCRIPT_FILE } from '../domain/release-script-contract.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
+import { releaseSourcePreparationCommand } from './release-source-preparation.js';
 
 export function releaseScriptFile(strategy: ReleaseStrategy): string {
   return strategy.scriptFile || DEFAULT_RELEASE_SCRIPT_FILE;
@@ -60,9 +61,12 @@ repo="$PWD"
 release_root="$(dirname "$repo")/.cds-releases/$CDS_TARGET_ID"
 worktree="$release_root/worktrees/$CDS_RELEASE_ID"
 mkdir -p "$release_root/worktrees"
+test ! -L "$release_root/.retention.lock"
+exec 8>>"$release_root/.retention.lock"
+flock -x 8
 git -C "$repo" fetch --all --prune
 git -C "$repo" cat-file -e "$CDS_COMMIT_SHA^{commit}"
-if [ ! -d "$worktree" ]; then git -C "$repo" worktree add --detach "$worktree" "$CDS_COMMIT_SHA"; fi
+${releaseSourcePreparationCommand(managed ? '' : releaseScriptFile(strategy))}
 cd "$worktree"
 ${managed ? `release_script="$(mktemp "$release_root/managed.XXXXXX.sh")"
 trap 'rm -f "$release_script"' EXIT
