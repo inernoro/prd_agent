@@ -1034,7 +1034,7 @@ export class JanitorService {
       cdsEventsBus.publish('capacity.risk', { targetId: 'janitor', message, reasons });
       this.lastCapacityAlertAt = this.clock.now();
     } else if (!key && this.lastCapacityRisk) {
-      cdsEventsBus.publish('capacity.recovered', { targetId: 'janitor', message: '本轮容量检查已确认，回收失败与待回收积压已解除',
+      cdsEventsBus.publish('capacity.recovered', { targetId: 'janitor', message: '本轮回收与水位检查已确认，回收失败与待回收积压已解除；增长预测须另行核对',
         autoRestoredAt: new Date(this.clock.now()).toISOString() });
     }
     this.lastCapacityRisk = key;
