@@ -56,6 +56,8 @@ import { CodeReviewService } from './services/code-review.js';
 import { codeReviewGithubToken, codeReviewRepositoryRoot } from './services/code-review-source.js';
 import { createCodeReviewInputs } from './services/code-review-inputs.js';
 import { createCodeReviewMail } from './services/code-review-mail.js';
+import { createAcceptanceTasksRouter } from './routes/acceptance-tasks.js';
+import { AcceptanceTaskService, startAcceptanceLeaseReaper } from './services/acceptance-tasks.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
 import { createNoticesRouter } from './routes/notices.js';
 import { NoticeLedgerService, startNoticeLedger } from './services/notice-ledger.js';
@@ -895,6 +897,12 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Static exact matches
   const staticMap: Record<string, string> = {
+    'GET /acceptance/health': '检查验收服务',
+    'GET /acceptance/templates': '列出测试清单',
+    'POST /acceptance/templates': '发布测试清单',
+    'GET /acceptance/tasks': '列出验收任务',
+    'POST /acceptance/tasks': '创建验收任务',
+    'GET /acceptance/matrix': '查看历史矩阵',
     'GET /janitor/backups': '预览备份回收',
     'GET /janitor/backups/state': '查询备份回收',
     'GET /janitor/backups/owners': '查询备份归属',
@@ -1248,6 +1256,16 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/acceptance\/templates\/[^/]+$/, '读取清单版本'],
+    [/^GET \/acceptance\/tasks\/[^/]+$/, '查看验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/claim$/, '领取验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/heartbeat$/, '续期任务领取'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/release$/, '释放验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/results\/[^/]+$/, '保存用例结果'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/complete$/, '结束验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/cancel$/, '取消验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/report$/, '生成验收报告'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/bind-report$/, '关联验收报告'],
     [/^POST \/janitor\/tasks\/data-cases\/[^/]+\/confirm$/, '登记数据处置'],
     [/^GET \/uptime\/incidents\/[^/]+$/, '查看故障通知上下文'],
     [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
@@ -1918,6 +1936,13 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const acceptanceTaskService = new AcceptanceTaskService(deps.stateService);
+  const acceptanceLeaseReaper = startAcceptanceLeaseReaper(acceptanceTaskService);
+  // 服务启动即收敛，支持测试/宿主关闭时清理定时器；不另造分布式任务队列。
+  app.locals.acceptanceTaskService = acceptanceTaskService;
+  app.locals.stopAcceptanceLeaseReaper = acceptanceLeaseReaper.stop;
+  app.once('close', acceptanceLeaseReaper.stop);
+  deps.registerResourceShutdown?.(async () => acceptanceLeaseReaper.stop());
   const selfMaintenance = deps.selfMaintenanceRuntime ?? new SelfMaintenanceRuntime(deps.shell, deps.config.repoRoot, view => {
     deps.serverEventLogStore?.record({ category: 'system', severity: 'warn', source: 'self-maintenance',
       action: 'self-maintenance.stop-unconfirmed', message: 'CDS 维护写者正在停止或等待清理确认，后继维护请求仍被拒绝。',
@@ -2141,6 +2166,7 @@ export function createServer(deps: ServerDeps): express.Express {
     //     调用时撞上 100kb 上限，容器拿到一个 HTML 的 413（栈里是 raw-body），
     //     错误文案读起来像模型出错，实际是转发层把自己的解析上限套在了别人的请求上。
     if (isDesignRuntimeModelProxyPath(req.path)) return next();
+    if (req.path === '/api/acceptance' || req.path.startsWith('/api/acceptance/')) return next();
     return globalJsonParser(req, res, next);
   });
 
@@ -2208,6 +2234,13 @@ export function createServer(deps: ServerDeps): express.Express {
       checks.state = { ok: false, detail: (err as Error).message };
       overallOk = false;
     }
+
+    const acceptanceHealth = acceptanceTaskService.health();
+    checks.acceptanceLeases = {
+      ok: acceptanceHealth.ok,
+      detail: acceptanceHealth.ok ? '单权威进程租约收敛正常' : '验收持久层或租约收敛未完成，请检查 /api/acceptance/health',
+    };
+    // 验收收敛是非核心后台状态；专属端点告警，不将整个控制面摘除。
 
     // Check 2: docker reachable (use a lightweight `docker version --format` call)
     try {
@@ -2324,7 +2357,7 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
-      degraded: pressure?.degraded ?? false,
+      degraded: Boolean(pressure?.degraded || !acceptanceHealth.ok),
       checks,
       pressure,
       timestamp: new Date().toISOString(),
@@ -5038,6 +5071,7 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use('/api', createCodeReviewsRouter({ state: deps.stateService, service: reviews }));
   void reviews.start().catch((error: Error) => console.error('[code-review] recovery failed:', error.message));
+  app.use('/api/acceptance', createAcceptanceTasksRouter({ service: acceptanceTaskService }));
 
   // 快捷提 bug（Ctrl+B）：转发凭据只在服务端读取，前端只调本端点。
   // 数据目录与验收报告同级（cache 的父目录），未配置转发时退化为本地留存。

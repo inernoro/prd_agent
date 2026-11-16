@@ -2262,6 +2262,8 @@ export interface DeletedProjectWorktreeTombstone {
   requestedAt: string;
 }
 
+export type { AcceptanceCase, AcceptanceTemplate, AcceptanceTask, AcceptanceSubmission, AcceptanceSummary, AcceptanceEnvironment, AcceptanceEvidence, AcceptanceReportSource } from './acceptance-types.js';
+
 export interface LegacyDataCase {
   id: string; projectId: string; sourceIdentity: string; dataIdentity: string;
   marker: string; device: number; inode: number; birthtimeMs?: number; firstObservedAt: string; lastObservedAt: string;
@@ -2271,6 +2273,9 @@ export interface LegacyDataCase {
 }
 
 export interface CdsState {
+  /** 不可变模板版本与任务快照；跟随现有 backingStore 持久化。 */
+  acceptanceTemplates?: import('./acceptance-types.js').AcceptanceTemplate[];
+  acceptanceTasks?: import('./acceptance-types.js').StoredAcceptanceTask[];
   profileStorageBindings?: Record<string, import('./services/profile-storage-provision.js').ProfileStorageBinding>;
   profileStoragePublications?: Record<string, {binding: import('./services/profile-storage-provision.js').ProfileStorageBinding}>;
   /** Routing rules */
@@ -3045,6 +3050,8 @@ export interface AcceptanceReportMeta {
   deployMode?: string | null;
   /** 规范/外部源同步：源文档标识；普通验收报告为空。 */
   sourceId?: string | null;
+  /** 任务报告归档时由服务端固定的图片资源基址，后续绑定/重试不随请求域名改变。 */
+  inlineAssetBaseUrl?: string;
   /** 规范/外部源同步：仓库内源文档路径；普通验收报告为空。 */
   sourcePath?: string | null;
   /** 规范/外部源同步：源内容哈希，如 sha256:...；普通验收报告为空。 */

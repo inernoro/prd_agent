@@ -4879,6 +4879,7 @@ async function shutdown(signal: string): Promise<void> {
   if (shutdownInProgress) return;
   shutdownInProgress = true;
   console.log(`[shutdown] received ${signal}, stopping services...`);
+  app.locals.stopAcceptanceLeaseReaper?.();
   branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown', { normalShutdown: true });
   // 已禁止新部署。尽早释放长日志/事件的空闲进程与内存，实际资源确认
   // 继续使用保留的operation/observation执行器及原来的清理期限。
