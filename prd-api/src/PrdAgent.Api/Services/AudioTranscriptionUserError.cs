@@ -1,3 +1,5 @@
+using PrdAgent.Core.LlmGateway;
+
 namespace PrdAgent.Api.Services;
 
 /// <summary>
@@ -16,6 +18,8 @@ public static class AudioTranscriptionUserError
     public static Failure Classify(Exception ex)
     {
         var message = ex.Message ?? string.Empty;
+        if (GatewayBillingFailure.Classify(null, message) is { } billing)
+            return new Failure(billing.Code, billing.UserMessage + "原始音频已保留，不需要重新录制。", AutomaticRetryAllowed: false);
         if (message.Contains(RouteContractInvalid, StringComparison.OrdinalIgnoreCase)
             || message.Contains("response_format", StringComparison.OrdinalIgnoreCase)
             || message.Contains("not a chat model", StringComparison.OrdinalIgnoreCase)

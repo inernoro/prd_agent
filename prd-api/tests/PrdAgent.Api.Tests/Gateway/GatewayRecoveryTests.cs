@@ -107,6 +107,8 @@ public class GatewayRecoveryTests
         using var refused = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         refused.Bind(new IPEndPoint(IPAddress.Loopback, 0)); // 占住端口但不监听，确定拒绝连接。
         var address = $"http://127.0.0.1:{((IPEndPoint)refused.LocalEndPoint!).Port}";
+        // Darwin 对已绑定但未监听的 TCP 端口会丢弃连接而非返回拒绝；释放后才能验证未发送分支。
+        if (OperatingSystem.IsMacOS()) refused.Dispose();
         var log = new CapturingLogWriter();
         var result = await InvokeAsync(entry, upstream, log, primaryUrl: address);
         Assert.True(result.Success, result.Error);

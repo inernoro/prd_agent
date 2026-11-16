@@ -121,6 +121,10 @@ cds/branch-claim-entry-output/
 
 # Local Codex/agent skill mirrors (machine-specific, generated locally)
 .agents/skills/*
+# 项目级交付技能入口使用仓库内相对链接，云端克隆后可直接发现
+!.agents/skills/work-budget
+!.agents/skills/kill-debt
+!.agents/skills/create-debt
 # 项目级原型导出技能由仓库维护，统一源头剪枝与上传前预检
 !.agents/skills/prototype-export/
 !.agents/skills/prototype-export/**

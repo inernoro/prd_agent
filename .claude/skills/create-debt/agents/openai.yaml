@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Debt · 债务入账"
+  short_description: "去重记录重要但暂不紧急的问题，保留依据、兜底、重评时机与关闭标准"
+  default_prompt: "使用 $create-debt 将本次重要但暂不处理的问题去重入账，写明事实、影响、暂缓原因、重评触发条件和关闭标准。"

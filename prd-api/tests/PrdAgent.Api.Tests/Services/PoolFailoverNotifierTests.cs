@@ -131,7 +131,7 @@ public class PoolFailoverNotifierTests
         stored.Id.ShouldBe(original.Id);
         stored.Key.ShouldBe(original.Key);
         stored.Source.ShouldBe("llm-gateway-quota");
-        stored.Title.ShouldBe("fixture-platform · fixture-model：上游额度不足");
+        stored.Title.ShouldBe($"fixture-platform · fixture-model：{GatewayBillingFailure.FromCode(GatewayBillingFailure.QuotaExceeded)!.Reason}");
         stored.IncidentId.ShouldBe(stored.Key);
         stored.IncidentState.ShouldBe("active");
         stored.RequestOutcome.ShouldBe("unknown");
@@ -200,6 +200,21 @@ public class PoolFailoverNotifierTests
         current.IncidentState.ShouldBe("active");
         current.RecoveredAt.ShouldBeNull();
         current.OccurrenceCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task BillingAlerts_ArePersistedWithCauseAndDeduplicatedWithoutRawDiagnostics()
+    {
+        await using var db = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
+        var notifier = new PoolFailoverNotifier(db.Context, NullLogger<PoolFailoverNotifier>.Instance);
+        await notifier.NotifyBillingFailureAsync("fixture-platform", "fixture-model", GatewayBillingFailure.AccountOverdue);
+        await notifier.NotifyBillingFailureAsync("fixture-platform", "fixture-model", GatewayBillingFailure.AccountOverdue);
+        await notifier.NotifyQuotaExceededAsync("fixture-platform", "fixture-model");
+        var notices = await db.Context.AdminNotifications.Find(_ => true).ToListAsync();
+        Assert.Equal(2, notices.Count);
+        Assert.Contains(notices, x => x.Title.Contains("账户欠费") && x.Message is { } message && message.Contains("补缴费用"));
+        Assert.Contains(notices, x => x.Title.Contains("额度已用尽"));
+        Assert.All(notices, x => { Assert.Equal(AdminNotificationSections.Admin, x.Section); Assert.Null(x.TargetUserId); Assert.Contains("备用线路已完成", x.Message); });
     }
 
     [Fact]

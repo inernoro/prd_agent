@@ -184,6 +184,8 @@ test('网页托管变更进入功能台账并绑定七个操作锚点', () => {
     'prd-admin/src/pages/WebPagesPage.siteCard.test.tsx',
     'prd-api/src/PrdAgent.Core/Models/WebFolder.cs',
     'prd-api/src/PrdAgent.Core/Models/WebPage.cs',
+    'prd-api/src/PrdAgent.Core/Models/WebPageAskEvidence.cs',
+    'prd-api/src/PrdAgent.Core/Models/WebPageAskPrompt.cs',
     'prd-api/src/PrdAgent.Infrastructure/Services/SiteContentSnapshotService.cs',
     'prd-api/src/PrdAgent.Infrastructure/Services/WebFolderService.cs',
     'prd-api/tests/PrdAgent.Api.Tests/Services/WebFolderRenameFenceTests.cs',
@@ -197,6 +199,7 @@ test('网页托管变更进入功能台账并绑定七个操作锚点', () => {
     'REG-web-folder-canonical-001',
     'REG-web-folder-fence-001',
     'REG-web-folder-create-rename-001',
+    'REG-web-ask-grounding-001',
   ]);
   const plan = buildPlan({
     catalog,
@@ -207,6 +210,8 @@ test('网页托管变更进入功能台账并绑定七个操作锚点', () => {
     mode: 'changed',
     commit: 'web-folder-scope',
   });
+  assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes('REG-web-ask-grounding-001'));
+  assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('REG-web-ask-grounding-001'));
   for (const caseId of feature.cdsOnlyRegressionCaseIds) {
     assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes(caseId));
     assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes(caseId));

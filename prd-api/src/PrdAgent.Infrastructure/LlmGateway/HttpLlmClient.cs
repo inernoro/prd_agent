@@ -207,7 +207,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
                 }
                 if (chunk != null)
                 {
-                    if (string.Equals(chunk.Type, "error", StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(chunk.Type, "error", StringComparison.OrdinalIgnoreCase) || chunk.BillingAlerts?.Count > 0)
                     {
                         await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
                             _failoverNotifier,
@@ -215,7 +215,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
                             chunk.ErrorMessage,
                             chunk.Platform,
                             chunk.Model ?? _pinnedModelId ?? _expectedModel,
-                            _logger);
+                            _logger,
+                            chunk.BillingAlerts);
                     }
                     yield return chunk;
                 }
