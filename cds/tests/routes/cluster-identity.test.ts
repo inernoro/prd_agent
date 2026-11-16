@@ -208,6 +208,9 @@ describe('cluster identity through two real HTTP control planes', () => {
     const response = await request(member, '/api/projects', 'cdsu_fixture');
     expect(response.status).toBe(200);
     expect((response.json.projects || response.json).map((p: { id: string }) => p.id)).toEqual(['local-a']);
+    const passthrough = await request(member, '/_cds/api/projects', 'cdsu_fixture');
+    expect(passthrough.status).toBe(200);
+    expect((passthrough.json.projects || passthrough.json).map((p: { id: string }) => p.id)).toEqual(['local-a']);
     primary.state.revokeProjectGrant('agent-grant');
     const empty = await request(member, '/api/projects', 'cdsu_fixture');
     expect(empty.json.projects || empty.json).toHaveLength(0);

@@ -237,7 +237,7 @@ export class ClusterIdentityService {
     return value;
   }
   private authorityPath(req: Request): string {
-    const url = new URL(req.originalUrl, 'http://cluster.local');
+    const url = new URL(req.url, 'http://cluster.local');
     const c = this.config;
     if (c?.role !== 'member') throw new Error('not a member');
     url.pathname = url.pathname.replace(/(\/api\/projects\/)([^/]+)/i, (_, prefix: string, id: string) => {
@@ -302,7 +302,7 @@ export class ClusterIdentityService {
   async authenticate(req: Request, res: Response): Promise<boolean> {
     if (this.config?.role !== 'member') return false;
     try {
-      const reply = await this.call(req, '/api/cluster/identity/resolve', { method: req.method, path: req.originalUrl });
+      const reply = await this.call(req, '/api/cluster/identity/resolve', { method: req.method, path: req.url });
       if (reply.status !== 200) { failure(res, 'cluster_identity_rejected', reply.status === 401 ? 401 : 503); return true; }
       installClusterIdentity(req, this.mapContext(reply.json as Parameters<ClusterIdentityService['mapContext']>[0],
         req.path.replace(/\/+$/, '').toLowerCase() === '/api/cluster/identity/config'));
