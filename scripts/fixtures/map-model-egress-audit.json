@@ -803,6 +803,13 @@
         "call:GetAsync:766ac21c5f2969a173668008": 2
       },
       "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/WritingTeachingRenderer.cs": {
+      "calls": {
+        "new:Process:4150ee9453824e265dac418b": 1,
+        "new:ProcessStartInfo:5a7a1d541d726da73841e16c": 1
+      },
+      "purpose": "确认文档教学的本地ffmpeg/ffprobe受控进程，仅做音频变速、时长读取、图文成片合成；命令由内部有限调用指定，不接受任意命令或网络地址，不选择模型或发送推理请求。逐调用指纹锁定，新运输仍须审计。"
     }
   },
   "packages": {
