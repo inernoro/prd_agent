@@ -61,7 +61,8 @@ def proof_read(p):
 
 def proof_write_once(p, value):
     raw = json.dumps(value, sort_keys=True, separators=(',', ':')).encode()
-    if len(raw) > PROOF_LIMIT:
+    journal = p.name.endswith('.deleting')
+    if len(raw) > (16 * 1024 if journal else PROOF_LIMIT):
         raise ValueError('static-proof-budget-exceeded')
     # Normal removal drops both records; abandoned records must not make this
     # new bookkeeping itself unbounded after repeated interrupted publications.
@@ -69,9 +70,11 @@ def proof_write_once(p, value):
     with os.scandir(p.parent) as records:
         for entry in records:
             s = entry.stat(follow_symlinks=False)
+            if entry.name.endswith('.deleting') != journal:
+                continue
             count += 1
             stored += s.st_size
-            if not stat.S_ISREG(s.st_mode) or count >= 2048 or stored + len(raw) > 64 * 1024 * 1024:
+            if not stat.S_ISREG(s.st_mode) or count >= 1024 or stored + len(raw) > (16 if journal else 48) * 1024 * 1024:
                 raise ValueError('static-proof-storage-budget-exceeded')
     fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
@@ -171,6 +174,11 @@ def proof_snapshot(root):
     return identity, sorted(entries, key=lambda row: row['path'])
 
 
+def static_owner(root, target, name, commit, identity):
+    return {'version': 1, 'target': target, 'release': name, 'commit': commit,
+            'publicRoot': str(root.parent.parent), 'identity': identity}
+
+
 def seal_static_artifact(root, release_root, target, name, commit):
     if not re.fullmatch(r'rel_[0-9a-f]{16}(?:-auto-restore)?', name) or not re.fullmatch('[0-9a-f]{40}', commit):
         raise ValueError('static-publication-owner-unconfirmed')
@@ -178,8 +186,10 @@ def seal_static_artifact(root, release_root, target, name, commit):
         raise ValueError('static-publication-owner-unconfirmed')
     proof_directory(root.parent)
     identity, entries = proof_snapshot(root)
-    value = {'version': 1, 'target': target, 'release': name, 'commit': commit,
-             'publicRoot': str(root.parent.parent), 'identity': identity, 'entries': entries}
+    owner = static_owner(root, target, name, commit, identity)
+    if len(json.dumps({**owner, 'manifestSha256': '0' * 64}, sort_keys=True, separators=(',', ':')).encode()) > 16 * 1024:
+        raise ValueError('static-proof-budget-exceeded')
+    value = {**owner, 'entries': entries}
     proof_write_once(proof_store(release_root, True) / (name + '.json'), value)
 
 
@@ -187,6 +197,20 @@ def reclaim_static_artifact(root, release_root, target, name, commit, identity, 
     store = proof_store(release_root)
     proof_path = store / (name + '.json')
     journal_path = store / (name + '.deleting')
+    context = static_owner(root, target, name, commit, identity)
+    started = os.path.lexists(journal_path)
+    if not os.path.lexists(root):
+        marker = proof_read(journal_path)[0] if started else None
+        if not isinstance(marker, dict) or any(marker.get(k) != v for k, v in context.items()) or not re.fullmatch('[0-9a-f]{64}', str(marker.get('manifestSha256'))):
+            raise ValueError('static-partial-removal-unconfirmed')
+        if os.path.lexists(proof_path) and proof_read(proof_path)[1] != marker['manifestSha256']:
+            raise ValueError('static-proof-changed')
+        check_live()
+        if not dry_run:
+            if os.path.lexists(proof_path):
+                proof_path.unlink()
+            journal_path.unlink()
+        return
     value, digest = proof_read(proof_path)
     if value.get('version') != 1 or value.get('target') != target or value.get('release') != name or value.get('commit') != commit or value.get('publicRoot') != str(root.parent.parent) or not identity or value.get('identity') != identity:
         raise ValueError('static-publication-owner-unconfirmed')
@@ -203,18 +227,9 @@ def reclaim_static_artifact(root, release_root, target, name, commit, identity, 
         if row.get('type') not in ('directory', 'file') or not re.fullmatch(r'\d+:\d+', str(row.get('identity'))):
             raise ValueError('static-proof-invalid')
         expected[path] = row
-    journal = {'manifestSha256': digest, 'identity': identity}
-    started = os.path.lexists(journal_path)
+    journal = {**context, 'manifestSha256': digest}
     if started and proof_read(journal_path)[0] != journal:
         raise ValueError('static-partial-removal-unconfirmed')
-    if not os.path.lexists(root):
-        if not started:
-            raise ValueError('static-directory-identity-unconfirmed')
-        check_live()
-        if not dry_run:
-            proof_path.unlink()
-            journal_path.unlink()
-        return
     actual_identity, entries = proof_snapshot(root)
     if actual_identity != identity:
         raise ValueError('static-directory-changed')
@@ -255,17 +270,45 @@ def reclaim_static_artifact(root, release_root, target, name, commit, identity, 
                     os.rmdir(parts[-1], dir_fd=parent)
                 if first:
                     first = False
-                    progress()
+                    progress('started')
             finally:
                 os.close(parent)
         check_live()
         if proof_identity(proof_directory(root)) != identity:
             raise ValueError('static-directory-changed')
         root.rmdir()
+        progress('directory-removed')
         proof_path.unlink()
         journal_path.unlink()
     finally:
         os.close(fd)
+
+
+def pending_static_artifacts(versions, release_root):
+    """Only our private, bound journals can nominate an absent directory."""
+    try:
+        store = proof_store(release_root)
+    except FileNotFoundError:
+        return []
+    pending = []
+    count = 0
+    with os.scandir(store) as records:
+        for entry in records:
+            count += 1
+            if count > 2048:
+                raise ValueError('static-proof-storage-budget-exceeded')
+            if not entry.name.endswith('.deleting'):
+                continue
+            name = entry.name[:-9]
+            if not re.fullmatch(r'rel_[0-9a-f]{16}(?:-auto-restore)?', name):
+                raise ValueError('static-partial-removal-unconfirmed')
+            if os.path.lexists(versions / name) and stat.S_ISDIR((versions / name).lstat().st_mode):
+                continue  # Ordinary existing roots are already in the directory inventory.
+            marker = proof_read(store / entry.name)[0]
+            if not isinstance(marker, dict) or marker.get('version') != 1 or marker.get('target') != release_root.name or marker.get('release') != name or marker.get('publicRoot') != str(versions.parent) or not re.fullmatch('[0-9a-f]{40}', str(marker.get('commit'))) or not re.fullmatch(r'\d+:\d+', str(marker.get('identity'))) or not re.fullmatch('[0-9a-f]{64}', str(marker.get('manifestSha256'))):
+                raise ValueError('static-partial-removal-unconfirmed')
+            pending.append((name, marker['identity'], marker['commit']))
+    return pending
 
 
 if __name__ == '__main__' and len(sys.argv) > 1 and sys.argv[1] == 'seal':

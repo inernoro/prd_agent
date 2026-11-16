@@ -1325,9 +1325,9 @@ export class ReleaseService {
       dryRun: options.dryRun === true,
     };
     const command = buildReleaseReclaimCommand(target, strategy, plan, {
-      commits: releaseArtifactCommitProof(runs),
+      commits: { ...Object.fromEntries(Object.entries(state.inventory?.pendingStaticRemovals || {}).map(([id, p]) => [id, p.commit])), ...releaseArtifactCommitProof(runs) },
       identities: state.inventory?.worktreeIdentities,
-      versionIdentities: state.inventory?.versionIdentities,
+      versionIdentities: { ...Object.fromEntries(Object.entries(state.inventory?.pendingStaticRemovals || {}).map(([id, p]) => [id, p.identity])), ...state.inventory?.versionIdentities },
       dryRun: options.dryRun === true,
     });
     if (!command) {

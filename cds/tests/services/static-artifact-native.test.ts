@@ -42,7 +42,8 @@ async function fixture() {
   await make(1);await make(2);await fs.symlink(version(1),path.join(publicRoot,'current'));await fs.symlink(version(2),path.join(publicRoot,'previous'));
   const inventory = () => parseRemoteReleaseInventory(execFileSync('/bin/sh',['-c',buildReleaseInventoryCommand(target,strategy)!],{encoding:'utf8',env}));
   const command = (names:number[], dryRun=false) => {
-    const inv=inventory();const proof = {commits:Object.fromEntries(names.map(n=>[id(n),commit])),identities:inv.worktreeIdentities,versionIdentities:inv.versionIdentities,dryRun};
+    const inv=inventory();const proof = {commits:Object.fromEntries(names.map(n=>[id(n),commit])),identities:inv.worktreeIdentities,
+      versionIdentities:{...Object.fromEntries(Object.entries(inv.pendingStaticRemovals||{}).map(([name,p])=>[name,p.identity])),...inv.versionIdentities},dryRun};
     return buildReleaseReclaimCommand(target,strategy,{removeWorktrees:[],removeVersions:names.map(id)},proof)!;
   };
   const reclaim = (names:number[], dryRun=false) => parseRemoteReclaimOutcome(execFileSync('/bin/sh',['-c',command(names,dryRun)],{encoding:'utf8',env}));
@@ -127,5 +128,37 @@ describe('proved static artifact native reclamation',()=>{
       expect(await fs.readFile(path.join(f.version(3),'index.html'))).toHaveLength(64*1024);
     }finally{await fs.chmod(f.version(3),0o755);}
     expect(f.reclaim([3]).removedVersions).toEqual([id(3)]);
+  });
+
+  it('reserves deletion journal capacity when publication proofs have reached their byte budget',async()=>{
+    const f=await fixture();await f.make(3);const store=path.join(f.releaseRoot,'static-proofs');
+    const padding=path.join(store,id(999)+'.json');await fs.writeFile(padding,'', {mode:0o600});await fs.truncate(padding,64*1024*1024);
+    await expect(f.make(4)).rejects.toThrow('static-proof-storage-budget-exceeded');
+    expect(f.reclaim([3]).removedVersions).toEqual([id(3)]);
+    expect(await fs.stat(padding)).toMatchObject({size:64*1024*1024});
+  });
+
+  it('rediscovers a real SIGKILL after rmdir and finishes only the owned metadata, including a missing manifest',async()=>{
+    const f=await fixture();await f.make(3);const store=path.join(f.releaseRoot,'static-proofs'),proof=path.join(store,id(3)+'.json');
+    // Stop only this native child at its real metadata unlink syscall. Product
+    // code has no test pause or alternate removal path; rmdir has already run.
+    const c=path.join(f.root,'pause-unlink.c'),lib=path.join(f.root,'pause-unlink.so');
+    await fs.writeFile(c,`#define _GNU_SOURCE\n#include <dlfcn.h>\n#include <stdlib.h>\n#include <string.h>\n#include <signal.h>\nint unlink(const char *p){const char *target=getenv("CAPACITY_TEST_UNLINK_BLOCK");if(target && strcmp(p,target)==0)raise(SIGSTOP);return ((int(*)(const char*))dlsym(RTLD_NEXT,"unlink"))(p);}\n`);
+    execFileSync('cc',['-shared','-fPIC','-o',lib,c,'-ldl']);
+    const child=spawn('/bin/sh',['-c',f.command([3])],{env:{...f.env,LD_PRELOAD:lib,CAPACITY_TEST_UNLINK_BLOCK:proof},stdio:['ignore','pipe','pipe']});
+    const ended=once(child,'close');let text='',killedPid=0;
+    await new Promise<void>(resolve=>child.stdout.on('data',bytes=>{text+=String(bytes);const m=text.match(/CDS_RELEASE_STATIC_RECLAIM_STARTED=\S+\t(\d+)/);if(m&&!killedPid){killedPid=Number(m[1]);resolve();}}));
+    let stopped=false;
+    try{for(let i=0;i<100;i++){const status=await fs.readFile('/proc/'+killedPid+'/status','utf8');if(/^State:\s+T/m.test(status)){stopped=true;break;}await new Promise(r=>setTimeout(r,10));}}
+    finally{process.kill(killedPid,'SIGKILL');}
+    const [code]=await ended;expect(code).not.toBe(0);expect(killedPid).toBeGreaterThan(0);expect(stopped).toBe(true);
+    await expect(fs.stat(f.version(3))).rejects.toMatchObject({code:'ENOENT'});
+    expect(await fs.readdir(store)).toContain(id(3)+'.deleting');
+    const pending=f.inventory();expect(pending.versions).toContain(id(3));expect(pending.pendingStaticRemovals?.[id(3)].commit).toBe(f.commit);
+    // Cover interruption between deleting the manifest and deleting the journal.
+    await fs.unlink(proof);expect(f.inventory().versions).toContain(id(3));
+    const result=f.reclaim([3]);expect(result.removedVersions).toEqual([id(3)]);expect(result.failedVersions).toEqual([]);
+    expect(await fs.readdir(store)).toEqual([id(1)+'.json',id(2)+'.json']);
+    expect(digest(await fs.readFile(path.join(f.version(1),'index.html')))).toBe(f.protectedHash);
   });
 });

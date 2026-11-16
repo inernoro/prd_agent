@@ -176,6 +176,7 @@ export interface RemoteReleaseInventory {
   worktreeRoot: string;
   worktreeIdentities?: Record<string, string>;
   versionIdentities?: Record<string, string>;
+  pendingStaticRemovals?: Record<string, { identity: string; commit: string }>;
   queryError?: string;
 }
 
@@ -429,7 +430,8 @@ export function buildReleaseInventoryCommand(
   const appPath = shellQuote(target.ssh.appPath);
   const targetId = shellQuote(target.id);
   const head = `cd ${appPath} || exit 1; repo="$PWD"; parent="$(dirname "$repo")"; wt="$parent/.cds-releases/"${targetId}"/worktrees"`;
-  const scan = `python3 -c ${shellQuote(`import os,stat,sys,itertools
+  const proofSource = fs.readFileSync(new URL('./static-artifact-proof.py', import.meta.url), 'utf8');
+  const scan = `python3 -c ${shellQuote(proofSource + `\nimport os,stat,sys,itertools
 for p,kind in zip(sys.argv[1:],['WORKTREE','VERSION']):
  try:
   with os.scandir(p) as entries:rows=list(itertools.islice(entries,1025))
@@ -440,7 +442,13 @@ for p,kind in zip(sys.argv[1:],['WORKTREE','VERSION']):
     print('CDS_RELEASE_'+kind+'='+e.name)
     print('CDS_RELEASE_'+kind+'_IDENTITY='+e.name+'\\t'+str(s.st_dev)+':'+str(s.st_ino))
  except FileNotFoundError:pass
- except Exception:print('CDS_RELEASE_SCAN_ERROR='+kind.lower()+'-inventory-unconfirmed')`)} "$wt"${strategy.mode === 'generated-static' ? ' "$root/.releases"' : ''}`;
+ except Exception:print('CDS_RELEASE_SCAN_ERROR='+kind.lower()+'-inventory-unconfirmed')
+if len(sys.argv)>2:
+ try:
+  for name,identity,commit in pending_static_artifacts(pathlib.Path(sys.argv[2]),pathlib.Path(sys.argv[1]).parent):
+   print('CDS_RELEASE_VERSION='+name)
+   print('CDS_RELEASE_STATIC_REMOVAL_PROOF='+name+'\\t'+identity+'\\t'+commit)
+ except Exception:print('CDS_RELEASE_SCAN_ERROR=static-journal-inventory-unconfirmed')`)} "$wt"${strategy.mode === 'generated-static' ? ' "$root/.releases"' : ''}`;
   if (strategy.mode === 'generated-compose' || strategy.mode === 'project-script' || strategy.mode === 'managed-script') {
     return [
       head,
@@ -541,6 +549,10 @@ export function parseRemoteReleaseInventory(stdout: string): RemoteReleaseInvent
         if (key === 'CDS_RELEASE_VERSION_IDENTITY') (inventory.versionIdentities ||= {})[name] = identity;
         else (inventory.worktreeIdentities ||= {})[name] = identity;
       }
+    } else if (key === 'CDS_RELEASE_STATIC_REMOVAL_PROOF') {
+      const [name, identity, commit] = value.split('\t');
+      if (isReleaseArtifactId(name) && /^\d+:\d+$/.test(identity || '') && /^[a-f0-9]{40}$/.test(commit || ''))
+        (inventory.pendingStaticRemovals ||= {})[name] = { identity, commit };
     } else if (key === 'CDS_RELEASE_SCAN_ERROR') inventory.queryError = value;
   }
   return inventory;
