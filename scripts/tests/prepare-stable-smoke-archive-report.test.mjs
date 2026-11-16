@@ -46,3 +46,27 @@ test('归档版把历史截图别名统一到唯一图号', () => {
   assert.match(archived, /\[图024\]\(#fig-024\)/);
   assert.doesNotMatch(archived, /fig-024-recording-real-transcription-failure/);
 });
+
+test('正式环境只读健康检查允许零视觉清单归档', () => {
+  const report = `# 报告
+
+## 模块覆盖
+
+| 模块 | 视觉结论 |
+|---|---|
+| 正式环境只读健康检查 | 不适用 |
+
+## 逐模块视觉取证任务
+
+本轮无视觉取证任务。原因：正式环境单独运行仅执行只读健康检查，不进入需要截图取证的业务创作页面。`;
+
+  assert.equal(prepareArchiveReport(report, []), report);
+});
+
+test('空视觉清单不得绕过普通报告的视觉章节门禁', () => {
+  const report = '# 报告\n\n## 逐模块视觉取证任务\n\n尚未取证。';
+  assert.throws(
+    () => prepareArchiveReport(report, []),
+    /缺少“视觉证据图片”或“视觉测试方法”章节/,
+  );
+});

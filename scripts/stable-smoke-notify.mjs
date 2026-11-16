@@ -9,15 +9,14 @@ function readArg(argv, name, fallback = '') {
 
 export function buildNotificationPayload(options) {
   const isTest = options.isTest === true;
+  const notificationOnly = options.notificationOnly === true;
   const source = options.source || 'stable-smoke';
-  const title = isTest ? '稳定冒烟通知通道测试' : `稳定冒烟${options.verdict === 'fail' ? '失败' : '需要确认'}`;
+  const title = isTest ? '业务巡检：通知通道测试' : '业务巡检：有检查项需要处理';
   const detail = [
-    `运行：${options.runId}`,
     `环境：${options.environment}`,
-    `模块：${options.module || '整轮'}`,
-    options.caseId ? `用例：${options.caseId}` : '',
-    options.requestId ? `追踪号：${options.requestId}` : '',
-    `处理：${isTest ? '这是一条通道测试，无需处理。' : options.recovery}`,
+    !isTest && notificationOnly ? `运行编号：${options.runId}` : '',
+    isTest ? '这是一条通道测试，无需处理。' : options.recovery,
+    isTest || notificationOnly ? '' : '查看报告了解逐项结果与处理进展；未执行不代表业务故障。',
   ].filter(Boolean).join('\n');
 
   return {
@@ -33,7 +32,7 @@ export function buildNotificationPayload(options) {
     section: 'admin',
     dedupKey: isTest
       ? 'stable-smoke-channel-test'
-      : `${options.runId}:${options.environment}:${options.caseId || 'run'}:${options.module || 'all'}`,
+      : `${options.runId}:summary`,
     expiresInDays: isTest ? 3 : 30,
   };
 }
@@ -123,6 +122,7 @@ async function main() {
     reportUrl: readArg(argv, '--report-url'),
     actionLabel: readArg(argv, '--action-label', '查看验收证据'),
     isTest: argv.includes('--test'),
+    notificationOnly: argv.includes('--notification-only'),
   };
   const result = await sendNotification(options);
   process.stdout.write(`${JSON.stringify(result)}\n`);
