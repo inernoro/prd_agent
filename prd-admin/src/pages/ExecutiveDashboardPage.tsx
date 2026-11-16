@@ -85,7 +85,19 @@ export default function ExecutiveDashboardPage() {
       },
       { replace: true },
     );
-  const [days, setDays] = useState(0);
+  const requestedDays = Number(params.get('days') ?? 0);
+  const days = DAYS_OPTIONS.some((option) => option.value === requestedDays)
+    ? requestedDays
+    : 0;
+  const setDays = (value: number) =>
+    setParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.set('days', String(value));
+        return next;
+      },
+      { replace: true },
+    );
   const [revision, setRevision] = useState(0);
   const overviewQuery = useExecutiveQuery(
     getExecutiveOverview,
@@ -239,7 +251,6 @@ export default function ExecutiveDashboardPage() {
         {activeTab === 'agents' && (
           <div className="exec-other-tab">
             <ExecutiveAgentsWorkspace
-              key={params.get('agent')}
               initialAgent={params.get('agent')}
               agents={agentsQuery.data}
               team={teamQuery.data}
