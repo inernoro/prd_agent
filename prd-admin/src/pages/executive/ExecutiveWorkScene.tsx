@@ -18,6 +18,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { HomeTaskQueue } from '@/components/workspace/HomeTaskQueue';
 import { withDocumentStoreEntry } from '@/pages/document-store/documentStoreDeepLink';
 import { useExecutiveQuery } from './useExecutiveQuery';
+import { stripMarkdown } from '@/lib/stripMarkdown';
 import { ok } from '@/types/api';
 
 const readImages = () => getMobileAssets({ category: 'image', limit: 4 });
@@ -105,7 +106,7 @@ export function ExecutiveWorkScene({ revision = 0 }: { revision?: number }) {
               >
                 <AssetImage asset={asset} />
                 <strong>
-                  {asset.title || '未命名图片'}
+                  <span>{asset.title || '未命名图片'}</span>
                   <ArrowUpRight size={13} />
                 </strong>
                 <small>
@@ -167,7 +168,7 @@ export function ExecutiveWorkScene({ revision = 0 }: { revision?: number }) {
                   <ArrowUpRight size={14} />
                 </header>
                 {entry.summary ? (
-                  <p>{entry.summary}</p>
+                  <p>{stripMarkdown(entry.summary).replace(/(^|\s)#{1,6}\s+/g, '$1')}</p>
                 ) : (
                   <p className="scene-doc-no-summary">打开阅读正文</p>
                 )}
