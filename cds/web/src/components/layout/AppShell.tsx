@@ -272,8 +272,8 @@ function ConsoleRouteFallback(): JSX.Element {
         */}
         <div className={cn('cds-workspace cds-workspace--fluid', scene?.kind === 'code-reviews' && 'cr-ui', workspace === 'fill' && 'cds-workspace--fill', workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
           {monitoringHome ? <div className="monitor-page-shell flex min-h-0 flex-1 flex-col">
-            {pageSkeletonForPath(pathname, { canManageProjects, monitoringHome })}
-          </div> : pageSkeletonForPath(pathname, { canManageProjects })}
+            {pageSkeletonForPath(pathname, { canManageProjects, monitoringHome, search })}
+          </div> : pageSkeletonForPath(pathname, { canManageProjects, search })}
           <ListLoadingFeedback />
         </div>
       </main>

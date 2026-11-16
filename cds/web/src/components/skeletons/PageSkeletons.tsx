@@ -14,6 +14,8 @@ import { SettingsPageSkeleton } from './SettingsSkeleton';
 import { BranchDetailLoadingSkeleton, LoadingBlock } from '@/pages/cds-settings/components';
 import { MonitorCenterSkeleton } from '@/pages/status/primitives';
 import { BranchListOverview } from '@/components/branch/BranchListOverview';
+import { ACCEPTANCE_LAYOUT_CLASS, AcceptanceNavigation } from '@/components/reports/AcceptanceNavigation';
+import { acceptanceView } from '@/lib/acceptance-api';
 
 /**
  * 页面级加载骨架的 SSOT（2026-09-17）。
@@ -169,8 +171,16 @@ export function ConsoleGenericSkeleton(): JSX.Element {
 }
 
 /** 路由 → 骨架形状。控制台外壳在 chunk 未到时按它画，和页面自己等数据时画的是同一副。 */
-export function pageSkeletonForPath(pathname: string, capabilities: { canManageProjects?: boolean; monitoringHome?: boolean } = {}): JSX.Element {
-  switch (loadingSceneForPath(pathname)?.kind) {
+export function pageSkeletonForPath(pathname: string, capabilities: { canManageProjects?: boolean; monitoringHome?: boolean; search?: string } = {}): JSX.Element {
+  const scene = loadingSceneForPath(pathname);
+  if (scene?.route === '/reports') {
+    const params = new URLSearchParams(capabilities.search);
+    return <div className={ACCEPTANCE_LAYOUT_CLASS}>
+      <AcceptanceNavigation view={acceptanceView(params.get('view'), params.get('report') || undefined)} />
+      <LoadingBlock label="正在加载验收报告" />
+    </div>;
+  }
+  switch (scene?.kind) {
     case 'auth': return <AuthPageSkeleton />;
     case 'public-status': return <PublicStatusSkeleton />;
     case 'projects': return <ProjectListSkeleton canManageProjects={capabilities.canManageProjects} />;

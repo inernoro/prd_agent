@@ -63,6 +63,7 @@ import { PipelinePanel } from '@/pages/reports/PipelinePanel';
 import { acceptanceView } from '@/lib/acceptance-api';
 import type { AcceptanceView } from '@/lib/acceptance-api';
 import { AcceptanceNavigation, AcceptanceWorkspace } from '@/pages/reports/AcceptanceWorkspace';
+import { ACCEPTANCE_LAYOUT_CLASS } from '@/components/reports/AcceptanceNavigation';
 
 interface ProjectLite {
   id: string;
@@ -778,7 +779,7 @@ export function ReportsPage(): JSX.Element {
       )}
     >
       <Workspace fluid className={selected || centerView !== 'reports' ? 'cds-workspace--fill' : undefined}>
-        <div className="flex h-full min-h-0 flex-col gap-3">
+        <div className={ACCEPTANCE_LAYOUT_CLASS}>
           <AcceptanceNavigation view={centerView} onChange={changeCenterView} />
           {centerView !== 'reports' ? <div className="min-h-0 overflow-y-auto lg:flex-1"><AcceptanceWorkspace key={projectId} projectId={projectId} projects={projects} view={centerView} onProjectChange={changeAcceptanceProject} /></div> : null}
           {centerView === 'reports' ? <>
