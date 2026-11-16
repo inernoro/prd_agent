@@ -44,10 +44,13 @@ interface JanitorConfig {
 
 interface JanitorSnapshot {
   enabled?: boolean;
+  reclaimLock?: { holder: string | null; since: number | null };
   config?: JanitorConfig | null;
   dryRun?: { wouldRemove: string[]; wouldSkip: string[] };
   disk?: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
-  lastSweep?: { at: string; deploymentSources?: { filesystem?: {
+  lastSweep?: { at: string; reclaimDeferred?: { heldBy: string; heldForMs: number };
+    capacity?: { fullRecheckScheduled?: boolean; fullRechecksRemaining?: number };
+    deploymentSources?: { filesystem?: {
     beforeAvailableBytes: number | null; afterAvailableBytes: number | null; netAvailableBytesDelta: number | null;
   } } } | null;
 }
@@ -162,6 +165,11 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
     <Section title="调度器与工作区保留" description="配置影响全部项目。热池最多25个分支；资源充裕时保留空闲服务，压力下维持降温保护。过期删除会清理容器与工作区，两项规则分别保存。">
       <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground"><span className="inline-flex items-center gap-2"><Flame />热池占用 {s?.snapshot.capacityUsage ? s.snapshot.capacityUsage.current : '未确认'}</span><span className="inline-flex items-center gap-2"><Snowflake />冷分支 {cold ? cold.length : '未确认'}</span><span className="inline-flex items-center gap-2"><Trash2 />当前规则待删除 {removal ? removal.length : '未确认'}</span><span className="inline-flex items-center gap-2"><HardDrive />磁盘 {j?.snapshot.disk ? `${j.snapshot.disk.usedPercent}%` : '未确认'}</span></div>
       <HeatPoolGovernance snapshot={s?.snapshot} />
+      {j?.snapshot.lastSweep?.reclaimDeferred ? <p role="status" className="mt-3 text-sm text-warn">
+        上轮回收因互斥锁占用而延期，持有任务为 <CodePill>{j.snapshot.lastSweep.reclaimDeferred.heldBy}</CodePill>。
+        {j.snapshot.lastSweep.capacity?.fullRecheckScheduled === true ? '已安排有界错峰复查。' : j.snapshot.lastSweep.capacity?.fullRecheckScheduled === false ? '当前未安排复查，将等待下一常规周期。' : '复查安排尚未确认。'}
+      </p> : null}
+
     </Section>
     <Section title="自动冷却" description="空闲超过时长或热分支超过上限时，停止最久未访问的非固定分支；后续访问可重建。固定分支不自动冷却。" actions={<Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={scheduler.busy} onClick={() => void scheduler.load(true)}>重新读取冷却规则</Button>}>
       {scheduler.state.status === 'loading' ? <LoadingBlock label="读取冷却规则" /> : scheduler.state.status === 'error' ? <ErrorBlock message={scheduler.state.message} /> : !s ? <LoadingBlock label="读取当前会话冷却规则" /> : !s.snapshot.config ? <p className="text-sm text-muted-foreground">调度服务未启动，当前没有可编辑配置。请确认服务运行后重新读取。</p> : <div className="space-y-4">
