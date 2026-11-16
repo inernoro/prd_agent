@@ -20,6 +20,12 @@ on:
       - ".claude/skills/cds-release/**"
       - ".claude/skills/preview-url/**"
   workflow_dispatch:
+    inputs:
+      capacity_standard_runtime:
+        description: "发布供隔离持久化验收的标准CDS运行镜像"
+        required: false
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
@@ -188,3 +194,46 @@ jobs:
       - name: Remove preview smoke container
         if: always()
         run: docker rm -f cds-preview-smoke 2>/dev/null || true
+
+      # 标准运行镜像保留仓库既有用户与工作目录；仅显式验收时发布。
+      # 不改变预览实例的环境隔离，也不在部署端绕过提交一致性门禁。
+      - name: Build & load opt-in standard CDS runtime
+        if: github.event_name == 'workflow_dispatch' && inputs.capacity_standard_runtime
+        uses: docker/build-push-action@v5
+        with:
+          context: ./cds
+          file: ./cds/Dockerfile
+          push: false
+          load: true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-runtime:sha-${{ github.sha }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Verify standard runtime assets and persistent volume across recreation
+        if: github.event_name == 'workflow_dispatch' && inputs.capacity_standard_runtime
+        env:
+          CDS_ACCEPTANCE_IMAGE: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-runtime:sha-${{ github.sha }}
+          CDS_ACCEPTANCE_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          CDS_ACCEPTANCE_VOLUME="cds-capacity-acceptance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker volume create --label cds.capacity-acceptance="$GITHUB_RUN_ID" "$CDS_ACCEPTANCE_VOLUME"
+          trap 'docker volume rm "$CDS_ACCEPTANCE_VOLUME"' EXIT
+          docker run --pull=never --rm --mount "type=volume,src=$CDS_ACCEPTANCE_VOLUME,dst=/app/.cds,volume-nocopy" \
+            --env CDS_ACCEPTANCE_SHA --entrypoint node "$CDS_ACCEPTANCE_IMAGE" -e '
+              const fs=require("fs"),assert=require("assert");
+              assert.equal(JSON.parse(fs.readFileSync("cds-prebuilt-manifest.json")).sha,process.env.CDS_ACCEPTANCE_SHA);
+              for(const p of ["dist/services/host-capacity-probe.py","dist/services/static-artifact-proof.py","web/dist/index.html"]) assert(fs.statSync(p).size>0,p);
+              fs.writeFileSync(".cds/acceptance-state",process.env.CDS_ACCEPTANCE_SHA,{mode:0o600,flag:"wx"});
+              assert.equal(fs.statSync(".cds/acceptance-state").mode&0o777,0o600);
+            '
+          docker run --pull=never --rm --mount "type=volume,src=$CDS_ACCEPTANCE_VOLUME,dst=/app/.cds,volume-nocopy" \
+            --env CDS_ACCEPTANCE_SHA --entrypoint node "$CDS_ACCEPTANCE_IMAGE" -e '
+              const fs=require("fs"),assert=require("assert");
+              assert.equal(fs.readFileSync(".cds/acceptance-state","utf8"),process.env.CDS_ACCEPTANCE_SHA);
+              assert.equal(fs.statSync(".cds/acceptance-state").mode&0o777,0o600);
+            '
+          docker run --pull=never --rm --entrypoint python3 "$CDS_ACCEPTANCE_IMAGE" dist/services/host-capacity-probe.py --help > /dev/null
+
+      - name: Publish verified opt-in standard CDS runtime
+        if: success() && github.event_name == 'workflow_dispatch' && inputs.capacity_standard_runtime
+        run: docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-runtime:sha-${{ github.sha }}
