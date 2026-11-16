@@ -165,14 +165,22 @@ def analyze(sample, history, warning=75, critical=90, reserve_bytes=6 * 1024**3,
                        "reserveBytes": reserve_bytes, "horizonDays": horizon_days, "maxSamples": MAX_SAMPLES}}
 
 
-def load_history(file, selected):
+def load_history(file, selected, new_source_baseline=False):
     if not file.exists():
         return []
     if file.is_symlink() or file.stat().st_size > MAX_STATE_BYTES:
         raise ValueError("unsafe or oversized state")
     data = json.loads(file.read_text())
-    if data["version"] != 1 or data["roots"] != selected or data["host"] != socket.gethostname():
+    changed = data["roots"] != selected
+    if data["version"] != 1 or data["host"] != socket.gethostname() or (changed and not new_source_baseline):
         raise ValueError("state host or source roots changed; use a separate state directory")
+    if changed:
+        previous_roots = data["roots"]
+        if not isinstance(previous_roots, dict) or not 1 <= len(previous_roots) <= 32 or any(
+                not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", name)
+                or not isinstance(root, str) or not os.path.isabs(root) or "\x00" in root
+                for name, root in previous_roots.items()):
+            raise ValueError("invalid source history")
     samples = data["samples"]
     if not isinstance(samples, list) or len(samples) > MAX_SAMPLES:
         raise ValueError("invalid sample history")
@@ -189,7 +197,9 @@ def load_history(file, selected):
             if not all(isinstance(entry[key], int) and entry[key] >= 0 for key in (
                 "totalBytes", "usedBytes", "availableBytes", "totalInodes", "availableInodes")) or entry["totalBytes"] <= 0:
                 raise ValueError("invalid filesystem measurement")
-    return samples
+    # The managed producer has a finite known root set. A lazily-created cache
+    # starts a new baseline in the same bounded slot, never a mixed history.
+    return [] if changed else samples
 
 
 def save_history(file, selected, history, sample):
@@ -268,6 +278,7 @@ def main():
     p.add_argument("--critical", type=float, default=90)
     p.add_argument("--reserve-gib", type=float, default=6)
     p.add_argument("--horizon-days", type=float, default=7)
+    p.add_argument("--new-source-baseline", action="store_true", help="start a cold baseline on a known source-set change; host identity must still match")
     args = p.parse_args()
     try:
         if not (0 < args.warning < args.critical <= 100 and math.isfinite(args.reserve_gib)
@@ -284,7 +295,7 @@ def main():
         with os.fdopen(lockfd, "w"):
             fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             try:
-                history = load_history(state / "history.json", selected)
+                history = load_history(state / "history.json", selected, args.new_source_baseline)
                 sample = collect(selected, args.docker)
                 report = analyze(sample, history, args.warning, args.critical,
                                  int(args.reserve_gib * 1024**3), args.horizon_days)

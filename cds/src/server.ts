@@ -901,6 +901,9 @@ export function resolveApiLabel(method: string, path: string): string {
   // Static exact matches
   const staticMap: Record<string, string> = {
     'GET /host-capacity/observation': '查看容量观测',
+    'GET /host-capacity/sampling': '查看容量采样',
+    'PUT /host-capacity/sampling': '配置容量采样',
+    'POST /host-capacity/sampling/run': '执行容量采样',
     'GET /janitor/backups': '预览备份回收',
     'GET /janitor/backups/state': '查询备份回收',
     'GET /janitor/backups/owners': '查询备份归属',
