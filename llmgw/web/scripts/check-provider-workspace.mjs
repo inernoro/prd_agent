@@ -40,7 +40,7 @@ const results = [], failures = [];
 const check = (value, message) => { results.push({ check: message, passed: !!value }); if (!value)
     failures.push(message); };
 const source = {};
-for (const f of ['src/pages/PlatformsPage.tsx', 'src/pages/PlatformsPage.css', 'src/components/ProviderModelsPanel.tsx', 'src/components/CollectionView.tsx'])
+for (const f of ['src/pages/PlatformsPage.tsx', 'src/pages/PlatformsPage.css', 'src/components/ProviderModelsPanel.tsx', 'src/components/CollectionView.tsx', 'src/components/CollectionView.css'])
     source[f] = crypto.createHash('sha256').update(fs.readFileSync(root + '/' + f)).digest('hex');
 try {
     for (const [width, theme] of (process.env.CHECK_REPRESENTATIVE ? [[1440, 'light']] : [[1440, 'light'], [1440, 'dark'], [390, 'light'], [390, 'dark']])) {
@@ -67,6 +67,14 @@ try {
             check(innerBorders.every(width => width === 0), `${width}/${theme}/one provider remains one visual group without field borders`);
         }
 
+        if (width === 1440) {
+            const actionAlignment = await p.evaluate(() => {
+                const head = document.querySelector('.lg-collection-provider-table th:last-child');
+                const action = document.querySelector('.lg-provider-row-actions > button');
+                return Math.abs(head.getBoundingClientRect().left + parseFloat(getComputedStyle(head).paddingLeft) - action.getBoundingClientRect().left);
+            });
+            check(actionAlignment <= 1, `${width}/${theme}/action column follows the same header and data alignment`);
+        }
         check(listGeometry.firstRow.y <= (width === 390 ? 330 : 300), `${width}/${theme}/first provider appears before baseline packaging`);
         const entry = p.getByRole('button', { name: /查看 preview-readability-20261115-alpha 的已接入模型/ });
         await entry.click();

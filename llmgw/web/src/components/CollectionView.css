@@ -174,7 +174,6 @@
 .lg-collection-provider-row td { height: 60px; padding: 8px 12px !important; line-height: 1.35 !important; }
 .lg-collection-provider-row td:first-child > div { min-width: 0 !important; gap: 2px !important; }
 .lg-collection-provider-row td:first-child > div > span { overflow: visible; overflow-wrap: anywhere; white-space: normal; }
-.lg-collection-provider-row td:last-child { padding-left: 0 !important; padding-right: 4px !important; }
 .lg-collection-provider-row td:last-child button { min-height: 32px; padding: 4px 8px !important; font-size: var(--fs-secondary) !important; }
 .lg-collection-provider-key { display: flex; align-items: flex-start; flex-direction: column; gap: 3px; }
 .lg-provider-owned-models-trigger { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; max-width: 100%; padding: 4px 0; background: none; border: none; cursor: pointer; text-align: left; font-size: var(--fs-secondary); white-space: normal; text-decoration: underline; text-underline-offset: 3px; }
