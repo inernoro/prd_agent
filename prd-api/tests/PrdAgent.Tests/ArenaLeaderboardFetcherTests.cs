@@ -58,6 +58,48 @@ public class ArenaLeaderboardFetcherTests
     }
 
     [Fact]
+    public async Task FetchAsync_代理返回成功状态的验证页时归为上游不可达()
+    {
+        // 2026-11-16 在 CDS main 实测：源站 403，Reader 将验证页包装成 200。
+        var handler = new RecordingHandler(
+            "<html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>");
+        var fetcher = new ArenaLeaderboardFetcher(new HttpClient(handler));
+
+        var error = await Assert.ThrowsAsync<HttpRequestException>(
+            () => fetcher.FetchAsync("agent", CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.Forbidden, error.StatusCode);
+        Assert.Contains("upstream_challenge", error.Message);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task FetchAsync_代理的Markdown验证页也不能误报榜单改版()
+    {
+        var handler = new RecordingHandler("""
+Title: Just a moment...
+
+URL Source: https://arena.ai/leaderboard/agent
+
+Warning: This page maybe requiring CAPTCHA, please make sure you are authorized to access this page.
+""");
+        var fetcher = new ArenaLeaderboardFetcher(new HttpClient(handler));
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => fetcher.FetchAsync("agent", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task FetchAsync_真正的表格改版仍触发完整性保护()
+    {
+        var handler = new RecordingHandler("<html><head><title>Agent leaderboard</title></head><body></body></html>");
+        var fetcher = new ArenaLeaderboardFetcher(new HttpClient(handler));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fetcher.FetchAsync("agent", CancellationToken.None));
+    }
+
+    [Fact]
     public async Task FetchAsync_配置快照镜像时优先从远程Cds恢复并保留抓取时间()
     {
         var parsed = Padded(ArenaLeaderboardFetcher.Parse(RealFixture));
@@ -90,6 +132,14 @@ public class ArenaLeaderboardFetcherTests
     {
         var r = ArenaLeaderboardFetcher.Parse(RealFixture);
         Assert.Equal(2, r.Entries.Count);
+    }
+
+    [Fact]
+    public void Parse_新网页命令可靠性不冒充旧命令恢复()
+    {
+        var result = ArenaLeaderboardFetcher.Parse(RealFixture.Replace("<th>Bash Recovery</th>", "<th>Bash Reliability</th>", StringComparison.Ordinal));
+        Assert.All(result.Entries, e => { Assert.NotNull(e.BashReliability); Assert.Null(e.BashRecovery); });
+        Assert.Equal(11.07, result.Entries[0].BashReliability!.Value);
     }
 
     /// <summary>
@@ -811,7 +861,7 @@ public class ArenaLeaderboardFetcherTests
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            var returnFormat = request.Headers.TryGetValues("X-Return-Format", out var values)
+            var returnFormat = request.Headers.TryGetValues("X-Respond-With", out var values)
                 ? values.Single()
                 : null;
             Requests.Add((request.RequestUri!.ToString(), returnFormat));

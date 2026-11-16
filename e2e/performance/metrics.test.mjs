@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { calibrate, compare, capacity, summarize, stats, workload, browserScenarios } from './metrics.mjs';
 
 function run(id, ms = 20) {
-  const samples = Array.from({ length: 100 }, () => ({ name: 'home', ok: true, ms, app: ms - 2, external: 0 }));
-  return { environmentId: id, commit: 'base', contract: { schema: 1 }, startedAt: id,
+  const samples = Array.from({ length: workload.normal.seconds * workload.normal.users }, () => ({ name: 'home', ok: true, ms, app: ms - 2, external: 0 }));
+  return { environmentId: id, commit: 'base', contract: { schema: 1, workload }, startedAt: id,
     buildIdentity: { api: { actualCommit: 'base', expectedCommit: 'base', commitMatch: 'match' }, webEntries: ['/assets/index-base.js'] },
     finishedAt: '2026-11-13T00:00:00.000Z', execution: { profile: 'normal', state: 'complete' },
     browser: { pass: true, samples: Object.fromEntries(browserScenarios.map(name => [name, [100, 110, 105]])) },
-    phases: [{ name: 'normal', metrics: summarize(samples, 20) }] };
+    phases: [{ name: 'normal', seconds: workload.normal.seconds, metrics: summarize(samples, workload.normal.seconds) }] };
 }
 test('零错误、足量、三次独立运行才允许校准', () => {
   assert.throws(() => calibrate([run('a'), run('b')]));
@@ -16,11 +16,21 @@ test('零错误、足量、三次独立运行才允许校准', () => {
   const bad = run('c'); bad.phases[0].metrics.home.errors = 1;
   assert.throws(() => calibrate([run('a'), run('b'), bad]));
 });
-test('短时40样本不能替代至少100样本的正常负载基线', () => {
+test('原60秒的120样本不能替代120秒至少200样本的新基线', () => {
   const short = run('short');
-  short.phases[0].metrics.home.attempts = 40;
-  short.phases[0].metrics.home.app.n = 40;
+  short.phases[0].metrics.home.attempts = 120;
+  short.phases[0].metrics.home.app.n = 120;
   assert.throws(() => calibrate([run('a'), run('b'), short]), /基线场景样本不足/);
+});
+test('已标完成但提前结束的正常阶段仍拒绝，旧契约不能混入新基线', () => {
+  const short = run('short'); short.phases[0].seconds = 60;
+  const baseline = calibrate([run('a'), run('b'), run('c')]);
+  assert.equal(compare(short, baseline).pass, false);
+  assert.throws(() => calibrate([run('a'), run('b'), short]), /采集时间不足/);
+  const old = structuredClone(run('old')); old.contract.workload.version = 3;
+  old.contract.workload.normal.seconds = 60;
+  assert.equal(compare(old, baseline).pass, false);
+  assert.throws(() => calibrate([run('a'), run('b'), old]), /契约不一致/);
 });
 test('运行快照不能复评通过，也不能进入三次基线', () => {
   const complete = run('complete');
@@ -129,4 +139,15 @@ test('用户可用时间不能缺样本，也不能沿用没有浏览器阈值�
   assert.throws(() => calibrate([partial, run('b'), run('c')]), /可用耗时/);
   const legacy = structuredClone(baseline); delete legacy.browserLimits;
   assert.equal(compare(run('normal'), legacy).pass, false);
+});
+
+test('缺少API基线不得通过', () => {
+  const baseline = calibrate([run('a'), run('b'), run('c')]);
+  baseline.limits = {};
+  assert.equal(compare(run('candidate'), baseline).pass, false);
+});
+test('仅有一个应用计时样本不得通过', () => {
+  const baseline = calibrate([run('a'), run('b'), run('c')]);
+  const sparse = run('candidate'); sparse.phases[0].metrics.home.app.n = 1;
+  assert.equal(compare(sparse, baseline).pass, false);
 });
