@@ -5041,7 +5041,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
       await testInfo.attach('multi-image-boundaries', { body: await page.screenshot(), contentType: 'image/png' });
 
-      const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+      const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL, serviceWorkers: 'allow' });
+      await mobileContext.addInitScript(blockStableSmokeServiceWorkerRegistration);
       const mobilePage = await mobileContext.newPage();
       const mobileToken = await loginAndReadToken(mobilePage, request, '/visual-agent');
       const { workspace: mobileWorkspace } = await createVisualWorkspace(mobilePage, mobileToken, 'mobile-upload-warning');

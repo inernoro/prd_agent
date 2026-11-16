@@ -787,7 +787,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
                 return GatewayResponse.Fail(IsAmbiguousProviderStatus((int)response.StatusCode)
                     ? OutcomeUnknownErrorCode : "LLM_ERROR", errorMsg, (int)response.StatusCode,
-                    activeResolution.ToGatewayResolution());
+                    activeResolution.ToGatewayResolution(billingAlerts));
             }
 
             // 从原始响应中提取消息文本内容
