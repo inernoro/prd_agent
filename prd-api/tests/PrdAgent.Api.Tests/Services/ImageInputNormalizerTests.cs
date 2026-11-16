@@ -108,8 +108,10 @@ public class ImageInputNormalizerTests
         maskImage[1, 0] = new Rgba32(255, 255, 255, 255);
         using var maskStream = new MemoryStream();
         maskImage.SaveAsPng(maskStream);
-        var mask = maskStream.ToArray();
-        var reference = oversizedMask ? mask : ImageInputTestData.Create();
+        var encodedMask = maskStream.ToArray();
+        // IHDR 完整而像素载荷缺失：必须先报告尺寸上限，不能先尝试解码像素再报告损坏。
+        var mask = oversizedMask ? encodedMask[..33] : encodedMask;
+        var reference = oversizedMask ? encodedMask : ImageInputTestData.Create();
         var http = new InspectingHttpFactory();
         var gateway = new LlmGateway(new Mock<IModelResolver>().Object, http, NullLogger<LlmGateway>.Instance);
         var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
@@ -135,6 +137,7 @@ public class ImageInputNormalizerTests
         {
             Assert.False(response.Success);
             Assert.Equal(ImageInputNormalizer.ErrorCode, response.ErrorCode);
+            Assert.Contains("4096", response.ErrorMessage);
             Assert.Equal(0, http.Calls);
             Assert.Contains("4096", Assert.Throws<ImageInputException>(() => ImageInputNormalizer.Read(mask, forMask: true)).Message);
             return;
@@ -146,6 +149,23 @@ public class ImageInputNormalizerTests
         Assert.Equal(0, decoded[1, 0].A);
         Assert.Equal(16, decoded.Width);
         Assert.Equal(16, decoded.Height);
+    }
+
+    [Fact]
+    public async Task ImageClient_RejectsMaskDimensionsBeforePixelDecodeOrModelResolution()
+    {
+        using var image = new Image<Rgba32>(4097, 1, new Rgba32(255, 255, 255, 255));
+        using var bytes = new MemoryStream();
+        image.SaveAsPng(bytes);
+        var headerOnlyMask = Convert.ToBase64String(bytes.ToArray()[..33]);
+        var client = new OpenAIImageClient(null!, null!, null!, null!,
+            NullLogger<OpenAIImageClient>.Instance, null!, null!, null!);
+        var response = await client.GenerateAsync("仅重绘蒙版区域", 1, null, null,
+            CancellationToken.None, "visual-agent.image.vision::generation",
+            initImageBase64: ImageInputTestData.DataUri(), maskBase64: headerOnlyMask);
+        Assert.False(response.Success);
+        Assert.Equal(ImageInputNormalizer.ErrorCode, response.Error?.Code);
+        Assert.Contains("4096", response.Error?.Message);
     }
 
     [Theory]

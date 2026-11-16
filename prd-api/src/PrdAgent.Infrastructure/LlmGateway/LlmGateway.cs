@@ -2651,7 +2651,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
                         ? value
                         : ImageInputNormalizer.Read(value).DataUri).ToList(),
-                MaskBase64 = spec.MaskBase64 is null ? null : ImageInputNormalizer.Read(spec.MaskBase64).DataUri,
+                MaskBase64 = spec.MaskBase64 is null ? null : ImageInputNormalizer.Read(spec.MaskBase64, forMask: true).DataUri,
             };
         }
         Dictionary<string, (string FileName, byte[] Content, string MimeType)>? files = null;
