@@ -1,0 +1,51 @@
+{
+  "allImagesActuallyViewed": true,
+  "commit": "5d85c1aa1c954789dcb48971888373ed616b9019",
+  "sourceRun": 43925807090,
+  "files": [
+    {
+      "name": "01-desktop-dark-home",
+      "sha256": "720fe58f25ac2979b49b3ed0a14151a6f41e92e407e8fcc8a2b411d66954f9d0"
+    },
+    {
+      "name": "02-desktop-dark-knowledge-list",
+      "sha256": "87f898c39e5ad570641eeee98a48d1e54e634c826735ebfa0a5cb1afd8848d1a"
+    },
+    {
+      "name": "03-desktop-dark-document-open",
+      "sha256": "0f51fafc667e868cb8a55270f6d2a88fcea834f4fd7b5ec4235f73d14f3a3829"
+    },
+    {
+      "name": "04-desktop-dark-saved-refresh",
+      "sha256": "1dd1eb1f31a00e8d17ba7124411a43cb4abc092e3087311980a17065ba498649"
+    },
+    {
+      "name": "05-desktop-light-home",
+      "sha256": "fe9d7427f9385e1b9e7bffdce3d51f3676710912a7e911ca239eb89884a0c654"
+    },
+    {
+      "name": "06-desktop-light-saved-refresh",
+      "sha256": "b27b0e4892b8d6f88d7b48d80ffaab4cbba2bebde1baceaa93c8cfd2cf93648a"
+    },
+    {
+      "name": "07-mobile-dark-home",
+      "sha256": "7d37c60a991d24c09e1c0cf8e9135adb0dd8fdd5a835b5498c67dd7e3548add1"
+    },
+    {
+      "name": "08-mobile-dark-saved-refresh",
+      "sha256": "4bdf473cd1f95fa6d33cddccb58ab9ace5b9da8f44e71670c706653cff3e53a8"
+    },
+    {
+      "name": "09-mobile-light-home",
+      "sha256": "91830593fca81bbefbe6d48fa4fc237bbd941a0629226977af79def87ed3aabb"
+    },
+    {
+      "name": "10-mobile-light-saved-refresh",
+      "sha256": "f742abe5e55f4114740d7105aad4a4164557a974c5f1f8c5216573180aa1026e"
+    },
+    {
+      "name": "11-mobile-light-server-restart",
+      "sha256": "c64131c9966f7723da615e3c68f2d29093774e7fa15ff9418080a504e550ea7f"
+    }
+  ]
+}

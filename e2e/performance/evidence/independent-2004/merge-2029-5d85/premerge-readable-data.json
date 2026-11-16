@@ -1,0 +1,116 @@
+{
+  "candidate": "5d85c1aa1c954789dcb48971888373ed616b9019",
+  "base": "c14389a403ff296c4bbfc95c0fbb6553c673bcd2",
+  "verified": true,
+  "normal": {
+    "attempts": 242,
+    "errors": 0,
+    "throughput": 2.000176976650717,
+    "client": {
+      "n": 242,
+      "p50": 71.7716140000266,
+      "p95": 171.52157400001306,
+      "p99": 245.21146700001555,
+      "max": 275.8373739999952,
+      "mean": 91.10194102066116
+    }
+  },
+  "baselineP95": [
+    177.1897159999935,
+    193.02067800000077,
+    167.79712399999698
+  ],
+  "homeReadyP95": 1788.7730180000071,
+  "injectedFront": {
+    "apiP95": 16.318742999996175,
+    "pageP95": 11490.049189000001,
+    "limit": 3523.148056000002
+  },
+  "resources": {
+    "api": {
+      "peakCpu": 94.26166779760969,
+      "peakRssMiB": 321.546875
+    },
+    "mongo": {
+      "peakCpu": 6.845321325847127,
+      "peakRssMiB": 212.4296875
+    },
+    "redis": {
+      "peakCpu": 1.970016681017714,
+      "peakRssMiB": 15.796875
+    },
+    "web": {
+      "peakCpu": 1.9673178205686581,
+      "peakRssMiB": 9.0390625
+    }
+  },
+  "actualCgroups": {
+    "mongo": {
+      "cpuMax": "100000 100000",
+      "memoryMax": "805306368"
+    },
+    "redis": {
+      "cpuMax": "50000 100000",
+      "memoryMax": "268435456"
+    },
+    "api": {
+      "cpuMax": "100000 100000",
+      "memoryMax": "1073741824"
+    },
+    "web": {
+      "cpuMax": "50000 100000",
+      "memoryMax": "268435456"
+    }
+  },
+  "host": {
+    "cpus": 4,
+    "memoryBytes": 16760344576,
+    "kernel": "7.0.0-1017-azure"
+  },
+  "cpu": "AMD EPYC 7763 64-Core Processor",
+  "ui": {
+    "commit": "5d85c1aa1c954789dcb48971888373ed616b9019",
+    "harnessCommit": "4b5290d33627967653414b02841038d96496c931",
+    "state": "complete",
+    "pass": true,
+    "cases": [
+      {
+        "id": "desktop-dark",
+        "pass": true,
+        "persisted": true,
+        "onboardingDismissals": [
+          "- button \"我已学会\":\n  - img\n  - text: 我已学会"
+        ]
+      },
+      {
+        "id": "desktop-light",
+        "pass": true,
+        "persisted": true,
+        "onboardingDismissals": null
+      },
+      {
+        "id": "mobile-dark",
+        "pass": true,
+        "persisted": true,
+        "onboardingDismissals": null
+      },
+      {
+        "id": "mobile-light",
+        "pass": true,
+        "persisted": true,
+        "onboardingDismissals": null
+      }
+    ],
+    "anonymous": {
+      "pass": true,
+      "status": 401,
+      "publicRedirect": true,
+      "loginEntryAccessible": true,
+      "contentUnchanged": true
+    },
+    "restart": {
+      "pass": true,
+      "method": "重启真实API容器后在原浏览器会话刷新，正文与主题保留"
+    }
+  }
+}

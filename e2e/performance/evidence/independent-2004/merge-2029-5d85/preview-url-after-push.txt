@@ -1,0 +1,1 @@
+[FAIL] 分支 'fix/map-performance-guide-ready' 当前没有可用的预览入口。MAP平台：分支 prd-agent-fix-map-performance-guide-ready 在 CDS 上，但还没有已发布的用户入口（多半正在构建，或该分支没有对外的 Web 服务）；CDS 批次发布完整验收源：本次改动波及该项目，但 CDS 上还没有分支 'fix/map-performance-guide-ready'；报告阅读专项隔离验收：分支 report-reading-cds-1113-fix-map-performance-guide-ready 在 CDS 上，但还没有已发布的用户入口（多半正在构建，或该分支没有对外的 Web 服务）

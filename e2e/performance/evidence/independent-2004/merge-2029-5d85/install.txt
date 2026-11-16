@@ -1,0 +1,25 @@
+✓ Lockfile passes supply-chain policies (verified 1d ago)
+Lockfile is up to date, resolution step is skipped
+Progress: resolved 1, reused 0, downloaded 0, added 0
+Packages: +6
+++++++
+
+   ╭──────────────────────────────────────────────────────────────────────╮
+   │                                                                      │
+   │                 Update available! 11.25.0 → 12.21.0.                 │
+   │                 Changelog: https://pnpm.io/v/12.21.0                 │
+   │   To update, run: curl -fsSL https://get.pnpm.io/install.sh | sh -   │
+   │                                                                      │
+   ╰──────────────────────────────────────────────────────────────────────╯
+
+Packages are hard linked from the content-addressable store to the virtual store.
+  Content-addressable store is at: /home/agent/.local/share/pnpm/store/v11
+  Virtual store is at:             node_modules/.pnpm
+Progress: resolved 6, reused 6, downloaded 0, added 6, done
+
+devDependencies:
++ @playwright/test 1.59.1
++ @types/node 22.19.17
++ typescript 5.9.3
+
+Done in 1s using pnpm v11.25.0

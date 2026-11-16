@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-11-16T18:44:06.598936+00:00",
+  "head": "5d85c1aa1c954789dcb48971888373ed616b9019",
+  "base": "c14389a403ff296c4bbfc95c0fbb6553c673bcd2",
+  "allRequiredChecksSatisfied": true,
+  "performanceIndependentlyRecomputed": true,
+  "currentReviewsCompleted": true,
+  "knownNonRequiredFailure": [
+    {
+      "name": "CDS Deploy",
+      "status": "COMPLETED",
+      "conclusion": "FAILURE",
+      "isRequired": false,
+      "detailsUrl": "https://mycds.net/branch-panel?id=prd-agent-local-fix-map-performance-guide-ready&runId=dr_f78a08574fa0f15db8460d6b"
+    }
+  ],
+  "scopeFiles": 5,
+  "gateSnapshot": "premerge-final-gate.json"
+}

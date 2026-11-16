@@ -1,0 +1,6 @@
+{
+  "currentHead": "5d85c1aa1c954789dcb48971888373ed616b9019",
+  "independentRecheckModuleIsByteIdenticalToCurrentHead": true,
+  "metricsSha256": "a11483a8a765c4c451cf6f2e76f4cecdf5a892d1a220b7ee21bae9b2fd5cd594",
+  "legacySourceProvenance": "此前审计分支已保留legacy-judge-provenance.json，旧实现47e71839d29fb0bcef56952809b010608e633800"
+}

@@ -1,0 +1,4 @@
+[verify-open] url=https://miduo.org/reports?project=prd-agent&folder=d6a48bce9a84423483b89853b772407d&report=e918a2bd250f49ad9b1d90b2b3c9514e
+  第1次：标题命中=true  当前运行标识命中=true  图片数=34(需≥11)  死页提示=false
+  第1次交互：报告=1  内部链接=104  已点击=13  断链=0  点击失败=0
+  结论：报告可正常打开，正文、截图和内部链接交互齐全（exit 0）

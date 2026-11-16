@@ -1,0 +1,29 @@
+{
+  "generatedAt": "2026-11-16T18:51:42.076260+00:00",
+  "deliveryState": "NEEDS_DECISION",
+  "pr": 2029,
+  "candidate": "5d85c1aa1c954789dcb48971888373ed616b9019",
+  "base": "c14389a403ff296c4bbfc95c0fbb6553c673bcd2",
+  "automaticNormal": {
+    "run": 43925807090,
+    "conclusion": "success",
+    "rawIndependentlyRecomputed": true,
+    "artifact": 14257983122,
+    "sha256": "a83e05626a707b6a691165662834587560b52c81b0e509091f43184056425500"
+  },
+  "merge": {
+    "merged": false,
+    "commit": null,
+    "reason": "Automatic approval review rejected same merge interface twice; latest affirmative short reply was not accepted as trusted explicit approval",
+    "postmergeRun": null,
+    "postmergeConclusion": "not-executed"
+  },
+  "optionalDeploymentFailure": {
+    "isRequired": false,
+    "instance": "mycds.net",
+    "reason": "unsafe_deployment_storage: storage-bind-pin-required",
+    "modified": false
+  },
+  "report": "https://miduo.org/reports?project=prd-agent&folder=d6a48bce9a84423483b89853b772407d&report=e918a2bd250f49ad9b1d90b2b3c9514e",
+  "next": "需要用户直接明确仓库inernoro/prd_agent、PR#2029和合入main后，再通过同一受审接口核验执行；不得绕过"
+}

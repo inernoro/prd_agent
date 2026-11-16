@@ -1,0 +1,15 @@
+{
+  "source": "本会话中紧邻用户最新回复之前的助手明确提问与用户最新回复",
+  "question": "是否追加授权将 #2029 同步最新 main、重新验证后合并？",
+  "answer": "可以",
+  "scope": {
+    "repository": "inernoro/prd_agent",
+    "pull_request": 2029,
+    "allowSyncAndVerification": true,
+    "allowMergeAfterVerification": true,
+    "productionRelease": false
+  },
+  "supersedes": "此前不得再次合并的限制仅在本次#2029追加授权范围内被最新用户指令覆盖",
+  "currentHead": "5d85c1aa1c954789dcb48971888373ed616b9019",
+  "reviewRejection": "审批将此前#2004已用的merge授权视为唯一授权，没有计入本次对#2029追加授权问题的明确肯定答复"
+}
