@@ -101,9 +101,9 @@ public class ModelLeaderboardSyncService
         {
             var uri = new Uri(evidence.Url);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await _db.ApiRequestLogs.InsertOneAsync(new ApiRequestLog
+            var log = new ApiRequestLog
             {
-                Id = Guid.NewGuid().ToString("N"), RequestId = runId, SessionId = runId,
+                Id = evidence.AuditId, RequestId = runId, SessionId = runId,
                 StartedAt = evidence.StartedAt, EndedAt = evidence.EndedAt,
                 DurationMs = (long)(evidence.EndedAt - evidence.StartedAt).TotalMilliseconds,
                 Method = "GET", Path = uri.AbsolutePath, Query = uri.Query, AbsoluteUrl = evidence.Url,
@@ -111,7 +111,7 @@ public class ModelLeaderboardSyncService
                 ClientType = "server", AppId = "model-leaderboard", AppName = "模型排行榜",
                 StatusCode = evidence.StatusCode ?? 0, ResponseContentType = evidence.ContentType,
                 ApiSummary = $"官方榜单数据/{evidence.Outcome}",
-                Status = evidence.Outcome == "success" ? "completed" : "failed",
+                Status = evidence.Outcome == "success" ? "completed" : evidence.Outcome == "received" ? "running" : "failed",
                 ErrorCode = evidence.ErrorType, ResponseBody = JsonSerializer.Serialize(new
                 {
                     auditVersion = 1, runId, evidence, timeoutSeconds = http.Timeout.TotalSeconds,
@@ -119,7 +119,9 @@ public class ModelLeaderboardSyncService
                     deployment = DeploymentAuthority.DescribeSource(_configuration),
                 }),
                 ResponseBodyBytes = (int)evidence.Bytes, ResponseBodyTruncated = true,
-            }, cancellationToken: deadline.Token);
+            };
+            await _db.ApiRequestLogs.ReplaceOneAsync(x => x.Id == log.Id, log,
+                new ReplaceOptions { IsUpsert = true }, cancellationToken: deadline.Token);
         }, new ArenaLeaderboardFetcher(http, _configuration["ModelLeaderboard:SnapshotMirrorBaseUrl"]));
         var sourceLabel = DeploymentAuthority.DescribeSource(_configuration);
 
@@ -204,6 +206,7 @@ public class ModelLeaderboardSyncService
             candidates, x => x.DeploymentSlug, x => x.FetchedAt, scope);
 
         var parsed = await fetcher.FetchAsync(board, ct);
+        EnsurePublicationNotRegressed(parsed.PublishedAt, previous?.PublishedAt);
         // 镜像恢复必须保留源快照的抓取时间，不能拿复制时间冒充数据更新时间。
         fetchedAt = parsed.SourceFetchedAt ?? fetchedAt;
         var entries = parsed.Entries;
@@ -250,9 +253,14 @@ public class ModelLeaderboardSyncService
         var filter = Builders<ModelLeaderboardSnapshot>.Filter.And(
             Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.Id, documentId),
             Builders<ModelLeaderboardSnapshot>.Filter.Lt(x => x.FetchedAt, fetchedAt));
+        if (parsed.PublishedAt is { } publication)
+            filter &= Builders<ModelLeaderboardSnapshot>.Filter.Or(
+                Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.PublishedAt, null),
+                Builders<ModelLeaderboardSnapshot>.Filter.Lte(x => x.PublishedAt, publication));
         if (previous is not null)
         {
-            ApplyPreviousRanks(entries, previous.Entries);
+            ApplyPreviousRanks(entries, previous.Entries,
+                parsed.PublishedAt.HasValue && parsed.PublishedAt == previous.PublishedAt);
         }
 
         var snapshot = new ModelLeaderboardSnapshot
@@ -269,6 +277,7 @@ public class ModelLeaderboardSyncService
             // 形状以**页面实际解析出来的**为准，不是照目录抄一份（FetchAsync 已校验两者一致）
             Kind = parsed.Kind,
             FetchedAt = fetchedAt,
+            PublishedAt = parsed.PublishedAt,
             SourceUrl = parsed.SourceUrl ?? ArenaLeaderboardFetcher.BuildUrl(board),
             SourceLabel = sourceLabel,
             // 盖上本部署的作用域，兄弟分支据此不会读到（也不会被覆盖）这一份
@@ -311,14 +320,22 @@ public class ModelLeaderboardSyncService
     }
 
     /// <summary>公开数据没有稳定模型 ID；同名变体不猜对应关系，避免编造升降。</summary>
-    public static void ApplyPreviousRanks(List<ModelLeaderboardEntry> entries, List<ModelLeaderboardEntry> previous)
+    public static void ApplyPreviousRanks(List<ModelLeaderboardEntry> entries, List<ModelLeaderboardEntry> previous,
+        bool samePublication = false)
     {
         var uniquePrevious = previous.GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
-            .Where(g => g.Count() == 1).ToDictionary(g => g.Key, g => g.Single().Rank, StringComparer.OrdinalIgnoreCase);
+            .Where(g => g.Count() == 1).ToDictionary(g => g.Key,
+                g => samePublication ? g.Single().PreviousRank : g.Single().Rank, StringComparer.OrdinalIgnoreCase);
         var duplicateNames = entries.GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
             .Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in entries)
             entry.PreviousRank = !duplicateNames.Contains(entry.Name) && uniquePrevious.TryGetValue(entry.Name, out var rank)
                 ? rank : null;
+    }
+
+    public static void EnsurePublicationNotRegressed(DateTime? incoming, DateTime? previous)
+    {
+        if (incoming.HasValue && previous.HasValue && incoming < previous)
+            throw new InvalidOperationException("官方数据发布日期早于已有快照，本次保留较新的数据。");
     }
 }

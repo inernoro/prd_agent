@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -34,9 +35,20 @@ public sealed class HuggingFaceLeaderboardFetcher(
 
     public sealed record ResponseEvidence(string Url, DateTime StartedAt, DateTime EndedAt,
         int? StatusCode, string? ContentType, long Bytes, string? Sha256, string Outcome,
-        string? ErrorType, string Summary);
+        string? ErrorType, string Summary, string AuditId);
 
     public sealed class AuditException(Exception inner) : Exception("榜单响应审计未能保存，本次不发布新快照。", inner) { }
+
+    private sealed class ValidationException(string message, string diagnostic) : InvalidOperationException(message)
+    {
+        public string Diagnostic { get; } = diagnostic;
+    }
+
+    private sealed class CaptureContext
+    {
+        public string Config { get; set; } = "";
+        public ConcurrentDictionary<string, ResponseEvidence> Responses { get; } = new();
+    }
 
     public static string BuildUrl(string config, int offset) =>
         $"https://datasets-server.huggingface.co/rows?dataset={Uri.EscapeDataString(Dataset)}" +
@@ -54,9 +66,26 @@ public sealed class HuggingFaceLeaderboardFetcher(
 
     private async Task<ArenaLeaderboardFetcher.ParseResult> FetchOfficialAsync(string board, CancellationToken ct)
     {
+        var context = new CaptureContext();
+        try
+        {
+            var result = await AssembleAsync(board, context, ct);
+            await CompleteAuditAsync(context, null);
+            return result;
+        }
+        catch (AuditException) { throw; }
+        catch (Exception ex)
+        {
+            await CompleteAuditAsync(context, ex);
+            throw;
+        }
+    }
+
+    private async Task<ArenaLeaderboardFetcher.ParseResult> AssembleAsync(string board, CaptureContext context, CancellationToken ct)
+    {
         if (!Configs.TryGetValue(board, out var config))
             throw new ArgumentException("未知榜单。", nameof(board));
-        var rows = await ReadRowsAsync(config, ct);
+        var rows = await ReadRowsAsync(config, context, ct);
         var date = PublishedAt(rows);
         var entries = new List<ModelLeaderboardEntry>();
         foreach (var row in rows)
@@ -102,14 +131,16 @@ public sealed class HuggingFaceLeaderboardFetcher(
             };
             foreach (var signal in signals)
             {
-                var signalRows = await ReadRowsAsync(signal.Config, ct);
+                var signalRows = await ReadRowsAsync(signal.Config, context, ct);
                 if (PublishedAt(signalRows) != date)
-                    throw new InvalidOperationException("官方榜单与分项发布日期不同，本次保留旧快照。");
+                    throw new ValidationException("官方榜单与分项发布日期不同，本次保留旧快照。",
+                        JsonSerializer.Serialize(new { kind = "publication_mismatch", aggregateDate = date, signalDate = PublishedAt(signalRows) }));
                 var byName = signalRows.ToDictionary(r => Text(r, "model_name"), StringComparer.Ordinal);
                 foreach (var entry in entries)
                 {
                     if (!byName.TryGetValue(entry.Name, out var signalRow))
-                        throw new InvalidOperationException("官方榜单缺少模型分项，本次保留旧快照。");
+                        throw new ValidationException("官方榜单缺少模型分项，本次保留旧快照。",
+                            JsonSerializer.Serialize(new { kind = "missing_model_association", model = SafeError(entry.Name) }));
                     signal.Set(entry, Metric(signalRow));
                 }
             }
@@ -117,20 +148,21 @@ public sealed class HuggingFaceLeaderboardFetcher(
 
         var result = new ArenaLeaderboardFetcher.ParseResult(
             board == "agent" ? BoardKind.Agent : BoardKind.Score,
-            entries.OrderBy(e => e.Rank).ToList(), null, null, date, DatasetUrl + "/viewer/" + config + "/latest");
+            entries.OrderBy(e => e.Rank).ToList(), null, null, SourceUrl: DatasetUrl + "/viewer/" + config + "/latest", PublishedAt: date);
         ArenaLeaderboardFetcher.EnsureUsable(DatasetUrl, board, result);
         return result;
     }
 
-    private async Task<List<JsonElement>> ReadRowsAsync(string config, CancellationToken ct)
+    private async Task<List<JsonElement>> ReadRowsAsync(string config, CaptureContext context, CancellationToken ct)
     {
-        var first = await ReadPageAsync(config, 0, null, ct);
+        context.Config = config;
+        var first = await ReadPageAsync(config, 0, null, context, ct);
         var all = first.Rows;
         // 每批最多四页，既避免 1 万多行的文本分类串行拖慢，也限制免费 API 的并发。
         for (var offset = PageSize; offset < first.Total; offset += PageSize * 4)
         {
             var offsets = Enumerable.Range(0, 4).Select(i => offset + i * PageSize).Where(i => i < first.Total);
-            var pages = await Task.WhenAll(offsets.Select(i => ReadPageAsync(config, i, first.Total, ct)));
+            var pages = await Task.WhenAll(offsets.Select(i => ReadPageAsync(config, i, first.Total, context, ct)));
             foreach (var page in pages) all.AddRange(page.Rows);
         }
         if (all.Count != first.Total) throw new InvalidOperationException("官方数据集分页不完整。");
@@ -145,7 +177,7 @@ public sealed class HuggingFaceLeaderboardFetcher(
     }
 
     private async Task<(List<JsonElement> Rows, int Total)> ReadPageAsync(
-        string config, int offset, int? expectedTotal, CancellationToken ct)
+        string config, int offset, int? expectedTotal, CaptureContext context, CancellationToken ct)
     {
         var url = BuildUrl(config, offset);
         var started = DateTime.UtcNow;
@@ -153,6 +185,7 @@ public sealed class HuggingFaceLeaderboardFetcher(
         using var buffer = new MemoryStream();
         string outcome = "failed", summary = "未收到响应。";
         string? errorType = null;
+        string? failure = null;
         try
         {
             response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -186,12 +219,13 @@ public sealed class HuggingFaceLeaderboardFetcher(
                     throw new InvalidOperationException("官方数据集分页错位或字段被截断。");
                 result.Add(rows[i].GetProperty("row").Clone());
             }
-            outcome = "success";
+            outcome = "received";
             return (result, total);
         }
         catch (Exception ex)
         {
             errorType = ex.GetType().Name;
+            failure = SafeError(ex.Message);
             if (ex is JsonException or KeyNotFoundException or FormatException or OverflowException)
                 throw new InvalidOperationException("官方数据集响应格式无效，本次保留旧快照。", ex);
             throw;
@@ -200,19 +234,42 @@ public sealed class HuggingFaceLeaderboardFetcher(
         {
             try
             {
-                if (audit is not null)
-                {
-                    try
-                    {
-                        await audit(new ResponseEvidence(url, started, DateTime.UtcNow, (int?)response?.StatusCode,
-                            response?.Content.Headers.ContentType?.MediaType, buffer.Length,
-                            buffer.Length == 0 ? null : Convert.ToHexString(SHA256.HashData(buffer.ToArray())),
-                            outcome, errorType, summary));
-                    }
-                    catch (Exception ex) { throw new AuditException(ex); }
-                }
+                var evidence = new ResponseEvidence(url, started, DateTime.UtcNow, (int?)response?.StatusCode,
+                    response?.Content.Headers.ContentType?.MediaType, buffer.Length,
+                    buffer.Length == 0 ? null : Convert.ToHexString(SHA256.HashData(buffer.ToArray())),
+                    outcome, errorType, failure is null ? summary : JsonSerializer.Serialize(new { response = summary, localFailure = failure }),
+                    Guid.NewGuid().ToString("N"));
+                context.Responses[evidence.AuditId] = evidence;
+                await EmitAsync(evidence);
             }
             finally { response?.Dispose(); }
+        }
+    }
+
+    private async Task EmitAsync(ResponseEvidence evidence)
+    {
+        if (audit is null) return;
+        try { await audit(evidence); }
+        catch (Exception ex) { throw new AuditException(ex); }
+    }
+
+    private async Task CompleteAuditAsync(CaptureContext context, Exception? error)
+    {
+        foreach (var evidence in context.Responses.Values.Where(e => e.Outcome == "received"))
+        {
+            var completed = evidence with
+            {
+                Outcome = error is null ? "success" : "semantic_failed",
+                ErrorType = error?.GetType().Name,
+                Summary = JsonSerializer.Serialize(new
+                {
+                    response = evidence.Summary, validation = error is null ? "accepted" : "rejected",
+                    validatedAt = DateTime.UtcNow, config = context.Config,
+                    reason = error is null ? null : SafeError(error.Message),
+                    fieldDiagnostic = (error as ValidationException)?.Diagnostic,
+                }),
+            };
+            await EmitAsync(completed);
         }
     }
 
@@ -271,7 +328,8 @@ public sealed class HuggingFaceLeaderboardFetcher(
         if (dates.Length != 1 || !DateTime.TryParseExact(dates[0], "yyyy-MM-dd", CultureInfo.InvariantCulture,
                 DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var date)
             || date > DateTime.UtcNow.Date)
-            throw new InvalidOperationException("官方数据集发布日期缺失、不一致或在未来。");
+            throw new ValidationException("官方数据集发布日期缺失、不一致或在未来。",
+                JsonSerializer.Serialize(new { kind = "invalid_publication", dates = rows.Select(DateEvidence).Distinct().Take(5) }));
         return date;
     }
 
@@ -280,18 +338,20 @@ public sealed class HuggingFaceLeaderboardFetcher(
         var value = Number(row, "score");
         var lower = Number(row, "score_ci_lower");
         var upper = Number(row, "score_ci_upper");
-        if (lower > value || upper < value) throw new InvalidOperationException("官方数据集指标区间无效。");
+        if (lower > value || upper < value) throw new ValidationException("官方数据集指标区间无效。",
+            JsonSerializer.Serialize(new { kind = "invalid_interval", field = "score", value, lower, upper }));
         return new() { Value = value * 100, Margin = (upper - lower) * 50 };
     }
 
     private static string Text(JsonElement row, string field) =>
         row.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.String
         && !string.IsNullOrWhiteSpace(value.GetString()) ? value.GetString()!
-        : throw new InvalidOperationException($"官方数据集缺少有效字段 {field}。");
+        : throw FieldFailure(row, field, "invalid_text");
 
     private static double Number(JsonElement row, string field) =>
-        row.TryGetProperty(field, out var value) && value.TryGetDouble(out var number) && double.IsFinite(number)
-            ? number : throw new InvalidOperationException($"官方数据集字段 {field} 无效。");
+        row.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.Number
+        && value.TryGetDouble(out var number) && double.IsFinite(number)
+            ? number : throw FieldFailure(row, field, "invalid_number");
 
     private static double? OptionalNumber(JsonElement row, string field) =>
         !row.TryGetProperty(field, out var value) || value.ValueKind == JsonValueKind.Null ? null : Number(row, field);
@@ -304,7 +364,22 @@ public sealed class HuggingFaceLeaderboardFetcher(
     {
         var number = Number(row, field);
         if (number < 0 || number >= long.MaxValue || number != Math.Truncate(number))
-            throw new InvalidOperationException($"官方数据集字段 {field} 不是有效非负整数。");
+            throw FieldFailure(row, field, "invalid_nonnegative_integer");
         return (long)number;
+    }
+
+    private static ValidationException FieldFailure(JsonElement row, string field, string constraint)
+    {
+        var exists = row.TryGetProperty(field, out var value);
+        var text = exists && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        var state = !exists ? "missing" : value.ValueKind == JsonValueKind.Null ? "null"
+            : text is { Length: 0 } ? "empty" : text is not null && string.IsNullOrWhiteSpace(text) ? "whitespace"
+            : value.ValueKind != JsonValueKind.Number && constraint != "invalid_text" ? "type_mismatch" : constraint;
+        var rawNumber = exists && value.ValueKind == JsonValueKind.Number ? value.GetRawText() : null;
+        return new ValidationException($"官方数据集字段 {field} 校验失败。", JsonSerializer.Serialize(new
+        {
+            field, state, actualKind = exists ? value.ValueKind.ToString() : "missing", length = text?.Length,
+            number = rawNumber?[..Math.Min(rawNumber.Length, 64)], publishedAt = DateEvidence(row),
+        }));
     }
 }

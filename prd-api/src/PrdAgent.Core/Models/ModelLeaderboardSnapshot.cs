@@ -28,8 +28,11 @@ public class ModelLeaderboardSnapshot
     /// </summary>
     public string Kind { get; set; } = "agent";
 
-    /// <summary>数据截至时刻（UTC）：官方数据集用发布日期，旧 HTML 快照用抓取时刻，不以复制时间冒充</summary>
+    /// <summary>抓取时刻（UTC），用于并发写入排序；镜像保留源抓取时刻</summary>
     public DateTime FetchedAt { get; set; }
+
+    /// <summary>官方数据发布日期（UTC），与抓取时刻分开；旧页面来源未知时为 null</summary>
+    public DateTime? PublishedAt { get; set; }
 
     /// <summary>抓取的源地址，原样记录便于复核与追责</summary>
     public string SourceUrl { get; set; } = string.Empty;

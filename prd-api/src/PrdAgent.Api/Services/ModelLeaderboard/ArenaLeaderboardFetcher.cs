@@ -157,7 +157,8 @@ public class ArenaLeaderboardFetcher : IModelLeaderboardFetcher
         long? TotalSessions,
         long? TotalVotes,
         DateTime? SourceFetchedAt = null,
-        string? SourceUrl = null);
+        string? SourceUrl = null,
+        DateTime? PublishedAt = null);
 
     /// <summary>
     /// 抓取并解析一个分榜。
@@ -219,7 +220,7 @@ public class ArenaLeaderboardFetcher : IModelLeaderboardFetcher
             snapshot.Entries,
             snapshot.TotalSessions,
             snapshot.TotalVotes,
-            snapshot.FetchedAt);
+            snapshot.FetchedAt, snapshot.SourceUrl, snapshot.PublishedAt);
         EnsureUsable(url, board, result);
         return result;
     }
@@ -234,6 +235,8 @@ public class ArenaLeaderboardFetcher : IModelLeaderboardFetcher
     {
         public string Kind { get; init; } = BoardKind.Agent;
         public DateTime FetchedAt { get; init; }
+        public DateTime? PublishedAt { get; init; }
+        public string? SourceUrl { get; init; }
         public long? TotalSessions { get; init; }
         public long? TotalVotes { get; init; }
         public List<ModelLeaderboardEntry> Entries { get; init; } = new();

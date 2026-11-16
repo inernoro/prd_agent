@@ -628,14 +628,11 @@ function MetaStrip({
   /** 已经铺到页面上的条数（渐进渲染，滚动时会涨） */
   rendered: number;
 }) {
-  const date = snapshot.fetchedAt
-    ? new Date(snapshot.fetchedAt).toLocaleString('zh-CN', {
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-    : '未知';
+  const date = snapshot.publishedAt
+    ? new Date(snapshot.publishedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit', timeZone: 'UTC' })
+    : snapshot.fetchedAt
+      ? new Date(snapshot.fetchedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : '未知';
 
   /**
    * 样本量。Agent 榜统计的是会话，分数榜统计的是人类投票——单位不同，各说各的，

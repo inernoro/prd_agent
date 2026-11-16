@@ -61,10 +61,13 @@ public class HuggingFaceLeaderboardFetcherTests
         Assert.Null(e.BashRecovery);
         Assert.Equal(-1.0355374099361825, e.ToolHallucination!.Value, 8);
         Assert.Equal(10406, e.Sessions);
-        Assert.Equal(new DateTime(2026, 11, 15, 0, 0, 0, DateTimeKind.Utc), result.SourceFetchedAt);
+        Assert.Equal(new DateTime(2026, 11, 15, 0, 0, 0, DateTimeKind.Utc), result.PublishedAt);
+        Assert.Null(result.SourceFetchedAt);
         Assert.Contains("huggingface.co", result.SourceUrl!);
-        Assert.Equal(6, evidence.Count);
-        Assert.All(evidence, item => { Assert.Equal("success", item.Outcome); Assert.NotNull(item.Sha256); });
+        Assert.Equal(12, evidence.Count);
+        Assert.All(evidence.Take(6), item => Assert.Equal("received", item.Outcome));
+        Assert.Equal(evidence.Take(6).Select(x => x.AuditId).Order(), evidence.Skip(6).Select(x => x.AuditId).Order());
+        Assert.All(evidence.Skip(6), item => { Assert.Equal("success", item.Outcome); Assert.NotNull(item.Sha256); });
         Assert.Contains("0.286126", evidence[0].Summary);
         Assert.Contains("2026-11-15", evidence[0].Summary);
     }
@@ -94,8 +97,42 @@ public class HuggingFaceLeaderboardFetcherTests
             case "partial": page["partial"] = true; break;
             case "truncated": rows[0]!["truncated_cells"]!.AsArray().Add("score"); break;
         }
-        await Assert.ThrowsAsync<InvalidOperationException>(() => new HuggingFaceLeaderboardFetcher(Client(fixture))
-            .FetchAsync("agent", default));
+        var latest = new Dictionary<string, HuggingFaceLeaderboardFetcher.ResponseEvidence>();
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => new HuggingFaceLeaderboardFetcher(Client(fixture),
+            e => { latest[e.AuditId] = e; return Task.CompletedTask; }).FetchAsync("agent", default));
+        Assert.DoesNotContain(latest.Values, e => e.Outcome == "success");
+        if (broken == "missing_model")
+            Assert.Contains(latest.Values, e => e.Summary.Contains("missing_model_association"));
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("null")]
+    [InlineData("type_mismatch")]
+    public async Task 样本外的指标异常也写入最终失败审计且不保存字符串值(string state)
+    {
+        var fixture = Fixture();
+        var row = fixture["agent"]!["rows"]![4]!["row"]!.AsObject();
+        if (state == "missing") row.Remove("score");
+        else row["score"] = state == "null" ? null : JsonValue.Create("private_text");
+        var latest = new Dictionary<string, HuggingFaceLeaderboardFetcher.ResponseEvidence>();
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => new HuggingFaceLeaderboardFetcher(Client(fixture),
+            e => { latest[e.AuditId] = e; return Task.CompletedTask; }).FetchAsync("agent", default));
+        var saved = Assert.Single(latest.Values);
+        Assert.Equal("semantic_failed", saved.Outcome);
+        Assert.Contains("score", saved.Summary);
+        Assert.Contains(state, saved.Summary);
+        Assert.DoesNotContain("private_text", saved.Summary);
+    }
+
+    [Fact]
+    public async Task 最终校验审计写入失败不发布也不调用备用源()
+    {
+        var fallback = new Fallback();
+        await Assert.ThrowsAsync<HuggingFaceLeaderboardFetcher.AuditException>(() =>
+            new HuggingFaceLeaderboardFetcher(Client(Fixture()), e => e.Outcome == "success"
+                ? Task.FromException(new TimeoutException()) : Task.CompletedTask, fallback).FetchAsync("agent", default));
+        Assert.Equal(0, fallback.Calls);
     }
 
     private static JsonObject ScoreRow(int i, string category = "overall") => new()
