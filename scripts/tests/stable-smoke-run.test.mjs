@@ -600,6 +600,7 @@ test('只有归档输出中的 HTTPS 深链可以进入通知', () => {
 test('正式环境只读运行使用无截图归档合同且打开验证不要求图片', () => {
   const archive = buildStableSmokeArchiveCommand({
     productionReadOnly: true,
+    projectId: 'prd-agent',
     runId: 'read-only-test',
     verdict: 'pass',
     reportPath: '/tmp/report.md',
@@ -614,6 +615,8 @@ test('正式环境只读运行使用无截图归档合同且打开验证不要�
   assert.equal(archive.args.includes('report'), true);
   assert.equal(archive.args.includes('P0 只读冒烟'), true);
   assert.equal(archive.args.includes('/tmp/empty-manifest.json'), false);
+  assert.equal(archive.args[archive.args.indexOf('--project') + 1], 'prd-agent');
+  assert.equal(archive.args.includes('--branch-id'), false);
 
   const verifyArgs = buildReportVerificationArgs(
     'https://cds.example/reports?report=1',

@@ -1135,11 +1135,13 @@ export function buildStableSmokeArchiveCommand({
   reportPath,
   manifestPath,
   branch,
+  projectId = '',
   commit,
   folderPath,
   reportDate = new Date().toISOString().slice(0, 10),
 }) {
   if (productionReadOnly) {
+    if (!String(projectId).trim()) throw new Error('正式只读归档缺少 CDS 项目归属');
     return {
       program: 'python3',
       contract: 'functional-read-only',
@@ -1153,6 +1155,7 @@ export function buildStableSmokeArchiveCommand({
         '--folder-path', folderPath,
         '--verdict', verdict,
         '--tier', 'P0 只读冒烟',
+        '--project', projectId,
         '--branch', branch,
         '--commit', commit,
       ],
@@ -1178,6 +1181,15 @@ export function buildStableSmokeArchiveCommand({
       '--branch', branch,
       '--commit', commit,
     ],
+  };
+}
+
+// 正式只读证据归属于项目；Git 分支仅用于追溯，不能要求存在对应 CDS 部署。
+export function executeStableSmokeArchive(input, commandRunner = command, environment = process.env) {
+  const archiveCommand = buildStableSmokeArchiveCommand(input);
+  return {
+    archiveCommand,
+    result: commandRunner(archiveCommand.program, archiveCommand.args, { env: environment }),
   };
 }
 
@@ -1994,19 +2006,17 @@ async function main() {
     } else if (!options.has('--dry-run')) {
       const branchResult = command('git', ['branch', '--show-current']);
       const commitResult = command('git', ['rev-parse', 'HEAD']);
-      const archiveCommand = buildStableSmokeArchiveCommand({
+      const { archiveCommand, result: archive } = executeStableSmokeArchive({
         productionReadOnly: productionReadOnlyArchive,
         runId,
         verdict: summary.verdict,
         reportPath: archiveReportPath,
         manifestPath: visualManifestPath,
         branch: String(branchResult.stdout || '').trim(),
+        projectId: registry.environments?.cds?.projectAutomation?.projectId || '',
         commit: String(commitResult.stdout || '').trim(),
         folderPath: `稳定冒烟/${new Date().toISOString().slice(0, 7)}`,
-      });
-      const archive = command(archiveCommand.program, archiveCommand.args, {
-        env: { ...process.env, ...values },
-      });
+      }, command, { ...process.env, ...values });
       reportUrl = archive.status === 0 ? extractArchivedReportUrl(archive.stdout) : '';
       summaryDocument.archive = reportUrl
         ? { status: 'archived', reportUrl, contract: archiveCommand.contract }
