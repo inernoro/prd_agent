@@ -16,16 +16,16 @@ function toQuery(params?: ApiLogsListParams) {
   return qs ? `?${qs}` : '';
 }
 
-export async function getApiLogsReal(params?: ApiLogsListParams): Promise<ApiResponse<ApiLogsListData>> {
-  return await apiRequest<ApiLogsListData>(`${api.logs.api.list()}${toQuery(params)}`, { method: 'GET' });
+export async function getApiLogsReal(params?: ApiLogsListParams, signal?: AbortSignal): Promise<ApiResponse<ApiLogsListData>> {
+  return await apiRequest<ApiLogsListData>(`${api.logs.api.list()}${toQuery(params)}`, { method: 'GET', signal, timeoutMs: 15000 });
 }
 
 export async function getApiLogDetailReal(id: string): Promise<ApiResponse<ApiRequestLog>> {
   return await apiRequest<ApiRequestLog>(api.logs.api.byId(encodeURIComponent(id)), { method: 'GET' });
 }
 
-export async function getApiLogsMetaReal(): Promise<ApiResponse<ApiLogsMetaData>> {
-  return await apiRequest<ApiLogsMetaData>(api.logs.api.meta(), { method: 'GET' });
+export async function getApiLogsMetaReal(signal?: AbortSignal): Promise<ApiResponse<ApiLogsMetaData>> {
+  return await apiRequest<ApiLogsMetaData>(api.logs.api.meta(), { method: 'GET', signal, timeoutMs: 15000 });
 }
 
 

@@ -56,6 +56,10 @@ public sealed class LogArchiveIntegrationTests : IAsyncLifetime
         _db = new MongoDbContext(uri, "business", "gateway");
         _gw = new LlmGatewayDataContext(uri, "gateway");
         await _db.Database.GetCollection<BsonDocument>("log_archive_policies").Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(new BsonDocument("OwnerId", 1), new CreateIndexOptions { Unique = true }));
+        foreach (var name in new[] { "apirequestlogs", "llmrequestlogs" })
+            await _db.Database.GetCollection<BsonDocument>(name).Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(new BsonDocument { { "ColdArchiveId", 1 }, { "StartedAt", 1 } }));
+        foreach (var name in new[] { "llmrequestlogs", "llmgw_request_executions" })
+            await _gw.Database.GetCollection<BsonDocument>(name).Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(new BsonDocument { { "TenantId", 1 }, { "ColdArchiveId", 1 }, { name == "llmrequestlogs" ? "StartedAt" : "CreatedAt", 1 } }));
         var storage = DispatchProxy.Create<IAssetStorage, StorageProxy>();
         _store = (StorageProxy)storage;
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -74,6 +78,14 @@ public sealed class LogArchiveIntegrationTests : IAsyncLifetime
         return Task.CompletedTask;
     }
     private static BsonDocument Log(string id) => new() { { "_id", id }, { "RequestId", "request-" + id }, { "StartedAt", DateTime.UtcNow.AddDays(-60) }, { "Status", "completed" }, { "RequestBody", "请求原文" }, { "ResponseBody", "响应原文" } };
+    [Fact]
+    public async Task CannotEnableArchiveWithoutBoundedSourceIndexes()
+    {
+        await _service.SetPolicyAsync("test-owner", false, false, 30, default);
+        await _gw.Database.GetCollection<BsonDocument>("llmgw_request_executions").Indexes.DropOneAsync("TenantId_1_ColdArchiveId_1_CreatedAt_1");
+        await Assert.ThrowsAsync<LogArchiveSetupException>(() => _service.SetPolicyAsync("test-owner", true, true, 30, default));
+        Assert.False((await _service.PolicyAsync("test-owner", default))["Enabled"].AsBoolean);
+    }
     [Fact]
     public async Task ArchiveReadDownloadAndRestorePreserveCompleteRecord()
     {

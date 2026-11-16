@@ -28,6 +28,7 @@ public sealed class LogArchivesController(LogArchiveService archives, IConfigura
     private async Task<IActionResult> Guard(Func<Task<IActionResult>> action)
     {
         try { return await action(); }
+        catch (LogArchiveSetupException ex) { return BadRequest(ApiResponse<object>.Fail("LOG_ARCHIVE_NOT_READY", ex.Message)); }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "归档不存在，请刷新列表后重试。")); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

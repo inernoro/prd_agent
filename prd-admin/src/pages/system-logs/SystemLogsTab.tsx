@@ -120,6 +120,9 @@ async function copyToClipboard(text: string) {
 export default function SystemLogsTab() {
   const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
+  const [queryError, setQueryError] = useState('');
+  const runningRequest = useRef<AbortController | null>(null);
+  const listRequest = useRef<AbortController | null>(null);
   const [items, setItems] = useState<ApiLogsListItem[]>([]);  // 非进行中的列表
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -160,14 +163,15 @@ export default function SystemLogsTab() {
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  const loadMeta = async () => {
-    const res = await getApiLogsMeta();
+  const loadMeta = useCallback(async (signal: AbortSignal) => {
+    const res = await getApiLogsMeta(signal);
+    if (signal.aborted) return;
     if (res.success) {
       setMetaClientTypes(res.data.clientTypes ?? []);
-      setMetaMethods(res.data.methods ?? metaMethods);
+      setMetaMethods(res.data.methods ?? ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
       setMetaAppNames(res.data.appNames ?? []);
     }
-  };
+  }, []);
 
   // 加载进行中任务（独立请求，用于自动刷新）
   const loadRunning = useCallback(async () => {
@@ -176,6 +180,9 @@ export default function SystemLogsTab() {
       setRunningItems([]);
       return;
     }
+    if (runningRequest.current) return;
+    const controller = new AbortController();
+    runningRequest.current = controller;
     setRunningLoading(true);
     try {
       const statusCodeValue = qStatusCode.trim() ? Number(qStatusCode) : undefined;
@@ -195,7 +202,8 @@ export default function SystemLogsTab() {
         from: qFrom || undefined,
         to: qTo || undefined,
         excludeNoise: excludeNoise || undefined,
-      });
+      }, controller.signal);
+      if (controller.signal.aborted) return;
       if (res.success) {
         const newItems = res.data.items;
         const newIds = new Set(newItems.map((it) => it.id));
@@ -218,15 +226,21 @@ export default function SystemLogsTab() {
 
         prevRunningIdsRef.current = newIds;
         setRunningItems(newItems);
+      } else {
+        setQueryError(res.error?.message || '日志暂时无法读取，请缩小日期范围后重试。');
       }
     } finally {
-      setRunningLoading(false);
+      if (runningRequest.current === controller) runningRequest.current = null;
+      if (!controller.signal.aborted) setRunningLoading(false);
     }
   }, [qUserId, qPath, qRequestId, qStatusCode, qClientType, qMethod, qAppName, qDirection, qStatus, qFrom, qTo, excludeNoise]);
 
   // 加载非进行中任务（分页）
   const load = useCallback(async (opts?: { resetPage?: boolean }) => {
-    if (opts?.resetPage) setPage(1);
+    if (opts?.resetPage && page !== 1) { setPage(1); return; }
+    listRequest.current?.abort();
+    const controller = new AbortController();
+    listRequest.current = controller;
     setLoading(true);
     try {
       const statusCodeValue = qStatusCode.trim() ? Number(qStatusCode) : undefined;
@@ -249,13 +263,18 @@ export default function SystemLogsTab() {
         from: qFrom || undefined,
         to: qTo || undefined,
         excludeNoise: excludeNoise || undefined,
-      });
+      }, controller.signal);
+      if (controller.signal.aborted) return;
       if (res.success) {
         setItems(res.data.items);
         setTotal(res.data.total);
+        setQueryError('');
+      } else {
+        setQueryError(res.error?.message || '日志暂时无法读取，请缩小日期范围后重试。');
       }
     } finally {
-      setLoading(false);
+      if (listRequest.current === controller) listRequest.current = null;
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, [page, pageSize, qUserId, qPath, qRequestId, qStatusCode, qClientType, qMethod, qAppName, qDirection, qStatus, qFrom, qTo, excludeNoise]);
 
@@ -286,24 +305,28 @@ export default function SystemLogsTab() {
     }
   };
 
-  // 初始化加载
+  // Each request has one owner; unmount/filter changes cancel pending work.
   useEffect(() => {
-    void loadMeta();
-    void loadRunning();
-    void load({ resetPage: true });
-  }, [load, loadRunning]);
+    const controller = new AbortController();
+    void loadMeta(controller.signal);
+    return () => controller.abort();
+  }, [loadMeta]);
 
-  // 分页变化时重新加载
   useEffect(() => {
     void load();
-  }, [page, load]);
+    return () => { listRequest.current?.abort(); listRequest.current = null; };
+  }, [load]);
 
-  // 自动刷新进行中任务（每 3 秒）
   useEffect(() => {
+    void loadRunning();
     const interval = setInterval(() => {
-      void loadRunning();
+      if (document.visibilityState === 'visible') void loadRunning();
     }, 3000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      runningRequest.current?.abort();
+      runningRequest.current = null;
+    };
   }, [loadRunning]);
 
   const inputStyle: React.CSSProperties = {
@@ -315,6 +338,7 @@ export default function SystemLogsTab() {
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       <LogArchivePanel />
+      {queryError && <p role="status" className="text-sm text-token-muted">{queryError}</p>}
       <GlassCard glow animated className="p-4">
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 md:grid-cols-8">
           <UserSearchSelect

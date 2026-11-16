@@ -57,6 +57,19 @@ public sealed class LogArchiveService(MongoDbContext db, LlmGatewayDataContext g
         if (days < 7 || days > 365 || (enabled && (!Ready || !migrate))) throw new InvalidOperationException("Archive setup not ready");
         if (enabled)
         {
+            foreach (var source in Sources)
+            {
+                if (source == "legacy-llm" && !db.HasSeparateLegacyLlmRequestLogCollection) continue;
+                var target = Source(source);
+                var required = new BsonDocument();
+                if (source is "llm" or "execution") required["TenantId"] = 1;
+                required[Pointer] = 1;
+                required[target.Time] = 1;
+                using var sourceIndexes = await target.Collection.Indexes.ListAsync(ct);
+                if (!(await sourceIndexes.ToListAsync(ct)).Any(x => x["key"].AsBsonDocument.Equals(required)
+                    && !x.GetValue("sparse", false).AsBoolean && !x.Contains("partialFilterExpression")))
+                    throw new LogArchiveSetupException();
+            }
             using var indexes = await Policies.Indexes.ListAsync(ct);
             if (!(await indexes.ToListAsync(ct)).Any(x => x.GetValue("unique", false).AsBoolean
                 && x["key"].AsBsonDocument.ElementCount == 1 && x["key"].AsBsonDocument.Contains("OwnerId")))
@@ -242,3 +255,6 @@ public sealed class LogArchiveService(MongoDbContext db, LlmGatewayDataContext g
         finally { await Policies.UpdateOneAsync(lease, Builders<BsonDocument>.Update.Set("LeaseUntil", DateTime.MinValue), cancellationToken: CancellationToken.None); }
     }
 }
+
+public sealed class LogArchiveSetupException() : InvalidOperationException(
+    "归档查询索引尚未准备完成，请管理员完成归档索引准备后再启用。") { }
