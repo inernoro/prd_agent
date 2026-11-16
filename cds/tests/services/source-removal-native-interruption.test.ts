@@ -30,9 +30,9 @@ afterEach(async () => {
 });
 
 describe('actual native Git deletion interruption', () => {
-  it.skipIf(process.platform !== 'linux')(
-    'keeps partial-cache risk across rescans and verifies historical repair before recovery',
-    async () => {
+  it.skipIf(process.platform !== 'linux').each([false, true])(
+    'keeps partial-cache risk across rescans and verifies historical repair before recovery (missingGitPointer=%s)',
+    async (removeGitPointer) => {
       closing = false;
       const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'source-native-interruption-')));
       roots.push(root);
@@ -112,6 +112,10 @@ describe('actual native Git deletion interruption', () => {
       git('commit', '-m', '隔离原生中断负载');
       const victimSha = git('rev-parse', 'HEAD'),
         victim = await make(victimSha);
+      const gitPointer = path.join(victim, '.git'),
+        originalPointer = await fs.readFile(gitPointer, 'utf8'),
+        gitDirectory = execFileSync('git', ['-C', victim, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim(),
+        gitIdentity = await fs.stat(gitDirectory);
       const remaining = () => {
         try {
           return syncFs.readdirSync(path.join(victim, 'many')).length;
@@ -276,7 +280,26 @@ exec /usr/bin/git "$@"
         expect(retries.every((r) => r.deploymentSources!.failed.some((x) => x.path === victim))).toBe(true);
         // The test operator repairs only this private known historical cache. The
         // implementation never restores files, force-cleans, or widens eligibility.
-        execFileSync('git', ['-C', victim, 'restore', '--source=HEAD', '--worktree', '--', '.']);
+        // Native unlink order is filesystem-dependent: .git may disappear before
+        // tracked files. Restore only the fixture's previously observed pointer,
+        // after checking its original registration and historical HEAD still exist.
+        if (removeGitPointer) await fs.rm(gitPointer, { force: true });
+        const currentGitIdentity = await fs.stat(gitDirectory);
+        expect([currentGitIdentity.dev, currentGitIdentity.ino]).toEqual([gitIdentity.dev, gitIdentity.ino]);
+        expect((await fs.readFile(path.join(gitDirectory, 'gitdir'), 'utf8')).trim()).toBe(gitPointer);
+        expect(execFileSync('git', ['--git-dir', gitDirectory, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).toBe(victimSha);
+        let pointerRestored = false;
+        try {
+          expect(await fs.readFile(gitPointer, 'utf8')).toBe(originalPointer);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          await fs.writeFile(gitPointer, originalPointer, { flag: 'wx' });
+          pointerRestored = true;
+        }
+        if (removeGitPointer) expect(pointerRestored).toBe(true);
+        expect(await fs.readFile(gitPointer, 'utf8')).toBe(originalPointer);
+        Object.assign(evidence, { removeGitPointer, pointerRestored, originalGitRegistrationVerified: true });
+        execFileSync('git', ['-C', victim, 'restore', `--source=${victimSha}`, '--worktree', '--', '.']);
         expect((await fs.readdir(path.join(victim, 'many'))).length).toBe(count);
         expect(hash(await fs.readFile(path.join(victim, 'many', '000000')))).toBe(hash(chunk));
         expect(execFileSync('git', ['-C', victim, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).toBe(
@@ -298,7 +321,7 @@ exec /usr/bin/git "$@"
         claim!.release();
         if (process.env.CAPACITY_NATIVE_INTERRUPTION_EVIDENCE)
           await fs.writeFile(
-            process.env.CAPACITY_NATIVE_INTERRUPTION_EVIDENCE,
+            process.env.CAPACITY_NATIVE_INTERRUPTION_EVIDENCE + (removeGitPointer ? '.missing-git-pointer.json' : ''),
             JSON.stringify(evidence, null, 2),
           );
       }
