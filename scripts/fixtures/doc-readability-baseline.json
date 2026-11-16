@@ -29,10 +29,10 @@
   },
   "source_refs": {
     "spec": 15,
-    "design": 178,
+    "design": 177,
     "plan": 21,
     "rule": 41,
-    "guide": 102,
+    "guide": 101,
     "report": 52,
     "debt": 213
   },
@@ -421,7 +421,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 0
     },
     "design.skill.marketplace-open-api.md": {
       "missing": 0,
@@ -589,7 +589,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 0
     },
     "guide.platform.mongodb-indexes.md": {
       "missing": 0,

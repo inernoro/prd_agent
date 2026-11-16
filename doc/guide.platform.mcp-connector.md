@@ -120,7 +120,7 @@ POST /api/admin/agent-open-endpoints
 | 某工具 `isError:true` 401 | 目标开放接口对 sk-ak 不友好（见上「关键约束」） |
 | 下载链接是 localhost | 回环未转发 host 头（已修：转发 `X-Forwarded-Host/Proto`） |
 
-## 相关
+## 实现来源与相关规范
 
 - [doc/design.platform.map-mcp-connector.md](./design.platform.map-mcp-connector.md) —— 设计与实施
 - [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— AgentApiKey + AgentOpenEndpoint 上游设计

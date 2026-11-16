@@ -63,7 +63,7 @@
 - P1（关系与追溯）：对象关联的连边 UI + 缺陷追溯打通（引用 defect-agent）+ 知识库挂载（引用 DocumentStore）。
 - P2（图谱与升级流）：知识图谱可视化 + 大版本升级申请可配置表单 + 看板视图 + 自定义表单/流程的可视化编辑器。
 
-## 八、关联文档
+## 八、实现来源与关联文档
 
 - [doc/spec.srs.md](./spec.srs.md) 附录D：需求可追溯矩阵 RTM（方法论来源）
 - [doc/design.defect-agent.md](./design.defect-agent.md)：缺陷管理（追溯引用对接）
