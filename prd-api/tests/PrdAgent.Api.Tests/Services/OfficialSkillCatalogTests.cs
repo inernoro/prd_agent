@@ -10,6 +10,39 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class OfficialSkillCatalogTests
 {
+    [Theory]
+    [InlineData("game-over")]
+    [InlineData("work-budget")]
+    [InlineData("kill-debt")]
+    [InlineData("create-debt")]
+    [InlineData("first-principles")]
+    public void DeliverySkills_AreOfficialAndDownloadable(string key)
+    {
+        var entry = OfficialSkillCatalog.Find(key);
+        Assert.NotNull(entry);
+        Assert.False(string.IsNullOrWhiteSpace(entry.Version));
+        Assert.NotEmpty(entry.Roles);
+
+        var response = OfficialMarketplaceSkillInjector.BuildForkResponseById(
+            $"official-{key}", BuildRequest("https://map.example.test"),
+            new ConfigurationBuilder().Build(), currentUserId: "user-1");
+        Assert.NotNull(response);
+        Assert.Equal($"https://map.example.test/api/official-skills/{key}/download",
+            Read<string>(response!, "downloadUrl"));
+
+        var result = BuildOfficialSkillsController().Download(key);
+        var file = Assert.IsType<FileContentResult>(result);
+        using var stream = new MemoryStream(file.FileContents);
+        using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
+        foreach (var source in entry.Files)
+        {
+            var packed = zip.GetEntry($"{key}/{source.Path}");
+            Assert.NotNull(packed);
+            using var reader = new StreamReader(packed.Open());
+            Assert.Equal(source.Content, reader.ReadToEnd());
+        }
+    }
+
     [Fact]
     public void AiDefectResolveOfficialTemplate_StatesDailyAutomationContract()
     {
