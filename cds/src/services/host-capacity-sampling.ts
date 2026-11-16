@@ -66,9 +66,11 @@ export class HostCapacitySamplingService {
     if (this.status.external) throw new Error('external-report-configured');
     if (this.updating) throw new Error('configuration-in-progress');
     this.updating = true;
+    const generation = this.generation;
     try {
       await this.options.persist(enabled);
       this.status.enabled = enabled;
+      if (generation !== this.generation) return;
       this.stop();
       if (enabled) this.start();
       else this.options.observation.configure();
@@ -100,12 +102,21 @@ export class HostCapacitySamplingService {
       if (controller.signal.aborted || generation !== this.generation) return;
       this.status.sources = sources; this.status.unavailableSources = unavailable;
       if (!Object.keys(sources).length) throw new Error('no-known-sources');
+      const latest = path.join(state, 'latest.json');
+      const before = await fs.lstat(latest).catch(error => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      const startedAt = this.now();
       const argv = [fileURLToPath(new URL('./host-capacity-probe.py', import.meta.url)), '--state-dir', state,
         ...Object.entries(sources).flatMap(([name, root]) => ['--source', `${name}=${root}`])];
       const code = await (this.options.run ?? runCapacityProbe)(argv, controller.signal);
       if (controller.signal.aborted || generation !== this.generation) return;
       if (![0, 1, 2, 3].includes(code)) throw new Error('probe-unconfirmed');
-      await this.options.observation.refresh();
+      const after = await fs.lstat(latest);
+      if (!after.isFile() || after.nlink !== 1 || (before && before.dev === after.dev && before.ino === after.ino))
+        throw new Error('current-run-report-unconfirmed');
+      await this.options.observation.refresh(startedAt);
       this.status.outcome = this.options.observation.getSnapshot().sampledAt ? 'collected' : 'unknown';
     } catch {
       if (generation === this.generation) {

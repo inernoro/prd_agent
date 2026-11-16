@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -75,4 +76,31 @@ it('does not let an old normal report, including an accepted future timestamp, h
   f.observation.markUnavailable('采样进程失败，风险未知');expect(f.observation.getSnapshot().status).toBe('unknown');
   await f.observation.refresh();await vi.waitFor(()=>expect(f.observation.getSnapshot().sampledAt).toBeNull());
   expect(f.observation.getSnapshot().status).toBe('unknown');expect(JSON.parse(await fs.readFile(file,'utf8')).status).toBe('ok');
+});
+
+it('does not restart after stop while an enable request is awaiting durable persistence',async()=>{
+  let release!:()=>void;const pending=new Promise<void>(r=>release=r);const f=await fixture({persist:()=>pending});
+  const enable=f.service.setEnabled(true);f.service.stop();release();await enable;
+  await new Promise(r=>setImmediate(r));expect(f.run).not.toHaveBeenCalled();expect(f.service.getStatus().running).toBe(false);
+});
+it('restores the actual server setting callback after a failed flush, including later unrelated saves',async()=>{
+  const f=await fixture();const file=path.join(f.root,'durable-toggle.json');const state=new StateService(file);state.load();
+  const source=readFileSync(new URL('../../src/server.ts',import.meta.url),'utf8');
+  const callback=source.match(/persist: (async enabled => \{[^\n]+\}|enabled => [^\n]+?),\n  \}\);\n  hostCapacitySampling.start/);
+  expect(callback).not.toBeNull();const persist=new Function('deps','return ('+callback![1]+');')({stateService:state});
+  vi.spyOn(state,'flush').mockRejectedValueOnce(Error('temporary-durable-failure'));
+  await expect(persist(true)).rejects.toThrow('temporary-durable-failure');expect(state.getHostCapacitySamplingEnabled()).toBe(false);
+  state.save();await state.flush();const restored=new StateService(file);restored.load();expect(restored.getHostCapacitySamplingEnabled()).toBe(false);
+});
+it('requires a report actually published by this run when the real collector exits unknown without replacing its old report',async()=>{
+  const f=await fixture({run:undefined});await f.service.setEnabled(true);await vi.waitFor(()=>expect(f.service.getStatus().running).toBe(false));
+  const state=path.join(f.root,'private-history'),file=path.join(state,'latest.json');
+  const trend={deltaBytes:0,bytesPerDay:0,windowSeconds:3600};
+  const normal={version:1,at:Date.now()/1000,host:os.hostname(),status:'ok',alerts:[],sources:{cache:{path:f.source,device:'1',bytes:4096,...trend}},filesystems:{'1':{totalBytes:100000000000,usedBytes:10000000000,availableBytes:90000000000,totalInodes:10000,availableInodes:9000,usedPercent:10,inodeUsedPercent:10,daysToFull:null,daysToReserve:null,...trend}},policy:{warningPercent:75,criticalPercent:90,reserveBytes:6*1024**3,horizonDays:7,maxSamples:192}};
+  await fs.writeFile(file+'.fixture',JSON.stringify(normal),{mode:0o600});await fs.rename(file+'.fixture',file);await f.observation.refresh();expect(f.observation.getSnapshot().status).toBe('ok');
+  const before=await fs.stat(file);await fs.mkdir(path.join(state,'history.pending'));
+  f.service.requestSample();await vi.waitFor(()=>expect(f.service.getStatus().running).toBe(false));
+  const after=await fs.stat(file);expect(after.ino).toBe(before.ino);expect(JSON.parse(await fs.readFile(file,'utf8')).status).toBe('ok');
+  expect(f.observation.getSnapshot().status).toBe('unknown');expect(f.service.getStatus().outcome).toBe('unknown');
+  await f.observation.refresh();expect(f.observation.getSnapshot().status).toBe('unknown');
 });
