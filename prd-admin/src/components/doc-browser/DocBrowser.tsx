@@ -35,6 +35,7 @@ import { getTagColor, truncateTagDisplay, TAG_PALETTE, type TagColorKey } from '
 import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { glassMobileHeader } from '@/lib/glassStyles';
 import { compareDocBrowserEntries, computeReorderUpdates, type DocBrowserReorderUpdate, type DocBrowserSortMode } from './docBrowserSort';
+import { documentDisplayTitle as getDisplayTitle } from './docBrowserTitle';
 import { describeTranscriptOutcome } from './transcriptSegments';
 import { useNavigate } from 'react-router-dom';
 
@@ -311,6 +312,8 @@ export type DocBrowserEntry = {
   sortOrder?: number;
   updatedByName?: string;
   summary?: string;
+  /** 已确认发布的成文条目使用其权威标题，summary 不作为正文标题。 */
+  hasWritingPublication?: boolean;
   syncStatus?: string;
   /** 上次同步失败的原因（GitHub 目录订阅失败时要摊给用户看，不能只留在后台） */
   syncError?: string;
@@ -647,15 +650,6 @@ function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEn
   const cfg = getFileTypeConfig(entry.title, entry.contentType);
   const Icon = cfg.icon;
   return <Icon size={14} style={{ color: cfg.color }} />;
-}
-
-// ── 获取文档显示标题 ──
-function getDisplayTitle(entry: DocBrowserEntry, useContentTitle: boolean, contentFirstLines: Map<string, string>): string {
-  if (entry.isFolder) return entry.title;
-  if (!useContentTitle) return entry.title;
-  const firstLine = contentFirstLines.get(entry.id);
-  if (firstLine) return firstLine;
-  return entry.title;
 }
 
 // ── 判断 entry 可以发起的 Agent 操作 ──
