@@ -11,7 +11,7 @@ import { defaultOrphanWorktreeFs } from '../../src/services/janitor.js';
 import { removeOwnedDirectory } from '../../src/services/worktree-directory-removal-process.js';
 import { readWorktreeDirectoryIdentity, worktreePathActivity, WorktreeClaimHeldError } from '../../src/services/worktree-path-activity.js';
 import { computeImageRetentionPlan } from '../../src/services/image-retention.js';
-import { buildReleaseReclaimCommand, computeReleaseArtifactRetentionPlan, parseRemoteReclaimOutcome } from '../../src/services/release-artifact-retention.js';
+import { buildReleaseInventoryCommand, buildReleaseReclaimCommand, computeReleaseArtifactRetentionPlan, parseRemoteReleaseInventory, parseRemoteReclaimOutcome } from '../../src/services/release-artifact-retention.js';
 import type { BranchEntry, ReleaseTarget, ReleaseStrategy } from '../../src/types.js';
 
 const scratch: string[] = [];
@@ -215,4 +215,58 @@ describe('equivalent fourteen-day retention and recovery drill (isolated files o
       currentAndPreviousPreserved:true,rollbackSwitchAndRestoreVerified:true,inFlightSweepSkipped:true,rows,
       accounting:'real static payload files, production plan and shell command, isolated target'};
   }, 30000);
+
+  it('bounds proved static outputs over fourteen days within the existing removal budget', async () => {
+    const f=await fixture(),publish=path.join(f.root,'public'),versions=path.join(publish,'.releases');
+    const releaseRoot=path.join(f.root,'.cds-releases','fixture');
+    await fs.mkdir(versions,{recursive:true});await fs.mkdir(path.join(releaseRoot,'worktrees'),{recursive:true});
+    const id=(n:number)=>'rel_'+n.toString(16).padStart(16,'0');
+    const commit=f.git('rev-parse','HEAD'),helper=fileURLToPath(new URL('../../src/services/static-artifact-proof.py',import.meta.url));
+    const payload=await fs.readFile(path.join(f.repo,'source.bin'));
+    const sealer=await fs.readFile(helper,'utf8');
+    const makeMany=(numbers:number[])=>execFileSync('python3',['-c',sealer+`
+payload=pathlib.Path(sys.argv[5]).read_bytes()
+for n in json.loads(sys.argv[1]):
+ name='rel_'+format(n,'016x')
+ root=pathlib.Path(sys.argv[2])/name
+ root.mkdir()
+ (root/'index.html').write_bytes(payload)
+ seal_static_artifact(root,pathlib.Path(sys.argv[3]),'fixture',name,sys.argv[4])
+`,JSON.stringify(numbers),versions,releaseRoot,commit,path.join(f.repo,'source.bin')]);
+    makeMany([1,2]);await fs.symlink(path.join(versions,id(1)),path.join(publish,'current'));await fs.symlink(path.join(versions,id(2)),path.join(publish,'previous'));
+    const refs=await Promise.all(['current','previous'].map(n=>fs.readlink(path.join(publish,n))));
+    const protectedHash=digest(payload),bin=path.join(f.root,'bin');await fs.mkdir(bin);
+    await fs.writeFile(path.join(bin,'docker'),'#!/bin/sh\n[ "$1" = ps ] && exit 0\nexit 1\n',{mode:0o755});
+    const env={...process.env,PATH:bin+path.delimiter+process.env.PATH};
+    const target={id:'fixture',ssh:{appPath:f.repo}} as ReleaseTarget;
+    const strategy={mode:'generated-static',publicDirectory:publish} as ReleaseStrategy;
+    const ledger:Array<{releaseId:string;commitSha:string;status:'success';startedAt:string}>=[];
+    const allocated=()=>Number(execFileSync('du',['-sx','--block-size=1','--',versions],{encoding:'utf8'}).split(/\s+/)[0]);
+    let removed=0,reclaimedAllocatedBytes=0,cleanupMs=0;const rows=[];
+    for(let day=1;day<=14;day++){
+      makeMany(Array.from({length:8},(_,i)=>100*day+i));
+      for(let i=0;i<8;i++){const n=100*day+i;ledger.push({releaseId:id(n),commitSha:commit,status:'success',startedAt:new Date(start+day*DAY+i).toISOString()});}
+      const inventory=parseRemoteReleaseInventory(execFileSync('/bin/sh',['-c',buildReleaseInventoryCommand(target,strategy)!],{env,encoding:'utf8'}));
+      const plan=computeReleaseArtifactRetentionPlan({mode:'generated-static',inventory,ledgerRuns:ledger,hasInFlightRun:day===4,drift:'in-sync',keepRecent:3,maxRemovals:20});
+      expect(plan.removeVersions.length+plan.removeWorktrees.length).toBeLessThanOrEqual(20);
+      const before=allocated(),began=performance.now();
+      const command=buildReleaseReclaimCommand(target,strategy,plan,{commits:Object.fromEntries(ledger.map(r=>[r.releaseId,r.commitSha])),versionIdentities:inventory.versionIdentities});
+      if(day===4){expect(command).toBeNull();expect(plan.skippedReason).toBeTruthy();}
+      if(command){const outcome=parseRemoteReclaimOutcome(execFileSync('/bin/sh',['-c',command],{env,encoding:'utf8'}));
+        expect(outcome.queryError).toBeUndefined();expect(outcome.failedVersions).toEqual([]);expect(outcome.heldReasons).toBeUndefined();removed+=outcome.removedVersions.length;}
+      cleanupMs+=performance.now()-began;const after=allocated();reclaimedAllocatedBytes+=before-after;
+      const retained=(await fs.readdir(versions)).length;expect(retained).toBe(day===4?13:5);
+      for(const name of ['current','previous'])expect(digest(await fs.readFile(path.join(publish,name,'index.html')))).toBe(protectedHash);
+      expect(await Promise.all(['current','previous'].map(n=>fs.readlink(path.join(publish,n))))).toEqual(refs);
+      rows.push({day,generated:day*8,removed,retained,beforeAllocatedBytes:before,afterAllocatedBytes:after,deferred:plan.deferred});
+    }
+    expect(removed).toBe(109);expect(await fs.readdir(path.join(releaseRoot,'static-proofs'))).toHaveLength(5);
+    const regeneratedPath=path.join(f.root,'historical-static.bin'),output=await fs.open(regeneratedPath,'wx',0o600);
+    try{execFileSync('git',['-C',f.repo,'show',commit+':source.bin'],{stdio:['ignore',output.fd,'pipe']});}finally{await output.close();}
+    const regenerated=await fs.readFile(regeneratedPath);expect(digest(regenerated)).toBe(protectedHash);
+    evidence.provedStaticOutputs={equivalentDays:14,generated:112,removed,retained:5,payloadBytes:PAYLOAD,generatedPayloadBytes:112*PAYLOAD,
+      retainedPayloadBytes:5*PAYLOAD,reclaimedAllocatedBytes,cleanupMs,protectedHash,sourceCommit:commit,historicalPayloadRegenerated:true,
+      inFlightSweepSkipped:true,maxRemovals:20,rows,proofFiles:5,
+      accounting:'real static output files and native proof/removal; publication sealer shared with real generated-script regression; no source-worktree or image byte benefit claimed; legacy unproved objects remain separately protected'};
+  },30000);
 });
