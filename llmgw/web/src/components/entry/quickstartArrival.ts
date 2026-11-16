@@ -1,3 +1,4 @@
+import { beginEntryArrival } from './entryArrival';
 import type { EntryAudio } from './entryAudio';
 
 let arrivalUntil = 0;
@@ -17,6 +18,7 @@ export function markQuickstartArrival(audio?: EntryAudio | null) {
   stopQuickstartArrivalSound();
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { arrivalUntil = 0; return false; }
   arrivalUntil = Date.now() + 10000;
+  beginEntryArrival();
   if (audio) {
     arrivalAudio = audio; audio.play('reveal');
     soundDeadline = setTimeout(stopQuickstartArrivalSound, 2200);

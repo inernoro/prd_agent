@@ -13,7 +13,7 @@ import { GatewayQuickstartStage } from '@/components/entry/GatewayQuickstartStag
 //     解释，逐字保留；本页大量标识符与请求头被 GatewayDataDomainGuardTests 按
 //     字面量断言（见 scripts/check-source-contracts.mjs），改名前先跑那个守卫。
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from 'lucide-react';
+import { AlertCircle, ArrowUpRight, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, draftAppCallerIntent, getOrganization, getLogicalModels, updateGatewayAppCaller } from '@/lib/api';
 import type { OrganizationData } from '@/lib/types';
@@ -131,13 +131,6 @@ const CLIENT_PRESETS: Array<{
   { id: 'api', label: 'API 与 Agent', description: '复制 cURL、环境变量或 Agent Skill。', clientCode: null },
   { id: 'cherry-studio', label: 'Cherry Studio', description: '生成地址、API Key 和模型三项配置。', clientCode: 'cherry-studio' },
   { id: 'openclaw', label: 'OpenClaw', description: '生成可直接粘贴的 provider 配置。', clientCode: 'openclaw-agent' },
-];
-
-/** 第一屏的示例句：点一下就填进去，省掉「对着空白框发呆」那几秒。 */
-const INTENT_SAMPLES = [
-  '接入小米音响，对接大模型网关指令集',
-  '桌面客户端里做售后客服问答',
-  '后端服务批量做图片理解',
 ];
 
 /**
@@ -1192,17 +1185,18 @@ export function QuickstartPage() {
   // 创建屏与产物屏互斥：没有密钥时整屏只有一张创建卡，签出来之后整屏让给产物。
   // 两者不同时占版面，就不会出现「左右一起变」——这是本页改版要治的核心问题。
   const onCreateScreen = phase === 'idle' || phase === 'issuing';
+  const isIntentScreen = onCreateScreen && phase !== 'issuing' && stage === 'intent';
   const ribbonText = bundle
     ? `已签发 · ${bundle.appCallerCode} · 团队 ${selectedTeam?.name ?? '未指定'} · ${budgetPair.monthly !== null ? `${budgetPair.monthly} USD/月` : '预算不限'}`
     : '';
 
   return (
     <GatewayQuickstartStage>
-    <PageShell>
-      <PageHeader
+    <PageShell className={isIntentScreen ? 'is-intent' : undefined}>
+      {isIntentScreen ? <h1 className="gateway-visually-hidden">模型网关接入</h1> : <PageHeader
         title="Quickstart"
         subtitle={onCreateScreen ? '先说清要做什么，再签发；密钥在下一屏只显示一次。' : '密钥只显示这一次，复制走再刷新。'}
-      />
+      />}
 
       <PageBody>
         {onCreateScreen ? (
@@ -1233,35 +1227,26 @@ export function QuickstartPage() {
               */
               <section className="lg-qs-ask" aria-label="第一步 说清要做什么">
                 <div className="lg-qs-ask-inner">
-                  <h2 className="lg-qs-ask-title">我想做什么</h2>
-                  <p className="lg-qs-ask-sub">一句话说清：谁在调用、要做什么。</p>
-                  <textarea
-                    className="lg-qs-ask-input"
-                    aria-label="我想做什么"
-                    rows={4}
-                    autoFocus
-                    placeholder="例如：接入小米音响，对接大模型网关指令集"
-                    value={intent}
-                    maxLength={500}
-                    disabled={!canCreateAccess}
-                    onChange={(event) => setIntent(event.target.value)}
-                    onKeyDown={(event) => {
-                      // Ctrl/Cmd + Enter 直接提交：这一屏只有一个动作，不该逼人去够按钮。
-                      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void submitIntent();
-                    }}
-                  />
-                  <div className="lg-qs-ask-foot">
-                    <div className="lg-qs-ask-samples">
-                      {INTENT_SAMPLES.map((sample) => (
-                        <button key={sample} type="button" disabled={!canCreateAccess} onClick={() => setIntent(sample)}>{sample}</button>
-                      ))}
-                    </div>
-                    <Button
-                      variant="primary"
-                      className="lg-qs-primary"
-                      disabled={!canCreateAccess || intent.trim().length < MIN_INTENT_LENGTH}
-                      onClick={() => void submitIntent()}
-                    >准备接入</Button>
+                  <div className="gateway-intent-composer">
+                    <textarea
+                      className="lg-qs-ask-input"
+                      aria-label="我想做什么"
+                      rows={1}
+                      autoFocus
+                      placeholder="描述你想接入的应用或任务…"
+                      value={intent}
+                      maxLength={500}
+                      disabled={!canCreateAccess}
+                      onChange={(event) => setIntent(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                          event.preventDefault(); void submitIntent();
+                        }
+                      }}
+                    />
+                    <button type="button" className="gateway-intent-send" aria-label="准备接入" title="准备接入" disabled={!canCreateAccess || intent.trim().length < MIN_INTENT_LENGTH} onClick={() => void submitIntent()}>
+                      <ArrowUpRight size={21} aria-hidden="true" />
+                    </button>
                   </div>
                   {!canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
                 </div>
@@ -1474,7 +1459,7 @@ export function QuickstartPage() {
               </Card>
             )}
 
-            <div className="lg-qs-footline">
+            {!isIntentScreen && <div className="lg-qs-footline">
               <DetailsBlock title="已经有密钥？看接入地址与现有密钥前缀">
                 <AccessSnippetBar />
               </DetailsBlock>
@@ -1491,7 +1476,7 @@ export function QuickstartPage() {
                 </dl>
                 <TutorialLink chapter="chapter-11">查看教程：第 11 章 自助接入</TutorialLink>
               </DetailsBlock>
-            </div>
+            </div>}
           </div>
         ) : (
           /*

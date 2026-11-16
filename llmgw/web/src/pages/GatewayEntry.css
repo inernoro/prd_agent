@@ -1,10 +1,10 @@
 /* Same accepted scene, scoped to the independent gateway console. */
-.gateway-entry {
+.gateway-entry, .lg-console-shell.is-entry-workspace {
   --cinema-paper: #eff0f1; --cinema-ink: #15171b; --cinema-night: #02050a; --cinema-light: #f0f5ff;
   --cinema-accent: #71dce7; --cinema-amber: #ff9b3d; --cinema-glass: rgba(23,37,54,.6); --cinema-border: rgba(185,218,250,.26);
   --font-body: var(--font-sans); --font-display: var(--font-sans);
-  position: relative; min-height: 100svh; isolation: isolate; overflow: clip;
 }
+.gateway-entry { position: relative; min-height: 100svh; isolation: isolate; overflow: clip; }
 .gateway-login-form form { display: grid; gap: 12px; margin-top: 28px; }
 .gateway-login-form label { font-size: var(--fs-secondary); color: var(--cinema-ink); }
 .gateway-login-form input { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 2px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--cinema-ink) 35%, transparent); border-radius: 0; background: transparent; color: var(--cinema-ink); font: inherit; font-size: var(--fs-body); outline-offset: 4px; }
@@ -43,14 +43,9 @@
 .gateway-quickstart-stage .lg-page-heading { padding-right: 125px; }
 .gateway-quickstart-stage .lg-qs-ask { justify-content: flex-start; padding: 32px 16px; }
 .gateway-quickstart-stage .lg-qs-ask-inner { width: 58%; max-width: 580px; }
-.gateway-quickstart-stage .lg-qs-ask-title { color: var(--cinema-light); }
-.gateway-quickstart-stage .lg-qs-ask-sub { color: var(--text-muted); }
 .gateway-quickstart-stage .lg-qs-ask-input { color: var(--cinema-light); background: var(--bg-input); border-color: var(--cinema-border); backdrop-filter: blur(16px); }
 .gateway-quickstart-stage .lg-qs-ask-input::placeholder { color: var(--text-muted); }
 .gateway-quickstart-stage .lg-qs-ask-input:focus { border-color: var(--cinema-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cinema-accent) 12%, transparent); }
-.gateway-quickstart-stage .lg-qs-ask-samples > button { color: var(--text-secondary); border-color: var(--cinema-border); background: color-mix(in srgb, var(--cinema-night) 50%, transparent); text-align: left; }
-.gateway-quickstart-stage .lg-qs-ask-samples > button:hover:not(:disabled) { color: var(--cinema-light); border-color: var(--cinema-accent); }
-.gateway-quickstart-stage > .gateway-sound { top: 25px; right: 24px; bottom: auto; }
 @media (max-width: 960px) { .gateway-quickstart-stage .lg-qs-ask-inner { width: 72%; } }
 @media (max-width: 600px) {
   .gateway-quickstart-stage > .lg-page-shell { padding: 16px 12px; }
@@ -59,5 +54,84 @@
   .gateway-quickstart-stage .lg-qs-ask-inner { width: 100%; }
   .gateway-quickstart-stage .consciousness-camera { opacity: .65; }
   .gateway-quickstart-shade { background: color-mix(in srgb, var(--cinema-night) 45%, transparent); }
-  .gateway-quickstart-stage > .gateway-sound { top: 18px; right: 12px; }
 }
+
+/* A compact navigation rail works throughout the console; its preference is device-local. */
+.lg-sidebar-desktop-heading { display: flex; align-items: center; justify-content: space-between; min-height: 52px; padding: 4px 10px; flex-shrink: 0; color: var(--text-secondary); font-size: var(--fs-caption); }
+.lg-sidebar-desktop-heading button { width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: inherit; cursor: pointer; }
+.lg-sidebar-desktop-heading button:hover { color: var(--text-primary); background: var(--bg-hover); }
+@media (min-width: 961px) {
+  .lg-console-sidebar { flex-basis: auto; transition: width 220ms cubic-bezier(.22,1,.36,1); }
+  .lg-console-shell.has-collapsed-sidebar .lg-console-body > .lg-console-sidebar { width: 64px; flex-basis: auto; }
+  .has-collapsed-sidebar .lg-sidebar-desktop-heading { justify-content: center; padding: 4px 0; }
+  .has-collapsed-sidebar .lg-nav-group-label, .has-collapsed-sidebar .lg-nav-group a > span, .has-collapsed-sidebar .lg-sidebar-footer button > span, .has-collapsed-sidebar .lg-sidebar-footer kbd { display: none; }
+  .has-collapsed-sidebar .lg-nav-group { padding: 4px 0; }
+  .has-collapsed-sidebar .lg-nav-group + .lg-nav-group { border-top: 1px solid var(--border-subtle); }
+  .has-collapsed-sidebar .lg-nav-group a { width: 40px; height: 36px; padding: 0; margin: 2px auto; justify-content: center; border-radius: 10px; }
+  .has-collapsed-sidebar .lg-console-sidebar > nav { overflow-x: hidden; scrollbar-width: thin; }
+  .has-collapsed-sidebar .lg-sidebar-footer { padding: 8px 0; }
+  .has-collapsed-sidebar .lg-sidebar-footer button { width: 42px; padding: 0; margin: auto; justify-content: center; }
+}
+@media (max-width: 960px) { .lg-sidebar-desktop-heading { display: none; } }
+
+/* Quickstart is the companion workspace, with its own cinematic chrome. */
+.lg-console-shell.is-entry-workspace {
+  --text-primary: var(--cinema-light); --text-secondary: color-mix(in srgb, var(--cinema-light) 86%, transparent); --text-muted: color-mix(in srgb, var(--cinema-light) 65%, transparent);
+  --bg-page: var(--cinema-night); --bg-surface: color-mix(in srgb, var(--cinema-night) 92%, transparent); --bg-elevated: var(--cinema-night); --bg-input: var(--cinema-glass); --bg-hover: color-mix(in srgb, var(--cinema-light) 7%, transparent);
+  --border-subtle: color-mix(in srgb, var(--cinema-light) 10%, transparent); --border-strong: var(--cinema-border);
+  --gateway-nav-width: 224px; position: relative; color: var(--cinema-light); background: var(--cinema-night); color-scheme: dark;
+}
+.is-entry-workspace.has-collapsed-sidebar { --gateway-nav-width: 64px; }
+.is-entry-workspace .lg-console-body { height: 100%; }
+.is-entry-workspace .lg-console-header {
+  position: absolute; top: 0; right: 0; left: var(--gateway-nav-width); height: 72px; padding: 16px 32px; gap: 16px; border: 0;
+  background: linear-gradient(var(--cinema-night), transparent); backdrop-filter: none; transition: left 220ms cubic-bezier(.22,1,.36,1);
+}
+.is-entry-workspace .lg-console-brand { flex: 1; font-size: var(--fs-heading); font-weight: 650; letter-spacing: .12em; }
+.is-entry-workspace .lg-brand-mark { border: 0; background: transparent; box-shadow: none; color: var(--cinema-accent); }
+.is-entry-workspace .lg-header-actions { margin-left: auto; gap: 12px; }
+.is-entry-workspace .lg-console-sidebar { padding-top: 0; background: color-mix(in srgb, var(--cinema-night) 82%, transparent); border-right: 1px solid var(--border-subtle); }
+.is-entry-workspace .lg-sidebar-desktop-heading { min-height: 72px; }
+.is-entry-workspace .lg-nav-group a { color: var(--text-secondary); }
+.is-entry-workspace .lg-nav-group a.is-active { color: var(--cinema-light); background: color-mix(in srgb, var(--cinema-light) 9%, transparent); }
+.is-entry-workspace .lg-user-menu > summary { width: 36px; height: 36px; padding: 0; border: 1px solid var(--cinema-border); border-radius: 50%; }
+.is-entry-workspace .lg-user-menu > summary > span { width: 100%; height: 100%; background: transparent; color: var(--cinema-light); }
+.is-entry-workspace .lg-user-menu > summary > strong, .is-entry-workspace .lg-user-menu > summary > svg { display: none; }
+.gateway-chrome-sound { width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 50%; color: var(--cinema-light); background: transparent; cursor: pointer; }
+.gateway-chrome-sound:hover { background: var(--bg-hover); }
+.lg-menu-tenant-switcher { margin: 8px 0; }
+.lg-menu-tenant-switcher > summary { width: 100%; }
+.lg-menu-tenant-switcher .lg-tenant-popover { position: static; width: 100%; box-shadow: none; margin-top: 8px; }
+.gateway-quickstart-stage > .lg-page-shell { padding: 88px 32px 24px; }
+.gateway-quickstart-stage .lg-page-shell.is-intent { padding: 72px 32px 24px; }
+.gateway-quickstart-stage .is-intent .lg-page-body { padding-bottom: 0; }
+.gateway-quickstart-stage .is-intent .lg-qs-ask { min-height: 260px; justify-content: center; padding: 0; }
+.gateway-quickstart-stage .is-intent .lg-qs-ask-inner { width: min(650px, 70%); max-width: 650px; transform: translateY(-5%); }
+.gateway-quickstart-stage.is-arriving .is-intent .lg-qs-ask-inner { opacity: calc(.35 + .65 * var(--portrait-controls, 0)); }
+.gateway-quickstart-stage .gateway-quickstart-shade { background: linear-gradient(90deg, color-mix(in srgb, var(--cinema-night) 80%, transparent), transparent 75%); }
+.gateway-intent-composer { position: relative; width: 100%; border: 1px solid var(--cinema-border); border-radius: 20px; background: color-mix(in srgb, var(--cinema-glass) 68%, transparent); backdrop-filter: blur(24px); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--cinema-light) 7%, transparent), 0 18px 64px color-mix(in srgb, var(--cinema-night) 40%, transparent); }
+.gateway-intent-composer:focus-within { border-color: color-mix(in srgb, var(--cinema-accent) 65%, transparent); }
+.gateway-quickstart-stage .gateway-intent-composer .lg-qs-ask-input { min-height: 76px; max-height: 180px; width: 100%; padding: 25px 70px 25px 24px; border: 0; outline: 0; box-shadow: none; border-radius: inherit; color: var(--cinema-light); background: transparent; resize: none; backdrop-filter: none; font-size: var(--fs-body); line-height: 1.8; }
+.gateway-intent-send { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border: 1px solid var(--cinema-border); border-radius: 13px; color: var(--cinema-light); background: color-mix(in srgb, var(--cinema-light) 7%, transparent); display: grid; place-items: center; cursor: pointer; }
+.gateway-intent-send:hover:not(:disabled) { border-color: var(--cinema-accent); color: var(--cinema-accent); }
+.gateway-intent-send:disabled { opacity: .35; cursor: default; }
+.gateway-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+@media (max-width: 960px) {
+  .is-entry-workspace .lg-console-header { left: 0; height: 64px; padding: 12px 18px; }
+  .is-entry-workspace .lg-console-sidebar { background: var(--cinema-night); }
+  .gateway-quickstart-stage > .lg-page-shell { padding: 80px 20px 20px; }
+  .gateway-quickstart-stage .lg-page-shell.is-intent { padding: 64px 20px 20px; }
+}
+@media (max-width: 600px) {
+  .is-entry-workspace .lg-console-brand { gap: 8px; font-size: var(--fs-secondary); letter-spacing: .06em; }
+  .is-entry-workspace .lg-console-brand > span:last-child { display: inline; }
+  .is-entry-workspace .lg-header-actions { gap: 4px; }
+  .gateway-quickstart-stage .is-intent .lg-qs-ask-inner { width: 100%; transform: translateY(22%); }
+  .gateway-quickstart-stage .gateway-intent-composer .lg-qs-ask-input { min-height: 72px; padding: 23px 62px 23px 18px; font-size: var(--fs-body); }
+  .gateway-intent-send { right: 12px; width: 36px; height: 36px; }
+}
+@media (prefers-reduced-motion: reduce) { .lg-console-sidebar, .is-entry-workspace .lg-console-header { transition: none; } }
+/* Keep the header aligned with the rail while its width changes. */
+.is-entry-workspace .lg-console-header.entry-shell-chrome { transition: opacity 650ms ease-out, left 220ms cubic-bezier(.22,1,.36,1) !important; }
+html[data-entry-arriving] .is-entry-workspace .lg-console-header.entry-shell-chrome { transition-property: left !important; }
+@media (prefers-reduced-motion: reduce) { .is-entry-workspace .lg-console-header.entry-shell-chrome { transition: none !important; } }

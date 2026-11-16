@@ -1,8 +1,11 @@
+import { readSidebarCollapsed, saveSidebarCollapsed } from '@/lib/sidebarPreference';
+import { finishEntryArrival } from '@/components/entry/entryArrival';
+import { GatewaySoundToggle } from '@/components/entry/GatewaySoundToggle';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity, BookOpen, Bug, Building2, ChevronDown, CircleDollarSign, FileClock, Layers3,
   Check, ExternalLink, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings, SlidersHorizontal,
-  ShieldCheck, Sun, Tags, UserRound, X,
+  ShieldCheck, Sun, Tags, UserRound, X, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
@@ -58,6 +61,10 @@ export function ConsoleLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+  const isQuickstart = location.pathname === '/quickstart';
+  const toggleSidebar = () => setSidebarCollapsed(previous => { const next = !previous; saveSidebarCollapsed(next); return next; });
+  useEffect(() => { if (!isQuickstart) finishEntryArrival(); }, [isQuickstart]);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [tenants, setTenants] = useState<AvailableTenant[]>([]);
@@ -143,25 +150,25 @@ export function ConsoleLayout() {
   }
 
   return (
-    <div className="lg-console-shell">
-      <header className="lg-console-header">
+    <div className={`lg-console-shell${isQuickstart ? ' is-entry-workspace' : ''}${sidebarCollapsed ? ' has-collapsed-sidebar' : ''}`}>
+      <header className="lg-console-header entry-shell-chrome">
         <div className="lg-console-brand">
-          <button className="lg-mobile-menu-button" type="button" aria-label="打开导航" onClick={() => setMobileOpen(true)}><Menu size={18} /></button>
+          <button className="lg-mobile-menu-button" type="button" aria-label="打开导航" aria-expanded={mobileOpen} onClick={() => setMobileOpen(true)}><Menu size={18} /></button>
           <span className="lg-brand-mark"><Activity size={17} /></span>
           <span>LLM Gateway</span>
         </div>
 
-        {renderTenantSwitcher('lg-desktop-tenant-switcher')}
+        {!isQuickstart && renderTenantSwitcher('lg-desktop-tenant-switcher')}
 
-        {canSearchRequests ? <form className="lg-global-search" role="search" onSubmit={submitSearch}>
+        {!isQuickstart && (canSearchRequests ? <form className="lg-global-search" role="search" onSubmit={submitSearch}>
           <Search size={15} />
           <input aria-label="按 requestId 搜索" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="按 requestId 定位请求" />
           <kbd>Enter</kbd>
           <button type="submit" aria-label="搜索请求"><Search size={14} /></button>
-        </form> : <div className="lg-global-search" aria-label="当前角色不提供请求搜索"><Search size={15} /><span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>当前角色仅查看用量</span></div>}
+        </form> : <div className="lg-global-search" aria-label="当前角色不提供请求搜索"><Search size={15} /><span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>当前角色仅查看用量</span></div>)}
 
         <div className="lg-header-actions">
-          {canSearchRequests ? (
+          {!isQuickstart && canSearchRequests ? (
             <button
               className="lg-mobile-search-button"
               type="button"
@@ -172,12 +179,14 @@ export function ConsoleLayout() {
               {mobileSearchOpen ? <X size={18} /> : <Search size={18} />}
             </button>
           ) : null}
-          {canOpenMapTutorials ? <a className="lg-header-link" href={mapTutorialHref}><BookOpen size={15} /><span>相关教程</span><ExternalLink size={12} /></a> : null}
-          <NavLink className="lg-header-link" to="/learn"><BookOpen size={15} /><span>文档</span></NavLink>
+          {!isQuickstart && canOpenMapTutorials ? <a className="lg-header-link" href={mapTutorialHref}><BookOpen size={15} /><span>相关教程</span><ExternalLink size={12} /></a> : null}
+          {!isQuickstart && <NavLink className="lg-header-link" to="/learn"><BookOpen size={15} /><span>文档</span></NavLink>}
+          {isQuickstart && <GatewaySoundToggle />}
           <details className="lg-user-menu">
             <summary aria-label="打开用户菜单"><span>{who.slice(0, 1).toUpperCase()}</span><strong>{who}</strong><ChevronDown size={13} /></summary>
             <div className="lg-user-popover">
               <div><strong>{who}</strong><small>{tenant?.name ?? '当前租户'} · {tenant?.role ?? 'member'}</small></div>
+              {isQuickstart && renderTenantSwitcher('lg-menu-tenant-switcher')}
               {canOpenMapTutorials ? (
                 <a href={mapTutorialHref}>
                   <BookOpen size={15} />相关教程<ExternalLink className="lg-user-menu-end-icon" size={14} />
@@ -213,7 +222,13 @@ export function ConsoleLayout() {
 
       <div className="lg-console-body">
         {mobileOpen ? <button className="lg-sidebar-backdrop" type="button" aria-label="关闭导航" onClick={() => setMobileOpen(false)} /> : null}
-        <aside className={`lg-console-sidebar${mobileOpen ? ' is-open' : ''}`} aria-label="主导航">
+        <aside className={`lg-console-sidebar entry-shell-chrome${mobileOpen ? ' is-open' : ''}`} aria-label="主导航">
+          <div className="lg-sidebar-desktop-heading">
+            {!sidebarCollapsed && <span>工作空间</span>}
+            <button type="button" aria-label={sidebarCollapsed ? '展开菜单' : '收起菜单'} title={sidebarCollapsed ? '展开菜单' : '收起菜单'} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}>
+              {sidebarCollapsed ? <PanelLeftOpen size={19} /> : <PanelLeftClose size={19} />}
+            </button>
+          </div>
           <div className="lg-sidebar-mobile-heading"><span>导航</span><button type="button" aria-label="关闭导航" onClick={() => setMobileOpen(false)}><X size={18} /></button></div>
           {renderTenantSwitcher('lg-mobile-tenant-switcher')}
           <nav>
@@ -221,7 +236,7 @@ export function ConsoleLayout() {
               <div className="lg-nav-group" key={group.label}>
                 <div className="lg-nav-group-label">{group.label}</div>
                 {group.items.map((item) => (
-                  <NavLink key={`${group.label}:${item.to}:${item.label}`} to={item.to} end={item.end} onClick={() => setMobileOpen(false)} className={({ isActive }) => isActive ? 'is-active' : undefined}>
+                  <NavLink key={`${group.label}:${item.to}:${item.label}`} to={item.to} end={item.end} aria-label={item.label} title={sidebarCollapsed ? item.label : undefined} onClick={() => setMobileOpen(false)} className={({ isActive }) => isActive ? 'is-active' : undefined}>
                     {item.icon}<span>{item.label}</span>
                   </NavLink>
                 ))}

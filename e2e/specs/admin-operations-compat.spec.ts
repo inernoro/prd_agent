@@ -53,6 +53,19 @@ async function loginGateway(page: Page) {
   expect(coverage.headingInside).toBe(true);
   expect(coverage.radius).toBe('0px');
   await expect(page.locator(".lg-console-content")).toBeVisible();
+  await expect(page.locator(".lg-console-header")).toBeVisible({ timeout: 12000 });
+  await expect(page.locator(".lg-console-header input")).toHaveCount(0);
+  await expect(page.locator(".gateway-quickstart-stage textarea")).toHaveCount(1);
+  const expandMenu = page.getByRole("button", { name: "展开菜单", exact: true });
+  if (await expandMenu.isVisible()) {
+    const sidebar = page.locator(".lg-console-sidebar");
+    await expect.poll(() => sidebar.evaluate(el => Math.round(el.getBoundingClientRect().width))).toBe(64);
+    await expandMenu.click();
+    await expect.poll(() => sidebar.evaluate(el => Math.round(el.getBoundingClientRect().width))).toBe(224);
+    await expect(page.getByRole("button", { name: "收起菜单", exact: true })).toHaveAttribute("aria-expanded", "true");
+    await page.getByRole("button", { name: "收起菜单", exact: true }).click();
+    await expect.poll(() => sidebar.evaluate(el => Math.round(el.getBoundingClientRect().width))).toBe(64);
+  }
   if (await page.getByLabel("打开导航", { exact: true }).isVisible())
     await page.getByLabel("打开导航", { exact: true }).click();
   await page.locator('nav a[href="/llmgw/logical-models"]').click();

@@ -23,6 +23,7 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
     } }],
   });
   let root;
+  let finishEntryArrival;
   try {
     const { createRoot } = await import('react-dom/client');
     const { entryAsset } = await server.ssrLoadModule('/src/components/entry/entryAsset.ts');
@@ -34,6 +35,7 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
     const { gatewayLoginDestination, hasQuickstartArrival } = await server.ssrLoadModule('/src/components/entry/quickstartArrival.ts');
     for (const path of [null, '/', '//outside', 'https://outside', '/login']) assert.equal(gatewayLoginDestination(path), '/quickstart');
     assert.equal(gatewayLoginDestination('/logs?requestId=sample'), '/logs?requestId=sample');
+    ({ finishEntryArrival } = await server.ssrLoadModule('/src/components/entry/entryArrival.ts'));
     const { GatewayQuickstartStage } = await server.ssrLoadModule('/src/components/entry/GatewayQuickstartStage.tsx');
     const { LoginPage } = await server.ssrLoadModule('/src/pages/LoginPage.tsx');
     root = createRoot(document.getElementById('root'));
@@ -72,6 +74,7 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
     assert.equal(document.querySelector('.gateway-arrival-copy'),null);
     assert.deepEqual(globalThis.__gatewayRoutes,[['/quickstart',{replace:true}]]);
     assert.equal(hasQuickstartArrival(),true);
+    assert.ok(document.documentElement.hasAttribute('data-entry-arriving'));
     await act(async () => root.unmount());
     root = createRoot(document.getElementById('root'));
     await act(async () => root.render(React.createElement(GatewayQuickstartStage,null,React.createElement('textarea',{'aria-label':'真实接入输入',defaultValue:'我想做客服问答'}))));
@@ -88,6 +91,7 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
 
   } finally {
     if (root) await act(async () => root.unmount());
+    finishEntryArrival?.();
     await server.close(); dom.window.close(); Object.assign(globalThis, previous);
     delete globalThis.__gatewayLogin; delete globalThis.__gatewayRoutes;
   }
