@@ -44,6 +44,14 @@ export function acceptanceLeaseIsInvalid(error: unknown): boolean {
   return (error.status === 409 && (error.body.error === 'lease_invalid' || error.body.error === 'task_not_running'))
     || (error.status === 404 && error.body.error === 'task_not_found');
 }
+
+/** 续期响应只承载租约变化，不能将途中读到的旧业务快照重新应用到页面。 */
+export function mergeAcceptanceRenewal(current: AcceptanceTask, renewal: AcceptanceTask): AcceptanceTask {
+  if (current.id !== renewal.id || current.status !== 'running' || renewal.status !== 'running'
+    || !current.lease || !renewal.lease || current.lease.generation !== renewal.lease.generation
+    || Date.parse(renewal.lease.expiresAt) <= Date.parse(current.lease.expiresAt)) return current;
+  return { ...current, lease: renewal.lease };
+}
 const CASE_STATUS_CLASS: Record<AcceptanceCaseStatus, string> = { pass: 'text-primary bg-primary/5 border-primary/30', fail: 'text-destructive bg-destructive/5 border-destructive/30', blocked: 'text-foreground bg-muted border-border', 'not-run': 'text-muted-foreground bg-background border-border' };
 
 export function AcceptanceStatus({ status, flaky }: { status: AcceptanceCaseStatus; flaky?: boolean }): JSX.Element {
@@ -96,24 +104,32 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
   activeTaskId.current = taskId;
   const mounted = useRef(true);
   const pendingSubmissions = useRef(new Map<string, { signature: string; id: string }>());
+  const caseSelectionIdentity = useRef('');
+  const taskMutationGeneration = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const updateTask = useCallback((next: AcceptanceTask) => { if (!mounted.current) return; if (activeTaskId.current === next.id) setTask(next); setTasks((current) => current.some((value) => value.id === next.id) ? current.map((value) => value.id === next.id ? next : value) : [next, ...current]); }, []);
+  const updateTask = useCallback((next: AcceptanceTask, source: 'read' | 'write' = 'write') => { if (!mounted.current) return; if (source === 'write') taskMutationGeneration.current += 1; if (activeTaskId.current === next.id) setTask(next); setTasks((current) => current.some((value) => value.id === next.id) ? current.map((value) => value.id === next.id ? next : value) : [next, ...current]); }, []);
+  const updateRenewal = useCallback((next: AcceptanceTask) => {
+    if (!mounted.current) return;
+    setTask((current) => current ? mergeAcceptanceRenewal(current, next) : current);
+    setTasks((current) => current.map((value) => mergeAcceptanceRenewal(value, next)));
+  }, []);
   const clearLease = (): void => { leaseRef.current = null; setLease(null); setHeartbeatError(''); };
 
   const load = useCallback(async (): Promise<void> => {
     if (!projectId) return;
     const generation = ++requestGeneration.current;
+    const mutationGeneration = taskMutationGeneration.current;
     setLoading(true); setError('');
     try {
       const [nextTemplates, nextTasks, nextMatrix] = await Promise.all([
         listAcceptanceTemplates(projectId), listAcceptanceTasks(projectId),
         view === 'matrix' ? getAcceptanceMatrix(projectId, matrixTemplate || undefined, matrixEnvironment || undefined) : Promise.resolve(null),
       ]);
-      if (generation !== requestGeneration.current) return;
+      if (generation !== requestGeneration.current || mutationGeneration !== taskMutationGeneration.current) return;
       const latestTemplates = latestAcceptanceTemplates(nextTemplates);
       setTemplates(latestTemplates); setTasks(nextTasks); if (nextMatrix) setMatrix(nextMatrix);
       const selectedTask = nextTasks.find((value) => value.id === activeTaskId.current);
-      if (selectedTask) updateTask(selectedTask);
+      if (selectedTask) updateTask(selectedTask, 'read');
       setTemplateId((current) => latestTemplates.some((value) => value.id === current) ? current : latestTemplates[0]?.id ?? '');
     } catch (err) { if (generation === requestGeneration.current) setError(errorMessage(err)); }
     finally { if (generation === requestGeneration.current) setLoading(false); }
@@ -124,10 +140,11 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
     setTask(null); setReportDraft(null); setPendingReportId(''); setBindReportId('');
     if (!taskId || !projectId) return;
     let cancelled = false;
+    const mutationGeneration = taskMutationGeneration.current;
     getAcceptanceTask(taskId).then((next) => {
-      if (cancelled) return;
+      if (cancelled || mutationGeneration !== taskMutationGeneration.current) return;
       if (next.projectId !== projectId) { setError('该任务不属于当前项目，请选择任务所属项目。'); return; }
-      updateTask(next);
+      updateTask(next, 'read');
     }).catch((err) => { if (!cancelled) setError(errorMessage(err)); });
     return () => { cancelled = true; };
   }, [taskId, projectId, updateTask]);
@@ -137,9 +154,9 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
     let cancelled = false;
     const timer = window.setInterval(() => {
       heartbeatAcceptanceTask(lease.taskId, lease.token).then((next) => {
-        if (!cancelled) { updateTask(next); setHeartbeatError(''); }
+        if (!cancelled && leaseRef.current?.token === lease.token) { updateRenewal(next); setHeartbeatError(''); }
       }).catch((err) => {
-        if (cancelled) return;
+        if (cancelled || leaseRef.current?.token !== lease.token) return;
         if (acceptanceLeaseIsInvalid(err)) {
           leaseRef.current = null; setLease(null);
           setHeartbeatError('');
@@ -153,16 +170,21 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
       cancelled = true; window.clearInterval(timer);
       if (leaseRef.current?.token === lease.token) { leaseRef.current = null; void releaseAcceptanceTask(lease.taskId, lease.token).catch(() => undefined); }
     };
-  }, [lease, updateTask]);
+  }, [lease, updateRenewal]);
 
   useEffect(() => {
     if (lease && lease.taskId !== taskId) { const previous = lease; clearLease(); void releaseAcceptanceTask(previous.taskId, previous.token).catch(() => undefined); }
   }, [taskId, lease]);
 
   const selectedTemplate = templates.find((value) => value.id === templateId);
-  useEffect(() => { setCaseIds(selectedTemplate?.cases.filter((value) => value.environments.includes(environment)).map((value) => value.caseId) ?? []); }, [selectedTemplate, environment]);
+  useEffect(() => {
+    const identity = JSON.stringify([selectedTemplate?.id, selectedTemplate?.version, environment]);
+    if (caseSelectionIdentity.current === identity) return;
+    caseSelectionIdentity.current = identity;
+    setCaseIds(selectedTemplate?.cases.filter((value) => value.environments.includes(environment)).map((value) => value.caseId) ?? []);
+  }, [selectedTemplate, environment]);
   const selectTask = (id: string): void => { const next = new URLSearchParams(searchParams); next.set('view', 'tasks'); next.set('task', id); next.delete('case'); next.delete('report'); setSearchParams(next); };
-  const action = async (operation: () => Promise<void>): Promise<void> => { setBusy(true); setError(''); setNotice(''); try { await operation(); } catch (err) { setError(errorMessage(err)); } finally { setBusy(false); } };
+  const action = async (operation: () => Promise<void>): Promise<void> => { setBusy(true); setError(''); setNotice(''); try { await operation(); } catch (err) { if (acceptanceLeaseIsInvalid(err)) clearLease(); setError(errorMessage(err)); } finally { setBusy(false); } };
 
   const claimTask = async (): Promise<void> => {
     if (!task) return;

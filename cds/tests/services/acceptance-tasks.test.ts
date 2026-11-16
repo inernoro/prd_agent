@@ -206,7 +206,8 @@ describe('结构化验收任务', () => {
   it('周期收敛真实运行，健康可见且stop停止定时器', async () => {
     const t = await task(); await service.claim(t.id, 'A');
     const reaper = startAcceptanceLeaseReaper(service, { intervalMs: 10 }); clock += 1_001;
-    await new Promise((resolve) => setTimeout(resolve, 40)); reaper.stop();
+    try { await vi.waitFor(() => expect(service.getTask(t.id).status).toBe('pending'), { timeout: 1_000 }); }
+    finally { reaper.stop(); }
     expect(service.getTask(t.id).status).toBe('pending'); expect(service.health()).toMatchObject({ ok: true, lastReconcileOk: true, expiredLeases: 0 });
     expect(service.health().reaperRunning).toBe(false);
   });

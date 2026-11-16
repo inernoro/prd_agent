@@ -11,7 +11,7 @@ import {
 import type { AcceptanceReportDraft, AcceptanceTask, AcceptanceTemplate } from '../../web/src/lib/acceptance-api';
 import { AcceptanceTemplateEditor, newAcceptanceCase } from '../../web/src/pages/reports/AcceptanceTemplateEditor';
 import { AcceptanceResultEditor, acceptanceSubmissionProblem, initialAcceptanceSubmission, preparedAcceptanceSubmission } from '../../web/src/pages/reports/AcceptanceResultEditor';
-import { AcceptanceNavigation, AcceptanceSummaryCard, acceptanceLeaseIsInvalid } from '../../web/src/pages/reports/AcceptanceWorkspace';
+import { AcceptanceNavigation, AcceptanceSummaryCard, acceptanceLeaseIsInvalid, mergeAcceptanceRenewal } from '../../web/src/pages/reports/AcceptanceWorkspace';
 import { ApiError } from '../../web/src/lib/api';
 
 const testCase = {
@@ -105,6 +105,18 @@ describe('结构化清单和逐项回填，非 JSON 粘贴框', () => {
 });
 
 describe('验收中心接线和结论语义', () => {
+  it('续期只更新当前代的到期时间，旧业务快照不能覆盖保存、结束或释放结果', () => {
+    const current = { id: 'task1', status: 'running', results: { 'VIS-001': { actual: '刚保存的结果' } },
+      lease: { agentName: 'A', generation: 1, expiresAt: '2030-01-01T00:01:00Z' } } as unknown as AcceptanceTask;
+    const stale = { ...current, results: {}, lease: { ...current.lease!, expiresAt: '2030-01-01T00:02:00Z' } };
+    expect(mergeAcceptanceRenewal(current, stale)).toEqual({ ...current, lease: stale.lease });
+    expect(mergeAcceptanceRenewal(current, { ...stale, lease: { ...stale.lease, generation: 2 } })).toBe(current);
+    expect(mergeAcceptanceRenewal(current, { ...stale, lease: { ...stale.lease, expiresAt: '2030-01-01T00:00:00Z' } })).toBe(current);
+    for (const status of ['completed', 'pending'] as const) {
+      const ended = { ...current, status, lease: undefined };
+      expect(mergeAcceptanceRenewal(ended, stale)).toBe(ended);
+    }
+  });
   it('网络和服务暂时失败不冒充领取失效，只有明确失效响应才丢弃票据', () => {
     for (const error of [new TypeError('fetch failed'), new ApiError(503, { error: 'acceptance_unavailable' }, ''),
       new ApiError(409, { error: 'task_claimed' }, ''), new ApiError(401, {}, ''), new ApiError(409, null, '')]) {
