@@ -20,7 +20,18 @@ export function readGovernanceView(value: unknown): GovernanceView {
 const inputClass = 'w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm';
 const states = { pending: '等待独立批准', approved: '已批准', rejected: '已拒绝', revoked: '已撤销' };
 const prStates = { open: '待合并', closed: '已关闭未合并', merged: 'PR 已合并', unknown: '尚未核实' };
-const failure = (error: unknown) => error instanceof ApiError ? error.message : '操作未完成，请刷新后重试';
+export function releaseGovernanceFailure(error: unknown): string {
+  if (!(error instanceof ApiError)) return '操作未完成，请刷新后重试';
+  if (error.status === 401) return '登录已失效，请重新登录后继续';
+  if (error.status === 403) return '没有执行此操作的权限，请使用有权访问该项目的账号';
+  if (error.status === 400) return '申请信息不完整，请核对分支、范围和有效期后重新提交';
+  const body = error.body as { code?: unknown; message?: unknown } | null;
+  if (body?.code === 'release_governance_rejected' && typeof body.message === 'string') {
+    return `${body.message}。请核对申请条件后重试`;
+  }
+  return '发布服务暂时不可用，尚未放行，请刷新后重试';
+}
+const failure = releaseGovernanceFailure;
 
 export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChanged }: {
   projectId: string; row?: CenterRow; refreshVersion: number; onChanged: () => void;

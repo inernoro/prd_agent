@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.21.2
+  version: 0.22.1
 description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, host-isolated primary/standby selection, load checks, canonical cdscli commands, self-update, deployment runs, versions and rollback. Read actual preview URLs through preview-url; delegate project scanning and deployment to their companion skills. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its required design/orchestration prerequisites; report upload is transport, not acceptance execution. Activate for these tasks or clarify intent when the user only says CDS.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.21.2 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
+> **版本**：v0.22.1 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -241,6 +241,31 @@ $CLI report-folder list [--project <id>]
 - 克隆保留源库，恢复可能覆盖目标，连接已有仅改配置；三者都不能直接称为「移动完成」。跨主机数据迁移要核对源/目标库名、集合范围、行数、索引和失败回滚。跨引擎转换不支持。
 - 同一连接内执行 SQL 事务；MySQL DDL 有隐式提交，不能承诺所有脚本自动回滚。MongoDB 事务还依赖 replica set，当前 UI/CLI 没有事务入口。
 - 当前网关只有内网地址时，明确报告局域网已验证、公网尚未验证；页面经 Cloudflare 看到的 IP 可能与原生工具的出口 IP 不同。
+
+## 结构化验收任务
+
+`acceptance` 命令族把清单、每轮任务、逐项结果与报告关联起来，不创建定时器，不触发发布。
+正式环境巡检默认 `production`，无需指定分支或冻结待发布版本；已观测版本仅作追溯。
+
+```bash
+$CLI acceptance templates --project <projectId>
+$CLI acceptance publish --project <projectId> --file <结构化清单.json>
+$CLI acceptance create --project <projectId> --template <templateId>
+$CLI acceptance tasks --project <projectId>
+$CLI acceptance claim <taskId> --agent Codex
+$CLI acceptance get <taskId>
+$CLI acceptance heartbeat <taskId>
+$CLI acceptance result <taskId> --case <caseId> --file <逐项结果.json>
+$CLI acceptance complete <taskId>
+$CLI acceptance archive-report <taskId>
+$CLI acceptance matrix --project <projectId> --template <templateId> --environment production
+```
+
+执行者必须按冻结清单走真实业务路径，再回填断言、实际结果、线上证据与清理回读。
+领取票据由 CLI 私密保存，禁止放入结果文件、命令参数或聊天；长任务按 30 秒心跳续租，离开时 `release`。
+同一 submissionId 重发幂等；第一次失败最多重试一次，重试通过仍为 flaky，不算稳定通过。
+`archive-report` 复用现有验收报告归档并绑定，不会把草稿或本地存储标为交付完成。
+返回 `pending-verify-open` 后必须再按验收技能验证线上深链；本命令不代替浏览器取证、通知或发布批准。
 
 ## 加一条功能监控（用户说「帮我增加 XX 的监控」时）
 
