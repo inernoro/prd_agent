@@ -627,11 +627,11 @@ public class WebPageAskController : ControllerBase
             var evidence = new WebPageAskEvidence(snapshot.Text);
             var messages = new JsonArray
             {
-                new JsonObject { ["role"] = "system", ["content"] = WebPageAskPrompt.Build(site, snapshot, evidence) },
+                new JsonObject { ["role"] = "system", ["content"] = WebPageAskPrompt.Build(snapshot) },
             };
             foreach (var (role, content) in history)
                 messages.Add(new JsonObject { ["role"] = role, ["content"] = content });
-            messages.Add(new JsonObject { ["role"] = "user", ["content"] = question });
+            messages.Add(new JsonObject { ["role"] = "user", ["content"] = WebPageAskPrompt.BuildUserMessage(site, evidence, question) });
 
             // 匿名访客没有 userId：记在站点 owner 账上。提问烧的本来就是 owner 的额度，
             // 账单归属也是对的。这个身份要同时给到 Context（跨进程）与 LlmRequestContext（进程内）。
@@ -866,9 +866,13 @@ public class WebPageAskController : ControllerBase
 
     /// <summary>匿名访客只拿现有白名单码；未知码与异常正文不能作为公开错误透传。</summary>
     private static (string Code, string Message) PublicGatewayError(string? failureCode, string fallbackCode)
-        => GatewayRouteFailure.All.Contains(failureCode ?? string.Empty, StringComparer.Ordinal)
+    {
+        if (GatewayBillingFailure.FromCode(failureCode) is { } billing)
+            return (billing.Code, billing.UserMessage);
+        return GatewayRouteFailure.All.Contains(failureCode ?? string.Empty, StringComparer.Ordinal)
             ? (failureCode!, GatewayRouteFailure.UserMessage(failureCode))
             : (fallbackCode, PublicErrorMessage);
+    }
 
     /// <summary>等首字期间的心跳间隔。取 5 秒：远小于常见反代 60s 空闲超时，又不会把流刷成噪音。</summary>
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);

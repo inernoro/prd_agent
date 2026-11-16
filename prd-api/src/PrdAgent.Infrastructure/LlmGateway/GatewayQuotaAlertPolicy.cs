@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Infrastructure.ModelPool;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
@@ -9,23 +10,11 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 /// </summary>
 internal static class GatewayQuotaAlertPolicy
 {
-    internal const string QuotaErrorCode = "LLM_QUOTA_EXCEEDED";
-    internal const string UserReadableQuotaMessage =
-        "部分 AI 创作暂时不可用，请稍后重试。管理员需要检查服务额度或切换可用配置，诊断信息已保留。";
+    internal const string QuotaErrorCode = GatewayBillingFailure.QuotaExceeded;
+    internal static string UserReadableQuotaMessage => GatewayBillingFailure.FromCode(QuotaErrorCode)!.UserMessage;
 
     internal static bool IsQuotaFailure(string? errorCode, string? errorMessage)
-    {
-        if (string.Equals(errorCode, QuotaErrorCode, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        var message = (errorMessage ?? string.Empty).ToLowerInvariant();
-        return message.Contains("llm_quota_exceeded")
-            || message.Contains("key limit exceeded")
-            || message.Contains("quota is not enough")
-            || message.Contains("额度已用尽")
-            || message.Contains("额度用尽")
-            || (message.Contains("quota") && (message.Contains("exceed") || message.Contains("insufficient")));
-    }
+        => GatewayBillingFailure.Classify(null, errorMessage, errorCode) != null;
 
     internal static async Task NotifyIfNeededAsync(
         IPoolFailoverNotifier? notifier,
@@ -33,21 +22,28 @@ internal static class GatewayQuotaAlertPolicy
         string? errorMessage,
         string? platformName,
         string? modelName,
-        ILogger logger)
+        ILogger logger,
+        IReadOnlyList<GatewayBillingAlert>? alerts = null)
     {
-        if (notifier == null || !IsQuotaFailure(errorCode, errorMessage))
-            return;
-
-        try
+        if (notifier == null) return;
+        var failures = new HashSet<GatewayBillingAlert>();
+        foreach (var alert in alerts ?? [])
+            if (alert != null && GatewayBillingFailure.FromCode(alert.ErrorCode) != null) failures.Add(alert);
+        if (GatewayBillingFailure.Classify(null, errorMessage, errorCode) is { } failure)
+            failures.Add(new(failure.Code, platformName, modelName));
+        foreach (var item in failures)
         {
-            await notifier.NotifyQuotaExceededAsync(
-                platformName,
-                modelName,
-                CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "[HttpLlmGatewayClient] 独立网关额度告警写入失败（不阻断主流程）");
+            try
+            {
+                if (item.ErrorCode == QuotaErrorCode)
+                    await notifier.NotifyQuotaExceededAsync(item.PlatformName, item.ModelName, CancellationToken.None);
+                else
+                    await notifier.NotifyBillingFailureAsync(item.PlatformName, item.ModelName, item.ErrorCode, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[HttpLlmGatewayClient] 上游计费拒绝的站内告警写入失败（不阻断主流程）");
+            }
         }
     }
 }
