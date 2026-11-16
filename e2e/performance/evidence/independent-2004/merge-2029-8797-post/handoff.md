@@ -21,4 +21,4 @@ PR #2029已合并，实际提交8797bde13a2e0a943d26d7fc01a0bb095b344d84对前�
 
 报告：https://miduo.org/reports?project=prd-agent&folder=d6a48bce9a84423483b89853b772407d&report=15063c4069bc4f158bc74b04f4480598 。98内部链接、13点击、0断链；原始artifact14262512268的完整ZIP与hash、证明日志、身份与实际部署结果在本目录。
 
-CI执行口径：Server Build & Test (execution)因本次产品API无改动而跳过，Server Build & Test与CI Status是守卫/汇总状态，不作为业务执行证明。实际API/Web构建、原始请求、两类故障和真实页面证据来自独立MAP Performance作业；preview E2E和smoke跳过，不计通过。
+CI执行口径（已按最终真实job逐步核对）：主干CI43933990939的Server Build & Test (execution)实际Restore、Build和Run tests (exclude integration and manual tests)均成功，未跳过；LLMGW协议模拟明确使用synthetic provider，属于辅助测试，不作为真实MAP用户路径。Server Build & Test中的Forward server result与CI Status只转发/汇总状态，不能单独证明业务执行。性能结论另由独立MAP Performance作业的真实API/Web构建、原始请求、两类故障和页面支持；preview E2E和smoke跳过，不计通过。此前交接曾将execution误写为跳过，已据postmerge-ci-job-execution.json校正，不更改原始作业证据。
