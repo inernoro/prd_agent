@@ -16,12 +16,12 @@ export function ProviderCallStatus({ platform }: { platform: PlatformItem }) {
   const beforeUpdate = knownTime && Number.isFinite(updated) && observed!.getTime() < updated;
   const failed = status && status !== 'succeeded';
   return <div className="lg-provider-call-status">
-    <span style={{ color: failed ? 'var(--warn)' : 'var(--text-primary)' }}>{status ? outcomes[status] : '暂无近期调用'}</span>
+    <span style={{ color: failed ? 'var(--warn)' : 'var(--text-secondary)' }}>{status ? outcomes[status] : '当前配置近 7 天无调用'}</span>
     {status ? <>
       {knownTime ? <time dateTime={observed!.toISOString()}>{formatPlatformTime(platform.recentCallAt)}</time> : <span className="lg-provider-call-note">调用时间未知</span>}
       {beforeUpdate ? <span className="lg-provider-call-note">配置更新前的记录</span> : null}
       {status === 'quota_exhausted' ? <span className="lg-provider-call-note">历史结果，非实时余额</span> : null}
       <Link to={`/logs?platformId=${encodeURIComponent(platform.id)}${failed ? '&status=failed' : ''}`}>{failed ? '查看失败请求' : '查看调用记录'}</Link>
-    </> : <span className="lg-provider-call-note">当前配置近 7 天无真实请求</span>}
+    </> : null}
   </div>;
 }

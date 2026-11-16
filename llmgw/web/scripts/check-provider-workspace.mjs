@@ -27,9 +27,9 @@ async function mock(route) {
     let data = { items: [], total: 0 };
     if (endpoint === '/auth/login') data = { token: 'local-fixture-only', expiresAt: '2099-01-01T00:00:00Z', username: 'owner', displayName: '审核', tenant, mustChangePassword: false };
     else if (endpoint === '/healthz') data = { status: 'ok', mapHomeUrl: 'https://example.invalid' };
-    else if (endpoint === '/platforms') data = { items: mode === 'empty' ? [] : [provider, { ...provider, id: 'p1', name: 'preview-readability-20261115-beta', enabled: false }] };
+    else if (endpoint === '/platforms') data = { items: mode === 'empty' ? [] : mode === 'attention' ? [{ ...provider, keyStatus: 'unreadable', apiUrl: '', authority: 'map', recentCallStatus: 'quota_exhausted', recentCallAt: '2026-11-01T10:00:00Z', updatedAt: '2026-11-02T10:00:00Z' }, { ...provider, id: 'p1', name: 'preview-readability-20261115-beta', enabled: false, hasKey: false }] : [provider, { ...provider, id: 'p1', name: 'preview-readability-20261115-beta', enabled: false }] };
     else if (endpoint === '/models') data = { items: models() };
-    else if (endpoint === '/logical-models') data = { items: [{ id: 'l0', publicId: 'preview-public-alpha', offerings: [{ targetKind: 'model', targetId: 'm0' }] }] };
+    else if (endpoint === '/logical-models') data = { items: mode === 'attention' ? [] : [{ id: 'l0', publicId: 'preview-public-alpha', offerings: [{ targetKind: 'model', targetId: 'm0' }] }] };
     else if (endpoint === '/overview') data = { totalRequests: 0, recentRequests: [], serviceKeys: { total: 0 }, estimatedCosts: [], topUsers: [], topAppCallers: [], topModels: [] };
     return route.fulfill({ json: { success: true, data, error: null } });
 }
@@ -40,7 +40,7 @@ const results = [], failures = [];
 const check = (value, message) => { results.push({ check: message, passed: !!value }); if (!value)
     failures.push(message); };
 const source = {};
-for (const f of ['src/pages/PlatformsPage.tsx', 'src/pages/PlatformsPage.css', 'src/components/ProviderModelsPanel.tsx', 'src/components/CollectionView.tsx', 'src/components/CollectionView.css'])
+for (const f of ['src/pages/PlatformsPage.tsx', 'src/pages/PlatformsPage.css', 'src/components/ProviderModelsPanel.tsx', 'src/components/ProviderCallStatus.tsx', 'src/components/CollectionView.tsx', 'src/components/CollectionView.css'])
     source[f] = crypto.createHash('sha256').update(fs.readFileSync(root + '/' + f)).digest('hex');
 try {
     for (const [width, theme] of (process.env.CHECK_REPRESENTATIVE ? [[1440, 'light']] : [[1440, 'light'], [1440, 'dark'], [390, 'light'], [390, 'dark']])) {
@@ -62,6 +62,12 @@ try {
         const measure = async (name) => { await p.waitForTimeout(100); await p.screenshot({ path: `${out}/${name}-${width}-${theme}.png` }); const m = await p.evaluate(() => { const rect = s => { const e = document.querySelector(s); if (!e)
             return null; const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, bottom: r.bottom }; }; return { firstRow: rect('.lg-collection-provider-row'), models: rect('.lg-collection-owned-table tbody tr'), workspace: rect('.lg-collection-workspace'), pane: rect('.lg-collection-pane'), extras: rect('.lg-provider-maintenance-actions'), overflow: document.documentElement.scrollWidth > innerWidth }; }); results.push({ width, theme, name, ...m }); check(!m.overflow, `${width}/${theme}/${name}: no document overflow`); return m; };
         const listGeometry = await measure('list');
+        const firstProvider = p.locator('.lg-collection-provider-row').first();
+        const summary = await firstProvider.evaluate((e, name) => ({ characters: e.innerText.replace(name, '').replace(/\s/g, '').length, text: e.innerText }), provider.name);
+        results.push({ width, theme, stage: 'default-content', ...summary });
+        check(summary.characters <= 60, `${width}/${theme}/default supplier summary avoids repeated configuration prose`);
+        check(listGeometry.firstRow.height <= (width === 390 ? 180 : 90), `${width}/${theme}/few suppliers use natural compact rows with readable text`);
+        for (const [label, name] of [['连接配置', /^连接配置$/], ['导入模型', /^(发现并)?导入模型$/]]) check(await firstProvider.getByRole('button', { name }).isVisible(), `${width}/${theme}/${label} remains a direct action`);
         if (width === 390) {
             const innerBorders = await p.locator('.lg-collection-provider-row:first-child td').evaluateAll(es => es.map(e => { const s = getComputedStyle(e); return parseFloat(s.borderTopWidth) + parseFloat(s.borderBottomWidth); }));
             check(innerBorders.every(width => width === 0), `${width}/${theme}/one provider remains one visual group without field borders`);
@@ -98,6 +104,8 @@ try {
         check(await entry.evaluate(e => e === document.activeElement), `${width}/${theme}/return restores trigger focus`);
         await p.getByRole('button', { name: '连接配置', exact: true }).first().click();
         await measure('connection');
+        check(await p.locator('.lg-collection-facts').getByText(provider.apiUrl, { exact: true }).isVisible(), `${width}/${theme}/full endpoint remains directly available in connection details`);
+        check((await p.locator('.lg-collection-facts').innerText()).includes('已配置'), `${width}/${theme}/normal key state remains in connection details`);
         await p.getByRole('button', { name: '编辑连接', exact: true }).click();
         await measure('connection-edit');
         const nameField = p.getByRole('textbox', { name: '平台名称', exact: true });
@@ -109,6 +117,13 @@ try {
         check(await p.getByRole('button', { name: '编辑连接', exact: true }).evaluate(e => e === document.activeElement), `${width}/${theme}/cancel restores original edit entry focus`);
 
         await p.locator('.lg-collection-close').click();
+        mode = 'attention';
+        await ready();
+        await measure('attention');
+        for (const text of ['通讯密钥无法读取', '未配置 API 地址', '1 个未关联', '余额或额度不足', '配置更新前的记录', '历史结果，非实时余额']) check(await firstProvider.getByText(text, { exact: true }).isVisible(), `${width}/${theme}/attention remains visible: ${text}`);
+        check(await firstProvider.getByText(/^待导入(平台)?$/).isVisible(), `${width}/${theme}/legacy configuration remains visibly pending import`);
+        check(await firstProvider.locator('time').isVisible() && await firstProvider.getByRole('link', { name: '查看失败请求', exact: true }).isVisible(), `${width}/${theme}/historical failure keeps time and direct recovery`);
+        check(await p.getByText('通讯密钥未配置', { exact: true }).isVisible(), `${width}/${theme}/missing key remains visible`);
         mode = 'many';
         await ready();
         await entry.click();

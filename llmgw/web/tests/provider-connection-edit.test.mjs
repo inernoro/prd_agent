@@ -90,10 +90,10 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
     assert.equal(firstRow.querySelector('a[href*="logs"]').textContent, '查看失败请求');
     assert.ok(firstRow.querySelector('a[href*="logs"]').href.includes('status=failed'));
     assert.ok(document.querySelectorAll('.lg-collection-provider-row')[1].textContent.includes('调用时间未知'));
-    assert.ok(document.querySelectorAll('.lg-collection-provider-row')[2].textContent.includes('暂无近期调用'));
+    assert.ok(document.querySelectorAll('.lg-collection-provider-row')[2].textContent.includes('当前配置近 7 天无调用'));
     assert.equal(button('查看模型', firstRow), undefined);
     assert.equal(fixture.calls.length, 0, '查看本地清单不能自动访问供应方');
-    await click(button('发现并导入模型', firstRow));
+    await click(button('导入模型', firstRow));
     assert.deepEqual(fixture.calls.pop(), { discovery: 'p0' });
     assert.ok(document.body.textContent.includes('清单暂时不可用'));
     await click(firstRow.querySelector('td:nth-child(2) button'));

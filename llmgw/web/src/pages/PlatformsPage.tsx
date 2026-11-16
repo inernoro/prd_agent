@@ -636,13 +636,12 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       <div className="lg-config-table-shell lg-collection-list lg-provider-list">
         <CollectionView items={providerItems} placeholder="搜索供应方名称或接口" searchText={(item) => `${item.name} ${item.apiUrl || ''}`} filters={[{ value: 'enabled', label: '已启用', matches: (item) => item.enabled }, { value: 'disabled', label: '已停用', matches: (item) => !item.enabled }]}>
         {(pageProviders) => <table className="lg-data-table lg-collection-provider-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <colgroup><col style={{ width: '29%' }}/><col style={{ width: '22%' }}/><col style={{ width: '13%' }}/><col style={{ width: '20%' }}/><col style={{ width: '16%' }}/></colgroup>
+          <colgroup><col style={{ width: '35%' }}/><col style={{ width: '16%' }}/><col style={{ width: '23%' }}/><col style={{ width: '26%' }}/></colgroup>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
             <tr>
               {/* 清单优先定位供应方与维护任务；完整连接事实保留在同对象的连接配置标签。 */}
               <th style={th}>供应方</th>
               <th style={th}>已接入模型</th>
-              <th style={th}>连接配置</th>
               <th style={th}>最近真实调用</th>
               <th style={th}>操作</th>
             </tr>
@@ -652,9 +651,8 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
               const modelSummary = modelsState === 'ready' ? summarizeProviderModels(ownedRows(p.id)) : modelsState === 'error' ? '模型信息加载失败' : '正在加载模型';
               // 密文在库但解不开（多半轮换过 ApiKeyCrypto:Secret）不能显示成「已配置」——
               // 那会让人以为这条上游能用，实际每次调用都会失败
-              const key = p.keyStatus === 'unreadable'
-                ? { label: '无法读取', color: 'var(--semantic-warning-text, #b45309)', bg: 'rgba(180,83,9,0.14)' }
-                : { label: p.hasKey ? '已配置' : '未配置', color: p.hasKey ? 'var(--ok)' : 'var(--text-muted)', bg: p.hasKey ? 'var(--ok-bg)' : 'var(--bg-elevated)' };
+              const keyWarning = p.keyStatus === 'unreadable' ? '通讯密钥无法读取' : !p.hasKey ? '通讯密钥未配置' : null;
+              const unregisteredCount = ownedRows(p.id).filter(row => row.publicIds.length === 0).length;
               return (
                 // 一行可能渲染两个兄弟节点（数据行 + 展开的编辑行），列表里的 Fragment 必须带 key
                 <Fragment key={p.id}>
@@ -662,7 +660,9 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                   <td style={td}>
                     <div className="lg-provider-identity">
                       <div className="lg-provider-name-line"><button type="button" className="lg-provider-name" onClick={() => { setProviderTab('models'); setExpandedModelsFor(p.id); }}>{p.name}</button><span className={`lg-provider-management ${p.enabled ? '' : 'is-disabled'}`} aria-label={`管理状态：${p.enabled ? '已启用' : '已停用'}`}>{p.enabled ? '已启用' : '已停用'}</span></div>
-                      <span className="lg-provider-endpoint" title={p.apiUrl || '未配置 API 地址'}>{p.apiUrl || '未配置 API 地址'}</span>
+                      {keyWarning ? <span className="lg-provider-key-state is-attention">{keyWarning}</span> : null}
+                      {!p.apiUrl ? <span className="lg-provider-key-state is-attention">未配置 API 地址</span> : null}
+                      {p.authority !== 'llm_gateway' ? <span className="lg-provider-key-state is-attention">待导入平台</span> : null}
                     </div>
                   </td>
                   <td style={td}>
@@ -678,11 +678,10 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                         color: ownedRows(p.id).some((x) => x.publicIds.length === 0) ? 'var(--warn)' : 'var(--accent)',
                       }}
                     >
-                      <span><strong>{modelsState === 'ready' ? `${ownedRows(p.id).length} 个模型` : modelsState === 'error' ? '模型信息加载失败' : '加载中…'}</strong><small>{modelsState === 'ready' ? ownedRows(p.id).length === 0 ? '尚未接入' : ownedRows(p.id).some(row => row.publicIds.length === 0) ? `${ownedRows(p.id).filter(row => row.publicIds.length === 0).length} 个未关联` : '全部已关联' : '关联状态未知'}</small></span>
+                      <span><strong>{modelsState === 'ready' ? `${ownedRows(p.id).length} 个模型` : modelsState === 'error' ? '模型信息加载失败' : '加载中…'}</strong>{modelsState === 'ready' ? unregisteredCount > 0 ? <small>{unregisteredCount} 个未关联</small> : null : <small>关联状态未知</small>}</span>
                       <ChevronRight size={16} aria-hidden="true" />
                     </button>
                   </td>
-                  <td style={td}><div className="lg-collection-provider-key"><span className={`lg-provider-key-state${!p.hasKey || p.keyStatus === 'unreadable' ? ' is-attention' : ''}`}>通讯密钥{key.label}</span><span style={HINT_TEXT} title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined}>{p.authority === 'llm_gateway' ? '平台配置' : '待导入'}</span></div></td>
                   <td style={td}><ProviderCallStatus platform={p} /></td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
                     <div className="lg-provider-row-actions"><Button size="sm" variant="ghost" onClick={() => { setProviderTab('connection'); setExpandedModelsFor(p.id); }}>连接配置</Button>
@@ -693,7 +692,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                           primary={p.authority === 'llm_gateway' ? (
                             <>
                               <Button size="sm" variant="ghost" disabled={busyId === p.id || !p.hasKey || p.platformType === 'claude'} onClick={() => void openDiscovery(p)} title={p.platformType === 'claude' ? 'Claude 原生协议没有模型列表接口' : '从上游拉取模型清单并勾选导入'}>
-                                发现并导入模型
+                                导入模型
                               </Button>
                             </>
                           ) : (
@@ -724,7 +723,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                     </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}</div>
                   </td>
                 </tr>
-                {keyEditId === p.id && canWrite ? <tr><td colSpan={5} style={td}><div className="lg-collection-provider-edit">
+                {keyEditId === p.id && canWrite ? <tr><td colSpan={4} style={td}><div className="lg-collection-provider-edit">
                         <>
                           <input
                             type="password"
