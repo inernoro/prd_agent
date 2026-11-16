@@ -115,7 +115,7 @@ const VERDICT_CN: Record<'pass' | 'conditional' | 'fail', string> = {
 };
 
 /** 从请求推断 CDS 对外可达基地址（PR 评论里的链接要绝对路径）。 */
-function publicBaseFromReq(req: Request): string {
+export function publicBaseFromReq(req: Request): string {
   const envBase = (process.env.CDS_PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
   if (envBase) return envBase;
   const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
@@ -144,13 +144,6 @@ const UPLOADABLE_IMAGE_TYPES: Record<string, { ext: string; valid: (data: Buffer
   },
 };
 
-/** Matches inline base64 image data URIs (HTML `src="data:..."` or Markdown
- *  `![](data:...)` — we operate on the data-URI substring, syntax-agnostic). */
-const DATA_IMG_RE = /data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,([A-Za-z0-9+/=\s]+)/g;
-const MIME_EXT: Record<string, string> = {
-  png: 'png', jpeg: 'jpg', jpg: 'jpg', gif: 'gif', webp: 'webp', 'svg+xml': 'svg',
-};
-
 /**
  * Ingest-time normalization: pull inline `data:image/*;base64,...` images out of
  * a report body, store them content-addressed via the state layer, and rewrite
@@ -168,32 +161,7 @@ async function normalizeInlineImages(
   base: string,
   stateService: StateService,
 ): Promise<{ content: string; extracted: number }> {
-  let extracted = 0;
-  // replace 回调不能 await——先同步改写正文并收集待写资产，最后统一异步落盘
-  //（2026-07-09：截图资产原来 writeFileSync，MB 级整图会阻塞单进程服务器）。
-  const pendingWrites = new Map<string, Buffer>();
-  const out = content.replace(DATA_IMG_RE, (whole: string, mime: string, b64: string) => {
-    const clean = b64.replace(/\s+/g, '');
-    if (!clean) return whole;
-    let buf: Buffer;
-    try {
-      buf = Buffer.from(clean, 'base64');
-    } catch {
-      return whole;
-    }
-    if (!buf.length) return whole;
-    const ext = MIME_EXT[mime.toLowerCase()] || 'png';
-    const hash = createHash('sha256').update(buf).digest('hex');
-    const name = `${hash}.${ext}`;
-    pendingWrites.set(name, buf); // 内容寻址，同名去重
-    extracted += 1;
-    const rel = `/api/reports/assets/${name}`;
-    return base ? `${base}${rel}` : rel;
-  });
-  await Promise.all(
-    [...pendingWrites.entries()].map(([name, buf]) => stateService.writeReportAssetAsync(name, buf)),
-  );
-  return { content: out, extracted };
+  return stateService.normalizeReportInlineImages(content, base);
 }
 
 type ReportFormat = 'html' | 'md';
@@ -1153,8 +1121,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
     const mismatch = reportAccessDenied(req, meta.projectId);
     if (mismatch) return res.status(mismatch.status).json(mismatch.body);
-    if (boundTaskReport(stateService, meta.id)) {
-      return res.status(409).json({ error: 'immutable_task_report', message: '已绑定的任务报告不可删除，历史验收结果必须保留' });
+    if (boundTaskReport(stateService, meta.id) || taskOwnedReport(stateService, meta.sourceId)) {
+      return res.status(409).json({ error: 'immutable_task_report', message: '任务报告不可删除，请创建新一轮验收保留历史' });
     }
     const removed = stateService.deleteAcceptanceReport(req.params.id);
     if (!removed) return res.status(404).json({ error: 'not_found', message: '报告不存在' });

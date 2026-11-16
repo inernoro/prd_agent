@@ -343,7 +343,7 @@ export class AcceptanceTaskService {
       '失败项按原 caseId 定向复验；根因未经诊断时为未知。本报告不自动发布，不授权超出测试身份与资源范围的操作。', '');
     return { title, format: 'md', content: lines.join('\n'), sourceId: task.id, verdict, defectCounts, evidence, verification: 'pending' };
   }
-  async bindReport(id: string, reportId: unknown): Promise<AcceptanceTask> {
+  async bindReport(id: string, reportId: unknown, publicBase = ''): Promise<AcceptanceTask> {
     const rid = text(reportId, '报告编号', false, 120);
     return this.mutate(async (slice) => {
       const t = this.task(slice, id);
@@ -354,7 +354,7 @@ export class AcceptanceTaskService {
       if (report.storage !== 'object' || !report.objectKey) reject('report_not_durable', '报告未进入线上持久存储，请恢复对象存储后重新归档', 409);
       if (report.format !== 'md' || report.title !== source.title || report.verdict !== source.verdict
         || report.defectCounts?.p0 !== source.defectCounts.p0 || report.defectCounts?.p1 !== source.defectCounts.p1
-        || await this.state.readAcceptanceReportContentAsync(rid) !== source.content) reject('report_mismatch', '报告正文或业务结论与冻结执行结果不一致', 409);
+        || await this.state.readAcceptanceReportContentAsync(rid) !== (await this.state.normalizeReportInlineImages(source.content, publicBase)).content) reject('report_mismatch', '报告正文或业务结论与冻结执行结果不一致', 409);
       t.report = { id: rid, url: `/reports?report=${encodeURIComponent(rid)}`, verification: 'pending' };
       return this.publicTask(t);
     });

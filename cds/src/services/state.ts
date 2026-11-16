@@ -6653,6 +6653,40 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     fs.writeFileSync(file, data);
   }
 
+  /** Shared canonical image normalization for ingestion and immutable task binding. */
+  async normalizeReportInlineImages(content: string, base: string): Promise<{ content: string; extracted: number }> {
+    const DATA_IMG_RE = /data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,([A-Za-z0-9+/=\s]+)/g;
+    const MIME_EXT: Record<string, string> = {
+      png: 'png', jpeg: 'jpg', jpg: 'jpg', gif: 'gif', webp: 'webp', 'svg+xml': 'svg',
+    };
+    let extracted = 0;
+    // replace 回调不能 await——先同步改写正文并收集待写资产，最后统一异步落盘
+    //（2026-07-09：截图资产原来 writeFileSync，MB 级整图会阻塞单进程服务器）。
+    const pendingWrites = new Map<string, Buffer>();
+    const out = content.replace(DATA_IMG_RE, (whole: string, mime: string, b64: string) => {
+      const clean = b64.replace(/\s+/g, '');
+      if (!clean) return whole;
+      let buf: Buffer;
+      try {
+        buf = Buffer.from(clean, 'base64');
+      } catch {
+        return whole;
+      }
+      if (!buf.length) return whole;
+      const ext = MIME_EXT[mime.toLowerCase()] || 'png';
+      const hash = crypto.createHash('sha256').update(buf).digest('hex');
+      const name = `${hash}.${ext}`;
+      pendingWrites.set(name, buf); // 内容寻址，同名去重
+      extracted += 1;
+      const rel = `/api/reports/assets/${name}`;
+      return base ? `${base}${rel}` : rel;
+    });
+    await Promise.all(
+      [...pendingWrites.entries()].map(([name, buf]) => this.writeReportAssetAsync(name, buf)),
+    );
+    return { content: out, extracted };
+  }
+
   /**
    * Async variant of writeReportAsset — HTTP 请求路径必须用这个
    * （routes/reports.ts），同步版仅供测试/非请求路径使用。

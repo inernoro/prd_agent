@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import express from 'express';
-import { beforeEach, afterEach, describe, it, expect } from 'vitest';
+import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { StateService } from '../../src/services/state.js';
 import { AcceptanceTaskService } from '../../src/services/acceptance-tasks.js';
 import { createReportObjectStore } from '../../src/services/report-object-store.js';
@@ -96,6 +96,38 @@ describe('结构化任务 → 既有归档 → 绑定：真实 HTTP 闭环', () 
     expect(archived.body.report.id).not.toBe(ordinary.body.report.id);
     expect((await request('POST', `/api/acceptance/tasks/${task.id}/bind-report`, { reportId: archived.body.report.id })).status).toBe(200);
     expect((await request('PATCH', `/api/reports/${ordinary.body.report.id}`, { content: '# 普通修订' })).status).toBe(200);
+  });
+  it('输入和执行描述含图片数据时归档与绑定使用相同规范正文', async () => {
+    const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j+ioAAAAASUVORK5CYII=';
+    const template = await tasks.publishTemplate({ projectId: 'p1', title: '图片输入', cases: [{ ...task.cases[0], inputs: [{ name: '参考图', value: image }] }] });
+    const imageTask = await tasks.createTask({ projectId: 'p1', templateId: template.id, environment: 'production' });
+    const claim = await tasks.claim(imageTask.id, 'A');
+    await tasks.submit(imageTask.id, 'WEB-001', claim.leaseToken, { ...tasks.getTask(task.id).results['WEB-001'], submissionId: 'image-result', actual: `已核对参考图 ${image}。` });
+    await tasks.complete(imageTask.id, claim.leaseToken);
+    const imageSource = tasks.reportSource(imageTask.id);
+    const archived = await request('POST', '/api/reports', payload(imageSource));
+    expect(archived.status).toBe(201);
+    const reportId = archived.body.report.id;
+    const content = await state.readAcceptanceReportContentAsync(reportId);
+    expect(content).not.toContain('data:image/');
+    expect(content).toContain('/api/reports/assets/');
+    expect((await request('POST', `/api/acceptance/tasks/${imageTask.id}/bind-report`, { reportId })).status).toBe(200);
+    const retried = await request('POST', '/api/reports', payload(imageSource));
+    expect(retried.status).toBe(200); expect(retried.body.report.id).toBe(reportId);
+  });
+  it('异步绑定验证期间任务报告不可删除，不留下失效报告关联', async () => {
+    const archived = await request('POST', '/api/reports', payload(source));
+    let release!: () => void, started!: () => void;
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    const reading = new Promise<void>((resolve) => { started = resolve; });
+    const read = vi.spyOn(state, 'readAcceptanceReportContentAsync').mockImplementationOnce(async () => { started(); await waiting; return source.content; });
+    const binding = request('POST', `/api/acceptance/tasks/${task.id}/bind-report`, { reportId: archived.body.report.id });
+    await reading;
+    const deletion = await request('DELETE', `/api/reports/${archived.body.report.id}`);
+    release(); const bound = await binding; read.mockRestore();
+    expect(deletion.status).toBe(409); expect(bound.status).toBe(200);
+    expect(state.getAcceptanceReport(archived.body.report.id)).toBeDefined();
+    expect(tasks.getTask(task.id).report?.id).toBe(archived.body.report.id);
   });
   it('受限全局身份不能绕过验收任务作用域归档', async () => {
     expect((await request('POST', '/api/reports', payload(source), { 'x-test-global': 'empty' })).status).toBe(403);

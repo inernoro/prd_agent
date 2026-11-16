@@ -1,6 +1,7 @@
 import { Router, json, type Request, type Response } from 'express';
 import { AcceptanceError, type AcceptanceTaskService } from '../services/acceptance-tasks.js';
 import { assertProjectAccess } from './projects.js';
+import { publicBaseFromReq } from './reports.js';
 
 export interface AcceptanceTasksRouterDeps { service: AcceptanceTaskService }
 
@@ -63,7 +64,7 @@ export function createAcceptanceTasksRouter({ service }: AcceptanceTasksRouterDe
   router.post('/tasks/:id/cancel', handler(async (req, res) => { task(req); res.json({ task: await service.cancel(req.params.id, req.body?.leaseToken) }); }));
   router.post('/tasks/:id/report', handler((req, res) => { const value = task(req); res.json({ task: value, report: service.reportSource(value.id) }); }));
   router.post('/tasks/:id/bind-report', handler(async (req, res) => {
-    task(req); const value = await service.bindReport(req.params.id, req.body?.reportId); res.json({ task: value, report: value.report });
+    task(req); const value = await service.bindReport(req.params.id, req.body?.reportId, publicBaseFromReq(req)); res.json({ task: value, report: value.report });
   }));
   router.get('/matrix', handler((req, res) => {
     const projectId = project(req, req.query.projectId);
