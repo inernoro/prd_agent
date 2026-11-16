@@ -427,6 +427,24 @@ for (const width of [390, 1440])
       await page.reload();
       await expect(page.locator(".gateway-identity-card > strong")).toHaveText(/^(早上好|午安|下午好|晚上好|夜深了)，demo。$/);
       expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+      const starters = page.getByRole("group", { name: "从一个想法开始" });
+      await expect(starters.getByRole("button")).toHaveCount(4);
+      const draftCalls = () => writes.filter(write => write.path === "/app-callers/draft").length;
+      const before = draftCalls();
+      await starters.getByRole("button", { name: "搭建知识库助手", exact: true }).click();
+      await expect(page.getByRole("textbox", { name: "我想做什么", exact: true })).toHaveValue(/团队知识库助手/);
+      expect(draftCalls()).toBe(before);
+      await page.locator(".gateway-entry-help > summary").click();
+      await expect(page.locator(".gateway-entry-help-body")).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+      await page.getByRole("button", { name: "试试这句", exact: true }).click();
+      await expect(page.locator(".gateway-entry-help")).not.toHaveAttribute("open", "");
+      await page.getByRole("button", { name: "准备接入", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "确认你的接入", exact: true })).toBeVisible();
+      await page.reload();
+      await page.locator(".gateway-entry-resume button").click();
+      await expect(page.getByRole("textbox", { name: "我想做什么", exact: true })).toHaveValue(/产品文档.*售后同事/);
+      expect(draftCalls()).toBe(before + 1);
       const sound = page.locator(".gateway-chrome-sound");
       await expect(sound).toHaveAttribute("data-audio-status", "pending");
       if (await sound.getAttribute("data-audio-status") === "ready") await sound.click();
@@ -495,5 +513,8 @@ for (const width of [390, 1440])
       await assertScene("result");
       await page.getByRole("tab", { name: "提示词", exact: true }).click();
       await expect(page.getByRole("radiogroup", { name: "调用方式" })).toBeVisible();
+      await page.reload();
+      await expect(page.locator(".gateway-intent-starters")).toBeVisible();
+      await expect(page.locator(".gateway-entry-resume button")).toHaveCount(0);
     });
   }

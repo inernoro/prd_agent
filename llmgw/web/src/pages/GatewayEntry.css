@@ -304,3 +304,46 @@ html[data-entry-arriving] .is-entry-workspace .lg-console-header.entry-shell-chr
   .gateway-chrome-sound .gateway-sound-label-long { display: none; }
   .gateway-chrome-sound .gateway-sound-label-short { display: inline; }
 }
+
+/* Quiet starting points share the composer, while the corners belong to the whole scene. */
+.gateway-intent-starters { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.gateway-intent-starters button { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 7px 12px; border: 1px solid color-mix(in srgb, var(--cinema-light) 13%, transparent); border-radius: 22px; background: color-mix(in srgb, var(--cinema-night) 28%, transparent); color: var(--text-secondary); font: inherit; font-size: var(--fs-caption); cursor: pointer; transition: color 200ms ease, border-color 200ms ease, background 200ms ease; }
+.gateway-intent-starters button:hover:not(:disabled) { color: var(--cinema-light); border-color: color-mix(in srgb, var(--cinema-light) 40%, transparent); background: color-mix(in srgb, var(--cinema-light) 7%, transparent); }
+.gateway-intent-starters button:disabled, .gateway-entry-corners button:disabled { opacity: .45; cursor: default; }
+.gateway-entry-corners { position: absolute; z-index: 4; left: 48px; right: 32px; bottom: 84px; display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; pointer-events: none; }
+.gateway-quickstart-stage.is-arriving .gateway-entry-corners { opacity: var(--portrait-chrome, 0); visibility: var(--portrait-shortcuts-visibility, hidden); }
+.gateway-entry-corners button, .gateway-entry-corners details, .gateway-entry-corners a { pointer-events: auto; }
+.gateway-entry-resume { min-width: 0; max-width: min(380px, 48%); }
+.gateway-entry-resume > button { display: flex; align-items: center; gap: 12px; max-width: 100%; padding: 12px 0; border: 0; background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; font: inherit; }
+.gateway-entry-resume > button > span { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.gateway-entry-resume small { font-size: var(--fs-caption); letter-spacing: .08em; color: var(--text-muted); }
+.gateway-entry-resume > button > span > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-secondary); }
+.gateway-entry-resume svg { flex-shrink: 0; }
+.gateway-entry-shortcuts { display: flex; align-items: center; gap: 18px; flex-shrink: 0; color: var(--text-secondary); font-size: var(--fs-caption); }
+.gateway-entry-shortcuts > i { height: 12px; width: 1px; background: var(--cinema-border); }
+.gateway-entry-shortcuts > a { display: inline-flex; align-items: center; gap: 7px; color: inherit; text-decoration: none; padding: 12px 0; }
+.gateway-entry-shortcuts > a:hover, .gateway-entry-help > summary:hover, .gateway-entry-resume > button:hover { color: var(--cinema-light); }
+.gateway-entry-help { position: relative; }
+.gateway-entry-help > summary { cursor: pointer; list-style: none; padding: 12px 0; }
+.gateway-entry-help > summary::-webkit-details-marker { display: none; }
+.gateway-entry-help-body { position: absolute; right: 0; bottom: calc(100% + 12px); width: min(340px, calc(100vw - 44px)); box-sizing: border-box; padding: 22px; border: 1px solid var(--cinema-border); border-radius: 18px; background: color-mix(in srgb, var(--cinema-night) 92%, transparent); backdrop-filter: blur(24px); box-shadow: 0 18px 70px color-mix(in srgb, var(--cinema-night) 55%, transparent); }
+.gateway-entry-help-body > span { color: var(--cinema-light); font-size: var(--fs-heading); }
+.gateway-entry-help-body p, .gateway-entry-help-body blockquote { font-size: var(--fs-body); line-height: 1.8; }
+.gateway-entry-help-body p { margin: 14px 0; }
+.gateway-entry-help-body blockquote { margin: 0; padding-left: 14px; border-left: 1px solid var(--cinema-border); color: var(--text-muted); }
+.gateway-entry-help-body button { display: flex; align-items: center; gap: 9px; margin-top: 18px; padding: 8px 0; border: 0; background: transparent; color: var(--cinema-accent); cursor: pointer; font: inherit; font-size: var(--fs-body); }
+.gateway-entry-help > summary:focus-visible { outline: 2px solid var(--cinema-accent); outline-offset: 4px; border-radius: 4px; }
+@media (max-width: 960px) { .gateway-entry-corners { left: 24px; right: 24px; } }
+@media (max-width: 600px) {
+  .gateway-intent-starters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+  .gateway-intent-starters button { justify-content: center; padding: 8px 5px; min-height: 40px; font-size: var(--fs-caption); }
+  .gateway-quickstart-stage .is-intent .lg-qs-ask-inner { transform: none; }
+  .gateway-quickstart-stage .is-intent .lg-page-body { padding-top: 228px; }
+  .gateway-quickstart-stage .is-intent .lg-qs-ask { min-height: 0; justify-content: flex-start; }
+  .gateway-entry-corners { position: relative; left: auto; right: auto; bottom: auto; margin: 14px 22px 72px; flex-shrink: 0; flex-direction: column; align-items: stretch; gap: 8px; }
+  .gateway-entry-resume { max-width: 100%; }
+  .gateway-entry-shortcuts { justify-content: flex-end; gap: 16px; }
+  .gateway-entry-help { position: static; }
+  .gateway-entry-help-body { right: 0; max-height: min(350px, 55svh); overflow-y: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .gateway-intent-starters button { transition: none; } }

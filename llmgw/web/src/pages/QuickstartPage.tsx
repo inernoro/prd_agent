@@ -1,3 +1,5 @@
+import { GatewayEntryCorners, GatewayIntentStarters } from '@/components/entry/GatewayEntryActions';
+import { clearQuickstartDraft, quickstartDraftScope, saveQuickstartDraft } from '@/lib/quickstartDraft';
 import { playGatewayCue } from '@/components/entry/gatewaySound';
 import { GatewayQuickstartStage } from '@/components/entry/GatewayQuickstartStage';
 // 自助接入：选客户端 → 生成接入配置 → 自动验证。
@@ -211,6 +213,9 @@ const TEST_IMAGE_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQ
 
 export function QuickstartPage() {
   const { tenant, user } = useAuth();
+  const draftScope = quickstartDraftScope(tenant?.id, user?.username);
+  const intentField = useRef<HTMLTextAreaElement>(null);
+  const chooseIntent = (text: string) => { setIntent(text); intentField.current?.focus(); };
   const canCreateAccess = canUseCapability(tenant?.role, 'appCallerWrite') && canUseCapability(tenant?.role, 'serviceKeyWrite');
   const { confirm } = useDialogs();
   const canManagePromptPolicy = canUseCapability(tenant?.role, 'configWrite');
@@ -519,6 +524,7 @@ export function QuickstartPage() {
   const submitIntent = async () => {
     const text = intent.trim();
     if (text.length < MIN_INTENT_LENGTH) return;
+    saveQuickstartDraft(draftScope, text);
     /*
       与路由预检同一形状：用户点「改那句话」再提交时，上一条推导常常还在流。
       两条写的是同一批状态（trace / 两段码 / 依据 / loading），先发的那条后到，
@@ -679,6 +685,7 @@ export function QuickstartPage() {
       teamId,
       clientPreset,
     };
+    clearQuickstartDraft(draftScope);
     setBundle(nextBundle);
     playGatewayCue('reveal');
     // 产物屏默认停在「接入信息」：刚签发出来，用户第一件事是把地址、密钥、用途码复制走。
@@ -1240,19 +1247,17 @@ export function QuickstartPage() {
                 </div>
               </Card>
             ) : stage === 'intent' ? (
-              /*
-                第一屏只有一件事：把那句话写下来。整块画布让给输入框，
-                没有第二个控件抢注意力——用户此刻唯一要做的决定就是「我想做什么」。
-              */
+              // Starters prepare editable language; only explicit submission begins inference.
               <section className="lg-qs-ask" aria-label="第一步 说清要做什么">
                 <div className="lg-qs-ask-inner">
                   <div className="gateway-intent-composer">
                     <textarea
                       className="lg-qs-ask-input"
+                      ref={intentField}
                       aria-label="我想做什么"
                       rows={1}
                       autoFocus
-                      placeholder="描述你想接入的应用或任务…"
+                      placeholder="你想让 AI 帮你的应用做些什么？"
                       value={intent}
                       maxLength={500}
                       disabled={!canCreateAccess}
@@ -1267,6 +1272,7 @@ export function QuickstartPage() {
                       <ArrowUpRight size={21} aria-hidden="true" />
                     </button>
                   </div>
+                  <GatewayIntentStarters disabled={!canCreateAccess} onChoose={chooseIntent} />
                   {!canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
                 </div>
               </section>
@@ -1865,6 +1871,7 @@ export function QuickstartPage() {
         </div>
       </PageBody>
     </PageShell>
+    {isIntentScreen && <GatewayEntryCorners key={draftScope} scope={draftScope} disabled={!canCreateAccess} onChoose={chooseIntent} />}
     </GatewayQuickstartStage>
   );
 }
