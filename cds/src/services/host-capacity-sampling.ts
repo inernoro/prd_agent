@@ -108,7 +108,7 @@ export class HostCapacitySamplingService {
         throw error;
       });
       const startedAt = this.now();
-      const argv = [fileURLToPath(new URL('./host-capacity-probe.py', import.meta.url)), '--state-dir', state, '--new-source-baseline',
+      const argv = [fileURLToPath(new URL('./host-capacity-probe.py', import.meta.url)), '--state-dir', state, '--new-source-baseline', '--new-host-baseline',
         ...Object.entries(sources).flatMap(([name, root]) => ['--source', `${name}=${root}`])];
       const code = await (this.options.run ?? runCapacityProbe)(argv, controller.signal);
       if (controller.signal.aborted || generation !== this.generation) return;
