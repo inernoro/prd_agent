@@ -124,17 +124,60 @@ describe('actual native Git deletion interruption', () => {
         }
       };
       let checkpoint: { remaining: number; pid: number; nativeGitConfirmed: boolean } | undefined;
-      // Stop at a process boundary before exec, then observe actual native unlink.
-      // This avoids turning a regression into a race against disk throughput.
+      // Pause inside the real Git child after its first successful tracked unlink.
+      // fs.watch delivery can lag behind all unlinks on a fast/loaded CI runner.
       const bin = path.join(root, 'bin'),
-        gate = path.join(root, 'remove-pid');
+        gate = path.join(root, 'remove-pid'),
+        hook = path.join(root, 'pause-native-unlink.so'),
+        hookSource = path.join(root, 'pause-native-unlink.c');
       await fs.mkdir(bin);
+      await fs.writeFile(hookSource, `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+static int paused;
+static void checkpoint(int fd, const char *p) {
+  const char *target = getenv("CAPACITY_TEST_MANY"), *gate = getenv("CAPACITY_TEST_REMOVE_PID");
+  if (paused || !target || !gate || !p) return;
+  const char *name = strrchr(p, '/'); name = name ? name + 1 : p;
+  if (strlen(name) != 6 || strspn(name, "0123456789") != 6) return;
+  char parent[PATH_MAX], resolved[PATH_MAX], relative[PATH_MAX];
+  size_t n = (size_t)(name - p);
+  if (n >= sizeof(relative)) return;
+  if (n) { memcpy(relative, p, n); relative[n] = 0; } else strcpy(relative, ".");
+  if (p[0] == '/' || fd == AT_FDCWD) snprintf(parent, sizeof(parent), "%s", relative);
+  else snprintf(parent, sizeof(parent), "/proc/self/fd/%d/%s", fd, relative);
+  if (!realpath(parent, resolved) || strcmp(resolved, target)) return;
+  paused = 1;
+  char pending[PATH_MAX], pid[32];
+  snprintf(pending, sizeof(pending), "%s.pending", gate);
+  int out = open(pending, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (out < 0) _exit(190);
+  int len = snprintf(pid, sizeof(pid), "%ld", (long)getpid());
+  if (write(out, pid, len) != len || fsync(out) || close(out) || rename(pending, gate)) _exit(191);
+  raise(SIGSTOP);
+}
+int unlink(const char *p) {
+  static int (*actual)(const char *); if (!actual) actual = dlsym(RTLD_NEXT, "unlink");
+  int result = actual(p); if (!result) checkpoint(AT_FDCWD, p); return result;
+}
+int unlinkat(int fd, const char *p, int flags) {
+  static int (*actual)(int, const char *, int); if (!actual) actual = dlsym(RTLD_NEXT, "unlinkat");
+  int result = actual(fd, p, flags); if (!result && !(flags & AT_REMOVEDIR)) checkpoint(fd, p); return result;
+}
+`);
+      execFileSync('cc', ['-shared', '-fPIC', '-o', hook, hookSource, '-ldl']);
       await fs.writeFile(
         path.join(bin, 'git'),
         `#!/bin/sh
 if [ "$1" = "--git-dir" ] && [ "$3" = "worktree" ] && [ "$4" = "remove" ]; then
- printf '%s' "$$" > "$CAPACITY_TEST_REMOVE_PID"
- kill -STOP "$$"
+ export LD_PRELOAD="$CAPACITY_TEST_UNLINK_HOOK"
 fi
 exec /usr/bin/git "$@"
 `,
@@ -169,6 +212,8 @@ exec /usr/bin/git "$@"
                   ...process.env,
                   PATH: bin + path.delimiter + process.env.PATH,
                   CAPACITY_TEST_REMOVE_PID: gate,
+                  CAPACITY_TEST_UNLINK_HOOK: hook,
+                  CAPACITY_TEST_MANY: path.join(victim, 'many'),
                 }
               : process.env,
           });
@@ -194,31 +239,11 @@ exec /usr/bin/git "$@"
             expect(text).toMatch(/^[1-9][0-9]*$/);
             const pid = Number(text);
             expect(pid).toBeGreaterThan(1);
-            const watcher = syncFs.watch(path.join(victim, 'many'), (event, name) => {
-              if (
-                checkpoint ||
-                event !== 'rename' ||
-                !name ||
-                syncFs.existsSync(path.join(victim, 'many', String(name)))
-              )
-                return;
-              try {
-                const args = syncFs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
-                if (!args.startsWith('/usr/bin/git' + String.fromCharCode(0))) return;
-                process.kill(pid, 'SIGSTOP');
-                const left = remaining();
-                checkpoint = { remaining: left, pid, nativeGitConfirmed: true };
-                process.kill(pid, 'SIGKILL');
-              } catch {
-                /* A completed deletion is not evidence of interruption. */
-              }
-            });
-            try {
-              process.kill(pid, 'SIGCONT');
-              await terminal;
-            } finally {
-              watcher.close();
-            }
+            const args = syncFs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+            expect(args.startsWith('/usr/bin/git' + String.fromCharCode(0))).toBe(true);
+            checkpoint = { remaining: remaining(), pid, nativeGitConfirmed: true };
+            process.kill(pid, 'SIGKILL');
+            await terminal;
           }
           return terminal;
         },
