@@ -29,3 +29,24 @@
   .writing-author .writing-source-excerpts .ex{font-size:14px;line-height:1.75;padding:10px 12px}
   .writing-author .writing-question-detail{padding:12px 16px;gap:10px}
 }
+
+.writing-author .writing-intent-item{padding:12px 0;border-top:1px solid var(--writing-ln)}
+.writing-author .writing-intent-item>label{display:flex;gap:8px;align-items:center;margin-top:8px}
+.writing-author .writing-intent-item p{margin:8px 0;color:var(--writing-ink2)}
+.writing-author .writing-template-import{margin:12px 0;padding:12px;border:1px solid var(--writing-ln);border-radius:8px}
+.writing-author .writing-template-import input[type=file]{width:100%;max-width:100%}
+.writing-compare-columns { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; margin-top: 12px; }
+.writing-compare-columns section { min-width: 0; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 8px; }
+.writing-compare-columns p { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media(max-width:760px) { .writing-compare-columns { grid-template-columns: 1fr; } }
+.writing-teaching-production { display: grid; gap: 12px; }
+.writing-teaching-status { display: flex; align-items: center; gap: 8px; line-height: 1.7; }
+.writing-teaching-preview { display: block; width: 100%; max-height: 520px; background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: 8px; }
+.writing-teaching-script > section { padding: 16px 0; border-bottom: 1px solid var(--border-subtle); }
+.writing-teaching-script p,.writing-teaching-script blockquote { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
+.writing-teaching-script blockquote { margin: 12px 0; padding-left: 12px; border-left: 2px solid var(--border-subtle); }
+.writing-completed-review { margin: 16px 0; }
+.writing-completed-review > summary { cursor: pointer; padding: 12px 0; }
+.writing-intent-location { margin-inline-start: 8px; }
+.writing-full-conclusions { margin: 12px 0 20px; }
+.writing-full-conclusions > summary { cursor: pointer; font-size: 14px; color: var(--text-secondary); }

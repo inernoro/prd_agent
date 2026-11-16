@@ -38,12 +38,19 @@ public class WritingDocumentProcessor(
         if (claimed.MatchedCount != 1) throw new InvalidOperationException("草稿执行身份已变化，旧任务不得继续写入");
         state.ActiveExecutionId = run.ExecutionId;
         await EnsureWriterAsync(db, entry.StoreId, run.UserId);
-        var template = WritingTemplateRegistry.Find(state.TemplateId) ?? throw new InvalidOperationException("模版不存在");
+        var template = state.TemplateSnapshot ?? WritingTemplateRegistry.Find(state.TemplateId) ?? throw new InvalidOperationException("模版不存在");
+        var reconcile = run.Kind == WritingDeliveryPolicy.ReconcileRunKind;
         var sourceText = new StringBuilder();
         var loaded = 0;
         foreach (var source in state.Sources.Where(s => s.Status != "skipped"))
         {
             await Progress($"读取资料 · 已读取 {loaded} / {state.Sources.Count} 份 · {source.Title}", 5);
+            if (reconcile) {
+                // 整理以作者已经采用的资料快照为依据，不悄悄换入更新后的原件。
+                if (source.Status != "read") continue;
+                sourceText.AppendLine($"【{source.Id}：{source.Title}】\n{source.Content}\n【{source.Id}结束】"); loaded++;
+                continue;
+            }
             var original = await db.DocumentEntries.Find(e => e.Id == source.EntryId && e.StoreId == entry.StoreId && !e.IsFolder).FirstOrDefaultAsync()
                 ?? throw new InvalidOperationException($"资料《{source.Title}》已删除，请重新选择");
             if (source.Status == "read" && source.UpdatedAt == original.UpdatedAt && !string.IsNullOrEmpty(source.Content)) {
@@ -72,8 +79,10 @@ public class WritingDocumentProcessor(
             "角色可包含orderedSectionIds数组，按角色真实需要排列已存在的小节id；摘要和角色行动不得省略改变行动的限制；不清楚时保留空值，不用模板提示代替正文。" +
             "小节可提供condition与detail（label、rows二维字符串表格），只在资料明确给出适用条件或字段表时填写。问题可提供choices（key、label、text）和evidence（sourceId、quote、location），quote必须逐字存在于对应原文。" +
             "模版为：" + JsonSerializer.Serialize(template, WritingDocumentPolicy.JsonOptions) +
-            "。以这些小标题组织，不复制写作提示。返回结构：" + shape;
+            "。以这些小标题组织，不复制写作提示。额外返回intentCoverage数组：每项intentIndex是作者必达要点从0开始的序号，paragraphIds是承载该重点的正文段落id数组；没有承载位置时返回空数组，不得假称覆盖。这仅是建议，仍由作者核对。返回结构：" + shape;
+        if (reconcile) system += "本次只整理作者已补充的正文所派生的摘要、结论、适用范围、角色行动和intentCoverage。当前正文是权威输入；不得改写正文、问题、引用或确认记录。只返回summary、conclusions、scopeIn、scopeOut、roles、intentCoverage。每项角色必须给出存在的sectionId。明确保留未决问题及影响范围，未决事项不得写成确定行动；每项结论与角色行动带上改变执行的条件、例外、数值边界。";
         var user = $"作者标题：{state.Title}\n作者必达要点：{string.Join("；", state.IntentPoints)}\n作者手动输入：\n{state.ManualInput}\n\n关联资料：\n{sourceText}";
+        if (reconcile) user += "\n当前权威正文与作者回答：\n" + JsonSerializer.Serialize(new { state.Sections, state.Questions }, WritingDocumentPolicy.JsonOptions);
         using var context = requestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"), GroupId: null, SessionId: run.Id, UserId: run.UserId, ViewRole: null,
             DocumentChars: user.Length, DocumentHash: null, SystemPromptRedacted: "template-writing", RequestType: "chat",
@@ -94,19 +103,25 @@ public class WritingDocumentProcessor(
         if (raw.StartsWith("```")) raw = raw[(raw.IndexOf('\n') + 1)..].TrimEnd('`').Trim();
         var generated = JsonSerializer.Deserialize<WritingDocumentState>(raw, WritingDocumentPolicy.JsonOptions)
             ?? throw new InvalidOperationException("返回的成文结构为空，请重试");
+        if (reconcile) WritingDeliveryPolicy.ApplyReconciliation(state, generated);
+        else {
         state.Title = string.IsNullOrWhiteSpace(state.Title) ? generated.Title : state.Title;
         state.Summary = generated.Summary; state.Conclusions = generated.Conclusions;
         state.ScopeIn = generated.ScopeIn; state.ScopeOut = generated.ScopeOut;
         state.Sections = generated.Sections; state.Questions = generated.Questions; state.Roles = generated.Roles;
+        state.IntentCoverage = generated.IntentCoverage;
         WritingDocumentPolicy.ValidateGenerated(state);
+        state.DerivedContentStale = false;
+        WritingDeliveryPolicy.Refresh(state);
+        }
         await EnsureWriterAsync(db, entry.StoreId, run.UserId);
         await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(db.DocumentStoreAgentRuns, run, CancellationToken.None);
-        state.Stage = "confirm"; state.Failure = null; state.UpdatedAt = DateTime.UtcNow; state.Revision = revision + 1;
+        state.Stage = reconcile ? "review" : "confirm"; state.Failure = null; state.UpdatedAt = DateTime.UtcNow; state.Revision = revision + 1;
         var result = await db.DocumentEntries.UpdateOneAsync(e => e.Id == entry.Id && e.Writing!.Revision == revision && e.Writing.ActiveRunId == run.Id && e.Writing.ActiveExecutionId == run.ExecutionId,
             Builders<DocumentEntry>.Update.Set(e => e.Writing, state).Set(e => e.Title, state.Published?.Title ?? state.Title)
                 .Set("Metadata.writing_stage", state.Stage).Set(e => e.UpdatedAt, state.UpdatedAt));
         if (result.ModifiedCount != 1) throw new InvalidOperationException("草稿已变化，旧生成结果未写回");
-        await Progress($"初稿已生成：{state.Sections.Sum(s => s.Paragraphs.Count)} 段，其中 {state.Questions.Count} 项需要你确认", 100);
+        await Progress(reconcile ? "摘要、角色行动与重点位置已整理，请对照正文核对" : $"初稿已生成：{state.Sections.Sum(s => s.Paragraphs.Count)} 段，其中 {state.Questions.Count} 项需要你确认", 100);
         try {
             await notifications.CreateAsync(new AdminNotificationEventRequest {
                 Source = "document-store", TargetUserId = run.UserId, Title = "初稿已生成，待你确认",
@@ -134,7 +149,7 @@ public class WritingDocumentProcessor(
         }
     }
 
-    private async Task EnsureWriterAsync(MongoDbContext db, string storeId, string userId)
+    internal async Task EnsureWriterAsync(MongoDbContext db, string storeId, string userId)
     {
         var store = await db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync() ?? throw new InvalidOperationException("知识库已删除");
         if (store.OwnerId == userId || store.SharedTeamIds.Any((await teams.GetMyTeamIdsAsync(userId)).Contains)) return;

@@ -62,3 +62,17 @@ describe('已发布作者审核页保留只读逐段核对记录', () => {
     expect(JSON.stringify(state)).toBe(snapshot);
   });
 });
+
+describe('作者必达点不能在审核页消失', () => {
+  it('逐项展示作者原话和待核对位置，不把正文确认替代重点确认', async () => {
+    const state = publishedState(); state.stage = 'review'; state.published = undefined;
+    state.intentPoints = ['仅测试租户允许执行', '必须先经主管批准；正式租户禁止执行'];
+    await mount(state);
+    const panel = container.querySelector('.writing-intent-review');
+    expect(panel?.textContent).toContain('仅测试租户允许执行');
+    expect(panel?.textContent).toContain('必须先经主管批准；正式租户禁止执行');
+    expect(panel?.textContent).toContain('0 / 2');
+    expect(panel?.textContent).toContain('未定位');
+    expect(container.querySelector('.writing-preview [aria-label="作者要点"]')?.textContent).toContain('必须先经主管批准；正式租户禁止执行');
+  });
+});

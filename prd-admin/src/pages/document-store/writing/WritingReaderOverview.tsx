@@ -3,13 +3,14 @@ import { Link } from 'react-router-dom';
 import type { WritingPublication, WritingSection } from '@/services/contracts/writing';
 
 /** v14 reader: conclusions, scope, then every role's action and condition. */
-export function WritingReaderOverview({ publication: doc, type, role, onRole, onGo, onSources, readingSections, bodyPending, learningHref, duration }: {
+export function WritingReaderOverview({ publication: doc, type, role, onRole, onGo, onSources, readingSections, bodyPending, learningHref, duration, onIntent }: {
   publication: WritingPublication;
   type?: string;
   role: string;
   onRole: (label: string) => void;
   onGo: (id: string) => void;
   onSources: () => void;
+  onIntent?: (paragraphId: string) => void;
   readingSections: WritingSection[];
   bodyPending: boolean;
   learningHref: string;
@@ -24,7 +25,7 @@ export function WritingReaderOverview({ publication: doc, type, role, onRole, on
       {doc.sources.length > 0 && <button className="writing-source-shortcut" onClick={onSources}>来源{readCount > 0 ? ` · ${readCount} 份` : '记录'}<ChevronRight size={12} /></button>}
     </div>
     <h1 className="writing-reader-title" tabIndex={-1}>{doc.title}</h1>
-    <section className="writing-reader-takeaways" aria-label="文档结论"><h2>结论</h2>{doc.conclusions.filter(Boolean).length ? <ol className="writing-conclusions">{doc.conclusions.filter(Boolean).map((c, i) => <li key={i}>{c}</li>)}</ol> : <p>{doc.summary || '正文开头：' + (doc.sections[0]?.paragraphs[0]?.text.slice(0, 60) ?? '')}</p>}</section>
+    <WritingTakeaways publication={doc} disabled={bodyPending} onLocate={onIntent} />
     {scope}
     {active && <>
       <section className="writing-actions-panel writing-focused-actions" aria-label="角色行动">
@@ -38,4 +39,21 @@ export function WritingReaderOverview({ publication: doc, type, role, onRole, on
       <nav className="writing-reading-order" aria-label={`${active.label}的阅读顺序`}><span className="hint">{active.label}建议按这个顺序读</span>{readingSections.map((s, i) => <button className="ord" disabled={bodyPending} onClick={() => onGo(s.id)} key={s.id}><span className="n">{i + 1}</span><span>{s.title}</span></button>)}<Link className="btn ghost sm" to={learningHref}>{duration >= 60 ? `或看 ${Math.floor(duration / 60)} 分钟教学` : '开始学习'}</Link></nav>
     </>}
   </div>;
+}
+
+/** 同一呈现用于作者预览和接收者首屏，作者原句不会被再次压缩。 */
+export function WritingTakeaways({ publication: doc, disabled = false, onLocate, preview = false }: {
+  publication: Pick<WritingPublication, 'intentPoints' | 'intentCoverage' | 'conclusions' | 'summary' | 'sections'>;
+  disabled?: boolean; onLocate?: (paragraphId: string) => void; preview?: boolean;
+}) {
+  const points = doc.intentPoints?.map((text, index) => ({ text, index })).filter(p => p.text.trim()) ?? [];
+  const title = points.length ? '作者要点' : '结论';
+  return <section className="writing-reader-takeaways" aria-label={points.length ? '作者要点' : '文档结论'}>
+    {preview ? <div className="cap writing-review-conclusion-label">{title}</div> : <h2>{title}</h2>}
+    {points.length ? <><ol className="writing-conclusions">{points.map(point => {
+      const target = doc.intentCoverage?.find(c => c.intentIndex === point.index)?.paragraphIds[0];
+      return <li key={point.index}><span>{point.text}</span>{target && onLocate && <button className="btn ghost sm writing-intent-location" disabled={disabled} onClick={() => onLocate(target)}>查看正文</button>}</li>;
+    })}</ol>{(doc.conclusions.some(Boolean) || doc.summary) && <details className="writing-full-conclusions"><summary>完整结论</summary>{doc.conclusions.some(Boolean) ? <ol>{doc.conclusions.filter(Boolean).map((text, i) => <li key={i}>{text}</li>)}</ol> : <p>{doc.summary}</p>}</details>}</>
+      : doc.conclusions.some(Boolean) ? <ol className="writing-conclusions">{doc.conclusions.filter(Boolean).map((text, i) => <li key={i}>{text}</li>)}</ol> : <p>{doc.summary || '正文开头：' + (doc.sections[0]?.paragraphs[0]?.text.slice(0, 60) ?? '')}</p>}
+  </section>;
 }

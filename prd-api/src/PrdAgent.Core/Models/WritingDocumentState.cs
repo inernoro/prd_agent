@@ -9,6 +9,10 @@ public class WritingDocumentState
     public string Stage { get; set; } = "select";
     public string TemplateId { get; set; } = "prd";
     public string TemplateVersion { get; set; } = "1.0";
+    public WritingTemplate? TemplateSnapshot { get; set; }
+    public string ContentFingerprint { get; set; } = "";
+    public bool DerivedContentStale { get; set; }
+    public WritingDerivedView? PreviousDerivedView { get; set; }
     public string Title { get; set; } = "";
     public string Summary { get; set; } = "";
     public string ManualInput { get; set; } = "";
@@ -20,6 +24,7 @@ public class WritingDocumentState
     public string ScopeOut { get; set; } = "";
     public List<string> Conclusions { get; set; } = new();
     public List<string> IntentPoints { get; set; } = new();
+    public List<WritingIntentCoverage> IntentCoverage { get; set; } = new();
     public List<WritingSource> Sources { get; set; } = new();
     public List<WritingSection> Sections { get; set; } = new();
     public List<WritingQuestion> Questions { get; set; } = new();
@@ -131,6 +136,10 @@ public class WritingPublication
     public string Summary { get; set; } = "";
     public string TemplateId { get; set; } = "";
     public string TemplateVersion { get; set; } = "";
+    public WritingTemplate? TemplateSnapshot { get; set; }
+    public string ContentFingerprint { get; set; } = "";
+    public List<string> IntentPoints { get; set; } = new();
+    public List<WritingIntentCoverage> IntentCoverage { get; set; } = new();
     public string AuthorName { get; set; } = "";
     public string ReviewerName { get; set; } = "";
     public string ReviewerId { get; set; } = "";
@@ -155,6 +164,7 @@ public static class WritingDocumentPolicy
     public static List<string> SubmissionProblems(WritingDocumentState state)
     {
         var problems = new List<string>();
+        if (state.DerivedContentStale) problems.Add("正文已补充或修改，请重新整理摘要、角色行动与重点位置");
         if (string.IsNullOrWhiteSpace(state.Title)) problems.Add("请填写标题");
         if (state.Sections.Count == 0 || !state.Sections.SelectMany(s => s.Paragraphs).Any(p => !string.IsNullOrWhiteSpace(p.Text))) problems.Add("请填写正文");
         if (state.Questions.Any(q => q.Status == "pending") || state.Sections.SelectMany(s => s.Paragraphs).Any(p => p.Status is "ask" or "conf")) problems.Add("还有未处理的确认事项");
@@ -164,6 +174,7 @@ public static class WritingDocumentPolicy
         if (state.Sections.Any(s => (!string.IsNullOrWhiteSpace(s.Condition) || s.Detail?.Rows.Count > 0) && !s.MetadataConfirmed))
             problems.Add("还有小节条件与细节未过目，请逐项核对");
         if (string.IsNullOrWhiteSpace(state.ReviewerId)) problems.Add("请设置审核人");
+        problems.AddRange(WritingDeliveryPolicy.SubmissionProblems(state));
         return problems;
     }
     public static void Answer(WritingDocumentState state, string questionId, string answer, bool open)
@@ -173,9 +184,9 @@ public static class WritingDocumentPolicy
         q.Answer = answer.Trim(); q.Status = open ? "open" : "answered";
         var p = state.Sections.SelectMany(s => s.Paragraphs).FirstOrDefault(p => p.Id == q.ParagraphId);
         if (p != null) { p.Text = open ? $"待确认：{q.Title}。{q.Answer}" : q.Answer; p.Status = "auth"; p.Citations.Clear(); p.Quotes.Clear(); p.Confirmed = false; }
-        // 回答改变后的角色行动与摘要必须重新过目，不能让旧结论继续冒充已确认结果。
-        state.Conclusions.Clear(); state.Roles.Clear(); state.Summary = "";
-        state.ScopeIn = ""; state.ScopeOut = ""; state.Chapters.Clear(); state.Captions.Clear();
+        // 保留旧派生表达供前后对照；重新整理完成前禁止提交，不要求作者重写。
+        state.DerivedContentStale = true;
+        state.Chapters.Clear(); state.Captions.Clear();
         state.Stage = "confirm";
     }
     public static void ValidateGenerated(WritingDocumentState state)
@@ -200,6 +211,10 @@ public static class WritingDocumentPolicy
         if (state.Questions.Any(q => !paragraphs.Any(p => p.Id == q.ParagraphId))) throw new InvalidOperationException("确认事项未关联正文段落，请重试");
         if (paragraphs.Any(p => p.Status is "ask" or "conf" && !state.Questions.Any(q => q.ParagraphId == p.Id))) throw new InvalidOperationException("缺失或冲突段落没有对应确认事项，请重试");
         if (state.Questions.Select(q => q.Id).Distinct().Count() != state.Questions.Count) throw new InvalidOperationException("确认事项编号重复，请重试");
+        if (state.IntentCoverage.Select(c => c.IntentIndex).Distinct().Count() != state.IntentCoverage.Count
+            || state.IntentCoverage.Any(c => c.IntentIndex < 0 || c.IntentIndex >= state.IntentPoints.Count || c.ParagraphIds.Any(id => !paragraphs.Any(p => p.Id == id))))
+            throw new InvalidOperationException("作者重点的承载位置无效，请重试");
+        foreach (var coverage in state.IntentCoverage) { coverage.ConfirmedContentHash = ""; coverage.Confirmed = false; }
         foreach (var section in state.Sections) section.MetadataConfirmed = false;
         foreach (var question in state.Questions) {
             if (question.Citations.Any(id => !sources.Contains(id))) throw new InvalidOperationException("确认事项引用了未读取的资料");
@@ -235,7 +250,8 @@ public static class WritingDocumentPolicy
     {
         var publication = new WritingPublication {
             Version = (state.Published?.Version ?? 0) + 1, Title = state.Title, Summary = state.Summary,
-            TemplateId = state.TemplateId, TemplateVersion = state.TemplateVersion, AuthorName = state.AuthorName,
+            TemplateId = state.TemplateId, TemplateVersion = state.TemplateVersion, TemplateSnapshot = state.TemplateSnapshot,
+            IntentPoints = state.IntentPoints, IntentCoverage = state.IntentCoverage.Select(c => new WritingIntentCoverage { IntentIndex = c.IntentIndex, ParagraphIds = c.ParagraphIds, ConfirmedContentHash = c.ConfirmedContentHash, Confirmed = WritingDeliveryPolicy.IsConfirmed(state, c.IntentIndex) }).ToList(), ContentFingerprint = WritingDeliveryPolicy.Fingerprint(state), AuthorName = state.AuthorName,
             ReviewerId = reviewerId, ReviewerName = reviewerName, PublishedAt = DateTime.UtcNow,
             Conclusions = state.Conclusions, ScopeIn = state.ScopeIn, ScopeOut = state.ScopeOut,
             Sources = state.Sources, Sections = state.Sections, Roles = state.Roles, Chapters = state.Chapters, Captions = state.Captions,

@@ -185,7 +185,9 @@ public class WritingDocumentPolicyTests
         state.Chapters.Add(new() { Title = "在正式租户执行" });
         state.Questions.Add(new() { Id = "q1", ParagraphId = "p1", Title = "适用范围？" });
         WritingDocumentPolicy.Answer(state, "q1", "仅测试租户", false);
-        Assert.Empty(state.Summary); Assert.Empty(state.ScopeIn); Assert.Empty(state.Chapters);
+        Assert.Equal("所有租户可执行", state.Summary); Assert.Equal("所有租户", state.ScopeIn); Assert.Empty(state.Chapters);
+        Assert.True(state.DerivedContentStale);
+        Assert.Contains(WritingDocumentPolicy.SubmissionProblems(state), problem => problem.Contains("重新整理"));
     }
 
     [Fact]

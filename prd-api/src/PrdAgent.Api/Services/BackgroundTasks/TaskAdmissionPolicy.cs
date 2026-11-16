@@ -67,6 +67,9 @@ public static class TaskAdmissionPolicies
         Register("DocumentStoreController", "CommandWritingDocument",
             new[] { AppCallerRegistry.DocumentStoreAgent.Writing.Generate }, false, 128,
             timing: TaskAdmissionTiming.AuthenticatedPaidBranch);
+        Register("DocumentStoreController", "GenerateWritingTeaching ResumeWritingTeaching",
+            new[] { AppCallerRegistry.DocumentStoreAgent.Writing.Generate, AppCallerRegistry.McpSpeech.Synthesize }, false, 32,
+            timing: TaskAdmissionTiming.AuthenticatedPaidBranch);
         Add("ShortVideoMaterialController", "CreateRun", new[] { "video-agent.", "workflow-agent.", "transcript-agent.", "document-store." });
         Add("DesignArtifactsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);
         Add("HostedSiteEditsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);
