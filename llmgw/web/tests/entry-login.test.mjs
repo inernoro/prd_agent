@@ -1,0 +1,72 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
+import { JSDOM } from 'jsdom';
+import { createServer } from 'vite';
+import React, { act } from 'react';
+
+test('电影式网关登录保持失败恢复、首登改密和静音偏好', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/login' });
+  const previous = Object.fromEntries(['window','document','Image','localStorage','requestAnimationFrame','cancelAnimationFrame','IS_REACT_ACT_ENVIRONMENT'].map(key => [key, globalThis[key]]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, Image: dom.window.Image, localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true });
+  globalThis.requestAnimationFrame = callback => setTimeout(() => callback(performance.now()),16);
+  globalThis.cancelAnimationFrame = clearTimeout;
+  window.matchMedia = () => ({ matches: true });
+  globalThis.__gatewayLogin = { success: false, error: { message: '账号或密码不正确，请重试' } };
+  globalThis.__gatewayRoutes = [];
+  const server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), cacheDir: '/tmp/llmgw-entry-test-cache', ssr: { noExternal: ['react-router-dom'] }, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: [] },
+    plugins: [{ name: 'entry-auth-fixture', enforce: 'pre', resolveId(id) { if (id === 'react-router-dom') return '\0entry-router'; }, load(id) {
+      if (id === '\0entry-router') return 'export const useNavigate=()=>((...args)=>globalThis.__gatewayRoutes.push(args));export const useLocation=()=>({state:null})';
+      if (id.endsWith('/src/lib/auth.tsx')) return 'export function useAuth(){return { login:async()=>globalThis.__gatewayLogin, sessionExpiredReason:null }}';
+      if (id.endsWith('/src/lib/api.ts')) return 'export async function getHealth(){return {success:true,data:{status:"ok"}}}';
+      if (id.endsWith('/src/lib/mapNavigation.ts')) return 'export function usePlatformMapHome(){}; export function resolveMapHomeHref(){return "/map"}';
+    } }],
+  });
+  let root;
+  try {
+    const { createRoot } = await import('react-dom/client');
+    const { LoginPage } = await server.ssrLoadModule('/src/pages/LoginPage.tsx');
+    root = createRoot(document.getElementById('root'));
+    await act(async () => root.render(React.createElement(LoginPage)));
+    assert.match(document.body.textContent, /登录模型网关/);
+    const sound = document.querySelector('.gateway-sound');
+    await act(async () => sound.click());
+    assert.equal(localStorage.getItem('llmgw-entry-sound'), 'off');
+    const fill = async (selector, value) => act(async () => {
+      const input = document.querySelector(selector);
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value);
+      input.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+    await fill('#llmgw-username','tenant-user'); await fill('#llmgw-password','fixture-only');
+    await act(async () => document.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
+    assert.match(document.querySelector('[role="alert"]').textContent,/账号或密码不正确/);
+    assert.equal(document.querySelector('.gateway-login-submit').disabled,false);
+    assert.equal(document.querySelector('.gateway-entry').dataset.phase,'idle');
+    globalThis.__gatewayLogin = { success: true, data: { mustChangePassword: true } };
+    await act(async () => document.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
+    assert.deepEqual(globalThis.__gatewayRoutes, [['/change-password', { replace: true }]]);
+    assert.equal(document.querySelector('.gateway-arrival-copy'),null);
+    await act(async () => root.unmount());
+    root = createRoot(document.getElementById('root'));
+    window.matchMedia = () => ({ matches: false });
+    globalThis.__gatewayRoutes.length = 0;
+    globalThis.__gatewayLogin = { success: true, data: { mustChangePassword: false } };
+    await act(async () => root.render(React.createElement(LoginPage)));
+    assert.equal(document.querySelector('.gateway-entry').dataset.sound,'off');
+    await fill('#llmgw-username','tenant-user'); await fill('#llmgw-password','fixture-only');
+    await act(async () => document.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
+    assert.equal(document.querySelector('.gateway-entry').dataset.phase,'authorized');
+    assert.equal(globalThis.__gatewayRoutes.length,0);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve,800)); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve,850)); });
+    assert.ok(document.querySelector('.gateway-arrival-copy'));
+    assert.equal(globalThis.__gatewayRoutes.length,0);
+    await act(async () => document.querySelector('.gateway-arrival-copy button').click());
+    assert.deepEqual(globalThis.__gatewayRoutes,[['/',{replace:true}]]);
+
+  } finally {
+    if (root) await act(async () => root.unmount());
+    await server.close(); dom.window.close(); Object.assign(globalThis, previous);
+    delete globalThis.__gatewayLogin; delete globalThis.__gatewayRoutes;
+  }
+});

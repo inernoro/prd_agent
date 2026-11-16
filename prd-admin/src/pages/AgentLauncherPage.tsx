@@ -1,3 +1,4 @@
+import { useEntrySkinStore } from '@/stores/entrySkinStore';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   Search,
@@ -461,6 +462,8 @@ function SectionHead({
 export default function AgentLauncherPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [deskOpen, setDeskOpen] = useState(false);
+  const cinematic = useEntrySkinStore(s => s.skin === 'companion');
+  const showingDesk = !cinematic || deskOpen;
   const [catalogFilter, setCatalogFilter] = useState<CatalogFilter>('all');
   // 收起时铺满左栏（两列六行），与右侧「近 7 日 + 我的动态」大致等高，
   // 不在工作带里留一块空白；有更多脚印时由「全部 N」展开。
@@ -698,7 +701,7 @@ export default function AgentLauncherPage() {
 
   return (
     <div className="home-desk h-full min-h-0 flex flex-col relative">
-      {!deskOpen ? <ConsciousnessHome
+      {!showingDesk ? <ConsciousnessHome
         query={searchQuery} onQueryChange={setSearchQuery} results={searchResults}
         shortcuts={[...groups.agents, ...groups.infra].filter(item => ['/visual-agent', '/literary-agent', '/document-store'].includes(item.routePath || '')).slice(0, 3)}
         onOpen={handleClick} onShowDesk={() => { setDeskOpen(true); setSearchQuery(''); }}
@@ -706,7 +709,7 @@ export default function AgentLauncherPage() {
       /> : <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
         <div aria-hidden className="home-launcher-color-field" />
 
-        <button type="button" className="consciousness-return" onClick={() => { setDeskOpen(false); setSearchQuery(''); }}>返回沉浸首页</button>
+        {cinematic && <button type="button" className="consciousness-return" onClick={() => { setDeskOpen(false); setSearchQuery(''); }}>返回沉浸首页</button>}
         <div className="home-desk-inner relative z-10">
           {/* ── 状态栏：无框、纯文字，只报"此刻 + 你是谁"，不参与容器竞争 ── */}
           <header className="home-desk-statusbar">
@@ -1040,7 +1043,7 @@ export default function AgentLauncherPage() {
       <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />
 
       {/* 周报海报弹窗：登录后首屏挂载时自动拉取并展示（本会话已关闭则不再弹） */}
-      {deskOpen && <WeeklyPosterModal />}
+      {showingDesk && <WeeklyPosterModal />}
     </div>
   );
 }

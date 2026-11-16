@@ -9,7 +9,7 @@ export function samplePortrait(time: number) {
   return {
     line: smoothProgress(time, .18, 2.05),
     lineOpacity: 1 - smoothProgress(time, 3.1, 4.15),
-    grid: smoothProgress(time, 1.55, 2.55) * (1 - smoothProgress(time, 4.0, 5.0)),
+    grid: smoothProgress(time, 1.55, 2.55) * (1 - smoothProgress(time, 3.85, 4.4)),
     material: smoothProgress(time, 2.25, 3.9),
     eye: smoothProgress(time, 4.45, 6.05),
     controls: smoothProgress(time, .8, 1.65),

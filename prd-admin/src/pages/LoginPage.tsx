@@ -1,3 +1,4 @@
+import { useEntrySkinStore } from '@/stores/entrySkinStore';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -52,6 +53,7 @@ function createSsoState() {
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const cinematic = useEntrySkinStore(s => s.skin === 'companion');
   useApplyDocumentTheme('/login');
   const setAuth = useAuthStore((s) => s.login);
   const setTokens = useAuthStore((s) => s.setTokens);
@@ -103,7 +105,7 @@ export default function LoginPage() {
     return resolved;
   }, [returnUrlWithRef]);
   const [loading, setLoading] = useState(false);
-  useEffect(() => { void prepareEntryScene(); }, []);
+  useEffect(() => { if (cinematic) void prepareEntryScene(); }, [cinematic]);
   const [gatePhase, setGatePhase] = useState<IdentityPhase>('idle');
   const completingLogin = useRef(false);
   const mounted = useRef(true);
@@ -303,6 +305,9 @@ export default function LoginPage() {
     } catch {
       // ignore
     }
+    if (useEntrySkinStore.getState().skin !== 'companion') {
+      navigate(resolveReturnUrl(), { replace: true }); return;
+    }
     // Preparation must not keep a verified user waiting on a failed resource.
     if (!prefersReducedMotion()) await Promise.race([prepareEntryScene(), new Promise(resolve => window.setTimeout(resolve, 1000))]);
     if (!mounted.current) return;
@@ -373,10 +378,8 @@ export default function LoginPage() {
   const phase: IdentityPhase = gatePhase === 'idle' && busy ? 'verifying' : gatePhase;
   const authorized = phase === 'authorized' || phase === 'entering';
   return (
-    <div className="cinema-login" data-busy={busy} data-phase={phase}>
-      <ConsciousnessScene fog />
-      <ConsciousnessHud login />
-      <IdentityScanner phase={phase} />
+    <div className={`cinema-login${cinematic ? '' : ' is-standard'}`} data-busy={busy} data-phase={phase}>
+      {cinematic && <><ConsciousnessScene fog /><ConsciousnessHud login /><IdentityScanner phase={phase} /></>}
       <main className="cinema-login-center" aria-label={showResetPassword ? '设置新密码' : '登录 MAP'}>
         {authorized ? <div className="cinema-identity-result" role="status"><div className="cinema-verified-copy"><p>读取完毕 · 核验通过</p><small>READ COMPLETE / VERIFIED</small></div><div className="cinema-welcome-copy"><p>WELCOME TO</p><small>YOUR INTELLIGENCE WORKSPACE</small><strong>MAP</strong></div></div> : <>
           {!showResetPassword ? (

@@ -186,3 +186,9 @@ html[data-entry-arriving] .app-aurora { background: var(--cinema-night); }
   .consciousness-art { opacity: .82; }
   .consciousness-home.is-arriving .consciousness-home-center, .consciousness-home.is-arriving .consciousness-shortcuts, .consciousness-home.is-arriving .consciousness-hud, .consciousness-home.is-arriving .consciousness-open-desk, .consciousness-scene.is-arriving .consciousness-ghost { opacity: 1; }
 }
+
+/* Standard entry shares the real auth form, without cinematic resources or delays. */
+.cinema-login.is-standard { --bg-base: inherit; --text-primary: inherit; --text-secondary: inherit; --text-muted: inherit; color-scheme: normal; background: var(--bg-base); color: var(--text-primary); --cinema-ink: var(--text-primary); --cinema-light: var(--bg-base); --login-cta-gradient: var(--text-primary); }
+.cinema-login.is-standard .cinema-login-center { padding: 36px; width: min(400px, calc(100% - 32px)); margin: 80px 16px 130px; border: 1px solid var(--border-default); border-radius: 18px; background: var(--bg-card); }
+.cinema-login.is-standard .cinema-login-status { color: var(--text-secondary); }
+.cinema-login.is-standard .cinema-login-status::after { display: none; }

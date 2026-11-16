@@ -13,6 +13,18 @@ describe('角色成形的阶段与眼睑几何', () => {
     expect(samplePortrait(6.1).chrome).toBe(0);
     expect(samplePortrait(7.2)).toMatchObject({ eye: 1, chrome: 1, brandFill: 1, grid: 0, lineOpacity: 0 });
   });
+  it('脸部网格在 0.55 秒内连续抽离，睁眼前完全退出', () => {
+    let previous = samplePortrait(3.85).grid;
+    expect(previous).toBe(1);
+    for (let t = 3.85; t <= 4.4; t += 1 / 60) {
+      const value = samplePortrait(t).grid;
+      expect(value).toBeLessThanOrEqual(previous);
+      expect(previous - value).toBeLessThan(.05);
+      previous = value;
+    }
+    expect(samplePortrait(4.4)).toMatchObject({ grid: 0, eye: 0 });
+    expect(samplePortrait(4.5).eye).toBeGreaterThan(0);
+  });
   it('闭眼上下缘重合；101 个开度的实际控制点连续张开，眼角固定', () => {
     expect(eyeControlPoints(0)).toEqual({ upper: [...CLOSED_LID], lower: [...CLOSED_LID] });
     let previousGap = 0;

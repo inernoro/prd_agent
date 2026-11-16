@@ -1,3 +1,4 @@
+import { useEntrySkinStore } from '@/stores/entrySkinStore';
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -35,6 +36,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   useAuthStore.setState({ isAuthenticated: false });
   sessionStorage.clear();
+  useEntrySkinStore.setState({ skin: 'companion' });
   window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() });
   api.getSsoOptions.mockResolvedValue({ success: true, data: { items: [], passwordLoginDisabled: false } });
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
@@ -42,6 +44,19 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); document.documentElement.removeAttribute('data-theme'); });
 
 describe('电影式登录真实表单交互', () => {
+  it('未开启皮肤时没有角色扫描，鉴权通过直接导航', async () => {
+    useEntrySkinStore.setState({ skin: 'standard' });
+    api.login.mockResolvedValue({ success: true, data: { user: { username: 'admin' }, accessToken: 'test-token', refreshToken: '', sessionKey: '' } });
+    api.getAdminAuthzMe.mockResolvedValue({ success: true, data: { effectivePermissions: ['admin.access'] } });
+    await mount();
+    expect(host.querySelector('.consciousness-scene')).toBeNull();
+    expect(host.querySelector('.identity-scanner')).toBeNull();
+    await fill(host.querySelector<HTMLInputElement>('input[autocomplete="current-password"]')!, 'sample-secret');
+    await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === '开始身份确认')!.click());
+    expect(navigation.navigate).toHaveBeenCalledTimes(1);
+    expect(navigation.navigate).toHaveBeenCalledWith('/', { replace: true });
+    expect(host.textContent).not.toContain('核验通过');
+  });
   it('空密码不可提交，密码可通过键盘访问显隐并保留输入', async () => {
     await mount();
     expect([...host.querySelectorAll('button')].find(b => b.textContent === '开始身份确认')?.disabled).toBe(true);

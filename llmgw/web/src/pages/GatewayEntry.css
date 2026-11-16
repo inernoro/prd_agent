@@ -1,0 +1,28 @@
+/* Same accepted scene, scoped to the independent gateway console. */
+.gateway-entry {
+  --cinema-paper: #eff0f1; --cinema-ink: #15171b; --cinema-night: #02050a; --cinema-light: #f0f5ff;
+  --cinema-accent: #71dce7; --cinema-amber: #ff9b3d; --cinema-glass: rgba(23,37,54,.6); --cinema-border: rgba(185,218,250,.26);
+  --font-body: var(--font-sans); --font-display: var(--font-sans);
+  position: relative; min-height: 100svh; isolation: isolate; overflow: clip;
+}
+.gateway-entry.consciousness-home { height: 100svh; }
+.gateway-login-form form { display: grid; gap: 12px; margin-top: 28px; }
+.gateway-login-form label { font-size: var(--fs-secondary); color: var(--cinema-ink); }
+.gateway-login-form input { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 2px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--cinema-ink) 35%, transparent); border-radius: 0; background: transparent; color: var(--cinema-ink); font: inherit; font-size: var(--fs-body); outline-offset: 4px; }
+.gateway-login-submit { display: flex; justify-content: center; align-items: center; gap: 12px; justify-self: center; margin-top: 16px; padding: 12px 20px; background: var(--cinema-ink); color: var(--cinema-light); border: 0; border-radius: 4px; cursor: pointer; font: inherit; font-size: var(--fs-secondary); }
+.gateway-login-submit:disabled { opacity: .55; cursor: wait; }
+.gateway-account-help { margin-top: 24px; color: var(--cinema-ink); font-size: var(--fs-body); line-height: 1.8; }
+.gateway-account-help summary { cursor: pointer; }
+.gateway-back { display: inline-flex; align-items: center; gap: 8px; margin-top: 16px; color: var(--cinema-ink); font-size: var(--fs-caption); }
+.gateway-login-message { font-size: var(--fs-secondary); line-height: 1.6; color: var(--cinema-ink); border-left: 2px solid currentColor; padding-left: 10px; }
+.gateway-sound { position: absolute; right: 28px; bottom: 28px; z-index: 8; display: flex; align-items: center; gap: 8px; border: 1px solid currentColor; border-radius: 30px; padding: 9px 12px; color: inherit; background: transparent; cursor: pointer; font: inherit; font-size: var(--fs-micro); }
+.gateway-arrival-copy { position: absolute; z-index: 4; top: 50%; left: 9%; transform: translateY(-50%); color: var(--cinema-light); opacity: var(--portrait-controls, 0); }
+.gateway-arrival-copy > span { color: var(--cinema-accent); font-size: var(--fs-micro); letter-spacing: .2em; }
+.gateway-arrival-copy h1 { font-size: var(--fs-display); font-weight: 500; letter-spacing: .04em; }
+.gateway-arrival-copy p { font-size: var(--fs-body); opacity: .7; }
+.gateway-arrival-copy button { display: inline-flex; gap: 18px; align-items: center; margin-top: 20px; padding: 12px 18px; color: inherit; border: 1px solid var(--cinema-border); background: var(--cinema-glass); border-radius: 4px; cursor: pointer; font: inherit; font-size: var(--fs-secondary); }
+.gateway-entry button:focus-visible, .gateway-entry a:focus-visible { outline: 2px solid var(--cinema-accent); outline-offset: 4px; }
+@media (max-width: 760px) { .gateway-sound { right: 16px; bottom: 18px; } .gateway-sound span { display: none; } .gateway-arrival-copy { top: 72%; left: 24px; right: 24px; } .gateway-entry .consciousness-ghost { top: 30%; } }
+
+.gateway-entry .consciousness-hud-coordinate { bottom: 80px; }
+@media (max-width: 760px) { .gateway-entry .consciousness-hud-brand > span { display: none; } }
