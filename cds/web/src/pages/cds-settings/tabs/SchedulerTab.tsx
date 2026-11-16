@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, Field, LoadingBlock, Section } from '../components';
 import type { LoadState } from '../types';
+import { HostCapacityPanel } from '../components/HostCapacityPanel';
 
 interface SchedulerConfig {
   enabled: boolean;
@@ -149,6 +150,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
       description="调度器开启后，空闲超过设定时长的分支会自动停止变灰；热分支数超上限时按 LRU 驱逐最久未访问分支。固定分支永不冷却。配置即时生效并在重启后保留。"
     >
       <div className="space-y-6">
+        <HostCapacityPanel />
         <div className="grid gap-4 md:grid-cols-2">
           <div className="rounded-md border border-border bg-card px-4 py-4">
             <div className="flex items-center gap-2 text-sm font-semibold">

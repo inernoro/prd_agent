@@ -176,7 +176,8 @@ import type { BranchEntry } from './types.js';
 import { combinedOutput } from './types.js';
 import { backfillReportReadScope } from './services/connection/pairing-service.js';
 import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
-import { MapNotifier, mapNotifierConfigFromEnv, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
+import { MapNotifier, readMapNotifierSettings, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
+import { isSealedSecret } from './infra/secret-seal.js';
 import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
 import { channelConfigured, classifyAlert, routeAlarm, notificationChannelSelected, renderAlarmMessage } from './services/alarm-route.js';
 import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
@@ -6148,16 +6149,11 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
    * 不在启动时定死一个实例的原因很实在：凭据配好之后不该还要重启一次 CDS 才生效——
    * 那等于把「接上铃」这件事又变回一件需要运维在场的事。
    */
+  const readMapSettings = () => readMapNotifierSettings(() => stateService.getAlarmNotify());
   const resolveMapNotifier = (): MapNotifier | null => {
-    const stored = stateService.getAlarmNotify();
-    // 设置里存的是 privateKey（与 githubApp 同名法），MapNotifier 要的是 privateKeyPem。
-    // 在这一处显式转换，而不是让两个名字在下游各自漂。
-    const cfg = stored
-      ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username, privateKeyPem: stored.privateKey }
-      : mapNotifierConfigFromEnv();
-    return cfg
-      ? new MapNotifier(cfg, { warn: (m) => console.warn(m), info: (m) => console.log(m) })
-      : null;
+    const { config: cfg, unavailable } = readMapSettings();
+    if (unavailable) console.warn('[map-notifier] 已保存的签名凭据无法读取，未使用备用身份发送');
+    return cfg ? new MapNotifier(cfg, { warn: (m) => console.warn(m), info: (m) => console.log(m) }) : null;
   };
   const mapNotifier = resolveMapNotifier();
   if (mapNotifier) {
@@ -6171,9 +6167,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // configured 传 getter 而不是布尔快照：配置是随时可改的，
   // 定死一个启动时的布尔值会让「刚配好」和「压根没配」在面板上长得一模一样。
   const alarmChannel = new AlarmChannel(
-    () => Boolean(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv()),
+    () => Boolean(readMapSettings().config),
     'MAP 站内通知',
-    () => (stateService.getAlarmNotify() ? [] : missingAlarmEnvKeys()),
+    () => readMapSettings().unavailable ? ['CDS_SECRET_KEY（已存凭据无法解密，请恢复原密封密钥）'] : readMapSettings().config ? [] : missingAlarmEnvKeys(),
   );
   /**
    * 多通道的投递记账本（2026-09-15）。
@@ -6557,7 +6553,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     forgetTarget: targetId => uptimeMonitor.forgetTarget(targetId),
     getNotifications: () => stateService.getMonitorNotifications(),
     setNotifications: settings => stateService.setMonitorNotifications(settings),
-    listChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv() ? ['legacy-map'] : [])],
+    listChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(readMapSettings().config ? ['legacy-map'] : [])],
     stampPreviewBranch: monitor => {
       const hit = monitor.projectId && monitor.url ? matchPreviewHost(monitor.url, listProjectPreviewHosts(monitor.projectId)) : undefined;
       monitor.previewBranchId = hit ? hit.branchId : undefined;
@@ -6567,7 +6563,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     monitor: uptimeMonitor,
     getNotifications: () => stateService.getMonitorNotifications(),
     setNotifications: (settings) => stateService.setMonitorNotifications(settings),
-    listNotificationChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv() ? ['legacy-map'] : [])],
+    listNotificationChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(readMapSettings().config ? ['legacy-map'] : [])],
     recordMcpAudit: (evidence) => stateService.recordMcpMonitorAudit(evidence),
     listMcpAudits: () => stateService.listMcpMonitorAudits(),
     listProjectPreviewHosts,
@@ -6581,28 +6577,22 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     alarmChannels: () => stateService.listAlarmChannels()
       .map((c) => alarmLedger.view(c, channelConfigured(c))),
     readAlarmNotify: () => {
-      const stored = stateService.getAlarmNotify();
-      const env = mapNotifierConfigFromEnv();
-      const eff = stored
-        ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username, key: stored.privateKey, source: 'settings' as const }
-        : env
-          ? { endpoint: env.endpoint, keyId: env.keyId, username: env.username, key: env.privateKeyPem, source: 'env' as const }
-          : null;
-      if (!eff) return { configured: false, source: null, missingEnv: missingAlarmEnvKeys() };
+      const { config: cfg, source, unavailable } = readMapSettings();
+      if (unavailable) return { configured: false, unavailable: true, source,
+        reason: '已保存的 MAP 凭据无法解密，请恢复原密封存储密钥后重试；未使用其他身份发送' };
+      if (!cfg) return { configured: false, source: null, missingEnv: missingAlarmEnvKeys() };
       return {
-        configured: true,
-        source: eff.source,
-        endpoint: eff.endpoint,
-        keyId: eff.keyId,
-        username: eff.username,
-        // 指纹而不是私钥：够用来核对「配的是不是我给的那把」，又不构成泄漏面。
-        privateKeyFingerprint: createHash('sha256').update(eff.key).digest('hex').slice(0, 16),
+        configured: true, source, endpoint: cfg.endpoint, keyId: cfg.keyId, username: cfg.username,
+        targetUsername: cfg.targetUsername || cfg.username,
+        secretStorage: source === 'settings' ? isSealedSecret(stateService.getState().alarmNotify?.privateKey) ? 'encrypted' : 'legacy' : 'env',
+        privateKeyFingerprint: createHash('sha256').update(cfg.privateKeyPem).digest('hex').slice(0, 16),
       };
     },
     writeAlarmNotify: (next) => {
       stateService.setAlarmNotify(next);
       // 换了凭据（或清掉）就是换了目的地：旧的投递证明作废，回到「没发过」，演练成功一次再算通
       alarmChannel.reset();
+      return stateService.flush();
     },
     // 演练走**真实投递路径**：同一个 MapNotifier、同一条签名、同一个 source。
     // 造一条假的「发送成功」毫无意义——那正好是这条链要防的自欺。

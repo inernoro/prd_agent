@@ -47,6 +47,7 @@ import {
   isSameRemoteDirectory,
   parseRemoteReclaimOutcome,
   parseRemoteReleaseInventory,
+  releaseArtifactCommitProof,
   type ReleaseRemoteDrift,
   type RemoteReleaseInventory,
 } from './release-artifact-retention.js';
@@ -170,6 +171,8 @@ export interface ReleaseArtifactReclaimResult {
   skippedReason?: string;
   readError?: string;
   dryRun: boolean;
+  nativeCounts?: { succeeded: number; held: number; failed: number; pending: number };
+  filesystemNetAvailableChange?: number;
 }
 
 export interface ReleaseHealthProbe {
@@ -397,6 +400,7 @@ export class ReleaseService {
   private readonly verifyProjectCI: ProjectReleaseCIVerifier;
   private readonly resolveProjectRepository: ReleaseServiceOptions['resolveProjectRepository'];
   private readonly inFlight = new Map<string, ReleaseExecutionHandle>();
+  private readonly artifactReclaimCursors = new Map<string, { worktree?: string; version?: string }>();
   private readonly runStartedHooks: Array<(run: ReleaseRun) => void> = [];
 
   constructor(private readonly stateService: StateService, options: ReleaseServiceOptions = {}) {
@@ -1298,6 +1302,14 @@ export class ReleaseService {
     } catch (err) {
       busyReason = errorText(err);
     }
+    // Bound scan positions by registered active targets. A held legacy prefix
+    // must not monopolize every sweep; restarting safely begins at the first page.
+    const activeTargets = new Set(this.stateService.getReleaseTargets()
+      .filter(candidate => candidate.isEnabled && candidate.lifecycle !== 'archived').map(candidate => candidate.id));
+    for (const id of this.artifactReclaimCursors.keys()) {
+      if (!activeTargets.has(id)) this.artifactReclaimCursors.delete(id);
+    }
+    const cursor = this.artifactReclaimCursors.get(target.id);
     const plan = computeReleaseArtifactRetentionPlan({
       mode: state.mode,
       inventory: state.inventory,
@@ -1305,6 +1317,8 @@ export class ReleaseService {
       hasInFlightRun: Boolean(busyReason),
       drift: state.drift.status,
       maxRemovals: options.maxRemovals,
+      afterWorktree: cursor?.worktree,
+      afterVersion: cursor?.version,
       publicDirectoryShared: this.isPublicDirectoryShared(target, strategy),
     });
 
@@ -1321,13 +1335,26 @@ export class ReleaseService {
       readError: state.readError,
       dryRun: options.dryRun === true,
     };
-    const command = buildReleaseReclaimCommand(target, strategy, plan);
-    if (!command || options.dryRun) {
+    const command = buildReleaseReclaimCommand(target, strategy, plan, {
+      commits: { ...Object.fromEntries(Object.entries(state.inventory?.pendingStaticRemovals || {}).map(([id, p]) => [id, p.commit])), ...releaseArtifactCommitProof(runs) },
+      identities: state.inventory?.worktreeIdentities,
+      versionIdentities: { ...Object.fromEntries(Object.entries(state.inventory?.pendingStaticRemovals || {}).map(([id, p]) => [id, p.identity])), ...state.inventory?.versionIdentities },
+      dryRun: options.dryRun === true,
+    });
+    if (!command) {
       return {
         ...base,
-        // dry-run 要让调用方看见「本来会删哪些」，否则预演毫无意义。
-        ...(options.dryRun ? { removedWorktrees: plan.removeWorktrees, removedVersions: plan.removeVersions } : {}),
+        nativeCounts: { succeeded: 0, held: 0, failed: 0, pending: plan.removeWorktrees.length + plan.removeVersions.length },
       };
+    }
+    // Advance an actual attempt even when native safety holds an object or the
+    // transport cannot confirm completion. It remains in inventory for retry.
+    // Dry-run is read-only and must not change the next real sweep's position.
+    if (!options.dryRun && activeTargets.has(target.id)) {
+      this.artifactReclaimCursors.set(target.id, {
+        worktree: plan.removeWorktrees.at(-1) ?? cursor?.worktree,
+        version: plan.removeVersions.at(-1) ?? cursor?.version,
+      });
     }
     try {
       const output = await this.sshExec(target, command);
@@ -1335,17 +1362,30 @@ export class ReleaseService {
       // 产出假证据：报告已回收、盘上还在、磁盘继续涨（Codex P2）。
       const outcome = parseRemoteReclaimOutcome(output);
       const failed = [...outcome.failedWorktrees, ...outcome.failedVersions];
+      const failedKeys = new Set([
+        ...outcome.failedWorktrees.map(id => `worktree:${id}`),
+        ...outcome.failedVersions.map(id => `version:${id}`),
+      ]);
       return {
         ...base,
         removedWorktrees: outcome.removedWorktrees,
         removedVersions: outcome.removedVersions,
+        filesystemNetAvailableChange: outcome.filesystemNetAvailableChange,
+        keptReasons: { ...base.keptReasons, ...outcome.heldReasons },
+        nativeCounts: {
+          succeeded: options.dryRun ? 0 : outcome.removedWorktrees.length + outcome.removedVersions.length,
+          held: Object.keys(outcome.heldReasons || {}).filter(key => !failedKeys.has(key)).length,
+          failed: failed.length,
+          pending: Math.max(0, plan.removeWorktrees.length + plan.removeVersions.length - outcome.removedWorktrees.length - outcome.removedVersions.length - new Set([...Object.keys(outcome.heldReasons || {}), ...failedKeys]).size),
+        },
+        ...(outcome.queryError ? {readError: outcome.queryError, skippedReason: '原生引用查询未完整确认，相关对象继续保留'} : {}),
         ...(failed.length > 0
           ? { skippedReason: `${failed.length} 份产物删除失败仍留在盘上（${failed.slice(0, 5).join('、')}${failed.length > 5 ? ' 等' : ''}），下一轮重试` }
           : {}),
       };
     } catch (err) {
-      // 删除失败不算事故：产物还在，下一轮再来。绝不能把异常抛出去打断整轮巡检。
-      return { ...base, skippedReason: `回收命令执行失败：${errorText(err)}` };
+      // SSH失败不能证明原生删除终态；保留待确认计数，不计成功或打断整轮巡检。
+      return { ...base, readError: errorText(err), nativeCounts: { succeeded: 0, held: 0, failed: 0, pending: plan.removeWorktrees.length + plan.removeVersions.length }, skippedReason: `回收命令未能确认，相关对象保留：${errorText(err)}` };
     }
   }
 
