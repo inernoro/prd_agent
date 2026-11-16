@@ -12,6 +12,7 @@ on:
       - 'e2e/admin-operations.config.ts'
       - 'e2e/specs/admin-operations-compat.spec.ts'
       - 'e2e/specs/branch-release-flow.spec.ts'
+      - 'e2e/specs/gateway-audio.spec.ts'
       - 'e2e/fixtures/admin-operations*'
       - 'cds/scripts/fixtures/mobile-layout-fixtures.mjs'
       - '.github/workflows/admin-operations-compat.yml'
@@ -25,10 +26,17 @@ on:
       - 'e2e/admin-operations.config.ts'
       - 'e2e/specs/admin-operations-compat.spec.ts'
       - 'e2e/specs/branch-release-flow.spec.ts'
+      - 'e2e/specs/gateway-audio.spec.ts'
       - 'e2e/fixtures/admin-operations*'
       - 'cds/scripts/fixtures/mobile-layout-fixtures.mjs'
       - '.github/workflows/admin-operations-compat.yml'
   workflow_dispatch:
+    inputs:
+      scenario:
+        description: '验收范围'
+        type: choice
+        options: [all, audio]
+        default: all
 
 permissions:
   contents: read
@@ -58,7 +66,14 @@ jobs:
           pnpm -C llmgw/web build
           pnpm -C e2e typecheck
       - name: Verify isolated management operations across browser engines
-        run: pnpm -C e2e exec playwright test -c admin-operations.config.ts --workers=2
+        env:
+          BROWSER_SCENARIO: ${{ inputs.scenario }}
+        run: |
+          if [ "$BROWSER_SCENARIO" = "audio" ]; then
+            pnpm -C e2e exec playwright test -c admin-operations.config.ts gateway-audio.spec.ts --workers=2
+          else
+            pnpm -C e2e exec playwright test -c admin-operations.config.ts --workers=2
+          fi
       - name: Retain browser evidence
         if: always()
         uses: actions/upload-artifact@v4
