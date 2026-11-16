@@ -3,6 +3,13 @@ import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
 import type { CapacityObservation } from '../../../../../src/services/host-capacity-observation';
 
+const alertLabels: Record<string, string> = {
+  'bytes-critical': '磁盘字节占用达到严重水位', 'bytes-warning': '磁盘字节占用达到预警水位',
+  'reserve-low': '可用空间已触及安全余量', 'reserve-exhaustion-forecast': '预计提前触及安全余量',
+  'inodes-critical': '文件节点严重不足', 'inodes-warning': '文件节点余量预警',
+  'growth-baseline-missing': '采样不足，增长趋势未知', 'sampling-gap': '采样中断，增长趋势未知',
+  'clock-not-increasing': '采样时间倒退，趋势未知',
+};
 const amount = (n: number | null): string => n === null ? '未知' : `${(n / 1024 ** 3).toFixed(2)} GiB`;
 const rate = (n: number | null): string => n === null ? '未知' : `${amount(n)} / 天`;
 export function HostCapacityView({ observation }: { observation: CapacityObservation }): JSX.Element {
@@ -22,9 +29,11 @@ export function HostCapacityView({ observation }: { observation: CapacityObserva
       {Object.entries(report.filesystems).map(([device, disk]) => <div key={device} className="space-y-1 rounded border border-border p-3 text-sm">
         <p className="break-all font-medium">文件系统 {device}：占用 {disk.usedPercent.toFixed(1)}%</p>
         <p>可用空间：{amount(disk.availableBytes)}；安全余量：{amount(report.policy.reserveBytes)}</p>
+        <p>文件节点占用：{disk.inodeUsedPercent === null ? '未知' : `${disk.inodeUsedPercent.toFixed(1)}%`}；剩余 {disk.availableInodes.toLocaleString()} / {disk.totalInodes.toLocaleString()}</p>
         <p>预计触及安全余量：{disk.daysToReserve === null ? (disk.bytesPerDay === null ? '未知' : '当前未观察到正增长') : `${disk.daysToReserve.toFixed(1)} 天`}</p>
         <p>日增长率：{rate(disk.bytesPerDay)}；提前预警窗口：{report.policy.horizonDays} 天</p>
       </div>)}
+      {report.alerts.length > 0 && <ul className="list-inside list-disc space-y-1 text-sm" aria-label="容量预警原因">{report.alerts.map((alert, i) => <li key={`${alert.code}-${i}`}>{alertLabels[alert.code] ?? '来源或采集状态异常，当前风险未知'}</li>)}</ul>}
       <p className="text-xs text-muted-foreground">来源按实际分配字节计量；跨目录硬链接、Docker 共享层可能重叠，不能相加作为整盘占用或回收收益。</p>
     </>}
   </section>;

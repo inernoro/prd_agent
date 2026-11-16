@@ -147,14 +147,14 @@ export class HostCapacityObservationService {
     const signal = JSON.stringify([next.status, next.reason, next.report?.alerts]);
     if (next.status !== 'ok') {
       if (signal !== this.lastSignal || this.now() - this.lastSignalAt >= 3600_000) {
-        this.options.publish('capacity.observation.risk', { targetId: `host-capacity:${this.options.expectedHost}`, message:
-          next.reason ?? `容量增长检查为${next.status === 'critical' ? '严重风险' : '预警'}；${Object.values(next.report?.filesystems ?? {}).map(d => `占用${d.usedPercent.toFixed(1)}%，预计${d.daysToReserve === null ? '未知' : d.daysToReserve.toFixed(1) + '天'}触及安全余量`).join('；')}。请核对来源增长与保留项`,
-          observation: next });
+        this.options.publish('capacity.observation.risk', { targetId: 'host-capacity-observation', message:
+          next.reason ?? `容量增长检查为${next.status === 'critical' ? '严重风险' : '预警'}；${Object.values(next.report?.filesystems ?? {}).map(d => `占用${d.usedPercent.toFixed(1)}%，文件节点占用${d.inodeUsedPercent === null ? '未知' : d.inodeUsedPercent.toFixed(1) + '%'}，预计${d.daysToReserve === null ? '未知' : d.daysToReserve.toFixed(1) + '天'}触及安全余量`).join('；')}。请核对来源增长与保留项`,
+        });
         this.lastSignal = signal; this.lastSignalAt = this.now();
       }
       this.risk = true;
     } else if (this.risk) {
-      this.options.publish('capacity.observation.recovered', { targetId: `host-capacity:${this.options.expectedHost}`,
+      this.options.publish('capacity.observation.recovered', { targetId: 'host-capacity-observation',
         message: '新采样的增长与安全余量检查已恢复；其他回收失败仍须分别核对', autoRestoredAt: new Date(this.now()).toISOString() });
       this.risk = false; this.lastSignal = ''; this.lastSignalAt = this.now();
     }

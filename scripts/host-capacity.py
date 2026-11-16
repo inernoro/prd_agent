@@ -233,6 +233,32 @@ def save_json(file, data):
                 os.unlink(temp)
 
 
+def publish_failed_report(state, requested_roots, report):
+    """Best effort only in an existing private state, never touch its history.
+
+    Input/root validation can fail before normal collection acquires the lock.
+    Publish unknown there too, instead of leaving a fresh-looking old report.
+    Unsafe state, overlap or another collector's lock must remain untouched.
+    """
+    state = state.resolve()
+    for selected in requested_roots:
+        _, sep, raw = selected.partition("=")
+        if sep:
+            root = str(Path(raw).resolve())
+            if os.path.commonpath([str(state), root]) in (str(state), root):
+                return
+    info = state.stat()
+    if info.st_mode & 0o077 or info.st_uid != os.getuid():
+        return
+    lockfd = os.open(state / "lock", os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(lockfd, "w") as lock:
+        info = os.fstat(lock.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            return
+        fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        save_json(state / "latest.json", report)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--source", action="append", required=True, help="NAME=PATH; repeat for disjoint roots, max 32")
@@ -270,8 +296,11 @@ def main():
         print(json.dumps(report, ensure_ascii=False, allow_nan=False))
         return {"ok": 0, "warning": 1, "critical": 2, "unknown": 3}[report["status"]]
     except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, subprocess.SubprocessError):
-        print(json.dumps({"version": 1, "status": "unknown", "alerts": [
-            {"code": "collector-or-state-failed", "severity": "unknown"}]}))
+        report = {"version": 1, "at": time.time(), "host": socket.gethostname(), "status": "unknown", "alerts": [
+            {"code": "collector-or-state-failed", "severity": "unknown"}]}
+        with contextlib.suppress(OSError, ValueError):
+            publish_failed_report(args.state_dir, args.source, report)
+        print(json.dumps(report))
         return 3
 
 

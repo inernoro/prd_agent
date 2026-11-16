@@ -11,6 +11,7 @@ import {
   mergeNotice,
   renderNoticeFromEvent,
   startNoticeLedger,
+  resolveCurrentNoticeOutbound,
   type CdsNoticeRecord,
   type NoticeInput,
 } from '../../src/services/notice-ledger.js';
@@ -493,5 +494,17 @@ describe('新事件读取当前 MAP 配置', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       expect(getOutbound).toHaveBeenCalledTimes(3);
     } finally { handle.stop(); }
+  });
+});
+
+
+describe('当前 MAP 配置优先级', () => {
+  it('有效专用配置与关闭开关不读取损坏的加密备用配置', () => {
+    const fallback = vi.fn(() => { throw new Error('fixture decryption failed'); });
+    expect(resolveCurrentNoticeOutbound({ CDS_NOTICE_MAP_BASE_URL: 'https://map.example.test', CDS_NOTICE_MAP_TOKEN: 'fixture' }, fallback)).toMatchObject({ baseUrl: 'https://map.example.test', token: 'fixture' });
+    expect(resolveCurrentNoticeOutbound({ CDS_NOTICE_OUTBOUND_ENABLED: 'false' }, fallback)).toBeNull();
+    expect(fallback).not.toHaveBeenCalled();
+    expect(() => resolveCurrentNoticeOutbound({}, fallback)).toThrow('fixture decryption failed');
+    expect(fallback).toHaveBeenCalledTimes(1);
   });
 });
