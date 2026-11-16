@@ -649,7 +649,7 @@ export function ReportsPage(): JSX.Element {
     >
       <Workspace fluid className={selected || centerView !== 'reports' ? 'cds-workspace--fill' : undefined}>
         <div className="flex h-full min-h-0 flex-col gap-3">
-          <AcceptanceNavigation view={centerView} onChange={changeCenterView} />
+          {centerView !== 'reports' || state.status !== 'loading' ? <AcceptanceNavigation view={centerView} onChange={changeCenterView} /> : null}
           {centerView !== 'reports' ? <div className="min-h-0 overflow-y-auto lg:flex-1"><AcceptanceWorkspace key={projectId} projectId={projectId} projects={projects} view={centerView} onProjectChange={changeAcceptanceProject} /></div> : null}
           {toast ? (
             <div className="shrink-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">{toast}</div>

@@ -104,10 +104,12 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
       if (generation !== requestGeneration.current) return;
       const latestTemplates = latestAcceptanceTemplates(nextTemplates);
       setTemplates(latestTemplates); setTasks(nextTasks); if (nextMatrix) setMatrix(nextMatrix);
+      const selectedTask = nextTasks.find((value) => value.id === activeTaskId.current);
+      if (selectedTask) updateTask(selectedTask);
       setTemplateId((current) => latestTemplates.some((value) => value.id === current) ? current : latestTemplates[0]?.id ?? '');
     } catch (err) { if (generation === requestGeneration.current) setError(errorMessage(err)); }
     finally { if (generation === requestGeneration.current) setLoading(false); }
-  }, [projectId, view, matrixTemplate, matrixEnvironment]);
+  }, [projectId, view, matrixTemplate, matrixEnvironment, updateTask]);
   useEffect(() => { void load(); return () => { requestGeneration.current += 1; }; }, [load]);
 
   useEffect(() => {
