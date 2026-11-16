@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
+import type { CapacitySamplingStatus } from '../../../../../src/services/host-capacity-sampling';
 import type { CapacityObservation } from '../../../../../src/services/host-capacity-observation';
 
 const alertLabels: Record<string, string> = {
@@ -41,6 +42,10 @@ export function HostCapacityView({ observation }: { observation: CapacityObserva
 export function HostCapacityPanel(): JSX.Element {
   const [observation, setObservation] = useState<CapacityObservation>({ status: 'unknown', sampledAt: null, reason: '正在读取容量观测' });
   const [key, setKey] = useState(0);
+  const samplingRunning = useRef(false);
+  const [sampling, setSampling] = useState<CapacitySamplingStatus | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [samplingError, setSamplingError] = useState('');
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     const controller = new AbortController();
@@ -48,14 +53,39 @@ export function HostCapacityPanel(): JSX.Element {
     const load = async () => {
       setLoading(true);
       try {
-        const next = await apiRequest<CapacityObservation>('/api/host-capacity/observation', { signal: controller.signal });
-        if (!controller.signal.aborted) setObservation(next);
+        const [next, status] = await Promise.all([
+          apiRequest<CapacityObservation>('/api/host-capacity/observation', { signal: controller.signal }),
+          apiRequest<CapacitySamplingStatus>('/api/host-capacity/sampling', { signal: controller.signal }),
+        ]);
+        if (!controller.signal.aborted) { setObservation(next); setSampling(status); samplingRunning.current = status.running; }
       } catch {
         if (!controller.signal.aborted) setObservation({ status: 'unknown', sampledAt: null, reason: '容量观测读取失败，当前风险未知，请刷新重试' });
-      } finally { if (!controller.signal.aborted) { setLoading(false); timer = setTimeout(() => void load(), 60_000); } }
+      } finally { if (!controller.signal.aborted) { setLoading(false); timer = setTimeout(() => void load(), samplingRunning.current ? 2000 : 60_000); } }
     };
     void load();
     return () => { controller.abort(); clearTimeout(timer); };
   }, [key]);
-  return <div className="space-y-2"><HostCapacityView observation={observation} /><Button variant="outline" size="sm" disabled={loading} aria-busy={loading} onClick={() => setKey(k => k + 1)}>{loading ? <><span className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />读取容量观测</> : '刷新容量观测'}</Button></div>;
+  const change = async (run: boolean) => {
+    setSaving(true); setSamplingError('');
+    try {
+      const next = await apiRequest<CapacitySamplingStatus>(run ? '/api/host-capacity/sampling/run' : '/api/host-capacity/sampling',
+        { method: run ? 'POST' : 'PUT', ...(run ? {} : { body: { enabled: !sampling?.enabled } }) });
+      setSampling(next); samplingRunning.current = next.running; setKey(k => k + 1);
+    } catch { setSamplingError('容量采样操作未能确认，请刷新状态，检查实例持久存储或已有外部采样配置后重试。'); }
+    finally { setSaving(false); }
+  };
+  return <div className="space-y-2">
+    <div className="space-y-2 rounded-lg border border-border p-4 text-sm" aria-label="只读容量采样设置">
+      <h3 className="font-semibold">只读容量采样</h3>
+      <p role="status">{sampling?.external ? '使用外部采样报告' : sampling?.running ? '正在采集目录实际分配与文件系统余量' : sampling?.enabled ? '已启用，每小时采集一次' : '采样未启用'}</p>
+      <p className="text-xs text-muted-foreground">首次采样或增长基线不足时显示未知；采样不清理文件、不调整保留策略。历史最多保留192个小时点。</p>
+      {sampling && <><p className="break-words text-xs text-muted-foreground">{sampling.coverage}</p>
+        <p className="break-all text-xs">已采集目录：{Object.entries(sampling.sources).map(([name, root]) => `${name}：${root}`).join('；') || '尚无'}</p>
+        {sampling.unavailableSources.length > 0 && <p className="text-xs text-muted-foreground">尚未存在的目录：{sampling.unavailableSources.join('、')}</p>}
+        <p className="text-xs">最近开始：{sampling.lastStartedAt ? new Date(sampling.lastStartedAt).toLocaleString() : '尚未运行'}；最近完成：{sampling.lastFinishedAt ? new Date(sampling.lastFinishedAt).toLocaleString() : '尚未完成'}</p></>}
+      <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={!sampling || sampling.external || saving} onClick={() => void change(false)}>{saving ? '正在确认配置' : sampling?.enabled ? '暂停来源采样' : '启用来源采样'}</Button>
+        <Button variant="outline" size="sm" disabled={!sampling?.enabled || sampling.running || saving} onClick={() => void change(true)}>{sampling?.running ? <><span className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />正在采样</> : '立即采样'}</Button></div>
+      {samplingError && <p role="alert" className="text-destructive">{samplingError}</p>}
+    </div>
+    <HostCapacityView observation={observation} /><Button variant="outline" size="sm" disabled={loading} aria-busy={loading} onClick={() => setKey(k => k + 1)}>{loading ? <><span className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />读取容量观测</> : '刷新容量观测'}</Button></div>;
 }

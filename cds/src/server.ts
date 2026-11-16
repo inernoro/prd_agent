@@ -60,6 +60,8 @@ import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-repor
 import { createNoticesRouter } from './routes/notices.js';
 import { NoticeLedgerService, startNoticeLedger, resolveCurrentNoticeOutbound } from './services/notice-ledger.js';
 import { mapNotifierConfigFromEnv } from './services/map-notifier.js';
+import { HostCapacitySamplingService } from './services/host-capacity-sampling.js';
+import { createHostCapacitySamplingRouter } from './routes/host-capacity-sampling.js';
 import { HostCapacityObservationService } from './services/host-capacity-observation.js';
 import { createHostCapacityObservationRouter } from './routes/host-capacity-observation.js';
 import { isSealingEnabled } from './infra/secret-seal.js';
@@ -2063,7 +2065,19 @@ export function createServer(deps: ServerDeps): express.Express {
     publish: (type, data) => { cdsEventsBus.publish(type, data); },
   });
   hostCapacityObservation.start();
-  deps.registerResourceShutdown?.(async () => { hostCapacityObservation.stop(); });
+  const hostCapacitySampling = new HostCapacitySamplingService({
+    enabled: deps.stateService.getHostCapacitySamplingEnabled(),
+    external: Boolean(process.env.CDS_HOST_CAPACITY_REPORT_PATH || process.env.CDS_HOST_CAPACITY_EXPECTED_HOST),
+    stateDir: path.join(deps.config.repoRoot, '.cds', 'host-capacity'),
+    roots: { 'cds-worktrees': deps.config.worktreeBase,
+      ...(deps.config.reposBase ? { 'cds-repositories': deps.config.reposBase } : {}),
+      'cds-build-cache': deps.stateService.getCacheBase(),
+      'cds-skill-cache': path.join(deps.config.repoRoot, '.cds', 'skill-cache') },
+    observation: hostCapacityObservation,
+    persist: async enabled => { deps.stateService.setHostCapacitySamplingEnabled(enabled); await deps.stateService.flush(); },
+  });
+  hostCapacitySampling.start();
+  deps.registerResourceShutdown?.(async () => { hostCapacitySampling.stop(); hostCapacityObservation.stop(); });
   // 读写路由挂在下面全局认证网关之后（搜 createNoticesRouter），这里只做事件接线。
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
@@ -5072,6 +5086,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 事件订阅在上面（搜 startNoticeLedger）。外发未配置时如实回 configured:false，
   // 前端面板顶部据此显示「仅记录在本地，未外发」——绝不暗示已经通知过谁。
   app.use('/api', createHostCapacityObservationRouter(hostCapacityObservation));
+  app.use('/api', createHostCapacitySamplingRouter(hostCapacitySampling));
   app.use('/api', createNoticesRouter({
     ledger: noticeLedger,
     getOutboundStatus: () => {
