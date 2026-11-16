@@ -32,12 +32,6 @@ async function fixture() {
   await write(report());
   return { dir, file, write };
 }
-async function settle(check: () => void) {
-  for (let n = 0; n < 200; n++) {
-    try { check(); return; } catch { await new Promise(resolve => setImmediate(resolve)); }
-  }
-  check();
-}
 describe('可信采样桥接', () => {
   it('低于水位的 3.4 天预测进入真实总线/账本/外发，同态去重，恢复不解除回收故障', async () => {
     const f = await fixture(); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] }); vi.setSystemTime(now);
@@ -93,8 +87,13 @@ describe('可信采样桥接', () => {
     if (kind === 'oversize') await fs.writeFile(f.file, Buffer.alloc(4 * 1024 ** 2 + 1), { mode: 0o600 });
     if (kind === 'public') { await f.write(report()); await fs.chmod(f.file, 0o644); }
     if (kind === 'corrupt') await fs.writeFile(f.file, '{', { mode: 0o600 });
-    const publish = vi.fn(); const service = new HostCapacityObservationService({ reportPath: f.file, expectedHost: 'isolated-host', now: () => now, publish }); stops.push(() => service.stop());
-    service.start(); await settle(() => expect(publish).toHaveBeenCalledTimes(1));
+    // Real file I/O completes on the worker pool, not within a fixed number
+    // of setImmediate turns. Await its actual publication under the unchanged
+    // Vitest case timeout, then keep the original count and unknown assertions.
+    let published!: () => void;
+    const publication = new Promise<void>(resolve => { published = resolve; });
+    const publish = vi.fn(() => published()); const service = new HostCapacityObservationService({ reportPath: f.file, expectedHost: 'isolated-host', now: () => now, publish }); stops.push(() => service.stop());
+    service.start(); await publication; expect(publish).toHaveBeenCalledTimes(1);
     expect(service.getSnapshot()).toMatchObject({ status: 'unknown' }); expect(service.getSnapshot().report).toBeUndefined();
   });
   it('未配置不产生定时器或假恢复；停止后的迟到读取不能发布或续订', async () => {
