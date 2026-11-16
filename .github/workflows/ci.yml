@@ -129,6 +129,10 @@ jobs:
               - 'deploy/journald/**'
               - 'deploy/compose/production-logging.yml'
               - 'scripts/prd-agent-*-retention.*'
+              - 'scripts/prd-agent-verify-offsite-backups.py'
+              - 'scripts/prd-agent-sync-small-backups.sh'
+              - 'scripts/llmgw-install-disk-monitor.sh'
+              - 'deploy/systemd/llmgw-backup-retention.service'
               - 'scripts/prd-agent-container-log-rollout.py'
               - 'scripts/prd-agent-with-release-lock.sh'
               - 'scripts/prd-agent-install-disk-governance.sh'
@@ -370,6 +374,7 @@ jobs:
       - name: Production disk governance regression
         run: |
           python3 scripts/tests/prd-agent-artifact-retention.test.py
+          python3 scripts/tests/prd-agent-verified-backup-retention.test.py
           python3 scripts/tests/prd-agent-container-log-rollout.test.py
           node --test scripts/tests/prd-agent-request-log-retention.test.mjs
           sh scripts/tests/prd-agent-release-lock.test.sh
