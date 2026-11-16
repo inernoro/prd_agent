@@ -32,12 +32,18 @@ const ssh = new Server({hostKeys:[hostKey]}, client => {
   });
   client.on('ready',() => client.on('session',(accept) => {
     const session = accept();
+    session.on('pty', accept => accept());
+    const commands = new Set();
+    session.on('signal', (accept, _reject, info) => {
+      for (const child of commands) if (child.exitCode === null) child.kill(info.name === 'KILL' ? 'SIGKILL' : 'SIGTERM');
+      accept?.();
+    });
     session.on('exec',(accept,_reject,info) => {
       const stream = accept();
       // This is the disposable target's real shell, with no parent credentials in its environment.
       const child = spawn('/bin/sh',['-c',info.command],{cwd:root,env:{PATH:process.env.PATH,LANG:'C.UTF-8'}});
-      children.add(child); child.stdout.on('data',data=>stream.write(data)); child.stderr.on('data',data=>stream.stderr.write(data));
-      child.on('close',code=>{children.delete(child);stream.exit(code ?? 1);stream.end();});
+      children.add(child); commands.add(child); child.stdout.on('data',data=>stream.write(data)); child.stderr.on('data',data=>stream.stderr.write(data));
+      child.on('close',code=>{children.delete(child);commands.delete(child);stream.exit(code ?? 1);stream.end();});
       stream.on('close',()=>{if(child.exitCode===null) child.kill('SIGTERM');});
     });
   }));

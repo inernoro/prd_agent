@@ -160,7 +160,7 @@ describe('发布控制台 · 并发口径不许对后端撒谎', () => {
 
   it('发布配置只读，改配置指回发布中心，不开第二处写入口', () => {
     const sheet = PAGE.slice(PAGE.indexOf("sheet === 'pipeline'"), PAGE.indexOf("sheet === 'agent'"));
-    expect(sheet).toContain('href="/release-center"');
+    expect(sheet).toContain('to={`/release-center?project=${encodeURIComponent(projectId)}&section=config`}');
     expect(sheet).not.toContain('<input');
     expect(sheet).not.toContain("method: 'POST'");
   });

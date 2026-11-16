@@ -3,6 +3,18 @@ export { DEFAULT_RELEASE_CENTER_PROJECT_ID, releaseCenterHref } from '../../../s
 export const DEFAULT_RELEASE_HEALTH_PATH = '/api/health';
 const LAST_RELEASE_CENTER_PROJECT_KEY = 'cds:lastReleaseCenterProjectId';
 
+/** 跨实例链接和本地记忆都必须先与当前实例的项目清单核对，不能冒用首项。 */
+export function resolveReleaseProject(projectId: string, projects: readonly { id: string }[]): string {
+  return projects.some((project) => project.id === projectId) ? projectId : '';
+}
+
+export function resolveInitialReleaseProject(searchParams: URLSearchParams, storage: Storage | undefined, projects: readonly { id: string }[]): string {
+  let requested = searchParams.get('project')?.trim();
+  try { requested ||= storage?.getItem(LAST_RELEASE_CENTER_PROJECT_KEY)?.trim(); } catch { /* storage may be unavailable */ }
+  if (requested) return resolveReleaseProject(requested, projects);
+  return resolveReleaseProject(DEFAULT_RELEASE_CENTER_PROJECT_ID, projects) || projects[0]?.id || '';
+}
+
 export function initialReleaseCenterProject(searchParams: URLSearchParams, storage?: Storage): string {
   const queryProject = searchParams.get('project')?.trim();
   if (queryProject) return queryProject;
