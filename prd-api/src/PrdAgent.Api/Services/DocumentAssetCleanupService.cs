@@ -182,7 +182,7 @@ public sealed class DocumentAssetCleanupService : BackgroundService
                 .ToListAsync(ct);
             if (purpose == PendingUploadPurpose && attachments.Count > 0)
             {
-                var hasCommittedEntry = await _db.DocumentEntries.CountDocumentsAsync(
+                var hasCommittedEntry = await _db.DocumentEntriesIncludingTrash.CountDocumentsAsync(
                     entry => entry.AttachmentId != null && attachments.Contains(entry.AttachmentId),
                     cancellationToken: ct) > 0;
                 if (hasCommittedEntry)

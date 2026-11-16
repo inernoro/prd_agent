@@ -434,6 +434,20 @@ describe('JanitorService', () => {
   // ── dryRun ──
 
   describe('dryRun', () => {
+    it.each(['restoredFromArchiveAt', 'lastPushAt'] as const)('最近的%s会重新开启闲置窗口，旧TTL不能立即再次归档', async key => {
+      stateService.addBranch(makeBranch('fresh-again', 100, { [key]: '2026-04-10T11:00:00Z' }));
+      expect(janitor.dryRun().wouldRemove).toEqual([]); await janitor.sweep(); expect(removed).toEqual([]);
+    });
+
+    it('已归档分支由30天保留策略负责，旧TTL预览及扫描都不会提前回收', async () => {
+      stateService.addBranch(makeBranch('archived', 100, { archive: {
+        archivedAt: '2026-04-10T11:00:00Z', retireAt: '2026-05-10T11:00:00Z', reason: 'manual', actor: 'user',
+      } }));
+      expect(janitor.dryRun().wouldRemove).toEqual([]);
+      await janitor.sweep(); expect(removed).toEqual([]);
+      expect(stateService.getBranch('archived')?.archive).toBeTruthy();
+    });
+
     it('returns would-remove / would-skip without mutating', async () => {
       stateService.addBranch(makeBranch('stale-a', 8));
       stateService.addBranch(makeBranch('stale-pinned', 8, { pinnedByUser: true }));

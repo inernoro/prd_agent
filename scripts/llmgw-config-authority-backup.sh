@@ -1,11 +1,13 @@
 #!/usr/bin/env sh
 set -eu
+umask 077
 
 # Backup data touched by the LLM Gateway config-authority migration.
 # Dry-run is the default. Execute mode writes Mongo archives on the production
 # host and emits small JSON/Markdown evidence files for the operator audit trail.
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$script_dir/lib/backup-stream.sh"
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 compose_file="${LLMGW_CONFIG_AUTHORITY_BACKUP_COMPOSE_FILE:-$repo_root/docker-compose.yml}"
 mongo_service="${LLMGW_CONFIG_AUTHORITY_BACKUP_MONGO_SERVICE:-mongodb}"
@@ -18,6 +20,9 @@ backup_stamp="$(date '+%Y%m%dT%H%M%S%z' 2>/dev/null || date '+%Y%m%dT%H%M%S')"
 backup_dir="${LLMGW_CONFIG_AUTHORITY_BACKUP_DIR:-$backup_root/llmgw-prod-before-config-authority-$backup_stamp}"
 json_out="${LLMGW_CONFIG_AUTHORITY_BACKUP_JSON_OUT:-}"
 report_md="${LLMGW_CONFIG_AUTHORITY_BACKUP_REPORT_MD:-}"
+source_before=""
+source_after=""
+backup_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 if [ ! -f "$compose_file" ]; then
   echo "ERROR: 找不到 compose 文件: $compose_file" >&2
@@ -44,9 +49,9 @@ fi
 
 write_report() {
   verdict="$1"
-  if [ -z "$json_out" ] && [ -z "$report_md" ]; then
-    return 0
-  fi
+  LLMGW_BACKUP_SOURCE_BEFORE="$source_before" \
+  LLMGW_BACKUP_SOURCE_AFTER="$source_after" \
+  LLMGW_BACKUP_STARTED_AT="$backup_started_at" \
   LLMGW_CONFIG_AUTHORITY_BACKUP_REPORT_VERDICT="$verdict" \
   LLMGW_CONFIG_AUTHORITY_BACKUP_REPORT_JSON="$json_out" \
   LLMGW_CONFIG_AUTHORITY_BACKUP_REPORT_MD="$report_md" \
@@ -63,7 +68,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-backup_dir = Path(os.environ["LLMGW_CONFIG_AUTHORITY_BACKUP_REPORT_DIR"])
+backup_dir = Path(os.environ["LLMGW_CONFIG_AUTHORITY_BACKUP_REPORT_DIR"]).absolute()
 archives = []
 if backup_dir.exists():
     archives = sorted(str(path) for path in backup_dir.glob("*.archive.gz"))
@@ -82,6 +87,11 @@ report = {
     "archives": archives,
     "sha256Sums": str(sha_path) if sha_path.exists() else "",
 }
+report["sourceFingerprint"] = os.environ.get("LLMGW_BACKUP_SOURCE_BEFORE", "")
+report["sourceIdentityStable"] = bool(report["sourceFingerprint"] and report["sourceFingerprint"] == os.environ.get("LLMGW_BACKUP_SOURCE_AFTER", ""))
+report["backupStartedAt"] = os.environ["LLMGW_BACKUP_STARTED_AT"]
+if not report["dryRun"] and backup_dir.is_dir():
+    (backup_dir / ".cds-export.json").write_text(json.dumps(report, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
 json_out = os.environ.get("LLMGW_CONFIG_AUTHORITY_BACKUP_REPORT_JSON", "")
 if json_out:
     path = Path(json_out)
@@ -122,10 +132,8 @@ dump_db() {
       ;;
   esac
   # shellcheck disable=SC2086
-  $COMPOSE -f "$compose_file" exec -T "$mongo_service" \
-    mongodump --db "$db" --archive \
-    | gzip > "$backup_dir/$db.archive.gz"
-  gzip -t "$backup_dir/$db.archive.gz"
+  cds_backup_stream "$backup_dir/$db.archive.gz" $COMPOSE -f "$compose_file" exec -T "$mongo_service" \
+    mongodump --db "$db" --archive
 }
 
 dump_collection() {
@@ -144,10 +152,8 @@ dump_collection() {
       ;;
   esac
   # shellcheck disable=SC2086
-  $COMPOSE -f "$compose_file" exec -T "$mongo_service" \
-    mongodump --db "$db" --collection "$collection" --archive \
-    | gzip > "$backup_dir/$db.$collection.archive.gz"
-  gzip -t "$backup_dir/$db.$collection.archive.gz"
+  cds_backup_stream "$backup_dir/$db.$collection.archive.gz" $COMPOSE -f "$compose_file" exec -T "$mongo_service" \
+    mongodump --db "$db" --collection "$collection" --archive
 }
 
 echo "LLM Gateway config authority backup"
@@ -168,6 +174,11 @@ fi
 "$script_dir/llmgw-disk-space-guard.sh" "$backup_dir" "${LLMGW_CONFIG_AUTHORITY_BACKUP_MIN_FREE_MB:-6144}" "LLM Gateway config authority backup"
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
+capture_source() {
+  source_id=$($COMPOSE -f "$compose_file" ps -q "$mongo_service")
+  python3 "$script_dir/llmgw-backup-retention.py" --source-container "$source_id" | python3 -c 'import sys,json;print(json.load(sys.stdin)["sourceFingerprint"])'
+}
+source_before=$(capture_source 2>/dev/null || true)
 cp -a "$compose_file" "$backup_dir/$(basename "$compose_file")"
 
 if [ "$mode" = "full" ]; then
@@ -202,6 +213,10 @@ fi
   shasum -a 256 ./*.archive.gz > SHA256SUMS
 )
 
+source_after=$(capture_source 2>/dev/null || true)
 write_report pass
+if ! python3 "$script_dir/llmgw-backup-retention.py" --root "$backup_root" --register-export "$backup_dir/.cds-export.json" --register-only; then
+  echo "WARNING: 导出已保留；退役登记未确认，旧恢复点继续保护。" >&2
+fi
 echo "LLM Gateway config authority backup completed: $backup_dir"
 cat "$backup_dir/SHA256SUMS"

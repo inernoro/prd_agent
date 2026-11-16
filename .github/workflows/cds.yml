@@ -110,6 +110,33 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      - name: Fourteen-day GiB retention drill (isolated files only)
+        env:
+          CAPACITY_DRILL_PAYLOAD_BYTES: '16777216'
+          CAPACITY_DRILL_EVIDENCE: ${{ runner.temp }}/capacity-gib.json
+        run: pnpm exec vitest run --maxWorkers=1 --minWorkers=1 tests/services/capacity-growth-drill.test.ts
+
+      - name: Automatic capacity reclaim and notification drill (loopback only)
+        env:
+          CAPACITY_NATIVE_EVIDENCE: ${{ runner.temp }}/capacity-native.json
+        run: |
+          pnpm exec tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution bundler --esModuleInterop --skipLibCheck scripts/capacity-reclaim-drill.ts
+          pnpm exec tsx scripts/capacity-reclaim-drill.ts
+
+      - name: Preserve capacity protection and recovery receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capacity-reclaim-${{ github.sha }}
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/capacity-gib.json
+            ${{ runner.temp }}/capacity-native.json
+          if-no-files-found: warn
+
+      - name: Scheduled jobs isolated recovery drill
+        run: pnpm drill:scheduled-jobs
+
       - name: Agent setup CLI HTTP integration
         run: python3 -m unittest discover -s ../.claude/skills/cds/tests -p 'test_cdscli_setup_check.py'
 
@@ -126,6 +153,17 @@ jobs:
 
       - name: Install Chromium for layout probes
         run: pnpm exec playwright install --with-deps chromium
+
+      - name: Task health recovery diagnostic
+        run: pnpm run smoke:task-health-recovery
+
+      - name: Preserve task health recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-health-recovery-evidence
+          path: work/task-health-recovery/
+          if-no-files-found: ignore
 
       - name: Agent starter mobile reachability
         run: pnpm run smoke:agent-starter-mobile

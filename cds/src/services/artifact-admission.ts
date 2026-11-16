@@ -1,13 +1,15 @@
 import type { BuildProfile, IShellExecutor } from '../types.js';
+import { randomBytes } from 'node:crypto';
 import type { WorktreeService } from './worktree.js';
 import { shellQuoteArg } from './secure-database-cli.js';
+import { configuredImageCacheGovernance, ImageCacheBudgetError } from './image-cache-governance.js';
 import {
   componentInputComparator, imageRepositoryOf, normalizeBuildScope, normalizeFallbackImages, normalizeImageRevision, proveFallbackImage,
   type ProveFallbackImageInput,
 } from './prebuilt-reuse.js';
 
 export type ArtifactWaitReason = 'target-unresolved' | 'image-unresolved' | 'missing' | 'access-denied'
-  | 'verification-unavailable' | 'revision-mismatch' | 'platform-mismatch';
+  | 'verification-unavailable' | 'revision-mismatch' | 'platform-mismatch' | 'cache-budget';
 
 export interface VerifiedDeploymentArtifact {
   profileIds: string[];
@@ -115,13 +117,29 @@ export async function inspectDeploymentArtifacts(
     const key = JSON.stringify([image, needsPull, exactTarget]);
     const cached = inspections.get(key); if (cached) return cached;
     const promise = (async (): Promise<Inspection> => {
-      const pull = needsPull ? await exec(`docker pull ${shellQuoteArg(image)}`, 90_000).catch(() => undefined) : { exitCode: 0, stdout: '', stderr: '' };
+      const cache = configuredImageCacheGovernance();let pin: { token: string } | undefined;
+      const digestPinned = /^.+@sha256:[0-9a-f]{64}$/.test(image);
+      if (cache) {
+        try { const prepared = await cache.prepare(image, assertCurrent, !needsPull, needsPull && !digestPinned);if (prepared.token) pin = prepared; }
+        catch (error) { assertCurrent();return { reason: error instanceof ImageCacheBudgetError ? 'cache-budget' : 'verification-unavailable' }; }
+      }
+      const completion = pin && needsPull ? `__CDS_PULL_EXIT_${randomBytes(16).toString('hex')}:` : undefined;
+      const command = `docker pull ${shellQuoteArg(image)}` + (completion
+        ? `; cds_pull_status=$?; printf '\\n${completion}%s\\n' "$cds_pull_status"; exit "$cds_pull_status"` : '');
+      const pull = needsPull ? await exec(command, 90_000).catch(() => undefined) : { exitCode: 0, stdout: '', stderr: '' };
       if (!pull) { assertCurrent(); return { reason: 'verification-unavailable' }; }
-      if (pull.exitCode) return { reason: pullFailureReason(pull.stdout, pull.stderr, image) };
+      if (pull.exitCode) {
+        // Only a completed native failure may settle its reservation; unknown leaves a visible pin.
+        const receipt = completion && typeof pull.exitCode === 'number' ? `\n${completion}${pull.exitCode}\n` : undefined;
+        const completed = receipt && pull.stdout.endsWith(receipt);
+        if (pin && completed) await cache!.abort(pin.token, assertCurrent, true).catch(() => undefined);
+        return { reason: pullFailureReason(completed ? pull.stdout.slice(0, -receipt!.length) : pull.stdout, pull.stderr, image) };
+      }
       const inspection = await exec(`docker image inspect ${shellQuoteArg(image)}`).catch(() => undefined);
       if (!inspection || inspection.exitCode) { assertCurrent(); return { reason: 'verification-unavailable' }; }
       const parsed = readJson(inspection.stdout);
       const metadata = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : undefined;
+      if (pin) { try { await cache!.confirm(pin.token, assertCurrent); } catch { assertCurrent();return { reason: 'verification-unavailable' }; } }
       const revision = normalizeImageRevision(metadata?.Config?.Labels?.['org.opencontainers.image.revision']);
       if (!revision || exactTarget && revision !== target) return { reason: 'revision-mismatch' };
       const imageArch = platformArchitecture(metadata?.Architecture);
@@ -130,7 +148,7 @@ export async function inspectDeploymentArtifacts(
       const immutable = metadata?.Id;
       if (typeof immutable !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(immutable)) return { reason: 'verification-unavailable' };
       // 已按固定仓库digest查询并核验内容，保留可跨执行器取回的引用。
-      const digest = /^.+@sha256:[0-9a-f]{64}$/.test(image) ? `${imageRepositoryOf(image)}@${image.split('@')[1]}`
+      const digest = digestPinned ? `${imageRepositoryOf(image)}@${image.split('@')[1]}`
         : !needsPull ? immutable : Array.isArray(metadata.RepoDigests)
         ? metadata.RepoDigests.find((value: unknown) => typeof value === 'string' && /^.+@sha256:[0-9a-f]{64}$/.test(value)
           && imageRepositoryOf(value) === imageRepositoryOf(image)) : undefined;

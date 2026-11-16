@@ -1,3 +1,4 @@
+import type { ReviewUserKeyInput } from '../../../src/shared/code-review-user-key';
 import { ApiError, apiRequest, apiUrl } from './api';
 import type { CodeReviewResultPage } from '../../../src/shared/code-review-result';
 import type { ReviewListSource, ReviewListStatus } from '../../../src/shared/code-review-list';
@@ -35,10 +36,12 @@ export interface CodeReviewTask {
     email?: string;
     error?: string;
   };
+  modelCredential?: { source: 'user'; provider: string; model: string; fingerprint: string; tokenLimit: number };
   findingsSummary?: Record<string, number>;
 }
 
 export interface CodeReviewSubmission {
+  userKey?: ReviewUserKeyInput;
   projectId: string;
   sourceType: 'zip' | 'github' | 'cds';
   branchId?: string;
@@ -90,6 +93,16 @@ export function getCodeReviewAudit(id: string, signal?: AbortSignal): Promise<Co
 }
 
 export interface CodeReviewBranch { id: string; branch: string; status: string }
+/** Remote-only selections use the existing authenticated, SHA-pinned repository snapshot flow. */
+export function reviewBranchSource(project: { githubRepoFullName?: string; gitRepoUrl?: string } | undefined, tracked: CodeReviewBranch | undefined, remote: string):
+  { sourceType: 'cds'; branchId: string } | { sourceType: 'github'; githubUrl: string; ref: string } | undefined {
+  if (tracked) return { sourceType: 'cds', branchId: tracked.id };
+  const repository = project?.githubRepoFullName || project?.gitRepoUrl?.match(/^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i)?.[1];
+  if (remote && repository && /^[\w.-]+\/[\w.-]+$/.test(repository)) {
+    return { sourceType: 'github', githubUrl: `https://github.com/${repository}`, ref: remote };
+  }
+  return undefined;
+}
 export async function listCodeReviewBranches(projectId: string, signal?: AbortSignal): Promise<CodeReviewBranch[]> {
   const response = await apiRequest<{ branches: CodeReviewBranch[] }>(`/api/code-reviews/branches?${new URLSearchParams({ projectId })}`, { signal });
   return response.branches;
@@ -137,6 +150,7 @@ export async function submitCodeReview(input: CodeReviewSubmission, signal?: Abo
         ...(input.sourceType === 'cds' ? { branchId: input.branchId } : { githubUrl: input.githubUrl, ref: input.ref || undefined }),
         excludePatterns: input.excludePatterns,
         email: input.email || undefined,
+        userKey: input.userKey,
       },
       signal,
     });
@@ -146,6 +160,7 @@ export async function submitCodeReview(input: CodeReviewSubmission, signal?: Abo
   const form = new FormData();
   form.set('projectId', input.projectId);
   form.set('sourceType', 'zip');
+  if (input.userKey) form.set('userKey', JSON.stringify(input.userKey));
   form.set('file', input.file);
   form.set('excludePatterns', JSON.stringify(input.excludePatterns || []));
   if (input.email) form.set('email', input.email);

@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { formatVideoGenerationError } from './videoGenerationError';
 
 describe('formatVideoGenerationError', () => {
-  it('removes provider credit details and links from persisted legacy errors', () => {
+  it.each([undefined, 'LLM_ERROR'])('removes provider credit details and links from persisted legacy errors with code %s', (code) => {
     const message = formatVideoGenerationError(
-      '大模型平台额度已用尽或被限额。上游信息：Insufficient credits. Add more using https://openrouter.ai/settings/credits',
+      '大模型平台额度已用尽或被限额。上游信息：Insufficient credits. Add more using https://openrouter.ai/settings/credits', code,
     );
 
     expect(message).toContain('上游 AI 服务可用额度已用尽');
@@ -25,9 +25,9 @@ describe('formatVideoGenerationError', () => {
     expect(text).not.toMatch(/SECRET|HTTP|supplier/);
   });
 
-  it('keeps a sanitized backend cause when a historical task has only a generic code', () => {
+  it.each([undefined, null, 'LLM_ERROR'])('keeps a sanitized backend cause with generic historical code %s', (code) => {
     const text = '上游 AI 服务账户欠费，本次操作未完成。请联系管理员补缴费用或切换可用线路，处理后再重试。';
-    expect(formatVideoGenerationError(text)).toBe(text);
+    expect(formatVideoGenerationError(text, code)).toBe(text);
   });
 
   it('keeps a known duration recovery action', () => {

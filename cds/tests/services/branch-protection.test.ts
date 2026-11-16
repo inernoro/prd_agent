@@ -110,6 +110,19 @@ describe('resolveBranchProtection', () => {
     expect(isBranchProtected(makeBranch({ id: 'proj-feat', branch: 'feat/x' }), lookup)).toBe(false);
   });
 
+  it('keeps prepared batch inputs until cancellation, and retains an executing rollback even after a stale terminal summary', () => {
+    const branch = makeBranch({ id: 'prepared', branch: 'feature/batch' });
+    const batch: any = { branchId: branch.id, projectId: branch.projectId, status: 'ready', targets: [] };
+    const withBatch = { ...lookup, getReleaseBatches: () => [batch] };
+    expect(resolveBranchProtection(branch, withBatch)).toEqual({ protected: true, reason: 'release-batch-input' });
+    batch.status = 'cancelled';
+    expect(isBranchProtected(branch, withBatch)).toBe(false);
+    batch.targets = [{ status: 'rollback_running' }];
+    expect(isBranchProtected(branch, withBatch)).toBe(true);
+    batch.targets = [];batch.status = 'unrecognized-state';
+    expect(isBranchProtected(branch, withBatch)).toBe(true);
+  });
+
   it('多项目：A 项目的 main 不因 B 项目的 defaultBranch 配置而失去保护', () => {
     const multi = makeLookup(
       [makeProject({ id: 'pa', slug: 'a' }), makeProject({ id: 'pb', slug: 'b' })],
@@ -125,7 +138,7 @@ describe('resolveBranchProtection', () => {
   });
 
   it('每个原因都有中文说明（报表/日志直接可读）', () => {
-    for (const reason of ['pinned-by-user', 'color-marked', 'default-branch', 'config-pinned', 'trunk-branch'] as const) {
+    for (const reason of ['pinned-by-user', 'color-marked', 'default-branch', 'config-pinned', 'trunk-branch', 'release-batch-input'] as const) {
       expect(describeBranchProtectionReason(reason).length).toBeGreaterThan(0);
     }
   });

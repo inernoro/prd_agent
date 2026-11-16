@@ -24,6 +24,13 @@ folders:
 
 docs:
   design.platform.log-cold-storage: "日志完整保留与冷存储 · 设计"
+
+  plan.frontend.workspace: "MAP 运营工作区改造目标 · 计划"
+  plan.cds.disk-governance-20261113: "CDS / LLMGW 磁盘治理与交接 · 计划"
+
+  guide.platform.capacity: "MAP 与 CDS 磁盘容量治理 · 指南"
+  plan.knowledge-base.information-delivery: "知识库信息高效传递与复刻验收计划"
+  guide.cds.automation-health: "CDS 自动化任务健康与安全恢复 · 指南"
   plan.llmgw.official-upstreams: "官方上游迁移与管理简化 · 计划"
   plan.web-hosting.related-documents: "网页托管关联文档 · 计划"
   guide.cds.release-scripts: "CDS 项目发布脚本 · 指南"
@@ -65,6 +72,7 @@ docs:
   design.ai-toolbox: "AI 百宝箱 · 设计"
   design.arena: "AI 竞技场 · 设计"
   design.ccas-agent: "赋码采集关联智能体（CCAS Agent） · 设计"
+  design.cds.acceptance-tasks: "CDS 结构化产品功能验收 · 设计"
   design.cds.agent.api: "CDS Agent API · 设计"
   design.cds.agent.commercial-architecture-and-roadmap: "CDS Agent 商业级架构与路线图 · 设计"
   design.cds.agent.managed-runtime-fact-source: "CDS Agent 托管运行时事实源设计 · 设计"
@@ -127,6 +135,7 @@ docs:
   design.open-platform.open-api: "开放接口（OpenAI 兼容对外网关）技术设计 · 设计"
   design.open-platform: "开放平台功能概要 · 设计"
   design.page-agent.bridge: "Page Agent Bridge 设计（编码 Agent 浏览器之眼） · 设计"
+  design.platform.notification.templates: "通知分类与短讯报告 · 设计"
   design.platform.active-tasks: "活动任务清单 · 设计"
   design.platform.account-data-sharing: "账户数据共享 · 设计"
   design.platform.core-business-stability: "MAP 核心业务稳定基线 · 设计"
@@ -185,12 +194,14 @@ docs:
   design.workflow-agent.engine: "工作流引擎 · 设计"
 
   # 三、指南
+  guide.cds.code-review: "CDS DeepAudit 代码审查使用与维护 · 指南"
   guide.acceptance.daily-sop: "MAP 每日自动化验收 SOP · 指南"
   guide.acceptance.report-evidence: "MAP 验收报告与证据交互 · 指南"
   guide.ai-toolbox.ops: "AI 百宝箱 (AI Toolbox) · 指南"
   guide.arena: "AI 竞技场使用 · 指南"
   guide.cds.agent.admin: "CDS Agent 管理员 · 指南"
   guide.cds.agent-onboarding-harness: "CDS Agent 上手助手 · 指南"
+  guide.cds.code-review-user-key: "代码审查使用自己的模型 Key · 指南"
   guide.cds.agent.code-review-quickstart: "CDS Agent 代码审查上手指南 · 指南"
   guide.cds.agent.next-agent-testing: "CDS Agent 下一代测试与涌现建议 · 指南"
   guide.cds.agent.runbook: "CDS Agent 运行手册 · 指南"
@@ -225,6 +236,15 @@ docs:
   guide.cds.web-migration-runbook: "CDS Web 迁移运行手册 · 指南"
   guide.defect-agent: "缺陷管理 Agent 使用 · 指南"
   guide.infra-sandbox-agent: "基础设施 Sandbox Agent · 指南"
+  guide.doc.pri.adr: "ADR 文档原则：为未来的人留下架构选择的理由 · 指南"
+  guide.doc.pri.debt: "债务文档原则：让已知欠账有边界、有偿还条件 · 指南"
+  guide.doc.pri.design: "设计文档原则：解释当前方案如何成立 · 指南"
+  guide.doc.pri.guide: "指南文档原则：帮助读者完成一件具体的事 · 指南"
+  guide.doc.pri.pdr: "PDR 文档原则：产品的根、承重结构与决策记忆 · 指南"
+  guide.doc.pri.plan: "计划文档原则：把已知目标变成可推进的行动 · 指南"
+  guide.doc.pri.report: "报告文档原则：说明某一时间范围实际发生了什么 · 指南"
+  guide.doc.pri.rule: "规则文档原则：说明当前共同遵守的约束 · 指南"
+  guide.doc.pri.spec: "规格文档原则：说明当前产品必须做到什么 · 指南"
   guide.doc.reading-map: "百科全书导读 —— 人类怎么读这套文档 · 指南"
   guide.list.directory: "MAP 平台文档索引 · 指南"
   guide.literary-agent: "文学创作 Agent 使用 · 指南"
@@ -293,6 +313,8 @@ docs:
   plan.platform.mcp-capability-completion: "MCP 接入与能力补齐 · 计划"
 
   # 五、计划
+  plan.video-agent.acceptance.handoff: "视频制作台新环境验收续接 · 计划"
+  plan.cds.code-review-delivery: "CDS 代码审查需求兑现台账 · 计划"
   plan.platform.background-task-safety.phase0: "平台后台任务与消费最低保护 · 阶段 0 计划"
   plan.platform.background-task-safety.phase1: "平台任务级准入与统一出口 · 阶段 1 计划"
   plan.platform.background-task-safety.phase2: "平台业务幂等、执行租约与取消撤销 · 阶段 2 计划"
@@ -306,6 +328,8 @@ docs:
   plan.cds.database-isolation: "CDS 数据库隔离三档收敛 · 计划"
   plan.cds.infra-hardening: "CDS 基础设施加固 · 计划"
   plan.cds.local-multi-user-auth: "CDS 本地多用户认证解耦 · 计划"
+  plan.cds.monitor.subscriptions: "CDS 监控订阅、环境与调查证据 · 计划"
+  plan.cds.monitor-workspace-v2: "CDS 监控工作区按完整设计还原 · 计划"
   plan.cds.multi-project-identity: "CDS 一仓多项目与身份层 · 计划"
   plan.cds.multi-project-phases: "CDS 多项目剩余交付 · 计划"
   plan.cds.performance.optimization: "CDS 长期性能优化与独立验收 · 计划"
@@ -352,6 +376,7 @@ docs:
   debt.acceptance.daily-anchors: "每日验收的锚点契约 · 债务台账"
   debt.acceptance.system: "功能验收体系 · 债务台账"
   debt.agent-universe: "智能体宇宙 · 债务台账"
+  debt.cds.notification: "CDS 通知验收边界 · 债务台账"
   debt.cds: "CDS 平台杂项 · 债务台账"
   debt.cds.agent: "CDS Agent 工作台 · 债务台账"
   debt.cds.agent.acceptance-smoke-drift: "CDS Agent 验收 smoke 断言漂移 · 债务台账"
@@ -449,6 +474,7 @@ docs:
   report.web-hosting.ask-dock-handoff: "「向我提问」形变坞 · 交接清单"
   # 八、架构决策
   adr.doc.001.document-roles: "ADR-DOC-001 文档原则与决策记录分层 · 架构决策"
+  adr.doc.002.principle-location: "ADR-DOC-002 原则指南遵守统一文档位置与授权边界 · 架构决策"
   adr.platform.001.llm-boundary: "ADR-PLATFORM-001 大模型调用统一归口 · 架构决策"
   # 九、产品决策
   pdr.platform.001.product-foundation: "PDR-PLATFORM-001 知识协作的产品根基与承重契约 · 产品决策"

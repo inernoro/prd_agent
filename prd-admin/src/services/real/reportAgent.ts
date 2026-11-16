@@ -1088,10 +1088,16 @@ export interface TeamWeekShareViewData {
   weekNumber: number;
   periodStart: string;
   periodEnd: string;
+  submissionDeadline?: string;
+  isPastDeadline?: boolean;
   stats: {
     totalMembers: number;
+    /** 应交人数 = 全部成员剔除免提交 */
+    expectedCount?: number;
     submittedCount: number;
     pendingCount: number;
+    /** 超时 = 截止前没完成首次提交的应交成员数,不随补交归 0 */
+    overdueCount?: number;
   };
   items: TeamWeekShareViewItem[];
   summary?: {

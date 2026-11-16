@@ -178,6 +178,7 @@ describe('原始证据与原版文档', () => {
     const document = buildCodeReviewDocument(original, 'html', 'dark', token);
     expect(document).toContain(original); expect(document).toContain(`script-src 'nonce-${token}'`);
     expect(document).toContain(`<script nonce="${token}">`);
+    expect(document.indexOf(`<script nonce="${token}">`)).toBeLessThan(document.indexOf(original));
     expect(document).not.toContain('color-scheme:dark');
     expect(buildCodeReviewDocument(original, 'html', 'dark', 'injected')).not.toContain('<script');
   });

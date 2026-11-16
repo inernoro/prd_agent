@@ -1,3 +1,5 @@
+import { ClassificationFilters, ClassificationSummary, NotificationTemplateCatalog, type ClassificationSelection } from '@/components/ReportClassification';
+import { matchesClassification } from '../../../src/shared/notification-templates';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
@@ -9,7 +11,7 @@ import {
   GitBranch, GitCommitHorizontal, GitPullRequest, History, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Network, Pencil, Plus, RefreshCw, Save, Search, Share2, SlidersHorizontal, Trash2, Upload, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { marked } from 'marked';
+import { buildMarkdownReportDocument } from '@/lib/report-document';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -34,6 +36,7 @@ import {
   disableReportShare,
   enableReportShare,
   fetchReportRaw,
+  getReport,
   listKnowledgeBaseConnections,
   listReportFolders,
   pushReportToPr,
@@ -56,6 +59,9 @@ import { useTheme } from '@/lib/theme';
 import { buildMapReportImportUrl } from '@/lib/knowledge-base-sync';
 import { ReportsOverviewPanel } from '@/pages/reports/ReportsOverview';
 import { PipelinePanel } from '@/pages/reports/PipelinePanel';
+import { acceptanceView } from '@/lib/acceptance-api';
+import type { AcceptanceView } from '@/lib/acceptance-api';
+import { AcceptanceNavigation, AcceptanceWorkspace } from '@/pages/reports/AcceptanceWorkspace';
 
 interface ProjectLite {
   id: string;
@@ -149,12 +155,16 @@ function formatTime(iso: string): string {
 }
 
 export function ReportsPage(): JSX.Element {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const classificationFilters: ClassificationSelection = { categories: searchParams.get('categories')?.split(',').filter(Boolean) || [], systems: searchParams.get('systems')?.split(',').filter(Boolean) || [], environments: searchParams.get('environments')?.split(',').filter(Boolean) || [] };
+  const setClassificationFilters = (v: ClassificationSelection) => { const next = new URLSearchParams(searchParams); for (const [key, values] of Object.entries(v)) { if (values.length) next.set(key, values.join(',')); else next.delete(key); } setSearchParams(next, { replace: true }); };
+  const monitorTarget = searchParams.get('target') || '';
   // 项目作用域：从 URL ?project= 取（项目卡右上角入口带）。空 = 全局（CDS 自身）报告。
   const projectId = searchParams.get('project') || '';
   // 直达深链：?report=<id> 自动打开该报告；?folder=<id> 自动激活该文件夹。
   const reportParam = searchParams.get('report') || '';
   const folderParam = searchParams.get('folder') || '';
+  const centerView = acceptanceView(searchParams.get('view'), reportParam);
 
   const [state, setState] = useState<ListState>({ status: 'loading' });
   const [projects, setProjects] = useState<ProjectLite[]>([]);
@@ -306,6 +316,23 @@ export function ReportsPage(): JSX.Element {
     }
   }, [state, folders, folderParam, reportParam]);
 
+  // A newly archived report need not exist in the already loaded list. Deep links read the actual report directly.
+  useEffect(() => {
+    if (!reportParam) return;
+    let cancelled = false;
+    getReport(reportParam).then((report) => {
+      if (cancelled) return;
+      if (projectId && report.projectId !== projectId) {
+        setToast('报告不属于当前项目，请使用报告所属项目的直达链接。');
+        return;
+      }
+      setSelected(report);
+      setState((current) => ({ status: 'ok', reports: current.status === 'ok'
+        ? [report, ...current.reports.filter((value) => value.id !== report.id)] : [report] }));
+    }).catch(() => { if (!cancelled) setToast('报告未能打开，请刷新后重试；若仍失败请检查报告是否已成功归档。'); });
+    return () => { cancelled = true; };
+  }, [reportParam, projectId]);
+
   // 项目列表用于关联下拉 + 当前项目名展示（best-effort，失败不阻断）。
   useEffect(() => {
     let cancelled = false;
@@ -380,9 +407,10 @@ export function ReportsPage(): JSX.Element {
   // 标题搜索：在当前项目 + 视图筛选之上再过滤；搜索时列表平铺展示命中项（不走文件夹树）。
   const searchedReports = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return visibleReports;
-    return visibleReports.filter((r) => r.title.toLowerCase().includes(q));
-  }, [visibleReports, searchQuery]);
+    return visibleReports.filter((r) => (!q || r.title.toLowerCase().includes(q))
+      && matchesClassification(r.classification, classificationFilters)
+      && (!monitorTarget || r.monitorEvent?.targetId === monitorTarget));
+  }, [visibleReports, searchQuery, searchParams]);
   const searching = searchQuery.trim().length > 0;
 
   const folderCounts = useMemo(() => {
@@ -570,6 +598,21 @@ export function ReportsPage(): JSX.Element {
     }
   }, []);
 
+  const changeCenterView = (nextView: AcceptanceView): void => {
+    const next = new URLSearchParams(searchParams);
+    next.set('view', nextView);
+    next.delete('report'); next.delete('task'); next.delete('case');
+    setSelected(null);
+    setSearchParams(next);
+  };
+
+  const changeAcceptanceProject = (id: string): void => {
+    const next = new URLSearchParams(searchParams);
+    next.set('project', id);
+    next.delete('task'); next.delete('case'); next.delete('report');
+    setSearchParams(next);
+  };
+
   return (
     <AppShell
       active="reports"
@@ -578,12 +621,12 @@ export function ReportsPage(): JSX.Element {
           left={<Crumb items={[
             { label: 'CDS', href: '/project-list' },
             ...(projectId ? [{ label: projectName || projectId, href: `/branches/${encodeURIComponent(projectId)}` }] : []),
-            { label: '验收报告' },
+            { label: '验收中心' },
           ]} />}
           right={(
             <>
               <PaletteHint />
-              {!selected ? (
+              {centerView === 'reports' && !selected ? (
                 <div className="hidden items-center gap-0.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-0.5 md:inline-flex" role="group" aria-label="结论时间窗">
                   {OVERVIEW_WINDOWS.map((d) => (
                     <button
@@ -598,24 +641,27 @@ export function ReportsPage(): JSX.Element {
                   ))}
                 </div>
               ) : null}
-              <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw />刷新</Button>
-              <Button size="sm" onClick={() => setCreateOpen(true)}><Plus />新建报告</Button>
+              {centerView === 'reports' ? <><Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw />刷新</Button><Button size="sm" onClick={() => setCreateOpen(true)}><Plus />新建报告</Button></> : null}
             </>
           )}
         />
       )}
     >
-      <Workspace fluid className={selected ? 'cds-workspace--fill' : undefined}>
+      <Workspace fluid className={selected || centerView !== 'reports' ? 'cds-workspace--fill' : undefined}>
         <div className="flex h-full min-h-0 flex-col gap-3">
+          {centerView !== 'reports' || state.status === 'ok' || state.status === 'error' ? <AcceptanceNavigation view={centerView} onChange={changeCenterView} /> : null}
+          {centerView !== 'reports' ? <div className="min-h-0 overflow-y-auto lg:flex-1"><AcceptanceWorkspace key={projectId} projectId={projectId} projects={projects} view={centerView} onProjectChange={changeAcceptanceProject} /></div> : null}
           {toast ? (
             <div className="shrink-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">{toast}</div>
           ) : null}
 
-          {state.status === 'loading' ? <LoadingBlock label="正在加载验收报告" /> : null}
-          {state.status === 'error' ? <ErrorBlock message={state.message} transient={state.transient} /> : null}
+          {centerView === 'reports' && state.status === 'loading' ? <LoadingBlock label="正在加载验收报告" /> : null}
+          {centerView === 'reports' && state.status === 'error' ? <ErrorBlock message={state.message} transient={state.transient} /> : null}
 
-          {state.status === 'ok' && !selected ? (
+          {centerView === 'reports' && state.status === 'ok' && !selected && <div className="shrink-0 space-y-2"><div className="flex flex-wrap items-center gap-3"><span className="text-sm">交叉分类 · 命中 {searchedReports.length} 份报告</span><NotificationTemplateCatalog />{monitorTarget && <span className="text-xs text-muted-foreground">当前监控目标的事件报告</span>}</div><ClassificationFilters value={classificationFilters} onChange={setClassificationFilters} /></div>}
+          {centerView === 'reports' && state.status === 'ok' && !selected ? (
             <ReportsHome
+              classificationActive={Boolean(monitorTarget || classificationFilters.categories.length || classificationFilters.systems.length || classificationFilters.environments.length)}
               overviewState={overviewState}
               pipelineState={pipelineState}
               // 「全局」= 既没有 URL 的 ?project=，筛选也停在「全部项目」。
@@ -651,33 +697,11 @@ export function ReportsPage(): JSX.Element {
             />
           ) : null}
 
-          {state.status === 'ok' && selected ? (
+          {centerView === 'reports' && state.status === 'ok' && selected ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
                 {visibleReports.length === 0 ? (
-                  <EmptyReportsState
-                    onCreate={() => setCreateOpen(true)}
-                    filtered={allReports.length > 0}
-                    filterMenu={(
-                      <div className="flex items-center gap-1">
-                        {!projectId ? (
-                          <ProjectFilterMenu
-                            projects={projects}
-                            counts={projectCounts}
-                            active={activeProjectFilter}
-                            onSelect={handleProjectFilterChange}
-                          />
-                        ) : null}
-                        <ReportFilterMenu
-                          folders={scopedFolders}
-                          counts={folderCounts}
-                          active={activeFolder}
-                          onSelect={setActiveFolder}
-                          onRequestCreate={requestCreateFolder}
-                        />
-                      </div>
-                    )}
-                  />
+                  <ReportViewer report={selected} onBack={() => setSelected(null)} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} />
                 ) : (
                   <>
                     <ReportList
@@ -707,7 +731,7 @@ export function ReportsPage(): JSX.Element {
                       showProjectFilter={!projectId}
                       className={selected ? 'hidden lg:flex' : undefined}
                     />
-                    <ReportViewer report={selected} onBack={() => setSelected(null)} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} />
+                    <ReportViewer onClassified={(updated) => { setSelected(updated); setState(cur => cur.status === 'ok' ? { ...cur, reports: cur.reports.map(r => r.id === updated.id ? updated : r) } : cur); }} report={selected} onBack={() => setSelected(null)} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} />
                   </>
                 )}
               </div>
@@ -820,10 +844,11 @@ export function ReportsPage(): JSX.Element {
  * 默认折叠被取代的早期版本（同一验收目标只展示最新版，标「v3 · 取代 2 份」）。
  */
 function ReportsHome({
-  overviewState, pipelineState, isGlobalScope, onOpenProject, onRetryOverview, allReports, reports, folders, scopedFolders, projects, projectCounts, folderCounts,
+  classificationActive = false, overviewState, pipelineState, isGlobalScope, onOpenProject, onRetryOverview, allReports, reports, folders, scopedFolders, projects, projectCounts, folderCounts,
   activeProjectFilter, activeFolder, searchQuery, onSearchChange, showProjectFilter, onProjectFilterSelect, onFilterSelect,
   onCreateFolder, onCreate, onSelect, onDelete, onMove, onCopy, onSync, onManageConnections,
 }: {
+  classificationActive?: boolean;
   overviewState: OverviewState;
   pipelineState: PipelineState;
   isGlobalScope: boolean;
@@ -974,7 +999,7 @@ function ReportsHome({
         不再承担首页的职责。这是 2026-09-09 从需求重推的结论：首页的问题是「有哪几件
         事要我管」，不是「这一份报告结论如何」。
       */}
-      {isGlobalScope ? (
+      {!classificationActive && (isGlobalScope ? (
         <>
           {pipelineState.status === 'loading' ? <LoadingBlock label="正在汇总验收流水线" /> : null}
           {pipelineState.status === 'error' ? (
@@ -1004,7 +1029,7 @@ function ReportsHome({
             <ReportsOverviewPanel overview={overview} projectName={projectName} onOpenReport={openById} onOpenCluster={openCluster} onJump={jumpTo} />
           ) : null}
         </>
-      )}
+      ))}
 
       <section id="reports-ledger" className="mt-1 overflow-hidden rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-card">
         {/*
@@ -2274,8 +2299,9 @@ function RenameFolderDialog({
  * of becoming a blank iframe. Raw downloads retain server CSP.
  */
 function ReportViewer({
-  report, onBack, onOpenNav, onSync,
+  report, onBack, onOpenNav, onSync, onClassified,
 }: {
+  onClassified?: (report: AcceptanceReport) => void;
   report: AcceptanceReport | null;
   onBack?: () => void;
   onOpenNav?: () => void;
@@ -2304,19 +2330,7 @@ function ReportViewer({
           setMdHtml(raw);
           return;
         }
-        const parsed = marked.parse(raw, { async: false }) as string;
-        const linkColor = theme === 'dark' ? '#60a5fa' : '#2563eb';
-        const doc = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
-          :root { color-scheme: ${theme}; }
-          body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.6; padding: 1.75rem clamp(1.75rem, 6vw, 6rem); max-width: 68.75rem; margin: 0 auto; }
-          pre { background: rgba(127,127,127,0.12); padding: 0.75rem; border-radius: 0.5rem; overflow: auto; }
-          code { background: rgba(127,127,127,0.12); padding: 1px 0.25rem; border-radius: 0.25rem; }
-          pre code { background: transparent; padding: 0; }
-          table { border-collapse: collapse; } th, td { border: 1px solid rgba(127,127,127,0.3); padding: 0.375rem 0.625rem; }
-          img { max-width: 100%; height: auto; }
-          a { color: ${linkColor}; }
-        </style></head><body>${parsed}</body></html>`;
-        setMdHtml(doc);
+        setMdHtml(buildMarkdownReportDocument(raw, theme));
       })
       .catch((err) => {
         if (reqRef.current !== token) return;
@@ -2388,6 +2402,7 @@ function ReportViewer({
           </Button>
         </div>
       </div>
+      <ClassificationSummary report={report} onSaved={onClassified} />
       <div className="min-h-0 flex-1 bg-white">
         {mdError ? (
           <div className="space-y-3 p-4">

@@ -31,11 +31,13 @@ import {
 } from './prebuilt-reuse.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } from './env-provenance.js';
+import { slugifyBranchForImage } from './image-template-vars.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
 import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConnections, resolveConfiguredMysqlMaxConnections } from './infra-connection-defaults.js';
 import { admittedArtifactProfile, inspectDeploymentArtifacts, type ArtifactInspectionOptions } from './artifact-admission.js';
+import { configuredImageCacheGovernance } from './image-cache-governance.js';
 import { computeDeploymentConfigHash } from './deployment-version.js';
 
 import { DOCKER_LOG_LIMIT_FLAGS, hasBoundedDockerLogs } from './docker-log-policy.js';
@@ -347,12 +349,7 @@ export function resolveImageTemplate(image: string | undefined, branch?: BranchE
  *   - 例: `my/branch`→`my-branch`、`Codex/fix`→`Codex-fix`、`release/v1.2`→`release-v1.2`。
  * 额外去掉前导 '.'/'-'(Docker tag 不能以它们开头) + 截到 128 字符上限。
  */
-export function slugifyBranchForImage(branch: string): string {
-  return branch
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/^[.-]+/, '')
-    .slice(0, 128);
-}
+export { slugifyBranchForImage };
 
 /**
  * Merge a branch-level BuildProfileOverride onto the shared baseline profile.
@@ -430,6 +427,7 @@ export function applyProfileOverride(baseline: BuildProfile, rawOverride?: Build
 export function resolveEffectiveProfile(
   profile: BuildProfile,
   branch?: BranchEntry,
+  options: { preserveImageTemplates?: boolean } = {},
 ): BuildProfile {
   const branchOverride = branch?.profileOverrides?.[profile.id];
   const withBranchOverride = applyProfileOverride(profile, branchOverride);
@@ -437,10 +435,11 @@ export function resolveEffectiveProfile(
   // 2026-06-23 极速版：deploy-mode 解析完后,把 dockerImage / fallbackImage 里的
   // ${CDS_COMMIT_SHA} 等模板变量按当前分支上下文替换。无模板变量时是 no-op。
   // fallbackImage 可为字符串或有序数组(逐组件回退链),逐元素解析。
-  const resolvedImage = resolveImageTemplate(withMode.dockerImage, branch);
+  const resolveImage = (image: string | undefined) => options.preserveImageTemplates ? image : resolveImageTemplate(image, branch);
+  const resolvedImage = resolveImage(withMode.dockerImage);
   const resolvedFallback = Array.isArray(withMode.fallbackImage)
-    ? withMode.fallbackImage.map((f) => resolveImageTemplate(f, branch) || f)
-    : resolveImageTemplate(withMode.fallbackImage, branch);
+    ? withMode.fallbackImage.map((f) => resolveImage(f) || f)
+    : resolveImage(withMode.fallbackImage);
   const imageChanged = resolvedImage !== withMode.dockerImage;
   const fallbackChanged = JSON.stringify(resolvedFallback) !== JSON.stringify(withMode.fallbackImage);
   let resolved = (imageChanged || fallbackChanged)
@@ -480,7 +479,7 @@ export function resolveEffectiveProfile(
         hotReload: undefined,
       };
       const srcResolved = resolveProfileWithMode(srcBase);
-      const srcImg = resolveImageTemplate(srcResolved.dockerImage, branch);
+      const srcImg = resolveImage(srcResolved.dockerImage);
       const srcProfile = srcImg !== srcResolved.dockerImage
         ? { ...srcResolved, dockerImage: srcImg || srcResolved.dockerImage }
         : srcResolved;
@@ -1168,7 +1167,11 @@ export class ContainerService {
     const buildCommand = [contract.installCommand, contract.buildCommand].filter(Boolean).join(' && ') || 'true';
     onOutput?.(`── managed 构建: ${contract.stack}，产物 ${artifactImage} ──\n`);
     let createdId: string | undefined;
+    const cache = configuredImageCacheGovernance();
+    let cachePin: { token: string } | undefined;
+    let committed = false;
     try {
+      cachePin = cache ? await cache.prepare(artifactImage, () => assertCurrent?.(`managed image budget ${profile.id}`), false, true) : undefined;
       assertCurrent?.(`managed build before create ${profile.id}`);
       const create = await shell.exec([
         'docker create',
@@ -1199,6 +1202,8 @@ export class ContainerService {
       if (build.exitCode !== 0) throw new Error(`managed 构建失败:\n${combinedOutput(build)}`);
       const commit = await shell.exec(`docker commit --change ${this.shellQuote(`LABEL org.opencontainers.image.revision=${sourceCommitSha.toLowerCase()}`)} --change ${this.shellQuote(`LABEL cds.managed.contract=${contractHash}`)} ${this.shellQuote(createdId!)} ${this.shellQuote(artifactImage)}`);
       if (commit.exitCode !== 0) throw new Error(`managed 产物固化失败:\n${combinedOutput(commit)}`);
+      committed = true;
+      if (cachePin) await cache!.confirm(cachePin.token, () => assertCurrent?.(`managed image identity ${profile.id}`));
       const fixed = commit.stdout.trim();
       if (!/^sha256:[0-9a-f]{64}$/i.test(fixed)) throw new Error('受管构建未返回可确认的镜像内容身份');
       const verified = await verifyArtifact(fixed);
@@ -1206,6 +1211,7 @@ export class ContainerService {
       onOutput?.('── 受管产物提交、平台和配置已确认，使用固定内容运行 ──\n');
       return verified;
     } finally {
+      if (cachePin && !committed) await cache!.abort(cachePin.token, () => {}).catch(() => undefined);
       try { if (createdId) await this.cleanupTemporaryContainer(createdId, entry, profile.id); }
       finally { try { fs.unlinkSync(envFilePath); } catch { /* best-effort */ } }
     }
@@ -2189,7 +2195,8 @@ export class ContainerService {
     });
 
     const resolvedEnv = this.resolveProfileRuntimeEnv(
-      runCommitSha ? { ...entry, pinnedCommit: undefined, githubCommitSha: runCommitSha } : entry,
+      // 已选定不可变产物/源码的实际提交优先于分支缓存的另一次 CI 目标。
+      runCommitSha ? { ...entry, pinnedCommit: undefined, ciTargetSha: undefined, githubCommitSha: runCommitSha } : entry,
       profile,
       customEnv,
     );
@@ -3465,6 +3472,24 @@ export class ContainerService {
         .map((line) => line.trim())
         .filter((line) => line.length > 0),
     );
+  }
+
+  /** Read only the target branch's container metadata; never inspect volume contents or env. */
+  async assertBranchStoppedForIsolation(entry: BranchEntry, excluded: readonly string[]): Promise<void> {
+    const format = '{{.State}}|{{.Label "cds.profile.id"}}';
+    const result = await this.shell.exec(`docker ps -a --filter "label=cds.managed=true" --filter ${this.shellQuote('label=cds.branch.id=' + entry.id)} --format ${this.shellQuote(format)}`,
+      { timeout: 5000, executionLane: 'observation' });
+    if (result.exitCode !== 0) throw new Error('无法确认容器运行状态，请先对账');
+    for (const line of result.stdout.trim().split('\n').filter(Boolean)) {
+      const [status, profileId, extra] = line.split('|');
+      if (!profileId || extra !== undefined || status !== 'exited' || excluded.includes(profileId)) {
+        throw new Error('本分支仍有运行、未知或被排除服务的保留容器，请先对账');
+      }
+    }
+    const listeners = new Set(this.staticSites?.names() || []);
+    if (Object.values(entry.services || {}).some(s => serviceRuntimeRefs(s).some(r => listeners.has(r.containerName)))) {
+      throw new Error('本分支仍有静态服务运行，请先停止并对账');
+    }
   }
 
   /**

@@ -202,6 +202,12 @@ describe('CDS Agent 接入口令', () => {
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.every((item) => item.access && item.risk && item.agentUse)).toBe(true);
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find((item) => item.id === 'executor-agent')?.agentUse).toBe('internal-only');
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find((item) => item.id === 'bridge')?.agentUse).toBe('protocol-only');
+    const monitorOnboarding = CDS_AGENT_CAPABILITY_DEFINITIONS.find(item => item.id === 'monitor-onboarding');
+    expect(monitorOnboarding).toMatchObject({ routeSource: 'monitor-onboarding.ts', scope: 'system', access: 'protocol-token', risk: 'write', agentUse: 'protocol-only', mcpExposure: 'not-exposed' });
+    expect(monitorOnboarding?.cliFamily).toBeUndefined();
+    expect(monitorOnboarding?.mcpTools).toBeUndefined();
+    expect(monitorOnboarding?.note).toContain('只有所有者确认才持久化');
+    expect(monitorOnboarding?.note).toContain('GET 只读说明和 POST 监控提议草案');
   });
 
   it('每个任务都绑定真实能力，并声明完整五技能包', () => {
@@ -237,7 +243,23 @@ describe('CDS Agent 接入口令', () => {
     //    + user-project-access（人类账号项目授权，仅系统所有者，2026-10-03）
     //    + cds-system-diagnostics（主线程诊断与按需 CPU 采样，只读观测，2026-10-08）
     // 分支地址设置只提供给有权限的人类会话，不新增 Agent 写入口。
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(62);
+    // 新增分支归档清理：有项目边界、需要明确确认，不直接暴露为MCP自动操作。
+    // 短期监控提议协议单独登记，不作为可直调的系统写能力。
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(71);
+    const capacityObservation = CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'host-capacity-observation');
+    expect(capacityObservation).toMatchObject({ routeSource: 'host-capacity-observation.ts', scope: 'system', access: 'human-only', risk: 'read-only', agentUse: 'guided', mcpExposure: 'not-exposed' });
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'host-capacity-sampling'))
+      .toMatchObject({ access: 'human-only', risk: 'write', mcpExposure: 'not-exposed' });
+    expect(capacityObservation?.cliFamily).toBeUndefined();
+    expect(capacityObservation?.mcpTools).toBeUndefined();
+    for (const id of ['backup-retention','owned-resource-retention']) {
+      expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === id))
+        .toMatchObject({ access: 'system', risk: 'destructive', agentUse: 'guided', cliFamily: 'disk', mcpExposure: 'approval-required' });
+    }
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'janitor-observation'))
+      .toMatchObject({ access: 'project', risk: 'read-only', agentUse: 'direct', cliFamily: 'disk' });
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'branch-lifecycle'))
+      .toMatchObject({ access: 'project', risk: 'destructive', agentUse: 'guided', mcpExposure: 'approval-required' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'code-reviews'))
       .toMatchObject({ access: 'project', agentUse: 'direct', risk: 'write', cliFamily: 'code-review' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'project-inspections'))
@@ -250,6 +272,8 @@ describe('CDS Agent 接入口令', () => {
       .toMatchObject({ access: 'human-only', agentUse: 'guided', risk: 'write' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'user-project-access'))
       .toMatchObject({ access: 'human-only', agentUse: 'guided', risk: 'write' });
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find((capability) => capability.id === 'acceptance-tasks'))
+      .toMatchObject({ routeSource: 'acceptance-tasks.ts', cliFamily: 'acceptance', risk: 'write', access: 'project', mcpExposure: 'approval-required' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.every((capability) => capability.mcpExposure)).toBe(true);
     expect(
       CDS_AGENT_CAPABILITY_DEFINITIONS

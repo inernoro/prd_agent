@@ -19,9 +19,9 @@ const annotations = (): HostedAnnotations => ({ ready: true, enabled: false, con
   preview: null, dismissPreview: vi.fn(), openThread: vi.fn(),
   draftAnchor: null, activeId: null, missingIds: [], threads: [], select, clearDraft: vi.fn(), focus: vi.fn(),
   notifyFrame: vi.fn(), setThreads: vi.fn(), setEnabled: vi.fn(), setActiveId: vi.fn() });
-async function mount(options: { ready?: boolean; review?: HostedReview } = {}) {
+async function mount(options: { ready?: boolean; review?: HostedReview; threadKind?: 'annotation' | 'discussion' } = {}) {
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
-  await act(async () => root.render(<CommentsSection mode="share" token="share" onLogin={login}
+  await act(async () => root.render(<CommentsSection mode="share" token="share" onLogin={login} threadKind={options.threadKind}
     annotations={{ ...annotations(), ready: options.ready ?? true }} review={options.review} />));
 }
 function button(text: string) {
@@ -36,6 +36,50 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('annotation entry availability', () => {
+  it('合集批注和讨论按真实锚点分开，计数排除回复和其他版本', async () => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    const anchor = { kind: 'text' as const, pagePath: '/', selector: 'p', tagName: 'p', text: '原文', elementText: '原文', prefix: '', suffix: '', contentVersion: 'current' };
+    const common = { siteId: 'member', authorName: '作者', createdAt: '2026-11-12T00:00:00Z', canDelete: false };
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: true, comments: [
+      { ...common, id: 'note', content: '当前版批注', contentVersion: 'current', anchor },
+      { ...common, id: 'talk', content: '当前版讨论', contentVersion: 'current' },
+      { ...common, id: 'reply', content: '回复内容', contentVersion: 'current', parentId: 'note' },
+      { ...common, id: 'old', content: '旧版批注', contentVersion: 'old', anchor },
+    ] } });
+    const counts = vi.fn();
+    const legacyCount = vi.fn();
+    const review = { selected: { id: 'v1', versionLabel: 'V1', contentVersionKey: 'current' }, loading: false, versions: [] } as unknown as HostedReview;
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (threadKind?: 'annotation' | 'discussion') => root.render(<CommentsSection mode="share" token="collection" siteId="member" threadKind={threadKind} onCountChange={legacyCount} onThreadCountsChange={counts} review={review} annotations={annotations()} />);
+    await act(async () => render('annotation'));
+    expect(container.querySelectorAll('.review-thread')).toHaveLength(1);
+    expect(container.querySelector('.review-thread')?.textContent).toContain('当前版批注');
+    expect(counts).toHaveBeenLastCalledWith({ annotations: 1, discussions: 1 });
+    expect(legacyCount).toHaveBeenLastCalledWith(2);
+    await act(async () => button('回复 1').click());
+    expect(container.querySelector('textarea')?.getAttribute('aria-label')).toBe('回复内容');
+    await act(async () => render('discussion'));
+    expect(container.querySelectorAll('.review-thread')).toHaveLength(1);
+    expect(container.querySelector('.review-thread')?.textContent).toContain('当前版讨论');
+    expect(container.querySelector('textarea')?.getAttribute('aria-label')).toBe('讨论内容');
+    expect(container.querySelector('[aria-label="绑定页面元素 / 选中文字"]')).toBeNull();
+    expect(legacyCount).toHaveBeenLastCalledWith(1);
+    await act(async () => render());
+    expect(legacyCount).toHaveBeenLastCalledWith(3);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+  it('整页讨论不会带入其他批注尚未提交的位置', async () => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });
+    const pending = { ...annotations(), draftAnchor: { kind: 'text' as const, pagePath: '/', selector: 'p', tagName: 'p', text: '位置', elementText: '位置', prefix: '', suffix: '', contentVersion: 'current' } };
+    add.mockResolvedValue({ success: true, data: { id: 'talk', siteId: 'member', content: '整页看法', authorName: '作者', createdAt: '2026-11-12T00:00:00Z' } });
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root.render(<CommentsSection mode="share" token="collection" password="original-password" siteId="member" threadKind="discussion" annotations={pending} />));
+    await act(async () => { const field = container.querySelector('textarea')!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, '整页看法'); field.dispatchEvent(new Event('input', { bubbles: true })); });
+    await act(async () => button('发送讨论').click());
+    expect(add).toHaveBeenCalledWith('collection', '整页看法', 'original-password', expect.objectContaining({ siteId: 'member', anchor: undefined }));
+    expect(pending.clearDraft).not.toHaveBeenCalled();
+  });
   it('合集第二份文档解决和重新打开讨论都携带当前文档及密码', async () => {
     auth.isAuthenticated = true; auth.token = 'session';
     const comment = { id: 'thread-b', siteId: 'document-b', authorName: '作者', content: '第二份讨论',
@@ -173,4 +217,16 @@ describe('annotation entry availability', () => {
     expect(add).toHaveBeenCalledWith('share', 'current', undefined, expect.objectContaining({ revisionId: undefined, expectedContentVersion: '20000' }));
   });
 
+});
+
+
+describe('collection annotation and discussion tabs', () => {
+  it.each(['annotation', 'discussion'] as const)('only renders %s roots while retaining annotation markers', async kind => {
+    const annotation = { id: 'note', siteId: 'site', authorName: '作者', content: '正文定位批注', anchor: { kind: 'element', selector: 'p', quote: '正文' }, createdAt: new Date().toISOString(), isResolved: false };
+    const discussion = { ...annotation, id: 'discussion', content: '整篇讨论意见', anchor: null };
+    list.mockResolvedValue({ success: true, data: { comments: [annotation, discussion], commentsEnabled: true, canComment: false } });
+    await mount({ threadKind: kind });
+    expect(container.textContent).toContain(kind === 'annotation' ? '正文定位批注' : '整篇讨论意见');
+    expect(container.textContent).not.toContain(kind === 'annotation' ? '整篇讨论意见' : '正文定位批注');
+  });
 });

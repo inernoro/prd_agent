@@ -1,13 +1,16 @@
+import { BranchSearchDropdown } from '@/components/branch/BranchSearchDropdown';
+import { listRemoteBranches, type RemoteBranch } from '@/lib/remoteBranches';
+import { ReviewUserKeyOptions, type UserKeyOptions } from './ReviewUserKeyOptions';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { ChevronRight, FileArchive, FileText, Upload, X } from 'lucide-react';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
-import { listCodeReviewBranches, submitCodeReview, uploadCodeReviewReport, type CodeReviewBranch, type CodeReviewTask } from '@/lib/codeReviews';
+import { listCodeReviewBranches, submitCodeReview, uploadCodeReviewReport, type CodeReviewBranch, type CodeReviewTask, reviewBranchSource } from '@/lib/codeReviews';
 import { ErrorNotice } from './ReviewTaskDetails';
 import { ReportDocument } from './ReportDocument';
 import { ReviewBack, ReviewButton } from './ReviewUi';
 
-export interface ReviewProjectOption { id: string; name: string; aliasName?: string; githubRepoFullName?: string; branchCount?: number }
-export interface ReviewCapabilities { engineConfigured: boolean; mailConfigured: boolean; storageConfigured?: boolean; tools?: string[] }
+export interface ReviewProjectOption { id: string; name: string; aliasName?: string; githubRepoFullName?: string; gitRepoUrl?: string; branchCount?: number }
+export interface ReviewCapabilities { engineConfigured: boolean; userKeyConfigured?: boolean; mailConfigured: boolean; storageConfigured?: boolean; tools?: string[] }
 
 export function ReviewComposer({ mode, projects, projectId: initialProject, capabilities, onBack, onSaved }: {
   mode: 'source' | 'import'; projects: ReviewProjectOption[]; projectId: string; capabilities: ReviewCapabilities | null;
@@ -17,10 +20,14 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
   const [origin, setOrigin] = useState<'upload' | 'cds'>('cds'), [source, setSource] = useState<'zip' | 'github'>('zip');
   const [branches, setBranches] = useState<CodeReviewBranch[]>([]), [branchId, setBranchId] = useState('');
   const [branchesLoading, setBranchesLoading] = useState(false), [branchesError, setBranchesError] = useState(''), [branchAttempt, setBranchAttempt] = useState(0);
+  const [remoteBranches, setRemoteBranches] = useState<RemoteBranch[]>([]), [remoteLoading, setRemoteLoading] = useState(false), [remoteError, setRemoteError] = useState('');
+  const [remoteBranch, setRemoteBranch] = useState(''), [branchSearch, setBranchSearch] = useState(''), [branchOpen, setBranchOpen] = useState(false);
+  const branchPickerRef = useRef<HTMLDivElement>(null), forceRemote = useRef(false);
   const [branchesLoadedFor, setBranchesLoadedFor] = useState('');
   const [projectSearch, setProjectSearch] = useState('');
   const [file, setFile] = useState<File | null>(null), [github, setGithub] = useState(''), [ref, setRef] = useState('');
   const [exclude, setExclude] = useState(''), [sendEmail, setSendEmail] = useState(false), [email, setEmail] = useState('');
+  const [userKey, setUserKey] = useState<UserKeyOptions | null>(null);
   const [title, setTitle] = useState(''), [preview, setPreview] = useState(''), [previewError, setPreviewError] = useState('');
   const [error, setError] = useState(''), [confirm, setConfirm] = useState(false), [busy, setBusy] = useState(false);
   const fileId = useId(), projectRadio = useId(), input = useRef<HTMLInputElement>(null), alive = useRef(true);
@@ -28,7 +35,12 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
   useEffect(() => {
     setBranchesError('');
     if (mode !== 'source' || origin !== 'cds' || !projectId) { setBranchesLoading(false); return; }
-    const controller = new AbortController(); setBranches([]); setBranchesLoading(true);
+    const controller = new AbortController(); setBranchesLoading(true); setRemoteLoading(true); setRemoteError('');
+    const forceFetch = forceRemote.current; forceRemote.current = false;
+    void listRemoteBranches(projectId, forceFetch, controller.signal).then(value => {
+      if (!controller.signal.aborted) { setRemoteBranches(value); setRemoteBranch(previous => value.some(branch => branch.name === previous) ? previous : ''); }
+    }).catch(() => { if (!controller.signal.aborted) setRemoteError('远程分支读取失败，请刷新重试。'); })
+      .finally(() => { if (!controller.signal.aborted) setRemoteLoading(false); });
     void listCodeReviewBranches(projectId, controller.signal).then(value => {
       if (!controller.signal.aborted) { setBranches(value); setBranchesLoadedFor(projectId); setBranchId(previous => value.some(branch => branch.id === previous) ? previous : ''); }
     }).catch(() => { if (!controller.signal.aborted) setBranchesError('分支读取失败，或当前账号没有权限。请重试或使用上传源码。'); })
@@ -40,7 +52,18 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
     if (mode === 'import' && file) void file.text().then(content => { if (!cancelled) setPreview(content); }).catch(() => { if (!cancelled) setPreviewError('文件读取失败，请重新选择文件。'); });
     return () => { cancelled = true; };
   }, [file, mode]);
-  const chooseProject = (id: string): void => { setProjectId(id); setBranchId(''); setBranches([]); setError(''); };
+  const chooseProject = (id: string): void => { setProjectId(id); setBranchId(''); setRemoteBranch(''); setBranches([]); setRemoteBranches([]); setBranchSearch(''); setBranchOpen(false); forceRemote.current = false; setError(''); };
+  useEffect(() => {
+    if (!branchOpen) return;
+    const close = (event: PointerEvent) => { if (!branchPickerRef.current?.contains(event.target as Node)) setBranchOpen(false); };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, [branchOpen]);
+  const refreshBranches = (): void => { forceRemote.current = true; setBranchAttempt(n => n + 1); };
+  const selectedProject = projects.find(project => project.id === projectId);
+  const selectedBranch = branches.find(branch => branch.id === branchId);
+  const branchName = selectedBranch?.branch || remoteBranch;
+  const branchSource = reviewBranchSource(selectedProject, selectedBranch, remoteBranch);
   const selectFile = (next: File | undefined): void => {
     setError(''); if (!next) { setFile(null); return; }
     const limit = mode === 'import' ? 10 : 100;
@@ -50,22 +73,22 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
     setFile(next); if (mode === 'import' && !title) setTitle(next.name.replace(/\.[^.]+$/, ''));
   };
   const withEmail = sendEmail && capabilities?.mailConfigured;
-  const canSubmit = Boolean(projectId && (mode === 'import' ? file && title.trim() && !previewError : origin === 'cds' ? !branchesLoading && branches.some(branch => branch.id === branchId) : source === 'zip' ? file : github.trim()));
+  const canSubmit = Boolean(projectId && (mode === 'import' ? file && title.trim() && !previewError : origin === 'cds' ? !branchesLoading && Boolean(branchSource) && (remoteBranch || !branchesError) : source === 'zip' ? file : github.trim()));
   const serviceConfigured = Boolean(capabilities?.engineConfigured && capabilities.storageConfigured !== false);
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault(); if (busy) return; setError('');
     if (!canSubmit) { setError('请选择项目并提供源码、分支或报告文件。'); return; }
+    if (mode === 'source' && userKey && (!userKey.apiKey.trim() || !userKey.model.trim() || !Number.isSafeInteger(userKey.tokenLimit) || userKey.tokenLimit! < 4096)) { setError('请填写有效的用户 Key、模型和 Token 额度。'); return; }
     if (mode === 'source' && !confirm) { setConfirm(true); mainScrollTop(); return; }
     setBusy(true);
     try {
-      const task = mode === 'import' ? await uploadCodeReviewReport(projectId, title.trim(), file!) : await submitCodeReview({ projectId, sourceType: origin === 'cds' ? 'cds' : source,
-        ...(origin === 'cds' ? { branchId } : source === 'zip' ? { file: file! } : { githubUrl: github.trim(), ref: ref.trim() }),
-        excludePatterns: exclude.split('\n').map(pattern => pattern.trim()).filter(Boolean), email: withEmail ? email.trim() : undefined });
-      if (alive.current) onSaved(task);
+      const task = mode === 'import' ? await uploadCodeReviewReport(projectId, title.trim(), file!) : await submitCodeReview({ projectId,
+        ...(origin === 'cds' ? branchSource! : source === 'zip' ? { sourceType: 'zip' as const, file: file! } : { sourceType: 'github' as const, githubUrl: github.trim(), ref: ref.trim() }),
+        userKey: userKey || undefined, excludePatterns: exclude.split('\n').map(pattern => pattern.trim()).filter(Boolean), email: withEmail ? email.trim() : undefined });
+      if (alive.current) { setUserKey(null); onSaved(task); }
     } catch (failure) { if (alive.current) setError(failure instanceof Error ? failure.message : mode === 'import' ? '文档未能保存，请重试。' : '任务未能提交，请检查源码权限和审查服务。'); }
     finally { if (alive.current) setBusy(false); }
   };
-  const selectedProject = projects.find(project => project.id === projectId);
   const fileFormat = /\.(md|markdown)$/i.test(file?.name || '') ? 'md' : 'html';
   const fileInput = <input ref={input} id={fileId} type="file" className="sr-only" aria-label={mode === 'import' ? '报告文件' : '源码 ZIP 压缩包'} accept={mode === 'import' ? '.html,.htm,.md,.markdown' : '.zip,application/zip'} onChange={e => selectFile(e.target.files?.[0])} />;
   const fileChooser = <div onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); if (!busy) selectFile(e.dataTransfer.files[0]); }}>
@@ -78,8 +101,8 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
       <div className={mode === 'import' ? 'cr-import-controls' : 'cr-form-main'}><fieldset disabled={busy}>
         {error ? <ErrorNotice message={error} /> : null}
         {confirm ? <>
-          <dl className="cr-surface cr-confirm-list"><div><dt>项目</dt><dd>{selectedProject?.aliasName || selectedProject?.name || projectId}</dd></div><div><dt>来源</dt><dd>{origin === 'cds' ? `平台项目 · ${branches.find(branch => branch.id === branchId)?.branch}` : source === 'zip' ? file?.name : github}</dd></div><div><dt>版本固定</dt><dd>{origin === 'cds' ? '开始准备时同步并固定所选分支的提交，以报告中的 SHA 为准；不包含未提交修改。' : source === 'github' ? `${ref || '仓库默认分支'}；准备时记录实际提交 SHA。` : '提交后按 ZIP 哈希固定快照。'}</dd></div><div><dt>分析范围</dt><dd>按本次支持的源码规则分析，依赖和构建产物排除；实际范围、跳过与未执行项以结果为准。</dd></div>{exclude ? <div><dt>额外排除</dt><dd className="whitespace-pre-wrap">{exclude}</dd></div> : null}<div><dt>报告接收</dt><dd>报告中心{withEmail ? ` + ${email}` : ''}</dd></div></dl>
-          <p className="cr-notice cr-notice-warning">当前无法提供可靠费用预估。确认开始后将按实际模型用量计费。</p>
+          <dl className="cr-surface cr-confirm-list"><div><dt>项目</dt><dd>{selectedProject?.aliasName || selectedProject?.name || projectId}</dd></div><div><dt>来源</dt><dd>{origin === 'cds' ? `平台项目 · ${branchName}` : source === 'zip' ? file?.name : github}</dd></div><div><dt>版本固定</dt><dd>{origin === 'cds' ? '开始准备时同步并固定所选分支的提交，以报告中的 SHA 为准；不包含未提交修改。' : source === 'github' ? `${ref || '仓库默认分支'}；准备时记录实际提交 SHA。` : '提交后按 ZIP 哈希固定快照。'}</dd></div><div><dt>分析范围</dt><dd>按本次支持的源码规则分析，依赖和构建产物排除；实际范围、跳过与未执行项以结果为准。</dd></div>{exclude ? <div><dt>额外排除</dt><dd className="whitespace-pre-wrap">{exclude}</dd></div> : null}<div><dt>报告接收</dt><dd>报告中心{withEmail ? ` + ${email}` : ''}</dd></div></dl>
+          <p className="cr-notice cr-notice-warning">{userKey ? `本次使用自己的 ${userKey.provider} Key，模型 ${userKey.model}，保护额度 ${userKey.tokenLimit?.toLocaleString()} Token。失败时停止，不使用平台额度。费用以供应商账单为准。` : '当前无法提供可靠费用预估。确认开始后将按实际模型用量计费。'}</p>
           {!serviceConfigured ? <p role="status" className="cr-form-note">审查服务尚未就绪，请管理员恢复后再提交；已有报告仍可阅读和导入。</p> : null}
           <div className="cr-form-footer"><ReviewButton tone="primary" type="submit" disabled={!serviceConfigured || busy}>{busy ? '正在提交' : '确认并开始审查'}</ReviewButton><ReviewButton tone="ghost" type="button" onClick={() => setConfirm(false)}>返回修改</ReviewButton></div>
         </> : mode === 'import' ? <>
@@ -91,14 +114,26 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
           <div id="source-panel" role="tabpanel" aria-labelledby={`source-tab-${origin}`} className="cr-stack">
             {origin === 'cds' ? <>
               <fieldset className="cr-stack"><legend className="cr-label mb-2">项目</legend>{projects.length > 6 ? <input className="cr-input cr-full" aria-label="搜索项目" placeholder="搜索项目" value={projectSearch} onChange={e => setProjectSearch(e.target.value)} /> : null}<div className="cr-project-options">{projects.filter(project => `${project.aliasName || ''} ${project.name}`.toLocaleLowerCase().includes(projectSearch.toLocaleLowerCase())).map(project => <label className="cr-project-choice" key={project.id}><input type="radio" name={projectRadio} value={project.id} checked={projectId === project.id} onChange={() => chooseProject(project.id)} /><span><strong>{project.aliasName || project.name}</strong><small className="cr-mono">{project.githubRepoFullName ? `github.com/${project.githubRepoFullName}` : '已连接的项目仓库'}</small></span><em>{project.id === branchesLoadedFor && project.id === projectId && !branchesLoading && !branchesError ? `${branches.length} 个已登记分支` : project.branchCount === undefined ? '选择后读取分支' : project.branchCount ? `${project.branchCount} 个已登记分支` : '无已登记分支'}</em></label>)}</div>{!projects.length ? <p className="cr-placeholder">暂无可选项目。请等待项目加载完成，或检查当前账号的项目权限。</p> : null}</fieldset>
-              <div className="cr-label"><span>分支</span>{!projectId ? <p className="cr-placeholder">先选择项目，再选择该项目已登记的分支。</p> : branchesLoading ? <ContentLoading label="正在读取已登记分支" variant="inline" /> : branchesError ? <div className="cr-stack"><ErrorNotice message={branchesError} /><ReviewButton type="button" onClick={() => setBranchAttempt(n => n + 1)}>重新读取分支</ReviewButton></div> : branches.length ? <select className="cr-input cr-full" aria-label="审查分支" required value={branchId} onChange={e => setBranchId(e.target.value)}><option value="">请选择分支</option>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.branch}</option>)}</select> : <p className="cr-placeholder">该项目没有已登记分支。可先在项目中添加分支，或切换到上传源码。</p>}
+              <div className="cr-label"><span className="flex items-center justify-between">分支<ReviewButton type="button" disabled={!projectId || branchesLoading || remoteLoading} onClick={refreshBranches}>刷新分支</ReviewButton></span>
+                {!projectId ? <p className="cr-placeholder">先选择项目，再选择分支。</p> : <div ref={branchPickerRef} className="relative" onKeyDown={event => { if (event.key === 'Escape') { setBranchOpen(false); event.stopPropagation(); } }}>
+                  <input className="cr-input cr-full" aria-label="搜索审查分支" aria-expanded={branchOpen} aria-controls="review-branch-options" placeholder={branchName || '搜索分支'} value={branchSearch} autoComplete="off" onFocus={() => setBranchOpen(true)} onClick={() => setBranchOpen(true)} onChange={event => { setBranchSearch(event.target.value); setBranchOpen(true); }} />
+                  {branchName ? <p className="cr-form-note">已选择：{branchName}</p> : null}
+                  {branchesLoading ? <ContentLoading label="正在读取已登记分支" variant="inline" /> : null}
+                  {branchesError ? <ErrorNotice message={branchesError} /> : null}
+                  {remoteError && !branchOpen ? <p role="alert" className="text-xs text-destructive">{remoteError}</p> : null}
+                  {branchOpen ? <div id="review-branch-options"><BranchSearchDropdown query={branchSearch} tracked={branches} remote={remoteBranches} remoteLoading={remoteLoading} remoteError={remoteError} trackedByName={new Map(branches.map(branch => [branch.branch, branch]))} actions={{}}
+                    onPickTracked={branch => { setBranchId(branch.id); setRemoteBranch(''); setBranchSearch(''); setBranchOpen(false); }}
+                    onPickRemote={branch => { setBranchId(''); setRemoteBranch(branch.name); setBranchSearch(''); setBranchOpen(false); }}
+                    onForceFetchRemote={refreshBranches} /></div> : null}
+                  {remoteBranch && !branchSource ? <ErrorNotice message="该项目没有可读取的 GitHub 仓库地址，请选择已登记分支。" /> : null}
+                </div>}
                 <p className="cr-form-note">开始准备时同步并固定所选分支的提交，以报告中的 SHA 为准；不包含未提交修改。无需重新上传源码。</p></div>
             </> : <>
               {projectSelect}<div className="cr-segment" role="group" aria-label="源码提交方式">{(['zip', 'github'] as const).map(value => <button type="button" key={value} aria-pressed={source === value} onClick={() => setSource(value)}>{value === 'zip' ? 'ZIP 文件' : 'GitHub 地址'}</button>)}</div>
               {source === 'zip' ? fileChooser : <><label className="cr-label"><span>GitHub 仓库地址</span><input className="cr-input cr-full" type="url" required value={github} onChange={e => setGithub(e.target.value)} placeholder="https://github.com/owner/repository" /></label><label className="cr-label"><span>分支、标签或提交（可选）</span><input className="cr-input cr-full" value={ref} onChange={e => setRef(e.target.value)} placeholder="留空使用仓库默认分支" maxLength={250} /></label><p className="cr-form-note">私有仓库需要已有授权；未授权时可改用 ZIP。版本会在准备源码时固定并记录。</p></>}
             </>}
           </div>
-          <details className="cr-more"><summary>更多选项<span>排除目录 · 邮件通知</span></summary><div><label className="cr-label"><span>排除目录或模式（每行一项）</span><textarea className="cr-input cr-full" rows={3} value={exclude} onChange={e => setExclude(e.target.value)} placeholder={'vendor/\nthirdparty/'} /></label><label className="cr-check-row"><input type="checkbox" checked={Boolean(withEmail)} disabled={!capabilities?.mailConfigured} onChange={e => setSendEmail(e.target.checked)} />同时发送至邮箱</label>{!capabilities?.mailConfigured ? <p className="cr-form-note">邮件服务不可用，仅归档报告中心。报告仍可正常阅读。</p> : null}{withEmail ? <label className="cr-label"><span>收件邮箱</span><input type="email" className="cr-input cr-full" value={email} onChange={e => setEmail(e.target.value)} required /></label> : null}</div></details>
+          <details className="cr-more"><summary>更多选项<span>模型 Key · 排除目录 · 邮件通知</span></summary><div><ReviewUserKeyOptions value={userKey} onChange={setUserKey} configured={Boolean(capabilities?.userKeyConfigured)} /><label className="cr-label"><span>排除目录或模式（每行一项）</span><textarea className="cr-input cr-full" rows={3} value={exclude} onChange={e => setExclude(e.target.value)} placeholder={'vendor/\nthirdparty/'} /></label><label className="cr-check-row"><input type="checkbox" checked={Boolean(withEmail)} disabled={!capabilities?.mailConfigured} onChange={e => setSendEmail(e.target.checked)} />同时发送至邮箱</label>{!capabilities?.mailConfigured ? <p className="cr-form-note">邮件服务不可用，仅归档报告中心。报告仍可正常阅读。</p> : null}{withEmail ? <label className="cr-label"><span>收件邮箱</span><input type="email" className="cr-input cr-full" value={email} onChange={e => setEmail(e.target.value)} required /></label> : null}</div></details>
           <div className="cr-form-footer"><ReviewButton tone="primary" type="submit" disabled={!canSubmit || busy}>下一步：确认</ReviewButton><ReviewButton tone="ghost" type="button" onClick={onBack}>取消</ReviewButton>{!canSubmit ? <span className="cr-form-note">{!projectId ? '请选择项目' : origin === 'cds' ? '请选择分支' : source === 'zip' ? '请选择 ZIP 文件' : '请填写仓库地址'}</span> : null}</div>
         </>}
         {busy ? <ContentLoading label={mode === 'import' ? '正在保存原始文档' : '正在上传并创建任务'} variant="inline" /> : null}

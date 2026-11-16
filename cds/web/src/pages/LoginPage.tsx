@@ -1,3 +1,4 @@
+import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 import { AuthPageFrame, AuthFormSkeleton } from '@/components/skeletons/AuthPageSkeleton';
 /*
  * LoginPage — CDS 控制台的唯一认证入口。
@@ -17,7 +18,7 @@ import { AuthPageFrame, AuthFormSkeleton } from '@/components/skeletons/AuthPage
  *   - GitHub OAuth 入口
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+
 import { ArrowRight, Eye, EyeOff, Github, KeyRound, Loader2, ShieldCheck } from 'lucide-react';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { Button } from '@/components/ui/button';
@@ -31,7 +32,7 @@ import {
 } from '@/lib/api';
 import { parseTicketSsoCallback } from '@/lib/ticket-sso-callback';
 
-function redirectTarget(): string {
+export function redirectTarget(): string {
   if (typeof window === 'undefined') return '/project-list';
   const params = new URLSearchParams(window.location.search);
   const raw = params.get('redirect') || '/project-list';
@@ -40,7 +41,10 @@ function redirectTarget(): string {
   // spinner 永远转、登录框永不出现(Bugbot Medium「Login redirect target loops」)。
   const path = raw.split(/[?#]/)[0];
   if (path === '/login') return '/project-list';
-  return raw;
+  // Fragments never reach the server. Its unauthenticated redirect preserves
+  // the original fragment on /login, so carry it back to the internal target.
+  // An explicitly encoded target fragment takes precedence.
+  return raw.includes('#') || !params.get('redirect') ? raw : raw + window.location.hash;
 }
 
 function AuthForm(): JSX.Element {

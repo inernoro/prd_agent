@@ -1,3 +1,5 @@
+import '@/components/workspace/workspace.css';
+import { HostedCollectionEditor, HostedCollectionLibrary } from '@/components/web-hosting/HostedCollectionManager';
 import { getWebHostingUploadError, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/lib/webHostingUploadLimits';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSelection';
@@ -310,6 +312,7 @@ export default function WebPagesPage() {
   const username = useAuthStore(s => s.user?.username);
   const currentUserId = useAuthStore(s => s.user?.userId);
   const [sites, setSites] = useState<HostedSite[]>([]);
+  const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'public' | 'restricted'>('all');
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   // SaaS 空间模型：个人空间 / 团队空间（协作边界）；空间内文件夹由内容派生（纯组织）
@@ -453,6 +456,8 @@ export default function WebPagesPage() {
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
   // 转知识库目标站点（非 null 时弹出选择文档空间的对话框）
   const [libraryTargetSite, setLibraryTargetSite] = useState<HostedSite | null>(null);
+  const [collectionInitialSites, setCollectionInitialSites] = useState<Array<{ id: string; title: string }> | null>(null);
+  const [showCollectionLibrary, setShowCollectionLibrary] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [shareTargetId, setShareTargetId] = useState<string | null>(null);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
@@ -786,8 +791,7 @@ export default function WebPagesPage() {
 
   const handleBatchShare = () => {
     if (selectedIds.size === 0) return;
-    setShareTargetId(null);
-    setShowShareDialog(true);
+    setCollectionInitialSites(sites.filter(site => selectedIds.has(site.id)).map(site => ({ id: site.id, title: site.title })));
   };
 
   const toggleSelect = (id: string) => {
@@ -844,7 +848,7 @@ export default function WebPagesPage() {
     ),
     [folders, managedFolderCanonicalNames, managedFolders],
   );
-  const displaySites = useMemo(() => {
+  const scopedSites = useMemo(() => {
     // 团队空间按分组（专题/日常分类）过滤；个人空间沿用文件夹过滤
     if (currentSpace.kind === 'team') {
       if (activeGroupId === UNGROUPED_ID) return spaceSites.filter((s) => !s.groupId);
@@ -862,6 +866,7 @@ export default function WebPagesPage() {
       ))
       : spaceSites;
   }, [spaceSites, activeFolder, activeGroupId, currentSpace.kind, personalFolderCanonicalNames]);
+  const displaySites = useMemo(() => scopedSites.filter(site => visibilityFilter === 'all' || (visibilityFilter === 'public' ? site.visibility === 'public' : site.visibility !== 'public')), [scopedSites, visibilityFilter]);
   useEffect(() => {
     if (loading || !focusSiteId || returnTargetId !== focusSiteId || !displaySites.some((site) => site.id === focusSiteId)) return;
     const element = Array.from(document.querySelectorAll<HTMLElement>('[data-hosted-site-id]'))
@@ -1010,8 +1015,8 @@ export default function WebPagesPage() {
     loaded: sites.length,
     recentCount: countRecent(spaceSites),
     shown: displaySites.length,
-    filtered: !!(activeFolder || activeGroupId || activeTag || activeSource || keyword.trim()),
-  }), [groupMode, currentSpace.kind, activeGroupId, activeFolderLabel, activeFolder, activeTag, activeSource, keyword, total, sites.length, spaceSites, displaySites.length]);
+    filtered: !!(activeFolder || activeGroupId || activeTag || activeSource || keyword.trim() || visibilityFilter !== 'all'),
+  }), [groupMode, currentSpace.kind, activeGroupId, activeFolderLabel, activeFolder, activeTag, activeSource, keyword, total, sites.length, spaceSites, displaySites.length, visibilityFilter]);
 
   const filterCount = [
     activeFolder != null,
@@ -1021,11 +1026,13 @@ export default function WebPagesPage() {
     sort !== 'newest',
     groupMode !== 'time',
     viewMode !== 'grid',
+    visibilityFilter !== 'all',
   ].filter(Boolean).length;
 
   const enterSpace = (s: Space) => {
     // 幂等守卫：点的就是当前空间则不动（双击当前团队改名时，两次 click 不应触发整页重载）
     if (s.kind === currentSpace.kind && (s.kind === 'personal' || (currentSpace.kind === 'team' && s.teamId === currentSpace.teamId))) return;
+    setVisibilityFilter('all');
     setCurrentSpace(s);
     rememberSpace(s);
     // 档位随空间收敛：个人的「按文件夹」进团队就不成立了，落回按时间，不给一个空列表
@@ -1192,45 +1199,47 @@ export default function WebPagesPage() {
       <div
         className="grid"
         style={{
-          // 设计稿：minmax(236px,1fr) 拉伸铺满 + gap 14 + 左对齐。
-          // 固定轨道 + 居中会让卡片左缘与上方结论行错开、右侧留一条死区。
-          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), 1fr))`,
+          // 已确认的 Demo：桌面三档使用注册表中的实际宽度，并与内容左缘对齐。
+          // 手机沿用两列自适应；窄容器限制为可用宽度，不额外拉伸卡片。
+          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : `repeat(auto-fill, minmax(0, min(100%, ${cardWidth}px)))`,
           justifyContent: isMobile ? 'stretch' : 'start',
           alignContent: 'start',
+          alignItems: 'start',
           gap: isMobile ? 12 : 14,
         }}
       >
         {items.map(site => (
-          <SiteCard
-            key={site.id}
-            site={site}
-            size={cardSize}
-            selected={selectedIds.has(site.id)}
-            selectionMode={selectionMode}
-            fresh={freshIds.has(site.id)}
-            shared={sharedSiteIds.has(site.id)}
-            shareStats={siteShareStats.get(site.id)}
-            caps={siteCaps(site)}
-            ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
-            traffic={siteTraffic[site.id]}
-            activity={siteActivity[site.id]}
-            relatedSummary={relatedSummaries[site.id]}
-            onNavigateRelated={openRelatedSite}
-            onVisit={() => handleVisitSite(site)}
-            onSelect={() => toggleSelect(site.id)}
-            onTogglePublic={() => handleMakePublic(site)}
-            onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
-            onDelete={() => handleDelete(site.id)}
-            onShare={(anchor) => handleShare(site.id, anchor)}
-            onQrCode={() => setQrSite(site)}
-            onTransferToLibrary={() => setLibraryTargetSite(site)}
-            onReplaceFile={(file) => setReplaceTarget({ site, file })}
-            onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
-            onMove={() => setMovingSite(site)}
-            onComments={() => setCommentSite(site)}
-            onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
-            onAiEdit={() => openSiteEditor(site)}
-          />
+          <div key={site.id} className="min-w-0">
+            <SiteCard
+              site={site}
+              size={cardSize}
+              selected={selectedIds.has(site.id)}
+              selectionMode={selectionMode}
+              fresh={freshIds.has(site.id)}
+              shared={sharedSiteIds.has(site.id)}
+              shareStats={siteShareStats.get(site.id)}
+              caps={siteCaps(site)}
+              ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
+              traffic={siteTraffic[site.id]}
+              activity={siteActivity[site.id]}
+              relatedSummary={relatedSummaries[site.id]}
+              onNavigateRelated={openRelatedSite}
+              onVisit={() => handleVisitSite(site)}
+              onSelect={() => toggleSelect(site.id)}
+              onTogglePublic={() => handleMakePublic(site)}
+              onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
+              onDelete={() => handleDelete(site.id)}
+              onShare={(anchor) => handleShare(site.id, anchor)}
+              onQrCode={() => setQrSite(site)}
+              onTransferToLibrary={() => setLibraryTargetSite(site)}
+              onReplaceFile={(file) => setReplaceTarget({ site, file })}
+              onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
+              onMove={() => setMovingSite(site)}
+              onComments={() => setCommentSite(site)}
+              onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
+              onAiEdit={() => openSiteEditor(site)}
+            />
+          </div>
         ))}
       </div>
     ) : (
@@ -1277,6 +1286,7 @@ export default function WebPagesPage() {
           网页托管
         </span>
       </div>
+      <Button size="sm" variant="ghost" onClick={() => setShowCollectionLibrary(true)}><FolderOpen size={14} />我的合集</Button>
                 {/* 语境两档：资产库 / 分享。分享档按钮上的数字与分享档结论句同口径（未过期且未撤销） */}
                 <div className="inline-flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-input)' }}>
                   <button
@@ -1453,6 +1463,8 @@ export default function WebPagesPage() {
                 {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
                   <div className="ml-auto flex shrink-0 items-center gap-2">
                     {/* 设计稿 Main：「生成网页」是主操作，下拉选素材来源，旁边齿轮进设置；「上传网页」退为次操作。 */}
+                    <Button size="sm" variant="secondary" onClick={() => navigate("/web-pages/new-document")}>按模版新建文档</Button>
+                    <Button size="sm" variant="secondary" onClick={() => navigate("/web-pages/collections")}>合集</Button>
                     <GenerateSiteMenu
                       onGenerate={openGenerateDialog}
                       onOpenSettings={() => setShowGenerationSettings(true)}
@@ -1479,9 +1491,9 @@ export default function WebPagesPage() {
       style={{
         // 不再自刷整幅不透明深色底（会盖住应用背景、与外壳 16px 内边距形成
         // "黑框 + 内容内缩"的错位，2026-07-08 用户反馈）；仅保留顶部一缕
-        // 品牌靛蓝氛围光，透明叠加在应用背景上。p-4 同步移除——外壳已供内边距。
+        // 沿用应用背景和主题材质，外壳已供内边距。
         background:
-          'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.12) 0%, transparent 55%)',
+          'transparent',
         width: '100%',
       }}
     >
@@ -1903,6 +1915,7 @@ export default function WebPagesPage() {
                     >
                       <Link2 size={15} /> 分享管理
                     </button>
+                    <button type="button" onClick={() => { setShowMobileFilters(false); setShowCollectionLibrary(true); }} className="h-11 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"><FolderOpen size={15} />我的合集</button>
                     {currentSpace.kind === 'team' && canEditInWebHosting(myWebHostingRole) && (
                       <button
                         type="button"
@@ -1928,7 +1941,7 @@ export default function WebPagesPage() {
             <span className="text-sm text-token-muted">已选 {selectedIds.size} 项</span>
             {/* 团队作用域按角色门控批量操作；个人作用域全开（站点都是自己的）。后端是最终权威。 */}
             {(teamScope.scope !== 'team' || canShareInWebHosting(myWebHostingRole)) && (
-              <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
+              <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 创建合集</Button>
             )}
             {batchGroupPicker}
             {(teamScope.scope !== 'team' || myWebHostingRole === 'owner') && (
@@ -1951,6 +1964,10 @@ export default function WebPagesPage() {
         style={!isMobile ? { border: '1px solid var(--border-default)', borderRadius: 'var(--radius-xl)', background: 'var(--bg-base)' } : undefined}
       >
       {!isMobile && desktopTopBar}
+      {workspaceTab === 'library' && <nav className="workspace-facets px-3 pt-2" aria-label="网页可见范围筛选">
+        <span>当前范围</span>{([{key:'all',label:'全部网页',count:scopedSites.length},{key:'public',label:'已公开',count:scopedSites.filter(site=>site.visibility==='public').length},{key:'restricted',label:'未公开',count:scopedSites.filter(site=>site.visibility!=='public').length}] as const).map(filter=><button type="button" key={filter.key} aria-pressed={visibilityFilter===filter.key} onClick={()=>setVisibilityFilter(filter.key)}>{filter.label} {loading ? '—' : filter.count}</button>)}<span>已载入范围 · 保留原分享权限</span>
+      </nav>}
+
       <div
         className={!isMobile ? 'flex items-stretch flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}
         style={{ display: workspaceTab === 'library' ? undefined : 'none' }}
@@ -2027,7 +2044,8 @@ export default function WebPagesPage() {
       ) : displaySites.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-token-muted">
           <UploadCloud size={48} strokeWidth={1} />
-          <p>{currentSpace.kind === 'team' ? (activeGroupId ? '这个分组还没有网页' : '这个团队空间还没有网页') : activeFolder ? '这个文件夹还没有网页' : '还没有托管的网页'}</p>
+          <p>{visibilityFilter !== 'all' ? '当前可见范围没有匹配的网页' : currentSpace.kind === 'team' ? (activeGroupId ? '这个分组还没有网页' : '这个团队空间还没有网页') : activeFolder ? '这个文件夹还没有网页' : '还没有托管的网页'}</p>
+          {visibilityFilter !== 'all' && <Button size="sm" variant="secondary" onClick={()=>setVisibilityFilter('all')}>清除可见范围筛选</Button>}
           {/* 与顶部上传按钮同款权限闸门：团队空间只读 viewer 不展示上传入口，
               避免点开弹窗 uploadSite 后被 setTeams 403、徒留站点在个人空间 */}
           {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
@@ -2260,6 +2278,9 @@ export default function WebPagesPage() {
           />
         );
       })()}
+
+      {collectionInitialSites && <HostedCollectionEditor initialSites={collectionInitialSites} onClose={() => { setCollectionInitialSites(null); void loadShares(); }} />}
+      {showCollectionLibrary && <HostedCollectionLibrary onClose={() => { setShowCollectionLibrary(false); void loadShares(); }} />}
 
       {/* Share Dialog（高级设置 + 拖拽快速分享等非下拉路径） */}
       {showShareDialog && (
@@ -3151,8 +3172,8 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
             {site.title}
           </span>
           <SiteNewBadge activity={activity} />
-          {relatedSummary && relatedSummary.count > 0 && <RelatedDocumentsBar siteId={site.id} variant="badge" summary={relatedSummary}
-            onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />}
+          <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionNavigation variant="badge" summary={relatedSummary}
+            onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
           {site.sourceType !== 'upload' && (
             <Badge className="hidden shrink-0 whitespace-nowrap @[768px]:inline-flex" variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
               {siteSourceLabel(site.sourceType)}

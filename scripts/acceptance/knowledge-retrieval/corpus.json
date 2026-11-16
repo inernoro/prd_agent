@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "description": "固定合成评测语料；仅在隔离临时知识库导入，不含真实生产数据。",
+  "documents": [
+    {
+      "entryId": "travel-policy",
+      "storeId": "evaluation-store",
+      "ownerId": "evaluation-user",
+      "isPublic": false,
+      "title": "差旅报销规定",
+      "summary": "差旅费用与审批",
+      "content": "员工出差住宿每晚报销上限为六百元。差旅申请须在出发前三个工作日提交直属经理审批。交通票据应在返程后十个工作日内报销。",
+      "contentIndex": "员工出差住宿每晚报销上限为六百元。差旅申请须在出发前三个工作日提交直属经理审批。交通票据应在返程后十个工作日内报销。",
+      "updatedAt": "2026-10-01T00:00:00Z"
+    },
+    {
+      "entryId": "invoice-policy",
+      "storeId": "evaluation-store",
+      "ownerId": "evaluation-user",
+      "isPublic": false,
+      "title": "报销票据要求",
+      "summary": "财务收单规则",
+      "content": "报销必须提供抬头为星河科技有限公司的增值税发票。电子发票可直接上传，无需打印。财务每周四统一付款。",
+      "contentIndex": "报销必须提供抬头为星河科技有限公司的增值税发票。电子发票可直接上传，无需打印。财务每周四统一付款。",
+      "updatedAt": "2026-10-02T00:00:00Z"
+    },
+    {
+      "entryId": "leave-policy",
+      "storeId": "evaluation-store",
+      "ownerId": "evaluation-user",
+      "isPublic": false,
+      "title": "年假申请流程",
+      "summary": "员工休假管理",
+      "content": "员工年假申请应提前五个工作日提交。连续休假超过五天需部门负责人批准。未休年假在次年三月底失效。",
+      "contentIndex": "员工年假申请应提前五个工作日提交。连续休假超过五天需部门负责人批准。未休年假在次年三月底失效。",
+      "updatedAt": "2026-10-03T00:00:00Z"
+    },
+    {
+      "entryId": "remote-policy",
+      "storeId": "evaluation-store",
+      "ownerId": "evaluation-user",
+      "isPublic": false,
+      "title": "远程办公约定",
+      "summary": "居家办公安排",
+      "content": "员工每周最多远程办公两天，需直属经理批准。涉及客户个人信息的工作只能在公司受控终端上进行。",
+      "contentIndex": "员工每周最多远程办公两天，需直属经理批准。涉及客户个人信息的工作只能在公司受控终端上进行。",
+      "updatedAt": "2026-10-04T00:00:00Z"
+    },
+    {
+      "entryId": "release-policy",
+      "storeId": "evaluation-store",
+      "ownerId": "evaluation-user",
+      "isPublic": false,
+      "title": "软件发布流程",
+      "summary": "上线审批门禁",
+      "content": "正式上线须先通过自动化回归，再由值班负责人审批。上线窗口为每周二和周四晚上九点。生产回滚由值班负责人执行。",
+      "contentIndex": "正式上线须先通过自动化回归，再由值班负责人审批。上线窗口为每周二和周四晚上九点。生产回滚由值班负责人执行。",
+      "updatedAt": "2026-10-05T00:00:00Z"
+    },
+    {
+      "entryId": "incident-policy",
+      "storeId": "evaluation-store",
+      "ownerId": "evaluation-user",
+      "isPublic": false,
+      "title": "故障响应办法",
+      "summary": "线上事故处理",
+      "content": "一级故障应在发现后十分钟内通知值班负责人。故障恢复后两个工作日内完成复盘。故障期间暂停非紧急发布。",
+      "contentIndex": "一级故障应在发现后十分钟内通知值班负责人。故障恢复后两个工作日内完成复盘。故障期间暂停非紧急发布。",
+      "updatedAt": "2026-10-06T00:00:00Z"
+    },
+    {
+      "entryId": "data-policy",
+      "storeId": "evaluation-store",
+      "ownerId": "evaluation-user",
+      "isPublic": false,
+      "title": "客户数据保护",
+      "summary": "隐私与导出规则",
+      "content": "客户个人信息只允许项目正式成员访问。数据导出必须通过安全负责人审批。临时访问权限二十四小时后自动失效。",
+      "contentIndex": "客户个人信息只允许项目正式成员访问。数据导出必须通过安全负责人审批。临时访问权限二十四小时后自动失效。",
+      "updatedAt": "2026-10-07T00:00:00Z"
+    },
+    {
+      "entryId": "account-policy",
+      "storeId": "evaluation-store",
+      "ownerId": "evaluation-user",
+      "isPublic": false,
+      "title": "离职账号处理",
+      "summary": "身份权限回收",
+      "content": "离职人员账号须在最后工作日下午六点前停用。直属经理负责移交文件，IT负责撤销登录权限。共享密钥须在离职当天轮换。",
+      "contentIndex": "离职人员账号须在最后工作日下午六点前停用。直属经理负责移交文件，IT负责撤销登录权限。共享密钥须在离职当天轮换。",
+      "updatedAt": "2026-10-08T00:00:00Z"
+    },
+    {
+      "entryId": "onboarding-policy",
+      "storeId": "evaluation-store",
+      "ownerId": "evaluation-user",
+      "isPublic": false,
+      "title": "新员工入职安排",
+      "summary": "到岗培训",
+      "content": "新员工到岗首日领取电脑并完成账号激活。信息安全培训须在到岗七天内完成。试用期导师由部门负责人指定。",
+      "contentIndex": "新员工到岗首日领取电脑并完成账号激活。信息安全培训须在到岗七天内完成。试用期导师由部门负责人指定。",
+      "updatedAt": "2026-10-09T00:00:00Z"
+    },
+    {
+      "entryId": "support-policy",
+      "storeId": "evaluation-store",
+      "ownerId": "evaluation-user",
+      "isPublic": false,
+      "title": "客户支持响应",
+      "summary": "服务时间约定",
+      "content": "客户支持时间为工作日早上九点至晚上六点。紧急生产问题全天候受理，使用值班电话联系。普通咨询首响时限为四个工作小时。",
+      "contentIndex": "客户支持时间为工作日早上九点至晚上六点。紧急生产问题全天候受理，使用值班电话联系。普通咨询首响时限为四个工作小时。",
+      "updatedAt": "2026-10-10T00:00:00Z"
+    },
+    {
+      "entryId": "private-payroll",
+      "storeId": "restricted-store",
+      "ownerId": "other-user",
+      "isPublic": false,
+      "title": "董事薪酬方案",
+      "summary": "仅财务库主可读",
+      "content": "董事会批准的特别津贴为每月三万二千元，内部代号为苍鹭计划。",
+      "contentIndex": "董事会批准的特别津贴为每月三万二千元，内部代号为苍鹭计划。",
+      "updatedAt": "2026-10-11T00:00:00Z"
+    },
+    {
+      "entryId": "private-acquisition",
+      "storeId": "restricted-store",
+      "ownerId": "other-user",
+      "isPublic": false,
+      "title": "未公开并购计划",
+      "summary": "仅战略库主可读",
+      "content": "项目银杉的拟收购对象为晴川数据，报价为两千七百万元。",
+      "contentIndex": "项目银杉的拟收购对象为晴川数据，报价为两千七百万元。",
+      "updatedAt": "2026-10-12T00:00:00Z"
+    }
+  ]
+}

@@ -40,6 +40,7 @@ export interface ModelLeaderboardEntry {
   praiseVsComplaint: ModelMetric | null;
   steerability: ModelMetric | null;
   bashRecovery: ModelMetric | null;
+  bashReliability?: ModelMetric | null;
   /** 工具幻觉——这项越低越好 */
   toolHallucination: ModelMetric | null;
 
@@ -84,8 +85,10 @@ export interface ModelLeaderboardSnapshot {
   /** false = 后台首次同步还没跑完，前端给「正在准备」而不是画空表。 */
   ready: boolean;
   fetchedAt?: string;
+  publishedAt?: string | null;
   sourceUrl?: string;
-  /** 超过两天没同步成功。前端把实时点变灰并标出数据日期，不装作是新的。 */
+  bashMetricLabel?: string;
+  /** 数据日期超过两天。前端把实时点变灰并标出日期。 */
   stale?: boolean;
   /**
    * 表格形状：agent = 六指标那套，score = 对战分那套。

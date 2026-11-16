@@ -162,6 +162,7 @@ builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundWebS
     PrdAgent.Infrastructure.Services.SafeOutboundWebSocketConnector>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.AdminPushDispatchSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminPushNotificationService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IAdminNotificationAudience, PrdAgent.Api.Services.AdminNotificationAudience>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>();
 // 首页槽位认领时把外部图片复制进我们自己的存储（供应商的临时/签名地址不能原样挂上首页）
 builder.Services.AddScoped<PrdAgent.Api.Services.HomepageAssetCopier>();
@@ -324,6 +325,7 @@ builder.Services.AddSingleton(
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteOptimizationService, PrdAgent.Infrastructure.Services.HostedSiteOptimizationService>();
 // 文本向量化：走网关的 embedding 通路（换供应商 = 加一行平台配置，不动代码）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.Infrastructure.Services.EmbeddingService>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.KnowledgeRetrievalService>();
 
 // 网页托管「向我提问」：站点正文快照（喂给模型的上下文）+ 配额闸（保护 owner 的 token 预算）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteContentSnapshotService, PrdAgent.Infrastructure.Services.SiteContentSnapshotService>();
@@ -552,8 +554,11 @@ builder.Services.AddHttpClient("McpLoopback", c =>
         RemoteCertificateValidationCallback = (_, _, _, _) => true,
     },
 });
+builder.Services.AddScoped<PrdAgent.Api.Services.KnowledgeIndexRefreshQueue>();
+builder.Services.AddScoped<PrdAgent.Api.Services.KnowledgeIndexRefreshProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.WritingDocumentProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AutoLinkProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EntryContentWriteService>();
@@ -1859,7 +1864,7 @@ static async Task<IResult> DeepHealth(
         // 自检要判的是**页面上实际显示的那份**陈不陈旧，不是库里所有部署的文档。
         var snapshots = await db.ModelLeaderboardSnapshots
             .Find(PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope.VisibleFilter())
-            .Project(x => new { x.Board, x.FetchedAt, x.DeploymentSlug })
+            .Project(x => new { x.Board, x.FetchedAt, x.PublishedAt, x.DeploymentSlug })
             .ToListAsync(cancellationToken);
 
         var storedBoards = snapshots
@@ -1899,13 +1904,13 @@ static async Task<IResult> DeepHealth(
                 .Select(g => PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope.PickVisible(
                     g.ToList(), x => x.DeploymentSlug, x => x.FetchedAt))
                 .Where(x => x is not null)
-                .OrderBy(x => x!.FetchedAt)
+                .OrderBy(x => x!.PublishedAt ?? x.FetchedAt)
                 .First()!;
-            leaderboardStaleHours = Math.Round((now - oldest.FetchedAt).TotalHours, 1);
+            leaderboardStaleHours = Math.Round((now - (oldest.PublishedAt ?? oldest.FetchedAt)).TotalHours, 1);
             leaderboardOutput = leaderboardStaleHours <= 48
                 ? $"{storedBoards.Count} 个榜都有快照，最旧的一份是 {leaderboardStaleHours} 小时前的（{oldest.Board}）"
-                : $"最旧的榜单快照已经 {leaderboardStaleHours} 小时没更新（{oldest.Board}）——"
-                  + "同步大概率连着失败了，去看容器日志里 ModelLeaderboardSync 的告警";
+                : $"最旧榜单的数据日期距今已 {leaderboardStaleHours} 小时（{oldest.Board}）——"
+                  + "请核对官方发布日期和 ModelLeaderboardSync 同步日志";
         }
     }
     catch (Exception ex)

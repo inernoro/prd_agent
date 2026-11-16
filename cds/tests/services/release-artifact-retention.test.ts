@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import {
   buildReleaseInventoryCommand,
@@ -265,9 +269,30 @@ describe('远端命令', () => {
     expect(command.trimEnd().endsWith('exit 0')).toBe(true);
   });
 
+  it('实际提交只读当前远端worktree，缺少current时不借祖先仓库HEAD冒充', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-release-observed-'));
+    try {
+      const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+      git('init'); git('config', 'user.email', 'release@example.test'); git('config', 'user.name', 'release test');
+      fs.writeFileSync(path.join(root, 'version'), 'original'); git('add', 'version'); git('commit', '-m', 'original');
+      const original = git('rev-parse', 'HEAD');
+      fs.writeFileSync(path.join(root, 'version'), 'advanced'); git('add', 'version'); git('commit', '-m', 'advanced');
+      const app = path.join(root, 'app'); fs.mkdirSync(app);
+      const releaseRoot = path.join(root, '.cds-releases', target.id);
+      const worktrees = path.join(releaseRoot, 'worktrees'); fs.mkdirSync(worktrees, { recursive: true });
+      const actualTarget = { ...target, ssh: { ...target.ssh!, appPath: app } };
+      const read = () => parseRemoteReleaseInventory(execFileSync('bash', ['-c', buildReleaseInventoryCommand(actualTarget, composeStrategy)!], { encoding: 'utf8' }));
+      expect(read().currentCommitSha).toBeUndefined();
+      const worktree = path.join(worktrees, RUN_A); git('worktree', 'add', '--detach', worktree, original);
+      fs.symlinkSync(worktree, path.join(releaseRoot, 'current'));
+      expect(read().currentCommitSha).toBe(original);
+      expect(original).not.toBe(git('rev-parse', 'HEAD'));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('static 盘点额外取回成品目录，compose 不取', () => {
-    expect(buildReleaseInventoryCommand(target, staticStrategy)!).toContain('CDS_RELEASE_VERSION=');
-    expect(buildReleaseInventoryCommand(target, composeStrategy)!).not.toContain('CDS_RELEASE_VERSION=');
+    expect(buildReleaseInventoryCommand(target, staticStrategy)!).toContain('"$root/.releases"');
+    expect(buildReleaseInventoryCommand(target, composeStrategy)!).not.toContain('"$root/.releases"');
   });
 
   it('existing-script 模式不生成任何命令', () => {
@@ -287,8 +312,10 @@ describe('远端命令', () => {
 
     // 事故值：裸 rm -rf 会在 .git/worktrees/ 留孤儿元数据，之后 git worktree add 会因
     // 「已注册但目录不存在」直接失败。
-    expect(command).toContain('git -C "$repo" worktree remove --force');
-    expect(command).toContain('git -C "$repo" worktree prune');
+    expect(command).toContain("'worktree','remove'");
+    expect(command).not.toContain('worktree remove --force');
+    expect(command).not.toContain('|| rm -rf');
+    expect(command).not.toContain('worktree prune');
   });
 
   it('删除命令拒绝形状不合法的名字，且不会有未加引号的注入面', () => {
@@ -297,7 +324,7 @@ describe('远端命令', () => {
       removeVersions: [],
     })!;
 
-    expect(command).toContain(`'${RUN_A}'`);
+    expect(command).toContain('CDS_SAFE_RECLAIM_PY');
     expect(command).not.toContain('rm -rf /)');
     expect(command).not.toContain('../../etc');
   });

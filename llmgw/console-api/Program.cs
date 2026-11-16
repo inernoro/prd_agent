@@ -1,3 +1,4 @@
+using PrdAgent.LlmGw.Logs;
 using PrdAgent.LlmGw.ModelUpgrades;
 using PrdAgent.LlmGw.ModelReferences;
 // AI 大模型网关 —— 独立观测/登录后端（与 MAP 物理隔离）。
@@ -452,6 +453,10 @@ await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
         .Ascending("TenantId")
         .Ascending("ProviderTaskId"),
     new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_provider_task" }));
+foreach (var field in new[] { "RequestId", "RunId", "LogicalRequestId", "ProviderRequestId", "ProviderTaskId",
+    "ProviderAttempts.AttemptId", "ProviderAttempts.ProviderRequestId", "ProviderAttempts.ProviderTaskId" })
+    await IndexAdvisory.ReportIfMissingAsync(logs, "idx_llmgw_trace_" + field,
+        "历史调用链查找可能扫描日志集合，需 DBA 执行 scripts/mongodb-indexes.js 的网关索引段");
 await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
 {
     new CreateIndexModel<BsonDocument>(
@@ -2739,6 +2744,8 @@ app.MapPost("/gw/members/{id}/invalidate-sessions", async (HttpContext http, str
 // ───────────────────────────── 日志列表（需鉴权）─────────────────────────────
 app.MapGatewayConsumptionAlerts(gatewayDatabase, jsonOptions);
 
+app.MapLogTraceEndpoints(logs, mapDatabase, MapListItem, MapProviderAttempts, jsonOptions, internalTenantId);
+
 app.MapGet("/gw/logs", async (
     HttpContext http,
     int? page, int? pageSize, string? from, string? to, string? model, string? status,
@@ -3516,7 +3523,9 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
             .Include("AllowedModelPoolIds")
             .Include("DefaultModelPoolId"))
         .ToListAsync();
-    var logFilter = Builders<BsonDocument>.Filter.Gte("StartedAt", since);
+    var logFilter = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Not(LogTraceQuery.LegacySummary),
+        Builders<BsonDocument>.Filter.Gte("StartedAt", since));
     var logStatsDocs = await logs.Aggregate()
         .Match(TenantAccess.FilterTeamScope(http, logFilter))
         .Group(new BsonDocument
@@ -8467,6 +8476,8 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         ? TenantAccess.Filter(http)
         : TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("ReleaseCommit", runtimeCommit),
+            Builders<BsonDocument>.Filter.Not(LogTraceQuery.LegacySummary),
+            Builders<BsonDocument>.Filter.Ne("IngressProtocol", BsonNull.Value),
             Builders<BsonDocument>.Filter.Ne("IsHealthProbe", true)));
     var releaseLogTotal = runtimeCommit is null ? 0 : await logs.CountDocumentsAsync(logReleaseFilter);
     var httpTransportLogs = runtimeCommit is null
@@ -12724,6 +12735,7 @@ app.MapGet("/gw/cost-reconciliations", async (HttpContext http, string? from, st
         .Sort(new BsonDocument("Count", -1))
         .ToListAsync();
     var logFilter = TenantAccess.FilterTeamScope(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Not(LogTraceQuery.LegacySummary),
         Builders<BsonDocument>.Filter.Gte("StartedAt", range.From),
         Builders<BsonDocument>.Filter.Lt("StartedAt", range.To),
         Builders<BsonDocument>.Filter.Or(
@@ -13048,10 +13060,10 @@ var upstreamProbeHttp = new HttpClient(new SocketsHttpHandler
 ///
 /// 内部租户不受此限：本地上游预设（Ollama / vLLM）本来就要指向内网，
 /// 这条豁免与 Exchange 侧的既有策略同源，不是本次新开的口子。
-async Task<string?> ValidateProviderProbeTargetAsync(HttpContext http, string apiUrl, CancellationToken ct)
+async Task<string?> ValidateProviderProbeTargetAsync(HttpContext http, string apiUrl, ResolvedUpstreamProxy? proxy, CancellationToken ct)
 {
     if (TenantAccess.GetRequired(http).TenantId == internalTenantId) return null;
-    return await ValidateExternalExchangeTargetAsync(apiUrl, "openai", ct);
+    return await ValidateExternalExchangeTargetAsync(apiUrl, "openai", ct, proxy);
 }
 
 // 一次导入的模型数上限。聚合型上游（OpenRouter）能列出几百个模型，全勾下来会把
@@ -13106,7 +13118,14 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
             Message = "这个 Provider 没有配 API 地址", NextStep = "在高级选项里补上 API 地址后再测",
         }), jsonOptions);
 
-    var probeTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, http.RequestAborted);
+    var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, doc);
+    if (proxyError is not null)
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ProbedUrl = probeUrl, ElapsedMs = 0, FailureKind = "INVALID_PROXY",
+            Message = proxyError, NextStep = "检查代理配置；密码无法读取时重新填写后保存",
+        }), jsonOptions);
+    var probeTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, effectiveProxy, http.RequestAborted);
     if (probeTargetError is not null)
         return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
         {
@@ -13156,7 +13175,7 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
         // 上游先回头、再把 body 挂住慢慢流，下面这个读就没人管了，
         // 「保存后自动测一次」会挂死并占住一个控制台请求。
         using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        using var proxyClient = await upstreamProxies.CreateClientAsync(http, doc);
+        using var proxyClient = upstreamProxies.CreateClient(http, effectiveProxy);
         using var resp = await (proxyClient ?? upstreamProbeHttp).SendAsync(req, HttpCompletionOption.ResponseHeadersRead, probeCts.Token);
         sw.Stop();
         var status = (int)resp.StatusCode;
@@ -13257,7 +13276,10 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
             "Claude 原生协议没有模型列表接口，请手动添加模型"), jsonOptions, 400);
 
     // 与「测试连接」同一道门：这条也会拿着用户填的地址向外发请求，不补上就等于留了个后门
-    var discoveryTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, http.RequestAborted);
+    var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, doc);
+    if (proxyError is not null)
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("INVALID_PROXY", proxyError), jsonOptions, 400);
+    var discoveryTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, effectiveProxy, http.RequestAborted);
     if (discoveryTargetError is not null)
         return Json(ApiEnvelope<UpstreamModelsData>.Fail("UNSAFE_TARGET_URL", discoveryTargetError), jsonOptions, 400);
 
@@ -13277,7 +13299,7 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         // 与「测试连接」同款：外部租户强制内网校验，整条请求（含读 body）共用一个 15 秒预算
         req.Options.Set(blockPrivateProbeTargets, TenantAccess.GetRequired(http).TenantId != internalTenantId);
         using var discoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        using var proxyClient = await upstreamProxies.CreateClientAsync(http, doc);
+        using var proxyClient = upstreamProxies.CreateClient(http, effectiveProxy);
         using var resp = await (proxyClient ?? upstreamProbeHttp).SendAsync(req, HttpCompletionOption.ResponseHeadersRead, discoveryCts.Token);
         if (!resp.IsSuccessStatusCode)
             return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_" + (int)resp.StatusCode,
@@ -15265,9 +15287,20 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
         return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
+    BsonDocument? proxyDocument = null;
+    if (body?.Proxy is { } proxyInput)
+    {
+        try { proxyDocument = await upstreamProxies.BuildAsync(http, proxyInput); }
+        catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    }
     if (tenantId != internalTenantId)
     {
-        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted);
+        var pendingUpstream = new BsonDocument();
+        if (proxyDocument is not null) pendingUpstream[UpstreamProxy.Field] = proxyDocument;
+        var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, pendingUpstream);
+        if (proxyError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", proxyError), jsonOptions, 400);
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted, effectiveProxy);
         if (targetError is not null)
             return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
     }
@@ -15294,11 +15327,7 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
     var now = DateTime.UtcNow;
     var document = GatewayConfigurationProvisioning.BuildExchangeDocument(
         draft, tenantId, id, encryptedApiKey, now, TenantAccess.GetRequired(http).Username);
-    if (body?.Proxy is { } proxyInput)
-    {
-        try { document[UpstreamProxy.Field] = await upstreamProxies.BuildAsync(http, proxyInput); }
-        catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
-    }
+    if (proxyDocument is not null) document[UpstreamProxy.Field] = proxyDocument;
     string requiredAuditId;
     try
     {
@@ -15494,17 +15523,27 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
 
     var fb = Builders<BsonDocument>.Filter;
     var tenantId = TenantAccess.GetRequired(http).TenantId;
-    if (tenantId != internalTenantId)
-    {
-        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted);
-        if (targetError is not null)
-            return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
-    }
     var tenantFilter = TenantAccess.Filter(http, fb.Eq("_id", id));
     var document = await gwModelExchanges.Find(tenantFilter).FirstOrDefaultAsync();
     if (document is null)
         return Json(ApiEnvelope<ExchangeItem>.Fail("NOT_FOUND", "Exchange 不存在或不属于当前租户"), jsonOptions, 404);
-
+    BsonDocument? proxyDocument = null;
+    if (body?.Proxy is { } proxyInput)
+    {
+        try { proxyDocument = await upstreamProxies.BuildAsync(http, proxyInput, UpstreamProxy.Read(document)); }
+        catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    }
+    if (tenantId != internalTenantId)
+    {
+        var pendingUpstream = document.DeepClone().AsBsonDocument;
+        if (proxyDocument is not null) pendingUpstream[UpstreamProxy.Field] = proxyDocument;
+        var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, pendingUpstream);
+        if (proxyError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", proxyError), jsonOptions, 400);
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted, effectiveProxy);
+        if (targetError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
+    }
     var currentVersion = document.AsNullableLong("Version") ?? 0;
     if (draft.Version != currentVersion)
         return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_CONCURRENTLY_MODIFIED", "Exchange 已被其他操作修改，请刷新后重试"), jsonOptions, 409);
@@ -15524,12 +15563,8 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
     var nextVersion = currentVersion + 1;
     var update = GatewayConfigurationProvisioning.BuildExchangeUpdate(
         draft, document, TenantAccess.GetRequired(http).Username, DateTime.UtcNow, nextVersion);
-    if (body?.Proxy is { } proxyInput)
-    {
-        try { update = Builders<BsonDocument>.Update.Combine(update, Builders<BsonDocument>.Update.Set(UpstreamProxy.Field,
-            await upstreamProxies.BuildAsync(http, proxyInput, UpstreamProxy.Read(document)))); }
-        catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
-    }
+    if (proxyDocument is not null)
+        update = Builders<BsonDocument>.Update.Combine(update, Builders<BsonDocument>.Update.Set(UpstreamProxy.Field, proxyDocument));
     string requiredAuditId;
     try
     {
@@ -16614,11 +16649,13 @@ static async Task<string> ReadUpstreamBodyAsync(HttpResponseMessage resp, int ma
     return System.Text.Encoding.UTF8.GetString(ms.ToArray());
 }
 
-static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, string transformerType, CancellationToken ct)
+static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, string transformerType, CancellationToken ct, ResolvedUpstreamProxy? proxy = null)
 {
     var transportError = GatewayConfigurationProvisioning.ValidateExternalExchangeTransport(targetUrl, transformerType);
     if (transportError is not null)
         return transportError;
+    if (proxy?.Mode == "custom")
+        return UpstreamProxy.ValidateProxyTarget(targetUrl);
 
     if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri)
         || uri.Scheme is not ("http" or "https" or "wss"))
@@ -16907,6 +16944,7 @@ static FilterDefinition<BsonDocument> BuildFilter(
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
     {
+        fb.Not(LogTraceQuery.LegacySummary),
         fb.Gte("StartedAt", fromUtc),
         fb.Lt("StartedAt", toUtc),
     };
@@ -16951,9 +16989,9 @@ static FilterDefinition<BsonDocument> BuildBusinessOperationFilter()
         fb.Or(
             fb.Ne("RequestType", "video-gen"),
             fb.Nin("HttpMethod", new[] { "GET", "DELETE" })));
-    return fb.Or(
+    return fb.And(fb.Not(LogTraceQuery.LegacySummary), fb.Or(
         fb.In("Operation", new[] { "invoke", "submit" }),
-        legacyBusiness);
+        legacyBusiness));
 }
 
 static FilterDefinition<BsonDocument> BuildOperationFilter(string operation)
@@ -17524,6 +17562,13 @@ static List<ProviderAttemptDto> MapProviderAttempts(BsonDocument d)
             var doc = x.AsBsonDocument;
             return new ProviderAttemptDto
             {
+                AttemptId = doc.AsNullableString("AttemptId"),
+                ProviderRequestId = doc.AsNullableString("ProviderRequestId"),
+                ProviderTaskId = doc.AsNullableString("ProviderTaskId"),
+                InputTokens = doc.AsNullableInt("InputTokens"),
+                OutputTokens = doc.AsNullableInt("OutputTokens"),
+                ProviderReportedCost = doc.AsNullableDecimal("ProviderReportedCost"),
+                ProviderCostCurrency = doc.AsNullableString("ProviderCostCurrency"),
                 Order = doc.AsNullableInt("Order") ?? 0,
                 Stage = doc.AsNullableString("Stage") ?? "send",
                 Provider = doc.AsNullableString("Provider"),
@@ -17555,36 +17600,7 @@ static List<ProviderAttemptDto> MapProviderAttempts(BsonDocument d)
 }
 
 static List<ProviderAttemptDto> BuildFallbackProviderAttempts(BsonDocument d)
-{
-    var model = d.AsNullableString("Model");
-    var provider = d.AsNullableString("Provider");
-    if (string.IsNullOrWhiteSpace(model) && string.IsNullOrWhiteSpace(provider))
-        return new List<ProviderAttemptDto>();
-
-    return new List<ProviderAttemptDto>
-    {
-        new()
-        {
-            Order = 1,
-            Stage = "send",
-            Provider = provider,
-            PlatformId = d.AsNullableString("PlatformId"),
-            PlatformName = d.AsNullableString("PlatformName"),
-            Model = model,
-            ModelGroupId = d.AsNullableString("ModelGroupId") ?? d.AsNullableString("GroupId"),
-            ModelGroupName = d.AsNullableString("ModelGroupName"),
-            Protocol = d.AsNullableString("Protocol"),
-            Transport = d.AsNullableString("GatewayTransport"),
-            ReachedProvider = true,
-            Status = d.AsNullableString("Status") == "failed" ? "failed" : "sent",
-            Reason = d.AsNullableString("FallbackReason") ?? d.AsNullableString("ResolutionReason"),
-            StatusCode = d.AsNullableInt("StatusCode"),
-            DurationMs = d.AsNullableLong("DurationMs"),
-            Error = d.AsNullableString("Error"),
-            EndedAt = d.AsNullableUtcDateTime("EndedAt").ToIso(),
-        }
-    };
-}
+    => new();
 
 static string? NormalizeResolutionMode(string? raw, string? reason)
 {

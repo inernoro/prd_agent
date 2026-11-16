@@ -43,6 +43,7 @@ interface VideoProjectStudioProps {
   onSave: (input: VideoProjectInput) => Promise<VideoProject | null>;
   onAnalyze: (input: VideoProjectInput) => Promise<void>;
   onCreateDirect: (input: VideoProjectInput) => Promise<void>;
+  onImportClips?: (input: VideoProjectInput, files: File[]) => Promise<void>;
   onOpenRun: (runId: string) => void;
   onOpenDemo: () => void;
 }
@@ -121,6 +122,27 @@ export const resolveVideoAudioSetting = (
   selectedModel?: Pick<VideoModelOption, 'supportsAudio'>,
 ) => requested && selectedModel?.supportsAudio === true;
 
+export const resolveAvailableVideoModel = (currentModel: string, models: VideoModelOption[]) =>
+  currentModel && models.some(item => item.id === currentModel)
+    ? currentModel
+    : models.find(item => item.healthStatus !== 'Unavailable')?.id ?? '';
+
+export const resolveVideoProjectSettings = (project: VideoProject | null, models: VideoModelOption[]) => {
+  const model = resolveAvailableVideoModel(project?.defaultVideoModel ?? '', models);
+  const option = models.find(item => item.id === model);
+  const aspectRatio = project?.defaultAspectRatio ?? '16:9';
+  const resolution = project?.defaultResolution ?? '1080p';
+  const duration = project?.defaultDuration ?? 5;
+  const generateAudio = project?.generateAudio ?? true;
+  return {
+    model,
+    aspectRatio: option?.aspectRatios.includes(aspectRatio) ? aspectRatio : option?.aspectRatios[0] ?? aspectRatio,
+    resolution: option?.resolutions.includes(resolution) ? resolution : option?.resolutions[0] ?? resolution,
+    duration: option?.durations.includes(duration) ? duration : option?.durations[0] ?? duration,
+    generateAudio: option ? resolveVideoAudioSetting(generateAudio, option) : generateAudio,
+  };
+};
+
 export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   projects,
   project,
@@ -132,6 +154,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   onSave,
   onAnalyze,
   onCreateDirect,
+  onImportClips,
   onOpenRun,
   onOpenDemo,
 }) => {
@@ -139,7 +162,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const [title, setTitle] = useState('');
   const [sourceMarkdown, setSourceMarkdown] = useState('');
   const [styleDescription, setStyleDescription] = useState('智能匹配');
-  const [model, setModel] = useState(() => models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '');
+  const [model, setModel] = useState(() => resolveAvailableVideoModel(project?.defaultVideoModel ?? '', models));
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [resolution, setResolution] = useState('1080p');
   const [duration, setDuration] = useState(5);
@@ -154,30 +177,41 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const [assetDescription, setAssetDescription] = useState('');
   const [activeSection, setActiveSection] = useState<'create' | 'works'>('create');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLElement>(null);
   const recentWorkRef = useRef<HTMLElement>(null);
   const selectedModel = models.find((item) => item.id === model);
   const effectiveGenerateAudio = resolveVideoAudioSetting(generateAudio, selectedModel);
+  const hydratedProjectRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
+    const projectId = project?.id ?? null;
+    if (hydratedProjectRef.current === projectId) {
+      // 目录/同项目回读只校正模型能力，不能重置用户尚未保存的文稿和参考素材。
+      const nextModel = resolveAvailableVideoModel(model || project?.defaultVideoModel || '', models);
+      const option = models.find(item => item.id === nextModel);
+      setModel(nextModel);
+      if (option) {
+        setAspectRatio(current => option.aspectRatios.includes(current) ? current : option.aspectRatios[0] ?? current);
+        setResolution(current => option.resolutions.includes(current) ? current : option.resolutions[0] ?? current);
+        setDuration(current => option.durations.includes(current) ? current : option.durations[0] ?? current);
+        if (!option.supportsAudio) setGenerateAudio(false);
+      }
+      return;
+    }
+    hydratedProjectRef.current = projectId;
+    const settings = resolveVideoProjectSettings(project, models);
     setTitle(project?.title === '未命名视频' ? '' : project?.title ?? '');
     setSourceMarkdown(project?.sourceMarkdown ?? '');
     setStyleDescription(project?.styleDescription ?? '智能匹配');
-    const savedModel = project?.defaultVideoModel;
-    const nextModel = savedModel && models.some((item) => item.id === savedModel)
-      ? savedModel
-      : models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '';
-    setModel(nextModel);
-    setAspectRatio(project?.defaultAspectRatio ?? '16:9');
-    setResolution(project?.defaultResolution ?? '1080p');
-    setDuration(project?.defaultDuration ?? 5);
-    setGenerateAudio(resolveVideoAudioSetting(
-      project?.generateAudio ?? true,
-      models.find((item) => item.id === nextModel),
-    ));
+    setModel(settings.model);
+    setAspectRatio(settings.aspectRatio);
+    setResolution(settings.resolution);
+    setDuration(settings.duration);
+    setGenerateAudio(settings.generateAudio);
     setAssets(project?.assets ?? []);
     setTimelineTracks(project?.timelineTracks?.length ? project.timelineTracks : createTimelineTracks());
-  }, [project, models]);
+  }, [project, models, model]);
 
   const input = useMemo<VideoProjectInput>(() => ({
     title: title.trim() || undefined,
@@ -236,7 +270,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
     setAssetDescription('');
   };
 
-  const coverForProject = (item: VideoProject) => item.assets.find((asset) => asset.type !== 'audio' && asset.url)?.url;
+  const coverForProject = (item: VideoProject) => item.assets?.find((asset) => asset.type !== 'audio' && asset.url)?.url;
   const submitCreation = () => creationMode === 'storyboard' ? onAnalyze(input) : onCreateDirect(input);
   const actionLabel = creationMode === 'storyboard' ? '生成故事分镜' : '生成这段视频';
 
@@ -269,6 +303,14 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
         <div className="video-create-nav-actions">
           <button className="video-create-text-button video-create-demo-button" onClick={onOpenDemo}><CirclePlay size={15} /> 体验 Demo</button>
           <button className="video-create-text-button" onClick={onNewProject}><Plus size={15} /> 新项目</button>
+          {onImportClips && <>
+            <input ref={videoInputRef} type="file" accept="video/mp4,video/webm,video/quicktime" multiple hidden aria-label="选择已有镜头素材" onChange={(event) => {
+              const files = Array.from(event.target.files ?? []);
+              event.target.value = '';
+              if (files.length) void onImportClips(input, files);
+            }} />
+            <button className="video-create-text-button" disabled={busy} onClick={() => videoInputRef.current?.click()}><Film size={15} /> 从已有视频开始</button>
+          </>}
           <button className="video-create-icon-button" onClick={() => void onSave(input)} disabled={busy} title="保存草稿"><Save size={16} /></button>
         </div>
       </header>
@@ -417,7 +459,10 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
           {recentWorkCount > 0 ? (
             <div className="video-create-project-grid">
               {projects.slice(0, 6).map((item) => (
-                <button key={item.id} className={item.id === project?.id ? 'is-active' : ''} onClick={() => onSelectProject(item)}>
+                <button key={item.id} className={item.id === project?.id ? 'is-active' : ''} onClick={() => {
+                  onSelectProject(item);
+                  if (item.latestRunId) onOpenRun(item.latestRunId);
+                }}>
                   <ProjectCover mediaUrl={coverForProject(item)} status={item.status} />
                   <span className="video-create-project-copy"><strong>{resolveVideoTitle(item.title, item.updatedAt, 28)}</strong><small>{new Date(item.updatedAt).toLocaleDateString('zh-CN')}</small></span>
                   <ArrowUpRight size={15} />

@@ -72,6 +72,73 @@ public class McpGatewayLogicTests
 
     // ── scope 满足（写隐含读，镜像 AdminPermissionMiddleware）──
 
+    [Theory]
+    [InlineData("map_web_list_pages")]
+    [InlineData("knowledge_base_list_stores")]
+    [InlineData("map_speech_list_runs")]
+    public async System.Threading.Tasks.Task ReadToolSchema_ExposesOriginalTaskIntent_WithoutChangingBusinessRequest(string name)
+    {
+        var tool = McpBuiltinTools.All.Single(x => x.Name == name);
+        var schema = McpGatewayController.BuiltinToolToJson(tool)["inputSchema"]!.AsObject();
+        var properties = schema["properties"]!.AsObject();
+        properties.ContainsKey("clientRequestId").ShouldBeTrue();
+        properties["clientRequestId"]!["type"]!.GetValue<string>().ShouldBe("string");
+        properties["clientRequestId"]!["maxLength"]!.GetValue<int>().ShouldBe(256);
+        var args = new JsonObject { ["clientRequestId"] = "original-read-operation" };
+        var expected = McpGatewayController.BuildBuiltinRequest(tool, new JsonObject());
+        var actual = McpGatewayController.BuildBuiltinRequest(tool, args);
+        actual.err.ShouldBeNull(); actual.path.ShouldBe(expected.path); actual.body.ShouldBeNull();
+        // 使用真实准入意图解析器，证明数字RPC id也能通过已存在的标识入口，不改原守卫。
+        var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        http.Request.Method = "POST"; http.Request.Path = "/api/mcp"; http.Request.ContentType = "application/json";
+        http.Request.Body = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(new JsonObject
+        { ["jsonrpc"] = "2.0", ["id"] = 42, ["method"] = "tools/call", ["params"] = new JsonObject { ["name"] = name, ["arguments"] = args.DeepClone() } }.ToJsonString()));
+        var intent = await PrdAgent.Api.Services.BackgroundTasks.TaskBusinessIntent.ResolveAsync(http,
+            "PrdAgent.Api.Controllers.McpGatewayController.Handle", PrdAgent.Core.LlmGateway.TaskExecutionOrigins.Agent, false, default);
+        intent.Key.ShouldBe("original-read-operation");
+    }
+
+    [Fact]
+    public void ReadToolIntentMetadata_DoesNotAdmitOtherUnknownArguments()
+    {
+        var tool = McpBuiltinTools.All.Single(x => x.Name == "map_speech_list_runs");
+        McpGatewayController.BuildBuiltinRequest(tool, new JsonObject { ["clientRequestId"] = "one-read", ["unsupported"] = true })
+            .err.ShouldNotBeNull();
+    }
+
+    [Theory]
+    [InlineData("map_speech_generate", false)]
+    [InlineData("map_literary_generate_image", true)]
+    public void DeclaredBusinessIntent_KeepsOriginalSchemaAndBody(string name, bool required)
+    {
+        var tool = McpBuiltinTools.All.Single(x => x.Name == name);
+        var parameter = tool.Params.Single(x => x.Name == "clientRequestId");
+        var schema = McpGatewayController.BuiltinToolToJson(tool)["inputSchema"]!;
+        schema["properties"]!["clientRequestId"]!["description"]!.GetValue<string>().ShouldBe(parameter.Description);
+        (schema["required"]?.AsArray().Any(x => x!.GetValue<string>() == "clientRequestId") ?? false).ShouldBe(required);
+        var args = name == "map_speech_generate"
+            ? new JsonObject { ["text"] = "仅构造请求，不发送" }
+            : new JsonObject { ["workspaceId"] = "owned-workspace", ["workflowVersion"] = 1 };
+        args["clientRequestId"] = "existing-business-intent";
+        var request = McpGatewayController.BuildBuiltinRequest(tool, args);
+        request.err.ShouldBeNull();
+        request.body!["clientRequestId"]!.GetValue<string>().ShouldBe("existing-business-intent");
+    }
+
+    [Fact]
+    public async Task NumericRpcId_StillRequiresExplicitIntent()
+    {
+        var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        http.Request.Method = "POST";
+        http.Request.ContentType = "application/json";
+        http.Request.Body = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(
+            """{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"map_web_list_pages","arguments":{}}}"""));
+        var error = await Assert.ThrowsAsync<PrdAgent.Core.Security.TaskExecutionAdmissionException>(() =>
+            PrdAgent.Api.Services.BackgroundTasks.TaskBusinessIntent.ResolveAsync(http,
+                "PrdAgent.Api.Controllers.McpGatewayController.Handle", PrdAgent.Core.LlmGateway.TaskExecutionOrigins.Agent, false, default));
+        error.Code.ShouldBe("TASK_INTENT_REQUIRED");
+    }
+
     [Fact]
     public void ScopeSatisfies_ExactMatch_True()
     {

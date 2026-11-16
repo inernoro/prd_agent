@@ -1,4 +1,5 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import {
   Plus, Calendar, FileText,
@@ -70,6 +71,14 @@ const STATUS_LABELS: Record<string, { label: string; icon: React.ElementType }> 
 // ────── component ──────
 
 export function ReportMainView() {
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const notificationId = location.state?.notificationId;
+  const appliedWeek = useRef<{ week: string; key: string } | null>(null);
+  const requestedYear = Number(searchParams.get('weekYear'));
+  const requestedWeek = Number(searchParams.get('weekNumber'));
+  const hasRequestedWeek = Number.isInteger(requestedYear) && requestedYear >= 1 && requestedYear <= 9999
+    && Number.isInteger(requestedWeek) && requestedWeek >= 1 && requestedWeek <= 53;
   const {
     reports, teams, templates,
     showReportEditor, setShowReportEditor,
@@ -83,9 +92,18 @@ export function ReportMainView() {
 
   const now = useMemo(() => getISOWeek(new Date()), []);
   const prevWeek = useMemo(() => getPreviousWeek(now), [now]);
-  const [weekFilterMode, setWeekFilterMode] = useState<'all' | 'specific'>('all');
-  const [selectedWeekKey, setSelectedWeekKey] = useState(getWeekKey(now));
+  const [weekFilterMode, setWeekFilterMode] = useState<'all' | 'specific'>(hasRequestedWeek ? 'specific' : 'all');
+  const [selectedWeekKey, setSelectedWeekKey] = useState(getWeekKey(hasRequestedWeek ? { weekYear: requestedYear, weekNumber: requestedWeek } : now));
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!hasRequestedWeek) { appliedWeek.current = null; return; }
+    const week = getWeekKey({ weekYear: requestedYear, weekNumber: requestedWeek });
+    const previous = appliedWeek.current;
+    if (previous?.week === week && (!notificationId || previous.key === location.key)) return;
+    appliedWeek.current = { week, key: location.key };
+    setSelectedWeekKey(week);
+    setWeekFilterMode('specific');
+  }, [requestedYear, requestedWeek, hasRequestedWeek, location.key, notificationId]);
   // 列表视图：cards = 4 列响应式网格；timeline = 左侧年/月/周折叠树 + 右侧周报卡片面板。
   // sessionStorage 持久化用户选择，下次进来仍是同一视图。
   const [viewMode, setViewMode] = useState<'cards' | 'timeline'>(() => {
@@ -114,11 +132,15 @@ export function ReportMainView() {
     }
     weekMap.set(getWeekKey(now), now);
     weekMap.set(getWeekKey(prevWeek), prevWeek);
+    if (hasRequestedWeek) {
+      const requested = { weekYear: requestedYear, weekNumber: requestedWeek };
+      weekMap.set(getWeekKey(requested), requested);
+    }
     return [...weekMap.values()].sort((a, b) => {
       if (a.weekYear !== b.weekYear) return b.weekYear - a.weekYear;
       return b.weekNumber - a.weekNumber;
     });
-  }, [reports, now, prevWeek]);
+  }, [reports, now, prevWeek, requestedYear, requestedWeek, hasRequestedWeek]);
 
   const filteredReports = useMemo(() => {
     const sorted = [...reports].sort((a, b) => {

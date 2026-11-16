@@ -79,7 +79,7 @@
 spec.{应用}.md   →   design.{应用}.md   →   plan.{应用}.*.md   →   debt.{应用}.md
  做什么              怎么做的               还要做什么            欠了什么
 ```
-这四类帮助了解当前状态；再查该模块的 ADR/PDR，了解为什么这样选、接受什么代价、何时值得改变。**`debt.` 那篇千万别跳过**——它写的是已知欠账、影响与处理条件。每个前缀的作用见 [README 原则入口](../README.md#documentation)，产品的根与承重结构见 [PDR 原则](../pri.pdr.md)。
+这四类帮助了解当前状态；再查该模块的 ADR/PDR，了解为什么这样选、接受什么代价、何时值得改变。**`debt.` 那篇千万别跳过**——它写的是已知欠账、影响与处理条件。每个前缀的作用见 [README 原则入口](../README.md#documentation)，产品的根与承重结构见 [PDR 原则](./guide.doc.pri.pdr.md)。
 
 ### AI Agent
 `CLAUDE.md` + `.claude/rules/*.md` 是强制纪律（按 glob 自动加载），`doc/` 是查证来源。

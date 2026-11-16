@@ -1,6 +1,7 @@
+import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+
 import {
   ArrowRight,
   CornerDownLeft,

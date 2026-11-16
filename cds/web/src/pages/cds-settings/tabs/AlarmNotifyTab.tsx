@@ -21,10 +21,14 @@ import { cn } from '@/lib/utils';
 
 interface AlarmNotifyView {
   configured: boolean;
+  unavailable?: boolean;
+  reason?: string;
   source: 'settings' | 'env' | null;
   endpoint?: string;
   keyId?: string;
   username?: string;
+  targetUsername?: string;
+  secretStorage?: 'encrypted' | 'legacy' | 'env';
   /** 指纹而不是私钥：够核对「配的是不是我给的那把」，又不构成泄漏面 */
   privateKeyFingerprint?: string;
   missingEnv?: string[];
@@ -37,7 +41,7 @@ export function AlarmNotifyTab(): JSX.Element {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [drill, setDrill] = useState<{ ok: boolean; reason?: string } | null>(null);
-  const [form, setForm] = useState({ endpoint: '', keyId: '', username: '', privateKey: '' });
+  const [form, setForm] = useState({ endpoint: '', keyId: '', username: '', targetUsername: '', privateKey: '' });
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -54,7 +58,7 @@ export function AlarmNotifyTab(): JSX.Element {
     try {
       await apiRequest('/api/cds-system/alarm-notify', { method: 'PUT', body: form });
       // 私钥只在这一次提交里出现，存完立刻从表单里抹掉——留在 DOM 里没有任何好处。
-      setForm({ endpoint: '', keyId: '', username: '', privateKey: '' });
+      setForm({ endpoint: '', keyId: '', username: '', targetUsername: '', privateKey: '' });
       setErr(null);
       await load();
     } catch (e) {
@@ -107,11 +111,11 @@ export function AlarmNotifyTab(): JSX.Element {
 
       {/* 存量的单一 MAP 通道。先于多通道存在，且可能已经在工作——删掉它等于让已经
           接好的铃在升级那天哑掉，所以留着，只是降到第二位并说清它和上面的关系。 */}
-      {!view && !err ? <SettingsContentSkeleton label="读取旧版通知通道" /> : <>
+      {!view && !err ? <SettingsContentSkeleton label="读取 MAP 签名配置" /> : <>
       <div className="flex flex-col gap-4 border-t border-[hsl(var(--hairline))] pt-5">
       <div className="text-xs text-muted-foreground">
-        下面这条是早先的单一 MAP 通道（走 .cds.env 或这一页的凭据）。它仍然工作；
-        新配通道请用上面那一块，MAP 也在那里能选。
+        容量与站内事件复用下面的 MAP 签名配置；上方通道用于监控订阅。
+        签名账号可以是独立服务身份，接收账号必须与 MAP 固定通知目标一致。
       </div>
       <div className={cn(
         'flex flex-wrap items-center gap-2 rounded-lg border px-3.5 py-3',
@@ -120,23 +124,24 @@ export function AlarmNotifyTab(): JSX.Element {
         <BellRing className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="text-sm font-medium">
           {view?.configured
-            ? `通知通道已配置（来自${view.source === 'settings' ? 'CDS 系统设置' : '.cds.env'}）`
-            : '出问题时不会有任何人被通知'}
+            ? `MAP 签名通道已配置（来自${view.source === 'settings' ? 'CDS 系统设置' : '.cds.env'}）`
+            : view?.unavailable ? 'MAP 签名凭据当前不可用' : 'MAP 签名通道未配置'}
         </span>
         {view?.configured ? (
           <span className="font-mono text-[0.6875rem] text-muted-foreground">
-            {view.username} @ {view.endpoint} · 私钥指纹 {view.privateKeyFingerprint}
+            {view.username} → {view.targetUsername || view.username} @ {view.endpoint} · 私钥指纹 {view.privateKeyFingerprint}
+            {view.secretStorage === 'encrypted' ? ' · 已加密保存' : view.secretStorage === 'legacy' ? ' · 旧凭据尚未加密，请重新保存' : ''}
           </span>
         ) : (
           <span className="text-[0.6875rem] text-muted-foreground">
-            监控探到故障时，告警只会留在 CDS 自己的台账里。填好下面四项即可接上。
+            {view?.reason || '配置后仍需实际演练确认送达；其他通知通道按各自配置投递。'}
           </span>
         )}
         <div className="flex-grow" />
         <Button size="sm" variant="outline" disabled={busy} onClick={() => void runDrill()}>
           {busy ? '处理中' : '演练一次通知'}
         </Button>
-        {view?.configured && view.source === 'settings' ? (
+        {view?.source === 'settings' ? (
           <Button size="sm" variant="outline" disabled={busy} onClick={() => void clear()}>清除</Button>
         ) : null}
       </div>
@@ -151,13 +156,14 @@ export function AlarmNotifyTab(): JSX.Element {
 
       <div className="flex flex-col gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4">
         <div className="text-xs text-muted-foreground">
-          与 MAP 的签名通道对齐：MAP 侧只存公钥，私钥只留在 CDS、从不过网络。
-          四项缺一即拒 —— 半套凭据只会在真出事那天以 401 的形式暴露。
+          MAP 只保存公钥，私钥在 CDS 密封存储中加密保存，不会转发给 MAP。
+          先启用密封存储，再填写签名配置与固定接收账号。
         </div>
         {([
           ['endpoint', '通知端点', 'https://<你的 MAP>/api/dashboard/notifications/events'],
           ['keyId', '密钥 ID', '与 MAP 配置里那条的 KeyId 一致'],
-          ['username', '通知账号', '与 MAP 配置里那条的 Username 一致，通知会发给这个账号'],
+          ['username', '签名账号', '与 MAP 公钥配置的 Username 一致'],
+          ['targetUsername', '接收账号', '与 MAP 固定通知目标一致；留空沿用签名账号'],
         ] as const).map(([key, label, ph]) => (
           <label key={key} className="flex flex-col gap-1">
             <span className="text-[0.6875rem] text-muted-foreground">{label}</span>

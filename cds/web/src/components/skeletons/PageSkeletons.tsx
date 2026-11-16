@@ -165,7 +165,7 @@ export function ConsoleGenericSkeleton(): JSX.Element {
 }
 
 /** 路由 → 骨架形状。控制台外壳在 chunk 未到时按它画，和页面自己等数据时画的是同一副。 */
-export function pageSkeletonForPath(pathname: string, capabilities: { canManageProjects?: boolean } = {}): JSX.Element {
+export function pageSkeletonForPath(pathname: string, capabilities: { canManageProjects?: boolean; monitoringHome?: boolean } = {}): JSX.Element {
   switch (loadingSceneForPath(pathname)?.kind) {
     case 'auth': return <AuthPageSkeleton />;
     case 'public-status': return <PublicStatusSkeleton />;

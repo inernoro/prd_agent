@@ -5,10 +5,64 @@ import { describe, expect, it, vi } from 'vitest';
 import { apiRequest } from '@/services/real/apiClient';
 vi.mock('@/services/real/apiClient', () => ({ apiRequest: vi.fn() }));
 import { useAskStream } from './useAskStream';
+import AskThread from './AskThread';
 
 vi.mock('@/stores/authStore', () => ({ useAuthStore: { getState: () => ({ token: null }) } }));
 vi.mock('@/services/api', () => ({ api: { webPages: { askRating: (id: string) => `/rating/${id}`, askStream: () => '/ask', askStreamByShare: () => '/ask' } } }));
 vi.mock('@/services/real/webPages', () => ({ buildApiUrl: (path: string) => path }));
+
+describe('故障后可继续提问', () => {
+  it.each(['site', 'share'] as const)('错误事件、半截断流和网络错误均停止等待，并可继续完成：%s', async (mode) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    let clock = 1_800_000_000_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => ++clock);
+    const response = (frames: string) => new Response(frames, { headers: { 'Content-Type': 'text/event-stream' } });
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(response('event: error\ndata: {"code":"MODEL_POOL_ALL_UNAVAILABLE","message":"模型暂时不可用，请稍后再试。"}\n\n'))
+      .mockResolvedValueOnce(response('event: typing\ndata: {"text":"已经收到的半截答案"}\n\n'))
+      .mockRejectedValueOnce(new Error('网络连接失败，请稍后重试。'))
+      .mockResolvedValueOnce(response('event: done\ndata: {"text":"恢复后的完整答案"}\n\n'));
+    vi.stubGlobal('fetch', fetcher);
+    let hook: ReturnType<typeof useAskStream>;
+    function Harness() {
+      hook = useAskStream(mode === 'site' ? { mode, siteId: 'site' } : { mode, token: 'share' });
+      return <AskThread messages={hook.messages} title="测试页面" openingQuestions={[]}
+        onPick={(question) => { void hook.ask(question); }} refusal={null} onLogin={() => {}}
+        onRetry={() => { void hook.ask('继续提问'); }} isBusy={hook.isBusy}
+        phaseMessage={hook.phaseMessage} elapsedSeconds={hook.elapsedSeconds} onCancel={hook.cancel} />;
+    }
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    try {
+      act(() => root.render(<Harness />));
+      for (const [question, expected] of [
+        ['第一次提问', '模型暂时不可用，请稍后再试。'],
+        ['断流提问', '回答被中断，内容可能不完整，可以再问一次。'],
+        ['网络错误提问', '网络连接失败，请稍后重试。'],
+      ]) {
+        await act(async () => { await hook.ask(question); });
+        expect(hook!.status).toBe('error');
+        expect(hook!.isBusy).toBe(false);
+        expect(hook!.messages.at(-1)?.streaming).toBe(false);
+        expect(hook!.messages.at(-1)?.error).toBe(expected);
+        expect(container.textContent).toContain(expected);
+        expect(container.querySelector('[role="status"]')).toBeNull();
+        expect(container.querySelector('.ask-answer-footer')).toBeNull();
+      }
+      expect(container.textContent).toContain('已经收到的半截答案');
+      await act(async () => { await hook.ask('再次提问'); });
+      expect(hook!.status).toBe('done');
+      expect(hook!.isBusy).toBe(false);
+      expect(hook!.messages.at(-1)?.error).toBeUndefined();
+      expect(container.textContent).toContain('恢复后的完整答案');
+      expect(container.querySelector('.ask-answer-footer')?.textContent).toContain('回答完成');
+      expect(fetcher).toHaveBeenCalledTimes(4);
+      expect(hook!.messages.filter(message => message.role === 'assistant')).toHaveLength(4);
+    } finally {
+      act(() => root.unmount()); now.mockRestore(); vi.unstubAllGlobals();
+    }
+  });
+});
 
 describe('问答完成事件', () => {
   it.each([true, false])('服务端最终脚注替换临时内容，兼容旧事件：%s', async (hasFinalText) => {

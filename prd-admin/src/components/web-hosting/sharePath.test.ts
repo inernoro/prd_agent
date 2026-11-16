@@ -47,6 +47,11 @@ describe('分享列表给的地址', () => {
     expect(matches(url).map((r) => r.path)).toContain('/s/:slug');
     expect(url.startsWith('/s/wp/'), '号码塞进 /s/wp/ 会 404').toBe(false);
   });
+  it.each([0, 42])('章节快照使用自己的阅读路由，短链编号 %s 不改变合集身份', shortSeq => {
+    const url = sharePath({ token: 'chapter-token', shortSeq, documentCollectionId: 'chapters' });
+    expect(url).toBe('/s/collection/chapter-token');
+    expect(matches(url).map(route => route.path)).toContain('/s/collection/:token');
+  });
 
   it('合集也用同一条 /s/wp/{token}，没有 /s/wp/c 这种路由', () => {
     expect(APP).not.toContain('/s/wp/c/');

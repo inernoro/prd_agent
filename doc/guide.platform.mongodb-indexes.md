@@ -311,3 +311,9 @@ PRD_GATEWAY_DB=1 mongosh "<connection-uri>/<网关库名>" scripts/mongodb-index
 日志、审计、影子比较和执行记录不能因为时间到期直接删除。处理存量过期索引时先暂停全局过期线程，在正确环境核对完整清单，先建立普通查询覆盖，再移除删除型索引。只保留已经明确属于限流、锁、并发槽、短期登录票据和数据库会话的过期索引；未知项阻止恢复全局线程。
 
 操作前必须已有当前三库的异机真实恢复回执，并在独立恢复副本确认日志全文哈希不变、临时状态正常过期。生产运行版本不能在启动时重建日志过期索引。回滚先暂停全局线程；恢复线程需要版本、备份新鲜度、归档指针、独立密钥与保留开关共同通过守卫。仅看到索引名称或压缩文件完整，不能代替这些条件。
+
+## 调用链排查与写入实例租约（2026-11-12）
+
+调用链通过请求、业务运行、逻辑请求、上游回执／作业及逐次尝试编号覆盖保留期内的日志。网关索引清单对 `RequestId`、`RunId`、`LogicalRequestId`、`ProviderRequestId`、`ProviderTaskId`、`ProviderAttempts.AttemptId`、`ProviderAttempts.ProviderRequestId`、`ProviderAttempts.ProviderTaskId` 分别维护 `TenantId + 字段 + StartedAt + _id` 非唯一索引，名字为 `idx_llmgw_trace_` 加字段名。三个数组字段各建独立多键索引，不将多个数组字段放入同一复合索引。必须覆盖所有 `$or` 身份分支，否则连精确业务编号查询也可能扫描租户历史；`_id` 分支使用原生主键索引。控制台启动只巡检，DBA显式执行清单；缺失时查询仍可用，但可能扫描历史日志。
+
+serving 持久化写入实例租约。`idx_llmgw_logs_writer_lifecycle` 限定需收口的实例与进行中记录，`idx_llmgw_writer_lease_scan` 支持过期实例轮转扫描；均为非唯一索引，不修改日志或历史费用，不自动执行。租约不设 TTL，以保留收口依据。

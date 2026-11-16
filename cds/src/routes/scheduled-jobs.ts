@@ -21,12 +21,13 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
       .sort((a, b) => String(a.nextRunAt || '').localeCompare(String(b.nextRunAt || '')));
     // 时间轴右半边要画一串待触发点。序列一律由服务端出，前端不复制到期判定。
     const horizon = Math.min(Math.max(Number(req.query.nextRuns || 0), 0), 64);
-    if (!horizon) { res.json({ jobs }); return; }
+    if (!horizon) { res.json({ jobs: jobs.map(job => ({ ...job, health: scheduledJobService.health(job) })) }); return; }
     const now = new Date();
     res.json({
       jobs: jobs.map((job) => ({
         ...job,
         nextRuns: scheduledJobService.projectUpcomingRuns(job, horizon, now),
+        health: scheduledJobService.health(job, now),
       })),
     });
   });
@@ -95,6 +96,8 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
       actions: input.actions,
       timeoutSeconds: input.timeoutSeconds,
       retryCount: input.retryCount,
+      completion: input.completion,
+      scheduleGraceSeconds: input.scheduleGraceSeconds,
       concurrencyPolicy: 'skip',
       createdAt: now,
       updatedAt: now,
@@ -123,6 +126,8 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
       actions: input.actions,
       timeoutSeconds: input.timeoutSeconds,
       retryCount: input.retryCount,
+      completion: input.completion,
+      scheduleGraceSeconds: input.scheduleGraceSeconds,
       // 人工重新启用 = 认领了这条规则，连续失败计数与自动停用痕迹一并清掉；
       // 不清的话下一次失败就直接触顶，规则刚开又被关掉。
       ...(input.enabled && !existing.enabled
@@ -149,11 +154,22 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
     const access = deps.assertProjectAccess(req, existing.projectId);
     if (access) { res.status(access.status).json(access.body); return; }
     try {
-      const run = await scheduledJobService.runJob(existing.id, 'manual');
+      const requestKey = req.get('Idempotency-Key');
+      if (requestKey && !/^\d{13}:[a-zA-Z0-9_.-]{8,100}$/.test(requestKey)) { res.status(400).json({ error: '幂等标识格式无效' }); return; }
+      const run = await scheduledJobService.runJob(existing.id, 'manual', { requestKey });
       res.json({ run });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  router.post('/scheduled-jobs/:id/recover', async (req, res) => {
+    const job = stateService.getScheduledJob(req.params.id);
+    if (!job) { res.status(404).json({ error: '任务不存在' }); return; }
+    const access = deps.assertProjectAccess(req, job.projectId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    try { res.json({ run: await scheduledJobService.recoverRun(job.id, String(req.body?.runId || '')) }); }
+    catch (err) { res.status(409).json({ error: (err as Error).message }); }
   });
 
   return router;
@@ -184,6 +200,8 @@ function parseJobInput(body: any, stateService: StateService): {
   actions: ScheduledJobAction[];
   timeoutSeconds: number;
   retryCount: number;
+  completion?: ScheduledJob['completion'];
+  scheduleGraceSeconds: number;
 } | { error: string } {
   const projectId = cleanText(body?.projectId, 120);
   const name = cleanText(body?.name, 120);
@@ -201,11 +219,23 @@ function parseJobInput(body: any, stateService: StateService): {
   });
   if ('error' in actions) return actions;
 
+  let completion: ScheduledJob['completion'];
+  if (body?.completion != null) {
+    const raw = body.completion;
+    if (raw.type !== 'reports' || !Number.isInteger(raw.minCount) || raw.minCount < 1 || raw.minCount > 20
+      || (raw.requireObjectStorage !== undefined && typeof raw.requireObjectStorage !== 'boolean')
+      || (raw.allowedVerdicts !== undefined && (!Array.isArray(raw.allowedVerdicts) || !raw.allowedVerdicts.length || raw.allowedVerdicts.some((v: unknown) => !['pass', 'conditional', 'fail'].includes(v as string))))) {
+      return { error: '报告产物契约无效' };
+    }
+    completion = { type: 'reports', minCount: raw.minCount, requireObjectStorage: raw.requireObjectStorage, allowedVerdicts: raw.allowedVerdicts };
+  }
   const hasRelease = actions.some((action) => action.type === 'release');
 
   return {
     projectId,
     name,
+    completion,
+    scheduleGraceSeconds: clampInt(body?.scheduleGraceSeconds, 120, 1, 86400),
     description: cleanText(body?.description, 500) || undefined,
     enabled: body?.enabled !== false,
     schedule,

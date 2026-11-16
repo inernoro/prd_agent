@@ -1,6 +1,6 @@
 # 文档命名规则（doc/） · 规则
 
-> **版本**：v3.3 | **日期**：2026-11-06 | **状态**：已落地
+> **版本**：v3.4 | **日期**：2026-11-09 | **状态**：已落地
 
 **一句话**：规定每篇文档叫什么名字——先写类型、再写应用名、子模块用点号接下去，让同一个应用的文档自动排在一起。
 **谁该读**：要新建或重命名文档的人和 AI；想学会「看文件名就知道里面写什么」的读者。
@@ -27,16 +27,18 @@ doc/{type}.{topic}.md
 | `guide.` | 操作指南 | 指南、教程、运行手册 | [guide.platform.quickstart.md](./guide.platform.quickstart.md), [guide.platform.e2e-tests.md](./guide.platform.e2e-tests.md) |
 | `report.` | 周报 | 周报 | [report.2026-W09.md](./report.2026-W09.md) |
 | `debt.` | 技术债务台账 | 模块级未还工程债（已知边界、后续可补、TODO、留尾风险） | [debt.video-agent.md](./debt.video-agent.md), [debt.cds.md](./debt.cds.md) |
-| `adr.` | 架构决策记录 | 架构、技术和工程流程的重要选择及其历史 | [文档分层决策](./adr.doc.001.document-roles.md) |
+| `adr.` | 架构决策记录 | 架构、技术和工程流程的重要选择及其历史 | [文档位置与分层决策](./adr.doc.002.principle-location.md) |
 | `pdr.` | 产品决策记录 | 产品价值、领域语义、商业边界与重要体验承诺 | [产品根基提议](./pdr.platform.001.product-foundation.md) |
 
-### 顶层原则与决策记录
+### 类型原则与决策记录
 
-根目录 `pri.<类型>.md` 是 Principles 的缩写命名，用来解释这一类文章的作用、最少内容与维护方式。当前登记九项：spec、design、plan、rule、guide、report、debt、adr、pdr；入口见 [README](../README.md#documentation)。这些是类型原则，不混入 `doc/` 的具体文档索引。
+`pri` 是 Principles 的缩写，表达文档类型的原则层次，不表示文件应位于仓库根目录。九类原则均作为指南放在 `doc/`，使用 `guide.doc.pri.<类型>.md`：guide 是已登记的类型，doc 是文档体系保留域，pri 与类型名是点分子主题。入口见 [README](../README.md#documentation)，它们与其他指南统一登记索引并接受导读、命名和链接检查。
+
+文档创建前核对目录、命名、元数据与索引；用户要求新增类型或顶层内容，不自动授权存放例外。不得为迁就产物而增加根目录白名单、豁免索引或放宽检查。规则或守卫变更必须说明与原约束的差异及实际授权；当前依据见[位置与授权纠正](./adr.doc.002.principle-location.md)。
 
 具体决策使用 `adr.<应用或领域>.<编号>.<主题>.md` 或 `pdr.<应用或领域>.<编号>.<主题>.md`。领域仍遵守下面的 appname 规则，例如跨项目文档体系用 doc、平台共性用 platform。编号在同类型与领域内稳定唯一，删除或被取代后不复用；跨项目引用带项目标识。
 
-决策状态为已提议、已接受、已拒绝、已取代；不套用普通规格与计划的实施阶段。接受或拒绝后保留决策正文，更新状态和追溯元数据；重要变化另建记录。实施状态和适用范围单独填写。原则方法见 [ADR](../pri.adr.md) 与 [PDR](../pri.pdr.md)，初始记录见[决策清单](./guide.platform.decision-records.md)。
+决策状态为已提议、已接受、已拒绝、已取代；不套用普通规格与计划的实施阶段。接受或拒绝后保留决策正文，更新状态和追溯元数据；重要变化另建记录。实施状态和适用范围单独填写。原则方法见 [ADR](./guide.doc.pri.adr.md) 与 [PDR](./guide.doc.pri.pdr.md)，初始记录见[决策清单](./guide.platform.decision-records.md)。
 
 ---
 

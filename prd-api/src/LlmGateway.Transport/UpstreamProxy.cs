@@ -40,8 +40,8 @@ public static class UpstreamProxy
         Func<string, string> encrypt, bool global = false)
     {
         var mode = (input.Mode ?? "").Trim().ToLowerInvariant();
-        if (mode is not ("inherit" or "direct" or "custom") || global && mode == "inherit")
-            throw new ArgumentException("请选择跟随全局、强制直连或独立代理；全局设置请选择直连或代理");
+        if (mode is not ("inherit" or "direct" or "custom"))
+            throw new ArgumentException(global ? "请选择部署默认、强制直连或使用代理" : "请选择跟随全局、强制直连或独立代理");
         if (mode != "custom") return new BsonDocument("Mode", mode);
         if (!Uri.TryCreate(input.Address?.Trim(), UriKind.Absolute, out var uri)
             || uri.Scheme is not ("http" or "https" or "socks5")
@@ -68,6 +68,7 @@ public static class UpstreamProxy
         var selected = View(local).Mode == "inherit" ? global : local;
         if (selected is null) return null; // 未配置时保留部署既有的出站行为。
         var view = View(selected, "direct");
+        if (view.Mode == "inherit") return null; // 全局继承保留部署默认出口，空配置保存后也不改路由。
         if (view.Mode == "direct") return new("direct", null, null, null);
         if (view.Mode != "custom" || string.IsNullOrEmpty(view.Address))
             throw new InvalidOperationException("代理配置无效，请重新保存代理设置");
@@ -83,19 +84,19 @@ public static class UpstreamProxy
         return new("custom", view.Address, view.Username, password);
     }
 
-    public static bool IsPublicAddress(IPAddress address)
+    public static bool IsPublicAddress(IPAddress address) => SafeOutboundAddressPolicy.IsPublicAddress(address);
+
+    // 目标 DNS 交给自定义代理，仍拒绝不安全协议、userinfo、localhost 及显式保留 IP。
+    public static string? ValidateProxyTarget(string targetUrl)
     {
-        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
-        if (IPAddress.IsLoopback(address)) return false;
-        var bytes = address.GetAddressBytes();
-        if (address.AddressFamily == AddressFamily.InterNetworkV6)
-            return (bytes[0] & 0xe0) == 0x20 && !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0d && bytes[3] == 0xb8);
-        return bytes[0] != 0 && bytes[0] != 10 && bytes[0] != 127 && bytes[0] < 224
-            && !(bytes[0] == 169 && bytes[1] == 254)
-            && !(bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
-            && !(bytes[0] == 192 && bytes[1] == 168)
-            && !(bytes[0] == 100 && bytes[1] is >= 64 and <= 127)
-            && !(bytes[0] == 198 && bytes[1] is 18 or 19);
+        if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https" or "wss"))
+            return "上游必须使用 HTTP、HTTPS 或 WSS 地址";
+        if (uri.UserInfo.Length > 0) return "上游地址不能携带 userinfo";
+        var host = uri.IdnHost.TrimEnd('.');
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || IPAddress.TryParse(host, out var literal) && !IsPublicAddress(literal))
+            return "上游地址不能指向内网、回环或保留地址";
+        return null;
     }
 
     public static SocketsHttpHandler CreateHandler(ResolvedUpstreamProxy proxy, bool publicOnly)

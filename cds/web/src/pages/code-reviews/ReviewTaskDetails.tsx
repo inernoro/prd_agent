@@ -1,3 +1,4 @@
+import { ReviewKeyUsage } from './ReviewKeyUsage';
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Check, ChevronRight, Mail, RefreshCw, X } from 'lucide-react';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
@@ -33,6 +34,7 @@ export function ReviewDetail({ task, now, pending, onAction, onClose }: { task: 
   const count = task.findingsSummary ? Object.values(task.findingsSummary).reduce((n, value) => n + value, 0) : undefined;
   const phaseText = task.status === 'failed' || task.status === 'cancelled' ? task.error || reviewTaskExplanation(task) : task.phase;
   return <article aria-label="审查任务详情" className="cr-stack">
+    <ReviewKeyUsage task={task} />
     {onClose ? <ReviewButton tone="ghost" className="cr-icon-button cr-end" aria-label="关闭任务详情" onClick={onClose}><X /></ReviewButton> : null}
     {task.sourceType === 'report' ? <div className="cr-surface cr-progress-summary"><h2>文档信息</h2><dl className="cr-facts"><dt>来源</dt><dd>{task.sourceName}</dd><dt>保存时间</dt><dd>{formatDate(task.createdAt)}（UTC+8）</dd><dt>文档编号</dt><dd className="cr-mono">{task.id}</dd><dt>执行说明</dt><dd>上传的已有文档，未在 CDS 执行 AI 审查。</dd></dl>{reportUrl ? <a className="cr-task-action" href={reportUrl}>阅读上传档案<ChevronRight /></a> : null}</div> : <>
       <div className="cr-progress-grid"><div className="cr-surface cr-stages">{stage < 0 ? <p className="cr-form-note">任务已停止，原记录未提供精确终止阶段；以下不推断各阶段是否完成。</p> : null}{stages.map((item, index) => {
@@ -68,7 +70,7 @@ function ReviewEvents({ task }: { task: CodeReviewTask }): JSX.Element {
       .catch(() => { if (!controller.signal.aborted) setError('事件记录暂时无法读取。'); });
     return () => controller.abort();
   }, [task.id, attempt]);
-  const label = (operation?: string) => operation?.startsWith('github.') ? '获取 GitHub 源码' : operation === 'cds.branch_snapshot' ? '固定 CDS 分支源码' : operation?.startsWith('deepaudit.') ? '读取审查引擎响应' : operation || '审查事件';
+  const label = (operation?: string) => operation?.startsWith('user_key.') ? (operation === 'user_key.bind' ? '绑定用户 Key' : '读取用户 Key 任务凭据') : operation?.startsWith('github.') ? '获取 GitHub 源码' : operation === 'cds.branch_snapshot' ? '固定 CDS 分支源码' : operation?.startsWith('deepaudit.') ? '读取审查引擎响应' : operation || '审查事件';
   return <section className="cr-surface" aria-label="审查事件记录"><header className="cr-event-header cr-row-inline">事件记录（UTC+8）<ReviewButton tone="ghost" className="cr-end" onClick={() => setAttempt(n => n + 1)}>刷新事件</ReviewButton></header>
     <div className="cr-event-log">{data?.nextBefore ? <p>以下仅展示最近 {data.events.length} 条已有上游事件，不代表完整执行日志。</p> : null}<p>{timeOnly(task.createdAt)}　任务已创建</p>{data?.events.slice().reverse().map((event, index) => <p key={event.sequence ?? index}>{timeOnly(event.startedAt)}　{label(event.operation)}{event.status ? ` · HTTP ${event.status}` : ''}{event.outcome ? ` · ${event.outcome}` : ''}</p>)}<p>{timeOnly(task.updatedAt)}　当前记录：{task.phase}</p>{!data && !error ? <ContentLoading label="正在读取已有事件" variant="inline" /> : null}{error ? <p>{error}</p> : null}</div>
     <p className="cr-form-note px-4 py-2">仅显示已保存的事件，不推算未记录的阶段时间。{data?.nextBefore ? '当前为最近一页事件。' : ''}</p>

@@ -15,6 +15,12 @@ namespace PrdAgent.Core.Models;
 [BsonIgnoreExtraElements]
 public class HostedSite
 {
+    public string? WritingTemplateId { get; set; }
+    /// <summary>作者选择的文档类型；旧数据为空时沿用来源写作模版的类型。</summary>
+    public string? DocumentType { get; set; }
+    public List<string> DocumentHeadings { get; set; } = new();
+    public string? DocumentTextExcerpt { get; set; }
+    public int DocumentCharacterCount { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>站点标题</summary>
@@ -345,7 +351,14 @@ public sealed record HostedSiteVerifiedFile(
 [BsonIgnoreExtraElements]
 public class WebPageShareLink
 {
+    public HostedCollectionSnapshot? CollectionSnapshot { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>命名合集及本次明确授权的成员快照；空值保留历史独立分享语义。</summary>
+    public string? CollectionId { get; set; }
+    public string? MainSiteId { get; set; }
+    public long CollectionVersion { get; set; }
+    public long CollectionShareGeneration { get; set; } = 1;
 
     /// <summary>短 Token（用于 URL）</summary>
     public string Token { get; set; } = GenerateToken();

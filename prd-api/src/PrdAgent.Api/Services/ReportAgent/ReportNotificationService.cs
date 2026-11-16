@@ -34,7 +34,8 @@ public class ReportNotificationService
             title: "周报草稿已生成",
             message: $"{weekYear} 年第 {weekNumber} 周的周报草稿已自动生成，请审核提交。",
             level: "info",
-            actionLabel: "查看周报");
+            actionLabel: "查看周报",
+            actionUrl: ReportNotificationNavigation.OwnReport(reportId));
     }
 
     /// <summary>截止提醒（未提交员工）— 需要 teamId 以触发 Webhook</summary>
@@ -46,7 +47,8 @@ public class ReportNotificationService
             title: "周报提交提醒",
             message: $"{weekYear} 年第 {weekNumber} 周的周报即将截止，请尽快提交。",
             level: "warning",
-            actionLabel: "去提交");
+            actionLabel: "去提交",
+            actionUrl: ReportNotificationNavigation.PersonalWeek(weekYear, weekNumber));
 
         if (!string.IsNullOrEmpty(teamId) && pendingMemberNames is { Count: > 0 })
         {
@@ -54,7 +56,7 @@ public class ReportNotificationService
             await _webhookService.NotifyAsync(teamId, ReportEventType.DeadlineApproaching,
                 "周报截止提醒",
                 $"**{weekYear} 年第 {weekNumber} 周**\n以下成员尚未提交周报：{names}",
-                ActionUrl);
+                ReportNotificationNavigation.TeamWeek(weekYear, weekNumber, teamId));
         }
     }
 
@@ -68,7 +70,8 @@ public class ReportNotificationService
             title: "周报已逾期",
             message: $"{weekYear} 年第 {weekNumber} 周的周报已逾期，请尽快补交。",
             level: "error",
-            actionLabel: "去补交");
+            actionLabel: "去补交",
+            actionUrl: ReportNotificationNavigation.PersonalWeek(weekYear, weekNumber));
 
         // 通知负责人
         if (!string.IsNullOrEmpty(leaderUserId))
@@ -79,7 +82,8 @@ public class ReportNotificationService
                 title: "团队成员周报逾期",
                 message: $"有成员的 {weekYear} 年第 {weekNumber} 周周报已逾期未提交。",
                 level: "warning",
-                actionLabel: "查看团队");
+                actionLabel: "查看团队",
+                actionUrl: ReportNotificationNavigation.TeamWeek(weekYear, weekNumber, teamId, userId));
         }
 
         if (!string.IsNullOrEmpty(teamId) && overdueMemberNames is { Count: > 0 })
@@ -88,7 +92,7 @@ public class ReportNotificationService
             await _webhookService.NotifyAsync(teamId, ReportEventType.Overdue,
                 "周报已逾期",
                 $"**{weekYear} 年第 {weekNumber} 周**\n以下成员周报已逾期：{names}",
-                ActionUrl);
+                ReportNotificationNavigation.TeamWeek(weekYear, weekNumber, teamId));
         }
     }
 
@@ -103,12 +107,13 @@ public class ReportNotificationService
             title: "收到新周报",
             message: $"{report.UserName ?? "团队成员"} 提交了 {report.WeekYear} 年第 {report.WeekNumber} 周的周报。",
             level: "info",
-            actionLabel: "去审阅");
+            actionLabel: "去审阅",
+            actionUrl: ReportNotificationNavigation.Report(report.Id));
 
         await _webhookService.NotifyAsync(report.TeamId, ReportEventType.Submitted,
             "周报已提交",
             $"**{report.UserName ?? "团队成员"}** 提交了 {report.WeekYear} 年第 {report.WeekNumber} 周的周报",
-            ActionUrl);
+            ReportNotificationNavigation.Report(report.Id));
     }
 
     /// <summary>全员已提交（通知负责人）</summary>
@@ -120,12 +125,13 @@ public class ReportNotificationService
             title: "团队周报已全部提交",
             message: $"{teamName} 团队 {weekYear} 年第 {weekNumber} 周的周报已全部提交。",
             level: "success",
-            actionLabel: "查看汇总");
+            actionLabel: "查看汇总",
+            actionUrl: ReportNotificationNavigation.TeamWeek(weekYear, weekNumber, teamId));
 
         await _webhookService.NotifyAsync(teamId, ReportEventType.AllSubmitted,
             "团队周报已全部提交",
             $"**{teamName}** 团队 {weekYear} 年第 {weekNumber} 周的周报已全部提交，可生成团队汇总。",
-            ActionUrl);
+            ReportNotificationNavigation.TeamWeek(weekYear, weekNumber, teamId));
     }
 
     /// <summary>周报被退回（通知员工）</summary>
@@ -143,13 +149,14 @@ public class ReportNotificationService
             message: $"{returnerName} 退回了你的 {report.WeekYear} 年第 {report.WeekNumber} 周周报" +
                      (string.IsNullOrEmpty(report.ReturnReason) ? "。" : $"：{report.ReturnReason}"),
             level: "warning",
-            actionLabel: "去修改");
+            actionLabel: "去修改",
+            actionUrl: ReportNotificationNavigation.OwnReport(report.Id));
 
         var reason = string.IsNullOrEmpty(report.ReturnReason) ? "" : $"\n退回原因：{report.ReturnReason}";
         await _webhookService.NotifyAsync(report.TeamId, ReportEventType.Returned,
             "周报被退回",
             $"**{report.UserName ?? "团队成员"}** 的 {report.WeekYear} 年第 {report.WeekNumber} 周周报被 {returnerName} 退回{reason}",
-            ActionUrl);
+            ReportNotificationNavigation.Report(report.Id));
     }
 
     /// <summary>周报已审阅（通知员工）</summary>
@@ -161,12 +168,13 @@ public class ReportNotificationService
             title: "周报已审阅",
             message: $"{reviewerName} 已审阅你的 {report.WeekYear} 年第 {report.WeekNumber} 周周报。",
             level: "success",
-            actionLabel: "查看详情");
+            actionLabel: "查看详情",
+            actionUrl: ReportNotificationNavigation.Report(report.Id));
 
         await _webhookService.NotifyAsync(report.TeamId, ReportEventType.Reviewed,
             "周报已审阅",
             $"**{report.UserName ?? "团队成员"}** 的 {report.WeekYear} 年第 {report.WeekNumber} 周周报已被 {reviewerName} 审阅通过",
-            ActionUrl);
+            ReportNotificationNavigation.Report(report.Id));
     }
 
     /// <summary>

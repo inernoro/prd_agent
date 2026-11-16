@@ -203,6 +203,9 @@ public sealed class LlmRequestLogBackground
         if (!string.IsNullOrWhiteSpace(done.ModelGroupName))
             update = update.Set(l => l.ModelGroupName, done.ModelGroupName);
 
+        if (!string.IsNullOrWhiteSpace(done.ProviderTaskId))
+            update = update.Set(l => l.ProviderTaskId, done.ProviderTaskId);
+
         // blackhole 占位记录由 LlmRequestLogWriter.StartAsync 失败路径返回 null 保护——logId 永不复用，
         // 故这里无需再按 Status 过滤；按主键直接更新即可。
         await _db.LlmRequestLogs.UpdateOneAsync(l => l.Id == logId, update);

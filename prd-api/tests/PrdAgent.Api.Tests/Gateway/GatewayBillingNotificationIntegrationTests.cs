@@ -27,11 +27,13 @@ namespace PrdAgent.Api.Tests.Gateway;
 public class GatewayBillingNotificationIntegrationTests
 {
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(true, true)]
-    public async Task ExplicitBillingRefusal_ReachesMapAndPersistsOneAdminNotice_EvenWhenBackupSucceeds(bool fallbackSucceeds, bool userQuota)
+    [InlineData(false, false, 200)]
+    [InlineData(true, false, 200)]
+    [InlineData(false, true, 200)]
+    [InlineData(true, true, 200)]
+    [InlineData(false, false, 500)]
+    [InlineData(false, true, 500)]
+    public async Task ExplicitBillingRefusal_ReachesMapAndPersistsOneAdminNotice_EvenWhenBackupSucceeds(bool fallbackSucceeds, bool userQuota, int backupStatus)
     {
         await using var db = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
         var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0");
@@ -46,7 +48,13 @@ public class GatewayBillingNotificationIntegrationTests
                     ? "{\"error\":{\"code\":\"insufficient_user_quota\",\"type\":\"shell_api_error\",\"message\":\"user [30296] quota [3267] preConsumedQuota [12500] is not enough\"}}"
                     : "{\"error\":{\"code\":\"AccountOverdueError\",\"message\":\"rejected\"}}");
             }
-            else await http.Response.WriteAsync("{\"choices\":[{\"message\":{\"content\":\"备用线路完成\"}}]}");
+            else
+            {
+                http.Response.StatusCode = backupStatus;
+                await http.Response.WriteAsync(backupStatus == 200
+                    ? "{\"choices\":[{\"message\":{\"content\":\"备用线路完成\"}}]}"
+                    : "{\"error\":{\"message\":\"backup unavailable\"}}");
+            }
         });
         await provider.StartAsync();
         var providerUrl = Address(provider);
@@ -55,7 +63,7 @@ public class GatewayBillingNotificationIntegrationTests
             Success = true, ActualModel = name, ActualPlatformId = name, ActualPlatformName = name,
             ApiUrl = providerUrl + "/" + name, ApiKey = "fixture-only", PlatformType = "openai", Protocol = "openai",
         };
-        var primary = Route("primary"); if (fallbackSucceeds) primary.RetryCandidates = [Route("backup")];
+        var primary = Route("primary"); if (fallbackSucceeds || backupStatus != 200) primary.RetryCandidates = [Route("backup")];
         var resolver = new Mock<IModelResolver>();
         resolver.Setup(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(primary);
         resolver.Setup(x => x.RecordFailureAsync(It.IsAny<ModelResolutionResult>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
@@ -84,7 +92,15 @@ public class GatewayBillingNotificationIntegrationTests
                 RequestBody = new System.Text.Json.Nodes.JsonObject { ["messages"] = new System.Text.Json.Nodes.JsonArray { new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = "fixed fixture" } } },
             });
             Assert.True(response.Success == fallbackSucceeds, response.ErrorMessage);
-            if (!fallbackSucceeds) { Assert.Equal(userQuota ? GatewayBillingFailure.QuotaExceeded : GatewayBillingFailure.AccountOverdue, response.ErrorCode); Assert.Contains(userQuota ? "额度" : "账户欠费", response.ErrorMessage); }
+            if (backupStatus == 500)
+            {
+                Assert.False(response.Success);
+                Assert.Equal("UPSTREAM_OUTCOME_UNKNOWN", response.ErrorCode);
+                var alert = Assert.Single(response.Resolution!.BillingAlerts);
+                Assert.Equal(userQuota ? GatewayBillingFailure.QuotaExceeded : GatewayBillingFailure.AccountOverdue, alert.ErrorCode);
+                Assert.Equal("primary", alert.PlatformName);
+            }
+            else if (!fallbackSucceeds) { Assert.Equal(userQuota ? GatewayBillingFailure.QuotaExceeded : GatewayBillingFailure.AccountOverdue, response.ErrorCode); Assert.Contains(userQuota ? "额度" : "账户欠费", response.ErrorMessage); }
             else Assert.Contains("备用线路完成", response.Content);
         }
         var notice = Assert.Single(await db.Context.AdminNotifications.Find(_ => true).ToListAsync());

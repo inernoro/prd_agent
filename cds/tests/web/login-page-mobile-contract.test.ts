@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { redirectTarget } from '../../web/src/pages/LoginPage';
 
 const repoRoot = path.resolve(import.meta.dirname, '../../..');
 const loginPage = fs.readFileSync(path.join(repoRoot, 'cds/web/src/pages/LoginPage.tsx'), 'utf8');
@@ -27,5 +28,24 @@ describe('CDS 登录页手机端主任务契约', () => {
     expect(mobileBlock).toContain('overflow-y: auto;');
     expect(mobileBlock).toContain('.cds-auth-card-wrap {');
     expect(mobileBlock).toContain('order: -1;');
+  });
+});
+
+
+describe('CDS 过期会话通知深链', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([
+    ['?redirect=%2Fcds-settings', '#scheduler', '/cds-settings#scheduler'],
+    ['?redirect=%2Fcds-settings%3Fproject%3Ddemo', '#scheduler', '/cds-settings?project=demo#scheduler'],
+    ['?redirect=%2Fcds-settings%23alarms', '#scheduler', '/cds-settings#alarms'],
+    ['?redirect=%2Fproject-list', '', '/project-list'],
+    ['?redirect=%2F%2Fevil.invalid', '#scheduler', '/project-list'],
+    ['?redirect=https%3A%2F%2Fevil.invalid', '#scheduler', '/project-list'],
+    ['?redirect=%2Flogin', '#scheduler', '/project-list'],
+  ])('登录目标 %s %s 保持内部路径和原目标锚点', (search, hash, expected) => {
+    // Real server redirects cannot read the URL fragment; browsers inherit it on /login.
+    vi.stubGlobal('window', { location: { search, hash } });
+    expect(redirectTarget()).toBe(expected);
   });
 });

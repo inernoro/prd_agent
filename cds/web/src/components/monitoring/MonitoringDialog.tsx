@@ -100,6 +100,8 @@ const ACTIVITY_TYPE_LABELS: Record<string, string> = {
   'ai-release': 'AI 释放',
   'branch-deleted': '删除分支',
   'branch-created': '创建分支',
+  'branch-archived': '归档分支',
+  'branch-restored': '恢复归档',
   'resource-created': '新建资源',
   'resource-deleted': '删除资源',
   'resource-restart': '重启资源',

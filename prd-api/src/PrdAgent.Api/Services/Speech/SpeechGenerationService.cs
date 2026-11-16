@@ -218,7 +218,7 @@ public sealed class SpeechGenerationService(
         audioUrl = run.Status == SpeechRunStatus.Completed ? $"/api/{(openApi ? "open/speech" : "mcp-speech")}/runs/{run.Id}/audio" : null,
     };
 
-    public async Task<(byte[] Bytes, string Mime, string FileName)> ReadAudioAsync(string owner, string id)
+    public async Task<(byte[] Bytes, string Mime, string FileName)> ReadAudioAsync(string owner, string id, bool normalizeForMedia = false)
     {
         var run = await GetRunAsync(owner, id) ?? throw new SpeechException("RUN_NOT_FOUND", "语音任务不存在。", 404);
         if (run.Status != SpeechRunStatus.Completed || run.AssetKey == null) throw new SpeechException("AUDIO_NOT_READY", "音频尚未生成完成。", 409);
@@ -226,6 +226,8 @@ public sealed class SpeechGenerationService(
             ?? throw new SpeechException("AUDIO_NOT_FOUND", "音频文件暂不可用，请联系管理员检查存储。", 503);
         try { bytes = Protector(run).Unprotect(bytes); }
         catch (CryptographicException) { throw new SpeechException("AUDIO_KEY_UNAVAILABLE", "当前环境无法解密该音频，请联系管理员检查持久化密钥。", 503); }
+        if (normalizeForMedia && run.Format == "pcm")
+            return (SpeechAudioMedia.WrapPcm16(bytes, SpeechCapabilityPolicy.PcmSampleRate, channels: 1), "audio/wav", $"speech-{run.Id}.wav");
         return (bytes, run.Mime ?? SpeechCapabilityPolicy.MimeFor(run.Format), $"speech-{run.Id}.{(run.Format == "ogg_opus" ? "ogg" : run.Format)}");
     }
 

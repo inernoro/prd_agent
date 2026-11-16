@@ -1,5 +1,9 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using PrdAgent.Api.Controllers.Api;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -89,6 +93,43 @@ public sealed class SpeechGenerationIntegrationTests : IAsyncLifetime
         if (protocol == "openai") profile.SupportsInstructions = true;
         else { profile.SupportsEmotion = true; profile.Emotions = new() { "happy" }; }
         return (await service.SaveSettingsAsync(0, new() { profile })).Profiles.Single();
+    }
+
+    [Theory]
+    [InlineData("openai")]
+    [InlineData("doubao-tts")]
+    public async Task PcmMediaRead_UsesSameAuthorizedNormalizationForAdoptionAndExport(string protocol)
+    {
+        resolution = Resolution(protocol);
+        var profile = SpeechCapabilityPolicyTests.Profile(protocol);
+        profile.Formats.Add("pcm");
+        profile = (await service.SaveSettingsAsync(0, [profile])).Profiles.Single();
+        var pcm = new byte[24000 * 3]; // 无容器头的1.5秒16-bit单声道。
+        upstream = new GatewayRawResponse {
+            Success = true, StatusCode = 200, ContentType = "audio/pcm", LogId = "test-pcm-log", BinaryContent = pcm,
+        };
+        var created = await service.CreateAsync("owner-a", "client-a", new() {
+            Text = "原始PCM配音", ProfileId = profile.Id, ProfileRevision = profile.Revision, Format = "pcm",
+        });
+        Assert.True(await service.ProcessNextAsync("worker-a"));
+        var raw = await service.ReadAudioAsync("owner-a", created.Run.Id);
+        Assert.Equal(pcm, raw.Bytes);Assert.Equal("audio/pcm", raw.Mime);Assert.EndsWith(".pcm", raw.FileName);
+        var media = await service.ReadAudioAsync("owner-a", created.Run.Id, normalizeForMedia: true);
+        Assert.Equal("audio/wav", media.Mime);Assert.EndsWith(".wav", media.FileName);
+        Assert.Equal(pcm, media.Bytes.AsSpan(44).ToArray());
+        Assert.InRange(await PrdAgent.Api.Services.VideoNarrationMedia.ProbeAudioDurationAsync(media.Bytes), 1.49, 1.51);
+        var controller = new McpSpeechController(service, Mock.Of<PrdAgent.Core.Interfaces.IAdminPermissionService>()) {
+            ControllerContext = new() { HttpContext = new DefaultHttpContext {
+                User = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, "owner-a")], "fixture")),
+            } },
+        };
+        var playable = Assert.IsType<FileContentResult>(await controller.Audio(created.Run.Id, playable: true));
+        Assert.Equal(media.Bytes, playable.FileContents);Assert.Equal("audio/wav", playable.ContentType);
+        var download = Assert.IsType<FileContentResult>(await controller.Audio(created.Run.Id));
+        Assert.Equal(pcm, download.FileContents);Assert.Equal("audio/pcm", download.ContentType);
+        Assert.Equal("RUN_NOT_FOUND", (await Assert.ThrowsAsync<SpeechException>(() =>
+            service.ReadAudioAsync("other-owner", created.Run.Id, normalizeForMedia: true))).Code);
+        Assert.Single(sent);
     }
 
     [Theory]

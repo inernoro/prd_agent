@@ -1,5 +1,6 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+
 import { ArrowRight, AlertTriangle, CheckCircle2, Search, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';

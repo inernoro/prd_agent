@@ -1,3 +1,4 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 /*
  * 全部分支模态窗：点主列表里某个项目的分支汇总行弹出。
  *
@@ -7,7 +8,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
-import { Link } from 'react-router-dom';
+
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';

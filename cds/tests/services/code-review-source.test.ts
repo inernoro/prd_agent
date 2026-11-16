@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildZip } from '../../src/utils/zip.js';
-import { fetchCodeReviewGithubSnapshot, parseCodeReviewGithubUrl, validateCodeReviewZip, readCodeReviewSnapshot } from '../../src/services/code-review-source.js';
+import { codeReviewGithubToken, fetchCodeReviewGithubSnapshot, parseCodeReviewGithubUrl, validateCodeReviewZip, readCodeReviewSnapshot } from '../../src/services/code-review-source.js';
 import type { CodeReviewAuditEvent } from '../../src/services/code-review-audit.js';
 
 function rename(zip: Buffer, before: string, after: string): Buffer {
@@ -27,6 +27,44 @@ function symlinkEntry(zip: Buffer, name: string): { zip: Buffer; centralOffset: 
 }
 
 describe('code review source snapshots', () => {
+  it.each(['https://github.com/owner/private.git', 'git@github.com:owner/private.git', 'ssh://git@github.com/owner/private.git'])('uses project Device Flow authentication for remote snapshot source %s', async gitRepoUrl => {
+    const getDeviceToken = vi.fn((userId: string) => userId === 'project-user' ? 'device-fixture-token' : undefined);
+    const token = await codeReviewGithubToken({ gitRepoUrl, githubCredentialUserId: 'project-user' }, 'https://github.com/Owner/Private', { getDeviceToken });
+    const sha = 'a'.repeat(40), calls: string[] = [];
+    const archive = buildZip([{ name: 'owner-private/src/a.ts', data: 'export const branch = 1' }]);
+    const snapshot = await fetchCodeReviewGithubSnapshot({ githubUrl: 'https://github.com/Owner/Private', ref: 'feature/remote', token,
+      signal: new AbortController().signal, audit: async () => {}, fetchImpl: (async (_url, init) => {
+        expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer device-fixture-token');
+        calls.push(String(_url));
+        return calls.length === 1 ? Response.json({ default_branch: 'main' }) : calls.length === 2 ? Response.json({ sha }) : new Response(new Uint8Array(archive));
+      }) as typeof fetch });
+    expect(getDeviceToken).toHaveBeenCalledTimes(1); expect(getDeviceToken).toHaveBeenCalledWith('project-user');
+    expect(calls[1]).toContain('/commits/feature%2Fremote');
+    expect(snapshot.commitSha).toBe(sha);
+    expect((await validateCodeReviewZip(snapshot.zip)).totalFiles).toBe(1);
+  });
+
+  it('keeps App priority and never borrows Device Flow credentials after an App authorization failure', async () => {
+    const project = { gitRepoUrl: 'https://github.com/owner/private.git', githubRepoFullName: 'owner/private', githubCredentialUserId: 'project-user', githubInstallationId: 42 };
+    const getDeviceToken = vi.fn(() => 'device-fixture-token'), getInstallationToken = vi.fn(async () => 'app-fixture-token');
+    expect(await codeReviewGithubToken(project, 'https://github.com/owner/private', { getDeviceToken, getInstallationToken })).toBe('app-fixture-token');
+    expect(getInstallationToken).toHaveBeenCalledTimes(1); expect(getInstallationToken).toHaveBeenCalledWith(42);
+    expect(getDeviceToken).not.toHaveBeenCalled();
+    getInstallationToken.mockRejectedValueOnce(new Error('installation revoked'));
+    await expect(codeReviewGithubToken(project, 'https://github.com/owner/private', { getDeviceToken, getInstallationToken })).rejects.toThrow('installation revoked');
+    expect(getDeviceToken).not.toHaveBeenCalled();
+  });
+
+  it('does not use project credentials for another repository, hostile hosts, missing owner or missing project', async () => {
+    const getDeviceToken = vi.fn(() => 'private-token'), getInstallationToken = vi.fn(async () => 'app-token');
+    const project = { gitRepoUrl: 'git@github.com:owner/private.git', githubCredentialUserId: 'project-user' };
+    for (const githubUrl of ['https://github.com/other/private', 'https://github.com/owner/other', 'https://github.com.evil.test/owner/private']) {
+      expect(await codeReviewGithubToken(project, githubUrl, { getDeviceToken, getInstallationToken })).toBeUndefined();
+    }
+    expect(await codeReviewGithubToken({ gitRepoUrl: project.gitRepoUrl }, 'https://github.com/owner/private', { getDeviceToken })).toBeUndefined();
+    expect(await codeReviewGithubToken(undefined, 'https://github.com/owner/private', { getDeviceToken })).toBeUndefined();
+    expect(getDeviceToken).not.toHaveBeenCalled(); expect(getInstallationToken).not.toHaveBeenCalled();
+  });
   it.each(['src', 'app'])('preserves real %s directory paths when a sanitized snapshot is checked again', async (directory) => {
     const first = await validateCodeReviewZip(buildZip([{ name: `repository/${directory}/a.ts`, data: 'const a = 1' }]));
     const second = await readCodeReviewSnapshot(first.zip);

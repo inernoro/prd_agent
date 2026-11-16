@@ -7,6 +7,8 @@ import { chromium } from 'playwright';
 import { verifyPublicLoading } from './loading-public-smoke.mjs';
 import { verifySettingsRefresh } from './project-settings-refresh-smoke.mjs';
 import { verifyLoadingRefresh } from './loading-refresh-smoke.mjs';
+import { verifyCodeReviewDocument } from './code-review-document-smoke.mjs';
+import { verifyMonitorWorkspaceNavigation, verifyMonitorOnboardingSessionCleanup } from './monitor-workspace-navigation-smoke.mjs';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -48,6 +50,7 @@ try {
       }
       if (!p.startsWith('/api/auth/')) { requests.push(p); await data.promise; }
       let payload = resolveFixture(p) ?? {};
+      if (scene.kind === 'release-center' && p === '/api/releases/center') payload = { ...payload, rows: [] };
       if (p === '/api/auth/sso/config') payload = { enabled: false, providerId: 'fixture', label: '使用 SSO 登录', authorizationUrl: '', tokenUrl: '', clientId: '', defaultRedirect: '/project-list', hasClientSecret: false };
       if (p === '/api/overview/topology') payload = {generatedAt: new Date().toISOString(),summary:{errors:0,warnings:0,infos:0},projects:[]};
       if (p === '/api/reports/overview') payload = {overview:{window:{from:'2026-10-01',to:'2026-11-01',days:30,previousFrom:'2026-09-01'},headline:{status:'untested',statusLabel:'尚无记录',sentence:'合成空结果',supports:[]},releaseGate:{state:'unknown',reason:'尚无记录',latest:null,lastPass:null},totals:{archived:0,folded:0,counted:0,pass:0,conditional:0,fail:0,undetermined:0,previous:{counted:0,pass:0,conditional:0,fail:0,undetermined:0}},passRate:{kind:'acceptance',numerator:0,denominator:0,rate:null,previous:{numerator:0,denominator:0,rate:null}},kinds:[],clusters:[],daily:[],mergeCoverage:{items:[],counts:{verified:0,conditional:0,failed:0,unverified:0}},reports:[],supersededReports:[]}};
@@ -110,6 +113,38 @@ try {
       data.release();
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
+      if (!before && scene.kind === 'release-center') {
+        await page.getByRole('heading', { name: '还没有站点发布目标', exact: true }).waitFor();
+        await page.getByRole('region', { name: '批次发布', exact: true }).waitFor();
+        await page.getByRole('button', { name: '新建批次', exact: true }).click();
+        await page.getByRole('combobox', { name: '已验收版本', exact: true }).waitFor();
+        await page.getByText('需要至少两个已启用的发布目标，可先通过「新建环境」补齐。', { exact: true }).waitFor();
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${route}: batch empty state overflows`);
+        result.batchEmptyStateReachable = true;
+      }
+      if (!before && scene.kind === 'code-reviews') {
+        result.documentScroll = await verifyCodeReviewDocument(browser, base, out);
+        await page.locator('.cr-ui h1').waitFor();
+        result.fontMatrix = [];
+        for (const density of ['80', '85', '100']) {
+          await page.evaluate(value => {
+            if (value === '85') delete document.documentElement.dataset.uiScale;
+            else document.documentElement.dataset.uiScale = value;
+          }, density);
+          for (const width of [1440, 1536, 1920, 2048]) {
+            await page.setViewportSize({ width, height: 940 });
+            result.fontMatrix.push(await page.evaluate(({ density, width }) => ({
+              density, width,
+              heading: getComputedStyle(document.querySelector('.cr-ui h1')).fontSize,
+              body: getComputedStyle(document.querySelector('.cr-ui')).fontSize,
+            }), { density, width }));
+          }
+          const sizes = result.fontMatrix.filter(item => item.density === density);
+          assert.equal(new Set(sizes.map(item => item.heading)).size, 1, `review heading changes with viewport at density ${density}`);
+          assert.equal(new Set(sizes.map(item => item.body)).size, 1, `review body changes with viewport at density ${density}`);
+        }
+        assert(parseFloat(result.fontMatrix.at(-1).body) > parseFloat(result.fontMatrix[0].body), 'the user density preference must still change text size');
+      }
       if (scene.kind === 'branch-detail') {
         await page.locator('summary').filter({hasText:'生效配置'}).click();
         await page.getByText('没有任何自定义环境变量层。',{exact:true}).waitFor();
@@ -130,6 +165,9 @@ try {
       const refresh = await verifyLoadingRefresh(browser, base, out);
       await fs.writeFile(path.join(out, 'refresh-result.json'), JSON.stringify(refresh,null,2));
       console.log('PASS refresh retains content/input/focus; failure/retry; navigate away and reopen');
+      await verifyMonitorWorkspaceNavigation(browser, base, path.join(out, 'monitor-navigation'));
+      console.log('PASS monitor navigation preserves location, selection and sidebar transitions');
+      await verifyMonitorOnboardingSessionCleanup(browser, base, path.join(out, 'monitor-onboarding-cleanup'));
     } catch(e) {results.push({route:'refresh-regression',failure:String(e)}); console.log('FAIL refresh-regression '+String(e));}
   }
 } finally { await browser.close(); }
