@@ -1019,6 +1019,7 @@ test('互斥锁阻塞的定时任务仍持久化有条件结论并发送 MAP 通
     assert.equal(summary.notification.status, 'sent');
     assert.equal(existsSync(result.blockedPath), true);
     assert.equal(calls.length, 1);
+    assert.ok(calls[0].args.includes('--notification-only'));
     assert.deepEqual(calls[0].args.slice(0, 5), [
       'scripts/stable-smoke-notify.mjs',
       '--verdict',

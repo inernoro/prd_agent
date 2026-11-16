@@ -9,12 +9,14 @@ function readArg(argv, name, fallback = '') {
 
 export function buildNotificationPayload(options) {
   const isTest = options.isTest === true;
+  const notificationOnly = options.notificationOnly === true;
   const source = options.source || 'stable-smoke';
   const title = isTest ? '业务巡检：通知通道测试' : '业务巡检：有检查项需要处理';
   const detail = [
     `环境：${options.environment}`,
+    !isTest && notificationOnly ? `运行编号：${options.runId}` : '',
     isTest ? '这是一条通道测试，无需处理。' : options.recovery,
-    isTest ? '' : '查看报告了解逐项结果与处理进展；未执行不代表业务故障。',
+    isTest || notificationOnly ? '' : '查看报告了解逐项结果与处理进展；未执行不代表业务故障。',
   ].filter(Boolean).join('\n');
 
   return {
@@ -120,6 +122,7 @@ async function main() {
     reportUrl: readArg(argv, '--report-url'),
     actionLabel: readArg(argv, '--action-label', '查看验收证据'),
     isTest: argv.includes('--test'),
+    notificationOnly: argv.includes('--notification-only'),
   };
   const result = await sendNotification(options);
   process.stdout.write(`${JSON.stringify(result)}\n`);

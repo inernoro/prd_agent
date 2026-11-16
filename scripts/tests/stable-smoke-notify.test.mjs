@@ -38,10 +38,14 @@ test('执行链异常可以把动作改为打开通知中心', () => {
     reportUrl: 'https://map.ebcone.net/?panel=notifications',
     targetUserId: 'user-1',
     actionLabel: '打开通知中心',
+    notificationOnly: true,
   });
 
   assert.equal(payload.actionLabel, '打开通知中心');
   assert.equal(payload.actionUrl, 'https://map.ebcone.net/?panel=notifications');
+  assert.match(payload.message, /运行编号：fatal-run/);
+  assert.doesNotMatch(payload.message, /查看报告了解|未执行不代表业务故障/);
+  assert.equal(payload.dedupKey, 'fatal-run:summary');
 });
 
 test('缺少目标用户时拒绝全局通知', () => {
@@ -130,3 +134,14 @@ test('旧调用方逐项发送136项时也只使用一个整轮身份', () => {
   assert.equal(new Set(payloads.map(p => p.dedupKey)).size, 1);
   assert.ok(payloads.every(p => p.actionUrl === base.reportUrl));
 });
+
+for (const verdict of ['fail', 'conditional']) {
+  test(`无报告的${verdict}通知保留补跑编号且不冒充报告已归档`, () => {
+    const payload = buildNotificationPayload({ ...base, verdict, notificationOnly: true,
+      actionLabel: '打开通知中心', reportUrl: 'https://map.example.test/?panel=notifications' });
+    assert.match(payload.message, /运行编号：stsmk-123/);
+    assert.doesNotMatch(payload.message, /查看报告了解|未执行不代表业务故障/);
+    assert.equal(payload.dedupKey, 'stsmk-123:summary');
+    assert.equal(payload.actionLabel, '打开通知中心');
+  });
+}

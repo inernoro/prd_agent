@@ -1272,6 +1272,7 @@ export async function deliverUnhandledFailure(argv, error) {
         '--recovery', '稳定冒烟异常终止。请先处理执行摘要中的失败阶段，再使用相同 runId 重新执行并核对验收报告。',
         '--report-url', providedReportUrl || notificationCenterUrl,
         '--action-label', providedReportUrl ? '查看验收证据' : '打开通知中心',
+        ...(!providedReportUrl ? ['--notification-only'] : []),
       ], {
         env: {
           ...process.env,
@@ -1363,6 +1364,7 @@ export async function deliverLockedRun(argv, dependencies = {}) {
         '--recovery', summaryDocument.recovery,
         '--report-url', actionUrl,
         '--action-label', providedReportUrl ? '查看验收证据' : '打开通知中心',
+        ...(!providedReportUrl ? ['--notification-only'] : []),
       ], {
         env: {
           ...process.env,
