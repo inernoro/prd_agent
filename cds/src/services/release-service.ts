@@ -400,6 +400,7 @@ export class ReleaseService {
   private readonly verifyProjectCI: ProjectReleaseCIVerifier;
   private readonly resolveProjectRepository: ReleaseServiceOptions['resolveProjectRepository'];
   private readonly inFlight = new Map<string, ReleaseExecutionHandle>();
+  private readonly artifactReclaimCursors = new Map<string, { worktree?: string; version?: string }>();
   private readonly runStartedHooks: Array<(run: ReleaseRun) => void> = [];
 
   constructor(private readonly stateService: StateService, options: ReleaseServiceOptions = {}) {
@@ -1301,6 +1302,14 @@ export class ReleaseService {
     } catch (err) {
       busyReason = errorText(err);
     }
+    // Bound scan positions by registered active targets. A held legacy prefix
+    // must not monopolize every sweep; restarting safely begins at the first page.
+    const activeTargets = new Set(this.stateService.getReleaseTargets()
+      .filter(candidate => candidate.isEnabled && candidate.lifecycle !== 'archived').map(candidate => candidate.id));
+    for (const id of this.artifactReclaimCursors.keys()) {
+      if (!activeTargets.has(id)) this.artifactReclaimCursors.delete(id);
+    }
+    const cursor = this.artifactReclaimCursors.get(target.id);
     const plan = computeReleaseArtifactRetentionPlan({
       mode: state.mode,
       inventory: state.inventory,
@@ -1308,6 +1317,8 @@ export class ReleaseService {
       hasInFlightRun: Boolean(busyReason),
       drift: state.drift.status,
       maxRemovals: options.maxRemovals,
+      afterWorktree: cursor?.worktree,
+      afterVersion: cursor?.version,
       publicDirectoryShared: this.isPublicDirectoryShared(target, strategy),
     });
 
@@ -1335,6 +1346,15 @@ export class ReleaseService {
         ...base,
         nativeCounts: { succeeded: 0, held: 0, failed: 0, pending: plan.removeWorktrees.length + plan.removeVersions.length },
       };
+    }
+    // Advance an actual attempt even when native safety holds an object or the
+    // transport cannot confirm completion. It remains in inventory for retry.
+    // Dry-run is read-only and must not change the next real sweep's position.
+    if (!options.dryRun && activeTargets.has(target.id)) {
+      this.artifactReclaimCursors.set(target.id, {
+        worktree: plan.removeWorktrees.at(-1) ?? cursor?.worktree,
+        version: plan.removeVersions.at(-1) ?? cursor?.version,
+      });
     }
     try {
       const output = await this.sshExec(target, command);
