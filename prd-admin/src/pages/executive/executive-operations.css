@@ -904,6 +904,7 @@
 }
 
 .op-task-dialog {
+  --exec-accent: var(--accent-fg-warning);
   font-size: 12px;
   line-height: 1.8;
 }
