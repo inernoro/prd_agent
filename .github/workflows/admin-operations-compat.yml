@@ -35,7 +35,7 @@ on:
       scenario:
         description: '验收范围'
         type: choice
-        options: [all, audio]
+        options: [all, audio, entry]
         default: all
 
 permissions:
@@ -88,6 +88,8 @@ jobs:
         run: |
           if [ "$BROWSER_SCENARIO" = "audio" ]; then
             GATEWAY_AUDIO_MONITOR=gateway_acceptance.monitor pnpm -C e2e exec playwright test -c admin-operations.config.ts gateway-audio.spec.ts --workers=1
+          elif [ "$BROWSER_SCENARIO" = "entry" ]; then
+            pnpm -C e2e exec playwright test -c admin-operations.config.ts --grep '电影式接入全流程' --repeat-each=2 --workers=2
           else
             pnpm -C e2e exec playwright test -c admin-operations.config.ts --workers=2
           fi

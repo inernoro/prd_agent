@@ -133,6 +133,8 @@ test('MAP 单点进入受阻时先显示试听，点击真实激活后才声称�
     permitted = true;
     await act(async () => button.click());
     assert.equal(started, 0, 'resume 尚未完成不能声称已播放');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1400)); });
+    assert.equal(button.dataset.audioStatus, 'pending');
     await act(async () => acknowledgeResume());
     assert.equal(started, 1);
     assert.equal(button.dataset.audioStatus, 'ready');
@@ -145,6 +147,15 @@ test('MAP 单点进入受阻时先显示试听，点击真实激活后才声称�
     assert.ok(stopped >= 1);
     await act(async () => window.dispatchEvent(new window.CustomEvent(GATEWAY_SOUND_EVENT, { detail: 'reveal' })));
     assert.equal(started, 2);
+    const { EntryAudio } = await server.ssrLoadModule('/src/components/entry/entryAudio.ts');
+    const cancelled = new EntryAudio();
+    cancelled.unlock();
+    const waiting = cancelled.play('scan');
+    cancelled.stop();
+    acknowledgeResume();
+    assert.equal(await waiting, false, '等待恢复期间被取消的旧音效不能迟到播放');
+    assert.equal(started, 2);
+    cancelled.dispose();
   } finally {
     if (root) await act(async () => root.unmount());
     finish?.(); await server.close(); dom.window.close(); Object.assign(globalThis, previous);

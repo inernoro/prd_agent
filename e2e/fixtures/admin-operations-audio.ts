@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
-import { expect, type TestInfo } from '@playwright/test';
+import { expect, type Page, type TestInfo } from '@playwright/test';
 
 /** Records only the CI virtual speaker monitor, never an input microphone. */
 export async function captureSpeaker(testInfo: TestInfo, label: string, audible: boolean, action: () => Promise<void>) {
@@ -45,4 +45,43 @@ export async function captureSpeaker(testInfo: TestInfo, label: string, audible:
   expect(pcm.length).toBeGreaterThan(9600);
   if (audible) { expect(peak).toBeGreaterThan(.005); expect(peak).toBeLessThan(.99); }
   else expect(peak).toBeLessThan(.0001);
+}
+
+export async function observeNativeAudio(page: Page) {
+  await page.addInitScript(() => {
+    const events: unknown[] = [];
+    const contexts: AudioContext[] = [];
+    Reflect.set(window, 'gatewayNativeAudioContexts', contexts);
+    document.addEventListener('visibilitychange', () => events.push({ event: 'visibility', value: document.visibilityState }));
+    Reflect.set(window, 'gatewayNativeAudio', events);
+    const resume = AudioContext.prototype.resume;
+    AudioContext.prototype.resume = function () {
+      const requestedAt = performance.now();
+      if (!contexts.includes(this)) contexts.push(this);
+      events.push({ event: 'resume', state: this.state, rate: this.sampleRate, visibility: document.visibilityState, activated: navigator.userActivation?.isActive });
+      this.addEventListener('statechange', () => events.push({ event: 'state', state: this.state, time: this.currentTime }));
+      return resume.call(this).then(() => { events.push({ event: 'resumed', waitMs: performance.now() - requestedAt, state: this.state, time: this.currentTime }); }, error => { events.push({ event: 'resume-error', error: String(error) }); throw error; });
+    };
+    const decode = BaseAudioContext.prototype.decodeAudioData;
+    BaseAudioContext.prototype.decodeAudioData = function (bytes: ArrayBuffer) {
+      events.push({ event: 'decode', bytes: bytes.byteLength });
+      return decode.call(this, bytes).then(buffer => { events.push({ event: 'decoded', duration: buffer.duration }); return buffer; }, error => { events.push({ event: 'decode-error', error: String(error) }); throw error; });
+    };
+    const start = AudioBufferSourceNode.prototype.start;
+    AudioBufferSourceNode.prototype.start = function (...args: Parameters<AudioBufferSourceNode['start']>) {
+      const duration = this.buffer?.duration;
+      const began = this.context.currentTime;
+      start.apply(this, args);
+      events.push({ event: 'started', state: this.context.state, duration, time: began });
+      this.addEventListener('ended', () => events.push({ event: 'ended', duration, elapsed: this.context.currentTime - began }));
+    };
+  });
+}
+
+export async function nativeAudioEvidence(page: Page) {
+  return page.evaluate(() => ({
+    visibility: document.visibilityState,
+    events: Reflect.get(window, 'gatewayNativeAudio'),
+    contexts: (Reflect.get(window, 'gatewayNativeAudioContexts') || []).map((context: AudioContext) => ({ state: context.state, time: context.currentTime, rate: context.sampleRate })),
+  }));
 }

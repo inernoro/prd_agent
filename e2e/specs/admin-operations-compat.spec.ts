@@ -1,3 +1,4 @@
+import { observeNativeAudio, nativeAudioEvidence } from '../fixtures/admin-operations-audio';
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   installOperationsFixtures,
@@ -416,6 +417,7 @@ for (const width of [390, 1440])
     test(`${width} ${theme} 电影式接入全流程与账户组织布局`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
       const { writes } = await installOperationsFixtures(page, { quickstart: true });
+      await observeNativeAudio(page);
       await page.addInitScript(t => localStorage.setItem("llmgw.theme", t), theme);
       await page.goto("http://127.0.0.1:8200/llmgw/login");
       await page.locator("#llmgw-username").fill("demo");
@@ -449,7 +451,13 @@ for (const width of [390, 1440])
       await expect(sound).toHaveAttribute("data-audio-status", "pending");
       if (await sound.getAttribute("data-audio-status") === "ready") await sound.click();
       await sound.click();
-      await expect(sound).toHaveAttribute("data-audio-status", "ready");
+      try {
+        await expect(sound).toHaveAttribute("data-audio-status", "ready");
+      } finally {
+        const evidence = await nativeAudioEvidence(page);
+        console.log("Layout native audio evidence:", testInfo.title, JSON.stringify(evidence));
+        await testInfo.attach("layout-native-audio", { body: JSON.stringify(evidence, null, 2), contentType: "application/json" });
+      }
       await sound.click();
       await expect(sound).toHaveAttribute("data-audio-status", "muted");
       await page.getByLabel("打开用户菜单", { exact: true }).click();

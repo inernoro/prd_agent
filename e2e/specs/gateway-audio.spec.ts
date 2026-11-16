@@ -1,32 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { installOperationsFixtures } from '../fixtures/admin-operations.mjs';
-import { captureSpeaker } from '../fixtures/admin-operations-audio';
+import { captureSpeaker, observeNativeAudio, nativeAudioEvidence } from '../fixtures/admin-operations-audio';
 
 // Observe real browser audio. No fake AudioContext, autoplay preference, or fabricated readiness.
 test('网关原生音频：点击激活、静音、扫描与确认提示音', async ({ page, browser }, testInfo) => {
-  await page.addInitScript(() => {
-    const events: unknown[] = [];
-    Reflect.set(window, 'gatewayNativeAudio', events);
-    const resume = AudioContext.prototype.resume;
-    AudioContext.prototype.resume = function () {
-      events.push({ event: 'resume', state: this.state, rate: this.sampleRate, visibility: document.visibilityState, activated: navigator.userActivation?.isActive });
-      this.addEventListener('statechange', () => events.push({ event: 'state', state: this.state, time: this.currentTime }));
-      return resume.call(this).then(() => { events.push({ event: 'resumed', state: this.state, time: this.currentTime }); }, error => { events.push({ event: 'resume-error', error: String(error) }); throw error; });
-    };
-    const decode = BaseAudioContext.prototype.decodeAudioData;
-    BaseAudioContext.prototype.decodeAudioData = function (bytes: ArrayBuffer) {
-      events.push({ event: 'decode', bytes: bytes.byteLength });
-      return decode.call(this, bytes).then(buffer => { events.push({ event: 'decoded', duration: buffer.duration }); return buffer; }, error => { events.push({ event: 'decode-error', error: String(error) }); throw error; });
-    };
-    const start = AudioBufferSourceNode.prototype.start;
-    AudioBufferSourceNode.prototype.start = function (...args: Parameters<AudioBufferSourceNode['start']>) {
-      const duration = this.buffer?.duration;
-      const began = this.context.currentTime;
-      start.apply(this, args);
-      events.push({ event: 'started', state: this.context.state, duration, time: began });
-      this.addEventListener('ended', () => events.push({ event: 'ended', duration, elapsed: this.context.currentTime - began }));
-    };
-  });
+  await observeNativeAudio(page);
   await installOperationsFixtures(page, { quickstart: true });
   try {
     await page.goto('http://127.0.0.1:8200/llmgw/login');
@@ -70,8 +48,8 @@ test('网关原生音频：点击激活、静音、扫描与确认提示音', as
     });
     await expect(page.getByRole('heading', { name: '设定归属与预算', exact: true })).toBeVisible();
   } finally {
-    const events = await page.evaluate(() => Reflect.get(window, 'gatewayNativeAudio'));
-    const evidence = { engine: testInfo.project.name, version: browser.version(), events };
+    const native = await nativeAudioEvidence(page);
+    const evidence = { engine: testInfo.project.name, version: browser.version(), ...native };
     console.log('Native audio evidence:', JSON.stringify(evidence));
     await testInfo.attach('native-audio-evidence', { body: JSON.stringify(evidence, null, 2), contentType: 'application/json' });
   }

@@ -33,10 +33,9 @@ export class EntryAudio {
     try {
       const buffer = await this.buffers.get(cue);
       if (buffer && this.context && !this.running && this.resuming) {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await Promise.race([this.resuming, new Promise<void>(resolve => { timer = setTimeout(resolve, 1200); })]);
-        } finally { clearTimeout(timer); }
+        // Native device startup is asynchronous. A fixed timeout loses a valid
+        // late resume permanently; stop/dispose/visibility still invalidate this epoch.
+        await this.resuming;
       }
       // Never queue a silent suspended source and call it enabled.
       if (!this.enabled || !buffer || !this.context || !this.running || this.disposed || epoch !== this.epoch || document.visibilityState !== 'visible') return false;
