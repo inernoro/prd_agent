@@ -348,7 +348,8 @@ jobs:
     name: Production Release Script Test
     needs: changes
     if: needs.changes.outputs.release_scripts == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # 与现有浏览器验收使用相同 LTS，避免 latest 升级后 Playwright 系统依赖不兼容。
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -677,6 +678,8 @@ jobs:
         run: pnpm test
 
       - name: Build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm build
 
       - name: Install recording acceptance dependencies

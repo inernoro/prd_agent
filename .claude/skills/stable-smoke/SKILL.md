@@ -150,7 +150,7 @@ Stable Smoke Progress:
 - 顺序：CDS 环境全量完成后，再运行正式环境安全矩阵。
 - 闸门：CDS 环境出现 P0、数据污染或清理失败时，正式环境只跑只读健康检查，跳过写入并把整轮判为 fail。
 - 超时：单模块 30 分钟，整轮 120 分钟；超时按失败处理，不继续播放进度文案。
-- 通知：成功只归档；conditional 或 fail 必须发送模块、caseId、环境、requestId、证据和恢复动作。
+- 通知：成功只归档；conditional 或 fail 每轮只发送一条汇总，明确失败、未执行和不稳定数量，附线上报告与恢复动作。模块、caseId、环境、requestId 和独立问题证据完整保留在报告，禁止按用例逐条推送。相同 runId 的补跑更新同一通知，模块和环境变化不得改变去重身份。
 - 通知实现：`scripts/stable-smoke-notify.mjs` 只调用 MAP `/api/dashboard/notifications/events`，缺少目标用户 ID 时拒绝发送，避免误发全员。
 - 保留：CDS 线上报告和截图至少 90 天；回归台账永久保留。
 - 实现：Codex 桌面端本地自动化 `stable-smoke-48h`，执行环境必须为 `local`，工作目录固定为项目主工作区；调度使用 `RRULE:FREQ=DAILY;INTERVAL=2;BYHOUR=2;BYMINUTE=17`。
