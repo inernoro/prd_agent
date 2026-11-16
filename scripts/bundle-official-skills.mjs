@@ -71,12 +71,22 @@ const INCLUDE = new Set([
   'acceptance-checklist',    // 通用 UAT 清单
   'create-visual-test-to-kb',// 通用视觉验收取证 + 报告归档
   'task-handoff-checklist',  // 通用交接清单
+  'game-over',               // 通用 PR 评审、修复、验证与交付闭环
+  'work-budget',             // 通用开工估算与预算跟踪
+  'kill-debt',               // 通用债务核实、目标任务发收
+  'create-debt',             // 通用债务记录与关闭标准
+  'first-principles',        // 通用精简总结与第一性原理分析
 ]);
 
 // 友好显示名（key → 中文备注名）。缺省用 frontmatter name（多为英文 key）。
 // 卡片标题展示这个，像 findmapskills 那样「英文 · 中文一句话」。
 const DISPLAY_NAME = {
   'map-agent': 'MAP 智能体接入与托管',
+  'game-over': 'game-over · PR 交付闭环',
+  'work-budget': 'work-budget · 开工预算与估算',
+  'kill-debt': 'kill-debt · 债务核实与发收',
+  'create-debt': 'create-debt · 债务入账',
+  'first-principles': 'first-principles · 精简提炼与分析',
   'acceptance-checklist': 'acceptance-checklist · 真人验收清单',
   'acceptance-scenario-orchestrator': 'acceptance-scenario-orchestrator · 验收场景编排',
   'acceptance-test-design': 'acceptance-test-design · 验收测试设计',
@@ -110,6 +120,11 @@ const DISPLAY_NAME = {
 // **不动 frontmatter**（那是 harness 的触发依据，改了会影响技能识别准确度）。
 const DISPLAY_SUMMARY = {
   'map-agent': '连接 MAP、安装更新技能、原样托管网站并管理公开永久分享',
+  'game-over': '按本次授权跟进 PR 评论、修复和验证，通过门禁后完成交付',
+  'work-budget': '开工前估算成果与投入，执行中跟踪预算，估时失准后校准方法',
+  'kill-debt': '先核实债务是否仍成立，再生成目标任务并按交付证据收账',
+  'create-debt': '去重记录重要但暂不紧急的问题，明确证据、影响与关闭条件',
+  'first-principles': '总结材料或按需分析，默认精简关键词要点，保留事实与未知边界',
   'acceptance-checklist': '生成真人逐步打勾的验收清单，每步带预期结果和失败排查手册',
   'acceptance-test-design': '把需求或代码变化转成风险假设、融合用例和可审计证据矩阵',
   'acceptance-scenario-orchestrator': '复杂验收目标的范围编排：场景识别、结果映射、指差法清单、证据链契约',
@@ -154,6 +169,11 @@ const TAG_RULES = [
 
 // 手工覆盖：key → tags（命中即用，跳过启发式）。允许多标签。
 const TAG_OVERRIDE = {
+  'game-over': ['工具'],
+  'work-budget': ['工具'],
+  'kill-debt': ['工具'],
+  'create-debt': ['文档'],
+  'first-principles': ['分析'],
   laowang: ['精英'],
   findmapskills: ['技能', '精英'],
   'acceptance-test-design': ['分析'],
