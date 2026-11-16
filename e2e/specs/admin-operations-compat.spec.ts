@@ -18,6 +18,50 @@ test.beforeEach(async ({ browser, page }, testInfo) => {
 });
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+  test(`${viewport.width} 运维授权关闭后同一请求不随心跳抢占，新请求和主动刷新仍可处理`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    await page.route('**/api/auth/status', async route => route.fulfill({ json: {
+      authenticated: true, enabled: true, user: { name: '审批操作员', isSystemOwner: true },
+      approvalCapabilities: { accessRequests: false, operator: true },
+    } }));
+    let reads = 0;
+    const pending = [{ id: 'pending-one', opId: 'shell.run', opName: '隔离运维请求', opDanger: 'destructive',
+      requestedBy: '其他 Agent', requestedAt: '2026-01-01T00:00:00Z', callerKey: 'fixture', status: 'pending' }];
+    const mutations: string[] = [];
+    page.on('request', req => {
+      if (req.method() !== 'GET' && new URL(req.url()).pathname.startsWith('/api/')) mutations.push(new URL(req.url()).pathname);
+    });
+    await page.route('**/api/cds-system/operator/requests', async route => {
+      reads++;
+      await route.fulfill({ json: { pending } });
+    });
+    // 真实 EventSource 重连及心跳触发组件的正常刷新，不直接改 React 状态。
+    await page.route('**/api/cds-events', async route => route.fulfill({
+      contentType: 'text/event-stream',
+      body: `retry: 100\nevent: heartbeat\ndata: ${JSON.stringify({ ts: new Date().toISOString(), data: {} })}\n\n`,
+    }));
+    await page.goto(`http://127.0.0.1:5273/release-console?project=${target.projectId}&mode=batch`);
+    const dialog = page.getByRole('dialog', { name: '需要你的明确授权', exact: true });
+    await expect(dialog).toContainText('其他 Agent');
+    await reachable(dialog.getByRole('button', { name: '关闭', exact: true }));
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+    const afterCloseReads = reads;
+    await expect.poll(() => reads, { timeout: 15000 }).toBeGreaterThanOrEqual(afterCloseReads + 2);
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole('combobox', { name: '当前项目', exact: true }).click({ trial: true });
+    expect(mutations).toEqual([]);
+    const beforeNewRequestReads = reads;
+    pending.unshift({ ...pending[0], id: 'pending-two', opName: '新的隔离运维请求' });
+    await expect.poll(() => reads, { timeout: 15000 }).toBeGreaterThan(beforeNewRequestReads);
+    await expect(dialog).toContainText('新的隔离运维请求');
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+    await page.reload();
+    await expect(dialog).toContainText('新的隔离运维请求');
+    expect(pending.every(item => item.status === 'pending')).toBe(true);
+    expect(mutations).toEqual([]);
+  });
+
   test(`${viewport.width} 授权提醒可稍后处理，预检就绪批次可直接取消`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await installOperationsFixtures(page);
