@@ -181,11 +181,12 @@ public class DocumentSyncWorker : BackgroundService
             if (diff.HasChanges)
                 update = update.Set(e => e.LastChangedAt, DateTime.UtcNow);
 
-            await db.DocumentEntries.UpdateOneAsync(
-                e => e.Id == entry.Id,
+            var completion = await db.DocumentEntries.UpdateOneAsync(
+                DocumentEntryWriteGuard.ForCurrentLifecycle(entry),
                 update,
                 cancellationToken: CancellationToken.None);
 
+            if (completion.MatchedCount == 0) return;
             sw.Stop();
 
             // 只在有变化时落日志
@@ -309,7 +310,7 @@ public class DocumentSyncWorker : BackgroundService
                 if (docOk)
                 {
                     await db.DocumentEntries.UpdateOneAsync(
-                        e => e.Id == entry.Id,
+                        DocumentEntryWriteGuard.ForCurrentLifecycle(entry),
                         Builders<DocumentEntry>.Update
                             .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
                             .Set(e => e.SyncError, null)
@@ -345,7 +346,7 @@ public class DocumentSyncWorker : BackgroundService
                 // 自愈：源内容并没真变，只是重建被误删的 Document。
                 // 不更新 LastChangedAt，避免错误触发 DocBrowser 的 NEW 徽标。
                 await db.DocumentEntries.UpdateOneAsync(
-                    e => e.Id == entry.Id,
+                    DocumentEntryWriteGuard.ForCurrentLifecycle(entry),
                     Builders<DocumentEntry>.Update
                         .Set(e => e.DocumentId, freshParsed.Id)
                         .Set(e => e.ContentHash, freshHash)
@@ -391,7 +392,7 @@ public class DocumentSyncWorker : BackgroundService
                 {
                     // 内容未变 → 仅更新 LastSyncAt + 缓存头（如有更新），不落日志
                     await db.DocumentEntries.UpdateOneAsync(
-                        e => e.Id == entry.Id,
+                        DocumentEntryWriteGuard.ForCurrentLifecycle(entry),
                         Builders<DocumentEntry>.Update
                             .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
                             .Set(e => e.SyncError, null)
@@ -412,15 +413,8 @@ public class DocumentSyncWorker : BackgroundService
                 // fall through 到下面的"重新解析、保存、落日志"分支，把 Document 重建回来
             }
 
-            // 覆盖前快照旧正文：订阅文档被远端同步覆盖时，用户本地改动（如插入配图）不丢，可恢复。
-            // 自愈分支（内容未真变、仅重建空 Document）跳过，避免无意义版本。
-            if (!isSelfHeal && !string.IsNullOrEmpty(entry.DocumentId))
-            {
-                var oldDoc = await documentService.GetByIdAsync(entry.DocumentId);
-                if (oldDoc != null && !string.IsNullOrWhiteSpace(oldDoc.RawContent))
-                    await versions.SnapshotAsync(entry.Id, entry.StoreId, oldDoc.RawContent,
-                        DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
-            }
+            var previousContent = !isSelfHeal && !string.IsNullOrEmpty(entry.DocumentId)
+                ? (await documentService.GetByIdAsync(entry.DocumentId))?.RawContent : null;
 
             // 真的有变化 → 解析、保存、落日志
             var parsed = await documentService.ParseAsync(content);
@@ -448,10 +442,15 @@ public class DocumentSyncWorker : BackgroundService
                 .Unset(e => e.SyncLeaseExpiresAt);
             // 自愈分支：源内容并没真变，只是重建被误删 Document → 不动 LastChangedAt 避免误亮 NEW
             if (!isSelfHeal) entryUpdate = entryUpdate.Set(e => e.LastChangedAt, DateTime.UtcNow);
-            await db.DocumentEntries.UpdateOneAsync(
-                e => e.Id == entry.Id,
+            var committed = await db.DocumentEntries.UpdateOneAsync(
+                DocumentEntryWriteGuard.ForCurrentLifecycle(entry),
                 entryUpdate,
                 cancellationToken: CancellationToken.None);
+
+            if (committed.MatchedCount == 0) return;
+            if (!string.IsNullOrWhiteSpace(previousContent))
+                await versions.SnapshotAsync(entry.Id, entry.StoreId, previousContent,
+                    DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
 
             // 同步后的新正文快照成版本，保证「最新版本 == 当前正文」（自愈不算变化，跳过）
             if (!isSelfHeal)
@@ -518,8 +517,8 @@ public class DocumentSyncWorker : BackgroundService
     {
         var truncated = error.Length > 500 ? error[..500] : error;
 
-        await db.DocumentEntries.UpdateOneAsync(
-            e => e.Id == entry.Id,
+        var result = await db.DocumentEntries.UpdateOneAsync(
+            DocumentEntryWriteGuard.ForCurrentLifecycle(entry),
             Builders<DocumentEntry>.Update
                 .Set(e => e.SyncStatus, DocumentSyncStatus.Error)
                 .Set(e => e.SyncError, truncated)
@@ -529,6 +528,7 @@ public class DocumentSyncWorker : BackgroundService
                 .Unset(e => e.SyncLeaseExpiresAt),
             cancellationToken: CancellationToken.None);
 
+        if (result.MatchedCount == 0) return;
         await db.DocumentSyncLogs.InsertOneAsync(new DocumentSyncLog
         {
             EntryId = entry.Id,

@@ -165,6 +165,8 @@ const EXACT = {
   '/api/infra/catalog': { services: [] },
   '/api/cds-system/operator/requests': { requests: [] },
   '/api/cds-system/perf-health': { status: 'ok', samples: [] },
+  '/api/releases/batches/accepted-versions': { versions: [] },
+  '/api/releases/batches': { batches: [] },
   '/api/releases/targets': { targets: [] },
   '/api/github/app': { configured: false },
   '/api/github/installations': { installations: [] },
@@ -270,6 +272,21 @@ const PREFIX = [
   [/^\/api\/branches$/, () => ({
     branches,
     capacity: { maxContainers: 40, runningContainers: 9, totalMemGB: 96 },
+  })],
+  [/^\/api\/projects\/[^/]+\/branch-groups$/, () => ({
+    ok: true,
+    groups: [
+      {
+        id: 'fixture-active-work',
+        name: '正在开发',
+        color: 'blue',
+        rules: [{ kind: 'prefix', value: 'feature/' }],
+        pinnedBranchIds: [],
+      },
+    ],
+    updatedAt: '2026-09-02T09:40:00.000Z',
+    updatedBy: 'user',
+    readOnly: false,
   })],
   [/^\/api\/projects\/[^/]+$/, () => project],
   [/^\/api\/projects\/[^/]+\/branch-groups$/, () => ({

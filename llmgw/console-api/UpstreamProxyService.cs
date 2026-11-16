@@ -43,9 +43,14 @@ public sealed class UpstreamProxyService(IMongoDatabase database, IConfiguration
         => UpstreamProxy.Resolve(UpstreamProxy.Read(upstream), await GlobalAsync(TenantAccess.GetRequired(http).TenantId, http.RequestAborted),
             encrypted => { var result = GwApiKeyCrypto.Decrypt(encrypted, config); return result.Success ? result.PlainText : null; });
 
-    public async Task<HttpClient?> CreateClientAsync(HttpContext http, BsonDocument upstream)
+    public async Task<(ResolvedUpstreamProxy? Proxy, string? Error)> TryResolveAsync(HttpContext http, BsonDocument upstream)
     {
-        var resolved = await ResolveAsync(http, upstream);
+        try { return (await ResolveAsync(http, upstream), null); }
+        catch (InvalidOperationException ex) { return (null, ex.Message); }
+    }
+
+    public HttpClient? CreateClient(HttpContext http, ResolvedUpstreamProxy? resolved)
+    {
         return resolved is null ? null : new HttpClient(UpstreamProxy.CreateHandler(resolved, TenantAccess.GetRequired(http).TenantId != internalTenantId))
             { Timeout = TimeSpan.FromSeconds(15) };
     }
@@ -56,7 +61,7 @@ public sealed class UpstreamProxyService(IMongoDatabase database, IConfiguration
         IResult Fail(string code, string message, int status = 400) => Results.Json(ApiEnvelope<object>.Fail(code, message), json, statusCode: status);
 
         app.MapGet("/gw/upstream-proxy", async (HttpContext http, CancellationToken ct) =>
-            Ok(UpstreamProxy.View(await GlobalAsync(TenantAccess.GetRequired(http).TenantId, ct), "direct")))
+            Ok(UpstreamProxy.View(await GlobalAsync(TenantAccess.GetRequired(http).TenantId, ct))))
             .RequireAuthorization("LogsRead");
 
         app.MapPut("/gw/upstream-proxy", async (HttpContext http, UpstreamProxyWrite body) =>
@@ -73,7 +78,7 @@ public sealed class UpstreamProxyService(IMongoDatabase database, IConfiguration
                     { "mode", UpstreamProxy.View(doc).Mode }, { "address", (BsonValue?)UpstreamProxy.View(doc).Address ?? BsonNull.Value },
                     { "hasPassword", UpstreamProxy.View(doc).HasPassword },
                 }, CancellationToken.None);
-                return Ok(UpstreamProxy.View(doc, "direct"));
+                return Ok(UpstreamProxy.View(doc));
             }
             catch (ArgumentException ex) { return Fail("INVALID_PROXY", ex.Message); }
             catch (InvalidOperationException) { return Fail("PROXY_SECRET_UNAVAILABLE", "代理密码未能加密，请检查网关的加密配置后重试"); }
@@ -122,6 +127,7 @@ public sealed class UpstreamProxyService(IMongoDatabase database, IConfiguration
                 int? status = null;
                 string? contentType = null;
                 string? upstreamRequestId = null;
+                string? failureStage = null;
                 string message;
                 bool connected;
                 try
@@ -143,10 +149,16 @@ public sealed class UpstreamProxyService(IMongoDatabase database, IConfiguration
                         _ => "已收到响应",
                     };
                 }
-                catch (OperationCanceledException) when (!http.RequestAborted.IsCancellationRequested)
-                { connected = false; message = "5 秒内未收到响应，请检查代理、上游地址或稍后重试"; }
+                catch (OperationCanceledException)
+                {
+                    connected = false;
+                    failureStage = http.RequestAborted.IsCancellationRequested ? "request-canceled" : "response-timeout";
+                    message = http.RequestAborted.IsCancellationRequested
+                        ? "客户端已中断连接测试，未收到响应"
+                        : "5 秒内未收到响应，请检查代理、上游地址或稍后重试";
+                }
                 catch (HttpRequestException)
-                { connected = false; message = "连接失败，请检查代理地址、认证信息及上游是否可访问"; }
+                { connected = false; failureStage = "connection"; message = "连接失败，请检查代理地址、认证信息及上游是否可访问"; }
                 sw.Stop();
                 var sample = new UpstreamNetworkSample(index, connected, status, sw.ElapsedMilliseconds, message);
                 samples.Add(sample);
@@ -158,8 +170,11 @@ public sealed class UpstreamProxyService(IMongoDatabase database, IConfiguration
                     { "httpStatus", (BsonValue?)status ?? BsonNull.Value }, { "contentType", (BsonValue?)contentType ?? BsonNull.Value },
                     { "upstreamRequestId", upstreamRequestId is null ? BsonNull.Value : new BsonString(new string(upstreamRequestId.Where(c => !char.IsControl(c)).Take(128).ToArray())) },
                     { "message", sample.Message }, { "responseBodyOmittedReason", "HEAD 请求没有响应正文；只保留安全响应头及本地判定" },
+                    { "failureStage", (BsonValue?)failureStage ?? BsonNull.Value },
                     { "timeoutMs", 5000 },
                 }, CancellationToken.None);
+                // 请求取消也先持久化本次实际探测，再停止后续采样并传播取消。
+                http.RequestAborted.ThrowIfCancellationRequested();
             }
             var successful = samples.Where(x => x.Connected).Select(x => x.ElapsedMs).ToArray();
             return Ok(new UpstreamNetworkTestResult(route, probeUri.GetLeftPart(UriPartial.Path), samples.Count, successful.Length,

@@ -23,9 +23,9 @@ function fixture() {
   const sha = git('rev-parse', 'HEAD');
   const run = { releaseId: 'rel_test', targetId: 'target', commitSha: sha, artifact: { artifactPath: repo } } as ReleaseRun;
   const target = (strategy: ReleaseStrategy) => ({ strategy, ssh: { appPath: repo } } as ReleaseTarget);
-  const execute = (strategy: ReleaseStrategy, id = 'rel_test') => {
-    const execution = buildReleaseExecution(target(strategy), { ...run, releaseId: id });
-    execFileSync('bash', ['-c', execution.command], { cwd: repo, env: { ...process.env, CDS_COMMIT_SHA: sha, CDS_RELEASE_ID: id, CDS_TARGET_ID: 'target', RELEASE_OUTPUT: path.join(root, 'output') }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const execute = (strategy: ReleaseStrategy, id = 'rel_test', commitSha = sha) => {
+    const execution = buildReleaseExecution(target(strategy), { ...run, commitSha, releaseId: id });
+    execFileSync('bash', ['-c', execution.command], { cwd: repo, env: { ...process.env, CDS_COMMIT_SHA: commitSha, CDS_RELEASE_ID: id, CDS_TARGET_ID: 'target', RELEASE_OUTPUT: path.join(root, 'output') }, stdio: ['pipe', 'pipe', 'pipe'] });
     return execution;
   };
   return { root, repo, git, sha, run, target, content, execute };
@@ -40,6 +40,21 @@ describe('project-owned publishing contract', () => {
     expect(fs.readFileSync(path.join(f.root, 'output'), 'utf8')).toBe('old');
     expect(result.scriptSha256).toBe(crypto.createHash('sha256').update(f.content).digest('hex'));
     expect(fs.realpathSync(path.join(f.root, '.cds-releases/target/current'))).toContain('rel_test');
+  });
+  it('executes committed check/deploy with declared minimal inputs through the real release chain', () => {
+    const f = fixture();
+    fs.mkdirSync(path.join(f.repo, 'scripts')); fs.mkdirSync(path.join(f.repo, 'deploy')); fs.mkdirSync(path.join(f.repo, 'acceptance'));
+    fs.writeFileSync(path.join(f.repo, 'scripts/required'), 'required release input');
+    fs.writeFileSync(path.join(f.repo, 'acceptance/large.bin'), Buffer.alloc(2 * 1024 * 1024, 42));
+    fs.writeFileSync(path.join(f.repo, 'deploy/release-inputs.json'), JSON.stringify({schema:1,kind:'prebuilt-release-inputs',directories:['scripts','deploy']}));
+    fs.writeFileSync(path.join(f.repo, 'cds-release.sh'), f.content.replace('check) :', 'check) test -f scripts/required; test ! -e acceptance'));
+    f.git('add', '.'); f.git('commit', '-m', 'declared release inputs');
+    const sha = f.git('rev-parse', 'HEAD');
+    f.execute({mode:'project-script'}, 'rel_scoped', sha);
+    expect(fs.readFileSync(path.join(f.root, 'output'), 'utf8')).toBe('old');
+    const current = fs.realpathSync(path.join(f.root, '.cds-releases/target/current'));
+    expect(fs.existsSync(path.join(current, 'acceptance'))).toBe(false);
+    expect(fs.readFileSync(path.join(current, 'scripts/required'), 'utf8')).toBe('required release input');
   });
   it('rejects a missing, uncommitted or symlinked release file', () => {
     const f = fixture();
@@ -101,6 +116,48 @@ describe('project-owned publishing contract', () => {
     await expect(service.startRelease({ ...input, preflightId: green.preflightId })).rejects.toThrow(/发布前检查未通过/);
     expect(deployments).toBe(0);
     await state.flush();
+  });
+  it.each([
+    { source: 'project', expected: 'pass' },
+    { source: 'other-project', expected: 'fail' },
+    { source: 'missing', expected: 'fail' },
+  ])('checks committed scripts without a prebuilt branch checkout: $source', async ({ source, expected }) => {
+    const f = fixture();
+    f.git('remote', 'add', 'origin', source === 'other-project'
+      ? 'https://operator:must-not-leak@github.com/other/project.git'
+      : 'https://github.com/owner/project.git');
+    fs.writeFileSync(path.join(f.repo, 'cds-release.sh'), f.content.replace('old', 'newer'));
+    f.git('add', '.'); f.git('commit', '-m', 'newer');
+    const state = new StateService(path.join(f.root, 'state.json')); state.load();
+    const now = new Date().toISOString();
+    const worktree = path.join(f.root, 'no-source-checkout');
+    state.addProject({ id: 'project', slug: 'project', name: 'Project', kind: 'git', githubRepoFullName: 'owner/project', createdAt: now, updatedAt: now });
+    state.addBranch({ id: 'branch', projectId: 'project', branch: 'main', worktreePath: worktree, status: 'running', pinnedCommit: f.sha, createdAt: now, services: {} });
+    state.addRemoteHost({ id: 'host', name: 'Host', host: '127.0.0.1', sshPort: 22, sshUser: 'deploy', sshPrivateKeyEncrypted: 'fixture', sshPrivateKeyFingerprint: 'fixture', tags: [], isEnabled: true, createdAt: now });
+    state.upsertReleaseTarget({ id: 'target', projectId: 'project', name: 'Target', type: 'ssh', isEnabled: true, createdAt: now,
+      strategy: { mode: 'project-script', scriptFile: 'cds-release.sh' },
+      ssh: { host: '127.0.0.1', port: 22, user: 'deploy', privateKeyRef: 'host', appPath: f.repo, deployCommand: '', healthcheckUrl: 'https://project.example.test/health' } });
+    const service = new ReleaseService(state, {
+      verifyProjectCI: async () => ({ ok: true, message: 'same commit CI passed' }),
+      resolveProjectRepository: (projectId) => {
+        expect(projectId).toBe('project');
+        return source === 'missing' ? path.join(f.root, 'missing-repo') : f.repo;
+      },
+      sshExecutor: async req => req.command.includes('CDS_REPO_ORIGIN=') ? 'CDS_REPO_ORIGIN=https://github.com/owner/project.git\n' : '',
+    });
+    try {
+      const result = await service.preflight({ branchId: 'branch', targetId: 'target', previewUrl: 'https://preview.example.test', operator: 'test' });
+      expect(result.checks.find(check => check.id === 'release-script')?.status).toBe(expected);
+      expect(result.ok).toBe(expected === 'pass');
+      expect(JSON.stringify(result.checks)).not.toContain('must-not-leak');
+      expect(fs.existsSync(worktree)).toBe(false);
+      if (expected === 'pass') {
+        expect(result.artifact?.artifactPath).toBe(f.repo);
+        expect(result.checks.find(check => check.id === 'release-script')?.message).toContain(crypto.createHash('sha256').update(f.content).digest('hex'));
+      }
+    } finally {
+      await state.flush();
+    }
   });
   it('a failed project-owned final check restores the previous script and keeps the release failed', async () => {
     const f = fixture();

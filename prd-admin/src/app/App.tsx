@@ -1,3 +1,4 @@
+import HostedCollectionPage from '@/pages/hosted-collections/HostedCollectionPage';
 import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
@@ -88,6 +89,7 @@ const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversat
 const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
 const LandingPage = lazy(() => import('@/pages/home').then(m => ({ default: m.LandingPage })));
 const RichComposerLab = lazy(() => import('@/pages/_dev/RichComposerLab'));
+const WebHostingShareDemo = lazy(() => import('@/pages/_dev/WebHostingShareDemo'));
 const WebHostingCardsDemo = lazy(() => import('@/pages/_dev/WebHostingCardsDemo'));
 const StreamingTextLab = lazy(() => import('@/pages/_dev/StreamingTextLab'));
 const MobileAuditPage = lazy(() => import('@/pages/_dev/MobileAuditPage'));
@@ -297,6 +299,7 @@ export default function App() {
         <Route path="/_mockup/selection-diff-probe" element={<SelectionDiffProbe />} />
 
         {/* 公开分享页面 - 无需登录 */}
+        <Route path="/s/collection/:token" element={<HostedCollectionPage />} />
         <Route path="/s/wp/:token" element={<ShareViewPage />} />
         <Route path="/s/shortcut/:id" element={<ShortcutInstallPage />} />
         <Route path="/shared/toolbox/:shareId" element={<SharedConversation />} />
@@ -312,6 +315,7 @@ export default function App() {
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
         <Route path="/_dev/mobile-audit" element={<MobileAuditPage />} />
+        <Route path="/_dev/web-hosting-share" element={<WebHostingShareDemo />} />
         <Route path="/_dev/web-hosting-cards" element={<WebHostingCardsDemo />} />
         <Route path="/_dev/streaming-text-lab" element={<StreamingTextLab />} />
         <Route path="/_dev/marketplace-card-demo" element={<MarketplacePage />} />

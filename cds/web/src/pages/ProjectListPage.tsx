@@ -1,6 +1,7 @@
+import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+
 import {
   Activity,
   AlertTriangle,
@@ -484,8 +485,17 @@ export function ProjectListPage(): JSX.Element {
   const [pendingImportOpen, setPendingImportOpen] = useState(false);
   const [pendingImportFocusId, setPendingImportFocusId] = useState<string | null>(null);
   const [pendingImportError, setPendingImportError] = useState('');
-  const [inventorySelection, setInventorySelection] = useState<ProjectInventorySelection>(INITIAL_PROJECT_SELECTION);
+  const [inventorySelection, setInventorySelection] = useState<ProjectInventorySelection>(() => {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(`cds.project-selection:${window.history.state?.key || 'default'}`) || 'null') as ProjectInventorySelection | null;
+      if (value && typeof value.query === 'string' && ['all', 'running', 'paused', 'ready'].includes(value.status) && typeof value.environment === 'string' && ['default', 'recent', 'name'].includes(value.sort) && ['grid', 'list'].includes(value.view)) return value;
+    } catch { /* optional visit context */ }
+    return INITIAL_PROJECT_SELECTION;
+  });
   const [inventoryPreferences, setInventoryPreferences] = useState<ProjectInventoryPreferences>({ view: 'grid', pinnedProjectIds: [] });
+  useEffect(() => {
+    try { sessionStorage.setItem(`cds.project-selection:${window.history.state?.key || 'default'}`, JSON.stringify(inventorySelection)); } catch { /* optional visit context */ }
+  }, [inventorySelection]);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
 
   useEffect(() => {
@@ -2005,7 +2015,7 @@ export function ProjectCard({
 
   return (
     <article className="cds-project-card cds-cv-auto" data-project-id={project.id} data-paused={paused || undefined} data-pinned={pinned || undefined}>
-      <a href={isReady ? projectHref(project) : '#'}
+      <a data-surface-route href={isReady ? projectHref(project) : '#'}
         onClick={(event) => { if (!isReady) event.preventDefault(); }}
         aria-label={`查看 ${title}`} className="cds-project-card-link">
         <header className="cds-project-card-heading">

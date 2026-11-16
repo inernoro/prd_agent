@@ -34,6 +34,20 @@ describe('取消后的原作业费用详情刷新', () => {
   });
   const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(3000); });
 
+  it('未取消但中断的已有作业显示待核对，不冒取消、免费或自动重提', async () => {
+    api.get.mockResolvedValue(ok(run({ status: 'Rendering', cancelRequested: false,
+      currentPhase: 'generation-recovery-blocked', errorCode: 'VIDEO_RECOVERY_OUTCOME_UNKNOWN',
+      errorMessage: '上次生成结果尚未确认，已停止自动重试以避免重复费用。请核对已有结果后再决定下一步。',
+    })));
+    await act(async () => root.render(<VideoGenDirectPanel externalRunId="existing-run" />));
+    expect(container.querySelector('[data-testid="video-generation-stage"]')?.textContent).toContain('避免重复费用');
+    expect(container.textContent).toContain('待核对');
+    expect(container.textContent).not.toContain('生成中');
+    expect(container.textContent).not.toContain('已取消');
+    expect(container.textContent).not.toContain('$0.000');
+    await tick(); expect(api.get).toHaveBeenCalledTimes(2);
+  });
+
   it('打开已取消的作业仍刷新，核到账单后显示最终费用并停止刷新', async () => {
     api.get.mockResolvedValueOnce(ok(run())).mockResolvedValueOnce(ok(run({ directVideoCost: 0.01 })))
       .mockResolvedValue(ok(run({ directVideoCost: 0.43, directVideoReconciledAt: '2026-11-08T00:01:00Z' })));

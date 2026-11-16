@@ -30,7 +30,7 @@ describe('让位给空状态的条件：必须是「成功地报了零」', () =
   });
 
   it('加载与失败两块仍然在流水线分支里，带重试按钮', () => {
-    const globalBranch = page.slice(page.indexOf('{isGlobalScope ? ('), page.indexOf('<section id="reports-ledger"'));
+    const globalBranch = page.slice(page.indexOf('{!classificationActive && (isGlobalScope ? ('), page.indexOf('<section id="reports-ledger"'));
     expect(globalBranch).toContain('正在汇总验收流水线');
     expect(globalBranch).toContain('流水线汇总加载失败');
     expect(globalBranch).toMatch(/onClick=\{onRetryOverview\}/);

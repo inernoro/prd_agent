@@ -37,16 +37,6 @@ ALLOWED_ROOT_FILES = {
     "execdep.sh",
     "fast.sh",
     "local_exec_dep.sh",
-    # Project-wide explanations of the supported document roles.
-    "pri.adr.md",
-    "pri.pdr.md",
-    "pri.spec.md",
-    "pri.design.md",
-    "pri.plan.md",
-    "pri.rule.md",
-    "pri.guide.md",
-    "pri.report.md",
-    "pri.debt.md",
     "quick.ps1",
     "quick.sh",
     "skills-lock.json",
@@ -116,7 +106,7 @@ def main() -> int:
             )
         elif entry.is_file() and entry.name not in ALLOWED_ROOT_FILES:
             failures.append(
-                f"unapproved root file {entry.name!r}; place it in its owning module or update the root contract"
+                f"unapproved root file {entry.name!r}; place documents under doc/ and supporting files in their owning module"
             )
         elif entry.is_dir() and entry.name in FORBIDDEN_ROOT_DIRECTORIES:
             failures.append(
@@ -124,7 +114,7 @@ def main() -> int:
             )
         elif entry.is_dir() and entry.name not in ALLOWED_ROOT_DIRECTORIES:
             failures.append(
-                f"unapproved root directory {entry.name!r}; place it in its owning module or update the root contract"
+                f"unapproved root directory {entry.name!r}; place supporting material in its owning module"
             )
 
     if failures:

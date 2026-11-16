@@ -958,7 +958,22 @@ export interface PreviewMirrorTag {
   routingIdentity?: { resourceNamespace: string; historicalSlugs: string[] };
 }
 
+export interface CiImageDiagnosis {
+  code: 'not_triggered' | 'workflow_missing' | 'queued' | 'building' | 'startup_failed' | 'cancelled' | 'build_failed' | 'build_timed_out' | 'result_unsynced' | 'unknown';
+  title: string;
+  message: string;
+  targetSha: string;
+  checkedAt: string;
+  actionUrl: string;
+  actionLabel: string;
+}
+
 export interface BranchEntry {
+  /** 逻辑归档仍保留服务、工作区与数据；到期前可恢复。 */
+  archive?: { archivedAt: string; retireAt: string; reason: string; actor: string } | null;
+  /** 整组未就绪的连续观察起点，完全就绪后清空。 */
+  incompleteSince?: string | null;
+  restoredFromArchiveAt?: string;
   /** 父实例镜像来的只读分支（预览实例专用），生产实例永远没有这个字段 */
   mirror?: PreviewMirrorTag;
   id: string;
@@ -1081,6 +1096,8 @@ export interface BranchEntry {
    * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
    */
   extraProfiles?: BuildProfile[];
+  /** Explicit branch-local omission of baseline services; absent/empty preserves inheritance. */
+  excludedProjectProfileIds?: string[];
   /**
    * 复制集模式（2026-07-23，design.cds.replica-set）：按 profileId 粒度，
    * 让单个服务在同一入口下并排跑多个历史版本。absent/空 = 普通模式（现状零回归）。
@@ -1186,6 +1203,8 @@ export interface BranchEntry {
    * 非极速版分支不设此字段,行为不变（push 即本机编译）。
    */
   ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  /** 对账原因绑定到目标 SHA；新 push/完成回执时清空，避免旧原因覆盖新状态。 */
+  ciDiagnosis?: CiImageDiagnosis | null;
   /** 极速版正在等待 CI 构建的目标 commit SHA（用于 workflow_run 的 head_sha 匹配）。 */
   ciTargetSha?: string;
   /** 最近一次匹配到的 CI workflow_run 结论（success / failure / cancelled / timed_out …）。 */
@@ -1677,6 +1696,9 @@ export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp' | 'health-json'
  * 不留证据的功能监控，红了以后没人说得清是模型抽风还是判据写错，最后只能被静音。
  */
 export interface MonitorObservation {
+  /** 产物地址含鉴权信息时，公开证据隐藏地址并说明原因。 */
+  artifactProtected?: boolean;
+  upstreamCalls?: import('./services/mcp-monitor.js').McpCallEvidence[];
   /** ISO 时间 */
   at: string;
   ok: boolean;
@@ -1705,6 +1727,8 @@ export interface MonitorObservation {
 }
 
 export interface UptimeCustomMonitor {
+  /** Only the MCP import route writes this sealed server-side configuration. */
+  mcp?: import('./services/mcp-monitor.js').McpMonitorConfig;
   id: string;
   /** 展示名；留空时由服务端按地址派生（主机名 / host:port） */
   name: string;
@@ -2047,6 +2071,8 @@ export type ReleaseRunStatus =
   | 'rollback_failed';
 
 export interface ReleaseRun {
+  batchId?: string;
+  batchAttemptId?: string;
   releaseId: string;
   projectId: string;
   branchId: string;
@@ -2236,6 +2262,14 @@ export interface DeletedProjectWorktreeTombstone {
   requestedAt: string;
 }
 
+export interface LegacyDataCase {
+  id: string; projectId: string; sourceIdentity: string; dataIdentity: string;
+  marker: string; device: number; inode: number; birthtimeMs?: number; firstObservedAt: string; lastObservedAt: string;
+  status: 'needs-owner' | 'protected' | 'backup-required';
+  disposition?: 'business-data' | 'ephemeral-test' | 'unknown';
+  confirmedBy?: string; confirmedAt?: string; note?: string;
+}
+
 export interface CdsState {
   profileStorageBindings?: Record<string, import('./services/profile-storage-provision.js').ProfileStorageBinding>;
   profileStoragePublications?: Record<string, {binding: import('./services/profile-storage-provision.js').ProfileStorageBinding}>;
@@ -2261,12 +2295,18 @@ export interface CdsState {
   releasePlans?: Record<string, ReleasePlan>;
   /** 监控中心的自定义探测目标，key 为 UptimeCustomMonitor.id。旧状态可缺省。 */
   uptimeMonitors?: Record<string, UptimeCustomMonitor>;
+  /** 总览订阅独立于探测开关；取消订阅不会改动共享探测或通知策略。 */
+  monitorSubscriptions?: Record<string, { subscribed: boolean; updatedAt: string; updatedBy: string }>;
+  monitorNotifications?: import('./services/alarm-route.js').MonitorNotificationSettings;
+  mcpMonitorAudits?: import('./services/mcp-monitor.js').McpCallEvidence[];
   /**
    * 落库的发布前检查结论，key 为 ReleasePreflightRecord.id。
    * 存量 state.json / mongo global 文档里**没有这个键**，所有读处必须 `?.` 兜底，
    * 否则 `Object.values(undefined)` 直接把 CDS 启动炸掉。
    */
   releasePreflights?: Record<string, ReleasePreflightRecord>;
+  /** Durable ordered batches, including request receipts; old state may omit it. */
+  releaseBatches?: Record<string, import('./domain/release-batch.js').ReleaseBatch>;
   /** Immutable release run records keyed by releaseId. */
   releaseRuns?: Record<string, ReleaseRun>;
   /** Per-branch append-only container log archives owned by CDS. */
@@ -2371,6 +2411,10 @@ export interface CdsState {
   resourceExternalAccess?: Record<string, ResourceExternalAccessPolicy>;
   /** Resource-scoped database clone / create / restore task history. */
   resourceCloneTasks?: ResourceCloneTask[];
+  /** Persistent-data observations are a disposition queue, never deletion permissions. */
+  legacyDataCases?: LegacyDataCase[];
+  /** Bounded last execution per host/keeper. Object identities live in native catalogs. */
+  resourceRetirementExecutions?: Record<string, unknown>;
   /**
    * 正在直接占用基础设施数据面的短作业台账。轮换在撤销旧凭据前以此做 drain 门禁；
    * completed/failed 记录只保留有限历史，active 记录在进程崩溃后故意保持阻断，等待人工核对。
@@ -2810,6 +2854,19 @@ export interface ScheduledJob {
   lastRunStatus?: ScheduledJobRunStatus;
   lastRunId?: string;
   nextRunAt?: string | null;
+  /** 报告生产者须将 X-CDS-Job-Run-Id / CDS_JOB_RUN_ID 带到归档请求。 */
+  completion?: ScheduledJobCompletion;
+  scheduleGraceSeconds?: number;
+  /** 独立于手动运行，且不受运行历史裁剪影响。 */
+  lastScheduledRun?: ScheduledJobRun;
+  /** 最近 push 运行独立于手动执行，且不随历史裁剪丢失健康依据。 */
+  lastPushRun?: ScheduledJobRun;
+  recoveryRequiredRunId?: string;
+  healthAlertKey?: string;
+  /** 旧幂等键拒绝重放，最新请求保留结果，不依赖运行史保留时长。 */
+  lastManualRequest?: ScheduledJobRun;
+  /** 每个来源分支最近一次认领的 push 版本；重复 webhook 不重放。 */
+  lastPushCommits?: Record<string, string>;
   /**
    * 连续失败计数（成功或跳过即清零）。只对含 release 动作的任务累计——
    * 给 http/command 任务加自动停用会改变存量行为，本轮不动它们。
@@ -2822,6 +2879,15 @@ export interface ScheduledJob {
 }
 
 export type ScheduledJobRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped';
+
+export interface ScheduledJobCompletion {
+  type: 'reports';
+  minCount: number;
+  requireObjectStorage?: boolean;
+  allowedVerdicts?: Array<'pass' | 'conditional' | 'fail'>;
+}
+
+export type ScheduledJobFailureKind = 'missed' | 'execution' | 'timeout' | 'artifact-invalid' | 'interrupted';
 
 /**
  * 一次运行里单个动作的结果。
@@ -2847,6 +2913,22 @@ export interface ScheduledJobRun {
   projectId: string;
   trigger: 'schedule' | 'manual' | 'push';
   status: ScheduledJobRunStatus;
+  scheduledFor?: string;
+  failureKind?: ScheduledJobFailureKind;
+  /** 核实恢复不能抹掉原故障；同一运行保留首次失败与验证时刻。 */
+  recovery?: {
+    failureKind?: ScheduledJobFailureKind;
+    error?: string;
+    failedAt?: string;
+    verifiedAt: string;
+  };
+  phase?: 'executing' | 'validating';
+  actionCount?: number;
+  deadlineAt?: string;
+  completion?: ScheduledJobCompletion;
+  artifacts?: Array<{ reportId: string; sha256: string; sizeBytes: number }>;
+  /** 客户端重试仅复用原结果；不重放动作。 */
+  requestKey?: string;
   queuedAt: string;
   startedAt?: string;
   finishedAt?: string;
@@ -2915,6 +2997,9 @@ export interface PeerPairingCode {
  * 存储位置，可选地通过 projectId 关联到某个项目以便过滤）。
  */
 export interface AcceptanceReportMeta {
+  scheduledJobRunId?: string;
+  classification?: import('./shared/notification-templates.js').ReportClassification;
+  monitorEvent?: import('./shared/notification-templates.js').ReportMonitorEvent;
   reportType?: 'acceptance' | 'code-review';
   reviewTaskId?: string;
   /** 稳定 ID（用于对象键 / 本地缓存文件名 `<id>.<ext>` 与路由 `:id`）。 */
@@ -3448,6 +3533,8 @@ export interface ProjectActivityLog {
     | 'ai-release'     // AI agent 释放
     | 'branch-deleted' // DELETE /branches/:id
     | 'branch-created' // POST /branches
+    | 'branch-archived'
+    | 'branch-restored'
     | 'resource-created'
     | 'resource-deleted'
     | 'resource-restart'
@@ -3591,6 +3678,7 @@ export interface ConfigSnapshot {
     branchConfigs?: Record<string, {
       profileOverrides?: Record<string, BuildProfileOverride>;
       extraProfiles?: BuildProfile[];
+      excludedProjectProfileIds?: string[];
       derivedFromBranchId?: string;
       derivedFromBranchName?: string;
       derivedAt?: string;
@@ -3811,6 +3899,112 @@ export interface ManagedProjectSpec {
   capabilities?: ManagedCapabilityBinding[];
 }
 
+export interface StandbyMirrorBranchFingerprint {
+  /** 目标节点执行 deploy/stop 时使用的 CDS branch id；不是 Git branch name。 */
+  id: string;
+  name: string;
+  commitSha: string | null;
+  status: string;
+  /** 人工固定提交必须保留；缓存与固定提交不一致时不能自动操作。 */
+  pinnedCommit?: string | null;
+  commitIdentityConfirmed?: boolean;
+  runtimeIdentityConfirmed?: boolean;
+  configHash?: string;
+  secretKeyHash?: string;
+  /** 仅用于同节点的瞬时配置条件核对；进程重启即失效，不跨站比较。 */
+  configurationRevision?: string;
+}
+
+/** 备用 CDS 之间只交换不可逆指纹与版本事实，不交换环境变量明文。 */
+export interface StandbyMirrorFingerprint {
+  protocolVersion: 1;
+  /** 缺少能力声明的旧节点只能核对，不能接收精确提交创建。 */
+  capabilities?: { expectedCommitCreate: true; pinAwareIdentity?: true; runtimeIdentity?: true; branchConfigIdentity?: true };
+  projectId: string;
+  repository: string | null;
+  defaultBranch: string | null;
+  configHash: string;
+  secretKeyHash: string;
+  secretKeyCount: number;
+  branches: StandbyMirrorBranchFingerprint[];
+  generatedAt: string;
+}
+
+export interface StandbyMirrorAudit {
+  id: string;
+  responseAuditId?: string;
+  checkedAt: string;
+  peerId: string;
+  remoteProjectId: string;
+  remoteReachable: boolean;
+  protocolReady: boolean;
+  repositoryMatches: boolean;
+  configMatches: boolean;
+  secretKeysMatch: boolean;
+  defaultBranchMatches: boolean;
+  dataSnapshotReady: boolean;
+  /** A historical transfer alone cannot prove current stateful data equality. */
+  currentDataVerified?: boolean;
+  dataReadinessReason?: string;
+  readyForFailover: boolean;
+  missingBranches: string[];
+  divergentBranches: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
+  performance: {
+    samples: number;
+    healthP50Ms: number | null;
+    healthP95Ms: number | null;
+    fingerprintMs: number | null;
+    localFingerprintMs: number;
+  };
+  error?: string;
+}
+
+export type StandbyBranchSyncPolicy = 'audit-only' | 'catalog' | 'warm-running';
+
+export interface StandbyBranchSyncAction {
+  configurationDivergence?: boolean;
+  name: string;
+  sourceStatus: string;
+  sourceCommit: string | null;
+  targetBranchId?: string;
+  kind: 'create' | 'deploy' | 'stop' | 'divergent';
+  reason: string;
+}
+
+export interface StandbyBranchSyncResult {
+  responseAuditId?: string;
+  startedAt: string;
+  completedAt: string;
+  dryRun: boolean;
+  policy: StandbyBranchSyncPolicy;
+  sourceBranchCount: number;
+  targetBranchCount: number;
+  planned: StandbyBranchSyncAction[];
+  created: string[];
+  deployed: string[];
+  stopped: string[];
+  divergent: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
+  failed: Array<{ name: string; action: StandbyBranchSyncAction['kind']; error: string }>;
+}
+
+export interface StandbyMirrorConfig {
+  peerId: string;
+  remoteProjectId: string;
+  enabled: boolean;
+  intervalMinutes: number;
+  /**
+   * audit-only: 只核对；catalog: 补齐分支目录但不启动；warm-running: 另外对齐运行/停止状态。
+   * 任何策略都不自动删除目标独有分支，也不强制覆盖提交分叉。
+   */
+  branchSyncPolicy?: StandbyBranchSyncPolicy;
+  /** 自动切流必须经过独立发布门，第一阶段固定 false。 */
+  autoFailover: false;
+  updatedAt: string;
+  lastAudit?: StandbyMirrorAudit;
+  lastBranchSync?: StandbyBranchSyncResult;
+  history?: StandbyMirrorAudit[];
+}
+
 export interface ProjectIdentitySnapshot {
   name: string;
   displayName: string;
@@ -3885,6 +4079,8 @@ export interface Project {
 
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
+  /** 主备对账策略与最近证据。缺省表示该项目尚未启用备用站。 */
+  standbyMirror?: StandbyMirrorConfig;
   /** 唯一可编辑的项目 slug，用于预览地址；关联使用稳定的 id。 */
   slug: string;
   /** Human-friendly display name shown on the projects list card. */

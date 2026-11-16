@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.LlmGateway.Asr;
@@ -41,19 +42,23 @@ public sealed class LiveAsrSessionOrchestrator
     private readonly LiveAsrBatchFallbackService _batchFallback;
     private readonly ILogger<LiveAsrSessionOrchestrator> _logger;
     private readonly IGatewayInvocationAuthority? _invocationAuthority;
+    private readonly string _internalTenantId;
 
     public LiveAsrSessionOrchestrator(
         IModelResolver resolver,
         DoubaoStreamAsrService asr,
         LiveAsrBatchFallbackService batchFallback,
         ILogger<LiveAsrSessionOrchestrator> logger,
-        IGatewayInvocationAuthority? invocationAuthority = null)
+        IGatewayInvocationAuthority? invocationAuthority = null,
+        IConfiguration? configuration = null)
     {
         _resolver = resolver;
         _asr = asr;
         _batchFallback = batchFallback;
         _logger = logger;
         _invocationAuthority = invocationAuthority;
+        _internalTenantId = configuration?["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
+            ? tenantId : GatewayTenantDefaults.InternalTenantId;
     }
 
     public async Task<LiveAsrOrchestrationResult> ExecuteAsync(
@@ -236,7 +241,9 @@ public sealed class LiveAsrSessionOrchestrator
                         candidates.Count,
                         candidate.ExchangeTransformerConfig,
                         platformCancellationToken,
-                        requirePublicPinnedWebSocket: true);
+                        requirePublicPinnedWebSocket: true,
+                        upstreamProxy: candidate.UpstreamProxy,
+                        allowPrivateProxy: string.Equals(requestContext.TenantId, _internalTenantId, StringComparison.Ordinal));
                 }
 
                 platformCancellationToken.ThrowIfCancellationRequested();

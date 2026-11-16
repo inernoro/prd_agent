@@ -11,6 +11,7 @@ import { identityChanged, identityRecord, importLegacyProjectSlug, projectIdenti
 import fs from 'node:fs';
 import { worktreePathActivity } from './worktree-path-activity.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
+import { customProbeTargetId } from './uptime-custom-monitor.js';
 import type {
   DbLedgerEntry,
   CdsState,
@@ -68,7 +69,7 @@ import type {
   InfraMaintenanceJobKind,
 } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
-import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
+import { mergeBranchProfiles, isValidExtraProfileId, assertBranchServiceIsolation } from './branch-extra-services.js';
 import { MAX_OBSERVATIONS } from './uptime-custom-monitor.js'; // monitor-observation-import
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -1586,6 +1587,13 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     branches: readonly BranchEntry[] = Object.values(this.state.branches || {}),
     profiles: readonly BuildProfile[] = this.state.buildProfiles,
   ): void {
+    for (const branch of branches) {
+      const projectId = branch.projectId || 'default';
+      const slug = this.getProject(projectId)?.slug;
+      assertBranchServiceIsolation(profiles.filter(p => (p.projectId || 'default') === projectId), branch,
+        (this.state.infraServices || []).filter(s => !s.projectId || s.projectId === projectId).map(s => s.id),
+        slug ? `-${slug}` : '');
+    }
     const targets = new Map<string, ProfileStorageTarget>();
     const add = (t: ProfileStorageTarget) => targets.set(profileStorageTargetKey(t), t);
     for (const row of Object.values(this.state.storageBirths || {})) if (row.binding.scope === 'branch-private')
@@ -1601,6 +1609,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       const original = this.getBranch(t.branchId);
       const members = (branch: BranchEntry | undefined, rows: readonly BuildProfile[]) => ({
         projectId:branch?.projectId || 'default',
+        excluded:branch?.excludedProjectProfileIds?.includes(t.serviceId) || false,
         project:rows.filter(p=>(p.projectId || 'default')===t.projectId && p.id===t.serviceId),
         extra:(branch?.extraProfiles || []).filter(p=>p.id===t.serviceId),
         override:branch?.profileOverrides?.[t.serviceId] || {},
@@ -1859,7 +1868,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const orphaned = Object.values(this.state.uptimeMonitors || {})
       .filter((monitor) => monitor.boundBranchId === id)
       .map((monitor) => monitor.id);
-    for (const mid of orphaned) delete this.state.uptimeMonitors?.[mid];
+    for (const mid of orphaned) this.deleteUptimeMonitorState(mid);
     if (orphaned.length > 0) {
       for (const listener of this.orphanedMonitorListeners) {
         // 各自 try/catch：一个观察者抛了不该让删分支这件事失败。
@@ -2159,6 +2168,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const protectedIds = new Set([
       ...Object.values(this.state.branches).map((branch) => branch.currentVersionId).filter(Boolean),
       ...Object.values(this.state.deploymentRuns || {}).map((run) => run.versionId).filter(Boolean),
+      ...this.getReleaseBatches(projectId).map(batch => batch.versionId),
     ]);
     for (const version of versions) {
       if (overflow <= 0) break;
@@ -2671,6 +2681,12 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       grants: (this.state.projectGrants || []).filter(p => projectGrantsToRevoke.includes(p.id)),
       dbLedger: (this.state.dbLedger || []).filter(p => p.projectId === id),
       monitors: uptimeMonitorsToRemove.map(mid => this.state.uptimeMonitors![mid]),
+      monitorSubscriptions: uptimeMonitorsToRemove.map(mid => ({ targetId: customProbeTargetId({ id: mid }), value: this.state.monitorSubscriptions?.[customProbeTargetId({ id: mid })] })),
+      monitorNotifications: uptimeMonitorsToRemove.map(mid => {
+        const targetId = customProbeTargetId({ id: mid });
+        const settings = this.state.monitorNotifications;
+        return { targetId, override: settings?.overrides?.[targetId], mutedUntil: settings?.mutedUntil?.[targetId], acknowledgedAt: settings?.acknowledgedAt?.[targetId] };
+      }),
       customEnv: this.state.customEnv?.[id],
     });
     let restored = false;
@@ -2687,6 +2703,16 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       for (const b of snapshot.branches) this.state.branches[b.id] ??= b;
       for (const [bid, logs] of Object.entries(snapshot.logs)) this.state.logs[bid] ??= logs;
       for (const m of snapshot.monitors) (this.state.uptimeMonitors ??= {})[m.id] ??= m;
+      for (const previous of snapshot.monitorSubscriptions) {
+        if (previous.value) (this.state.monitorSubscriptions ??= {})[previous.targetId] ??= previous.value;
+      }
+      for (const previous of snapshot.monitorNotifications) {
+        if (previous.override === undefined && previous.mutedUntil === undefined && previous.acknowledgedAt === undefined) continue;
+        const settings = this.state.monitorNotifications ??= {};
+        if (previous.override !== undefined) (settings.overrides ??= {})[previous.targetId] ??= previous.override;
+        if (previous.mutedUntil !== undefined) (settings.mutedUntil ??= {})[previous.targetId] ??= previous.mutedUntil;
+        if (previous.acknowledgedAt !== undefined) (settings.acknowledgedAt ??= {})[previous.targetId] ??= previous.acknowledgedAt;
+      }
       if (snapshot.customEnv) this.state.customEnv[id] ??= snapshot.customEnv;
       for (const previous of snapshot.grants) {
         const current = this.state.projectGrants?.find(g => g.id === previous.id);
@@ -2743,7 +2769,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       if (this.state.dbLedger) {
         this.state.dbLedger = this.state.dbLedger.filter((e) => e.projectId !== id);
       }
-      for (const mid of uptimeMonitorsToRemove) delete this.state.uptimeMonitors?.[mid];
+      for (const mid of uptimeMonitorsToRemove) this.deleteUptimeMonitorState(mid);
 
       this.state.projects = this.state.projects.filter((p) => p.id !== id);
       this.save();
@@ -2961,6 +2987,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       ciWorkflowRunUrl?: string;
       ciWaitingSince?: string;
       ciImageError?: string;
+      ciDiagnosis?: BranchEntry['ciDiagnosis'];
     },
   ): void {
     const branch = this.state.branches[id];
@@ -2979,6 +3006,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     if ('githubPrNumber' in updates) branch.githubPrNumber = updates.githubPrNumber;
     if ('githubPreviewCommentId' in updates) branch.githubPreviewCommentId = updates.githubPreviewCommentId;
     if ('ciImageStatus' in updates) branch.ciImageStatus = updates.ciImageStatus;
+    if ('ciDiagnosis' in updates) branch.ciDiagnosis = updates.ciDiagnosis;
+    else if ('ciImageStatus' in updates || 'ciTargetSha' in updates) branch.ciDiagnosis = null;
     if ('ciTargetSha' in updates) branch.ciTargetSha = updates.ciTargetSha;
     if ('ciWorkflowConclusion' in updates) branch.ciWorkflowConclusion = updates.ciWorkflowConclusion;
     if ('ciWorkflowRunUrl' in updates) branch.ciWorkflowRunUrl = updates.ciWorkflowRunUrl;
@@ -3188,6 +3217,41 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     this.save();
   }
 
+  getMonitorSubscriptions(): NonNullable<CdsState['monitorSubscriptions']> {
+    let changed = false;
+    const subscriptions = this.state.monitorSubscriptions ??= {};
+    for (const monitor of this.listUptimeMonitors()) {
+      const id = customProbeTargetId(monitor);
+      if (!subscriptions[id]) { subscriptions[id] = { subscribed: monitor.enabled !== false, updatedBy: 'registered-monitor', updatedAt: monitor.createdAt }; changed = true; }
+    }
+    if (changed) this.save(HINT_GLOBAL);
+    return structuredClone(subscriptions);
+  }
+
+  setMonitorSubscription(targetId: string, subscribed: boolean, updatedBy: string): void {
+    (this.state.monitorSubscriptions ??= {})[targetId] = { subscribed, updatedBy, updatedAt: new Date().toISOString() };
+    this.save(HINT_GLOBAL);
+  }
+
+  getMonitorNotifications(): import('./alarm-route.js').MonitorNotificationSettings {
+    return structuredClone(this.state.monitorNotifications ?? {});
+  }
+
+  setMonitorNotifications(settings: import('./alarm-route.js').MonitorNotificationSettings): void {
+    this.state.monitorNotifications = structuredClone(settings);
+    this.save(HINT_GLOBAL);
+  }
+
+  async recordMcpMonitorAudit(evidence: import('./mcp-monitor.js').McpCallEvidence): Promise<void> {
+    this.state.mcpMonitorAudits = [evidence, ...(this.state.mcpMonitorAudits ?? [])].slice(0, 200);
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
+  listMcpMonitorAudits(): import('./mcp-monitor.js').McpCallEvidence[] {
+    return structuredClone(this.state.mcpMonitorAudits ?? []);
+  }
+
   getUptimeMonitor(id: string): UptimeCustomMonitor | undefined {
     return this.state.uptimeMonitors?.[id];
   }
@@ -3206,15 +3270,37 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       createdAt: existing?.createdAt || monitor.createdAt || now,
       updatedAt: now,
     };
+    // 新接入不能继承旧版本删除后残留的静默；正常编辑保留现有通知。
+    if (!existing) this.clearUptimeMonitorNotifications(monitor.id);
     this.state.uptimeMonitors[monitor.id] = saved;
+    if (!existing) (this.state.monitorSubscriptions ??= {})[customProbeTargetId(saved)] ??= {
+      subscribed: saved.enabled !== false, updatedAt: now, updatedBy: saved.createdBy || 'registered-monitor',
+    };
     this.save(HINT_GLOBAL);
     return saved;
   }
 
   removeUptimeMonitor(id: string): boolean {
+    if (!this.deleteUptimeMonitorState(id)) return false;
+    this.save(HINT_GLOBAL);
+    return true;
+  }
+
+  private clearUptimeMonitorNotifications(id: string): void {
+    const targetId = customProbeTargetId({ id });
+    const settings = this.state.monitorNotifications;
+    for (const entries of [settings?.overrides, settings?.mutedUntil, settings?.acknowledgedAt]) {
+      if (entries) delete entries[targetId];
+    }
+  }
+
+  /** 由单项、分支、项目删除共用；各调用者仍只提交自己的原子保存。 */
+  private deleteUptimeMonitorState(id: string): boolean {
     if (!this.state.uptimeMonitors?.[id]) return false;
     delete this.state.uptimeMonitors[id];
-    this.save(HINT_GLOBAL);
+    this.clearUptimeMonitorNotifications(id);
+    // Keep explicit opt-outs across discovery disappearance/reappearance of the stable id.
+    if (this.state.monitorSubscriptions?.[customProbeTargetId({ id })]?.subscribed) delete this.state.monitorSubscriptions[customProbeTargetId({ id })];
     return true;
   }
 
@@ -3233,6 +3319,24 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     this.state.releasePlans[plan.id] = plan;
     this.save();
     return plan;
+  }
+
+  getReleaseBatches(projectId?: string): import('../domain/release-batch.js').ReleaseBatch[] {
+    return Object.values(this.state.releaseBatches || {})
+      .filter(batch => !projectId || batch.projectId === projectId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map(batch => structuredClone(batch));
+  }
+
+  getReleaseBatch(id: string): import('../domain/release-batch.js').ReleaseBatch | undefined {
+    const batch = this.state.releaseBatches && Object.hasOwn(this.state.releaseBatches, id) ? this.state.releaseBatches[id] : undefined;
+    return batch ? structuredClone(batch) : undefined;
+  }
+
+  saveReleaseBatch(batch: import('../domain/release-batch.js').ReleaseBatch): void {
+    this.state.releaseBatches ||= {};
+    this.state.releaseBatches[batch.id] = structuredClone(batch);
+    this.save(HINT_GLOBAL);
   }
 
   getReleaseRuns(filter: { projectId?: string; targetId?: string; branchId?: string } = {}): ReleaseRun[] {
@@ -3360,8 +3464,11 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const runs = Object.values(this.state.releaseRuns).filter((run) => run.targetId === targetId);
     const doomed = selectReleaseRunsToPrune({ runs, nowMs: Date.now() });
     if (doomed.length === 0) return;
-    for (const releaseId of doomed) delete this.state.releaseRuns[releaseId];
-    console.warn(`[release] 保留策略淘汰目标 ${targetId} 的 ${doomed.length} 条历史发布记录: ${doomed.join(', ')}`);
+    const batchReferences = new Set(this.getReleaseBatches().flatMap(batch => batch.targets.flatMap(row =>
+      [row.previousReleaseId, row.runId, row.rollbackRunId, ...row.attempts.map(attempt => attempt.runId)])));
+    const pruned = doomed.filter(releaseId => !batchReferences.has(releaseId));
+    for (const releaseId of pruned) delete this.state.releaseRuns[releaseId];
+    if (pruned.length) console.warn(`[release] 保留策略淘汰目标 ${targetId} 的 ${pruned.length} 条历史发布记录: ${pruned.join(', ')}`);
   }
 
   // ── 发布前检查结论（阶段三记账）──
@@ -4232,6 +4339,58 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       this.getBuildProfilesForProject(branch.projectId || 'default'),
       branch,
     );
+  }
+
+  /** Opaque compare-and-set token: configuration values never leave this method. */
+  getBranchServiceIsolationRevision(branch: BranchEntry): string {
+    return storageProvisionDigest({
+      projectId: branch.projectId, profiles: this.getBuildProfilesForProject(branch.projectId),
+      extraProfiles: branch.extraProfiles || [], overrides: branch.profileOverrides || {},
+      excluded: branch.excludedProjectProfileIds || [],
+    });
+  }
+
+  /** One atomic branch-only change; no deployment, container or volume operation. */
+  setBranchServiceIsolation(branchId: string, input: {
+    expectedRevision: string; excludedProjectProfileIds: string[];
+    dependsOnOverrides?: Record<string, string[] | null>;
+  }): BranchEntry {
+    const branch = this.getBranch(branchId);
+    if (!branch) throw new Error('分支不存在');
+    if (input.expectedRevision !== this.getBranchServiceIsolationRevision(branch)) throw new Error('分支配置已变化，请重新读取');
+    if (branch.status !== 'idle' || branch.deleting || branch.remoteDeployment
+      || Object.values(branch.services || {}).some(s => s.status !== 'stopped')) {
+      throw new Error('须先停止并对账本分支全部操作');
+    }
+    if (!Array.isArray(input.excludedProjectProfileIds)
+      || input.excludedProjectProfileIds.some(id => !isValidExtraProfileId(id))) throw new Error('排除清单必须是服务标识数组');
+    const candidate = structuredClone(branch);
+    candidate.excludedProjectProfileIds = [...input.excludedProjectProfileIds];
+    const changes = input.dependsOnOverrides || {};
+    if (typeof changes !== 'object' || Array.isArray(changes)) throw new Error('依赖覆盖必须是对象');
+    const available = new Set(mergeBranchProfiles(this.getBuildProfilesForProject(branch.projectId),
+      { ...branch, excludedProjectProfileIds: [] }).map(p => p.id));
+    for (const [id, deps] of Object.entries(changes)) {
+      if (!available.has(id) || !isValidExtraProfileId(id) || candidate.excludedProjectProfileIds.includes(id)
+        || (deps !== null && (!Array.isArray(deps) || new Set(deps).size !== deps.length || deps.some(d => !isValidExtraProfileId(d))))) {
+        throw new Error('依赖覆盖包含非法服务或依赖');
+      }
+      candidate.profileOverrides ||= {};
+      const override = { ...candidate.profileOverrides[id] };
+      if (deps === null) delete override.dependsOn;
+      else override.dependsOn = [...deps];
+      candidate.profileOverrides[id] = override;
+    }
+    for (const id of candidate.excludedProjectProfileIds) {
+      if (branch.services?.[id] || branch.replicaSets?.[id]) throw new Error('被排除服务仍有容器或复制集记录，请先对账');
+    }
+    this.assertProfileStorageDeclarationsPreserved([candidate]);
+    if (candidate.excludedProjectProfileIds.length) branch.excludedProjectProfileIds = candidate.excludedProjectProfileIds;
+    else delete branch.excludedProjectProfileIds;
+    if (Object.keys(changes).length) branch.profileOverrides = candidate.profileOverrides;
+    try { this.save([{ kind: 'branches', id: branch.id }]); }
+    catch { throw new Error('service_isolation_save_unconfirmed'); }
+    return branch;
   }
 
   /**
@@ -5333,6 +5492,15 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const next = list.filter((c) => c.id !== id);
     if (next.length === list.length) return false;
     this.state.alarmChannels = next;
+    const settings = this.state.monitorNotifications;
+    if (settings?.defaultChannelIds) settings.defaultChannelIds = settings.defaultChannelIds.filter(channelId => channelId !== id);
+    if (settings?.overrides) {
+      for (const [targetId, channelIds] of Object.entries(settings.overrides)) {
+        // Keep empty overrides explicit: removing their keys would subscribe
+        // these services to the default channels instead of leaving them off.
+        settings.overrides[targetId] = channelIds.filter(channelId => channelId !== id);
+      }
+    }
     this.save();
     return true;
   }
@@ -5597,7 +5765,44 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   // ── Data migrations ──
 
   getDataMigrations(): DataMigration[] {
+
     return this.state.dataMigrations || [];
+  }
+
+  getLegacyDataCases(projectId?: string) {
+    return (this.state.legacyDataCases || []).filter(row => !projectId || row.projectId === projectId);
+  }
+
+  resourceRetirementJournal(instance: string, kind: 'backups' | 'tasks' | 'images') {
+    const key = JSON.stringify([instance, kind]);
+    return {
+      read: () => structuredClone(this.state.resourceRetirementExecutions?.[key] || null),
+      write: (value: unknown) => {
+        this.state.resourceRetirementExecutions ??= {};
+        this.state.resourceRetirementExecutions[key] = structuredClone(value);
+        this.save(HINT_GLOBAL);
+      },
+    };
+  }
+
+  recordLegacyDataObservations(observations: Array<{ projectId: string; sourceIdentity: string; dataIdentity: string; marker: string; device: number; inode: number; birthtimeMs?: number }>, nowMs: number) {
+    this.state.legacyDataCases ??= [];
+    const date = new Date(nowMs).toISOString();
+    for (const observation of observations) {
+      const id = crypto.createHash('sha256').update(JSON.stringify([observation.sourceIdentity, observation.dataIdentity, observation.device, observation.inode, observation.birthtimeMs])).digest('hex').slice(0, 32);
+      const existing = this.state.legacyDataCases.find(row => row.id === id);
+      if (existing) existing.lastObservedAt = date;
+      else this.state.legacyDataCases.push({ ...observation, id, firstObservedAt: date, lastObservedAt: date, status: 'needs-owner' });
+    }
+    if (observations.length) this.save();
+  }
+
+  confirmLegacyDataCase(id: string, disposition: 'business-data' | 'ephemeral-test' | 'unknown', confirmedBy: string, note: string) {
+    const row = this.state.legacyDataCases?.find(item => item.id === id);
+    if (!row) throw new Error('数据对象不存在或身份已变化。');
+    // Confirmation cannot authorize data removal or assert a backup/migration has happened.
+    Object.assign(row, { disposition, confirmedBy, note, confirmedAt: new Date().toISOString(), status: disposition === 'ephemeral-test' ? 'backup-required' : 'protected' });
+    this.save();return row;
   }
 
   getDataMigration(id: string): DataMigration | undefined {
@@ -5961,10 +6166,12 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       if (params.projectId && (branch.projectId || 'default') !== params.projectId) continue;
       const hasOverrides = branch.profileOverrides && Object.keys(branch.profileOverrides).length > 0;
       const hasExtras = branch.extraProfiles && branch.extraProfiles.length > 0;
-      if (!hasOverrides && !hasExtras && !branch.derivedFromBranchId) continue;
+      const hasExclusions = !!branch.excludedProjectProfileIds?.length;
+      if (!hasOverrides && !hasExtras && !hasExclusions && !branch.derivedFromBranchId) continue;
       branchConfigs[branchId] = JSON.parse(JSON.stringify({
         ...(hasOverrides ? { profileOverrides: branch.profileOverrides } : {}),
         ...(hasExtras ? { extraProfiles: branch.extraProfiles } : {}),
+        ...(hasExclusions ? { excludedProjectProfileIds: branch.excludedProjectProfileIds } : {}),
         ...(branch.derivedFromBranchId ? {
           derivedFromBranchId: branch.derivedFromBranchId,
           derivedFromBranchName: branch.derivedFromBranchName,
@@ -6011,6 +6218,22 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * This is a pure preflight before even the pre-rollback backup snapshot.
    */
   private assertStorageSnapshotRollbackAllowed(target: ConfigSnapshot): void {
+    // A global snapshot cannot silently reinstate a deliberately omitted legacy service.
+    for (const branch of Object.values(this.state.branches)) {
+      if (target.projectId && branch.projectId !== target.projectId) continue;
+      const before = branch.excludedProjectProfileIds || [];
+      const after = target.payload.branchConfigs?.[branch.id]?.excludedProjectProfileIds || [];
+      if (before.length || after.length) {
+        const snap = target.payload.branchConfigs?.[branch.id];
+        if (JSON.stringify(before) !== JSON.stringify(after)
+          || JSON.stringify(branch.profileOverrides || {}) !== JSON.stringify(snap?.profileOverrides || {})
+          || JSON.stringify(branch.extraProfiles || []) !== JSON.stringify(snap?.extraProfiles || [])
+          || JSON.stringify(this.getBuildProfilesForProject(branch.projectId)) !== JSON.stringify(target.payload.buildProfiles.filter(p => p.projectId === branch.projectId))) {
+          throw new Error('请先沿本分支隔离入口停止并对账，再恢复不同的服务配置');
+        }
+      }
+    }
+
     const refuse = () => { throw new Error('storage_retained_service_delete_refused: 回滚会覆盖已分配或待确认存储的完整配置，请保留原配置并使用停止'); };
     const same = (left: unknown, right: unknown) => storageProvisionDigest(left) === storageProvisionDigest(right);
     const infraTargets = new Map<string, {projectId: string; id: string}>();
@@ -6054,6 +6277,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
           const pick = (row: typeof branch | NonNullable<ConfigSnapshot['payload']['branchConfigs']>[string]) => ({
             profileOverrides: row.profileOverrides && Object.keys(row.profileOverrides).length ? row.profileOverrides : undefined,
             extraProfiles: row.extraProfiles?.length ? row.extraProfiles : undefined,
+            excludedProjectProfileIds: row.excludedProjectProfileIds?.length ? row.excludedProjectProfileIds : undefined,
             ...(row.derivedFromBranchId ? {derivedFromBranchId:row.derivedFromBranchId,derivedFromBranchName:row.derivedFromBranchName,derivedAt:row.derivedAt} : {}),
           });
           if (!same(pick(branch),pick(target.payload.branchConfigs[branch.id] || {}))) refuse();
@@ -6089,6 +6313,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
         if (snap) {
           if (snap.profileOverrides) branch.profileOverrides = JSON.parse(JSON.stringify(snap.profileOverrides));
           else delete branch.profileOverrides;
+          if (snap.excludedProjectProfileIds?.length) branch.excludedProjectProfileIds = [...snap.excludedProjectProfileIds];
+          else delete branch.excludedProjectProfileIds;
           if (snap.extraProfiles) branch.extraProfiles = JSON.parse(JSON.stringify(snap.extraProfiles));
           else delete branch.extraProfiles;
           if (snap.derivedFromBranchId) {
@@ -6104,6 +6330,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
           // 拍照时该分支没有任何分支层配置 → 恢复为无配置
           delete branch.profileOverrides;
           delete branch.extraProfiles;
+          delete branch.excludedProjectProfileIds;
           delete branch.derivedFromBranchId;
           delete branch.derivedFromBranchName;
           delete branch.derivedAt;
@@ -6302,9 +6529,14 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * a bundle reading many report bodies; doing those reads synchronously stalls
    * the single-process CDS server during a MAP pull (Cursor Bugbot High).
    */
-  async readAcceptanceReportContentAsync(id: string): Promise<string | undefined> {
+  async readAcceptanceReportContentAsync(id: string, options: { requireObjectStorage?: boolean } = {}): Promise<string | undefined> {
     const meta = this.getAcceptanceReport(id);
     if (!meta) return undefined;
+    // 任务要求持久归档时必须核实权威对象，不能用仍在本地的缓存掩盖对象丢失。
+    if (options.requireObjectStorage) {
+      if (meta.storage !== 'object' || !meta.objectKey) return undefined;
+      return (await this.reportObjects.get(meta.objectKey)) ?? undefined;
+    }
     // 本地盘现在只是读缓存：命中就用，未命中不代表正文没了。
     try {
       return await fs.promises.readFile(this.reportFilePath(meta), 'utf-8');
@@ -6455,8 +6687,11 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * callers cannot collide. Returns the stored metadata.
    */
   createAcceptanceReport(input: {
+    classification?: import('../shared/notification-templates.js').ReportClassification;
+    monitorEvent?: import('./notification-report.js').ReportMonitorEvent;
     reportType?: 'acceptance' | 'code-review';
     reviewTaskId?: string;
+    scheduledJobRunId?: string;
     title: string;
     format: 'html' | 'md';
     content: string;
@@ -6572,8 +6807,11 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const folderId = folder && (folder.projectId || null) === (input.projectId ?? null) ? folder.id : null;
     return {
       id: crypto.randomUUID().replace(/-/g, ''),
+      classification: input.classification,
+      monitorEvent: input.monitorEvent,
       reportType: input.reportType,
       reviewTaskId: input.reviewTaskId,
+      scheduledJobRunId: input.scheduledJobRunId,
       title: input.title,
       format: input.format,
       projectId: input.projectId ?? null,
@@ -6605,6 +6843,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   updateAcceptanceReport(
     id: string,
     updates: {
+      classification?: import('../shared/notification-templates.js').ReportClassification;
+      monitorEvent?: import('./notification-report.js').ReportMonitorEvent;
       title?: string;
       format?: 'html' | 'md';
       content?: string;
@@ -6746,6 +6986,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     meta: AcceptanceReportMeta,
     updates: Parameters<StateService['updateAcceptanceReport']>[1],
   ): void {
+    if (updates.classification !== undefined) meta.classification = updates.classification;
+    if (updates.monitorEvent !== undefined) meta.monitorEvent = updates.monitorEvent;
     if (updates.verdict !== undefined) meta.verdict = updates.verdict;
     if (updates.tier !== undefined) meta.tier = updates.tier;
     if (updates.defectCounts !== undefined) meta.defectCounts = updates.defectCounts;

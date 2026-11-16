@@ -22,7 +22,8 @@ public class DoubaoTtsTransformerTests
         result.Success.ShouldBeFalse();
         result.ErrorCode.ShouldBe("TTS_RESOURCE_NOT_GRANTED");
         result.BinaryContent.ShouldBeNull();
-        result.ErrorMessage!.ShouldContain("未获授权");
+        Assert.NotNull(result.ErrorMessage);
+        result.ErrorMessage.ShouldContain("未获授权");
         result.ErrorMessage.ShouldNotContain("private-request-id");
         JsonNode.Parse(result.AuditSummary)!["provider_code"]!.GetValue<int>().ShouldBe(45000030);
     }

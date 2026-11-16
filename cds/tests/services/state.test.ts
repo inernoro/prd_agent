@@ -22,6 +22,20 @@ describe('StateService', () => {
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
+  it('新 push 与完成回执清空旧 CI 诊断，null 可随 SSE 序列化', () => {
+    service.load();
+    service.addBranch({ id: 'diagnosis', branch: 'feature/diagnosis', worktreePath: '/tmp/diagnosis',
+      services: {}, status: 'idle', createdAt: new Date().toISOString() });
+    const diagnosis = { code: 'cancelled' as const, title: 'CI 已取消', message: 'cancelled', targetSha: 'a'.repeat(40),
+      checkedAt: new Date().toISOString(), actionUrl: '', actionLabel: '' };
+    for (const update of [{ ciImageStatus: 'waiting' as const, ciTargetSha: 'b'.repeat(40) }, { ciImageStatus: 'ready' as const }]) {
+      service.updateBranchGithubMeta('diagnosis', { ciDiagnosis: diagnosis });
+      service.updateBranchGithubMeta('diagnosis', update);
+      expect(service.getBranch('diagnosis')?.ciDiagnosis).toBeNull();
+      expect(JSON.stringify(service.getBranch('diagnosis'))).toContain('"ciDiagnosis":null');
+    }
+  });
+
   describe('initialization', () => {
     it('should create empty state when file does not exist', () => {
       service.load();

@@ -78,7 +78,7 @@ export function Dialog({
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className="fixed inset-0 flex items-center justify-center prd-dialog-overlay"
-          style={{ background: 'var(--dialog-overlay)', zIndex: zIndex ?? 100 }}
+          style={{ zIndex: zIndex ?? 100 }}
         >
         <DialogPrimitive.Content
           {...(description ? {} : ({ 'aria-describedby': undefined } as const))}

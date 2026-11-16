@@ -95,7 +95,7 @@ function getMemberPriority(status?: string): number {
 type ViewMode = 'report_list' | 'ai_summary' | 'issues';
 
 export function TeamDashboard() {
-  const { teams, loadTeams } = useReportAgentStore();
+  const { teams, teamsLoaded, loadTeams } = useReportAgentStore();
   const userId = useAuthStore((s) => s.user?.userId);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -104,7 +104,6 @@ export function TeamDashboard() {
   const statusConfig = useMemo(() => buildStatusConfig(isLight), [isLight]);
 
   const now = useMemo(() => getISOWeek(new Date()), []);
-  const teamScope: 'managed' | 'joined' = searchParams.get('scope') === 'joined' ? 'joined' : 'managed';
   const selectedTeamId = searchParams.get('teamId') ?? '';
   const weekYear = (() => {
     const v = Number.parseInt(searchParams.get('weekYear') ?? '', 10);
@@ -232,6 +231,12 @@ export function TeamDashboard() {
     [teams, userId]
   );
 
+  // 通知目标优先按当前用户的真实团队关系定位，不能被默认管理视图替换。
+  const requestedManaged = managedTeams.some((team) => team.id === selectedTeamId);
+  const requestedJoined = joinedTeams.some((team) => team.id === selectedTeamId);
+  const teamScope: 'managed' | 'joined' = requestedManaged !== requestedJoined
+    ? (requestedJoined ? 'joined' : 'managed')
+    : (searchParams.get('scope') === 'joined' ? 'joined' : 'managed');
   const scopedTeams = teamScope === 'managed' ? managedTeams : joinedTeams;
   const selectedTeam = useMemo(() => teams.find((team) => team.id === selectedTeamId) ?? null, [teams, selectedTeamId]);
   const hasScopedTeams = scopedTeams.length > 0;
@@ -241,7 +246,8 @@ export function TeamDashboard() {
   const canAccessTeamAiSummary = teamScope === 'managed' && !!reportsView?.canGenerateSummary;
 
   const loadReportsView = useCallback(async () => {
-    if (!selectedTeamId) {
+    if (!teamsLoaded || !selectedTeam) {
+      setReportsLoading(false);
       setReportsView(null);
       return;
     }
@@ -257,7 +263,7 @@ export function TeamDashboard() {
       if (res.error?.message) toast.error(res.error.message);
     }
     setReportsLoading(false);
-  }, [selectedTeamId, weekYear, weekNumber]);
+  }, [teamsLoaded, selectedTeam, selectedTeamId, weekYear, weekNumber]);
 
   // 切换团队时清空 per-week 缓存
   useEffect(() => {
@@ -344,8 +350,14 @@ export function TeamDashboard() {
   }, [loadReportsView, loadSummaryView, viewMode]);
 
   useEffect(() => {
+    if (!teamsLoaded) return;
+    if (selectedTeamId && !selectedTeam) {
+      setReportsView(null);
+      setSummaryView(null);
+      closeMemberDrawer(true);
+      return;
+    }
     if (!hasScopedTeams) {
-      if (selectedTeamId) setSelectedTeamId('');
       setReportsView(null);
       setSummaryView(null);
       closeMemberDrawer(true);
@@ -354,7 +366,7 @@ export function TeamDashboard() {
     if (!scopedTeams.some((team) => team.id === selectedTeamId)) {
       setSelectedTeamId(scopedTeams[0].id);
     }
-  }, [closeMemberDrawer, hasScopedTeams, scopedTeams, selectedTeamId, setSelectedTeamId]);
+  }, [closeMemberDrawer, teamsLoaded, selectedTeam, hasScopedTeams, scopedTeams, selectedTeamId, setSelectedTeamId]);
 
   useEffect(() => {
     setViewMode('report_list');
@@ -552,11 +564,16 @@ export function TeamDashboard() {
   }, [cancelPendingClose]);
   useEffect(() => () => cancelPendingClose(), [cancelPendingClose]);
 
-  // 超时人员 = 已过截止 && 待提交;未过截止时为空(chip 显示 0)
+  // 超时人员以后端 isOverdue 为准:截止前没完成首次提交即超时,补交后仍保留(不随待提交归 0)。
+  // 旧后端未返回 isOverdue 时退回原口径(已过截止 && 待提交)。
   const overdueMembers = useMemo(() => {
-    if (!reportsView?.isPastDeadline) return [];
+    if (!reportsView?.members) return [];
+    const hasServerFlag = reportsView.members.some((m) => typeof m.isOverdue === 'boolean');
+    if (hasServerFlag) return reportsView.members.filter((m) => m.isOverdue === true);
+    if (!reportsView.isPastDeadline) return [];
     return pendingMembers;
-  }, [reportsView?.isPastDeadline, pendingMembers]);
+  }, [reportsView?.members, reportsView?.isPastDeadline, pendingMembers]);
+  const overdueCount = reportsView?.stats.overdueCount ?? overdueMembers.length;
 
   const overdueChipRef = useRef<HTMLSpanElement | null>(null);
   const [overduePopoverOpen, setOverduePopoverOpen] = useState(false);
@@ -598,6 +615,18 @@ export function TeamDashboard() {
     });
     navigate(`/report-agent/report/${reportId}?${params.toString()}`);
   };
+
+  if (teamsLoaded && selectedTeamId && !selectedTeam) {
+    return (
+      <GlassCard className="p-4">
+        <p>该团队不可用或你没有查看权限，请刷新团队列表后重试。</p>
+        <div className="mt-3 flex gap-2">
+          <Button variant="secondary" onClick={() => void loadTeams()}>刷新团队列表</Button>
+          <Button variant="secondary" onClick={() => setSelectedTeamId('')}>返回团队列表</Button>
+        </div>
+      </GlassCard>
+    );
+  }
 
   return (
     // 手机端上下堆叠（周导航收成紧凑卡在顶部），lg 起恢复左右双栏——
@@ -896,6 +925,15 @@ export function TeamDashboard() {
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
                   团队人数 {reportsView?.stats.totalMembers ?? 0}
                 </span>
+                {typeof reportsView?.stats.expectedCount === 'number' && (
+                  <span
+                    className="surface-inset rounded-full px-2 py-0.5"
+                    style={{ color: 'var(--text-secondary)' }}
+                    title="全部成员剔除免提交(负责人默认免提交)"
+                  >
+                    应交人数 {reportsView.stats.expectedCount}
+                  </span>
+                )}
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: isLight ? 'rgba(22,101,52,1)' : 'rgba(34,197,94,.95)' }}>
                   已提交 {reportsView?.stats.submittedCount ?? 0}
                 </span>
@@ -913,14 +951,14 @@ export function TeamDashboard() {
                     ref={overdueChipRef}
                     className="surface-inset rounded-full px-2 py-0.5 cursor-default"
                     style={{
-                      color: overdueMembers.length > 0
+                      color: overdueCount > 0
                         ? (isLight ? 'rgba(185,28,28,1)' : 'rgba(239,68,68,.95)')
                         : 'var(--text-muted)',
                     }}
                     onMouseEnter={openOverduePopover}
                     onMouseLeave={scheduleOverdueClose}
                   >
-                    超时 {overdueMembers.length}
+                    超时 {overdueCount}
                   </span>
                 )}
               </div>
@@ -1132,12 +1170,14 @@ export function TeamDashboard() {
               截止时间 · {new Date(reportsView.submissionDeadline).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', weekday: 'short', hour: '2-digit', minute: '2-digit' })}
             </div>
             <div className="text-[11px]" style={{
-              color: overdueMembers.length > 0
+              color: overdueCount > 0
                 ? (isLight ? 'rgba(185,28,28,1)' : 'rgba(239,68,68,.95)')
                 : 'var(--text-secondary)',
             }}>
               {reportsView.isPastDeadline
-                ? (overdueMembers.length > 0 ? `超时未提交 · ${overdueMembers.length} 人` : '已过截止 · 全员已提交')
+                ? (overdueCount > 0
+                    ? `超时 · ${overdueCount} 人（其中仍未提交 ${overdueMembers.filter((m) => !m.firstSubmittedAt).length} 人）`
+                    : '已过截止 · 全员按时提交')
                 : '尚未到截止时间'}
             </div>
           </div>
@@ -1153,15 +1193,35 @@ export function TeamDashboard() {
                   <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
                     {m.userName || m.userId}
                   </span>
-                  {m.role === ReportTeamRole.Deputy && (
-                    <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full" style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}>副</span>
-                  )}
+                  <span className="ml-auto flex items-center gap-1 flex-none">
+                    {m.role === ReportTeamRole.Deputy && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}>副</span>
+                    )}
+                    {m.firstSubmittedAt ? (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap"
+                        style={{ color: 'var(--accent-fg-warning)', background: 'var(--bg-tertiary)' }}
+                        title="截止后才提交，仍计入超时"
+                      >
+                        迟交 · {new Date(m.firstSubmittedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    ) : (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap"
+                        style={{ color: 'var(--accent-fg-danger)', background: 'var(--bg-tertiary)' }}
+                      >
+                        未提交
+                      </span>
+                    )}
+                  </span>
                 </div>
               ))}
             </div>
           ) : (
             <div className="text-[11px] text-center mt-3 mb-1" style={{ color: 'var(--text-muted)' }}>
-              {reportsView.isPastDeadline ? '没有超时未提交成员' : '到截止前未提交者将出现在此'}
+              {reportsView.isPastDeadline
+                ? (overdueCount > 0 ? '你当前只能看到自己的提交状态' : '没有超时成员')
+                : '到截止前未提交者将出现在此'}
             </div>
           )}
         </div>,

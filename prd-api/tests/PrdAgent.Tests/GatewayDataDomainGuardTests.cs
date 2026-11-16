@@ -301,7 +301,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("new RegistryAssetStorage(inner, db, providerName, regLogger, \"llmgw_asset_registry\")", program);
         Assert.Contains("GetCollection<PrdAgent.Core.Models.LLMPlatform>(\"llmgw_platforms\")", program);
         Assert.DoesNotContain("AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>()", program);
-        Assert.Contains("AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>()", program);
+        Assert.Contains("AddScoped<PrdAgent.Infrastructure.LlmGateway.ModelResolver>()", program);
+        Assert.Contains("AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, CodeReviewUserKeyResolver>()", program);
     }
 
     [Fact]
@@ -2368,7 +2369,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("write_remote_container_snapshot", script);
         Assert.Contains("docker ps --format", script);
         Assert.Contains("env.snapshot.redacted", script);
-        Assert.Contains("gzip -t \"$backup_dir/$db.archive.gz\"", script);
+        Assert.Contains(". \"$script_dir/lib/backup-stream.sh\"", script);
+        Assert.Contains("cds_backup_stream \"$backup_dir/$db.archive.gz\" remote_mongo_dump \"$db\"", script);
+        Assert.Contains("gzip -t \"$stream_archive\"", ReadRepoFile("scripts/lib/backup-stream.sh"));
         Assert.Contains("SHA256SUMS", script);
         Assert.DoesNotContain("rm -", script);
         Assert.DoesNotContain("dropDatabase", script);
@@ -2750,6 +2753,22 @@ public class GatewayDataDomainGuardTests
             Assert.True(
                 body.Contains("ValidateProviderProbeTargetAsync", StringComparison.Ordinal),
                 $"{route} 会向用户填的地址发请求却没过内网校验");
+            Assert.Contains("upstreamProxies.TryResolveAsync(http, doc)", body);
+            Assert.Contains("INVALID_PROXY", body);
+            Assert.Contains("apiUrl, effectiveProxy, http.RequestAborted", body);
+            Assert.Contains("upstreamProxies.CreateClient(http, effectiveProxy)", body);
+        }
+        foreach (var route in new[] { "app.MapPost(\"/gw/exchanges\"", "app.MapPut(\"/gw/exchanges/{id}\"" })
+        {
+            var start = server.IndexOf(route, StringComparison.Ordinal);
+            Assert.True(start > 0);
+            var end = server.IndexOf("app.Map", start + route.Length, StringComparison.Ordinal);
+            var body = end > 0 ? server[start..end] : server[start..];
+            Assert.Contains("upstreamProxies.TryResolveAsync(http, pendingUpstream)", body);
+            Assert.Contains("INVALID_PROXY", body);
+            Assert.Contains("http.RequestAborted, effectiveProxy)", body);
+            Assert.True(body.IndexOf("upstreamProxies.BuildAsync", StringComparison.Ordinal)
+                < body.IndexOf("ValidateExternalExchangeTargetAsync", StringComparison.Ordinal));
         }
     }
 

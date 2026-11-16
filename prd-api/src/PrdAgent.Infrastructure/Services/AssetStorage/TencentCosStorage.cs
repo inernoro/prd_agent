@@ -329,6 +329,9 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
     /// <summary>
     /// 判断对象是否存在。\n    /// </summary>
     public async Task<bool> ExistsAsync(string key, CancellationToken ct)
+        => await ProbeExistsAsync(key, ct).ConfigureAwait(false) == true;
+
+    private async Task<bool?> ProbeExistsAsync(string key, CancellationToken ct)
     {
         ThrowIfDisposed();
         var k = NormalizeKey(key);
@@ -347,7 +350,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
                 TryGetIntMember(result, "StatusCode");
 
             if (httpCode is >= 200 and < 300) return true;
-            return false;
+            return httpCode == 404 ? false : null;
         }
         catch (CosServerException ex) when (LooksLikeNotFound(ex))
         {
@@ -377,13 +380,14 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var key = BuildObjectKey(d, t, sha, ext);
 
         // 去重：存在则不重复上传（即使重复上传也不会影响正确性，但浪费带宽）
-        if (!await ExistsAsync(key, ct).ConfigureAwait(false))
+        var existed = await ProbeExistsAsync(key, ct).ConfigureAwait(false);
+        if (existed != true)
         {
             await UploadBytesAsync(key, bytes, safeMime, ct).ConfigureAwait(false);
         }
 
         var url = BuildPublicUrl(key);
-        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key);
+        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key) { CreatedNew = existed.HasValue ? !existed.Value : null };
     }
 
     public string? TryBuildContentAddressedKey(
@@ -764,6 +768,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             "audio/webm" => "weba",
             // 视频
             "video/mp4" => "mp4",
+            "video/x-m4v" => "m4v",
             "video/webm" => "webm",
             "video/quicktime" => "mov",
             "video/x-matroska" => "mkv",
@@ -803,6 +808,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             "weba" => "audio/webm",
             // 视频
             "mp4" => "video/mp4",
+            "m4v" => "video/x-m4v",
             "webm" => "video/webm",
             "mov" => "video/quicktime",
             "mkv" => "video/x-matroska",

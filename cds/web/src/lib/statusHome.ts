@@ -74,6 +74,7 @@ export function explainTarget(target: UptimeTargetSummary): { meaning: string; i
 export type StatusHomeView = 'home' | 'catalog' | 'history' | 'owner' | 'all' | 'detail';
 export function readStatusLocation(params: URLSearchParams): { view: StatusHomeView; targetId: string | null } {
   const targetId = params.get('target');
+  if (targetId && params.get('incident')) return { view: 'home', targetId };
   if (targetId) return { view: 'detail', targetId };
   const view = params.get('view');
   return { view: view === 'catalog' || view === 'history' || view === 'owner' || view === 'all' ? view : 'home', targetId: null };

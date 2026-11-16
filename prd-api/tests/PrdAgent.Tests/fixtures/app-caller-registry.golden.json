@@ -120,6 +120,12 @@
     ]
   },
   {
+    "code": "cds.code-review::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "channel-adapter.email.classify::chat",
     "modelTypes": [
       "chat"
@@ -247,6 +253,12 @@
   },
   {
     "code": "document-store.transcribe-summary::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "document-store.writing::chat",
     "modelTypes": [
       "chat"
     ]

@@ -362,6 +362,8 @@ public class MongoDbContext
     public IMongoCollection<DesktopUpdateCache> DesktopUpdateCaches => _database.GetCollection<DesktopUpdateCache>("desktop_update_caches");
 
     // Web Hosting 网页托管与分享
+    public IMongoCollection<HostedCollection> HostedCollections => _database.GetCollection<HostedCollection>("hosted_collections");
+
     public IMongoCollection<HostedDocumentGroup> HostedDocumentGroups => _database.GetCollection<HostedDocumentGroup>("hosted_document_groups");
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
     public IMongoCollection<HostedSiteDeletionTask> HostedSiteDeletionTasks => _database.GetCollection<HostedSiteDeletionTask>("hosted_site_deletion_tasks");
@@ -420,8 +422,14 @@ public class MongoDbContext
     public IMongoCollection<TranscriptTemplate> TranscriptTemplates => _database.GetCollection<TranscriptTemplate>("transcript_templates");
 
     // Document Store 文档空间
-    public IMongoCollection<DocumentStore> DocumentStores => _database.GetCollection<DocumentStore>("document_stores");
-    public IMongoCollection<DocumentEntry> DocumentEntries => _database.GetCollection<DocumentEntry>("document_entries");
+    // 正常业务统一屏蔽回收数据，包含条件写入，防止旧编辑请求复活已删除内容。
+    public IMongoCollection<DocumentStore> DocumentStores => new ScopedMongoCollection<DocumentStore>(
+        DocumentStoresIncludingTrash, Builders<DocumentStore>.Filter.Eq(x => x.Trash, null));
+    public IMongoCollection<DocumentStore> DocumentStoresIncludingTrash => _database.GetCollection<DocumentStore>("document_stores");
+    public IMongoCollection<DocumentEntry> DocumentEntries => new ScopedMongoCollection<DocumentEntry>(
+        DocumentEntriesIncludingTrash, Builders<DocumentEntry>.Filter.Eq(x => x.Trash, null));
+    // 仅回收恢复、资源引用和同步身份识别使用；不能用于普通读路径。
+    public IMongoCollection<DocumentEntry> DocumentEntriesIncludingTrash => _database.GetCollection<DocumentEntry>("document_entries");
     public IMongoCollection<DocumentStoreLike> DocumentStoreLikes => _database.GetCollection<DocumentStoreLike>("document_store_likes");
     public IMongoCollection<DocumentStoreFavorite> DocumentStoreFavorites => _database.GetCollection<DocumentStoreFavorite>("document_store_favorites");
     public IMongoCollection<DocumentStoreShareLink> DocumentStoreShareLinks => _database.GetCollection<DocumentStoreShareLink>("document_store_share_links");

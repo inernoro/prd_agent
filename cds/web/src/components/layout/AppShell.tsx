@@ -1,9 +1,11 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
+import { RouteMotion, RouteMotionCommit } from './RouteMotion';
 import { InstanceSwitcher } from '@/components/InstanceSwitcher';
 import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
 import { createContext, Suspense, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
-import { Link, Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, SearchCode, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
@@ -20,6 +22,9 @@ import { apiUrl, fetchInstanceMode, formatMirrorCapturedAt, isChildPreviewCdsIns
 import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
 import { UI_SCALE_PRESETS, useUiScale } from '@/lib/uiScale';
 import { cn } from '@/lib/utils';
+import { readStatusLocation } from '@/lib/statusHome';
+import { MonitorViewNav } from './MonitorViewNav';
+import '@/pages/status/monitor-frame.css';
 import { canReadApproval, type ApprovalCapabilities } from '@/hooks/approvalPolling';
 
 /*
@@ -169,7 +174,9 @@ export function useCanShowProjectActions(): boolean {
 /** Never mount owner pages (and their effects) for members or unresolved authentication. */
 export function OwnerConsoleRoute(): JSX.Element {
   const { status, pending, retry } = useContext(ConsoleAuthContext);
-  if (canManageSystemSettings(status)) return <Outlet />;
+  // Keep lazy owner pages inside their own boundary. Otherwise resolving auth
+  // suspends the outer tree and leaves a hidden copy of the auth skeleton behind.
+  if (canManageSystemSettings(status)) return <Suspense fallback={<ConsoleRouteFallback />}><Outlet /></Suspense>;
   if (pending) return <ConsoleRouteFallback />;
   return (
     <AppShell topbar={<TopBar left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '访问范围' }]} />} />}>
@@ -238,6 +245,7 @@ export function ConsoleLayout(): JSX.Element {
   return (
     <ShellFrameContext.Provider value={true}>
       <ShellChrome active={activeNavKeyFor(pathname)}>
+        <RouteMotion />
         <ListLoadingBoundary key={pathname} enabled={listPage}>
           <Suspense fallback={<ConsoleRouteFallback />}>
             <Outlet />
@@ -254,15 +262,20 @@ export function ConsoleLayout(): JSX.Element {
  * (artifact-is-experience: the wait state is the product's own silhouette).
  */
 function ConsoleRouteFallback(): JSX.Element {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const scene = loadingSceneForPath(pathname);
+  const monitoringHome = pathname === '/status' && readStatusLocation(new URLSearchParams(search)).view === 'home';
+  const workspace = monitoringHome ? 'bleed' : scene?.workspace;
   const canManageProjects = useCanShowProjectActions();
   const projectList = pathname === '/project-list';
   const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
   const listPage = projectList || branchList;
   return (
     <>
-      {listPage ? <TopBar
+      {monitoringHome ? <TopBar
+        left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '监控中心' }]} />}
+        center={<MonitorViewNav />}
+      /> : listPage ? <TopBar
         left={<div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" aria-hidden />}
         center={branchList ? <div className="cds-loading-skeleton-line h-9 w-full" aria-hidden /> : undefined}
       /> : <header className="cds-topbar" aria-hidden>
@@ -277,8 +290,10 @@ function ConsoleRouteFallback(): JSX.Element {
           chunk 到了、页面挂上、开始等数据——这三步之间轮廓不变，用户只看到一副骨架被填上。
           此前这里是固定的「标题 + 六块方块」，页面挂上后再换成卡片网格，就是被反馈的「两幅骨架」。
         */}
-        <div className={cn('cds-workspace cds-workspace--fluid', scene?.kind === 'code-reviews' && 'cr-ui', scene?.workspace === 'fill' && 'cds-workspace--fill', scene?.workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
-          {pageSkeletonForPath(pathname, { canManageProjects })}
+        <div className={cn('cds-workspace cds-workspace--fluid', scene?.kind === 'code-reviews' && 'cr-ui', workspace === 'fill' && 'cds-workspace--fill', workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
+          {monitoringHome ? <div className="monitor-page-shell flex min-h-0 flex-1 flex-col">
+            {pageSkeletonForPath(pathname, { canManageProjects, monitoringHome })}
+          </div> : pageSkeletonForPath(pathname, { canManageProjects })}
           <ListLoadingFeedback />
         </div>
       </main>
@@ -298,6 +313,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
       {topbar}
       <main className={cn('cds-main cds-page-enter', wide ? 'cds-main--wide' : null)}>
         {children}
+        <RouteMotionCommit />
       </main>
     </>
   );
@@ -1206,7 +1222,9 @@ export function Crumb({ items }: CrumbProps): JSX.Element {
         return (
           <span key={`${item.label}-${idx}`} className="inline-flex items-center gap-1.5">
             {item.href && !isLast ? (
-              <a href={item.href} className={className}>
+              item.href.startsWith('/') && !item.href.startsWith('//') ? <Link to={item.href} className={className}>
+                {item.label}
+              </Link> : <a href={item.href} className={className}>
                 {item.label}
               </a>
             ) : (

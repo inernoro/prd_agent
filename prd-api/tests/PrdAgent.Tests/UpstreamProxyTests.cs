@@ -3,6 +3,8 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using PrdAgent.GatewayTransport;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway;
 using MongoDB.Bson;
 using Xunit;
 
@@ -10,6 +12,63 @@ namespace PrdAgent.Tests;
 
 public class UpstreamProxyTests
 {
+    [Fact]
+    public void SavingDisplayedUnconfiguredGlobalProxyPreservesDeploymentClient()
+    {
+        var displayed = UpstreamProxy.View(null);
+        Assert.Equal("inherit", displayed.Mode);
+        var saved = UpstreamProxy.Build(new() { Mode = displayed.Mode }, null,
+            _ => throw new Exception("部署默认不需要加密凭据"), global: true);
+        var resolved = UpstreamProxy.Resolve(Config("inherit"), saved, _ => null);
+        Assert.Null(resolved);
+        var factory = new CountingClientFactory();
+        using var clients = new UpstreamProxyClientScope(factory, false);
+        clients.Get(new ModelResolutionResult { UpstreamProxy = resolved }, 30);
+        Assert.Equal(1, factory.Calls);
+        var direct = UpstreamProxy.Build(new() { Mode = "direct" }, saved, _ => "unused", global: true);
+        clients.Get(new ModelResolutionResult { UpstreamProxy = UpstreamProxy.Resolve(null, direct, _ => null) }, 30);
+        Assert.Equal(1, factory.Calls); // 显式直连使用独立 handler，不能与部署默认混为一谈。
+    }
+
+    private sealed class CountingClientFactory : IHttpClientFactory
+    {
+        public int Calls;
+        public HttpClient CreateClient(string name) { Calls++; return new HttpClient(); }
+    }
+
+    [Fact]
+    public void ProxiedProbeValidationAllowsRemoteDnsButRejectsUnsafeLiteralTargets()
+    {
+        Assert.Null(UpstreamProxy.ValidateProxyTarget("https://proxy-only-models.invalid/v1"));
+        Assert.Null(UpstreamProxy.ValidateProxyTarget("wss://proxy-only-asr.invalid/asr"));
+        foreach (var url in new[] { "http://localhost./models", "http://127.0.0.1/models",
+            "https://user:secret@example.com/models", "http://192.0.2.1/models", "ftp://example.com/models",
+            "https://[2002:a00:1::]/models" })
+            Assert.NotNull(UpstreamProxy.ValidateProxyTarget(url));
+    }
+
+    [Fact]
+    public void InvalidFallbackProxyCannotBreakValidPrimaryOrBecomeDirectFallback()
+    {
+        var invalid = new BsonDocument { { "Mode", "custom" }, { "Address", "http://proxy.example:8080" }, { "PasswordEncrypted", "broken" } };
+        var docs = new Dictionary<string, BsonDocument>
+        {
+            ["primary"] = new("UpstreamProxy", Config("direct")),
+            ["broken"] = new("UpstreamProxy", invalid),
+            ["healthy"] = new("UpstreamProxy", Config("custom", "socks5://proxy.example:1080")),
+        };
+        var bad = new ModelResolutionResult { ActualPlatformId = "broken" };
+        var good = new ModelResolutionResult { ActualPlatformId = "healthy" };
+        var primary = new ModelResolutionResult { ActualPlatformId = "primary", RetryCandidates = [bad, good] };
+        var rejected = new List<ModelResolutionResult>();
+        ModelResolver.ApplyProxySnapshots(primary, docs, null, _ => null, (candidate, _) => rejected.Add(candidate));
+        Assert.Equal("direct", primary.UpstreamProxy!.Mode);
+        Assert.Same(good, Assert.Single(primary.RetryCandidates!));
+        Assert.Equal("custom", good.UpstreamProxy!.Mode);
+        Assert.Same(bad, Assert.Single(rejected));
+        Assert.Throws<InvalidOperationException>(() => ModelResolver.ApplyProxySnapshots(bad, docs, null, _ => null, (_, _) => { }));
+    }
+
     private static BsonDocument Config(string mode, string? address = null)
         => UpstreamProxy.Build(new() { Mode = mode, Address = address }, null, value => "cipher:" + value);
 

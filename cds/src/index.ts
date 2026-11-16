@@ -1,3 +1,7 @@
+import { notificationFunction } from './shared/notification-templates.js';
+import { NotificationReportRecorder, systemForProject } from './services/notification-report.js';
+import type { AlarmEvent } from './services/alarm-route.js';
+import { BranchLifecycleService, stopBranchForLifecycle } from './services/branch-lifecycle.js';
 import { inspectionHealthDocument } from './services/project-inspections.js';
 import { createProjectInspectionsRouter } from './routes/project-inspections.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
@@ -58,13 +62,17 @@ import {
   backupDirCandidates, buildMysqlDumpScript, buildNacosDumpScript, buildPostgresDumpScript,
   buildRabbitmqDumpScript, extractBackupScopeNote, extractBackupGapNote, backupScopeGaps,
   buildRedisBackupProbeScript,
+  buildRedisSnapshotCopyArgv,
   redisAuthFromServiceDefinition,
   redisUsernameFromServiceDefinition,
-  redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
+  redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups,
   backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound,
   shouldSkipOffsiteThisRound, INFRA_BACKUP_HEALTH_FILE, INFRA_BACKUP_INTERVAL_MS, backupFailureReason,
   type BackupOutcome,
 } from './services/infra-backup-schedule.js';
+import { BackupRetentionService } from './services/backup-retention.js';
+import { OwnedResourceLifecycle } from './services/owned-resource-task.js';
+import { ImageCacheGovernance, collectImageCacheReferences, configureImageCacheGovernance } from './services/image-cache-governance.js';
 import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
 import { evaluateInfrastructureHealth, infrastructureContainerHealth } from './services/infrastructure-health.js';
 import {
@@ -95,13 +103,18 @@ import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { createUptimeRouter } from './routes/uptime.js';
+import { createMonitorOnboardingRouter } from './routes/monitor-onboarding.js';
+import { MonitorOnboardingService } from './services/monitor-onboarding.js';
+import { matchPreviewHost } from './services/uptime-custom-monitor.js';
 import { createPublicStatusRouter, createStatusPageAdminRouter } from './routes/public-status.js';
 import { runMonitorDiscovery, type DiscoveryRunSummary } from './services/monitor-discovery-runner.js';
 import { customProbeTargetId } from './services/uptime-custom-monitor.js';
-import { UptimeMonitorService, uptimeConfigFromEnv } from './services/uptime-monitor.js';
+import { observeScheduledJobs } from './services/scheduled-job-health.js';
+import { UptimeMonitorService, uptimeConfigFromEnv, type UptimeAlertEventType, type UptimeAlertEventData } from './services/uptime-monitor.js';
 import { cdsEventsBus } from './services/cds-events-bus.js';
 import { setReleaseHealthSource } from './services/release-health-snapshot.js';
 import { availabilityOverRange } from './services/uptime-metrics.js';
+import { monitorIncidentPath, monitorReportUrl } from './services/monitor-incident-link.js';
 import { setMaxConcurrentBuildsProvider, buildGateStatus } from './services/build-gate.js';
 import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
@@ -141,6 +154,7 @@ import { readPreviewMirror, registerLoadedPreviewMirror } from './services/previ
 import { sweepOrphanCdsContainers, isOrphanReaperEnabled, computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { GitHubAppClient } from './services/github-app-client.js';
+import { diagnoseCiImage, ciDiagnosisSnapshot } from './services/ci-image-diagnosis.js';
 import { startRotationRecoveryArtifactCleanup } from './services/infra-local-recovery-drill.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
@@ -168,7 +182,7 @@ import { backfillReportReadScope } from './services/connection/pairing-service.j
 import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
 import { MapNotifier, mapNotifierConfigFromEnv, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
 import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
-import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-route.js';
+import { channelConfigured, classifyAlert, routeAlarm, notificationChannelSelected, renderAlarmMessage } from './services/alarm-route.js';
 import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
@@ -726,8 +740,8 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       // 半截文件的危害是具体的：保留策略按 `<key>-auto-` 前缀认它是一份备份，
       // 可能把真正可用的旧副本挤掉；备份历史也会把它列出来供人恢复。
       // 放子目录而不是加后缀，这样上层 ls 既看不到它，也不会把它算进份数。
-      const tmpDir = `${dir}/.tmp`;
-      await shell.exec(`rm -rf ${shq(tmpDir)} && mkdir -p ${shq(tmpDir)}`, { timeout: 15_000 });
+      const tmpDir = `${dir}/.tmp/${holder.roundId}-${crypto.randomBytes(8).toString('hex')}`;
+      await shell.exec(`mkdir -p ${shq(tmpDir)}`, { timeout: 15_000 });
 
       /**
        * 磁盘闸。**每个目标之前都要重跑一次**，不是每轮开头查一次就完事——
@@ -789,7 +803,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         const finalOut = `${dir}/${t.fileName}`;
         let maintenanceJobId: string | null = null;
         let maintenanceCompleted = false;
+        await backupRetentionService.withLease(dir, t.projectId, t.id, 'backup', async () => {
         try {
+          const backupSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
+          await backupRetentionService.beginOutput(out, t.projectId, t.id, backupSourceFingerprint);
           if (t.kind === 'mongo' || t.kind === 'redis') {
             try {
               const maintenanceJob = await stateService.beginInfraMaintenanceJob({
@@ -893,7 +910,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             if (!rdbPath.startsWith('/')) {
               throw new Error(`探测脚本没有回传快照路径（拿到 ${JSON.stringify(rdbPath.slice(0, 80))}），拒绝按默认路径猜`);
             }
-            cmd = `docker cp ${shq(`${t.containerName}:${rdbPath}`)} ${shq(out)}`;
+            cmd = buildRedisSnapshotCopyArgv(t.containerName, rdbPath, out).map(shq).join(' ');
           } else {
             /**
              * 这里原来是 redis 的 `else`——**新增一种备份类型而忘了在这里加分支时，
@@ -979,24 +996,19 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
           // 本地这份已经过 gzip -t，无论离机成不成都转正并纳入保留策略——
           // 保留策略是它的上界（份数 + 天数），不会因为离机长期挂掉就无限堆积把盘写满。
-          const promote = await shell.exec(`mv -f ${shq(out)} ${shq(finalOut)}`, { timeout: 15_000 });
-          if (promote.exitCode !== 0) throw new Error(`改名到正式目录失败：${combinedOutput(promote).slice(0, 200)}`);
+          await backupRetentionService.promoteOutput(out, finalOut);
           maintenanceCompleted = true;
 
-          // 保留策略：读目录里自己产的旧备份，超份数或超期的删掉，最新一份永不删。
-          const ls = await shell.exec(
-            `ls -l --time-style=+%s ${shq(dir)} 2>/dev/null | awk '{print $6"\\t"$7}'`,
-            { timeout: 15_000 },
-          );
-          const existing = (ls.stdout || '').split('\n')
-            .map((l) => l.split('\t'))
-            .filter((p) => p.length === 2 && p[1])
-            .map(([ts, name]) => ({ name: name.trim(), mtimeMs: Number(ts) * 1000 }))
-            .filter((f) => Number.isFinite(f.mtimeMs));
-          const doomed = selectExpiredBackups(existing, { projectId: t.projectId, id: t.id, now: new Date() });
-          for (const name of doomed) {
-            await shell.exec(`rm -f ${shq(`${dir}/${name}`)}`, { timeout: 10_000 });
-          }
+          // Completed outputs enter the shared catalog; the independent reconciler owns retirement.
+          const finalSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
+          await backupRetentionService.register(finalOut, t.projectId, t.id, 'automatic', {
+            sourceFingerprint: backupSourceFingerprint,
+            sourceComplete: Boolean(backupSourceFingerprint && backupSourceFingerprint === finalSourceFingerprint && !gapNote),
+          });
+          if (!backupSourceFingerprint || backupSourceFingerprint !== finalSourceFingerprint) store?.record({
+            category: 'system', severity: 'warn', source: 'infra-backup', action: 'infra.backup.recovery-point.unconfirmed',
+            projectId: t.projectId, serviceId: t.id, message: '导出已保留，但备份源身份未确认或已变化，不能替代旧恢复点。',
+          });
           outcomes.push({
             id: t.id,
             projectId: t.projectId,
@@ -1008,7 +1020,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
               : `离机副本缺失：${offsiteError}（本地副本已保留：${t.fileName}）`,
             fileName: t.fileName,
             bytes,
-            pruned: doomed,
+            pruned: [],
             remoteObjectKey: remote?.objectKey,
             sha256: remote?.sha256,
             note: scopeNote ?? undefined,
@@ -1017,9 +1029,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         } catch (err) {
           // 走到这里说明**本地这份就没成**（导出失败/空文件/gzip 校验不过），
           // 那才是真残骸，删掉；离机失败已经在上面单独处理，不会落到这条路径。
-          await shell.exec(`rm -f ${shq(out)}`, { timeout: 10_000 }).catch(() => undefined);
+          // Retire only the registered native output identity; unknown replacements remain protected.
           outcomes.push({ id: t.id, projectId: t.projectId, ok: false, error: (err as Error).message });
         } finally {
+          await backupRetentionService.closeOutput(out).catch(() => undefined);
           if (maintenanceJobId) {
             await stateService.finishInfraMaintenanceJob(
               maintenanceJobId,
@@ -1027,9 +1040,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             );
           }
         }
+        });
       }
 
-      await shell.exec(`rm -rf ${shq(tmpDir)}`, { timeout: 15_000 }).catch(() => undefined);
+      await shell.exec(`rmdir ${shq(tmpDir)}`, { timeout: 15_000 }).catch(() => undefined);
 
       const summary = summarizeBackupRound(outcomes, plan.skipped.length);
       const failed = outcomes.filter((o) => !o.ok);
@@ -2099,6 +2113,11 @@ async function initStateService(): Promise<void> {
 
 await initStateService();
 config.storageInstanceId = await stateService.ensureStorageInstanceId(config.storageInstanceId);
+const backupRetentionService = new BackupRetentionService({ shell, state: stateService, repoRoot: config.repoRoot, instanceId: config.storageInstanceId });
+const acceptanceResourceRoot = path.resolve(process.env.CDS_RESOURCE_ROOT || '/var/lib/cds-resource-lifecycle');
+const ownedResourceLifecycle = new OwnedResourceLifecycle({ shell, instanceId: config.storageInstanceId,
+  journal: stateService.resourceRetirementJournal(config.storageInstanceId, 'tasks'),
+  workspaceBase: path.join(acceptanceResourceRoot, 'workspaces'), catalog: path.join(acceptanceResourceRoot, 'catalog') });
 
 // ── Stale self-update 清扫(2026-05-07 用户反馈"卡 web-build 看不清状态"):
 // .cds/active-update.json 里如果还有未结束的 update 记录但写它的进程已死,
@@ -2167,6 +2186,27 @@ const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
 // 自动备份：手工备份的实际含义是「出事那天正好没人点」。带磁盘闸与保留策略，
 // 因为把根盘写满会同时打死所有预览、构建和 CDS 自己，那比没有备份更糟。
 const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
+// Independent of backup creation/success; restart resumes the same durable catalog.
+const reconcileBackups = async () => {
+  try {
+    const report = await backupRetentionService.inspect(false);
+    activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'backup-retention', action: 'backup.retention.reconciled', message: '全局备份保留对账（最多15天，冲突与未知保持保护）', details: { report } });
+  } catch (error) {
+    activeServerEventLogStore?.record({ category: 'system', severity: 'error', source: 'backup-retention', action: 'backup.retention.failed', message: '备份保留对账未完成，未确认的对象已保留。' });
+  }
+};
+const backupRetentionTimer = config.mode !== 'executor' && !isPreviewInstance() ? setInterval(() => void reconcileBackups(), 60 * 60_000) : null;
+const backupRetentionStartup = backupRetentionTimer ? setTimeout(() => void reconcileBackups(), 60_000) : null;
+backupRetentionTimer?.unref(); backupRetentionStartup?.unref();
+// Independent host keeper: a crashed producer is not responsible for its own retirement.
+const reconcileAcceptanceResources = async () => {
+  try {
+    const report = await ownedResourceLifecycle.inspect(false);
+    activeServerEventLogStore?.record({ category: 'system', severity: report.scanStatus === 'complete' ? 'info' : 'warn', source: 'acceptance-retention', action: 'acceptance.retention.reconciled', message: '验收资源租约与退役对账', details: { report } });
+  } catch { activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'acceptance-retention', action: 'acceptance.retention.failed', message: '验收资源身份或引用未确认，未确认对象已保留。' }); }
+};
+const acceptanceRetentionTimer = config.mode !== 'executor' && !isPreviewInstance() ? setInterval(() => void reconcileAcceptanceResources(), 60_000) : null;
+acceptanceRetentionTimer?.unref();
 const rotationRecoveryCleanup = startRotationRecoveryArtifactCleanup({
   recoveryDir: path.join(path.dirname(stateService.getCacheBase()), 'credential-rotation-recovery'),
   onError: (error) => console.warn(`[credential-rotation] recovery artifact cleanup failed: ${error.message}`),
@@ -3560,6 +3600,24 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
   }
 }
 const janitorDocker = createJanitorDockerAdapters(shell);
+const configuredImageCacheBudgetGiB = Number(process.env.CDS_IMAGE_CACHE_BUDGET_GIB || 0);
+if (!Number.isFinite(configuredImageCacheBudgetGiB) || configuredImageCacheBudgetGiB < 0 || configuredImageCacheBudgetGiB > 4096) throw new Error('镜像缓存总量预算必须在0至4096 GiB之间；0表示尚未启用。');
+const imageCacheGovernance = new ImageCacheGovernance({ shell, catalog: path.join(acceptanceResourceRoot, 'image-cache'),
+  audit: activeServerEventLogStore,
+  journal: stateService.resourceRetirementJournal(config.storageInstanceId, 'images'),
+  instanceId: computeCdsInstanceId(config.repoRoot), budgetBytes: configuredImageCacheBudgetGiB * 1024 ** 3,
+  protectedReferences: () => collectImageCacheReferences(stateService, config.scheduler?.pinnedBranches || [], 5,
+    7, Date.now(), (profile, branch) => resolveEffectiveProfile(profile, branch).dockerImage) });
+if (configuredImageCacheBudgetGiB > 0) configureImageCacheGovernance(imageCacheGovernance);
+// The hourly general Janitor cannot drain a two-image batch at deployment speed.
+// Share its global reclaim lock and native cross-process catalog lock; never queue ticks.
+const imageCacheRetentionTimer = configuredImageCacheBudgetGiB > 0 && config.mode !== 'executor' && !isPreviewInstance()
+  ? setInterval(() => {
+    void imageCacheGovernance.inspect(false).then(report => {
+      activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'image-cache-retention', action: 'image.cache.reconciled', message: '宿主镜像总量与引用对账', details: { report } });
+    }, () => activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'image-cache-retention', action: 'image.cache.failed', message: '镜像引用、registry 或审计未确认，相关镜像保持保护。' }));
+  }, 60_000) : null;
+imageCacheRetentionTimer?.unref();
 const janitorService = new JanitorService(
   stateService,
   // 固定名单只配在 scheduler 那侧（文档也只写了那一处），但 janitor 的删除判定
@@ -3578,6 +3636,7 @@ const janitorService = new JanitorService(
       .filter((image): image is string => Boolean(image));
   }),
 );
+if (configuredImageCacheBudgetGiB > 0) janitorService.setImageCacheGovernance(imageCacheGovernance);
 // 磁盘刹车自带测量能力（Codex 第二十八轮 P1）：不依赖 janitor 的启停与一小时
 // 节奏——进程刚重启（往往正是「刚被磁盘打满打死」）时部署闸门会就地测一次。
 // 两个挂载点都量（Codex 第二十九轮 P2）：worktree 与 docker 数据目录常不在同一个
@@ -3968,65 +4027,62 @@ janitorService.setOrphanInfraScan(async () => {
   return orphans;
 });
 
-janitorService.setRemoveFn(async (slug: string) => {
-  // Reuse the existing removal path: stop containers → git worktree remove → drop state.
-  const branch = stateService.getBranch(slug);
-  if (!branch) return;
-  stateService.assertBranchStorageRemovalAllowed(slug);
-  const branchOperationLease = beginBackgroundBranchOperation({
-    branchId: slug,
-    kind: 'janitor-remove',
-    trigger: 'janitor',
-    actor: 'janitor',
-    source: 'janitorService.setRemoveFn',
-    reason: 'Janitor 自动回收：超过保留期或磁盘清理',
-  });
-  let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+const removeExpiredLifecycleBranch = async (id: string): Promise<void> => {
+  const branch = stateService.getBranch(id);
+  if (!branch?.archive || Date.now() < Date.parse(branch.archive.retireAt)) return;
+  if (isRemoteExecutorOwned(branch.executorId)) throw new Error('远端分支归档仍保留，需要在所属执行器确认回收，未删除本地记录');
+  stateService.assertBranchStorageRemovalAllowed(id);
+  const lease = beginBackgroundBranchOperation({ branchId: id, kind: 'janitor-remove', trigger: 'janitor',
+    actor: 'janitor', source: 'branch-lifecycle.retire', reason: '归档保留30天到期回收' });
+  let finalStatus: 'completed' | 'failed' = 'completed';
   try {
-  // janitor 回收前先留痕，否则用户看到分支整个消失却无任何记录。
-  await new DeploymentRunService(stateService).persistBranchCancellation(branch.projectId || 'default', branch.id, branchOperationLease);
-  try {
-    stateService.appendActivityLog(branch.projectId, {
-      type: 'branch-deleted',
-      branchId: branch.id,
-      branchName: branch.branch,
-      actor: 'janitor',
-      note: 'Janitor 自动回收：停止容器并移除 worktree（超过保留期 / 磁盘清理）',
-    });
-  } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
-  for (const svc of Object.values(branch.services)) {
-    branchOperationLease?.assertCurrent(`janitor remove before ${svc.profileId}`);
-    try {
-      await containerService.removeRuntimeGroup(svc, {
-        projectId: branch.projectId,
-        branchId: branch.id,
-        profileId: svc.profileId,
-        operationId: branchOperationLease?.operationId || null,
-        actor: 'janitor',
-        trigger: 'janitor',
-        operation: 'janitor-remove',
-        source: 'janitorService.setRemoveFn',
-        reason: 'Janitor 自动回收：超过保留期或磁盘清理',
-      });
-    } catch { /* best effort */ }
-  }
-  try {
-    const repoRoot = stateService.getProjectRepoRoot(branch.projectId, config.repoRoot);
-    await worktreeService.remove(repoRoot, branch.worktreePath);
-  } catch { /* best effort */ }
-  // 分支专属网络（cds-br-*）随分支回收：不清会缓慢堆积空网络
-  //（debt.cds.branch-isolation BNI-cleanup，2026-07-09 接线）。内部已容错
-  // not-found/仍被占用，失败不阻断删除主流程。
-  await containerService.removeBranchNetwork(slug, branch.replacementNetworks).catch(() => { /* best-effort */ });
-  branchOperationLease?.assertCurrent('janitor remove before state delete');
-  stateService.removeBranch(slug);
-  stateService.save();
-  } catch (err) {
-    branchOperationFinalStatus = 'failed';
-    throw err;
-  } finally {
-    completeBackgroundBranchOperation(branchOperationLease, branchOperationFinalStatus);
-  }
+    await new DeploymentRunService(stateService).persistBranchCancellation(branch.projectId || 'default', id, lease);
+    const context = { projectId: branch.projectId, branchId: id, operationId: lease?.operationId || null,
+      actor: 'janitor', trigger: 'janitor', operation: 'archive-retirement', source: 'branch-lifecycle.retire', reason: '归档保留30天到期回收' };
+    for (const service of Object.values(branch.services)) {
+      lease?.assertCurrent('archive retirement before service removal');
+      await containerService.removeRuntimeGroup(service, { ...context, profileId: service.profileId });
+    }
+    for (const set of Object.values(branch.replicaSets || {})) for (const member of set.members) {
+      if (!member.containerName) continue;
+      lease?.assertCurrent('archive retirement before replica removal');
+      await containerService.remove(member.containerName, { ...context, profileId: `${set.profileId}--${member.id}` });
+    }
+    lease?.assertCurrent('archive retirement before workspace removal');
+    if (fs.existsSync(branch.worktreePath)) await worktreeService.remove(stateService.getProjectRepoRoot(branch.projectId, config.repoRoot), branch.worktreePath);
+    await containerService.removeBranchNetwork(id, branch.replacementNetworks);
+    lease?.assertCurrent('archive retirement before state removal');
+    stateService.appendActivityLog(branch.projectId, { type: 'branch-deleted', branchId: id, branchName: branch.branch,
+      actor: 'janitor', note: '归档保留30天到期，已回收本分支容器及工作区；未触碰共享基础设施' });
+    stateService.removeBranch(id); stateService.save(); await stateService.flush();
+  } catch (error) { finalStatus = 'failed'; throw error; }
+  finally { completeBackgroundBranchOperation(lease, finalStatus); }
+};
+
+const branchLifecycleService = new BranchLifecycleService({
+  state: stateService,
+  observed: getObservedRunningContainerNames,
+  active: id => branchOperationCoordinator.getActiveOperations(id).length > 0,
+  canInterruptStartup: id => branchOperationCoordinator.getActiveOperations(id).every(operation =>
+    ['deploy', 'deploy-profile', 'restart', 'force-rebuild', 'auto-lifecycle-redeploy', 'auto-restart'].includes(operation.request.kind)),
+  expectedProfiles: branch => stateService.getEffectiveProfilesForBranch(branch).map(profile => profile.id),
+  pinnedBranches: config.scheduler?.pinnedBranches,
+  audit: activeServerEventLogStore,
+  flush: () => stateService.flush(),
+  paused: () => isSelfUpdateDraining(Date.now()),
+  lock: branch => {
+    const lease = beginBackgroundBranchOperation({ branchId: branch.id, kind: 'stop', trigger: 'auto-lifecycle',
+      actor: 'system:lifecycle', source: 'branch-lifecycle', reason: '保存分支归档状态' });
+    return { assertCurrent: () => lease?.assertCurrent('branch archive state write'),
+      release: failed => completeBackgroundBranchOperation(lease, failed ? 'failed' : 'completed') };
+  },
+  stop: (branch, reason) => stopBranchForLifecycle(`http://127.0.0.1:${config.masterPort}`, branch, reason),
+  remove: removeExpiredLifecycleBranch,
+});
+// 旧 TTL 回收也先归档，统一遵守30天恢复窗口；到期删除只由生命周期服务派发。
+janitorService.setRemoveFn(async id => {
+  if (stateService.getBranch(id)?.archive) return;
+  await branchLifecycleService.archive(id, '闲置超过项目回收期，先归档保留30天', 'janitor');
 });
 
 // The BranchDispatcher (Phase 3) is instantiated later, inside the scheduler-mode
@@ -4840,6 +4896,10 @@ async function shutdown(signal: string): Promise<void> {
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
   if (infraExposureAudit) clearInterval(infraExposureAudit);
   if (infraAutoBackup) clearInterval(infraAutoBackup);
+  if (backupRetentionTimer) clearInterval(backupRetentionTimer);
+  if (backupRetentionStartup) clearTimeout(backupRetentionStartup);
+  if (acceptanceRetentionTimer) clearInterval(acceptanceRetentionTimer);
+  if (imageCacheRetentionTimer) clearInterval(imageCacheRetentionTimer);
   clearInterval(deploymentMemoryReconciler);
   clearInterval(rotationRecoveryCleanup);
   if (externalPortAuditWatchdog) clearInterval(externalPortAuditWatchdog);
@@ -5409,10 +5469,9 @@ startPerfHealthMonitor();
 // 前端旧逻辑还把它误渲染成「容器停止 · 无记录 · 时间未知」（用户 2026-06-24 反馈
 // 「莫名其妙停止 / 可观测性有问题」的真因）。
 //
-// 看门狗：waiting 超过阈值（默认 15 分钟，无匹配 workflow_run）即翻 'failed' +
-// 写人类可读 ciImageError 归因 + server-event + branch.updated 事件，让分支卡显示
-// 「CI 镜像未就绪（原因）」而非假的「停止」。翻 failed 不阻断恢复：真 CI 完成事件
-// 晚到时 handleWorkflowRun 的 waiting||failed matcher 仍可 failed → ready。
+// 先对账 GitHub，再分类原因。排队/构建超过15分钟不等于失败；查询不可用仅标状态未知。
+// 已失败的历史分支也低频复核；对账结果只补原因，不绕过镜像准入自动部署。
+// 真 CI 完成事件晚到时，原 waiting||failed matcher 仍可恢复 ready。
 const CI_WAIT_TIMEOUT_MS = (() => {
   const raw = Number(process.env.CDS_CI_WAIT_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : 15 * 60 * 1000;
@@ -5422,24 +5481,30 @@ const CI_WAIT_TIMEOUT_MS = (() => {
 // 的 ciImageError——GitHub 上该 commit 连 "CDS Deploy" 条目都没有，用户在 PR 上
 // 看到的是彻底静默。这里独立构造一个 CheckRunRunner（与 server.ts 内部实例互不
 // 干扰，GitHubAppClient 仅是 token 缓存的无状态封装），超时时补一个红灯。
-const ciWaitCheckRunRunner = config.githubApp
+const ciWaitGithubApp = config.githubApp ? new GitHubAppClient({
+  appId: config.githubApp.appId, privateKey: config.githubApp.privateKey, appSlug: config.githubApp.appSlug,
+}) : undefined;
+const ciWaitCheckRunRunner = ciWaitGithubApp
   ? new CheckRunRunner({
       stateService,
-      githubApp: new GitHubAppClient({
-        appId: config.githubApp.appId,
-        privateKey: config.githubApp.privateKey,
-        appSlug: config.githubApp.appSlug,
-      }),
+      githubApp: ciWaitGithubApp,
       config,
     })
   : undefined;
 function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
-  const check = (): void => {
+  let checking = false;
+  const lastAttempt = new Map<string, number>();
+  const check = async (): Promise<void> => {
+    if (checking) return;
+    checking = true;
     try {
       const state = stateService.getState();
       const now = Date.now();
-      for (const b of Object.values(state.branches || {})) {
-        if (b.ciImageStatus !== 'waiting') continue;
+      let queried = 0;
+      const branches = Object.values(state.branches || {}).sort((a, b) => (lastAttempt.get(a.id) || 0) - (lastAttempt.get(b.id) || 0));
+      for (const id of lastAttempt.keys()) if (!state.branches[id]) lastAttempt.delete(id);
+      for (const b of branches) {
+        if (b.archive || (b.ciImageStatus !== 'waiting' && b.ciImageStatus !== 'failed')) continue;
         // 校验分支**当前**仍是极速版：用户若把部署 override 从 express 切回 dev/static，
         // profile 路由只存 override、不清旧的 ciImageStatus='waiting'，看门狗不该据此把一个
         // 已退出极速版的源码模式分支误判超时翻 failed（Codex P2，与 workflow_run 同口径）。
@@ -5454,22 +5519,58 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
         const sinceMs = sinceIso ? Date.parse(sinceIso) : Number.NaN;
         if (!Number.isFinite(sinceMs)) continue;
         const waitedMs = now - sinceMs;
+        const project = stateService.getProject(b.projectId);
+        const repository = project?.githubRepoFullName;
+        const installationId = project?.githubInstallationId;
+        if (ciWaitGithubApp && repository && installationId && activeServerEventLogStore) {
+          const cooldown = b.ciImageStatus === 'waiting' ? 60_000 : 10 * 60_000;
+          if (queried >= 6 || now - (lastAttempt.get(b.id) || 0) < cooldown) continue;
+          queried++;
+          lastAttempt.set(b.id, now);
+          const targetSha = b.ciTargetSha;
+          const previousStatus = b.ciImageStatus;
+          const snapshot = ciDiagnosisSnapshot(b);
+          try {
+            const patch = await diagnoseCiImage({ repository, branch: b.branch, targetSha: targetSha || '',
+              projectId: b.projectId, branchId: b.id,
+              authorization: async () => `Bearer ${await ciWaitGithubApp.getInstallationToken(installationId)}`, waitedMs,
+              timeoutMs: CI_WAIT_TIMEOUT_MS, audit: activeServerEventLogStore });
+            // 网络等待期间可能又 push、切模式、删除，或真正 completion 已到达；绝不覆盖新状态。
+            const fresh = stateService.getBranch(b.id);
+            const freshProject = fresh && stateService.getProject(fresh.projectId);
+            if (!fresh || ciDiagnosisSnapshot(fresh) !== snapshot
+              || freshProject?.githubRepoFullName !== repository || freshProject?.githubInstallationId !== installationId
+              || !branchUsesPrebuiltMode(stateService.getBuildProfilesForProject(fresh.projectId), fresh)) continue;
+            if (patch.ciDiagnosis?.code === 'unknown' && previousStatus === 'failed' && fresh.ciDiagnosis?.code !== 'unknown'
+              && fresh.ciWorkflowConclusion !== 'timed_out_no_run' && fresh.ciWorkflowConclusion !== 'status_unknown') continue;
+            stateService.updateBranchGithubMeta(b.id, patch);
+            stateService.save();
+            branchEvents.emitEvent({ type: 'branch.updated', payload: { branchId: b.id, projectId: b.projectId, patch, ts: nowIso() } });
+            if (previousStatus === 'waiting' && patch.ciImageStatus === 'failed') {
+              void ciWaitCheckRunRunner?.concludeWithoutDeploy(fresh, { conclusion: 'failure',
+                title: patch.ciDiagnosis?.title || 'CI image unavailable', summary: patch.ciImageError || '' }).catch(() => {});
+            }
+          } catch (error) {
+            console.warn('[ci-image-diagnosis] GitHub 对账暂不可用:', error instanceof Error ? error.name : 'unknown');
+          }
+          continue;
+        }
+        if (b.ciImageStatus !== 'waiting') continue;
         if (waitedMs < CI_WAIT_TIMEOUT_MS) continue;
         const waitedMin = Math.round(waitedMs / 60000);
         const shortSha = (b.ciTargetSha || b.githubCommitSha || '').slice(0, 7);
-        const reason = `CI 预构建镜像${shortSha ? ` ${shortSha}` : ''}等待超时（${waitedMin} 分钟无匹配构建完成）。常见原因：该分支缺少 .github/workflows/branch-image.yml（从旧 main 切出）、CI 未运行或事件丢失。请查看 CI 日志，修复后重新运行 CI；通过后再部署。`;
+        const reason = `CI 镜像${shortSha ? ` ${shortSha}` : ''}状态未确认（${waitedMin} 分钟未收到匹配完成回执）。当前无法主动核对 GitHub，请打开 Actions 查看实际状态。`;
         stateService.updateBranchGithubMeta(b.id, {
           ciImageStatus: 'failed',
-          ciWorkflowConclusion: 'timed_out_no_run',
+          ciWorkflowConclusion: 'status_unknown',
           // 清空字段一律用 '' 而非 undefined：/api/branches/stream 的 branch.updated 会
           // 从 state 重新序列化**整个 branch** 下发，BranchList 按 data.branch merge 覆盖旧项；
           // JSON.stringify 丢 undefined 字段 → 客户端 merge 时保留旧值（旧「查看构建」链接/
           // 旧等待时间）。空串可序列化 + falsy，真正清空（Bugbot/Codex P2）。
           ciWaitingSince: '',
           ciImageError: reason,
-          // 超时原因是「无匹配构建完成」，任何旧 run 链接都与本次失败无关，清掉避免
-          // 卡片「查看构建」指向一个误导性的历史 Actions run。
-          ciWorkflowRunUrl: '',
+          // 没有主动查询权限时，保留当前目标已有入口；新 push 已在 dispatcher 清理旧入口。
+          ciWorkflowRunUrl: b.ciWorkflowRunUrl || '',
         });
         stateService.save();
         activeServerEventLogStore?.record({
@@ -5488,7 +5589,7 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
             branchId: b.id,
             projectId: b.projectId,
             // patch 仅作语义「本次变了什么」；真正驱动 UI 的是 SSE 层补的整 branch（见上）。
-            patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'timed_out_no_run', ciImageError: reason, ciWorkflowRunUrl: '' },
+            patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'status_unknown', ciImageError: reason, ciWorkflowRunUrl: b.ciWorkflowRunUrl || '' },
             ts: nowIso(),
           },
         });
@@ -5514,6 +5615,7 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
         }).catch(() => { /* best-effort */ });
       }
     } catch { /* 自检不致命 */ }
+    finally { checking = false; }
   };
   const timer = setInterval(check, 60 * 1000);
   timer.unref?.();
@@ -5559,6 +5661,7 @@ startMainThreadDiagnostics();
 // ── Master server (dashboard + API on masterPort) ──
 // serverDeps 保留引用：uptimeMonitor 在下面才构造，建好后回填给 /healthz 用。
 const serverDeps: ServerDeps = {
+  branchLifecycleService,
   getPublishedRoutes: () => forwarderRoutePublisher?.getPublishedRoutes() ?? [],
   stateService,
   worktreeService,
@@ -5569,6 +5672,9 @@ const serverDeps: ServerDeps = {
   config,
   schedulerService,
   janitorService,
+  backupRetentionService,
+  ownedResourceLifecycle,
+  imageCacheGovernance,
   registry,
   getClusterStrategy: () => clusterStrategy,
   storageModeContext,
@@ -5582,6 +5688,10 @@ const serverDeps: ServerDeps = {
   offhostAudit: activeServerEventLogStore instanceof OffHostAuditLogSink ? activeServerEventLogStore : null,
 };
 const app = createServer(serverDeps);
+if (config.mode !== 'executor' && !isPreviewInstance()) {
+  branchLifecycleService.start();
+  resourceShutdownTasks.add(() => branchLifecycleService.close());
+}
 
 // ── Helper: kill process on port so CDS can bind ──
 // force=true → kill any process (used for masterPort which belongs exclusively to CDS)
@@ -6147,10 +6257,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       targetName: alert.targetName, detectedAt: alert.detectedAt, title: payload.title, body: payload.message,
     }, () => notifier.send(alert));
   };
-  const alarmBoardUrl = (targetId?: string): string | undefined => {
+  const alarmBoardUrl = (targetId?: string, incidentId?: string, detectedAt?: string): string | undefined => {
     const base = (config.publicBaseUrl || '').trim().replace(/\/+$/, '');
     // 拿不到就不放。一条点不开的地址比没有地址更糟——它会让人以为自己点错了。
-    return base ? `${base}/status${targetId ? `?target=${encodeURIComponent(targetId)}` : ''}` : undefined;
+    return base ? `${base}${monitorIncidentPath(targetId, incidentId, detectedAt)}` : undefined;
   };
 
   /**
@@ -6186,7 +6296,30 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     return hosts;
   };
 
+  const alarmEventFor = (type: UptimeAlertEventType, data: UptimeAlertEventData): AlarmEvent => {
+    return {
+        notificationFacts: { environment: data.notificationEnvironment || 'unknown', system: systemForProject(data.projectId === '__self__' ? 'cds' : stateService.getProject(data.projectId)?.slug),
+          function: notificationFunction(data.targetName) },
+        identity: identityForAlarm(stateService.getAlarmIdentity(), data.targetId),
+        correlationKey: data.assessment === 'observation-unavailable'
+          ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
+          : data.targetId,
+        incidentId: data.incidentId,
+        targetId: data.targetId,
+        urgency: data.urgency,
+        kind: classifyAlert(type, data.source),
+        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
+        projectId: data.projectId,
+        targetName: data.targetName,
+        message: data.message,
+        detectedAt: data.detectedAt,
+        ...(data.probeUrl ? { probeUrl: data.probeUrl } : {}),
+        consecutiveFailures: data.consecutiveFailures,
+      };
+  };
+  const notificationReports = new NotificationReportRecorder(stateService);
   const uptimeMonitor = new UptimeMonitorService({
+    observeScheduledJobs: () => observeScheduledJobs(stateService, (type, data) => { cdsEventsBus.publish(type, data); }),
     state: {
       getAllBranches: () => stateService.getAllBranches(),
       getProject: (projectId: string) => stateService.getProject(projectId),
@@ -6226,12 +6359,32 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       operationId: crypto.randomUUID(), projectId: data.projectId, message: `${data.targetName}：通知已合并（${data.reason}）`,
       details: { kind: 'policy', targetId: data.targetId, targetName: data.targetName, reason: data.reason, detectedAt: new Date(data.at).toISOString() },
     }),
-    onAlert: (type, data) => {
+    onReportEvent: (type, data) => {
+      void notificationReports.record(alarmEventFor(type, data))
+        .catch(() => console.warn('[alarm] 未发送通知的状态事实归档失败，请检查报告存储。'));
+    },
+    onAlert: async (type, data) => {
+      // 第三个出口：用户自己配的通知通道（Bark / Webhook / MAP）。
+      // 同样不 await、不重试——理由与上面那条一致（探测轮次不该被投递拖住；
+      // 上游已去抖，重试会把一次翻转变成多条通知）。
+      const event = alarmEventFor(type, data);
+      let boardUrl = alarmBoardUrl(data.targetId, data.incidentId, data.detectedAt);
+      try {
+        const record = await notificationReports.record(event);
+        event.reportId = record.reportId;
+        event.eventId = record.eventId;
+        event.firstOccurredAt = record.firstOccurredAt;
+        event.lastOccurredAt = record.lastOccurredAt;
+        event.occurrenceCount = record.occurrenceCount;
+        // 已有更晚的失败事实时，保留迟到恢复记录，但不把它外发成当前恢复。
+        if (type === 'uptime.target.recovered' && Date.parse(record.lastOccurredAt) > Date.parse(data.detectedAt)) return;
+        if (boardUrl) { boardUrl = monitorReportUrl(boardUrl, record.reportId); }
+      } catch { console.warn('[alarm] 监控事件报告归档失败，通知继续发送，详情保留监控入口。'); }
       cdsEventsBus.publish(type, data);
       // 第二个出口：站内通知。不 await——探测轮次不该被一次通知投递拖住；
       // 也不重试——上游已经去抖，只在真翻转时调一次，重试会把一次翻转变成多条通知。
       // 投递失败只留日志（MapNotifier 内部已把异常转成结果值，这里的 catch 是兜底）。
-      if (!data.recoveryChannelIds || data.recoveryChannelIds.includes('legacy-map')) void sendLegacyAlarm({
+      if (notificationChannelSelected(stateService.getMonitorNotifications(), data.targetId, 'legacy-map') && (!data.recoveryChannelIds || data.recoveryChannelIds.includes('legacy-map'))) void sendLegacyAlarm({
         type,
         urgency: data.urgency,
         businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
@@ -6240,7 +6393,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         projectId: data.projectId,
         branchId: data.branchId,
         probeUrl: data.probeUrl,
-        boardUrl: alarmBoardUrl(data.targetId),
+        boardUrl,
+        notificationFacts: event.notificationFacts,
+        eventId: event.eventId, firstOccurredAt: event.firstOccurredAt, lastOccurredAt: event.lastOccurredAt, occurrenceCount: event.occurrenceCount,
         message: data.message,
         consecutiveFailures: data.consecutiveFailures,
         detectedAt: data.detectedAt,
@@ -6257,27 +6412,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
           console.warn(`[map-notifier] ${reason}`);
         });
 
-      // 第三个出口：用户自己配的通知通道（Bark / Webhook / MAP）。
-      // 同样不 await、不重试——理由与上面那条一致（探测轮次不该被投递拖住；
-      // 上游已去抖，重试会把一次翻转变成多条通知）。
-      const event = {
-        identity: identityForAlarm(stateService.getAlarmIdentity(), data.targetId),
-        correlationKey: data.assessment === 'observation-unavailable'
-          ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
-          : data.targetId,
-        targetId: data.targetId,
-        urgency: data.urgency,
-        kind: classifyAlert(type, data.source),
-        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
-        projectId: data.projectId,
-        targetName: data.targetName,
-        message: data.message,
-        detectedAt: data.detectedAt,
-        ...(data.probeUrl ? { probeUrl: data.probeUrl } : {}),
-        consecutiveFailures: data.consecutiveFailures,
-      };
-      const boardUrl = alarmBoardUrl(data.targetId);
-      for (const channel of routeAlarm(stateService.listAlarmChannels(), event)) {
+      for (const channel of routeAlarm(stateService.listAlarmChannels(), event, stateService.getMonitorNotifications())) {
         if (data.recoveryChannelIds && !data.recoveryChannelIds.includes(channel.id)) continue;
         if (alarmRelay.owns(channel.id)) {
           alarmRelay.enqueue(channel.id, { ...event, recoveryConfirmed: data.recoveryChannelIds?.includes(channel.id) }, boardUrl);
@@ -6472,8 +6607,25 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     getProject: (id) => stateService.getProject(id),
     save: (id, monitoringInspections) => { stateService.updateProject(id, { monitoringInspections }); },
   }));
+  app.use('/api', createMonitorOnboardingRouter(new MonitorOnboardingService({
+    store: stateService,
+    refreshTarget: targetId => uptimeMonitor.refreshTarget(targetId),
+    forgetTarget: targetId => uptimeMonitor.forgetTarget(targetId),
+    getNotifications: () => stateService.getMonitorNotifications(),
+    setNotifications: settings => stateService.setMonitorNotifications(settings),
+    listChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv() ? ['legacy-map'] : [])],
+    stampPreviewBranch: monitor => {
+      const hit = monitor.projectId && monitor.url ? matchPreviewHost(monitor.url, listProjectPreviewHosts(monitor.projectId)) : undefined;
+      monitor.previewBranchId = hit ? hit.branchId : undefined;
+    },
+  })));
   app.use('/api', createUptimeRouter({
     monitor: uptimeMonitor,
+    getNotifications: () => stateService.getMonitorNotifications(),
+    setNotifications: (settings) => stateService.setMonitorNotifications(settings),
+    listNotificationChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv() ? ['legacy-map'] : [])],
+    recordMcpAudit: (evidence) => stateService.recordMcpMonitorAudit(evidence),
+    listMcpAudits: () => stateService.listMcpMonitorAudits(),
     listProjectPreviewHosts,
     listMonitorEndpoints: (projectId: string) => stateService.listMonitorEndpoints(projectId),
     addMonitorEndpoint: (projectId: string, url: string) => stateService.addMonitorEndpoint(projectId, url),
@@ -6533,6 +6685,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       getUptimeMonitor: (id: string) => stateService.getUptimeMonitor(id),
       upsertUptimeMonitor: (monitor) => stateService.upsertUptimeMonitor(monitor),
       removeUptimeMonitor: (id: string) => stateService.removeUptimeMonitor(id),
+      getMonitorSubscriptions: () => stateService.getMonitorSubscriptions(),
+      setMonitorSubscription: (targetId, subscribed, actor) => stateService.setMonitorSubscription(targetId, subscribed, actor),
+      flush: () => stateService.flush(),
       getProject: (projectId: string) => stateService.getProject(projectId),
     },
   }));
@@ -6541,25 +6696,28 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     const r = express.Router();
     registerAlarmRelayRoutes(r, alarmRelay, {
       channels: () => stateService.listAlarmChannels(),
+      getNotifications: () => stateService.getMonitorNotifications(),
       acknowledged: async (item, result) => {
         if (result.merged) activeServerEventLogStore?.record({
           category: 'system', severity: 'info', source: 'alarm-delivery', action: 'alarm.suppressed', status: 'suppressed',
           operationId: item.id, projectId: item.event.projectId, message: '同源检查已归入已有事故',
           details: { kind: 'policy', targetId: item.event.targetId, targetName: item.event.targetName, reason: 'shared-incident' },
         });
-        else alarmLedger.record(item.channelId, result, item.event.drill ? 'drill' : 'alert', Date.now());
+        else if (!result.cancelled) alarmLedger.record(item.channelId, result, item.event.drill ? 'drill' : 'alert', Date.now());
         const channel = stateService.listAlarmChannels().find(c => c.id === item.channelId);
         if (!result.merged) await withAlarmDeliveryHistory(activeServerEventLogStore, {
           channelId: item.channelId, channelName: channel?.name ?? '已删除的通知通道', channelKind: channel?.kind ?? 'bark',
           kind: item.event.drill ? 'drill' : 'alert', eventKind: item.event.kind, projectId: item.event.projectId,
           targetId: item.event.targetId, targetName: item.event.targetName, detectedAt: item.event.detectedAt,
-          title: item.event.targetName, body: '由独立监控统一投递，详细证据保留在事件记录中。',
+          reportId: item.event.reportId, eventId: item.event.eventId,
+          title: renderAlarmMessage(item.event).title, body: renderAlarmMessage(item.event).body,
         }, async () => result);
         if (result.ok && item.event.kind.endsWith('-down') && item.event.targetId && !item.event.drill)
           await uptimeMonitor.markAlarmDelivered(item.event.targetId, item.channelId, item.event.detectedAt);
       },
     });
     registerAlarmChannelRoutes(r, {
+      recordEvent: (event) => notificationReports.record(event),
       relay: alarmRelay,
       getIdentity: () => stateService.getAlarmIdentity(),
       setIdentity: (identity) => stateService.setAlarmIdentity(identity),

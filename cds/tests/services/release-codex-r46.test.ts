@@ -588,7 +588,7 @@ describe('Codex 第五轮：回收全程持锁、删除失败不谎报、回滚�
       { mode: 'generated-compose' } as never,
       { removeWorktrees: ['rel_00000000000000aa'], removeVersions: [], keptReasons: {}, deferred: 0 },
     );
-    expect(cmd).toContain('[ -e "$wt/$name" ]');
+    expect(cmd).toContain('not os.path.lexists(p)');
     expect(cmd).toContain('CDS_RELEASE_RECLAIM_FAILED_WORKTREE');
   });
 

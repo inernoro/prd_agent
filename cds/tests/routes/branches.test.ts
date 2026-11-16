@@ -16,6 +16,7 @@ import {
   shouldSkipFencedDeployCleanupForNewerRuntime,
 } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
+import { buildStandbyBranchConfiguration } from '../../src/services/standby-mirror.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService, resolveEffectiveProfile } from '../../src/services/container.js';
 import { BranchOperationCoordinator, BranchOperationSupersededError, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
@@ -230,6 +231,10 @@ describe('Branch Routes', () => {
   let config: CdsConfig;
   let mock: MockShellExecutor;
   let stateService: StateService;
+  const standbyConfiguration = (entry: BranchEntry) => buildStandbyBranchConfiguration({ branch: entry,
+    profiles: stateService.getBuildProfilesForProject(entry.projectId || 'default'), env: stateService.getCustomEnv(entry.projectId || 'default'),
+    branchEnv: stateService.getCustomEnvScope(entry.id), infra: stateService.getInfraServicesForProject(entry.projectId || 'default'),
+    routingRules: stateService.getRoutingRulesForProject(entry.projectId || 'default') });
   let containerService: ContainerService;
   let serverEventLogStore: ServerEventLogSink;
   let branchOperationCoordinator: BranchOperationCoordinator;
@@ -414,6 +419,26 @@ describe('Branch Routes', () => {
     delete process.env.CDS_BRANCH_NETWORK_ISOLATION;
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it('归档分支拒绝部署、重启及镜像认领，旧停止分支清理不能提前删除', async () => {
+    const branch: BranchEntry = { id: 'archived-fixture', projectId: 'default', branch: 'feature/archived', worktreePath: tmpDir,
+      status: 'idle', createdAt: new Date().toISOString(), services: { api: { profileId: 'api', containerName: 'archived-api', hostPort: 12001, status: 'stopped' } },
+      archive: { archivedAt: new Date().toISOString(), retireAt: '2099-01-01T00:00:00Z', reason: 'manual', actor: 'user' } };
+    stateService.addBranch(branch);
+    for (const action of ['deploy', 'deploy/api', 'restart', 'force-rebuild/api', 'prebuilt-image/claim']) {
+      const response = await request(server, 'POST', `/api/branches/${branch.id}/${action}`, {});
+      expect(response.status).toBe(409); expect(response.body).toMatchObject({ error: 'branch_archived' });
+    }
+    const scoped = await request(server, 'POST', `/api/branches/${branch.id}/deploy`, {}, { 'x-test-key': 'A' });
+    expect(scoped.status).toBe(403);
+    const cleanup = await request(server, 'POST', '/api/branches/cleanup-stopped?project=default', {});
+    expect(cleanup.body).toMatchObject({ removedCount: 0, skippedProtectedCount: 1 });
+    expect(stateService.getBranch(branch.id)?.archive).toBeTruthy(); expect(fs.existsSync(tmpDir)).toBe(true);
+    // webhook已排队、随后用户归档的竞态，也必须在最终删除入口保留数据。
+    const automaticDelete = await request(server, 'DELETE', `/api/branches/${branch.id}`, undefined, { 'x-cds-trigger': 'webhook' });
+    expect(automaticDelete.status).toBe(409); expect(automaticDelete.body).toMatchObject({ error: 'archived_branch_auto_delete_refused' });
+    expect(stateService.getBranch(branch.id)?.archive).toBeTruthy(); expect(fs.existsSync(tmpDir)).toBe(true);
   });
 
   it('手动新建在首个 mkdir 等待前冻结默认，期间修改项目不会留下半分支', async () => {
@@ -841,6 +866,41 @@ describe('Branch Routes', () => {
       expect(body.fetched).toBe(false);
       expect(body.cachedAt).toBeNull();
       expect(mock.commands.some(c => c.includes('git fetch origin --prune'))).toBe(false);
+    });
+
+    it('explicit refresh fetches newly added refs inside the cache window and updates cachedAt', async () => {
+      let fetches = 0;
+      mock.addResponsePatternFirst(/git fetch origin --prune/, () => {
+        fetches++; return { stdout: '', stderr: '', exitCode: 0 };
+      });
+      mock.addResponsePatternFirst(/git for-each-ref/, () => ({
+        stdout: fetches > 1 ? 'feature/new<SEP>2026-11-14<SEP>Dev<SEP>new' : '', stderr: '', exitCode: 0,
+      }));
+      const first = await request(server, 'GET', '/api/remote-branches');
+      await new Promise(resolve => setTimeout(resolve, 2));
+      const refreshed = await request(server, 'GET', '/api/remote-branches?force=true');
+      expect(refreshed.status).toBe(200);
+      expect(fetches).toBe(2);
+      expect(refreshed.body).toMatchObject({ fetched: true, branches: [{ name: 'feature/new' }] });
+      expect((refreshed.body as any).cachedAt).toBeGreaterThan((first.body as any).cachedAt);
+    });
+
+    it('explicit refresh reports an actual fetch failure even with warm cache, then can recover', async () => {
+      let fail = false;
+      mock.addResponsePatternFirst(/git fetch origin --prune/, () => ({ stdout: '', stderr: fail ? 'origin unavailable' : '', exitCode: fail ? 1 : 0 }));
+      await request(server, 'GET', '/api/remote-branches');
+      fail = true;
+      const failed = await request(server, 'GET', '/api/remote-branches?force=true');
+      expect(failed.status).toBe(502);
+      expect(failed.body).toMatchObject({ error: 'git_fetch_failed', message: 'origin unavailable' });
+      fail = false;
+      expect((await request(server, 'GET', '/api/remote-branches?force=true')).body).toMatchObject({ fetched: true });
+    });
+
+    it('nofetch still prevents Git network work when force is also supplied', async () => {
+      const result = await request(server, 'GET', '/api/remote-branches?nofetch=true&force=true');
+      expect(result.body).toMatchObject({ fetched: false, cachedAt: null });
+      expect(mock.commands.some(command => command.includes('git fetch origin --prune'))).toBe(false);
     });
 
     it('persists the remote default branch onto the project', async () => {
@@ -2624,6 +2684,21 @@ describe('Branch Routes', () => {
         stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
         await request(server, 'PUT', `/api/branches/${id}/profile-overrides/api`, { env: { KEY: 'from-source' }, dbScope: 'per-branch' });
       };
+
+      it('isolated source cannot be derived or copied, and isolated targets cannot be overwritten', async () => {
+        await seedSourceWithConfig('isolated-source'); seedBranch('ordinary-target');
+        stateService.getBranch('isolated-source')!.excludedProjectProfileIds = ['api'];
+        const beforeSource = JSON.stringify(stateService.getBranch('isolated-source'));
+        const beforeTarget = JSON.stringify(stateService.getBranch('ordinary-target'));
+        const snapshots = stateService.getConfigSnapshots().length;
+        expect((await request(server, 'POST', '/api/branches', { branch: 'unsafe-child', sourceBranchId: 'isolated-source' })).status).toBe(409);
+        expect(stateService.getBranch('unsafe-child')).toBeUndefined();
+        expect((await request(server, 'POST', '/api/branches/ordinary-target/copy-config-from/isolated-source?redeploy=1')).status).toBe(409);
+        expect((await request(server, 'POST', '/api/branches/isolated-source/copy-config-from/ordinary-target')).status).toBe(409);
+        expect(JSON.stringify(stateService.getBranch('isolated-source'))).toBe(beforeSource);
+        expect(JSON.stringify(stateService.getBranch('ordinary-target'))).toBe(beforeTarget);
+        expect(stateService.getConfigSnapshots().length).toBe(snapshots);
+      });
 
       it('POST /branches 带 sourceBranchId:深拷贝 overrides+extraProfiles,写派生指针,改新不串旧', async () => {
         await seedSourceWithConfig('src-branch');
@@ -5058,6 +5133,76 @@ describe('Branch Routes', () => {
         expect(deploymentRunService.list({ branchId: id })).toHaveLength(1);
         expect(branchOperationCoordinator.getArtifactWaiters()[0].pending.request.commitSha).toBe(target);
       } finally { release(); await Promise.all([first, second]); registration.mockRestore(); }
+    });
+
+    it.each(['pin', 'version', 'unchanged'] as const)('备用同步快照一次性条件不能在artifact-wait丢失：%s', async change => {
+      const A = 'a'.repeat(40), B = 'b'.repeat(40), id = 'standby-artifact-snapshot';
+      stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'Synthetic prebuilt',
+        dockerImage: `ghcr.io/owned/api:sha-${A}`, workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+      const entry: BranchEntry = { id, projectId: 'default', branch: 'feature/standby-artifact',
+        worktreePath: path.join(tmpDir, 'worktrees', id), status: 'idle', createdAt: new Date().toISOString(),
+        githubCommitSha: A, ciTargetSha: A, services: {} };
+      stateService.addBranch(entry); readyArtifactFixture();
+      mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
+      const begin = vi.spyOn(branchOperationCoordinator, 'begin');
+      const body = { commitSha: A, standbyExpected: { commitSha: A, status: 'idle', pinnedCommit: null, ...standbyConfiguration(entry) } };
+      const initial = await request(server, 'POST', `/api/branches/${id}/deploy`, body);
+      await requestArtifactWaitRefresh(branchOperationCoordinator);
+      const queuedCount = branchOperationCoordinator.getArtifactWaiters().length;
+      if (change === 'pin') entry.pinnedCommit = B;
+      if (change === 'version') entry.githubCommitSha = B;
+      mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: 'available', stderr: '', exitCode: 0 }));
+      const { refreshArtifactWaiters } = await import('../../src/services/artifact-admission-wait.js');
+      const replayed = await refreshArtifactWaiters({ coordinator: branchOperationCoordinator, containerService,
+        getBranch: branchId => stateService.getBranch(branchId), recheckMs: 0 });
+      // 红测真实经过旧coordinator的产物ready→drain→HTTP重放，不只mock路由入口。
+      for (const pending of replayed) await request(server, 'POST', `/api/branches/${id}/deploy`, pendingDeployBody(pending),
+        { 'X-CDS-Internal': '1', 'X-CDS-Trigger': pending.request.trigger });
+      const launches = () => mock.commands.filter(command => isAppLaunchCommand(command)).length;
+      console.info('standby artifact snapshot evidence', { change, initialStatus: initial.status, queuedCount,
+        replayCount: replayed.length, replayBodyKeys: replayed.map(p => Object.keys(pendingDeployBody(p))),
+        launchCount: launches(), pinPreserved: entry.pinnedCommit === B, currentSha: entry.githubCommitSha });
+      expect(queuedCount).toBe(0); expect(replayed).toEqual([]); expect(initial.status).toBe(409);
+      expect(begin.mock.calls[0][0].hasOneShotOptions).toBe(true);
+      expect(deploymentRunService.list({ branchId: id })).toEqual([]); expect(launches()).toBe(0);
+      const fresh = await request(server, 'POST', `/api/branches/${id}/deploy`, body);
+      if (change === 'unchanged') {
+        expect(fresh.status).toBe(200); expect(launches()).toBe(1); expect(entry.status).toBe('running');
+        expect(begin.mock.results.some(result => result.type === 'return' && result.value.status === 'started')).toBe(true);
+      } else {
+        expect(fresh.status).toBe(409); expect(launches()).toBe(0);
+        if (change === 'pin') expect(entry.pinnedCommit).toBe(B);
+        else expect(entry.githubCommitSha).toBe(B);
+      }
+      expect(branchOperationCoordinator.getArtifactWaiters()).toEqual([]); begin.mockRestore();
+    });
+
+    it.each(['pin', 'configuration', 'secret', 'db-scope'] as const)('备用同步快照在产物复核期间新增%s时不能准入或清pin', async change => {
+      const A = 'a'.repeat(40), B = 'b'.repeat(40), id = 'standby-artifact-pin-during-check';
+      stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'Synthetic prebuilt',
+        dockerImage: `ghcr.io/owned/api:sha-${A}`, workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+      const entry: BranchEntry = { id, projectId: 'default', branch: id, worktreePath: tmpDir, status: 'idle',
+        createdAt: new Date().toISOString(), githubCommitSha: A, ciTargetSha: A, services: {} };
+      stateService.addBranch(entry); readyArtifactFixture();
+      stateService.setCustomEnv({ API_TOKEN: 'synthetic-original-secret' }, entry.id);
+      const originalInspect = containerService.inspectDeploymentArtifacts.bind(containerService);
+      const inspect = vi.spyOn(containerService, 'inspectDeploymentArtifacts').mockImplementation(async (...args) => {
+        const result = await originalInspect(...args);
+        if (change === 'pin') entry.pinnedCommit = B;
+        else if (change === 'db-scope') entry.profileOverrides = { api: { dbScope: 'per-branch' } };
+        else if (change === 'secret') stateService.setCustomEnv({ API_TOKEN: 'synthetic-changed-secret' }, entry.id);
+        else entry.profileOverrides = { api: { env: { PUBLIC_SETTING: 'changed' } } };
+        return result;
+      });
+      const result = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: A,
+        standbyExpected: { commitSha: A, status: 'idle', pinnedCommit: null, ...standbyConfiguration(entry) } });
+      expect(inspect).toHaveBeenCalled(); expect(result.status).toBe(409);
+      if (change === 'pin') expect(entry.pinnedCommit).toBe(B);
+      else if (change === 'db-scope') expect(entry.profileOverrides?.api.dbScope).toBe('per-branch');
+      else if (change === 'secret') expect(stateService.getCustomEnvScope(entry.id).API_TOKEN).toBe('synthetic-changed-secret');
+      else expect(entry.profileOverrides?.api.env?.PUBLIC_SETTING).toBe('changed');
+      expect(branchOperationCoordinator.getArtifactWaiters()).toEqual([]); expect(deploymentRunService.list({ branchId: id })).toEqual([]);
+      expect(mock.commands.filter(command => isAppLaunchCommand(command))).toEqual([]); inspect.mockRestore();
     });
 
     it('最后一个必需产物缺失时保留旧入口与孤儿服务，不初始化数据库或准备源码，原任务持久等待', async () => {
@@ -7995,9 +8140,14 @@ describe('Branch Routes', () => {
         status:'running',createdAt:new Date().toISOString(),services:{orphan:{profileId:'orphan',containerName:'old-orphan',hostPort:10010,status:'running'}}});
       mock.addResponsePattern(/docker image inspect.*json .Id/,()=>({exitCode:0,stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null]),stderr:''}));
       const preflight=vi.spyOn(containerService,'preflightProfileStorage');
-      const result=await request(server,'POST','/api/branches/storage-graph/deploy');
-      expect(result.status).toBe(200);
-      expect(String(result.body)).toContain('unsafe_deployment_storage');
+      const source=vi.spyOn(WorktreeService.prototype,'prepareDeploymentSource');
+      for (let retry=0;retry<3;retry++) {
+        const result=await request(server,'POST','/api/branches/storage-graph/deploy');
+        expect(result.status).toBe(200);
+        expect(String(result.body)).toContain('unsafe_deployment_storage');
+      }
+      expect(source).not.toHaveBeenCalled();
+      expect(fs.existsSync(WorktreeService.deploymentSourceRootFor(path.join(tmpDir,'worktrees','storage-graph')))).toBe(false);
       expect(preflight).not.toHaveBeenCalled();
       expect(mock.commands.some(c=>/^docker image inspect/.test(c))).toBe(false);
       expect(mock.commands.some(c=>/^docker (rm|stop|run|create|start) /.test(c))).toBe(false);

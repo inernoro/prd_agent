@@ -5,6 +5,8 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash, randomBytes } from 'node:crypto';
+import { OwnedResourceLifecycle } from '../src/services/owned-resource-task.js';
+import { ShellExecutor } from '../src/services/shell-executor.js';
 
 // 唯一接主 Docker 的外层：只创建带随机归属的容器、镜像和卷；原应用使用另一个守护进程。
 const execute = promisify(execFile);
@@ -28,17 +30,23 @@ async function main(): Promise<void> {
   const cancelAfterDaemonCreate = process.argv.includes('--cancel-after-daemon-create');
   const qualifyUnknownCreationShutdown = process.argv.includes('--qualify-unknown-create-shutdown');
   assert.ok(!qualifyUnknownCreationShutdown || !cancelAfterDaemonCreate);
-  const sourceHead = (await execute('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' })).stdout.trim(); assert.match(sourceHead, /^[a-f0-9]{40}$/);
+  const sourceHead = (await execute('/usr/bin/git', ['-c', `safe.directory=${path.resolve('..')}`, 'rev-parse', 'HEAD'], { encoding: 'utf8' })).stdout.trim(); assert.match(sourceHead, /^[a-f0-9]{40}$/);
   const owner = `cds_app_${randomBytes(8).toString('hex')}`;
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-application-docker-ci-')); await fs.chmod(root, 0o700);
+  const resourceRoot = path.resolve(process.env.CDS_RESOURCE_ROOT || '/var/lib/cds-resource-lifecycle');
+  const lifecycle = new OwnedResourceLifecycle({ shell: new ShellExecutor(), instanceId: 'local-acceptance-runner',
+    workspaceBase: path.join(resourceRoot, 'workspaces'), catalog: path.join(resourceRoot, 'catalog') });
+  const task = await lifecycle.begin({ projectId: 'cds-self', owner, createdBy: 'application-docker-host-drill', ttlSeconds: 900, dataDisposition: 'ephemeral-test' });
+  const root = task.handle.workspace;
+  const ownedOutput = path.join(root, 'output');await fs.mkdir(ownedOutput);
   const output = path.resolve(cancelAfterDaemonCreate ? 'application-probe-cancel-output' : 'application-docker-output'); await fs.mkdir(output, { recursive: true, mode: 0o700 });
   const report: any = { schema: 1, sourceHead, owner, startedAt: new Date().toISOString(), verdict: 'failed',
-    scope: 'owned network namespace with original full application and separate real Docker daemon; generic fixtures; prerequisite only, not STG-03 business coverage or STG-04/public acceptance',
+    resourceTaskId: task.handle.taskId, scope: 'owned network namespace with original full application and separate real Docker daemon; generic fixtures; prerequisite only, not STG-03 business coverage or STG-04/public acceptance',
     actualWholeFirstStageVerified: false, formalAcceptancePassed: false, productionChanged: false,
     cancellationBoundary: cancelAfterDaemonCreate ? 'daemon-created' : 'client-disconnect',
     ownedContainerRemoved: false, ownedVolumeRemoved: false, ownedImageRemoved: false };
   let containerId: string | undefined, volume: string | undefined, imageId: string | undefined;
-  const tag = `${owner}:fixture`;
+  let tag = '';
+  const renew = setInterval(() => void task.heartbeat(600).catch(() => undefined), 60_000);renew.unref();
   const ownedContainer = async () => {
     assert.ok(containerId); assert.match(containerId, /^[a-f0-9]{64}$/);
     const view = JSON.parse(await docker(['inspect', containerId]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], owner); return view;
@@ -67,20 +75,20 @@ async function main(): Promise<void> {
     const buildContext = path.join(root, 'build'); await fs.mkdir(buildContext);
     await fs.writeFile(path.join(buildContext, 'Dockerfile'), `FROM node:22-alpine AS node\nFROM docker:29-dind\nCOPY --from=node /usr/local/bin/node /usr/local/bin/node\nRUN apk add --no-cache libstdc++ git procps bash curl\nLABEL cds.acceptance.owner="${owner}" org.opencontainers.image.revision="${sourceHead}"\n`);
     report.stage = 'owned-daemon-image-build';
-    await docker(['build', '--quiet', '-t', tag, buildContext], 300_000);
+    const built = await task.buildImage('isolated-daemon-image', buildContext);tag = built.name;
     const image = JSON.parse(await docker(['image', 'inspect', tag]))[0]; assert.equal(image.Config.Labels['cds.acceptance.owner'], owner);
     imageId = image.Id; report.outerImage = { id: image.Id, revision: image.Config.Labels['org.opencontainers.image.revision'], baseImages: ['node:22-alpine', 'docker:29-dind'] };
-    volume = `${owner}-data`; await docker(['volume', 'create', '--label', `cds.acceptance.owner=${owner}`, volume]);
+    volume = (await task.createVolume('isolated-docker-data')).identity;
     report.stage = 'owned-container-create';
-    containerId = await docker(['create', '--privileged', '--network', 'bridge', '--name', owner, '--label', `cds.acceptance.owner=${owner}`,
-      '--cpus', '4', '--memory', '6g', '--pids-limit', '1024', '-e', 'DOCKER_TLS_CERTDIR=',
-      '-e', 'GITHUB_ACTIONS=true', '-e', `GITHUB_RUN_ID=${process.env.GITHUB_RUN_ID}`,
-      '--mount', `type=bind,src=${snapshot},dst=/owned/source,readonly`,
-      '--mount', `type=bind,src=${path.resolve('node_modules')},dst=/owned/source/node_modules,readonly`,
-      '--mount', `type=bind,src=${output},dst=/owned/output`, '-v', `${volume}:/var/lib/docker`,
-      tag, 'dockerd', '--host=unix:///var/run/owned.sock', '--storage-driver=vfs', '--feature=containerd-snapshotter=false']);
+    containerId = (await task.createContainer({ image: tag, role: 'isolated-docker-host', isolatedDockerHost: true,
+      mounts: [{ kind: 'bind', source: snapshot, target: '/owned/source', readOnly: true },
+        { kind: 'bind', source: path.resolve('node_modules'), target: '/owned/source/node_modules', readOnly: true },
+        { kind: 'bind', source: ownedOutput, target: '/owned/output' },
+        { kind: 'volume', source: volume!, target: '/var/lib/docker' }],
+      command: ['dockerd', '--host=unix:///var/run/owned.sock', '--storage-driver=vfs', '--feature=containerd-snapshotter=false'] })).identity;
+    assert.ok(containerId);
     // 分开create/start，启动报错仍持有已验证的ID，最后可清理创建的容器和卷。
-    await ownedContainer(); report.stage = 'owned-container-start-and-isolation'; await docker(['start', containerId]);
+    await ownedContainer(); report.stage = 'owned-container-start-and-isolation';
     const outer = await ownedContainer(); assert.equal(outer.HostConfig.NetworkMode, 'bridge'); assert.equal(outer.HostConfig.PidMode, '');
     assert.equal(outer.Mounts.some((m: any) => /docker\.sock$/.test(m.Source)), false);
     report.outerRuntime = { containerId, networkMode: outer.HostConfig.NetworkMode, sharedPrimarySocket: false, sharedHostPid: false,
@@ -119,7 +127,7 @@ async function main(): Promise<void> {
       await fs.writeFile(path.join(output, 'inner-driver.log'), ((failed.stdout || '') + (failed.stderr || '')).slice(-65536)); throw error; }
     report.innerCommand = commandEvidence();
     await fs.writeFile(path.join(output, 'inner-driver.log'), (result.stdout + result.stderr).slice(-65536));
-    const application = JSON.parse(await fs.readFile(path.join(output, 'report.json'), 'utf8')); assert.equal(application.verdict, 'passed');
+    const application = JSON.parse(await fs.readFile(path.join(ownedOutput, 'report.json'), 'utf8')); assert.equal(application.verdict, 'passed');
     assert.equal(application.actualFullIndexBootstrapVerified, true); assert.equal(application.actualOwnedDockerApplicationPreflightVerified, true);
     if (cancelAfterDaemonCreate) assert.equal(application.actualBudgetProbeCancellationVerified, true);
     if (qualifyUnknownCreationShutdown) {
@@ -128,7 +136,7 @@ async function main(): Promise<void> {
       assert.equal(application.failureRecoveryVerified, true);
     }
     assert.equal(application.actualWholeFirstStageVerified, false); assert.equal(application.formalAcceptancePassed, false);
-    report.applicationReportSha256 = createHash('sha256').update(await fs.readFile(path.join(output, 'report.json'))).digest('hex');
+    report.applicationReportSha256 = createHash('sha256').update(await fs.readFile(path.join(ownedOutput, 'report.json'))).digest('hex');
     report.verdict = 'passed';
   } catch (error) {
     report.failure = { stage: report.stage, message: String((error as Error).message).slice(0, 4000) };
@@ -136,18 +144,18 @@ async function main(): Promise<void> {
     throw error;
   } finally {
     const cleanupErrors: string[] = [];
-    if (containerId) { try { await ownedContainer(); await docker(['rm', '-f', containerId]);
-      assert.equal((await docker(['ps', '-aq', '--no-trunc', '--filter', `id=${containerId}`])), ''); report.ownedContainerRemoved = true;
-    } catch (error) { cleanupErrors.push(String(error)); } }
-    if (volume) { try { const view = JSON.parse(await docker(['volume', 'inspect', volume]))[0]; assert.equal(view.Labels['cds.acceptance.owner'], owner);
-      await docker(['volume', 'rm', volume]);
-      assert.equal(await docker(['volume', 'ls', '-q', '--filter', `label=cds.acceptance.owner=${owner}`]), ''); report.ownedVolumeRemoved = true;
-    } catch (error) { cleanupErrors.push(String(error)); } }
-    if (imageId) { try { const view = JSON.parse(await docker(['image', 'inspect', imageId]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], owner);
-      assert.deepEqual(view.RepoTags, [tag]); await docker(['image', 'rm', imageId]);
-      assert.equal(await docker(['image', 'ls', '-q', '--no-trunc', '--filter', `label=cds.acceptance.owner=${owner}`]), ''); report.ownedImageRemoved = true;
-    } catch (error) { cleanupErrors.push(String(error)); } }
-    await fs.rm(root, { recursive: true, force: true }); report.isolatedFilesRemoved = true;
+    clearInterval(renew);
+    // Evidence has a separate 14-day CI artifact lifecycle. Only this bounded output is exported.
+    try { await fs.cp(ownedOutput, output, { recursive: true }); }
+    catch (error) { cleanupErrors.push(String(error)); }
+    try {
+      report.retirement = await task.finish(report.verdict === 'passed' ? 'completed' : 'failed');
+      if (containerId) report.ownedContainerRemoved = !(await docker(['ps', '-aq', '--no-trunc'])).split('\n').includes(containerId);
+      if (volume) report.ownedVolumeRemoved = !(await docker(['volume', 'ls', '-q'])).split('\n').includes(volume);
+      if (imageId) report.ownedImageRemoved = !(await docker(['image', 'ls', '-aq', '--no-trunc'])).split('\n').includes(imageId);
+      report.isolatedFilesRemoved = await fs.lstat(root).then(() => false, error => error.code === 'ENOENT');
+      if (!report.isolatedFilesRemoved || (containerId && !report.ownedContainerRemoved) || (volume && !report.ownedVolumeRemoved) || (imageId && !report.ownedImageRemoved)) cleanupErrors.push('原生退役尚未确认，已保留清单供独立回收器继续处理。');
+    } catch (error) { cleanupErrors.push(String(error)); }
     if (cleanupErrors.length) { report.cleanupErrors = cleanupErrors; report.verdict = 'failed'; process.exitCode = 1; }
     report.finishedAt = new Date().toISOString(); await fs.writeFile(path.join(output, 'host-report.json'), JSON.stringify(report, null, 2) + '\n');
   }

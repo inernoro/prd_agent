@@ -52,6 +52,7 @@ public static class VideoTrackType
 public static class VideoExportTaskStatus
 {
     public const string Queued = "Queued";
+    public const string ScopedQueued = "ScopedQueued";
     public const string Processing = "Processing";
     public const string Completed = "Completed";
     public const string Failed = "Failed";
@@ -108,6 +109,8 @@ public class VideoProject
     public bool GenerateAudio { get; set; } = true;
     public string? LatestRunId { get; set; }
     public string? LatestExportTaskId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ExportHolderLeaseId { get; set; }
     public List<VideoProjectAsset> Assets { get; set; } = new();
     public List<VideoTimelineTrack> TimelineTracks { get; set; } =
     [
@@ -250,14 +253,30 @@ public class VideoGenScene : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     /// <summary>本镜成本（美元）</summary>
     public double? Cost { get; set; }
 
+    /// <summary>取消后仅查询原已提交作业的收据，不代表本地任务恢复生成。</summary>
+    public string? UpstreamStatus { get; set; }
+    public DateTime? ReconciledAt { get; set; }
+    public DateTime? ReceiptQueuedAt { get; set; }
+
     /// <summary>本镜单段视频 URL（已下载到 COS）</summary>
     public string? VideoUrl { get; set; }
 
     /// <summary>当前采用的视频版本 ID</summary>
     public string? ActiveVersionId { get; set; }
 
+    /// <summary>当前镜头采用的本人私有语音任务；重新导出只读取，不重新调用模型。</summary>
+    public VideoSceneNarration? Narration { get; set; }
+
     /// <summary>本镜历史生成版本，重新渲染不会覆盖旧产物</summary>
     public List<VideoGenSceneVersion> Versions { get; set; } = new();
+}
+
+/// <summary>与镜头一起持久化的配音采用记录。</summary>
+public sealed class VideoSceneNarration
+{
+    public string SpeechRunId { get; set; } = string.Empty;
+    public string Text { get; set; } = string.Empty;
+    public double DurationSeconds { get; set; }
 }
 
 /// <summary>单个分镜的一次生成结果</summary>
@@ -359,6 +378,8 @@ public class VideoGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 
     /// <summary>最近一次独立导出任务 ID。</summary>
     public string? LatestExportTaskId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ExportHolderLeaseId { get; set; }
 
     /// <summary>用户已请求把全部分镜合成为完整视频</summary>
     public bool ExportRequested { get; set; }
@@ -425,10 +446,32 @@ public class VideoExportTask
     public string OwnerAdminId { get; set; } = string.Empty;
     public string ProjectId { get; set; } = string.Empty;
     public string RunId { get; set; } = string.Empty;
-    public string Status { get; set; } = VideoExportTaskStatus.Queued;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string Status { get; set; } = VideoExportTaskStatus.ScopedQueued;
+    [BsonIgnore]
+    [System.Text.Json.Serialization.JsonPropertyName("status")]
+    public string PublicStatus
+    {
+        get => Status == VideoExportTaskStatus.ScopedQueued ? VideoExportTaskStatus.Queued : Status;
+        set => Status = value;
+    }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? WorkerLeaseId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime? WorkerLeaseExpiresAt { get; set; }
     public string CurrentPhase { get; set; } = "queued";
     public int Progress { get; set; }
     public string? OutputUrl { get; set; }
+    // 完成回执先落库，恢复只核对本人当前导出，不重新生成、上传或申请执行许可。
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? DeploymentSlug { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? OutputSha256 { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public double? TotalCost { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime? RunReconciledAt { get; set; }
+
     public string? ErrorMessage { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }

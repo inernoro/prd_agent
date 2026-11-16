@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.20.5"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.21.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -688,6 +688,19 @@ def ok(data: Any = None, *, note: str | None = None, code: int = 0) -> None:
 
 # ── Commands ───────────────────────────────────────────────────────
 
+def cmd_disk(args: argparse.Namespace) -> None:
+    paths = {"state": "/api/janitor/state", "sources": "/api/janitor/deployment-sources", "backups": "/api/janitor/backups", "tasks": "/api/janitor/tasks", "data-cases": "/api/janitor/tasks/data-cases", "images": "/api/janitor/tasks/images"}
+    path = paths.get(args.sub)
+    if args.sub == "target":
+        path = f"/api/releases/targets/{urllib.parse.quote(args.id, safe='')}/disk-diagnosis"
+    body = _call("GET", path, timeout=120)
+    if not isinstance(body, dict):
+        die("磁盘观测响应未确认，不能据此判断零占用", code=3)
+    if args.sub in ("sources", "backups", "tasks", "images") and body.get("scanStatus") != "complete":
+        die("资源盘点未完整确认，相关对象保持保护；请查看保护原因、策略冲突与待处理项", code=3, extra={"data": body})
+    ok(body, note="只读磁盘观测；候选预览不授权删除，估计大小不代表实际释放")
+
+
 def cmd_health(args: argparse.Namespace) -> None:
     status, body, _ = _request("GET", "/healthz", timeout=5)
     ok({"status": status, "body": body}, note=f"healthz={status}")
@@ -988,6 +1001,60 @@ def cmd_project_list(args: argparse.Namespace) -> None:
             print("  (敏感字段已隐藏，--include-sensitive 显示全部)")
         return
     ok([_redact_project(p, include_sensitive) for p in projects])
+
+
+def _release_environment_rows(project_id: str) -> tuple[list[dict], list[dict]]:
+    data = _call("GET", "/api/releases/targets?project=" + urllib.parse.quote(project_id, safe=""))
+    targets = data.get("targets", [])
+    active = [t for t in targets if t.get("projectId") == project_id
+              and t.get("isEnabled") is True and t.get("lifecycle") != "archived"]
+    return active, targets + data.get("archivedTargets", [])
+
+
+def _release_environment_summary(target: dict) -> dict:
+    return {"id": target.get("id"), "name": target.get("name"),
+            "environment": target.get("environment"), "isCanonical": target.get("isCanonical"),
+            "url": (target.get("ssh") or {}).get("healthcheckUrl")}
+
+
+def cmd_release_target_list(args: argparse.Namespace) -> None:
+    targets, _ = _release_environment_rows(args.project)
+    ok({"projectId": args.project, "environments": [_release_environment_summary(t) for t in targets]})
+
+
+def cmd_release_target_register(args: argparse.Namespace) -> None:
+    try:
+        body = json.loads(pathlib.Path(args.file).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        die("环境配置文件无法读取或不是有效 JSON", code=1)
+    if not isinstance(body, dict) or not isinstance(body.get("name"), str) or not body["name"].strip():
+        die("环境配置必须包含名称 name", code=1)
+    if body.get("projectId", args.project) != args.project:
+        die("project_scope_mismatch：环境配置与 --project 不一致，未写入", code=2)
+    if body.get("environment") not in ("production", "staging", "other"):
+        die("请明确 environment：production / staging / other，避免误登记为生产环境", code=1)
+    if body.get("isEnabled") is False:
+        die("disabled_environment：接入环境必须启用才能在分支卡片选择", code=1)
+    project = _call("GET", "/api/projects/" + urllib.parse.quote(args.project, safe=""))
+    project = project.get("project", project)
+    if project.get("id") != args.project:
+        die("project_identity_mismatch：未确认项目身份，未写入", code=2)
+    _, existing = _release_environment_rows(args.project)
+    if any(t.get("id") == body.get("id") for t in existing if body.get("id")) or any(
+            t.get("name") == body["name"].strip() and t.get("lifecycle") != "archived" for t in existing):
+        die("environment_exists：已有同名或同 ID 环境，请先 list 核对，不重复创建或覆盖", code=2)
+    body = {**body, "projectId": args.project, "name": body["name"].strip()}
+    created = _call("POST", "/api/releases/targets", body=body).get("target", {})
+    if created.get("projectId") != args.project or not created.get("id"):
+        die("registration_unconfirmed：服务端未返回当前项目环境，停止后续发布", code=2)
+    visible, _ = _release_environment_rows(args.project)
+    target = next((t for t in visible if t.get("id") == created["id"]), None)
+    if target is None:
+        die("registration_not_visible：环境已登记但未出现在可选列表，请核对启用状态，不要重复创建",
+            code=2, extra={"targetId": created["id"]})
+    ok({"projectId": args.project, "environment": _release_environment_summary(target),
+        "selectable": True, "releaseStarted": False},
+       note="环境已登记并读回；完成预检后回到项目分支卡片点击「发布到」选择，未自动发布")
 
 
 def cmd_project_show(args: argparse.Namespace) -> None:
@@ -3629,7 +3696,16 @@ def cmd_code_review_submit(args: argparse.Namespace) -> None:
     for name in ("title", "email", "idempotency_key"):
         if value := getattr(args, name, None):
             fields["idempotencyKey" if name == "idempotency_key" else name] = value
+    if getattr(args, 'user_key_env', None):
+        capability = _code_review_request('GET', '/api/code-reviews/capabilities')
+        if capability.get('userKeyConfigured') is not True or capability.get('userKeyBindingVersion') != 1:
+            die('当前 CDS 不支持用户 Key 任务隔离，未提交审查或使用平台额度')
+        raw_key = os.environ.get(args.user_key_env, '').strip()
+        if not raw_key or not args.provider or not args.model:
+            die('用户 Key 需要已配置的 --user-key-env、--provider 与 --model')
+        fields['userKey'] = {'provider': args.provider, 'model': args.model, 'apiKey': raw_key, 'tokenLimit': args.token_limit}
     if args.zip_file:
+        if 'userKey' in fields: fields['userKey'] = json.dumps(fields['userKey'])
         if args.ref:
             die("ZIP 不接受 --ref；仓库版本只适用于 --github")
         filename, content = _code_review_file(args.zip_file, (".zip",), 100 * 1024 * 1024)
@@ -3668,6 +3744,10 @@ def cmd_code_review_task(args: argparse.Namespace) -> None:
     project = _code_review_project(args)
     endpoint = "/api/code-reviews/" + urllib.parse.quote(args.id, safe="")
     method = "GET"
+    if args.sub == "usage":
+        _code_review_assert_project(_code_review_request("GET", endpoint), project)
+        ok(_code_review_request("GET", endpoint + "/usage"))
+        return
     if args.sub == "show" and getattr(args, "results", False):
         query = {"includeResult": "1", "offset": args.offset, "limit": args.limit}
         if args.severity:
@@ -8119,6 +8199,8 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
 
     CDS 运行时变量白名单（由 CDS 服务端在容器启动时注入，verify 阶段无法预知）：
       - CDS_HOST：CDS 服务地址
+      - CDS_PROJECT_ID / CDS_PROJECT_SLUG：项目身份
+      - CDS_COMMIT_SHA / CDS_BRANCH_SLUG：本次部署的版本身份
       - CDS_*_PORT：CDS 为每个 service 分配的端口变量
       - CDS_*_HOST：CDS 为每个 service 分配的 hostname 变量
       - CDS_*_URL：CDS 自动组装的连接串
@@ -8128,6 +8210,13 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
     # 仅包含 CDS 服务端自动分配的网络层变量（端口/主机名/连接串）。
     # _PASSWORD / _USER / _DB 等凭据变量不在此列——它们必须由项目在 x-cds-env 中显式定义。
     _CDS_RUNTIME_SUFFIXES = ("_PORT", "_HOST", "_URL")
+    _CDS_RUNTIME_EXACT = {
+        "CDS_HOST",
+        "CDS_PROJECT_ID",
+        "CDS_PROJECT_SLUG",
+        "CDS_COMMIT_SHA",
+        "CDS_BRANCH_SLUG",
+    }
 
     issues: list[dict] = []
     env = svc.get("environment") or {}
@@ -8145,7 +8234,9 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
             if var in env_self_keys:
                 continue
             # CDS 运行时变量白名单
-            if var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES):
+            if var in _CDS_RUNTIME_EXACT or (
+                var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES)
+            ):
                 issues.append({
                     "severity": "INFO",
                     "service": svc_name,
@@ -10497,6 +10588,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"cdscli {VERSION}")
     p.add_argument("--instance", help="仅本次命令使用指定 CDS 实例及其独立项目授权")
     sub = p.add_subparsers(dest="cmd", required=True)
+    release_targets = sub.add_parser("release-target", help="Agent 接入发布环境，供分支卡片选择").add_subparsers(dest="release_target_cmd", required=True)
+    for command, handler in (("list", cmd_release_target_list), ("register", cmd_release_target_register)):
+        item = release_targets.add_parser(command)
+        item.add_argument("--project", required=True, help="当前项目 ID")
+        if command == "register":
+            item.add_argument("--file", required=True, help="环境配置 JSON；只登记，不触发发布")
+        item.set_defaults(func=handler)
     instances = sub.add_parser("instance", help="主备实例发现、接入、检查与选择").add_subparsers(dest="instance_cmd", required=True)
     instances.add_parser("sync", help="从当前已授权 CDS 同步公共实例目录").set_defaults(func=cmd_instance_sync)
     instances.add_parser("recommend", help="只读检查当前负载并提示备用站点及独立授权要求").set_defaults(func=cmd_instance_recommend)
@@ -10519,6 +10617,16 @@ def _build_parser() -> argparse.ArgumentParser:
     item.set_defaults(func=cmd_instance_connect)
 
     sub.add_parser("health", help="CDS /healthz").set_defaults(func=cmd_health)
+    disk = sub.add_parser("disk", help="只读磁盘治理观测与候选预览").add_subparsers(dest="sub", required=True)
+    disk.add_parser("state", help="磁盘档位、Janitor 与回收结果").set_defaults(func=cmd_disk)
+    disk.add_parser("sources", help="预览源码候选、估计大小与保护原因，不执行删除").set_defaults(func=cmd_disk)
+    disk.add_parser("backups", help="只读预览15天全局备份保留、租约及策略冲突").set_defaults(func=cmd_disk)
+    disk.add_parser("tasks", help="只读预览验收资源租约、退役候选与未知对象").set_defaults(func=cmd_disk)
+    disk.add_parser("images", help="只读预览宿主镜像ID、总量预算与保护原因").set_defaults(func=cmd_disk)
+    disk.add_parser("data-cases", help="只读查看源码快照内持久化数据处置队列").set_defaults(func=cmd_disk)
+    disk_target = disk.add_parser("target", help="读取指定发布目标的真实主机磁盘诊断")
+    disk_target.add_argument("id", help="ReleaseTarget ID，须从目标清单读取")
+    disk_target.set_defaults(func=cmd_disk)
 
     setup_check = sub.add_parser("setup-check", help="只读验证技能、凭据、目标项目与真实接入")
     setup_check.add_argument("--host", required=True, help="接入页面指定的 CDS 主机")
@@ -10832,11 +10940,15 @@ def _build_parser() -> argparse.ArgumentParser:
     review_submit.add_argument("--title"); review_submit.add_argument("--email")
     review_submit.add_argument("--exclude", action="append", default=[], help="排除目录或模式，可重复")
     review_submit.add_argument("--idempotency-key", help="重试同一次提交时复用的幂等键")
+    review_submit.add_argument('--user-key-env', help='从本地环境变量读取用户 Key，不接受明文参数')
+    review_submit.add_argument('--provider', choices=['openai', 'anthropic', 'openrouter', 'deepseek'])
+    review_submit.add_argument('--model', help='用户 Key 的模型名称')
+    review_submit.add_argument('--token-limit', type=int, default=200000, help='任务保守 Token 保护额度')
     review_submit.set_defaults(func=cmd_code_review_submit)
     review_list = review.add_parser("list", help="列出当前项目的任务及报告")
     review_list.add_argument("--project"); review_list.set_defaults(func=cmd_code_review_list)
     review_list.add_argument("--include-branches", action="store_true", help="附带当前项目可审查的 CDS 分支 ID 与名称")
-    for action, help_text in (("show", "查询进度和结果"), ("cancel", "取消任务"), ("retry", "重试失败任务"), ("mail-retry", "只重试邮件投递")):
+    for action, help_text in (("show", "查询进度和结果"), ("usage", "查询用户 Key 用量"), ("cancel", "取消任务"), ("retry", "重试失败任务"), ("mail-retry", "只重试邮件投递")):
         review_task = review.add_parser(action, help=help_text)
         review_task.add_argument("id"); review_task.add_argument("--project")
         if action == "show":

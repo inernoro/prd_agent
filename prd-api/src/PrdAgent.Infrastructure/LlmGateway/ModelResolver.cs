@@ -121,12 +121,30 @@ public class ModelResolver : IModelResolver
         var platforms = await _gatewayDb.Database.GetCollection<BsonDocument>("llmgw_platforms").Find(filter).ToListAsync(ct);
         var exchanges = await _gatewayDb.Database.GetCollection<BsonDocument>("llmgw_model_exchanges").Find(filter).ToListAsync(ct);
         var docs = platforms.Concat(exchanges).ToDictionary(x => x["_id"].AsString);
-        foreach (var candidate in candidates)
+        ApplyProxySnapshots(resolved, docs, global,
+            encrypted => ApiKeyCryptoKeyRing.DecryptPlainOrNull(encrypted, _config),
+            (candidate, ex) => _logger.LogWarning(ex, "[ModelResolver] 跳过代理配置不可用的备用上游 {PlatformId}", candidate.ActualPlatformId));
+        return resolved;
+    }
+
+    internal static void ApplyProxySnapshots(ModelResolutionResult resolved, IReadOnlyDictionary<string, BsonDocument> docs,
+        BsonDocument? global, Func<string, string?> decrypt, Action<ModelResolutionResult, InvalidOperationException> invalidFallback)
+    {
+        void Apply(ModelResolutionResult candidate)
         {
             var local = candidate.ActualPlatformId is { } id && docs.TryGetValue(id, out var doc) ? UpstreamProxy.Read(doc) : null;
-            candidate.UpstreamProxy = UpstreamProxy.Resolve(local, global, encrypted => ApiKeyCryptoKeyRing.DecryptPlainOrNull(encrypted, _config));
+            candidate.UpstreamProxy = UpstreamProxy.Resolve(local, global, decrypt);
         }
-        return resolved;
+        // 主线路错误仍明确失败，不能悄悄变成直连；损坏的备用线路只从重试候选中移除。
+        Apply(resolved);
+        if (resolved.RetryCandidates is not { } retries) return;
+        var usable = new List<ModelResolutionResult>();
+        foreach (var candidate in retries)
+        {
+            try { Apply(candidate); usable.Add(candidate); }
+            catch (InvalidOperationException ex) { invalidFallback(candidate, ex); }
+        }
+        resolved.RetryCandidates = usable;
     }
 
     /// <summary>

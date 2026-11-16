@@ -17,7 +17,7 @@ describe('手机最终发送出口', () => {
     const pending = Array.from({ length: 100 }, (_, n) => queue.enqueue(item(String(n)), 0));
     await queue.flush(29_999); expect(calls).toEqual([]);
     await Promise.all([queue.flush(30_000), queue.flush(30_000)]);
-    expect(calls).toEqual(['有 100 项监控变化，请查看']);
+    expect(calls).toEqual(['环境待确认 系统待确认']);
     expect((await Promise.all(pending)).every(r => r.ok)).toBe(true);
   });
   it('同项目新增故障仍进入下一条摘要，超过预算保留到窗口释放', async () => {
@@ -49,7 +49,7 @@ describe('手机最终发送出口', () => {
     const recovery = item('恢复'); recovery.event.kind = 'business-recovered'; recovery.message.level = 'passive';
     void queue.enqueue(recovery, 0);
     for (let i = 0; i < 100; i++) { const drill = item('演练-' + i); drill.event.drill = true; void queue.enqueue(drill, 0); }
-    await queue.flush(30_000); expect(calls).toEqual(['有 101 项监控变化，请查看']);
+    await queue.flush(30_000); expect(calls).toEqual(['环境待确认 系统待确认']);
   });
 });
 

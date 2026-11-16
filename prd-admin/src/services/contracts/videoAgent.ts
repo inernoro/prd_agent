@@ -178,6 +178,7 @@ export interface VideoGenScene {
   cost?: number;
   videoUrl?: string;
   activeVersionId?: string;
+  narration?: { speechRunId: string; text: string; durationSeconds: number };
   versions: VideoGenSceneVersion[];
 }
 
