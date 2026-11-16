@@ -134,6 +134,14 @@ Warning: This page maybe requiring CAPTCHA, please make sure you are authorized 
         Assert.Equal(2, r.Entries.Count);
     }
 
+    [Fact]
+    public void Parse_新网页命令可靠性不冒充旧命令恢复()
+    {
+        var result = ArenaLeaderboardFetcher.Parse(RealFixture.Replace("<th>Bash Recovery</th>", "<th>Bash Reliability</th>", StringComparison.Ordinal));
+        Assert.All(result.Entries, e => { Assert.NotNull(e.BashReliability); Assert.Null(e.BashRecovery); });
+        Assert.Equal(11.07, result.Entries[0].BashReliability!.Value);
+    }
+
     /// <summary>
     /// 六个指标必须按页面顺序对位到具名字段。
     ///

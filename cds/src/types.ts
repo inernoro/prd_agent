@@ -2262,6 +2262,8 @@ export interface DeletedProjectWorktreeTombstone {
   requestedAt: string;
 }
 
+export type { AcceptanceCase, AcceptanceTemplate, AcceptanceTask, AcceptanceSubmission, AcceptanceSummary, AcceptanceEnvironment, AcceptanceEvidence, AcceptanceReportSource } from './acceptance-types.js';
+
 export interface LegacyDataCase {
   id: string; projectId: string; sourceIdentity: string; dataIdentity: string;
   marker: string; device: number; inode: number; birthtimeMs?: number; firstObservedAt: string; lastObservedAt: string;
@@ -2271,6 +2273,11 @@ export interface LegacyDataCase {
 }
 
 export interface CdsState {
+  /** Explicit owner opt-in for bounded read-only capacity collection. */
+  hostCapacitySamplingEnabled?: boolean;
+  /** 不可变模板版本与任务快照；跟随现有 backingStore 持久化。 */
+  acceptanceTemplates?: import('./acceptance-types.js').AcceptanceTemplate[];
+  acceptanceTasks?: import('./acceptance-types.js').StoredAcceptanceTask[];
   profileStorageBindings?: Record<string, import('./services/profile-storage-provision.js').ProfileStorageBinding>;
   profileStoragePublications?: Record<string, {binding: import('./services/profile-storage-provision.js').ProfileStorageBinding}>;
   /** Routing rules */
@@ -2671,7 +2678,7 @@ export interface CdsState {
    * process.env，那份只能从宿主的 `.cds.env` 来，于是「把铃接上」变成必须登主机的事——
    * 而这条链最常见的失败恰恰是**根本没人去接**。设置里配了就用设置，没配才回落 env。
    */
-  alarmNotify?: AlarmNotifyConfig;
+  alarmNotify?: StoredAlarmNotifyConfig;
   /**
    * 通知通道表（2026-09-15）。「哪些出问题通知谁」的落点。
    *
@@ -3045,6 +3052,8 @@ export interface AcceptanceReportMeta {
   deployMode?: string | null;
   /** 规范/外部源同步：源文档标识；普通验收报告为空。 */
   sourceId?: string | null;
+  /** 任务报告归档时由服务端固定的图片资源基址，后续绑定/重试不随请求域名改变。 */
+  inlineAssetBaseUrl?: string;
   /** 规范/外部源同步：仓库内源文档路径；普通验收报告为空。 */
   sourcePath?: string | null;
   /** 规范/外部源同步：源内容哈希，如 sha256:...；普通验收报告为空。 */
@@ -5296,7 +5305,7 @@ export interface CdsConfig {
    * 解析顺序：设置里配了就用设置，没配才回落 env。四项缺任何一项都算没配，
    * 那时铃是哑的，面板上必须直说。
    */
-  alarmNotify?: AlarmNotifyConfig;
+  alarmNotify?: StoredAlarmNotifyConfig;
   /**
    * 通知通道表（2026-09-15）。「哪些出问题通知谁」的落点。
    *
@@ -5348,9 +5357,13 @@ export interface AlarmNotifyConfig {
   keyId: string;
   /** 必须与 MAP 配置里该 keyId 条目的 Username 一致——它进签名载荷。 */
   username: string;
+  targetUsername?: string;
   /** PKCS#8 私钥 PEM。**只写不读**：任何读接口都不许把它回显出去。 */
   privateKey: string;
 }
+
+/** 持久化形状；已有明文只读兼容，新写入必须密封。 */
+export type StoredAlarmNotifyConfig = Omit<AlarmNotifyConfig, 'privateKey'> & { privateKey: string | SealedSecret };
 
 /** Shell execution result */
 export interface ExecResult {

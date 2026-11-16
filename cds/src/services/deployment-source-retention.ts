@@ -17,6 +17,8 @@ export interface DeploymentSourceRetentionReport {
   filesystem?: { beforeAvailableBytes: number | null; afterAvailableBytes: number | null; netAvailableBytesDelta: number | null; measurement: 'filesystem-net-change' };
   /** A native cleanup worker has no confirmed terminal receipt; its claim remains held. */
   cleanupUnconfirmed?: boolean;
+  /** Bounded failure tracking overflowed; an empty scan cannot prove recovery. */
+  failureRecheckUnconfirmed?: boolean;
 }
 export type DeploymentSourceHoldReason = 'filesystem-unknown' | 'identity-unknown' | 'age-or-claim-unconfirmed'
   | 'container-mounted' | 'in-use' | 'identity-or-mount-unconfirmed' | 'protected-or-unconfirmed' | SourceHoldReason;
@@ -45,6 +47,43 @@ export function summarizeDeploymentSourceHolds(held: Record<string, string>): Pa
   return counts;
 }
 
+/** Pending failures are live obligations, not an ever-growing operation history.
+ * Holds/age/cursor skips cannot prove recovery. Only removal or confirmed ENOENT
+ * clears a path. Overflow fails closed for this service instance, like unknown
+ * native cleanup; stop/start must not erase either uncertainty.
+ */
+export class DeploymentSourceFailureTracker {
+  private readonly pending = new Set<string>();
+  private overflow = false;
+  constructor(private readonly maxEntries = 1024) {
+    if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 1024) throw new Error('Invalid source failure receipt budget');
+  }
+  async reconcile(report: DeploymentSourceRetentionReport): Promise<void> {
+    for (const entry of report.failed) {
+      if (this.pending.has(entry.path)) continue;
+      if (this.pending.size >= this.maxEntries) this.overflow = true;
+      else this.pending.add(entry.path);
+    }
+    for (const dir of report.removed) this.pending.delete(dir);
+    const current = new Set(report.failed.map(entry => entry.path));
+    for (const dir of this.pending) {
+      // Report a newly failed operation even if it removed the leaf before
+      // returning an error. A later pass may independently confirm absence.
+      if (current.has(dir)) continue;
+      try { await fs.lstat(dir); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          this.pending.delete(dir);
+          continue;
+        }
+        // Permission or IO errors do not prove that a failed source disappeared.
+      }
+      report.failed.push({path: dir, error: '此前源码回收失败尚未确认解除'});
+    }
+    if (this.overflow) report.failureRecheckUnconfirmed = true;
+  }
+}
+
 const related = (a: string, b: string) => a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BUSY = new Set(['building', 'starting', 'stopping', 'restarting', 'preparing', 'provisioning']);
@@ -55,8 +94,10 @@ export async function reclaimDeploymentSources(input: {
   files: OrphanWorktreeFs; nowMs: number; maxRemovals?: number; minAgeMs?: number; afterPath?: string;
   dryRun?: boolean; signal?: AbortSignal;
   protectedPaths?: () => readonly string[];
+  failureTracker?: DeploymentSourceFailureTracker;
 }): Promise<DeploymentSourceRetentionReport> {
   const report: DeploymentSourceRetentionReport = { scanned: 0, attempted: 0, removed: [], held: {}, failed: [], deferred: 0 };
+  const finish = async () => { await input.failureTracker?.reconcile(report); return report; };
   const requested = input.maxRemovals ?? 20;
   const max = Number.isSafeInteger(requested) ? Math.max(1, Math.min(20, requested)) : 20;
   const minAge = input.minAgeMs ?? 2 * 3600_000;
@@ -69,7 +110,7 @@ export async function reclaimDeploymentSources(input: {
     if (error.code !== 'ENOENT') report.held[input.base] = '无法确认部署源码基础目录，本轮保留';
     return null;
   });
-  if (!realBase) return report;
+  if (!realBase) return finish();
   const isDirectory = async (dir: string): Promise<boolean> => {
     try {
       const stat = await fs.lstat(dir);
@@ -133,9 +174,9 @@ export async function reclaimDeploymentSources(input: {
     }
     candidates.push({ dir, mtime, identity });
   }
-  if (!candidates.length) return report;
+  if (!candidates.length) return finish();
   const mounted = await input.files.listMountedHostPaths();
-  if (mounted === null) { report.held[input.base] = '容器挂载枚举未完整确认，本轮不回收部署源码'; return report; }
+  if (mounted === null) { report.held[input.base] = '容器挂载枚举未完整确认，本轮不回收部署源码'; return finish(); }
   // Preserve the scan order. Resuming after the last dispatch keeps the 20-removal
   // budget and 1024-leaf window on one cursor, including worker-held leaves.
   let previewed = 0;
@@ -172,9 +213,12 @@ export async function reclaimDeploymentSources(input: {
         } });
       if (error) report.failed.push({ path: dir, error }); else report.removed.push(dir);
     } catch (error) {
-      uncertain = (error as {code?:string})?.code === 'cleanup';
+      const code = (error as {code?:string})?.code;
+      uncertain = code === 'cleanup';
       if (uncertain) { activity.markUncertain(); report.cleanupUnconfirmed = true; }
-      report.held[dir] = error instanceof SourceInspectionHeldError ? error.reason : '源码回收未确认，保留目录与占用';
+      if (uncertain || code === 'worktree-held' || error instanceof SourceInspectionHeldError) {
+        report.held[dir] = error instanceof SourceInspectionHeldError ? error.reason : '源码回收未确认，保留目录与占用';
+      } else report.failed.push({path: dir, error: '部署源码回收执行失败，保留等待复核'});
     } finally { if (!uncertain) activity.release(); }
   }
   const after = await available();
@@ -182,5 +226,5 @@ export async function reclaimDeploymentSources(input: {
   report.filesystem = { beforeAvailableBytes: before?.bytes ?? null, afterAvailableBytes: after?.bytes ?? null,
     netAvailableBytesDelta: !before || !after || before.device !== after.device ? null : after.bytes - before.bytes,
     measurement: 'filesystem-net-change' };
-  return report;
+  return finish();
 }

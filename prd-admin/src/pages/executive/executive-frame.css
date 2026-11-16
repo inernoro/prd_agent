@@ -1,0 +1,93 @@
+/* Keep the navigation and content inside the same workspace bounds. */
+.executive-dashboard {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.executive-dashboard .exec-page-header {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 10px;
+  background: var(--panel-solid);
+  box-shadow: none;
+}
+.executive-dashboard .exec-page-title {
+  flex: none;
+}
+.executive-dashboard .exec-page-title > span {
+  display: inline;
+}
+.executive-dashboard .exec-page-tabs {
+  min-width: 0;
+  max-width: 100%;
+  height: 34px;
+  align-self: center;
+  gap: 3px;
+}
+.executive-dashboard .exec-page-tabs button {
+  flex: 0 0 auto;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 7px;
+}
+.executive-dashboard .exec-page-actions {
+  min-width: 0;
+  margin-left: 0;
+}
+.executive-dashboard .exec-page-body {
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 12px 0;
+  overflow: hidden;
+}
+.executive-dashboard .exec-workspace {
+  min-width: 0;
+  max-width: 100%;
+}
+.executive-dashboard .exec-fetch-state {
+  margin: 6px 12px 0;
+  border-radius: 7px;
+}
+@media (max-width: 1120px) {
+  .executive-dashboard .exec-page-header {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: 8px 12px;
+  }
+  .executive-dashboard .exec-page-title {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .executive-dashboard .exec-page-actions {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .executive-dashboard .exec-page-tabs {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: space-between;
+  }
+}
+@media (max-width: 760px) {
+  .executive-dashboard {
+    overflow: visible;
+  }
+  .executive-dashboard .exec-page-header {
+    padding: 8px;
+    gap: 7px;
+  }
+  .executive-dashboard .exec-page-tabs button {
+    flex: 1 0 auto;
+    justify-content: center;
+    padding: 0 6px;
+  }
+  .executive-dashboard .exec-page-body {
+    padding: 6px 8px 0;
+    overflow: visible;
+  }
+}
