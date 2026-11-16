@@ -12,7 +12,7 @@ import { GatewayQuickstartStage } from '@/components/entry/GatewayQuickstartStag
 //   - 四协议接入片段（cURL / 环境变量 / 技能文件 / 客户端配置）是产品内容不是
 //     解释，逐字保留；本页大量标识符与请求头被 GatewayDataDomainGuardTests 按
 //     字面量断言（见 scripts/check-source-contracts.mjs），改名前先跑那个守卫。
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ArrowUpRight, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, draftAppCallerIntent, getOrganization, getLogicalModels, updateGatewayAppCaller } from '@/lib/api';
@@ -1186,19 +1186,35 @@ export function QuickstartPage() {
   // 两者不同时占版面，就不会出现「左右一起变」——这是本页改版要治的核心问题。
   const onCreateScreen = phase === 'idle' || phase === 'issuing';
   const isIntentScreen = onCreateScreen && phase !== 'issuing' && stage === 'intent';
+  const flowStep = onCreateScreen ? (phase === 'issuing' ? 'issuing' : stage) : 'result';
+  const flowTitle = flowStep === 'draft' ? '确认你的接入' : flowStep === 'owner' ? '设定归属与预算' : flowStep === 'issuing' ? '正在建立连接' : '连接已就绪';
+  const flowFrameRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const body = flowFrameRef.current?.parentElement;
+    if (body) body.scrollTop = 0;
+  }, [flowStep]);
   const ribbonText = bundle
     ? `已签发 · ${bundle.appCallerCode} · 团队 ${selectedTeam?.name ?? '未指定'} · ${budgetPair.monthly !== null ? `${budgetPair.monthly} USD/月` : '预算不限'}`
     : '';
 
   return (
     <GatewayQuickstartStage>
-    <PageShell className={isIntentScreen ? 'is-intent' : undefined}>
+    <PageShell className={isIntentScreen ? 'is-intent' : 'is-flow'}>
       {isIntentScreen ? <h1 className="gateway-visually-hidden">模型网关接入</h1> : <PageHeader
-        title="Quickstart"
-        subtitle={onCreateScreen ? '先说清要做什么，再签发；密钥在下一屏只显示一次。' : '密钥只显示这一次，复制走再刷新。'}
+        key={flowStep}
+        title={flowTitle}
+        subtitle={onCreateScreen ? '从想法到连接，每一步都在这里继续。' : '保存密钥，然后把连接带到你的应用。'}
       />}
 
+        {!isIntentScreen && <nav className="gateway-flow-progress" aria-label="接入进度">
+          {['描述用途', '确认接入', '团队与预算', '连接就绪'].map((label, index) => {
+            const current = flowStep === 'draft' ? 1 : flowStep === 'owner' || flowStep === 'issuing' ? 2 : 3;
+            return <span key={label} className={index === current ? 'is-current' : index < current ? 'is-complete' : ''} aria-current={index === current ? 'step' : undefined}><i aria-hidden="true">{index < current ? <Check size={11} /> : index + 1}</i><span>{label}</span></span>;
+          })}
+        </nav>}
+
       <PageBody>
+        <div className={`gateway-flow-frame is-${flowStep}`} key={flowStep} data-step={flowStep} ref={flowFrameRef}>
         {onCreateScreen ? (
           /*
             创建线是三屏一条路：说清要做什么 → 看颁发的码 → 落归属与预算。
@@ -1562,7 +1578,7 @@ export function QuickstartPage() {
                 </div>
 
                 {resultTab === 'access' ? (
-                  <div className="lg-qs-access-grid">
+                  <div className="lg-qs-access-grid gateway-result-panel">
                     <Card style={CARD_BODY} className="lg-qs-hero">
                       <div className="lg-qs-hero-head">
                         <strong>接入地址</strong>
@@ -1584,7 +1600,7 @@ export function QuickstartPage() {
                 ) : null}
 
                 {resultTab === 'curl' ? (
-                  <Card style={CARD_BODY} className="lg-qs-snippet-card lg-qs-curl-card">
+                  <Card style={CARD_BODY} className="lg-qs-snippet-card lg-qs-curl-card gateway-result-panel">
                     {/*
                       一键测试：类型是这把 key 的调用用途本身携带的（appCallerCode 以 ::chat / ::vision
                       结尾，签发后不可改），所以这里只读展示；能选的是模型——且只列该类型模型池里的
@@ -1748,7 +1764,7 @@ export function QuickstartPage() {
                 ) : null}
 
                 {resultTab === 'prompt' ? (
-                  <Card style={CARD_BODY} className="lg-qs-snippet-card">
+                  <Card style={CARD_BODY} className="lg-qs-snippet-card gateway-result-panel">
                     <div className="lg-qs-snippet-head">
                       <div className="lg-qs-type-row" role="radiogroup" aria-label="调用方式">
                         {PROMPT_WAYS.map((item) => (
@@ -1843,6 +1859,7 @@ export function QuickstartPage() {
             ) : null}
           </div>
         )}
+        </div>
       </PageBody>
     </PageShell>
     </GatewayQuickstartStage>

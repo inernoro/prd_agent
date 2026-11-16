@@ -186,7 +186,20 @@ export function ConsoleLayout() {
             <summary aria-label="打开用户菜单"><span>{who.slice(0, 1).toUpperCase()}</span><strong>{who}</strong><ChevronDown size={13} /></summary>
             <div className="lg-user-popover">
               <div><strong>{who}</strong><small>{tenant?.name ?? '当前租户'} · {tenant?.role ?? 'member'}</small></div>
-              {isQuickstart && renderTenantSwitcher('lg-menu-tenant-switcher')}
+              {isQuickstart && <details className="gateway-account-organizations">
+                <summary aria-label="切换组织" aria-busy={switching}>
+                  <Building2 size={16} /><span>{tenant?.name ?? '当前组织'}</span><ChevronDown size={14} />
+                </summary>
+                <div className="gateway-account-organization-list" role="menu" aria-label="可用组织">
+                  {(tenants.length ? tenants : [{ id: tenant?.id ?? '', name: tenant?.name ?? '当前组织', role: tenant?.role ?? 'member', current: true }]).map(item => (
+                    <button key={item.id || item.name} type="button" role="menuitemradio" aria-checked={item.id === tenant?.id || item.current} disabled={switching} onClick={() => void changeTenant(item.id)}>
+                      <span><strong>{item.name}</strong><small>{item.role}</small></span>
+                      {item.id === tenant?.id || item.current ? <Check size={15} /> : null}
+                    </button>
+                  ))}
+                  <NavLink to="/organization"><Building2 size={15} /><span>管理团队与成员</span></NavLink>
+                </div>
+              </details>}
               {canOpenMapTutorials ? (
                 <a href={mapTutorialHref}>
                   <BookOpen size={15} />相关教程<ExternalLink className="lg-user-menu-end-icon" size={14} />

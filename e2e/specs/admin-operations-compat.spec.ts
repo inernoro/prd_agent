@@ -410,3 +410,75 @@ test("390 隔离发布成功闭环", async ({ page }) => {
     },
   ]);
 });
+
+for (const width of [390, 1440])
+  for (const theme of ["light", "dark"]) {
+    test(`${width} ${theme} 电影式接入全流程与账户组织布局`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      const { writes } = await installOperationsFixtures(page, { quickstart: true });
+      await page.addInitScript(t => localStorage.setItem("llmgw.theme", t), theme);
+      await page.goto("http://127.0.0.1:8200/llmgw/login");
+      await page.locator("#llmgw-username").fill("demo");
+      await page.locator("#llmgw-password").fill("demo");
+      await page.getByRole("button", { name: "开始身份确认", exact: true }).click();
+      await expect(page).toHaveURL(/\/quickstart$/);
+      await expect(page.locator(".lg-console-header")).toBeVisible({ timeout: 12000 });
+
+      await page.getByLabel("打开用户菜单", { exact: true }).click();
+      await page.locator(".lg-user-popover").getByLabel("切换组织", { exact: true }).click();
+      const account = page.locator(".lg-user-popover");
+      await expect(account.getByRole("menu", { name: "可用组织" })).toBeVisible();
+      const menuBounds = await account.evaluate(el => {
+        const list = el.querySelector(".gateway-account-organization-list")!.getBoundingClientRect();
+        const menu = el.getBoundingClientRect();
+        const name = el.querySelector(".gateway-account-organizations > summary > span")!;
+        return { inside: list.left >= menu.left && list.right <= menu.right, overflow: el.scrollWidth > el.clientWidth, nameWidth: name.getBoundingClientRect().width, nameBackground: getComputedStyle(name).backgroundColor };
+      });
+      expect(menuBounds.inside).toBe(true);
+      expect(menuBounds.overflow).toBe(false);
+      expect(menuBounds.nameWidth).toBeGreaterThan(100);
+      expect(menuBounds.nameBackground).toBe("rgba(0, 0, 0, 0)");
+      await testInfo.attach("account-organization", { body: await page.screenshot(), contentType: "image/png" });
+      await page.getByLabel("打开用户菜单", { exact: true }).click();
+
+      const assertScene = async (step: string) => {
+        await expect(page.locator(".gateway-flow-frame")).toHaveAttribute("data-step", step);
+        await expect(page.locator(".gateway-flow-frame")).toHaveCSS("transform", "none");
+        await expect(page.locator(".consciousness-art")).toHaveJSProperty("naturalWidth", 1672);
+        const state = await page.locator(".gateway-quickstart-stage").evaluate(stage => {
+          const scene = stage.querySelector(".consciousness-scene")!.getBoundingClientRect(), main = stage.closest("main")!.getBoundingClientRect();
+          const surface = stage.querySelector(".lg-qs-step-card, .lg-qs-key-hero");
+          return { gaps: [scene.left - main.left, scene.top - main.top, main.right - scene.right, main.bottom - scene.bottom], blur: surface ? getComputedStyle(surface).backdropFilter : "", overflow: document.documentElement.scrollWidth > innerWidth };
+        });
+        expect(state.gaps.every(gap => Math.abs(gap) < 2)).toBe(true);
+        expect(state.overflow).toBe(false);
+        expect(state.blur).toContain("blur");
+        await testInfo.attach(step, { body: await page.screenshot(), contentType: "image/png" });
+      };
+      await page.getByRole("textbox", { name: "我想做什么", exact: true }).fill("为团队知识库接入问答助手");
+      await page.getByRole("textbox", { name: "我想做什么", exact: true }).press("Enter");
+      await expect(page.getByRole("button", { name: "下一步", exact: true })).toBeEnabled();
+      await assertScene("draft");
+      await page.getByRole("button", { name: "下一步", exact: true }).click();
+      await page.getByRole("radio", { name: "知识库团队", exact: true }).click();
+      await page.getByRole("textbox", { name: "月预算（美元）", exact: true }).fill("25");
+      await assertScene("owner");
+      await page.getByRole("button", { name: "回上一步", exact: true }).click();
+      await expect(page.getByText("team.knowledge::chat", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "下一步", exact: true }).click();
+      await expect(page.getByRole("textbox", { name: "月预算（美元）", exact: true })).toHaveValue("25");
+      await page.getByRole("button", { name: "创建密钥", exact: true }).click();
+      await expect(page.getByText("gwk_fixture_visual_only_not_a_credential", { exact: true })).toBeVisible();
+      await assertScene("result");
+      await expect(page.getByText(/未访问上游。/)).toBeVisible();
+      const governance = writes.find(w => w.path === "/app-callers/fixture-caller" && w.method === "PUT")!.body as { monthlyBudgetUsd: number; budgetReservationUsd: number };
+      expect(governance.monthlyBudgetUsd).toBe(25);
+      expect(governance.budgetReservationUsd).toBeGreaterThan(0);
+      expect(writes.filter(w => w.path === "/service-keys" && w.method === "POST")).toHaveLength(1);
+      await page.getByRole("tab", { name: "cURL", exact: true }).click();
+      await expect(page.getByRole("textbox", { name: "试跑要发送的内容", exact: true })).toBeVisible();
+      await assertScene("result");
+      await page.getByRole("tab", { name: "提示词", exact: true }).click();
+      await expect(page.getByRole("radiogroup", { name: "调用方式" })).toBeVisible();
+    });
+  }

@@ -50,7 +50,7 @@ export const logical = {
   offerings: [],
   displayOrder: 1,
 };
-export async function installOperationsFixtures(page) {
+export async function installOperationsFixtures(page, { quickstart = false } = {}) {
   const writes = [];
   let model = structuredClone(logical);
   let error = false;
@@ -144,6 +144,11 @@ export async function installOperationsFixtures(page) {
       if (path.includes("/releases/runs/")) return reply({ run, logs });
       return reply(resolveFixture(path) ?? {});
     }
+    if (quickstart && path === "/v1/chat/completions") {
+      const safe = req.headers()["x-gateway-dry-run"] === "quickstart";
+      writes.push({ path, method: req.method(), body: req.postDataJSON() });
+      return route.fulfill({ status: safe ? 200 : 403, json: { requestId: "fixture-quickstart-dry-run", upstreamCalled: false } });
+    }
     if (path.includes("/gw/")) {
       const api = path.slice(path.indexOf("/gw/") + 3);
       let data = { items: [], total: 0 };
@@ -153,6 +158,26 @@ export async function installOperationsFixtures(page) {
           method: req.method(),
           body: req.postDataJSON(),
         });
+      if (quickstart && api === "/app-callers/draft") {
+        const frames = [
+          { type: "stage", text: "正在理解接入用途" },
+          { type: "delta", text: "识别为团队知识库问答助手，使用文字对话入口。" },
+          { type: "result", ok: true, appCallerCode: "team.knowledge::chat", requestType: "chat", reason: "团队知识库问答", model: "fixture-model" },
+        ];
+        return route.fulfill({ contentType: "text/event-stream", body: frames.map(frame => "data: " + JSON.stringify(frame) + "\n\n").join("") });
+      }
+      if (quickstart && api === "/auth/tenants")
+        return reply({ success: true, data: [{ id: "t1", name: "验收租户名称用于验证完整组织布局", role: "owner", current: true }] });
+      if (quickstart && api === "/organization")
+        return reply({ success: true, data: { tenant: { id: "t1", name: "验收租户" }, teams: [{ id: "fixture-team", name: "知识库团队", status: "active" }], members: [] } });
+      if (quickstart && api === "/app-callers" && req.method() === "POST")
+        return reply({ success: true, data: { id: "fixture-caller", ...req.postDataJSON() } });
+      if (quickstart && api === "/app-callers/fixture-caller" && req.method() === "PUT")
+        return reply({ success: true, data: { id: "fixture-caller", ...req.postDataJSON() } });
+      if (quickstart && api === "/service-keys" && req.method() === "POST")
+        return reply({ success: true, data: { id: "fixture-issued-key", key: "gwk_fixture_visual_only_not_a_credential", keyPrefix: "gwk_fixture" } });
+      if (quickstart && api === "/v1/resolve")
+        return reply({ success: false, error: { message: "隔离验收不连接真实模型" } });
       if (api === "/auth/login")
         data = {
           token: "fixture",
