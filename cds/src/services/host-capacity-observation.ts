@@ -82,6 +82,8 @@ export class HostCapacityObservationService {
   private generation = 0;
   private running = false;
   private reading = false;
+  private readFinished: Promise<void> = Promise.resolve();
+  private finishRead?: () => void;
   private lastAt = 0;
   private unavailableAfter = 0;
   private lastConfiguredHost?: string;
@@ -127,8 +129,11 @@ export class HostCapacityObservationService {
     this.unavailableAfter = Math.max(this.now(), this.lastAt + 1);
     this.snapshot = { status: 'unknown', sampledAt: null, reason };
   }
-  async refresh(): Promise<void> {
-    if (this.reading) return;
+  async refresh(minimumAt = 0): Promise<void> {
+    const generation = this.generation;
+    if (this.reading) await this.readFinished;
+    if (!this.running || generation !== this.generation) return;
+    this.unavailableAfter = Math.max(this.unavailableAfter, minimumAt);
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     await this.poll(this.generation);
@@ -155,6 +160,7 @@ export class HostCapacityObservationService {
       this.timer = setTimeout(() => void this.poll(generation), 60_000); return;
     }
     this.reading = true;
+    this.readFinished = new Promise(resolve => { this.finishRead = resolve; });
     let next: CapacityObservation;
     try {
       next = await this.read();
@@ -162,7 +168,7 @@ export class HostCapacityObservationService {
       if (at < this.lastAt || at < this.unavailableAfter) invalid();
 
     } catch { next = { status: 'unknown', sampledAt: null, reason: '容量报告缺失、过期或读取失败，当前风险未知' }; }
-    finally { this.reading = false; }
+    finally { this.reading = false; this.finishRead?.(); this.finishRead = undefined; }
     if (!this.running || generation !== this.generation) return;
     if (next.sampledAt) this.lastAt = Date.parse(next.sampledAt);
     this.snapshot = next;
