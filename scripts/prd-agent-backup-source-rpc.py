@@ -18,12 +18,28 @@ FILES = {'indexes.json'} | {db + suffix for db in DATABASES for suffix in
     ('.archive.gz', '.archive.gz.sha256', '.dump.log', '.started', '.completed')}
 FILES |= {'log-archive-index' + suffix for suffix in
           ('.archive.gz', '.archive.gz.sha256', '.dump.log', '.started', '.completed')}
-CONFIGS = {
-    'environment.snapshot': ['cat', '/root/inernoro/prd_agent/.env'],
-    'compose.snapshot.yml': ['cat', '/root/inernoro/prd_agent/docker-compose.yml'],
-    'logging-overlay.snapshot.yml': ['cat', '/etc/prd-agent/compose.logging.yml'],
-    'api-environment.snapshot.json': ['docker', 'inspect', 'prdagent-api', '--format', '{{json .Config.Env}}'],
-}
+CONFIGS = {'environment.snapshot', 'compose.snapshot.yml', 'logging-overlay.snapshot.yml', 'api-environment.snapshot.json'}
+
+
+def configuration_command(name):
+    if name == 'logging-overlay.snapshot.yml':
+        return ['cat', '/etc/prd-agent/compose.logging.yml']
+    if name == 'api-environment.snapshot.json':
+        return ['docker', 'inspect', 'prdagent-api', '--format', '{{json .Config.Env}}']
+    config = json.loads(Path('/etc/prd-agent/backup-source.json').read_text())
+    repository = Path(config['repository'])
+    if not repository.is_absolute() or repository.is_symlink():
+        raise ValueError('Backup repository must be an explicit physical directory')
+    repository = repository.resolve(strict=True)
+    actual = subprocess.check_output(['git', '-C', str(repository), 'rev-parse', '--show-toplevel'],
+                                     text=True, timeout=15).strip()
+    if actual != str(repository):
+        raise ValueError('Backup repository identity mismatch')
+    filename = '.env' if name == 'environment.snapshot' else 'docker-compose.yml'
+    path = repository / filename
+    if not path.is_file() or path.is_symlink():
+        raise ValueError('Backup configuration must be a regular repository file')
+    return ['cat', str(path)]
 
 
 def parse(command):
@@ -55,7 +71,7 @@ def main():
     args = parse(os.environ.get('SSH_ORIGINAL_COMMAND', ''))
     op = args[0]
     if op == 'config':
-        subprocess.run(CONFIGS[args[1]], check=True)
+        subprocess.run(configuration_command(args[1]), check=True)
         return
     root = folder(args[1])
     if op == 'start':
