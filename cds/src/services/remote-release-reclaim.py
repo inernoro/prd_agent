@@ -88,7 +88,7 @@ try:
   try:
    commit=spec.get('commits',{}).get(name)
    identity=spec.get('versionIdentities',{}).get(name)
-   if not isinstance(commit,str) or not re.fullmatch('[a-f0-9]{40}',commit) or not identity or not os.path.lexists(wt.parent/'static-proofs'/(name+'.json')):
+   if not isinstance(commit,str) or not re.fullmatch('[a-f0-9]{40}',commit) or not identity or (not os.path.lexists(wt.parent/'static-proofs'/(name+'.json')) and os.path.lexists(p)):
     raise ValueError('static-object-content-proof-unconfirmed')
    def check_static_live():
     ordinary(public);ordinary(public/'.releases')
@@ -97,7 +97,7 @@ try:
     if any(p==q or p in q.parents or q in p.parents for q in live):raise ValueError('static-current-or-previous')
     if any(p==q or p in q.parents or q in p.parents for q in container_mounts()):raise ValueError('static-running-or-stopped-container')
    reclaim_static_artifact(p,wt.parent,spec.get('targetId'),name,commit,identity,spec.get('dryRun'),check_static_live,
-    lambda:emit('CDS_RELEASE_STATIC_RECLAIM_STARTED',name+'\t'+str(os.getpid())))
+    lambda stage:emit('CDS_RELEASE_STATIC_RECLAIM_STARTED' if stage=='started' else 'CDS_RELEASE_STATIC_DIRECTORY_REMOVED',name+'\t'+str(os.getpid())))
    emit('CDS_RELEASE_RECLAIMABLE_VERSION' if spec.get('dryRun') else 'CDS_RELEASE_RECLAIMED_VERSION',name)
   except Exception as error:
    reason=str(error) if isinstance(error,ValueError) else 'static-native-proof-or-removal-unconfirmed'
