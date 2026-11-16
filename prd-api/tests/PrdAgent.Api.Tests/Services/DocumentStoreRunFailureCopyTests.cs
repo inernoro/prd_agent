@@ -13,6 +13,21 @@ namespace PrdAgent.Api.Tests.Services;
 /// </summary>
 public class DocumentStoreRunFailureCopyTests
 {
+    [Theory]
+    [InlineData("template-writing")]
+    [InlineData("template-writing-reconcile")]
+    [InlineData("template-writing-teaching")]
+    public void WritingQuotaFailure_PreservesRecoveryDirectionWithoutRawProviderDetails(string kind)
+    {
+        var copy = DocumentStoreRunFailureCopy.Resolve(new DocumentStoreAgentRun { Kind = kind },
+            new GatewayRouteFailureException("LLM_QUOTA_EXCEEDED", "private provider diagnostic"));
+        Assert.Equal("LLM_QUOTA_EXCEEDED", copy.Code);
+        Assert.False(copy.AutomaticRetryAllowed);
+        Assert.Contains("额度", copy.UserMessage);
+        Assert.Contains("保留", copy.UserMessage);
+        Assert.DoesNotContain("private provider diagnostic", copy.UserMessage);
+    }
+
     private static DocumentStoreAgentRun Restyle() => new()
     {
         Kind = DocumentStoreAgentRunKind.Transcribe,

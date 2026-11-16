@@ -56,6 +56,9 @@ public static class DocumentStoreRunFailureCopy
     public static Copy Resolve(DocumentStoreAgentRun run, Exception ex)
     {
         var routeFailureCode = ExtractRouteFailureCode(ex);
+        if (run.Kind is WritingDocumentPolicy.RunKind or WritingDeliveryPolicy.ReconcileRunKind or WritingTeachingPolicy.RunKind
+            && routeFailureCode == "LLM_QUOTA_EXCEEDED")
+            return new Copy(routeFailureCode, "当前文本模型的服务额度不足，请联系管理员恢复额度或切换可用配置，再沿当前文档重试；资料、正文和已完成内容均保留。", AutomaticRetryAllowed: false);
         if (GatewayRouteFailure.IsConfigurationFault(routeFailureCode)
             || (routeFailureCode == null && LooksLikeMissingModel(ex)))
         {
