@@ -1750,7 +1750,7 @@ export class ReleaseService {
     this.stateService.patchReleaseRun(releaseId, { autoRestoreStartedAt });
     this.emitLog(releaseId, 'warn', `${failureLabel}失败，正在自动恢复 ${previous.releaseId}: ${(probeError as Error).message}`, 'auto-restore');
     try {
-      await this.runDeployCommand(releaseId, executionTarget, restoreRun, execution.command);
+      await this.runDeployCommand(releaseId, executionTarget, restoreRun, execution.command, 'automatic-recovery');
       await probeReleaseSurface(target.ssh!.healthcheckUrl, execution.mode);
       // 自动恢复此前**只写日志**：没有 run、没有时间戳，原 run 仍是 failed。
       // 于是 DORA 的恢复配对在这条失败之后找不到任何恢复者，把它算成「进行中故障」
@@ -1855,12 +1855,13 @@ export class ReleaseService {
    * buildReleaseRunProgress 用来生成步骤表，两边同源才不会出现「执行两条脚本、
    * 步骤条只画一格」这种对不上号。
    */
-  private async runDeployCommand(releaseId: string, target: ReleaseTarget, run: ReleaseRun, rawCommand: string): Promise<void> {
+  private async runDeployCommand(releaseId: string, target: ReleaseTarget, run: ReleaseRun, rawCommand: string,
+    context: 'deployment' | 'automatic-recovery' = 'deployment'): Promise<void> {
     const deployTitle = this.stepTitle(releaseId, 'deploy');
     for (const phase of planDeployPhases(rawCommand, deployTitle)) {
       this.beginStep(releaseId, phase.id, phase.title);
       try {
-        await this.sshExec(target, buildReleaseCommand(target, run, phase.command), releaseId, phase.id);
+        await this.sshExec(target, buildReleaseCommand(target, run, phase.command), releaseId, phase.id, context);
       } catch (err) {
         this.emitLog(releaseId, 'error', `${phase.title}失败: ${(err as Error).message}`, phase.id);
         throw err;
@@ -1919,7 +1920,8 @@ export class ReleaseService {
    *  - **可取消**：与本次 run 的在途句柄联动，cancelRelease / 心跳收割能掐断在跑的 SSH。
    *  - **心跳**：命令执行期是最长的静默段，必须周期打点，否则收割器误杀慢发布。
    */
-  private async sshExec(target: ReleaseTarget, cmd: string, releaseId?: string, logPhase = 'ssh'): Promise<string> {
+  private async sshExec(target: ReleaseTarget, cmd: string, releaseId?: string, logPhase = 'ssh',
+    context: 'deployment' | 'automatic-recovery' = 'deployment'): Promise<string> {
     if (!target.ssh) throw new Error('target is not SSH');
     const keyHost = this.stateService.getRemoteHost(target.ssh.privateKeyRef);
     if (!keyHost) throw new Error(`privateKeyRef not found: ${target.ssh.privateKeyRef}`);
@@ -1956,7 +1958,7 @@ export class ReleaseService {
         passphrase,
         password,
         command: cmd,
-        beforeExec: releaseId && logPhase !== 'auto-restore' && target.governance?.required ? () => {
+        beforeExec: releaseId && context !== 'automatic-recovery' && target.governance?.required ? () => {
           const current = this.stateService.getReleaseRun(releaseId);
           if (!current || !this.governance) throw new ReleaseGovernanceError('运行审批不可用，已停止执行');
           this.governance.assertExecution(current);

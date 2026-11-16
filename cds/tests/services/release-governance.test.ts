@@ -245,4 +245,38 @@ describe('独立批准与连续调试的服务层约束', () => {
     await expect(request()).rejects.toThrow('无法唯一核实');
     expect(state.getBranch('feature')?.pinnedCommit).toBe('eeeeeee');
   });
+  it('待审批配额按申请人和项目隔离，撤销后可释放待批名额',async()=>{
+    const records=[];
+    for(let i=0;i<16;i++) records.push(await request());
+    await expect(request()).rejects.toThrow('待审批申请已满');
+    for(let i=0;i<16;i++) await request({actor:agent});
+    await expect(request({actor:'ai:key:third'})).rejects.toThrow('待审批申请已满');
+    await service.decide(records[0].id,'revoked',alice,'不再需要此申请');
+    await expect(request()).resolves.toMatchObject({status:'pending'});
+    expect(service.list('p').authorizations.filter(r=>r.status==='pending')).toHaveLength(32);
+  });
+  it('大范围申请不能耗尽其他项目的审批与放行空间，限额跨重启保留',async()=>{
+    const paths=['allowed/',...Array.from({length:31},(_,i)=>`long-${i}-`+'x'.repeat(480))];
+    let accepted=0, rejection='';
+    for(let i=0;i<60;i++) {
+      try { await request({kind:'debug',allowedPaths:paths,reason:'测'.repeat(2000)}); accepted++; }
+      catch(error) { rejection=String(error);break; }
+    }
+    expect(accepted).toBeGreaterThan(0);expect(accepted).toBeLessThan(16);
+    expect(rejection).toContain('本项目审批历史达到存储上限');
+    expect(Buffer.byteLength(JSON.stringify(state.getReleaseGovernance()))).toBeLessThan(384*1024);
+    const project=state.getProject('p')!;state.addProject({...project,id:'other',slug:'other'});
+    state.addBranch({...state.getBranch('feature')!,id:'other-branch',projectId:'other'});
+    state.upsertReleaseTarget({...state.getReleaseTarget('prod')!,id:'other-target',projectId:'other'});
+    const pending=await request({targetId:'other-target',branchId:'other-branch'});
+    await service.decide(pending.id,'approved',reviewer,'其他项目仍可核验并批准');
+    expect(await service.authorize(input({projectId:'other',targetId:'other-target',branchId:'other-branch',authorizationId:pending.id})))
+      .toMatchObject({authorizationId:pending.id,approvedBy:reviewer});
+    const reloaded=new StateService(path.join(root,'state.json'),root);reloaded.load();
+    expect(reloaded.getReleaseGovernance().authorizations[pending.id].status).toBe('approved');
+    const restarted=new ReleaseGovernanceService(reloaded,git,undefined,()=>new Date(now));
+    await expect(restarted.request({targetId:'prod',branchId:'feature',kind:'debug',allowedPaths:paths,
+      reason:'测'.repeat(2000),actor:alice,expiresAt:new Date(now+3600000).toISOString()})).rejects.toThrow('本项目审批历史达到存储上限');
+    await reloaded.flush();
+  });
 });

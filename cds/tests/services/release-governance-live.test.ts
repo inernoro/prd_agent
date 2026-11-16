@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import http from 'node:http';
 import os from 'node:os';
-import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, execFileSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const runtime = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -133,3 +133,58 @@ it('正常认证、真实 Git 和 SSH 发布：独立审批、连续调试、越
   expect(audit.authorizations.find((a:any)=>a.id===id).decisions.map((d:any)=>d.action)).toEqual(['approved','revoked']);
   expect(audit.attempts.filter((a:any)=>a.result==='denied').length).toBeGreaterThanOrEqual(5);
 },120000);
+
+it('真实 SSH 部署启动后批准到期且脚本失败，仍自动恢复上一成功版本',async()=>{
+  expect(root).toBeTruthy();expect(buildRoot).toBeTruthy();
+  const compiled=path.join(buildRoot!,'runtime/dist/services');
+  const load=async(name:string)=>import(pathToFileURL(path.join(compiled,name+'.js')).href);
+  const [{StateService},{ReleaseGovernanceService},{ReleaseGovernanceGit},{ReleaseService,defaultReleaseSshExecutor},{buildReleaseExecution}]
+    =await Promise.all([load('state'),load('release-governance'),load('release-governance-git'),load('release-service'),load('release-strategy')]);
+  const fixture=JSON.parse(await fs.readFile(path.join(root!,'.cds/state.json'),'utf8'));
+  const credentials=JSON.parse(await fs.readFile(path.join(root!,'.cds/lab-credentials.json'),'utf8'));
+  const host=Object.values(fixture.remoteHosts).find((row:any)=>row.id==='release-lab-ssh') as any;
+  const dir=path.join(root!,'recovery-regression');await fs.mkdir(dir);
+  const marker=path.join(dir,'version'),effects=path.join(dir,'effects');await fs.writeFile(marker,credentials.main);
+  const health=http.createServer(async(_req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({status:'healthy',commitSha:await fs.readFile(marker,'utf8')}));});
+  await new Promise<void>(resolve=>health.listen(0,'127.0.0.1',resolve));
+  const state=new StateService(path.join(dir,'state.json'),dir);state.load();
+  const projectId='recovery-project',targetId='recovery-target',branchId='recovery-branch',actor='ai:key:recovery-test';
+  let now=Date.now();const stamp=new Date(now).toISOString();
+  const repo=path.join(root!,'project');
+  state.addProject({id:projectId,slug:projectId,name:'自动恢复回归',kind:'git',repoPath:repo,gitRepoUrl:path.join(root!,'origin.git'),gitDefaultBranch:'main',createdAt:stamp,updatedAt:stamp});
+  state.addBranch({id:branchId,projectId,branch:'lab/debug',worktreePath:path.join(root!,'debug'),githubCommitSha:credentials.second,status:'running',services:{},createdAt:stamp});
+  state.addRemoteHost({...host,id:'recovery-host'});
+  const script=`#!/bin/sh\nset -eu\nif [ "$1" = check ]; then exit 0; fi\nprintf '%s' "$CDS_COMMIT_SHA" > '${marker}'\nif [ "$CDS_COMMIT_SHA" = '${credentials.second}' ]; then printf 'approval-expired-after-command-start\\n'; exit 17; fi\nprintf '%s %s\\n' "$CDS_RELEASE_ID" "$CDS_COMMIT_SHA" >> '${effects}'\n`;
+  const target={id:targetId,projectId,name:'隔离自动恢复',type:'ssh',isEnabled:true,createdAt:stamp,governance:{required:true},strategy:{mode:'managed-script',script},ssh:{host:'127.0.0.1',port:host.sshPort,user:'lab',privateKeyRef:'recovery-host',appPath:repo,healthcheckUrl:`http://127.0.0.1:${(health.address() as {port:number}).port}/health`}};
+  state.upsertReleaseTarget(target);
+  const makeRun=(releaseId:string,commitSha:string,status:string)=>{
+    const run:any={releaseId,projectId,targetId,branchId,commitSha,status,operator:actor,planId:projectId+':managed-script',startedAt:stamp,finishedAt:status==='success'?stamp:undefined,logs:[],seq:0,artifact:{type:'branch-preview',branchId,branchName:'lab/debug',commitSha,previewUrl:credentials.surfaceUrl}};
+    const execution=buildReleaseExecution(target,run);run.executionSnapshot={mode:execution.mode,scriptSha256:execution.scriptSha256,scriptContent:execution.scriptContent,summary:execution.summary,strategy:target.strategy};return run;
+  };
+  state.addReleaseRun(makeRun('recovery-baseline',credentials.main,'success'));
+  const git=new ReleaseGovernanceGit(()=>repo,()=> 'main',async(args:string[],cwd:string,isolated=false)=>{
+    const result=spawnSync('git',args,{cwd,encoding:'utf8',timeout:30000,env:{...process.env,GIT_TERMINAL_PROMPT:'0',
+      ...(isolated?{GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null'}:{})}});
+    return {stdout:result.stdout||'',exitCode:result.status};
+  });
+  const governance=new ReleaseGovernanceService(state,git,undefined,()=>new Date(now));
+  try {
+    const pending=await governance.request({targetId,branchId,kind:'single',reason:'实际执行失败后核验已批准恢复路径',actor,expiresAt:new Date(now+3600000).toISOString()});
+    await governance.decide(pending.id,'approved','user:recovery-reviewer:Reviewer','独立批准此固定版本');
+    const run=makeRun('recovery-failed',credentials.second,'queued');run.previousReleaseId='recovery-baseline';
+    run.governance=await governance.authorize({runId:run.releaseId,projectId,targetId,branchId,commitSha:run.commitSha,operator:actor,action:'release',authorizationId:pending.id});
+    state.addReleaseRun(run);await governance.accept(run);
+    let expiredDuringExecution=false;
+    const release=new ReleaseService(state,{governance,sshExecutor:(request:any)=>defaultReleaseSshExecutor({...request,onOutput:(level:string,text:string)=>{
+      request.onOutput(level,text);if(text.includes('approval-expired-after-command-start')){now+=7200000;expiredDuringExecution=true;}
+    }})});
+    await expect(release.runRelease(run.releaseId)).rejects.toThrow();
+    expect(expiredDuringExecution).toBe(true);
+    expect(await fs.readFile(marker,'utf8')).toBe(credentials.main);
+    expect(await fs.readFile(effects,'utf8')).toContain(run.releaseId+'-auto-restore '+credentials.main);
+    expect(state.getReleaseRun(run.releaseId).autoRestoredAt).toBeTruthy();
+    state.patchReleaseRun(run.releaseId,{status:'failed'});
+  } finally {
+    await state.flush();health.closeAllConnections();await new Promise<void>(resolve=>health.close(()=>resolve()));
+  }
+},30000);

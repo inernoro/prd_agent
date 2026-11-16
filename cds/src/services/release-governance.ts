@@ -43,6 +43,22 @@ export class ReleaseGovernanceService {
     private readonly history = new ReleaseTargetHistoryStore()) {}
 
   private async persist(value: ReturnType<StateService['getReleaseGovernance']>, revocation = false): Promise<void> {
+    if (!revocation) {
+      const sizes = (data: typeof value): Map<string, number> => {
+        const result = new Map<string, number>();
+        for (const record of [...Object.values(data.authorizations), ...data.attempts,
+          ...Object.values(data.checks || {}), ...Object.values(data.mergeBacks)]) {
+          result.set(record.projectId, (result.get(record.projectId) || 0) + Buffer.byteLength(JSON.stringify(record), 'utf8'));
+        }
+        return result;
+      };
+      const previous = sizes(this.state.getReleaseGovernance());
+      for (const [projectId, bytes] of sizes(value)) {
+        if (bytes > 256 * 1024 && bytes > (previous.get(projectId) || 0)) {
+          throw new ReleaseGovernanceError('本项目审批历史达到存储上限，已停止新增；请联系管理员导出并迁移本项目历史记录后重试');
+        }
+      }
+    }
     if (!revocation && Buffer.byteLength(JSON.stringify(value), 'utf8') > 1024 * 1024) {
       throw new ReleaseGovernanceError('审批历史达到存储上限，已停止新增；请联系管理员导出并迁移历史记录后重试');
     }
@@ -54,6 +70,14 @@ export class ReleaseGovernanceService {
     const target = this.state.getReleaseTarget(targetId);
     if (!target || !target.isEnabled || target.lifecycle === 'archived') throw new ReleaseGovernanceError('发布环境已停用或不存在');
     return target;
+  }
+  private assertRequestQuota(projectId: string, actor: string): void {
+    const pending = Object.values(this.state.getReleaseGovernance().authorizations)
+      .filter(record => record.projectId === projectId && record.status === 'pending'
+        && Date.parse(record.expiresAt) > this.now().getTime());
+    if (pending.length >= 32 || pending.filter(record => actorId(record.requestedBy) === actorId(actor)).length >= 16) {
+      throw new ReleaseGovernanceError('本项目或当前申请人的待审批申请已满，请撤销不再需要的申请后重试');
+    }
   }
   private async branchCommit(branchId: string): Promise<string> {
     const branch = this.state.getBranch(branchId);
@@ -117,6 +141,7 @@ export class ReleaseGovernanceService {
     if (!known(input.actor)) throw new ReleaseGovernanceError('请使用真实登录账号或项目执行凭据发起申请');
     const target = this.target(input.targetId);
     if (!target.governance?.required) throw new ReleaseGovernanceError('请先由项目成员启用本环境审批，再申请发布批准');
+    this.assertRequestQuota(target.projectId, input.actor);
     if (input.scheduledJobId !== undefined && (typeof input.scheduledJobId !== 'string' || !input.scheduledJobId.trim())) throw new ReleaseGovernanceError('请选择有效的定时发布任务');
     const scheduledJobFingerprint = input.scheduledJobId ? this.scheduledJobFingerprint(input.scheduledJobId, target.projectId, target.id) : undefined;
     const action = input.action || 'release';
@@ -151,6 +176,7 @@ export class ReleaseGovernanceService {
       reason: input.reason.trim(), createdAt: now.toISOString(),
       expiresAt: new Date(expires).toISOString(), status: 'pending', conflictCheck: check };
     const data = this.state.getReleaseGovernance();
+    this.assertRequestQuota(target.projectId, input.actor);
     if (Object.keys(data.authorizations).length >= 5000) throw new ReleaseGovernanceError('审批记录容量已满，请先归档历史记录');
     data.authorizations[record.id] = record; await this.persist(data); return record;
   }
