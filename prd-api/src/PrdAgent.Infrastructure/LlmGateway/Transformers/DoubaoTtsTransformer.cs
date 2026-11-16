@@ -141,6 +141,9 @@ public sealed class DoubaoTtsTransformer : IRawExchangeResponseTransformer
                     return Fail("TTS_RESPONSE_TOO_MANY_FRAMES", "语音服务返回分片数量异常。");
                 using var frame = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 32 });
                 var root = frame.RootElement;
+                // 鉴权拒绝使用 header 信封，与音频分片的顶层 code 不同；不能丢成解析失败。
+                if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("header", out var header)
+                    && header.ValueKind == JsonValueKind.Object) root = header;
                 if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("code", out var codeNode)
                     || codeNode.ValueKind != JsonValueKind.Number || !codeNode.TryGetInt32(out var code))
                     return Fail("TTS_RESPONSE_INVALID", "语音服务返回了无法识别的分片。");
@@ -158,6 +161,8 @@ public sealed class DoubaoTtsTransformer : IRawExchangeResponseTransformer
                 {
                     audit["parsed"] = true;
                     audit["provider_code"] = code;
+                    if (code == 45000030)
+                        return Fail("TTS_RESOURCE_NOT_GRANTED", "语音服务账户未获授权，请联系管理员恢复音色或资源授权后重试。");
                     return Fail("TTS_UPSTREAM_FAILED", "语音服务未完成生成，请检查音色、资源授权或服务额度；诊断信息已记录。");
                 }
                 if (root.TryGetProperty("data", out var data) && data.ValueKind != JsonValueKind.Null)

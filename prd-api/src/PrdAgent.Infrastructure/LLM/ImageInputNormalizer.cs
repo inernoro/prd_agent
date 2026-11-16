@@ -1,5 +1,6 @@
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -42,6 +43,28 @@ internal static class ImageInputNormalizer
         {
             throw new ImageInputException();
         }
+    }
+
+    /// <summary>业务黑白蒙版的白色代表重绘；OpenAI edits 使用透明像素代表重绘。</summary>
+    internal static Input ToOpenAiMask(Input input)
+    {
+        using var image = Image.Load<Rgba32>(new DecoderOptions { MaxFrames = 1, SkipMetadata = true }, input.Bytes);
+        // 已经是供应商原生透明蒙版时保留原字节和透明度，不反转第二次。
+        for (var y = 0; y < image.Height; y++)
+            for (var x = 0; x < image.Width; x++)
+                if (image[x, y].A < 255) return input;
+
+        for (var y = 0; y < image.Height; y++)
+            for (var x = 0; x < image.Width; x++)
+            {
+                var pixel = image[x, y];
+                if (pixel.R != pixel.G || pixel.G != pixel.B)
+                    throw new ImageInputException("蒙版应为黑白图片或带透明区域的 PNG，请重新绘制蒙版。");
+                image[x, y] = new Rgba32(0, 0, 0, (byte)(255 - pixel.R));
+            }
+        using var output = new MemoryStream();
+        image.SaveAsPng(output);
+        return new Input(output.ToArray(), "image/png", "png");
     }
 
     internal static Input Read(byte[] bytes)

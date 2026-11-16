@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { ImageGenerationCancelActions } from '@/components/visual-agent/ImageGenerationCancelActions';
 import { Button } from '@/components/design/Button';
 import { glassTooltip } from '@/lib/glassStyles';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -1132,6 +1133,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [sizesByResolution, setSizesByResolution] = useState<SizesByResolutionType>({ '1k': [], '2k': [], '4k': [] });
   // 仅“尺寸语义不适用”的模型隐藏选择器；提示词传输型自适应模型仍允许用户选尺寸。
   const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
+  const [currentModelInpainting, setCurrentModelInpainting] = useState<boolean | null>(null);
 
   useEffect(() => {
     // 生成和尺寸查询均使用业务模型标识；adapter-info 转发网关发布的能力，
@@ -1139,6 +1141,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     let cancelled = false;
     setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
     setCurrentModelSizesNotApplicable(false);
+    setCurrentModelInpainting(null);
+    setInpaintTarget(null);
     const modelCode = effectiveModel?.actualModelId || effectiveModel?.modelName;
     if (!modelCode) {
       setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
@@ -1149,6 +1153,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     getVisualAgentAdapterInfo(modelCode)
       .then((res) => {
         if (cancelled) return;
+        setCurrentModelInpainting(res.success && res.data?.matched ? res.data.supportsInpainting === true : null);
         if (res.success && res.data?.matched && res.data.sizesByResolution) {
           const data = res.data.sizesByResolution;
           setSizesByResolution({
@@ -1242,9 +1247,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [uploadToast, setUploadToast] = useState<{ text: string } | null>(null);
   const uploadToastTimerRef = useRef<number | null>(null);
-  const showUploadToast = useCallback((text: string) => {
+  const uploadToastPriorityRef = useRef<'info' | 'warning'>('info');
+  const showUploadToast = useCallback((text: string, priority: 'info' | 'warning' = 'info') => {
     const t = String(text ?? '').trim();
     if (!t) return;
+    // 批量上传仍在异步完成时，成功提示不能抹掉“部分输入未上传”的警告。
+    if (priority === 'info' && uploadToastPriorityRef.current === 'warning') return;
+    uploadToastPriorityRef.current = priority;
     setUploadToast({ text: t });
     if (uploadToastTimerRef.current != null) {
       window.clearTimeout(uploadToastTimerRef.current);
@@ -1253,7 +1262,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     uploadToastTimerRef.current = window.setTimeout(() => {
       setUploadToast(null);
       uploadToastTimerRef.current = null;
-    }, 1600);
+      uploadToastPriorityRef.current = 'info';
+    }, priority === 'warning' ? 6000 : 1600);
   }, []);
   useEffect(() => {
     return () => {
@@ -5962,7 +5972,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
     const imageFiles = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
     if (imageFiles.length > 20) {
-      showUploadToast('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加');
+      showUploadToast('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加', 'warning');
     }
     // 先按「新增路径」的上限（下方 list.slice(0, 20)）截断，再压缩——否则一次拖入 50 张时
     // 会把 30 张注定被丢弃的图也解码 + 画到 canvas，反而在上传前先卡死/爆内存。
@@ -6596,7 +6606,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     <div ref={containerRef} data-tour-id="visual-editor-root" className="h-full min-h-0 bg-token-nested">
       {uploadToast ? (
         <div
-          className="fixed left-1/2 z-9999"
+          className="fixed left-1/2 z-9999 w-max max-w-[calc(100vw-24px)]"
           style={{
             top: 18,
             transform: 'translateX(-50%)',
@@ -6605,9 +6615,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           aria-live="polite"
           aria-atomic="true"
         >
-          <div className="surface-popover text-token-primary inline-flex h-10 items-center gap-2 rounded-full px-4 text-[13px] font-semibold">
-            <Check size={16} />
-            <span className="truncate max-w-[520px]">{uploadToast.text}</span>
+          <div className="surface-popover text-token-primary inline-flex min-h-10 max-w-full items-center gap-2 rounded-2xl px-4 py-2 text-[13px] font-semibold">
+            <Check size={16} className="shrink-0" />
+            <span className="min-w-0 max-w-[520px] whitespace-normal break-words">{uploadToast.text}</span>
           </div>
         </div>
       ) : null}
@@ -7250,7 +7260,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               className="absolute inset-0 flex items-end justify-center pb-[8%]"
                               style={{ zIndex: 200 }}
                             >
-                              <div className="max-w-[90%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '3.5cqw' }} title={it.errorMessage || '生成失败'}>
+                              <div className="max-w-[90%] text-center truncate" style={{ color: 'var(--text-primary)', fontSize: '3.5cqw' }} title={it.errorMessage || '生成失败'}>
                                 {it.errorMessage || '生成失败'}
                               </div>
                             </div>
@@ -7369,7 +7379,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               className="absolute inset-0 flex items-end justify-center pb-[8%]"
                               style={{ zIndex: 200 }}
                             >
-                              <div className="max-w-[90%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '3.5cqw' }} title={it.errorMessage || '图片加载失败'}>
+                              <div className="max-w-[90%] text-center truncate" style={{ color: 'var(--text-primary)', fontSize: '3.5cqw' }} title={it.errorMessage || '图片加载失败'}>
                                 {it.errorMessage || '图片加载失败'}
                               </div>
                             </div>
@@ -8056,6 +8066,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 onInpaint={() => {
                                   if (it.status !== 'done' || !it.src) {
                                     toast.error('请先选中一张已完成的图片');
+                                    return;
+                                  }
+                                  if (currentModelInpainting !== true) {
+                                    toast.warning(currentModelInpainting === false
+                                      ? '当前模型不支持局部重绘，请在“模型偏好”选择支持蒙版的模型。'
+                                      : '正在确认模型的局部重绘能力，请稍后重试。');
                                     return;
                                   }
                                   setInpaintTarget(it);
@@ -9270,6 +9286,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 {error}
               </div>
             ) : null}
+
+            <ImageGenerationCancelActions key={workspaceId || ''} items={workspaceReady ? canvas : []}
+              onCancelled={(runId) => {
+                if (workspaceIdRef.current !== workspaceId) return;
+                setCanvas((prev) => prev.map((item) => item.runId === runId && item.status === 'running'
+                  ? { ...item, status: 'error' as const, errorMessage: '已取消' } : item));
+              }} />
 
             {!workspaceReady ? (
               <div role="status" className={`mt-2 text-[10px] text-token-muted ${booting ? 'animate-pulse' : ''}`}>
