@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Restore a completed off-host backup to a fresh loopback-only local Mongo process."""
-import argparse,hashlib,json,os,re,signal,socket,subprocess,time
+import argparse,hashlib,json,os,re,resource,signal,socket,subprocess,time
 from pathlib import Path
 
 def digest(p):
@@ -11,6 +11,12 @@ def digest(p):
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--backup',required=True);p.add_argument('--work',required=True);a=p.parse_args()
+ # launchd defaults to only 256 descriptors; a real schema opens many index files.
+ soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
+ if soft!=resource.RLIM_INFINITY and soft<65536:
+  target=65536 if hard==resource.RLIM_INFINITY else min(hard,65536)
+  if target<8192:raise RuntimeError('Isolated Mongo restore requires at least 8192 file descriptors')
+  resource.setrlimit(resource.RLIMIT_NOFILE,(target,hard))
  backup=Path(a.backup).resolve(strict=True);manifest=json.loads((backup/'manifest.json').read_text())
  schemas=json.loads((backup/'indexes.json').read_text()) if (backup/'indexes.json').exists() else None
  if not schemas:raise RuntimeError('Source index snapshot is required')
