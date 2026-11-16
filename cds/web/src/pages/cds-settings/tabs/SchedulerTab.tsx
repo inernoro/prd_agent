@@ -41,10 +41,13 @@ interface JanitorConfig {
 
 interface JanitorSnapshot {
   enabled?: boolean;
+  reclaimLock?: { holder: string | null; since: number | null };
   config?: JanitorConfig | null;
   dryRun?: { wouldRemove: string[]; wouldSkip: string[] };
   disk?: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
-  lastSweep?: { at: string; deploymentSources?: { filesystem?: {
+  lastSweep?: { at: string; reclaimDeferred?: { heldBy: string; heldForMs: number };
+    capacity?: { fullRecheckScheduled?: boolean; fullRechecksRemaining?: number };
+    deploymentSources?: { filesystem?: {
     beforeAvailableBytes: number | null; afterAvailableBytes: number | null; netAvailableBytesDelta: number | null;
   } } } | null;
 }
@@ -296,6 +299,26 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
           <div className="mt-1.5 text-xs text-muted-foreground">
             默认 7 天，最长 7 天。当前生效值 <CodePill>{janitorCfg.worktreeTTLDays} 天</CodePill>
           </div>
+        </Field>
+
+        <Field label="回收执行状态">
+          <p className="text-xs text-muted-foreground">
+            {janitorSnap.reclaimLock === undefined
+              ? '当前版本未提供回收互斥状态，执行情况未知。'
+              : janitorSnap.reclaimLock.holder
+                ? <>本次读取时，回收锁由 <CodePill>{janitorSnap.reclaimLock.holder}</CodePill> 持有。</>
+                : '本次读取时回收锁空闲。'}
+          </p>
+          {janitorSnap.lastSweep?.reclaimDeferred ? (
+            <p className="mt-1.5 text-xs text-muted-foreground" role="status">
+              上轮回收因互斥锁占用而延期，持有任务为 <CodePill>{janitorSnap.lastSweep.reclaimDeferred.heldBy}</CodePill>。
+              {janitorSnap.lastSweep.capacity?.fullRecheckScheduled === true
+                ? '已安排有次数上限的延迟复查。'
+                : janitorSnap.lastSweep.capacity?.fullRecheckScheduled === false
+                  ? '本周期未安排延迟复查，下一常规周期重试。'
+                  : '复查调度状态未提供。'}
+            </p>
+          ) : null}
         </Field>
 
         <Field label="部署源码磁盘治理">
