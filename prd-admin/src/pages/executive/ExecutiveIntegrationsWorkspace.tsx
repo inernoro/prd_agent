@@ -1,23 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Mail,
-  MessageSquare,
-  Mic,
-  Webhook,
-  Link2,
-  ListChecks,
-  Users,
-  Settings2,
-} from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-import { channelService } from '@/services';
+import { Activity, Plug, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { getMcpConsoleOverview, listMcpCalls } from '@/services';
 import type {
-  ChannelTask,
-  ChannelStatsResponse,
-  PagedTaskResponse,
-} from '@/services/contracts/channels';
-import { ok, type ApiResponse } from '@/types/api';
+  McpCapabilityDto,
+  McpClientDto,
+} from '@/services/contracts/mcpConsole';
+import { useAuthStore } from '@/stores/authStore';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
@@ -27,175 +16,341 @@ import {
   WorkspaceLink,
   WorkspaceMetric,
   WorkspacePanel,
-  WorkspaceSearch,
 } from '@/components/workspace/Workspace';
+import { McpCallTrendChart } from '@/pages/mcp-console/McpCallTrendChart';
+import { capabilityVisual } from '@/pages/mcp-console/capabilityRegistry';
+import { clientVisual } from '@/pages/mcp-console/clientVisualRegistry';
+import {
+  eventTime,
+  groupCalls,
+  soloGroup,
+  type CallGroup,
+} from '@/pages/mcp-console/callGroups';
+import { safeArtifactHref } from '@/pages/mcp-console/artifactHref';
 import { useExecutiveQuery } from './useExecutiveQuery';
-import { dateTime, taskLane, taskStatus } from './executiveOperationsModel';
+import { dateTime } from './executiveOperationsModel';
 
-const EMPTY_TASKS: ChannelTask[] = [];
-const readStats = async (): Promise<ApiResponse<ChannelStatsResponse>> =>
-  ok(await channelService.getStats());
-const readTasks = async (
-  page: number,
-): Promise<ApiResponse<PagedTaskResponse>> =>
-  ok(await channelService.getTasks(page, 40));
-const CHANNEL_ICONS: Record<string, LucideIcon> = {
-  email: Mail,
-  sms: MessageSquare,
-  siri: Mic,
-  webhook: Webhook,
+import './executive-mcp.css';
+
+const PAGE_SIZE = 20;
+const EMPTY_CLIENTS: McpClientDto[] = [];
+const OUTCOMES: Record<string, { label: string; tone: string }> = {
+  success: { label: '调用成功', tone: 'good' },
+  error: { label: '失败', tone: 'danger' },
+  denied: { label: '被拒绝', tone: 'warning' },
+  pending: { label: '产物待完成', tone: '' },
 };
-const LANES = [
-  { key: 'pending', label: '待处理' },
-  { key: 'processing', label: '处理中' },
-  { key: 'failed', label: '失败' },
-  { key: 'ended', label: '已结束' },
-] as const;
-const person = (task: ChannelTask) => ({
-  displayName:
-    task.mappedUserName ||
-    task.senderDisplayName ||
-    task.senderIdentifier ||
-    '未识别来源',
-});
-const title = (task: ChannelTask) =>
-  task.originalSubject || task.originalContent || task.intent || task.id;
-const configPath = (channel: string) =>
-  `/open-platform?tab=${channel === 'email' ? 'email' : 'webhook'}`;
+const outcome = (status: string) =>
+  OUTCOMES[status] ?? { label: status || '未知状态', tone: '' };
+const elapsed = (ms: number) =>
+  ms >= 1000 ? `${(ms / 1000).toFixed(2)} 秒` : `${ms.toLocaleString()} 毫秒`;
+type Filters = { client: string; capability: string; status: string };
 
-function TaskCard({
-  task,
-  selected,
-  onSelect,
-}: {
-  task: ChannelTask;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const lane = taskLane(task.status);
+function CallDetails({ group }: { group?: CallGroup }) {
+  if (!group)
+    return (
+      <WorkspaceEmpty
+        title="选择一件协作事件"
+        description="查看真实工具步骤、调用结果和产物。"
+      />
+    );
+  const result = outcome(group.status);
+  const artifact = group.artifact;
+  const href = safeArtifactHref(artifact?.url);
   return (
-    <button
-      className={`op-task-card ${lane}`}
-      data-task-id={task.id}
-      aria-pressed={selected}
-      onClick={onSelect}
-    >
-      <strong>{title(task)}</strong>
-      <span className="ws-person">
-        <PersonAvatar person={person(task)} size={23} />
-        <span>{person(task).displayName}</span>
-      </span>
-      <span className="op-task-meta">
-        <small>
-          {task.channelType} · {dateTime(task.createdAt)}
-        </small>
-        <span
-          className={`ws-badge ${lane === 'failed' ? 'danger' : lane === 'processing' ? 'warning' : ''}`}
-        >
-          {lane === 'processing' && <MapSpinner size={10} />}{' '}
-          {taskStatus(task.status)}
-        </span>
-      </span>
-      {task.error && <small className="op-task-error">{task.error}</small>}
-    </button>
+    <>
+      <div className="op-mcp-detail-head">
+        <Activity size={17} />
+        <strong>{group.last.keyName || '历史客户端'}</strong>
+        <span className={`ws-badge ${result.tone}`}>{result.label}</span>
+      </div>
+      <dl className="ws-facts">
+        <dt>最后调用</dt>
+        <dd>{group.last.toolName}</dd>
+        <dt>记录时间</dt>
+        <dd>{dateTime(eventTime(group))}</dd>
+        <dt>{group.multiStep ? '本页步骤跨度' : '调用耗时'}</dt>
+        <dd>{elapsed(group.elapsedMs)}</dd>
+        <dt>已载入步骤</dt>
+        <dd>{group.steps.length} 次工具调用</dd>
+        <dt>操作类型</dt>
+        <dd>{group.isWrite ? '包含写入动作' : '读取查询'}</dd>
+        {group.steps.some((step) => step.deduplicated) && (
+          <>
+            <dt>重复请求</dt>
+            <dd>包含幂等命中，未重复执行写入</dd>
+          </>
+        )}
+      </dl>
+      {group.last.errorMessage && (
+        <div className="op-error-detail">
+          <strong>调用反馈</strong>
+          <p>{group.last.errorMessage}</p>
+        </div>
+      )}
+      {artifact && (
+        <section className="op-mcp-artifact">
+          <h3>关联产物</h3>
+          <strong>{artifact.title || artifact.kind || '已关联产物'}</strong>
+          {artifact.status && <small>业务状态：{artifact.status}</small>}
+          {href ? (
+            <a
+              className="ws-link"
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              打开产物或任务
+            </a>
+          ) : (
+            <p className="op-scope-note">尚无可打开的产物地址。</p>
+          )}
+          {group.status === 'pending' && (
+            <p className="op-scope-note">工具已响应，产物尚未确认完成。</p>
+          )}
+        </section>
+      )}
+      <h3 className="op-timeline-heading">工具调用步骤</h3>
+      <ol className="op-mcp-steps">
+        {[...group.steps].reverse().map((step) => {
+          const status = outcome(step.status);
+          return (
+            <li key={step.id}>
+              <time>{dateTime(step.createdAt)}</time>
+              <strong>{step.toolName}</strong>
+              <span className={`ws-badge ${status.tone}`}>{status.label}</span>
+              <small>
+                {elapsed(step.durationMs)} · {step.isWrite ? '写入' : '读取'}
+                {step.deduplicated ? ' · 幂等命中' : ''}
+              </small>
+              {step.argumentsPreview && <p>{step.argumentsPreview}</p>}
+              {step.errorMessage && (
+                <p className="op-task-error">{step.errorMessage}</p>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </>
   );
 }
 
-function TaskInspector({ task }: { task?: ChannelTask }) {
+/** A filter change mounts a new query scope; old-client rows can never appear below new filters. */
+function McpActivity({
+  filters,
+  revision,
+  clients,
+  hasHistory,
+}: {
+  filters: Filters;
+  revision: number;
+  clients: McpClientDto[];
+  hasHistory?: boolean;
+}) {
   const navigate = useNavigate();
+  const [skip, setSkip] = useState(0);
+  const [retry, setRetry] = useState(0);
+  const [selected, setSelected] = useState<CallGroup>();
+  const [mobileDetail, setMobileDetail] = useState(false);
+  const fetchCalls = useCallback(
+    (offset: number) =>
+      listMcpCalls({
+        keyId: filters.client || undefined,
+        capability: filters.capability || undefined,
+        status: filters.status || undefined,
+        skip: offset,
+        limit: PAGE_SIZE,
+      }),
+    [filters.client, filters.capability, filters.status],
+  );
+  const query = useExecutiveQuery(fetchCalls, skip, true, revision + retry);
+  const groups = useMemo(
+    () =>
+      filters.status
+        ? (query.data?.items ?? []).map(soloGroup)
+        : groupCalls(query.data?.items ?? []),
+    [query.data, filters.status],
+  );
+  const group = selected
+    ? (groups.find((item) => item.id === selected.id) ?? selected)
+    : (groups.find((item) => ['error', 'denied'].includes(item.status)) ??
+      groups[0]);
+  const snapshotOnly = Boolean(
+    selected && !groups.some((item) => item.id === selected.id),
+  );
+  const shownSkip = query.data?.skip ?? query.dataDays ?? skip;
+  const total = query.data?.total;
+  const pageSize = query.data?.limit || PAGE_SIZE;
+  const changePage = (next: number) => {
+    setSelected(undefined);
+    setMobileDetail(false);
+    if (next === skip) setRetry((value) => value + 1);
+    else setSkip(next);
+  };
+  const choose = (item: CallGroup) => {
+    setSelected(item);
+    if (window.matchMedia?.('(max-width: 760px)')?.matches)
+      setMobileDetail(true);
+  };
+  const details = (
+    <>
+      <CallDetails group={group} />
+      {snapshotOnly && (
+        <p className="op-scope-note">
+          所选事件已不在当前页，显示上次载入记录。
+        </p>
+      )}
+      <WorkspaceLink onClick={() => navigate('/mcp-console?tab=calls')}>
+        打开完整调用记录
+      </WorkspaceLink>
+    </>
+  );
   return (
     <>
-      {task ? (
-        <>
-          <div className="ws-identity">
-            <PersonAvatar person={person(task)} size={36} />
-            <div>
-              <h3>{person(task).displayName}</h3>
-              <p>
-                {task.channelType} · {taskStatus(task.status)}
-              </p>
-            </div>
-          </div>
-          <strong className="op-task-detail-title">{title(task)}</strong>
-          <dl className="ws-facts">
-            <dt>任务标识</dt>
-            <dd>{task.id}</dd>
-            <dt>目标 Agent</dt>
-            <dd>{task.targetAgent || '未识别'}</dd>
-            <dt>创建</dt>
-            <dd>{dateTime(task.createdAt)}</dd>
-            <dt>开始处理</dt>
-            <dd>{dateTime(task.startedAt)}</dd>
-            <dt>结束</dt>
-            <dd>{dateTime(task.completedAt)}</dd>
-            <dt>记录耗时</dt>
-            <dd>
-              {task.durationMs == null
-                ? '未记录'
-                : `${task.durationMs.toLocaleString()} 毫秒`}
-            </dd>
-            <dt>重试次数</dt>
-            <dd>{task.retryCount ?? '未记录'}</dd>
-          </dl>
-          {task.error && (
-            <div className="op-error-detail">
-              <strong>{task.errorCode || '处理失败'}</strong>
-              <p>{task.error}</p>
+      <Dialog
+        open={mobileDetail && Boolean(group)}
+        onOpenChange={setMobileDetail}
+        title={<span className="scene-preview-title">MCP 协作详情</span>}
+        maxWidth={900}
+        content={<div className="op-task-dialog op-mcp-dialog">{details}</div>}
+      />
+      <div className="op-mcp-activity">
+        <WorkspacePanel
+          title="协作事件"
+          hint={`本环境全部历史 · 当前页 ${query.data?.items.length ?? '—'} 次调用，归并 ${groups.length} 件事件；共 ${total ?? '—'} 次调用`}
+          action={
+            <WorkspaceLink onClick={() => navigate('/mcp-console?tab=calls')}>
+              完整调用记录
+            </WorkspaceLink>
+          }
+        >
+          {query.loading && (
+            <div className="op-query-status" role="status">
+              <MapSpinner size={12} />
+              {query.data
+                ? '正在更新，保留已载入记录'
+                : '正在读取 MCP 调用记录'}
             </div>
           )}
-          <h3 className="op-timeline-heading">状态历史</h3>
-          {task.statusHistory?.length ? (
-            <ol className="op-timeline">
-              {task.statusHistory.map((event, index) => (
-                <li
-                  key={`${event.at}:${index}`}
-                  className={taskLane(event.status)}
-                >
-                  <strong>{taskStatus(event.status)}</strong>
-                  <time>{dateTime(event.at)}</time>
-                  {event.note && <p>{event.note}</p>}
-                </li>
-              ))}
-            </ol>
+          {query.error && (
+            <div className="ws-alert" role="alert">
+              调用记录读取失败：{query.error}
+              {query.data
+                ? `。暂显示第 ${Math.floor(shownSkip / pageSize) + 1} 页的上次结果。`
+                : '。不能据此判断没有调用。'}
+              <button
+                className="ws-link"
+                onClick={() => setRetry((value) => value + 1)}
+              >
+                重试调用记录
+              </button>
+            </div>
+          )}
+          {query.data && groups.length > 0 ? (
+            <div className="ws-table-wrap op-mcp-call-table">
+              <table className="ws-table">
+                <thead>
+                  <tr>
+                    <th>客户端 / 工具</th>
+                    <th>事件结果</th>
+                    <th>步骤 / 耗时</th>
+                    <th>最近调用</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groups.map((item) => {
+                    const state = outcome(item.status);
+                    const title = item.artifact?.title || item.first.toolName;
+                    return (
+                      <tr
+                        key={item.id}
+                        data-mcp-event={item.first.id}
+                        aria-selected={group?.id === item.id}
+                        onClick={() => choose(item)}
+                      >
+                        <td>
+                          <button className="ws-row-action">
+                            <strong>{title}</strong>
+                          </button>
+                          <small>
+                            {item.last.keyName ||
+                              clients.find(
+                                (client) => client.keyId === item.last.keyId,
+                              )?.name ||
+                              '历史客户端'}{' '}
+                            · {item.last.toolName}
+                          </small>
+                        </td>
+                        <td>
+                          <span className={`ws-badge ${state.tone}`}>
+                            {state.label}
+                          </span>
+                        </td>
+                        <td>
+                          {item.steps.length} 次调用
+                          <small>
+                            {item.multiStep ? '本页步骤跨度 ' : ''}
+                            {elapsed(item.elapsedMs)}
+                          </small>
+                        </td>
+                        <td>{dateTime(eventTime(item))}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : query.data ? (
+            <WorkspaceEmpty
+              title={
+                hasHistory === false &&
+                !filters.client &&
+                !filters.capability &&
+                !filters.status
+                  ? '本环境暂无 MCP 调用'
+                  : '当前条件没有调用记录'
+              }
+              description="在智能体接入台配置客户端，用你的智能体调用 MAP 工具后，可在这里查看结果与产物。"
+              action={
+                <WorkspaceLink onClick={() => navigate('/mcp-console')}>
+                  前往智能体接入台
+                </WorkspaceLink>
+              }
+            />
           ) : (
+            !query.loading && <WorkspaceEmpty title="调用记录暂不可用" />
+          )}
+          {total !== undefined && total > pageSize && (
+            <div className="op-pagination">
+              <span>
+                第 {Math.floor(shownSkip / pageSize) + 1} /{' '}
+                {Math.max(1, Math.ceil(total / pageSize))} 页
+                {query.loading && shownSkip !== skip ? ' · 正在翻页' : ''}
+              </span>
+              <button
+                disabled={shownSkip <= 0 || query.loading}
+                onClick={() => changePage(Math.max(0, shownSkip - pageSize))}
+              >
+                上一页
+              </button>
+              <button
+                disabled={shownSkip + pageSize >= total || query.loading}
+                onClick={() => changePage(shownSkip + pageSize)}
+              >
+                下一页
+              </button>
+            </div>
+          )}
+          {filters.status && (
             <p className="op-scope-note">
-              未记录状态历史，可查看上方已有时间记录。
+              筛选按工具调用结果；关联产物是否完成另行显示。
             </p>
           )}
-          {task.responsesSent?.length > 0 && (
-            <div className="op-response-history">
-              <h3>响应记录</h3>
-              {task.responsesSent.map((response, index) => (
-                <p key={index}>
-                  {response.type} · {response.status}
-                  <time>{dateTime(response.sentAt)}</time>
-                  {response.error && <small>{response.error}</small>}
-                </p>
-              ))}
-            </div>
-          )}
-          <WorkspaceLink
-            permission="open-platform.manage"
-            onClick={() =>
-              navigate(
-                `/open-platform?tab=tasks&channelType=${encodeURIComponent(task.channelType)}`,
-              )
-            }
-          >
-            前往任务监控处理
-          </WorkspaceLink>
-        </>
-      ) : (
-        <>
-          <WorkspaceEmpty
-            title="当前暂无可选任务"
-            description="选择任务后查看真实过程与错误。"
-          />
-          <p className="op-scope-note">
-            启用状态、身份映射和任务执行分别展示。今日成功记录不能替代连接探测。
-          </p>
-        </>
-      )}
+        </WorkspacePanel>
+        <aside className="ws-side op-mcp-inspector">
+          <WorkspacePanel title="事件与产物详情">{details}</WorkspacePanel>
+        </aside>
+      </div>
     </>
   );
 }
@@ -206,407 +361,328 @@ export function ExecutiveIntegrationsWorkspace({
   revision: number;
 }) {
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
   const [retry, setRetry] = useState(0);
-  const [page, setPage] = useState(1);
-  const [channel, setChannel] = useState('');
-  const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState<string>();
-  const [selectedSnapshot, setSelectedSnapshot] = useState<ChannelTask>();
-  const [mobileDetail, setMobileDetail] = useState(false);
-  const stats = useExecutiveQuery(readStats, 0, true, revision + retry);
-  const tasks = useExecutiveQuery(readTasks, page, true, revision + retry);
-  const all = tasks.data?.items ?? EMPTY_TASKS;
-  const filtered = useMemo(
-    () =>
-      all.filter(
-        (task) =>
-          (!channel || task.channelType === channel) &&
-          `${title(task)} ${person(task).displayName} ${task.targetAgent ?? ''} ${task.id}`
-            .toLowerCase()
-            .includes(query.toLowerCase()),
-      ),
-    [all, channel, query],
+  const [filters, setFilters] = useState<Filters>({
+    client: '',
+    capability: '',
+    status: '',
+  });
+  const query = useExecutiveQuery(
+    getMcpConsoleOverview,
+    0,
+    true,
+    revision + retry,
   );
-  const task = selected
-    ? (all.find((item) => item.id === selected) ??
-      (selectedSnapshot?.id === selected ? selectedSnapshot : undefined))
-    : (filtered.find((item) => taskLane(item.status) === 'failed') ??
-      filtered[0]);
-  const snapshotOnly = Boolean(
-    selected && task && !all.some((item) => item.id === selected),
-  );
-  function chooseTask(item: ChannelTask) {
-    setSelected(item.id);
-    setSelectedSnapshot(item);
-    if (window.matchMedia?.('(max-width: 760px)')?.matches)
-      setMobileDetail(true);
-  }
-  function goToPage(next: number) {
-    setSelected(undefined);
-    setSelectedSnapshot(undefined);
-    setMobileDetail(false);
-    if (next === page) setRetry((v) => v + 1);
-    else setPage(next);
-  }
-  const currentPage = tasks.data?.page ?? tasks.dataDays ?? page;
-  const totalPages = Math.max(
-    1,
-    Math.ceil((tasks.data?.total ?? 0) / (tasks.data?.pageSize || 40)),
-  );
-  const active =
-    all.some((item) =>
-      ['pending', 'processing'].includes(item.status.toLowerCase()),
-    ) || (stats.data?.processingCount ?? 0) > 0;
-  useEffect(() => {
-    if (!active || stats.loading || tasks.loading) return;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible')
-        setRetry((value) => value + 1);
-    }, 15000);
-    return () => window.clearInterval(timer);
-  }, [active, stats.loading, tasks.loading]);
-  const known = LANES.map((lane) => ({
-    ...lane,
-    items: filtered.filter((item) => taskLane(item.status) === lane.key),
-  }));
-  const other = filtered.filter((item) => taskLane(item.status) === 'other');
-  const lanes = other.length
-    ? [...known, { key: 'other', label: '其他状态', items: other }]
-    : known;
-  const selectedChannel = stats.data?.channels.find(
-    (item) => item.channelType === channel,
-  );
-  return (
-    <div className="map-workspace op-workspace" data-workspace="integrations">
-      <Dialog
-        open={mobileDetail && Boolean(task)}
-        onOpenChange={setMobileDetail}
-        title={
-          <span className="scene-preview-title">
-            任务过程 · {task ? title(task) : ''}
-          </span>
-        }
-        maxWidth={900}
-        content={
-          <div className="op-task-dialog">
-            <TaskInspector task={task} />
-            {snapshotOnly && (
-              <p className="op-scope-note">
-                所选任务已不在当前页，显示上次载入记录。
-              </p>
-            )}
-          </div>
-        }
-      />
-      <div className="ws-toolbar">
-        <span className="ws-person">
-          <Link2 size={15} />
-          渠道与任务过程
-        </span>
-        <span>
-          {active ? '有进行中的任务，空闲时每15秒更新' : '按需刷新当前快照'}
-        </span>
-        <WorkspaceLink
-          permission="open-platform.manage"
-          onClick={() => navigate('/open-platform?tab=tasks')}
-        >
-          完整任务监控
-        </WorkspaceLink>
-      </div>
-      <div className="ws-metrics">
-        <WorkspaceMetric
-          label="今日任务 · 全渠道"
-          value={stats.data?.todayTaskCount}
-        />
-        <WorkspaceMetric
-          label="处理中 · 全渠道"
-          value={stats.data?.processingCount}
-        />
-        <WorkspaceMetric
-          label="今日成功率"
-          value={
-            stats.data
-              ? stats.data.todayTaskCount > 0
-                ? `${stats.data.successRate.toFixed(1)}%`
-                : '无任务'
-              : null
-          }
-          note="今日已完成任务 / 今日全部任务"
-        />
-        <WorkspaceMetric
-          label="身份映射"
-          value={stats.data?.identityMappingCount}
-        />
-      </div>
-      {(stats.loading || tasks.loading) && (
-        <div className="op-query-status" role="status">
-          <MapSpinner size={12} />
-          正在更新渠道数据{tasks.data ? '，已载入任务仍可查看' : ''}
-        </div>
-      )}
-      {stats.error && (
-        <p className="ws-alert" role="alert">
-          渠道统计读取失败：{stats.error}。不能据此判定未接入。
-          <button className="ws-link" onClick={() => setRetry((v) => v + 1)}>
-            重试
-          </button>
-        </p>
-      )}
-      <WorkspacePanel
-        title="外部渠道"
-        hint="启用是配置状态；连接是否可用需要在渠道管理中验证"
-        action={
-          <WorkspaceLink
-            permission="open-platform.manage"
-            onClick={() => navigate(configPath(channel))}
-          >
-            渠道管理
-          </WorkspaceLink>
+  const overview = query.data;
+  const clients = overview?.clients ?? EMPTY_CLIENTS;
+  const select = (key: keyof Filters, value: string) =>
+    setFilters((previous) => ({ ...previous, [key]: value }));
+  function capabilityButton(cap: McpCapabilityDto) {
+    const Icon = capabilityVisual(cap.key).icon;
+    return (
+      <button
+        key={cap.key}
+        className="op-mcp-capability"
+        aria-pressed={filters.capability === cap.key}
+        onClick={() =>
+          select('capability', filters.capability === cap.key ? '' : cap.key)
         }
       >
-        <div className="op-channel-grid">
-          {stats.data?.channels.map((item) => {
-            const Icon = CHANNEL_ICONS[item.channelType] ?? Link2;
-            return (
-              <button
-                key={item.channelType}
-                className="op-channel-card"
-                aria-pressed={channel === item.channelType}
-                onClick={() => {
-                  setChannel((value) =>
-                    value === item.channelType ? '' : item.channelType,
-                  );
-                  setSelected(undefined);
-                }}
-              >
-                <span className="op-channel-name">
-                  <Icon size={18} />
-                  <strong>{item.displayName}</strong>
-                  <span
-                    className={`ws-badge ${item.isEnabled ? 'warning' : ''}`}
-                  >
-                    {item.isEnabled ? '已启用' : '未启用'}
-                  </span>
-                </span>
-                <small>连接未验证</small>
-                <span className="op-channel-count">
-                  今日请求 <b>{compact(item.todayRequestCount)}</b>
-                  <small>
-                    成功 {item.todaySuccessCount} · 失败 {item.todayFailCount}
-                  </small>
-                </span>
-              </button>
-            );
-          })}
+        <span>
+          <Icon size={16} />
+          <strong>{cap.title}</strong>
+          <b>{compact(cap.todayCalls)}</b>
+        </span>
+        <small>
+          {cap.granted ? '已有授权' : '未授权'} · {cap.tools.length} 个工具 ·
+          今日调用
+        </small>
+      </button>
+    );
+  }
+  return (
+    <div
+      className="map-workspace op-workspace op-mcp-workspace"
+      data-workspace="integrations"
+    >
+      <div className="ws-toolbar">
+        <span className="ws-person">
+          <PersonAvatar
+            person={user ?? { displayName: '当前账号' }}
+            size={28}
+          />
+          <strong>我的 MCP 协作</strong>
+        </span>
+        <span>
+          当前账号的客户端与授权；调用仅限本环境，今日按 UTC 自然日统计
+        </span>
+        <WorkspaceLink onClick={() => navigate('/mcp-console')}>
+          管理 MCP 接入
+        </WorkspaceLink>
+      </div>
+      <div className="ws-metrics op-mcp-metrics">
+        <WorkspaceMetric
+          label="可用客户端"
+          value={
+            overview ? clients.filter((client) => client.isActive).length : null
+          }
+          note={
+            overview
+              ? `共 ${clients.length} 个 · 不代表实时在线`
+              : '读取授权配置'
+          }
+        />
+        <WorkspaceMetric
+          label="今日 MCP 调用"
+          value={overview ? compact(overview.today.calls) : null}
+        />
+        <WorkspaceMetric label="今日写入动作" value={overview?.today.writes} />
+        <WorkspaceMetric
+          label="今日失败调用"
+          value={overview?.today.failed}
+          tone={overview?.today.failed ? 'danger' : undefined}
+        />
+        <WorkspaceMetric
+          label="今日被拒绝"
+          value={overview?.today.denied}
+          tone={overview?.today.denied ? 'warning' : undefined}
+        />
+      </div>
+      {query.loading && (
+        <div className="op-query-status" role="status">
+          <MapSpinner size={12} />
+          {overview
+            ? '正在更新 MCP 概览，保留上一份数据'
+            : '正在读取 MCP 客户端与授权'}
         </div>
-        {!stats.data?.channels.length && (
+      )}
+      {query.error && (
+        <div role="alert" className="ws-alert">
+          MCP 概览读取失败：{query.error}
+          {overview ? '。保留上次概览。' : '。调用记录仍独立加载。'}
+          <button
+            className="ws-link"
+            onClick={() => setRetry((value) => value + 1)}
+          >
+            重试 MCP 概览
+          </button>
+        </div>
+      )}
+      <div className="op-mcp-overview">
+        <WorkspacePanel
+          title="客户端与授权"
+          hint="可用性来自凭证状态，最近使用来自真实调用，不推断在线连接"
+          action={
+            <WorkspaceLink onClick={() => navigate('/mcp-console')}>
+              管理客户端
+            </WorkspaceLink>
+          }
+        >
+          <div className="op-mcp-clients">
+            {clients.map((client) => {
+              const Icon = clientVisual(client.name).icon;
+              return (
+                <button
+                  key={client.keyId}
+                  className="op-mcp-client"
+                  aria-pressed={filters.client === client.keyId}
+                  onClick={() =>
+                    select(
+                      'client',
+                      filters.client === client.keyId ? '' : client.keyId,
+                    )
+                  }
+                >
+                  <span className="op-mcp-client-name">
+                    <Icon size={18} />
+                    <strong>{client.name}</strong>
+                    <span
+                      className={`ws-badge ${client.isActive ? 'good' : 'warning'}`}
+                    >
+                      {client.isActive
+                        ? '可用'
+                        : client.unusableReason === 'expired'
+                          ? '已到期'
+                          : client.unusableReason === 'disabled'
+                            ? '已停用'
+                            : '不可用'}
+                    </span>
+                  </span>
+                  <span className="op-mcp-client-count">
+                    <b>{compact(client.todayCalls)}</b> 今日调用
+                    <small>
+                      写入 {client.todayWrites} · 生图 {client.todayImages}
+                    </small>
+                  </span>
+                  <small>
+                    {client.scopeMode === 'auto'
+                      ? '跟随账号权限'
+                      : '自定义授权'}{' '}
+                    · {client.scopes.length} 项范围
+                  </small>
+                  <small>
+                    最近使用{' '}
+                    {client.lastUsedAt
+                      ? dateTime(client.lastUsedAt)
+                      : '尚无记录'}
+                  </small>
+                </button>
+              );
+            })}
+          </div>
+          {!clients.length && (
+            <WorkspaceEmpty
+              title={
+                query.loading
+                  ? '客户端读取中'
+                  : query.error
+                    ? '客户端配置暂不可用'
+                    : '尚未配置 MCP 客户端'
+              }
+              description="在智能体接入台为 Codex、Claude 等客户端配置 MAP 工具授权。"
+              action={
+                <WorkspaceLink onClick={() => navigate('/mcp-console')}>
+                  配置 MCP 接入
+                </WorkspaceLink>
+              }
+            />
+          )}
+        </WorkspacePanel>
+        <WorkspacePanel
+          title="调用频率"
+          hint="当前账号 · 本环境 · 近 24 个小时"
+        >
+          <div className="op-mcp-trend">
+            <McpCallTrendChart trend={overview?.callTrend} />
+            {overview && (
+              <dl className="op-mcp-config-facts">
+                <div>
+                  <dt>自动授权</dt>
+                  <dd>
+                    {
+                      clients.filter((client) => client.scopeMode === 'auto')
+                        .length
+                    }
+                  </dd>
+                </div>
+                <div>
+                  <dt>自定义授权</dt>
+                  <dd>
+                    {
+                      clients.filter((client) => client.scopeMode === 'manual')
+                        .length
+                    }
+                  </dd>
+                </div>
+                <div>
+                  <dt>未记录使用</dt>
+                  <dd>
+                    {clients.filter((client) => !client.lastUsedAt).length}
+                  </dd>
+                </div>
+              </dl>
+            )}
+          </div>
+        </WorkspacePanel>
+      </div>
+      <WorkspacePanel
+        title="MCP 能力使用"
+        hint="点击能力筛选下方历史事件；调用量为今日统计，授权表示当前已有可用凭证"
+      >
+        <div className="op-mcp-capabilities">
+          {overview?.capabilities.map(capabilityButton)}
+        </div>
+        {!overview?.capabilities.length && (
           <WorkspaceEmpty
             title={
-              stats.loading
-                ? '渠道配置读取中'
-                : stats.error
-                  ? '渠道统计暂不可用'
-                  : '暂无渠道配置'
+              query.loading
+                ? '授权能力读取中'
+                : query.error
+                  ? '授权能力暂不可用'
+                  : '暂无能力数据'
             }
           />
         )}
       </WorkspacePanel>
-      <div className="ws-layout op-channel-layout">
-        <div className="ws-main">
-          <WorkspacePanel
-            title="任务过程"
-            hint={`已载入第 ${currentPage} 页 ${all.length} 条 / 总计 ${tasks.data?.total ?? '—'} 条；搜索、渠道和分栏计数仅作用于本页`}
-            action={
-              <WorkspaceLink
-                permission="open-platform.manage"
-                onClick={() =>
-                  navigate(
-                    `/open-platform?tab=tasks${channel ? `&channelType=${encodeURIComponent(channel)}` : ''}`,
-                  )
-                }
-              >
-                查看全部任务
-              </WorkspaceLink>
-            }
+      <div
+        className="op-mcp-filters"
+        role="group"
+        aria-label="MCP 历史调用筛选"
+      >
+        <SlidersHorizontal size={15} />
+        <label>
+          客户端
+          <select
+            aria-label="筛选 MCP 客户端"
+            value={filters.client}
+            onChange={(event) => select('client', event.target.value)}
           >
-            <div className="ws-toolbar">
-              <WorkspaceSearch
-                value={query}
-                onChange={(value) => {
-                  setQuery(value);
-                  setSelected(undefined);
-                  setSelectedSnapshot(undefined);
-                  setMobileDetail(false);
-                }}
-                placeholder="搜索本页任务、人员或 Agent"
-              />
-              {channel && (
-                <button className="ws-link" onClick={() => setChannel('')}>
-                  清除渠道 · {selectedChannel?.displayName || channel}
-                </button>
+            <option value="">全部客户端</option>
+            {filters.client &&
+              !clients.some((client) => client.keyId === filters.client) && (
+                <option value={filters.client}>历史客户端</option>
               )}
-            </div>
-            {tasks.error && (
-              <p role="alert" className="ws-alert">
-                任务读取失败：{tasks.error}
-                {tasks.data
-                  ? `。暂显示第 ${currentPage} 页的上次结果。`
-                  : '。不能将失败解释为没有任务。'}
-                <button
-                  className="ws-link"
-                  onClick={() => setRetry((v) => v + 1)}
-                >
-                  重试任务
-                </button>
-              </p>
-            )}
-            <div className="op-lane-summary">
-              {lanes.map((lane) => (
-                <span key={lane.key} className={lane.key}>
-                  <i />
-                  {lane.label}
-                  <b>{tasks.data ? lane.items.length : '—'}</b>
-                </span>
-              ))}
-            </div>
-            {tasks.data && filtered.length > 0 ? (
-              <div className="op-task-board">
-                {lanes.map((lane) => (
-                  <section
-                    key={lane.key}
-                    className={`op-lane ${lane.key}`}
-                    aria-label={`${lane.label}任务`}
-                  >
-                    <h3>
-                      {lane.label}
-                      <span>{lane.items.length}</span>
-                    </h3>
-                    {lane.items.map((item) => (
-                      <TaskCard
-                        key={item.id}
-                        task={item}
-                        selected={task?.id === item.id}
-                        onSelect={() => chooseTask(item)}
-                      />
-                    ))}
-                    {!lane.items.length && (
-                      <p className="op-lane-empty">本页无此类任务</p>
-                    )}
-                  </section>
-                ))}
-              </div>
-            ) : tasks.loading && !tasks.data ? (
-              <WorkspaceEmpty
-                title="任务过程读取中"
-                description="渠道统计与任务列表分别加载。"
-              />
-            ) : !tasks.data ? (
-              <WorkspaceEmpty title="任务列表暂不可用" />
-            ) : tasks.data.total === 0 ? (
-              <div className="op-channel-onboarding">
-                <h3>暂无外部协作任务</h3>
-                <p>先配置可信来源和成员，再在这里追踪任务过程。</p>
-                <div className="op-setup-steps">
-                  <section>
-                    <Settings2 size={21} />
-                    <strong>配置渠道</strong>
-                    <p>
-                      核对服务配置与授权；当前管理入口提供邮箱与 Webhook
-                      配置，其余渠道请核对接入端。
-                    </p>
-                    <WorkspaceLink
-                      permission="open-platform.manage"
-                      onClick={() => navigate(configPath(channel))}
-                    >
-                      打开渠道管理
-                    </WorkspaceLink>
-                  </section>
-                  <section>
-                    <Users size={21} />
-                    <strong>绑定发送来源</strong>
-                    <p>
-                      在来源白名单中设置权限和映射用户。当前白名单{' '}
-                      {stats.data?.whitelistCount ?? '—'} 条、身份映射{' '}
-                      {stats.data?.identityMappingCount ?? '—'} 条。
-                    </p>
-                    <WorkspaceLink
-                      permission="open-platform.manage"
-                      onClick={() => navigate('/open-platform?tab=email')}
-                    >
-                      查看邮箱与白名单
-                    </WorkspaceLink>
-                  </section>
-                  <section>
-                    <ListChecks size={21} />
-                    <strong>查看任务过程</strong>
-                    <p>任务接入后，展示真实状态历史、处理耗时和错误。</p>
-                    <WorkspaceLink
-                      permission="open-platform.manage"
-                      onClick={() => navigate('/open-platform?tab=tasks')}
-                    >
-                      打开任务监控
-                    </WorkspaceLink>
-                  </section>
-                </div>
-              </div>
-            ) : (
-              <WorkspaceEmpty
-                title="本页没有匹配的任务"
-                description="筛选只覆盖本页已载入记录，可清除筛选或继续翻页。"
-                action={
-                  <button
-                    className="ws-link"
-                    onClick={() => {
-                      setQuery('');
-                      setChannel('');
-                    }}
-                  >
-                    清除本页筛选
-                  </button>
-                }
-              />
-            )}
-            {tasks.data && totalPages > 1 && (
-              <div className="op-pagination">
-                <span>
-                  第 {currentPage} / {totalPages} 页
-                  {tasks.loading && page !== currentPage
-                    ? ` · 正在读取第 ${page} 页`
-                    : ''}
-                </span>
-                <button
-                  disabled={currentPage <= 1 || tasks.loading}
-                  onClick={() => goToPage(currentPage - 1)}
-                >
-                  上一页
-                </button>
-                <button
-                  disabled={currentPage >= totalPages || tasks.loading}
-                  onClick={() => {
-                    goToPage(currentPage + 1);
-                  }}
-                >
-                  下一页
-                </button>
-              </div>
-            )}
-          </WorkspacePanel>
-        </div>
-        <aside className="ws-side">
-          <WorkspacePanel
-            title="任务详情"
-            hint={
-              snapshotOnly
-                ? '所选任务已不在当前页，显示上次载入记录'
-                : undefined
+            {clients.map((client) => (
+              <option key={client.keyId} value={client.keyId}>
+                {client.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          能力
+          <select
+            aria-label="筛选 MCP 能力"
+            value={filters.capability}
+            onChange={(event) => select('capability', event.target.value)}
+          >
+            <option value="">全部能力</option>
+            {overview?.capabilities.map((cap) => (
+              <option key={cap.key} value={cap.key}>
+                {cap.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          调用结果
+          <select
+            aria-label="筛选 MCP 调用结果"
+            value={filters.status}
+            onChange={(event) => select('status', event.target.value)}
+          >
+            <option value="">全部结果</option>
+            <option value="success">调用成功</option>
+            <option value="error">失败</option>
+            <option value="denied">被拒绝</option>
+          </select>
+        </label>
+        {Object.values(filters).some(Boolean) && (
+          <button
+            className="ws-link"
+            onClick={() =>
+              setFilters({ client: '', capability: '', status: '' })
             }
           >
-            <TaskInspector task={task} />
-          </WorkspacePanel>
-        </aside>
+            清除筛选
+          </button>
+        )}
+        <span className="op-scope-note">
+          <ShieldCheck size={13} />
+          仅当前账号授权与调用
+        </span>
       </div>
+      <McpActivity
+        key={JSON.stringify(filters)}
+        filters={filters}
+        revision={revision + retry}
+        clients={clients}
+        hasHistory={overview?.hasHistory}
+      />
       <p className="op-scope-note">
-        这里为只读任务看板；重试、取消等操作沿用任务监控中的权限与确认流程。
+        <Plug size={13} />
+        授权变更与调用处理请前往智能体接入台。
       </p>
     </div>
   );

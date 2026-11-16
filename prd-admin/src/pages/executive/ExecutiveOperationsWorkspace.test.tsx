@@ -6,12 +6,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { ExecutiveModelStat } from '@/services/contracts/executive';
 const clipboard = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/clipboard', () => ({ copyToClipboard: clipboard }));
-const channels = vi.hoisted(() => ({ getStats: vi.fn(), getTasks: vi.fn() }));
-vi.mock('@/services', () => ({ channelService: channels }));
+vi.mock('@/services', () => ({}));
 import {
   ExecutiveCostWorkspace,
   ExecutiveOverviewWorkspace,
-  ExecutiveIntegrationsWorkspace,
 } from './ExecutiveOperationsWorkspace';
 import { AssetSourceFilter } from '@/components/workspace/AssetSourceFilter';
 
@@ -128,61 +126,6 @@ it('未记录模型名称的请求有明确标签，不能错误下钻到全部�
   expect(container.querySelector('tbody')?.textContent).toContain('未记录模型');
   expect(container.textContent).toContain('不能按模型准确筛选');
 });
-it('渠道启用不声称连接健康，选择任务后显示对应人员及错误', async () => {
-  channels.getStats.mockResolvedValue({
-    channels: [
-      {
-        channelType: 'webhook',
-        displayName: 'Webhook',
-        isEnabled: true,
-        todayRequestCount: 2,
-        todaySuccessCount: 1,
-        todayFailCount: 1,
-      },
-    ],
-    todayTaskCount: 2,
-    processingCount: 0,
-    successRate: 50,
-    identityMappingCount: 0,
-  });
-  const task = (id: string, name: string, status: string, error?: string) => ({
-    id,
-    channelType: 'webhook',
-    senderIdentifier: name,
-    mappedUserName: name,
-    originalContent: `验收任务 ${id}`,
-    status,
-    error,
-    createdAt: '2026-11-15T09:00:00Z',
-  });
-  channels.getTasks.mockResolvedValue({
-    items: [
-      task('a', '成员甲', 'completed'),
-      task('b', '成员乙', 'failed', '解析失败'),
-    ],
-    total: 2,
-  });
-  await act(async () =>
-    root.render(
-      <MemoryRouter>
-        <ExecutiveIntegrationsWorkspace revision={0} />
-      </MemoryRouter>,
-    ),
-  );
-  expect(container.textContent).toContain('已启用');
-  expect(container.textContent).not.toContain('已连接');
-  await act(async () =>
-    (
-      container.querySelector('[data-task-id="b"]') as HTMLButtonElement
-    ).click(),
-  );
-  expect(container.querySelector('aside')?.textContent).toContain('成员乙');
-  expect(container.querySelector('aside')?.textContent).toContain('解析失败');
-  expect(container.querySelectorAll('.op-task-card .ws-avatar')).toHaveLength(
-    2,
-  );
-});
-
 it('分布数据未到达时直接提示，不渲染空白面积画布', async () => {
   await act(async () =>
     root.render(
@@ -221,84 +164,4 @@ it('复制缺价清单排除空名称，失败反馈不能误报成功', async (
   expect(clipboard).toHaveBeenCalledWith('need-price');
   expect(container.textContent).toContain('复制失败');
   expect(container.textContent).not.toContain('已复制');
-});
-it('任务翻页失败保留上一页快照和原页码，不能误判为空', async () => {
-  channels.getStats.mockResolvedValue({
-    channels: [],
-    todayTaskCount: 80,
-    processingCount: 0,
-    successRate: 100,
-  });
-  channels.getTasks
-    .mockResolvedValueOnce({
-      items: [
-        {
-          id: 'saved',
-          channelType: 'webhook',
-          senderIdentifier: '成员',
-          originalContent: '已有任务',
-          status: 'completed',
-          createdAt: '2026-11-16T00:00:00Z',
-        },
-      ],
-      total: 80,
-      page: 1,
-      pageSize: 40,
-    })
-    .mockRejectedValue(new Error('网络中断'));
-  await act(async () =>
-    root.render(
-      <MemoryRouter>
-        <ExecutiveIntegrationsWorkspace revision={0} />
-      </MemoryRouter>,
-    ),
-  );
-  await act(async () =>
-    [...container.querySelectorAll('button')]
-      .find((b) => b.textContent === '下一页')!
-      .click(),
-  );
-  expect(container.textContent).toContain('第 1 / 2 页');
-  expect(container.textContent).toContain('已有任务');
-  expect(container.textContent).toContain('网络中断');
-  expect(container.textContent).not.toContain('还没有外部任务');
-});
-it('后台刷新后所选任务移出本页仍保留明确标注的历史快照', async () => {
-  channels.getStats.mockResolvedValue({
-    channels: [],
-    todayTaskCount: 2,
-    processingCount: 0,
-    successRate: 100,
-  });
-  const task = {
-    id: 'chosen',
-    channelType: 'webhook',
-    senderIdentifier: '成员',
-    originalContent: '所选任务',
-    status: 'completed',
-    createdAt: '2026-11-16T00:00:00Z',
-    statusHistory: [
-      { status: 'completed', at: '2026-11-16T00:00:01Z', note: '真实历史' },
-    ],
-  };
-  channels.getTasks
-    .mockResolvedValueOnce({ items: [task], total: 1, page: 1, pageSize: 40 })
-    .mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 40 });
-  const render = (revision: number) => (
-    <MemoryRouter>
-      <ExecutiveIntegrationsWorkspace revision={revision} />
-    </MemoryRouter>
-  );
-  await act(async () => root.render(render(0)));
-  await act(async () =>
-    (
-      container.querySelector('[data-task-id="chosen"]') as HTMLButtonElement
-    ).click(),
-  );
-  await act(async () => root.render(render(1)));
-  expect(container.querySelector('aside')?.textContent).toContain('所选任务');
-  expect(container.querySelector('aside')?.textContent).toContain('真实历史');
-  expect(container.querySelector('aside')?.textContent).toContain(
-    '显示上次载入记录',
-  );
 });

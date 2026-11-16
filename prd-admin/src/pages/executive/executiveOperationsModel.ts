@@ -67,29 +67,3 @@ export function priceCoverage(models: ExecutiveModelStat[]) {
     tokens: sumOf(models, (m) => m.totalTokens)!,
   };
 }
-
-export const taskStatus = (value: string) =>
-  ({
-    pending: '待处理',
-    processing: '处理中',
-    failed: '失败',
-    completed: '已完成',
-    cancelled: '已取消',
-  })[value.toLowerCase()] ?? value;
-export function taskLane(
-  value: string,
-): 'pending' | 'processing' | 'failed' | 'ended' | 'other' {
-  switch (value.toLowerCase()) {
-    case 'pending':
-      return 'pending';
-    case 'processing':
-      return 'processing';
-    case 'failed':
-      return 'failed';
-    case 'completed':
-    case 'cancelled':
-      return 'ended';
-    default:
-      return 'other';
-  }
-}

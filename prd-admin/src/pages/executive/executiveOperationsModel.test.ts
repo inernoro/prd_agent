@@ -3,12 +3,7 @@ import type {
   ExecutiveAgentStat,
   ExecutiveModelStat,
 } from '@/services/contracts/executive';
-import {
-  agentPlot,
-  priceCoverage,
-  taskLane,
-  percent,
-} from './executiveOperationsModel';
+import { agentPlot, priceCoverage, percent } from './executiveOperationsModel';
 
 it('模型响应缺失不绘成零，短窗口小样本仍能比较', () => {
   const agent = (
@@ -65,12 +60,6 @@ it('费用只汇总已配置价格，零价可估算，覆盖率以调用次数�
   expect(result.missingCalls).toBe(100);
   expect(priceCoverage([data[0]]).cost).toBeUndefined();
   expect(priceCoverage([]).coverage).toBeUndefined();
-});
-it('取消归入已结束但未知状态不当作完成', () => {
-  expect(taskLane('Cancelled')).toBe('ended');
-  expect(taskLane('COMPLETED')).toBe('ended');
-  expect(taskLane('Processing')).toBe('processing');
-  expect(taskLane('suspended')).toBe('other');
 });
 it('真实零和很小的非零占比分开，零分母不显示伪造百分比', () => {
   expect(percent(0, 100)).toBe('0.0%');

@@ -29,6 +29,8 @@ import {
   ExecutiveIntegrationsWorkspace,
 } from './executive/ExecutiveOperationsWorkspace';
 
+import './executive/executive-frame.css';
+
 const TABS = [
   {
     key: 'team',
