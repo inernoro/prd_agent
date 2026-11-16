@@ -378,6 +378,8 @@ export class StateService {
    *  at runtime for the "switch storage mode" flow in the Settings
    *  panel (P4 Part 18 D.3). */
   private backingStore: StateBackingStore;
+  isReportObjectStoreConfigured(): boolean { return this.reportObjects.isConfigured(); }
+
   /**
    * 验收报告正文的持久层（2026-09-10）。元数据在这个 state 里（跟着 backingStore
    * 进 Mongo），正文进对象存储——两半必须同一个持久等级，否则就是那批点不开的
@@ -1327,6 +1329,28 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   }
 
 
+
+  /** 验收切片在 flush 成功前不对读取发布，失败不留下虚假领取状态。 */
+  async persistAcceptanceState(
+    templates: import('../acceptance-types.js').AcceptanceTemplate[],
+    tasks: import('../acceptance-types.js').StoredAcceptanceTask[],
+  ): Promise<void> {
+    const previousTemplates = this.state.acceptanceTemplates;
+    const previousTasks = this.state.acceptanceTasks;
+    // backingStore.save 可以排队，故必须等待 flush；不能用 save 的返回值冒充落库。
+    this.state.acceptanceTemplates = templates;
+    this.state.acceptanceTasks = tasks;
+    try {
+      this.save([{ kind: 'global' }]);
+      await this.flush();
+    } catch (error) {
+      this.state.acceptanceTemplates = previousTemplates;
+      this.state.acceptanceTasks = previousTasks;
+      // 尝试撤回可能已入队的快照；失败仍向调用者报告，不返回租约票据。
+      try { this.save([{ kind: 'global' }]); await this.flush(); } catch { /* 原错误为权威结果 */ }
+      throw error;
+    }
+  }
 
   // ── Scheduled jobs ──
 

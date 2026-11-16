@@ -39,6 +39,8 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { buildZip } from '../utils/zip.js';
 import { buildPipelineSeries, buildPipelineOverview } from '../services/acceptance-pipeline.js';
 import { buildReportsOverview, effectiveVerdict } from '../services/acceptance-overview.js';
+import { AcceptanceTaskService } from '../services/acceptance-tasks.js';
+import { assertProjectAccess } from './projects.js';
 
 /**
  * Project-scoped agent key (cdsp_) stamped on the request by the auth gate.
@@ -79,6 +81,25 @@ export interface ReportsRouterDeps {
   stateService: StateService;
   /** E4 验收回写 PR：可选 GitHub App 客户端（未配置时回写端点返回 503）。 */
   githubApp?: GitHubAppClient;
+}
+
+function boundTaskReport(stateService: StateService, reportId: string): boolean {
+  return (stateService.getState().acceptanceTasks ?? []).some((task) => task.report?.id === reportId);
+}
+
+function taskOwnedReport(stateService: StateService, sourceId?: string | null): boolean {
+  return Boolean(sourceId && (stateService.getState().acceptanceTasks ?? []).some((task) => task.id === sourceId));
+}
+
+// Only structured task identities are serialized. Ordinary historical reports
+// keep their existing creation semantics; a new acceptance run always has a new id.
+const taskReportWrites = new Map<string, Promise<unknown>>();
+async function serializeTaskReport<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = taskReportWrites.get(taskId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(operation);
+  taskReportWrites.set(taskId, next);
+  try { return await next; }
+  finally { if (taskReportWrites.get(taskId) === next) taskReportWrites.delete(taskId); }
 }
 
 /** 验收结论 → GitHub check-run conclusion。 */
@@ -220,6 +241,7 @@ interface ParsedUpload {
   branch?: string;
   prNumber?: string;
   deployMode?: string;
+  sourceId?: string;
 }
 
 const VERDICTS = ['pass', 'conditional', 'fail'] as const;
@@ -316,6 +338,8 @@ function parseMultipart(buf: Buffer, contentType: string): ParsedUpload {
       out.prNumber = value;
     } else if (fieldName === 'deployMode') {
       out.deployMode = value;
+    } else if (fieldName === 'sourceId') {
+      out.sourceId = value;
     } else if (fieldName === 'content' && out.content === undefined) {
       out.content = value;
     }
@@ -475,6 +499,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     let rawPrNumber: unknown;
     let rawDeployMode: unknown;
     let rawClassification: unknown;
+    let rawSourceId: unknown;
 
     if (contentType.includes('multipart/form-data')) {
       const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
@@ -494,6 +519,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       rawBranch = parsed.branch;
       rawPrNumber = parsed.prNumber;
       rawDeployMode = parsed.deployMode;
+      rawSourceId = parsed.sourceId;
     } else if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
       const body = req.body as Record<string, unknown>;
       title = typeof body.title === 'string' ? body.title : undefined;
@@ -511,6 +537,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       rawPrNumber = body.prNumber;
       rawDeployMode = body.deployMode;
       rawClassification = body.classification;
+      rawSourceId = body.sourceId;
     } else if (typeof req.body === 'string') {
       content = req.body;
     }
@@ -544,6 +571,12 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       // 项目级 key 一律把报告归到自己的项目：杜绝建出本 key 之后列不出来的全局/孤儿
       // 报告，也不许挂到别的项目（PR #865 Bugbot「orphan creates」+「read global」）。
       resolvedProjectId = key.projectId;
+    }
+    const structuredTask = (stateService.getState().acceptanceTasks ?? []).find((task) => task.id === normShort(rawSourceId, 120));
+    if (structuredTask && !stateService.isReportObjectStoreConfigured()) {
+      const denied = assertProjectAccess(req as Request & Parameters<typeof assertProjectAccess>[0], structuredTask.projectId);
+      if (denied) return res.status(denied.status).json(denied.body);
+      return res.status(503).json({ error: 'report_storage_unavailable', message: '任务报告未归档：请先恢复对象存储，再重试；不会回退到本地报告' });
     }
     // 关联分支必须属于报告所属项目，避免跨项目挂分支（PR #865 Bugbot「branch ignores
     // scope」）。全局报告(null projectId，仅 owner 可建)可挂任意已存在分支。
@@ -593,6 +626,24 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
 
     const verdict = normVerdict(rawVerdict);
     const tier = normShort(rawTier, 80);
+    const sourceId = normShort(rawSourceId, 120);
+    const sourceTask = (stateService.getState().acceptanceTasks ?? []).find((task) => task.id === sourceId);
+    if (sourceTask) {
+      const denied = assertProjectAccess(req as Request & Parameters<typeof assertProjectAccess>[0], sourceTask.projectId);
+      if (denied) return res.status(denied.status).json(denied.body);
+      if (sourceTask.projectId !== resolvedProjectId) {
+        return res.status(403).json({ error: 'project_mismatch', message: '任务与报告必须属于同一项目' });
+      }
+      if (sourceTask.status !== 'completed') {
+        return res.status(409).json({ error: 'task_not_completed', message: '请先结束本轮执行，再归档报告' });
+      }
+      const canonical = new AcceptanceTaskService(stateService).reportSource(sourceTask.id);
+      const counts = normDefectCounts(rawDefectCounts);
+      if (format !== canonical.format || cleanTitle !== canonical.title || content !== canonical.content
+        || verdict !== canonical.verdict || counts?.p0 !== canonical.defectCounts.p0 || counts?.p1 !== canonical.defectCounts.p1) {
+        return res.status(422).json({ error: 'task_report_mismatch', message: '报告与本轮结构化结果不一致，请重新生成报告后归档' });
+      }
+    }
     const templateGate = validateAcceptanceHtmlTemplate({
       title: cleanTitle,
       format,
@@ -617,26 +668,50 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
         return res.status(400).json({ error: '报告运行标识不存在或不属于当前项目' });
       }
     }
-    const meta = await stateService.createAcceptanceReportAsync({
-      scheduledJobRunId,
-      reportType: 'acceptance',
-      classification,
-      title: cleanTitle,
-      format,
-      content: normalizedContent,
-      projectId: resolvedProjectId,
-      branchId: resolvedBranchId,
-      folderId: resolvedFolderId,
-      verdict,
-      tier,
-      defectCounts: normDefectCounts(rawDefectCounts),
-      commitSha: resolvedCommitSha,
-      branch: resolvedBranch,
-      prNumber: normPrNumber(rawPrNumber),
-      deployMode: resolvedDeployMode,
-      createdBy: resolveActorFromRequest(req),
-    });
-    return res.status(201).json({ report: meta });
+    const createReport = async () => {
+      if (sourceTask) {
+        const existing = stateService.listAcceptanceReports(resolvedProjectId).find((report) => report.sourceId === sourceId);
+        if (existing) {
+          const storedContent = await stateService.readAcceptanceReportContentAsync(existing.id);
+          if (existing.format !== format || storedContent !== normalizedContent || existing.title !== cleanTitle
+            || existing.verdict !== verdict) {
+            throw new Error('已有任务报告与本轮内容或持久化存储不一致，请排查归档链路');
+          }
+          if (existing.storage !== 'object') {
+            // 未绑定的旧规范草稿在依赖恢复后迁入对象存储，保持同一身份。
+            const recovered = await stateService.updateAcceptanceReportAsync(existing.id, { content: normalizedContent });
+            if (!recovered || recovered.storage !== 'object') throw new Error('任务报告仍未进入对象存储，请恢复存储后重试');
+            return { meta: recovered, reused: true };
+          }
+          return { meta: existing, reused: true };
+        }
+      }
+      const meta = await stateService.createAcceptanceReportAsync({
+        scheduledJobRunId,
+        reportType: 'acceptance',
+        classification,
+        title: cleanTitle,
+        format,
+        content: normalizedContent,
+        projectId: resolvedProjectId,
+        branchId: resolvedBranchId,
+        folderId: resolvedFolderId,
+        verdict,
+        tier,
+        defectCounts: normDefectCounts(rawDefectCounts),
+        commitSha: resolvedCommitSha,
+        branch: resolvedBranch,
+        prNumber: normPrNumber(rawPrNumber),
+        deployMode: resolvedDeployMode,
+        sourceId,
+        createdBy: resolveActorFromRequest(req),
+      });
+      return { meta, reused: false };
+    };
+    const { meta, reused } = sourceTask
+      ? await serializeTaskReport(sourceTask.id, createReport)
+      : await createReport();
+    return res.status(reused ? 200 : 201).json({ report: meta });
     } catch (err) {
       return res.status(500).json({ error: 'internal', message: (err as Error).message });
     }
@@ -1001,6 +1076,9 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     const hasMeta = Object.keys(metaUpdates).length > 0;
     // folderId: 字符串=移入该文件夹；null / 'none' / '' = 移出文件夹；缺省=不改动。
     const hasFolder = Object.prototype.hasOwnProperty.call(body, 'folderId');
+    if ((boundTaskReport(stateService, existing.id) || taskOwnedReport(stateService, existing.sourceId)) && (title !== undefined || content !== undefined || hasFormat || hasMeta)) {
+      return res.status(409).json({ error: 'immutable_task_report', message: '已绑定的任务报告不可修改，请创建新一轮验收保留历史' });
+    }
     if (title === undefined && content === undefined && !hasFormat && !hasFolder && !hasMeta) {
       return res.status(400).json({ error: 'nothing_to_update', message: '没有可更新的字段' });
     }
@@ -1072,6 +1150,9 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
     const mismatch = reportAccessDenied(req, meta.projectId);
     if (mismatch) return res.status(mismatch.status).json(mismatch.body);
+    if (boundTaskReport(stateService, meta.id)) {
+      return res.status(409).json({ error: 'immutable_task_report', message: '已绑定的任务报告不可删除，历史验收结果必须保留' });
+    }
     const removed = stateService.deleteAcceptanceReport(req.params.id);
     if (!removed) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
     return res.json({ success: true });

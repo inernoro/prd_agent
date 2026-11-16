@@ -36,6 +36,7 @@ import {
   disableReportShare,
   enableReportShare,
   fetchReportRaw,
+  getReport,
   listKnowledgeBaseConnections,
   listReportFolders,
   pushReportToPr,
@@ -58,6 +59,9 @@ import { useTheme } from '@/lib/theme';
 import { buildMapReportImportUrl } from '@/lib/knowledge-base-sync';
 import { ReportsOverviewPanel } from '@/pages/reports/ReportsOverview';
 import { PipelinePanel } from '@/pages/reports/PipelinePanel';
+import { acceptanceView } from '@/lib/acceptance-api';
+import type { AcceptanceView } from '@/lib/acceptance-api';
+import { AcceptanceNavigation, AcceptanceWorkspace } from '@/pages/reports/AcceptanceWorkspace';
 
 interface ProjectLite {
   id: string;
@@ -160,6 +164,7 @@ export function ReportsPage(): JSX.Element {
   // 直达深链：?report=<id> 自动打开该报告；?folder=<id> 自动激活该文件夹。
   const reportParam = searchParams.get('report') || '';
   const folderParam = searchParams.get('folder') || '';
+  const centerView = acceptanceView(searchParams.get('view'), reportParam);
 
   const [state, setState] = useState<ListState>({ status: 'loading' });
   const [projects, setProjects] = useState<ProjectLite[]>([]);
@@ -310,6 +315,23 @@ export function ReportsPage(): JSX.Element {
       if (r) setSelected((prev) => (prev?.id === r.id ? prev : r));
     }
   }, [state, folders, folderParam, reportParam]);
+
+  // A newly archived report need not exist in the already loaded list. Deep links read the actual report directly.
+  useEffect(() => {
+    if (!reportParam) return;
+    let cancelled = false;
+    getReport(reportParam).then((report) => {
+      if (cancelled) return;
+      if (projectId && report.projectId !== projectId) {
+        setToast('报告不属于当前项目，请使用报告所属项目的直达链接。');
+        return;
+      }
+      setSelected(report);
+      setState((current) => ({ status: 'ok', reports: current.status === 'ok'
+        ? [report, ...current.reports.filter((value) => value.id !== report.id)] : [report] }));
+    }).catch(() => { if (!cancelled) setToast('报告未能打开，请刷新后重试；若仍失败请检查报告是否已成功归档。'); });
+    return () => { cancelled = true; };
+  }, [reportParam, projectId]);
 
   // 项目列表用于关联下拉 + 当前项目名展示（best-effort，失败不阻断）。
   useEffect(() => {
@@ -576,6 +598,21 @@ export function ReportsPage(): JSX.Element {
     }
   }, []);
 
+  const changeCenterView = (nextView: AcceptanceView): void => {
+    const next = new URLSearchParams(searchParams);
+    next.set('view', nextView);
+    next.delete('report'); next.delete('task'); next.delete('case');
+    setSelected(null);
+    setSearchParams(next);
+  };
+
+  const changeAcceptanceProject = (id: string): void => {
+    const next = new URLSearchParams(searchParams);
+    next.set('project', id);
+    next.delete('task'); next.delete('case'); next.delete('report');
+    setSearchParams(next);
+  };
+
   return (
     <AppShell
       active="reports"
@@ -584,12 +621,12 @@ export function ReportsPage(): JSX.Element {
           left={<Crumb items={[
             { label: 'CDS', href: '/project-list' },
             ...(projectId ? [{ label: projectName || projectId, href: `/branches/${encodeURIComponent(projectId)}` }] : []),
-            { label: '验收报告' },
+            { label: '验收中心' },
           ]} />}
           right={(
             <>
               <PaletteHint />
-              {!selected ? (
+              {centerView === 'reports' && !selected ? (
                 <div className="hidden items-center gap-0.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-0.5 md:inline-flex" role="group" aria-label="结论时间窗">
                   {OVERVIEW_WINDOWS.map((d) => (
                     <button
@@ -604,24 +641,25 @@ export function ReportsPage(): JSX.Element {
                   ))}
                 </div>
               ) : null}
-              <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw />刷新</Button>
-              <Button size="sm" onClick={() => setCreateOpen(true)}><Plus />新建报告</Button>
+              {centerView === 'reports' ? <><Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw />刷新</Button><Button size="sm" onClick={() => setCreateOpen(true)}><Plus />新建报告</Button></> : null}
             </>
           )}
         />
       )}
     >
-      <Workspace fluid className={selected ? 'cds-workspace--fill' : undefined}>
+      <Workspace fluid className={selected || centerView !== 'reports' ? 'cds-workspace--fill' : undefined}>
         <div className="flex h-full min-h-0 flex-col gap-3">
+          <AcceptanceNavigation view={centerView} onChange={changeCenterView} />
+          {centerView !== 'reports' ? <div className="min-h-0 overflow-y-auto lg:flex-1"><AcceptanceWorkspace key={projectId} projectId={projectId} projects={projects} view={centerView} onProjectChange={changeAcceptanceProject} /></div> : null}
           {toast ? (
             <div className="shrink-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">{toast}</div>
           ) : null}
 
-          {state.status === 'loading' ? <LoadingBlock label="正在加载验收报告" /> : null}
-          {state.status === 'error' ? <ErrorBlock message={state.message} transient={state.transient} /> : null}
+          {centerView === 'reports' && state.status === 'loading' ? <LoadingBlock label="正在加载验收报告" /> : null}
+          {centerView === 'reports' && state.status === 'error' ? <ErrorBlock message={state.message} transient={state.transient} /> : null}
 
-          {state.status === 'ok' && !selected && <div className="shrink-0 space-y-2"><div className="flex flex-wrap items-center gap-3"><span className="text-sm">交叉分类 · 命中 {searchedReports.length} 份报告</span><NotificationTemplateCatalog />{monitorTarget && <span className="text-xs text-muted-foreground">当前监控目标的事件报告</span>}</div><ClassificationFilters value={classificationFilters} onChange={setClassificationFilters} /></div>}
-          {state.status === 'ok' && !selected ? (
+          {centerView === 'reports' && state.status === 'ok' && !selected && <div className="shrink-0 space-y-2"><div className="flex flex-wrap items-center gap-3"><span className="text-sm">交叉分类 · 命中 {searchedReports.length} 份报告</span><NotificationTemplateCatalog />{monitorTarget && <span className="text-xs text-muted-foreground">当前监控目标的事件报告</span>}</div><ClassificationFilters value={classificationFilters} onChange={setClassificationFilters} /></div>}
+          {centerView === 'reports' && state.status === 'ok' && !selected ? (
             <ReportsHome
               classificationActive={Boolean(monitorTarget || classificationFilters.categories.length || classificationFilters.systems.length || classificationFilters.environments.length)}
               overviewState={overviewState}
@@ -659,33 +697,11 @@ export function ReportsPage(): JSX.Element {
             />
           ) : null}
 
-          {state.status === 'ok' && selected ? (
+          {centerView === 'reports' && state.status === 'ok' && selected ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
                 {visibleReports.length === 0 ? (
-                  <EmptyReportsState
-                    onCreate={() => setCreateOpen(true)}
-                    filtered={allReports.length > 0}
-                    filterMenu={(
-                      <div className="flex items-center gap-1">
-                        {!projectId ? (
-                          <ProjectFilterMenu
-                            projects={projects}
-                            counts={projectCounts}
-                            active={activeProjectFilter}
-                            onSelect={handleProjectFilterChange}
-                          />
-                        ) : null}
-                        <ReportFilterMenu
-                          folders={scopedFolders}
-                          counts={folderCounts}
-                          active={activeFolder}
-                          onSelect={setActiveFolder}
-                          onRequestCreate={requestCreateFolder}
-                        />
-                      </div>
-                    )}
-                  />
+                  <ReportViewer report={selected} onBack={() => setSelected(null)} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} />
                 ) : (
                   <>
                     <ReportList
