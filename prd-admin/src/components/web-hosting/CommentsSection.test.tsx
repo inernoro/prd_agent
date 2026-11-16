@@ -65,6 +65,20 @@ describe('annotation entry availability', () => {
     expect(container.querySelectorAll('.review-thread')).toHaveLength(2);
     expect(container.querySelector('[aria-label="讨论状态"] [aria-selected="true"]')?.textContent).toContain('全部');
   });
+  it.each([false, true])('版本信息失败仍显示已有意见和计数，且不开放无法归属的写入，loading=%s', async loading => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: true, comments: [
+      { id: 'existing', siteId: 'site', content: '版本服务失败仍能阅读的意见', contentVersion: 'saved', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' },
+    ] } });
+    const count = vi.fn();
+    const review = { loading, error: '无法加载版本，请重试', selected: undefined, versions: [] } as unknown as HostedReview;
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root.render(<CommentsSection mode="share" token="share" review={review} onCountChange={count} annotations={annotations()} />));
+    expect(count).toHaveBeenLastCalledWith(1);
+    expect(container.querySelector('.review-thread')?.textContent).toContain('版本服务失败仍能阅读的意见');
+    expect(container.querySelector('textarea')).toBeNull();
+    expect(button('绑定页面元素 / 选中文字').disabled).toBe(true);
+  });
   it('合集批注和讨论按真实锚点分开，计数排除回复和其他版本', async () => {
     auth.isAuthenticated = true; auth.token = 'session';
     const anchor = { kind: 'text' as const, pagePath: '/', selector: 'p', tagName: 'p', text: '原文', elementText: '原文', prefix: '', suffix: '', contentVersion: 'current' };
