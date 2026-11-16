@@ -81,7 +81,17 @@ export function ExecutiveWorkScene({ revision = 0 }: { revision?: number }) {
   const [preview, setPreview] = useState<MobileAssetItem>();
   return (
     <div className="scene-work">
-      <div className="scene-owner ws-person"><PersonAvatar person={{displayName:user?.displayName || '我',avatarFileName:user?.avatarFileName,avatarUrl:user?.avatarUrl}} size={28}/><strong>我的工作对象 · {user?.displayName || '当前账号'}</strong></div>
+      <div className="scene-owner ws-person">
+        <PersonAvatar
+          person={{
+            displayName: user?.displayName || '我',
+            avatarFileName: user?.avatarFileName,
+            avatarUrl: user?.avatarUrl,
+          }}
+          size={28}
+        />
+        <strong>我的工作对象 · {user?.displayName || '当前账号'}</strong>
+      </div>
       {assetsAllowed && (
         <WorkspacePanel
           title="我的最近图片"
@@ -168,7 +178,12 @@ export function ExecutiveWorkScene({ revision = 0 }: { revision?: number }) {
                   <ArrowUpRight size={14} />
                 </header>
                 {entry.summary ? (
-                  <p>{stripMarkdown(entry.summary).replace(/(^|\s)#{1,6}\s+/g, '$1')}</p>
+                  <p>
+                    {stripMarkdown(entry.summary).replace(
+                      /(^|\s)#{1,6}\s+/g,
+                      '$1',
+                    )}
+                  </p>
                 ) : (
                   <p className="scene-doc-no-summary">打开阅读正文</p>
                 )}
@@ -220,7 +235,11 @@ export function ExecutiveWorkScene({ revision = 0 }: { revision?: number }) {
         onOpenChange={(open) => {
           if (!open) setPreview(undefined);
         }}
-        title={preview?.title || '图片预览'}
+        title={
+          <span className="scene-preview-title" title={preview?.title}>
+            {preview?.title || '图片预览'}
+          </span>
+        }
         maxWidth={1000}
         content={
           preview ? (

@@ -124,36 +124,37 @@ export function ExecutiveOverviewWorkspace({
               title="Agent 调用版图"
               hint="面积对应业务操作与模型调用记录合计；不同类型记录可能属于同一次工作"
             >
-              <div className="scene-treemap">
-                {callMapLayout(agents ?? [], (a) => a.calls).map(
-                  ({ item: agent, x, y, width, height }, index) => (
-                    <button
-                      key={agent.appKey}
-                      style={{
-                        left: `${x}%`,
-                        top: `${y}%`,
-                        width: `${width}%`,
-                        height: `${height}%`,
-                      }}
-                      data-tone={index % 3}
-                      title={`${agent.name} · ${compact(agent.calls)} 条调用记录`}
-                      onClick={() =>
-                        navigate(
-                          `/executive?tab=agents&agent=${encodeURIComponent(agent.appKey)}`,
-                        )
-                      }
-                    >
-                      <strong>{agent.name}</strong>
-                      <b>{compact(agent.calls)}</b>
-                      <small>
-                        API {compact(agent.apiCalls)} · LLM{' '}
-                        {compact(agent.llmCalls)}
-                      </small>
-                    </button>
-                  ),
-                )}
-              </div>
-              {!agents?.some((a) => a.calls > 0) && (
+              {agents?.some((a) => a.calls > 0) ? (
+                <div className="scene-treemap">
+                  {callMapLayout(agents ?? [], (a) => a.calls).map(
+                    ({ item: agent, x, y, width, height }, index) => (
+                      <button
+                        key={agent.appKey}
+                        style={{
+                          left: `${x}%`,
+                          top: `${y}%`,
+                          width: `${width}%`,
+                          height: `${height}%`,
+                        }}
+                        data-tone={index % 3}
+                        title={`${agent.name} · ${compact(agent.calls)} 条调用记录`}
+                        onClick={() =>
+                          navigate(
+                            `/executive?tab=agents&agent=${encodeURIComponent(agent.appKey)}`,
+                          )
+                        }
+                      >
+                        <strong>{agent.name}</strong>
+                        <b>{compact(agent.calls)}</b>
+                        <small>
+                          API {compact(agent.apiCalls)} · LLM{' '}
+                          {compact(agent.llmCalls)}
+                        </small>
+                      </button>
+                    ),
+                  )}
+                </div>
+              ) : (
                 <WorkspaceEmpty
                   title={agents ? '此窗口暂无调用记录' : '调用分布读取中'}
                 />
@@ -278,7 +279,10 @@ export function ExecutiveOverviewWorkspace({
               打开缺陷工作区
             </WorkspaceLink>
           </WorkspacePanel>
-          <p className="scene-owner">趋势记录消息与 Token；缺陷按全部历史计算。调用数量不代表成员工作质量。</p>
+          <p className="scene-owner">
+            趋势记录消息与
+            Token；缺陷按全部历史计算。调用数量不代表成员工作质量。
+          </p>
         </aside>
       </div>
     </div>

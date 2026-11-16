@@ -177,3 +177,19 @@ it('渠道启用不声称连接健康，选择任务后显示对应人员及错�
   expect(container.querySelector('aside')?.textContent).toContain('解析失败');
   expect(container.querySelectorAll('tbody .ws-avatar')).toHaveLength(2);
 });
+
+it('分布数据未到达时直接提示，不渲染空白面积画布', async () => {
+  await act(async () =>
+    root.render(
+      <MemoryRouter>
+        <ExecutiveOverviewWorkspace />
+      </MemoryRouter>,
+    ),
+  );
+  const toggle = [...container.querySelectorAll('button')].find(
+    (button) => button.textContent === '使用分布',
+  )!;
+  await act(async () => toggle.click());
+  expect(container.querySelector('.scene-treemap')).toBeNull();
+  expect(container.textContent).toContain('调用分布读取中');
+});
