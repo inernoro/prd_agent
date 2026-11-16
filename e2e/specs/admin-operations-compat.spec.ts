@@ -463,6 +463,11 @@ for (const width of [390, 1440])
       await page.getByRole("radio", { name: "知识库团队", exact: true }).click();
       await page.getByRole("textbox", { name: "月预算（美元）", exact: true }).fill("25");
       await assertScene("owner");
+      const advancedGap = await page.locator(".lg-qs-create-footer").evaluate(el => {
+        const summary = el.parentElement!.querySelector(".lg-explainer > summary")!;
+        return el.getBoundingClientRect().top - summary.getBoundingClientRect().bottom;
+      });
+      expect(advancedGap).toBeGreaterThanOrEqual(0);
       await page.getByRole("button", { name: "回上一步", exact: true }).click();
       await expect(page.getByText("team.knowledge::chat", { exact: true })).toBeVisible();
       await page.getByRole("button", { name: "下一步", exact: true }).click();

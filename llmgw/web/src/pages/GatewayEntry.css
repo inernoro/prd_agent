@@ -248,3 +248,5 @@ html[data-entry-arriving] .is-entry-workspace .lg-console-header.entry-shell-chr
 .gateway-flow-frame .lg-test-result { border-radius: 14px; background: #02050a60; backdrop-filter: blur(20px); }
 .gateway-flow-frame .lg-test-result.is-ok { background: color-mix(in srgb, var(--cinema-accent) 8%, transparent); border-color: var(--cinema-border); color: var(--cinema-accent); }
 .gateway-flow-frame .lg-test-result.is-ok a { color: var(--cinema-accent); }
+/* The action row follows the form so long team lists never hide advanced fields. */
+.gateway-flow-frame .lg-qs-create-footer { position: static; }

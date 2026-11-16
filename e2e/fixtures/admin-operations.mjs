@@ -169,7 +169,7 @@ export async function installOperationsFixtures(page, { quickstart = false } = {
       if (quickstart && api === "/auth/tenants")
         return reply({ success: true, data: [{ id: "t1", name: "验收租户名称用于验证完整组织布局", role: "owner", current: true }] });
       if (quickstart && api === "/organization")
-        return reply({ success: true, data: { tenant: { id: "t1", name: "验收租户" }, teams: [{ id: "fixture-team", name: "知识库团队", status: "active" }], members: [] } });
+        return reply({ success: true, data: { tenant: { id: "t1", name: "验收租户" }, teams: [{ id: "fixture-team", name: "知识库团队", status: "active" }, { id: "fixture-team-2", name: "应用开发团队", status: "active" }, { id: "fixture-team-3", name: "模型运营团队", status: "active" }], members: [] } });
       if (quickstart && api === "/app-callers" && req.method() === "POST")
         return reply({ success: true, data: { id: "fixture-caller", ...req.postDataJSON() } });
       if (quickstart && api === "/app-callers/fixture-caller" && req.method() === "PUT")
