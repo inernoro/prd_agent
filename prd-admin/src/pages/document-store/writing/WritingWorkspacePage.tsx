@@ -1,5 +1,4 @@
 import { WritingLogo } from './WritingLogo';
-import { WritingThreads } from './WritingThreads';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowUpRight, ChevronLeft, Check, ChevronRight, FileText, Moon, X, MoreHorizontal } from 'lucide-react';
@@ -231,7 +230,7 @@ function WritingAuthor({ storeId, entryId }: { storeId: string; entryId?: string
     primary = () => unresolved ? setStepOverride(2) : void perform('review');
     if (!unresolved && unseen) { primaryDisabled = true; reason = unseenDetails ? `还有 ${unseenParagraphs} 段正文、${unseenDetails} 项小节条件与细节未过目` : `还有 ${unseenParagraphs} 段正文未过目`; }
   } else if (!state.sources.length && !state.manualInput.trim()) { primaryDisabled = true; reason = '关联资料或输入内容后生成，也可以用空白模版开始'; }
-  return <div className="writing-author writing-root" data-writing-page="author"><WritingThreads />
+  return <div className="writing-author writing-root" data-writing-page="author">
     <header className="writing-mobile-header"><Link to={writingKnowledgeHref(storeId)} aria-label="返回知识库"><ChevronLeft size={20} /></Link><div><strong>{state.published ? '编辑文档' : '新建文档'}</strong><span>{busy ? '保存中…' : dirty ? '有未保存修改' : state.updatedAt ? `已保存 ${new Date(state.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : '尚未保存'}</span></div><WritingThemeButton /></header><div className="writing-mobile-step"><strong>第 {step + 1} / 4 步 · {STEPS[step]}</strong><div>{STEPS.map((label, i) => <button key={label} className={i === step ? 'on' : i < step ? 'done' : ''} aria-label={label} disabled={i > serverStep && i !== 3} onClick={() => setStepOverride(i)} />)}</div></div><header className="writing-top">
       <div className="writing-breadcrumb"><Link to={writingKnowledgeHref(storeId)} aria-label="返回知识库"><WritingLogo /></Link><Link to="/document-store">团队知识库</Link><span>/</span><Link to={writingKnowledgeHref(storeId)}>{context.store.name}</Link><span>/</span><span>{state.published ? '编辑文档' : '新建文档'}</span></div>
       <ol className="stp" aria-label="进度">{STEPS.map((label, i) => <li className={step === i ? 'cur' : i < step ? 'done' : ''} key={label}>{i > 0 && <span className="sep" />}<button disabled={i > serverStep && i !== 3} onClick={() => setStepOverride(i)} aria-current={step === i ? 'step' : undefined}><span className="n">{i < step ? <Check size={10} /> : i + 1}</span>{label}</button></li>)}</ol>

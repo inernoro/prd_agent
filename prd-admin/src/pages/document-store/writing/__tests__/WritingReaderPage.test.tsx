@@ -87,17 +87,20 @@ describe('教学转换必须保留已发布的执行约束', () => {
     expect(container.querySelector('.writing-tutorial-steps')?.textContent).toContain(condition);
   });
 
-  it('图文教学刷新后恢复当前章节及其执行条件和完成记录', async () => {
+  it('章节导读刷新后恢复当前章节与条件，描述性要点不冒充操作或完成记录', async () => {
     await mount();
     await click(container.querySelectorAll<HTMLButtonElement>('.writing-chapter-list .writing-chapter')[1]);
-    await click(container.querySelector<HTMLButtonElement>('.writing-done-step')!);
     expect(container.querySelector('.writing-tutorial-title')?.textContent).toBe('主管签收');
-    expect(container.querySelector('.writing-done-step')?.getAttribute('aria-checked')).toBe('true');
+    expect(container.querySelector('.writing-done-step')).toBeNull();
+    expect(container.querySelector('.writing-step-heading')?.textContent).toContain('本章要点');
+    expect(container.querySelector('.writing-step-heading')?.textContent).not.toContain('已完成');
+    expect(container.querySelector('.writing-chapter-list')?.textContent).toContain('条要点');
+    expect(container.querySelector('.writing-tutorial-body')?.textContent).not.toContain('操作步骤');
     await act(async () => root.unmount()); container.remove();
     await mount();
     expect(container.querySelector('.writing-tutorial-title')?.textContent).toBe('主管签收');
     expect(container.querySelector('.writing-tutorial-steps')?.textContent).toContain('接手人核验完成后，主管才能签收。');
-    expect(container.querySelector('.writing-done-step')?.getAttribute('aria-checked')).toBe('true');
+    expect(container.querySelector('.writing-done-step')).toBeNull();
   });
 
   it('未关联视频的图文教学不显示不可用播放器控件、零秒字幕或虚假观看状态', async () => {
@@ -242,6 +245,9 @@ describe('播放器状态必须与当前学习步骤一致', () => {
   });
   it('损坏但仍为合法JSON的完成记录不会让教学页崩溃', async () => {
     localStorage.setItem('map-learning:entry:v1', '{}');
+    const data = fixture();
+    data.publication.chapters = [{ id: 'authored', title: '已编排的操作', start: 0, steps: data.publication.sections.flatMap(section => section.paragraphs.map(p => ({ id: p.id, text: p.text, condition: section.condition ?? '', at: 0 }))) }];
+    api.read.mockResolvedValue(ok(data));
     await mount();
     expect(container.querySelector('.writing-step-heading')?.textContent).toContain('已完成 0 / 3');
   });
