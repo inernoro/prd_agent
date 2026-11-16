@@ -17,7 +17,43 @@ test.beforeEach(async ({ browser, page }, testInfo) => {
   });
 });
 
+test('普通项目成员不能通过环境接入读取系统服务器列表',async({page})=>{
+  await installOperationsFixtures(page);
+  await page.route('**/api/auth/status',route=>route.fulfill({json:{authenticated:true,enabled:true,
+    user:{name:'项目成员',isSystemOwner:false},approvalCapabilities:{accessRequests:false,operator:false}}}));
+  const systemReads:string[]=[];
+  page.on('request',request=>{if(new URL(request.url()).pathname==='/api/cds-system/remote-hosts')systemReads.push(request.url());});
+  await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
+  await expect(page.getByRole('heading',{name:'此页面仅系统所有者可用',exact:true})).toBeVisible();
+  expect(systemReads).toEqual([]);
+});
+
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+  test(`${viewport.width} 所有者可为未绑定主机的项目选择既有服务器，选择本身不创建环境`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    await page.route('**/api/auth/status', route => route.fulfill({json:{authenticated:true,enabled:true,
+      user:{name:'接入管理员',isSystemOwner:true},approvalCapabilities:{accessRequests:false,operator:false}}}));
+    let hostReads=0, targetWrites=0;
+    await page.route('**/api/cds-system/remote-hosts', route => {
+      hostReads++;return route.fulfill({json:{hosts:[{id:'system-only-host',name:'已有隔离服务器',host:'127.0.0.1',
+        sshPort:2222,sshUser:'fixture',sshPrivateKeyFingerprint:'fixture-fingerprint',isEnabled:true}]}});
+    });
+    page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/releases/targets')targetWrites++;});
+    await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
+    if (viewport.width < 768) await page.getByRole('button',{name:'更多操作',exact:true}).click();
+    await expect(page.getByRole('button',{name:'新建环境',exact:true})).toBeEnabled();
+    expect(hostReads).toBe(0);
+    await page.getByRole('button',{name:'新建环境',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'添加环境',exact:true});
+    await dialog.getByRole('button',{name:/已有隔离服务器/}).click();
+    await dialog.getByRole('button',{name:/生产域名/}).click();
+    await expect(dialog).toContainText('fixture@127.0.0.1:2222');
+    expect(hostReads).toBe(1);expect(targetWrites).toBe(0);
+    await dialog.getByRole('button',{name:'取消',exact:true}).click();
+    await expect(dialog).toBeHidden();expect(targetWrites).toBe(0);
+  });
+
   test(`${viewport.width} 运维授权关闭后同一请求不随心跳抢占，新请求和主动刷新仍可处理`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await installOperationsFixtures(page);

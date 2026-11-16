@@ -73,7 +73,7 @@ import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
 import { createReleaseGovernanceRouter } from './routes/release-governance.js';
 import { ReleaseGovernanceService } from './services/release-governance.js';
-import { ReleaseGovernanceGit, governanceGitRunner } from './services/release-governance-git.js';
+import { ReleaseGovernanceGit, governanceGitRunner, resolveReleaseProjectRepository } from './services/release-governance-git.js';
 import { releaseMergeBackReader } from './services/release-merge-back.js';
 import { ReleaseTargetHistoryStore } from './services/release-target-history.js';
 import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deploy-drain.js';
@@ -2053,20 +2053,14 @@ export function createServer(deps: ServerDeps): express.Express {
   // 生产发布侧的同款收割（阶段一 · 止血）：启动收一轮 + 每 5 分钟一轮，
   // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
   const releaseHistory = new ReleaseTargetHistoryStore({ storePath: path.join(deps.config.repoRoot, '.cds', 'release-target-history.json') });
+  const resolveReleaseRepository = (projectId: string) => resolveReleaseProjectRepository(deps.stateService, projectId, deps.config.repoRoot);
   const releaseGovernance = new ReleaseGovernanceService(deps.stateService,
-    new ReleaseGovernanceGit(projectId => {
-      const project = deps.stateService.getProject(projectId);
-      return project?.repoPath ? deps.stateService.getProjectRepoRoot(projectId, deps.config.repoRoot) : undefined;
-    }, projectId => deps.stateService.getProject(projectId)?.gitDefaultBranch || 'main', governanceGitRunner(deps.shell)),
+    new ReleaseGovernanceGit(resolveReleaseRepository, projectId => deps.stateService.getProject(projectId)?.gitDefaultBranch || 'main', governanceGitRunner(deps.shell)),
     (projectId, number) => releaseMergeBackReader(deps.stateService, githubAppClient, fetch, deps.serverEventLogStore)(projectId, number), undefined, releaseHistory);
   const releaseService = new ReleaseService(deps.stateService, {
     verifyProjectCI: (branch, sha, strategy) => verifyProjectReleaseCI(deps.stateService.getProject(branch.projectId), githubAppClient, branch, sha, strategy),
     governance: releaseGovernance,
-    resolveProjectRepository: (projectId) => {
-      const project = deps.stateService.getProject(projectId);
-      if (!project || (project.gitRepoUrl && !project.repoPath)) return undefined;
-      return deps.stateService.getProjectRepoRoot(projectId, deps.config.repoRoot);
-    },
+    resolveProjectRepository: resolveReleaseRepository,
   });
   const releaseReconciler: ReleaseRunReconciler = releaseService;
   startReleaseRunReaper({ service: releaseReconciler });

@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { ReleaseGovernanceGit, type GovernanceGitRunner } from '../../src/services/release-governance-git.js';
+import { ReleaseGovernanceGit, resolveReleaseProjectRepository, type GovernanceGitRunner } from '../../src/services/release-governance-git.js';
+import { StateService } from '../../src/services/state.js';
 
 describe('发布治理的真实隔离合并', () => {
   let root: string, repo: string, basis: string, reader: ReleaseGovernanceGit;
@@ -32,6 +33,20 @@ describe('发布治理的真实隔离合并', () => {
     reader = new ReleaseGovernanceGit(() => repo, () => 'main', native);
   });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  it('迁移的本地项目可核验真实回退仓库，未克隆的远端项目及不存在项目仍不可用',async()=>{
+    const state=new StateService(path.join(root,'state.json'),repo);state.load();
+    const now=new Date().toISOString();
+    state.addProject({id:'legacy-local',slug:'legacy-local',name:'旧本地项目',kind:'git',createdAt:now,updatedAt:now});
+    state.addProject({id:'uncloned',slug:'uncloned',name:'未克隆远端项目',kind:'git',gitRepoUrl:'https://example.invalid/not-cloned.git',createdAt:now,updatedAt:now});
+    const resolved=new ReleaseGovernanceGit(id=>resolveReleaseProjectRepository(state,id,repo),()=> 'main',native);
+    expect((await resolved.inspect('legacy-local',basis,basis))).toMatchObject({status:'clean',candidateSha:basis,mainSha:basis,includesBaseline:true});
+    expect(await resolved.resolveCommit('legacy-local',basis.slice(0,7))).toBe(basis);
+    for(const id of ['uncloned','missing']){
+      expect(resolveReleaseProjectRepository(state,id,repo)).toBeUndefined();
+      expect((await resolved.inspect(id,basis,basis)).status).toBe('unknown');
+    }
+    await state.flush();
+  });
   it('从真实仓库解析旧短提交，拒绝未知与非提交输入',async()=>{
     expect(await reader.resolveCommit('p',basis.slice(0,7))).toBe(basis);
     await expect(reader.resolveCommit('p','--help')).rejects.toThrow('有效提交');

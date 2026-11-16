@@ -4,6 +4,13 @@ import path from 'node:path';
 import type { IShellExecutor } from '../types.js';
 import type { ReleaseConflictCheck } from '../domain/release-governance.js';
 import { shellQuoteArg } from './secure-database-cli.js';
+import type { StateService } from './state.js';
+
+export function resolveReleaseProjectRepository(state: Pick<StateService, 'getProject' | 'getProjectRepoRoot'>, projectId: string, fallbackRoot: string): string | undefined {
+  const project = state.getProject(projectId);
+  if (!project || (project.gitRepoUrl && !project.repoPath)) return undefined;
+  return state.getProjectRepoRoot(projectId, fallbackRoot);
+}
 
 export const FULL_SHA = /^[a-f0-9]{40}$/i;
 export interface GovernanceGitResult { stdout: string; exitCode: number | null }

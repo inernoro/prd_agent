@@ -21,7 +21,7 @@ import { ReleaseCenterSkeleton } from '@/components/skeletons/WorkspaceSkeletons
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, RefreshCw, Rocket } from 'lucide-react';
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
 import { useNowTick } from '@/hooks/useNowTick';
@@ -130,6 +130,7 @@ function useMeasuredWide(threshold = 1264): [React.RefObject<HTMLDivElement>, bo
 }
 
 export function ReleaseCenterPage(): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialProject = initialReleaseCenterProject(
     searchParams,
@@ -182,9 +183,27 @@ export function ReleaseCenterPage(): JSX.Element {
   const [releaseIntent, setReleaseIntent] = useState<StartReleaseIntent | null>(null);
 
   const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [systemHosts, setSystemHosts] = useState<RemoteHostOption[]>([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode | undefined>(undefined);
   const [previewConfig, setPreviewConfig] = useState<PreviewUrlConfig>({});
+
+  useEffect(() => {
+    setSystemHosts([]);
+    if (!wizardOpen || !canManageConsole || !projectAvailable) return;
+    const controller = new AbortController();
+    // 首次接入项目尚无已绑定主机；所有者从既有系统主机选择，写入仍由服务端鉴权。
+    void apiRequest<{ hosts: Array<RemoteHostOption & { sshPrivateKeyFingerprint?: string }> }>(
+      '/api/cds-system/remote-hosts', { signal: controller.signal },
+    ).then(result => {
+      if (controller.signal.aborted) return;
+      if (!Array.isArray(result.hosts)) throw new Error('现有服务器列表尚未读取');
+      setSystemHosts(result.hosts.map(host => ({ ...host, fingerprint: host.fingerprint || host.sshPrivateKeyFingerprint || '' })));
+    }).catch(() => {
+      if (!controller.signal.aborted) setToast('现有服务器暂未读取，请关闭后重试；原有项目服务器仍可使用。');
+    });
+    return () => controller.abort();
+  }, [wizardOpen, canManageConsole, projectId, projectAvailable]);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!projectAvailable) { request.current?.abort(); return; }
@@ -283,7 +302,9 @@ export function ReleaseCenterPage(): JSX.Element {
   const rows = useMemo(() => center?.rows ?? [], [center]);
   const runs = useMemo(() => center?.runs ?? [], [center]);
   const commitMeta = useMemo(() => center?.commitMeta ?? {}, [center]);
-  const hosts = state.status === 'ok' ? state.hosts : [];
+  const hosts = useMemo(() => [...new Map([
+    ...(canManageConsole ? systemHosts : []), ...(state.status === 'ok' ? state.hosts : []),
+  ].map(host => [host.id, host])).values()], [canManageConsole, systemHosts, state]);
   const rail = center?.commitRail;
   const branchLabel = rail?.branch || 'main';
 
