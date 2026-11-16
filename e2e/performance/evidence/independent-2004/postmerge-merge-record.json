@@ -1,0 +1,28 @@
+{
+  "merged": true,
+  "sha": "890d9b0bc3d13c0a6c0ee34d740480b813029b4d",
+  "head": "7870004e5739b675dfe6655846ce939e0ecaef32",
+  "mergedAt": "2026-11-16T13:34:15Z",
+  "baseBeforeMerge": "2eb2995bb6171e4741ba180c85854ddf212883e9",
+  "postmergeRun": 43877037528,
+  "postmergeEvent": "push",
+  "postmergeProfile": "normal",
+  "postmergeStatus": "completed",
+  "originalCandidate": "c97ab1d2ca3147ae3e81d483a21fdb84b50f0d1e",
+  "originalBase": "49b8e320f8c194dd92490e4623635c05f463fcec",
+  "fullLoadCandidate": "3b246376362fb798139a0b0b24daff0e090ca7bb",
+  "fullLoadBase": "61e759ab0af4bbdd6bc342760192d0f9f4e4433b",
+  "ancestryChecked": true,
+  "postmergeConclusion": "failure",
+  "postmergeFailure": "真实页面知识库截图出现迟到教程遮罩，后续页面/匿名/重启未执行",
+  "observations": [
+    {
+      "at": "2026-11-16T13:34:15Z",
+      "state": "in_progress"
+    },
+    {
+      "at": "2026-11-16T14:02:24Z",
+      "state": "failure"
+    }
+  ]
+}

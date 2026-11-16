@@ -1,0 +1,15 @@
+{
+  "pr": 2029,
+  "head": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+  "base": "5ba0c3e3e3577286392bccf18f027b1d2ced42e0",
+  "workflow": 43888850649,
+  "state": "running",
+  "tests": 32,
+  "oldRegressionExit": 1,
+  "newRegressionExit": 0,
+  "applicationOfLocalPages": "890d9b0bc3d13c0a6c0ee34d740480b813029b4d",
+  "toolOfLocalPages": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+  "localPagePass": true,
+  "localImageP1": "4条同一个默认头像资源加载错误，保留不称无缺陷视觉验收",
+  "merged": false
+}
