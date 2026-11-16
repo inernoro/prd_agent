@@ -66,6 +66,11 @@ jobs:
           PLAYWRIGHT_MODULE: ${{ github.workspace }}/e2e/node_modules/@playwright/test/index.mjs
           CHECK_OUT: ${{ github.workspace }}/work/compat/log-result-height
         run: pnpm -C llmgw/web exec node scripts/check-log-result-height.mjs
+      - name: Verify provider maintenance workspace
+        env:
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/e2e/node_modules/@playwright/test/index.mjs
+          CHECK_OUT: ${{ github.workspace }}/work/compat/provider-workspace
+        run: pnpm -C llmgw/web exec node scripts/check-provider-workspace.mjs
       - name: Retain browser evidence
         if: always()
         uses: actions/upload-artifact@v4

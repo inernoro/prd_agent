@@ -16,7 +16,7 @@ import { GAP } from '@/lib/surface';
 type UpstreamView = 'provider' | 'exchange' | 'catalog' | 'imagegen';
 
 const VIEWS: Array<{ key: UpstreamView; label: string }> = [
-  { key: 'provider', label: 'Provider' },
+  { key: 'provider', label: '供应方' },
   { key: 'exchange', label: '转接上游' },
   { key: 'catalog', label: '模型名录' },
   { key: 'imagegen', label: '生图契约' },

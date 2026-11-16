@@ -1,3 +1,4 @@
+import './PlatformsPage.css';
 import { useToolbarPopover } from '@/lib/toolbarPopover';
 // Provider（模型供应方）：先完成单个 Provider 的可理解自助配置，再把批量维护收进高级区。
 // 密钥明文只随创建/轮换请求发送，永不回显；列表最多展示头尾打码的指纹（keyFingerprint），
@@ -14,7 +15,6 @@ import { ProviderCallStatus } from '@/components/ProviderCallStatus';
 import { ProviderModelsPanel, collectProviderModels, summarizeProviderModels } from '@/components/ProviderModelsPanel';
 import { Chip, SectionLoader, Button, ReadOnlyNotice, InlineAlert } from '@/components/ui';
 import { ProviderPresetPicker, TestResultBar, UpstreamModelPicker, keyPrefixWarning } from '@/components/ProviderSetup';
-import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { ImageGenContractsSection } from '@/components/ImageGenContractsSection';
 import { ModelCatalogSection } from '@/components/ModelCatalogSection';
 import { HelpPopover, PageBody, PageShell } from '@/components/PageShell';
@@ -102,9 +102,9 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   function renderOwnedModels() {
     if (!selectedProvider) return null;
     const p = selectedProvider;
-    return <CollectionDetailPane key={p.id} title={p.name} icon={<Server size={18}/>} identifier={modelsState === 'ready' ? summarizeProviderModels(ownedRows(p.id)) : modelsState === 'error' ? '模型信息加载失败' : '正在加载模型'} onClose={() => setExpandedModelsFor(null)} tabs={<><CollectionPaneTab active={providerTab === 'models'} onClick={() => setProviderTab('models')}>已接入模型</CollectionPaneTab><CollectionPaneTab active={providerTab === 'connection'} onClick={() => setProviderTab('connection')}>连接配置</CollectionPaneTab><CollectionPaneTab active={providerTab === 'activity'} onClick={() => setProviderTab('activity')}>调用记录</CollectionPaneTab></>}>
+    return <CollectionDetailPane closeLabel="返回上游清单" key={p.id} title={p.name} icon={<Server size={18}/>} onClose={() => setExpandedModelsFor(null)} tabs={<><CollectionPaneTab active={providerTab === 'models'} onClick={() => setProviderTab('models')}>已接入模型</CollectionPaneTab><CollectionPaneTab active={providerTab === 'connection'} onClick={() => setProviderTab('connection')}>连接配置</CollectionPaneTab><CollectionPaneTab active={providerTab === 'activity'} onClick={() => setProviderTab('activity')}>调用记录</CollectionPaneTab></>}>
       <div className={providerTab === 'models' ? 'lg-collection-provider-models' : 'lg-collection-hidden'}>{modelsState === 'error' ? <InlineAlert tone="error">模型加载失败，接入数量与关联状态未知。<Button size="sm" variant="ghost" onClick={() => void refreshOwnedModels()}>重新加载</Button></InlineAlert> : modelsState === 'loading' ? <SectionLoader /> : <ProviderModelsPanel rows={ownedRows(p.id)} onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude' ? () => void openDiscovery(p) : undefined} />}</div>
-      {providerTab === 'connection' ? <div className="lg-collection-key-facts"><h3>连接配置</h3><CollectionFacts items={[{label:'接口类型',value:platformTypeLabel(p.platformType)},{label:'API 地址',value:<code>{p.apiUrl || '未配置'}</code>},{label:'连接方式',value:<ProxyBadge proxy={p.proxy}/>},{label:'供应方标识',value:p.providerId || '未单独设置'},{label:'最大并发',value:p.maxConcurrency ?? '未配置'},{label:'配置来源',value:p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入'},{label:'密钥状态',value:<>{p.keyStatus === 'unreadable' ? '解不开' : p.hasKey ? '已配置' : '未配置'}{p.keyFingerprint ? <code>{p.keyFingerprint}</code> : null}</>},{label:'备注',value:p.remark || '无备注'},{label:'最近更新',value:formatPlatformTime(p.updatedAt)},{label:'导入时间',value:p.claimedAt || '未导入'}]}/>{canWrite && p.authority === 'llm_gateway' ? editId === p.id ? renderConnectionEditor(p) : <Button size="sm" disabled={busyId === p.id} onClick={() => beginEdit(p)}>编辑连接</Button> : null}{canWrite && p.authority === 'llm_gateway' ? <UpstreamNetworkTest kind="platform" id={p.id} revision={p.updatedAt} disabled={editId === p.id} /> : null}<Link className="lg-text-link" to={`/platforms/view?id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name)}`}>供应方详情</Link></div> : null}
+      {providerTab === 'connection' ? <div className="lg-collection-key-facts"><h3>连接配置</h3><CollectionFacts items={[{ label: '接口类型', value: platformTypeLabel(p.platformType)},{ label: 'API 地址', value: <code>{p.apiUrl || '未配置'}</code>},{ label: '连接方式', value: <ProxyBadge proxy={p.proxy}/>},{ label: '供应方标识', value: p.providerId || '未单独设置'},{ label: '最大并发', value: p.maxConcurrency ?? '未配置'},{ label: '配置来源', value: p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入'},{ label: '密钥状态', value: <>{p.keyStatus === 'unreadable' ? '无法读取' : p.hasKey ? '已配置' : '未配置'}{p.keyFingerprint ? <code>{p.keyFingerprint}</code> : null}</>},{ label: '备注', value: p.remark || '无备注'},{ label: '最近更新', value: formatPlatformTime(p.updatedAt)},{ label: '导入时间', value: p.claimedAt || '未导入'}]}/>{canWrite && p.authority === 'llm_gateway' ? editId === p.id ? renderConnectionEditor(p) : <Button size="sm" disabled={busyId === p.id} onClick={() => beginEdit(p)}>编辑连接</Button> : null}{canWrite && p.authority === 'llm_gateway' ? <UpstreamNetworkTest kind="platform" id={p.id} revision={p.updatedAt} disabled={editId === p.id} /> : null}<Link className="lg-text-link" to={`/platforms/view?id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name)}`}>供应方详情</Link></div> : null}
       {providerTab === 'activity' ? <div className="lg-collection-key-facts"><h3>调用记录<HelpPopover label="调用记录">查看这条供应方的真实请求、响应状态与最近调用。</HelpPopover></h3><Link className="lg-text-link" to={`/logs?platformId=${encodeURIComponent(p.id)}`}>查看全部请求记录</Link></div> : null}
     </CollectionDetailPane>;
   }
@@ -487,17 +487,14 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   return (
     <PageShell>
       {section === 'provider' ? (
-      <PageBody className="lg-collection-page">
+      <PageBody className="lg-collection-page lg-provider-page">
       <header className="lg-page-heading">
         <div style={{ maxWidth: 720 }}>
-          <h1>Provider（模型供应方）</h1>
-          <p>
-            此处使用供应方密钥，业务调用使用 <code>gwk_</code> 密钥。
-          </p>
+          <h1>上游管理</h1>
 
         </div>
-        {canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
-          {showCreate ? '收起配置' : '添加 Provider'}
+        {canWrite && !selectedProvider ? <Button variant="primary" size="sm" aria-expanded={showCreate} onClick={() => setShowCreate((value) => !value)}>
+          {showCreate ? '收起配置' : '添加上游'}
         </Button> : null}
       </header>
       {returnProblem ? <InlineAlert tone="error">{returnProblem}</InlineAlert> : null}
@@ -616,21 +613,19 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       ) : null}
 
       {providerItems.length === 0 ? (
-        <Empty text={canWrite ? '还没有 Provider。请填写上方 4 个必填项，保存后再去添加第一个模型。' : '当前租户还没有 Provider。请联系 Owner 或 Admin 添加。'} />
+        <Empty text={canWrite ? showCreate ? '还没有上游。填写上方连接配置，保存后即可接入模型。' : '还没有上游。点击“添加上游”配置供应方连接，保存后即可接入模型。' : '当前租户还没有 Provider。请联系 Owner 或 Admin 添加。'} />
       ) : (
       <div className="lg-collection-workspace">
       <div className="lg-config-table-shell lg-collection-list" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
         <CollectionView items={providerItems} placeholder="搜索供应方名称或接口" searchText={(item) => `${item.name} ${item.apiUrl || ''}`} filters={[{ value: 'enabled', label: '已启用', matches: (item) => item.enabled }, { value: 'disabled', label: '已停用', matches: (item) => !item.enabled }]}>
         {(pageProviders) => <table className="lg-data-table lg-collection-provider-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <colgroup><col style={{ width: '22%' }}/><col style={{ width: '24%' }}/><col style={{ width: '18%' }}/><col style={{ width: '21%' }}/><col style={{ width: '15%' }}/></colgroup>
+          <colgroup><col style={{ width: '29%' }}/><col style={{ width: '22%' }}/><col style={{ width: '13%' }}/><col style={{ width: '20%' }}/><col style={{ width: '16%' }}/></colgroup>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
             <tr>
-              {/* 主表只摆要拿来做决定的东西。接口类型、API 地址、并发都是选完平台就定下来的
-                  实现细节：用户读它们做不出任何决定，却占掉半张表的宽度。三项在「查看接口」
-                  预览里一个不少（minimal-user-input：有正确默认值的字段不摆在主路径上）。 */}
-              <th style={th}>平台</th>
+              {/* 清单优先定位供应方与维护任务；完整连接事实保留在同对象的连接配置标签。 */}
+              <th style={th}>供应方</th>
               <th style={th}>已接入模型</th>
-              <th style={th}>密钥 / 来源</th>
+              <th style={th}>连接配置</th>
               <th style={th}>最近真实调用</th>
               <th style={th}>操作</th>
             </tr>
@@ -641,47 +636,16 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
               // 密文在库但解不开（多半轮换过 ApiKeyCrypto:Secret）不能显示成「已配置」——
               // 那会让人以为这条上游能用，实际每次调用都会失败
               const key = p.keyStatus === 'unreadable'
-                ? { label: '解不开', color: 'var(--semantic-warning-text, #b45309)', bg: 'rgba(180,83,9,0.14)' }
+                ? { label: '无法读取', color: 'var(--semantic-warning-text, #b45309)', bg: 'rgba(180,83,9,0.14)' }
                 : { label: p.hasKey ? '已配置' : '未配置', color: p.hasKey ? 'var(--ok)' : 'var(--text-muted)', bg: p.hasKey ? 'var(--ok-bg)' : 'var(--bg-elevated)' };
               return (
                 // 一行可能渲染两个兄弟节点（数据行 + 展开的编辑行），列表里的 Fragment 必须带 key
                 <Fragment key={p.id}>
                 <tr className={`lg-collection-provider-row${expandedModelsFor === p.id ? ' lg-collection-selected-row' : ''}`}>
                   <td style={td}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
-                      <span style={{ fontWeight: 600 }}>{p.name}</span>
-                      <span style={HINT_TEXT}>管理：{p.enabled ? '已启用' : '已停用'}</span>
-                      <ProxyBadge proxy={p.proxy} />
-                      <EntityPreviewDrawer
-                        buttonLabel="查看接口"
-                        kicker="Provider 接口预览"
-                        title={p.name}
-                        summary="确认网关把请求发往哪里、用哪种协议、这条上游有没有密钥。预览不访问供应方。"
-                        status={[
-                          { label: p.enabled ? '已启用' : '已停用', tone: p.enabled ? 'good' : 'warning' },
-                          { label: p.hasKey ? '通讯密钥已配置' : '通讯密钥缺失', tone: p.hasKey ? 'good' : 'warning' },
-                        ]}
-                        sections={[
-                          {
-                            title: '连接方式',
-                            fields: [
-                              { label: '接口类型', value: platformTypeLabel(p.platformType) },
-                              { label: 'API 地址', value: <code>{p.apiUrl || '未配置'}</code>, hint: '这是供应方地址，不是业务应用调用 Gateway 的地址。' },
-                              { label: '供应方标识', value: p.providerId || '未单独设置' },
-                              { label: '最大并发', value: p.maxConcurrency ?? '未配置' },
-                            ],
-                          },
-                          {
-                            title: '平台归属',
-                            description: '配置来源决定这条 Provider 是否可在当前控制台直接维护。',
-                            fields: [
-                              { label: '配置来源', value: p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入' },
-                              { label: '备注', value: p.remark || '无备注' },
-                              { label: '最近更新', value: formatPlatformTime(p.updatedAt) },
-                            ],
-                          },
-                        ]}
-                      />
+                    <div className="lg-provider-identity">
+                      <div className="lg-provider-name-line"><button type="button" className="lg-provider-name" onClick={() => { setProviderTab('models'); setExpandedModelsFor(p.id); }}>{p.name}</button><span className={`lg-provider-management ${p.enabled ? '' : 'is-disabled'}`} aria-label={`管理状态：${p.enabled ? '已启用' : '已停用'}`}>{p.enabled ? '已启用' : '已停用'}</span></div>
+                      <span className="lg-provider-endpoint" title={p.apiUrl || '未配置 API 地址'}>{p.apiUrl || '未配置 API 地址'}</span>
                     </div>
                   </td>
                   <td style={td}>
@@ -697,13 +661,14 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                         color: ownedRows(p.id).some((x) => x.publicIds.length === 0) ? 'var(--warn)' : 'var(--accent)',
                       }}
                     >
-                      <span>{modelSummary}</span>
-                      <ChevronRight size={14} aria-hidden="true" />
+                      <span><strong>{modelsState === 'ready' ? `${ownedRows(p.id).length} 个模型` : modelsState === 'error' ? '模型信息加载失败' : '加载中…'}</strong><small>{modelsState === 'ready' ? ownedRows(p.id).length === 0 ? '尚未接入' : ownedRows(p.id).some(row => row.publicIds.length === 0) ? `${ownedRows(p.id).filter(row => row.publicIds.length === 0).length} 个未关联` : '全部已关联' : '关联状态未知'}</small></span>
+                      <ChevronRight size={16} aria-hidden="true" />
                     </button>
                   </td>
-                  <td style={td}><div className="lg-collection-provider-key"><Chip label={key.label} color={key.color} bg={key.bg}/>{p.keyFingerprint ? <code title="当前密钥的脱敏标识，仅配置管理员可见">{p.keyFingerprint}</code> : null}<span style={HINT_TEXT} title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined}>{p.authority === 'llm_gateway' ? '平台配置' : '待导入'}</span></div></td>
+                  <td style={td}><div className="lg-collection-provider-key"><Chip label={key.label} color={key.color} bg={key.bg}/><span style={HINT_TEXT} title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined}>{p.authority === 'llm_gateway' ? '平台配置' : '待导入'}</span></div></td>
                   <td style={td}><ProviderCallStatus platform={p} /></td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                    <div className="lg-provider-row-actions"><Button size="sm" variant="ghost" onClick={() => { setProviderTab('connection'); setExpandedModelsFor(p.id); }}>连接配置</Button>
                     {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
 
 
@@ -739,7 +704,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                             ] : []),
                           ]}
                         />
-                    </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
+                    </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}</div>
                   </td>
                 </tr>
                 {keyEditId === p.id && canWrite ? <tr><td colSpan={5} style={td}><div className="lg-collection-provider-edit">

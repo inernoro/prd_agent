@@ -3410,8 +3410,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("target?.isConnected) target.focus()", preview);
         Assert.Contains("密钥明文不会在预览中显示", preview);
 
-        Assert.Contains("Provider 接口预览", platforms);
-        Assert.Contains("查看接口", platforms);
+        // 上游清单统一进入同对象的连接配置，避免与只读接口预览重复。
+        // 完整连接事实和权限仍须保留，不能靠删除安全信息来减少包装。
+        Assert.Contains("连接配置", platforms);
+        Assert.Contains("<ProxyBadge proxy={p.proxy}/>", platforms);
+        Assert.Contains("p.keyFingerprint", platforms);
+        Assert.Contains("canWrite && p.authority === 'llm_gateway'", platforms);
+        Assert.DoesNotContain("Provider 接口预览", platforms);
+        Assert.DoesNotContain("查看接口", platforms);
         Assert.Contains("查看 Provider", models);
         // appCaller 页那个「预览模型池」抽屉随模型池路由一起退役了（2026-09-16）。
         // 它展示的池健康、成员顺位、选择策略都已不再决定这个 appCaller 走哪个上游，

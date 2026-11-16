@@ -82,7 +82,7 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
     // 管理启用不代表实时健康；历史依据和下一步无需悬停。
     assert.ok(firstRow.querySelector('time'), '历史调用必须在页面直接显示时间依据');
     assert.equal(document.querySelector('.lg-collection-list [aria-label="清单数量"]').textContent, '共 12 项');
-    assert.ok(firstRow.textContent.includes('管理：已启用'));
+    assert.equal(firstRow.querySelector('[aria-label="管理状态：已启用"]').textContent, '已启用');
     assert.ok(firstRow.textContent.includes('余额或额度不足'));
     assert.ok(firstRow.querySelector('time'));
     assert.ok(firstRow.textContent.includes('配置更新前的记录'));

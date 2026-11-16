@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { ArrowLeft, X } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { collectionPage } from '@/lib/collectionPaging';
 import './CollectionView.css';
@@ -73,7 +73,7 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
 }
 
 /** 桌面并列、窄屏独立详情态。保持真实编辑表单内联在页面，不复制写入逻辑。 */
-export function CollectionDetailPane({ title, identifier, onClose, children, tabs, icon, footer }: { title: ReactNode; identifier?: string; onClose: () => void; children: ReactNode; tabs?: ReactNode; icon?: ReactNode; footer?: ReactNode }) {
+export function CollectionDetailPane({ title, identifier, onClose, children, tabs, icon, footer, closeLabel }: { closeLabel?: string; title: ReactNode; identifier?: string; onClose: () => void; children: ReactNode; tabs?: ReactNode; icon?: ReactNode; footer?: ReactNode }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   // Capture the entry before the master list becomes hidden on narrow screens.
   const [trigger] = useState(() => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null);
@@ -90,7 +90,7 @@ export function CollectionDetailPane({ title, identifier, onClose, children, tab
     });
   }, [trigger]);
   return <aside className="lg-collection-pane" aria-label="清单详情" onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
-    <header className="lg-collection-pane-heading">{icon ? <span className="lg-collection-pane-icon">{icon}</span> : null}<div><h2>{title}</h2>{identifier ? <code>{identifier}</code> : null}</div><button ref={closeRef} type="button" className="lg-collection-close" aria-label="关闭详情" onClick={onClose}><X size={16} /></button></header>
+    <header className="lg-collection-pane-heading">{icon ? <span className="lg-collection-pane-icon">{icon}</span> : null}<div><h2>{title}</h2>{identifier ? <code>{identifier}</code> : null}</div>{closeLabel ? <button ref={closeRef} type="button" className="lg-collection-close lg-collection-back" onClick={onClose}><ArrowLeft size={16} aria-hidden="true" />{closeLabel}</button> : <button ref={closeRef} type="button" className="lg-collection-close" aria-label="关闭详情" onClick={onClose}><X size={16} /></button>}</header>
     {tabs ? <div className="lg-collection-pane-tabs">{tabs}</div> : null}
     <div className="lg-collection-pane-body">{children}</div>
     {footer}
