@@ -18,7 +18,7 @@ const { StateService } = await import(pathToFileURL(path.join(runtime,'dist/serv
 const sshModule = await import(pathToFileURL(path.join(runtime,'node_modules/ssh2/lib/index.js')).href);
 const { Server } = sshModule.default;
 const password = crypto.randomBytes(24).toString('base64url');
-const agentKey = 'cdsp_lab_' + crypto.randomBytes(30).toString('base64url');
+const agentKey = process.env.CDS_LAB_AGENT_KEY || 'cdsp_lab_' + crypto.randomBytes(30).toString('base64url');
 const username = process.env.CDS_PREVIEW_USERNAME || 'reviewer';
 const humanPassword = process.env.CDS_PREVIEW_PASSWORD || crypto.randomBytes(24).toString('base64url');
 const pair = crypto.generateKeyPairSync('rsa',{modulusLength:2048});
@@ -103,4 +103,6 @@ delete env.CDS_SECRET_KEY; delete env.AI_ACCESS_KEY; delete env.CDS_PROJECT_KEY;
 const mainProcess=spawn(process.execPath,[path.join(runtime,'dist/index.js')],{cwd:path.join(root,'cds'),env,stdio:'inherit'});
 mainProcess.on('exit',()=>process.exit());
 for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{mainProcess.kill(signal);for(const child of children)child.kill(signal);for(const client of sockets)client.end();ssh.close();surface.close();});
-console.log(JSON.stringify({labRoot:root,credentialsPath,projectId,targetId,actualSsh:true,actualGit:true,noHostMounts:true}));
+const metadata={labRoot:root,credentialsPath,projectId,targetId,actualSsh:true,actualGit:true,noHostMounts:true};
+if(process.env.CDS_LAB_METADATA_FILE) await fs.writeFile(process.env.CDS_LAB_METADATA_FILE,JSON.stringify(metadata),{mode:0o600});
+console.log(JSON.stringify(metadata));
