@@ -9,12 +9,12 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import type { AddressInfo } from 'node:net';
+import net, { type AddressInfo, type Socket } from 'node:net';
 import express from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
 import { sealToken } from '../../src/infra/secret-seal.js';
 import { createReleasesRouter } from '../../src/routes/releases.js';
-import { ReleaseService } from '../../src/services/release-service.js';
+import { ReleaseService, defaultReleaseSshExecutor } from '../../src/services/release-service.js';
 import { StateService } from '../../src/services/state.js';
 import type { ReleaseTarget } from '../../src/types.js';
 
@@ -480,5 +480,50 @@ describe.skipIf(!enabled)('批次发布：真 SSH / Git / 双目标隔离演练'
     expect(f.attempts('site-a')).toHaveLength(0); expect(f.attempts('site-b')).toHaveLength(0);
     for (const surface of Object.values(surfaces)) expect(surface.health.commitSha).toBe('');
   }, 90_000);
+
+  it('真实SSH命令通道失联后取消有界失败，明确远端结果未确认而不假报退出', async () => {
+    const key = process.env.CDS_BATCH_E2E_SSH_KEY!;
+    const sockets = new Set<Socket>();
+    let blackhole = false;
+    const proxy = net.createServer(downstream => {
+      const upstream = net.connect(Number(process.env.CDS_BATCH_E2E_SSH_PORT || 2222), '127.0.0.1');
+      for (const socket of [downstream, upstream]) {
+        sockets.add(socket);
+        socket.on('error', () => {});
+        socket.on('close', () => { sockets.delete(socket); downstream.destroy(); upstream.destroy(); });
+      }
+      downstream.on('data', data => { if (!blackhole) upstream.write(data); });
+      upstream.on('data', data => { if (!blackhole) downstream.write(data); });
+    });
+    await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+    const port = (proxy.address() as AddressInfo).port;
+    const controller = new AbortController(), outputs: string[] = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const execution = defaultReleaseSshExecutor({
+        host: { id: 'isolated-blackhole', name: '仅本机失联演练', host: '127.0.0.1', sshPort: port,
+          sshUser: os.userInfo().username, sshPrivateKeyEncrypted: '', sshPrivateKeyFingerprint: 'isolated',
+          tags: [], isEnabled: true, createdAt: new Date().toISOString() },
+        privateKey: fs.readFileSync(key), command: 'printf CDS_BLACKHOLE_READY; sleep 45',
+        signal: controller.signal, onOutput: (_level, text) => outputs.push(text),
+      }).then(() => ({ succeeded: true, error: '' }), error => ({ succeeded: false, error: String(error.message) }));
+      await waitFor(() => outputs.join(''), text => text.includes('CDS_BLACKHOLE_READY'), 10_000);
+      // 握手与真实命令均已成功，此后双向丢弃SSH数据；TERM/KILL也不能收到回执。
+      blackhole = true;
+      controller.abort(new Error('操作员取消隔离演练'));
+      const started = Date.now();
+      const result = await Promise.race([execution, new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('SSH失联取消超过26秒仍未返回')), 26_000);
+      })]);
+      evidence('ssh-blackhole-cancel-unconfirmed', { result, elapsedMs: Date.now() - started, outputs });
+      expect(result.succeeded).toBe(false);
+      expect(result.error).toMatch(/远端执行结果未确认/);
+      expect(outputs.join('')).toMatch(/远端执行结果未确认/);
+    } finally {
+      if (timer) clearTimeout(timer);
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => proxy.close(() => resolve()));
+    }
+  }, 45_000);
 
 });

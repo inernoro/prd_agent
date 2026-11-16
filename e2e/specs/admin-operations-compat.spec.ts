@@ -619,3 +619,40 @@ test("390 隔离发布成功闭环", async ({ page }) => {
     },
   ]);
 });
+
+for (const routePath of ['release-console', 'release-center']) {
+  for (const width of [1440, 390]) {
+    test(`${routePath} ${width} 项目列表失败后刷新在原页面恢复且仍校验项目`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await installOperationsFixtures(page);
+      let projectReads = 0;
+      const centerProjects: string[] = [], writes: string[] = [];
+      page.on('request', request => {
+        const url = new URL(request.url());
+        if (url.pathname === '/api/releases/center') centerProjects.push(url.searchParams.get('project') || '');
+        if (url.pathname.startsWith('/api/') && request.method() !== 'GET') writes.push(url.pathname);
+      });
+      await page.route('**/api/projects', async route => {
+        projectReads++;
+        await route.fulfill(projectReads === 1
+          ? { status: 503, json: { error: '项目清单暂不可用' } }
+          : { json: { projects: [{ id: target.projectId, name: '重试后可选的项目' }] } });
+      });
+      await page.goto(`http://127.0.0.1:5273/${routePath}?project=${target.projectId}`);
+      await expect(page.getByText('项目清单暂不可用').first()).toBeVisible();
+      expect(centerProjects).toEqual([]);
+      await page.evaluate(() => { Object.assign(window, { __projectRetryPageAlive: true }); });
+      if (width === 390) await page.getByRole('button', { name: '更多操作', exact: true }).click();
+      await page.getByRole('button', { name: '刷新', exact: true }).click();
+      if (width === 390) await page.keyboard.press('Escape');
+      await expect.poll(() => projectReads, { timeout: 8000 }).toBe(2);
+      await expect.poll(() => centerProjects.length).toBeGreaterThan(0);
+      expect(centerProjects.every(project => project === target.projectId)).toBe(true);
+      expect(await page.evaluate(() => Reflect.get(window, '__projectRetryPageAlive'))).toBe(true);
+      await expect(page.getByRole('combobox', {
+        name: routePath === 'release-center' ? '项目' : '当前项目', exact: true,
+      })).toHaveValue(target.projectId);
+      expect(writes).toEqual([]);
+    });
+  }
+}

@@ -206,6 +206,7 @@ export function ReleaseConsolePage(): JSX.Element {
   const [params, setParams] = useSearchParams();
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [projectListAttempt, setProjectListAttempt] = useState(0);
   const [initialSettled, setInitialSettled] = useState(false);
   const [projectId, setProjectId] = useState(() => initialReleaseCenterProject(params, window.localStorage));
   const [unavailableProject, setUnavailableProject] = useState(false);
@@ -268,7 +269,7 @@ export function ReleaseConsolePage(): JSX.Element {
       .catch((err) => { if (alive) setError(err instanceof ApiError ? err.message : String(err)); })
       .finally(() => { if (alive) setProjectsLoaded(true); });
     return () => { alive = false; };
-  }, []);
+  }, [projectListAttempt]);
 
   /**
    * 「这份响应还属于当前项目吗」——**所有**带 project 的请求都必须过这一关。
@@ -316,6 +317,16 @@ export function ReleaseConsolePage(): JSX.Element {
       setError(err instanceof ApiError ? err.message : String(err));
     }
   }, [projectId, projectAvailable, isStaleProject]);
+
+  const refreshProjectData = (): void => {
+    if (!projectAvailable) {
+      setError('');
+      setProjectsLoaded(false);
+      setProjectListAttempt(value => value + 1);
+      return;
+    }
+    void loadCenter();
+  };
 
   useEffect(() => { void loadCenter(); }, [loadCenter]);
 
@@ -727,7 +738,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   : '发布通道空闲'}
               </span> : null}
               {projectAvailable ? <Button variant="outline" size="sm" asChild><Link to={`/release-center?project=${encodeURIComponent(projectId)}`}>环境管理</Link></Button> : <Button variant="outline" size="sm" disabled>环境管理</Button>}
-              <Button variant="outline" size="sm" onClick={() => void loadCenter()}>
+              <Button variant="outline" size="sm" onClick={refreshProjectData} disabled={!projectsLoaded}>
                 <RefreshCw />
                 刷新
               </Button>
@@ -753,7 +764,7 @@ export function ReleaseConsolePage(): JSX.Element {
             并让页面横滚，本仓库不允许——见 cds/.claude/rules/mobile-layout-fallback.md）。
             所以：xl 收成 240/300，wide(1440) 回到 264/340，2xl 才是参考值 288/380。 */}
         {initialLoading ? <ReleaseConsoleSkeleton navigation={false} /> : !projectAvailable ? <div role="alert" className="m-6 rounded-md border border-warn/30 bg-warn-soft p-5 text-sm">{unavailableProject ? '当前链接或上次选择的项目不在此实例中，请从上方重新选择项目。' : error || '当前实例还没有可用项目，请先创建项目。'}</div> : batchMode ? <div className="h-full min-w-0 overflow-y-auto p-4 md:p-6">
-          {error ? <div role="alert" className="mb-4 rounded-md border border-bad/30 bg-bad-soft p-4 text-sm text-bad">{error}<Button variant="outline" size="sm" onClick={() => void loadCenter()}>重试读取项目</Button></div> : null}
+          {error ? <div role="alert" className="mb-4 rounded-md border border-bad/30 bg-bad-soft p-4 text-sm text-bad">{error}<Button variant="outline" size="sm" onClick={refreshProjectData} disabled={!projectsLoaded}>重试读取项目</Button></div> : null}
           {center ? <BatchReleasePanel key={projectId} projectId={projectId} targets={center.rows.map((item) => item.target)} currentRows={center.rows} onOpenLogs={setBatchLog} /> : !error ? <ContentLoading label="读取当前项目发布目标" /> : null}
         </div> : <div
           className={RELEASE_CONSOLE_LAYOUT_CLASS}
