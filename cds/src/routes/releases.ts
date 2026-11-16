@@ -1,3 +1,4 @@
+import { ReleaseBatchService } from '../services/release-batch-service.js';
 import { projectResourceNamespace } from '../services/preview-slug.js';
 import crypto from 'node:crypto';
 import { DEFAULT_RELEASE_SCRIPT_FILE, DEFAULT_RELEASE_CI_WORKFLOW_FILE } from '../domain/release-script-contract.js';
@@ -5,7 +6,7 @@ import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
 import type { CdsConfig, IShellExecutor, ReleaseStrategy, ReleaseTarget, RemoteHost } from '../types.js';
-import { ReleaseService, isReleaseRunTerminal } from '../services/release-service.js';
+import { ReleaseService, ReleaseNotStartedError, isReleaseRunTerminal } from '../services/release-service.js';
 import { readReleaseHealthSnapshot } from '../services/release-health-snapshot.js';
 import {
   discoverReleaseStrategies,
@@ -63,6 +64,12 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   // 没有 repoRoot（单测 / 嵌入式用法）就只在内存里跑，绝不回落到 process.cwd()：
   // 那是别人的目录，往里写审计流水会让每次跑测试都在开发者仓库里留一份垃圾。
   // 生产走 server.ts 传进来的完整 CdsConfig，repoRoot 必然有值。
+  const batches = new ReleaseBatchService(deps.stateService, service);
+  const replyStartError = (req: Request, res: Response, error: unknown): void => {
+    res.status(409).json({ error: error instanceof Error ? error.message : String(error),
+      ...(error instanceof ReleaseNotStartedError ? { releaseOutcome: 'not-started', requestId: req.get('X-CDS-Request-Id') } : {}),
+    });
+  };
   const stateRoot = deps.config?.repoRoot;
   const history = new ReleaseTargetHistoryStore({
     storePath: stateRoot ? path.join(stateRoot, '.cds', 'release-target-history.json') : undefined,
@@ -109,6 +116,56 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   // 自动发布的 commit 永远进不了台账，DORA 只统计人手点的那些（Codex review P2）。
   // 路由与调度器共用同一个 ReleaseService 实例，所以挂一次两边都覆盖。
   service.onRunStarted(rememberCommitTime);
+
+  const batchProject = (req: Request, res: Response): string | false => {
+    const projectId = typeof req.query.projectId === 'string' ? req.query.projectId : requestProjectKey(req)?.projectId;
+    if (!projectId) { res.status(400).json({ error: '请选择项目' }); return false; }
+    if (rejectProjectMismatch(req, res, projectId)) return false;
+    return projectId;
+  };
+  router.get('/releases/batches/accepted-versions', (req, res) => {
+    const projectId = batchProject(req, res);
+    if (projectId) res.json({ versions: batches.acceptedVersions(projectId) });
+  });
+  router.get('/releases/batches', (req, res) => {
+    const projectId = batchProject(req, res);
+    if (projectId) res.json({ batches: deps.stateService.getReleaseBatches(projectId) });
+  });
+  router.post('/releases/batches', async (req, res) => {
+    const body = req.body || {};
+    if (typeof body.projectId !== 'string' || !body.projectId.trim()) { res.status(400).json({ error: '请选择项目' }); return; }
+    if (rejectProjectMismatch(req, res, body.projectId) || rejectUnscopedAiMutation(req, res)) return;
+    if (typeof body.versionId !== 'string' || typeof body.reportId !== 'string' || !Array.isArray(body.targetIds)
+      || !body.targetIds.every((id: unknown) => typeof id === 'string')) { res.status(400).json({ error: '请选择验收版本和有序目标' }); return; }
+    try {
+      res.status(201).json({ batch: await batches.create({ projectId: body.projectId, versionId: body.versionId,
+        reportId: body.reportId, targetIds: body.targetIds, idempotencyKey: body.idempotencyKey, operator: resolveActorFromRequest(req) }) });
+    } catch (error) { res.status(409).json({ error: (error as Error).message }); }
+  });
+  router.get('/releases/batches/:id', (req, res) => {
+    const batch = deps.stateService.getReleaseBatch(req.params.id);
+    if (!batch) { res.status(404).json({ error: '批次不存在' }); return; }
+    if (rejectProjectMismatch(req, res, batch.projectId)) return;
+    res.json({ batch });
+  });
+  const batchAction = (action: 'preflight' | 'start' | 'cancel' | 'refresh' | 'retry' | 'rollback') => async (req: Request, res: Response) => {
+    const batch = deps.stateService.getReleaseBatch(req.params.id);
+    if (!batch) { res.status(404).json({ error: '批次不存在' }); return; }
+    if (rejectProjectMismatch(req, res, batch.projectId) || rejectUnscopedAiMutation(req, res)) return;
+    try {
+      const result = action === 'preflight' ? await batches.preflight(batch.id)
+        : action === 'cancel' ? await batches.cancel(batch.id, resolveActorFromRequest(req))
+        : action === 'refresh' ? await batches.refresh(batch.id)
+        : await batches.start(batch.id, req.body?.idempotencyKey, action === 'start' ? undefined : req.params.targetId, action === 'rollback', resolveActorFromRequest(req));
+      res.status(action === 'start' || action === 'retry' || action === 'rollback' ? 202 : 200).json({ batch: result });
+    } catch (error) { res.status(409).json({ error: (error as Error).message }); }
+  };
+  router.post('/releases/batches/:id/preflight', batchAction('preflight'));
+  router.post('/releases/batches/:id/start', batchAction('start'));
+  router.post('/releases/batches/:id/cancel', batchAction('cancel'));
+  router.post('/releases/batches/:id/refresh', batchAction('refresh'));
+  router.post('/releases/batches/:id/targets/:targetId/retry', batchAction('retry'));
+  router.post('/releases/batches/:id/targets/:targetId/rollback', batchAction('rollback'));
 
   router.post('/releases/projects/:projectId/discover', (req, res) => {
     const projectId = req.params.projectId;
@@ -590,7 +647,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       });
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
-      res.status(409).json({ error: (err as Error).message });
+      replyStartError(req, res, err);
     }
   });
 
@@ -624,6 +681,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     }
     if (rejectProjectMismatch(req, res, existing.projectId)) return;
     if (rejectUnscopedAiMutation(req, res)) return;
+    if (existing.batchId) { replyStartError(req, res, new ReleaseNotStartedError('此记录属于发布批次，请在批次中恢复该目标原版本')); return; }
     try {
       const body = (req.body || {}) as Record<string, unknown>;
       const targetReleaseId = typeof body.targetReleaseId === 'string' && body.targetReleaseId.trim()
@@ -640,7 +698,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       const run = await service.startRollback(req.params.id, resolveActorFromRequest(req), targetReleaseId);
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
-      res.status(409).json({ error: (err as Error).message });
+      replyStartError(req, res, err);
     }
   });
 
@@ -652,8 +710,10 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     }
     if (rejectProjectMismatch(req, res, source.projectId)) return;
     if (rejectUnscopedAiMutation(req, res)) return;
+    if (source.batchId) { replyStartError(req, res, new ReleaseNotStartedError('此记录属于发布批次，请在批次中重试失败目标以保留固定版本')); return; }
+
     if (!source.commitSha?.trim()) {
-      res.status(409).json({ error: '原发布记录缺少可确认的来源版本，不能重发；请重新选择明确的分支版本。' });
+      replyStartError(req, res, new ReleaseNotStartedError('原发布记录缺少可确认的来源版本，不能重发；请重新选择明确的分支版本。'));
       return;
     }
     try {
@@ -666,7 +726,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       });
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
-      res.status(409).json({ error: (err as Error).message });
+      replyStartError(req, res, err);
     }
   });
 

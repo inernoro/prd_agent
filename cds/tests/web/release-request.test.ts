@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { correlateRelease, releaseAccountIdentity, readReleaseRequests, releaseRequestStorageKey, type ReleaseRequest } from '../../web/src/lib/releaseRequest';
+import { ApiError } from '../../web/src/lib/api';
+import { isConfirmedReleaseRejection } from '../../web/src/pages/ReleaseConsolePage';
 import type { ReleaseRun } from '../../web/src/pages/release-center/types';
 const request: ReleaseRequest = { requestId: 'once-only-request', projectId: 'p', targetId: 't', branchId: 'b', commitSha: 'a'.repeat(40), kind: 'deploy', requestedAt: '2026-11-15T10:00:00Z' };
 const run = (overrides: Partial<ReleaseRun> = {}): ReleaseRun => ({ releaseId: 'r1', requestId: request.requestId, projectId: 'p', targetId: 't', branchId: 'b', commitSha: request.commitSha, status: 'running', startedAt: request.requestedAt, logs: [], ...overrides } as ReleaseRun);
@@ -34,5 +36,20 @@ describe('保留请求依真实主体隔离', () => {
     expect(releaseAccountIdentity({ enabled: true, activeProvider: 'legacy', user: { username: 'alice' } })).not.toBe(releaseAccountIdentity({ enabled: true, activeProvider: 'github', user: { githubLogin: 'alice' } }));
     expect(releaseAccountIdentity({ enabled: true, user: { username: 'alice' } })).toBeNull();
     expect(releaseAccountIdentity(null)).toBeNull();
+  });
+});
+
+
+describe('发布拒绝必须有服务端写前契约和本次编号', () => {
+  it('同编号的明确写前409才允许解除待核对锁', () => {
+    expect(isConfirmedReleaseRejection(new ApiError(409, { releaseOutcome: 'not-started', requestId: request.requestId }, '版本已前进'), request.requestId)).toBe(true);
+  });
+  it.each([400, 401, 403, 408, 409, 422, 429, 500, 503])('裸HTTP%s不证明命令没有开始', status => {
+    expect(isConfirmedReleaseRejection(new ApiError(status, { error: '服务拒绝' }, '服务拒绝'), request.requestId)).toBe(false);
+  });
+  it('编号不匹配或非409响应仍保持未知', () => {
+    expect(isConfirmedReleaseRejection(new ApiError(409, { releaseOutcome: 'not-started', requestId: 'another-request' }, '拒绝'), request.requestId)).toBe(false);
+    expect(isConfirmedReleaseRejection(new ApiError(503, { releaseOutcome: 'not-started', requestId: request.requestId }, '中断'), request.requestId)).toBe(false);
+    expect(isConfirmedReleaseRejection(new Error('409 not-started'), request.requestId)).toBe(false);
   });
 });

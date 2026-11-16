@@ -37,6 +37,7 @@ import {
   disableReportShare,
   enableReportShare,
   fetchReportRaw,
+  getReport,
   listKnowledgeBaseConnections,
   listReportFolders,
   pushReportToPr,
@@ -59,6 +60,9 @@ import { useTheme } from '@/lib/theme';
 import { buildMapReportImportUrl } from '@/lib/knowledge-base-sync';
 import { ReportsOverviewPanel } from '@/pages/reports/ReportsOverview';
 import { PipelinePanel } from '@/pages/reports/PipelinePanel';
+import { acceptanceView } from '@/lib/acceptance-api';
+import type { AcceptanceView } from '@/lib/acceptance-api';
+import { AcceptanceNavigation, AcceptanceWorkspace } from '@/pages/reports/AcceptanceWorkspace';
 
 interface ProjectLite {
   id: string;
@@ -161,7 +165,8 @@ export function ReportsPage(): JSX.Element {
   // 直达深链：?report=<id> 自动打开该报告；?folder=<id> 自动激活该文件夹。
   const reportParam = searchParams.get('report') || '';
   const folderParam = searchParams.get('folder') || '';
-  const showOverview = searchParams.get('view') === 'overview';
+  const centerView = acceptanceView(searchParams.get('view'), reportParam);
+  const showOverview = centerView === 'reports' && searchParams.get('view') === 'overview';
   const setOverviewView = (overview: boolean) => { overviewReturn.current = null; setSearchParams(current => { const next = new URLSearchParams(current); if (overview) next.set('view', 'overview'); else next.delete('view'); return next; }, { replace: true }); };
   const classificationActive = Boolean(classificationFilters.categories.length || classificationFilters.systems.length || classificationFilters.environments.length);
   const listGeneration = useRef(0), folderScope = useRef(projectId);
@@ -171,6 +176,14 @@ export function ReportsPage(): JSX.Element {
   const readingPosition = useRef({ scroll: 0, reportId: '' });
   const navPanel = useRef<HTMLDivElement>(null);
   const reportActionOrigin = useRef<HTMLElement | null>(null);
+  const currentProject = useRef(projectId);
+  currentProject.current = projectId;
+  const currentCenterView = useRef(centerView);
+  currentCenterView.current = centerView;
+  const currentReportScope = useRef('');
+  currentReportScope.current = JSON.stringify([centerView, projectId, reportParam]);
+  const reportReadGeneration = useRef(0);
+  const [directReportState, setDirectReportState] = useState<{ scope: string; status: 'loading' | 'ok' | 'error'; message?: string } | null>(null);
 
   const [state, setState] = useState<ListState>({ status: 'loading' });
   const [projects, setProjects] = useState<ProjectLite[]>([]);
@@ -180,7 +193,13 @@ export function ReportsPage(): JSX.Element {
   const [createOpen, setCreateOpen] = useState(false);
   const [folderCreateOpen, setFolderCreateOpen] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<ReportFolder | null>(null);
-  const [selected, setSelected] = useState<AcceptanceReport | null>(null);
+  const [selectedReport, setSelected] = useState<AcceptanceReport | null>(null);
+  const selected = centerView === 'reports' && selectedReport
+    && (!projectId || selectedReport.projectId === projectId)
+    && (!reportParam || selectedReport.id === reportParam) ? selectedReport : null;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const directReport = directReportState?.scope === currentReportScope.current ? directReportState : null;
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   useFocusTrap(navDrawerOpen, navPanel);
   useEffect(() => {
@@ -223,13 +242,14 @@ export function ReportsPage(): JSX.Element {
   }, [showOverview, overviewState]);
 
   const load = useCallback(async () => {
+    const requestedProject = projectId;
     const generation = ++listGeneration.current;
     if (folderScope.current !== projectId) {
       folderScope.current = projectId; setFolders([]); setFoldersError(''); setState({ status: 'loading' });
     }
     setRefreshing(true); setReportsError('');
     const [reports, directory] = await Promise.allSettled([listReports(projectId || undefined), listReportFolders(projectId || undefined)]);
-    if (generation !== listGeneration.current) return;
+    if (generation !== listGeneration.current || currentProject.current !== requestedProject) return;
     if (directory.status === 'fulfilled') { setFolders(directory.value); setFoldersError(''); }
     else setFoldersError(directory.reason instanceof Error ? directory.reason.message : String(directory.reason));
     if (reports.status === 'fulfilled') setState({ status: 'ok', reports: reports.value });
@@ -242,16 +262,43 @@ export function ReportsPage(): JSX.Element {
     setRefreshing(false);
   }, [projectId]);
 
+  const loadDirectReport = useCallback(async () => {
+    const scope = JSON.stringify([centerView, projectId, reportParam]);
+    if (centerView !== 'reports' || !reportParam || currentReportScope.current !== scope) return;
+    const generation = ++reportReadGeneration.current;
+    setDirectReportState({ scope, status: 'loading' });
+    setSelected(current => current?.id === reportParam && (!projectId || current.projectId === projectId) ? current : null);
+    try {
+      const report = await getReport(reportParam);
+      if (generation !== reportReadGeneration.current || currentReportScope.current !== scope) return;
+      if (report.id !== reportParam) throw new Error('返回的报告编号与当前链接不一致，请重新读取。');
+      if (projectId && report.projectId !== projectId) throw new Error('报告不属于当前项目，请使用报告所属项目的直达链接。');
+      readingPosition.current.reportId = report.id;
+      setSelected(report);
+      // Reading a deep link must not turn a failed list request into a successful list.
+      setState(current => current.status === 'ok'
+        ? { status: 'ok', reports: [report, ...current.reports.filter(value => value.id !== report.id)] }
+        : current);
+      setDirectReportState({ scope, status: 'ok' });
+    } catch (err) {
+      if (generation !== reportReadGeneration.current || currentReportScope.current !== scope) return;
+      setDirectReportState({ scope, status: 'error', message: `报告未能打开：${err instanceof Error ? err.message : String(err)}` });
+    }
+  }, [centerView, projectId, reportParam]);
+
   useEffect(() => {
     setActiveProjectFilter('all');
     setActiveFolder('all');
     setSelected(null);
+    setNavDrawerOpen(false);
     void load();
     return () => { listGeneration.current++; };
   }, [load]);
 
   // 聚合作用域跟随「项目筛选」：URL 的 ?project= 优先；否则用筛选菜单的选择（self = 只看 CDS 自身）。
   const overviewScope = projectId || (activeProjectFilter === 'all' ? '' : activeProjectFilter === 'self' ? '__self__' : activeProjectFilter);
+  const currentOverviewScope = useRef('');
+  currentOverviewScope.current = JSON.stringify([centerView, overviewScope, overviewDays]);
   const loadOverview = useCallback(async () => {
     /*
      * 与流水线同一套代次保护：后发的请求让先发的作废。
@@ -262,7 +309,8 @@ export function ReportsPage(): JSX.Element {
      * 又是「同一条判断只修了一面」（Codex review 抓到）。
      */
     const gen = (overviewReqRef.current += 1);
-    const superseded = (): boolean => overviewReqRef.current !== gen;
+    const scope = JSON.stringify([centerView, overviewScope, overviewDays]);
+    const superseded = (): boolean => overviewReqRef.current !== gen || currentOverviewScope.current !== scope;
     setOverviewState({ status: 'loading' });
     try {
       const overview = await fetchReportsOverview({ projectId: overviewScope || undefined, days: overviewDays });
@@ -273,7 +321,7 @@ export function ReportsPage(): JSX.Element {
       if (superseded()) return;
       setOverviewState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
-  }, [overviewScope, overviewDays]);
+  }, [centerView, overviewScope, overviewDays]);
   /**
    * 拉流水线。`quiet` 用于「报告增删后的重算」：那种时候面板上已经有内容，
    * 再把状态打回 loading 会让整块图表凭空消失一下再回来，比不刷新还难看。
@@ -294,7 +342,8 @@ export function ReportsPage(): JSX.Element {
      * （删报告触发的重算恰好与一次换档并发）时分不出先后，仍会用旧数据盖新数据。
      */
     const gen = (pipelineReqRef.current += 1);
-    const superseded = (): boolean => pipelineReqRef.current !== gen;
+    const scope = currentOverviewScope.current;
+    const superseded = (): boolean => pipelineReqRef.current !== gen || currentOverviewScope.current !== scope;
     if (!quiet) setPipelineState({ status: 'loading' });
     try {
       // 时间窗要真的传下去。首页渲染的是流水线，不是 overview——只把 days 喂给
@@ -330,23 +379,25 @@ export function ReportsPage(): JSX.Element {
   // 流水线也必须一起重拉：它和头条是同一批数据的两个切面，只刷一个的话，
   // 删掉一份报告后台账少了一行、而上面的漏斗与走向还是旧的（Codex review 抓到）。
   useEffect(() => {
-    if (state.status !== 'ok') return;
+    if (centerView !== 'reports' || state.status !== 'ok') return;
     void loadOverview();
     if (showOverview) void loadPipeline(true);
-  }, [loadOverview, loadPipeline, state, showOverview]);
+  }, [loadOverview, loadPipeline, state, showOverview, centerView]);
 
-  // 直达深链：报告加载完成后，按 ?folder= / ?report= 自动激活文件夹并打开对应报告。
-  // 用 identity-guard 的函数式 setState 避免重复触发（命中即稳定，不抖动）。
+  // Folder selection is independent of the report deep-link request.
   useEffect(() => {
     if (state.status !== 'ok') return;
     if (folderParam && folders.some((f) => f.id === folderParam)) {
       setActiveFolder((prev) => (prev === folderParam ? prev : folderParam));
     }
-    if (reportParam) {
-      const r = state.reports.find((x) => x.id === reportParam);
-      if (r) setSelected((prev) => (prev?.id === r.id ? prev : r));
-    }
-  }, [state, folders, folderParam, reportParam]);
+  }, [state, folders, folderParam]);
+
+  // A newly archived report need not exist in the already loaded list. Deep links read the actual report directly.
+  useEffect(() => {
+    if (centerView === 'reports' && reportParam) void loadDirectReport();
+    else { setDirectReportState(null); setSelected(null); }
+    return () => { reportReadGeneration.current++; };
+  }, [loadDirectReport, centerView, reportParam]);
 
   // 项目列表用于关联下拉 + 当前项目名展示（best-effort，失败不阻断）。
   useEffect(() => {
@@ -466,22 +517,38 @@ export function ReportsPage(): JSX.Element {
   }, [projectId, activeProjectFilter]);
 
   const handleProjectFilterChange = useCallback((next: ProjectFilter) => {
+    reportReadGeneration.current++;
+    setDirectReportState(null);
     setActiveProjectFilter(next);
     setActiveFolder((current) => (isReportSystemView(current) ? current : 'all'));
     setSelected(null);
-  }, []);
+    setNavDrawerOpen(false);
+    if (reportParam) setSearchParams(current => { const params = new URLSearchParams(current); params.delete('report'); return params; }, { replace: true });
+  }, [reportParam, setSearchParams]);
 
   const handleSelectReport = useCallback((report: AcceptanceReport) => {
+    reportReadGeneration.current++;
+    setDirectReportState(null);
     if (!selected) readingPosition.current = { scroll: document.querySelector('.cds-main')?.scrollTop || 0, reportId: report.id };
     setSelected(report);
     setNavDrawerOpen(false);
-  }, [selected]);
+    if (reportParam && reportParam !== report.id) setSearchParams(current => { const params = new URLSearchParams(current); params.set('report', report.id); return params; }, { replace: true });
+  }, [selected, reportParam, setSearchParams]);
   const closeReport = () => {
+    reportReadGeneration.current++;
+    setDirectReportState(null);
     setSelected(null);
+    setNavDrawerOpen(false);
+    const returningProject = projectId, position = { ...readingPosition.current };
     if (reportParam) setSearchParams(current => { const next = new URLSearchParams(current); next.delete('report'); return next; }, { replace: true });
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      document.querySelector('.cds-main')?.scrollTo({ top: readingPosition.current.scroll });
-      document.querySelector<HTMLElement>(`[data-report-id="${CSS.escape(readingPosition.current.reportId)}"]`)?.focus({ preventScroll: true });
+      if (currentProject.current !== returningProject || selectedRef.current || currentCenterView.current !== 'reports') return;
+      if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body && document.activeElement.isConnected) return;
+      document.querySelector('.cds-main')?.scrollTo({ top: position.scroll });
+      const target = document.querySelector<HTMLElement>(`[data-report-id="${CSS.escape(position.reportId)}"]`)
+        ?? document.querySelector<HTMLElement>('#reports-ledger h2')
+        ?? document.querySelector<HTMLElement>('[aria-label="验收中心导航"] [aria-current="page"]');
+      target?.focus({ preventScroll: true });
     }));
   };
 
@@ -526,11 +593,15 @@ export function ReportsPage(): JSX.Element {
   }, [foldersError, rememberReportActionOrigin]);
 
   const handleCreated = useCallback((report: AcceptanceReport) => {
+    if (currentProject.current !== projectId) return;
+    reportReadGeneration.current++;
+    setDirectReportState(null);
     setCreateOpen(false);
     setToast(`已创建报告「${report.title}」`);
     setState((cur) => (cur.status === 'ok' ? { status: 'ok', reports: [report, ...cur.reports] } : cur));
     setSelected(report);
-  }, []);
+    if (reportParam) setSearchParams(current => { const next = new URLSearchParams(current); next.set('report', report.id); return next; }, { replace: true });
+  }, [projectId, reportParam, setSearchParams]);
 
   const handleDelete = useCallback(async (report: AcceptanceReport) => {
     try {
@@ -646,6 +717,29 @@ export function ReportsPage(): JSX.Element {
     }
   }, [foldersError]);
 
+  const changeCenterView = (nextView: AcceptanceView): void => {
+    reportReadGeneration.current++;
+    setDirectReportState(null);
+    overviewReturn.current = null;
+    const next = new URLSearchParams(searchParams);
+    next.set('view', nextView);
+    next.delete('report'); next.delete('task'); next.delete('case');
+    setSelected(null);
+    setNavDrawerOpen(false);
+    setSearchParams(next);
+  };
+
+  const changeAcceptanceProject = (id: string): void => {
+    reportReadGeneration.current++;
+    setDirectReportState(null);
+    setSelected(null);
+    setNavDrawerOpen(false);
+    const next = new URLSearchParams(searchParams);
+    next.set('project', id);
+    next.delete('task'); next.delete('case'); next.delete('report');
+    setSearchParams(next);
+  };
+
   return (
     <AppShell
       active="reports"
@@ -654,12 +748,12 @@ export function ReportsPage(): JSX.Element {
           left={<Crumb items={[
             { label: 'CDS', href: '/project-list' },
             ...(projectId ? [{ label: projectName || projectId, href: `/branches/${encodeURIComponent(projectId)}` }] : []),
-            { label: '验收报告' },
+            { label: '验收中心' },
           ]} />}
           right={(
             <>
               <PaletteHint />
-              {!selected && showOverview ? (
+              {centerView === 'reports' && !selected && showOverview ? (
                 <div className="hidden items-center gap-0.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-0.5 md:inline-flex" role="group" aria-label="结论时间窗">
                   {OVERVIEW_WINDOWS.map((d) => (
                     <button
@@ -674,23 +768,30 @@ export function ReportsPage(): JSX.Element {
                   ))}
                 </div>
               ) : null}
-              <Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}><RefreshCw />{refreshing ? '刷新中' : '刷新'}</Button>
-              <Button size="sm" onClick={() => setCreateOpen(true)}><Plus />新建报告</Button>
+              {centerView === 'reports' ? <>
+                <Button variant="outline" size="sm" disabled={refreshing || directReport?.status === 'loading'} onClick={() => { void load(); if (reportParam) void loadDirectReport(); }}><RefreshCw />{refreshing || directReport?.status === 'loading' ? '刷新中' : '刷新'}</Button>
+                <Button size="sm" onClick={() => setCreateOpen(true)}><Plus />新建报告</Button>
+              </> : null}
             </>
           )}
         />
       )}
     >
-      <Workspace fluid className={selected ? 'cds-workspace--fill' : undefined}>
+      <Workspace fluid className={selected || centerView !== 'reports' ? 'cds-workspace--fill' : undefined}>
         <div className="flex h-full min-h-0 flex-col gap-3">
+          <AcceptanceNavigation view={centerView} onChange={changeCenterView} />
+          {centerView !== 'reports' ? <div className="min-h-0 overflow-y-auto lg:flex-1"><AcceptanceWorkspace key={projectId} projectId={projectId} projects={projects} view={centerView} onProjectChange={changeAcceptanceProject} /></div> : null}
+          {centerView === 'reports' ? <>
           {toast ? (
             <div className="shrink-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">{toast}</div>
           ) : null}
 
           {foldersError ? <div role="alert" className="flex flex-wrap items-center gap-2 text-sm"><span className="min-w-0 flex-1 break-words">目录信息未确认，报告仍可阅读；移动和目录操作暂不可用。{foldersError}</span><Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>重试读取目录</Button></div> : null}
           {reportsError && state.status === 'ok' ? <div role="alert" className="flex flex-wrap items-center gap-2 text-sm"><span className="min-w-0 flex-1 break-words">报告刷新失败，以下保留上次读取结果。{reportsError}</span><Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>重试读取报告</Button></div> : null}
-          {state.status === 'loading' ? <LoadingBlock label="正在加载验收报告" /> : null}
-          {state.status === 'error' ? <div role="alert" className="space-y-2"><ErrorBlock message={state.transient ? '报告暂时无法读取，请稍后重试。' : state.message} /><Button variant="outline" disabled={refreshing} onClick={() => void load()}>重试读取报告</Button></div> : null}
+          {directReport?.status === 'loading' && !selected ? <LoadingBlock label="正在打开验收报告" /> : null}
+          {directReport?.status === 'error' ? <div role="alert" className="space-y-2"><ErrorBlock message={directReport.message || '报告未能打开，请重新读取。'} /><Button variant="outline" onClick={() => void loadDirectReport()}>重试打开报告</Button></div> : null}
+          {state.status === 'loading' && !selected && directReport?.status !== 'loading' ? <LoadingBlock label="正在加载验收报告" /> : null}
+          {state.status === 'error' ? <div role="alert" className="space-y-2"><ErrorBlock message={selected ? `报告清单未读取成功，当前报告仍可阅读。${state.message}` : state.transient ? '报告暂时无法读取，请稍后重试。' : state.message} /><Button variant="outline" disabled={refreshing} onClick={() => void load()}>重试读取报告</Button></div> : null}
 
           {state.status === 'ok' && !selected && !showOverview && overviewState.status === 'error' ? <div role="alert" className="flex flex-wrap items-center gap-2 text-sm"><span className="min-w-0 flex-1 break-words">版本关系汇总未读取成功，当前保留原始报告清单，暂不折叠历史版本。{overviewState.message}</span><Button size="sm" variant="outline" onClick={() => void loadOverview()}>重试版本汇总</Button></div> : null}
           {state.status === 'ok' && !selected ? <div className="shrink-0 flex flex-wrap items-center gap-3">
@@ -755,35 +856,10 @@ export function ReportsPage(): JSX.Element {
             />
           </div> : null}
 
-          {state.status === 'ok' && selected ? (
+          {selected ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
-                {visibleReports.length === 0 ? (
-                  <EmptyReportsState
-                    onCreate={() => setCreateOpen(true)}
-                    filtered={allReports.length > 0}
-                    filterMenu={(
-                      <div className="flex items-center gap-1">
-                        {!projectId ? (
-                          <ProjectFilterMenu
-                            projects={projects}
-                            counts={projectCounts}
-                            active={activeProjectFilter}
-                            onSelect={handleProjectFilterChange}
-                          />
-                        ) : null}
-                        <ReportFilterMenu
-                          folders={scopedFolders}
-                          counts={folderCounts}
-                          active={activeFolder}
-                          onSelect={setActiveFolder}
-                          onRequestCreate={requestCreateFolder}
-                        />
-                      </div>
-                    )}
-                  />
-                ) : (
-                  <>
+                {searchedReports.length > 0 ? (
                     <ReportList
                       folderActionsAvailable={!foldersError}
                       foldersConfirmed={!foldersError}
@@ -813,9 +889,8 @@ export function ReportsPage(): JSX.Element {
                       showProjectFilter={!projectId}
                       className={selected ? 'hidden lg:flex' : undefined}
                     />
-                    <ReportViewer onClassified={(updated) => { setSelected(updated); setState(cur => cur.status === 'ok' ? { ...cur, reports: cur.reports.map(r => r.id === updated.id ? updated : r) } : cur); }} report={selected} onBack={closeReport} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} />
-                  </>
-                )}
+                ) : null}
+                <ReportViewer onClassified={(updated) => { setSelected(current => current?.id === updated.id ? updated : current); setState(cur => cur.status === 'ok' ? { ...cur, reports: cur.reports.map(r => r.id === updated.id ? updated : r) } : cur); }} report={selected} onBack={closeReport} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} />
               </div>
               {/* 抽屉 z-[90]：全屏面板带（60-100），必须低于 dropdown/dialog portal（300），
                   否则抽屉内的文件夹菜单与重命名弹窗会被抽屉整体盖住（2026-07-09 修复，
@@ -868,6 +943,7 @@ export function ReportsPage(): JSX.Element {
               ) : null}
             </div>
           ) : null}
+          </> : null}
         </div>
       </Workspace>
 

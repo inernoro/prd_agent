@@ -170,6 +170,42 @@ describe('release execution endpoints require a project-scoped key for AI caller
     expect(stateService.getReleaseRuns()).toHaveLength(before);
   });
 
+  it.each(['preflight', 'stale-sha', 'busy'])('marks %s refusal before run creation as a correlated definite rejection', async reason => {
+    const sha = 'a'.repeat(40);
+    vi.spyOn(releaseService, 'preflight').mockResolvedValue({
+      ok: reason !== 'preflight',
+      checks: reason === 'preflight' ? [{ id: 'blocked', label: '目标不可发布', status: 'fail', blocking: true }] : [],
+      artifact: { type: 'branch-preview', commitSha: sha, branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
+      target: stateService.getReleaseTarget('target-a')!, plan: { id: 'plan-a', steps: [] },
+    } as never);
+    const before = stateService.getReleaseRuns().length;
+    const result = await request(server, 'POST', '/api/releases/branches/branch-a/runs', { 'X-CDS-Request-Id': 'refused-before-start' }, {
+      targetId: 'target-a', expectedCommitSha: reason === 'stale-sha' ? 'b'.repeat(40) : sha,
+    });
+    expect(result.status).toBe(409);
+    expect(result.body).toMatchObject({ releaseOutcome: 'not-started', requestId: 'refused-before-start' });
+    expect(stateService.getReleaseRuns()).toHaveLength(before);
+  });
+
+  it('does not claim not-started when a run was created before flush failed', async () => {
+    const sha = 'a'.repeat(40);
+    stateService.getReleaseRun('rel-inflight')!.status = 'success';
+    vi.spyOn(releaseService, 'preflight').mockResolvedValue({ ok: true, checks: [],
+      artifact: { type: 'branch-preview', commitSha: sha, branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
+      target: stateService.getReleaseTarget('target-a')!, plan: { id: 'plan-a', steps: [] },
+    } as never);
+    const originalStart = releaseService.startRelease.bind(releaseService);
+    vi.spyOn(releaseService, 'startRelease').mockImplementation(input => originalStart({ ...input, batchId: 'flush-boundary-test' }));
+    const flush = vi.spyOn(stateService, 'flush').mockRejectedValueOnce(new Error('flush failed after run creation'));
+    const before = stateService.getReleaseRuns().length;
+    const result = await request(server, 'POST', '/api/releases/branches/branch-a/runs', { 'X-CDS-Request-Id': 'created-before-flush-error' }, { targetId: 'target-a', expectedCommitSha: sha });
+    flush.mockRestore();
+    expect(result.status).toBe(409);
+    expect(result.body.error).toContain('flush failed');
+    expect(result.body).not.toHaveProperty('releaseOutcome');
+    expect(stateService.getReleaseRuns()).toHaveLength(before + 1);
+  });
+
   it('refuses an unscoped AI key from starting a release run', async () => {
     const before = stateService.getReleaseRuns({ projectId: 'proj-a' }).length;
 

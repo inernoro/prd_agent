@@ -37,6 +37,7 @@
 .lg-provider-page .lg-provider-owned-models-trigger > svg { margin-top: 8px; }
 .lg-provider-page .lg-provider-owned-models-trigger:hover strong { text-decoration: underline; text-underline-offset: 3px; }
 .lg-provider-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 16px; }
+.lg-provider-row-actions > button[aria-haspopup="dialog"] { min-height: 32px; align-self: center !important; }
 .lg-provider-page .lg-collection-provider-row td:last-child button { padding-inline: 0 !important; }
 .lg-provider-page .lg-collection-provider-key { gap: 0; }
 .lg-provider-key-state { min-height: 32px; display: flex; align-items: center; font-size: var(--fs-body); color: var(--text-primary); }

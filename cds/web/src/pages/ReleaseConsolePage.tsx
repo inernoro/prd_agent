@@ -201,6 +201,13 @@ const LOG_TONE_CLASS: Record<ReturnType<typeof logLineTone>, string> = {
   plain: 'text-muted-foreground',
 };
 
+/** A status code alone cannot prove that no run was created. */
+export function isConfirmedReleaseRejection(error: unknown, requestId: string): boolean {
+  if (!(error instanceof ApiError) || error.status !== 409 || !error.body || typeof error.body !== 'object') return false;
+  const body = error.body as Record<string, unknown>;
+  return body.releaseOutcome === 'not-started' && body.requestId === requestId;
+}
+
 export function ReleaseConsolePage(): JSX.Element {
   const { status, pending, retry } = useContext(ConsoleAuthContext);
   const account = releaseAccountIdentity(status);
@@ -530,6 +537,10 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
       recovery.forget(request.requestId);
       if (stillHere(scope)) { adoptRun(result.run); void loadCenter(); }
     } catch (error) {
+      if (isConfirmedReleaseRejection(error, request.requestId)) {
+        if (recovery.forget(request.requestId) && stillHere(scope)) setCommandError(`发布请求被拒绝，未创建任务：${releaseFailureReason(error)}。请核对后重新选择版本或目标。`);
+        return;
+      }
       if (mounted.current) recovery.noteUnknown(request.requestId, error);
       if (mounted.current) await recovery.verify(request);
     }

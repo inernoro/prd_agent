@@ -154,7 +154,7 @@ public sealed class NotificationsController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> CreateEvent([FromBody] AdminNotificationEventRequest request, CancellationToken ct = default)
     {
-        if (!HasAdminNotificationEventPermission())
+        if (!await HasAdminNotificationPermissionAsync(ct))
         {
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权创建管理员通知事件"));
         }
@@ -345,17 +345,6 @@ public sealed class NotificationsController : ControllerBase
         return permissions.Contains(AdminPermissionCatalog.Super) || permissions.Contains(AdminPermissionCatalog.LlmGatewayAccess);
     }
 
-    private bool HasAdminNotificationEventPermission()
-    {
-        if (string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal))
-            return true;
-        if (string.Equals(User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value, "1", StringComparison.Ordinal))
-            return true;
-
-        var permissions = User.FindAll("permissions").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return AdminNotificationAudience.HasPermission(permissions);
-    }
-
     private async Task<bool> HasAdminNotificationPermissionAsync(CancellationToken ct)
     {
         if (string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal)
@@ -487,6 +476,22 @@ public sealed class NotificationsController : ControllerBase
     {
         if (IsLegacyQuotaWithoutStructuredFacts(notification))
         {
+            // 只保留网关生成的有限原因标题，不把存量供应商诊断重新暴露给用户。
+            foreach (var code in new[]
+            {
+                PrdAgent.Core.LlmGateway.GatewayBillingFailure.AccountOverdue,
+                PrdAgent.Core.LlmGateway.GatewayBillingFailure.InsufficientBalance,
+                PrdAgent.Core.LlmGateway.GatewayBillingFailure.QuotaExceeded,
+                PrdAgent.Core.LlmGateway.GatewayBillingFailure.PaymentRequired,
+            })
+            {
+                var failure = PrdAgent.Core.LlmGateway.GatewayBillingFailure.FromCode(code)!;
+                if (notification.Title == $"上游 AI 服务{failure.Reason}")
+                    return (notification.Title,
+                        $"某条上游 AI 线路{failure.Reason}，该线路调用被拒绝。" +
+                        "若备用线路已完成任务，可正常使用结果。" +
+                        failure.RecoveryAction + "处理后再使用该线路。诊断信息已保留。");
+            }
             return (
                 "AI 创作服务需要管理员处理",
                 "历史通知记录了服务额度异常，对应请求结果和当前状态尚未确认。管理员需要检查服务额度及最近调用记录，请核对结果后再重试。");

@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.21.0
-description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, checks current-site load and tells users about standby sites with host-isolated credentials, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
+  version: 0.22.0
+description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, host-isolated primary/standby selection, load checks, canonical cdscli commands, self-update, deployment runs, versions and rollback. Read actual preview URLs through preview-url; delegate project scanning and deployment to their companion skills. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its required design/orchestration prerequisites; report upload is transport, not acceptance execution. Activate for these tasks or clarify intent when the user only says CDS.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.21.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
+> **版本**：v0.22.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -197,19 +197,24 @@ $CLI schedule run <scheduledJobId>
 # 支持调度口令：每天 02:00 / 每隔 10 分钟 / 手动
 # 支持动作口令：curl ... / 调用 POST https://... / 执行命令 ...
 
+# 磁盘治理只读观测：沿用当前实例与授权，不跨主机重放
+$CLI disk state                         # Janitor、磁盘档位及最近回收结果
+$CLI disk sources                       # 预览源码候选、分配块估计和保护原因
+$CLI disk target <targetId>             # 现有发布目标的真实主机磁盘诊断
+# 估计大小不能相加充当释放量；filesystem.netAvailableBytesDelta 是文件系统净变化，包含并发写入。
+
 # CDS 服务自更新（仅改 cds/ 代码时）
 $CLI self branches                       # 看 CDS 自身能切到哪些分支
 $CLI self status                         # 看当前版本、提交和运行状态
 $CLI self update --branch <branch>       # 切 + pull + 重启 CDS 进程
 
-# 验收报告 / 视觉取证（CDS 自托管 HTML/Markdown，登录态门控，可按项目/文件夹归类）
+# 验收报告：先执行 create-visual-test-to-kb，按其要求设计/编排、取证、标准生成和准入校验。
+# archive_report.py 负责正式归档；以下命令只管理存储与入口，不能替代验收技能。
 $CLI report-folder create --name "2026-06 验收"        # 建文件夹（可 --project）
-$CLI report create --title "CDS · X · 验收报告" --html-file r.html --folder <fid> [--project <id>]
 $CLI report list --folder <fid>                        # 列出（可 --project / --folder）
 $CLI report deeplink <reportId>                        # 打印 /reports?folder=&report= 直达深链
 $CLI report-folder list [--project <id>]
-# 视觉取证全流程（穿 agent 代理的浏览器取证 + 组装 HTML 入库）见 reference/acceptance-reports.md +
-# cli/acceptance/（proxyroute.mjs / cds-harness.mjs / build_report_html.py / driver.template.mjs）
+# 正式流程见 ../create-visual-test-to-kb/SKILL.md；CDS 传输/取证适配见 reference/acceptance-reports.md。
 ```
 
 完整命令族 → `$CLI --help`，分技能用法 → `cds-project-scan` / `cds-deploy-pipeline` 各自的 SKILL.md。
@@ -225,6 +230,31 @@ $CLI report-folder list [--project <id>]
 - 克隆保留源库，恢复可能覆盖目标，连接已有仅改配置；三者都不能直接称为「移动完成」。跨主机数据迁移要核对源/目标库名、集合范围、行数、索引和失败回滚。跨引擎转换不支持。
 - 同一连接内执行 SQL 事务；MySQL DDL 有隐式提交，不能承诺所有脚本自动回滚。MongoDB 事务还依赖 replica set，当前 UI/CLI 没有事务入口。
 - 当前网关只有内网地址时，明确报告局域网已验证、公网尚未验证；页面经 Cloudflare 看到的 IP 可能与原生工具的出口 IP 不同。
+
+## 结构化验收任务
+
+`acceptance` 命令族把清单、每轮任务、逐项结果与报告关联起来，不创建定时器，不触发发布。
+正式环境巡检默认 `production`，无需指定分支或冻结待发布版本；已观测版本仅作追溯。
+
+```bash
+$CLI acceptance templates --project <projectId>
+$CLI acceptance publish --project <projectId> --file <结构化清单.json>
+$CLI acceptance create --project <projectId> --template <templateId>
+$CLI acceptance tasks --project <projectId>
+$CLI acceptance claim <taskId> --agent Codex
+$CLI acceptance get <taskId>
+$CLI acceptance heartbeat <taskId>
+$CLI acceptance result <taskId> --case <caseId> --file <逐项结果.json>
+$CLI acceptance complete <taskId>
+$CLI acceptance archive-report <taskId>
+$CLI acceptance matrix --project <projectId> --template <templateId> --environment production
+```
+
+执行者必须按冻结清单走真实业务路径，再回填断言、实际结果、线上证据与清理回读。
+领取票据由 CLI 私密保存，禁止放入结果文件、命令参数或聊天；长任务按 30 秒心跳续租，离开时 `release`。
+同一 submissionId 重发幂等；第一次失败最多重试一次，重试通过仍为 flaky，不算稳定通过。
+`archive-report` 复用现有验收报告归档并绑定，不会把草稿或本地存储标为交付完成。
+返回 `pending-verify-open` 后必须再按验收技能验证线上深链；本命令不代替浏览器取证、通知或发布批准。
 
 ## 加一条功能监控（用户说「帮我增加 XX 的监控」时）
 
@@ -560,7 +590,7 @@ $CLI self update --branch <branch> \
 | [reference/smoke.md](reference/smoke.md) | 分层冒烟策略（`cds-deploy-pipeline` 详读） |
 | [reference/diagnose.md](reference/diagnose.md) | 容器日志 → 根因决策树（`cds-deploy-pipeline` 详读） |
 | [reference/drop-in.md](reference/drop-in.md) | 新项目接入完整步骤 + 常见问题 |
-| [reference/acceptance-reports.md](reference/acceptance-reports.md) | 视觉取证 → CDS 自托管验收报告 → 项目/文件夹归类 → 直达深链（含穿 agent 代理的浏览器取证解法） |
+| [reference/acceptance-reports.md](reference/acceptance-reports.md) | 验收技能分派、CDS 取证适配与归档存储接口；标准生成和准入由 create-visual-test-to-kb 负责 |
 | [reference/maintainer.md](reference/maintainer.md) | 仅 CDS 仓库所有者读 |
 
 ## 跨技能依赖

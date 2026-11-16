@@ -34,8 +34,16 @@ const makeBranches = reports => reports.map((report, i) => ({ id: `b${i}`, proje
 const folders = [{ id: 'f1', name: '回归证据', projectId: 'fixture-project', createdAt: now.toISOString() }];
 const task = i => ({ id: `t${i}`, title: `审查样例${i}`, projectId: 'fixture-project', sourceType: 'github', sourceName: `reading-${i}`, branchName: 'feature/reading', status: 'completed', phase: 'completed', progress: { totalFiles: 8, scannedFiles: 8 }, createdAt: now.toISOString(), updatedAt: now.toISOString(), delivery: { status: 'not_requested' }, findingsSummary: { p1: 1 }, reportId: 'r0' });
 const results = [], metrics = [], unknown = new Set(), writes = [], pageErrors = [];
-async function fixture({ width = 1440, theme = 'light', count = 2, reviews = 2, decisionRows = false, failFolders = false, failReports = false, failReview = false, failOverview = false } = {}) {
-  const state = { count, reviews, decisionRows, failFolders, failReports, failReview, failOverview };
+async function fixture({ width = 1440, theme = 'light', count = 2, reviews = 2, decisionRows = false, failFolders = false, failReports = false, failReview = false, failOverview = false, directReports = [], failDirectReports = [], reportProjects = {} } = {}) {
+  const state = { count, reviews, decisionRows, failFolders, failReports, failReview, failOverview,
+    directReports: new Map(directReports.map(report => [report.id, report])), failDirectReports: new Set(failDirectReports),
+    metadataReads: [], reportReads: [], acceptanceReads: [], heldReports: new Map(), reportProjects };
+  const holdReport = id => {
+    let release;
+    const wait = new Promise(resolve => { release = resolve; });
+    state.heldReports.set(id, { wait, release });
+    return async () => { release(); await Promise.all(state.metadataReads.filter(read => read.id === id).map(read => read.finished)); };
+  };
   const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 }, colorScheme: theme, reducedMotion: 'reduce' });
   await context.addInitScript(theme => { if (window === window.top) localStorage.setItem('cds_theme', theme); }, theme);
   await context.route('**/*', async route => {
@@ -45,15 +53,43 @@ async function fixture({ width = 1440, theme = 'light', count = 2, reviews = 2, 
     if (!pathname.startsWith('/api/')) return route.continue();
     if (request.method() !== 'GET') { writes.push(pathname); return route.fulfill({ status: 405, json: { error: 'fixture forbids writes' } }); }
     if (isEventStream(pathname)) return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });
-    const error = () => route.fulfill({ status: 500, headers: { 'x-cds-request-id': 'fixture-error' }, json: { error: '合成读取错误' } });
-    const reports = state.decisionRows ? makeDecisionReports().map((report, i) => state.decisionRows === 'long' && i === 0
+    const error = (status = 500) => route.fulfill({ status, headers: { 'x-cds-request-id': 'fixture-error' }, json: { error: '合成读取错误' } });
+    const reports = (state.decisionRows ? makeDecisionReports().map((report, i) => state.decisionRows === 'long' && i === 0
       ? { ...report, title: longReportTitle, branch: longReportBranch }
-      : state.decisionRows === 'mixed' && i === 1 ? { ...report, projectId: 'fixture-other' } : report) : makeReports(state.count);
-    if (pathname === '/api/reports') return state.failReports ? error() : route.fulfill({ json: { reports } });
-    if (pathname === '/api/report-folders') return state.failFolders ? error() : route.fulfill({ json: { folders } });
+      : state.decisionRows === 'mixed' && i === 1 ? { ...report, projectId: 'fixture-other' } : report) : makeReports(state.count))
+      .map(report => ({ ...report, projectId: state.reportProjects[report.id] ?? report.projectId }));
+    if (pathname === '/api/reports') {
+      state.reportReads.push({ projectId: url.searchParams.get('projectId'), status: state.failReports ? (typeof state.failReports === 'number' ? state.failReports : 500) : 200 });
+      return state.failReports ? error(typeof state.failReports === 'number' ? state.failReports : 500) : route.fulfill({ json: { reports: url.searchParams.has('projectId') ? reports.filter(report => report.projectId === url.searchParams.get('projectId')) : reports } });
+    }
+    if (pathname === '/api/report-folders') return state.failFolders ? error() : route.fulfill({ json: { folders: url.searchParams.has('projectId') ? folders.filter(folder => folder.projectId === url.searchParams.get('projectId')) : folders } });
     if (pathname === '/api/reports/overview') return state.failOverview ? error() : route.fulfill({ json: { overview: buildReportsOverview(reports, [], { to: now, days: Number(url.searchParams.get('days') || 7) }) } });
     if (pathname === '/api/reports/pipeline') return route.fulfill({ json: { pipeline: buildPipelineOverview(projects, makeBranches(reports), [], reports, { now, recentDays: Number(url.searchParams.get('recentDays') || 7) }), series: buildPipelineSeries(projects, makeBranches(reports), reports, { now, days: 90 }) } });
-    if (/^\/api\/reports\/[^/]+\/raw$/.test(pathname)) return route.fulfill({ contentType: 'text/html', body: '<!doctype html><html lang="zh"><body><h1>阅读正文已到达</h1><p>合成报告证据</p></body></html>' });
+    if (/^\/api\/reports\/[^/]+\/raw$/.test(pathname)) {
+      const id = decodeURIComponent(pathname.split('/')[3]);
+      return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh"><body><h1>阅读正文已到达</h1><p>合成报告证据</p><p>报告编号：${id.replace(/[&<>"']/g, '')}</p></body></html>` });
+    }
+    if (/^\/api\/reports\/[^/]+$/.test(pathname)) {
+      const id = decodeURIComponent(pathname.split('/')[3]);
+      const report = state.directReports.get(id) ?? reports.find(report => report.id === id);
+      const status = state.failDirectReports.has(id) ? 503 : report ? 200 : 404;
+      let finish;
+      const read = { id, status, delivered: false, finished: new Promise(resolve => { finish = resolve; }) };
+      state.metadataReads.push(read);
+      try {
+        const gate = state.heldReports.get(id);
+        if (gate) await gate.wait;
+        if (status === 200) await route.fulfill({ json: { report } });
+        else await route.fulfill({ status, headers: { 'x-cds-request-id': 'fixture-report-detail' }, json: { error: status === 503 ? '合成报告详情暂不可用' : '合成报告不存在' } });
+        read.delivered = true;
+      } catch (error) { read.deliveryError = error.message; }
+      finally { finish(); }
+      return;
+    }
+    if (pathname === '/api/acceptance/templates' || pathname === '/api/acceptance/tasks') {
+      state.acceptanceReads.push({ path: pathname, projectId: url.searchParams.get('projectId') });
+      return route.fulfill({ json: pathname.endsWith('/templates') ? { templates: [] } : { tasks: [] } });
+    }
     if (pathname === '/api/projects') return route.fulfill({ json: { projects, canManageProjects: true } });
     if (pathname === '/api/code-reviews') {
       if (state.failReview) return error();
@@ -67,7 +103,7 @@ async function fixture({ width = 1440, theme = 'light', count = 2, reviews = 2, 
   });
   const page = await context.newPage(); page.setDefaultTimeout(8000); page.setDefaultNavigationTimeout(30000); // Vite cold startup is not the layout latency assertion.
   page.on('pageerror', error => pageErrors.push(error.message));
-  return { page, context, state };
+  return { page, context, state, holdReport };
 }
 async function settled(page) {
   await page.evaluate(async () => { await document.fonts.ready; await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); });
@@ -79,7 +115,103 @@ async function check(name, run) {
   catch (error) { results.push({ name, pass: false, error: error.message }); console.log('FAIL ' + name + ': ' + error.message.slice(0, 400)); }
 }
 const row = page => page.locator('#reports-ledger tbody tr').first();
+const metadataRequest = (request, id) => request.method() === 'GET'
+  && new URL(request.url()).pathname.replace(/^\/_cds/, '') === `/api/reports/${encodeURIComponent(id)}`;
+async function reportBody(page, report) {
+  await page.frameLocator('iframe').getByRole('heading', { name: '阅读正文已到达', exact: true }).waitFor();
+  await page.frameLocator('iframe').getByText(`报告编号：${report.id}`, { exact: true }).waitFor();
+  assert.equal(await page.locator('iframe').count(), 1, 'exactly one report viewer is mounted');
+  assert.equal(await page.locator('iframe').getAttribute('title'), report.title, 'reader metadata and body identify the same report');
+}
 try {
+  await check('direct-report-metadata-503-has-real-retry', async () => {
+    const report = { ...makeReports(1)[0], id: 'archived-retry', title: '新归档报告 · 重读样例', folderId: null };
+    const { page, context, state } = await fixture({ count: 0, directReports: [report], failDirectReports: [report.id] });
+    try {
+      await page.goto(server.url + `/reports?project=fixture-project&report=${report.id}`);
+      const retry = page.getByRole('button', { name: '重试打开报告', exact: true });
+      await retry.waitFor(); await settled(page);
+      const before = state.metadataReads.length;
+      assert(before > 0 && state.metadataReads.every(read => read.status === 503), 'failure is a real detail GET503, not an empty list');
+      assert.equal(await page.locator('iframe:visible').count(), 0);
+      state.failDirectReports.delete(report.id);
+      const requestedAgain = page.waitForRequest(request => metadataRequest(request, report.id));
+      await retry.click(); await requestedAgain; await reportBody(page, report);
+      assert(state.metadataReads.slice(before).some(read => read.id === report.id && read.status === 200 && read.delivered), 'retry really sends another successful metadata GET');
+      metrics.push({ case: 'direct-report-metadata-503-has-real-retry', failedMetadataReads: before, metadataReadsAfterRetry: state.metadataReads.length, rawBody: report.id });
+      await shot(page, 'direct-report-retry');
+    } finally { await context.close(); }
+  });
+  for (const failReports of [false, 503]) await check(`direct-report-independent-of-${failReports ? 'failed' : 'empty'}-list`, async () => {
+    const report = { ...makeReports(1)[0], id: 'archived-outside-list', title: '新归档报告 · 尚未进入清单', folderId: null };
+    const { page, context, state } = await fixture({ width: 390, count: 0, failReports, directReports: [report] });
+    try {
+      await page.goto(server.url + `/reports?project=fixture-project&report=${report.id}`);
+      await reportBody(page, report);
+      if (failReports) await page.getByRole('button', { name: '重试读取报告', exact: true }).waitFor();
+      await settled(page); await reportBody(page, report);
+      assert(state.reportReads.some(read => read.status === (failReports || 200)), 'list really returned the requested empty/503 fixture');
+      assert.equal(await page.getByText('还没有验收报告', { exact: true }).filter({ visible: true }).count(), 0, 'list empty state does not replace the selected reader');
+      await shot(page, `direct-report-list-${failReports ? '503' : 'empty'}`);
+    } finally { await context.close(); }
+  });
+  await check('direct-report-late-A-cannot-replace-new-B', async () => {
+    const archived = { ...makeReports(1)[0], id: 'archived-slow-A', title: '新归档慢响应 A', folderId: null };
+    const next = makeReports(2)[1];
+    const { page, context, state, holdReport } = await fixture({ directReports: [archived] });
+    const release = holdReport(archived.id);
+    try {
+      const started = page.waitForRequest(request => metadataRequest(request, archived.id));
+      await page.goto(server.url + `/reports?project=fixture-project&report=${archived.id}`); await started;
+      const nextRow = page.locator('#reports-ledger [data-report-id="r1"]'); await nextRow.waitFor(); await nextRow.click();
+      await reportBody(page, next);
+      await release(); await settled(page); await reportBody(page, next);
+      assert(state.metadataReads.filter(read => read.id === archived.id).every(read => read.delivered), 'late A was actually delivered, not hidden by request cancellation');
+      assert.equal(await page.getByText(archived.title, { exact: true }).filter({ visible: true }).count(), 0);
+      metrics.push({ case: 'direct-report-late-A-cannot-replace-new-B', lateReport: archived.id, selectedBody: next.id, lateDeliveries: state.metadataReads.filter(read => read.id === archived.id).length });
+      await shot(page, 'direct-report-reversed-response');
+    } finally { await release(); await context.close(); }
+  });
+  await check('direct-report-cross-project-late-response-cannot-backfill', async () => {
+    const archived = { ...makeReports(1)[0], id: 'archived-project-A', title: '旧项目慢响应报告', folderId: null };
+    const next = { ...makeReports(2)[1], projectId: 'fixture-other' };
+    const { page, context, state, holdReport } = await fixture({ directReports: [archived], reportProjects: { r1: 'fixture-other' } });
+    const release = holdReport(archived.id);
+    try {
+      const started = page.waitForRequest(request => metadataRequest(request, archived.id));
+      await page.goto(server.url + `/reports?project=fixture-project&report=${archived.id}`); await started; await row(page).waitFor();
+      const navigation = page.getByRole('navigation', { name: '验收中心导航' });
+      await navigation.getByRole('button', { name: '测试清单', exact: true }).click();
+      const project = page.getByRole('combobox', { name: '验收项目', exact: true });
+      await project.locator('option[value="fixture-other"]').waitFor({ state: 'attached' }); await project.selectOption('fixture-other');
+      await page.waitForURL(url => url.searchParams.get('project') === 'fixture-other');
+      await navigation.getByRole('button', { name: '验收报告', exact: true }).click();
+      const nextRow = page.locator('#reports-ledger [data-report-id="r1"]'); await nextRow.waitFor(); await nextRow.click(); await reportBody(page, next);
+      await release(); await settled(page); await reportBody(page, next);
+      assert.equal(new URL(page.url()).searchParams.get('project'), 'fixture-other');
+      assert(state.metadataReads.filter(read => read.id === archived.id).every(read => read.delivered), 'old-project response was delivered after the project changed');
+      assert.equal(await page.getByText(archived.title, { exact: true }).filter({ visible: true }).count(), 0);
+      metrics.push({ case: 'direct-report-cross-project-late-response-cannot-backfill', selectedProject: 'fixture-other', selectedBody: next.id, oldProjectDeliveries: state.metadataReads.filter(read => read.id === archived.id).length });
+      await shot(page, 'direct-report-project-race');
+    } finally { await release(); await context.close(); }
+  });
+  await check('acceptance-templates-independent-of-report-503', async () => {
+    const { page, context, state } = await fixture({ failReports: 503 });
+    try {
+      await page.goto(server.url + '/reports?project=fixture-project&view=templates');
+      const heading = page.getByRole('heading', { name: '重要产品功能测试清单', exact: true }); await heading.waitFor();
+      const navigation = page.getByRole('navigation', { name: '验收中心导航' });
+      await navigation.getByRole('button', { name: '验收报告', exact: true }).click();
+      await page.getByRole('button', { name: '重试读取报告', exact: true }).waitFor();
+      await navigation.getByRole('button', { name: '测试清单', exact: true }).click(); await heading.waitFor(); await settled(page);
+      assert.equal(await page.getByRole('button', { name: '重试读取报告', exact: true }).count(), 0, 'failed report loading does not cover the templates workspace');
+      assert(await page.getByRole('button', { name: '新建测试清单', exact: true }).first().isEnabled(), 'templates retain their own working controls');
+      assert(state.reportReads.some(read => read.status === 503));
+      assert(state.acceptanceReads.some(read => read.path === '/api/acceptance/templates' && read.projectId === 'fixture-project'));
+      assert(state.acceptanceReads.some(read => read.path === '/api/acceptance/tasks' && read.projectId === 'fixture-project'));
+      await shot(page, 'templates-despite-report-503');
+    } finally { await context.close(); }
+  });
   for (const width of [390, 1440]) for (const theme of ['light', 'dark']) {
     await check(`mobile-ledger-facts-${width}-${theme}`, async () => {
       const { page, context } = await fixture({ width, theme, decisionRows: true });

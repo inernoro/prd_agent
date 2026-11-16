@@ -8,6 +8,11 @@ import { ConfirmAction } from '@/components/ui/confirm-action';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
+import { SourceRetentionPreview } from '../components/SourceRetentionPreview';
+import { BackupRetentionPanel } from '../components/BackupRetentionPanel';
+import { AcceptanceRetentionPanel } from '../components/AcceptanceRetentionPanel';
+import { ImageCachePanel } from '../components/ImageCachePanel';
+import { HostCapacityPanel } from '../components/HostCapacityPanel';
 
 interface SchedulerConfig {
   enabled: boolean;
@@ -38,6 +43,9 @@ interface JanitorSnapshot {
   config?: JanitorConfig | null;
   dryRun?: { wouldRemove: string[]; wouldSkip: string[] };
   disk?: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
+  lastSweep?: { at: string; deploymentSources?: { filesystem?: {
+    beforeAvailableBytes: number | null; afterAvailableBytes: number | null; netAvailableBytesDelta: number | null;
+  } } } | null;
 }
 
 const DEFAULT_SCHEDULER_CONFIG: SchedulerConfig = {
@@ -171,6 +179,19 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
         {j.readError ? <p role="alert" className="text-sm text-destructive">读取失败：{j.readError}。当前显示上次结果。</p> : null}{j.saveError ? <p role="alert" className="text-sm text-destructive">{j.saveError}</p> : null}
         {destructiveChange ? <ConfirmAction scopeKey={JSON.stringify({ draft: j.draft, saved: j.saved })} title="保存过期删除规则？" description={`保留期设为 ${j.draft.days} 天，保存后立即用于定时清理全部项目中未受保护的分支容器与工作区。当前候选仅基于旧规则，不代表新规则执行结果。`} confirmLabel="保存删除规则" onConfirm={janitor.save} disabled={janitor.busy || j.unknown || Boolean(j.readError)} trigger={janitorSave} /> : janitorSave}
       </div>}
+    </Section>
+    <HostCapacityPanel />
+    <Section title="部署源码磁盘治理">
+      <p className="text-sm text-muted-foreground">
+        最近一轮文件系统净可用空间变化：{j?.snapshot.lastSweep?.deploymentSources?.filesystem?.netAvailableBytesDelta == null
+          ? '尚无已确认读数'
+          : `${j.snapshot.lastSweep.deploymentSources.filesystem.netAvailableBytesDelta.toLocaleString()} 字节`}。
+        该读数包含同时发生的写入，不能将候选估计值或删除数量当作实际释放量。
+      </p>
+      <SourceRetentionPreview />
+      <BackupRetentionPanel />
+      <AcceptanceRetentionPanel />
+      <ImageCachePanel />
     </Section>
   </div>;
 }

@@ -18,11 +18,17 @@
 
 ## 文档列表
 
+- [MAP 运营工作区改造目标 · 计划](./plan.frontend.workspace.md) `plan.frontend.workspace`
+- [CDS / LLMGW 磁盘治理与交接 · 计划](./plan.cds.disk-governance-20261113.md) `plan.cds.disk-governance-20261113`
+
+
 - [MAP 与 CDS 磁盘容量治理 · 指南](./guide.platform.capacity.md) `guide.platform.capacity`
 
 - [知识库信息高效传递与复刻验收计划](./plan.knowledge-base.information-delivery.md) `plan.knowledge-base.information-delivery`
 
 - [CDS 自动化任务健康与安全恢复 · 指南](./guide.cds.automation-health.md) `guide.cds.automation-health`
+- [官方上游迁移与管理简化 · 计划](./plan.llmgw.official-upstreams.md) `plan.llmgw.official-upstreams`
+
 - [网页托管关联文档 · 计划](./plan.web-hosting.related-documents.md) `plan.web-hosting.related-documents`
 
 - [CDS 骨架维护与验收 · 指南](./guide.cds.loading.md) `guide.cds.loading`
@@ -72,6 +78,7 @@
 - [AI 百宝箱 · 设计](./design.ai-toolbox.md) `design.ai-toolbox`
 - [AI 竞技场 · 设计](./design.arena.md) `design.arena`
 - [赋码采集关联智能体（CCAS Agent） · 设计](./design.ccas-agent.md) `design.ccas-agent`
+- [CDS 结构化产品功能验收 · 设计](./design.cds.acceptance-tasks.md) `design.cds.acceptance-tasks`
 - [CDS Agent API · 设计](./design.cds.agent.api.md) `design.cds.agent.api`
 - [CDS Agent 商业级架构与路线图 · 设计](./design.cds.agent.commercial-architecture-and-roadmap.md) `design.cds.agent.commercial-architecture-and-roadmap`
 - [CDS Agent 托管运行时事实源设计 · 设计](./design.cds.agent.managed-runtime-fact-source.md) `design.cds.agent.managed-runtime-fact-source`

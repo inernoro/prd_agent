@@ -868,6 +868,41 @@ describe('Branch Routes', () => {
       expect(mock.commands.some(c => c.includes('git fetch origin --prune'))).toBe(false);
     });
 
+    it('explicit refresh fetches newly added refs inside the cache window and updates cachedAt', async () => {
+      let fetches = 0;
+      mock.addResponsePatternFirst(/git fetch origin --prune/, () => {
+        fetches++; return { stdout: '', stderr: '', exitCode: 0 };
+      });
+      mock.addResponsePatternFirst(/git for-each-ref/, () => ({
+        stdout: fetches > 1 ? 'feature/new<SEP>2026-11-14<SEP>Dev<SEP>new' : '', stderr: '', exitCode: 0,
+      }));
+      const first = await request(server, 'GET', '/api/remote-branches');
+      await new Promise(resolve => setTimeout(resolve, 2));
+      const refreshed = await request(server, 'GET', '/api/remote-branches?force=true');
+      expect(refreshed.status).toBe(200);
+      expect(fetches).toBe(2);
+      expect(refreshed.body).toMatchObject({ fetched: true, branches: [{ name: 'feature/new' }] });
+      expect((refreshed.body as any).cachedAt).toBeGreaterThan((first.body as any).cachedAt);
+    });
+
+    it('explicit refresh reports an actual fetch failure even with warm cache, then can recover', async () => {
+      let fail = false;
+      mock.addResponsePatternFirst(/git fetch origin --prune/, () => ({ stdout: '', stderr: fail ? 'origin unavailable' : '', exitCode: fail ? 1 : 0 }));
+      await request(server, 'GET', '/api/remote-branches');
+      fail = true;
+      const failed = await request(server, 'GET', '/api/remote-branches?force=true');
+      expect(failed.status).toBe(502);
+      expect(failed.body).toMatchObject({ error: 'git_fetch_failed', message: 'origin unavailable' });
+      fail = false;
+      expect((await request(server, 'GET', '/api/remote-branches?force=true')).body).toMatchObject({ fetched: true });
+    });
+
+    it('nofetch still prevents Git network work when force is also supplied', async () => {
+      const result = await request(server, 'GET', '/api/remote-branches?nofetch=true&force=true');
+      expect(result.body).toMatchObject({ fetched: false, cachedAt: null });
+      expect(mock.commands.some(command => command.includes('git fetch origin --prune'))).toBe(false);
+    });
+
     it('persists the remote default branch onto the project', async () => {
       const now = new Date().toISOString();
       stateService.addProject({
@@ -2649,6 +2684,21 @@ describe('Branch Routes', () => {
         stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default' });
         await request(server, 'PUT', `/api/branches/${id}/profile-overrides/api`, { env: { KEY: 'from-source' }, dbScope: 'per-branch' });
       };
+
+      it('isolated source cannot be derived or copied, and isolated targets cannot be overwritten', async () => {
+        await seedSourceWithConfig('isolated-source'); seedBranch('ordinary-target');
+        stateService.getBranch('isolated-source')!.excludedProjectProfileIds = ['api'];
+        const beforeSource = JSON.stringify(stateService.getBranch('isolated-source'));
+        const beforeTarget = JSON.stringify(stateService.getBranch('ordinary-target'));
+        const snapshots = stateService.getConfigSnapshots().length;
+        expect((await request(server, 'POST', '/api/branches', { branch: 'unsafe-child', sourceBranchId: 'isolated-source' })).status).toBe(409);
+        expect(stateService.getBranch('unsafe-child')).toBeUndefined();
+        expect((await request(server, 'POST', '/api/branches/ordinary-target/copy-config-from/isolated-source?redeploy=1')).status).toBe(409);
+        expect((await request(server, 'POST', '/api/branches/isolated-source/copy-config-from/ordinary-target')).status).toBe(409);
+        expect(JSON.stringify(stateService.getBranch('isolated-source'))).toBe(beforeSource);
+        expect(JSON.stringify(stateService.getBranch('ordinary-target'))).toBe(beforeTarget);
+        expect(stateService.getConfigSnapshots().length).toBe(snapshots);
+      });
 
       it('POST /branches 带 sourceBranchId:深拷贝 overrides+extraProfiles,写派生指针,改新不串旧', async () => {
         await seedSourceWithConfig('src-branch');
@@ -8090,9 +8140,14 @@ describe('Branch Routes', () => {
         status:'running',createdAt:new Date().toISOString(),services:{orphan:{profileId:'orphan',containerName:'old-orphan',hostPort:10010,status:'running'}}});
       mock.addResponsePattern(/docker image inspect.*json .Id/,()=>({exitCode:0,stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null]),stderr:''}));
       const preflight=vi.spyOn(containerService,'preflightProfileStorage');
-      const result=await request(server,'POST','/api/branches/storage-graph/deploy');
-      expect(result.status).toBe(200);
-      expect(String(result.body)).toContain('unsafe_deployment_storage');
+      const source=vi.spyOn(WorktreeService.prototype,'prepareDeploymentSource');
+      for (let retry=0;retry<3;retry++) {
+        const result=await request(server,'POST','/api/branches/storage-graph/deploy');
+        expect(result.status).toBe(200);
+        expect(String(result.body)).toContain('unsafe_deployment_storage');
+      }
+      expect(source).not.toHaveBeenCalled();
+      expect(fs.existsSync(WorktreeService.deploymentSourceRootFor(path.join(tmpDir,'worktrees','storage-graph')))).toBe(false);
       expect(preflight).not.toHaveBeenCalled();
       expect(mock.commands.some(c=>/^docker image inspect/.test(c))).toBe(false);
       expect(mock.commands.some(c=>/^docker (rm|stop|run|create|start) /.test(c))).toBe(false);

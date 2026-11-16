@@ -1,0 +1,4 @@
+interface:
+  display_name: "Work Budget · 开工预算"
+  short_description: "先看可验收成果与投入再开工，按预算复核进展，超时失准后修正评估方法"
+  default_prompt: "使用 $work-budget 先评估这项任务的产出、工作量、耗时和建议硬上限，给我可取舍的开工卡，等我确认再实施。"

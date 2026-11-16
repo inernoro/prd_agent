@@ -78,7 +78,7 @@ export function ModelRankWidget({ board = 'agent' }: { board?: string } = {}) {
       if (cancelled || !aliveRef.current) return;
       if (res.success && res.data?.ready && res.data.entries?.length) {
         setEntries(res.data.entries);
-        setFetchedAt(res.data.fetchedAt ?? null);
+        setFetchedAt(res.data.publishedAt ?? res.data.fetchedAt ?? null);
       }
       // 不论成败都推一下时钟：拉不到时，stale 仍应随时间自己翻过去
       setNow(Date.now());

@@ -27,13 +27,24 @@ export function readableResult(result, baseline) {
   const comparison = incomplete || !sameContract || !baselineReady ? {pass:false,failures:[]} : compare(result, baseline);
   const insufficient = comparison.failures.some(line=>line.includes('样本不足'));
   const intentionalFault = Boolean(result.browserInjection?.delayMs || result.injectionMs);
-  const faultUnproven = intentionalFault && comparison.pass;
+  const browserFault = result.browserInjection?.delayMs > 0;
+  const apiAlsoSlow = browserFault && comparison.failures.some(line=>/^(normal|soak)\//.test(line));
+  const hits = result.browserInjection?.applied ?? [];
+  const browserFaultUnproven = browserFault && (result.browserInjection.delayMs !== 10000
+    || new Set(hits.filter(hit=>hit.stage==='home' && hit.delayMs===10000).map(hit=>hit.round)).size
+      < (result.contract?.workload?.browserRepetitions ?? 3)
+    || !comparison.failures.some(line=>line.startsWith('browser/home: ready p95'))
+    || comparison.failures.some(line=>!line.startsWith('browser/')));
+  const appFaultUnproven = result.injectionMs > 0 && (result.injectionMs !== 350
+    || !comparison.failures.some(line=>/(?:document-open|write-save|write-readback): app p95/.test(line)));
+  const faultUnproven = intentionalFault && (comparison.pass || browserFaultUnproven || appFaultUnproven);
   const status = incomplete || !sameContract || !baselineReady || insufficient || faultUnproven ? 'unknown' : comparison.pass ? 'healthy' : 'degraded';
   const unknownReason = incomplete ? '测试没有完整结束，不能把未测完当作通过。'
     : !sameContract ? '测试条件与正常速度对照不同，不能直接比较。'
     : !baselineReady ? '缺少完整的正常速度对照，暂时不能判断是否变慢。'
     : insufficient ? '有效操作次数不足，暂时不能判断是否变慢。'
-    : faultUnproven ? '已设置故意拖慢，但没有触发超限，不能认定识别试验成功。' : '';
+    : apiAlsoSlow ? '已检测到页面变慢，但接口也超出正常对照，尚未证明“接口快、页面慢”仍会被发现。'
+    : faultUnproven ? '故意拖慢未完成规定的命中和耗时证明，不能认定识别试验成功。' : '';
   const reasons = [...new Set(comparison.failures.map(line => {
     const match = /^(browser|normal|soak)\/([^:]+):/.exec(line);
     if(!match) return '缺少可比较的完整证据';

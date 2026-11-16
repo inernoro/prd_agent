@@ -5,7 +5,7 @@ import { useToolbarPopover } from '@/lib/toolbarPopover';
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
 import { Link, useSearchParams } from 'react-router-dom';
-import { GlobalUpstreamProxyControl, popoverHeadingStyle, ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
+import { GlobalUpstreamProxyControl, popoverHeadingStyle, EditableProxyBadge, ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
 import { ChevronRight, X } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
@@ -48,6 +48,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   const [bulkOnlyMissing, setBulkOnlyMissing] = useState(true);
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [deleteBlockedName, setDeleteBlockedName] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [draft, setDraft] = useState<CreatePlatformRequest>({
@@ -251,10 +252,10 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     }
   }
 
-  async function toggle(p: PlatformItem) {
+  async function toggle(p: PlatformItem, enabled = !p.enabled) {
     setBusyId(p.id);
     setToast(null);
-    const res = await setPlatformEnabled(p.id, !p.enabled);
+    const res = await setPlatformEnabled(p.id, enabled);
     setBusyId(null);
     if (res.success) {
       setItems((prev) => (prev ? prev.map((x) => (x.id === p.id ? res.data : x)) : prev));
@@ -444,6 +445,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     }
     setBusyId(p.id);
     setToast(null);
+    setDeleteBlockedName(null);
     const res = await deletePlatform(p.id);
     setBusyId(null);
     if (res.success) {
@@ -455,6 +457,10 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
         return next;
       });
       setToast(`已删除上游「${p.name}」`);
+      return;
+    }
+    if (res.error?.code === 'PLATFORM_IN_USE') {
+      setDeleteBlockedName(p.name);
       return;
     }
     setToast(res.error?.message || '删除失败');
@@ -597,6 +603,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       {toast ? (
         <div style={{ flexShrink: 0, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
+      {deleteBlockedName ? <InlineAlert tone="error">「{deleteBlockedName}」仍被模型或线路使用，尚未删除。<Link to="/logical-models">前往模型迁移并移除旧线路</Link></InlineAlert> : null}
       {/* 自测结果与模型清单挂在表格上方：接完之后「通没通、上游有什么」必须看得见。 */}
       {Object.entries(testResult).map(([platformId, result]) => {
         const owner = providerItems.find((x) => x.id === platformId);
@@ -660,6 +667,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                   <td style={td}>
                     <div className="lg-provider-identity">
                       <div className="lg-provider-name-line"><button type="button" className="lg-provider-name" onClick={() => { setProviderTab('models'); setExpandedModelsFor(p.id); }}>{p.name}</button><span className={`lg-provider-management ${p.enabled ? '' : 'is-disabled'}`} aria-label={`管理状态：${p.enabled ? '已启用' : '已停用'}`}>{p.enabled ? '已启用' : '已停用'}</span></div>
+
                       {keyWarning ? <span className="lg-provider-key-state is-attention">{keyWarning}</span> : null}
                       {!p.apiUrl ? <span className="lg-provider-key-state is-attention">未配置 API 地址</span> : null}
                       {p.authority !== 'llm_gateway' ? <span className="lg-provider-key-state is-attention">待导入平台</span> : null}
@@ -685,6 +693,14 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                   <td style={td}><ProviderCallStatus platform={p} /></td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
                     <div className="lg-provider-row-actions"><Button size="sm" variant="ghost" onClick={() => { setProviderTab('connection'); setExpandedModelsFor(p.id); }}>连接配置</Button>
+                      <EditableProxyBadge key={`${p.id}:${p.updatedAt}`} name={p.name} proxy={p.proxy} onSave={canWrite && p.authority === 'llm_gateway' ? async proxy => {
+                        const res = await updatePlatform(p.id, { proxy });
+                        if (res.success) {
+                          setItems(current => current?.map(item => item.id === p.id ? res.data : item) ?? current);
+                          setToast(`已更新「${p.name}」的连接方式`);
+                        }
+                        return res;
+                      } : undefined} />
                     {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
 
 
@@ -713,6 +729,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                               disabled: busyId === p.id,
                               onSelect: () => void toggle(p),
                             },
+                            ...(!p.enabled ? [{ key: 'disable-again', label: '重新停用', disabled: busyId === p.id, onSelect: () => void toggle(p, false) }] : []),
                             // 这条上游到底有没有在被调、报什么错——不看日志答不上来
                             { key: 'logs', label: '查看日志', to: `/logs?platformId=${encodeURIComponent(p.id)}` },
                             ...(p.authority === 'llm_gateway' ? [

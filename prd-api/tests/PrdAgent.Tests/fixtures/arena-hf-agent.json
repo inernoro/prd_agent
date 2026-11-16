@@ -1,0 +1,154 @@
+{
+  "agent": {
+    "features": [
+      {"feature_idx": 0, "name": "model_name", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 1, "name": "organization", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 2, "name": "license", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 3, "name": "score", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 4, "name": "score_ci_lower", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 5, "name": "score_ci_upper", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 6, "name": "observation_count", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 7, "name": "session_count", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 8, "name": "rank", "type": {"dtype": "int64", "_type": "Value"}},
+      {"feature_idx": 9, "name": "category", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 10, "name": "leaderboard_publish_date", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 11, "name": "cost_per_task_p50", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 12, "name": "output_tokens_per_task_p50", "type": {"dtype": "float64", "_type": "Value"}}
+    ],
+    "rows": [
+      {"row_idx": 0, "row": {"model_name": "Claude Fable 5.2 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.28612631840600056, "score_ci_lower": 0.24891363246396428, "score_ci_upper": 0.32333900434803686, "observation_count": 1690217.0, "session_count": 10406.0, "rank": 1, "category": "overall", "leaderboard_publish_date": "2026-11-15", "cost_per_task_p50": 9.019102999999998, "output_tokens_per_task_p50": 126742.5}, "truncated_cells": []},
+      {"row_idx": 1, "row": {"model_name": "Claude Opus 5.5 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.1819375579333983, "score_ci_lower": 0.1616822124124222, "score_ci_upper": 0.2021929034543744, "observation_count": 2583520.0, "session_count": 14649.0, "rank": 2, "category": "overall", "leaderboard_publish_date": "2026-11-15", "cost_per_task_p50": 5.650809199999999, "output_tokens_per_task_p50": 107510.5}, "truncated_cells": []},
+      {"row_idx": 2, "row": {"model_name": "Gemini 4 Carbon (High)", "organization": "google", "license": "Proprietary", "score": 0.16445704574025574, "score_ci_lower": 0.15768740437441162, "score_ci_upper": 0.17122668710609987, "observation_count": 10136564.0, "session_count": 64218.0, "rank": 3, "category": "overall", "leaderboard_publish_date": "2026-11-15", "cost_per_task_p50": 1.3539045, "output_tokens_per_task_p50": 44991.0}, "truncated_cells": []},
+      {"row_idx": 3, "row": {"model_name": "Claude Sonnet 5.5 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.15285002202884324, "score_ci_lower": 0.1239005950057149, "score_ci_upper": 0.18179944905197157, "observation_count": 1290203.0, "session_count": 8805.0, "rank": 4, "category": "overall", "leaderboard_publish_date": "2026-11-15", "cost_per_task_p50": 3.46204235, "output_tokens_per_task_p50": 150642.0}, "truncated_cells": []},
+      {"row_idx": 4, "row": {"model_name": "Gemini 4 Hydrogen (High)", "organization": "google", "license": "Proprietary", "score": 0.1490657982485307, "score_ci_lower": 0.130196343810596, "score_ci_upper": 0.1679352526864654, "observation_count": 1775553.0, "session_count": 8639.0, "rank": 5, "category": "overall", "leaderboard_publish_date": "2026-11-15", "cost_per_task_p50": 1.5251263, "output_tokens_per_task_p50": 64700.0}, "truncated_cells": []}
+    ],
+    "num_rows_total": 5,
+    "num_rows_per_page": 100,
+    "partial": false
+  },
+  "agent_task_outcome_explicit": {
+    "features": [
+      {"feature_idx": 0, "name": "model_name", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 1, "name": "organization", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 2, "name": "license", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 3, "name": "score", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 4, "name": "score_ci_lower", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 5, "name": "score_ci_upper", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 6, "name": "observation_count", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 7, "name": "session_count", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 8, "name": "rank", "type": {"dtype": "int64", "_type": "Value"}},
+      {"feature_idx": 9, "name": "category", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 10, "name": "leaderboard_publish_date", "type": {"dtype": "string", "_type": "Value"}}
+    ],
+    "rows": [
+      {"row_idx": 0, "row": {"model_name": "Claude Fable 5.2 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.1941220243047772, "score_ci_lower": 0.14861878636732595, "score_ci_upper": 0.23962526224222847, "observation_count": 3185.0, "session_count": 2777.0, "rank": 1, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 1, "row": {"model_name": "Claude Opus 5.5 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.19127315391014665, "score_ci_lower": 0.15829710243024286, "score_ci_upper": 0.22424920539005044, "observation_count": 4646.0, "session_count": 3732.0, "rank": 2, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 2, "row": {"model_name": "Claude Sonnet 5.5 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.180065061127072, "score_ci_lower": 0.13369353499183592, "score_ci_upper": 0.22643658726230806, "observation_count": 2308.0, "session_count": 1966.0, "rank": 3, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 3, "row": {"model_name": "Gemini 4 Carbon (High)", "organization": "google", "license": "Proprietary", "score": 0.17878654233263114, "score_ci_lower": 0.16787201103497038, "score_ci_upper": 0.1897010736302919, "observation_count": 32225.0, "session_count": 23019.0, "rank": 4, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 4, "row": {"model_name": "Gemini 4 Hydrogen (High)", "organization": "google", "license": "Proprietary", "score": 0.16808508107637077, "score_ci_lower": 0.13901205490929247, "score_ci_upper": 0.19715810724344907, "observation_count": 4207.0, "session_count": 3162.0, "rank": 5, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []}
+    ],
+    "num_rows_total": 5,
+    "num_rows_per_page": 100,
+    "partial": false
+  },
+  "agent_praise_complaint": {
+    "features": [
+      {"feature_idx": 0, "name": "model_name", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 1, "name": "organization", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 2, "name": "license", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 3, "name": "score", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 4, "name": "score_ci_lower", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 5, "name": "score_ci_upper", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 6, "name": "observation_count", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 7, "name": "session_count", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 8, "name": "rank", "type": {"dtype": "int64", "_type": "Value"}},
+      {"feature_idx": 9, "name": "category", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 10, "name": "leaderboard_publish_date", "type": {"dtype": "string", "_type": "Value"}}
+    ],
+    "rows": [
+      {"row_idx": 0, "row": {"model_name": "Claude Fable 5.2 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.7601511696610654, "score_ci_lower": 0.612921799753394, "score_ci_upper": 0.9073805395687369, "observation_count": 827.0, "session_count": 796.0, "rank": 1, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 1, "row": {"model_name": "Gemini 4 Carbon (High)", "organization": "google", "license": "Proprietary", "score": 0.403122455340688, "score_ci_lower": 0.3782770186752943, "score_ci_upper": 0.42796789200608176, "observation_count": 14395.0, "session_count": 11119.0, "rank": 2, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 2, "row": {"model_name": "Claude Opus 5.5 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.372895867551423, "score_ci_lower": 0.29749429510385855, "score_ci_upper": 0.44829743999898747, "observation_count": 1899.0, "session_count": 1638.0, "rank": 3, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 3, "row": {"model_name": "Gemini 4 Hydrogen (High)", "organization": "google", "license": "Proprietary", "score": 0.33757305223276746, "score_ci_lower": 0.26689806168290103, "score_ci_upper": 0.4082480427826339, "observation_count": 1603.0, "session_count": 1372.0, "rank": 4, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 4, "row": {"model_name": "Claude Sonnet 5.5 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.3019518800018167, "score_ci_lower": 0.1887447016426726, "score_ci_upper": 0.41515905836096084, "observation_count": 934.0, "session_count": 860.0, "rank": 6, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []}
+    ],
+    "num_rows_total": 5,
+    "num_rows_per_page": 100,
+    "partial": false
+  },
+  "agent_steerability": {
+    "features": [
+      {"feature_idx": 0, "name": "model_name", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 1, "name": "organization", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 2, "name": "license", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 3, "name": "score", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 4, "name": "score_ci_lower", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 5, "name": "score_ci_upper", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 6, "name": "observation_count", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 7, "name": "session_count", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 8, "name": "rank", "type": {"dtype": "int64", "_type": "Value"}},
+      {"feature_idx": 9, "name": "category", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 10, "name": "leaderboard_publish_date", "type": {"dtype": "string", "_type": "Value"}}
+    ],
+    "rows": [
+      {"row_idx": 0, "row": {"model_name": "Claude Fable 5.2 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.2550742961645536, "score_ci_lower": 0.212057857437029, "score_ci_upper": 0.29809073489207827, "observation_count": 21852.0, "session_count": 6246.0, "rank": 1, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 1, "row": {"model_name": "Gemini 4 Hydrogen (High)", "organization": "google", "license": "Proprietary", "score": 0.18369194364141034, "score_ci_lower": 0.16681937599586705, "score_ci_upper": 0.20056451128695363, "observation_count": 32177.0, "session_count": 5032.0, "rank": 2, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 2, "row": {"model_name": "Gemini 4 Carbon (High)", "organization": "google", "license": "Proprietary", "score": 0.18144106189251408, "score_ci_lower": 0.17550317231849885, "score_ci_upper": 0.1873789514665293, "observation_count": 294148.0, "session_count": 36830.0, "rank": 3, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 3, "row": {"model_name": "Claude Opus 5.5 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.1752016570684613, "score_ci_lower": 0.15655399008677706, "score_ci_upper": 0.19384932405014554, "observation_count": 40983.0, "session_count": 7506.0, "rank": 4, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 4, "row": {"model_name": "Claude Sonnet 5.5 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.13694345139311404, "score_ci_lower": 0.11027363170975915, "score_ci_upper": 0.16361327107646892, "observation_count": 18898.0, "session_count": 4690.0, "rank": 7, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []}
+    ],
+    "num_rows_total": 5,
+    "num_rows_per_page": 100,
+    "partial": false
+  },
+  "agent_bash_reliability": {
+    "features": [
+      {"feature_idx": 0, "name": "model_name", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 1, "name": "organization", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 2, "name": "license", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 3, "name": "score", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 4, "name": "score_ci_lower", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 5, "name": "score_ci_upper", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 6, "name": "observation_count", "type": {"dtype": "int64", "_type": "Value"}},
+      {"feature_idx": 7, "name": "session_count", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 8, "name": "rank", "type": {"dtype": "int64", "_type": "Value"}},
+      {"feature_idx": 9, "name": "category", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 10, "name": "leaderboard_publish_date", "type": {"dtype": "string", "_type": "Value"}}
+    ],
+    "rows": [
+      {"row_idx": 0, "row": {"model_name": "Claude Opus 5.5 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.1434985419331392, "score_ci_lower": 0.1394149178093497, "score_ci_upper": 0.14758216605692873, "observation_count": 283006, "session_count": 3332.0, "rank": 2, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 1, "row": {"model_name": "Claude Fable 5.2 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.13573113719448915, "score_ci_lower": 0.12953336136400825, "score_ci_upper": 0.14192891302497004, "observation_count": 196206, "session_count": 2328.0, "rank": 3, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 2, "row": {"model_name": "Claude Sonnet 5.5 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.11939392753098135, "score_ci_lower": 0.11333521766848283, "score_ci_upper": 0.1254526373934799, "observation_count": 152399, "session_count": 2103.0, "rank": 5, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 3, "row": {"model_name": "Gemini 4 Hydrogen (High)", "organization": "google", "license": "Proprietary", "score": -0.04637500610590589, "score_ci_lower": -0.06479503869700981, "score_ci_upper": -0.027954973514801966, "observation_count": 83733, "session_count": 1995.0, "rank": 46, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 4, "row": {"model_name": "Gemini 4 Carbon (High)", "organization": "google", "license": "Proprietary", "score": -0.059464424019074535, "score_ci_lower": -0.06581663813573127, "score_ci_upper": -0.0531122099024178, "observation_count": 658813, "session_count": 16205.0, "rank": 52, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []}
+    ],
+    "num_rows_total": 5,
+    "num_rows_per_page": 100,
+    "partial": false
+  },
+  "agent_tool_hallucination": {
+    "features": [
+      {"feature_idx": 0, "name": "model_name", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 1, "name": "organization", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 2, "name": "license", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 3, "name": "score", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 4, "name": "score_ci_lower", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 5, "name": "score_ci_upper", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 6, "name": "observation_count", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 7, "name": "session_count", "type": {"dtype": "float64", "_type": "Value"}},
+      {"feature_idx": 8, "name": "rank", "type": {"dtype": "int64", "_type": "Value"}},
+      {"feature_idx": 9, "name": "category", "type": {"dtype": "string", "_type": "Value"}},
+      {"feature_idx": 10, "name": "leaderboard_publish_date", "type": {"dtype": "string", "_type": "Value"}}
+    ],
+    "rows": [
+      {"row_idx": 0, "row": {"model_name": "Claude Fable 5.2 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.010355374099361825, "score_ci_lower": 0.0095289602199779, "score_ci_upper": 0.01118178797874575, "observation_count": 1468147.0, "session_count": 9909.0, "rank": 6, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 1, "row": {"model_name": "Claude Sonnet 5.5 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.009167742842301152, "score_ci_lower": 0.007929161255068711, "score_ci_upper": 0.010406324429533593, "observation_count": 1115664.0, "session_count": 8619.0, "rank": 24, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 2, "row": {"model_name": "Claude Opus 5.5 (Max)", "organization": "anthropic", "license": "Proprietary", "score": 0.007599061203691804, "score_ci_lower": 0.005865231728499056, "score_ci_upper": 0.009332890678884553, "observation_count": 2252986.0, "session_count": 14261.0, "rank": 28, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 3, "row": {"model_name": "Gemini 4 Carbon (High)", "organization": "google", "license": "Proprietary", "score": 0.006438858274854908, "score_ci_lower": 0.004878146232134957, "score_ci_upper": 0.00799957031757486, "observation_count": 9136983.0, "session_count": 62097.0, "rank": 31, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []},
+      {"row_idx": 4, "row": {"model_name": "Gemini 4 Hydrogen (High)", "organization": "google", "license": "Proprietary", "score": 0.0046335182207926096, "score_ci_lower": 0.00144757944823844, "score_ci_upper": 0.007819456993346779, "observation_count": 1653833.0, "session_count": 8421.0, "rank": 36, "category": "overall", "leaderboard_publish_date": "2026-11-15"}, "truncated_cells": []}
+    ],
+    "num_rows_total": 5,
+    "num_rows_per_page": 100,
+    "partial": false
+  }
+}

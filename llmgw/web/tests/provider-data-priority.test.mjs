@@ -67,8 +67,10 @@ test('Provider先呈现对象、低频全局维护在数据后且空态仍可配
     assert.equal(document.querySelector('.lg-collection-toolbar .lg-provider-bulk-control'),null);
     assert.ok(bulk.textContent.includes('确认应用全部供应方（不随清单筛选）'));
     const firstRow = document.querySelector('.lg-collection-provider-row');
-    assert.equal(firstRow.textContent.includes('跟随全局'), false, '低频连接方式不应重复占据清单');
-    assert.equal(firstRow.querySelector('[aria-haspopup="dialog"]'), null, '清单不再提供与连接配置重复的接口抽屉');
+    const quickProxy = firstRow.querySelector('[aria-label="更改上游 0的连接方式"]');
+    assert.ok(quickProxy, '保留主线快捷代理入口');
+    assert.ok(firstRow.querySelector('.lg-provider-row-actions').contains(quickProxy), '连接方式与操作同行，不给名称再叠一层说明');
+    assert.equal(firstRow.querySelectorAll('[aria-haspopup="dialog"]').length, 1, '清单只保留快捷代理，不重复提供接口抽屉');
     await act(async()=>[...firstRow.querySelectorAll('button')].find(b=>b.textContent.trim()==='连接配置').click());
     assert.ok(document.querySelector('.lg-collection-pane').textContent.includes('跟随全局'), '完整连接信息保留在同一连接工作区');
     await act(async()=>[...document.querySelector('.lg-collection-pane').querySelectorAll('button')].find(b=>b.textContent.trim()==='返回上游清单').click());

@@ -1096,6 +1096,8 @@ export interface BranchEntry {
    * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
    */
   extraProfiles?: BuildProfile[];
+  /** Explicit branch-local omission of baseline services; absent/empty preserves inheritance. */
+  excludedProjectProfileIds?: string[];
   /**
    * 复制集模式（2026-07-23，design.cds.replica-set）：按 profileId 粒度，
    * 让单个服务在同一入口下并排跑多个历史版本。absent/空 = 普通模式（现状零回归）。
@@ -2069,6 +2071,8 @@ export type ReleaseRunStatus =
   | 'rollback_failed';
 
 export interface ReleaseRun {
+  batchId?: string;
+  batchAttemptId?: string;
   releaseId: string;
   projectId: string;
   branchId: string;
@@ -2258,7 +2262,22 @@ export interface DeletedProjectWorktreeTombstone {
   requestedAt: string;
 }
 
+export type { AcceptanceCase, AcceptanceTemplate, AcceptanceTask, AcceptanceSubmission, AcceptanceSummary, AcceptanceEnvironment, AcceptanceEvidence, AcceptanceReportSource } from './acceptance-types.js';
+
+export interface LegacyDataCase {
+  id: string; projectId: string; sourceIdentity: string; dataIdentity: string;
+  marker: string; device: number; inode: number; birthtimeMs?: number; firstObservedAt: string; lastObservedAt: string;
+  status: 'needs-owner' | 'protected' | 'backup-required';
+  disposition?: 'business-data' | 'ephemeral-test' | 'unknown';
+  confirmedBy?: string; confirmedAt?: string; note?: string;
+}
+
 export interface CdsState {
+  /** Explicit owner opt-in for bounded read-only capacity collection. */
+  hostCapacitySamplingEnabled?: boolean;
+  /** 不可变模板版本与任务快照；跟随现有 backingStore 持久化。 */
+  acceptanceTemplates?: import('./acceptance-types.js').AcceptanceTemplate[];
+  acceptanceTasks?: import('./acceptance-types.js').StoredAcceptanceTask[];
   profileStorageBindings?: Record<string, import('./services/profile-storage-provision.js').ProfileStorageBinding>;
   profileStoragePublications?: Record<string, {binding: import('./services/profile-storage-provision.js').ProfileStorageBinding}>;
   /** Routing rules */
@@ -2293,6 +2312,8 @@ export interface CdsState {
    * 否则 `Object.values(undefined)` 直接把 CDS 启动炸掉。
    */
   releasePreflights?: Record<string, ReleasePreflightRecord>;
+  /** Durable ordered batches, including request receipts; old state may omit it. */
+  releaseBatches?: Record<string, import('./domain/release-batch.js').ReleaseBatch>;
   /** Immutable release run records keyed by releaseId. */
   releaseRuns?: Record<string, ReleaseRun>;
   /** Per-branch append-only container log archives owned by CDS. */
@@ -2397,6 +2418,10 @@ export interface CdsState {
   resourceExternalAccess?: Record<string, ResourceExternalAccessPolicy>;
   /** Resource-scoped database clone / create / restore task history. */
   resourceCloneTasks?: ResourceCloneTask[];
+  /** Persistent-data observations are a disposition queue, never deletion permissions. */
+  legacyDataCases?: LegacyDataCase[];
+  /** Bounded last execution per host/keeper. Object identities live in native catalogs. */
+  resourceRetirementExecutions?: Record<string, unknown>;
   /**
    * 正在直接占用基础设施数据面的短作业台账。轮换在撤销旧凭据前以此做 drain 门禁；
    * completed/failed 记录只保留有限历史，active 记录在进程崩溃后故意保持阻断，等待人工核对。
@@ -2653,7 +2678,7 @@ export interface CdsState {
    * process.env，那份只能从宿主的 `.cds.env` 来，于是「把铃接上」变成必须登主机的事——
    * 而这条链最常见的失败恰恰是**根本没人去接**。设置里配了就用设置，没配才回落 env。
    */
-  alarmNotify?: AlarmNotifyConfig;
+  alarmNotify?: StoredAlarmNotifyConfig;
   /**
    * 通知通道表（2026-09-15）。「哪些出问题通知谁」的落点。
    *
@@ -3027,6 +3052,8 @@ export interface AcceptanceReportMeta {
   deployMode?: string | null;
   /** 规范/外部源同步：源文档标识；普通验收报告为空。 */
   sourceId?: string | null;
+  /** 任务报告归档时由服务端固定的图片资源基址，后续绑定/重试不随请求域名改变。 */
+  inlineAssetBaseUrl?: string;
   /** 规范/外部源同步：仓库内源文档路径；普通验收报告为空。 */
   sourcePath?: string | null;
   /** 规范/外部源同步：源内容哈希，如 sha256:...；普通验收报告为空。 */
@@ -3660,6 +3687,7 @@ export interface ConfigSnapshot {
     branchConfigs?: Record<string, {
       profileOverrides?: Record<string, BuildProfileOverride>;
       extraProfiles?: BuildProfile[];
+      excludedProjectProfileIds?: string[];
       derivedFromBranchId?: string;
       derivedFromBranchName?: string;
       derivedAt?: string;
@@ -5277,7 +5305,7 @@ export interface CdsConfig {
    * 解析顺序：设置里配了就用设置，没配才回落 env。四项缺任何一项都算没配，
    * 那时铃是哑的，面板上必须直说。
    */
-  alarmNotify?: AlarmNotifyConfig;
+  alarmNotify?: StoredAlarmNotifyConfig;
   /**
    * 通知通道表（2026-09-15）。「哪些出问题通知谁」的落点。
    *
@@ -5329,9 +5357,13 @@ export interface AlarmNotifyConfig {
   keyId: string;
   /** 必须与 MAP 配置里该 keyId 条目的 Username 一致——它进签名载荷。 */
   username: string;
+  targetUsername?: string;
   /** PKCS#8 私钥 PEM。**只写不读**：任何读接口都不许把它回显出去。 */
   privateKey: string;
 }
+
+/** 持久化形状；已有明文只读兼容，新写入必须密封。 */
+export type StoredAlarmNotifyConfig = Omit<AlarmNotifyConfig, 'privateKey'> & { privateKey: string | SealedSecret };
 
 /** Shell execution result */
 export interface ExecResult {

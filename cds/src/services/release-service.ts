@@ -47,6 +47,7 @@ import {
   isSameRemoteDirectory,
   parseRemoteReclaimOutcome,
   parseRemoteReleaseInventory,
+  releaseArtifactCommitProof,
   type ReleaseRemoteDrift,
   type RemoteReleaseInventory,
 } from './release-artifact-retention.js';
@@ -107,6 +108,11 @@ export interface ReleasePreflightResult {
 }
 
 export interface ReleaseStartInput {
+  /** Internal batch source: version selection is validated by ReleaseBatchService. */
+  batchSource?: import('../domain/release-batch.js').ReleaseBatchSource;
+  batchId?: string;
+  batchAttemptId?: string;
+  assertDispatchAllowed?: () => void;
   branchId: string;
   targetId: string;
   operator?: string;
@@ -165,6 +171,8 @@ export interface ReleaseArtifactReclaimResult {
   skippedReason?: string;
   readError?: string;
   dryRun: boolean;
+  nativeCounts?: { succeeded: number; held: number; failed: number; pending: number };
+  filesystemNetAvailableChange?: number;
 }
 
 export interface ReleaseHealthProbe {
@@ -384,6 +392,14 @@ interface ReleaseExecutionHandle {
   cancelledBy?: string;
 }
 
+/** Only validation before creating this request's run may use this rejection type. */
+export class ReleaseNotStartedError extends Error {
+  constructor(message: string) { super(message); this.name = 'ReleaseNotStartedError'; }
+}
+function rejectBeforeReleaseStart(error: unknown): never {
+  throw new ReleaseNotStartedError(error instanceof Error ? error.message : String(error));
+}
+
 export class ReleaseService {
   private readonly now: () => Date;
   private readonly execTimeoutMs: number;
@@ -392,6 +408,7 @@ export class ReleaseService {
   private readonly verifyProjectCI: ProjectReleaseCIVerifier;
   private readonly resolveProjectRepository: ReleaseServiceOptions['resolveProjectRepository'];
   private readonly inFlight = new Map<string, ReleaseExecutionHandle>();
+  private readonly artifactReclaimCursors = new Map<string, { worktree?: string; version?: string }>();
   private readonly runStartedHooks: Array<(run: ReleaseRun) => void> = [];
 
   constructor(private readonly stateService: StateService, options: ReleaseServiceOptions = {}) {
@@ -512,10 +529,18 @@ export class ReleaseService {
     return this.stateService.getReleasePlans(projectId);
   }
 
+  private resolveSourceBranch(input: ReleaseStartInput): BranchEntry | undefined {
+    if (!input.batchSource) return this.stateService.getBranch(input.branchId);
+    const source = input.batchSource;
+    return { id: source.artifact.branchId, projectId: source.projectId,
+      branch: source.artifact.branchName, worktreePath: source.artifact.artifactPath,
+      pinnedCommit: source.artifact.commitSha, status: 'running', services: {} } as BranchEntry;
+  }
+
   async preflight(input: ReleaseStartInput): Promise<ReleasePreflightResult> {
     const checks: ReleasePreflightCheck[] = [];
     const push = (check: ReleasePreflightCheck): void => { checks.push(check); };
-    const branch = this.stateService.getBranch(input.branchId);
+    const branch = this.resolveSourceBranch(input);
     const target = this.stateService.getReleaseTarget(input.targetId);
     const projectMismatch = Boolean(branch && target && branch.projectId !== target.projectId);
     const projectId = branch?.projectId || target?.projectId || 'default';
@@ -525,6 +550,8 @@ export class ReleaseService {
 
     if (!branch) {
       push({ id: 'branch', label: '分支存在', status: 'fail', message: `分支不存在: ${input.branchId}`, blocking: true });
+    } else if (input.batchSource) {
+      push({ id: 'branch', label: '验收版本来源', status: 'pass', message: `${branch.branch} 的固定验收版本；后续分支运行态不影响本批次`, blocking: false });
     } else if (branch.status !== 'running') {
       push({ id: 'branch', label: '分支部署成功', status: 'fail', message: `当前状态是 ${branch.status}，只允许从成功运行的分支发布`, blocking: true });
     } else {
@@ -540,8 +567,8 @@ export class ReleaseService {
 
     const previewUrl = input.previewUrl || '';
     const artifact = branch && commitSha ? buildArtifact(branch, commitSha, previewUrl) : undefined;
-    if (branch && commitSha && previewUrl) {
-      push({ id: 'artifact', label: '可发布产物', status: 'pass', message: 'branch-preview artifact 已就绪', blocking: false });
+    if (branch && commitSha && (previewUrl || input.batchSource)) {
+      push({ id: 'artifact', label: '可发布产物', status: 'pass', message: input.batchSource ? '已验收的固定部署版本已锁定' : 'branch-preview artifact 已就绪', blocking: false });
     } else {
       push({ id: 'artifact', label: '可发布产物', status: 'fail', message: '缺少预览地址或 commit，无法形成 ReleaseArtifact', blocking: true });
     }
@@ -856,7 +883,7 @@ export class ReleaseService {
    * 目标在这 2 分钟里被禁用、归档，或分支不再 running，一律回落重跑而不是盲信旧结论。
    */
   private findReusablePreflight(input: ReleaseStartInput): ReleasePreflightResult | undefined {
-    const branch = this.stateService.getBranch(input.branchId);
+    const branch = this.resolveSourceBranch(input);
     const key: ReleasePreflightReuseKey = {
       branchId: input.branchId,
       targetId: input.targetId,
@@ -909,15 +936,15 @@ export class ReleaseService {
   }
 
   async startRelease(input: ReleaseStartInput): Promise<ReleaseRun> {
-    const preflight = await this.resolvePreflight(input);
+    const preflight = await this.resolvePreflight(input).catch(rejectBeforeReleaseStart);
     if (!preflight.ok || !preflight.artifact || !preflight.target || !preflight.plan) {
-      throw new Error(`发布前检查未通过: ${preflight.checks.filter((c) => c.blocking && c.status === 'fail').map((c) => c.label).join(', ')}`);
+      throw new ReleaseNotStartedError(`发布前检查未通过: ${preflight.checks.filter((c) => c.blocking && c.status === 'fail').map((c) => c.label).join(', ')}`);
     }
     // 版本钳制（fail-closed）：调用方说「我要发的是这个 commit」时，绝不能因为分支
     // 在这期间前进了就默默改发别的版本。见 ReleaseStartInput.expectedCommitSha。
     const expectedCommitSha = (input.expectedCommitSha || '').trim();
     if (expectedCommitSha && expectedCommitSha !== preflight.artifact.commitSha) {
-      throw new Error(`分支已前进到 ${preflight.artifact.commitSha}，与请求的版本 ${expectedCommitSha} 不一致，已拒绝发布`);
+      throw new ReleaseNotStartedError(`分支已前进到 ${preflight.artifact.commitSha}，与请求的版本 ${expectedCommitSha} 不一致，已拒绝发布`);
     }
     // 并发串行化：同一发布目标已有在途 run（未到终态）时拒绝新发布，避免两个 SSH
     // 部署并发跑互相打架。在途 = 非终态，从 RELEASE_STATUS_TERMINAL 取反推导，
@@ -925,12 +952,17 @@ export class ReleaseService {
     //
     // 这道守卫是「卡死」的放大器：执行体随 CDS 重启消失后 run 永远停在 running，
     // 该目标从此发不出去。所以先做一次心跳收割，把已经死掉的 run 收敛掉再判定。
-    this.reconcileInterruptedReleases();
-    this.assertTargetFree(preflight.target.id, '发布');
+    try {
+      this.reconcileInterruptedReleases();
+      input.assertDispatchAllowed?.();
+      this.assertTargetFree(preflight.target.id, '发布');
+    } catch (error) { rejectBeforeReleaseStart(error); }
     const releaseId = `rel_${crypto.randomBytes(8).toString('hex')}`;
     const startedAt = this.nowIso();
     const run: ReleaseRun = {
       releaseId,
+      batchId: input.batchId,
+      batchAttemptId: input.batchAttemptId,
       projectId: preflight.target.projectId,
       branchId: input.branchId,
       commitSha: preflight.artifact.commitSha,
@@ -970,38 +1002,49 @@ export class ReleaseService {
         'queued',
       );
     }
+    if (input.batchId) {
+      await this.stateService.flush();
+      try { input.assertDispatchAllowed?.(); }
+      catch (error) { this.cancelRelease(releaseId, input.operator || 'user'); throw error; }
+    }
     void this.execute(releaseId, () => this.runRelease(releaseId), 'failed');
     return this.stateService.getReleaseRun(releaseId)!;
   }
 
-  async startRollback(releaseId: string, operator?: string, targetReleaseId?: string): Promise<ReleaseRun> {
+  async startRollback(releaseId: string, operator?: string, targetReleaseId?: string,
+    batch?: { id: string; attemptId: string; assertDispatchAllowed: () => void }): Promise<ReleaseRun> {
     const current = this.stateService.getReleaseRun(releaseId);
-    if (!current) throw new Error(`ReleaseRun not found: ${releaseId}`);
+    if (!current) throw new ReleaseNotStartedError(`ReleaseRun not found: ${releaseId}`);
     const target = this.stateService.getReleaseTarget(current.targetId);
-    if (!target?.ssh) throw new Error('回滚需要站点发布目标');
-    if (target.lifecycle === 'archived') throw new Error(`${target.name} 已归档，禁止回滚`);
-    if (!target.isEnabled) throw new Error(`${target.name} 已禁用，禁止回滚`);
+    if (!target?.ssh) throw new ReleaseNotStartedError('回滚需要站点发布目标');
+    if (target.lifecycle === 'archived') throw new ReleaseNotStartedError(`${target.name} 已归档，禁止回滚`);
+    if (!target.isEnabled) throw new ReleaseNotStartedError(`${target.name} 已禁用，禁止回滚`);
     const previous = targetReleaseId
       ? this.stateService.getReleaseRun(targetReleaseId)
       : current.previousReleaseId
         ? this.stateService.getReleaseRun(current.previousReleaseId)
         : this.stateService.getLatestSuccessfulReleaseRun(current.targetId, current.releaseId);
-    if (!previous) throw new Error('没有可回滚的上一版本');
-    if (previous.targetId !== current.targetId) throw new Error('回滚目标版本不属于当前发布目标');
+    if (!previous) throw new ReleaseNotStartedError('没有可回滚的上一版本');
+    if (previous.targetId !== current.targetId) throw new ReleaseNotStartedError('回滚目标版本不属于当前发布目标');
     // 与保留策略 / 版本下拉共用同一个成功判定：这三处一旦分裂，就会出现
     // 「下拉里看得见、点下去说不是成功版本」或「保留策略以为没用而删掉」的错位。
-    if (!isSuccessfulReleaseRun(previous)) throw new Error('只能回滚到成功版本');
+    if (!isSuccessfulReleaseRun(previous)) throw new ReleaseNotStartedError('只能回滚到成功版本');
 
     // 回滚同样是往目标机器跑 SSH 写操作，必须过与发布同一道并发闸：
     // 此前这里一道闸都没有，取消后紧接着回滚会和尚未退出的老执行体并发写
     // （Codex PR #1273 P1）。先收一轮心跳过期的僵尸 run，免得闸门被死 run 卡住。
-    this.reconcileInterruptedReleases();
-    this.assertTargetFree(current.targetId, '回滚');
+    try {
+      this.reconcileInterruptedReleases();
+      batch?.assertDispatchAllowed();
+      this.assertTargetFree(current.targetId, '回滚');
+    } catch (error) { rejectBeforeReleaseStart(error); }
 
     const rollbackId = `rel_${crypto.randomBytes(8).toString('hex')}`;
     const rollbackStartedAt = this.nowIso();
     const run: ReleaseRun = {
       releaseId: rollbackId,
+      batchId: batch?.id,
+      batchAttemptId: batch?.attemptId,
       projectId: current.projectId,
       branchId: previous.branchId,
       commitSha: previous.commitSha,
@@ -1040,6 +1083,11 @@ export class ReleaseService {
     // （release-events 按 status 映射 + 去重），不另造事件类型。
     releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId: rollbackId, run: persisted } });
     this.emitLog(rollbackId, 'info', `rollback queued to ${previous.releaseId} via ${strategy}`, 'rollback');
+    if (batch) {
+      await this.stateService.flush();
+      try { batch.assertDispatchAllowed(); }
+      catch (error) { this.cancelRelease(rollbackId, operator || 'user'); throw error; }
+    }
     void this.execute(rollbackId, () => this.runRollback(rollbackId, target, previous), 'rollback_failed');
     return this.stateService.getReleaseRun(rollbackId)!;
   }
@@ -1266,6 +1314,14 @@ export class ReleaseService {
     } catch (err) {
       busyReason = errorText(err);
     }
+    // Bound scan positions by registered active targets. A held legacy prefix
+    // must not monopolize every sweep; restarting safely begins at the first page.
+    const activeTargets = new Set(this.stateService.getReleaseTargets()
+      .filter(candidate => candidate.isEnabled && candidate.lifecycle !== 'archived').map(candidate => candidate.id));
+    for (const id of this.artifactReclaimCursors.keys()) {
+      if (!activeTargets.has(id)) this.artifactReclaimCursors.delete(id);
+    }
+    const cursor = this.artifactReclaimCursors.get(target.id);
     const plan = computeReleaseArtifactRetentionPlan({
       mode: state.mode,
       inventory: state.inventory,
@@ -1273,6 +1329,8 @@ export class ReleaseService {
       hasInFlightRun: Boolean(busyReason),
       drift: state.drift.status,
       maxRemovals: options.maxRemovals,
+      afterWorktree: cursor?.worktree,
+      afterVersion: cursor?.version,
       publicDirectoryShared: this.isPublicDirectoryShared(target, strategy),
     });
 
@@ -1289,13 +1347,26 @@ export class ReleaseService {
       readError: state.readError,
       dryRun: options.dryRun === true,
     };
-    const command = buildReleaseReclaimCommand(target, strategy, plan);
-    if (!command || options.dryRun) {
+    const command = buildReleaseReclaimCommand(target, strategy, plan, {
+      commits: { ...Object.fromEntries(Object.entries(state.inventory?.pendingStaticRemovals || {}).map(([id, p]) => [id, p.commit])), ...releaseArtifactCommitProof(runs) },
+      identities: state.inventory?.worktreeIdentities,
+      versionIdentities: { ...Object.fromEntries(Object.entries(state.inventory?.pendingStaticRemovals || {}).map(([id, p]) => [id, p.identity])), ...state.inventory?.versionIdentities },
+      dryRun: options.dryRun === true,
+    });
+    if (!command) {
       return {
         ...base,
-        // dry-run 要让调用方看见「本来会删哪些」，否则预演毫无意义。
-        ...(options.dryRun ? { removedWorktrees: plan.removeWorktrees, removedVersions: plan.removeVersions } : {}),
+        nativeCounts: { succeeded: 0, held: 0, failed: 0, pending: plan.removeWorktrees.length + plan.removeVersions.length },
       };
+    }
+    // Advance an actual attempt even when native safety holds an object or the
+    // transport cannot confirm completion. It remains in inventory for retry.
+    // Dry-run is read-only and must not change the next real sweep's position.
+    if (!options.dryRun && activeTargets.has(target.id)) {
+      this.artifactReclaimCursors.set(target.id, {
+        worktree: plan.removeWorktrees.at(-1) ?? cursor?.worktree,
+        version: plan.removeVersions.at(-1) ?? cursor?.version,
+      });
     }
     try {
       const output = await this.sshExec(target, command);
@@ -1303,17 +1374,30 @@ export class ReleaseService {
       // 产出假证据：报告已回收、盘上还在、磁盘继续涨（Codex P2）。
       const outcome = parseRemoteReclaimOutcome(output);
       const failed = [...outcome.failedWorktrees, ...outcome.failedVersions];
+      const failedKeys = new Set([
+        ...outcome.failedWorktrees.map(id => `worktree:${id}`),
+        ...outcome.failedVersions.map(id => `version:${id}`),
+      ]);
       return {
         ...base,
         removedWorktrees: outcome.removedWorktrees,
         removedVersions: outcome.removedVersions,
+        filesystemNetAvailableChange: outcome.filesystemNetAvailableChange,
+        keptReasons: { ...base.keptReasons, ...outcome.heldReasons },
+        nativeCounts: {
+          succeeded: options.dryRun ? 0 : outcome.removedWorktrees.length + outcome.removedVersions.length,
+          held: Object.keys(outcome.heldReasons || {}).filter(key => !failedKeys.has(key)).length,
+          failed: failed.length,
+          pending: Math.max(0, plan.removeWorktrees.length + plan.removeVersions.length - outcome.removedWorktrees.length - outcome.removedVersions.length - new Set([...Object.keys(outcome.heldReasons || {}), ...failedKeys]).size),
+        },
+        ...(outcome.queryError ? {readError: outcome.queryError, skippedReason: '原生引用查询未完整确认，相关对象继续保留'} : {}),
         ...(failed.length > 0
           ? { skippedReason: `${failed.length} 份产物删除失败仍留在盘上（${failed.slice(0, 5).join('、')}${failed.length > 5 ? ' 等' : ''}），下一轮重试` }
           : {}),
       };
     } catch (err) {
       // 删除失败不算事故：产物还在，下一轮再来。绝不能把异常抛出去打断整轮巡检。
-      return { ...base, skippedReason: `回收命令执行失败：${errorText(err)}` };
+      return { ...base, readError: errorText(err), nativeCounts: { succeeded: 0, held: 0, failed: 0, pending: plan.removeWorktrees.length + plan.removeVersions.length }, skippedReason: `回收命令未能确认，相关对象保留：${errorText(err)}` };
     }
   }
 
@@ -1941,6 +2025,18 @@ export function buildDiskDiagnosisCommand(appPath: string): string {
     "printf '== 主机 =='; printf ' %s (%s)\\n' \"$(hostname 2>/dev/null || uname -n)\" \"$(whoami 2>/dev/null || echo unknown)\"",
     "echo '== df -Pm (appPath 所在文件系统) =='",
     `df -Pm ${app} 2>/dev/null || df -Pm /`,
+    "echo; echo '== 全部磁盘挂载点（实际字节） =='",
+    "df -PT -B1 2>/dev/null || echo '挂载点字节读数未确认，不能按零占用处理'",
+    "echo; echo '== inode =='",
+    "df -Pi 2>/dev/null || echo 'inode 读数未确认'",
+    "echo; echo '== 块设备与分区布局（只读；未挂载不代表空盘） =='",
+    "lsblk -b -J -o NAME,SIZE,START,LOG-SEC,TYPE,FSTYPE,MOUNTPOINT,PKNAME 2>/dev/null || echo '设备或分区布局未确认，不能据此认定可用未分配空间'",
+    "echo; echo '== Docker 数据根 =='",
+    "docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo 'Docker 数据根未确认'",
+    "echo; echo '== 运行及停止容器（前 100） =='",
+    "docker ps -a --no-trunc --format '{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Mounts}}' 2>/dev/null | head -100",
+    "echo; echo '== 容器版本、日志驱动与挂载（前 100） =='",
+    "docker ps -aq 2>/dev/null | head -100 | xargs -r docker inspect --format '{{.Name}} revision={{index .Config.Labels \"org.opencontainers.image.revision\"}} log={{json .HostConfig.LogConfig}} mounts={{json .Mounts}}' 2>/dev/null || echo '容器身份或挂载查询未确认'",
     "echo; echo '== docker system df =='",
     "docker system df 2>/dev/null || echo 'docker 不可用'",
     "echo; echo '== docker images 体积排行 (前 40) =='",

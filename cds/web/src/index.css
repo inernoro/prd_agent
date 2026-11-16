@@ -6608,6 +6608,7 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
 :root.cds-surface-motion::view-transition-old(cds-detail),
 :root.cds-surface-motion::view-transition-new(cds-detail) { transform-origin: 0 0; }
 .cds-surface-motion .cds-page-enter, .cds-surface-motion .cds-drawer-anim { animation: none !important; }
+[data-cds-surface-entered] { animation: none !important; }
 
 .cds-theme-motion .cds-main, .cds-theme-motion .cds-branch-detail-drawer { view-transition-name: none; }
 
