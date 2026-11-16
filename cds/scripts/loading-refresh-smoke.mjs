@@ -118,7 +118,10 @@ export async function verifyLoadingRefresh(browser, base, out) {
     await page.getByRole('button',{name:'刷新',exact:true}).first().waitFor({state:'visible'});
     failCenter=true; await page.getByRole('button',{name:'刷新',exact:true}).first().click();
     await page.getByRole('alert').filter({hasText:'合成：发布中心刷新失败'}).waitFor();
-    assert(await page.getByText('fixture-release-target',{exact:true}).first().isVisible());
+    // 环境选择器也包含同名 option；必须验证可见矩阵行，而不是第一个同名文本。
+    const retainedTargetRow = page.getByRole('button', { name: /^fixture-release-target / })
+      .filter({ has: page.getByText('fixture-release-target', { exact: true }) });
+    assert(await retainedTargetRow.isVisible(), '刷新失败后仍保留目标环境的矩阵行');
     assert.equal(await page.locator('[data-release-center-skeleton]').count(),0);
     failCenter=false; await page.getByRole('alert').getByRole('button',{name:'重试',exact:true}).click();
     await page.getByRole('alert').filter({hasText:'合成：发布中心刷新失败'}).waitFor({state:'hidden'});
