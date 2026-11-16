@@ -1,7 +1,7 @@
 import { ENTRY_SKINS, useEntrySkinStore } from '@/stores/entrySkinStore';
 /**
  * 皮肤/主题编辑器（2026-07-17 极简重做，用户定）：
- * 用户只决定两件属于"自己"的事——外观（深色/浅色）与界面材质（素色/液态玻璃）。
+ * 用户选择外观、界面材质，以及是否启用智能伙伴入场皮肤。
  * 色深、透明度、光晕、侧边栏玻璃、性能模式是设计参数，由系统统一决定
  * （themeApplier.normalizeThemeConfig 归一化为设计预设），不再转嫁给用户。
  */

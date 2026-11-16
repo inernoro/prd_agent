@@ -798,6 +798,10 @@ function LoginCard({
               <Terminal className="w-3 h-3" />
               <span>使用你的企业账号安全登录</span>
             </div>
+            <details className="mt-3 text-xs text-token-secondary">
+              <summary className="cursor-pointer">首次管理员登录帮助</summary>
+              <p className="mt-2 leading-relaxed">首位管理员密码由部署环境安全注入，请向部署负责人获取；首次登录后设置自己的密码。</p>
+            </details>
           </Reveal>
         )}
       </div>

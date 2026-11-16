@@ -38,6 +38,10 @@ async function loginGateway(page: Page) {
   await page.locator("#llmgw-username").fill("demo");
   await page.locator("#llmgw-password").fill("demo");
   await page.locator("button[type=submit]").click();
+  await expect(page.locator(".gateway-entry")).toHaveAttribute("data-phase", "authorized");
+  const enterConsole = page.getByRole("button", { name: "进入控制台", exact: true });
+  await expect(enterConsole).toBeVisible();
+  await enterConsole.click();
   await expect(page.locator(".lg-console-content")).toBeVisible();
   if (await page.getByLabel("打开导航", { exact: true }).isVisible())
     await page.getByLabel("打开导航", { exact: true }).click();

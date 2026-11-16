@@ -51,6 +51,7 @@ describe('电影式登录真实表单交互', () => {
     await mount();
     expect(host.querySelector('.consciousness-scene')).toBeNull();
     expect(host.querySelector('.identity-scanner')).toBeNull();
+    expect(host.querySelector('details')?.textContent).toContain('部署环境安全注入');
     await fill(host.querySelector<HTMLInputElement>('input[autocomplete="current-password"]')!, 'sample-secret');
     await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === '开始身份确认')!.click());
     expect(navigation.navigate).toHaveBeenCalledTimes(1);
