@@ -2058,7 +2058,7 @@ export function createServer(deps: ServerDeps): express.Express {
       const project = deps.stateService.getProject(projectId);
       return project?.repoPath ? deps.stateService.getProjectRepoRoot(projectId, deps.config.repoRoot) : undefined;
     }, projectId => deps.stateService.getProject(projectId)?.gitDefaultBranch || 'main', governanceGitRunner(deps.shell)),
-    (projectId, number) => releaseMergeBackReader(deps.stateService, githubAppClient)(projectId, number), undefined, releaseHistory);
+    (projectId, number) => releaseMergeBackReader(deps.stateService, githubAppClient, fetch, deps.serverEventLogStore)(projectId, number), undefined, releaseHistory);
   const releaseService = new ReleaseService(deps.stateService, {
     verifyProjectCI: (branch, sha, strategy) => verifyProjectReleaseCI(deps.stateService.getProject(branch.projectId), githubAppClient, branch, sha, strategy),
     governance: releaseGovernance,

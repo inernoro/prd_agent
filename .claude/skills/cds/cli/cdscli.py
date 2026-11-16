@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.22.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.22.2"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -1054,6 +1054,8 @@ def cmd_release_governance(args: argparse.Namespace) -> None:
         body = {"branchId": args.branch, "kind": args.kind, "action": "rollback" if args.rollback_version else "release",
                 "expiresAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + args.expires_in * 60)),
                 "allowedPaths": args.scope or [], "reason": args.reason}
+        if getattr(args, "scheduled_job", None):
+            body["scheduledJobId"] = args.scheduled_job
         if args.rollback_version:
             body["rollbackReleaseId"] = args.rollback_version
         ok(_call("POST", base + "/authorizations", body=body, timeout=180),
@@ -10809,6 +10811,7 @@ def _build_parser() -> argparse.ArgumentParser:
         if command == "approval-request":
             item.add_argument("--branch", required=True, help="执行分支的 canonical ID")
             item.add_argument("--kind", choices=("single", "debug"), default="single")
+            item.add_argument("--scheduled-job", help="批准供同项目的指定发布任务执行，不改变真实申请人")
             item.add_argument("--expires-in", type=int, default=60, help="有效分钟数，最长 1440")
             item.add_argument("--scope", action="append", help="单个允许路径；目录以 / 结尾，可重复")
             item.add_argument("--rollback-version", help="同一目标的历史成功 ReleaseRun ID")

@@ -93,6 +93,25 @@ it('正常认证、真实 Git 和 SSH 发布：独立审批、连续调试、越
   expect((await call('POST','/releases/authorizations/'+expiryId+'/approve',{reason:'独立核验短期窗口'},cookie)).status).toBe(200);
   const beforeExpiry=await fs.readFile(credentials.effects,'utf8'); await new Promise(r=>setTimeout(r,Math.max(0, Date.parse(expiring.body.authorization.expiresAt)-Date.now()+100)));
   expect((await publish()).status).toBe(409); expect(await fs.readFile(credentials.effects,'utf8')).toBe(beforeExpiry);
+  const createdJob=await call('POST','/scheduled-jobs',{projectId:credentials.projectId,name:'隔离定时发布审批回归',enabled:false,
+    schedule:{type:'manual'},target:{type:'release',targetId:credentials.targetId,source:{kind:'branch',branchId:'lab-debug'}},timeoutSeconds:60,retryCount:0});
+  expect(createdJob.status).toBe(201); const jobId=createdJob.body.job.id;
+  const runJob=()=>call('POST','/scheduled-jobs/'+jobId+'/run',{});
+  expect((await runJob()).body.run.status).toBe('failed');
+  expect(await fs.readFile(credentials.effects,'utf8')).toBe(beforeExpiry);
+  const jobRequest=await call('POST',target+'/authorizations',{branchId:'lab-debug',kind:'single',scheduledJobId:jobId,
+    expiresAt:new Date(Date.now()+3600000).toISOString(),reason:'限定真实定时任务执行已核验版本'});
+  expect(jobRequest.status).toBe(200);const jobApprovalId=jobRequest.body.authorization.id;
+  expect((await call('POST','/releases/authorizations/'+jobApprovalId+'/approve',{reason:'独立核对定时执行任务与版本'},cookie)).status).toBe(200);
+  expect((await publish()).status).toBe(409); // The initiating key cannot borrow a job approval.
+  const scheduled=await runJob();expect(scheduled.status).toBe(200);expect(scheduled.body.run.status,JSON.stringify(scheduled.body.run)).toBe('success');
+  const afterJob=await call('GET','/releases/governance?projectId='+credentials.projectId);
+  const accepted=afterJob.body.attempts.find((attempt:any)=>attempt.authorizationId===jobApprovalId&&attempt.result==='accepted');
+  expect(accepted.operator).toBe('system:scheduled-job:'+jobId);
+  expect(await fs.readFile(credentials.effects,'utf8')).toContain(accepted.releaseId+' '+credentials.second);
+  const jobEffect=await fs.readFile(credentials.effects,'utf8');
+  expect((await runJob()).body.run.status).toBe('failed');
+  expect(await fs.readFile(credentials.effects,'utf8')).toBe(jobEffect);
   const audit=(await call('GET','/releases/governance?projectId='+credentials.projectId)).body;
   expect(audit.authorizations.find((a:any)=>a.id===id).decisions.map((d:any)=>d.action)).toEqual(['approved','revoked']);
   expect(audit.attempts.filter((a:any)=>a.result==='denied').length).toBeGreaterThanOrEqual(5);

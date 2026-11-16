@@ -48,7 +48,8 @@ export function createReleaseGovernanceRouter(state: StateService, governance: R
     }
     await execute(async request => ({ authorization: await governance.request({ targetId: request.params.id,
       branchId: body.branchId, kind: body.kind, action: body.action, rollbackReleaseId: body.rollbackReleaseId,
-      expiresAt: body.expiresAt, allowedPaths: body.allowedPaths, reason: body.reason, actor: resolveReleaseActorFromRequest(request) }) }))(req, res);
+      expiresAt: body.expiresAt, allowedPaths: body.allowedPaths, scheduledJobId: body.scheduledJobId,
+      reason: body.reason, actor: resolveReleaseActorFromRequest(request) }) }))(req, res);
   });
   for (const [action, decision] of [['approve','approved'],['reject','rejected'],['revoke','revoked']] as const) {
     router.post(`/releases/authorizations/:id/${action}`, async (req, res) => {

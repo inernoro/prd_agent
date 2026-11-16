@@ -26,6 +26,8 @@ export interface ReleaseAuthorization {
   projectFingerprint: string;
   allowedPaths: string[];
   requestedBy: string;
+  scheduledJobId?: string;
+  scheduledJobFingerprint?: string;
   reason: string;
   createdAt: string;
   expiresAt: string;

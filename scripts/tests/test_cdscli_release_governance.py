@@ -31,6 +31,14 @@ class GovernanceCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit): cli.cmd_release_governance(self.args())
             call.assert_not_called()
 
+    def test_scheduled_job_is_explicit_and_never_spoofs_requester(self):
+        with patch.object(cli, '_release_environment_rows', return_value=([], [{'id':'target','projectId':'p'}])), patch.object(cli, '_call', return_value={}) as call, patch.object(cli, 'ok'):
+            cli.cmd_release_governance(self.args(scheduled_job='job-real'))
+            body=call.call_args.kwargs['body']
+            self.assertEqual(body['scheduledJobId'],'job-real')
+            self.assertNotIn('operator',body)
+            self.assertNotIn('requestedBy',body)
+
     def test_invalid_duration_or_missing_scope_never_writes(self):
         for changes in [{'expires_in':0}, {'expires_in':1441}, {'scope':None}]:
             with patch.object(cli, '_release_environment_rows', return_value=([], [{'id':'target','projectId':'p'}])), patch.object(cli, '_call') as call, patch.object(cli, 'die', side_effect=SystemExit):

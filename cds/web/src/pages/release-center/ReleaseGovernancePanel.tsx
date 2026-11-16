@@ -10,11 +10,12 @@ import { Chip, formatDateTime } from './shared';
 import type { BranchOption, CenterRow } from './types';
 import type { ReleaseAuthorization, ReleaseConflictCheck, ReleaseGovernanceAttempt, ReleaseMergeBack } from '../../../../src/domain/release-governance';
 
-interface GovernanceView { authorizations: ReleaseAuthorization[]; attempts: ReleaseGovernanceAttempt[]; mergeBacks: ReleaseMergeBack[]; checks?: Array<ReleaseConflictCheck & { targetId: string }> }
+interface GovernanceView { authorizations: ReleaseAuthorization[]; attempts: ReleaseGovernanceAttempt[]; mergeBacks: ReleaseMergeBack[]; checks?: Array<ReleaseConflictCheck & { targetId: string }>; scheduledJobs?: Array<{ id: string; name: string; targetIds: string[] }> }
 export function readGovernanceView(value: unknown): GovernanceView {
   const data = value as GovernanceView | null;
   if (!data || !Array.isArray(data.authorizations) || !Array.isArray(data.attempts) || !Array.isArray(data.mergeBacks)
-    || data.checks !== undefined && !Array.isArray(data.checks)) throw new Error('发布治理响应不完整');
+    || data.checks !== undefined && !Array.isArray(data.checks)
+    || data.scheduledJobs !== undefined && !Array.isArray(data.scheduledJobs)) throw new Error('发布治理响应不完整');
   return data;
 }
 const inputClass = 'w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm';
@@ -46,6 +47,7 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
   const [kind, setKind] = useState<'single' | 'debug'>('single');
   const [action, setAction] = useState<'release' | 'rollback'>('release');
   const [rollbackId, setRollbackId] = useState('');
+  const [scheduledJobId, setScheduledJobId] = useState('');
   const [minutes, setMinutes] = useState('60');
   const [paths, setPaths] = useState('');
   const [reason, setReason] = useState('');
@@ -109,7 +111,7 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
     () => apiRequest(`/api/releases/authorizations/${current.id}/${decision}`, { method: 'POST', body: { reason: decisionReason } }), '审批决定已保存');
   const request = async () => {
     const saved = await perform('更新主干并核验申请', () => apiRequest(`${base}/authorizations`, { method: 'POST', body: {
-      branchId, kind, action, rollbackReleaseId: action === 'rollback' ? rollbackId : undefined,
+      branchId, kind, action, rollbackReleaseId: action === 'rollback' ? rollbackId : undefined, scheduledJobId: scheduledJobId || undefined,
       expiresAt: new Date(Date.now() + Number(minutes) * 60_000).toISOString(),
       allowedPaths: paths.split('\n').map(p => p.trim()).filter(Boolean), reason,
     } }), '申请已保存，等待另一位项目成员批准');
@@ -121,9 +123,10 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
       <div className="flex flex-wrap gap-2">
         {!row.target.governance?.required ? <Button variant="outline" disabled={!!busy} onClick={() => void perform('启用发布审批', () => apiRequest(`${base}/governance/enable`, { method: 'POST' }), '本环境已启用独立审批，所有发布入口均受约束')}><ShieldCheck />启用本环境审批</Button> : <Chip tone="ok">执行审批已启用</Chip>}
         <Button variant="outline" disabled={!!busy} onClick={() => void perform('刷新审批记录', () => Promise.resolve(), '已刷新审批记录')}><RefreshCw />刷新记录</Button>
-        <Button disabled={!!busy || !loaded} onClick={() => { setKind(tab === 'debug' ? 'debug' : 'single'); setAction('release'); setBranchId(branches.find(b => b.status === 'running')?.id || branches[0]?.id || ''); setDialog(true); }}><Plus />新建申请</Button>
+        <Button disabled={!!busy || !loaded || !row.target.governance?.required} onClick={() => { setKind(tab === 'debug' ? 'debug' : 'single'); setAction('release'); setScheduledJobId(''); setBranchId(branches.find(b => b.status === 'running')?.id || branches[0]?.id || ''); setDialog(true); }}><Plus />新建申请</Button>
       </div>
     </div>
+    {!row.target.governance?.required ? <p className="mt-2 text-xs text-muted-foreground">先启用本环境审批，再申请独立批准。</p> : null}
     {busy ? <p role="status" className="mt-3 flex items-center gap-2 text-sm"><RefreshCw className="h-4 w-4 animate-spin" />{busy}，请稍候…</p> : null}
     {error ? <p role="alert" className="mt-3 text-sm text-bad">{error}</p> : null}
     {notice ? <p role="status" className="mt-3 text-sm text-ok">{notice}</p> : null}
@@ -140,6 +143,7 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
           <p className="mt-2 text-sm">{current.reason}</p>
           <dl className="mt-4 grid min-w-0 gap-3 text-sm sm:grid-cols-2">
             <div><dt className="text-xs text-muted-foreground">申请人 / 执行凭据</dt><dd className="break-all">{releaseActorLabel(current.requestedBy)}</dd></div>
+            {current.scheduledJobId ? <div><dt className="text-xs text-muted-foreground">执行任务</dt><dd className="break-all">{data.scheduledJobs?.find(job => job.id === current.scheduledJobId)?.name || current.scheduledJobId}</dd></div> : null}
             <div><dt className="text-xs text-muted-foreground">审批人</dt><dd>{approval ? releaseActorLabel(approval.by) : current.status === 'approved' && current.decidedBy ? releaseActorLabel(current.decidedBy) : '等待独立批准'}</dd></div>
             <div><dt className="text-xs text-muted-foreground">候选版本</dt><dd className="break-all font-mono text-xs">{current.candidateSha}</dd></div>
             <div><dt className="text-xs text-muted-foreground">主干依据</dt><dd className="break-all font-mono text-xs">{current.mainSha}</dd></div>
@@ -172,6 +176,7 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
         <label className="text-sm">操作<select aria-label="批准操作" className={`${inputClass} mt-1`} value={action} onChange={e => setAction(e.target.value as 'release' | 'rollback')}><option value="release">发布</option>{kind === 'single' ? <option value="rollback">恢复历史成功版本</option> : null}</select></label>
         <label className="min-w-0 text-sm">执行分支<select aria-label="申请分支" className={`${inputClass} mt-1`} value={branchId} onChange={e => setBranchId(e.target.value)}><option value="">选择分支</option>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.branch} · {(branch.commitSha || branch.githubCommitSha || '').slice(0,12)}</option>)}</select></label>
         <label className="text-sm">有效期<select aria-label="授权有效期" className={`${inputClass} mt-1`} value={minutes} onChange={e => setMinutes(e.target.value)}><option value="15">15 分钟</option><option value="60">1 小时</option><option value="240">4 小时</option><option value="1440">24 小时</option></select></label>
+        {data.scheduledJobs?.some(job => job.targetIds.includes(targetId)) ? <label className="min-w-0 text-sm sm:col-span-2">执行方式<select aria-label="批准执行任务" className={`${inputClass} mt-1`} value={scheduledJobId} onChange={e => setScheduledJobId(e.target.value)}><option value="">由本次申请账号或执行凭据发布</option>{data.scheduledJobs.filter(job => job.targetIds.includes(targetId)).map(job => <option key={job.id} value={job.id}>定时任务：{job.name}</option>)}</select><span className="mt-1 block text-xs text-muted-foreground">任务批准只供该任务使用；任务配置变化后需要重新申请。</span></label> : null}
         {action === 'rollback' ? <label className="text-sm sm:col-span-2">恢复版本<select aria-label="批准恢复版本" className={`${inputClass} mt-1`} value={rollbackId} onChange={e => setRollbackId(e.target.value)}><option value="">选择历史成功版本</option>{row.successfulRuns?.map(run => <option key={run.releaseId} value={run.releaseId}>{run.commitSha.slice(0,12)} · {formatDateTime(run.finishedAt)}</option>)}</select></label> : null}
         {kind === 'debug' ? <label className="text-sm sm:col-span-2">允许改动的文件 / 目录<textarea aria-label="允许改动范围" className={`${inputClass} mt-1 min-h-24 font-mono`} value={paths} onChange={e => setPaths(e.target.value)} placeholder={'cds/web/src/pages/release-center/\ncds/web/src/lib/releaseProvenance.ts'} /><span className="mt-1 block text-xs text-muted-foreground">每行一个仓库内路径，目录以 / 结尾。每次检查从授权基线开始的全部累计改动。</span></label> : null}
         <label className="text-sm sm:col-span-2">发布目的<textarea aria-label="发布目的" className={`${inputClass} mt-1 min-h-20`} value={reason} onChange={e => setReason(e.target.value)} placeholder="说明此次发布或连续打磨的目的" /></label>

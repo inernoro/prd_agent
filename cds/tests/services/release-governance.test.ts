@@ -43,6 +43,16 @@ describe('独立批准与连续调试的服务层约束', () => {
     await expect(service.authorize(input())).rejects.toThrow('独立批准');
     expect(service.list('p').attempts[0]).toMatchObject({ result: 'denied', candidateSha: B, operator: alice });
   });
+  it('首个调试窗口须包含当前主干，在申请时即拒绝不满足条件的版本',async()=>{
+    state.upsertReleaseTarget({...state.getReleaseTarget('prod')!,id:'fresh'});
+    const check={projectId:'p',candidateSha:B,mainSha:MAIN,status:'clean' as const,checkedAt:new Date(now).toISOString(),changedPaths:['allowed/file.ts'],conflicts:[],includesBaseline:false};
+    vi.mocked(git.inspect).mockResolvedValue(check);
+    await expect(request({targetId:'fresh',kind:'debug',allowedPaths:['allowed/']})).rejects.toThrow('当前主干');
+    expect(service.list('p').authorizations).toHaveLength(0);
+    vi.mocked(git.inspect).mockResolvedValue({...check,includesBaseline:true});
+    const record=await approve({targetId:'fresh',kind:'debug',allowedPaths:['allowed/']});
+    expect((await service.authorize(input({targetId:'fresh',authorizationId:record.id})))?.authorizationId).toBe(record.id);
+  });
   it('认证账号 ID 相同但显示名改变也不能自批', async () => {
     const record = await request();
     await expect(service.decide(record.id,'approved','user:alice:Alicia','核对后批准')).rejects.toThrow('自己');
@@ -52,6 +62,28 @@ describe('独立批准与连续调试的服务层约束', () => {
     const record = await approve({ actor: agent });
     const receipt = await service.authorize(input({ operator: agent, authorizationId: record.id }));
     expect(receipt).toMatchObject({ requestedBy: agent, approvedBy: reviewer, candidateSha: B, baselineReleaseId: 'baseline' });
+  });
+  it('真实申请人可为指定任务申请，独立批准后仅该任务可执行；修改任务使批准失效', async () => {
+    const job = { id:'job-release', projectId:'p', name:'定时发布', enabled:false, schedule:{type:'manual' as const},
+      target:{type:'release' as const,targetId:'prod',source:{kind:'branch' as const,branchId:'feature'}},
+      timeoutSeconds:120,retryCount:0,concurrencyPolicy:'skip' as const,createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString() };
+    state.upsertScheduledJob(job);
+    const pending = await request({scheduledJobId:job.id});
+    expect(pending.requestedBy).toBe(alice);
+    await expect(service.decide(pending.id,'approved',alice,'申请人不能自批')).rejects.toThrow('自己');
+    await service.decide(pending.id,'approved',reviewer,'核验任务与固定版本');
+    await expect(service.authorize(input({operator:alice,authorizationId:pending.id}))).rejects.toThrow('不匹配');
+    await expect(service.authorize(input({operator:'system:scheduled-job:other',authorizationId:pending.id}))).rejects.toThrow('不匹配');
+    const receipt=await service.authorize(input({operator:'system:scheduled-job:job-release'}));
+    expect(receipt).toMatchObject({requestedBy:alice,approvedBy:reviewer,authorizationId:pending.id});
+    state.upsertScheduledJob({...job,target:{...job.target,dryRun:true}});
+    await expect(service.authorize(input({operator:'system:scheduled-job:job-release',authorizationId:pending.id}))).rejects.toThrow('配置已变化');
+  });
+  it('定时任务不存在或跨项目时不能借任务身份申请', async () => {
+    await expect(request({scheduledJobId:'missing'})).rejects.toThrow('不匹配');
+    state.upsertScheduledJob({id:'foreign',projectId:'other',name:'其他项目任务',enabled:false,schedule:{type:'manual'},
+      target:{type:'release',targetId:'prod',source:{kind:'branch',branchId:'feature'}},timeoutSeconds:30,retryCount:0,concurrencyPolicy:'skip',createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString()});
+    await expect(request({scheduledJobId:'foreign'})).rejects.toThrow('不匹配');
   });
   it('单次批准只能用于固定版本与一次运行，重启后不能再用', async () => {
     const record = await approve();

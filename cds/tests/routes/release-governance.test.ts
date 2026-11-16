@@ -24,7 +24,7 @@ describe('发布治理 HTTP 契约与认证边界夹具', () => {
     const now = new Date().toISOString();
     for (const projectId of ['p','other']) {
       state.addProject({ id: projectId, slug: projectId, name: projectId, kind:'git', createdAt: now, updatedAt: now });
-      state.upsertReleaseTarget({ id: projectId+'-target', projectId, name: projectId, type:'ssh', isEnabled:true, createdAt:now });
+      state.upsertReleaseTarget({ id: projectId+'-target', projectId, name: projectId, type:'ssh', isEnabled:true, createdAt:now, governance:{required:true} });
     }
     state.addBranch({ id:'b', projectId:'p', branch:'feature/test', githubCommitSha:sha, worktreePath:root, services:{},status:'running',createdAt:now });
     const git = new ReleaseGovernanceGit(() => root, () => 'main',async () => ({ stdout:'',exitCode:0 }));
@@ -83,5 +83,13 @@ describe('发布治理 HTTP 契约与认证边界夹具', () => {
     const target = state.getReleaseTarget('p-target')!;
     state.upsertReleaseTarget({ ...target, governance: undefined });
     expect(state.getReleaseTarget('p-target')?.governance?.required).toBe(true);
+  });
+  it('存量目标先启用再申请，避免启用时令已有批准失效', async()=>{
+    state.upsertReleaseTarget({id:'legacy',projectId:'p',name:'存量环境',type:'ssh',isEnabled:true,createdAt:new Date().toISOString()});
+    expect((await call('POST','/releases/targets/legacy/authorizations','agent',body())).status).toBe(409);
+    expect((await call('POST','/releases/targets/legacy/governance/enable','human')).status).toBe(200);
+    const requested=await call('POST','/releases/targets/legacy/authorizations','agent',body());
+    expect(requested.status).toBe(200);
+    expect((await call('POST','/releases/authorizations/'+requested.body.authorization.id+'/approve','human',{reason:'启用之后核验并批准'})).status).toBe(200);
   });
 });

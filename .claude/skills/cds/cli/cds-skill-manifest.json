@@ -1,6 +1,6 @@
 {
   "format": "agent-skills",
-  "version": "0.22.1",
+  "version": "0.22.2",
   "skills": [
     "cds",
     "cds-project-scan",
@@ -9,14 +9,14 @@
     "preview-url"
   ],
   "files": {
-    "cds/SKILL.md": "46fe30f1e57690c02293171968be69075a5c028c09b1921c6acc8a97875cbe79",
+    "cds/SKILL.md": "a7ef24d6e311d144c4a40f72eb975c98df5a2b461c85bf95e5ee5e9618a7fa95",
     "cds/cli/acceptance/.gitignore": "5875f28fb25c8a9449faa5ebb5100a488f79ea807932fb21fb52ce48fcab1db0",
     "cds/cli/acceptance/build_report_html.py": "332ef0716bfc531f3c815acc783695121fb1a6fe25c5001312b4cd34ff7ce9af",
     "cds/cli/acceptance/cds-harness.mjs": "be6a9af00cb5ae704a6f08f295795d3921d9f860447bf9b5dc207faf2e9cef75",
     "cds/cli/acceptance/cds.config.example.json": "0f0aca3f66243fd76f1003d3ae06f076db52650eda60c385491352d9cffa248c",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "683a19f2c88968cb61987a24d5e67c2646cc9230c43638164f7d50e63e6f7d25",
+    "cds/cli/cdscli.py": "2aa2716dff97300d40804dc0115f3828e7fd69c4ce7b2040cea2ab4c3ddf71b6",
     "cds/reference/acceptance-reports.md": "f0467b25fe209ec5a5225c246406704782ae595631abc9221c50cb982e48002e",
     "cds/reference/api.md": "9984c6f896f672df35c43fae33ca3f89a1bfc8fd10f7e0ab2e88f2871e71339f",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
@@ -63,9 +63,9 @@
     "cds-project-scan/reference/infra-init.md": "367af0506e5f8418d37cc9483602f6bc34747ed84cba4e6d11f49be1b7b31015",
     "cds-project-scan/reference/tech-detection.md": "20d88a38a278bc65dd2f7f8c9e09e2a5e39e5ef33584af585980249604df7a64",
     "cds-deploy-pipeline/SKILL.md": "5e7f3ba287a319e47e286bab215ed298854f6ddf4da129de3c701bcea17868c5",
-    "cds-release/SKILL.md": "1572e43a4ba745b21e7f19e6fcf63e3d5471ac32a68de5d444b332fcce646000",
+    "cds-release/SKILL.md": "ca99f7abfab11cb529f960c9a37cd337c9c1fb13bed859e4aab7923c9544d599",
     "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-16T15:50:15.619005+00:00"
+  "generatedAt": "2026-11-16T19:36:22.239778+00:00"
 }
