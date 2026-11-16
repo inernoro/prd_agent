@@ -3179,6 +3179,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     this.state.releaseTargets[target.id] = {
       ...existing,
       ...target,
+      ...(existing?.governance?.required ? { governance: existing.governance } : {}),
       createdAt: existing?.createdAt || target.createdAt || now,
       updatedAt: now,
     };
@@ -3336,6 +3337,15 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   saveReleaseBatch(batch: import('../domain/release-batch.js').ReleaseBatch): void {
     this.state.releaseBatches ||= {};
     this.state.releaseBatches[batch.id] = structuredClone(batch);
+    this.save(HINT_GLOBAL);
+  }
+
+  getReleaseGovernance(): import('../domain/release-governance.js').ReleaseGovernanceState {
+    return structuredClone(this.state.releaseGovernance || { authorizations: {}, attempts: [], mergeBacks: {} });
+  }
+
+  saveReleaseGovernance(value: import('../domain/release-governance.js').ReleaseGovernanceState): void {
+    this.state.releaseGovernance = structuredClone(value);
     this.save(HINT_GLOBAL);
   }
 

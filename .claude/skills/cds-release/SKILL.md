@@ -1,7 +1,7 @@
 ---
 name: cds-release
 metadata:
-  version: 1.1.0
+  version: 1.2.0
 description: 当用户要求“部署 xxx 环境到 CDS”、接入新发布环境、配置、修改、排查或验收 CDS 发布时使用。默认执行项目 Git 中经 CI 验证的 cds-release.sh；CDS 独立脚本仅为明确选择的备选，旧部署类型仅兼容存量。强制项目级 Key、身份、同提交 CI、正文指纹、真实入口与回滚证据。
 ---
 
@@ -74,6 +74,16 @@ python3 "$CDSCLI" release-target register --project <projectId> --file /tmp/rele
 - 正式发布必须锚定完整 commit SHA；禁止使用可漂移的 `latest` 代替不可变版本证据。
 - 生产完成证据必须包含最终公网 HTML、HTML 实际引用的 JS/CSS、API 健康和本次涉及的专项服务。
 - 日志、教程和回复中不得输出 Key、私钥、口令或带凭据的 Git URL。
+
+## 独立批准与调试窗口
+
+新建正式环境默认启用独立审批。存量目标由真实登录用户在发布中心启用后，所有发布、重试、回滚和定时入口统一受约束；普通配置更新不能关闭该策略。
+
+执行凭据先用 `release-target approval-request` 申请，另一位真实用户在发布中心核对并批准。单次批准绑定完整提交和一次运行；回滚须申请独立的单次回滚批准。连续调试须列出允许文件或以 `/` 结尾的目录，以及最长 24 小时的有效期，不允许通配符。
+
+实际执行前重新核对项目、环境配置、分支身份、主干和生产基线，隔离执行真实 Git 合并，并检查从授权基线起的全部累计改动，包括修改后又撤回的文件。越界、主干前进、其他发布改变基线、撤销、到期和核验失败都会拒绝执行。每次运行保存独立的批准回执，拒绝也有审计记录。
+
+`release-target conflict-check` 主动核验线上版本；`release-target merge-back` 关联项目仓库中真实、面向项目主干且包含线上提交的 PR。Git 包含关系与 GitHub 的 open、closed、merged 状态分开呈现，读取失败显示未知。
 
 ## 前置输入
 

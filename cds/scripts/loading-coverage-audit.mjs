@@ -17,6 +17,7 @@ const progressOwners = new Map([
   ['ApiProbe', '诊断接口实测状态'],
   ['ProjectCard', '真实仓库克隆状态徽标；项目内容并非页面请求占位'],
   ['SelfUpdateStatusPanel', '真实 self-update 排空与进程切换阶段，保留后端阶段说明'],
+  ['ReleaseGovernancePanel', '已加载申请的待独立审批业务状态；批准与撤销操作不属于请求占位'],
   ['IdentityRecoveryPanel', '已加载申请的待人工批准业务状态；保留原项目、账号选择与批准拒绝操作'],
 ]);
 export const loadingCondition = text => {
@@ -69,6 +70,7 @@ export function auditLoadingCoverage(root = sourceRoot) {
           record.owner === 'BranchSearchDropdown' && record.condition === 'remoteLoading' ||
           record.owner === 'ProjectCard' && record.condition === '!isReady && cloneLabel' ||
           record.owner === 'SelfUpdateStatusPanel' && record.condition === "data.restartStatus === 'pending' && data.restartWait" ||
+          record.owner === 'ReleaseGovernancePanel' && record.condition.startsWith("current.status === 'pending'") && markup.includes("decide('approve')") ||
           record.owner === 'IdentityRecoveryPanel' && record.condition === "r.status === 'pending'"
             && /<select\b/.test(markup) && markup.includes('/approve') && markup.includes('/reject') ||
           record.owner === 'PreviewActionSplitButton' || record.owner === 'ApiProbe'

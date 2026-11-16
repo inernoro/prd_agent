@@ -52,6 +52,7 @@ import {
 } from '@/pages/release-center/dialogs';
 import { EnvironmentSidebar } from '@/pages/release-center/EnvironmentSidebar';
 import { ReleaseTraceOverview } from '@/pages/release-center/ReleaseTraceOverview';
+import { ReleaseGovernancePanel } from '@/pages/release-center/ReleaseGovernancePanel';
 import { OverviewTab } from '@/pages/release-center/OverviewTab';
 import { FleetMatrix } from '@/pages/release-center/FleetMatrix';
 import { AutoReleaseTab } from '@/pages/release-center/AutoReleaseTab';
@@ -795,6 +796,7 @@ export function ReleaseCenterPage(): JSX.Element {
 
                 {/* ══ 分区一：全环境矩阵 ══ */}
                 {section === 'fleet' ? <ReleaseTraceOverview rows={rows} rail={rail} commitMeta={commitMeta} selectedTargetId={effectiveTargetId} onSelect={setSelectedTargetId} onOpenLogs={setLogRun} onInspect={inspectEnv} /> : null}
+                {section === 'fleet' ? <ReleaseGovernancePanel key={`governance:${projectId}`} projectId={projectId} row={rows.find(row => row.target.id === effectiveTargetId)} refreshVersion={sectionRefresh} onChanged={() => void load({ silent: true })} /> : null}
                 {section === 'fleet' ? <BatchReleasePanel key={projectId} projectId={projectId} targets={rows.map((row) => row.target)} onOpenLogs={setLogRun} /> : null}
                 {rows.length === 0 ? <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} /> : null}
                 {section === 'fleet' ? (

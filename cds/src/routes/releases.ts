@@ -38,6 +38,7 @@ import { buildReleaseLogSnapshot } from '../services/release-log-buffer.js';
 import { assertProjectAccess } from './projects.js';
 
 export interface ReleasesRouterDeps {
+  history?: ReleaseTargetHistoryStore;
   stateService: StateService;
   shell?: IShellExecutor;
   /**
@@ -68,7 +69,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   // 生产走 server.ts 传进来的完整 CdsConfig，repoRoot 必然有值。
   const batches = new ReleaseBatchService(deps.stateService, service);
   const stateRoot = deps.config?.repoRoot;
-  const history = new ReleaseTargetHistoryStore({
+  const history = deps.history ?? new ReleaseTargetHistoryStore({
     storePath: stateRoot ? path.join(stateRoot, '.cds', 'release-target-history.json') : undefined,
     logger: { warn: (m) => console.warn(m) },
   });
@@ -259,6 +260,8 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       isEnabled: body.isEnabled !== false,
       lifecycle: 'active',
       environment: normalizeReleaseEnvironment(body.environment),
+      governance: normalizeReleaseEnvironment(body.environment) === 'production'
+        ? { required: true, enabledAt: now, enabledBy: resolveReleaseActorFromRequest(req) } : undefined,
       isCanonical: body.isCanonical !== false,
       projectIdentity: releaseProjectIdentity(project),
       strategy,
@@ -632,6 +635,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     if (rejectUnscopedAiMutation(req, res)) return;
     try {
       const run = await service.startRelease({
+        authorizationId: typeof body.authorizationId === 'string' ? body.authorizationId : undefined,
         branchId: req.params.branchId,
         targetId: body.targetId.trim(),
         previewUrl: typeof body.previewUrl === 'string' ? body.previewUrl : '',
@@ -693,7 +697,8 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         }
         if (rejectProjectMismatch(req, res, targetRun.projectId)) return;
       }
-      const run = await service.startRollback(req.params.id, resolveActorFromRequest(req), targetReleaseId);
+      const run = await service.startRollback(req.params.id, resolveReleaseActorFromRequest(req), targetReleaseId, undefined,
+        typeof body.authorizationId === 'string' ? body.authorizationId : undefined);
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
@@ -714,6 +719,8 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         branchId: source.branchId,
         targetId: source.targetId,
         previewUrl: source.artifact?.previewUrl || '',
+        expectedCommitSha: source.commitSha,
+        authorizationId: typeof req.body?.authorizationId === 'string' ? req.body.authorizationId : undefined,
         operator: resolveReleaseActorFromRequest(req),
       });
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
@@ -822,6 +829,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     if (projectId) service.ensureDefaultPlans(projectId);
     const targets = deps.stateService.getReleaseTargets(projectId);
     const runs = deps.stateService.getReleaseRuns(projectId ? { projectId } : {});
+    const governanceState = deps.stateService.getReleaseGovernance?.();
     const doraWindowDays = clampDoraWindowDays(req.query.doraDays ?? DEFAULT_DORA_WINDOW_DAYS);
     const resolveCommitAt = (run: { projectId: string; commitSha: string }): string | undefined =>
       commitClock.get(run.projectId, run.commitSha);
@@ -867,6 +875,8 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         healthStatus: health.status,
         lastOperator: current?.operator || '',
         currentRun: current,
+        conflictCheck: governanceState?.checks?.[target.id],
+        mergeBack: Object.values(governanceState?.mergeBacks || {}).find(record => record.targetId === target.id && record.sourceSha === current?.commitSha),
         comparison: await comparisonReader.read(target.projectId, rail.rail.nodes[0]?.sha || '', current?.commitSha || ''),
         canRollback: Boolean(rollbackDefaultReleaseId),
         // 下拉给出的版本数必须 = 保留策略保住的成功 run 数，不许再拍一个字面量。

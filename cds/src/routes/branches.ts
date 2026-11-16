@@ -19149,8 +19149,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       const [pinnedHash, ...subjectParts] = logResult.stdout.trim().split(' ');
       const pinnedSubject = subjectParts.join(' ');
-
-      entry.pinnedCommit = pinnedHash || hash;
+      const fullHead = await shell.exec('git rev-parse --verify HEAD', { cwd: entry.worktreePath, timeout: 5_000 });
+      const exactPinned = fullHead.stdout.trim().toLowerCase();
+      if (fullHead.exitCode !== 0 || !/^[a-f0-9]{40}$/.test(exactPinned)) throw new Error('固定版本的完整身份尚未确认，请刷新分支后重试');
+      entry.pinnedCommit = exactPinned;
       stateService.save();
 
       res.json({

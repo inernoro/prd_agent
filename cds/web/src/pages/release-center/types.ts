@@ -45,6 +45,7 @@ export interface ReleaseStrategyDiscovery {
 }
 
 export interface ReleaseTarget {
+  governance?: { required: boolean; enabledAt: string; enabledBy: string };
   id: string;
   projectId: string;
   name: string;
@@ -79,6 +80,7 @@ export interface ReleaseLogEntry {
 }
 
 export interface ReleaseRun {
+  governance?: import('../../../../src/domain/release-governance').ReleaseGovernanceReceipt;
   releaseId: string;
   projectId: string;
   branchId: string;
@@ -154,6 +156,8 @@ export interface ReleaseComparison {
 }
 
 export interface CenterRow {
+  conflictCheck?: import('../../../../src/domain/release-governance').ReleaseConflictCheck;
+  mergeBack?: import('../../../../src/domain/release-governance').ReleaseMergeBack;
   currentRun?: ReleaseRun;
   comparison?: ReleaseComparison;
   target: ReleaseTarget;

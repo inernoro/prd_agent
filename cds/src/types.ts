@@ -1890,6 +1890,8 @@ export interface ReleaseProjectIdentity {
 }
 
 export interface ReleaseTarget {
+  /** Existing targets opt in explicitly; policy is preserved by every target update. */
+  governance?: { required: boolean; enabledAt: string; enabledBy: string };
   id: string;
   projectId: string;
   name: string;
@@ -2071,6 +2073,7 @@ export type ReleaseRunStatus =
   | 'rollback_failed';
 
 export interface ReleaseRun {
+  governance?: import('./domain/release-governance.js').ReleaseGovernanceReceipt;
   batchId?: string;
   batchAttemptId?: string;
   releaseId: string;
@@ -2305,6 +2308,7 @@ export interface CdsState {
    * 否则 `Object.values(undefined)` 直接把 CDS 启动炸掉。
    */
   releasePreflights?: Record<string, ReleasePreflightRecord>;
+  releaseGovernance?: import('./domain/release-governance.js').ReleaseGovernanceState;
   /** Durable ordered batches, including request receipts; old state may omit it. */
   releaseBatches?: Record<string, import('./domain/release-batch.js').ReleaseBatch>;
   /** Immutable release run records keyed by releaseId. */

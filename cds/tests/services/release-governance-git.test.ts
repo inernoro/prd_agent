@@ -1,0 +1,73 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { ReleaseGovernanceGit, type GovernanceGitRunner } from '../../src/services/release-governance-git.js';
+
+describe('发布治理的真实隔离合并', () => {
+  let root: string, repo: string, basis: string, reader: ReleaseGovernanceGit;
+  const native: GovernanceGitRunner = async (args, cwd, isolated) => {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0',
+      ...(isolated ? { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } : {}) } });
+    return { stdout: result.stdout || '', exitCode: result.status };
+  };
+  const git = (...args: string[]) => {
+    const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+    if (result.status !== 0) throw new Error(result.stderr);
+    return result.stdout.trim();
+  };
+  const commit = (file: string, content: string) => {
+    fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
+    fs.writeFileSync(path.join(repo, file), content); git('add', '--', file); git('commit', '-m', '测试变更');
+    return git('rev-parse', 'HEAD');
+  };
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-governance-git-test-')); repo = path.join(root, 'source');
+    fs.mkdirSync(repo); git('init','-b','main'); git('config','user.name','发布治理测试'); git('config','user.email','release@example.invalid');
+    basis = commit('shared.txt', 'base\n');
+    const remote = path.join(root, 'origin.git');
+    spawnSync('git', ['init','--bare',remote], { encoding: 'utf8' });
+    git('remote','add','origin',remote); git('push','origin','main');
+    reader = new ReleaseGovernanceGit(() => repo, () => 'main', native);
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  it('真实文本冲突被检出，原索引、未提交内容和分支不变', async () => {
+    commit('shared.txt','main\n'); git('push','origin','main');
+    git('checkout','-b','hotfix',basis); const candidate = commit('shared.txt','hotfix\n');
+    fs.writeFileSync(path.join(repo,'shared.txt'),'未提交内容\n');
+    const status = git('status','--porcelain'), index = fs.readFileSync(path.join(repo,'.git/index'));
+    const result = await reader.inspect('p',candidate,basis);
+    expect(result.status).toBe('conflicts'); expect(result.conflicts).toEqual(['shared.txt']);
+    expect(git('status','--porcelain')).toBe(status); expect(git('branch','--show-current')).toBe('hotfix');
+    expect(fs.readFileSync(path.join(repo,'.git/index'))).toEqual(index);
+    expect(fs.readFileSync(path.join(repo,'shared.txt'),'utf8')).toBe('未提交内容\n');
+  });
+  it('同文件产生相同结果时不把重叠误报为真实冲突', async () => {
+    commit('shared.txt','same\n'); git('push','origin','main');
+    git('checkout','-b','hotfix',basis); const candidate = commit('shared.txt','same\n');
+    const result = await reader.inspect('p',candidate,basis);
+    expect(result.status).toBe('clean'); expect(result.conflicts).toEqual([]); expect(result.includesBaseline).toBe(true);
+  });
+  it('累计检查包含已回退的越界修改与含换行的真实路径', async () => {
+    git('checkout','-b','hotfix'); commit('outside.txt','once\n'); git('rm','outside.txt'); git('commit','-m','撤回越界改动');
+    const candidate = commit('allowed/line\nname.txt','hello\n');
+    const result = await reader.inspect('p',candidate,basis);
+    expect(result.status).toBe('clean'); expect(result.changedPaths).toContain('outside.txt');
+    expect(result.changedPaths).toContain('allowed/line\nname.txt');
+    expect(result.changedPaths.every(p => !p.startsWith('\n'))).toBe(true);
+  });
+  it('从可信 PR 引用取齐对象并核对完整 head，拒绝错配版本', async () => {
+    git('checkout','-b','hotfix'); const head = commit('allowed/ui.txt','review\n');
+    git('push','origin',`${head}:refs/pull/7/head`);
+    expect(await reader.includesPr('p',basis,7,head)).toBe(true);
+    await expect(reader.includesPr('p',basis,7,basis)).rejects.toThrow('PR 已变化');
+    await expect(reader.includesPr('p',basis,8,head)).rejects.toThrow('PR 已变化');
+  });
+  it('主干读取失败或没有仓库时保持未知，不生成通过结论', async () => {
+    const broken = new ReleaseGovernanceGit(() => repo, () => 'main', async () => ({ stdout: '', exitCode: 128 }));
+    expect((await broken.inspect('p',basis,basis)).status).toBe('unknown');
+    const unavailable = new ReleaseGovernanceGit(() => undefined, () => 'main', native);
+    expect((await unavailable.inspect('p',basis)).status).toBe('unknown');
+  });
+});

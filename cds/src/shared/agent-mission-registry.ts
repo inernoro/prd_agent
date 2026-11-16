@@ -206,6 +206,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['project-storage', '项目存储占用', 'project-storage.ts', 'project', 'project', 'read-only', 'direct', 'cds', '', '只读容量检查可直接执行，清理必须转入对应破坏性能力'],
   ['projects', '项目、环境变量与 Agent Key', 'projects.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'project / env / key', '所有命令都必须锁定项目 ID，机器凭据不得自行提权'],
   ['releases', '正式发布控制面', 'releases.ts', 'project', 'project', 'destructive', 'direct', 'cds-release', '', '发现、预检、发布、验证、回滚和归档必须形成完整证据链'],
+  ['release-governance', '发布审批与回并', 'release-governance.ts', 'project', 'project', 'destructive', 'direct', 'cds-release', 'release-target', '执行凭据申请、人类独立批准；连续调试受范围、主干、基线和有效期约束'],
   ['replica-sets', '复制集成员、隔离库与执行计划', 'replica-sets.ts', 'project', 'project', 'destructive', 'direct', 'cds-deploy-pipeline', '', '加副本/调权重可逆；解散、隔离库、回切涉及数据库克隆与容器拆除，执行前必须锁定分支与服务'],
   ['remote-hosts', '远程主机、Sidecar 与 Agent 会话', 'remote-hosts.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', '', '主机密钥、工具审批和会话停止需要人类边界'],
   ['reports', '报告、资产、分享与 PR 回写', 'reports.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'report / report-folder', '分享和推送 PR 前检查脱敏与目标项目'],

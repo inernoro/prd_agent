@@ -38,6 +38,8 @@ export function ReleaseTraceOverview({ rows, rail, commitMeta, selectedTargetId,
   const main = rail?.nodes[0];
   const hasExtra = knownPosition && row.commitPosition!.aheadCount! > 0;
   const thread = current?.agentIdentity?.threadId;
+  const conflict = row.conflictCheck?.candidateSha === row.currentCommit && row.conflictCheck.mainSha === comparison?.mainSha
+    && row.conflictCheck.status !== 'unknown' ? row.conflictCheck : undefined;
   const files = (comparison?.files || [])
     .filter(file => filter === 'all' || file.side === filter || (filter === 'production' && file.side === 'both'))
     .sort((a, b) => SIDE_ORDER[a.side] - SIDE_ORDER[b.side] || a.path.localeCompare(b.path));
@@ -76,7 +78,7 @@ export function ReleaseTraceOverview({ rows, rail, commitMeta, selectedTargetId,
             <h3 className="text-sm font-semibold">受影响文件</h3>
             <span className="text-xs text-muted-foreground">{comparison ? formatDateTime(comparison.comparedAt) : '尚无比较快照'}</span>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">文件重叠需重点检查，文本冲突尚未经过预合并核验。</p>
+          <p className="mt-1 text-xs text-muted-foreground">{conflict ? conflict.status === 'clean' ? `隔离合并未发现冲突，核验于 ${formatDateTime(conflict.checkedAt)}。` : `隔离合并发现 ${conflict.conflicts.length} 个冲突文件，请先解决。` : '文件重叠需重点检查，文本冲突尚未经过预合并核验。'}</p>
           {comparison?.reason ? (
             <p role="status" className="py-5 text-sm text-muted-foreground">{comparison.reason}</p>
           ) : comparison?.baseSha ? (
@@ -94,7 +96,7 @@ export function ReleaseTraceOverview({ rows, rail, commitMeta, selectedTargetId,
                       <tr key={file.path} className="border-b border-[hsl(var(--hairline))]">
                         <td className="break-all py-2.5 pr-4"><FileText className="mr-2 inline h-4 w-4 text-muted-foreground" />{file.path}</td>
                         <td className="whitespace-nowrap pr-4">{file.side === 'both' ? '双方重叠' : file.side === 'production' ? '生产侧' : '主干侧'}</td>
-                        <td className="whitespace-nowrap text-muted-foreground">未核验</td>
+                        <td className="whitespace-nowrap text-muted-foreground">{conflict ? conflict.conflicts.includes(file.path) ? '存在冲突' : '未发现冲突' : '未核验'}</td>
                       </tr>
                     ))}</tbody>
                   </table>
@@ -118,7 +120,7 @@ export function ReleaseTraceOverview({ rows, rail, commitMeta, selectedTargetId,
             </div>
             <div>
               <dt className="flex items-center gap-2 text-muted-foreground"><ShieldCheck className="h-4 w-4" />批准记录</dt>
-              <dd className="mt-1">未记录独立批准证据</dd>
+              <dd className="mt-1">{current?.governance ? <>{releaseActorLabel(current.governance.approvedBy)} · {current.governance.kind === 'debug' ? '调试授权' : '单次批准'}<span className="mt-1 block text-xs text-muted-foreground">{formatDateTime(current.governance.approvedAt)} · {current.governance.authorizationId}</span></> : '未记录独立批准证据'}</dd>
             </div>
             <div>
               <dt className="flex items-center gap-2 text-muted-foreground"><Bot className="h-4 w-4" />关联对话</dt>
@@ -129,7 +131,7 @@ export function ReleaseTraceOverview({ rows, rail, commitMeta, selectedTargetId,
           <div className="py-5">
             <h4 className="flex items-center gap-2 font-medium"><GitBranch className="h-4 w-4" />回并状态</h4>
             <p className={`mt-2 text-sm ${hasExtra ? 'text-warn' : 'text-muted-foreground'}`}>{releaseMergeState(row.commitPosition)}</p>
-            <p className="mt-2 text-xs text-muted-foreground">按 Git 历史判断，尚未关联回并 PR 与负责人。</p>
+            {row.mergeBack ? <div className="mt-2 text-xs"><a href={row.mergeBack.url} target="_blank" rel="noreferrer" className="text-primary underline">PR #{row.mergeBack.number}</a> · {row.mergeBack.state === 'merged' ? '已合并' : row.mergeBack.state === 'open' ? '待合并' : row.mergeBack.state === 'closed' ? '已关闭未合并' : '尚未核实'}<p className="mt-1 text-muted-foreground">负责人 {row.mergeBack.owner} · {formatDateTime(row.mergeBack.checkedAt)}；PR 状态与 Git 历史分别核验。</p></div> : <p className="mt-2 text-xs text-muted-foreground">按 Git 历史判断，尚未关联回并 PR 与负责人。</p>}
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" disabled={!current} onClick={() => current && onOpenLogs(current)}>查看发布证据</Button>

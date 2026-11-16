@@ -57,6 +57,7 @@ export interface ReleaseTargetChange {
 export const RELEASE_TARGET_TRACKED_PATHS: ReadonlyArray<{ path: string; label: string }> = [
   { path: 'name', label: '站点名称' },
   { path: 'isEnabled', label: '是否启用' },
+  { path: 'governance.required', label: '是否要求独立批准' },
   { path: 'lifecycle', label: '生命周期' },
   { path: 'environment', label: '环境' },
   { path: 'isCanonical', label: '是否主发布目标' },
