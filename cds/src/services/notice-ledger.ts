@@ -450,6 +450,8 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     href = `/task-schedule?${query}`;
   } else if (copy.link === 'status') {
     href = monitorIncidentPath(data.targetId, data.incidentId, data.detectedAt);
+  } else if (copy.link === 'scheduler') {
+    href = '/cds-settings#scheduler';
   } else if (copy.link === 'maintenance') {
     href = '/cds-settings';
   }
