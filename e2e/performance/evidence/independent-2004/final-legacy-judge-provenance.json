@@ -1,0 +1,7 @@
+{
+  "oldJudgeCommit": "47e71839d29fb0bcef56952809b010608e633800",
+  "oldJudgePath": "e2e/performance/metrics.mjs",
+  "storedSha256": "409f1a4a7bb617b0bc8adf32fde436bacf4127919f4f0e38bad944f0c1b12275",
+  "identicalToGitBlob": true,
+  "method": "在当前同一真实首页负例与同机基线上运行旧纯判定函数；不代表运行旧产品，也不代表页面门槛是#2004首次引入"
+}

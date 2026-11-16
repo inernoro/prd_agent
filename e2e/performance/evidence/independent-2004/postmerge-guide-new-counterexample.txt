@@ -1,0 +1,9 @@
+✔ 真实教程载入及可见引导完成后才报告知识库可用，桌面窄屏均覆盖 (1776.853451ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2126.861884

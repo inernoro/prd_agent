@@ -1,0 +1,14 @@
+{
+  "injectedMs": 350,
+  "detected": true,
+  "failures": [
+    "normal/document-open: client p95 364.73 > 48.34 ms",
+    "normal/document-open: app p95 358.92 > 45.71 ms",
+    "normal/journey: client p95 1144.83 > 225.35 ms",
+    "normal/write: client p95 763.71 > 172.23 ms",
+    "normal/write-readback: client p95 361.91 > 69.43 ms",
+    "normal/write-readback: app p95 358.60 > 67.27 ms",
+    "normal/write-save: client p95 379.14 > 97.58 ms",
+    "normal/write-save: app p95 374.93 > 93.56 ms"
+  ]
+}

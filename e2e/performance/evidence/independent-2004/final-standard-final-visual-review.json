@@ -1,0 +1,20 @@
+{
+  "sourceRun": 43865199895,
+  "sourceApplication": "3b246376362fb798139a0b0b24daff0e090ca7bb",
+  "seen": [
+    "01-desktop-dark-home",
+    "02-desktop-dark-knowledge-list",
+    "03-desktop-dark-document-open",
+    "04-desktop-dark-saved-refresh",
+    "05-desktop-light-home",
+    "06-desktop-light-saved-refresh",
+    "07-mobile-dark-home",
+    "08-mobile-dark-saved-refresh",
+    "09-mobile-light-home",
+    "10-mobile-light-saved-refresh",
+    "11-mobile-light-server-restart"
+  ],
+  "allImagesActuallyViewed": true,
+  "observed": "桌面/手机明暗均显示真实内容，库和文档0-0身份一致；4种正文标记刷新后可见，最后图API重启后正文仍存在；图片无白屏；标注可辨识。",
+  "limitations": "手机为独立触控模拟上下文，不代表真机或Safari；首页标注覆盖局部标题，不影响下方目标库内容辨识。"
+}

@@ -1,0 +1,58 @@
+[
+  {
+    "runId": 43855863684,
+    "file": "verified-data-43855863684.zip",
+    "sha256": "41e52b87a755eaf41938dad59a63c48da3b840ec4fe74dfe5c8a5154d3fb81bc",
+    "bytes": 16959233,
+    "entries": 75
+  },
+  {
+    "runId": 43855938105,
+    "file": "verified-data-43855938105.zip",
+    "sha256": "ce698b5ebe9de53809963d9f4b4a5ef08b3ec27a0388e2f5c7d40a402c62b303",
+    "bytes": 17632258,
+    "entries": 75
+  },
+  {
+    "runId": 43861390979,
+    "file": "verified-data-43861390979.zip",
+    "sha256": "8a06503984ad6e34f8bf6d4e74b2e622a7baaed51c791193e16a4f2ff488db52",
+    "bytes": 17003098,
+    "entries": 75
+  },
+  {
+    "runId": 43865199895,
+    "file": "verified-data-43865199895.zip",
+    "sha256": "a8456ed56d05befdcca6e6c4717534af749202c29d219c2c0e225bb2a57c4f7f",
+    "bytes": 13961705,
+    "entries": 75
+  },
+  {
+    "runId": 43865211854,
+    "file": "verified-data-43865211854.zip",
+    "sha256": "865dbbe2e45cd5aa5e671a6ac460d1574ba1d2738c0ce2e05508635d80d867f3",
+    "bytes": 14582334,
+    "entries": 75
+  },
+  {
+    "runId": 43867909042,
+    "file": "verified-data-43867909042.zip",
+    "sha256": "c83e23ddd821aaccb77f8ca8e6f6ebf97fe39d4b267b623d7f785228653afa50",
+    "bytes": 13880413,
+    "entries": 75
+  },
+  {
+    "runId": 43871617745,
+    "file": "verified-data-43871617745.zip",
+    "sha256": "0c64f450f93ab8811d0db993a11c89c73175d48a07238bc956302b0d306e88be",
+    "bytes": 13907426,
+    "entries": 75
+  },
+  {
+    "runId": 43827678317,
+    "file": "verified-data-43827678317.zip",
+    "sha256": "bb63c8e7dbe38ba68b148a19a29ba85494d90480bb7397f5b0eb6eb5cf5d8a7d",
+    "bytes": 12844332,
+    "entries": 62
+  }
+]

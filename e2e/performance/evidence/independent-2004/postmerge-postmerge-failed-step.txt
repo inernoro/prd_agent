@@ -1,0 +1,20 @@
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	﻿2026-11-16T14:02:06.1217043Z ##[group]Run node e2e/performance/local-acceptance.mjs --prepared work/performance/candidate/result.json --out work/performance/local-acceptance
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:06.1217804Z [36;1mnode e2e/performance/local-acceptance.mjs --prepared work/performance/candidate/result.json --out work/performance/local-acceptance[0m
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:06.1245564Z shell: /usr/bin/bash -e {0}
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:06.1245948Z env:
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:06.1246117Z   NODE_VERSION: 20
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:06.1246289Z   PNPM_VERSION: 9
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:06.1246486Z   PERF_REF: 890d9b0bc3d13c0a6c0ee34d740480b813029b4d
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:06.1246764Z   PERF_BASE_REF: 2eb2995bb6171e4741ba180c85854ddf212883e9
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:06.1247003Z   PERF_PROFILE: normal
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:06.1247208Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:06.1247439Z   DOTNET_ROOT: /usr/share/dotnet
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:06.1247684Z   PERF_ACCEPTANCE_SHOTS_DIR: /tmp/map-performance-acceptance
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:06.1247934Z ##[endgroup]
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:17.1787613Z   截图 01-desktop-dark-home | desktop-dark：登录后首页已显示可用内容
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:17.7960171Z   ! 02-desktop-dark-knowledge-list 首次截图有问题：存在覆盖主要内容的高层弹窗/遮罩：关闭高亮引导；若本图就是验收该弹窗，需显式 allowBlockingOverlay=true —— 等 2.5s 后重试
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:20.4018907Z   [警告] 截图 02-desktop-dark-knowledge-list | desktop-dark：目标知识库卡片可见 | 仍有警告: 存在覆盖主要内容的高层弹窗/遮罩：关闭高亮引导；若本图就是验收该弹窗，需显式 allowBlockingOverlay=true
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:20.5090563Z 标准证据不完整: 存在覆盖主要内容的高层弹窗/遮罩：关闭高亮引导；若本图就是验收该弹窗，需显式 allowBlockingOverlay=true
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:21.0838724Z   [自动捕获] P0=0 P1=1（详见 result.json autoFindings；P0 已折叠进截图 warnings → 准入会拒收）
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:21.0868942Z   [自动捕获] P0=0 P1=1（详见 result.json autoFindings；P0 已折叠进截图 warnings → 准入会拒收）
+MAP Performance (Isolated)	Accept real local pages across themes and mobile viewport	2026-11-16T14:02:21.0980941Z ##[error]Process completed with exit code 1.

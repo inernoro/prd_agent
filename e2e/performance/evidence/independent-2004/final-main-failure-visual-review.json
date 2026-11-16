@@ -1,0 +1,58 @@
+{
+  "allImagesActuallyViewed": true,
+  "sourceApplication": "890d9b0bc3d13c0a6c0ee34d740480b813029b4d",
+  "localHarnessCommit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+  "failureRun": 43877037528,
+  "positiveRun": "map-perf-ui-1b5aa0783498",
+  "files": [
+    {
+      "name": "00-main-M-knowledge-guide-failure",
+      "sha256": "dc72bc0c9a379a4f1ed083396a28a88c99af473dc5d70413f42f9bec9b60b9a5"
+    },
+    {
+      "name": "01-desktop-dark-home",
+      "sha256": "628f5669958493f899a51789a12cd8d7ae2d5f5c41b801de20b3ba84e21ff6a6"
+    },
+    {
+      "name": "02-desktop-dark-knowledge-list",
+      "sha256": "6876c5c840c7bca25a5ece43d8f13247784f0740b50ed4404199a71e09daa8b2"
+    },
+    {
+      "name": "03-desktop-dark-document-open",
+      "sha256": "5890b97196e3800af9664c410851b571d99b8960b9f829b2e5c106054de4e317"
+    },
+    {
+      "name": "04-desktop-dark-saved-refresh",
+      "sha256": "3a0a3ddacf25515d03a9d741c5ea3809849217048aa89b32c6b5e56bd8bae41e"
+    },
+    {
+      "name": "05-desktop-light-home",
+      "sha256": "b0d48b0759461097c18eb16c875c90c90b98aba501a2605c1a47fdf322cefd02"
+    },
+    {
+      "name": "06-desktop-light-saved-refresh",
+      "sha256": "df9339e5596f84929457de4e328eb6415ca6181d7eb3d6d1c326ed674e993cdd"
+    },
+    {
+      "name": "07-mobile-dark-home",
+      "sha256": "873c3709761c5da1af95640da79353aa48ef54dccaa05e3a0cf845e9d26f1660"
+    },
+    {
+      "name": "08-mobile-dark-saved-refresh",
+      "sha256": "a88c70dc38f163c3dda52e91aea4f032c83f9fda0e24f1027c8e54bdf38db45c"
+    },
+    {
+      "name": "09-mobile-light-home",
+      "sha256": "6672d5a06c5012c8e855c1594110d648e75aeb31705155d18478519ef55b01a8"
+    },
+    {
+      "name": "10-mobile-light-saved-refresh",
+      "sha256": "738922bd44f7bd1b82b978770f23b4a7908e5cc7bf62aa1e23ded51ece61b9fb"
+    },
+    {
+      "name": "11-mobile-light-server-restart",
+      "sha256": "eae595ab4a6d22f42b3dbef94af1974405aadd8cff32367eb081844194eb075e"
+    }
+  ],
+  "notes": "失败图曾实看；11张补验图逐张实际查看，未通过仅摘要推断。原始P1头像资源记录保留。"
+}

@@ -1,0 +1,25 @@
+{
+  "sourceRun": 43871617745,
+  "applicationCommit": "7870004e5739b675dfe6655846ce939e0ecaef32",
+  "old": {
+    "pass": true,
+    "failures": []
+  },
+  "new": {
+    "pass": false,
+    "failures": [
+      "browser/home: ready p95 11178.38 > 3244.53 ms"
+    ]
+  },
+  "homeReadyMs": [
+    11178.380764999998,
+    11056.904038,
+    10981.970118999998
+  ],
+  "apiHomeP95": 15.270135999991908,
+  "homeLimit": {
+    "samples": 9,
+    "readyP95Ms": 3244.5310929999687
+  },
+  "rawRequestsSha256": "3f616481539568bf1c9156e43b7aa489277407f7dfd4bd123372fa0f73d96167"
+}

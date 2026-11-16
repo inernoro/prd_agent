@@ -1,0 +1,27 @@
+{
+  "applicationCommit": "c97ab1d2ca3147ae3e81d483a21fdb84b50f0d1e",
+  "oldJudgeCommit": "47e71839d29fb0bcef56952809b010608e633800",
+  "candidateJudgeCommit": "c97ab1d2ca3147ae3e81d483a21fdb84b50f0d1e",
+  "baselineCommit": "49b8e320f8c194dd92490e4623635c05f463fcec",
+  "rawResultSha256": "9154748829b46fe96b47ccc0e2706655795291979c1e803e9ffeb5bef3b3698d",
+  "before": {
+    "pass": true,
+    "failures": []
+  },
+  "candidate": {
+    "pass": false,
+    "failures": [
+      "browser/home: ready p95 10715.04 > 2601.09 ms"
+    ]
+  },
+  "homeReadyMs": [
+    10715.044392,
+    10653.619740000002,
+    10599.517456000001
+  ],
+  "homeApiP95": 48.978952999998,
+  "homeLimit": {
+    "samples": 9,
+    "readyP95Ms": 2601.0935799998188
+  }
+}

@@ -1,0 +1,16 @@
+  上传截图 01-desktop-dark-home (651310B) -> d3dc29bd7b6544bcf1498e99351ba18674f7af6501b903ce3e71c73633004005.png
+  上传截图 02-desktop-dark-knowledge-list (183780B) -> 8aebb7341c3048f004240cb7f3150e4886c8d39f152a41c73e2e2f5269f64655.png
+  上传截图 03-desktop-dark-document-open (241668B) -> 0c6c378e3d0320f88005e9a73f5946689587d25adc04b40fb181352e9dda3d0f.png
+  上传截图 04-desktop-dark-saved-refresh (220039B) -> b7c76c0d0f26981b9891cc978991051250eb8328945cf7e22c4d04b456470c09.png
+  上传截图 05-desktop-light-home (729422B) -> 2873bb5b3bcafdfede566943dde549e65ced7720ab9bb457cb29b31e5830805c.png
+  上传截图 06-desktop-light-saved-refresh (203689B) -> d0e48797cdecd17ba3b883c9005994d835a6b621bd64104fad994df3eae0204a.png
+  上传截图 07-mobile-dark-home (377739B) -> 7570bad4aeafe4054078f8c737394d6a0a6f297ea356c71a515fedf626d62db7.png
+  上传截图 08-mobile-dark-saved-refresh (267167B) -> 4bdf473cd1f95fa6d33cddccb58ab9ace5b9da8f44e71670c706653cff3e53a8.png
+  上传截图 09-mobile-light-home (370347B) -> 39cfee2b1c918074486f95d5341609c666e0f601ce4d521e87dc6245e6e56cd4.png
+  上传截图 10-mobile-light-saved-refresh (223582B) -> f742abe5e55f4114740d7105aad4a4164557a974c5f1f8c5216573180aa1026e.png
+  上传截图 11-mobile-light-server-restart (224730B) -> c64131c9966f7723da615e3c68f2d29093774e7fa15ff9418080a504e550ea7f.png
+{"mode": "cds", "title": "PR验收 · #2004 / MAP性能最终补验 · 2026-11-16", "report_id": "acc-prd-agent-202611162051-map性能回归最终证据阻断修复复验", "cdsReportId": "ad1e8ef7169b41c8bf96449f72b4639b", "projectId": "prd-agent", "folderId": "d6a48bce9a84423483b89853b772407d", "folderPath": "PR验收/2026-11", "format": "html", "verdict": "conditional", "deeplink": "https://miduo.org/reports?project=prd-agent&folder=d6a48bce9a84423483b89853b772407d&report=ad1e8ef7169b41c8bf96449f72b4639b"}
+
+===== 验收归档完成 · CDS 验收中心 =====
+直达深链（CDS 登录态可达，按项目+文件夹归类）：https://miduo.org/reports?project=prd-agent&folder=d6a48bce9a84423483b89853b772407d&report=ad1e8ef7169b41c8bf96449f72b4639b
+说明：报告已入 CDS（验收能力的唯一归属）；MAP 等系统通过知识库开放协议从 CDS 拉取展示，无需另建验收知识库。

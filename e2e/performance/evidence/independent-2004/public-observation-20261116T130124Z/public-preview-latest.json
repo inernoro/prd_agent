@@ -1,0 +1,23 @@
+{
+  "queriedBy": "cdscli preview-url",
+  "checkedAt": "2026-11-16T13:01:24.341828+00:00",
+  "requests": [
+    {
+      "url": "https://map-performance-judge-guards-fix-prd-agent.miduo.org/",
+      "status": "200",
+      "curlExit": 0
+    },
+    {
+      "url": "https://map-performance-judge-guards-fix-prd-agent.miduo.org/api/version",
+      "status": "200",
+      "curlExit": 0
+    }
+  ],
+  "result": "公开预览未验收：已恢复200，但API为主干fcbfd84e，Web-local，非精确候选。未登录写入或施压。",
+  "actualApiCommit": "fcbfd84e01121640d26ee7249b5a1432c227d0e5",
+  "declaredApiCommit": "fcbfd84e01121640d26ee7249b5a1432c227d0e5",
+  "webEntries": [
+    "/assets/index-COnPG6-2-local.js"
+  ],
+  "expectedCurrentHead": "7870004e5739b675dfe6655846ce939e0ecaef32"
+}

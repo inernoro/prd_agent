@@ -1,0 +1,8 @@
+{
+  "detected": true,
+  "homeReadyP95Ms": 10922.900963000002,
+  "injectedAssetRequests": 3,
+  "failures": [
+    "browser/home: ready p95 10922.90 > 1937.46 ms"
+  ]
+}
