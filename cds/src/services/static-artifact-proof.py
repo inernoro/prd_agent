@@ -70,13 +70,25 @@ def proof_write_once(p, value):
     with os.scandir(p.parent) as records:
         for entry in records:
             s = entry.stat(follow_symlinks=False)
-            if entry.name.endswith('.deleting') != journal:
+            if entry.name == p.name + '.pending':
+                continue
+            if (entry.name.endswith('.deleting') or entry.name.endswith('.deleting.pending')) != journal:
                 continue
             count += 1
             stored += s.st_size
             if not stat.S_ISREG(s.st_mode) or count >= 1024 or stored + len(raw) > (16 if journal else 48) * 1024 * 1024:
                 raise ValueError('static-proof-storage-budget-exceeded')
-    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    # An interrupted write must never look like a committed deletion journal.
+    # A deterministic private staging name bounds leftovers to one per record.
+    # All callers hold the target retention lock. Only this owned staging inode
+    # may be replaced; committed proofs/journals are never overwritten.
+    pending = p.with_name(p.name + '.pending')
+    if os.path.lexists(pending):
+        q = pending.lstat()
+        if not stat.S_ISREG(q.st_mode) or q.st_uid != os.getuid() or q.st_nlink != 1 or q.st_mode & 0o077:
+            raise ValueError('static-proof-staging-unconfirmed')
+        pending.unlink()
+    fd = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
         with os.fdopen(fd, 'wb', closefd=False) as f:
             f.write(raw)
@@ -86,6 +98,10 @@ def proof_write_once(p, value):
         os.close(fd)
     directory = os.open(p.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.renameat2(directory, pending.name.encode(), directory, p.name.encode(), 1) != 0:
+            raise OSError(ctypes.get_errno(), 'static-proof-atomic-commit-refused-no-overwrite')
         os.fsync(directory)
     finally:
         os.close(directory)

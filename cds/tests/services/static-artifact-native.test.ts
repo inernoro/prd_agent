@@ -138,6 +138,22 @@ describe('proved static artifact native reclamation',()=>{
     expect(await fs.stat(padding)).toMatchObject({size:64*1024*1024});
   });
 
+  it('retries after a real SIGKILL before the deletion journal write without adopting partial content',async()=>{
+    const f=await fixture();await f.make(3);const journal=path.join(f.releaseRoot,'static-proofs',id(3)+'.deleting');
+    const before=digest(await fs.readFile(path.join(f.version(3),'index.html')));
+    const c=path.join(f.root,'pause-open.c'),lib=path.join(f.root,'pause-open.so');
+    await fs.writeFile(c,`#define _GNU_SOURCE\n#include <dlfcn.h>\n#include <stdlib.h>\n#include <string.h>\n#include <signal.h>\n#include <fcntl.h>\n#include <stdarg.h>\n#include <stdio.h>\n#include <unistd.h>\nint open64(const char *p,int flags,...){mode_t m=0;if(flags&O_CREAT){va_list a;va_start(a,flags);m=va_arg(a,int);va_end(a);}int fd=((int(*)(const char*,int,...))dlsym(RTLD_NEXT,"open64"))(p,flags,m);const char*t=getenv("CAPACITY_TEST_JOURNAL_OPEN");if(fd>=0 && t && (flags&O_CREAT) && strncmp(p,t,strlen(t))==0){dprintf(1,"CAPACITY_STATIC_TEST_STAGE=%d\\n",getpid());raise(SIGSTOP);}return fd;}\n`);
+    execFileSync('cc',['-shared','-fPIC','-o',lib,c,'-ldl']);
+    const child=spawn('/bin/sh',['-c',f.command([3])],{env:{...f.env,LD_PRELOAD:lib,CAPACITY_TEST_JOURNAL_OPEN:journal},stdio:['ignore','pipe','pipe']});
+    const ended=once(child,'close');let output='',pid=0;
+    await new Promise<void>(resolve=>child.stdout.on('data',bytes=>{output+=String(bytes);const m=output.match(/CAPACITY_STATIC_TEST_STAGE=(\d+)/);if(m&&!pid){pid=Number(m[1]);resolve();}}));
+    process.kill(pid,'SIGKILL');const [code]=await ended;expect(code).not.toBe(0);expect(pid).toBeGreaterThan(0);
+    expect(digest(await fs.readFile(path.join(f.version(3),'index.html')))).toBe(before);
+    const interrupted=await fs.readFile(await fs.access(journal).then(()=>journal,()=>journal+'.pending'));expect(interrupted.length).toBe(0);
+    const retried=f.reclaim([3]);expect(retried.removedVersions).toEqual([id(3)]);expect(retried.failedVersions).toEqual([]);
+    expect(digest(await fs.readFile(path.join(f.version(1),'index.html')))).toBe(f.protectedHash);
+  });
+
   it('rediscovers a real SIGKILL after rmdir and finishes only the owned metadata, including a missing manifest',async()=>{
     const f=await fixture();await f.make(3);const store=path.join(f.releaseRoot,'static-proofs'),proof=path.join(store,id(3)+'.json');
     // Stop only this native child at its real metadata unlink syscall. Product
