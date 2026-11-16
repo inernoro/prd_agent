@@ -133,7 +133,7 @@ LLM 调用必须展示流式内容、可用的 thinking 内容、批次进度或
 
 声称完成前必须全部满足：后端编译零错误（判据见 `cds-first-verification.md` 的权威位置表：Branch Image 绿 = API 编得出来，CI 的 `Server Build & Test` 绿 = sln 零 error + 非集成非手工 xUnit；CDS 只负责运行、不负责编译）／前端页面能通过预览地址打开并正常渲染／核心业务流程端到端跑通（不是只有 CRUD）／直连预览域名测试（container-exec 是诊断工具不是验收工具）／依赖的外部服务已确认可用。
 
-**验收技能自动触发**：用户要求「页面验收、功能验收、回归验收、验收报告」或交付需要这些产物时，即使未写斜杠命令，也必须读取 [create-visual-test-to-kb](.claude/skills/create-visual-test-to-kb/SKILL.md)，按其前置要求执行 [acceptance-test-design](.claude/skills/acceptance-test-design/SKILL.md) → [acceptance-scenario-orchestrator](.claude/skills/acceptance-scenario-orchestrator/SKILL.md) → 取证归档。宿主未列出技能时按这些仓库路径读取；`human-verify`、`/uat`、交接清单和 CDS 上传回执均不能替代。执行类验收报告必须经标准 `archive_report.py` 生成、准入校验和 `verify-open.mjs`；缺步骤保持验收未完成，不得手写 HTML、改档位或补模板标记绕过。禁止：骨架完成就报「已实现」；绕过真实访问路径测试；不主动查系统能力。
+**验收技能自动触发**：用户要求「页面验收、功能验收、回归验收、验收报告」或交付需要这些产物时，即使未写斜杠命令，也必须读取 [create-visual-test-to-kb](.claude/skills/create-visual-test-to-kb/SKILL.md)，按其前置要求执行 [acceptance-test-design](.claude/skills/acceptance-test-design/SKILL.md) → [acceptance-scenario-orchestrator](.claude/skills/acceptance-scenario-orchestrator/SKILL.md) → 取证归档。宿主未列出技能时按这些仓库路径读取；`human-verify`、`/uat`、交接清单和 CDS 上传回执均不能替代。执行类验收报告必须经标准 `archive_report.py` 生成、准入校验和 `verify-open.mjs`；缺步骤保持验收未完成，不得手写 HTML、改档位或补模板标记绕过。禁止：骨架完成就报「已实现」；绕过真实访问路径测试；不主动查系统能力。**理解与纠偏**：先读真实源码、样式和用户素材，明确必留特征；重大视觉改动先自查并展示可运行关键场景，再按已有授权继续扩展，不增设审批（见 `.claude/rules/visual-anchor-first.md`）；收到否定反馈先对照原始要求与证据，说明具体偏差和修正动作，再实施并重跑能暴露偏差的路径，交付验证结果与证据，未验证就明说。禁止反复道歉、换措辞或堆功能代替纠偏，反馈不自动授权扩范围。
 
 **用户能看懂也是完成门槛。** 面向用户交付时，必须按对话模板逐项回答原始业务目标：现在能做什么、怎样证明、还有什么没做到。主结论要用普通中文直接呈现，不能让用户阅读JSON、源码、日志或Markdown文档链接后自行判断。技术文件仅作佐证。用户明确表示看不懂时，交付状态保持未通过，先改正说明与可见证据，不能用测试数量、提交成功或内部验收标签代替用户验收。
 
