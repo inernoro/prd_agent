@@ -60,14 +60,20 @@ try {
         const ready = async () => { await p.goto(origin + '/platforms', { waitUntil: 'domcontentloaded' }); await p.locator('.lg-collection-provider-row').first().waitFor(); await p.evaluate(t => { document.documentElement.dataset.theme = t; localStorage.setItem('llmgw-theme', t); }, theme); await p.evaluate(() => document.fonts.ready); };
         await ready();
         const measure = async (name) => { await p.waitForTimeout(100); await p.screenshot({ path: `${out}/${name}-${width}-${theme}.png` }); const m = await p.evaluate(() => { const rect = s => { const e = document.querySelector(s); if (!e)
-            return null; const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, bottom: r.bottom }; }; return { firstRow: rect('.lg-collection-provider-row'), models: rect('.lg-collection-owned-table tbody tr'), workspace: rect('.lg-collection-workspace'), pane: rect('.lg-collection-pane'), extras: rect('.lg-provider-maintenance-actions'), overflow: document.documentElement.scrollWidth > innerWidth }; }); results.push({ width, theme, name, ...m }); check(!m.overflow, `${width}/${theme}/${name}: no document overflow`); };
-        await measure('list');
-        check(results.at(-2).firstRow.y <= (width === 390 ? 330 : 300), `${width}/${theme}/first provider appears before baseline packaging`);
+            return null; const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, bottom: r.bottom }; }; return { firstRow: rect('.lg-collection-provider-row'), models: rect('.lg-collection-owned-table tbody tr'), workspace: rect('.lg-collection-workspace'), pane: rect('.lg-collection-pane'), extras: rect('.lg-provider-maintenance-actions'), overflow: document.documentElement.scrollWidth > innerWidth }; }); results.push({ width, theme, name, ...m }); check(!m.overflow, `${width}/${theme}/${name}: no document overflow`); return m; };
+        const listGeometry = await measure('list');
+        if (width === 390) {
+            const innerBorders = await p.locator('.lg-collection-provider-row:first-child td').evaluateAll(es => es.map(e => { const s = getComputedStyle(e); return parseFloat(s.borderTopWidth) + parseFloat(s.borderBottomWidth); }));
+            check(innerBorders.every(width => width === 0), `${width}/${theme}/one provider remains one visual group without field borders`);
+        }
+
+        check(listGeometry.firstRow.y <= (width === 390 ? 330 : 300), `${width}/${theme}/first provider appears before baseline packaging`);
         const entry = p.getByRole('button', { name: /查看 preview-readability-20261115-alpha 的已接入模型/ });
         await entry.click();
         await p.locator('.lg-collection-close').waitFor();
-        await measure('models');
-        const geometry = results.at(-2);
+        const geometry = await measure('models');
+        check(await p.getByRole('heading', { name: provider.name, level: 1, exact: true }).count() === 1 && await p.locator('.lg-provider-page h1').count() === 1, `${width}/${theme}/selected supplier owns the single page heading`);
+
         check(geometry.pane.width >= geometry.workspace.width * .95, `${width}/${theme}/maintenance uses complete workspace`);
         check(geometry.pane.bottom - geometry.models.bottom <= 32, `${width}/${theme}/single model ends naturally`);
         const modelText = await p.locator('.lg-collection-owned-table tbody tr:first-child td:first-child strong').evaluate(e => { const r = e.getBoundingClientRect(), range = document.createRange(); range.selectNodeContents(e); const t = range.getBoundingClientRect(); return { width: r.width, complete: t.left >= r.left - 1 && t.right <= r.right + 1 }; });

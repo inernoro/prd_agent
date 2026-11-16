@@ -6,14 +6,14 @@ import { useToolbarPopover } from '@/lib/toolbarPopover';
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
 import { Link, useSearchParams } from 'react-router-dom';
 import { GlobalUpstreamProxyControl, popoverHeadingStyle, ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
-import { ChevronRight, Server, X } from 'lucide-react';
+import { ChevronRight, X } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
 import type { CreatePlatformRequest, LogicalModelItem, ModelItem, PlatformItem, PlatformTestResult, ProviderPresetItem, UpdatePlatformRequest, UpstreamModelsData } from '@/lib/types';
 import { formatPlatformTime } from '@/lib/platformTime';
 import { ProviderCallStatus } from '@/components/ProviderCallStatus';
 import { ProviderModelsPanel, collectProviderModels, summarizeProviderModels } from '@/components/ProviderModelsPanel';
-import { Chip, SectionLoader, Button, ReadOnlyNotice, InlineAlert } from '@/components/ui';
+import { SectionLoader, Button, ReadOnlyNotice, InlineAlert } from '@/components/ui';
 import { ProviderPresetPicker, TestResultBar, UpstreamModelPicker, keyPrefixWarning } from '@/components/ProviderSetup';
 import { ImageGenContractsSection } from '@/components/ImageGenContractsSection';
 import { ModelCatalogSection } from '@/components/ModelCatalogSection';
@@ -112,7 +112,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   function renderOwnedModels() {
     if (!selectedProvider) return null;
     const p = selectedProvider;
-    return <CollectionDetailPane closeLabel="返回上游清单" key={p.id} title={p.name} icon={<Server size={18}/>} onClose={() => setExpandedModelsFor(null)} tabs={<><CollectionPaneTab active={providerTab === 'models'} onClick={() => setProviderTab('models')}>已接入模型</CollectionPaneTab><CollectionPaneTab active={providerTab === 'connection'} onClick={() => setProviderTab('connection')}>连接配置</CollectionPaneTab><CollectionPaneTab active={providerTab === 'activity'} onClick={() => setProviderTab('activity')}>调用记录</CollectionPaneTab></>}>
+    return <CollectionDetailPane headingLevel={1} closeLabel="返回上游清单" key={p.id} title={p.name} onClose={() => setExpandedModelsFor(null)} tabs={<><CollectionPaneTab active={providerTab === 'models'} onClick={() => setProviderTab('models')}>已接入模型</CollectionPaneTab><CollectionPaneTab active={providerTab === 'connection'} onClick={() => setProviderTab('connection')}>连接配置</CollectionPaneTab><CollectionPaneTab active={providerTab === 'activity'} onClick={() => setProviderTab('activity')}>调用记录</CollectionPaneTab></>}>
       <div className={providerTab === 'models' ? 'lg-collection-provider-models' : 'lg-collection-hidden'}>{modelsState === 'error' ? <InlineAlert tone="error">模型加载失败，接入数量与关联状态未知。<Button size="sm" variant="ghost" onClick={() => void refreshOwnedModels()}>重新加载</Button></InlineAlert> : modelsState === 'loading' ? <SectionLoader /> : <ProviderModelsPanel rows={ownedRows(p.id)} onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude' ? () => void openDiscovery(p) : undefined} />}</div>
       {providerTab === 'connection' ? <div className="lg-collection-key-facts"><h3>{editId === p.id ? '编辑连接' : '连接配置'}</h3>{canWrite && p.authority === 'llm_gateway' && editId === p.id ? renderConnectionEditor(p) : <><CollectionFacts items={[{ label: '接口类型', value: platformTypeLabel(p.platformType)},{ label: 'API 地址', value: <code>{p.apiUrl || '未配置'}</code>},{ label: '连接方式', value: <ProxyBadge proxy={p.proxy}/>},{ label: '供应方标识', value: p.providerId || '未单独设置'},{ label: '最大并发', value: p.maxConcurrency ?? '未配置'},{ label: '配置来源', value: p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入'},{ label: '密钥状态', value: <>{p.keyStatus === 'unreadable' ? '无法读取' : p.hasKey ? '已配置' : '未配置'}{p.keyFingerprint ? <code>{p.keyFingerprint}</code> : null}</>},{ label: '备注', value: p.remark || '无备注'},{ label: '最近更新', value: formatPlatformTime(p.updatedAt)},{ label: '导入时间', value: p.claimedAt || '未导入'}]}/>{canWrite && p.authority === 'llm_gateway' ? <Button className="lg-provider-edit-trigger" size="sm" disabled={busyId === p.id} onClick={() => beginEdit(p)}>编辑连接</Button> : null}</>}{canWrite && p.authority === 'llm_gateway' ? <UpstreamNetworkTest kind="platform" id={p.id} revision={p.updatedAt} disabled={editId === p.id} /> : null}<Link className="lg-text-link" to={`/platforms/view?id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name)}`}>供应方详情</Link></div> : null}
       {providerTab === 'activity' ? <div className="lg-collection-key-facts"><h3>调用记录<HelpPopover label="调用记录">查看这条供应方的真实请求、响应状态与最近调用。</HelpPopover></h3><Link className="lg-text-link" to={`/logs?platformId=${encodeURIComponent(p.id)}`}>查看全部请求记录</Link></div> : null}
@@ -497,14 +497,14 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   if (section === 'provider' && !items) return <PageShell><PageBody><SectionLoader text="正在加载平台…" /><GlobalUpstreamProxyControl /></PageBody></PageShell>;
 
   const th = TABLE_HEAD_CELL;
-  const td = TABLE_CELL;
+  const td: React.CSSProperties = { ...TABLE_CELL, verticalAlign: 'top', borderBottom: 'none' };
   const providerItems = items ?? [];
 
   return (
     <PageShell>
       {section === 'provider' ? (
       <PageBody className="lg-collection-page lg-provider-page">
-      <header className="lg-page-heading">
+      {!selectedProvider ? <header className="lg-page-heading">
         <div style={{ maxWidth: 720 }}>
           <h1>上游管理</h1>
 
@@ -512,7 +512,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
         {canWrite && !selectedProvider ? <Button variant="primary" size="sm" aria-expanded={showCreate} onClick={() => setShowCreate((value) => !value)}>
           {showCreate ? '收起配置' : '添加上游'}
         </Button> : null}
-      </header>
+      </header> : null}
       {returnProblem ? <InlineAlert tone="error">{returnProblem}</InlineAlert> : null}
       {showCreate && canWrite ? (
         <section style={createCardStyle}>
@@ -633,7 +633,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
         <Empty text={canWrite ? showCreate ? '还没有上游。填写上方连接配置，保存后即可接入模型。' : '还没有上游。点击“添加上游”配置供应方连接，保存后即可接入模型。' : '当前租户还没有 Provider。请联系 Owner 或 Admin 添加。'} />
       ) : (
       <div className="lg-collection-workspace">
-      <div className="lg-config-table-shell lg-collection-list" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
+      <div className="lg-config-table-shell lg-collection-list lg-provider-list">
         <CollectionView items={providerItems} placeholder="搜索供应方名称或接口" searchText={(item) => `${item.name} ${item.apiUrl || ''}`} filters={[{ value: 'enabled', label: '已启用', matches: (item) => item.enabled }, { value: 'disabled', label: '已停用', matches: (item) => !item.enabled }]}>
         {(pageProviders) => <table className="lg-data-table lg-collection-provider-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <colgroup><col style={{ width: '29%' }}/><col style={{ width: '22%' }}/><col style={{ width: '13%' }}/><col style={{ width: '20%' }}/><col style={{ width: '16%' }}/></colgroup>
@@ -682,7 +682,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                       <ChevronRight size={16} aria-hidden="true" />
                     </button>
                   </td>
-                  <td style={td}><div className="lg-collection-provider-key"><Chip label={key.label} color={key.color} bg={key.bg}/><span style={HINT_TEXT} title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined}>{p.authority === 'llm_gateway' ? '平台配置' : '待导入'}</span></div></td>
+                  <td style={td}><div className="lg-collection-provider-key"><span className={`lg-provider-key-state${!p.hasKey || p.keyStatus === 'unreadable' ? ' is-attention' : ''}`}>通讯密钥{key.label}</span><span style={HINT_TEXT} title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined}>{p.authority === 'llm_gateway' ? '平台配置' : '待导入'}</span></div></td>
                   <td style={td}><ProviderCallStatus platform={p} /></td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
                     <div className="lg-provider-row-actions"><Button size="sm" variant="ghost" onClick={() => { setProviderTab('connection'); setExpandedModelsFor(p.id); }}>连接配置</Button>
