@@ -93,6 +93,43 @@ describe('结构化验收任务', () => {
     await expect(service.submit(t.id, 'VIS-001', claim.leaseToken, { ...result(), actual: '不同结果' })).rejects.toMatchObject({ code: 'submission_conflict' });
     await expect(service.submit(t.id, 'VIS-002', claim.leaseToken, result())).rejects.toMatchObject({ code: 'submission_conflict' });
   });
+  it('未执行和阻塞进度不消耗执行机会，首次执行通过不算不稳定', async () => {
+    const t = await task(), claim = await service.claim(t.id, 'A');
+    for (const [index, status] of (['not-run', 'blocked', 'not-run'] as const).entries()) {
+      await service.submit(t.id, 'VIS-001', claim.leaseToken, result(`progress-${index}`, status));
+    }
+    const passed = await service.submit(t.id, 'VIS-001', claim.leaseToken, result('executed'));
+    expect(passed.results['VIS-001'].attempts.map((a) => a.status)).toEqual(['not-run', 'blocked', 'not-run', 'pass']);
+    expect(passed.summary).toMatchObject({ executed: 1, pass: 1, flaky: 0, gate: 'pass' });
+  });
+  it('首败后的进度记录不消耗重试，重试成功仍保留不稳定标记', async () => {
+    const t = await task(), claim = await service.claim(t.id, 'A');
+    await service.submit(t.id, 'VIS-001', claim.leaseToken, result('first', 'fail'));
+    await service.submit(t.id, 'VIS-001', claim.leaseToken, result('waiting', 'blocked'));
+    const passed = await service.submit(t.id, 'VIS-001', claim.leaseToken, result('retry'));
+    expect(passed.results['VIS-001'].attempts.map((a) => a.status)).toEqual(['fail', 'blocked', 'pass']);
+    expect(passed.summary).toMatchObject({ pass: 1, flaky: 1, gate: 'fail' });
+  });
+  it('进度不增加实际失败次数，两次实际失败后不能再执行', async () => {
+    const t = await task(), claim = await service.claim(t.id, 'A');
+    await service.submit(t.id, 'VIS-001', claim.leaseToken, result('first', 'fail'));
+    await service.submit(t.id, 'VIS-001', claim.leaseToken, result('waiting', 'not-run'));
+    await service.submit(t.id, 'VIS-001', claim.leaseToken, result('second', 'fail'));
+    await expect(service.submit(t.id, 'VIS-001', claim.leaseToken, result('third'))).rejects.toMatchObject({ code: 'retry_exhausted' });
+  });
+  it.each(['toString', 'valueOf', 'hasOwnProperty'])('合法用例编号 %s 不读取继承属性，未执行和通过均可汇总', async (caseId) => {
+    const t = await task([businessCase(caseId)]);
+    expect(t.summary).toMatchObject({ executed: 0, notRun: 1, pass: 0, fail: 0, gate: 'fail' });
+    expect(service.matrix('p1').rows[0].cells[0].status).toBe('not-run');
+    const claim = await service.claim(t.id, 'A');
+    const saved = await service.submit(t.id, caseId, claim.leaseToken, result());
+    expect(saved.summary).toMatchObject({ executed: 1, notRun: 0, pass: 1, gate: 'pass' });
+    await service.complete(t.id, claim.leaseToken);
+    expect(service.reportSource(t.id).verdict).toBe('pass');
+    const empty = await task([businessCase(caseId)]), emptyClaim = await service.claim(empty.id, 'A');
+    await service.complete(empty.id, emptyClaim.leaseToken);
+    expect(service.reportSource(empty.id).verdict).toBe('conditional');
+  });
   it('最多一次重试，首败保留且重试通过为flaky，不变成全绿', async () => {
     const t = await task(), claim = await service.claim(t.id, 'A');
     await service.submit(t.id, 'VIS-001', claim.leaseToken, result('first', 'fail'));

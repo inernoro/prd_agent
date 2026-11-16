@@ -51,6 +51,18 @@ describe('验收API真实HTTP与项目隔离', () => {
       req.on('error', reject); req.end(body === undefined ? undefined : JSON.stringify(body));
     });
   }
+  it('拒绝非字符串状态，数组不能绕过通过条件', async () => {
+    const claimed = await request('POST', `/tasks/${tasks.p1.id}/claim`, { agentName: 'A' });
+    const sent = await request('POST', `/tasks/${tasks.p1.id}/results/WEB-001`, {
+      leaseToken: claimed.body.leaseToken, submissionId: 'malformed-status', status: ['pass'],
+      actual: '没有执行', assertions: [], evidence: [], cleanup: { status: 'fail', details: '未清理' },
+    });
+    expect(sent.status).toBe(400);
+    expect(sent.body.error).toBe('invalid_result');
+    const read = await request('GET', `/tasks/${tasks.p1.id}`);
+    expect(read.body.task.summary).toMatchObject({ pass: 0, notRun: 1, gate: 'fail' });
+    expect(read.body.task.results).toEqual({});
+  });
   it('全部验收路由在操作记录中都有中文操作说明', () => {
     const router = createAcceptanceTasksRouter({ service });
     for (const layer of router.stack) {

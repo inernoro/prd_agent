@@ -95,6 +95,11 @@ export interface AcceptanceTask {
   report?: { id: string; url: string; verification: 'pending' };
 }
 
+/** Case IDs are user input and may equal Object.prototype property names. */
+export function acceptanceCaseResult(task: AcceptanceTask, caseId: string): AcceptanceResult | undefined {
+  return Object.prototype.hasOwnProperty.call(task.results, caseId) ? task.results[caseId] : undefined;
+}
+
 export interface AcceptanceMatrix {
   tasks: Array<Pick<AcceptanceTask, 'id' | 'title' | 'environment' | 'summary' | 'createdAt' | 'report'>>;
   rows: Array<Pick<AcceptanceCase, 'caseId' | 'title' | 'module' | 'criticality'> & {

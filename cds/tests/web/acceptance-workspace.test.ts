@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  acceptanceReportLink, acceptanceTaskLink, acceptanceView, archiveAcceptanceReport, bindAcceptanceReport,
+  acceptanceCaseResult, acceptanceReportLink, acceptanceTaskLink, acceptanceView, archiveAcceptanceReport, bindAcceptanceReport,
   claimAcceptanceTask, createAcceptanceTask, heartbeatAcceptanceTask, onlineEvidenceUrl,
   latestAcceptanceTemplates, publishAcceptanceTemplate, submitAcceptanceResult,
 } from '../../web/src/lib/acceptance-api';
@@ -45,6 +45,19 @@ describe('结构化清单和逐项回填，非 JSON 粘贴框', () => {
     for (const label of ['重要功能', '用例编号 caseId', '所属模块', '负责人', '业务面包屑', '前置条件', '固定输入', '添加输入', '添加步骤', '添加断言', '清理操作与回读标准', '发布清单版本']) expect(html).toContain(label);
     expect(html).not.toContain('粘贴 JSON');
     expect(html).toContain('value="production"');
+  });
+
+  it('页面读取只取用例自身结果，继承属性不会变成执行记录', () => {
+    const task = { results: {} } as AcceptanceTask;
+    for (const id of ['toString', 'valueOf', 'hasOwnProperty']) {
+      expect(acceptanceCaseResult(task, id)).toBeUndefined();
+      const html = render(createElement(AcceptanceResultEditor, { testCase: { ...testCase, caseId: id }, result: acceptanceCaseResult(task, id), writable: false, busy: false, onSave: async () => {} }));
+      expect(html).toContain('未执行');
+    }
+    const own = { ...initialAcceptanceSubmission(testCase), attempts: [], flaky: false, submittedAt: '', caseId: 'toString' };
+    task.results = { ['toString']: own };
+    expect(acceptanceCaseResult(task, 'toString')).toBe(own);
+    expect(workspaceSource).not.toContain('task.results[');
   });
 
   it('保存结果时缺断言、线上证据或清理回读不能宣称通过', () => {

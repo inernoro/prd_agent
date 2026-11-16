@@ -73,7 +73,7 @@ function parseCase(value: unknown): AcceptanceCase {
 
 function parseSubmission(value: unknown, c: AcceptanceCase): AcceptanceSubmission {
   const s = record(value);
-  if (!['pass', 'fail', 'blocked', 'not-run'].includes(String(s.status))) reject('invalid_result', '结果仅允许 pass、fail、blocked、not-run');
+  if (typeof s.status !== 'string' || !['pass', 'fail', 'blocked', 'not-run'].includes(s.status)) reject('invalid_result', '结果仅允许 pass、fail、blocked、not-run');
   const assertions = list(s.assertions, '断言结果').map((v) => {
     const a = record(v);
     if (typeof a.passed !== 'boolean') reject('invalid_result', '断言必须填写 passed');
@@ -99,10 +99,14 @@ function parseSubmission(value: unknown, c: AcceptanceCase): AcceptanceSubmissio
   return result;
 }
 
+function ownResult(results: AcceptanceTask['results'], caseId: string) {
+  return Object.prototype.hasOwnProperty.call(results, caseId) ? results[caseId] : undefined;
+}
+
 export function acceptanceSummary(cases: AcceptanceCase[], results: AcceptanceTask['results']): AcceptanceSummary {
   const summary: AcceptanceSummary = { planned: cases.length, executed: 0, pass: 0, fail: 0, blocked: 0, notRun: 0, flaky: 0, gate: 'fail' };
   for (const c of cases) {
-    const result = results[c.caseId];
+    const result = ownResult(results, c.caseId);
     if (!result || result.status === 'not-run') summary.notRun++;
     else if (result.status === 'blocked') summary.blocked++;
     else { summary.executed++; summary[result.status]++; }
@@ -235,16 +239,17 @@ export class AcceptanceTaskService {
       const t = this.task(slice, id); this.requireLease(t, token);
       const c = t.cases.find((c) => c.caseId === caseId);
       if (!c) reject('case_not_found', '用例不在本任务执行范围', 404);
-      const submission = parseSubmission(value, c), previous = t.results[caseId];
+      const submission = parseSubmission(value, c), previous = ownResult(t.results, caseId);
       const existing = Object.values(t.results).flatMap((r) => r.attempts.map((attempt) => ({ caseId: r.caseId, attempt }))).find((r) => r.attempt.submissionId === submission.submissionId);
       if (existing) {
         const { submittedAt: _time, ...original } = existing.attempt;
         if (existing.caseId !== caseId || JSON.stringify(original) !== JSON.stringify(submission)) reject('submission_conflict', '此提交编号已用于不同结果，请勿覆盖历史', 409);
         return this.publicTask(t);
       }
-      if (previous && (previous.attempts.length >= 2 || previous.status === 'pass')) reject('retry_exhausted', '每条失败最多重试一次，通过结果不能改写', 409);
+      const failedAttempts = previous?.attempts.filter((attempt) => attempt.status === 'fail').length ?? 0;
+      if (previous && (failedAttempts >= 2 || previous.status === 'pass')) reject('retry_exhausted', '每条失败最多重试一次，通过结果不能改写', 409);
       const attempt = { ...submission, submittedAt: this.now().toISOString() }, attempts = [...(previous?.attempts ?? []), attempt];
-      t.results[caseId] = { ...attempt, caseId, attempts, flaky: attempts.length === 2 && attempt.status === 'pass' };
+      t.results[caseId] = { ...attempt, caseId, attempts, flaky: failedAttempts > 0 && attempt.status === 'pass' };
       t.summary = acceptanceSummary(t.cases, t.results); t.updatedAt = this.now().toISOString();
       return this.publicTask(t);
     });
@@ -293,7 +298,7 @@ export class AcceptanceTaskService {
         templateId, caseId: c.caseId, title: c.title, module: c.module, criticality: c.criticality,
         cells: tasks.map((t) => {
           const applicable = t.templateId === templateId && t.cases.some((entry) => entry.caseId === c.caseId);
-          const result = applicable ? t.results[c.caseId] : undefined;
+          const result = applicable ? ownResult(t.results, c.caseId) : undefined;
           return { taskId: t.id, status: result?.status ?? 'not-run', flaky: result?.flaky ?? false, evidence: result?.evidence ?? [], applicable };
         }),
       })),
@@ -304,9 +309,9 @@ export class AcceptanceTaskService {
     if (task.status !== 'completed') reject('task_incomplete', '请先结束逐项验收，再生成报告', 409);
     const escape = (value: string) => value.replace(/[\\`*_{}\[\]<>#|]/g, '\\$&').replace(/[\r\n]+/g, ' ');
     const s = task.summary, verdict = s.fail ? 'fail' : s.blocked || s.notRun || s.flaky ? 'conditional' : 'pass';
-    const evidence = task.cases.flatMap((c) => task.results[c.caseId]?.attempts.flatMap((a) => a.evidence) ?? []);
+    const evidence = task.cases.flatMap((c) => ownResult(task.results, c.caseId)?.attempts.flatMap((a) => a.evidence) ?? []);
     const defectCounts = { p0: 0, p1: 0 };
-    for (const c of task.cases) if (task.results[c.caseId]?.status === 'fail') defectCounts[c.criticality === 'core' ? 'p0' : 'p1']++;
+    for (const c of task.cases) if (ownResult(task.results, c.caseId)?.status === 'fail') defectCounts[c.criticality === 'core' ? 'p0' : 'p1']++;
     const title = `功能验收 · ${task.title} / ${task.environment} · ${task.completedAt!.slice(0, 10)}`;
     const lines = [
       `# ${escape(title)}`, '', '## 老板决策卡', '',
@@ -315,11 +320,11 @@ export class AcceptanceTaskService {
       `计划 ${s.planned}，执行 ${s.executed}，通过 ${s.pass}，失败 ${s.fail}，阻塞 ${s.blocked}，未执行 ${s.notRun}，不稳定 ${s.flaky}。`,
       `业务结论：${s.gate}。报告交付：pending，尚未完成线上归档与 verify-open；不得据此宣称允许发布。`, '',
       '## 验收结果矩阵', '', '| caseId | 重要功能 | 结果 | 不稳定 | 清理 |', '|---|---|---|---|---|',
-      ...task.cases.map((c) => { const r = task.results[c.caseId]; return `| ${c.caseId} | ${escape(c.title)} | ${r?.status ?? 'not-run'} | ${r?.flaky ? '是' : '否'} | ${r?.cleanup.status ?? '未回填'} |`; }),
+      ...task.cases.map((c) => { const r = ownResult(task.results, c.caseId); return `| ${c.caseId} | ${escape(c.title)} | ${r?.status ?? 'not-run'} | ${r?.flaky ? '是' : '否'} | ${r?.cleanup.status ?? '未回填'} |`; }),
       '', '## 逐项执行与证据', '',
     ];
     for (const c of task.cases) {
-      const result = task.results[c.caseId];
+      const result = ownResult(task.results, c.caseId);
       lines.push(`### ${c.caseId} ${escape(c.title)}`, '', `模块：${escape(c.module)}；负责人：${escape(c.owner)}；面包屑：${c.breadcrumb.map(escape).join(' → ')}；业务路径：${escape(c.entryPath)}。`,
         `前置条件：${c.preconditions.map(escape).join('；') || '无'}。`, `输入：${c.inputs.map((i) => `${escape(i.name)}=${escape(i.value)}`).join('；') || '无'}。`,
         ...c.steps.map((step, i) => `${i + 1}. ${escape(step.action)}；预期：${escape(step.expected)}`), '',
