@@ -896,6 +896,9 @@ export function resolveApiLabel(method: string, path: string): string {
   // Static exact matches
   const staticMap: Record<string, string> = {
     'GET /host-capacity/observation': '查看容量观测',
+    'GET /host-capacity/sampling': '查看容量采样',
+    'PUT /host-capacity/sampling': '配置容量采样',
+    'POST /host-capacity/sampling/run': '执行容量采样',
     'GET /code-reviews/branches': '列出审查分支',
     // shared 基础设施服务远程主机（系统级，2026-05-06）
     'GET /cds-system/remote-hosts': '列出远程主机',
