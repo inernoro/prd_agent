@@ -35,3 +35,17 @@ test('设置了故意拖慢但没有检测到超限时，不能把识别试验�
   assert.equal(view.status,'unknown');
   assert.ok(view.outcome.includes('不能认定识别试验成功'));
 });
+test('页面与API同时超限不能显示识别试验符合预期，必须说明API健康前提未满足',()=>{
+  const mixed=structuredClone(fault);
+  mixed.phases.find(p=>p.name==='normal').metrics.home.client.p95=baseline.limits.home.clientP95+1;
+  const view=readableResult(mixed,baseline);
+  assert.equal(view.status,'unknown');
+  assert.ok(view.outcome.includes('接口也超出正常对照'));
+  assert.equal(renderReport(view).includes('出现“不通过”符合预期'),false);
+});
+test('页面变慢但注入未命中不能显示识别试验符合预期',()=>{
+  const missed=structuredClone(fault);missed.browserInjection.applied=[];
+  const view=readableResult(missed,baseline);
+  assert.equal(view.status,'unknown');
+  assert.ok(view.outcome.includes('不能认定识别试验成功'));
+});

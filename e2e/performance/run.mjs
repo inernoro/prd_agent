@@ -10,6 +10,7 @@ import { setTimeout as pause } from 'node:timers/promises';
 import { chromium, expect } from '@playwright/test';
 import { workload, digest, summarize, compare, capacity, executionErrors, buildIdentityErrors, browserScenarios, stats } from './metrics.mjs';
 import { readProcesses, processTree } from './resources.mjs';
+import { openFixtureDocument, installOnboardingHandler } from './browser-path.mjs';
 
 const exec = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +62,7 @@ const contract = { schema: 4, buildMetadataVersion: 2, workload, limits, images,
   proxyRecipe: digest(await fs.readFile(path.join(here, 'nginx.conf'), 'utf8')),
   runtimeRecipe: digest(await fs.readFile(path.join(here, 'runtime.Dockerfile'), 'utf8')),
   workloadCode: digest(await fs.readFile(fileURLToPath(import.meta.url), 'utf8')) };
+contract.browserPathCode = digest(await fs.readFile(path.join(here, 'browser-path.mjs'), 'utf8'));
 const result = { schema: 2, commit, harnessCommit: await command('git', ['rev-parse', 'HEAD']),
   environmentId: runId, startedAt: new Date().toISOString(), contract,
   execution: { profile: options.profile ?? 'all', state: 'running' },
@@ -190,9 +192,7 @@ async function browserJourney(round) {
   page.setDefaultTimeout(30_000);
   // Fresh accounts see the real onboarding overlay. Dismiss it through its UI,
   // rather than injecting storage flags or forcing clicks through the overlay.
-  await page.addLocatorHandler(page.getByRole('button', { name: '我已学会', exact: true }), async () => {
-    await page.getByRole('button', { name: '我已学会', exact: true }).click();
-  });
+  await installOnboardingHandler(page, snapshot => (result.browser.onboardingDismissals ??= []).push({ round, snapshot }));
   const requests = [];
   page.on('response', response => {
     const url = new URL(response.url());
@@ -225,9 +225,8 @@ async function browserJourney(round) {
       await expect(page.getByText('性能知识库-0', { exact: true }).first()).toBeVisible();
     });
     await timed('document-open', async () => {
-      await page.getByText('性能知识库-0', { exact: true }).first().click();
-      await page.getByText('性能文档-0-0', { exact: true }).first().click();
-      await expect(page.getByText('MAP性能样例', { exact: true }).first()).toBeVisible();
+      const opened = await openFixtureDocument(page, { storeId: fixture.stores[0], entryId: fixture.entries[0] });
+      (result.browser.documentSelections ??= []).push({ round, ...opened });
     });
     await timed('write', async () => {
       await page.getByRole('button', { name: '编辑文档', exact: true }).click();

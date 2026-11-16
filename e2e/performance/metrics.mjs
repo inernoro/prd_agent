@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 
 export const workload = {
-  version: 3, stores: 6, documentsPerStore: 20, writerDocuments: 128, contentBytes: 8192,
+  version: 4, stores: 6, documentsPerStore: 20, writerDocuments: 128, contentBytes: 8192,
   writeFlow: 'edit-existing-document',
   browserRepetitions: 3,
   rateLimit: { maxRequestsPerMinute: 100000, maxConcurrentRequests: 1024 },
   warmup: { users: 2, iterationsPerUser: 20 },
-  normal: { users: 2, seconds: 60, intervalMs: 1000, minimumBaselineSamples: 100 },
+  normal: { users: 2, seconds: 120, intervalMs: 1000, minimumBaselineSamples: 200 },
   ramp: { users: [2, 4, 8, 16, 32, 64, 128], seconds: 15, intervalMs: 0 },
   soak: { users: 2, seconds: 120, intervalMs: 1000 },
 };
@@ -52,6 +52,10 @@ export function executionErrors(result) {
   failures.push(...buildIdentityErrors(result?.commit, result?.buildIdentity));
   const phases = result?.phases ?? [];
   const names = phases.map(p => p.name);
+  const normal = phases.find(p => p.name === 'normal');
+  const normalSeconds = result?.contract?.workload?.normal?.seconds ?? workload.normal.seconds;
+  if (!Number.isFinite(normal?.seconds) || normal.seconds < normalSeconds)
+    failures.push('正常负载采集时间不足，不能以提前终止的数据比较或校准');
   if (execution?.profile === 'normal' && (names.length !== 1 || names[0] !== 'normal'))
     failures.push('normal档位阶段不完整');
   if (execution?.profile === 'all') {
@@ -106,6 +110,16 @@ export function calibrate(results) {
 export function compare(result, baseline) {
   const failures = executionErrors(result);
   if (failures.length) return { pass: false, failures };
+  const normalNames = Object.keys(result.phases.find(p => p.name === 'normal')?.metrics ?? {});
+  if (!baseline || baseline.sourceRuns?.length < 3 || !baseline.sourceRuns
+      || !normalNames.length || normalNames.some(name => {
+        const limit = baseline.limits?.[name];
+        return !limit || !Number.isFinite(limit.clientP95) || limit.clientP95 <= 0
+          || !Number.isFinite(limit.minThroughput) || limit.minThroughput <= 0
+          || !Number.isFinite(limit.errorRate) || limit.errorRate < 0 || limit.errorRate > 1
+          || (['journey', 'write'].includes(name) ? limit.appP95 !== null
+            : !Number.isFinite(limit.appP95) || limit.appP95 <= 0);
+      })) return { pass: false, failures: ['基线缺少完整API阈值或三次校准来源，须重新校准'] };
   if (digest(result.contract) !== digest(baseline.contract)) return { pass: false, failures: ['运行契约不一致，须在同机重新校准'] };
   for (const name of browserScenarios) {
     const limit = baseline.browserLimits?.[name]?.readyP95Ms;
@@ -120,6 +134,9 @@ export function compare(result, baseline) {
     for (const [name, limit] of Object.entries(baseline.limits)) {
       const m = phase.metrics[name];
       if (!m || m.attempts < 30) { failures.push(`${phase.name}/${name}: 样本不足`); continue; }
+      if (limit.appP95 !== null && (!Number.isFinite(m.app?.n) || m.app.n < 30)) {
+        failures.push(`${phase.name}/${name}: 应用耗时样本不足`); continue;
+      }
       if (m.errorRate > limit.errorRate) failures.push(`${phase.name}/${name}: errorRate ${m.errorRate} > ${limit.errorRate}`);
       if (m.client.p95 > limit.clientP95) failures.push(`${phase.name}/${name}: client p95 ${m.client.p95.toFixed(2)} > ${limit.clientP95.toFixed(2)} ms`);
       if (limit.appP95 !== null && (!m.app.n || m.app.p95 > limit.appP95)) failures.push(`${phase.name}/${name}: app p95 ${m.app.p95.toFixed(2)} > ${limit.appP95.toFixed(2)} ms`);
