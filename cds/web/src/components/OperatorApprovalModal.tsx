@@ -47,6 +47,8 @@ export function OperatorApprovalModal(): JSX.Element | null {
   const [busy, setBusy] = useState(false);
   const [refreshError, setRefreshError] = useState('');
   const [refreshGate] = useState(() => createApprovalPollingGate<{ pending: PendingRequest[] }>());
+  // 关闭只延后本页提醒，不修改服务端审批；同一请求不能每次心跳都抢回焦点。
+  const deferredRequests = useRef(new Set<string>());
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
@@ -58,7 +60,10 @@ export function OperatorApprovalModal(): JSX.Element | null {
       setRefreshError('');
       if (result.kind === 'forbidden') { setPending(null); return; }
       const data = result.data;
-      const list = (data.pending || []).filter((r) => r.status === 'pending');
+      const waiting = (data.pending || []).filter((r) => r.status === 'pending');
+      const waitingIds = new Set(waiting.map((r) => r.id));
+      for (const id of deferredRequests.current) if (!waitingIds.has(id)) deferredRequests.current.delete(id);
+      const list = waiting.filter((r) => !deferredRequests.current.has(r.id));
       if (list.length > 0) setPending(list[0]);
       else setPending(null);
     } catch (error) {
@@ -115,7 +120,12 @@ export function OperatorApprovalModal(): JSX.Element | null {
   const visibleArgs = pending.args && Object.fromEntries(Object.entries(pending.args).filter(([key]) => key !== 'databaseTarget'));
 
   return (
-    <Dialog open={!!pending} onOpenChange={(open) => { if (!open) setPending(null); }}>
+    <Dialog open={!!pending} onOpenChange={(open) => {
+      if (!open) {
+        if (pending) deferredRequests.current.add(pending.id);
+        setPending(null);
+      }
+    }}>
       <DialogContent
         className="max-w-2xl overflow-hidden"
         style={{ maxHeight: 'min(47.5rem, calc(100dvh - 2rem))' }}
@@ -174,6 +184,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
           </div>
 
           <p className="text-xs leading-5 text-muted-foreground">
+            关闭仅收起提醒，不会批准或拒绝；刷新页面可再次处理待批请求。<br />
             选择「<strong>允许本次</strong>」只放行这一次请求。<br />
             选择「<strong>授权 7 天</strong>」仅放行接下来 7 天内同一发起方、同一操作且参数完全相同的请求；更换目标或 SQL 需要重新批准。
           </p>

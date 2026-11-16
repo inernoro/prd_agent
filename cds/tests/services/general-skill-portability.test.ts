@@ -50,7 +50,8 @@ describe('portable general skill packages', () => {
       const versions = [manifest.version, manifest.metadata?.version].filter(value => value !== undefined);
       expect(versions.length, `${skillName} must declare a version`).toBeGreaterThan(0);
       // Metadata is the canonical location; legacy packages remain valid, and conflicting versions cannot hide.
-      for (const version of versions) expect(version).toBe(skillName === 'acceptance-test-design' ? '2.0.1' : '2.0.0');
+      const expectedVersion = skillName === 'acceptance-test-design' ? '2.0.1' : '2.0.0';
+      for (const version of versions) expect(version).toBe(expectedVersion);
 
       const files = listFiles(directory);
       expect(files.length).toBeGreaterThan(0);
