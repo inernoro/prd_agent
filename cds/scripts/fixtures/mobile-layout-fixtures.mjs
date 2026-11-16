@@ -145,6 +145,7 @@ function scheduledRuns() {
  * 顺序无关，精确匹配优先于前缀匹配。
  */
 const EXACT = {
+  '/api/cluster/identity/status': { enabled: false, state: 'independent' },
   '/api/instance-catalog': { version: 1, instances: [
     { id: 'primary', name: '合成主实例', role: 'primary', url: 'https://primary.example.invalid' },
     { id: 'standby', name: '合成备用实例', role: 'standby', url: 'https://standby.example.invalid' },

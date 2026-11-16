@@ -26,13 +26,11 @@ export function InstanceSwitcher({ embedded = false }: { embedded?: boolean }): 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [identity, setIdentity] = useState<ClusterStatus | null>(null);
+  const [identityLoading, setIdentityLoading] = useState(false);
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 8_000);
-    void apiRequest('/api/cluster/identity/status', { signal: controller.signal }).then(raw => {
-      if (!cancelled) setIdentity(raw as ClusterStatus);
-    }).catch(() => { if (!cancelled) setIdentity(null); });
     apiRequest('/api/instance-catalog', { signal: controller.signal }).then(raw => {
       const next = parseInstanceCatalog(raw);
       if (cancelled) return;
@@ -67,7 +65,11 @@ export function InstanceSwitcher({ embedded = false }: { embedded?: boolean }): 
 
   return (
     <details className={`relative shrink-0 text-sm ${embedded ? 'w-full' : ''}`} onToggle={event => {
-      if (event.currentTarget.open) void apiRequest('/api/cluster/identity/status').then(raw => setIdentity(raw as ClusterStatus)).catch(() => setIdentity(null));
+      if (event.currentTarget.open) {
+        setIdentity(null); setIdentityLoading(true);
+        void apiRequest('/api/cluster/identity/status').then(raw => setIdentity(raw as ClusterStatus))
+          .catch(() => setIdentity(null)).finally(() => setIdentityLoading(false));
+      }
     }}>
       <summary className={`flex cursor-pointer list-none items-center gap-1 rounded-md border border-border px-2 py-1.5 ${embedded ? 'ml-auto w-fit' : ''}`} aria-label="切换 CDS 实例">
         <Server className="h-4 w-4" aria-hidden />
@@ -76,9 +78,9 @@ export function InstanceSwitcher({ embedded = false }: { embedded?: boolean }): 
       <div className={`space-y-3 rounded-lg border border-border bg-background p-4 shadow-lg ${embedded ? 'mt-2 w-full' : 'absolute right-0 top-full z-50 mt-2 w-72 max-w-[90vw]'}`}>
         <p className="font-medium">主备 CDS</p>
         <p className="break-all text-xs text-muted-foreground">当前：{typeof window !== 'undefined' ? window.location.host : '当前实例'}</p>
-        <p role="status" className="text-xs text-muted-foreground">{identity?.enabled
+        {identityLoading ? <ContentLoading label="核对集群授权" /> : <p role="status" className="text-xs text-muted-foreground">{identity?.enabled
           ? identity.role === 'authority' ? '集群统一授权 · 主节点' : identity.state === 'synchronized' ? '集群统一授权 · 已同步' : '集群统一授权 · 等待核对'
-          : '集群授权状态尚未确认'}</p>
+          : '集群授权状态尚未确认'}</p>}
         {catalog?.instances.map(instance => (
           <a key={instance.id} href={instanceConsoleUrl(instance)} rel="noreferrer" aria-label={`${instance.name} · 打开控制台`} className="block rounded-md border border-border p-2 hover:bg-muted" aria-current={current?.id === instance.id ? 'page' : undefined}>
             <span className="font-medium">{instance.name}{current?.id === instance.id ? ' · 当前实例' : ' · 打开控制台'}</span>
