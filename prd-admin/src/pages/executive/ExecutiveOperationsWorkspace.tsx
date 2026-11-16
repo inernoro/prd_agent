@@ -1,7 +1,7 @@
 import { useAuthStore } from '@/stores/authStore';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Bot, ChevronRight, Coins, Link2 } from 'lucide-react';
+import { Activity, Bot, Coins, Link2 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   compact,
@@ -21,6 +21,8 @@ import type {
 } from '@/services/contracts/executive';
 import { channelService } from '@/services';
 import { ok, type ApiResponse } from '@/types/api';
+import { callMapLayout } from './callMapLayout';
+import { ExecutiveWorkScene } from './ExecutiveWorkScene';
 import { useExecutiveQuery } from './useExecutiveQuery';
 import type {
   ChannelStatsResponse,
@@ -43,12 +45,17 @@ export function ExecutiveOverviewWorkspace({
   overview,
   trends,
   agents,
+  team,
+  revision = 0,
 }: {
+  team?: ExecutiveTeamMember[];
+  revision?: number;
   overview?: ExecutiveOverview;
   trends?: ExecutiveTrendItem[];
   agents?: ExecutiveAgentStat[];
 }) {
   const navigate = useNavigate();
+  const [view, setView] = useState<'scene' | 'distribution'>('scene');
   const [field, setField] = useState<'messages' | 'tokens'>('messages');
   const [date, setDate] = useState('');
   const point = trends?.find((item) => item.date === date) ?? trends?.at(-1);
@@ -91,8 +98,101 @@ export function ExecutiveOverviewWorkspace({
           note="全时间缺陷口径"
         />
       </div>
-      <div className="ws-layout">
+      <div className="ws-toolbar scene-heading">
+        <h1>{view === 'scene' ? '工作现场' : '使用版图'}</h1>
+        <div className="ws-tabs">
+          <button
+            aria-pressed={view === 'scene'}
+            onClick={() => setView('scene')}
+          >
+            工作现场
+          </button>
+          <button
+            aria-pressed={view === 'distribution'}
+            onClick={() => setView('distribution')}
+          >
+            使用分布
+          </button>
+        </div>
+      </div>
+      <div className="ws-layout scene-layout">
         <div className="ws-main">
+          {view === 'scene' ? (
+            <ExecutiveWorkScene revision={revision} />
+          ) : (
+            <WorkspacePanel
+              title="Agent 调用版图"
+              hint="面积对应业务操作与模型调用记录合计；不同类型记录可能属于同一次工作"
+            >
+              <div className="scene-treemap">
+                {callMapLayout(agents ?? [], (a) => a.calls).map(
+                  ({ item: agent, x, y, width, height }, index) => (
+                    <button
+                      key={agent.appKey}
+                      style={{
+                        left: `${x}%`,
+                        top: `${y}%`,
+                        width: `${width}%`,
+                        height: `${height}%`,
+                      }}
+                      data-tone={index % 3}
+                      title={`${agent.name} · ${compact(agent.calls)} 条调用记录`}
+                      onClick={() =>
+                        navigate(
+                          `/executive?tab=agents&agent=${encodeURIComponent(agent.appKey)}`,
+                        )
+                      }
+                    >
+                      <strong>{agent.name}</strong>
+                      <b>{compact(agent.calls)}</b>
+                      <small>
+                        API {compact(agent.apiCalls)} · LLM{' '}
+                        {compact(agent.llmCalls)}
+                      </small>
+                    </button>
+                  ),
+                )}
+              </div>
+              {!agents?.some((a) => a.calls > 0) && (
+                <WorkspaceEmpty
+                  title={agents ? '此窗口暂无调用记录' : '调用分布读取中'}
+                />
+              )}
+            </WorkspacePanel>
+          )}
+        </div>
+        <aside className="ws-side">
+          <WorkspacePanel
+            title="全平台成员"
+            hint="当前统计窗口 · 按消息数排列"
+            action={
+              <WorkspaceLink
+                permission="team-activity.read"
+                onClick={() => navigate('/team-activity')}
+              >
+                全部动态
+              </WorkspaceLink>
+            }
+          >
+            {(team ?? [])
+              .slice()
+              .sort((a, b) => b.messages - a.messages)
+              .slice(0, 6)
+              .map((member) => (
+                <div className="ws-source-row" key={member.userId}>
+                  <span className="ws-person">
+                    <PersonAvatar person={member} />
+                    <span>{member.displayName}</span>
+                  </span>
+                  <b>{compact(member.messages)} 消息</b>
+                </div>
+              ))}
+            {!team?.length && (
+              <WorkspaceEmpty
+                title={team ? '此窗口暂无成员活动' : '成员统计读取中'}
+              />
+            )}
+          </WorkspacePanel>
           <WorkspacePanel
             title="使用趋势"
             hint={
@@ -141,48 +241,6 @@ export function ExecutiveOverviewWorkspace({
                 description="趋势与核心指标独立加载。"
               />
             )}
-          </WorkspacePanel>
-          <WorkspacePanel
-            title="Agent 调用分布"
-            hint="业务写操作与模型调用合计"
-            action={
-              <WorkspaceLink onClick={() => navigate('/executive?tab=agents')}>
-                查看 Agent
-              </WorkspaceLink>
-            }
-          >
-            {(agents ?? [])
-              .slice()
-              .sort((a, b) => b.calls - a.calls)
-              .map((agent) => (
-                <button
-                  key={agent.appKey}
-                  className="ws-source-row"
-                  onClick={() =>
-                    navigate(
-                      `/executive?tab=agents&agent=${encodeURIComponent(agent.appKey)}`,
-                    )
-                  }
-                >
-                  <span className="ws-person">
-                    <Bot size={15} />
-                    <span>{agent.name}</span>
-                  </span>
-                  <b>
-                    {compact(agent.calls)} 次{' '}
-                    <ChevronRight size={12} className="inline" />
-                  </b>
-                </button>
-              ))}
-            {!agents?.length && (
-              <WorkspaceEmpty
-                title={agents ? '暂无调用数据' : 'Agent 统计读取中'}
-              />
-            )}
-          </WorkspacePanel>
-        </div>
-        <aside className="ws-side">
-          <WorkspacePanel title="日期详情" hint="仅展示此序列实际记录的字段">
             <dl className="ws-facts">
               <dt>日期</dt>
               <dd>{point?.date ?? '—'}</dd>
@@ -220,12 +278,7 @@ export function ExecutiveOverviewWorkspace({
               打开缺陷工作区
             </WorkspaceLink>
           </WorkspacePanel>
-          <WorkspacePanel title="数据口径">
-            <p>
-              趋势只含消息与
-              Token，不据此推测成员工作质量。缺陷解决率按全部历史缺陷计算；其他指标以各自标注为准。
-            </p>
-          </WorkspacePanel>
+          <p className="scene-owner">趋势记录消息与 Token；缺陷按全部历史计算。调用数量不代表成员工作质量。</p>
         </aside>
       </div>
     </div>
@@ -260,6 +313,10 @@ export function ExecutiveAgentsWorkspace({
         )
         .sort((a, b) => b.calls - a.calls),
     [agents, query],
+  );
+  const maxAgentCalls = Math.max(
+    1,
+    ...filtered.map((a) => a.apiCalls + a.llmCalls),
   );
   const agent =
     filtered.find((item) => item.appKey === selected) ?? filtered[0];
@@ -300,7 +357,7 @@ export function ExecutiveAgentsWorkspace({
                   <tr>
                     <th>Agent</th>
                     <th>使用人数</th>
-                    <th>业务操作</th>
+                    <th>调用构成 · API / LLM</th>
                     <th>模型调用</th>
                     <th>Token</th>
                     <th>模型平均响应</th>
@@ -323,7 +380,26 @@ export function ExecutiveAgentsWorkspace({
                         </button>
                       </td>
                       <td>{item.users} 人</td>
-                      <td className="number">{compact(item.apiCalls)}</td>
+                      <td>
+                        <div
+                          className="scene-track"
+                          title={`业务操作 ${item.apiCalls} · 模型调用 ${item.llmCalls}`}
+                        >
+                          <i
+                            style={{
+                              width: `${(item.apiCalls / maxAgentCalls) * 100}%`,
+                            }}
+                          />
+                          <i
+                            style={{
+                              width: `${(item.llmCalls / maxAgentCalls) * 100}%`,
+                            }}
+                          />
+                        </div>
+                        <small>
+                          {compact(item.apiCalls)} / {compact(item.llmCalls)}
+                        </small>
+                      </td>
                       <td className="number">{compact(item.llmCalls)}</td>
                       <td className="number">{compact(item.tokens)}</td>
                       <td>{duration(item.avgDurationMs)}</td>
@@ -476,6 +552,10 @@ export function ExecutiveCostWorkspace({
           (filter === 'unpriced' ? !item.hasPricing : item.hasPricing)),
     )
     .sort((a, b) => b.calls - a.calls);
+  const maxModelTokens = Math.max(
+    1,
+    ...filtered.map((m) => m.inputTokens + m.outputTokens),
+  );
   const model = filtered.find((item) => item.model === selected) ?? filtered[0];
   const priced = models?.filter((item) => item.hasPricing);
   const missing = models?.filter((item) => !item.hasPricing);
@@ -551,7 +631,7 @@ export function ExecutiveCostWorkspace({
                   <tr>
                     <th>模型</th>
                     <th>调用</th>
-                    <th>Token</th>
+                    <th>输入 / 输出 Token</th>
                     <th>图片</th>
                     <th>平均响应</th>
                     <th>预估成本</th>
@@ -576,7 +656,27 @@ export function ExecutiveCostWorkspace({
                         </button>
                       </td>
                       <td className="number">{compact(item.calls)}</td>
-                      <td className="number">{compact(item.totalTokens)}</td>
+                      <td>
+                        <div
+                          className="scene-track token"
+                          title={`输入 ${item.inputTokens} · 输出 ${item.outputTokens}`}
+                        >
+                          <i
+                            style={{
+                              width: `${(item.inputTokens / maxModelTokens) * 100}%`,
+                            }}
+                          />
+                          <i
+                            style={{
+                              width: `${(item.outputTokens / maxModelTokens) * 100}%`,
+                            }}
+                          />
+                        </div>
+                        <small>
+                          {compact(item.inputTokens)} /{' '}
+                          {compact(item.outputTokens)}
+                        </small>
+                      </td>
                       <td className="number">{item.imageCount}</td>
                       <td>{duration(item.avgDurationMs)}</td>
                       <td>

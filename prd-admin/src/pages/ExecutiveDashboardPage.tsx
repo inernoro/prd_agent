@@ -102,7 +102,7 @@ export default function ExecutiveDashboardPage() {
   const teamQuery = useExecutiveQuery(
     getExecutiveTeam,
     days,
-    activeTab === 'agents',
+    activeTab === 'agents' || activeTab === 'overview',
     revision,
   );
   const agentsQuery = useExecutiveQuery(
@@ -125,7 +125,7 @@ export default function ExecutiveDashboardPage() {
   );
   const queryRegistry = {
     team: [insightsQuery],
-    overview: [overviewQuery, trendsQuery, agentsQuery],
+    overview: [overviewQuery, trendsQuery, agentsQuery, teamQuery],
     agents: [agentsQuery, teamQuery],
     cost: [modelsQuery],
     integrations: [],
@@ -231,6 +231,8 @@ export default function ExecutiveDashboardPage() {
               overview={overviewQuery.data}
               trends={trendsQuery.data}
               agents={agentsQuery.data}
+              team={teamQuery.data}
+              revision={revision}
             />
           </div>
         )}
