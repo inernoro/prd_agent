@@ -244,7 +244,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   const [askState, setAskState] = useState<AskDockState>('collapsed');
   // 常驻的 CommentsSection 统一加载批注并同步顶栏计数，避免重复请求。
   const [commentCount, setCommentCount] = useState<number | null>(null);
-  const autoOpenReview = useReviewAutoOpen(`${token}:${openedSiteId}`, () => setShowComments(true));
+  const autoOpenReview = useReviewAutoOpen(`${token}:${openedSiteId}`, () => setShowComments(true), showComments);
   const reviewSidebar = useReviewSidebarWidth();
   const handleCommentCount = (count: number) => { setCommentCount(count); autoOpenReview(count); };
   const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
