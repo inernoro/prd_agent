@@ -88,7 +88,7 @@ export interface ModelLeaderboardSnapshot {
   publishedAt?: string | null;
   sourceUrl?: string;
   bashMetricLabel?: string;
-  /** 超过两天没同步成功。前端把实时点变灰并标出数据日期，不装作是新的。 */
+  /** 数据日期超过两天。前端把实时点变灰并标出日期。 */
   stale?: boolean;
   /**
    * 表格形状：agent = 六指标那套，score = 对战分那套。
