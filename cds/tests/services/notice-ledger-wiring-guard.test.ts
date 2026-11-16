@@ -48,7 +48,7 @@ describe('通知账本接线守卫', () => {
     expect(
       call,
       '外发接线被摘掉后账本照常记账、只是永远不外发——删掉不会红，故在此钉住',
-    ).toContain('outbound: noticeOutbound');
+    ).toContain('getOutbound: getNoticeOutbound');
   });
 
   it('server.ts 挂载了站内信路由（否则前端拉账本 404）', () => {

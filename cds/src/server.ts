@@ -59,6 +59,8 @@ import { createCodeReviewMail } from './services/code-review-mail.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
 import { createNoticesRouter } from './routes/notices.js';
 import { NoticeLedgerService, startNoticeLedger } from './services/notice-ledger.js';
+import { HostCapacityObservationService } from './services/host-capacity-observation.js';
+import { createHostCapacityObservationRouter } from './routes/host-capacity-observation.js';
 import { resolveNoticeOutboundConfig } from './services/notice-outbound-map.js';
 import { isSealingEnabled } from './infra/secret-seal.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
@@ -546,6 +548,7 @@ async function collectActiveHttpRequests(
 }
 
 export interface ServerDeps {
+  hostCapacityObservation?: HostCapacityObservationService;
   backupRetentionService?: import('./services/backup-retention.js').BackupRetentionService;
   ownedResourceLifecycle?: import('./services/owned-resource-task.js').OwnedResourceLifecycle;
   imageCacheGovernance?: import('./services/image-cache-governance.js').ImageCacheGovernance;
@@ -895,6 +898,7 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Static exact matches
   const staticMap: Record<string, string> = {
+    'GET /host-capacity/observation': '查看容量观测',
     'GET /janitor/backups': '预览备份回收',
     'GET /janitor/backups/state': '查询备份回收',
     'GET /janitor/backups/owners': '查询备份归属',
@@ -2033,17 +2037,10 @@ export function createServer(deps: ServerDeps): express.Express {
   // 这段就是那根线：订阅总线 → 记进 .cds/notice-ledger.json → 可选外发到 MAP。
   // 专用通知 env 优先；没有时复用 CDS 系统设置里已经加密保存的 MAP 服务端接入，
   // 避免同一个 MAP 重复配两套 Token。两条都没有才如实记「未外发」。
-  let storedMapForwarding: { baseUrl: string; token: string } | undefined;
-  try {
-    storedMapForwarding = deps.stateService.getBugReportForwardingConfig();
-  } catch (err) {
-    console.warn(`[notice] CDS 系统设置中的 MAP Token 无法读取: ${(err as Error).message}`);
-    storedMapForwarding = undefined;
-  }
-  const noticeOutbound = resolveNoticeOutboundConfig(
-    process.env,
-    storedMapForwarding ?? resolveForwardConfig(process.env),
-  );
+  const getNoticeOutbound = () => {
+    const stored = deps.stateService.getBugReportForwardingConfig();
+    return resolveNoticeOutboundConfig(process.env, stored ?? resolveForwardConfig(process.env));
+  };
   const noticeLedger = new NoticeLedgerService({
     storePath: path.join(deps.config.repoRoot, '.cds', 'notice-ledger.json'),
     logger: { warn: (m) => console.warn(m) },
@@ -2052,10 +2049,18 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   startNoticeLedger({
     ledger: noticeLedger,
-    outbound: noticeOutbound,
+    outbound: null,
+    getOutbound: getNoticeOutbound,
     publish: (type, data) => { cdsEventsBus.publish(type, data); },
     logger: { warn: (m) => console.warn(m) },
   });
+  const hostCapacityObservation = deps.hostCapacityObservation ?? new HostCapacityObservationService({
+    reportPath: process.env.CDS_HOST_CAPACITY_REPORT_PATH,
+    expectedHost: process.env.CDS_HOST_CAPACITY_EXPECTED_HOST,
+    publish: (type, data) => { cdsEventsBus.publish(type, data); },
+  });
+  hostCapacityObservation.start();
+  deps.registerResourceShutdown?.(async () => { hostCapacityObservation.stop(); });
   // 读写路由挂在下面全局认证网关之后（搜 createNoticesRouter），这里只做事件接线。
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
@@ -5063,14 +5068,13 @@ export function createServer(deps: ServerDeps): express.Express {
   // 服务端站内信账本读写。挂在全局认证网关之后，与 bug-reports 同款；账本本身与
   // 事件订阅在上面（搜 startNoticeLedger）。外发未配置时如实回 configured:false，
   // 前端面板顶部据此显示「仅记录在本地，未外发」——绝不暗示已经通知过谁。
+  app.use('/api', createHostCapacityObservationRouter(hostCapacityObservation));
   app.use('/api', createNoticesRouter({
     ledger: noticeLedger,
-    getOutboundStatus: () => (noticeOutbound
-      ? { configured: true }
-      : {
-        configured: false,
-        reason: '未连接 MAP，通知仅保存在 CDS',
-      }),
+    getOutboundStatus: () => {
+      try { return getNoticeOutbound() ? { configured: true } : { configured: false, reason: '未连接 MAP，通知仅保存在 CDS' }; }
+      catch { return { configured: false, reason: 'MAP 通知配置读取失败，请检查服务端接入配置' }; }
+    },
   }));
 
   app.use('/api', createDeploymentRunsRouter({

@@ -199,6 +199,10 @@ def save_history(file, selected, history, sample):
     if not points or sample["at"] - points[-1]["at"] >= 3600:
         points.append(sample)
     data = {"version": 1, "host": socket.gethostname(), "roots": selected, "samples": points[-MAX_SAMPLES:]}
+    save_json(file, data)
+
+
+def save_json(file, data):
     encoded = json.dumps(data, allow_nan=False)
     if len(encoded.encode()) > MAX_STATE_BYTES:
         raise ValueError("state exceeds budget")
@@ -253,11 +257,16 @@ def main():
         lockfd = os.open(state / "lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         with os.fdopen(lockfd, "w"):
             fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            history = load_history(state / "history.json", selected)
-            sample = collect(selected, args.docker)
-            report = analyze(sample, history, args.warning, args.critical,
-                             int(args.reserve_gib * 1024**3), args.horizon_days)
-            save_history(state / "history.json", selected, history, sample)
+            try:
+                history = load_history(state / "history.json", selected)
+                sample = collect(selected, args.docker)
+                report = analyze(sample, history, args.warning, args.critical,
+                                 int(args.reserve_gib * 1024**3), args.horizon_days)
+                save_history(state / "history.json", selected, history, sample)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, subprocess.SubprocessError):
+                report = {"version": 1, "at": time.time(), "host": socket.gethostname(), "status": "unknown", "alerts": [
+                    {"code": "collector-or-state-failed", "severity": "unknown"}]}
+            save_json(state / "latest.json", report)
         print(json.dumps(report, ensure_ascii=False, allow_nan=False))
         return {"ok": 0, "warning": 1, "critical": 2, "unknown": 3}[report["status"]]
     except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, subprocess.SubprocessError):
