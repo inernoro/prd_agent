@@ -25,7 +25,7 @@ class DtsCliTest(unittest.TestCase):
                 payload = json.loads(self.rfile.read(int(self.headers.get("content-length", "0"))) or "{}")
                 outer.calls.append((self.command, self.path, payload))
                 resource = {"id": "run", "projectId": "other" if outer.foreign else "p", "plan": {"id": "plan"}}
-                body = {"projectId": "p", "protocolVersion": outer.version, "tools": ["cds_dts_start", "cds_dts_runs", "cds_dts_control", "cds_dts_plan", "cds_dts_connections", "cds_dts_policies"]} if "/capabilities?" in self.path else {"run": resource}
+                body = {"projectId": "p", "protocolVersion": outer.version, "tools": ["cds_dts_start", "cds_dts_runs", "cds_dts_control", "cds_dts_plan", "cds_dts_connections", "cds_dts_policies"]} if "/capabilities?" in self.path else {"connections": [{"projectId": "p"}], "services": [resource]} if "/connections?" in self.path else {"run": resource}
                 self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(json.dumps(body).encode())
             do_GET = serve
             do_POST = serve
@@ -63,3 +63,7 @@ class DtsCliTest(unittest.TestCase):
         self.foreign = True
         with self.assertRaises(SystemExit): self.run_cli("cancel", "run")
         self.assertNotIn("POST", [c[0] for c in self.calls])
+
+    def test_foreign_managed_service_is_rejected(self):
+        self.foreign = True
+        with self.assertRaises(SystemExit): self.run_cli("connections")

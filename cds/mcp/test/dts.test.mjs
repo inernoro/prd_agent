@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createDtsBridge, DTS_TOOLS } from '../src/dts-bridge.mjs';
-let server, host, root; const requests = []; let version = 1, wrongProject = false;
+let server, host, root; const requests = []; let version = 1, wrongProject = false, foreignService = false;
 const projectId = 'p', key = 'cdsp_fixture_dts_key';
 before(async () => {
   server = http.createServer(async (req, res) => {
@@ -18,7 +18,7 @@ before(async () => {
     if (req.headers['x-ai-access-key'] !== key || url.searchParams.get('projectId') !== projectId) { res.writeHead(403); res.end('{}'); return; }
     const resource = { projectId: wrongProject ? 'foreign' : projectId, id: 'run', plan: { id: 'plan' }, status: 'running' };
     const result = url.pathname.endsWith('/capabilities') ? { projectId, protocolVersion: version, tools: DTS_TOOLS.map(t => t.name) }
-      : url.pathname.endsWith('/connections') ? { connections: [{ ...resource, id: 'source' }] }
+      : url.pathname.endsWith('/connections') ? { connections: [{ ...resource, id: 'source' }], services: [{ id: 'managed', projectId: foreignService ? 'foreign' : projectId }] }
       : url.pathname.endsWith('/plans') ? { plan: { ...resource, id: 'plan', insertCount: 1 } }
       : url.pathname.endsWith('/runs') && req.method === 'GET' ? { runs: [resource] }
       : url.pathname.endsWith('/policies') ? req.method === 'GET' ? { policies: [] } : { policy: resource }
@@ -58,4 +58,9 @@ test('real stdio MCP discovers and calls DTS using existing project credentials'
   try { await client.connect(transport); const catalog = await client.listTools(); assert.equal(catalog.tools.length, 6);
     const result = await client.callTool({ name: 'cds_dts_connections', arguments: {} }); assert.equal(result.isError, undefined); assert.equal(JSON.parse(result.content[0].text).connections[0].projectId, projectId);
   } finally { await client.close(); }
+});
+
+test('managed service discovery refuses resources from another project', async () => {
+  const b = bridge(); try { foreignService = true; await assert.rejects(b.call('cds_dts_connections', {}), /其他项目/); }
+  finally { foreignService = false; await b.close(); }
 });

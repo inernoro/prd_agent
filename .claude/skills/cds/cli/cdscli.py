@@ -3715,6 +3715,11 @@ def cmd_dts(args: argparse.Namespace) -> None:
             die("CDS 数据同步列表格式错误")
         for resource in result[action]:
             scope(resource)
+        if action == "connections":
+            if not isinstance(result.get("services", []), list):
+                die("CDS 数据服务目录格式错误")
+            for resource in result.get("services", []):
+                scope(resource)
     elif action in ("engine", "connection"):
         payload = _acceptance_json_file(args.file)
         if any(key in payload for key in ("projectId", "host", "password", "uri", "projectKey")):

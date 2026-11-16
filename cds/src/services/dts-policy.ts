@@ -49,7 +49,7 @@ export function parseDtsConnection(projectId: string, input: unknown): DtsConnec
     || /^(status|roles?|permissions?|disabled|active|isSystemOwner|isAdmin|authProvider)$/i.test(f))) {
     dtsReject('invalid_account_fields', '账号校准字段必须来自已批准的数据字段，不能包含身份主键或凭据');
   }
-  return { id: randomUUID(), projectId, kind: c.kind, name: dtsText(c.name, '连接名称'), uriEnv, database, collection,
+  return { id: randomUUID(), projectId, ...(c.infraId !== undefined ? { infraId: dtsText(c.infraId, '项目数据服务') } : {}), kind: c.kind, name: dtsText(c.name, '连接名称'), uriEnv, database, collection,
     contract, environmentRole, allowWrite: c.allowWrite === true, accountFields: [...new Set(accountFields)], createdAt: new Date().toISOString() };
 }
 export function dtsConnectionUri(connection: DtsConnection, env: Record<string, string | undefined>): string {

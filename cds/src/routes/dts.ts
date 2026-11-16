@@ -38,7 +38,7 @@ export function createDtsRouter(input: { service: DtsService; state: StateServic
     return res.json({ ...await service.capabilities(id), configureAllowed,
       executeAllowed: configureAllowed || actor.kind === 'project-key' || actor.kind === 'principal' });
   }));
-  router.get('/dts/connections', handler(async (req, res) => res.json({ connections: await service.connections(project(req)) })));
+  router.get('/dts/connections', handler(async (req, res) => { const id = project(req); return res.json({ connections: await service.connections(id), services: service.services(id) }); }));
   router.post('/dts/connections', handler(async (req, res) => { owner(req); return res.status(201).json({ connection: await service.addConnection(project(req), req.body) }); }));
   router.put('/dts/engine', handler(async (req, res) => { owner(req); return res.json(await service.configureEngine(project(req), req.body)); }));
   router.post('/dts/plans', handler(async (req, res) => res.status(201).json({ plan: await service.plan(project(req),

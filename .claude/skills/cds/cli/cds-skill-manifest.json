@@ -15,7 +15,7 @@
     "cds/cli/acceptance/cds.config.example.json": "0f0aca3f66243fd76f1003d3ae06f076db52650eda60c385491352d9cffa248c",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "c8b9932c1b8d66d6a4f1e37c29cb11fa32a4d9804b11a81de55ccb70b82b2c0f",
+    "cds/cli/cdscli.py": "491185797c970edac6f32c8ee1e93726cab08dc237b4a9b8ed2566fbb0362ac9",
     "cds/reference/acceptance-reports.md": "f0467b25fe209ec5a5225c246406704782ae595631abc9221c50cb982e48002e",
     "cds/reference/api.md": "9984c6f896f672df35c43fae33ca3f89a1bfc8fd10f7e0ab2e88f2871e71339f",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
@@ -35,7 +35,7 @@
     "cds/tests/test_cdscli_deployment_run.py": "f4a4522456d3aeb60b36c30d259c34b1ee09de3f0afb5bc65c5bf15a468e34f1",
     "cds/tests/test_cdscli_deployment_version.py": "9acc9773bba8fe93d1b57781c1b8e6a142820e284d4629e6168ee7ecf20883bf",
     "cds/tests/test_cdscli_disk.py": "9eaa6fd1dc4669f26ba325533fc0497afde5bdda335d35aa6e6f872405f5a42a",
-    "cds/tests/test_cdscli_dts.py": "1a3ae3b2b0926554fa58b89ad999c9a5b23b730348ebb2830ab89fd60a7de67d",
+    "cds/tests/test_cdscli_dts.py": "83bd88247122e23194a4bcfaf1780de6fca0937a5d898f9a2818fb6ecf8906db",
     "cds/tests/test_cdscli_env.py": "1556d0403f60d6f6695f33f96b52db324ce62fe18d4e8fd20ad8c4906c8bfa99",
     "cds/tests/test_cdscli_extra_services.py": "0e211964883584e7168db2662668e681287e688cfd1dc5519cb6f75d9e1679ce",
     "cds/tests/test_cdscli_instances.py": "40f93c945eb58974b86ce789830e440d7708534dcc5dd29d08e810a1d2859f87",
@@ -68,5 +68,5 @@
     "cds-release/SKILL.md": "17f4df0330e3b041a9c3d96a825ded21092df8b0e4a2b699930692965eabe2f7",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-16T21:03:34.365Z"
+  "generatedAt": "2026-11-16T21:58:33.416Z"
 }

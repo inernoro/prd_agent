@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { StateService } from './state.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 import { createExternalResponseAudit } from './standby-response-audit.js';
+import { dtsConnectionEnvironment, dtsManagedServices, dtsProjectEnvironment } from './dts-connections.js';
 import { DtsStore } from './dts-store.js';
 import { DtsSeaTunnel, parseDtsEngine } from './dts-seatunnel.js';
 import { DtsError, buildDtsMongoJob, dtsConnectionUri, dtsHash, dtsReject, parseDtsConnection, prepareDtsPlan, verifyDtsPlan, withDtsMongo } from './dts-policy.js';
@@ -35,7 +36,8 @@ export class DtsService {
     await this.store.put('engines', { ...binding, id: `engine:${projectId}` });
     return { configured: true, version: binding.version };
   }
-  private env(c: DtsConnection) { return this.state.getCustomEnv(c.projectId); }
+  private env(c: DtsConnection) { return dtsConnectionEnvironment(this.state, c); }
+  services(projectId: string) { return dtsManagedServices(this.state, projectId); }
   private async databaseCall<T>(projectId: string, action: string, fn: () => Promise<T>, summary: (value: T) => unknown, businessRequestId?: string): Promise<T> {
     const audit = createExternalResponseAudit(this.sink, { projectId, remoteProjectId: projectId, policy: 'dts-database', dryRun: action !== 'verify', businessRequestId },
       { source: 'dts', action: 'dts.database.response', message: '数据同步预检响应' });
@@ -47,12 +49,13 @@ export class DtsService {
       await audit.record({ peerId: action, url: 'http://dts-database.local/' + action, method: 'READ', startedAt: new Date(start).toISOString(),
         durationMs: Date.now() - start, timeoutMs: 10_000, responseReceived: !failure || failure instanceof DtsError,
         httpStatus: null, upstreamRequestId: null, contentType: 'application/bson', json: raw, text: JSON.stringify(raw), parseState: 'json',
-        localDecision: failure ? 'rejected' : 'success', secrets: Object.values(this.state.getCustomEnv(projectId)).filter(v => v.length > 3) });
+        localDecision: failure ? 'rejected' : 'success', secrets: Object.values(dtsProjectEnvironment(this.state, projectId)).filter(v => v.length > 3) });
     }
   }
   connections(projectId: string) { return this.store.list<DtsConnection>('connections', projectId); }
   async addConnection(projectId: string, input: unknown) {
     const c = parseDtsConnection(projectId, input);
+    if (c.infraId) this.env(c);
     if (c.kind === 'mongo') await this.databaseCall(projectId, 'connection', () => withDtsMongo(dtsConnectionUri(c, this.env(c)), async client => {
       await client.db(c.database).command({ ping: 1 }); return true;
     }), () => ({ success: true }), c.id);

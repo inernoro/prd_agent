@@ -1,3 +1,4 @@
+import { dtsProjectEnvironment } from './dts-connections.js';
 import type { StateService } from './state.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 import type { DtsEngineBinding } from '../shared/dts.js';
@@ -19,7 +20,7 @@ export function parseDtsEngine(projectId: string, value: unknown): DtsEngineBind
 export class DtsSeaTunnel {
   constructor(private readonly state: StateService, private readonly sink: ServerEventLogSink | undefined | null) {}
   async call(binding: DtsEngineBinding, operation: 'overview' | 'submit' | 'status' | 'stop', jobId?: string, body?: unknown, requestId?: string): Promise<Record<string, unknown>> {
-    const env = this.state.getCustomEnv(binding.projectId);
+    const env = dtsProjectEnvironment(this.state, binding.projectId);
     const username = env[binding.usernameEnv], password = env[binding.passwordEnv];
     if (!username || !password) dtsReject('engine_account_unavailable', '传输服务账号尚未配置，请联系管理员', 503);
     if (jobId && (!/^[0-9]{1,16}$/.test(jobId) || !Number.isSafeInteger(Number(jobId)))) dtsReject('invalid_job', '同步任务编号无效');

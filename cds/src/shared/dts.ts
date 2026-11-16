@@ -15,10 +15,14 @@ export interface DtsContract {
 export interface DtsConnection {
   id: string; projectId: string; name: string; kind: DtsKind;
   /** Reference to an existing private project environment value, never a copied URI. */
-  uriEnv: string; database: string; collection: string; contract: DtsContract;
+  uriEnv: string; infraId?: string; database: string; collection: string; contract: DtsContract;
   /** Account mutations are restricted to this administrator-approved field set. */
   environmentRole: 'production' | 'standby' | 'acceptance' | 'other'; allowWrite: boolean;
   accountFields: string[]; createdAt: string;
+}
+export interface DtsManagedService {
+  id: string; projectId: string; name: string; kind: DtsKind; database: string | null;
+  uriEnv: string; status: string; ready: boolean;
 }
 export interface DtsEngineBinding {
   projectId: string; baseUrl: string; version: typeof SEATUNNEL_VERSION;

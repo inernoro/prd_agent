@@ -44,7 +44,7 @@ export function createDtsBridge(credentials, options = {}) {
     // Refresh admission instead of letting stale catalogs authorize a write.
     await listTools(); if (!allowed.has(name)) throw new Error('当前 CDS 未开放此同步操作');
     let result;
-    if (name === 'cds_dts_connections') { result = await request('GET', '/connections'); result.connections.forEach(scope); }
+    if (name === 'cds_dts_connections') { result = await request('GET', '/connections'); result.connections.forEach(scope); (result.services ?? []).forEach(scope); }
     if (name === 'cds_dts_plan') { result = await request('POST', '/plans', a); scope(result.plan); }
     if (name === 'cds_dts_start') { result = await request('POST', '/runs', a); scope(result.run); if (result.run.plan.id !== a.planId) throw new Error('返回任务与比较计划不符'); }
     if (name === 'cds_dts_runs') {
