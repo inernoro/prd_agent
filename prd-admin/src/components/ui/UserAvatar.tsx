@@ -21,12 +21,14 @@ export function UserAvatar({
   className,
   style,
   title,
+  loading,
 }: {
   src: string;
   alt?: string;
   className?: string;
   style?: React.CSSProperties;
   title?: string;
+  loading?: 'eager' | 'lazy';
 }) {
   const imageRef = useRef<HTMLImageElement>(null);
   const cdnBaseUrl = useAuthStore((state) => state.cdnBaseUrl);
@@ -49,6 +51,7 @@ export function UserAvatar({
       src={src || DEFAULT_AVATAR_FALLBACK}
       alt={alt}
       title={title}
+      loading={loading}
       className={className}
       style={style}
       onError={(e) => {
