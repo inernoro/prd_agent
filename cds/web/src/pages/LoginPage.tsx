@@ -32,7 +32,7 @@ import {
 } from '@/lib/api';
 import { parseTicketSsoCallback } from '@/lib/ticket-sso-callback';
 
-function redirectTarget(): string {
+export function redirectTarget(): string {
   if (typeof window === 'undefined') return '/project-list';
   const params = new URLSearchParams(window.location.search);
   const raw = params.get('redirect') || '/project-list';
@@ -41,7 +41,10 @@ function redirectTarget(): string {
   // spinner 永远转、登录框永不出现(Bugbot Medium「Login redirect target loops」)。
   const path = raw.split(/[?#]/)[0];
   if (path === '/login') return '/project-list';
-  return raw;
+  // Fragments never reach the server. Its unauthenticated redirect preserves
+  // the original fragment on /login, so carry it back to the internal target.
+  // An explicitly encoded target fragment takes precedence.
+  return raw.includes('#') || !params.get('redirect') ? raw : raw + window.location.hash;
 }
 
 function AuthForm(): JSX.Element {
