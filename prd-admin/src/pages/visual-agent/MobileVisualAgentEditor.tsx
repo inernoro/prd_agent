@@ -18,6 +18,7 @@ import { useSmartBack } from '@/hooks/useSmartBack';
 import { ArrowLeft, Download, Expand, ImagePlus, LayoutGrid, RefreshCw, Send, Wand2, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { ImageGenerationCancelActions } from '@/components/visual-agent/ImageGenerationCancelActions';
 import { normalizeVisualModelOptionId } from '@/pages/ai-chat/visualAgentModelOptions';
 import {
   createWorkspaceImageGenRun,
@@ -65,6 +66,7 @@ type RefImage = { assetId: string; sha256: string; url: string; label: string };
 
 type GenCard = {
   key: string;
+  runId?: string;
   prompt: string;
   status: 'running' | 'done' | 'error';
   url?: string;
@@ -181,6 +183,41 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
   }, [sizeChoices]);
 
   const hasRunning = cards.some((c) => c.status === 'running');
+  const observedRunIds = cards.filter(c => c.status === 'running' && c.runId).map(c => c.runId).join(',');
+  useEffect(() => {
+    if (!observedRunIds) return;
+    let alive = true;
+    let polling = false;
+    const poll = async () => {
+      if (!alive || polling) return;
+      polling = true;
+      try {
+        for (const runId of observedRunIds.split(',')) {
+          try {
+            const result = await getImageGenRun({ runId, includeItems: true, includeImages: true });
+            if (!alive || !result.success) continue;
+            const status = result.data.run.status;
+            if (status === 'Completed') {
+              const url = result.data.items?.find(item => item.url)?.url;
+              const detail = await getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: 1, assetLimit: 200 });
+              if (!alive) return;
+              const asset = detail.success ? detail.data.assets.find(item => item.url === url) : undefined;
+              if (detail.success) setAssets(detail.data.assets);
+              setCards(prev => prev.map(card => card.runId === runId && card.status === 'running'
+                ? { ...card, status: url ? 'done' : 'error', url: url || undefined, assetId: asset?.id,
+                  sha256: asset?.sha256, errorMessage: url ? undefined : '生成完成但图片尚不可读取，请刷新后查看资产。' } : card));
+            } else if (status === 'Failed' || status === 'Cancelled') {
+              setCards(prev => prev.map(card => card.runId === runId && card.status === 'running'
+                ? { ...card, status: 'error', errorMessage: status === 'Cancelled' ? '已取消' : '生成未完成，请查看任务结果或联系管理员后重试。' } : card));
+            }
+          } catch { /* 进度暂时不可达时保留原任务，继续计时，不重复发起生成。 */ }
+        }
+      } finally { polling = false; }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 5000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [observedRunIds, workspaceId]);
   useEffect(() => {
     if (!hasRunning) return;
     const t = window.setInterval(() => setTick((v) => v + 1), 1000);
@@ -244,6 +281,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
     let alive = true;
     void (async () => {
       setLoading(true);
+      setCards([]);
       const [detailRes, modelsRes] = await Promise.all([
         getVisualAgentWorkspaceDetail({ id: workspaceId, messageLimit: 1, assetLimit: 200 }),
         getVisualAgentImageGenModels(),
@@ -255,6 +293,13 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
           (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
         setAssets(sorted);
+        try {
+          const state = JSON.parse(detailRes.data.canvas?.payloadJson || '{}') as PersistedState;
+          setCards((state.elements || []).filter(el => el.status === 'running' && el.runId).map(el => ({
+            key: el.id, runId: el.runId, prompt: el.name || '图片生成', status: 'running',
+            startedAt: Date.now(), size: `${el.w || 1024}x${el.h || 1024}`,
+          })));
+        } catch { /* 不解析未知画布格式，既有资产列表继续可用。 */ }
       } else if (!detailRes.success) {
         toast.error(detailRes.error?.message || '加载项目失败');
       }
@@ -427,6 +472,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
           return;
         }
         const runId = runRes.data.runId;
+        setCards(prev => prev.map(card => card.key === key ? { ...card, runId } : card));
 
         // 3) 订阅进度（断流后查后端真实状态兜底，不盲判失败）
         const ac = new AbortController();
@@ -797,6 +843,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
 
       {/* 底部输入区 */}
       <div className="shrink-0 px-3 pt-2 flex flex-col gap-2" style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 10px)' }}>
+        <ImageGenerationCancelActions key={workspaceId} items={cards} />
         {refImage ? (
           <div className="flex items-center gap-2 px-2 py-1.5 rounded-xl" style={{ background: 'rgba(255,255,255,0.06)' }}>
             <img src={refImage.url} alt="参考图" className="h-9 w-9 rounded-lg object-cover" />

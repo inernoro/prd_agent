@@ -240,7 +240,7 @@ for (const theme of ["light", "dark"])
     }
     await nav("platforms");
     await page
-      .getByRole("button", { name: "还没有模型", exact: false })
+      .getByRole("button", { name: "接入模型", exact: false })
       .click();
     let pane = page.getByRole("complementary", { name: "清单详情" });
     await pane.getByRole("button", { name: "连接配置", exact: true }).click();
