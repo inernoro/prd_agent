@@ -113,10 +113,15 @@ public class DocumentTextlessUploadContractTests
         Assert.Contains("const startedAt = Date.now();", stableSmoke);
         Assert.Contains("Date.now() - startedAt", stableSmoke);
         Assert.Contains("toBeLessThan(2_000)", stableSmoke);
-        Assert.Contains("refId: 3", stableSmoke);
+        // 参考编号来自真实上传后的画布持久化；守住三图旅程及顺序回读，不能要求旧硬编码编号。
+        Assert.Contains("await runDefaultMultiImageJourney(page, request, testInfo, 3);", stableSmoke);
+        Assert.Contains("multiImageJourney.waitForPersistedMultiImageReferences", stableSmoke);
+        Assert.Contains("multiImageJourney.submitDefaultMultiImageThroughUi", stableSmoke);
+        Assert.Contains("expect(initial.run.imageRefs?.map(item => item.assetSha256)).toEqual(references.map(item => item.sha256))", stableSmoke);
+        Assert.Contains("multiImageJourney.assertMultiImageWireReferences", stableSmoke);
         Assert.Contains("imageRefs = run.ImageRefs?.Select", imageGen);
-        Assert.Contains("label: '红色参考', role: 'reference'", stableSmoke);
-        Assert.Contains("expect(messageText).toContain('@img3')", stableSmoke);
+        Assert.Contains("{ name: 'c.png', data: solidPngDataUrl(210, 55, 75), color: 'red' }", stableSmoke);
+        Assert.Contains("await expect(composer).toContainText('@img3')", stableSmoke);
     }
 
     private static string LocateRepoFile(string relativePath)
