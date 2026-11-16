@@ -95,6 +95,6 @@ export function buildReleaseEnvironmentTask(input: { projectId: string; branchId
     `CDS：${input.cdsHost}`, `项目：${input.projectId}`, `检测分支：${input.branchName}（${input.branchId}）`,
     '使用 cds-release 技能和当前项目级授权，核对项目与仓库身份，沿用项目发布脚本及同提交 CI、预检和回滚合同。不要输出密钥。',
     '通过 cdscli release-target register 登记到当前项目，再用 release-target list 读回；不得新增到其他项目，也不得创建重复环境。',
-    '回到本项目分支卡片，点击“发布到”，确认新环境可选。只接入环境，不自动发布任何分支；首次发布需明确分支、提交与环境。',
+    '回到本项目分支卡片，展开“预览”旁的更多操作，再点击“发布到”，确认新环境可选。只接入环境，不自动发布任何分支；首次发布需明确分支、提交与环境。',
   ].join('\n');
 }

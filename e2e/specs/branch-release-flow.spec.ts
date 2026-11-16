@@ -14,7 +14,11 @@ async function branchCard(page: Page) {
   await page.getByText('窄屏样例项目', { exact: true }).first().click();
   const card = page.locator('[data-branch-card-id="compat-branch"]');
   await expect(card).toBeVisible();
-  await card.getByRole('button', { name: '发布到', exact: true }).click();
+  await expect(card.getByRole('button', { name: '预览', exact: true })).toBeVisible();
+  await expect(card.getByRole('button', { name: '发布到', exact: true })).toHaveCount(0);
+  await card.getByRole('button', { name: '预览更多操作', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '发布到', exact: true })).toHaveCount(0);
+  await page.getByRole('menuitem', { name: '发布到', exact: true }).click();
   return page.getByRole('dialog', { name: '发布到', exact: true });
 }
 
