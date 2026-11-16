@@ -21,6 +21,8 @@ import { cn } from '@/lib/utils';
 
 interface AlarmNotifyView {
   configured: boolean;
+  unavailable?: boolean;
+  reason?: string;
   source: 'settings' | 'env' | null;
   endpoint?: string;
   keyId?: string;
@@ -123,7 +125,7 @@ export function AlarmNotifyTab(): JSX.Element {
         <span className="text-sm font-medium">
           {view?.configured
             ? `MAP 签名通道已配置（来自${view.source === 'settings' ? 'CDS 系统设置' : '.cds.env'}）`
-            : 'MAP 签名通道未配置'}
+            : view?.unavailable ? 'MAP 签名凭据当前不可用' : 'MAP 签名通道未配置'}
         </span>
         {view?.configured ? (
           <span className="font-mono text-[0.6875rem] text-muted-foreground">
@@ -132,14 +134,14 @@ export function AlarmNotifyTab(): JSX.Element {
           </span>
         ) : (
           <span className="text-[0.6875rem] text-muted-foreground">
-            配置后仍需实际演练确认送达；其他通知通道按各自配置投递。
+            {view?.reason || '配置后仍需实际演练确认送达；其他通知通道按各自配置投递。'}
           </span>
         )}
         <div className="flex-grow" />
         <Button size="sm" variant="outline" disabled={busy} onClick={() => void runDrill()}>
           {busy ? '处理中' : '演练一次通知'}
         </Button>
-        {view?.configured && view.source === 'settings' ? (
+        {view?.source === 'settings' ? (
           <Button size="sm" variant="outline" disabled={busy} onClick={() => void clear()}>清除</Button>
         ) : null}
       </div>

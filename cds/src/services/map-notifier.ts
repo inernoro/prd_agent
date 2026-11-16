@@ -20,6 +20,23 @@ import { notificationFunction } from '../shared/notification-templates.js';
 
 import crypto from 'node:crypto';
 
+/** Status readers must remain usable when a saved secret cannot be decrypted.
+ * A broken stored identity never selects an environment fallback identity.
+ */
+export function readMapNotifierSettings(
+  readStored: () => import('../types.js').AlarmNotifyConfig | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): { config: MapNotifierConfig | null; source: 'settings' | 'env' | null; unavailable: boolean } {
+  try {
+    const stored = readStored();
+    if (stored) return { config: { endpoint: stored.endpoint, keyId: stored.keyId,
+      username: stored.username, targetUsername: stored.targetUsername, privateKeyPem: stored.privateKey },
+      source: 'settings', unavailable: false };
+    const config = mapNotifierConfigFromEnv(env);
+    return { config, source: config ? 'env' : null, unavailable: false };
+  } catch { return { config: null, source: 'settings', unavailable: true }; }
+}
+
 /** 与 MAP 的 StableSmokeAuthenticationHandler 对齐的请求头名。 */
 export const HEADER_KEY_ID = 'X-Stable-Smoke-Key-Id';
 export const HEADER_TIMESTAMP = 'X-Stable-Smoke-Timestamp';
