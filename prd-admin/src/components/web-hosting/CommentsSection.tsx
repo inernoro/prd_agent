@@ -139,7 +139,7 @@ export default function CommentsSection(props: Props) {
     const id = annotations?.activeId;
     if (!id) return;
     const selected = comments.find(c => c.id === id);
-    if (selected) setFilter(selected.isResolved ? 'resolved' : 'open');
+    if (selected) setFilter(current => current === 'all' ? current : selected.isResolved ? 'resolved' : 'open');
     const timer = window.setTimeout(() => document.getElementById(`hosted-thread-${id}`)?.scrollIntoView({ block: 'nearest' }), 50);
     return () => window.clearTimeout(timer);
   }, [annotations?.activeId, comments]);
@@ -160,7 +160,7 @@ export default function CommentsSection(props: Props) {
         window.dispatchEvent(new Event('hosted-comments-changed'));
         setComments(prev => prev.some(c => c.id === created.id) ? prev : [created, ...prev]);
         if (operationDraftScope === draftScopeRef.current) {
-          setDraft(''); setReplyTo(null); if (props.threadKind !== 'discussion') annotations?.clearDraft(); if (!replyTo) setFilter('open');
+          setDraft(''); setReplyTo(null); if (props.threadKind !== 'discussion') annotations?.clearDraft(); if (!replyTo) setFilter('all');
         }
         await load(true);
       } else if (operationDraftScope === draftScopeRef.current) setError(res.error?.message || '发表失败，草稿已保留');

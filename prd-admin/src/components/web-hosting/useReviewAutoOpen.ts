@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useRef } from 'react';
 
-/** 每份文档首次发现批注时展开；后续计数刷新不覆盖用户的手动收起。 */
-export function useReviewAutoOpen(identity: string, onOpen: () => void, expanded = false) {
+/** 每份文档在侧栏尚未使用时发现批注即展开；不覆盖手动收起或已开始的提问。 */
+export function useReviewAutoOpen(identity: string, onOpen: () => void, occupied = false) {
   const openedFor = useRef('');
   const open = useRef(onOpen);
   open.current = onOpen;
   useEffect(() => {
-    if (expanded) openedFor.current = identity;
-  }, [identity, expanded]);
+    if (occupied) openedFor.current = identity;
+  }, [identity, occupied]);
   return useCallback((count: number) => {
-    if (count > 0 && openedFor.current !== identity) {
+    if (count > 0 && !occupied && openedFor.current !== identity) {
       openedFor.current = identity;
       open.current();
     }
-  }, [identity]);
+  }, [identity, occupied]);
 }

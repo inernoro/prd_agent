@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
 import { useReviewAutoOpen } from './useReviewAutoOpen';
@@ -35,5 +35,23 @@ it('首次计数迟到时不重新展开用户已经打开并收起的面板，�
     act(() => loaded(1)); expect(open).not.toHaveBeenCalled();
     act(() => root.render(<App id="b" expanded={false} />));
     act(() => loaded(1)); expect(open).toHaveBeenCalledTimes(1);
+  } finally { act(() => root.unmount()); vi.unstubAllGlobals(); }
+});
+
+
+it('评论响应与提问面板同一轮提交时不抢走已占用的侧栏', () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  const element = document.createElement('div'), root = createRoot(element), open = vi.fn();
+  function Response({ loaded }: { loaded: (count: number) => void }) {
+    useEffect(() => loaded(1), [loaded]);
+    return null;
+  }
+  function App() {
+    const loaded = useReviewAutoOpen('a', open, true);
+    return <Response loaded={loaded} />;
+  }
+  try {
+    act(() => root.render(<App />));
+    expect(open).not.toHaveBeenCalled();
   } finally { act(() => root.unmount()); vi.unstubAllGlobals(); }
 });

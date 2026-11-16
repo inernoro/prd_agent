@@ -19,10 +19,10 @@ const annotations = (): HostedAnnotations => ({ ready: true, enabled: false, con
   preview: null, dismissPreview: vi.fn(), openThread: vi.fn(),
   draftAnchor: null, activeId: null, missingIds: [], threads: [], select, clearDraft: vi.fn(), focus: vi.fn(),
   notifyFrame: vi.fn(), setThreads: vi.fn(), setEnabled: vi.fn(), setActiveId: vi.fn() });
-async function mount(options: { ready?: boolean; review?: HostedReview; threadKind?: 'annotation' | 'discussion' } = {}) {
+async function mount(options: { ready?: boolean; review?: HostedReview; threadKind?: 'annotation' | 'discussion'; activeId?: string } = {}) {
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
   await act(async () => root.render(<CommentsSection mode="share" token="share" onLogin={login} threadKind={options.threadKind}
-    annotations={{ ...annotations(), ready: options.ready ?? true }} review={options.review} />));
+    annotations={{ ...annotations(), ready: options.ready ?? true, activeId: options.activeId ?? null }} review={options.review} />));
 }
 function button(text: string) {
   const match = [...container.querySelectorAll('button')].find(element => (element.getAttribute('aria-label') ?? element.textContent) === text);
@@ -272,4 +272,31 @@ describe('collection annotation and discussion tabs', () => {
     expect(container.textContent).toContain(kind === 'annotation' ? '正文定位批注' : '整篇讨论意见');
     expect(container.textContent).not.toContain(kind === 'annotation' ? '整篇讨论意见' : '正文定位批注');
   });
+});
+
+
+it('发表新意见后仍展示全部状态，不把已有已解决意见藏起来', async () => {
+  auth.isAuthenticated = true; auth.token = 'session';
+  const resolved = { id: 'done', siteId: 'site', content: '保留的已解决意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: true };
+  const created = { ...resolved, id: 'new', content: '新的意见', isResolved: false };
+  let comments = [resolved];
+  list.mockImplementation(async () => ({ success: true, data: { comments, commentsEnabled: true, canComment: true } }));
+  add.mockImplementation(async () => { comments = [created, resolved]; return { success: true, data: created }; });
+  await mount();
+  await act(async () => { const field = container.querySelector('textarea')!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, '新的意见'); field.dispatchEvent(new Event('input', { bubbles: true })); });
+  await act(async () => button('发送批注').click());
+  expect(add).toHaveBeenCalled();
+  expect(container.querySelector('[aria-label="讨论状态"] [aria-selected="true"]')?.textContent).toContain('全部');
+  expect(container.querySelectorAll('.review-thread')).toHaveLength(2);
+  expect(container.textContent).toContain('保留的已解决意见');
+});
+
+it('从全部状态点击原文编号定位意见时仍保留其他状态的意见', async () => {
+  list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+    { id: 'done', siteId: 'site', content: '保留的已解决意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: true },
+    { id: 'focus', siteId: 'site', content: '定位的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: false },
+  ] } });
+  await mount({ activeId: 'focus' });
+  expect(container.querySelector('[aria-label="讨论状态"] [aria-selected="true"]')?.textContent).toContain('全部');
+  expect(container.querySelectorAll('.review-thread')).toHaveLength(2);
 });

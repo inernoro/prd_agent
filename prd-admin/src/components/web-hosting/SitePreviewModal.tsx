@@ -84,7 +84,7 @@ export default function SitePreviewModal({
   // 右侧面板同一时刻只开一个：评论与提问互斥，两个都塞进来会把 iframe 挤成窄条
   const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask'>('none');
   const showComments = rightPanel === 'comments';
-  const autoOpenReview = useReviewAutoOpen(originalSite.id, () => setRightPanel('comments'), showComments);
+  const autoOpenReview = useReviewAutoOpen(originalSite.id, () => setRightPanel('comments'), rightPanel !== 'none');
   const reviewSidebar = useReviewSidebarWidth();
   const setShowComments = (next: boolean | ((v: boolean) => boolean)) => {
     const want = typeof next === 'function' ? next(rightPanel === 'comments') : next;
