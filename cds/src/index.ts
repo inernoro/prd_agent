@@ -71,6 +71,7 @@ import {
   type BackupOutcome,
 } from './services/infra-backup-schedule.js';
 import { BackupRetentionService } from './services/backup-retention.js';
+import { buildMongoBackupInvocation } from './services/infra-mongo-backup.js';
 import { OwnedResourceLifecycle } from './services/owned-resource-task.js';
 import { ImageCacheGovernance, collectImageCacheReferences, configureImageCacheGovernance } from './services/image-cache-governance.js';
 import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
@@ -831,16 +832,14 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 后所有自动备份都会失败。口令不进入宿主或容器 argv。
             const current = stateService.getInfraServiceForProjectAndId(t.projectId, t.id);
             if (!current) throw new Error('轮换后的 Mongo 权威服务记录不存在');
-            const resolved = resolveEnvTemplates(current.env || {}, stateService.getCustomEnv(current.projectId));
-            const user = resolved.MONGO_INITDB_ROOT_USERNAME || resolved.MONGO_USERNAME || resolved.MONGODB_USERNAME || '';
-            const password = resolved.MONGO_INITDB_ROOT_PASSWORD || resolved.MONGO_PASSWORD || resolved.MONGODB_PASSWORD || '';
-            if (user) {
-              if (!password) throw new Error('Mongo 权威账号存在但口令为空');
-              cmd = `docker exec -i ${shq(t.containerName)} mongodump --archive --gzip --username=${shq(user)} --authenticationDatabase=admin --config=/dev/stdin > ${shq(out)}`;
-              commandStdin = `password: ${JSON.stringify(password)}\n`;
-            } else {
-              cmd = `docker exec ${shq(t.containerName)} mongodump --archive --gzip > ${shq(out)}`;
-            }
+            const invocation = await buildMongoBackupInvocation({
+              service: current,
+              variables: stateService.getCustomEnv(current.projectId),
+              outputPath: out,
+              systemMongoUri: process.env.CDS_MONGO_URI,
+            });
+            cmd = invocation.command;
+            commandStdin = invocation.stdin;
           } else if (t.kind === 'mysql') {
             // 密码在容器内展开；用 MYSQL_PWD 而不是 -p，避免它出现在容器自己的
             // 进程列表里。--single-transaction 保证 InnoDB 一致性快照。

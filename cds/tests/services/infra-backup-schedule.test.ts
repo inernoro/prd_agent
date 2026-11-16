@@ -319,7 +319,7 @@ describe('自动备份真的被启动了', () => {
 
   it('磁盘闸排在写盘之前', () => {
     const gate = CODE.indexOf('shouldSkipForDiskPressure(');
-    const dump = CODE.indexOf('mongodump');
+    const dump = CODE.indexOf('const invocation = await buildMongoBackupInvocation(');
     expect(gate).toBeGreaterThan(0);
     expect(dump).toBeGreaterThan(gate);
   });
@@ -457,9 +457,12 @@ describe('首轮实跑暴露的缺陷', () => {
     // 判据要盯「从台账取凭据」这个动作本身，别用 `-p ${shq(` 这种形状去猜——
     // 它会把 `mkdir -p ${shq(dir)}` 一起匹配上（判据太宽，今天已经栽过同款）。
     expect(CODE).toContain('stateService.getInfraServiceForProjectAndId(t.projectId, t.id)');
-    expect(CODE).toContain('--config=/dev/stdin');
-    expect(CODE).toContain('commandStdin = `password: ${JSON.stringify(password)}');
-    expect(CODE).not.toMatch(/mongodump[^\n]+(?:-p|--password)[= ]/);
+    expect(CODE).toContain('service: current,');
+    expect(CODE).toContain('commandStdin = invocation.stdin;');
+    const mongo = fs.readFileSync(path.resolve(process.cwd(), 'src/services/infra-mongo-backup.ts'), 'utf8');
+    expect(mongo).toContain('--config=/dev/stdin');
+    expect(mongo).toContain('stdin: `password: ${JSON.stringify(password)}');
+    expect(mongo).not.toMatch(/mongodump[^\n]+(?:-p|--password)[= ]/);
     expect(buildMysqlDumpScript()).toMatch(/export MYSQL_PWD="\$CDS_(ROOT|APP)_PW"/);
   });
 });
