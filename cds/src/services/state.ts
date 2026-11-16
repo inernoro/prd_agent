@@ -2312,6 +2312,24 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   //
   // Mirrors scheduler override semantics: Dashboard writes these fields to
   // state so global expiry settings survive CDS restarts.
+  getHostCapacitySamplingEnabled(): boolean { return this.state.hostCapacitySamplingEnabled === true; }
+  setHostCapacitySamplingEnabled(enabled: boolean): void {
+    this.state.hostCapacitySamplingEnabled = enabled; this.save();
+  }
+  async updateHostCapacitySamplingEnabled(enabled: boolean): Promise<void> {
+    const previous = this.state.hostCapacitySamplingEnabled;
+    try { this.setHostCapacitySamplingEnabled(enabled); await this.flush(); }
+    catch (error) {
+      if (previous === undefined) delete this.state.hostCapacitySamplingEnabled;
+      else this.state.hostCapacitySamplingEnabled = previous;
+      // Restore the live snapshot and best-effort compensate an unknown ACK.
+      // A later unrelated save must never commit the rejected candidate.
+      try { this.save(); await this.flush(); } catch {}
+      throw error;
+    }
+  }
+
+
   getJanitorEnabledOverride(): boolean | undefined {
     return this.state.janitorEnabledOverride;
   }
@@ -5474,14 +5492,20 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   getAlarmNotify(): import('../types.js').AlarmNotifyConfig | undefined {
     const c = this.state.alarmNotify;
     if (!c) return undefined;
+    const privateKey = unsealToken(c.privateKey);
     // 四项缺任何一项都算没配：半套凭据只会在真出事那天以 401 的形式暴露。
-    const ok = [c.endpoint, c.keyId, c.username, c.privateKey].every((v) => (v || '').trim());
-    return ok ? c : undefined;
+    const ok = [c.endpoint, c.keyId, c.username, privateKey].every((v) => (v || '').trim());
+    if (!ok) throw new Error('已保存的 MAP 签名配置不完整');
+    return { ...c, privateKey };
   }
 
   setAlarmNotify(next: import('../types.js').AlarmNotifyConfig | null): void {
     if (next === null) delete this.state.alarmNotify;
-    else this.state.alarmNotify = next;
+    else {
+      const privateKey = sealToken(next.privateKey);
+      if (!isSealedSecret(privateKey)) throw new Error('请先启用 CDS 密封存储，再保存 MAP 私钥');
+      this.state.alarmNotify = { ...next, privateKey };
+    }
     this.save();
   }
 

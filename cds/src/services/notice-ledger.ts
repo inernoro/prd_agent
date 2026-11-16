@@ -27,6 +27,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { monitorIncidentPath } from './monitor-incident-link.js';
+import type { MapNotifierConfig } from './map-notifier.js';
 import {
   cdsEventNoticeCopy,
   cdsEventsBus,
@@ -36,6 +37,8 @@ import {
 } from './cds-events-bus.js';
 import {
   forwardNoticeToMap,
+  resolveNoticeOutboundConfig,
+  type NoticeOutboundFallback,
   noticeOutboundGeneration,
   type NoticeOutboundConfig,
   type FetchLike,
@@ -472,10 +475,26 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
   };
 }
 
+/** 有效专用配置与关闭开关不依赖另一个可损坏的加密集成。 */
+export function resolveCurrentNoticeOutbound(
+  env: NodeJS.ProcessEnv,
+  readFallback: () => NoticeOutboundFallback | null | undefined,
+  readSigning?: () => MapNotifierConfig | null | undefined,
+): NoticeOutboundConfig | null {
+  const dedicated = resolveNoticeOutboundConfig(env);
+  const enabled = (env.CDS_NOTICE_OUTBOUND_ENABLED ?? '1').trim().toLowerCase();
+  if (dedicated || enabled === '0' || enabled === 'false') return dedicated;
+  const signing = readSigning?.();
+  if (signing) return resolveNoticeOutboundConfig(env, null, signing);
+  return resolveNoticeOutboundConfig(env, readFallback());
+}
+
 export interface StartNoticeLedgerDeps {
   ledger: NoticeLedgerService;
   /** 外发配置；null = 未配置凭据，此时必须如实记 skipped，绝不假装发送成功。 */
   outbound: NoticeOutboundConfig | null;
+  /** 每次新通知读取当前配置；失败必须记账，不能复用旧授权。 */
+  getOutbound?: () => NoticeOutboundConfig | null;
   /** 记完账后回发总线，前端据此实时亮铃。传 cdsEventsBus.publish 即可。 */
   publish?: (type: CdsEventType, data: unknown) => void;
   fetchImpl?: FetchLike;
@@ -501,7 +520,15 @@ export function startNoticeLedger(deps: StartNoticeLedgerDeps): { stop(): void }
     // 窗口内的重复只累加次数，不再打扰外部系统一次。
     if (action === 'merged') return;
 
-    if (!deps.outbound) {
+    let outbound: NoticeOutboundConfig | null;
+    try { outbound = deps.getOutbound ? deps.getOutbound() : deps.outbound; }
+    catch {
+      deps.ledger.patchOutbound(record.dedupeKey, {
+        status: 'failed', at: new Date().toISOString(), reason: 'MAP 通知配置读取失败，请检查服务端接入配置',
+      });
+      return;
+    }
+    if (!outbound) {
       deps.ledger.patchOutbound(record.dedupeKey, {
         status: 'skipped',
         at: new Date().toISOString(),
@@ -510,7 +537,7 @@ export function startNoticeLedger(deps: StartNoticeLedgerDeps): { stop(): void }
       return;
     }
 
-    void forwardNoticeToMap(record, deps.outbound, deps.fetchImpl)
+    void forwardNoticeToMap(record, outbound, deps.fetchImpl)
       .then((result) => {
         deps.ledger.patchOutbound(record.dedupeKey, {
           status: result.ok ? 'sent' : 'failed',

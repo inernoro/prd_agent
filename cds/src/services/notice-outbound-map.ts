@@ -20,12 +20,15 @@
  *     混在一起、无法按来源筛，已登记进 doc/debt.cds.md「CDS 存活监控（uptime-monitor）」。
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { buildCanonicalRequest, signCanonical, HEADER_KEY_ID, HEADER_TIMESTAMP, HEADER_NONCE, HEADER_SIGNATURE, type MapNotifierConfig } from './map-notifier.js';
 import type { CdsNoticeRecord } from './notice-ledger.js';
 
 export interface NoticeOutboundConfig {
   baseUrl: string;
   token: string;
+  /** 复用已保存的 MAP 签名通道；不序列化到通知账本或公开接口。 */
+  signing?: MapNotifierConfig;
   /** MAP 通知来源（必须在 MAP 白名单内），默认 system-alert。 */
   source: string;
   /** 定向投递给某个 MAP 用户；不填则按 MAP 的默认受众规则。 */
@@ -94,6 +97,7 @@ const DEFAULT_MAP_SOURCE = 'system-alert';
 export function resolveNoticeOutboundConfig(
   env: NodeJS.ProcessEnv = process.env,
   fallback?: NoticeOutboundFallback | null,
+  signing?: MapNotifierConfig | null,
 ): NoticeOutboundConfig | null {
   // 逃生阀：外发常态对 MAP 发外呼，被限流 / MAP 维护时必须能一刀关掉。
   const enabled = (env.CDS_NOTICE_OUTBOUND_ENABLED ?? '1').trim();
@@ -105,6 +109,13 @@ export function resolveNoticeOutboundConfig(
   const fallbackToken = (fallback?.token || '').trim();
   // 专用配置必须成对出现，绝不把一边的 URL 与另一边的 Token 混用。
   const useDedicated = Boolean(dedicatedBaseUrl && dedicatedToken);
+  if (!useDedicated && signing) {
+    const url = new URL(signing.endpoint);
+    if (url.protocol !== 'https:' || url.pathname !== '/api/dashboard/notifications/events' || url.search || url.hash || url.username || url.password
+      || !signing.keyId || !signing.username || !signing.privateKeyPem) throw new Error('MAP 签名通知配置不完整或端点不匹配');
+    return { baseUrl: url.origin, token: '', source: (env.CDS_NOTICE_MAP_SOURCE || '').trim() || DEFAULT_MAP_SOURCE,
+      signing, publicOrigin: normalizeNoticeOrigin(env.CDS_NOTICE_PUBLIC_ORIGIN || env.CDS_DASHBOARD_DOMAIN || env.DASHBOARD_DOMAIN) };
+  }
   const baseUrl = useDedicated ? dedicatedBaseUrl : fallbackBaseUrl;
   const token = useDedicated ? dedicatedToken : fallbackToken;
   if (!baseUrl || !token) return null;
@@ -165,12 +176,13 @@ export function buildMapNotificationBody(
     // 逐字 dedupKey —— 不是 dedupeKey（坑 1）。
     dedupKey: noticeOutboundKey(notice),
     expiresInDays: 7,
-    ...(config.targetUserId ? { targetUserId: config.targetUserId } : {}),
+    ...(config.signing ? { targetUsername: config.signing.targetUsername || config.signing.username }
+      : config.targetUserId ? { targetUserId: config.targetUserId } : {}),
   };
 }
 
 export function noticeOutboundUrl(config: NoticeOutboundConfig): string {
-  return `${config.baseUrl}/api/dashboard/notifications/events`;
+  return config.signing?.endpoint || `${config.baseUrl}/api/dashboard/notifications/events`;
 }
 
 /**
@@ -190,13 +202,18 @@ export async function forwardNoticeToMap(
     : undefined;
 
   try {
+    const body = JSON.stringify(buildMapNotificationBody(notice, config));
+    let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (config.signing) {
+      const timestamp = Math.floor(Date.now() / 1000), nonce = randomUUID();
+      const canonical = buildCanonicalRequest('POST', new URL(config.signing.endpoint).pathname, timestamp, nonce, config.signing.username, body);
+      headers = { ...headers, [HEADER_KEY_ID]: config.signing.keyId, [HEADER_TIMESTAMP]: String(timestamp), [HEADER_NONCE]: nonce,
+        [HEADER_SIGNATURE]: signCanonical(config.signing.privateKeyPem, canonical) };
+    } else headers.Authorization = `Bearer ${config.token}`;
     const res = await doFetch(noticeOutboundUrl(config), {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.token}`,
-      },
-      body: JSON.stringify(buildMapNotificationBody(notice, config)),
+      headers,
+      body,
       ...(budget ? { signal: budget } : {}),
     });
     const text = await res.text();
@@ -208,7 +225,7 @@ export async function forwardNoticeToMap(
     }
     const envelope = parsed as {
       success?: boolean;
-      data?: { id?: string; notificationId?: string };
+      data?: { id?: string; notificationId?: string; notification?: { id?: string } };
       error?: { message?: string };
     } | null;
 
@@ -221,7 +238,8 @@ export async function forwardNoticeToMap(
     if (envelope?.success === false) {
       return { ok: false, reason: envelope.error?.message || '通知系统拒绝了本次投递' };
     }
-    const reference = envelope?.data?.id || envelope?.data?.notificationId;
+    if (envelope?.success !== true) return { ok: false, reason: '通知系统未返回可确认的业务回执' };
+    const reference = envelope?.data?.notification?.id || envelope?.data?.id || envelope?.data?.notificationId;
     return { ok: true, ...(reference ? { reference } : {}) };
   } catch (err) {
     return {
