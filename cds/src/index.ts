@@ -87,6 +87,7 @@ import { isTrustedProbeFingerprint } from './services/probe-marker.js';
 import { JanitorService, defaultDiskUsage, createJanitorDockerAdapters } from './services/janitor.js';
 import { withBootRetry, diagnoseDisksForBootFailure } from './services/boot-retry.js';
 import { diskGuard, resolveDockerDataRoot } from './services/disk-guard.js';
+import { schedulerResourcePressure } from './services/scheduler-pressure.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
 import { InfraLifecycleWatcher } from './services/infra-lifecycle-watcher.js';
@@ -2964,6 +2965,7 @@ deploymentMemoryReconciler.unref?.();
 }
 const schedulerService = new SchedulerService(stateService, config.scheduler);
 schedulerService.setRuntimePresenceProvider(getObservedRunningContainerNames);
+schedulerService.setResourcePressureProvider(schedulerResourcePressure);
 schedulerService.setOperationProtection(slug => branchOperationCoordinator.getActiveOperations(slug)
   .some(operation => operation.request.kind !== 'scheduler-cooling'));
 let previewActivitySelfCheck: SelfCheckDeps['previewActivity'];
@@ -3320,17 +3322,12 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       // hot-container budget. No-op when the scheduler is disabled or
       // maxHotBranches is unset.
       //
-      // Best-effort: eviction can throw when the chosen LRU victim has an active
-      // higher-priority operation (its cool path rethrows the lease rejection).
-      // That's unrelated to THIS branch — letting it fall into the catch below
-      // would poison the requested branch into `error` and stop future preview
-      // retries over a mere capacity hiccup. Swallow it; the next scheduler tick
-      // re-enforces capacity. (A superseding op on THIS branch still surfaces via
-      // the assertCurrent checks in the restart loop, not here.)
+      // A conflict is a retryable deferral: restore the request state and retain
+      // all existing protections rather than bypassing the configured capacity.
       try {
         await schedulerService.evictLruIfOverCapacity(slug);
-      } catch (evictErr) {
-        if (schedulerService.getSnapshot().previewActivity?.status === 'unknown') {
+      } catch {
+        { // Capacity/protection uncertainty is a deferral, never permission to exceed the pool.
           lease?.assertCurrent('auto-wake capacity deferred');
           branchOperationFinalStatus = 'cancelled';
           branch.status = previousWake.status;
@@ -3339,7 +3336,6 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           stateService.save();
           return;
         }
-        console.warn(`[auto-wake] capacity eviction skipped for "${slug}": ${(evictErr as Error).message}`);
       }
 
       const profiles = stateService.getBuildProfilesForProject(branch.projectId);
@@ -3645,8 +3641,8 @@ if (configuredImageCacheBudgetGiB > 0) janitorService.setImageCacheGovernance(im
 diskGuard.setProbe(() => {
   const readings = [defaultDiskUsage(config.worktreeBase)];
   const dockerRoot = resolveDockerDataRoot();
-  if (dockerRoot) readings.push(defaultDiskUsage(dockerRoot));
-  return readings.filter((r): r is { totalBytes: number; freeBytes: number } => !!r);
+  readings.push(dockerRoot ? defaultDiskUsage(dockerRoot) : null);
+  return readings;
 });
 diskGuard.refreshNow();
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──

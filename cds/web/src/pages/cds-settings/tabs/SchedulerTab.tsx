@@ -25,6 +25,10 @@ interface SchedulerSnapshot {
   hot?: Array<{ slug: string; lastAccessedAt: string | undefined; pinned: boolean }>;
   cold?: Array<{ slug: string; lastAccessedAt: string | undefined }>;
   capacityUsage?: { current: number; max: number };
+  resourcePressure?: 'ample' | 'pressure' | 'unknown';
+  occupancy?: Array<{ slug: string; state: string; reason: string }>;
+  protections?: Array<{ slug: string; source: string; active: boolean; reviewRequired: boolean;
+    pin?: { kind: string; actor: string; reason: string; expiresAt?: string; authorizationRef?: string } }>;
 }
 
 interface JanitorConfig {
@@ -121,8 +125,8 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
       onToast('空闲超时必须是 1 到 1440 之间的整数（分钟）');
       return;
     }
-    if (!Number.isInteger(hot) || hot < 0 || hot > 100) {
-      onToast('最大热分支数必须是 0 到 100 之间的整数（0 = 不限）');
+    if (!Number.isInteger(hot) || hot < 1 || hot > 25) {
+      onToast('最大热分支数必须是 1 到 25 之间的整数');
       return;
     }
     if (!Number.isInteger(days) || days < 1 || days > 7) {
@@ -153,7 +157,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
   return (
     <Section
       title="调度器"
-      description="调度器开启后，空闲超过设定时长的分支会自动停止变灰；热分支数超上限时按 LRU 驱逐最久未访问分支。固定分支永不冷却。配置即时生效并在重启后保留。"
+      description="热池最多 25 个分支。资源充裕时保留空闲服务；出现压力或容量不足时，按现有保护和访问顺序降温。临时固定到期退出，旧保护须核对。"
     >
       <div className="space-y-6">
         <div className="grid gap-4 md:grid-cols-2">
@@ -162,7 +166,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
               <Flame className="h-4 w-4 text-warn" />
               当前热分支
             </div>
-            <div className="mt-2 text-2xl font-semibold">{hotList.length}</div>
+            <div className="mt-2 text-2xl font-semibold">{snap.capacityUsage?.current ?? hotList.length}</div>
             <div className="mt-1 text-xs text-muted-foreground">
               上限 {capMax === 0 ? '不限' : capMax}
             </div>
@@ -214,6 +218,26 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
           </div>
         </Field>
 
+        <Field label="热池占用与保护">
+          <p className="text-xs text-muted-foreground">
+            资源状态：{snap.resourcePressure === 'ample' ? '充裕，暂不因空闲降温' : snap.resourcePressure === 'pressure' ? '存在压力，保留空闲降温保护' : '未知，继续原有空闲保护'}。
+            不占容量的已停止或空闲登记 {snap.occupancy?.filter(row => row.state === 'nonresident').length ?? '未知'} 个；
+            用途待核对且保留预约 {snap.occupancy?.filter(row => row.state === 'unknown').length ?? '未知'} 个。
+          </p>
+          <div className="mt-2 space-y-2 text-xs">
+            {(snap.protections ?? []).map(row => (
+              <div key={`${row.slug}:${row.source}`} className="rounded border border-border p-2 break-words">
+                <strong>{row.slug}</strong> · {({ user: '手动固定', debug: '调试标记', 'config-pinned': '配置固定', 'default-branch': '默认分支', 'trunk-branch': '主分支', 'release-batch-input': '发布与恢复保护' } as Record<string, string>)[row.source] ?? row.source} · {row.active ? '保护中' : '临时保护已到期'}
+                {row.reviewRequired ? ' · 旧记录，须核对依据，继续保留' : null}
+                {row.pin ? <div className="mt-1 text-muted-foreground">
+                  {row.pin.actor} · {row.pin.reason} · {row.reviewRequired ? '期限及依据待核对' : row.pin.expiresAt ? `到期 ${row.pin.expiresAt}` : '永久固定'}
+                  {row.pin.authorizationRef ? ` · 授权依据 ${row.pin.authorizationRef}` : ''}
+                </div> : null}
+              </div>
+            ))}
+          </div>
+        </Field>
+
         <Field label="空闲自动下线时长（分钟）">
           <input
             type="number"
@@ -224,7 +248,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
             className={inputClass}
           />
           <div className="mt-1.5 text-xs text-muted-foreground">
-            分支无预览域名访问超过此时长即被停止。范围 1–1440 分钟。当前生效值{' '}
+            资源有压力或状态未知时，超过此时长的空闲分支可被降温。范围 1–1440 分钟。当前生效值{' '}
             <CodePill>{Math.round((cfg.idleTTLSeconds || 900) / 60)} 分钟</CodePill>
           </div>
         </Field>
@@ -232,15 +256,15 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
         <Field label="最大热分支数">
           <input
             type="number"
-            min={0}
-            max={100}
+            min={1}
+            max={25}
             value={maxHot}
             onChange={(e) => setMaxHot(e.target.value)}
             className={inputClass}
           />
           <div className="mt-1.5 text-xs text-muted-foreground">
-            同时保持运行的分支上限，超出按 LRU 驱逐最久未访问的非固定分支。0 = 不限。当前生效值{' '}
-            <CodePill>{cfg.maxHotBranches === 0 ? '不限' : cfg.maxHotBranches}</CodePill>
+            同时保持运行及在途预约的分支上限，范围 1–25。超出时仅降温可安全停止的分支。当前生效值{' '}
+            <CodePill>{capMax}</CodePill>
           </div>
         </Field>
 
@@ -286,7 +310,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
         </Field>
 
         {cfg.pinnedBranches.length > 0 ? (
-          <Field label="固定分支（永不冷却）">
+          <Field label="配置固定名单（旧记录保留，已复核的临时保护按期限退出）">
             <div className="flex flex-wrap gap-2">
               {cfg.pinnedBranches.map((slug) => (
                 <CodePill key={slug}>{slug}</CodePill>

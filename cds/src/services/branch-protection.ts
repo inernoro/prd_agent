@@ -1,5 +1,6 @@
 import type { BranchEntry, Project } from '../types.js';
 import { releaseBatchProtectsInputs, type ReleaseBatch } from '../domain/release-batch.js';
+import { pinExpired, reviewedConfigPin } from './branch-pin.js';
 
 /**
  * branch-protection —— 「这条分支能不能被自动回收/驱逐」的**唯一判定源**（SSOT）。
@@ -91,13 +92,14 @@ export function resolveBranchProtection(
   branch: BranchEntry,
   lookup: BranchProtectionLookup,
   configPinned: readonly string[] = [],
+  now = Date.now(),
 ): BranchProtection {
-  if (branch.pinnedByUser) return { protected: true, reason: 'pinned-by-user' };
-  if (branch.isColorMarked) return { protected: true, reason: 'color-marked' };
+  if (branch.pinnedByUser && !pinExpired(branch.userPin, now)) return { protected: true, reason: 'pinned-by-user' };
+  if (branch.isColorMarked && !pinExpired(branch.colorMarkPin, now)) return { protected: true, reason: 'color-marked' };
   if (lookup.getDefaultBranchFor(branch.projectId) === branch.id) {
     return { protected: true, reason: 'default-branch' };
   }
-  if (configPinned.includes(branch.id)) return { protected: true, reason: 'config-pinned' };
+  if (configPinned.includes(branch.id) && !pinExpired(reviewedConfigPin(branch.configPinReview, configPinned), now)) return { protected: true, reason: 'config-pinned' };
   if (lookup.getReleaseBatches?.(branch.projectId).some(batch => batch.branchId === branch.id && releaseBatchProtectsInputs(batch))) {
     return { protected: true, reason: 'release-batch-input' };
   }

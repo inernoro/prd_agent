@@ -1,4 +1,5 @@
 import { WorktreeService } from './worktree.js';
+import { containerImageReferences } from './container-image-references.js';
 import { releaseBatchProtectsInputs } from '../domain/release-batch.js';
 import { SourceInspectionHeldError, sourceHoldReason } from './deployment-source-inspection.js';
 import { reclaimDeploymentSources, summarizeDeploymentSourceHolds, type DeploymentSourceHoldReason, type DeploymentSourceRetentionReport } from './deployment-source-retention.js';
@@ -143,9 +144,11 @@ function createImageDocker(run: DockerRunner): ImageDockerFns {
       return out.split('\n').filter(Boolean);
     },
     listInUseImages: async () => {
-      const out = await execDocker(['ps', '-a', '--format', '{{.Image}}'], 60_000, run);
-      if (out.startsWith('__ERR__')) throw new Error('容器镜像占用查询失败，本轮跳过镜像回收。');
-      return out.split('\n').filter(Boolean);
+      return containerImageReferences(async args => {
+        const out = await execDocker(args, 30_000, run);
+        if (out.startsWith('__ERR__')) throw new Error('容器镜像占用查询失败，本轮跳过镜像回收。');
+        return out;
+      });
     },
     removeImage: async (image, isProtected) => {
       let held = false;
@@ -504,7 +507,8 @@ export function createJanitorDockerAdapters(shell: IShellExecutor): {
   dockerPrune: DockerPruneFn; imageDocker: ImageDockerFns; orphanWorktreeFs: OrphanWorktreeFs;
 } {
   const run: DockerRunner = async (args, timeout, beforeStart) => {
-    const readOnly = ['images', 'ps', 'inspect'].includes(args[0]);
+    const readOnly = ['images', 'ps', 'inspect'].includes(args[0])
+      || (['container', 'image'].includes(args[0]) && args[1] === 'inspect');
     const result = await shell.exec(['docker', ...args].map(shellQuoteArg).join(' '), {
       timeout, executionLane: readOnly ? 'observation' : 'operation', beforeStart,
     });
@@ -893,7 +897,13 @@ export class JanitorService {
     const plan: ImageRetentionPlan = computeImageRetentionPlan({
       ledger, hostImages, inUseImages: [...inUseImages, ...(this.protectedImages?.() || [])], keepGenerations,
       maxRemovals: imageMaxRemovalsFor(tier, this.config.imageMaxRemovalsPerSweep ?? 40),
+      afterImage: this.stateService.getImageRetentionCursor?.(),
     });
+    // Persist before dispatch: a held/failing prefix (or restart mid-batch) must not starve the tail.
+    if (plan.remove.length && this.stateService.setImageRetentionCursor) {
+      this.stateService.setImageRetentionCursor(plan.remove.at(-1)!);
+      this.stateService.save();
+    }
     const removed: string[] = [];
     const failed: Array<{ image: string; error: string }> = [];
     const held: Array<{ image: string; reason: string }> = [];
