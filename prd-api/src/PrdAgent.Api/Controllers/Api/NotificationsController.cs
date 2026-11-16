@@ -154,7 +154,7 @@ public sealed class NotificationsController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> CreateEvent([FromBody] AdminNotificationEventRequest request, CancellationToken ct = default)
     {
-        if (!HasAdminNotificationEventPermission())
+        if (!await HasAdminNotificationPermissionAsync(ct))
         {
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权创建管理员通知事件"));
         }
@@ -343,17 +343,6 @@ public sealed class NotificationsController : ControllerBase
         if (isRoot) return true;
         var permissions = await _adminPermissions.GetEffectivePermissionsAsync(this.GetRequiredUserId(), false, ct);
         return permissions.Contains(AdminPermissionCatalog.Super) || permissions.Contains(AdminPermissionCatalog.LlmGatewayAccess);
-    }
-
-    private bool HasAdminNotificationEventPermission()
-    {
-        if (string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal))
-            return true;
-        if (string.Equals(User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value, "1", StringComparison.Ordinal))
-            return true;
-
-        var permissions = User.FindAll("permissions").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return AdminNotificationAudience.HasPermission(permissions);
     }
 
     private async Task<bool> HasAdminNotificationPermissionAsync(CancellationToken ct)
