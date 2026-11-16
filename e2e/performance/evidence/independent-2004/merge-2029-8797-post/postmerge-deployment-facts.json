@@ -1,0 +1,20 @@
+[
+  {
+    "checkId": 133535917730,
+    "headSha": "8797bde13a2e0a943d26d7fc01a0bb095b344d84",
+    "status": "completed",
+    "conclusion": "failure",
+    "detailsUrl": "https://mycds.net/branch-panel?id=prd-agent-local-main&runId=dr_567ad923a217c07145d60d22",
+    "title": "Deploy failed",
+    "summary": "unsafe_deployment_storage: 服务 'api-prd-agent-local' 的新挂载计划被拒绝 (storage-bind-pin-required)；保留原容器与数据，请提供明确的安全存储绑定。\n\n预览地址: https://main-prd-agent-local.mycds.net\n\nDeploymentRun: `dr_567ad923a217c07145d60d22` · failed · deploy"
+  },
+  {
+    "checkId": 133535692983,
+    "headSha": "8797bde13a2e0a943d26d7fc01a0bb095b344d84",
+    "status": "completed",
+    "conclusion": "success",
+    "detailsUrl": "https://cds.miduo.org/branch-panel?id=prd-agent-main&runId=dr_29b8db0300984aa9fefce34f",
+    "title": "Deploy successful",
+    "summary": "所有服务已启动\n\n预览地址: https://main-prd-agent.miduo.org\n\nDeploymentRun: `dr_29b8db0300984aa9fefce34f` · running · complete"
+  }
+]

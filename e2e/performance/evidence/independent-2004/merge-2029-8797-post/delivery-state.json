@@ -1,0 +1,38 @@
+{
+  "generatedAt": "2026-11-16T19:33:44.672909+00:00",
+  "deliveryState": "MERGED",
+  "overallAcceptance": "conditional",
+  "pr": 2029,
+  "mergeCommit": "8797bde13a2e0a943d26d7fc01a0bb095b344d84",
+  "baseBeforeMerge": "c14389a403ff296c4bbfc95c0fbb6553c673bcd2",
+  "premergeHead": "5d85c1aa1c954789dcb48971888373ed616b9019",
+  "postmerge": {
+    "run": 43933991017,
+    "event": "push",
+    "profile": "normal",
+    "conclusion": "success",
+    "independentRawVerification": true,
+    "artifact": 14262512268,
+    "sha256": "fe23f1890a3f7aad53122880b0c15834d69792bd2d7dd91df47f689719362e56"
+  },
+  "actualImagesViewed": 11,
+  "report": "https://miduo.org/reports?project=prd-agent&folder=d6a48bce9a84423483b89853b772407d&report=15063c4069bc4f158bc74b04f4480598",
+  "onlineVerification": {
+    "firstAttempt": true,
+    "images": 34,
+    "uniqueSourceImages": 11,
+    "links": 98,
+    "clicked": 13,
+    "broken": 0
+  },
+  "remaining": [
+    "公开入口API实际/声明已match，Web入口仍-local，公开精确候选未验收",
+    "mycds.net/local-main安全存储绑定缺失部署失败，主实例cds.miduo.org成功，分别保留",
+    "默认头像系统资产缺失的原始自动P1=4保留，非截图遮挡warnings",
+    "生产发布强制等待性能检查未演练",
+    "小时级、生产数据/完整角色、同文档冲突与真机未验收"
+  ],
+  "historicalFailuresOverwritten": false,
+  "manualProductionDeployment": false,
+  "noFurtherMergeNeeded": true
+}

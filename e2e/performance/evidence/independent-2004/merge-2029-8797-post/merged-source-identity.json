@@ -1,0 +1,7 @@
+{
+  "mergeCommit": "8797bde13a2e0a943d26d7fc01a0bb095b344d84",
+  "premergeHead": "5d85c1aa1c954789dcb48971888373ed616b9019",
+  "sourceTreeIdentical": true,
+  "tree": "f0a5ec0cd18b4f977319082bc796a161c482040b",
+  "requiresActualCompiledMergeShaInPostmergeRun": true
+}

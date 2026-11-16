@@ -1,0 +1,35 @@
+{
+  "checkedAt": "2026-11-16T19:05:11.076433+00:00",
+  "queriedBy": "cdscli preview-url main context",
+  "expectedCommit": "8797bde13a2e0a943d26d7fc01a0bb095b344d84",
+  "requests": [
+    {
+      "url": "https://main-prd-agent.miduo.org/",
+      "curlExit": 0,
+      "status": "200"
+    },
+    {
+      "url": "https://main-prd-agent.miduo.org/api/version",
+      "curlExit": 0,
+      "status": "200"
+    }
+  ],
+  "webEntries": [
+    "/assets/index-COnPG6-2-local.js"
+  ],
+  "version": {
+    "app": "prd-agent",
+    "service": "prd-api",
+    "version": "1.0.0+8797bde13a2e0a943d26d7fc01a0bb095b344d84",
+    "commit": "8797bde13a2e0a943d26d7fc01a0bb095b344d84",
+    "shortCommit": "8797bde1",
+    "actualCommit": "8797bde13a2e0a943d26d7fc01a0bb095b344d84",
+    "expectedCommit": "8797bde13a2e0a943d26d7fc01a0bb095b344d84",
+    "commitMatch": "match",
+    "commitWarning": null,
+    "buildTimeUtc": "2026-11-16T18:56:25Z",
+    "environment": "Production",
+    "serverTimeUtc": "2026-11-16T19:05:10.9755494Z"
+  },
+  "scope": "普通匿名GET身份核对；未登录写入或施压"
+}

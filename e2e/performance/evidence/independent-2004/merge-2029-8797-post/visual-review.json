@@ -1,0 +1,52 @@
+{
+  "allImagesActuallyViewed": true,
+  "commit": "8797bde13a2e0a943d26d7fc01a0bb095b344d84",
+  "sourceRun": 43933991017,
+  "scope": "逐张实际回读11图：桌面/触控手机明暗主题、知识库无教程遮罩、正确文档、四种唯一正文标记刷新后与API重启后仍显示；原始头像资源console P1四条另保留",
+  "files": [
+    {
+      "name": "01-desktop-dark-home",
+      "sha256": "d58314071c28dc0301e70c1337013309efd54490a10b51bc0b242daaddf3d565"
+    },
+    {
+      "name": "02-desktop-dark-knowledge-list",
+      "sha256": "3a17f9c65a4a40d7c7bc87351d7e509bd7b05dac87ecbb4fc0c42da12c57355b"
+    },
+    {
+      "name": "03-desktop-dark-document-open",
+      "sha256": "95ff3a57b9a77c6d60ae0611d7bef2df5e6df7c65f8bdde0d42937808dc89be6"
+    },
+    {
+      "name": "04-desktop-dark-saved-refresh",
+      "sha256": "f61ff64ddcbc62fe8f95e9ff5ea0bfd3233d63afa196886a173784bc6f80b2b3"
+    },
+    {
+      "name": "05-desktop-light-home",
+      "sha256": "c34b201d26a36d1cc70091a708dc9f5a5748879d33bc1a6ac67fd95b09851c17"
+    },
+    {
+      "name": "06-desktop-light-saved-refresh",
+      "sha256": "d7927bef27b279ab71e7a1127a37928d95ab2d27b7cf91e657cd60784a8e7f50"
+    },
+    {
+      "name": "07-mobile-dark-home",
+      "sha256": "7570bad4aeafe4054078f8c737394d6a0a6f297ea356c71a515fedf626d62db7"
+    },
+    {
+      "name": "08-mobile-dark-saved-refresh",
+      "sha256": "4bdf473cd1f95fa6d33cddccb58ab9ace5b9da8f44e71670c706653cff3e53a8"
+    },
+    {
+      "name": "09-mobile-light-home",
+      "sha256": "39cfee2b1c918074486f95d5341609c666e0f601ce4d521e87dc6245e6e56cd4"
+    },
+    {
+      "name": "10-mobile-light-saved-refresh",
+      "sha256": "f742abe5e55f4114740d7105aad4a4164557a974c5f1f8c5216573180aa1026e"
+    },
+    {
+      "name": "11-mobile-light-server-restart",
+      "sha256": "c64131c9966f7723da615e3c68f2d29093774e7fa15ff9418080a504e550ea7f"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "merged": true,
+  "sha": "8797bde13a2e0a943d26d7fc01a0bb095b344d84",
+  "baseBeforeMerge": "c14389a403ff296c4bbfc95c0fbb6553c673bcd2",
+  "headBeforeMerge": "5d85c1aa1c954789dcb48971888373ed616b9019",
+  "mergedAt": "2026-11-16T18:55:53Z",
+  "postmergeRun": 43933991017,
+  "postmergeConclusion": "success",
+  "postmergeProfile": "normal",
+  "priorTwoApprovalRejectionsPreserved": true,
+  "noManualProductionRelease": true,
+  "postmergeStatus": "completed",
+  "independentRawVerification": true,
+  "observedStates": [
+    "in_progress",
+    "completed/success"
+  ]
+}

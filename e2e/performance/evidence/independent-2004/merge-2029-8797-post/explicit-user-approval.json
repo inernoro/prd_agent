@@ -1,0 +1,1 @@
+{"source":"本会话最新用户对审批确认问题的直接答复","answer":"同意将 inernoro/prd_agent 的 PR #2029 合并到 main","repository":"inernoro/prd_agent","pr":2029,"target":"main","productionRelease":false,"subsequentReviewedMergeResult":{"merged":true,"sha":"8797bde13a2e0a943d26d7fc01a0bb095b344d84"},"priorTwoRejectionsPreserved":true}
