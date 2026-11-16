@@ -19,6 +19,9 @@ const credentialHeaders = ['cookie', 'x-ai-access-key', 'ai-access-key', 'author
 const cookieNames = ['cds_token', 'cds_gh_session', 'cds_sso_session'];
 const MAX_REPLY_BYTES = 2 * 1024 * 1024;
 const TIMEOUT_MS = 15_000;
+class ClusterIdentityValidationError extends Error {
+  constructor(readonly code: string) { super(code); }
+}
 
 function origin(value: string): string {
   const url = new URL(value);
@@ -142,7 +145,7 @@ export class ClusterIdentityService {
     if (c?.role !== 'member' || raw.clusterId !== c.clusterId || raw.authorityNodeId !== c.authorityNodeId
       || raw.nodeId !== c.nodeId || !identityValid || !scopeValid
       || (!(reconfigure && owner) && JSON.stringify(Object.entries(raw.projects || {}).sort()) !== JSON.stringify(Object.entries(c.projects).sort()))) {
-      throw new Error('cluster identity mismatch');
+      throw new ClusterIdentityValidationError('cluster_identity_mismatch');
     }
     if (reconfigure && owner) return { clusterId: raw.clusterId, nodeId: raw.nodeId, authorityNodeId: raw.authorityNodeId,
       user: raw.user, session: raw.session, basicHuman: raw.basicHuman, aiSession: raw.aiSession };
@@ -151,7 +154,7 @@ export class ClusterIdentityService {
       const project = this.state.getProject(local);
       const repository = clusterProjectRepository(project);
       if (!local || !project || !(id in (raw.projectRepositories || {})) || raw.projectRepositories[id] !== repository
-        || (!repository && id !== project.id)) throw new Error('project has no matching cluster repository binding');
+        || (!repository && id !== project.id)) throw new ClusterIdentityValidationError('cluster_project_binding_mismatch');
       return local;
     };
     for (const id of Object.keys(c.projects)) mapId(id);
@@ -170,7 +173,8 @@ export class ClusterIdentityService {
       'x-cds-cluster-token': c.nodeToken, 'accept': 'application/json' };
     for (const key of credentialHeaders) if (typeof req.headers[key] === 'string') headers[key] = req.headers[key] as string;
     if (body !== undefined) headers['content-type'] = 'application/json';
-    const audit = createExternalResponseAudit(this.sink, { projectId: '_cluster', remoteProjectId: '_cluster', policy: 'cluster-identity', dryRun: false },
+    const audit = createExternalResponseAudit(this.sink, { projectId: '_cluster', remoteProjectId: '_cluster', policy: 'cluster-identity', dryRun: false,
+      businessRequestId: (req as Request & { cdsRequestId?: string }).cdsRequestId },
       { source: 'cluster-identity', action: 'cluster.identity.response', message: '集群身份响应' });
     audit.assertAvailable();
     const started = Date.now();
@@ -305,7 +309,16 @@ export class ClusterIdentityService {
       this.copyCookies(res, reply.cookies);
       this.lastVerifiedAt = new Date().toISOString(); this.lastErrorAt = null;
       return false;
-    } catch { this.lastErrorAt = new Date().toISOString(); failure(res, 'cluster_identity_unavailable'); return true; }
+    } catch (error) {
+      this.lastErrorAt = new Date().toISOString();
+      const code = error instanceof ClusterIdentityValidationError ? error.code : 'cluster_identity_unavailable';
+      try {
+        await this.sink?.recordImmediate?.({ category: 'system', severity: 'warn', source: 'cluster-identity', action: 'cluster.identity.validation-rejected',
+          message: '集群身份本地校验拒绝', requestId: (req as Request & { cdsRequestId?: string }).cdsRequestId,
+          details: { clusterId: this.config?.clusterId, nodeId: this.config?.nodeId, code } });
+      } catch { console.warn('[cluster-identity] 本地校验拒绝记录未能持久化'); }
+      failure(res, code); return true;
+    }
   }
   login(req: Request, res: Response): void {
     const c = this.config;

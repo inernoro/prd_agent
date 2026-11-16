@@ -65,6 +65,7 @@ export interface StandbyResponseFacts {
 /** Existing project-scoped event store and its retention/query path; no new public log store. */
 export function createStandbyResponseAudit(sink: ServerEventLogSink | null | undefined, scope: {
   projectId: string; remoteProjectId: string; policy: string; dryRun: boolean; configUpdatedAt?: string;
+  businessRequestId?: string;
 }, event = { source: 'standby-response-audit', action: 'standby.peer.response', message: '备用站远端响应证据' }) {
   const operationId = randomUUID();
   let attempt = 0;

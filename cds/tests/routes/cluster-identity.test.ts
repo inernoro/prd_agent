@@ -156,6 +156,7 @@ describe('cluster identity through two real HTTP control planes', () => {
     expect(result.status).toBe(503); expect(result.json.error).toBe('cluster_identity_unavailable');
     const rows = fs.readFileSync(member.eventFile, 'utf8').trim().split('\n').map(s => JSON.parse(s));
     expect(rows.some(r => r.source === 'cluster-identity' && r.details.responseReceived === false)).toBe(true);
+    expect(rows.some(r => r.source === 'cluster-identity' && r.details.businessRequestId === result.headers.get('x-cds-request-id'))).toBe(true);
     for (const secret of [primaryKey, oldMemberKey, nodeToken]) expect(JSON.stringify(rows)).not.toContain(secret);
   });
 
@@ -166,7 +167,10 @@ describe('cluster identity through two real HTTP control planes', () => {
     expect(invalid.status).toBe(401);
     await request(primary, '/api/cluster/identity/config', primaryKey, 'PUT', { version: 1, role: 'authority', clusterId: 'fixture-cluster', nodeId: 'primary',
       members: [{ nodeId: 'standby', url: member.url, tokenHash: hash(nodeToken), projects: { 'source-a': 'local-b' } }] });
-    expect((await request(member, '/api/projects/local-a', primaryKey)).status).toBe(503);
+    const rejected = await request(member, '/api/projects/local-a', primaryKey);
+    expect(rejected.status).toBe(503);
+    const decisions = await member.sink.findRecent!({ requestId: rejected.headers.get('x-cds-request-id')! });
+    expect(decisions.some(row => row.details?.code === 'cluster_identity_mismatch')).toBe(true);
     expect(() => parseClusterIdentityConfig({ version: 1, role: 'member', clusterId: 'x', nodeId: 'standby', authorityNodeId: 'primary',
       authorityUrl: 'https://user:password@foreign.example/', nodeToken, projects })).toThrow();
   });
@@ -204,7 +208,10 @@ describe('cluster identity through two real HTTP control planes', () => {
   it('rejects a same-name binding whose repositories differ and allows the owner to repair it', async () => {
     projectKey();
     member.state.updateProject('local-a', { gitRepoUrl: 'https://foreign.example/fixture/a.git' });
-    expect((await request(member, '/api/projects/local-a', primaryKey)).status).toBe(503);
+    const rejected = await request(member, '/api/projects/local-a', primaryKey);
+    expect(rejected.status).toBe(503);
+    const decisions = await member.sink.findRecent!({ requestId: rejected.headers.get('x-cds-request-id')! });
+    expect(decisions.some(row => row.details?.code === 'cluster_project_binding_mismatch')).toBe(true);
     expect((await request(member, '/api/cluster/identity/config', primaryKey, 'PUT', {
       version: 1, role: 'member', clusterId: 'fixture-cluster', nodeId: 'standby', authorityNodeId: 'primary', authorityUrl: primary.url, nodeToken, projects,
     })).status).toBe(200);
