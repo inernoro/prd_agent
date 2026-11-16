@@ -1,0 +1,49 @@
+[
+  {
+    "runId": 43836294615,
+    "file": "failed-run-43836294615.zip",
+    "sha256": "2b64a4d93765d72eaee5ef511b25cabe77850dff1dd894f53506cb898e8ff6cc",
+    "source": "GitHub原始artifact ZIP，字节未改",
+    "result": "failure"
+  },
+  {
+    "runId": 43843135250,
+    "file": "failed-run-43843135250.zip",
+    "sha256": "019ff55314cfe7cc25c27a0bad4dc04d47d37534f44e5f81c6345b2ef209e795",
+    "source": "GitHub原始artifact ZIP，字节未改",
+    "result": "failure"
+  },
+  {
+    "runId": 43851747550,
+    "file": "failed-run-43851747550.zip",
+    "sha256": "4b183330e2c55e5994f002247dfca38ba80e1532a2fad20e32b0986fbe3dca3e",
+    "source": "GitHub原始artifact ZIP，字节未改",
+    "result": "failure"
+  },
+  {
+    "runId": 43851742451,
+    "file": "failed-run-43851742451.zip",
+    "sha256": "8dd8a77b9d28c87cde88c642230cc6516990dfc888a92d9cfedc48ab97fb6b92",
+    "source": "GitHub原始artifact ZIP，字节未改",
+    "result": "failure"
+  },
+  {
+    "runId": 43854135325,
+    "file": "failed-run-43854135325.zip",
+    "sha256": "678b14aac2aaee87b5b232122caf698b8ee6ee9acec7afe619920ee8a74ee49f",
+    "source": "GitHub原始artifact ZIP，字节未改",
+    "result": "failure"
+  },
+  {
+    "runId": 43854205441,
+    "file": "failed-run-43854205441.zip",
+    "sha256": "782920f11d43a15d0ccb1fec2a1bb6c17b396ff6452df7b62ed3eb80b080c366",
+    "source": "GitHub原始artifact ZIP，字节未改",
+    "result": "failure"
+  },
+  {
+    "file": "local-attempts-original.zip",
+    "sha256": "1371e183d5a053dcebf65046d4ccac57f726e53fbc7a5b71dadc10855042867c",
+    "source": "原本地尝试及健康最终证据修复复验；目录迁移回执另存"
+  }
+]

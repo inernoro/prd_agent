@@ -1,0 +1,14 @@
+{
+  "sourceRun": 43836294615,
+  "before": {
+    "status": "degraded",
+    "outcome": "本次故意拖慢，出现“不通过”符合预期；正常版本是否变慢，请看正常检查报告。"
+  },
+  "after": {
+    "status": "unknown",
+    "outcome": "已检测到页面变慢，但接口也超出正常对照，尚未证明“接口快、页面慢”仍会被发现。"
+  },
+  "unchangedRawResultSha256": "70a339e3635c0cb75921738bb6487b9a3de2b9229fb3f14a6049b11ce867a465",
+  "sourceApplicationCommit": "9cb6385c0b05036e9d530085182e9f607e5c7f35",
+  "sourceWorkflowHead": "a7bab38d9ea262225ea163cf30887df764dc76fd"
+}

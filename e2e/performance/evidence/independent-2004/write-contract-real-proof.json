@@ -1,0 +1,46 @@
+[
+  {
+    "runId": 43851747550,
+    "applicationCommit": "528de1331ed748cfc7f2a19c0b7c71c2774d82b2",
+    "profile": "normal",
+    "oldExit": 1,
+    "newExit": 0,
+    "newProof": {
+      "verified": true,
+      "flow": "edit-existing-document",
+      "independentWriterDocuments": 128,
+      "phases": [
+        "normal"
+      ],
+      "observedRows": 1936,
+      "cleanup": "销毁本轮隔离容器、卷与网络；不在计时流程中删除文档"
+    },
+    "rawResultSha256": "83655e77178ca0e8dc0b1866ce76c0de06838b19b4f2c6b7e9413ab4c0ee2ec0"
+  },
+  {
+    "runId": 43851742451,
+    "applicationCommit": "528de1331ed748cfc7f2a19c0b7c71c2774d82b2",
+    "profile": "all",
+    "oldExit": 1,
+    "newExit": 0,
+    "newProof": {
+      "verified": true,
+      "flow": "edit-existing-document",
+      "independentWriterDocuments": 128,
+      "phases": [
+        "normal",
+        "ramp-2",
+        "ramp-4",
+        "ramp-8",
+        "ramp-16",
+        "ramp-32",
+        "ramp-64",
+        "ramp-128",
+        "soak"
+      ],
+      "observedRows": 32720,
+      "cleanup": "销毁本轮隔离容器、卷与网络；不在计时流程中删除文档"
+    },
+    "rawResultSha256": "8d7d21b08b6a5564a30daf3ac6b6b56365aeed9721652bb207a25c3c466557fd"
+  }
+]

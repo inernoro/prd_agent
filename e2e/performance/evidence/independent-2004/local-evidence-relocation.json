@@ -1,0 +1,17 @@
+[
+  {
+    "original": "/workspace/prd_agent/work/independent-1997/minimal-pr/work/repair-v4",
+    "preservedAt": "/tmp/map-performance-2004-report/local-attempts",
+    "reason": "验收产物移出代码仓库；字节与原始记录未改"
+  },
+  {
+    "original": "/workspace/prd_agent/work/independent-1997/minimal-pr/work/merge-2004/failed-artifacts",
+    "preservedAt": "/tmp/map-performance-2004-report/original-a7-artifacts",
+    "reason": "验收产物移出代码仓库；字节与原始记录未改"
+  },
+  {
+    "original": "/workspace/prd_agent/work/independent-1997/minimal-pr/work/minimal-pr/artifacts",
+    "preservedAt": "/tmp/map-performance-2004-report/original-7345-artifacts",
+    "reason": "验收产物移出代码仓库；字节与原始记录未改"
+  }
+]

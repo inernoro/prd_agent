@@ -1,0 +1,23 @@
+{
+  "stage": "页面最终证据阻断修复",
+  "head": "3b246376362fb798139a0b0b24daff0e090ca7bb",
+  "base": "61e759ab0af4bbdd6bc342760192d0f9f4e4433b",
+  "rules": [
+    "AGENTS.md",
+    ".Codex/rules/local-debugging.md",
+    ".claude/rules/pre-merge-recheck.md"
+  ],
+  "claim": "同一真实HTTP500在最后截图之后到达时，上层验收必须拒绝，不能与最终截图证据矛盾",
+  "oldBehavior": "writeManifest附500警告后旧调用方pass仍为true",
+  "newBehavior": "reconcilePageCases在关闭浏览器后重查全部HTTP/JS错误；finalizeEvidence重查最终manifest后同步pass=false/state=failed，调用方据此exitCode=1",
+  "evidence": {
+    "unitTest": "e2e/performance/evidence.test.mjs",
+    "tests": 31,
+    "passing": 31,
+    "localPositiveApplication": "c97ab1d2ca3147ae3e81d483a21fdb84b50f0d1e",
+    "localPositiveResult": "/tmp/map-performance-2004-report/finalizer-local/result.json",
+    "localPositiveShots": "/tmp/map-performance-2004-finalizer-local/manifest.json"
+  },
+  "risk": "内部HTTP替身只能证明工具阻断逻辑，不能代替MAP业务路径；当前新head真实页面仍待CI",
+  "scope": "15文件+414/-33；执行器和配套测试，属于已经批准范围；不改产品功能、阈值、并发或限额"
+}
