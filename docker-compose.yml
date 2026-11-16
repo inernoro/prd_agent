@@ -1,3 +1,11 @@
+# 每个容器沿用 CDS 已有的 json-file 轮转上限；仅在受支持的容器重建后生效。
+# 禁止直接截断 /var/lib/docker 中的日志，既有容器需另行安排维护发布。
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 services:
   gateway:
     image: nginx:1.27-alpine
@@ -25,6 +33,7 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
+    logging: *bounded-logging
 
   mongodb:
     image: mongo:8.0
@@ -36,6 +45,7 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
+    logging: *bounded-logging
 
   redis:
     image: redis:7-alpine
@@ -45,6 +55,7 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
+    logging: *bounded-logging
 
   api:
     # 生产环境禁止本地构建：默认拉取 :latest（由 GitHub Actions 推送）
@@ -180,6 +191,7 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
+    logging: *bounded-logging
 
   # 独立 LLM serving 网关 llmgw-serve —— DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*。
   # 主库只承载 MAP 业务依赖；appCaller、模型池、平台、exchange 和请求日志均从
@@ -236,6 +248,7 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
+    logging: *bounded-logging
 
   # serving 第二实例。两实例使用同一不可变镜像和 GW-owned 数据库，由 gateway nginx 做被动摘流。
   llmgw-serve-b:
@@ -287,6 +300,7 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
+    logging: *bounded-logging
 
   # 独立 LLM 网关服务 llmgw —— 独立 llmgw/console-api 镜像（自包含 ASP.NET 服务，监听 8090）。
   # 与 MAP 共享同一 Mongo（读 llmrequestlogs 做观测）+ 独立 LlmGwJwt__Secret（网关自身账号鉴权，
@@ -333,6 +347,7 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
+    logging: *bounded-logging
 
   # 独立 LLM 网关前端静态站 llmgw-web —— 独立 llmgw/web 镜像（nginx 托管构建产物，监听 80）。
   # SPA 回退 + /gw 反代到 llmgw:8090（见 llmgw/web/nginx.conf）。
@@ -344,6 +359,7 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
+    logging: *bounded-logging
 
   # 设计执行服务 design-opendesign（OpenDesign 引擎 + map-design-executor-v1），只供 api 经内部网络调用，
   # 不发布端口。镜像与 api 同一个发布 ref（exec_dep.sh 钉版并同批拉取）。任务状态只在进程内存里，
@@ -366,6 +382,7 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
+    logging: *bounded-logging
 
 volumes:
   mongodb_data:

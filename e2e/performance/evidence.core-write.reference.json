@@ -1,0 +1,3306 @@
+{
+  "schema": 1,
+  "overallStatus": "NOT_PASSED_BLOCKED",
+  "blockers": [
+    {
+      "id": "BLOCK-PREVIEW",
+      "status": "BLOCKED",
+      "evidence": "当前环境 observations_current=true，network_policy.state=enforced；miduo.org 不在有效允许列表；上次权威 CDS 查询为隧道403",
+      "impact": "无法取得权威公开预览入口、核对部署提交或执行公网业务链及主题/移动端验收",
+      "unblock": "由环境维护入口保留现有规则并允许配置的 CDS 主机 miduo.org；保存后刷新状态并建立新连接，按实际返回入口验证，不猜测域名"
+    },
+    {
+      "id": "BLOCK-CI",
+      "status": "BLOCKED",
+      "evidence": "api.github.com 不在当前有效允许列表；上次 Actions 前置查询 Forbidden；没有 workflow dispatch 工具",
+      "impact": "现有 Preview Acceptance 隔离性能作业尚无实际云端运行与artifact",
+      "unblock": "环境维护入口允许 api.github.com；由执行器重新查询和触发既有工作流，并跟踪实际作业及artifact，不要求用户代为测试"
+    }
+  ],
+  "goal": "让MAP四条真实核心用户路径的性能退化在进入用户使用前被可重复的隔离CI测试识别",
+  "applicationCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+  "workloadVersion": 3,
+  "codeMatches": {
+    "run.mjs": {
+      "frozenCommit": "ff576c40f",
+      "digest": "eaeeec6e8f2a046b8fee153132cfdede649de5e4db6522424467ff4d2c44c944",
+      "matched": true
+    },
+    "metrics.mjs": {
+      "frozenCommit": "ff576c40f",
+      "digest": "a45e45bd489b530efb9985a6dabebd4f328194d652767b8e67f442713b0d8b69",
+      "matched": true
+    }
+  },
+  "provenanceNote": "base-1在ff576c40f提交前启动，源代码摘要与冻结提交逐字匹配；应用编译、声明、Web均独立核对目标完整SHA，不用harnessCommit单独代替代码来源",
+  "baseline": {
+    "file": "baseline.core-write.reference.json",
+    "policyVersion": 3,
+    "browserLimits": {
+      "home": {
+        "samples": 9,
+        "readyP95Ms": 2927.1183190000083
+      },
+      "knowledge-list": {
+        "samples": 9,
+        "readyP95Ms": 1198.004501000025
+      },
+      "document-open": {
+        "samples": 9,
+        "readyP95Ms": 2454.509914000024
+      },
+      "write": {
+        "samples": 9,
+        "readyP95Ms": 3574.9660279999953
+      }
+    },
+    "sourceRuns": [
+      {
+        "environmentId": "map-perf-fe605aab3c27",
+        "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+        "startedAt": "2026-11-13T10:51:41.320Z"
+      },
+      {
+        "environmentId": "map-perf-680a34659a69",
+        "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+        "startedAt": "2026-11-13T10:53:33.801Z"
+      },
+      {
+        "environmentId": "map-perf-55ad84e25f9d",
+        "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+        "startedAt": "2026-11-13T10:55:28.470Z"
+      }
+    ]
+  },
+  "runs": {
+    "base-1": {
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "harnessCommit": "d86d05b55c016fb9946e0872c4373124f1753fe4",
+      "execution": {
+        "profile": "normal",
+        "state": "complete"
+      },
+      "environmentId": "map-perf-fe605aab3c27",
+      "startedAt": "2026-11-13T10:51:41.320Z",
+      "finishedAt": "2026-11-13T10:53:32.933Z",
+      "buildIdentity": {
+        "api": {
+          "actualCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "expectedCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "commitMatch": "match"
+        },
+        "webEntries": [
+          "/assets/index-CqLXP3YQ-dd992d7add2686a83841b0d7a78d3de32e84b85c.js"
+        ]
+      },
+      "browser": {
+        "pass": true,
+        "samples": {
+          "home": [
+            996.1671649999989,
+            911.387106000002,
+            903.9506699999984
+          ],
+          "knowledge-list": [
+            198.27638599999773,
+            292.06377000000066,
+            131.56371899999795
+          ],
+          "document-open": [
+            1026.8842330000043,
+            985.3491360000044,
+            1045.748824000002
+          ],
+          "write": [
+            1870.5493849999984,
+            1397.4116730000023,
+            1434.2775669999974
+          ]
+        }
+      },
+      "browserInjection": {
+        "delayMs": 0,
+        "applied": []
+      },
+      "injectionMs": 0,
+      "resourceAccounting": {
+        "source": "Linux /proc process tree; CPU ticks and summed RSS",
+        "requestedLimitsEnforced": false,
+        "clockTicksPerSecond": 100,
+        "pageBytes": 4096
+      },
+      "host": {
+        "cpus": 5,
+        "memoryBytes": 18882662400,
+        "kernel": "6.18.57"
+      },
+      "phases": [
+        {
+          "name": "normal",
+          "users": 2,
+          "seconds": 60.04139470599999,
+          "metrics": {
+            "document-open": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986211277668453,
+              "client": {
+                "p50": 6.858873999997741,
+                "p95": 10.779959999999846,
+                "p99": 24.672058999996807
+              },
+              "appSamples": 120,
+              "appP95": 7.24,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986211277668453,
+              "client": {
+                "p50": 10.50105099999928,
+                "p95": 29.02901600000041,
+                "p99": 53.143331999999646
+              },
+              "appSamples": 120,
+              "appP95": 15.711,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986211277668453,
+              "client": {
+                "p50": 57.47371299999941,
+                "p95": 137.17119999999704,
+                "p99": 186.2223779999913
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986211277668453,
+              "client": {
+                "p50": 8.967288999992888,
+                "p95": 18.335197000000335,
+                "p99": 21.825379000001703
+              },
+              "appSamples": 120,
+              "appP95": 14.659,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986211277668453,
+              "client": {
+                "p50": 30.396644000007655,
+                "p95": 62.22610900000291,
+                "p99": 161.0858159999916
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986211277668453,
+              "client": {
+                "p50": 6.7380859999975655,
+                "p95": 18.12855999999738,
+                "p99": 63.27162299999327
+              },
+              "appSamples": 120,
+              "appP95": 13.528,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986211277668453,
+              "client": {
+                "p50": 15.979391999993823,
+                "p95": 25.043558999997913,
+                "p99": 78.8280800000066
+              },
+              "appSamples": 120,
+              "appP95": 21.314,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986211277668453,
+              "client": {
+                "p50": 7.534116000009817,
+                "p95": 10.20198800000071,
+                "p99": 50.349626999988686
+              },
+              "appSamples": 120,
+              "appP95": 8.555,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 59,
+              "maxCpuPercent": 50.755598199975516,
+              "maxRssBytes": 1117417472
+            },
+            "mongo": {
+              "sampleCount": 59,
+              "maxCpuPercent": 9.721499172219282,
+              "maxRssBytes": 210231296
+            },
+            "redis": {
+              "sampleCount": 59,
+              "maxCpuPercent": 2.824705778763798,
+              "maxRssBytes": 14897152
+            },
+            "web": {
+              "sampleCount": 59,
+              "maxCpuPercent": 1.9625707495225,
+              "maxRssBytes": 9416704
+            }
+          }
+        }
+      ]
+    },
+    "base-2": {
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "harnessCommit": "ff576c40f469d774e349545d4861f0045f50b9d7",
+      "execution": {
+        "profile": "normal",
+        "state": "complete"
+      },
+      "environmentId": "map-perf-680a34659a69",
+      "startedAt": "2026-11-13T10:53:33.801Z",
+      "finishedAt": "2026-11-13T10:55:27.571Z",
+      "buildIdentity": {
+        "api": {
+          "actualCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "expectedCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "commitMatch": "match"
+        },
+        "webEntries": [
+          "/assets/index-CqLXP3YQ-dd992d7add2686a83841b0d7a78d3de32e84b85c.js"
+        ]
+      },
+      "browser": {
+        "pass": true,
+        "samples": {
+          "home": [
+            1210.2419319999972,
+            804.4812029999957,
+            845.6369730000006
+          ],
+          "knowledge-list": [
+            395.3716790000035,
+            298.7918290000016,
+            127.82740499999636
+          ],
+          "document-open": [
+            1096.2314200000037,
+            983.3046580000009,
+            993.1828719999976
+          ],
+          "write": [
+            1545.5440759999983,
+            1794.7699929999944,
+            1302.4105039999995
+          ]
+        }
+      },
+      "browserInjection": {
+        "delayMs": 0,
+        "applied": []
+      },
+      "injectionMs": 0,
+      "resourceAccounting": {
+        "source": "Linux /proc process tree; CPU ticks and summed RSS",
+        "requestedLimitsEnforced": false,
+        "clockTicksPerSecond": 100,
+        "pageBytes": 4096
+      },
+      "host": {
+        "cpus": 5,
+        "memoryBytes": 18882662400,
+        "kernel": "6.18.57"
+      },
+      "phases": [
+        {
+          "name": "normal",
+          "users": 2,
+          "seconds": 60.024121002,
+          "metrics": {
+            "document-open": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991962897049604,
+              "client": {
+                "p50": 6.771278000000166,
+                "p95": 18.601974999997765,
+                "p99": 26.829094999993686
+              },
+              "appSamples": 120,
+              "appP95": 14.808,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991962897049604,
+              "client": {
+                "p50": 11.703652000011061,
+                "p95": 27.2749199999962,
+                "p99": 143.0075169999982
+              },
+              "appSamples": 120,
+              "appP95": 19.372,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991962897049604,
+              "client": {
+                "p50": 64.42396999998891,
+                "p95": 125.58887200000754,
+                "p99": 200.77648300000146
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991962897049604,
+              "client": {
+                "p50": 9.35420200000226,
+                "p95": 20.361956999986432,
+                "p99": 27.157581000006758
+              },
+              "appSamples": 120,
+              "appP95": 17.82,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991962897049604,
+              "client": {
+                "p50": 31.28741400000581,
+                "p95": 68.34487200000149,
+                "p99": 110.25019400000747
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991962897049604,
+              "client": {
+                "p50": 6.629022000008263,
+                "p95": 13.071217000004253,
+                "p99": 68.94385100000363
+              },
+              "appSamples": 120,
+              "appP95": 10.194,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991962897049604,
+              "client": {
+                "p50": 16.175021999995806,
+                "p95": 28.708983000004082,
+                "p99": 82.90608899999643
+              },
+              "appSamples": 120,
+              "appP95": 25.027,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991962897049604,
+              "client": {
+                "p50": 7.708944000005431,
+                "p95": 17.77679599999101,
+                "p99": 66.36600799999724
+              },
+              "appSamples": 120,
+              "appP95": 11.929,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 59,
+              "maxCpuPercent": 55.055407545864796,
+              "maxRssBytes": 1089368064
+            },
+            "mongo": {
+              "sampleCount": 59,
+              "maxCpuPercent": 9.473172870592643,
+              "maxRssBytes": 211861504
+            },
+            "redis": {
+              "sampleCount": 59,
+              "maxCpuPercent": 1.966314297016289,
+              "maxRssBytes": 14753792
+            },
+            "web": {
+              "sampleCount": 59,
+              "maxCpuPercent": 1.9562782454300118,
+              "maxRssBytes": 9687040
+            }
+          }
+        }
+      ]
+    },
+    "base-3": {
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "harnessCommit": "ff576c40f469d774e349545d4861f0045f50b9d7",
+      "execution": {
+        "profile": "normal",
+        "state": "complete"
+      },
+      "environmentId": "map-perf-55ad84e25f9d",
+      "startedAt": "2026-11-13T10:55:28.470Z",
+      "finishedAt": "2026-11-13T10:57:16.474Z",
+      "buildIdentity": {
+        "api": {
+          "actualCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "expectedCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "commitMatch": "match"
+        },
+        "webEntries": [
+          "/assets/index-CqLXP3YQ-dd992d7add2686a83841b0d7a78d3de32e84b85c.js"
+        ]
+      },
+      "browser": {
+        "pass": true,
+        "samples": {
+          "home": [
+            1335.1404819999989,
+            870.4585169999991,
+            865.0339399999939
+          ],
+          "knowledge-list": [
+            162.32373399999778,
+            266.9990969999999,
+            241.09676999999647
+          ],
+          "document-open": [
+            1077.7008999999998,
+            643.471921999997,
+            821.8214440000011
+          ],
+          "write": [
+            1488.6045899999954,
+            1533.9376869999978,
+            1340.0987660000028
+          ]
+        }
+      },
+      "browserInjection": {
+        "delayMs": 0,
+        "applied": []
+      },
+      "injectionMs": 0,
+      "resourceAccounting": {
+        "source": "Linux /proc process tree; CPU ticks and summed RSS",
+        "requestedLimitsEnforced": false,
+        "clockTicksPerSecond": 100,
+        "pageBytes": 4096
+      },
+      "host": {
+        "cpus": 5,
+        "memoryBytes": 18882662400,
+        "kernel": "6.18.57"
+      },
+      "phases": [
+        {
+          "name": "normal",
+          "users": 2,
+          "seconds": 60.030568842,
+          "metrics": {
+            "document-open": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989815574768095,
+              "client": {
+                "p50": 7.502491000006557,
+                "p95": 14.631738999989466,
+                "p99": 20.048569999999017
+              },
+              "appSamples": 120,
+              "appP95": 11.984,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989815574768095,
+              "client": {
+                "p50": 10.394934000010835,
+                "p95": 24.5908999999956,
+                "p99": 80.38827499999024
+              },
+              "appSamples": 120,
+              "appP95": 16.02,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989815574768095,
+              "client": {
+                "p50": 62.77240199998778,
+                "p95": 144.06168699999398,
+                "p99": 267.5865569999951
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989815574768095,
+              "client": {
+                "p50": 9.625939999998081,
+                "p95": 13.78714799998852,
+                "p99": 59.061215000008815
+              },
+              "appSamples": 120,
+              "appP95": 11.766,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989815574768095,
+              "client": {
+                "p50": 32.516233999995166,
+                "p95": 96.79896200000076,
+                "p99": 231.77990000000136
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989815574768095,
+              "client": {
+                "p50": 7.1548860000038985,
+                "p95": 15.29285900000832,
+                "p99": 202.6970500000025
+              },
+              "appSamples": 120,
+              "appP95": 10.181,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989815574768095,
+              "client": {
+                "p50": 16.813490000000456,
+                "p95": 23.114972999988822,
+                "p99": 68.01358299999265
+              },
+              "appSamples": 120,
+              "appP95": 20.524,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989815574768095,
+              "client": {
+                "p50": 7.826078999998572,
+                "p95": 20.669160999997985,
+                "p99": 81.67019699999946
+              },
+              "appSamples": 120,
+              "appP95": 12.621,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 59,
+              "maxCpuPercent": 46.42464873862492,
+              "maxRssBytes": 1070718976
+            },
+            "mongo": {
+              "sampleCount": 59,
+              "maxCpuPercent": 9.59374641847457,
+              "maxRssBytes": 214007808
+            },
+            "redis": {
+              "sampleCount": 59,
+              "maxCpuPercent": 2.878123925542371,
+              "maxRssBytes": 15024128
+            },
+            "web": {
+              "sampleCount": 59,
+              "maxCpuPercent": 1.9778353505650226,
+              "maxRssBytes": 9576448
+            }
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "harnessCommit": "ff576c40f469d774e349545d4861f0045f50b9d7",
+      "execution": {
+        "profile": "all",
+        "state": "complete"
+      },
+      "environmentId": "map-perf-025cc2232432",
+      "startedAt": "2026-11-13T10:57:42.857Z",
+      "finishedAt": "2026-11-13T11:03:23.844Z",
+      "buildIdentity": {
+        "api": {
+          "actualCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "expectedCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "commitMatch": "match"
+        },
+        "webEntries": [
+          "/assets/index-CqLXP3YQ-dd992d7add2686a83841b0d7a78d3de32e84b85c.js"
+        ]
+      },
+      "comparison": {
+        "pass": true,
+        "failures": []
+      },
+      "browser": {
+        "pass": true,
+        "samples": {
+          "home": [
+            1270.1139120000007,
+            1066.996438000002,
+            924.7937149999998
+          ],
+          "knowledge-list": [
+            348.9934009999997,
+            442.092813999996,
+            301.6417539999966
+          ],
+          "document-open": [
+            1113.1905740000002,
+            827.3430599999992,
+            986.5950099999973
+          ],
+          "write": [
+            1419.5354389999993,
+            1458.2221690000006,
+            1897.7867379999952
+          ]
+        }
+      },
+      "browserInjection": {
+        "delayMs": 0,
+        "applied": []
+      },
+      "injectionMs": 0,
+      "resourceAccounting": {
+        "source": "Linux /proc process tree; CPU ticks and summed RSS",
+        "requestedLimitsEnforced": false,
+        "clockTicksPerSecond": 100,
+        "pageBytes": 4096
+      },
+      "host": {
+        "cpus": 5,
+        "memoryBytes": 18882662400,
+        "kernel": "6.18.57"
+      },
+      "phases": [
+        {
+          "name": "normal",
+          "users": 2,
+          "seconds": 60.022033211,
+          "metrics": {
+            "document-open": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.999265829235656,
+              "client": {
+                "p50": 7.710953000001609,
+                "p95": 11.455564999996568,
+                "p99": 32.886767999996664
+              },
+              "appSamples": 120,
+              "appP95": 9.61,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.999265829235656,
+              "client": {
+                "p50": 13.369871000002604,
+                "p95": 28.020994999998948,
+                "p99": 32.52387499999895
+              },
+              "appSamples": 120,
+              "appP95": 18.876,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.999265829235656,
+              "client": {
+                "p50": 69.82454799999687,
+                "p95": 91.61953999999969,
+                "p99": 190.0044440000056
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.999265829235656,
+              "client": {
+                "p50": 10.768123999994714,
+                "p95": 24.235792000006768,
+                "p99": 105.30690400001185
+              },
+              "appSamples": 120,
+              "appP95": 19.375,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.999265829235656,
+              "client": {
+                "p50": 33.91676899999584,
+                "p95": 42.54664100000082,
+                "p99": 60.68532200000482
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.999265829235656,
+              "client": {
+                "p50": 7.355515999995987,
+                "p95": 9.815239999996265,
+                "p99": 16.489446999999927
+              },
+              "appSamples": 120,
+              "appP95": 7.71,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.999265829235656,
+              "client": {
+                "p50": 17.51992400000745,
+                "p95": 22.117634000009275,
+                "p99": 23.808810000002268
+              },
+              "appSamples": 120,
+              "appP95": 20.241,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.999265829235656,
+              "client": {
+                "p50": 8.34031299999333,
+                "p95": 11.313229999999749,
+                "p99": 33.679194999989704
+              },
+              "appSamples": 120,
+              "appP95": 9.605,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 59,
+              "maxCpuPercent": 32.15105944180816,
+              "maxRssBytes": 1035116544
+            },
+            "mongo": {
+              "sampleCount": 59,
+              "maxCpuPercent": 12.610794438433953,
+              "maxRssBytes": 211374080
+            },
+            "redis": {
+              "sampleCount": 59,
+              "maxCpuPercent": 1.948549057079282,
+              "maxRssBytes": 14958592
+            },
+            "web": {
+              "sampleCount": 59,
+              "maxCpuPercent": 0.9812609431753584,
+              "maxRssBytes": 9662464
+            }
+          }
+        },
+        {
+          "name": "ramp-2",
+          "users": 2,
+          "seconds": 15.00486984,
+          "metrics": {
+            "document-open": {
+              "attempts": 488,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 32.522774619416495,
+              "client": {
+                "p50": 6.801651999994647,
+                "p95": 10.139510000008158,
+                "p99": 18.437132000006386
+              },
+              "appSamples": 488,
+              "appP95": 8.211,
+              "externalHttpSamples": 488,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 488,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 32.522774619416495,
+              "client": {
+                "p50": 7.854747000004863,
+                "p95": 16.70481799999834,
+                "p99": 28.673857999994652
+              },
+              "appSamples": 488,
+              "appP95": 11.367,
+              "externalHttpSamples": 488,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 488,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 32.522774619416495,
+              "client": {
+                "p50": 57.0441290000017,
+                "p95": 91.62237599999935,
+                "p99": 167.2379329999967
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 488,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 32.522774619416495,
+              "client": {
+                "p50": 8.242853000003379,
+                "p95": 13.367805000001681,
+                "p99": 40.02065599999332
+              },
+              "appSamples": 488,
+              "appP95": 10.736,
+              "externalHttpSamples": 488,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 488,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 32.522774619416495,
+              "client": {
+                "p50": 32.74140099999204,
+                "p95": 53.49224800000957,
+                "p99": 133.16240899999684
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 488,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 32.522774619416495,
+              "client": {
+                "p50": 6.681157999992138,
+                "p95": 11.361528000008548,
+                "p99": 20.82209000000148
+              },
+              "appSamples": 488,
+              "appP95": 8.622,
+              "externalHttpSamples": 488,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 488,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 32.522774619416495,
+              "client": {
+                "p50": 17.63442600000417,
+                "p95": 26.44129299999622,
+                "p99": 64.75672499999928
+              },
+              "appSamples": 488,
+              "appP95": 24.55,
+              "externalHttpSamples": 488,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 488,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 32.522774619416495,
+              "client": {
+                "p50": 7.963803999999072,
+                "p95": 12.99311999999918,
+                "p99": 22.668986999997287
+              },
+              "appSamples": 488,
+              "appP95": 10.784,
+              "externalHttpSamples": 488,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 14,
+              "maxCpuPercent": 161.75453390091437,
+              "maxRssBytes": 1073147904
+            },
+            "mongo": {
+              "sampleCount": 14,
+              "maxCpuPercent": 45.27538470933322,
+              "maxRssBytes": 259870720
+            },
+            "redis": {
+              "sampleCount": 14,
+              "maxCpuPercent": 6.476727905026497,
+              "maxRssBytes": 22953984
+            },
+            "web": {
+              "sampleCount": 14,
+              "maxCpuPercent": 4.936925972015443,
+              "maxRssBytes": 9527296
+            }
+          }
+        },
+        {
+          "name": "ramp-4",
+          "users": 4,
+          "seconds": 15.021287456999998,
+          "metrics": {
+            "document-open": {
+              "attempts": 740,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 49.26342047033766,
+              "client": {
+                "p50": 9.255392999999458,
+                "p95": 17.302518999989843,
+                "p99": 27.757156000006944
+              },
+              "appSamples": 740,
+              "appP95": 13.481,
+              "externalHttpSamples": 740,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 740,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 49.26342047033766,
+              "client": {
+                "p50": 10.548734000010882,
+                "p95": 17.664087999990443,
+                "p99": 30.858978999996907
+              },
+              "appSamples": 740,
+              "appP95": 14.973,
+              "externalHttpSamples": 740,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 740,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 49.26342047033766,
+              "client": {
+                "p50": 76.61728099998436,
+                "p95": 108.1564280000166,
+                "p99": 149.0000560000044
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 740,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 49.26342047033766,
+              "client": {
+                "p50": 11.12229899999511,
+                "p95": 18.981713000001037,
+                "p99": 31.016201999998884
+              },
+              "appSamples": 740,
+              "appP95": 15.455,
+              "externalHttpSamples": 740,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 740,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 49.26342047033766,
+              "client": {
+                "p50": 44.454017000010936,
+                "p95": 60.97415200000978,
+                "p99": 101.56357999998727
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 740,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 49.26342047033766,
+              "client": {
+                "p50": 9.29530299999169,
+                "p95": 15.55863600000157,
+                "p99": 25.08310500002699
+              },
+              "appSamples": 740,
+              "appP95": 12.11,
+              "externalHttpSamples": 740,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 740,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 49.26342047033766,
+              "client": {
+                "p50": 23.407646000006935,
+                "p95": 35.36567100000684,
+                "p99": 42.5314350000117
+              },
+              "appSamples": 740,
+              "appP95": 32.371,
+              "externalHttpSamples": 740,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 740,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 49.26342047033766,
+              "client": {
+                "p50": 11.12612299999455,
+                "p95": 17.333714999986114,
+                "p99": 27.54948499999591
+              },
+              "appSamples": 740,
+              "appP95": 14.919,
+              "externalHttpSamples": 740,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 15,
+              "maxCpuPercent": 181.58263893025514,
+              "maxRssBytes": 598614016
+            },
+            "mongo": {
+              "sampleCount": 15,
+              "maxCpuPercent": 75.58220815052825,
+              "maxRssBytes": 336809984
+            },
+            "redis": {
+              "sampleCount": 15,
+              "maxCpuPercent": 8.613544686852501,
+              "maxRssBytes": 35799040
+            },
+            "web": {
+              "sampleCount": 15,
+              "maxCpuPercent": 6.774780058580167,
+              "maxRssBytes": 9523200
+            }
+          }
+        },
+        {
+          "name": "ramp-8",
+          "users": 8,
+          "seconds": 15.100791855999995,
+          "metrics": {
+            "document-open": {
+              "attempts": 1025,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 67.8772351658325,
+              "client": {
+                "p50": 13.747815999988234,
+                "p95": 23.211876999994274,
+                "p99": 33.61591699998826
+              },
+              "appSamples": 1025,
+              "appP95": 19.175,
+              "externalHttpSamples": 1025,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 1025,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 67.8772351658325,
+              "client": {
+                "p50": 15.766261999990093,
+                "p95": 27.69129799999064,
+                "p99": 37.90228599999682
+              },
+              "appSamples": 1025,
+              "appP95": 23.234,
+              "externalHttpSamples": 1025,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 1025,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 67.8772351658325,
+              "client": {
+                "p50": 115.03535300001386,
+                "p95": 148.80274100002134,
+                "p99": 167.76370400001178
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 1025,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 67.8772351658325,
+              "client": {
+                "p50": 15.967857000010554,
+                "p95": 25.880028999992646,
+                "p99": 34.55202400000417
+              },
+              "appSamples": 1025,
+              "appP95": 21.622,
+              "externalHttpSamples": 1025,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 1025,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 67.8772351658325,
+              "client": {
+                "p50": 66.39914600001066,
+                "p95": 88.59958799998276,
+                "p99": 98.61109900000156
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 1025,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 67.8772351658325,
+              "client": {
+                "p50": 13.802174999989802,
+                "p95": 22.857224999985192,
+                "p99": 28.888122000003932
+              },
+              "appSamples": 1025,
+              "appP95": 19.073,
+              "externalHttpSamples": 1025,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 1025,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 67.8772351658325,
+              "client": {
+                "p50": 33.99102300000959,
+                "p95": 49.182234000007156,
+                "p99": 58.190944000001764
+              },
+              "appSamples": 1025,
+              "appP95": 45.465,
+              "externalHttpSamples": 1025,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 1025,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 67.8772351658325,
+              "client": {
+                "p50": 16.88880600000266,
+                "p95": 29.057831999991322,
+                "p99": 36.95532899998943
+              },
+              "appSamples": 1025,
+              "appP95": 24.723,
+              "externalHttpSamples": 1025,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 14,
+              "maxCpuPercent": 221.28718100335328,
+              "maxRssBytes": 479940608
+            },
+            "mongo": {
+              "sampleCount": 14,
+              "maxCpuPercent": 107.63432482045742,
+              "maxRssBytes": 435769344
+            },
+            "redis": {
+              "sampleCount": 14,
+              "maxCpuPercent": 10.626773752846299,
+              "maxRssBytes": 53231616
+            },
+            "web": {
+              "sampleCount": 14,
+              "maxCpuPercent": 8.505970977086399,
+              "maxRssBytes": 8966144
+            }
+          }
+        },
+        {
+          "name": "ramp-16",
+          "users": 16,
+          "seconds": 15.131103059999994,
+          "metrics": {
+            "document-open": {
+              "attempts": 1165,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 76.99372579648535,
+              "client": {
+                "p50": 23.682319999992615,
+                "p95": 43.313601000001654,
+                "p99": 54.88483999998425
+              },
+              "appSamples": 1165,
+              "appP95": 36.948,
+              "externalHttpSamples": 1165,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 1165,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 76.99372579648535,
+              "client": {
+                "p50": 28.101016000000527,
+                "p95": 46.39639400001033,
+                "p99": 57.96179800000391
+              },
+              "appSamples": 1165,
+              "appP95": 41.54,
+              "externalHttpSamples": 1165,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 1165,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 76.99372579648535,
+              "client": {
+                "p50": 203.88935100001981,
+                "p95": 256.80841200001305,
+                "p99": 292.18509400001494
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 1165,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 76.99372579648535,
+              "client": {
+                "p50": 27.649107000004733,
+                "p95": 46.47007300000405,
+                "p99": 56.82847700000275
+              },
+              "appSamples": 1165,
+              "appP95": 41.199,
+              "externalHttpSamples": 1165,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 1165,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 76.99372579648535,
+              "client": {
+                "p50": 118.37648100001388,
+                "p95": 157.72771700000158,
+                "p99": 183.2444850000029
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 1165,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 76.99372579648535,
+              "client": {
+                "p50": 23.315365999995265,
+                "p95": 42.26040100000682,
+                "p99": 54.56643800000893
+              },
+              "appSamples": 1165,
+              "appP95": 37.497,
+              "externalHttpSamples": 1165,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 1165,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 76.99372579648535,
+              "client": {
+                "p50": 62.75978100000066,
+                "p95": 90.84768199999235,
+                "p99": 106.3882609999855
+              },
+              "appSamples": 1165,
+              "appP95": 84.539,
+              "externalHttpSamples": 1165,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 1165,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 76.99372579648535,
+              "client": {
+                "p50": 29.60583799998858,
+                "p95": 49.161802999995416,
+                "p99": 61.20016899998882
+              },
+              "appSamples": 1165,
+              "appP95": 43.704,
+              "externalHttpSamples": 1165,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 14,
+              "maxCpuPercent": 232.50484232237326,
+              "maxRssBytes": 493277184
+            },
+            "mongo": {
+              "sampleCount": 14,
+              "maxCpuPercent": 119.88093088779235,
+              "maxRssBytes": 455299072
+            },
+            "redis": {
+              "sampleCount": 14,
+              "maxCpuPercent": 18.40472227407065,
+              "maxRssBytes": 79736832
+            },
+            "web": {
+              "sampleCount": 14,
+              "maxCpuPercent": 8.501977520295185,
+              "maxRssBytes": 9183232
+            }
+          }
+        },
+        {
+          "name": "ramp-32",
+          "users": 32,
+          "seconds": 15.289115066000027,
+          "metrics": {
+            "document-open": {
+              "attempts": 1232,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.58020328068069,
+              "client": {
+                "p50": 49.903556000004755,
+                "p95": 77.62772200000472,
+                "p99": 91.35193499998422
+              },
+              "appSamples": 1232,
+              "appP95": 66.085,
+              "externalHttpSamples": 1232,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 1232,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.58020328068069,
+              "client": {
+                "p50": 57.742780000000494,
+                "p95": 84.26231400002143,
+                "p99": 94.99392700000317
+              },
+              "appSamples": 1232,
+              "appP95": 75.269,
+              "externalHttpSamples": 1232,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 1232,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.58020328068069,
+              "client": {
+                "p50": 390.93997200002195,
+                "p95": 468.81205099998624,
+                "p99": 508.01984699998866
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 1232,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.58020328068069,
+              "client": {
+                "p50": 55.93005700001959,
+                "p95": 83.02158299999428,
+                "p99": 95.6373489999969
+              },
+              "appSamples": 1232,
+              "appP95": 71.057,
+              "externalHttpSamples": 1232,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 1232,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.58020328068069,
+              "client": {
+                "p50": 226.17241899998044,
+                "p95": 286.65223700000206,
+                "p99": 323.2212490000238
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 1232,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.58020328068069,
+              "client": {
+                "p50": 49.183159999985946,
+                "p95": 75.59164300002158,
+                "p99": 87.93287200000486
+              },
+              "appSamples": 1232,
+              "appP95": 65.264,
+              "externalHttpSamples": 1232,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 1232,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.58020328068069,
+              "client": {
+                "p50": 114.59829799999716,
+                "p95": 156.27342800001497,
+                "p99": 180.54222499998286
+              },
+              "appSamples": 1232,
+              "appP95": 146.17,
+              "externalHttpSamples": 1232,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 1232,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.58020328068069,
+              "client": {
+                "p50": 59.10310499998741,
+                "p95": 88.69764399999985,
+                "p99": 101.31605899997521
+              },
+              "appSamples": 1232,
+              "appP95": 79.013,
+              "externalHttpSamples": 1232,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 15,
+              "maxCpuPercent": 225.59740625997534,
+              "maxRssBytes": 561422336
+            },
+            "mongo": {
+              "sampleCount": 15,
+              "maxCpuPercent": 141.43405161417934,
+              "maxRssBytes": 611569664
+            },
+            "redis": {
+              "sampleCount": 15,
+              "maxCpuPercent": 7.785222329590913,
+              "maxRssBytes": 94912512
+            },
+            "web": {
+              "sampleCount": 15,
+              "maxCpuPercent": 9.144067512245178,
+              "maxRssBytes": 9543680
+            }
+          }
+        },
+        {
+          "name": "ramp-64",
+          "users": 64,
+          "seconds": 15.530977401000012,
+          "metrics": {
+            "document-open": {
+              "attempts": 1249,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.41992256840057,
+              "client": {
+                "p50": 102.97635799998534,
+                "p95": 151.4390719999792,
+                "p99": 185.18582699997933
+              },
+              "appSamples": 1249,
+              "appP95": 128.707,
+              "externalHttpSamples": 1249,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 1249,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.41992256840057,
+              "client": {
+                "p50": 112.29777400000603,
+                "p95": 164.17258100002073,
+                "p99": 201.2343450000044
+              },
+              "appSamples": 1249,
+              "appP95": 142.079,
+              "externalHttpSamples": 1249,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 1249,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.41992256840057,
+              "client": {
+                "p50": 788.0210599999991,
+                "p95": 904.3907619999954,
+                "p99": 957.3064639999939
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 1249,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.41992256840057,
+              "client": {
+                "p50": 110.51243100001011,
+                "p95": 158.9447410000139,
+                "p99": 197.82580300001428
+              },
+              "appSamples": 1249,
+              "appP95": 139.152,
+              "externalHttpSamples": 1249,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 1249,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.41992256840057,
+              "client": {
+                "p50": 450.6696050000028,
+                "p95": 543.787885000027,
+                "p99": 583.8888349999906
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 1249,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.41992256840057,
+              "client": {
+                "p50": 102.3439800000051,
+                "p95": 146.89027799997712,
+                "p99": 172.88669499999378
+              },
+              "appSamples": 1249,
+              "appP95": 124.49,
+              "externalHttpSamples": 1249,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 1249,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.41992256840057,
+              "client": {
+                "p50": 222.86012800000026,
+                "p95": 288.15858099999605,
+                "p99": 322.1548189999885
+              },
+              "appSamples": 1249,
+              "appP95": 272.883,
+              "externalHttpSamples": 1249,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 1249,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 80.41992256840057,
+              "client": {
+                "p50": 116.1316410000145,
+                "p95": 168.78229200001806,
+                "p99": 187.62999200000195
+              },
+              "appSamples": 1249,
+              "appP95": 144.85,
+              "externalHttpSamples": 1249,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 15,
+              "maxCpuPercent": 228.8276344853673,
+              "maxRssBytes": 700792832
+            },
+            "mongo": {
+              "sampleCount": 15,
+              "maxCpuPercent": 166.56067106122794,
+              "maxRssBytes": 763219968
+            },
+            "redis": {
+              "sampleCount": 15,
+              "maxCpuPercent": 5.743471415904411,
+              "maxRssBytes": 116932608
+            },
+            "web": {
+              "sampleCount": 15,
+              "maxCpuPercent": 7.856742814948234,
+              "maxRssBytes": 10170368
+            }
+          }
+        },
+        {
+          "name": "ramp-128",
+          "users": 128,
+          "seconds": 16.074853773000008,
+          "metrics": {
+            "document-open": {
+              "attempts": 1273,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 79.19201119814748,
+              "client": {
+                "p50": 207.94706599999336,
+                "p95": 290.9654160000209,
+                "p99": 340.87484800000675
+              },
+              "appSamples": 1273,
+              "appP95": 244.275,
+              "externalHttpSamples": 1273,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 1273,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 79.19201119814748,
+              "client": {
+                "p50": 230.8646010000084,
+                "p95": 319.8450529999973,
+                "p99": 358.11272199999075
+              },
+              "appSamples": 1273,
+              "appP95": 264.988,
+              "externalHttpSamples": 1273,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 1273,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 79.19201119814748,
+              "client": {
+                "p50": 1586.3789760000072,
+                "p95": 1789.846983000025,
+                "p99": 1883.178117000003
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 1273,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 79.19201119814748,
+              "client": {
+                "p50": 227.43143799999962,
+                "p95": 323.23311100000865,
+                "p99": 357.10403400001815
+              },
+              "appSamples": 1273,
+              "appP95": 269.19,
+              "externalHttpSamples": 1273,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 1273,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 79.19201119814748,
+              "client": {
+                "p50": 908.9886580000166,
+                "p95": 1068.1353579999995,
+                "p99": 1129.8479989999905
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 1273,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 79.19201119814748,
+              "client": {
+                "p50": 221.23933900002157,
+                "p95": 311.01471599997603,
+                "p99": 371.73705399999744
+              },
+              "appSamples": 1273,
+              "appP95": 264.063,
+              "externalHttpSamples": 1273,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 1273,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 79.19201119814748,
+              "client": {
+                "p50": 456.62770300000557,
+                "p95": 587.1665890000004,
+                "p99": 629.7230069999932
+              },
+              "appSamples": 1273,
+              "appP95": 550.753,
+              "externalHttpSamples": 1273,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 1273,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 79.19201119814748,
+              "client": {
+                "p50": 230.65635800000746,
+                "p95": 315.8161820000096,
+                "p99": 360.57936599999084
+              },
+              "appSamples": 1273,
+              "appP95": 261.176,
+              "externalHttpSamples": 1273,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 14,
+              "maxCpuPercent": 214.54356537147495,
+              "maxRssBytes": 651284480
+            },
+            "mongo": {
+              "sampleCount": 14,
+              "maxCpuPercent": 178.26942830220545,
+              "maxRssBytes": 904335360
+            },
+            "redis": {
+              "sampleCount": 14,
+              "maxCpuPercent": 5.533098506972828,
+              "maxRssBytes": 138559488
+            },
+            "web": {
+              "sampleCount": 14,
+              "maxCpuPercent": 7.056640184183832,
+              "maxRssBytes": 11112448
+            }
+          }
+        },
+        {
+          "name": "soak",
+          "users": 2,
+          "seconds": 120.01849707099998,
+          "metrics": {
+            "document-open": {
+              "attempts": 240,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9996917629956816,
+              "client": {
+                "p50": 7.991260000038892,
+                "p95": 21.788782999967225,
+                "p99": 28.06483799999114
+              },
+              "appSamples": 240,
+              "appP95": 18.098,
+              "externalHttpSamples": 240,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 240,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9996917629956816,
+              "client": {
+                "p50": 12.04652899998473,
+                "p95": 34.57936699996935,
+                "p99": 45.503473999968264
+              },
+              "appSamples": 240,
+              "appP95": 21.029,
+              "externalHttpSamples": 240,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 240,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9996917629956816,
+              "client": {
+                "p50": 82.58745499997167,
+                "p95": 122.94471000001067,
+                "p99": 148.69303999998374
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 240,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9996917629956816,
+              "client": {
+                "p50": 9.975465999974404,
+                "p95": 24.507019000011496,
+                "p99": 42.816865999950096
+              },
+              "appSamples": 240,
+              "appP95": 15.637,
+              "externalHttpSamples": 240,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 240,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9996917629956816,
+              "client": {
+                "p50": 46.34974400000647,
+                "p95": 76.8066070000059,
+                "p99": 92.49260399999912
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 240,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9996917629956816,
+              "client": {
+                "p50": 7.028261999948882,
+                "p95": 11.611642999981996,
+                "p99": 23.609591000014916
+              },
+              "appSamples": 240,
+              "appP95": 9.549,
+              "externalHttpSamples": 240,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 240,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9996917629956816,
+              "client": {
+                "p50": 26.889051000005566,
+                "p95": 44.5001409999968,
+                "p99": 64.84583700000076
+              },
+              "appSamples": 240,
+              "appP95": 37.863,
+              "externalHttpSamples": 240,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 240,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9996917629956816,
+              "client": {
+                "p50": 11.795886999985669,
+                "p95": 21.886303000006592,
+                "p99": 40.23234300001059
+              },
+              "appSamples": 240,
+              "appP95": 15.894,
+              "externalHttpSamples": 240,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 117,
+              "maxCpuPercent": 45.6773216152773,
+              "maxRssBytes": 638885888
+            },
+            "mongo": {
+              "sampleCount": 117,
+              "maxCpuPercent": 111.76365927142318,
+              "maxRssBytes": 1051037696
+            },
+            "redis": {
+              "sampleCount": 117,
+              "maxCpuPercent": 1.961613443495577,
+              "maxRssBytes": 141574144
+            },
+            "web": {
+              "sampleCount": 117,
+              "maxCpuPercent": 1.9437158134160555,
+              "maxRssBytes": 8892416
+            }
+          }
+        }
+      ]
+    },
+    "injected-app": {
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "harnessCommit": "ff576c40f469d774e349545d4861f0045f50b9d7",
+      "execution": {
+        "profile": "normal",
+        "state": "complete"
+      },
+      "environmentId": "map-perf-ed9912704580",
+      "startedAt": "2026-11-13T11:03:24.958Z",
+      "finishedAt": "2026-11-13T11:06:32.786Z",
+      "buildIdentity": {
+        "api": {
+          "actualCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "expectedCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "commitMatch": "match"
+        },
+        "webEntries": [
+          "/assets/index-CqLXP3YQ-dd992d7add2686a83841b0d7a78d3de32e84b85c.js"
+        ]
+      },
+      "comparison": {
+        "pass": false,
+        "failures": [
+          "normal/document-open: client p95 374.70 > 42.07 ms",
+          "normal/document-open: app p95 363.71 > 37.51 ms",
+          "normal/journey: client p95 1151.56 > 267.59 ms",
+          "normal/write: client p95 769.06 > 231.78 ms",
+          "normal/write-readback: client p95 374.22 > 202.70 ms",
+          "normal/write-readback: app p95 367.01 > 52.91 ms",
+          "normal/write-save: client p95 379.97 > 82.91 ms",
+          "normal/write-save: app p95 376.38 > 61.29 ms"
+        ]
+      },
+      "browser": {
+        "pass": true,
+        "samples": {
+          "home": [
+            924.3285360000009,
+            900.3316190000041,
+            945.0391290000116
+          ],
+          "knowledge-list": [
+            398.80829200000153,
+            131.38876200000232,
+            131.53927899998962
+          ],
+          "document-open": [
+            1360.7311440000049,
+            1231.4375599999912,
+            1391.1777100000036
+          ],
+          "write": [
+            2738.179188000009,
+            2737.201912000004,
+            2559.1011870000075
+          ]
+        }
+      },
+      "browserInjection": {
+        "delayMs": 0,
+        "applied": []
+      },
+      "injectionMs": 350,
+      "resourceAccounting": {
+        "source": "Linux /proc process tree; CPU ticks and summed RSS",
+        "requestedLimitsEnforced": false,
+        "clockTicksPerSecond": 100,
+        "pageBytes": 4096
+      },
+      "host": {
+        "cpus": 5,
+        "memoryBytes": 18882662400,
+        "kernel": "6.18.57"
+      },
+      "phases": [
+        {
+          "name": "normal",
+          "users": 2,
+          "seconds": 60.72009039400001,
+          "metrics": {
+            "document-open": {
+              "attempts": 108,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.7786534785967958,
+              "client": {
+                "p50": 360.0473639999982,
+                "p95": 374.70307600000524,
+                "p99": 390.42258899999433
+              },
+              "appSamples": 108,
+              "appP95": 363.712,
+              "externalHttpSamples": 108,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 108,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.7786534785967958,
+              "client": {
+                "p50": 7.87019099999452,
+                "p95": 10.451441999990493,
+                "p99": 20.32795299999998
+              },
+              "appSamples": 108,
+              "appP95": 8.949,
+              "externalHttpSamples": 108,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 108,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.7786534785967958,
+              "client": {
+                "p50": 1118.9426169999933,
+                "p95": 1151.5622670000012,
+                "p99": 1174.5388349999848
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 108,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.7786534785967958,
+              "client": {
+                "p50": 8.680511999991722,
+                "p95": 19.37205899998662,
+                "p99": 35.35394400000223
+              },
+              "appSamples": 108,
+              "appP95": 15.933,
+              "externalHttpSamples": 108,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 108,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.7786534785967958,
+              "client": {
+                "p50": 740.4221359999792,
+                "p95": 769.0572810000158,
+                "p99": 793.3144810000085
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 108,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.7786534785967958,
+              "client": {
+                "p50": 360.59064000000944,
+                "p95": 374.2174400000076,
+                "p99": 388.0498859999934
+              },
+              "appSamples": 108,
+              "appP95": 367.01,
+              "externalHttpSamples": 108,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 108,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.7786534785967958,
+              "client": {
+                "p50": 369.78324900000007,
+                "p95": 379.96737500000745,
+                "p99": 404.2638009999937
+              },
+              "appSamples": 108,
+              "appP95": 376.385,
+              "externalHttpSamples": 108,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 108,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.7786534785967958,
+              "client": {
+                "p50": 8.29792099999031,
+                "p95": 19.23025900000357,
+                "p99": 21.523559000022942
+              },
+              "appSamples": 108,
+              "appP95": 16.71,
+              "externalHttpSamples": 108,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 60,
+              "maxCpuPercent": 22.171464905529653,
+              "maxRssBytes": 1107845120
+            },
+            "mongo": {
+              "sampleCount": 60,
+              "maxCpuPercent": 6.876600619049482,
+              "maxRssBytes": 210436096
+            },
+            "redis": {
+              "sampleCount": 60,
+              "maxCpuPercent": 1.9649761569056166,
+              "maxRssBytes": 14663680
+            },
+            "web": {
+              "sampleCount": 60,
+              "maxCpuPercent": 1.9052530753756909,
+              "maxRssBytes": 9584640
+            }
+          }
+        }
+      ]
+    },
+    "injected-browser": {
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "harnessCommit": "ff576c40f469d774e349545d4861f0045f50b9d7",
+      "execution": {
+        "profile": "normal",
+        "state": "complete"
+      },
+      "environmentId": "map-perf-ffd60764da58",
+      "startedAt": "2026-11-13T11:06:33.668Z",
+      "finishedAt": "2026-11-13T11:08:56.887Z",
+      "buildIdentity": {
+        "api": {
+          "actualCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "expectedCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "commitMatch": "match"
+        },
+        "webEntries": [
+          "/assets/index-CqLXP3YQ-dd992d7add2686a83841b0d7a78d3de32e84b85c.js"
+        ]
+      },
+      "comparison": {
+        "pass": false,
+        "failures": [
+          "browser/home: ready p95 11071.19 > 2927.12 ms"
+        ]
+      },
+      "browser": {
+        "pass": true,
+        "samples": {
+          "home": [
+            11071.189814999998,
+            10837.263242,
+            10850.50593
+          ],
+          "knowledge-list": [
+            168.32569799999328,
+            157.04199900000094,
+            155.2778959999996
+          ],
+          "document-open": [
+            1034.1389180000042,
+            1125.183567,
+            1058.2423089999938
+          ],
+          "write": [
+            1508.4009789999982,
+            1471.486269000001,
+            1498.5330219999887
+          ]
+        }
+      },
+      "browserInjection": {
+        "delayMs": 10000,
+        "applied": [
+          {
+            "round": 1,
+            "stage": "home",
+            "asset": "/assets/AgentLauncherPage-BDyuo-IC-dd992d7add2686a83841b0d7a78d3de32e84b85c.js",
+            "delayMs": 10000
+          },
+          {
+            "round": 2,
+            "stage": "home",
+            "asset": "/assets/AgentLauncherPage-BDyuo-IC-dd992d7add2686a83841b0d7a78d3de32e84b85c.js",
+            "delayMs": 10000
+          },
+          {
+            "round": 3,
+            "stage": "home",
+            "asset": "/assets/AgentLauncherPage-BDyuo-IC-dd992d7add2686a83841b0d7a78d3de32e84b85c.js",
+            "delayMs": 10000
+          }
+        ]
+      },
+      "injectionMs": 0,
+      "resourceAccounting": {
+        "source": "Linux /proc process tree; CPU ticks and summed RSS",
+        "requestedLimitsEnforced": false,
+        "clockTicksPerSecond": 100,
+        "pageBytes": 4096
+      },
+      "host": {
+        "cpus": 5,
+        "memoryBytes": 18882662400,
+        "kernel": "6.18.57"
+      },
+      "phases": [
+        {
+          "name": "normal",
+          "users": 2,
+          "seconds": 60.032585542999996,
+          "metrics": {
+            "document-open": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989144048118115,
+              "client": {
+                "p50": 7.478553000008105,
+                "p95": 16.204916000002413,
+                "p99": 17.445719000010286
+              },
+              "appSamples": 120,
+              "appP95": 9.976,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989144048118115,
+              "client": {
+                "p50": 11.345044000001508,
+                "p95": 25.782898999997997,
+                "p99": 48.35844300000463
+              },
+              "appSamples": 120,
+              "appP95": 18.426,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989144048118115,
+              "client": {
+                "p50": 69.41401100000076,
+                "p95": 125.38590799999656,
+                "p99": 393.4419749999943
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989144048118115,
+              "client": {
+                "p50": 9.931314000001294,
+                "p95": 39.89005499999621,
+                "p99": 341.62599000000046
+              },
+              "appSamples": 120,
+              "appP95": 29.683,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989144048118115,
+              "client": {
+                "p50": 33.05645999999251,
+                "p95": 69.25270700000692,
+                "p99": 170.12195200000133
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989144048118115,
+              "client": {
+                "p50": 7.164735999991535,
+                "p95": 20.840173999997205,
+                "p99": 119.14337600000727
+              },
+              "appSamples": 120,
+              "appP95": 12.662,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989144048118115,
+              "client": {
+                "p50": 17.45850399999472,
+                "p95": 29.981331999995746,
+                "p99": 31.65166999999201
+              },
+              "appSamples": 120,
+              "appP95": 26.005,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9989144048118115,
+              "client": {
+                "p50": 8.004809999998542,
+                "p95": 32.620091999997385,
+                "p99": 46.261744999996154
+              },
+              "appSamples": 120,
+              "appP95": 16.262,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 59,
+              "maxCpuPercent": 110.19422646219732,
+              "maxRssBytes": 1124134912
+            },
+            "mongo": {
+              "sampleCount": 59,
+              "maxCpuPercent": 10.393420168330628,
+              "maxRssBytes": 214839296
+            },
+            "redis": {
+              "sampleCount": 59,
+              "maxCpuPercent": 1.964084792620184,
+              "maxRssBytes": 15020032
+            },
+            "web": {
+              "sampleCount": 59,
+              "maxCpuPercent": 0.9841928568735312,
+              "maxRssBytes": 9682944
+            }
+          }
+        }
+      ]
+    },
+    "recovered": {
+      "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "harnessCommit": "ff576c40f469d774e349545d4861f0045f50b9d7",
+      "execution": {
+        "profile": "normal",
+        "state": "complete"
+      },
+      "environmentId": "map-perf-f4cea86d6edc",
+      "startedAt": "2026-11-13T11:08:57.509Z",
+      "finishedAt": "2026-11-13T11:10:50.130Z",
+      "buildIdentity": {
+        "api": {
+          "actualCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "expectedCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+          "commitMatch": "match"
+        },
+        "webEntries": [
+          "/assets/index-CqLXP3YQ-dd992d7add2686a83841b0d7a78d3de32e84b85c.js"
+        ]
+      },
+      "comparison": {
+        "pass": true,
+        "failures": []
+      },
+      "browser": {
+        "pass": true,
+        "samples": {
+          "home": [
+            1048.9725959999996,
+            1185.3405140000032,
+            852.1674459999995
+          ],
+          "knowledge-list": [
+            156.3388699999996,
+            128.07472300000518,
+            142.25498899999366
+          ],
+          "document-open": [
+            1033.419133000003,
+            696.7746279999992,
+            1008.3124190000017
+          ],
+          "write": [
+            1484.2310040000011,
+            1334.181807999994,
+            1812.0100549999988
+          ]
+        }
+      },
+      "browserInjection": {
+        "delayMs": 0,
+        "applied": []
+      },
+      "injectionMs": 0,
+      "resourceAccounting": {
+        "source": "Linux /proc process tree; CPU ticks and summed RSS",
+        "requestedLimitsEnforced": false,
+        "clockTicksPerSecond": 100,
+        "pageBytes": 4096
+      },
+      "host": {
+        "cpus": 5,
+        "memoryBytes": 18882662400,
+        "kernel": "6.18.57"
+      },
+      "phases": [
+        {
+          "name": "normal",
+          "users": 2,
+          "seconds": 60.03949142599999,
+          "metrics": {
+            "document-open": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986844849927263,
+              "client": {
+                "p50": 7.27620300000126,
+                "p95": 20.26277800000389,
+                "p99": 66.44069699999818
+              },
+              "appSamples": 120,
+              "appP95": 14.409,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986844849927263,
+              "client": {
+                "p50": 10.029381000000285,
+                "p95": 34.8737140000012,
+                "p99": 256.8190820000018
+              },
+              "appSamples": 120,
+              "appP95": 22.207,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986844849927263,
+              "client": {
+                "p50": 66.53814800000691,
+                "p95": 173.62807299999986,
+                "p99": 300.166035000002
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986844849927263,
+              "client": {
+                "p50": 9.276796999998624,
+                "p95": 23.92721899999742,
+                "p99": 74.50075700000161
+              },
+              "appSamples": 120,
+              "appP95": 18.743,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986844849927263,
+              "client": {
+                "p50": 32.599981000006665,
+                "p95": 89.42126099999587,
+                "p99": 108.22056200000225
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986844849927263,
+              "client": {
+                "p50": 6.92173799999,
+                "p95": 14.228965000002063,
+                "p99": 55.553868000002694
+              },
+              "appSamples": 120,
+              "appP95": 8.118,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986844849927263,
+              "client": {
+                "p50": 17.142312999996648,
+                "p95": 35.96972000000096,
+                "p99": 79.93009500000335
+              },
+              "appSamples": 120,
+              "appP95": 31.258,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9986844849927263,
+              "client": {
+                "p50": 7.5987310000055,
+                "p95": 21.34496200000285,
+                "p99": 63.764357000007294
+              },
+              "appSamples": 120,
+              "appP95": 15.1,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 59,
+              "maxCpuPercent": 91.69487841690254,
+              "maxRssBytes": 1102278656
+            },
+            "mongo": {
+              "sampleCount": 59,
+              "maxCpuPercent": 7.732407302296779,
+              "maxRssBytes": 211828736
+            },
+            "redis": {
+              "sampleCount": 59,
+              "maxCpuPercent": 1.9652043975095599,
+              "maxRssBytes": 14893056
+            },
+            "web": {
+              "sampleCount": 59,
+              "maxCpuPercent": 1.9356192107117192,
+              "maxRssBytes": 9486336
+            }
+          }
+        }
+      ]
+    },
+    "cross-commit": {
+      "commit": "ce1f0e71bad04a4dfec8f9bed08bae199fac6208",
+      "harnessCommit": "ff576c40f469d774e349545d4861f0045f50b9d7",
+      "execution": {
+        "profile": "normal",
+        "state": "complete"
+      },
+      "environmentId": "map-perf-423c1dd0eb25",
+      "startedAt": "2026-11-13T11:10:51.085Z",
+      "finishedAt": "2026-11-13T11:12:41.348Z",
+      "buildIdentity": {
+        "api": {
+          "actualCommit": "ce1f0e71bad04a4dfec8f9bed08bae199fac6208",
+          "expectedCommit": "ce1f0e71bad04a4dfec8f9bed08bae199fac6208",
+          "commitMatch": "match"
+        },
+        "webEntries": [
+          "/assets/index-Dku6RxxU-ce1f0e71bad04a4dfec8f9bed08bae199fac6208.js"
+        ]
+      },
+      "comparison": {
+        "pass": true,
+        "failures": []
+      },
+      "browser": {
+        "pass": true,
+        "samples": {
+          "home": [
+            967.5025970000024,
+            775.5203550000006,
+            704.9580969999952
+          ],
+          "knowledge-list": [
+            238.087658000004,
+            165.3284100000019,
+            164.15215800000442
+          ],
+          "document-open": [
+            983.0573429999931,
+            897.1874179999941,
+            1029.7775299999994
+          ],
+          "write": [
+            1434.8558269999994,
+            1316.8771070000003,
+            1378.146732000001
+          ]
+        }
+      },
+      "browserInjection": {
+        "delayMs": 0,
+        "applied": []
+      },
+      "injectionMs": 0,
+      "resourceAccounting": {
+        "source": "Linux /proc process tree; CPU ticks and summed RSS",
+        "requestedLimitsEnforced": false,
+        "clockTicksPerSecond": 100,
+        "pageBytes": 4096
+      },
+      "host": {
+        "cpus": 5,
+        "memoryBytes": 18882662400,
+        "kernel": "6.18.57"
+      },
+      "phases": [
+        {
+          "name": "normal",
+          "users": 2,
+          "seconds": 60.024859444,
+          "metrics": {
+            "document-open": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991716950533407,
+              "client": {
+                "p50": 7.297085000012885,
+                "p95": 13.194547999999486,
+                "p99": 90.2217190000083
+              },
+              "appSamples": 120,
+              "appP95": 11.976,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "home": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991716950533407,
+              "client": {
+                "p50": 10.284610999995493,
+                "p95": 31.89917399999831,
+                "p99": 114.39589600000181
+              },
+              "appSamples": 120,
+              "appP95": 18.196,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "journey": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991716950533407,
+              "client": {
+                "p50": 59.35706599999685,
+                "p95": 161.9533100000117,
+                "p99": 182.00412199999846
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "knowledge-list": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991716950533407,
+              "client": {
+                "p50": 8.74707299999136,
+                "p95": 16.847567000004346,
+                "p99": 86.24204499999178
+              },
+              "appSamples": 120,
+              "appP95": 13.555,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991716950533407,
+              "client": {
+                "p50": 31.661003999994136,
+                "p95": 44.519269999989774,
+                "p99": 141.46509800000058
+              },
+              "appSamples": 0,
+              "appP95": null,
+              "externalHttpSamples": 0,
+              "externalHttpP95": null
+            },
+            "write-readback": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991716950533407,
+              "client": {
+                "p50": 6.695865999994567,
+                "p95": 13.645696000006865,
+                "p99": 17.602880999998888
+              },
+              "appSamples": 120,
+              "appP95": 11.822,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-save": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991716950533407,
+              "client": {
+                "p50": 16.572891000003438,
+                "p95": 24.68222999999125,
+                "p99": 109.74488800000108
+              },
+              "appSamples": 120,
+              "appP95": 21.763,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            },
+            "write-versions": {
+              "attempts": 120,
+              "errors": 0,
+              "errorRate": 0,
+              "throughput": 1.9991716950533407,
+              "client": {
+                "p50": 7.68507099999988,
+                "p95": 12.909351000009337,
+                "p99": 19.97994500000641
+              },
+              "appSamples": 120,
+              "appP95": 8.42,
+              "externalHttpSamples": 120,
+              "externalHttpP95": 0
+            }
+          },
+          "resources": {
+            "api": {
+              "sampleCount": 59,
+              "maxCpuPercent": 51.8800588404443,
+              "maxRssBytes": 1092677632
+            },
+            "mongo": {
+              "sampleCount": 59,
+              "maxCpuPercent": 13.443910792780239,
+              "maxRssBytes": 212889600
+            },
+            "redis": {
+              "sampleCount": 59,
+              "maxCpuPercent": 2.82438865326185,
+              "maxRssBytes": 14860288
+            },
+            "web": {
+              "sampleCount": 59,
+              "maxCpuPercent": 0.9809872747164552,
+              "maxRssBytes": 9342976
+            }
+          }
+        }
+      ]
+    }
+  },
+  "capacity": {
+    "criterion": "任一场景错误率>1% 或 client p95>正常负载两倍；仅为本隔离配置的相对退化边界",
+    "firstDegradedUsers": 8,
+    "lastTestedUsers": 128,
+    "stages": [
+      {
+        "users": 2,
+        "journeyP95": 91.62237599999935,
+        "journeysPerSecond": 32.522774619416495,
+        "errorRate": 0
+      },
+      {
+        "users": 4,
+        "journeyP95": 108.1564280000166,
+        "journeysPerSecond": 49.26342047033766,
+        "errorRate": 0
+      },
+      {
+        "users": 8,
+        "journeyP95": 148.80274100002134,
+        "journeysPerSecond": 67.8772351658325,
+        "errorRate": 0
+      },
+      {
+        "users": 16,
+        "journeyP95": 256.80841200001305,
+        "journeysPerSecond": 76.99372579648535,
+        "errorRate": 0
+      },
+      {
+        "users": 32,
+        "journeyP95": 468.81205099998624,
+        "journeysPerSecond": 80.58020328068069,
+        "errorRate": 0
+      },
+      {
+        "users": 64,
+        "journeyP95": 904.3907619999954,
+        "journeysPerSecond": 80.41992256840057,
+        "errorRate": 0
+      },
+      {
+        "users": 128,
+        "journeyP95": 1789.846983000025,
+        "journeysPerSecond": 79.19201119814748,
+        "errorRate": 0
+      }
+    ],
+    "triggers": [
+      {
+        "name": "document-open",
+        "normalP95": 11.455564999996568,
+        "actualP95": 23.211876999994274,
+        "errorRate": 0
+      },
+      {
+        "name": "write",
+        "normalP95": 42.54664100000082,
+        "actualP95": 88.59958799998276,
+        "errorRate": 0
+      },
+      {
+        "name": "write-readback",
+        "normalP95": 9.815239999996265,
+        "actualP95": 22.857224999985192,
+        "errorRate": 0
+      },
+      {
+        "name": "write-save",
+        "normalP95": 22.117634000009275,
+        "actualP95": 49.182234000007156,
+        "errorRate": 0
+      },
+      {
+        "name": "write-versions",
+        "normalP95": 11.313229999999749,
+        "actualP95": 29.057831999991322,
+        "errorRate": 0
+      }
+    ]
+  },
+  "contrast": {
+    "oldJudgeCommit": "47e71839d",
+    "old": {
+      "pass": true,
+      "failures": []
+    },
+    "current": {
+      "pass": false,
+      "failures": [
+        "browser/home: ready p95 11071.19 > 2927.12 ms"
+      ]
+    }
+  },
+  "retainedFailures": {
+    "file": "sampling-failures.reference.json",
+    "oldDeletionConflict": "evidence/user-path/capacity-409.log",
+    "oldCandidateIncludedInBaseline": false,
+    "thresholdFormulaChanged": false
+  },
+  "crossVerification": {
+    "nodeTests": {
+      "passed": 16,
+      "failed": 0
+    },
+    "probe": "真实Kestrel/HttpClient归因通过",
+    "typecheck": "现有e2e TypeScript通过",
+    "workload": "原始请求与独立writer文档及逐场景计数核验通过",
+    "negativeFixtures": "重复writer、缺失原始请求均拒绝；这是确定性证据复放，不是外部服务验收"
+  },
+  "liveAcceptance": {
+    "local": "真实登录入口、四条路径及保存刷新通过",
+    "preview": "BLOCKED",
+    "cloudCI": "BLOCKED",
+    "themes": "未验收",
+    "mobile": "未验收",
+    "previewDeepLink": null,
+    "githubWebFallback": {
+      "action": "通过已允许访问的GitHub网页入口打开既有Preview Acceptance工作流",
+      "tool": "cua_repl.js",
+      "result": "BLOCKED_BEFORE_NAVIGATION",
+      "error": "the gaas-browser node_repl sandbox cannot be disabled",
+      "interpretation": "浏览器控制环境启动失败，未进入GitHub页面，未观察到登录态或工作流权限；未启动作业；不另行绕过网络策略",
+      "next": "所需API主机放行后，仍由执行器通过正常CLI触发与跟踪工作流；当前继续隔离测试"
+    }
+  },
+  "limits": [
+    "实际共享4CPU/16GiB且未实施声明容器配额，不跨机器套阈值",
+    "6库120篇阅读、128篇独立写入，单管理员，容量不外推生产",
+    "120秒持续测试不证明小时级稳定；公开预览和CI未完成前任务未通过"
+  ],
+  "artifacts": {
+    "baseline.json": {
+      "path": "work/core-goal-closeout/v3/baseline.json",
+      "bytes": 5292,
+      "sha256": "5aac5c63fcd3e439cb1168f134c41205fdc0de2f6dc1b52c96d74eed7c6487be"
+    },
+    "base-1/result.json": {
+      "path": "work/core-goal-closeout/v3/base-1/result.json",
+      "bytes": 100728,
+      "sha256": "ad78b4008719aaef5c39bdbc7e1296fed4ab9618649e68d29e2d0608584b0c8f"
+    },
+    "base-1/requests.ndjson": {
+      "path": "work/core-goal-closeout/v3/base-1/requests.ndjson",
+      "bytes": 170208,
+      "sha256": "3c1ec1c0a6dba3602e8b8040647f0fb8cf7a6467c033186ad366cd3ff77d20eb"
+    },
+    "base-1/fixture.json": {
+      "path": "work/core-goal-closeout/v3/base-1/fixture.json",
+      "bytes": 5880,
+      "sha256": "6d9338176bcbcd6bf43c28e244e1e3b14e06ce6cbb87d5f4f4bc60d05e1498a9"
+    },
+    "base-2/result.json": {
+      "path": "work/core-goal-closeout/v3/base-2/result.json",
+      "bytes": 100682,
+      "sha256": "b11ad2c0054e678ca4c097b09146f0704ae3b9a222405e7e5f2de66f78561591"
+    },
+    "base-2/requests.ndjson": {
+      "path": "work/core-goal-closeout/v3/base-2/requests.ndjson",
+      "bytes": 170229,
+      "sha256": "a7f6b8e4b3d0baf3e136667763a7790455fab7a16a343d15f5239ce7dfb05845"
+    },
+    "base-2/fixture.json": {
+      "path": "work/core-goal-closeout/v3/base-2/fixture.json",
+      "bytes": 5880,
+      "sha256": "f770098d0dfb310d569f4f6574521d1768e770f036ad4dc8d1138ceef76ae2bb"
+    },
+    "base-3/result.json": {
+      "path": "work/core-goal-closeout/v3/base-3/result.json",
+      "bytes": 100446,
+      "sha256": "723da9d2eb1d2f335fc6aea7b68af80b98327cc078a72b39ff36d7bb9b206a4c"
+    },
+    "base-3/requests.ndjson": {
+      "path": "work/core-goal-closeout/v3/base-3/requests.ndjson",
+      "bytes": 170167,
+      "sha256": "803543025b87d4725b7318ab489f8ef02daef960a6f632200f9a4a2a1eda71d4"
+    },
+    "base-3/fixture.json": {
+      "path": "work/core-goal-closeout/v3/base-3/fixture.json",
+      "bytes": 5880,
+      "sha256": "78ff19c5e7a34a801a4586c85d54e41dc11a68d07a866afbc6130a9b4f9d0a83"
+    },
+    "candidate/result.json": {
+      "path": "work/core-goal-closeout/v3/candidate/result.json",
+      "bytes": 349499,
+      "sha256": "f1a26bc4e608a2b76e705f63dfecc9c69c0b7741e5d0da2493e991916031fb43"
+    },
+    "candidate/requests.ndjson": {
+      "path": "work/core-goal-closeout/v3/candidate/requests.ndjson",
+      "bytes": 8148557,
+      "sha256": "68bc9df1bad25327d86a9a6b2a049208c35d40f421f9dd668b243f685ef3aeec"
+    },
+    "candidate/fixture.json": {
+      "path": "work/core-goal-closeout/v3/candidate/fixture.json",
+      "bytes": 5880,
+      "sha256": "22b7807eeb6ee361dfa0597dd9dafc7f6ea19b7c2a0fe14c9fd55bab0e23b45f"
+    },
+    "injected-app/result.json": {
+      "path": "work/core-goal-closeout/v3/injected-app/result.json",
+      "bytes": 100660,
+      "sha256": "fca428452dd494d77992eefcc37442f5a182f0b78e23dcbbe2c0862d5264dac7"
+    },
+    "injected-app/requests.ndjson": {
+      "path": "work/core-goal-closeout/v3/injected-app/requests.ndjson",
+      "bytes": 158144,
+      "sha256": "2d5148dfedabe1b0e10644f140d643eb0be23fac574035a6a44bc5bd55d1cbe0"
+    },
+    "injected-app/fixture.json": {
+      "path": "work/core-goal-closeout/v3/injected-app/fixture.json",
+      "bytes": 5880,
+      "sha256": "38a15924c19cd84851ebbe6912201f42a320b6ee1d3f2d8ba45742e314c7edba"
+    },
+    "injected-browser/result.json": {
+      "path": "work/core-goal-closeout/v3/injected-browser/result.json",
+      "bytes": 101552,
+      "sha256": "d909fd4e73838fca0b57cc18dbcca5bef01c78987232718265fe22850a865cce"
+    },
+    "injected-browser/requests.ndjson": {
+      "path": "work/core-goal-closeout/v3/injected-browser/requests.ndjson",
+      "bytes": 170261,
+      "sha256": "250ba3c2f0e27507fde4c9e9a6b1c6814274fae12a190d910e258a1d183ff739"
+    },
+    "injected-browser/fixture.json": {
+      "path": "work/core-goal-closeout/v3/injected-browser/fixture.json",
+      "bytes": 5880,
+      "sha256": "d67f0a97db3027cde6ed6b5cd60275ee72e8d77aa0b67046f026be780a878d8f"
+    },
+    "recovered/result.json": {
+      "path": "work/core-goal-closeout/v3/recovered/result.json",
+      "bytes": 100468,
+      "sha256": "03dc8e651a6a300efbb9288de8cdf19d0fc9ee01aae584703d99d6e145cdc23d"
+    },
+    "recovered/requests.ndjson": {
+      "path": "work/core-goal-closeout/v3/recovered/requests.ndjson",
+      "bytes": 170221,
+      "sha256": "2c9fed33b3bd4beb1f8d8cbb40b7d332f6e917192bb7ac68384f6bf4c62f9924"
+    },
+    "recovered/fixture.json": {
+      "path": "work/core-goal-closeout/v3/recovered/fixture.json",
+      "bytes": 5880,
+      "sha256": "cf3e34b048926a8cbbf8a9574563218650c62687b6b51951d5021ee84d0b57e8"
+    },
+    "cross-commit/result.json": {
+      "path": "work/core-goal-closeout/v3/cross-commit/result.json",
+      "bytes": 100393,
+      "sha256": "20cdd5ed945e123c555c57c9b0abbe69f8c297902aa64365d567c52a521b30ed"
+    },
+    "cross-commit/requests.ndjson": {
+      "path": "work/core-goal-closeout/v3/cross-commit/requests.ndjson",
+      "bytes": 170144,
+      "sha256": "d89697c3a9863a32804f75aee9a42a688f3ccf90f66a31afd5ef7cceefe301bd"
+    },
+    "cross-commit/fixture.json": {
+      "path": "work/core-goal-closeout/v3/cross-commit/fixture.json",
+      "bytes": 5880,
+      "sha256": "4b546c396147a8c4cf933c15b04014ef4b14173ebc58daa013248d22bc8c63b3"
+    },
+    "candidate-write-proof.json": {
+      "path": "work/core-goal-closeout/v3/candidate-write-proof.json",
+      "bytes": 360,
+      "sha256": "9d6f301055f67f636c8a9a0ecbd298d22e20e2fa06c13f19254745ac0fb6a6a7"
+    },
+    "actual-old-new-contrast.json": {
+      "path": "work/core-goal-closeout/v3/actual-old-new-contrast.json",
+      "bytes": 206,
+      "sha256": "5b9089618a0063894bae8e996a7698ac529abb93477f62a6d48d672db9469348"
+    },
+    "unit-tests.log": {
+      "path": "work/core-goal-closeout/v3/unit-tests.log",
+      "bytes": 1540,
+      "sha256": "8f323d01a3badf17f84c6679a3e0596b7233300bba652edac0f04f8340b79188"
+    },
+    "probe-test.log": {
+      "path": "work/core-goal-closeout/v3/probe-test.log",
+      "bytes": 4242,
+      "sha256": "429a15ed34d4b361d066443a9239144ce846e2362360d0b08f653765c70f85c2"
+    },
+    "typecheck.log": {
+      "path": "work/core-goal-closeout/v3/typecheck.log",
+      "bytes": 15,
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    }
+  }
+}

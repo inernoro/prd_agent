@@ -6,7 +6,7 @@ on:
       - feat/cds-release-batches
       - acceptance/cds-batch-*
     paths:
-      - acceptance/cds-batch/**
+      - e2e/fixtures/cds-batch/**
       - .github/workflows/cds-batch-acceptance.yml
   workflow_dispatch:
 
@@ -27,8 +27,8 @@ jobs:
           CDS_TARGET_ID: ci-site-a
           CDS_RELEASE_ID: ci-release-a
         run: |
-          bash -n acceptance/cds-batch/cds-release.sh
-          bash acceptance/cds-batch/cds-release.sh check
+          bash -n e2e/fixtures/cds-batch/cds-release.sh
+          bash e2e/fixtures/cds-batch/cds-release.sh check
           test "$(git rev-parse HEAD)" = "$CDS_COMMIT_SHA"
       - name: 两个隔离目标真实执行、失败单独恢复与入口断言
         env:
@@ -37,19 +37,19 @@ jobs:
           set -Eeuo pipefail
           export CDS_BATCH_SITE_ROOT="$RUNNER_TEMP/cds-batch-sites"
           export CDS_TARGET_ID=ci-site-a CDS_RELEASE_ID=ci-release-a
-          bash acceptance/cds-batch/cds-release.sh deploy
+          bash e2e/fixtures/cds-batch/cds-release.sh deploy
           export CDS_TARGET_ID=ci-site-b CDS_RELEASE_ID=ci-release-b-fail
           mkdir -p "$CDS_BATCH_SITE_ROOT/$CDS_TARGET_ID"
           printf '%s' "$CDS_COMMIT_SHA" > "$CDS_BATCH_SITE_ROOT/$CDS_TARGET_ID/fail-sha"
           set +e
-          bash acceptance/cds-batch/cds-release.sh deploy
+          bash e2e/fixtures/cds-batch/cds-release.sh deploy
           result=$?
           set -e
           test "$result" = 17
           test ! -e "$CDS_BATCH_SITE_ROOT/$CDS_TARGET_ID/current"
           rm "$CDS_BATCH_SITE_ROOT/$CDS_TARGET_ID/fail-sha"
           export CDS_RELEASE_ID=ci-release-b-retry
-          bash acceptance/cds-batch/cds-release.sh deploy
+          bash e2e/fixtures/cds-batch/cds-release.sh deploy
           test "$(wc -l < "$CDS_BATCH_SITE_ROOT/ci-site-a/attempts")" = 1
           test "$(wc -l < "$CDS_BATCH_SITE_ROOT/ci-site-b/attempts")" = 2
           for target in ci-site-a ci-site-b; do
@@ -63,7 +63,7 @@ jobs:
           CDS_TARGET_ID: ci-site-a
           CDS_RELEASE_ID: ci-wrong-sha
         run: |
-          if bash acceptance/cds-batch/cds-release.sh check; then
+          if bash e2e/fixtures/cds-batch/cds-release.sh check; then
             echo '错误提交不得通过 check' >&2
             exit 1
           fi
@@ -71,7 +71,7 @@ jobs:
         env:
           IMAGE: cds-batch-acceptance:${{ github.sha }}
         run: |
-          docker build --build-arg CDS_COMMIT_SHA="${{ github.sha }}" --tag "$IMAGE" acceptance/cds-batch
+          docker build --build-arg CDS_COMMIT_SHA="${{ github.sha }}" --tag "$IMAGE" e2e/fixtures/cds-batch
           test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "${{ github.sha }}"
       - name: 真实HTTP验证镜像HTML、入口资源与健康提交
         env:

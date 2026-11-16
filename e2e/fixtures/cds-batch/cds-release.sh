@@ -10,10 +10,10 @@ case "$mode" in check|deploy) ;; *) echo '仅支持 check/deploy' >&2; exit 64;;
 [[ "$CDS_RELEASE_ID" =~ ^[a-zA-Z0-9_-]+$ ]]
 test "$(git rev-parse HEAD)" = "$CDS_COMMIT_SHA"
 command -v python3 >/dev/null
-payload=acceptance/cds-batch/payload.html
+payload=e2e/fixtures/cds-batch/payload.html
 test -f "$payload"
 git cat-file -e "$CDS_COMMIT_SHA:$payload"
-git diff --quiet -- "$payload" acceptance/cds-batch/cds-release.sh
+git diff --quiet -- "$payload" e2e/fixtures/cds-batch/cds-release.sh
 if [ "$mode" = check ]; then
   printf '验收脚本 check 通过：commit=%s target=%s\n' "$CDS_COMMIT_SHA" "$CDS_TARGET_ID"
   exit 0

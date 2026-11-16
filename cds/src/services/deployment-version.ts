@@ -7,6 +7,7 @@ import type {
 } from '../types.js';
 import type { StateService } from './state.js';
 import { resolveEffectiveProfile } from './container.js';
+import { selectDefaultRollbackVersion } from './deployment-version-selection.js';
 
 export interface CreateDeploymentVersionInput {
   projectId: string;
@@ -65,11 +66,7 @@ export class DeploymentVersionService {
     if (!branch) return undefined;
     const versions = this.stateService.getDeploymentVersions({ branchId });
     if (requestedVersionId) return versions.find((version) => version.id === requestedVersionId);
-    return versions.find((version) =>
-      version.id !== branch.currentVersionId
-      && version.profiles.length > 0
-      && version.profiles.every((profile) => profile.reusable),
-    );
+    return selectDefaultRollbackVersion(versions, branch.currentVersionId);
   }
 
   findReusable(input: {

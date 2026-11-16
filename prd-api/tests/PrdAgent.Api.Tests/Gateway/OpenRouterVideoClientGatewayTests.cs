@@ -82,16 +82,16 @@ public class OpenRouterVideoClientGatewayTests
         };
 
         VideoGenerationUserError.ForPersistence("VIDEOGEN_ERROR", upstream)
-            .ShouldBe(GatewayQuotaAlertPolicy.UserReadableQuotaMessage);
+            .ShouldBe(GatewayBillingFailure.FromCode(GatewayBillingFailure.InsufficientBalance)!.UserMessage);
         VideoGenerationUserError.ForPersistence("EMPTY_PROMPT", "directPrompt 为空")
             .ShouldBe("视频描述为空，请返回并输入内容后重试。");
         VideoGenerationUserError.ForPersistence("DOWNLOAD_FAILED", upstream)
             .ShouldBe(VideoGenerationUserError.DownloadUnavailable());
 
         VideoGenerationUserError.SanitizeForResponse(run);
-        run.ErrorMessage.ShouldBe(GatewayQuotaAlertPolicy.UserReadableQuotaMessage);
+        run.ErrorMessage.ShouldBe(GatewayBillingFailure.FromCode(GatewayBillingFailure.InsufficientBalance)!.UserMessage);
         run.ExportErrorMessage.ShouldBe("视频导出暂时失败，请稍后重试。若持续出现，请联系管理员。");
-        run.Scenes.Single().ErrorMessage.ShouldBe(GatewayQuotaAlertPolicy.UserReadableQuotaMessage);
+        run.Scenes.Single().ErrorMessage.ShouldBe(GatewayBillingFailure.FromCode(GatewayBillingFailure.InsufficientBalance)!.UserMessage);
         run.ErrorMessage.ShouldNotContain("上游信息");
         run.ExportErrorMessage.ShouldNotContain("http");
         run.Scenes.Single().ErrorMessage.ShouldNotContain("API Key");

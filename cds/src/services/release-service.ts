@@ -47,6 +47,7 @@ import {
   isSameRemoteDirectory,
   parseRemoteReclaimOutcome,
   parseRemoteReleaseInventory,
+  releaseArtifactCommitProof,
   type ReleaseRemoteDrift,
   type RemoteReleaseInventory,
 } from './release-artifact-retention.js';
@@ -170,6 +171,8 @@ export interface ReleaseArtifactReclaimResult {
   skippedReason?: string;
   readError?: string;
   dryRun: boolean;
+  nativeCounts?: { succeeded: number; held: number; failed: number; pending: number };
+  filesystemNetAvailableChange?: number;
 }
 
 export interface ReleaseHealthProbe {
@@ -1321,12 +1324,15 @@ export class ReleaseService {
       readError: state.readError,
       dryRun: options.dryRun === true,
     };
-    const command = buildReleaseReclaimCommand(target, strategy, plan);
-    if (!command || options.dryRun) {
+    const command = buildReleaseReclaimCommand(target, strategy, plan, {
+      commits: releaseArtifactCommitProof(runs),
+      identities: state.inventory?.worktreeIdentities,
+      dryRun: options.dryRun === true,
+    });
+    if (!command) {
       return {
         ...base,
-        // dry-run 要让调用方看见「本来会删哪些」，否则预演毫无意义。
-        ...(options.dryRun ? { removedWorktrees: plan.removeWorktrees, removedVersions: plan.removeVersions } : {}),
+        nativeCounts: { succeeded: 0, held: 0, failed: 0, pending: plan.removeWorktrees.length + plan.removeVersions.length },
       };
     }
     try {
@@ -1339,13 +1345,22 @@ export class ReleaseService {
         ...base,
         removedWorktrees: outcome.removedWorktrees,
         removedVersions: outcome.removedVersions,
+        filesystemNetAvailableChange: outcome.filesystemNetAvailableChange,
+        keptReasons: { ...base.keptReasons, ...outcome.heldReasons },
+        nativeCounts: {
+          succeeded: options.dryRun ? 0 : outcome.removedWorktrees.length + outcome.removedVersions.length,
+          held: Object.keys(outcome.heldReasons || {}).length,
+          failed: failed.length,
+          pending: Math.max(0, plan.removeWorktrees.length + plan.removeVersions.length - outcome.removedWorktrees.length - outcome.removedVersions.length - Object.keys(outcome.heldReasons || {}).length - failed.length),
+        },
+        ...(outcome.queryError ? {readError: outcome.queryError, skippedReason: '原生引用查询未完整确认，相关对象继续保留'} : {}),
         ...(failed.length > 0
           ? { skippedReason: `${failed.length} 份产物删除失败仍留在盘上（${failed.slice(0, 5).join('、')}${failed.length > 5 ? ' 等' : ''}），下一轮重试` }
           : {}),
       };
     } catch (err) {
       // 删除失败不算事故：产物还在，下一轮再来。绝不能把异常抛出去打断整轮巡检。
-      return { ...base, skippedReason: `回收命令执行失败：${errorText(err)}` };
+      return { ...base, readError: errorText(err), nativeCounts: { succeeded: 0, held: 0, failed: 0, pending: plan.removeWorktrees.length + plan.removeVersions.length }, skippedReason: `回收命令未能确认，相关对象保留：${errorText(err)}` };
     }
   }
 
@@ -1973,6 +1988,18 @@ export function buildDiskDiagnosisCommand(appPath: string): string {
     "printf '== 主机 =='; printf ' %s (%s)\\n' \"$(hostname 2>/dev/null || uname -n)\" \"$(whoami 2>/dev/null || echo unknown)\"",
     "echo '== df -Pm (appPath 所在文件系统) =='",
     `df -Pm ${app} 2>/dev/null || df -Pm /`,
+    "echo; echo '== 全部磁盘挂载点（实际字节） =='",
+    "df -PT -B1 2>/dev/null || echo '挂载点字节读数未确认，不能按零占用处理'",
+    "echo; echo '== inode =='",
+    "df -Pi 2>/dev/null || echo 'inode 读数未确认'",
+    "echo; echo '== 块设备与分区布局（只读；未挂载不代表空盘） =='",
+    "lsblk -b -J -o NAME,SIZE,START,LOG-SEC,TYPE,FSTYPE,MOUNTPOINT,PKNAME 2>/dev/null || echo '设备或分区布局未确认，不能据此认定可用未分配空间'",
+    "echo; echo '== Docker 数据根 =='",
+    "docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo 'Docker 数据根未确认'",
+    "echo; echo '== 运行及停止容器（前 100） =='",
+    "docker ps -a --no-trunc --format '{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Mounts}}' 2>/dev/null | head -100",
+    "echo; echo '== 容器版本、日志驱动与挂载（前 100） =='",
+    "docker ps -aq 2>/dev/null | head -100 | xargs -r docker inspect --format '{{.Name}} revision={{index .Config.Labels \"org.opencontainers.image.revision\"}} log={{json .HostConfig.LogConfig}} mounts={{json .Mounts}}' 2>/dev/null || echo '容器身份或挂载查询未确认'",
     "echo; echo '== docker system df =='",
     "docker system df 2>/dev/null || echo 'docker 不可用'",
     "echo; echo '== docker images 体积排行 (前 40) =='",

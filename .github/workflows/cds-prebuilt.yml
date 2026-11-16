@@ -92,6 +92,7 @@ jobs:
             sleep 1
           done
           pnpm -C cds exec node scripts/notification-classification-smoke.mjs http://127.0.0.1:8870
+          pnpm -C cds smoke:branch-picker-motion http://127.0.0.1:8870
           pnpm -C cds smoke:loading http://127.0.0.1:8870 --out "$RUNNER_TEMP/cds-loading-continuity"
           CDS_LOADING_EVIDENCE="$RUNNER_TEMP/cds-loading-neighbors" node cds/scripts/loading-coverage-smoke.mjs http://127.0.0.1:8870
           CDS_SKELETON_EVIDENCE="$RUNNER_TEMP/cds-loading-lists" node cds/scripts/list-loading-smoke.mjs http://127.0.0.1:8870
@@ -165,6 +166,7 @@ jobs:
           docker run --pull=never --rm -i --entrypoint sh \
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }} -e <<'OPENSSL_SMOKE'
           set -eu
+          git --version
           openssl_smoke_dir="$(mktemp -d)"
           trap 'rm -rf "$openssl_smoke_dir"' EXIT
           openssl req -x509 -newkey rsa:2048 -nodes -days 2 \

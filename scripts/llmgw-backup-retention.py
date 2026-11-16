@@ -1,190 +1,113 @@
 #!/usr/bin/env python3
-"""Inventory and prune redundant full LLM Gateway backups.
+"""LLMGW adapter for the same identity/lease/15-day policy used by CDS.
 
-Dry-run is the default. Execution requires both --execute and an explicit
-confirmation phrase. Small configuration snapshots are never deleted.
+Dry-run is the default. Unknown files and unique business recovery points stay
+protected. Explicit ownership and non-business attestations are never inferred
+from names, age, absence from a ledger, or lack of a container mount.
 """
-
 from __future__ import annotations
+import argparse, datetime as dt, hashlib, json, os, pathlib, subprocess, sys, tempfile
 
-import argparse
-import datetime as dt
-import hashlib
-import json
-import shutil
-from dataclasses import dataclass
-from pathlib import Path
+CONFIRM_PHRASE='DELETE_REDUNDANT_FULL_BACKUPS'
 
+def engine():
+    roots=[pathlib.Path(__file__).resolve().parent.parent/'cds/src/services',pathlib.Path('/usr/local/lib/cds-disk-retention')]
+    for root in roots:
+        common=root/'disk-resource-native.py';policy=root/'backup-retention-native.py'
+        if common.is_file() and policy.is_file() and not common.is_symlink() and not policy.is_symlink():
+            return common.read_text()+'\n'+policy.read_text()
+    raise RuntimeError('Shared versioned backup policy is missing; no fallback deletion is allowed')
 
-CONFIRM_PHRASE = "DELETE_REDUNDANT_FULL_BACKUPS"
+def run(program,request):
+    timeout=905 if request['action']=='register' else 305 if request['action']=='reconcile' else 30
+    p=subprocess.run([sys.executable,'-c',program],input=json.dumps(request),text=True,capture_output=True,timeout=timeout)
+    if p.returncode:raise RuntimeError('Native identity, source, lease or integrity query is unconfirmed; objects retained')
+    return json.loads(p.stdout)
 
-
-@dataclass(frozen=True)
-class Backup:
-    path: Path
-    modified_at: dt.datetime
-    size_bytes: int
-    archives: tuple[Path, ...]
-
-    @property
-    def day(self) -> str:
-        return self.modified_at.strftime("%Y-%m-%d")
-
-    @property
-    def week(self) -> str:
-        year, week, _ = self.modified_at.isocalendar()
-        return f"{year}-W{week:02d}"
-
-    @property
-    def month(self) -> str:
-        return self.modified_at.strftime("%Y-%m")
-
-
-def directory_size(path: Path) -> int:
-    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
-
-
-def discover(root: Path, minimum_full_bytes: int) -> tuple[list[Backup], list[Backup]]:
-    full: list[Backup] = []
-    small: list[Backup] = []
-    for path in sorted(root.glob("llmgw-*")):
-        if not path.is_dir():
-            continue
-        archives = tuple(sorted(path.glob("*.archive.gz")))
-        backup = Backup(
-            path=path,
-            modified_at=dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.timezone.utc),
-            size_bytes=directory_size(path),
-            archives=archives,
-        )
-        if archives and backup.size_bytes >= minimum_full_bytes:
-            full.append(backup)
-        else:
-            small.append(backup)
-    full.sort(key=lambda item: item.modified_at, reverse=True)
-    return full, small
-
-
-def select_keep(backups: list[Backup], daily: int, weekly: int, monthly: int) -> set[Path]:
-    keep: set[Path] = set()
-    for attribute, limit in (("day", daily), ("week", weekly), ("month", monthly)):
-        seen: set[str] = set()
-        for backup in backups:
-            bucket = getattr(backup, attribute)
-            if bucket in seen:
-                continue
-            if len(seen) >= limit:
-                break
-            seen.add(bucket)
-            keep.add(backup.path)
-    if backups:
-        keep.add(backups[0].path)
-    return keep
-
-
-def verify_archive(archive: Path) -> tuple[bool, str]:
-    checksum_path = archive.with_name(archive.name + ".sha256")
-    if not checksum_path.exists():
-        return False, f"missing checksum: {checksum_path.name}"
-    parts = checksum_path.read_text(encoding="utf-8").strip().split()
-    if not parts:
-        return False, f"empty checksum: {checksum_path.name}"
-    expected = parts[0].lower()
-    digest = hashlib.sha256()
-    with archive.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    actual = digest.hexdigest()
-    return (actual == expected, "ok" if actual == expected else "checksum mismatch")
-
-
-def verify_backup(backup: Backup) -> tuple[bool, list[dict[str, str]]]:
-    results: list[dict[str, str]] = []
-    valid = bool(backup.archives)
-    for archive in backup.archives:
-        ok, detail = verify_archive(archive)
-        valid = valid and ok
-        results.append({"archive": archive.name, "status": "ok" if ok else "failed", "detail": detail})
-    return valid, results
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--root", default="/root/backups")
-    parser.add_argument("--keep-daily", type=int, default=7)
-    parser.add_argument("--keep-weekly", type=int, default=4)
-    parser.add_argument("--keep-monthly", type=int, default=6)
-    parser.add_argument("--minimum-full-mb", type=int, default=256)
-    parser.add_argument("--minimum-age-hours", type=float, default=24)
-    parser.add_argument("--protect", action="append", default=["llmgw-release"])
-    parser.add_argument("--json-out")
-    parser.add_argument("--execute", action="store_true")
-    parser.add_argument("--confirm", default="")
-    args = parser.parse_args()
-
-    root = Path(args.root).resolve()
-    if not root.is_dir():
-        raise SystemExit(f"backup root does not exist: {root}")
-    if min(args.keep_daily, args.keep_weekly, args.keep_monthly, args.minimum_full_mb) < 0:
-        raise SystemExit("retention values must not be negative")
-    if args.execute and args.confirm != CONFIRM_PHRASE:
-        raise SystemExit(f"--execute requires --confirm {CONFIRM_PHRASE}")
-
-    full, small = discover(root, args.minimum_full_mb * 1024 * 1024)
-    keep = select_keep(full, args.keep_daily, args.keep_weekly, args.keep_monthly)
-    keep.update(root / name for name in args.protect)
-
-    verified_backup: Backup | None = None
-    verification: list[dict[str, object]] = []
-    for backup in full:
-        if backup.path not in keep:
-            continue
-        ok, details = verify_backup(backup)
-        verification.append({"path": str(backup.path), "ok": ok, "archives": details})
-        if ok:
-            verified_backup = backup
-            break
-
-    if full and verified_backup is None:
-        raise SystemExit("no retained full backup passed checksum verification; refusing prune")
-
-    cutoff = dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(hours=args.minimum_age_hours)
-    candidates = [
-        backup
-        for backup in full
-        if backup.path not in keep and backup.modified_at <= cutoff
-    ]
-    reclaimed = sum(item.size_bytes for item in candidates)
-
-    if args.execute:
-        for backup in candidates:
-            shutil.rmtree(backup.path)
-
-    report = {
-        "status": "executed" if args.execute else "dry-run",
-        "root": str(root),
-        "policy": {
-            "keepDaily": args.keep_daily,
-            "keepWeekly": args.keep_weekly,
-            "keepMonthly": args.keep_monthly,
-            "minimumFullMb": args.minimum_full_mb,
-            "minimumAgeHours": args.minimum_age_hours,
-        },
-        "fullBackupCount": len(full),
-        "smallSnapshotCount": len(small),
-        "verifiedRetainedBackup": str(verified_backup.path) if verified_backup else None,
-        "verification": verification,
-        "kept": [str(item.path) for item in full if item.path in keep],
-        "candidates": [str(item.path) for item in candidates],
-        "candidateBytes": reclaimed,
-        "candidateGiB": round(reclaimed / (1024 ** 3), 3),
-    }
-    rendered = json.dumps(report, ensure_ascii=False, indent=2)
-    print(rendered)
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--root',default='/root/backups');parser.add_argument('--catalog');parser.add_argument('--instance-id',default='llmgw-host-backups')
+    parser.add_argument('--project',default='llmgw-production');parser.add_argument('--service',default='production-data')
+    parser.add_argument('--source-container');parser.add_argument('--register-export');parser.add_argument('--adopt-plan')
+    parser.add_argument('--register-only',action='store_true')
+    parser.add_argument('--max-removals',type=int,default=8);parser.add_argument('--json-out');parser.add_argument('--execute',action='store_true');parser.add_argument('--confirm',default='')
+    # Old timer arguments remain accepted for a reviewable upgrade, but cannot override the hard limit.
+    for option in ['keep-daily','keep-weekly','keep-monthly','minimum-full-mb','minimum-age-hours']:parser.add_argument('--'+option,type=float)
+    parser.add_argument('--protect',action='append',default=[])
+    args=parser.parse_args();program=engine()
+    if args.source_container:
+        print(json.dumps(run(program,{'action':'source','containerName':args.source_container,'projectId':args.project,'serviceId':args.service})));return 0
+    root=pathlib.Path(args.root).absolute()
+    if root.resolve()!=root or not root.is_dir():raise RuntimeError('Backup root is missing or aliased; occupancy remains unknown')
+    directories=[root]
+    for child in sorted(root.iterdir()):
+        if child.name=='.cds-retention':continue
+        if child.is_dir() and not child.is_symlink():directories.append(child)
+        if len(directories)>256:raise RuntimeError('Directory enumeration budget exceeded; nothing deleted')
+    base={'catalog':str(pathlib.Path(args.catalog).absolute() if args.catalog else root/'.cds-retention'),'directories':list(map(str,directories)),'instanceId':args.instance_id}
+    if args.execute and args.confirm!=CONFIRM_PHRASE:raise RuntimeError('--execute requires the explicit retention confirmation phrase')
+    if not 1<=args.max_removals<=20:raise RuntimeError('Batch size must be 1..20')
+    if args.adopt_plan:
+        plan=pathlib.Path(args.adopt_plan)
+        if plan.is_symlink() or plan.stat().st_uid!=os.getuid():raise RuntimeError('Ownership plan author is unconfirmed')
+        values=json.loads(plan.read_text())
+        if not isinstance(values,list) or len(values)>20:raise RuntimeError('Ownership registration requires a bounded explicit file list')
+        for item in values:
+            allowed={'path','projectId','serviceId','origin','disposition','dispositionReason','sourceContainer','lineageAttestation'}
+            if not isinstance(item,dict) or set(item)-allowed:raise RuntimeError('Ownership plan fields are not allowed')
+            source=item.pop('sourceContainer',None);fingerprint=None
+            if source:
+                if not isinstance(item.get('lineageAttestation'),str) or not item['lineageAttestation'].strip():raise RuntimeError('Binding a historical archive to a current source requires explicit owner lineage evidence')
+                fingerprint=run(program,{'action':'source','containerName':source})['sourceFingerprint']
+            run(program,{**base,**item,'sourceFingerprint':fingerprint,'action':'register','attestedBy':'local-owner-uid-'+str(os.getuid()),'sourceComplete':False})
+    if args.register_export:
+        receipt=pathlib.Path(args.register_export)
+        if receipt.is_symlink() or receipt.stat().st_uid!=os.getuid() or receipt.stat().st_size>262144:raise RuntimeError('Exporter receipt identity is unconfirmed')
+        report=json.loads(receipt.read_text());folder=pathlib.Path(report['backupDir']).absolute()
+        if folder.resolve()!=folder or folder not in directories or report.get('verdict')!='pass' or report.get('dryRun') is not False:raise RuntimeError('Exporter completion is unconfirmed')
+        expected={}
+        if report.get('mode')=='full':
+            expected={str(folder/(db+'.archive.gz')):db for db in report.get('databases',[]) if isinstance(db,str) and db and '/' not in db and '..' not in db}
+        elif report.get('mode')=='critical':
+            for spec in report.get('criticalCollections',[]):
+                if not isinstance(spec,str) or '/' in spec or '..' in spec or '.' not in spec:raise RuntimeError('Declared collection coverage is invalid')
+                db,collection=spec.split('.',1);scope=db if collection=='*' else db+'/'+collection
+                expected[str(folder/((db if collection=='*' else db+'.'+collection)+'.archive.gz'))]=scope
+        declared=report.get('archives')
+        if not expected or not isinstance(declared,list) or set(declared)!=set(expected):raise RuntimeError('Declared database/collection coverage is incomplete')
+        source=report.get('sourceFingerprint');complete=isinstance(source,str) and len(source)==64 and report.get('sourceIdentityStable') is True
+        sums=folder/'SHA256SUMS'
+        if sums.is_symlink() or sums.stat().st_uid!=os.getuid():raise RuntimeError('Producer checksum file identity is unconfirmed')
+        checksums={}
+        for line in sums.read_text().splitlines():
+            parts=line.split(maxsplit=1)
+            if len(parts)!=2 or len(parts[0])!=64 or any(c not in '0123456789abcdef' for c in parts[0]):raise RuntimeError('Producer checksum format is unconfirmed')
+            name=parts[1].lstrip('*');name=name[2:] if name.startswith('./') else name
+            if '/' in name or name in checksums:raise RuntimeError('Producer checksum path or uniqueness is unconfirmed')
+            checksums[name]=parts[0]
+        if set(checksums)!={pathlib.Path(p).name for p in expected}:raise RuntimeError('Producer checksums do not cover the complete declared export')
+        receipt_hash=hashlib.sha256(receipt.read_bytes()+sums.read_bytes()).hexdigest()
+        recovered_at=int(dt.datetime.fromisoformat(report.get('backupStartedAt',report['generatedAt']).replace('Z','+00:00')).timestamp()*1000)
+        registered=0
+        for file,database in expected.items():
+            run(program,{**base,'action':'register','path':file,'projectId':args.project,'serviceId':args.service+'/'+database,'origin':'automatic','sourceFingerprint':source if complete else None,'sourceComplete':complete,'recoveryPointAt':recovered_at,'producerIntegrity':{'gzipValidated':True,'sha256':checksums[pathlib.Path(file).name],'receiptSha256':receipt_hash}});registered+=1
+        for file in [receipt,folder/'SHA256SUMS']:
+            if file.parent==folder and file.is_file() and not file.is_symlink():run(program,{**base,'action':'register','path':str(file),'projectId':args.project,'serviceId':args.service+'/export-evidence','origin':'automatic','disposition':'reproducible-artifact','attestedBy':'completed-exporter','dispositionReason':'This exact producer generated bounded metadata/checksums; contains no business data'})
+        if args.register_only:
+            print(json.dumps({'registered':True,'archives':registered,'replacementVerified':complete,'maxAgeDays':15}));return 0
+    report=run(program,{**base,'action':'reconcile' if args.execute else 'preview','maxRemovals':args.max_removals})
+    report.update({'status':'executed' if args.execute else 'dry-run','root':str(root),'policy':{'maxAgeDays':15,'unknownOwnership':'retain','uniqueBusinessRecoveryPoint':'explicit-policy-conflict-until-valid-replacement'}})
+    rendered=json.dumps(report,ensure_ascii=False,indent=2);print(rendered)
     if args.json_out:
-        Path(args.json_out).write_text(rendered + "\n", encoding="utf-8")
-    return 0
+        output=pathlib.Path(args.json_out)
+        if output.is_symlink():raise RuntimeError('Report destination is aliased')
+        if output.parent.absolute().resolve()!=output.parent.absolute():raise RuntimeError('Report directory is aliased')
+        fd,temp=tempfile.mkstemp(prefix='.retention-report-',dir=output.parent)
+        with os.fdopen(fd,'w') as f:f.write(rendered+'\n');f.flush();os.fsync(f.fileno())
+        os.replace(temp,output)
+    return 0 if report.get('scanStatus')=='complete' else 3
 
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__=='__main__':
+    try:raise SystemExit(main())
+    except (RuntimeError,OSError,ValueError,KeyError,TypeError,subprocess.TimeoutExpired) as error:
+        print(json.dumps({'scanStatus':'partial','usageBytes':None,'error':str(error),'retained':True},ensure_ascii=False));raise SystemExit(3)

@@ -3,6 +3,7 @@ import {ProfileStorageProvisionService,profileStorageBranchIdentity} from '../se
 import { StorageProvisionService,storageProvisionDigest } from '../services/storage-provision.js';
 import {infraStoragePlan,stableStorageVolumeName} from '../services/deployment-storage-plan.js';
 import { UnsafeDeploymentStorageError } from '../services/deployment-storage-plan.js';
+import { assertProfileStorageBoundary } from '../services/deployment-storage-boundary.js';
 import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { normalizeRestrictedIpv4Allowlist } from '../services/restricted-ipv4-allowlist.js';
 import { createPreviewAddressRouter } from './preview-address.js';
@@ -44,6 +45,7 @@ import { resolveArtifactCommitIdentity } from '../services/artifact-commit-ident
 import { refreshArtifactWaiters, registerArtifactWaitRefresher, requestArtifactWaitRefresh } from '../services/artifact-admission-wait.js';
 import { ContainerStopUnconfirmedError, resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
+import { createJanitorObservationRouter } from './janitor-observation.js';
 import { createSelfUpdateCheckpoint, prepareDetachedCdsRestart } from '../services/self-update-handoff.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
 import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
@@ -2318,6 +2320,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   if (branchOperationCoordinator && deploymentRunService) deploymentRunService.bindOperationCoordinator(branchOperationCoordinator);
   const router = Router();
+  router.use(createJanitorObservationRouter(janitorService));
   router.use(createBranchServiceIsolationRouter(stateService, branchOperationCoordinator,
     (entry, excluded) => containerService.assertBranchStoppedForIsolation(entry, excluded)));
   router.use((req, res, next) => {
@@ -3237,6 +3240,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           'platform-mismatch': '镜像平台与执行器不匹配，等待适用产物；旧服务继续保留',
           'target-unresolved': '目标提交的完整身份尚未确认，暂不部署；旧服务继续保留',
           'image-unresolved': '必需镜像引用尚未确认，暂不部署；旧服务继续保留',
+          'cache-budget': '宿主镜像总量预算不足，等待回收或容量调整；旧服务继续保留',
         };
         const phase = result.state === 'ready' ? 'artifact-ready' : 'artifact-wait';
         deploymentRunService!.heartbeat(run.id, phase);
@@ -5150,6 +5154,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //   - `git fetch origin --prune` 每个 repoRoot 独立 cache 5 分钟
   //   - 5 分钟内只跑 `for-each-ref`(纯本地读 refs,毫秒级)
   //   - `?nofetch=true` 强制跳过 fetch,纯本地读(用户主动刷新前置场景)
+  //   - `?force=true` 是用户主动刷新，绕过五分钟缓存；nofetch 仍优先
   //   - 响应额外字段 `cachedAt`、`fetched` 让前端能展示"上次同步于 N 分钟前"
 
   const REMOTE_FETCH_CACHE_MS = 5 * 60 * 1000;
@@ -5159,6 +5164,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const projectId = resolveProjectIdParam(req.query.project);
       const noFetch = req.query.nofetch === 'true' || req.query.nofetch === '1';
+      const forceFetch = req.query.force === 'true' || req.query.force === '1';
       const repoRoot = projectId
         ? stateService.getProjectRepoRoot(projectId, config.repoRoot)
         : config.repoRoot;
@@ -5169,7 +5175,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const cacheValid = now - lastFetchedAt < REMOTE_FETCH_CACHE_MS;
 
       let fetched = false;
-      if (!noFetch && !cacheValid) {
+      if (!noFetch && (forceFetch || !cacheValid)) {
         const auth = await gitAuthForRepo(repoRoot);
         const fetchResult = await shell.exec(
           'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
@@ -5226,7 +5232,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branches,
         defaultBranch,
         fetched,
-        cachedAt: cacheValid ? lastFetchedAt : (fetched ? now : null),
+        cachedAt: fetched ? now : cacheValid ? lastFetchedAt : null,
       });
     } catch (err) {
       res.status(500).json(logPayloadForHumanView(req, { error: (err as Error).message }));
@@ -13171,6 +13177,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         assertCurrent('manual migration after run');
         return result;
       };
+      assertProfileStorageBoundary(profile, entry.worktreePath);
       const result = deploymentNeedsSourceCheckout([profile])
         ? await worktreePathActivity.withClaim([entry.worktreePath, WorktreeService.deploymentSourceRootFor(entry.worktreePath)], async () => {
           assertCurrent('manual migration before local HEAD');
@@ -14021,6 +14028,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         force: true,
       });
       const deploymentRepoRoot = stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+      // Reject known-invalid declarations before any full source snapshot is allocated.
+      // Runtime preflight still revalidates native identity and current references.
+      for (const profile of profiles) assertProfileStorageBoundary(resolveEffectiveProfile(profile, inputBranch()), entry.worktreePath);
       let pullResult = selectedDeploymentVersion
         ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
         : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
@@ -15479,6 +15489,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
       const deploymentRepoRoot = stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+      assertProfileStorageBoundary(resolveEffectiveProfile(profile, inputBranch()), entry.worktreePath);
       let pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : deploymentNeedsSourceCheckout([resolveEffectiveProfile(profile, inputBranch())])
@@ -23207,8 +23218,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           owner.defaultDeployModes,
           stateService.getBuildProfilesForProject(owner.id),
         );
-        const needsSource = deploymentNeedsSourceCheckout(mergeBranchProfiles(
-          stateService.getBuildProfilesForProject(owner.id),entry).map(profile=>resolveEffectiveProfile(profile,entry!)));
+        const importCreationProfiles = mergeBranchProfiles(stateService.getBuildProfilesForProject(owner.id),entry)
+          .map(profile=>resolveEffectiveProfile(profile,entry!));
+        for (const profile of importCreationProfiles) assertProfileStorageBoundary(profile, entry.worktreePath);
+        const needsSource = deploymentNeedsSourceCheckout(importCreationProfiles);
         if (needsSource) {
           await worktreePathActivity.withClaim([worktreePath,WorktreeService.deploymentSourceRootFor(worktreePath)],async()=>{
             await worktreeService.create(config.repoRoot,mainBranch,worktreePath);stateService.addBranch(entry!);
@@ -23240,6 +23253,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         entry,
       );
       const importEffective = profiles.map(profile => resolveEffectiveProfile(profile, entry!));
+      for (const profile of importEffective) assertProfileStorageBoundary(profile, entry.worktreePath);
       const importNeedsSource = deploymentNeedsSourceCheckout(importEffective);
       const importTarget = await worktreeService.resolveDeploymentCommit(entry.branch,
         entry.worktreePath,undefined,config.repoRoot);

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kill Debt · 债务发收"
+  short_description: "复核债务有效性，生成可执行目标提示词，并按真实结果回写核销债务"
+  default_prompt: "使用 $kill-debt 复核指定范围的债务，按优先级和依赖生成完整目标提示词；已有交付结果则核验后收账。"
