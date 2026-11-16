@@ -2263,6 +2263,8 @@ export interface DeletedProjectWorktreeTombstone {
 }
 
 export interface CdsState {
+  /** Explicit owner opt-in for bounded read-only capacity collection. */
+  hostCapacitySamplingEnabled?: boolean;
   profileStorageBindings?: Record<string, import('./services/profile-storage-provision.js').ProfileStorageBinding>;
   profileStoragePublications?: Record<string, {binding: import('./services/profile-storage-provision.js').ProfileStorageBinding}>;
   /** Routing rules */

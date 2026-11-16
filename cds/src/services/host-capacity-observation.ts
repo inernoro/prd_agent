@@ -83,13 +83,15 @@ export class HostCapacityObservationService {
   private running = false;
   private reading = false;
   private lastAt = 0;
+  private unavailableAfter = 0;
+  private lastConfiguredHost?: string;
   private risk = false;
   private lastSignal = '';
   private lastSignalAt = 0;
   constructor(private readonly options: {
     reportPath?: string; expectedHost?: string; now?: () => number;
     publish: (type: CdsEventType, data: unknown) => void;
-  }) {}
+  }) { this.lastConfiguredHost = options.expectedHost; }
   private now(): number { return this.options.now?.() ?? Date.now(); }
   getSnapshot(): CapacityObservation {
     if (this.snapshot.sampledAt && this.now() - Date.parse(this.snapshot.sampledAt) > MAX_AGE_MS)
@@ -110,6 +112,26 @@ export class HostCapacityObservationService {
     this.running = false; this.generation++;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
+  }
+  configure(reportPath?: string, expectedHost?: string): void {
+    const changed = Boolean(expectedHost && this.lastConfiguredHost && expectedHost !== this.lastConfiguredHost);
+    if (expectedHost) this.lastConfiguredHost = expectedHost;
+    this.stop();
+    this.options.reportPath = reportPath; this.options.expectedHost = expectedHost;
+    this.lastAt = 0; this.unavailableAfter = this.now();
+    if (changed) { this.risk = false; this.lastSignal = ''; }
+    this.snapshot = { status: 'unknown', sampledAt: null, reason: reportPath ? '正在等待新的可信容量采样' : '已暂停容量采样，当前风险未知' };
+    this.start();
+  }
+  markUnavailable(reason: string): void {
+    this.unavailableAfter = Math.max(this.now(), this.lastAt + 1);
+    this.snapshot = { status: 'unknown', sampledAt: null, reason };
+  }
+  async refresh(): Promise<void> {
+    if (this.reading) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    await this.poll(this.generation);
   }
   private async read(): Promise<CapacityObservation> {
     const handle = await fs.open(this.options.reportPath!, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -137,7 +159,7 @@ export class HostCapacityObservationService {
     try {
       next = await this.read();
       const at = Date.parse(next.sampledAt!);
-      if (at < this.lastAt) invalid();
+      if (at < this.lastAt || at < this.unavailableAfter) invalid();
 
     } catch { next = { status: 'unknown', sampledAt: null, reason: '容量报告缺失、过期或读取失败，当前风险未知' }; }
     finally { this.reading = false; }

@@ -2287,6 +2287,11 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   //
   // Mirrors scheduler override semantics: Dashboard writes these fields to
   // state so global expiry settings survive CDS restarts.
+  getHostCapacitySamplingEnabled(): boolean { return this.state.hostCapacitySamplingEnabled === true; }
+  setHostCapacitySamplingEnabled(enabled: boolean): void {
+    this.state.hostCapacitySamplingEnabled = enabled; this.save();
+  }
+
   getJanitorEnabledOverride(): boolean | undefined {
     return this.state.janitorEnabledOverride;
   }
