@@ -63,6 +63,10 @@ public partial class DocumentStoreController
             ContentType = "text/markdown", SourceType = DocumentSourceType.Upload, Writing = state,
             Metadata = new() { ["writing_template"] = template.Id, ["writing_stage"] = "select", ["writing_version"] = template.Version } };
         await _db.DocumentEntries.InsertOneAsync(entry);
+        await _db.DocumentStores.UpdateOneAsync(s => s.Id == storeId,
+            Builders<DocumentStore>.Update
+                .Inc(s => s.DocumentCount, 1)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow));
         return Ok(ApiResponse<object>.Ok(new { entryId = entry.Id, state }));
     }
 
