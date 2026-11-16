@@ -1,0 +1,46 @@
+name: Arena Source Probe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/arena-source-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify public leaderboard access
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe_body="${RUNNER_TEMP}/arena-probe.html"
+          probe_status=$(curl --silent --show-error --location --max-time 45 \
+            --user-agent 'PrdAgent-ModelLeaderboard/1.0' \
+            --output "$probe_body" --write-out '%{http_code}' \
+            https://arena.ai/leaderboard/agent)
+          PROBE_BODY="$probe_body" PROBE_STATUS="$probe_status" python3 - <<'PY'
+          import datetime, hashlib, json, os, pathlib, re
+          body = pathlib.Path(os.environ['PROBE_BODY']).read_bytes()
+          html = body.decode('utf-8', errors='replace')
+          rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.S)
+          model_rows = [row for row in rows if re.search(r'title="[^"]+"', row)]
+          challenge = bool(re.search(r'<title>\s*Just a moment\.\.\.\s*</title>', html, re.I))
+          evidence = {
+              'source': 'https://arena.ai/leaderboard/agent',
+              'fetchedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'httpStatus': int(os.environ['PROBE_STATUS']),
+              'bytes': len(body),
+              'sha256': hashlib.sha256(body).hexdigest(),
+              'modelRows': len(model_rows),
+              'challenge': challenge,
+          }
+          print(json.dumps(evidence, ensure_ascii=False))
+          pathlib.Path(os.environ['PROBE_BODY']).unlink()
+          if evidence['httpStatus'] != 200 or challenge or len(model_rows) < 5:
+              raise SystemExit('Runner did not obtain a usable leaderboard page')
+          PY
