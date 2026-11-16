@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   installOperationsFixtures,
+  target,
   targetName,
 } from "../fixtures/admin-operations.mjs";
 test.beforeEach(async ({ browser, page }, testInfo) => {
@@ -15,6 +16,59 @@ test.beforeEach(async ({ browser, page }, testInfo) => {
     description: browser.version(),
   });
 });
+
+for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+  test(`${viewport.width} 授权提醒可稍后处理，预检就绪批次可直接取消`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    await page.route('**/api/auth/status', async (route) => route.fulfill({ json: {
+      authenticated: true, enabled: true, user: { name: '审批操作员', isSystemOwner: true },
+      approvalCapabilities: { accessRequests: true, operator: false },
+    } }));
+    const targets = [target, { ...target, id: 'compat-target-b', name: '隔离目标 B' }];
+    let batch = {
+      id: 'compat-ready-batch', projectId: target.projectId, versionId: 'compat-version', reportId: 'compat-report',
+      branchId: 'compat-branch', branchName: 'compat-branch', commitSha: 'a'.repeat(40), status: 'ready',
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+      targets: targets.map((item) => ({ targetId: item.id, targetName: item.name, status: 'ready', attempts: [], checks: [] })),
+    };
+    const mutations: string[] = [];
+    page.on('request', (req) => {
+      const path = new URL(req.url()).pathname;
+      if (req.method() !== 'GET' && path.startsWith('/api/')) mutations.push(path);
+    });
+    await page.route('**/api/access-requests', async (route) => {
+      await route.fulfill({ json: { requests: [{ id: 'unrelated-pending', status: 'pending', kind: 'project', projectId: 'other-project', projectName: '其他项目', agentName: '验收 Agent', purpose: '请保留这条未批准申请', createdAt: '2026-01-01T00:00:00Z' }] } });
+    });
+    await page.route('**/api/releases/targets*', async (route) => route.fulfill({ json: { targets, archivedTargets: [], remoteHosts: [] } }));
+    await page.route('**/api/releases/batches**', async (route) => {
+      const req = route.request(), path = new URL(req.url()).pathname;
+      if (path.endsWith('/accepted-versions')) return route.fulfill({ json: { versions: [] } });
+      if (path.endsWith('/cancel') && req.method() === 'POST') {
+        batch = { ...batch, status: 'cancelled', updatedAt: new Date().toISOString(), targets: batch.targets.map((item) => ({ ...item, status: 'cancelled' })) };
+        return route.fulfill({ json: { batch } });
+      }
+      return route.fulfill({ json: path.endsWith('/batches') ? { batches: [batch] } : { batch } });
+    });
+    await page.goto(`http://127.0.0.1:5273/release-console?project=${target.projectId}&batch=${batch.id}`);
+    const floating = page.getByTestId('cds-access-request-floating');
+    await expect(floating).toContainText('请保留这条未批准申请');
+    await floating.getByRole('button', { name: '稍后在信息中心处理', exact: true }).click();
+    await expect(floating).toHaveCount(0);
+    expect(mutations).toEqual([]);
+    const cancel = page.getByRole('button', { name: '取消批次', exact: true });
+    await reachable(cancel);
+    await cancel.click();
+    await expect(page.getByText('已取消', { exact: true }).first()).toBeVisible();
+    expect(mutations).toEqual([`/api/releases/batches/${batch.id}/cancel`]);
+    expect(batch.targets.every((item) => item.attempts.length === 0)).toBe(true);
+    await page.getByRole('button', { name: '信息中心，1 条待处理', exact: true }).click();
+    const inbox = page.getByRole('region', { name: '1 个授权申请需要处理', exact: true });
+    await expect(inbox).toContainText('请保留这条未批准申请');
+    await expect(inbox.getByRole('button', { name: '批准项目访问', exact: true })).toBeVisible();
+    expect(mutations).toEqual([`/api/releases/batches/${batch.id}/cancel`, '/api/notices/read-all']);
+  });
+}
 test.afterEach(async ({}, testInfo) => {
   expect(testInfo.annotations.filter((a) => a.type === "pageerror")).toEqual(
     [],

@@ -353,7 +353,7 @@ export function BatchReleasePanel({ projectId, targets, currentRows = [], onOpen
           {['draft', 'blocked', 'ready'].includes(selected.status) ? <Button variant="outline" disabled={busy} onClick={() => newRelease(true)}>返回修改（创建新批次）</Button> : null}
           {['draft', 'blocked', 'ready'].includes(selected.status) ? <Button variant="outline" disabled={busy} onClick={() => batchAction('正在统一检查所有目标', '/preflight')}>{selected.status === 'draft' ? '统一发布前检查' : '重新检查所有目标'}</Button> : null}
           {selected.status === 'ready' ? <Button disabled={busy} onClick={() => batchAction('正在开始批次发布', '/start')}>确认发布到 {selected.targets.length} 个目标</Button> : null}
-          {isActive(selected) || pending === '正在统一检查所有目标' ? <Button variant="outline" disabled={cancelling} onClick={() => void cancelBatch()}><Square />取消批次</Button> : null}
+          {['draft', 'blocked', 'ready'].includes(selected.status) || isActive(selected) || pending === '正在统一检查所有目标' ? <Button variant="outline" disabled={cancelling} onClick={() => void cancelBatch()}><Square />取消批次</Button> : null}
           <Button variant="outline" disabled={pollingPending} onClick={() => batchAction('正在核对各目标实际运行版本', '/refresh')}><RefreshCw />核对实际运行版本</Button>
         </> : null}
       </div>
