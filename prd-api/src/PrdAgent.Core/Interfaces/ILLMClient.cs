@@ -55,6 +55,8 @@ public class LLMAttachment
 /// </summary>
 public class LLMStreamChunk
 {
+    public IReadOnlyList<PrdAgent.Core.LlmGateway.GatewayBillingAlert> BillingAlerts { get; set; } = [];
+
     public string Type { get; set; } = string.Empty; // start, delta, done, error
     public string? Content { get; set; }
     public int? InputTokens { get; set; }

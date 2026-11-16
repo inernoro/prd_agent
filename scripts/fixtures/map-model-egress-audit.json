@@ -358,6 +358,12 @@
       },
       "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
     },
+    "prd-api/src/PrdAgent.Api/Services/ModelLeaderboard/HuggingFaceLeaderboardFetcher.cs": {
+      "calls": {
+        "call:GetAsync:a72634fa1ebe117527a47ff1": 1
+      },
+      "purpose": "仅从固定 Hugging Face 官方榜单数据集读取公开 JSON；沿用 ModelLeaderboard 命名客户端的 SafeOutbound 与全局模型出口守卫，无模型推理请求、供应商 SDK 或凭据。仅许可本条 GET 指纹，新增调用仍须审计。"
+    },
     "prd-api/src/PrdAgent.Api/Services/ModelLeaderboard/ModelLeaderboardSyncService.cs": {
       "calls": {
         "call:CreateClient:2fdfccefe2092ffbdfae312d": 1
