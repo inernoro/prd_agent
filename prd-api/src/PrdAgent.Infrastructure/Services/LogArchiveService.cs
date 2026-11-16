@@ -248,7 +248,7 @@ public sealed class LogArchiveService(MongoDbContext db, LlmGatewayDataContext g
         }
         catch (Exception error)
         {
-            if (batch != null) await Batches.UpdateOneAsync(new BsonDocument("_id", batch["_id"]), Builders<BsonDocument>.Update.Set("Status", "failed").Set("FailureStage", stage).Set("FailureType", error.GetType().Name), cancellationToken: CancellationToken.None);
+            if (batch != null) await Batches.UpdateOneAsync(new BsonDocument("_id", batch["_id"]), Builders<BsonDocument>.Update.Set("Status", "failed").Set("Migrated", batch["Migrated"]).Set("FailureStage", stage).Set("FailureType", error.GetType().Name), cancellationToken: CancellationToken.None);
             await Policies.UpdateOneAsync(lease, Builders<BsonDocument>.Update.Set("Error", "归档未完成，日志仍可查回；请检查冷库连接和密钥后重试。"), cancellationToken: CancellationToken.None);
             throw;
         }

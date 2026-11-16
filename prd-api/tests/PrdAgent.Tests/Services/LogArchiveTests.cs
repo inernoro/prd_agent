@@ -87,6 +87,32 @@ public sealed class LogArchiveIntegrationTests : IAsyncLifetime
         Assert.False((await _service.PolicyAsync("test-owner", default))["Enabled"].AsBoolean);
     }
     [Fact]
+    public async Task InterruptedMigrationKeepsConfirmedCountAndRestoresOnlyMigratedRecord()
+    {
+        var logs = _db.Database.GetCollection<BsonDocument>("apirequestlogs");
+        var first = Log("first");
+        var second = Log("second"); second["StartedAt"] = first["StartedAt"].ToUniversalTime().AddSeconds(1);
+        await logs.InsertManyAsync([first, second]);
+        // Let the first migration commit, then reject only the second cold stub.
+        await _db.Database.RunCommandAsync<BsonDocument>(new BsonDocument
+        {
+            { "collMod", "apirequestlogs" },
+            { "validator", new BsonDocument("$or", new BsonArray
+                { new BsonDocument("_id", new BsonDocument("$ne", "second")), new BsonDocument("ColdArchiveId", new BsonDocument("$exists", false)) }) },
+            { "validationLevel", "strict" }
+        });
+        await Assert.ThrowsAnyAsync<Exception>(() => _service.ProcessOneAsync("test-owner", default));
+        var batch = Assert.Single(await _service.ListAsync("test-owner", "api", null, null, null, default));
+        Assert.Equal("failed", batch["Status"].AsString);
+        Assert.Equal(1, batch["Migrated"].ToInt32());
+        Assert.Equal(second, await logs.Find(new BsonDocument("_id", "second")).SingleAsync());
+        Assert.Equal(first, await _service.HydrateAsync("test-owner", "api", "first", default));
+        Assert.Equal(1, await _service.RestoreAsync("test-owner", batch["_id"].AsString, default));
+        var restored = await logs.Find(new BsonDocument("_id", "first")).SingleAsync();
+        Assert.False(restored.Contains(LogArchiveService.Pointer));
+        Assert.Equal(first["ResponseBody"], restored["ResponseBody"]);
+    }
+    [Fact]
     public async Task ArchiveReadDownloadAndRestorePreserveCompleteRecord()
     {
         var logs = _db.Database.GetCollection<BsonDocument>("apirequestlogs");
