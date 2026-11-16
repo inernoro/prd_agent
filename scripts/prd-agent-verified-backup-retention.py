@@ -39,6 +39,8 @@ def main():
  for directory in sorted(root.iterdir()):
   if not directory.is_dir() or directory.is_symlink() or directory.name in protected:
    report['kept'][directory.name]='latest full database snapshot or non-directory';continue
+  if directory.stat().st_mtime>time.time()-args.days*86400:
+   report['kept'][directory.name]='recent snapshot directory';continue
   paths=list(directory.rglob('*'))
   files=[(p,str(p.relative_to(root))) for p in paths if p.is_file() and not p.is_symlink()]
   if any(p.is_symlink() for p in paths):report['kept'][directory.name]='symlink';continue
