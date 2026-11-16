@@ -1,5 +1,6 @@
 import { ReleaseConsoleSkeleton, RELEASE_CONSOLE_LAYOUT_CLASS, RELEASE_CONSOLE_LEFT_CLASS, RELEASE_CONSOLE_CENTER_CLASS, RELEASE_CONSOLE_RIGHT_CLASS } from '@/components/skeletons/ReleaseConsoleSkeleton';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 /**
  * 发布控制台（三栏版）—— 设计稿 cds/web/demo/release-console-rail.html 的真接口实现。
  *
@@ -35,7 +36,7 @@ import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useNowTick } from '@/hooks/useNowTick';
-import { ApiError, apiRequest, apiUrl } from '@/lib/api';
+import { ApiError, apiRequest, apiUrl, isChildPreviewCdsInstance } from '@/lib/api';
 import { buildReleaseAgentTask } from '@/lib/releaseAgentTask';
 import { detectStall, resolveStepDetails, type ConsolePlanLike } from '@/lib/releaseConsoleView';
 import { buildEnvironmentSections, resolveSelectedTargetId } from '@/lib/releaseEnvironments';
@@ -45,6 +46,9 @@ import { buildConsoleStance, isShownRunCurrent, planRollbackToVersion, sameCommi
 import { PROJECT_TAG_TONE_CLASS, projectTags, type ProjectTagKey } from '@/lib/projectTags';
 import { releaseEtaText } from '@/lib/releaseEta';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
+import { initialReleaseCenterProject, rememberReleaseCenterProject, resolveReleaseProject, resolveInitialReleaseProject } from '@/lib/releaseCenter';
+import { BatchReleasePanel } from './release-center/BatchReleasePanel';
+import { ReleaseLogDialog } from './release-center/dialogs';
 import { Chip, formatClock, formatDateTime, formatDuration, runTone, statusLabel } from './release-center/shared';
 // BranchOption 复用发布中心那一份：分支的展示名是 `branch` 不是 `name`，
 // 自己再声明一个接口只会让 TS 对着一个不存在的字段点头（真实数据里下拉全是空的）。
@@ -202,7 +206,11 @@ export function ReleaseConsolePage(): JSX.Element {
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [initialSettled, setInitialSettled] = useState(false);
-  const [projectId, setProjectId] = useState(params.get('project') || '');
+  const [projectId, setProjectId] = useState(() => initialReleaseCenterProject(params, window.localStorage));
+  const [unavailableProject, setUnavailableProject] = useState(false);
+  const projectAvailable = projectsLoaded && Boolean(resolveReleaseProject(projectId, projects));
+  const batchMode = params.get('mode') === 'batch' || (!params.get('mode') && !params.has('target') && !params.has('intent'));
+  const [batchLog, setBatchLog] = useState<ReleaseRun | null>(null);
   const [search, setSearch] = useState('');
   const [center, setCenter] = useState<CenterResponse | null>(null);
   const [branches, setBranches] = useState<BranchOption[]>([]);
@@ -252,7 +260,9 @@ export function ReleaseConsolePage(): JSX.Element {
         if (!alive) return;
         const list = res.projects || [];
         setProjects(list);
-        setProjectId((current) => current || list[0]?.id || '');
+        const resolved = resolveInitialReleaseProject(params, window.localStorage, list);
+        if (resolved !== currentProject.current) selectProject(resolved);
+        setUnavailableProject(list.length > 0 && !resolved);
       })
       .catch((err) => { if (alive) setError(err instanceof ApiError ? err.message : String(err)); })
       .finally(() => { if (alive) setProjectsLoaded(true); });
@@ -273,9 +283,24 @@ export function ReleaseConsolePage(): JSX.Element {
   const currentProject = useRef(projectId);
   useEffect(() => { currentProject.current = projectId; }, [projectId]);
   const isStaleProject = useCallback((p: string): boolean => currentProject.current !== p, []);
+  const selectProject = (id: string): void => {
+    setUnavailableProject(false);
+    currentProject.current = id;
+    setProjectId(id); setCenter(null); setBranches([]); setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); setBatchLog(null); setTargetId(''); setConfirmTargetId(null);
+    setParams((current) => {
+      const next = new URLSearchParams(current); next.set('project', id);
+      for (const key of ['target', 'intent', 'batch', 'batchView']) next.delete(key);
+      return next;
+    }, { replace: true });
+  };
+  const workspaceHref = (mode: string): string => {
+    const next = new URLSearchParams({ project: projectId, mode });
+    for (const key of ['batch', 'batchView']) { const value = params.get(key); if (value) next.set(key, value); }
+    return `/release-console?${next.toString()}`;
+  };
 
   const loadCenter = useCallback(async (): Promise<void> => {
-    if (!projectId) return;
+    if (!projectAvailable) return;
     const forProject = projectId;
     try {
       const res = await apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`);
@@ -289,12 +314,13 @@ export function ReleaseConsolePage(): JSX.Element {
       if (isStaleProject(forProject)) return;
       setError(err instanceof ApiError ? err.message : String(err));
     }
-  }, [projectId, isStaleProject]);
+  }, [projectId, projectAvailable, isStaleProject]);
 
   useEffect(() => { void loadCenter(); }, [loadCenter]);
 
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectAvailable) return;
+    rememberReleaseCenterProject(projectId, window.localStorage);
     setParams((current) => {
       const next = new URLSearchParams(current);
       next.set('project', projectId);
@@ -309,20 +335,20 @@ export function ReleaseConsolePage(): JSX.Element {
         setBranchId((current) => (list.some((b) => b.id === current) ? current : list[0]?.id || ''));
       })
       .catch(() => { if (!isStaleProject(forProject)) setBranches([]); });
-  }, [projectId, setParams, isStaleProject]);
+  }, [projectId, projectAvailable, setParams, isStaleProject]);
 
   /**
    * 选中的目标同步进 URL。发布中心跳过来带的是 `?target=`，这里把用户之后手动切换的
    * 结果也写回去——否则刷新一下就跳回默认目标，分享的链接也指不到同一个环境。
    */
   useEffect(() => {
-    if (!targetId) return;
+    if (!targetId || batchMode) return;
     setParams((current) => {
       const next = new URLSearchParams(current);
       next.set('target', targetId);
       return next;
     }, { replace: true });
-  }, [targetId, setParams]);
+  }, [targetId, batchMode, setParams]);
 
   /* ── 实时：订阅当前 run 的 SSE ─────────────────────────── */
   useEffect(() => {
@@ -685,15 +711,21 @@ export function ReleaseConsolePage(): JSX.Element {
       wide
       topbar={(
         <TopBar
-          left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布中心', href: '/release-center' }, { label: '发布控制台' }]} />}
+          left={<div className="flex min-w-0 flex-wrap items-center gap-3">
+            <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布工作台' }]} />
+            <label className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">当前项目
+              <select aria-label="当前项目" value={projectAvailable ? projectId : ''} className="h-9 min-w-0 max-w-[22rem] rounded-md border border-input bg-background px-3 text-sm text-foreground" onChange={(event) => selectProject(event.target.value)}><option value="" disabled>请选择当前实例中的项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name || project.id}</option>)}</select>
+            </label>
+          </div>}
           right={(
             <>
-              <span className="hidden items-center gap-2 rounded-full border border-[hsl(var(--hairline))] px-2.5 py-1 text-xs text-muted-foreground md:inline-flex">
+              {!batchMode ? <span className="hidden items-center gap-2 rounded-full border border-[hsl(var(--hairline))] px-2.5 py-1 text-xs text-muted-foreground md:inline-flex">
                 <span className={`h-1.5 w-1.5 rounded-full ${inFlight ? 'bg-primary' : 'bg-muted-foreground/60'}`} />
                 {inFlight && liveRow
                   ? `发布中 · ${liveRow.target.name}`
                   : '发布通道空闲'}
-              </span>
+              </span> : null}
+              {projectAvailable ? <Button variant="outline" size="sm" asChild><Link to={`/release-center?project=${encodeURIComponent(projectId)}`}>环境管理</Link></Button> : <Button variant="outline" size="sm" disabled>环境管理</Button>}
               <Button variant="outline" size="sm" onClick={() => void loadCenter()}>
                 <RefreshCw />
                 刷新
@@ -706,12 +738,23 @@ export function ReleaseConsolePage(): JSX.Element {
       {/* --fill 给高度，--bleed 抵消 .cds-main 的内边距：参考稿的左右两栏是**贴边的
           整块面板**，靠一条 1px 边框分隔，不是浮在底色上、四周留缝的圆角卡。
           这一条是这一页与参考稿观感差最远的地方，先把它对上。 */}
-      <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+      <Workspace fluid className="cds-workspace--fill cds-workspace--bleed flex flex-col">
+        <nav aria-label="发布方式" className="flex shrink-0 flex-wrap gap-2 border-b border-[hsl(var(--hairline))] px-6 py-3">
+          {[{ mode: 'batch', label: '批次发布' }, { mode: 'single', label: '逐目标发布' }].map((item) => <Link key={item.mode}
+            to={workspaceHref(item.mode)}
+            aria-current={(item.mode === 'batch') === batchMode ? 'page' : undefined}
+            className={`rounded-md px-4 py-2 text-sm font-medium ${(item.mode === 'batch') === batchMode ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted'}`}>{item.label}</Link>)}
+        </nav>
+        {isChildPreviewCdsInstance() ? <p role="note" className="border-b border-warn/30 bg-warn-soft px-6 py-3 text-sm">当前是隔离预览，只能查看界面，不能执行真实发布。请在有发布数据与权限的 CDS 实例中操作。</p> : null}
+        <div className="min-h-0 flex-1">
         {/* 桌面三栏无间距（分隔线由各栏自己的 border 画），窄屏回落自然流。
             列宽照参考稿 288/380，但参考稿是在宽画布上量的（它自己写死 min-width:1228
             并让页面横滚，本仓库不允许——见 cds/.claude/rules/mobile-layout-fallback.md）。
             所以：xl 收成 240/300，wide(1440) 回到 264/340，2xl 才是参考值 288/380。 */}
-        {initialLoading ? <ReleaseConsoleSkeleton /> : <div
+        {initialLoading ? <ReleaseConsoleSkeleton navigation={false} /> : !projectAvailable ? <div role="alert" className="m-6 rounded-md border border-warn/30 bg-warn-soft p-5 text-sm">{unavailableProject ? '当前链接或上次选择的项目不在此实例中，请从上方重新选择项目。' : error || '当前实例还没有可用项目，请先创建项目。'}</div> : batchMode ? <div className="h-full min-w-0 overflow-y-auto p-4 md:p-6">
+          {error ? <div role="alert" className="mb-4 rounded-md border border-bad/30 bg-bad-soft p-4 text-sm text-bad">{error}<Button variant="outline" size="sm" onClick={() => void loadCenter()}>重试读取项目</Button></div> : null}
+          {center ? <BatchReleasePanel key={projectId} projectId={projectId} targets={center.rows.map((item) => item.target)} currentRows={center.rows} onOpenLogs={setBatchLog} /> : !error ? <ContentLoading label="读取当前项目发布目标" /> : null}
+        </div> : <div
           className={RELEASE_CONSOLE_LAYOUT_CLASS}
         >
           {/* ══ 左栏：项目 + 环境 ══ */}
@@ -744,7 +787,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   key={item.id}
                   type="button"
                   aria-pressed={item.id === projectId}
-                  onClick={() => { setProjectId(item.id); setCenter(null); setBranches([]); setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); }}
+                  onClick={() => selectProject(item.id)}
                   className={`mb-1 flex w-full flex-col gap-1 rounded-[0.5625rem] border px-3 py-2.5 text-left transition-colors ${
                     item.id === projectId
                       ? 'border-primary/40 bg-primary/[0.08]'
@@ -1360,6 +1403,8 @@ export function ReleaseConsolePage(): JSX.Element {
             </div>
           </aside>
         </div>}
+        </div>
+        {batchLog ? <ReleaseLogDialog run={batchLog} readOnly retryingRunId="" canRollback={false} onRetry={() => {}} onRollback={() => {}} onClose={() => setBatchLog(null)} /> : null}
 
         {/* ══ 浮层：发布流水线（只读）══ */}
         {sheet === 'pipeline' ? (
@@ -1372,7 +1417,7 @@ export function ReleaseConsolePage(): JSX.Element {
               <p className="text-xs leading-relaxed text-muted-foreground">
                 这一页只读。当前后端的计划模板只登记步骤名，不登记每步命令，所以下面多数步骤看不到命令行——
                 真正执行的脚本在「部署命令」一栏与实时输出里。要改步骤、命令、健康检查地址，去
-                <a className="mx-1 text-primary hover:underline" href="/release-center">发布中心</a>
+                <Link className="mx-1 text-primary hover:underline" to={`/release-center?project=${encodeURIComponent(projectId)}&section=config`}>环境管理</Link>
                 的配置页签——后端没有第二处可写入口，这里再放一个编辑器就是画一个存不下去的表单。
               </p>
               {(activePlan?.steps || []).length === 0 ? (

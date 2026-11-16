@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   installOperationsFixtures,
+  target,
   targetName,
 } from "../fixtures/admin-operations.mjs";
 test.beforeEach(async ({ browser, page }, testInfo) => {
@@ -15,11 +16,145 @@ test.beforeEach(async ({ browser, page }, testInfo) => {
     description: browser.version(),
   });
 });
+
+for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+  test(`${viewport.width} 授权提醒可稍后处理，预检就绪批次可直接取消`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    await page.route('**/api/auth/status', async (route) => route.fulfill({ json: {
+      authenticated: true, enabled: true, user: { name: '审批操作员', isSystemOwner: true },
+      approvalCapabilities: { accessRequests: true, operator: false },
+    } }));
+    const targets = [target, { ...target, id: 'compat-target-b', name: '隔离目标 B' }];
+    let batch = {
+      id: 'compat-ready-batch', projectId: target.projectId, versionId: 'compat-version', reportId: 'compat-report',
+      branchId: 'compat-branch', branchName: 'compat-branch', commitSha: 'a'.repeat(40), status: 'ready',
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+      targets: targets.map((item) => ({ targetId: item.id, targetName: item.name, status: 'ready', attempts: [], checks: [] })),
+    };
+    const mutations: string[] = [];
+    page.on('request', (req) => {
+      const path = new URL(req.url()).pathname;
+      if (req.method() !== 'GET' && path.startsWith('/api/')) mutations.push(path);
+    });
+    await page.route('**/api/access-requests', async (route) => {
+      await route.fulfill({ json: { requests: [{ id: 'unrelated-pending', status: 'pending', kind: 'project', projectId: 'other-project', projectName: '其他项目', agentName: '验收 Agent', purpose: '请保留这条未批准申请', createdAt: '2026-01-01T00:00:00Z' }] } });
+    });
+    await page.route('**/api/releases/targets*', async (route) => route.fulfill({ json: { targets, archivedTargets: [], remoteHosts: [] } }));
+    await page.route('**/api/releases/batches**', async (route) => {
+      const req = route.request(), path = new URL(req.url()).pathname;
+      if (path.endsWith('/accepted-versions')) return route.fulfill({ json: { versions: [] } });
+      if (path.endsWith('/cancel') && req.method() === 'POST') {
+        batch = { ...batch, status: 'cancelled', updatedAt: new Date().toISOString(), targets: batch.targets.map((item) => ({ ...item, status: 'cancelled' })) };
+        return route.fulfill({ json: { batch } });
+      }
+      return route.fulfill({ json: path.endsWith('/batches') ? { batches: [batch] } : { batch } });
+    });
+    await page.goto(`http://127.0.0.1:5273/release-console?project=${target.projectId}&batch=${batch.id}`);
+    const floating = page.getByTestId('cds-access-request-floating');
+    await expect(floating).toContainText('请保留这条未批准申请');
+    await floating.getByRole('button', { name: '稍后在信息中心处理', exact: true }).click();
+    await expect(floating).toHaveCount(0);
+    expect(mutations).toEqual([]);
+    const cancel = page.getByRole('button', { name: '取消批次', exact: true });
+    await reachable(cancel);
+    await cancel.click();
+    await expect(page.getByText('已取消', { exact: true }).first()).toBeVisible();
+    expect(mutations).toEqual([`/api/releases/batches/${batch.id}/cancel`]);
+    expect(batch.targets.every((item) => item.attempts.length === 0)).toBe(true);
+    await page.getByRole('button', { name: '信息中心，1 条待处理', exact: true }).click();
+    const inbox = page.getByRole('region', { name: '1 个授权申请需要处理', exact: true });
+    await expect(inbox).toContainText('请保留这条未批准申请');
+    await expect(inbox.getByRole('button', { name: '批准项目访问', exact: true })).toBeVisible();
+    expect(mutations).toEqual([`/api/releases/batches/${batch.id}/cancel`, '/api/notices/read-all']);
+  });
+
+  test(`${viewport.width} 取消目标重新发布先确认固定版本，返回不写入且只发布选中目标`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    const commit = 'a'.repeat(40);
+    let batch = {
+      id: 'compat-cancelled-batch', projectId: target.projectId, versionId: 'compat-version', reportId: 'compat-report',
+      branchId: 'compat-branch', branchName: 'compat-branch', commitSha: commit, status: 'cancelled',
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+      targets: [target, { ...target, id: 'compat-target-b', name: '隔离目标 B' }].map(item => ({
+        targetId: item.id, targetName: item.name, status: 'cancelled',
+        attempts: [] as Array<{ id: string; kind: string; runId: string; createdAt: string }>,
+        runId: undefined as string | undefined, observedCommitSha: undefined as string | undefined,
+      })),
+    };
+    const mutations: string[] = [];
+    page.on('request', req => {
+      const path = new URL(req.url()).pathname;
+      if (req.method() !== 'GET' && path.startsWith('/api/')) mutations.push(path);
+    });
+    await page.route('**/api/releases/batches**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/accepted-versions')) return route.fulfill({ json: { versions: [] } });
+      if (path.endsWith('/targets/compat-target/retry') && route.request().method() === 'POST') {
+        expect(route.request().postDataJSON().idempotencyKey).toMatch(/^[a-zA-Z0-9_-]{8,128}$/);
+        batch = { ...batch, status: 'partial_success', targets: batch.targets.map((row, index) => index ? row : {
+          ...row, status: 'success', observedCommitSha: commit, runId: 'compat-republished',
+          attempts: [{ id: 'republished-once', kind: 'deploy', runId: 'compat-republished', createdAt: new Date().toISOString() }],
+        }) };
+      }
+      return route.fulfill({ json: path.endsWith('/batches') ? { batches: [batch] } : { batch } });
+    });
+    await page.goto(`http://127.0.0.1:5273/release-console?project=${target.projectId}&batch=${batch.id}`);
+    const rows = page.getByRole('list', { name: '各目标发布结果', exact: true }).locator(':scope > li');
+    await rows.first().getByRole('button', { name: '重新发布此目标', exact: true }).click();
+    const confirm = page.getByRole('dialog', { name: '确认重新发布已取消目标', exact: true });
+    await expect(confirm).toContainText(targetName);
+    await expect(confirm).toContainText(commit);
+    expect(mutations).toEqual([]);
+    await reachable(confirm.getByRole('button', { name: '返回', exact: true }));
+    await confirm.getByRole('button', { name: '返回', exact: true }).click();
+    await expect(confirm).toHaveCount(0);
+    expect(mutations).toEqual([]);
+    await rows.first().getByRole('button', { name: '重新发布此目标', exact: true }).click();
+    const execute = confirm.getByRole('button', { name: '确认重新发布', exact: true });
+    await reachable(execute);
+    await execute.click();
+    await expect(rows.first()).toContainText('本批次部署 1 次');
+    await expect(rows.first().getByRole('button', { name: '重新发布此目标', exact: true })).toHaveCount(0);
+    await expect(rows.nth(1).getByRole('button', { name: '重新发布此目标', exact: true })).toBeVisible();
+    expect(batch.targets.map(row => row.attempts.length)).toEqual([1, 0]);
+    await page.reload();
+    await expect(rows.first()).toContainText('本批次部署 1 次');
+    expect(mutations).toEqual([`/api/releases/batches/${batch.id}/targets/compat-target/retry`]);
+  });
+}
 test.afterEach(async ({}, testInfo) => {
   expect(testInfo.annotations.filter((a) => a.type === "pageerror")).toEqual(
     [],
   );
 });
+
+for (const route of ['release-console', 'release-center']) {
+  test(`${route} 失效项目不能冒用首项或读取别的发布上下文`, async ({ page }) => {
+    const invalidRequests: string[] = [];
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith('/api/') && (url.searchParams.get('project') === 'missing-project' || url.searchParams.get('projectId') === 'missing-project' || url.pathname.includes('/missing-project/'))) invalidRequests.push(url.pathname);
+    });
+    await installOperationsFixtures(page);
+    if (route === 'release-console') await page.addInitScript(() => { (window as Window & { __CDS_PREVIEW_INSTANCE__?: boolean }).__CDS_PREVIEW_INSTANCE__ = true; });
+    await page.goto(`http://127.0.0.1:5273/${route}?project=missing-project&mode=batch`);
+    const project = page.getByRole('combobox', { name: route === 'release-console' ? '当前项目' : '项目', exact: true });
+    await expect(page.getByRole('alert')).toContainText('项目不在此实例中');
+    await expect(project).toHaveValue('');
+    if (route === 'release-console') await expect(page.getByRole('note')).toContainText('不能执行真实发布');
+    expect(invalidRequests).toEqual([]);
+    const validProjectId = await project.locator('option:not([value=""])').first().getAttribute('value');
+    expect(validProjectId).toBeTruthy();
+    await project.selectOption(validProjectId!);
+    await expect(project).toHaveValue(validProjectId!);
+    await expect.poll(() => new URL(page.url()).searchParams.get('project')).toBe(validProjectId);
+    if (route === 'release-console') await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
+    else await expect(page.getByRole('button', { name: '新建环境', exact: true })).toBeEnabled();
+    expect(invalidRequests).toEqual([]);
+  });
+}
 async function reachable(locator: Locator) {
   await locator.scrollIntoViewIfNeeded();
   await expect(locator).toBeVisible();
@@ -64,9 +199,11 @@ for (const viewport of [
       if (await page.getByLabel("打开导航菜单").isVisible())
         await page.getByLabel("打开导航菜单").click();
       await page
-        .getByRole("link", { name: "发布控制台", exact: true })
+        .getByRole("link", { name: "发布工作台", exact: true })
         .first()
         .click();
+      await expect(page.getByRole("heading", { name: "选择版本与目标", exact: true })).toBeVisible();
+      await page.getByRole("navigation", { name: "发布方式" }).getByRole("link", { name: "逐目标发布", exact: true }).click();
       await reachable(page.getByLabel("要发布的版本"));
       await page.getByRole("button", { name: "开始发布", exact: true }).click();
       const confirm = page.getByRole("button", {
@@ -298,7 +435,9 @@ for (const theme of ["light", "dark"]) {
     await page.addInitScript((t) => localStorage.setItem("cds_theme", t), theme);
     await page.goto("http://127.0.0.1:5273/project-list");
     await page.getByLabel("打开导航菜单").click();
-    await page.getByRole("link", { name: "发布控制台", exact: true }).click();
+    await page.getByRole("link", { name: "发布工作台", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "选择版本与目标", exact: true })).toBeVisible();
+    await page.getByRole("navigation", { name: "发布方式" }).getByRole("link", { name: "逐目标发布", exact: true }).click();
     await expect(page.getByLabel("要发布的版本")).toBeVisible();
     await page.evaluate(() => {
       document.documentElement.style.fontSize = "200%";
@@ -358,7 +497,9 @@ test("390 隔离发布成功闭环", async ({ page }) => {
   fixture.setPreflightPass(true);
   await page.goto("http://127.0.0.1:5273/project-list");
   await page.getByLabel("打开导航菜单").click();
-  await page.getByRole("link", { name: "发布控制台", exact: true }).click();
+  await page.getByRole("link", { name: "发布工作台", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "选择版本与目标", exact: true })).toBeVisible();
+  await page.getByRole("navigation", { name: "发布方式" }).getByRole("link", { name: "逐目标发布", exact: true }).click();
   await page.getByRole("button", { name: "开始发布", exact: true }).click();
   const confirm = page.getByRole("button", {
     name: `确认发布到 ${targetName}`,

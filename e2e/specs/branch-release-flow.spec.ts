@@ -14,7 +14,13 @@ async function branchCard(page: Page) {
   await page.getByText('窄屏样例项目', { exact: true }).first().click();
   const card = page.locator('[data-branch-card-id="compat-branch"]');
   await expect(card).toBeVisible();
-  await card.getByRole('button', { name: '发布到', exact: true }).click();
+  await expect(card.getByRole('button', { name: '预览', exact: true })).toBeVisible();
+  await expect(card.getByRole('button', { name: '发布到', exact: true })).toHaveCount(0);
+  await card.getByRole('button', { name: '预览更多操作', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '发布到', exact: true })).toHaveCount(0);
+  const release = page.getByRole('menuitem', { name: /^发布到/ });
+  await expect(release).toContainText('当前分支 · 逐目标发布');
+  await release.click();
   return page.getByRole('dialog', { name: '发布到', exact: true });
 }
 
@@ -187,7 +193,9 @@ for (const theme of ['light', 'dark']) test(`${theme} 大字弹窗暂时让预�
   await expect(badge).toBeVisible();
   await page.evaluate(() => document.documentElement.style.fontSize = '100%');
   await page.getByLabel('打开导航菜单', { exact: true }).click();
-  await page.getByRole('link', { name: '发布控制台', exact: true }).first().click();
+  await page.getByRole('link', { name: '发布工作台', exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
+  await page.getByRole('navigation', { name: '发布方式' }).getByRole('link', { name: '逐目标发布', exact: true }).click();
   await page.getByRole('button', { name: '流水线', exact: true }).click();
   const pipeline = page.getByRole('dialog');
   await expect(pipeline).toBeVisible();
