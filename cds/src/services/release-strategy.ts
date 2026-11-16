@@ -332,6 +332,7 @@ git -C "$repo" fetch --all --prune
 git -C "$repo" cat-file -e "$CDS_COMMIT_SHA^{commit}"
 if [ ! -d "$worktree" ]; then git -C "$repo" worktree add --detach "$worktree" "$CDS_COMMIT_SHA"; fi
 cd "$worktree"
+test "$(git rev-parse HEAD)" = "$CDS_COMMIT_SHA"
 ${strategy.buildCommand}
 source_dir="$worktree/${strategy.artifactDirectory}"
 test -s "$source_dir/index.html"
@@ -362,6 +363,10 @@ for ref in refs:
         raise SystemExit(f'entry asset missing or empty: {clean}')
 PY
 mv -T "$version.tmp" "$version"
+python3 - "$version" "$release_root" "$CDS_TARGET_ID" "$CDS_RELEASE_ID" "$CDS_COMMIT_SHA" <<'CDS_STATIC_PROOF_PY'
+${fs.readFileSync(new URL('./static-artifact-proof.py', import.meta.url), 'utf8')}
+seal_static_artifact(pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), *sys.argv[3:])
+CDS_STATIC_PROOF_PY
 ${preservePrevious ? '# auto-restore preserves the last known-good previous pointer' : 'if [ -L "$publish_root/current" ]; then ln -sfn "$(readlink "$publish_root/current")" "$publish_root/previous"; fi'}
 rm -f "$publish_root/current.next"
 ln -s "$version" "$publish_root/current.next"

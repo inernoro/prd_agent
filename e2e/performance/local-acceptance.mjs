@@ -8,6 +8,9 @@ import { randomBytes, createHash } from 'node:crypto';
 import { setTimeout as pause } from 'node:timers/promises';
 import { chromium, expect } from '@playwright/test';
 import { digest, executionErrors, buildIdentityErrors } from './metrics.mjs';
+import { openFixtureDocument, installOnboardingHandler, dismissOnboarding, classifyPageHttpErrors, settleKnowledgeOnboarding } from './browser-path.mjs';
+import { createMobileContext, attachAutoCapture, box, clearBoxes, shot, manifest } from '../../.claude/skills/create-visual-test-to-kb/scripts/harness.mjs';
+import { finalizeEvidence, reconcilePageCases } from './evidence.mjs';
 
 // Reuse a successful run's immutable Release build, SDK, pinned images and
 // proxy. This suite exercises real pages; it does not recalibrate performance.
@@ -28,6 +31,13 @@ await fs.mkdir(out, { recursive: true });
 try { await fs.access(path.join(out, 'result.json')); throw new Error('拒绝覆盖已有验收结果'); }
 catch (e) { if (e.code !== 'ENOENT') throw e; }
 const runId = `map-perf-ui-${randomBytes(6).toString('hex')}`;
+// Optional standard report evidence remains outside the repository. Raw CI
+// evidence continues to use the existing --out location and is never replaced.
+const shotsDir = process.env.PERF_ACCEPTANCE_SHOTS_DIR;
+if (shotsDir) {
+  await fs.mkdir(shotsDir, { recursive: true });
+  if ((await fs.readdir(shotsDir)).length) throw new Error('标准证据目录非空，拒绝覆盖原始证据');
+}
 const run = promisify(execFile);
 const command = async (bin, argv) => (await run(bin, argv, { cwd: root, maxBuffer: 4 * 1024 * 1024 })).stdout.trim();
 const docker = async argv => {
@@ -50,6 +60,8 @@ const password = `Perf_${randomBytes(18).toString('hex')}!`;
 let base, token, browser;
 const result = { schema: 1, provenance: 'integration-live', commit, harnessCommit: await command('git', ['rev-parse','HEAD']),
   driverDigest: digest(await fs.readFile(fileURLToPath(import.meta.url), 'utf8')),
+  browserPathCode: digest(await fs.readFile(new URL('./browser-path.mjs', import.meta.url), 'utf8')),
+  evidenceCode: digest(await fs.readFile(new URL('./evidence.mjs', import.meta.url), 'utf8')),
   preparedResult: { path: options.prepared, sha256: createHash('sha256').update(await fs.readFile(preparedPath)).digest('hex') },
   startedAt: new Date().toISOString(), state: 'running', cases: [], anonymous: null, restartRecovery: null };
 const save = () => fs.writeFile(path.join(out, 'result.json'), JSON.stringify(result, null, 2) + '\n');
@@ -72,7 +84,7 @@ const waitReady = async () => {
   throw new Error('实际API版本在180秒内未就绪');
 };
 const originalContent = '# 性能文档-0-0\n\nMAP性能样例\n\n' + '真实本地验收，不调用模型。\n'.repeat(180);
-let entryId;
+let entryId, storeId;
 try {
   await docker(['info','--format','{{.ServerVersion}}']);
   const apiDir = path.join(out,'api');
@@ -119,7 +131,7 @@ try {
     for(let d=0;d<20;d++) {
       const doc=await api(`/api/document-store/stores/${store.id}/entries`,'POST',{title:`性能文档-${s}-${d}`,sourceType:'upload',contentType:'text/markdown'});
       await api(`/api/document-store/entries/${doc.id}/content`,'PUT',{content:originalContent.replace('性能文档-0-0',`性能文档-${s}-${d}`)});
-      if(s===0&&d===0) entryId=doc.id;
+      if(s===0&&d===0) { entryId=doc.id; storeId=store.id; }
     }
     await api(`/api/document-store/stores/${store.id}`);
   }
@@ -129,16 +141,20 @@ try {
   const cases=[['desktop-dark',1440,1000,'dark'],['desktop-light',1440,1000,'light'],['mobile-dark',390,844,'dark'],['mobile-light',390,844,'light']];
   for(const [id,width,height,theme] of cases) {
     await login(); await api(`/api/document-store/entries/${entryId}/content`,'PUT',{content:originalContent});
-    const context=await browser.newContext({viewport:{width,height},hasTouch:width<768,isMobile:width<768,reducedMotion:'reduce',serviceWorkers:'block'});
+    const mobile = shotsDir && width < 768
+      ? await createMobileContext(browser, {}, { viewport: {width,height}, mobilePathId: id, environment: 'integration-live' }) : null;
+    const context=mobile?.ctx ?? await browser.newContext({viewport:{width,height},hasTouch:width<768,isMobile:width<768,reducedMotion:'reduce',serviceWorkers:'block'});
     const origin=new URL(base).origin;
     await context.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
-    const page=await context.newPage(); page.setDefaultTimeout(30_000);
+    const page=mobile?.page ?? await context.newPage(); page.setDefaultTimeout(30_000);
+    if (shotsDir && !mobile) attachAutoCapture(page);
+    const captureNetwork = Object.fromEntries(['response','requestfailed'].map(event => [event,page.listeners(event)]));
     let stage='entry';
     const record={id,viewport:{width,height},theme,pass:false,steps:[],requests:[],pageErrors:[],
       preferenceSetup:'各目标视口通过实际外观入口选择主题，不注入存储或修改DOM'}; result.cases.push(record);
     page.on('pageerror',e=>record.pageErrors.push(e.message));
     page.on('response',r=>{let u=new URL(r.url());if(u.pathname.startsWith('/api/'))record.requests.push({path:u.pathname,status:r.status(),stage,at:new Date().toISOString()});});
-    await page.addLocatorHandler(page.getByRole('button',{name:'我已学会',exact:true}),()=>page.getByRole('button',{name:'我已学会',exact:true}).click());
+    await installOnboardingHandler(page,snapshot=>(record.onboardingDismissals ??= []).push(snapshot));
     const uiLogin=async()=>{
       await page.goto(`${base}/home`,{waitUntil:'domcontentloaded'});
       const publicMenu=page.getByRole('button',{name:'Open menu',exact:true});
@@ -155,7 +171,32 @@ try {
     // The product deliberately omits data-theme in dark mode; only light is
     // represented by an attribute. Check the real contract, not a synthetic DOM.
     const assertTheme=()=>expect.poll(()=>page.locator('html').getAttribute('data-theme')).toBe(theme==='light'?'light':null);
-    const capture=async step=>{stage=step;record.steps.push({step,url:page.url(),theme:(await page.locator('html').getAttribute('data-theme'))??'dark'});await page.screenshot({path:path.join(out,`${id}-${step}.png`),animations:'disabled'});};
+    const capture=async step=>{
+      await dismissOnboarding(page);
+      stage=step;record.steps.push({step,url:page.url(),theme:(await page.locator('html').getAttribute('data-theme'))??'dark'});
+      await page.screenshot({path:path.join(out,`${id}-${step}.png`),animations:'disabled'});
+      if (!shotsDir || !(id === 'desktop-dark' || ['home','saved-refresh','server-restart'].includes(step))) return;
+      const target = step === 'home' ? width<768 ? page.getByText('继续上次',{exact:true}).first()
+        : page.locator('[aria-labelledby="home-continue-heading"]')
+        : step === 'knowledge-list' ? page.locator(`[data-store-card="${storeId}"]`)
+        : page.getByText(step === 'document-open' ? 'MAP性能样例' : record.bodyMarker,{exact:true}).first();
+      // Exercise real actionability so the registered UI handler can dismiss
+      // a guide that appeared after the page's content assertion completed.
+      await target.hover();
+      await dismissOnboarding(page);
+      const claim = {home:'登录后首页已显示可用内容', 'knowledge-list':'目标知识库卡片可见',
+        'document-open':'实际目录打开指定文档及正文', 'saved-refresh':'编辑保存后刷新仍显示唯一正文标记',
+        'server-restart':'API重启后原会话刷新仍显示持久化正文'}[step];
+      const name = `${String(manifest().length+1).padStart(2,'0')}-${id}-${step}`;
+      if(!await box(page,target,`看这里：${claim}`)) throw new Error(`未找到标准证据标注目标: ${step}`);
+      try {
+        const evidence = await shot(page,shotsDir,name,`${id}：${claim}`,{skipReady:true,
+          expectText:step==='document-open'?'MAP性能样例':['saved-refresh','server-restart'].includes(step)?record.bodyMarker:undefined,
+          module:'MAP性能',breadcrumb:'真实登录 → 首页 → 知识库 → 文档 → 保存刷新',environment:'integration-live',
+          mobilePathId:width<768?id:undefined,mobileStage:width<768?(step==='home'?'entry':'result'):undefined,commit,runId,status:'通过'});
+        if(!evidence.annotated || evidence.warnings?.length) throw new Error(`标准证据不完整: ${evidence.warnings?.join('; ') ?? '缺少重点标注'}`);
+      } finally { await clearBoxes(page); }
+    };
     try {
       // Each journey starts at the public entry and uses its viewport's real
       // theme control. No storage flags, token injection or DOM mutation.
@@ -176,14 +217,16 @@ try {
         await drawer.getByRole('button',{name:'知识库',exact:true}).click();
         await expect(drawer).not.toBeVisible();
       } else await page.getByText('知识库',{exact:true}).filter({visible:true}).first().click();
-      await expect(page.getByText('性能知识库-0',{exact:true}).first()).toBeVisible(); await capture('knowledge-list');
-      await page.getByText('性能知识库-0',{exact:true}).first().click();
-      await page.getByText('性能文档-0-0',{exact:true}).first().click();
-      await expect(page.getByText('MAP性能样例',{exact:true}).first()).toBeVisible(); await capture('document-open');
+      await expect(page.getByText('性能知识库-0',{exact:true}).first()).toBeVisible();
+      await settleKnowledgeOnboarding(page);
+      await capture('knowledge-list');
+      record.documentSelection = await openFixtureDocument(page, { storeId, entryId });
+      await capture('document-open');
       if(width<768) await page.getByRole('button',{name:'更多操作',exact:true}).click();
       await page.getByRole('button',{name:'编辑文档',exact:true}).click();
       const source=page.getByRole('button',{name:/源码/}); if(await source.count()) await source.first().click();
       const marker=`MAP无模型写入已持久化-${id}`;
+      record.bodyMarker=marker;
       await page.locator('textarea[placeholder*="正文"], textarea[placeholder*="在此编辑"]').fill(`# 本地验收-${id}\n\n${marker}`);
       const saved=page.waitForResponse(r=>r.request().method()==='PUT'&&r.url().endsWith('/content')&&r.ok());
       await page.getByRole('button',{name:'保存',exact:true}).click(); await saved;
@@ -197,7 +240,19 @@ try {
       record.layout=layout; await capture('saved-refresh');
       if(id==='mobile-light') {
         stage='api-restart';
-        await docker(['restart',`${runId}-api`]); await waitReady();
+        record.restartWindow={startedAt:new Date().toISOString(),expectedStatus:502};
+        // Planned API unavailability is a separate fault phase. Keep every
+        // response in record.requests; only steady/recovery network errors
+        // belong to the standard screenshot recorder. JS errors remain active.
+        if(shotsDir) for(const [event,listeners] of Object.entries(captureNetwork))
+          for(const listener of listeners) page.off(event,listener);
+        try { await docker(['restart',`${runId}-api`]); await waitReady(); }
+        finally {
+          record.restartWindow.finishedAt=new Date().toISOString();
+          if(shotsDir) for(const [event,listeners] of Object.entries(captureNetwork))
+            for(const listener of listeners) page.on(event,listener);
+        }
+        stage='api-recovery';
         const recovered=page.waitForResponse(r=>r.request().method()==='GET'&&r.url().includes(`/entries/${entryId}/content`)&&r.ok());
         await page.reload({waitUntil:'domcontentloaded'}); await recovered;
         await expect(page.getByText(marker,{exact:true}).first()).toBeVisible();
@@ -209,11 +264,11 @@ try {
       const body=await api(`/api/document-store/entries/${entryId}/content`);
       if(!body.content.includes(marker)) throw new Error('真实持久化回读不一致');
       if(record.pageErrors.length) throw new Error(`页面运行异常: ${record.pageErrors.join('; ')}`);
-      record.unexpectedHttpErrors=record.requests.filter(r=>r.status>=400&&r.stage!=='api-restart');
+      Object.assign(record,classifyPageHttpErrors(record.requests));
       if(record.unexpectedHttpErrors.length) throw new Error('稳态路径出现非预期HTTP失败，见请求证据');
       record.persisted=true; record.pass=true;
       console.log(`${id}: 真实登录→首页→知识库→文档→保存→刷新通过`);
-    } catch(e) { record.error=e.message;record.failureUrl=page.url();await page.screenshot({path:path.join(out,`${id}-failure.png`)});throw e; }
+    } catch(e) { record.error=e.message;record.failureUrl=page.url();await page.screenshot({path:path.join(out,`${id}-failure.png`)});await fs.writeFile(path.join(out,`${id}-failure.html`),await page.content());throw e; }
     finally {await context.close();await save();}
   }
   const anon=await browser.newContext();const page=await anon.newPage();
@@ -230,8 +285,14 @@ finally {
   for(const name of containers.reverse())await docker(['rm','-f','-v',name]).catch(e=>{result.failure??=e.message;});
   for(const name of networks.reverse())await docker(['network','rm',name]).catch(e=>{result.failure??=e.message;});
   await fs.rm(path.join(out,'api'),{recursive:true,force:true});
+  const latePageErrors=reconcilePageCases(result.cases);
+  if(latePageErrors.length) result.failure ??= latePageErrors.join('; ');
   result.finishedAt=new Date().toISOString();result.state=result.failure?'failed':'complete';
   result.pass=Boolean(!result.failure&&result.cases.length===4&&result.cases.every(c=>c.pass)&&result.anonymous?.pass&&result.restartRecovery?.pass);
+  if(shotsDir) {
+    result.standardEvidence=finalizeEvidence(result,shotsDir,{target:'MAP性能回归真实页面',commit,
+      themeSupport:{supportsLight:true,proof:'四种视口/主题均通过产品可见入口切换并核对实际主题'}});
+  }
   await save();
 }
 if(!result.pass)process.exitCode=1;
