@@ -18,7 +18,9 @@ async function branchCard(page: Page) {
   await expect(card.getByRole('button', { name: '发布到', exact: true })).toHaveCount(0);
   await card.getByRole('button', { name: '预览更多操作', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '发布到', exact: true })).toHaveCount(0);
-  await page.getByRole('menuitem', { name: '发布到', exact: true }).click();
+  const release = page.getByRole('menuitem', { name: /^发布到/ });
+  await expect(release).toContainText('当前分支 · 逐目标发布');
+  await release.click();
   return page.getByRole('dialog', { name: '发布到', exact: true });
 }
 

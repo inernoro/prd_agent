@@ -68,6 +68,61 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await expect(inbox.getByRole('button', { name: '批准项目访问', exact: true })).toBeVisible();
     expect(mutations).toEqual([`/api/releases/batches/${batch.id}/cancel`, '/api/notices/read-all']);
   });
+
+  test(`${viewport.width} 取消目标重新发布先确认固定版本，返回不写入且只发布选中目标`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    const commit = 'a'.repeat(40);
+    let batch = {
+      id: 'compat-cancelled-batch', projectId: target.projectId, versionId: 'compat-version', reportId: 'compat-report',
+      branchId: 'compat-branch', branchName: 'compat-branch', commitSha: commit, status: 'cancelled',
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+      targets: [target, { ...target, id: 'compat-target-b', name: '隔离目标 B' }].map(item => ({
+        targetId: item.id, targetName: item.name, status: 'cancelled',
+        attempts: [] as Array<{ id: string; kind: string; runId: string; createdAt: string }>,
+        runId: undefined as string | undefined, observedCommitSha: undefined as string | undefined,
+      })),
+    };
+    const mutations: string[] = [];
+    page.on('request', req => {
+      const path = new URL(req.url()).pathname;
+      if (req.method() !== 'GET' && path.startsWith('/api/')) mutations.push(path);
+    });
+    await page.route('**/api/releases/batches**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/accepted-versions')) return route.fulfill({ json: { versions: [] } });
+      if (path.endsWith('/targets/compat-target/retry') && route.request().method() === 'POST') {
+        expect(route.request().postDataJSON().idempotencyKey).toMatch(/^[a-zA-Z0-9_-]{8,128}$/);
+        batch = { ...batch, status: 'partial_success', targets: batch.targets.map((row, index) => index ? row : {
+          ...row, status: 'success', observedCommitSha: commit, runId: 'compat-republished',
+          attempts: [{ id: 'republished-once', kind: 'deploy', runId: 'compat-republished', createdAt: new Date().toISOString() }],
+        }) };
+      }
+      return route.fulfill({ json: path.endsWith('/batches') ? { batches: [batch] } : { batch } });
+    });
+    await page.goto(`http://127.0.0.1:5273/release-console?project=${target.projectId}&batch=${batch.id}`);
+    const rows = page.getByRole('list', { name: '各目标发布结果', exact: true }).locator(':scope > li');
+    await rows.first().getByRole('button', { name: '重新发布此目标', exact: true }).click();
+    const confirm = page.getByRole('dialog', { name: '确认重新发布已取消目标', exact: true });
+    await expect(confirm).toContainText(targetName);
+    await expect(confirm).toContainText(commit);
+    expect(mutations).toEqual([]);
+    await reachable(confirm.getByRole('button', { name: '返回', exact: true }));
+    await confirm.getByRole('button', { name: '返回', exact: true }).click();
+    await expect(confirm).toHaveCount(0);
+    expect(mutations).toEqual([]);
+    await rows.first().getByRole('button', { name: '重新发布此目标', exact: true }).click();
+    const execute = confirm.getByRole('button', { name: '确认重新发布', exact: true });
+    await reachable(execute);
+    await execute.click();
+    await expect(rows.first()).toContainText('本批次部署 1 次');
+    await expect(rows.first().getByRole('button', { name: '重新发布此目标', exact: true })).toHaveCount(0);
+    await expect(rows.nth(1).getByRole('button', { name: '重新发布此目标', exact: true })).toBeVisible();
+    expect(batch.targets.map(row => row.attempts.length)).toEqual([1, 0]);
+    await page.reload();
+    await expect(rows.first()).toContainText('本批次部署 1 次');
+    expect(mutations).toEqual([`/api/releases/batches/${batch.id}/targets/compat-target/retry`]);
+  });
 }
 test.afterEach(async ({}, testInfo) => {
   expect(testInfo.annotations.filter((a) => a.type === "pageerror")).toEqual(

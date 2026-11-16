@@ -102,7 +102,7 @@ export function PreviewActionSplitButton({
           </button>
         }>
           <DropdownItem disabled={disabled || releaseDisabled} onSelect={onRelease}>
-            <Rocket className="h-4 w-4" />{releaseLabel}
+            <Rocket className="h-4 w-4" /><span>{releaseLabel}<span className="mt-0.5 block text-xs text-muted-foreground">当前分支 · 逐目标发布</span></span>
           </DropdownItem>
         </DropdownMenu>
       ) : null}

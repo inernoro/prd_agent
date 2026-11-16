@@ -58,7 +58,22 @@ describe('批次发布结果 · 保留各目标真实结果', () => {
       expect(html).toContain(COMMIT);
       expect(html).toContain('1/2 个目标发布成功');
       expect(html).toContain(status === 'cancelled' ? '已取消' : '执行中断，需核对现场');
+      expect(html).toContain(status === 'cancelled' ? '重新发布此目标' : '仅重试此目标');
+      if (status === 'cancelled') expect(html).not.toContain('仅重试此目标');
     }
+  });
+
+  it('取消请求已受理但执行体未退出时显示正在停止，保留成功目标', () => {
+    const html = render(batch([
+      target('A', 'success', { observedCommitSha: COMMIT }),
+      target('B', 'running'),
+    ], 'cancelled'));
+    expect(html).toContain('正在取消，等待目标停止');
+    expect(html).toContain('正在停止');
+    expect(html).toContain('等待目标停止并核对实际版本');
+    expect(html).toContain('1/2 个目标发布成功');
+    expect(html).toContain(COMMIT);
+    expect(html).not.toContain('全部目标发布成功');
   });
 
   it('未知现场版本明确写未知，不把期望提交填入实际版本位置', () => {
@@ -163,6 +178,7 @@ describe('批次发布结果 · 保留各目标真实结果', () => {
     ]));
     expect(html).toContain('各目标版本不一致');
     expect(html).toContain('已成功目标不会重复部署');
-    expect(html).toContain('重试继续使用本批次固定版本');
+    expect(html).toContain('已取消目标需确认后重新发布');
+    expect(html).toContain('操作继续使用本批次固定版本');
   });
 });
