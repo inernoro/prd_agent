@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import {
   buildReleaseInventoryCommand, buildReleaseReclaimCommand, parseRemoteReleaseInventory,
-  parseRemoteReclaimOutcome,
+  parseRemoteReclaimOutcome, computeReleaseArtifactRetentionPlan,
 } from '../../src/services/release-artifact-retention.js';
 import type { ReleaseStrategy, ReleaseTarget } from '../../src/types.js';
 
@@ -177,4 +177,31 @@ describe('proved static artifact native reclamation',()=>{
     expect(await fs.readdir(store)).toEqual([id(1)+'.json',id(2)+'.json']);
     expect(digest(await fs.readFile(path.join(f.version(1),'index.html')))).toBe(f.protectedHash);
   });
+  it('reclaims proved static versions despite twenty repeatedly held dirty worktrees within the same budget',async()=>{
+    const f=await fixture();for(let n=3;n<=8;n++)await f.make(n);
+    const ledger=Array.from({length:6},(_,i)=>({releaseId:id(i+3),commitSha:f.commit,status:'success',startedAt:new Date(1700000000000+i).toISOString()}));
+    const held:string[]=[];
+    for(let n=100;n<125;n++){
+      const dir=path.join(f.releaseRoot,'worktrees',id(n));execFileSync('git',['-C',f.repo,'worktree','add','--detach',dir,f.commit],{stdio:'pipe'});
+      await fs.writeFile(path.join(dir,'build-output.bin'),Buffer.alloc(65536,n));held.push(dir);
+      ledger.push({releaseId:id(n),commitSha:f.commit,status:'failed',startedAt:new Date(1700000000000+n).toISOString()});
+    }
+    const before=await Promise.all(held.map(async dir=>({dir,hash:digest(await fs.readFile(path.join(dir,'build-output.bin'))),head:execFileSync('git',['-C',dir,'rev-parse','HEAD'],{encoding:'utf8'}).trim()})));
+    const refs=await Promise.all(['current','previous'].map(n=>fs.readlink(path.join(f.publicRoot,n))));
+    const rounds:unknown[]=[],removed:string[]=[];
+    for(let round=0;round<2;round++){
+      const inv=f.inventory(),plan=computeReleaseArtifactRetentionPlan({mode:'generated-static',inventory:inv,ledgerRuns:ledger,hasInFlightRun:false,drift:'in-sync',keepRecent:3,maxRemovals:20});
+      expect(plan.removeWorktrees.length+plan.removeVersions.length).toBeLessThanOrEqual(20);
+      const command=buildReleaseReclaimCommand(f.target,f.strategy,plan,{commits:Object.fromEntries(ledger.map(r=>[r.releaseId,r.commitSha])),identities:inv.worktreeIdentities,versionIdentities:inv.versionIdentities})!;
+      const result=parseRemoteReclaimOutcome(execFileSync('/bin/sh',['-c',command],{env:f.env,encoding:'utf8'}));
+      expect(result.queryError).toBeUndefined();expect(result.removedWorktrees).toEqual([]);expect(result.failedWorktrees).toEqual([]);expect(result.failedVersions).toEqual([]);
+      removed.push(...result.removedVersions);rounds.push({round,plan,result});
+    }
+    const after=await Promise.all(held.map(async dir=>({dir,hash:digest(await fs.readFile(path.join(dir,'build-output.bin'))),head:execFileSync('git',['-C',dir,'rev-parse','HEAD'],{encoding:'utf8'}).trim()})));
+    expect(after).toEqual(before);expect(digest(await fs.readFile(path.join(f.version(1),'index.html')))).toBe(f.protectedHash);
+    expect(await Promise.all(['current','previous'].map(n=>fs.readlink(path.join(f.publicRoot,n))))).toEqual(refs);
+    if(process.env.CAPACITY_STATIC_STARVATION_EVIDENCE)await fs.writeFile(process.env.CAPACITY_STATIC_STARVATION_EVIDENCE,JSON.stringify({rounds,removed,before,after,refs,isolatedOnly:true},null,2));
+    expect(removed.sort()).toEqual([id(3),id(4),id(5)]);expect((await fs.readdir(path.join(f.publicRoot,'.releases'))).length).toBe(5);
+  },30000);
+
 });

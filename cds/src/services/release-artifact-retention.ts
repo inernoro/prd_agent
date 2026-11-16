@@ -401,8 +401,16 @@ export function computeReleaseArtifactRetentionPlan(
   const versionCandidates = pickCandidates(inventory.versions, 'version');
   const total = worktreeCandidates.length + versionCandidates.length;
   const budget = Math.max(0, Math.floor(input.maxRemovals ?? total));
-  const removeWorktrees = worktreeCandidates.slice(0, budget);
-  const removeVersions = versionCandidates.slice(0, Math.max(0, budget - removeWorktrees.length));
+  // Dirty build worktrees may remain held for many sweeps. Share the existing
+  // budget so they cannot consume every slot before proved static outputs.
+  const removeWorktrees: string[] = [], removeVersions: string[] = [];
+  let worktreeIndex = 0, versionIndex = 0;
+  while (removeWorktrees.length + removeVersions.length < budget
+    && (worktreeIndex < worktreeCandidates.length || versionIndex < versionCandidates.length)) {
+    if (versionIndex < versionCandidates.length) removeVersions.push(versionCandidates[versionIndex++]);
+    if (removeWorktrees.length + removeVersions.length < budget && worktreeIndex < worktreeCandidates.length)
+      removeWorktrees.push(worktreeCandidates[worktreeIndex++]);
+  }
   return {
     removeWorktrees,
     removeVersions,
