@@ -40,6 +40,7 @@ export interface ModelLeaderboardEntry {
   praiseVsComplaint: ModelMetric | null;
   steerability: ModelMetric | null;
   bashRecovery: ModelMetric | null;
+  bashReliability?: ModelMetric | null;
   /** 工具幻觉——这项越低越好 */
   toolHallucination: ModelMetric | null;
 
@@ -85,6 +86,7 @@ export interface ModelLeaderboardSnapshot {
   ready: boolean;
   fetchedAt?: string;
   sourceUrl?: string;
+  bashMetricLabel?: string;
   /** 超过两天没同步成功。前端把实时点变灰并标出数据日期，不装作是新的。 */
   stale?: boolean;
   /**

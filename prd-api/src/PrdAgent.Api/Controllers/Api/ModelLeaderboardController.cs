@@ -93,6 +93,7 @@ public class ModelLeaderboardController : ControllerBase
             kind = string.IsNullOrEmpty(snapshot.Kind) ? BoardKind.Agent : snapshot.Kind,
             stale = IsStale(snapshot.FetchedAt),
             total = snapshot.Entries.Count,
+            bashMetricLabel = snapshot.Entries.Any(e => e.BashReliability != null) ? "命令可靠性" : "命令恢复",
             totalSessions = snapshot.TotalSessions,
             totalVotes = snapshot.TotalVotes,
             entries = snapshot.Entries.Take(limit).Select(Project),
@@ -259,6 +260,7 @@ public class ModelLeaderboardController : ControllerBase
         praiseVsComplaint = Metric(e.PraiseVsComplaint),
         steerability = Metric(e.Steerability),
         bashRecovery = Metric(e.BashRecovery),
+        bashReliability = Metric(e.BashReliability),
         toolHallucination = Metric(e.ToolHallucination),
         // 分数榜字段（agent 榜上全为 null，前端按 kind 选列）
         score = e.Score,

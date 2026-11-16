@@ -577,7 +577,7 @@ export default function ModelLeaderboardPage() {
                       <div className="text-right">任务完成</div>
                       <div className="text-right">好评比</div>
                       <div className="text-right">可操控性</div>
-                      <div className="text-right">命令恢复</div>
+                      <div className="text-right">{snapshot.bashMetricLabel ?? '命令恢复'}</div>
                       <div className="text-right">工具幻觉</div>
                       <div className="text-right">会话数</div>
                       <div className="text-right">单任务成本</div>
@@ -664,7 +664,7 @@ function MetaStrip({
         </svg>
         <span className="font-mono" style={{ color: snapshot.stale ? 'var(--accent-gold)' : undefined }}>
           数据截至 {date}
-          {snapshot.stale ? '（已超过两天没同步成功）' : ''}
+          {snapshot.stale ? '（数据已超过两天）' : ''}
         </span>
       </span>
 
@@ -773,7 +773,7 @@ function Row({
       <HeatCell metric={entry.confirmedSuccess} max={columnMax.confirmed} />
       <HeatCell metric={entry.praiseVsComplaint} max={columnMax.praise} />
       <HeatCell metric={entry.steerability} max={columnMax.steer} />
-      <PlainCell metric={entry.bashRecovery} />
+      <PlainCell metric={entry.bashReliability ?? entry.bashRecovery} />
       <PlainCell metric={entry.toolHallucination} />
 
       <div className="text-right font-mono text-[12px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>

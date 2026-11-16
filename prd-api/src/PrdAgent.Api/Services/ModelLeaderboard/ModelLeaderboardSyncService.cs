@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
+using System.Text.Json;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
@@ -71,12 +72,15 @@ public class ModelLeaderboardSyncService
     /// </summary>
     private static (string Code, string Message) ClassifyFailure(Exception ex) => ex switch
     {
+        HuggingFaceLeaderboardFetcher.AuditException => (
+            SyncErrorCodes.StoreFailed,
+            "同步记录暂时无法保存，本次未更新，上一份快照仍在用。请稍后重试。"),
         HttpRequestException or TaskCanceledException or TimeoutException => (
             SyncErrorCodes.Unreachable,
-            "抓不到 arena.ai 的页面（对方暂时不可达或超时）。上一份快照仍在用，稍后重试或等下一轮自动同步。"),
+            "暂时无法获取官方榜单数据，上一份快照仍在用。请稍后重试或等下一轮自动同步。"),
         InvalidOperationException => (
             SyncErrorCodes.MarkupChanged,
-            "arena.ai 的页面结构与解析器对不上，本次没有写库、保留了上一份快照。需要更新解析器，详见服务端日志。"),
+            "榜单数据未通过格式或完整性检查，本次未更新，已保留上一份快照。请稍后重试，或查看服务端日志。"),
         MongoException => (
             SyncErrorCodes.StoreFailed,
             "数据抓到了但写库失败，本次未更新。请查看服务端日志。"),
@@ -92,9 +96,31 @@ public class ModelLeaderboardSyncService
     public async Task<List<BoardResult>> SyncAllAsync(CancellationToken ct, string? onlyBoard = null)
     {
         var http = _httpClientFactory.CreateClient(ModelLeaderboardSyncWorker.HttpClientName);
-        var fetcher = new ArenaLeaderboardFetcher(
-            http,
-            _configuration["ModelLeaderboard:SnapshotMirrorBaseUrl"]);
+        var runId = System.Diagnostics.Activity.Current?.Id ?? Guid.NewGuid().ToString("N");
+        var fetcher = new HuggingFaceLeaderboardFetcher(http, async evidence =>
+        {
+            var uri = new Uri(evidence.Url);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await _db.ApiRequestLogs.InsertOneAsync(new ApiRequestLog
+            {
+                Id = Guid.NewGuid().ToString("N"), RequestId = runId, SessionId = runId,
+                StartedAt = evidence.StartedAt, EndedAt = evidence.EndedAt,
+                DurationMs = (long)(evidence.EndedAt - evidence.StartedAt).TotalMilliseconds,
+                Method = "GET", Path = uri.AbsolutePath, Query = uri.Query, AbsoluteUrl = evidence.Url,
+                Protocol = uri.Scheme, TargetHost = uri.Host, Direction = "outbound", UserId = "system",
+                ClientType = "server", AppId = "model-leaderboard", AppName = "模型排行榜",
+                StatusCode = evidence.StatusCode ?? 0, ResponseContentType = evidence.ContentType,
+                ApiSummary = $"官方榜单数据/{evidence.Outcome}",
+                Status = evidence.Outcome == "success" ? "completed" : "failed",
+                ErrorCode = evidence.ErrorType, ResponseBody = JsonSerializer.Serialize(new
+                {
+                    auditVersion = 1, runId, evidence, timeoutSeconds = http.Timeout.TotalSeconds,
+                    maxCaptureBytes = 2 * 1024 * 1024,
+                    deployment = DeploymentAuthority.DescribeSource(_configuration),
+                }),
+                ResponseBodyBytes = (int)evidence.Bytes, ResponseBodyTruncated = true,
+            }, cancellationToken: deadline.Token);
+        }, new ArenaLeaderboardFetcher(http, _configuration["ModelLeaderboard:SnapshotMirrorBaseUrl"]));
         var sourceLabel = DeploymentAuthority.DescribeSource(_configuration);
 
         var targets = string.IsNullOrWhiteSpace(onlyBoard)
@@ -136,7 +162,7 @@ public class ModelLeaderboardSyncService
 
     /// <summary>同步一个分榜，返回写入的条目数。失败直接抛，由调用方决定怎么记。</summary>
     public async Task<int> SyncBoardAsync(
-        ArenaLeaderboardFetcher fetcher,
+        IModelLeaderboardFetcher fetcher,
         string board,
         string sourceLabel,
         CancellationToken ct)
@@ -226,15 +252,7 @@ public class ModelLeaderboardSyncService
             Builders<ModelLeaderboardSnapshot>.Filter.Lt(x => x.FetchedAt, fetchedAt));
         if (previous is not null)
         {
-            var previousRanks = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var entry in previous.Entries)
-                previousRanks.TryAdd(entry.Name, entry.Rank);
-
-            foreach (var entry in entries)
-            {
-                if (previousRanks.TryGetValue(entry.Name, out var rank))
-                    entry.PreviousRank = rank;
-            }
+            ApplyPreviousRanks(entries, previous.Entries);
         }
 
         var snapshot = new ModelLeaderboardSnapshot
@@ -251,7 +269,7 @@ public class ModelLeaderboardSyncService
             // 形状以**页面实际解析出来的**为准，不是照目录抄一份（FetchAsync 已校验两者一致）
             Kind = parsed.Kind,
             FetchedAt = fetchedAt,
-            SourceUrl = ArenaLeaderboardFetcher.BuildUrl(board),
+            SourceUrl = parsed.SourceUrl ?? ArenaLeaderboardFetcher.BuildUrl(board),
             SourceLabel = sourceLabel,
             // 盖上本部署的作用域，兄弟分支据此不会读到（也不会被覆盖）这一份
             DeploymentSlug = scope,
@@ -290,5 +308,17 @@ public class ModelLeaderboardSyncService
 
         _logger.LogInformation("模型榜同步：分榜 {Board} 已更新，{Count} 个模型。", board, entries.Count);
         return entries.Count;
+    }
+
+    /// <summary>公开数据没有稳定模型 ID；同名变体不猜对应关系，避免编造升降。</summary>
+    public static void ApplyPreviousRanks(List<ModelLeaderboardEntry> entries, List<ModelLeaderboardEntry> previous)
+    {
+        var uniquePrevious = previous.GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() == 1).ToDictionary(g => g.Key, g => g.Single().Rank, StringComparer.OrdinalIgnoreCase);
+        var duplicateNames = entries.GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
+            entry.PreviousRank = !duplicateNames.Contains(entry.Name) && uniquePrevious.TryGetValue(entry.Name, out var rank)
+                ? rank : null;
     }
 }
