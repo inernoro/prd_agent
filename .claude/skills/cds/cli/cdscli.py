@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.22.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.23.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3665,6 +3665,113 @@ def _acceptance_lease(task_id: str) -> str:
         return token
     except (OSError, ValueError, AttributeError):
         die("没有可用的领取票据，请先领取任务", code=1)
+
+
+def cmd_dts(args: argparse.Namespace) -> None:
+    project = (getattr(args, "project", None) or os.environ.get("CDS_PROJECT_ID", "")).strip()
+    bound = os.environ.get("CDS_PROJECT_ID", "").strip()
+    if not project:
+        die("数据同步需要项目：请先 cdscli connect，或传 --project <projectId>")
+    if os.environ.get("CDS_PROJECT_KEY", "").strip() and bound and project != bound:
+        die("项目级凭据不能用于其他项目的数据同步")
+    query = "?" + urllib.parse.urlencode({"projectId": project})
+
+    def request(method: str, path: str, payload: Any = None) -> dict:
+        status, result, _ = _request(method, "/api/dts" + path + query,
+                                    body=({**payload, "projectId": project} if payload is not None else None),
+                                    timeout=60, follow_redirects=False)
+        if not 200 <= status < 300:
+            messages = {400: "同步参数不符合要求", 401: "凭据无效或已过期", 403: "当前项目无权执行此操作",
+                        404: "连接或任务不存在", 409: "版本、数据或任务状态已变化，请重新查询原任务后比较",
+                        502: "传输服务未接受操作，请查询原任务", 503: "同步服务暂不可用，请稍后查询原任务"}
+            die(f"HTTP {status}: {messages.get(status, '数据同步请求失败，请查看 CDS 任务详情')}", code=2 if status < 500 else 3)
+        if not isinstance(result, dict):
+            die("CDS 数据同步响应格式错误")
+        return result
+
+    def scope(resource: Any) -> None:
+        if not isinstance(resource, dict) or resource.get("projectId") != project:
+            die("CDS 数据同步返回资源与当前项目不匹配")
+
+    capabilities = request("GET", "/capabilities")
+    scope(capabilities)
+    tools = {"cds_dts_connections", "cds_dts_plan", "cds_dts_start", "cds_dts_runs", "cds_dts_control", "cds_dts_policies"}
+    if (type(capabilities.get("protocolVersion")) is not int or capabilities["protocolVersion"] != 1
+            or not isinstance(capabilities.get("tools"), list)
+            or any(not isinstance(t, str) or t not in tools for t in capabilities["tools"])
+            or len(set(capabilities["tools"])) != len(capabilities["tools"])):
+        die("数据同步协议与当前 cdscli 不兼容，请更新服务或 CLI")
+    action = args.action
+    required = {"connections": "cds_dts_connections", "plan": "cds_dts_plan", "start": "cds_dts_start", "runs": "cds_dts_runs", "get": "cds_dts_runs",
+                "pause": "cds_dts_control", "resume": "cds_dts_control", "cancel": "cds_dts_control", "policies": "cds_dts_policies", "policy": "cds_dts_policies"}
+    if action == "capabilities":
+        ok(capabilities)
+        return
+    if action in required and required[action] not in capabilities["tools"]:
+        die("当前 CDS 未开放此数据同步操作")
+    if action in ("connections", "runs", "policies"):
+        result = request("GET", "/" + action)
+        if not isinstance(result.get(action), list):
+            die("CDS 数据同步列表格式错误")
+        for resource in result[action]:
+            scope(resource)
+    elif action in ("engine", "connection"):
+        payload = _acceptance_json_file(args.file)
+        if any(key in payload for key in ("projectId", "host", "password", "uri", "projectKey")):
+            die("连接文件只能引用已有项目配置，不能携带凭据或覆盖项目")
+        result = request("PUT" if action == "engine" else "POST", "/engine" if action == "engine" else "/connections", payload)
+        if action == "connection":
+            scope(result.get("connection"))
+    elif action == "plan":
+        result = request("POST", "/plans", {"sourceId": args.source, "targetId": args.target, "mode": args.mode})
+        scope(result.get("plan"))
+    elif action == "start":
+        result = request("POST", "/runs", {"planId": args.plan, "idempotencyKey": args.idempotency_key})
+        scope(result.get("run"))
+        if result["run"].get("plan", {}).get("id") != args.plan:
+            die("返回任务与比较计划不符")
+    elif action == "policy":
+        if args.disable or args.enable:
+            result = request("PATCH", "/policies/" + urllib.parse.quote(args.disable or args.enable, safe=""), {"enabled": bool(args.enable)})
+        else:
+            if not args.source or not args.target:
+                die("创建账号同步规则需要 --source 与 --target")
+            result = request("POST", "/policies", {"sourceId": args.source, "targetId": args.target})
+        scope(result.get("policy"))
+    else:
+        path = "/runs/" + urllib.parse.quote(args.id, safe="")
+        result = request("GET", path)
+        scope(result.get("run"))
+        if result["run"].get("id") != args.id:
+            die("返回任务与请求编号不符")
+        if action != "get":
+            result = request("POST", path + "/" + action, {})
+            scope(result.get("run"))
+    ok(result)
+
+
+def _register_dts_parser(sub: Any) -> None:
+    commands = sub.add_parser("dts", help="SeaTunnel 数据同步：连接、比较、只追加、账号规则与恢复").add_subparsers(dest="action", required=True)
+    for name in ("capabilities", "connections", "runs", "policies", "engine", "connection", "plan", "start", "get", "pause", "resume", "cancel", "policy"):
+        p = commands.add_parser(name)
+        p.add_argument("--project")
+        if name in ("engine", "connection"):
+            p.add_argument("--file", required=True, help="结构化 JSON；连接密钥只能引用已有项目配置")
+        if name in ("plan", "policy"):
+            p.add_argument("--source", required=name == "plan")
+            p.add_argument("--target", required=name == "plan")
+        if name == "plan":
+            p.add_argument("--mode", choices=["append-only", "account-authority"], default="append-only")
+        if name == "start":
+            p.add_argument("--plan", required=True)
+            p.add_argument("--idempotency-key", required=True)
+        if name in ("get", "pause", "resume", "cancel"):
+            p.add_argument("id")
+        if name == "policy":
+            toggle = p.add_mutually_exclusive_group()
+            toggle.add_argument("--enable")
+            toggle.add_argument("--disable")
+        p.set_defaults(func=cmd_dts)
 
 
 def cmd_acceptance(args: argparse.Namespace) -> None:
@@ -11259,6 +11366,7 @@ def _build_parser() -> argparse.ArgumentParser:
     review_upload.set_defaults(func=cmd_code_review_upload_report)
 
     _register_acceptance_parser(sub)
+    _register_dts_parser(sub)
 
     # 验收报告(CDS 自托管 HTML/Markdown,登录态门控,可按项目/文件夹归类)
     rep = sub.add_parser("report", help="验收报告:列出/查看/创建/删除/直达深链").add_subparsers(dest="sub", required=True)

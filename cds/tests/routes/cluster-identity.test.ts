@@ -85,6 +85,24 @@ describe('cluster identity through two real HTTP control planes', () => {
     await flushAllJsonStateStores(); vi.restoreAllMocks(); vi.unstubAllEnvs(); fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it('pins enrolled membership so an owner cannot restore independent authorization through reconfiguration', async () => {
+    const result = await request(member, '/api/cluster/identity/config', primaryKey, 'PUT', {
+      version: 1, role: 'authority', clusterId: 'fixture-cluster', nodeId: 'standby', members: [],
+    });
+    expect(result.status).toBe(409); expect(result.json.error).toBe('cluster_identity_pinned');
+    expect(member.app.locals.clusterIdentity?.getConfig?.()?.role ?? JSON.parse(fs.readFileSync(path.join(member.dir, '.cds', 'cluster-identity.json'), 'utf8')).role).toBe('member');
+    expect((await request(member, '/api/projects/local-a', oldMemberKey)).status).toBe(401);
+  });
+
+  it('routes member DTS through the authority and rejects cross-project sync scope', async () => {
+    const key = projectKey();
+    const capabilities = vi.spyOn(primary.app.locals.dtsService, 'capabilities').mockImplementation(async (projectId: unknown) => ({ projectId, protocolVersion: 1, tools: [] }));
+    vi.spyOn(member.app.locals.dtsService, 'capabilities').mockRejectedValue(new Error('independent member DTS must not run'));
+    const result = await request(member, '/api/dts/capabilities?projectId=local-a', key);
+    expect(result.status).toBe(200); expect(result.json.projectId).toBe('local-a'); expect(capabilities).toHaveBeenCalledWith('source-a');
+    expect((await request(member, '/api/dts/capabilities?projectId=local-b', key)).status).toBe(403);
+  });
+
   it('accepts the same authority credential, rejects independent local credentials, and persists membership', async () => {
     expect((await request(member, '/api/projects/local-a', primaryKey)).status).toBe(200);
     expect((await request(member, '/api/projects/local-a', oldMemberKey)).status).toBe(401);

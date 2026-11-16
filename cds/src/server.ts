@@ -55,6 +55,12 @@ import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
 import { createCodeReviewsRouter } from './routes/code-reviews.js';
+import { createDtsRouter } from './routes/dts.js';
+import { DtsService } from './services/dts.js';
+import { dtsCredentialAllowed } from './services/dts-access.js';
+import { DtsStore } from './services/dts-store.js';
+import { dtsHash, dtsReject } from './services/dts-policy.js';
+import type { DtsActor, DtsRun } from './shared/dts.js';
 import { CodeReviewService } from './services/code-review.js';
 import { codeReviewGithubToken, codeReviewRepositoryRoot } from './services/code-review-source.js';
 import { createCodeReviewInputs } from './services/code-review-inputs.js';
@@ -903,9 +909,20 @@ export interface ActivityEvent {
 export function resolveApiLabel(method: string, path: string): string {
   // Normalize: remove /api prefix, trim trailing slash
   const p = path.replace(/^\/api/, '').replace(/\/$/, '');
+  if (method === 'PATCH' && /^\/dts\/policies\/[^/]+$/.test(p)) return '调整账号同步规则';
+  if (/^\/dts\/runs\/[^/]+(?:\/(?:pause|resume|cancel))?$/.test(p)) return method === 'GET' ? '查看同步进度' : '管理同步任务';
 
   // Static exact matches
   const staticMap: Record<string, string> = {
+    'GET /dts/capabilities': '查看同步能力',
+    'GET /dts/connections': '列出数据连接',
+    'POST /dts/connections': '登记数据连接',
+    'PUT /dts/engine': '连接传输服务',
+    'POST /dts/plans': '比较同步差异',
+    'POST /dts/runs': '开始数据同步',
+    'GET /dts/runs': '列出同步任务',
+    'GET /dts/policies': '查看账号同步',
+    'POST /dts/policies': '启用账号同步',
     'POST /cluster/identity/resolve': '校验集群身份',
     'POST /cluster/identity/exchange': '交接集群登录',
     'GET /cluster/identity/status': '读取身份同步',
@@ -3740,13 +3757,28 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     res.setHeader('Cache-Control', 'no-store'); res.json(status);
   });
-  app.put('/api/cluster/identity/config', (req, res) => {
+  app.put('/api/cluster/identity/config', async (req, res) => {
     res.locals.cdsSuppressRequestBodyLog = true;
     if (!isHumanSystemOwner(req) && resolveAiSession(req, deps.stateService)?.id !== 'static') {
       res.status(403).json({ error: 'cluster_owner_required', message: '只有系统所有者可以配置集群身份，请联系系统所有者。' }); return;
     }
-    try { clusterIdentity.configure(req.body); res.json(clusterIdentity.status()); }
-    catch { res.status(400).json({ error: 'cluster_config_invalid', message: '集群身份配置不完整，请核对节点与项目绑定后重试。' }); }
+    try {
+      if (req.body?.role === 'member' && clusterIdentity.getConfig()?.role !== 'member' && app.locals.dtsService) {
+        const dts = app.locals.dtsService as DtsService;
+        if (dts.store.configured()) for (const p of deps.stateService.getProjects()) {
+          if ((await dts.store.activeRuns<DtsRun>(p.id)).length) {
+            res.status(409).json({ error: 'dts_writer_active', message: '本节点仍有未确认结束的数据同步任务，请先核对并停止，再加入统一集群。' }); return;
+          }
+        }
+      }
+      clusterIdentity.configure(req.body); res.json(clusterIdentity.status());
+    }
+    catch (error) {
+      if ((error as { code?: string }).code === 'cluster_identity_pinned') {
+        res.status(409).json({ error: 'cluster_identity_pinned', message: '该节点已加入现有集群，不能切换为独立身份；请保留原集群、节点和角色后重试。' }); return;
+      }
+      res.status(400).json({ error: 'cluster_config_invalid', message: '集群身份配置不完整，请核对节点与项目绑定后重试。' });
+    }
   });
   app.get('/api/cluster/identity/login', (req, res) => clusterIdentity.login(req, res));
 
@@ -5208,6 +5240,38 @@ export function createServer(deps: ServerDeps): express.Express {
     },
   });
   app.use('/api', createCodeReviewsRouter({ state: deps.stateService, service: reviews }));
+
+  const dtsActor = (req: express.Request): DtsActor => {
+    const r = req as express.Request & { cdsProjectKey?: { projectId: string; keyId: string }; _aiSession?: { id: string; token: string };
+      cdsPrincipal?: { credentialId: string }; _cdsBasicHumanAuth?: boolean; cdsUser?: { id?: string; username?: string } };
+    if (r.cdsProjectKey) return { kind: 'project-key', id: r.cdsProjectKey.keyId };
+    if (r.cdsPrincipal) return { kind: 'principal', id: r.cdsPrincipal.credentialId };
+    if (r._aiSession?.id === 'static') return { kind: 'static', id: 'static', fingerprint: dtsHash(r._aiSession.token) };
+    if (r._cdsBasicHumanAuth && r.cdsUser?.username) return { kind: 'legacy-owner', id: r.cdsUser.username };
+    if (r.cdsUser?.id) return { kind: 'user', id: r.cdsUser.id };
+    return dtsReject('dts_identity_required', '请先使用已授权的账号或项目凭据接入数据同步', 403);
+  };
+  const dtsStore = new DtsStore(process.env.CDS_MONGO_URI, process.env.CDS_MONGO_DB || 'cds_state_db');
+  const dtsService = new DtsService(dtsStore, deps.stateService, deps.serverEventLogStore, async (actor, projectId) => {
+    if (!deps.stateService.getProject(projectId) || authMode === 'disabled') return false;
+    if (actor.kind === 'project-key' || actor.kind === 'principal') return dtsCredentialAllowed(deps.stateService, actor, projectId);
+    if (actor.kind === 'static') return [process.env.CDS_AI_ACCESS_KEY || process.env.AI_ACCESS_KEY, deps.stateService.getCustomEnv()?.AI_ACCESS_KEY]
+      .some(value => value && dtsHash(value) === actor.fingerprint);
+    if (actor.kind === 'legacy-owner') return authEnabled && actor.id === cdsUser;
+    const user = await authService?.findUserById(actor.id);
+    return Boolean(user?.status === 'active' && user.isSystemOwner);
+  });
+  app.locals.dtsService = dtsService;
+  app.use('/api', createDtsRouter({ service: dtsService, state: deps.stateService, actor: dtsActor }));
+  const dtsTimer = setInterval(() => {
+    if (clusterIdentity.getConfig()?.role !== 'member') void dtsService.tick(deps.stateService.getProjects().map(p => p.id))
+      .catch(() => console.warn('[dts] 后台同步状态核对失败，将保留任务保护并等待重试'));
+  }, 5_000);
+  dtsTimer.unref();
+  const stopDts = async () => { clearInterval(dtsTimer); await dtsStore.close(); };
+  app.once('close', () => { void stopDts(); });
+  deps.registerResourceShutdown?.(stopDts);
+
   void reviews.start().catch((error: Error) => console.error('[code-review] recovery failed:', error.message));
   app.use('/api/acceptance', createAcceptanceTasksRouter({ service: acceptanceTaskService }));
 

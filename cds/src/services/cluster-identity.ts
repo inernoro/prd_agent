@@ -79,7 +79,7 @@ function failure(res: Response, code: string, status = 503): void {
 }
 export function clusterAuthorityPath(pathname: string): boolean {
   pathname = pathname.replace(/\/+$/, '').toLowerCase();
-  return /^\/api\/(?:auth(?:\/|$)|me$|login$|logout$|identity(?:-connections)?(?:\/|$)|credentials\/self-check$|ai(?:\/|$)|access-requests(?:\/|$)|bootstrap-access-requests(?:\/|$)|global-agent-keys(?:\/|$))/.test(pathname)
+  return /^\/api\/(?:auth(?:\/|$)|me$|login$|logout$|identity(?:-connections)?(?:\/|$)|credentials\/self-check$|ai(?:\/|$)|access-requests(?:\/|$)|bootstrap-access-requests(?:\/|$)|global-agent-keys(?:\/|$)|dts(?:\/|$))/.test(pathname)
     || /^\/api\/projects\/[^/]+\/(?:agent-keys|access-status|access-requests)(?:\/|$)/.test(pathname);
 }
 
@@ -100,6 +100,9 @@ export class ClusterIdentityService {
   getConfig() { return this.config; }
   configure(value: unknown): void {
     const config = parseClusterIdentityConfig(value);
+    if (this.config && (config.clusterId !== this.config.clusterId || config.nodeId !== this.config.nodeId || config.role !== this.config.role)) {
+      throw new ClusterIdentityValidationError('cluster_identity_pinned');
+    }
     fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
     const temp = `${this.file}.${randomBytes(8).toString('hex')}.tmp`;
     try {

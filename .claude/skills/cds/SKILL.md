@@ -1,7 +1,7 @@
 ---
 name: cds
 metadata:
-  version: 0.22.0
+  version: 0.23.0
 description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, cluster-wide identity and primary/standby selection, load checks, canonical cdscli commands, self-update, deployment runs, versions and rollback. Read actual preview URLs through preview-url; delegate project scanning and deployment to their companion skills. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its required design/orchestration prerequisites; report upload is transport, not acceptance execution. Activate for these tasks or clarify intent when the user only says CDS.
 ---
 
@@ -52,7 +52,7 @@ CDS 这边您想做什么？
 - 主节点不可达时成员报告统一授权暂不可用，不接受旧的独立授权，也不把未核对状态标为已同步。本功能不提供主站故障接管。
 - 不复制整份状态库：项目和运行数据仍归各节点管理，不自动迁移数据库、复用分支 ID 或接管部署流量。
 
-集群配置保存在各节点仓库的私有 `.cds/cluster-identity.json`（0600，排除 Git）；主节点保存成员凭据摘要，成员保存专用节点连接凭据。项目绑定须在两侧一致，改变绑定必须核对实际项目，不能按项目名猜测。配置无效时启动失败，不退回独立授权。配置与状态入口为 `PUT /api/cluster/identity/config`、`GET /api/cluster/identity/status`；仅系统所有者或静态管理凭据可配置，状态不返回连接密钥。主节点配置只由当前系统所有者授权的操作建立，不因为地址目录有一个站点就自动加入信任。
+集群配置保存在各节点仓库的私有 `.cds/cluster-identity.json`（0600，排除 Git）；主节点保存成员凭据摘要，成员保存专用节点连接凭据。项目绑定须在两侧一致，改变绑定必须核对实际项目，不能按项目名猜测。配置无效时启动失败，不退回独立授权；已入群节点的集群、节点标识与角色固定，不能通过配置接口改回独立身份。配置与状态入口为 `PUT /api/cluster/identity/config`、`GET /api/cluster/identity/status`；仅系统所有者或静态管理凭据可配置，状态不返回连接密钥。主节点配置只由当前系统所有者授权的操作建立，不因为地址目录有一个站点就自动加入信任。
 
 开始部署、拉取或创建分支前，执行 `instance recommend`。CPU 一分钟负载占核心数比例达到 80% 才判为 high；失败、超时、权限问题、维护或缺字段均为 unknown。高负载时向用户说明当前负载、备用入口和已核对的集群授权状态；已有明确节点选择则沿用。CLI 不自动切换，不跨节点重放写请求；超时先查询原任务是否被接受。
 
@@ -586,3 +586,13 @@ prd-agent 的图片/验收报告走后端 `IAssetStorage`，由**项目环境变
 ## 代码审查用户 Key
 
 在“更多选项”可选择自己的 OpenAI、Anthropic、OpenRouter 或 DeepSeek Key；失败不回退平台额度。CLI 使用 `code-review submit --user-key-env <本地变量名> --provider <供应商> --model <模型> --token-limit <保护额度>`，不要把明文 Key 放在参数或报告中。`code-review usage <任务ID>` 查询网关同账本用量；只有 Key 所有者可以继续重试消费。MCP 的 `userKey.apiKeyEnv` 同样只填写本地环境变量名。
+
+## DTS 数据同步
+
+通过 `cdscli dts --help` 查询连接、比较、启动、状态和账号规则；沿用当前项目授权。
+先比较，保留返回的计划编号，以稳定的 `--idempotency-key` 启动；结果不明时查询原任务，不重新提交。
+`completed` 表示原生传输结束且独立对账通过。暂停或取消必须等待服务确认，续传会重新比较。
+业务数据默认只追加；账号规则每 5 秒发现缺失账号，每天上海时间 03:00 校准管理员批准的资料字段。
+连接由系统所有者登记，只引用已有项目私密配置，不把数据库密码交给 Agent 或放入同步文件。
+MCP 使用同一项目凭据，运行 `node cds/mcp/src/server.mjs --dts`；工具目录以服务端能力接口为准。
+当前已验证 SeaTunnel 3.0.0 的 MongoDB 文本主键和批准的标量字段；其他服务的写入能力以实际能力返回为准，未验证能力不可代替成功结果。
