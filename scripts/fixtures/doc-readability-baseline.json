@@ -417,12 +417,6 @@
       "impl": 0,
       "src": 3
     },
-    "design.product-agent.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 0
-    },
     "design.skill.marketplace-open-api.md": {
       "missing": 0,
       "bare": 0,
@@ -584,12 +578,6 @@
       "bare": 0,
       "impl": 0,
       "src": 7
-    },
-    "guide.platform.mcp-connector.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 0
     },
     "guide.platform.mongodb-indexes.md": {
       "missing": 0,

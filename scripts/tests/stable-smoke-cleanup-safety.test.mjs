@@ -291,7 +291,7 @@ const spec = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import
 test('REG-stsmk-cleanup-circuit-001 原非法输入子判据每轮被真实消费且失败不被忽略', () => {
   const childEnvironment = { ...process.env };
   delete childEnvironment.NODE_TEST_CONTEXT;
-  const child = spawnSync(process.execPath, ['--test', new URL('./stable-smoke-short-video-invalid.test.mjs', import.meta.url).pathname], {
+  const child = spawnSync(process.execPath, ['--test', '--test-reporter=tap', new URL('./stable-smoke-short-video-invalid.test.mjs', import.meta.url).pathname], {
     encoding: 'utf8', timeout: 30_000, env: childEnvironment,
   });
   assert.equal(child.status, 0, `${child.stdout || ''}\n${child.stderr || ''}`);
