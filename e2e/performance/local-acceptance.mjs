@@ -9,7 +9,8 @@ import { setTimeout as pause } from 'node:timers/promises';
 import { chromium, expect } from '@playwright/test';
 import { digest, executionErrors, buildIdentityErrors } from './metrics.mjs';
 import { openFixtureDocument, installOnboardingHandler, dismissOnboarding, classifyPageHttpErrors } from './browser-path.mjs';
-import { createMobileContext, attachAutoCapture, box, clearBoxes, shot, manifest, writeManifest } from '../../.claude/skills/create-visual-test-to-kb/scripts/harness.mjs';
+import { createMobileContext, attachAutoCapture, box, clearBoxes, shot, manifest } from '../../.claude/skills/create-visual-test-to-kb/scripts/harness.mjs';
+import { finalizeEvidence, reconcilePageCases } from './evidence.mjs';
 
 // Reuse a successful run's immutable Release build, SDK, pinned images and
 // proxy. This suite exercises real pages; it does not recalibrate performance.
@@ -60,6 +61,7 @@ let base, token, browser;
 const result = { schema: 1, provenance: 'integration-live', commit, harnessCommit: await command('git', ['rev-parse','HEAD']),
   driverDigest: digest(await fs.readFile(fileURLToPath(import.meta.url), 'utf8')),
   browserPathCode: digest(await fs.readFile(new URL('./browser-path.mjs', import.meta.url), 'utf8')),
+  evidenceCode: digest(await fs.readFile(new URL('./evidence.mjs', import.meta.url), 'utf8')),
   preparedResult: { path: options.prepared, sha256: createHash('sha256').update(await fs.readFile(preparedPath)).digest('hex') },
   startedAt: new Date().toISOString(), state: 'running', cases: [], anonymous: null, restartRecovery: null };
 const save = () => fs.writeFile(path.join(out, 'result.json'), JSON.stringify(result, null, 2) + '\n');
@@ -191,7 +193,7 @@ try {
         const evidence = await shot(page,shotsDir,name,`${id}：${claim}`,{skipReady:true,
           expectText:step==='document-open'?'MAP性能样例':['saved-refresh','server-restart'].includes(step)?record.bodyMarker:undefined,
           module:'MAP性能',breadcrumb:'真实登录 → 首页 → 知识库 → 文档 → 保存刷新',environment:'integration-live',
-          mobilePathId:width<768?id:undefined,mobileStage:step,commit,runId,status:'通过'});
+          mobilePathId:width<768?id:undefined,mobileStage:width<768?(step==='home'?'entry':'result'):undefined,commit,runId,status:'通过'});
         if(!evidence.annotated || evidence.warnings?.length) throw new Error(`标准证据不完整: ${evidence.warnings?.join('; ') ?? '缺少重点标注'}`);
       } finally { await clearBoxes(page); }
     };
@@ -281,12 +283,13 @@ finally {
   for(const name of containers.reverse())await docker(['rm','-f','-v',name]).catch(e=>{result.failure??=e.message;});
   for(const name of networks.reverse())await docker(['network','rm',name]).catch(e=>{result.failure??=e.message;});
   await fs.rm(path.join(out,'api'),{recursive:true,force:true});
+  const latePageErrors=reconcilePageCases(result.cases);
+  if(latePageErrors.length) result.failure ??= latePageErrors.join('; ');
   result.finishedAt=new Date().toISOString();result.state=result.failure?'failed':'complete';
   result.pass=Boolean(!result.failure&&result.cases.length===4&&result.cases.every(c=>c.pass)&&result.anonymous?.pass&&result.restartRecovery?.pass);
   if(shotsDir) {
-    writeManifest(shotsDir,{verdict:result.pass?'pass':'fail',target:'MAP性能回归真实页面',commit,
+    result.standardEvidence=finalizeEvidence(result,shotsDir,{target:'MAP性能回归真实页面',commit,
       themeSupport:{supportsLight:true,proof:'四种视口/主题均通过产品可见入口切换并核对实际主题'}});
-    result.standardEvidence={directory:shotsDir,manifest:path.join(shotsDir,'manifest.json')};
   }
   await save();
 }
