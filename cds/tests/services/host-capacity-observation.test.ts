@@ -25,7 +25,10 @@ afterEach(async () => { stops.splice(0).forEach(f => f()); vi.restoreAllMocks();
 async function fixture() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'host-capacity-')); dirs.push(dir);
   const file = path.join(dir, 'latest.json');
-  const write = (value: unknown) => fs.writeFile(file, JSON.stringify(value), { mode: 0o600 });
+  const write = async (value: unknown) => {
+    await fs.writeFile(file + '.pending', JSON.stringify(value), { mode: 0o600 });
+    await fs.rename(file + '.pending', file);
+  };
   await write(report());
   return { dir, file, write };
 }
@@ -38,20 +41,35 @@ async function settle(check: () => void) {
 describe('可信采样桥接', () => {
   it('低于水位的 3.4 天预测进入真实总线/账本/外发，同态去重，恢复不解除回收故障', async () => {
     const f = await fixture(); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] }); vi.setSystemTime(now);
+    // File I/O is real while the schedule is virtual. Observe each actual close
+    // before moving the clock again; the previous snapshot does not prove a new
+    // read completed. Production publishes the report by atomic rename as above.
+    const originalOpen = fs.open.bind(fs);
+    const readClosures: Array<() => void> = [];
+    const nextReadClosed = () => new Promise<void>(resolve => { readClosures.push(resolve); });
+    vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+      const handle = await originalOpen(...args); const close = handle.close.bind(handle);
+      handle.close = async () => { await close(); readClosures.shift()?.(); }; return handle;
+    });
+    const finishRead = async (closed: Promise<void>) => { await closed; await new Promise(resolve => setImmediate(resolve)); };
+
     const publicEvents: unknown[] = [];
     stops.push(cdsEventsBus.subscribe(event => { if (event.type.startsWith('capacity.observation.')) publicEvents.push(event.data); }));
     const ledger = new NoticeLedgerService({ storePath: '' });
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ success: true, data: { id: 'fixture-receipt' } }), { status: 200 }));
     const handler = startNoticeLedger({ ledger, outbound: { baseUrl: 'https://map.example.test', token: 'fixture', source: 'system-alert' }, fetchImpl }); stops.push(handler.stop);
     const service = new HostCapacityObservationService({ reportPath: f.file, expectedHost: 'isolated-host', publish: (type, data) => cdsEventsBus.publish(type, data) }); stops.push(() => service.stop());
-    service.start(); await settle(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+    const firstRead = nextReadClosed(); service.start(); await finishRead(firstRead);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(service.getSnapshot().report?.filesystems['1']).toMatchObject({ usedPercent: 60, daysToReserve: 3.4 });
     expect(ledger.list()[0]).toMatchObject({ eventType: 'capacity.observation.risk', href: '/cds-settings#scheduler' });
-    await vi.advanceTimersByTimeAsync(60_000); await settle(() => expect(service.getSnapshot().status).toBe('warning'));
+    const secondRead = nextReadClosed(); await vi.advanceTimersByTimeAsync(60_000); await finishRead(secondRead);
+    expect(service.getSnapshot().status).toBe('warning');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     cdsEventsBus.publish('capacity.risk', { targetId: 'janitor', message: '隔离回收失败仍存在' });
-    await f.write(report('ok')); await vi.advanceTimersByTimeAsync(60_000);
-    await settle(() => expect(ledger.list().some(n => n.eventType === 'capacity.observation.recovered')).toBe(true));
+    await f.write(report('ok')); const thirdRead = nextReadClosed();
+    await vi.advanceTimersByTimeAsync(60_000); await finishRead(thirdRead);
+    expect(ledger.list().some(n => n.eventType === 'capacity.observation.recovered')).toBe(true);
     expect(ledger.list().some(n => n.eventType === 'capacity.risk')).toBe(true);
     expect(ledger.list().some(n => n.eventType === 'capacity.recovered')).toBe(false);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
