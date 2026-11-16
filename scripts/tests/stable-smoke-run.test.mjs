@@ -208,7 +208,7 @@ test('双环境执行范围按各自矩阵取交集且正式环境不能点名�
   );
 });
 
-test('失败、未执行和重试用例逐项形成带用例与追踪号的通知目标', () => {
+test('失败和未执行合并成同轮一条通知，原用例明细留在线报告', () => {
   const targets = buildAffectedNotificationTargets({
     runId: 'stsmk-notify',
     verdict: 'fail',
@@ -249,11 +249,23 @@ test('失败、未执行和重试用例逐项形成带用例与追踪号的通�
     ],
   });
 
-  assert.equal(targets.length, 2);
-  assert.deepEqual(targets.map((item) => item.caseId), ['MVIS-001', 'MVIS-002']);
+  assert.equal(targets.length, 1);
+  assert.equal(targets[0].caseId, 'RUN-SUMMARY');
   assert.equal(targets[0].module, '多图视觉创作');
-  assert.equal(targets[0].requestId, 'req-mvis-001');
-  assert.equal(targets[1].requestId, 'stsmk-notify:production:MVIS-002');
+  assert.equal(targets[0].requestId, 'stsmk-notify:summary');
+  assert.match(targets[0].recovery, /失败 1 项/);
+  assert.match(targets[0].recovery, /未执行 1 项/);
+});
+
+test('REG-stsmk-notify-evidence-001 REG-stsmk-notify-aggregate-001 136项异常不得创建136条收件通知', () => {
+  const targets = buildAffectedNotificationTargets({runId:'stsmk-aggregate',verdict:'fail',plan:{},
+    rows:Array.from({length:136},(_,index)=>({caseId:`CASE-${index}`,environment:index%2?'production':'cds',status:index<23?'fail':'not-run',title:'本轮巡检'}))});
+  assert.equal(targets.length,1);
+  assert.equal(targets[0].caseId,'RUN-SUMMARY');
+  assert.equal(targets[0].environment,'双环境');
+  assert.match(targets[0].recovery,/失败 23 项/);
+  assert.match(targets[0].recovery,/未执行 113 项/);
+  assert.doesNotMatch(targets[0].recovery,/转交|修复 Agent/);
 });
 
 test('只有视觉门禁不通过时仍生成可追踪的视觉通知目标', () => {

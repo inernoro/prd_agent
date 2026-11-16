@@ -25,7 +25,7 @@ test('通知始终定向用户并包含证据和恢复动作', () => {
   assert.equal(payload.actionUrl, base.reportUrl);
   assert.match(payload.message, /CDS 回滚/);
   assert.equal(payload.source, 'stable-smoke');
-  assert.match(payload.dedupKey, /REG-multi-image-001/);
+  assert.equal(payload.dedupKey, 'stsmk-123:summary');
 });
 
 test('执行链异常可以把动作改为打开通知中心', () => {
@@ -110,4 +110,23 @@ test('服务端未确认目标用户时不得把接口成功误报为送达', as
     })),
     /没有确认通知已写入指定用户/,
   );
+});
+
+
+test('同一轮的模块、环境与补跑结果变化不产生新通知身份', () => {
+  const first = buildNotificationPayload(base);
+  const revised = buildNotificationPayload({ ...base, environment: '双环境', module: '全部模块', caseId: 'RUN-SUMMARY', requestId: 'new-trace', recovery: '失败 2 项；未执行 3 项。' });
+  assert.equal(first.dedupKey, revised.dedupKey);
+  assert.notEqual(first.message, revised.message);
+  assert.notEqual(first.dedupKey, buildNotificationPayload({ ...base, runId: 'next-run' }).dedupKey);
+  assert.notEqual(first.dedupKey, buildNotificationPayload({ ...base, isTest: true }).dedupKey);
+  assert.doesNotMatch(revised.message, /stsmk-|RUN-SUMMARY|new-trace/);
+  assert.match(revised.message, /失败 2 项；未执行 3 项/);
+  assert.match(revised.message, /未执行不代表业务故障/);
+});
+
+test('旧调用方逐项发送136项时也只使用一个整轮身份', () => {
+  const payloads = Array.from({length:136}, (_,i) => buildNotificationPayload({ ...base, caseId:`CASE-${i}`, module:`module-${i}`, environment:i % 2 ? '正式环境' : 'CDS 环境' }));
+  assert.equal(new Set(payloads.map(p => p.dedupKey)).size, 1);
+  assert.ok(payloads.every(p => p.actionUrl === base.reportUrl));
 });
