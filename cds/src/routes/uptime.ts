@@ -222,7 +222,7 @@ export function createUptimeRouter(deps: {
   /** 读通道凭据的**打码视图**：配没配、端点、keyId、账号、私钥指纹。私钥本身不出。 */
   readAlarmNotify?: () => Record<string, unknown>;
   /** 写通道凭据；传 null 表示清除。 */
-  writeAlarmNotify?: (next: { endpoint: string; keyId: string; username: string; privateKey: string } | null) => void;
+  writeAlarmNotify?: (next: { endpoint: string; keyId: string; username: string; privateKey: string; targetUsername?: string } | null) => void | Promise<void>;
 }): Router {
   const router = Router();
 
@@ -333,6 +333,9 @@ export function createUptimeRouter(deps: {
    * **私钥永远不回显**：只说配没配、指纹是什么。读接口把密钥吐回去，是最常见的
    * 一种「看起来只是个设置页」的泄漏面（同 /api/env 2026-05-09 那次 P1.5）。
    */
+  router.use('/cds-system/alarm-notify', (_req, res, next) => {
+    Object.assign(res.locals, { cdsSuppressRequestBodyLog: true, cdsSuppressRequestDetails: true }); next();
+  });
   router.get('/cds-system/alarm-notify', (req, res) => {
     if (denySystemAlarmAccess(req, res)) return;
     if (!deps.readAlarmNotify) {
@@ -342,7 +345,8 @@ export function createUptimeRouter(deps: {
     res.json(deps.readAlarmNotify());
   });
 
-  router.put('/cds-system/alarm-notify', (req, res) => {
+  router.put('/cds-system/alarm-notify', async (req, res) => {
+    (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
     if (denySystemAlarmAccess(req, res)) return;
     if (!deps.writeAlarmNotify) {
       res.status(501).json({ error: '这个实例没有接通知通道配置' });
@@ -350,7 +354,8 @@ export function createUptimeRouter(deps: {
     }
     const body = (req.body || {}) as Record<string, unknown>;
     if (body.clear === true) {
-      deps.writeAlarmNotify(null);
+      try { await deps.writeAlarmNotify(null); }
+      catch { res.status(409).json({ error: 'storage_unavailable', message: '通知凭据清除未能确认，请检查持久存储' }); return; }
       res.json({ ...deps.readAlarmNotify?.(), message: '通知通道凭据已清除 —— 现在出问题不会有人被通知' });
       return;
     }
@@ -358,6 +363,7 @@ export function createUptimeRouter(deps: {
     const endpoint = str('endpoint');
     const keyId = str('keyId');
     const username = str('username');
+    const targetUsername = str('targetUsername') || username;
     const privateKey = str('privateKey');
     // 四项缺一即拒。半套凭据存进去只会在真出事那天以 401 的形式暴露，
     // 而那正是最不该出意外的时刻。
@@ -375,7 +381,11 @@ export function createUptimeRouter(deps: {
       res.status(400).json({ error: 'validation', message: '私钥必须是 PEM 格式（BEGIN PRIVATE KEY）' });
       return;
     }
-    deps.writeAlarmNotify({ endpoint, keyId, username, privateKey });
+    try {
+      await deps.writeAlarmNotify({ endpoint, keyId, username, privateKey, targetUsername });
+    } catch {
+      res.status(409).json({ error: 'secret_storage_unavailable', message: 'MAP 凭据未保存，请确认密封存储已启用且持久存储可写' }); return;
+    }
     res.json({ ...deps.readAlarmNotify?.(), message: '通知通道已配置 —— 建议立刻演练一次确认真能送到' });
   });
 
