@@ -56,7 +56,7 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
           return `export async function ${name}(){return {success:true,data:{items:[]}}}`;
         }).join('\n');
         if (id.endsWith('/src/lib/auth.tsx')) return 'export function useAuth(){return {tenant:{id:"tenant",role:globalThis.__providerEditFixture.role,teamIds:["team"]}}}';
-        if (id.endsWith('/src/components/ConfirmDialog.tsx')) return 'export function useDialogs(){return {confirm:async()=>false,promptText:async()=>null}}';
+        if (id.endsWith('/src/components/ConfirmDialog.tsx')) return 'export function useDialogs(){return {confirm:async()=>globalThis.__providerEditFixture.confirmed??false,promptText:async()=>null}}';
       },
     }],
   });
@@ -340,10 +340,37 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
     await click(button('重新核对'));assert.equal(button('创建密钥').disabled,true,'预算不一致不能声称已保存');
     fixture.appCallers=[{...pendingCaller,id:'happy-caller',...pendingBudget}];
     await click(button('重新核对'));assert.equal(button('创建密钥').disabled,false);
+    fixture.callerResult={success:true,data:fixture.appCallers[0]};
     const priorGovernance=fixture.calls.filter(call=>call.governance).length;await click(button('创建密钥'));assert.equal(fixture.calls.filter(call=>call.governance).length,priorGovernance,'已确认预算后继续不盲重写预算');
     assert.equal(document.querySelector('.lg-qs-key-value').textContent,'gwk_fixture_only_not_a_real_credential');
     assert.ok(document.body.textContent.includes('未访问上游'));
     assert.ok(button('复制密钥'));
+    fixture.confirmed=true;
+    await click(button('更改'));
+    // 新登记回执是服务端最新状态；旧确认不能掩盖其他管理员的修改或清空。
+    for (const latestBudget of [{monthlyBudgetUsd:5,budgetReservationUsd:0.5},{monthlyBudgetUsd:null,budgetReservationUsd:null}]) {
+      fixture.callerResult={success:true,data:{...pendingCaller,id:'happy-caller',...latestBudget}};
+      const beforeExternalChangeKeys=fixture.calls.filter(call=>call.createKey).length;
+      await click(button('创建密钥'));
+      assert.equal(fixture.calls.filter(call=>call.createKey).length,beforeExternalChangeKeys,'已有预算被外部更改后不能静默签发不同约束的密钥');
+      assert.equal(fixture.calls.filter(call=>call.governance).length,priorGovernance,'核对外部变更不能自动覆盖其他管理员的预算');
+      assert.ok(document.body.textContent.includes('预算已被更改或清空'));
+    }
+    fixture.callerResult={success:true,data:{...pendingCaller,id:'happy-caller',monthlyBudgetUsd:20}};
+    const beforePartialKeys=fixture.calls.filter(call=>call.createKey).length;
+    await click(button('创建密钥'));
+    assert.equal(fixture.calls.filter(call=>call.createKey).length,beforePartialKeys,'部分预算回执不是完整确认');
+    assert.equal(button('创建密钥').disabled,true,'预算读取不完整保留未确认锁');
+    fixture.callersThrow=true;await click(button('重新核对'));fixture.callersThrow=false;
+    assert.equal(button('创建密钥').disabled,true,'核对读取中断不解除锁');
+    fixture.appCallers=[{...pendingCaller,id:'happy-caller',monthlyBudgetUsd:20}];
+    await click(button('重新核对'));assert.equal(button('创建密钥').disabled,true,'部分调用方读取不解除预算确认锁');
+    fixture.appCallers=[{...pendingCaller,id:'happy-caller',...pendingBudget}];
+    await click(button('重新核对'));assert.equal(button('创建密钥').disabled,false);
+    fixture.callerResult={success:true,data:fixture.appCallers[0]};
+    await click(button('创建密钥'));
+    assert.equal(fixture.calls.filter(call=>call.createKey).length,beforePartialKeys+1,'完整新回执匹配原预算后才可继续');
+    assert.equal(fixture.calls.filter(call=>call.governance).length,priorGovernance,'同一恢复尝试确认后不重复治理写入');
     await click(button('cURL'));
     assert.ok(document.querySelector('pre').textContent.includes('gwk_fixture_only_not_a_real_credential'),'产物中可直接运行的接入片段使用此次签发密钥');
     assert.ok([...document.querySelectorAll('a')].some(a=>a.href.includes('fixture-safe-record')&&a.href.includes('view=physical')&&a.href.includes('openRequest=1')),'安全记录承接到物理视图，不能误导为模型结果');

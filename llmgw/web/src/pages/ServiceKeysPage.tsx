@@ -93,7 +93,10 @@ export function ServiceKeysPage() {
   const [params] = useSearchParams();
   const contextClient = (params.get('client') || '').trim();
   const contextCaller = (params.get('appCaller') || '').trim();
-  const { tenant } = useAuth();
+  const { tenant, user } = useAuth();
+  const accessScope = JSON.stringify([tenant?.id, tenant?.role, user?.username, user?.identityProvider]);
+  const accessScopeRef = useRef(accessScope);
+  accessScopeRef.current = accessScope;
   const { confirm } = useDialogs();
   const isInternalTenant = tenant?.isInternal === true;
   // Developer 的密钥必须绑团队（服务端硬性要求），Owner/Admin 留空则是租户级密钥。
@@ -125,6 +128,12 @@ export function ServiceKeysPage() {
   const [creationUnknown, setCreationUnknown] = useState<{ stage: 'caller' | 'key'; request: CreateServiceKeyRequest; caller: string; requestType: SelfServiceRequestType; callerTeam: string } | null>(null);
   const [creationCheck, setCreationCheck] = useState<string | null>(null);
   const [checkingCreation, setCheckingCreation] = useState(false);
+  const creationReadSequence = useRef(0);
+  const [creationCandidates, setCreationCandidates] = useState<{ scope: string; pending: typeof creationUnknown; items: ServiceKeyItem[] } | null>(null);
+  const candidateReadRef = useRef(creationCandidates);
+  candidateReadRef.current = creationCandidates;
+  const creationUnknownRef = useRef(creationUnknown);
+  creationUnknownRef.current = creationUnknown;
   const [showCreate, setShowCreate] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [created, setCreated] = useState<CreatedServiceKey | null>(null);
@@ -170,6 +179,10 @@ export function ServiceKeysPage() {
   const [rateLimitPerMinute, setRateLimitPerMinute] = useState('');
   const [rotatesKeyId, setRotatesKeyId] = useState<string | undefined>();
   const [confirmWildcardRisk, setConfirmWildcardRisk] = useState(false);
+  const resetCreationDraft = useCallback(() => {
+    setName(''); setClientCode(''); setAppCallerFeature(''); setIdentitySlug(''); setAppCallerCodes(''); setTeamId(''); setAllowedCidrs(''); setRateLimitPerMinute(''); setRotatesKeyId(undefined); setExpiresAt(''); setConfirmWildcardRisk(false);
+    setSourceSystem('external'); setEnvironment('production'); setPurpose('external-platform'); setAppCallerMode('generate'); setAppCallerRequestType('chat'); setIngressProtocols(DEFAULT_PROTOCOLS); setScopes(DEFAULT_SCOPES);
+  }, []);
   /** 只喂下拉与补全。签发前的「存不存在、什么状态」现问服务端，不看这一页（见 submit）。 */
   const [knownAppCallers, setKnownAppCallers] = useState<string[]>([]);
   const [legacy, setLegacy] = useState<LegacyKeyCutoverData | null>(null);
@@ -208,17 +221,20 @@ export function ServiceKeysPage() {
   }, []);
 
   const load = useCallback(async () => {
+    const scope = accessScope;
     setListError(null); setLegacyReadError(null); setReading(true);
     let keysRead = false;
     let legacyRequest = 0;
     try {
     const res = await getServiceKeys();
+    if (accessScopeRef.current !== scope) return;
     if (res.success) { keysRead = true; setItems(res.data); setValidityNow(Date.now()); setLifecycleReceipt(null); }
     else setListError(res.error?.message || '加载接入密钥失败');
     if (canManageLegacyCutover) {
       if (legacyCheckingRef.current) return;
       legacyRequest = ++legacyReadSequence.current;
       const legacyRes = await getLegacyKeyCutover();
+      if (accessScopeRef.current !== scope) return;
       if (legacyRequest !== legacyReadSequence.current) return;
       if (!legacyRes.success) setLegacyReadError(legacyRes.error?.message || '旧共享密钥状态未读取，请刷新核对。');
       if (legacyRes.success && legacyRes.data.applicable) {
@@ -227,14 +243,15 @@ export function ServiceKeysPage() {
         else { setLegacy(legacyRes.data); setLegacyReadAt(new Date().toISOString()); }
       }
     }
-    } catch { if (keysRead) { if (legacyRequest === legacyReadSequence.current) setLegacyReadError('旧共享密钥状态读取中断，请重读。'); } else setListError('密钥配置读取未完成，请重新读取后核对。'); }
-    finally { setReading(false); }
-  }, [canManageLegacyCutover, adoptLegacy]);
+    } catch { if (accessScopeRef.current !== scope) return; if (keysRead) { if (legacyRequest === legacyReadSequence.current) setLegacyReadError('旧共享密钥状态读取中断，请重读。'); } else setListError('密钥配置读取未完成，请重新读取后核对。'); }
+    finally { if (accessScopeRef.current === scope) setReading(false); }
+  }, [canManageLegacyCutover, adoptLegacy, accessScope]);
 
   useEffect(() => {
+    const scope = accessScope;
     void load();
     void getGatewayAppCallers({ page: 1, pageSize: 200 }).then((res) => {
-      if (res.success) {
+      if (accessScopeRef.current === scope && res.success) {
         // 这一页只喂给「手选已有用途」的下拉与补全，不参与签发前的判定：
         // 那是一页有上限的列表，用它判「这个码存不存在 / 是什么状态」在用途多过一页的
         // 租户上必然判错，所以签发那一步改成现问服务端（见 submit）。
@@ -246,14 +263,27 @@ export function ServiceKeysPage() {
     // 团队只用来回答「这条调用用途登记在谁名下」。以前这里是一个让人手抄 team id 的
     // 输入框，没人知道该填什么；现在读回真实团队列表做下拉，空值仍然表示租户级密钥。
     void getOrganization().then((res) => {
-      if (res.success) setTeams(res.data.teams.filter((team) => team.status === 'active'));
+      if (accessScopeRef.current === scope && res.success) setTeams(res.data.teams.filter((team) => team.status === 'active'));
     });
   }, [load]);
+
+  const previousScope = useRef(accessScope);
+  useEffect(() => {
+    if (previousScope.current === accessScope) return;
+    previousScope.current = accessScope; creationReadSequence.current++;
+    candidateReadRef.current = null; creationUnknownRef.current = null;
+    setCreationCandidates(null); setCreationUnknown(null); setCreationCheck(null); setCheckingCreation(false);
+    setCreated(null); setShowCreate(false); resetCreationDraft();
+    setItems(null); setSelectedKeyId(null); setLifecycleUnknown(null); setLifecycleReceipt(null); setLifecycleResolved(null);
+    setLifecycleRead(null); setLifecycleReadAt(null); setLifecycleCheck(null); setBusyId(null); setError(null);
+    creatingRef.current = false; lifecycleRef.current = false; checkingLifecycleRef.current = false; setCheckingLifecycle(false); setCreating(false);
+  }, [accessScope, resetCreationDraft]);
 
   const submit = async () => {
     if (!canUseCapability(tenant?.role, 'serviceKeyWrite') || !canSubmit || creatingRef.current || creationUnknown || Boolean(rotatesKeyId && (lifecycleRef.current || lifecycleUnknown || lifecycleReceipt))) return;
     if (expiresAt && !Number.isFinite(Date.parse(expiresAt))) { setError('过期时间无效，请重新选择。'); return; }
-    creatingRef.current = true; setCreating(true); setError(null); setCreationCheck(null); setCreated(null);
+    const scope = accessScope;
+    creatingRef.current = true; setCreating(true); setError(null); setCreationCheck(null); setCreated(null); setCreationCandidates(null);
     const request: CreateServiceKeyRequest = {
       name: name.trim(),
       sourceSystem: sourceSystem.trim(),
@@ -283,6 +313,7 @@ export function ServiceKeysPage() {
         // Always let the authoritative idempotent endpoint resolve exact code+type, team
         // and traffic permission. A paged code-only list is not this decision's authority.
         const callerRes = await createGatewayAppCaller({ teamId: appCallerTeamId, appCallerCode: generatedAppCallerCode, requestType: appCallerRequestType, title: name.trim() || generatedAppCallerCode, ingressProtocol: 'openai-compatible' });
+        if (accessScopeRef.current !== scope) return;
         if (!callerRes.success) {
           if (mutationOutcomeUnknown(callerRes.error?.code, CALLER_CREATE_REJECTED)) setCreationUnknown(snapshot());
           else setError(callerRes.error?.message || '调用身份登记被拒绝，密钥未签发');
@@ -292,6 +323,7 @@ export function ServiceKeysPage() {
       }
       stage = 'key';
       const res = await createServiceKey(request);
+      if (accessScopeRef.current !== scope) return;
       if (!res.success) {
         if (mutationOutcomeUnknown(res.error?.code, KEY_CREATE_REJECTED)) setCreationUnknown(snapshot());
         else setError(res.error?.message || '密钥签发请求被拒绝');
@@ -319,42 +351,79 @@ export function ServiceKeysPage() {
       setConfirmWildcardRisk(false);
       setExpiresAt('');
       await load();
-    } catch { setCreationUnknown(snapshot()); }
-    finally { creatingRef.current = false; setCreating(false); }
+    } catch { if (accessScopeRef.current === scope) setCreationUnknown(snapshot()); }
+    finally { if (accessScopeRef.current === scope) { creatingRef.current = false; setCreating(false); } }
   };
 
   const reconcileCreation = async () => {
-    const pending = creationUnknown; if (!pending || checkingCreation) return;
+    const pending = creationUnknown; if (!pending || checkingCreation || creatingRef.current || lifecycleRef.current || lifecycleUnknown || lifecycleReceipt) return;
+    const scope = accessScope, sequence = ++creationReadSequence.current;
+    const current = () => accessScopeRef.current === scope && sequence === creationReadSequence.current && creationUnknownRef.current === pending;
+    candidateReadRef.current = null; setCreationCandidates(null);
     setCheckingCreation(true);
     try {
       if (pending.stage === 'caller') {
         const result = await getGatewayAppCallers({ search: pending.caller, requestType: pending.requestType, page: 1, pageSize: 200 });
+        if (!current()) return;
         if (!result.success) { setCreationCheck('调用身份核对读取失败，原提交结果仍未确认。'); return; }
         const found = result.data.items.find(item => item.appCallerCode.toLowerCase() === pending.caller.toLowerCase() && item.requestType === pending.requestType && item.teamId === pending.callerTeam);
         if (found && ['discovered', 'configured', 'active'].includes(found.status.toLowerCase())) { setCreationUnknown(null); setCreationCheck('已确认同一调用身份和团队，密钥尚未签发，可继续。'); }
         else setCreationCheck('尚未确认可继续的调用身份；请到调用方治理核对团队、用途和管理状态。');
       } else {
         const result = await getServiceKeys();
+        if (!current()) return;
         if (!result.success) { setCreationCheck('密钥核对读取失败，签发结果仍未确认。'); return; }
         setItems(result.data); setValidityNow(Date.now());
-        const candidates = result.data.filter(item => item.clientCode === pending.request.clientCode && pending.request.appCallerCodes.every(code => item.appCallerCodes.some(value => value.toLowerCase() === code.toLowerCase())));
+        const candidates = result.data.filter(item => creationRequestMatches(item, pending.request));
+        setCreationCandidates({ scope, pending, items: candidates });
         setCreationCheck(candidates.length ? `找到 ${candidates.length} 把可能相关的密钥；不能确认哪把属于本次签发，明文无法重现。请核对并撤销不再使用的候选。` : '尚未找到可确认的签发记录；结果仍未知，不会再次签发。');
       }
-    } catch { setCreationCheck('核对读取中断，原提交结果仍未确认，请重试读取。'); }
-    finally { setCheckingCreation(false); }
+    } catch { if (current()) setCreationCheck('核对读取中断，原提交结果仍未确认，请重试读取。'); }
+    finally { if (current()) setCheckingCreation(false); }
+  };
+
+  const candidateFor = (item: ServiceKeyItem) => creationUnknown?.stage === 'key' && creationCandidates?.scope === accessScope && creationCandidates.pending === creationUnknown
+    ? creationCandidates.items.find(candidate => candidate.id === item.id && candidate.enabled && candidateFingerprint(candidate) === candidateFingerprint(item)) : undefined;
+
+  const endCreationCheck = async () => {
+    if (creationUnknown?.stage !== 'key' || !canUseCapability(tenant?.role, 'serviceKeyWrite') || creatingRef.current || lifecycleRef.current || lifecycleUnknown || lifecycleReceipt || checkingCreation) return;
+    const pending = creationUnknown, scope = accessScope; creatingRef.current = true;
+    try {
+      const agreed = await confirm({ title: '结束核对并重新准备？', description: '原签发仍未确认，可能已有或稍后出现有效密钥；结束不会撤销它们，也不能恢复明文。请先核对候选及审计。继续只清空本次表单、准备新任务，不会重发原请求。', tone: 'danger', confirmLabel: '清空并重新准备' });
+      if (!agreed || accessScopeRef.current !== scope || creationUnknownRef.current !== pending) return;
+      creationReadSequence.current++; candidateReadRef.current = null; creationUnknownRef.current = null;
+      setCreationUnknown(null); setCreationCandidates(null); setCreated(null);
+      resetCreationDraft();
+      setShowCreate(true); setCreationCheck('已清空表单，尚未提交新任务。原签发仍可能有效，请继续核对审计。');
+    } finally { if (accessScopeRef.current === scope) creatingRef.current = false; }
   };
 
   const runLifecycle = async (item: ServiceKeyItem, kind: KeyLifecycleIntent['kind']) => {
-    if (!canUseCapability(tenant?.role, 'serviceKeyWrite') || lifecycleRef.current || lifecycleUnknown || lifecycleReceipt || creatingRef.current || creationUnknown) return;
+    const candidate = kind === 'revoke' ? candidateFor(item) : undefined;
+    if (!canUseCapability(tenant?.role, 'serviceKeyWrite') || lifecycleRef.current || lifecycleUnknown || lifecycleReceipt || creatingRef.current || checkingCreation || creationUnknown && !candidate) return;
+    const scope = accessScope, authorizedRead = creationCandidates;
     lifecycleRef.current = true; setBusyId(item.id); setLifecycleResolved(null);
     const intent: KeyLifecycleIntent = { kind, id: item.id, name: item.name, predecessorId: item.rotatesKeyId, successorId: item.rotatedByKeyId };
     const markUnknown = () => { setLifecycleUnknown(intent); setLifecycleRead(null); setLifecycleReadAt(null); setLifecycleCheck(null); setError(null); };
     try {
       const confirmed = await confirm(kind === 'revoke'
-        ? { title: `撤销接入密钥「${item.name}」？`, description: '撤销后使用它的客户端会立即收到 401。', tone: 'danger', confirmLabel: '撤销' }
+        ? { title: `撤销接入密钥「${item.name}」？`, description: candidate ? `候选 ID：${item.id}。范围与本次请求一致，但不能证明它属于本次签发；撤销后使用它的客户端立即收到 401，且明文无法恢复。原签发仍待核，不会重复签发。` : '撤销后使用它的客户端会立即收到 401。', tone: 'danger', confirmLabel: '撤销' }
         : { title: `确认「${item.name}」的客户端已经全部切换到新密钥？`, description: '确认后旧密钥进入可撤销状态。', confirmLabel: '已全部切换' });
-      if (!confirmed) return;
+      if (!confirmed || accessScopeRef.current !== scope) return;
+      if (candidate) {
+        if (candidateReadRef.current !== authorizedRead || creationUnknownRef.current !== authorizedRead?.pending) return;
+        let fresh;
+        try { fresh = await getServiceKeys(); }
+        catch { if (accessScopeRef.current === scope) { candidateReadRef.current = null; setCreationCandidates(null); setCreationCheck('候选读取中断，未撤销；请重新核对本次步骤。'); } return; }
+        if (accessScopeRef.current !== scope) return;
+        const target = fresh.success ? fresh.data.find(key => key.id === item.id) : undefined;
+        if (!target || candidateFingerprint(target) !== candidateFingerprint(candidate)) {
+          candidateReadRef.current = null; setCreationCandidates(null);
+          setCreationCheck(fresh.success ? '候选状态已变化，未撤销；请重新核对本次步骤并确认目标。' : '候选读取失败，未撤销；请重新核对本次步骤。'); return;
+        }
+      }
       const response = kind === 'revoke' ? await revokeServiceKey(intent.id) : await confirmServiceKeyClientCutover(intent.id, intent.successorId || '');
+      if (accessScopeRef.current !== scope) return;
       if (!response.success) {
         if (mutationOutcomeUnknown(response.error?.code, kind === 'revoke' ? KEY_REVOKE_REJECTED : KEY_CUTOVER_REJECTED)) markUnknown();
         else setError(response.error?.message || '操作在写入前被拒绝，请读取当前状态。');
@@ -364,23 +433,25 @@ export function ServiceKeysPage() {
       if (kind === 'cutover' && (!('rotationState' in response.data) || response.data.rotationState !== 'client-switched')) { markUnknown(); return; }
       if (kind === 'cutover' && 'successorKeyId' in response.data && response.data.successorKeyId !== intent.successorId) { markUnknown(); setLifecycleCheck(`服务端回报的后继 ${response.data.successorKeyId} 与操作前不同；请核对完整配对。`); return; }
       const confirmedPhase = 'rotationState' in response.data && typeof response.data.rotationState === 'string' ? response.data.rotationState : kind === 'revoke' ? 'revoked' : 'client-switched';
+      if (candidate) { candidateReadRef.current = null; setCreationCandidates(null); }
       setLifecycleReceipt(intent);
       // Apply only the target outcome confirmed in this response. Full pairing/stage
       // facts still come from the subsequent read; a failed read retains the receipt.
       setItems(current => current?.map(key => key.id !== intent.id ? key : kind === 'revoke' ? { ...key, enabled: false, rotationState: confirmedPhase } : { ...key, rotationState: confirmedPhase }) ?? current);
       invalidateOnboardingCache(tenant?.id);
       await load();
-    } catch { markUnknown(); }
-    finally { lifecycleRef.current = false; setBusyId(null); }
+    } catch { if (accessScopeRef.current === scope) markUnknown(); }
+    finally { if (accessScopeRef.current === scope) { lifecycleRef.current = false; setBusyId(null); } }
   };
   const revoke = (item: ServiceKeyItem) => runLifecycle(item, 'revoke');
   const confirmClientCutover = (item: ServiceKeyItem) => runLifecycle(item, 'cutover');
   const reconcileLifecycle = async () => {
     if (!lifecycleUnknown || checkingLifecycleRef.current) return;
-    const intent = lifecycleUnknown; checkingLifecycleRef.current = true;
+    const intent = lifecycleUnknown, scope = accessScope; checkingLifecycleRef.current = true;
     setCheckingLifecycle(true); setLifecycleRead(null); setLifecycleReadAt(null);
     try {
       const response = await getServiceKeys();
+      if (accessScopeRef.current !== scope) return;
       if (!response.success) { setLifecycleCheck('读取失败，原操作结果仍未确认。'); return; }
       const readAt = new Date().toISOString();
       setItems(response.data); setValidityNow(Date.now());
@@ -393,8 +464,8 @@ export function ServiceKeysPage() {
       }
       setLifecycleRead(response.data); setLifecycleReadAt(readAt);
       setLifecycleCheck('当前读取尚未满足完整目标，或相关密钥不在可见范围；原操作仍待核，不会重提。');
-    } catch { setLifecycleCheck('读取中断，原操作结果仍未确认。'); }
-    finally { checkingLifecycleRef.current = false; setCheckingLifecycle(false); }
+    } catch { if (accessScopeRef.current === scope) setLifecycleCheck('读取中断，原操作结果仍未确认。'); }
+    finally { if (accessScopeRef.current === scope) { checkingLifecycleRef.current = false; setCheckingLifecycle(false); } }
   };
   const copyCreatedKey = async () => {
     if (!created) return;
@@ -611,7 +682,7 @@ export function ServiceKeysPage() {
   const renderActions = (item: ServiceKeyItem) => item.enabled ? <div className="lg-service-key-actions">
     {item.rotationState === 'active' || item.rotationState === 'completed' ? <Button size="sm" variant="ghost" disabled={creating || Boolean(creationUnknown) || Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt)} onClick={() => startRotation(item)}>轮换</Button> : null}
     {item.rotationState === 'awaiting-client-cutover' ? <Button size="sm" variant="ghost" disabled={Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt) || creating || Boolean(creationUnknown)} onClick={() => void confirmClientCutover(item)}>确认已切换</Button> : null}
-    <Button size="sm" variant="ghost" disabled={Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt) || creating || Boolean(creationUnknown) || item.rotationState === 'awaiting-client-cutover' || item.rotationState === 'client-switched' && Boolean(item.rotatesKeyId) && !item.rotatedByKeyId} onClick={() => void revoke(item)}>{item.rotationState === 'client-switched' && item.rotatedByKeyId ? '撤销旧钥并完成' : item.rotationState === 'client-switched' ? '等待旧钥撤销' : '撤销'}</Button>
+    <Button size="sm" variant="ghost" data-creation-candidate-revoke={candidateFor(item) ? item.id : undefined} disabled={Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt) || creating || checkingCreation || Boolean(creationUnknown) && !candidateFor(item) || item.rotationState === 'awaiting-client-cutover' || item.rotationState === 'client-switched' && Boolean(item.rotatesKeyId) && !item.rotatedByKeyId} onClick={() => void revoke(item)}>{item.rotationState === 'client-switched' && item.rotatedByKeyId ? '撤销旧钥并完成' : item.rotationState === 'client-switched' ? '等待旧钥撤销' : '撤销'}</Button>
   </div> : null;
 
   return (
@@ -658,7 +729,7 @@ export function ServiceKeysPage() {
           {lifecycleCheck ? <span style={{ display: 'block' }}>{lifecycleCheck}</span> : null}
           <Button size="sm" variant="ghost" disabled={checkingLifecycle} onClick={() => void reconcileLifecycle()}>读取相关密钥状态</Button>
         </InlineAlert> : null}
-        {creationUnknown ? <InlineAlert tone="error">{creationUnknown.stage === 'caller' ? '调用身份登记结果未确认，密钥尚未签发。' : '密钥签发结果未确认，可能已生效；本次表单已保留，不会重复签发。'}<Button size="sm" variant="ghost" disabled={checkingCreation} onClick={() => void reconcileCreation()}>核对本次步骤</Button>{creationUnknown.stage === 'caller' ? <Link className="lg-text-link" to={callerWorkspaceReturnHref(creationUnknown.caller, creationUnknown.requestType, '')}>查看调用方治理</Link> : <Link className="lg-text-link" to={`/service-keys?${new URLSearchParams({ client: creationUnknown.request.clientCode, appCaller: creationUnknown.request.appCallerCodes[0] || '' })}`}>查看可能相关的密钥</Link>}</InlineAlert> : null}
+        {creationUnknown ? <InlineAlert tone="error">{creationUnknown.stage === 'caller' ? '调用身份登记结果未确认，密钥尚未签发。' : '密钥签发结果未确认，可能已生效；本次表单已保留，不会重复签发。'}<Button size="sm" variant="ghost" disabled={checkingCreation || Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt)} onClick={() => void reconcileCreation()}>核对本次步骤</Button>{creationUnknown.stage === 'caller' ? <Link className="lg-text-link" to={callerWorkspaceReturnHref(creationUnknown.caller, creationUnknown.requestType, '')}>查看调用方治理</Link> : <Link className="lg-text-link" to={`/service-keys?${new URLSearchParams({ client: creationUnknown.request.clientCode, appCaller: creationUnknown.request.appCallerCodes[0] || '' })}`}>查看可能相关的密钥</Link>}{creationUnknown.stage === 'key' ? <Button size="sm" variant="ghost" disabled={checkingCreation || Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt)} onClick={() => void endCreationCheck()}>结束核对并重新准备</Button> : null}</InlineAlert> : null}
         {creationCheck ? <InlineAlert tone="info">{creationCheck}</InlineAlert> : null}
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
         {listError && !lifecycleReceipt ? <InlineAlert tone="error">{listError}<Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重新读取</Button></InlineAlert> : null}
@@ -977,6 +1048,21 @@ const createdKeyStyle: React.CSSProperties = {
  * 而 --danger 从未定义 —— 整条 background 声明作废（有定义所以 var() 的 fallback 也不触发），
  * 这个警告框长期连底色和边框都没有。改成 --err 后它们会重新出现，这是修复。
  */
+// Candidates are a readable request-scope match, never proof of issuance attribution.
+function candidateFingerprint(item: ServiceKeyItem) {
+  const values = (items: readonly string[]) => [...items].map(value => value.toLowerCase()).sort();
+  return JSON.stringify([item.id, item.name, item.keyPrefix, item.enabled, item.rotationState, item.rotatesKeyId || null, item.rotatedByKeyId || null, item.teamId || null,
+    item.sourceSystem, item.clientCode, item.environment, item.purpose, values(item.appCallerCodes), values(item.ingressProtocols), values(item.scopes), values(item.allowedCidrs), item.rateLimitPerMinute ?? null, item.expiresAt ? Date.parse(item.expiresAt) : null]);
+}
+
+function creationRequestMatches(item: ServiceKeyItem, request: CreateServiceKeyRequest) {
+  const sameValues = (left: readonly string[], right: readonly string[]) => JSON.stringify([...left].map(value => value.toLowerCase()).sort()) === JSON.stringify([...right].map(value => value.toLowerCase()).sort());
+  return item.name === request.name && item.clientCode === request.clientCode && item.sourceSystem === request.sourceSystem && item.environment === request.environment && item.purpose === request.purpose
+    && (item.teamId || '') === (request.teamId || '') && (item.rotatesKeyId || '') === (request.rotatesKeyId || '') && (item.rateLimitPerMinute ?? null) === (request.rateLimitPerMinute ?? null)
+    && (item.expiresAt ? Date.parse(item.expiresAt) : null) === (request.expiresAt ? Date.parse(request.expiresAt) : null)
+    && sameValues(item.appCallerCodes, request.appCallerCodes) && sameValues(item.ingressProtocols, request.ingressProtocols) && sameValues(item.scopes, request.scopes) && sameValues(item.allowedCidrs, request.allowedCidrs);
+}
+
 const wildcardStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',

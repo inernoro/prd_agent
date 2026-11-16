@@ -19,7 +19,7 @@ import { buildLogRequestHref } from '@/lib/logNavigation';
 import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
 import { CALLER_CREATE_REJECTED, KEY_CREATE_REJECTED } from '@/lib/serviceKeyIssuance';
 import { mutationOutcomeUnknown } from '@/lib/mutationOutcome';
-import type { OrganizationData } from '@/lib/types';
+import type { GatewayAppCaller, OrganizationData } from '@/lib/types';
 import { Button, Card, Chip, ReadOnlyNotice, SectionLoader, Spinner } from '@/components/ui';
 import { AccessSnippetBar } from '@/components/AccessSnippetBar';
 import { DetailsBlock, PageBody, PageHeader, PageShell, TutorialLink } from '@/components/PageShell';
@@ -661,7 +661,7 @@ export function QuickstartPage() {
     // 预算与负责人挂在 appCaller 上（密钥本身没有这两个字段）。放在签密钥之前：
     // 预算被后端拒收时还没有密钥生出来，不会留下一把「没有预算约束」的孤儿 key。
     issuanceAttempt.current!.callerId = callerResponse.data.id;
-    const governance = await applyGovernance(callerResponse.data.id);
+    const governance = await applyGovernance(callerResponse.data);
     if (governance) {
       setCreatingStage(null);
       setActionError(governance);
@@ -755,9 +755,19 @@ export function QuickstartPage() {
    * （`ValidateBudgetConfiguration`），而库里真出现单边配置会让 serving 启动自检直接抛错。
    * 所以派生值由 `deriveBudgetPair` 统一算，且只在两个都成立时才进请求体。
    */
-  const applyGovernance = async (appCallerId: string) => {
+  const applyGovernance = async (caller: GatewayAppCaller) => {
+    const appCallerId = caller.id;
     if (budgetPair.monthly === null || budgetPair.hold === null) return null;
-    if (confirmedGovernance.current?.id === appCallerId && confirmedGovernance.current.monthly === budgetPair.monthly && confirmedGovernance.current.hold === budgetPair.hold) return null;
+    if (confirmedGovernance.current?.id === appCallerId && confirmedGovernance.current.monthly === budgetPair.monthly && confirmedGovernance.current.hold === budgetPair.hold) {
+      // 登记回执是本次服务端快照；旧确认不能遮住其他管理员的预算变更。
+      if (caller.monthlyBudgetUsd === undefined || caller.budgetReservationUsd === undefined) {
+        issuanceAttempt.current!.stage = 'governance';
+        setIssuanceUnknown(true);
+        return '调用方最新预算读取不完整，密钥尚未签发；请先重新核对预算。';
+      }
+      if (caller.monthlyBudgetUsd === budgetPair.monthly && caller.budgetReservationUsd === budgetPair.hold) return null;
+      return '调用方预算已被更改或清空，本次未签发密钥，也未覆盖现有预算；请先核对调用方治理。';
+    }
     issuanceAttempt.current!.stage = 'governance';
     const response = await updateGatewayAppCaller(appCallerId, {
       monthlyBudgetUsd: budgetPair.monthly,
