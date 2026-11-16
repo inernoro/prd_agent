@@ -8,7 +8,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { setTimeout as pause } from 'node:timers/promises';
 import { chromium, expect } from '@playwright/test';
 import { digest, executionErrors, buildIdentityErrors } from './metrics.mjs';
-import { openFixtureDocument, installOnboardingHandler, dismissOnboarding, classifyPageHttpErrors } from './browser-path.mjs';
+import { openFixtureDocument, installOnboardingHandler, dismissOnboarding, classifyPageHttpErrors, settleKnowledgeOnboarding } from './browser-path.mjs';
 import { createMobileContext, attachAutoCapture, box, clearBoxes, shot, manifest } from '../../.claude/skills/create-visual-test-to-kb/scripts/harness.mjs';
 import { finalizeEvidence, reconcilePageCases } from './evidence.mjs';
 
@@ -217,7 +217,9 @@ try {
         await drawer.getByRole('button',{name:'知识库',exact:true}).click();
         await expect(drawer).not.toBeVisible();
       } else await page.getByText('知识库',{exact:true}).filter({visible:true}).first().click();
-      await expect(page.getByText('性能知识库-0',{exact:true}).first()).toBeVisible(); await capture('knowledge-list');
+      await expect(page.getByText('性能知识库-0',{exact:true}).first()).toBeVisible();
+      await settleKnowledgeOnboarding(page);
+      await capture('knowledge-list');
       record.documentSelection = await openFixtureDocument(page, { storeId, entryId });
       await capture('document-open');
       if(width<768) await page.getByRole('button',{name:'更多操作',exact:true}).click();
