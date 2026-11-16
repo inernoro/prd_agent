@@ -175,6 +175,8 @@ export interface RemoteReleaseInventory {
   releaseRoot: string;
   worktreeRoot: string;
   worktreeIdentities?: Record<string, string>;
+  versionIdentities?: Record<string, string>;
+  pendingStaticRemovals?: Record<string, { identity: string; commit: string }>;
   queryError?: string;
 }
 
@@ -283,6 +285,9 @@ export interface ReleaseArtifactRetentionInput {
   drift: ReleaseRemoteDriftStatus;
   keepRecent?: number;
   maxRemovals?: number;
+  /** 上轮已尝试窗口末项；仅改变顺序，所有引用保护仍先计算。 */
+  afterWorktree?: string;
+  afterVersion?: string;
   /**
    * generated-static 的 publicDirectory 是否被同一个 CDS 内的其他启用目标共用。
    * worktree 路径天然按 targetId 隔离，`.releases` **不隔离** —— 两个目标配了同一个
@@ -395,12 +400,25 @@ export function computeReleaseArtifactRetentionPlan(
     return out.sort();
   };
 
-  const worktreeCandidates = pickCandidates(inventory.worktrees, 'worktree');
-  const versionCandidates = pickCandidates(inventory.versions, 'version');
+  const rotateAfter = (names: string[], after?: string): string[] => {
+    if (!after) return names;
+    const next = names.findIndex(name => name > after);
+    return next > 0 ? [...names.slice(next), ...names.slice(0, next)] : names;
+  };
+  const worktreeCandidates = rotateAfter(pickCandidates(inventory.worktrees, 'worktree'), input.afterWorktree);
+  const versionCandidates = rotateAfter(pickCandidates(inventory.versions, 'version'), input.afterVersion);
   const total = worktreeCandidates.length + versionCandidates.length;
   const budget = Math.max(0, Math.floor(input.maxRemovals ?? total));
-  const removeWorktrees = worktreeCandidates.slice(0, budget);
-  const removeVersions = versionCandidates.slice(0, Math.max(0, budget - removeWorktrees.length));
+  // Dirty build worktrees may remain held for many sweeps. Share the existing
+  // budget so they cannot consume every slot before proved static outputs.
+  const removeWorktrees: string[] = [], removeVersions: string[] = [];
+  let worktreeIndex = 0, versionIndex = 0;
+  while (removeWorktrees.length + removeVersions.length < budget
+    && (worktreeIndex < worktreeCandidates.length || versionIndex < versionCandidates.length)) {
+    if (versionIndex < versionCandidates.length) removeVersions.push(versionCandidates[versionIndex++]);
+    if (removeWorktrees.length + removeVersions.length < budget && worktreeIndex < worktreeCandidates.length)
+      removeWorktrees.push(worktreeCandidates[worktreeIndex++]);
+  }
   return {
     removeWorktrees,
     removeVersions,
@@ -428,7 +446,8 @@ export function buildReleaseInventoryCommand(
   const appPath = shellQuote(target.ssh.appPath);
   const targetId = shellQuote(target.id);
   const head = `cd ${appPath} || exit 1; repo="$PWD"; parent="$(dirname "$repo")"; wt="$parent/.cds-releases/"${targetId}"/worktrees"`;
-  const scan = `python3 -c ${shellQuote(`import os,stat,sys,itertools
+  const proofSource = fs.readFileSync(new URL('./static-artifact-proof.py', import.meta.url), 'utf8');
+  const scan = `python3 -c ${shellQuote(proofSource + `\nimport os,stat,sys,itertools
 for p,kind in zip(sys.argv[1:],['WORKTREE','VERSION']):
  try:
   with os.scandir(p) as entries:rows=list(itertools.islice(entries,1025))
@@ -437,9 +456,15 @@ for p,kind in zip(sys.argv[1:],['WORKTREE','VERSION']):
    s=e.stat(follow_symlinks=False)
    if stat.S_ISDIR(s.st_mode):
     print('CDS_RELEASE_'+kind+'='+e.name)
-    if kind=='WORKTREE':print('CDS_RELEASE_WORKTREE_IDENTITY='+e.name+'\\t'+str(s.st_dev)+':'+str(s.st_ino))
+    print('CDS_RELEASE_'+kind+'_IDENTITY='+e.name+'\\t'+str(s.st_dev)+':'+str(s.st_ino))
  except FileNotFoundError:pass
- except Exception:print('CDS_RELEASE_SCAN_ERROR='+kind.lower()+'-inventory-unconfirmed')`)} "$wt"${strategy.mode === 'generated-static' ? ' "$root/.releases"' : ''}`;
+ except Exception:print('CDS_RELEASE_SCAN_ERROR='+kind.lower()+'-inventory-unconfirmed')
+if len(sys.argv)>2:
+ try:
+  for name,identity,commit in pending_static_artifacts(pathlib.Path(sys.argv[2]),pathlib.Path(sys.argv[1]).parent):
+   print('CDS_RELEASE_VERSION='+name)
+   print('CDS_RELEASE_STATIC_REMOVAL_PROOF='+name+'\\t'+identity+'\\t'+commit)
+ except Exception:print('CDS_RELEASE_SCAN_ERROR=static-journal-inventory-unconfirmed')`)} "$wt"${strategy.mode === 'generated-static' ? ' "$root/.releases"' : ''}`;
   if (strategy.mode === 'generated-compose' || strategy.mode === 'project-script' || strategy.mode === 'managed-script') {
     return [
       head,
@@ -505,7 +530,7 @@ export function parseRemoteReclaimOutcome(stdout: string): RemoteReclaimOutcome 
     }
     if (!value || !isReleaseArtifactId(value)) continue;
     if (key === 'CDS_RELEASE_RECLAIMED_WORKTREE' || key === 'CDS_RELEASE_RECLAIMABLE_WORKTREE') outcome.removedWorktrees.push(value);
-    else if (key === 'CDS_RELEASE_RECLAIMED_VERSION') outcome.removedVersions.push(value);
+    else if (key === 'CDS_RELEASE_RECLAIMED_VERSION' || key === 'CDS_RELEASE_RECLAIMABLE_VERSION') outcome.removedVersions.push(value);
     else if (key === 'CDS_RELEASE_RECLAIM_FAILED_WORKTREE') outcome.failedWorktrees.push(value);
     else if (key === 'CDS_RELEASE_RECLAIM_FAILED_VERSION') outcome.failedVersions.push(value);
   }
@@ -534,9 +559,16 @@ export function parseRemoteReleaseInventory(stdout: string): RemoteReleaseInvent
     else if (key === 'CDS_RELEASE_WORKTREE_ROOT') inventory.worktreeRoot = value;
     else if (key === 'CDS_RELEASE_WORKTREE' && value) inventory.worktrees.push(value);
     else if (key === 'CDS_RELEASE_VERSION' && value) inventory.versions.push(value);
-    else if (key === 'CDS_RELEASE_WORKTREE_IDENTITY') {
+    else if (key === 'CDS_RELEASE_WORKTREE_IDENTITY' || key === 'CDS_RELEASE_VERSION_IDENTITY') {
       const [name, identity] = value.split('\t');
-      if (isReleaseArtifactId(name) && /^\d+:\d+$/.test(identity || '')) (inventory.worktreeIdentities ||= {})[name] = identity;
+      if (isReleaseArtifactId(name) && /^\d+:\d+$/.test(identity || '')) {
+        if (key === 'CDS_RELEASE_VERSION_IDENTITY') (inventory.versionIdentities ||= {})[name] = identity;
+        else (inventory.worktreeIdentities ||= {})[name] = identity;
+      }
+    } else if (key === 'CDS_RELEASE_STATIC_REMOVAL_PROOF') {
+      const [name, identity, commit] = value.split('\t');
+      if (isReleaseArtifactId(name) && /^\d+:\d+$/.test(identity || '') && /^[a-f0-9]{40}$/.test(commit || ''))
+        (inventory.pendingStaticRemovals ||= {})[name] = { identity, commit };
     } else if (key === 'CDS_RELEASE_SCAN_ERROR') inventory.queryError = value;
   }
   return inventory;
@@ -548,14 +580,15 @@ export function buildReleaseReclaimCommand(
   target: ReleaseTarget,
   strategy: ReleaseStrategy,
   plan: Pick<ReleaseArtifactRetentionPlan, 'removeWorktrees' | 'removeVersions'>,
-  proof: { commits?: Record<string,string>; identities?: Record<string,string>; dryRun?: boolean } = {},
+  proof: { commits?: Record<string,string>; identities?: Record<string,string>; versionIdentities?: Record<string,string>; dryRun?: boolean } = {},
 ): string | null {
   if (!target.ssh || strategy.mode === 'existing-script') return null;
   const worktrees = plan.removeWorktrees.filter(isReleaseArtifactId);
   const versions = strategy.mode === 'generated-static' ? plan.removeVersions.filter(isReleaseArtifactId) : [];
   if (!worktrees.length && !versions.length) return null;
-  const source = fs.readFileSync(new URL('./remote-release-reclaim.py', import.meta.url), 'utf8');
-  const spec = Buffer.from(JSON.stringify({worktrees, versions, ...proof})).toString('base64');
+  const source = fs.readFileSync(new URL('./static-artifact-proof.py', import.meta.url), 'utf8') + '\n'
+    + fs.readFileSync(new URL('./remote-release-reclaim.py', import.meta.url), 'utf8');
+  const spec = Buffer.from(JSON.stringify({worktrees, versions, ...proof, targetId: target.id})).toString('base64');
   return `cd ${shellQuote(target.ssh.appPath)} || exit 1
 repo="$PWD"
 parent="$(dirname "$repo")"

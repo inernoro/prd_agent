@@ -10,7 +10,7 @@ import { setTimeout as pause } from 'node:timers/promises';
 import { chromium, expect } from '@playwright/test';
 import { workload, digest, summarize, compare, capacity, executionErrors, buildIdentityErrors, browserScenarios, stats } from './metrics.mjs';
 import { readProcesses, processTree } from './resources.mjs';
-import { openFixtureDocument, installOnboardingHandler } from './browser-path.mjs';
+import { openFixtureDocument, installOnboardingHandler, settleKnowledgeOnboarding } from './browser-path.mjs';
 
 const exec = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -223,6 +223,7 @@ async function browserJourney(round) {
     await timed('knowledge-list', async () => {
       await page.getByText('知识库', { exact: true }).first().click();
       await expect(page.getByText('性能知识库-0', { exact: true }).first()).toBeVisible();
+      await settleKnowledgeOnboarding(page);
     });
     await timed('document-open', async () => {
       const opened = await openFixtureDocument(page, { storeId: fixture.stores[0], entryId: fixture.entries[0] });

@@ -20,6 +20,23 @@ import { notificationFunction } from '../shared/notification-templates.js';
 
 import crypto from 'node:crypto';
 
+/** Status readers must remain usable when a saved secret cannot be decrypted.
+ * A broken stored identity never selects an environment fallback identity.
+ */
+export function readMapNotifierSettings(
+  readStored: () => import('../types.js').AlarmNotifyConfig | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): { config: MapNotifierConfig | null; source: 'settings' | 'env' | null; unavailable: boolean } {
+  try {
+    const stored = readStored();
+    if (stored) return { config: { endpoint: stored.endpoint, keyId: stored.keyId,
+      username: stored.username, targetUsername: stored.targetUsername, privateKeyPem: stored.privateKey },
+      source: 'settings', unavailable: false };
+    const config = mapNotifierConfigFromEnv(env);
+    return { config, source: config ? 'env' : null, unavailable: false };
+  } catch { return { config: null, source: 'settings', unavailable: true }; }
+}
+
 /** 与 MAP 的 StableSmokeAuthenticationHandler 对齐的请求头名。 */
 export const HEADER_KEY_ID = 'X-Stable-Smoke-Key-Id';
 export const HEADER_TIMESTAMP = 'X-Stable-Smoke-Timestamp';
@@ -35,6 +52,8 @@ export interface MapNotifierConfig {
   keyId: string;
   /** 必须与 MAP 配置里该 keyId 条目的 Username 一致——它进签名载荷。 */
   username: string;
+  /** 独立服务身份与接收人可以不同；MAP 服务端仍强制校验固定目标。 */
+  targetUsername?: string;
   /** PKCS#8 私钥 PEM。公钥在 MAP 配置里，私钥只留在 CDS，不过网络。 */
   privateKeyPem: string;
   timeoutMs?: number;
@@ -193,7 +212,7 @@ export class MapNotifier {
   ) {}
 
   async send(alert: MapNotifierAlert): Promise<MapNotifierSendResult> {
-    const payload = buildNotificationPayload(alert);
+    const payload = { ...buildNotificationPayload(alert), targetUsername: this.config.targetUsername || this.config.username };
     const body = JSON.stringify(payload);
     const timestamp = Math.floor(Date.now() / 1000);
     const nonce = crypto.randomUUID();

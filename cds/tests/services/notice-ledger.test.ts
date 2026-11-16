@@ -11,6 +11,7 @@ import {
   mergeNotice,
   renderNoticeFromEvent,
   startNoticeLedger,
+  resolveCurrentNoticeOutbound,
   type CdsNoticeRecord,
   type NoticeInput,
 } from '../../src/services/notice-ledger.js';
@@ -466,5 +467,44 @@ describe('通知轮次 — 兼容与时钟边界', () => {
       expect(ledger.list()[0].outboundGeneration).toBe(0);
       expect(ledger.upsert(input()).record.outboundGeneration).toBe(1);
     }
+  });
+});
+
+
+describe('新事件读取当前 MAP 配置', () => {
+  it('配置变更即时生效，同窗不重复外发，读取失败不复用旧授权', async () => {
+    const ledger = new NoticeLedgerService({ storePath: '' });
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ success: true, data: { id: 'receipt' } }), { status: 200 }));
+    let current: NoticeOutboundConfig | null = null;
+    let broken = false;
+    const getOutbound = vi.fn(() => { if (broken) throw new Error('fixture config unavailable'); return current; });
+    const handle = startNoticeLedger({ ledger, outbound: null, getOutbound, fetchImpl });
+    const emit = (id: string) => cdsEventsBus.publish('capacity.risk', { targetId: id, message: '隔离容量事件' });
+    try {
+      emit('unconfigured');
+      expect(ledger.list()[0].outbound?.status).toBe('skipped');
+      current = { baseUrl: 'https://map.example.test', token: 'fixture-only', source: 'system-alert' };
+      emit('configured');
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+      emit('configured');
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      broken = true;
+      emit('unreadable');
+      expect(ledger.list().find(n => n.dedupeKey.includes('unreadable'))?.outbound?.status).toBe('failed');
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(getOutbound).toHaveBeenCalledTimes(3);
+    } finally { handle.stop(); }
+  });
+});
+
+
+describe('当前 MAP 配置优先级', () => {
+  it('有效专用配置与关闭开关不读取损坏的加密备用配置', () => {
+    const fallback = vi.fn(() => { throw new Error('fixture decryption failed'); });
+    expect(resolveCurrentNoticeOutbound({ CDS_NOTICE_MAP_BASE_URL: 'https://map.example.test', CDS_NOTICE_MAP_TOKEN: 'fixture' }, fallback)).toMatchObject({ baseUrl: 'https://map.example.test', token: 'fixture' });
+    expect(resolveCurrentNoticeOutbound({ CDS_NOTICE_OUTBOUND_ENABLED: 'false' }, fallback)).toBeNull();
+    expect(fallback).not.toHaveBeenCalled();
+    expect(() => resolveCurrentNoticeOutbound({}, fallback)).toThrow('fixture decryption failed');
+    expect(fallback).toHaveBeenCalledTimes(1);
   });
 });
