@@ -115,4 +115,10 @@ describe('等待页六芒星', () => {
     expect(WAITING_GEM_CSS).toContain('88%{transform:scale(.5) rotate(-10deg);opacity:0}');
     expect(WAITING_GEM_CSS).toContain('@media(prefers-reduced-motion:reduce){.cds-waiting-gem .cds-gem-story-facet{animation:none;transform:none;opacity:1}}');
   });
+
+  it('双主题按切面着色，覆盖页面旧的单类反色规则以保留实际绘制的纯黑暗面', () => {
+    expect(WAITING_GEM_CSS).toContain('.cds-gem-story.cds-waiting-gem{display:block;filter:none}');
+    expect(WAITING_GEM_CSS).toContain('@media(prefers-color-scheme:light){.cds-waiting-gem .cds-gem-story-facet{--cds-waiting-face:var(--cds-waiting-face-light)');
+    expect(buildWaitingGemSvg(40).match(/--cds-waiting-face-light:/g)).toHaveLength(12);
+  });
 });

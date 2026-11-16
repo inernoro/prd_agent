@@ -96,8 +96,10 @@ export function buildGemStorySvg(mineral: ServerGemMineral, sizePx: number, durS
 /** 等待页沿用品牌组装 / 驻留 / 碎裂动作，仅将中央暗面改为纯黑。 */
 export const WAITING_GEM_CSS = `
 ${GEM_STORY_CSS}
-.cds-waiting-gem{display:block;filter:none}
+.cds-gem-story.cds-waiting-gem{display:block;filter:none}
+.cds-waiting-gem .cds-gem-story-facet{--cds-waiting-face:var(--cds-waiting-face-dark);--cds-waiting-line:#aaaab7;fill:var(--cds-waiting-face);stroke:var(--cds-waiting-line)}
 .cds-waiting-gem .cds-waiting-gem-core{animation-name:cds-waiting-core-black}
+@media(prefers-color-scheme:light){.cds-waiting-gem .cds-gem-story-facet{--cds-waiting-face:var(--cds-waiting-face-light);--cds-waiting-line:#595960}}
 @keyframes cds-waiting-core-black{
   0%{transform:scale(0);opacity:0;fill:var(--cds-waiting-face);stroke:var(--cds-waiting-line)}
   9%{transform:scale(1.1);opacity:1}
@@ -114,11 +116,13 @@ ${GEM_STORY_CSS}
 
 export function buildWaitingGemSvg(sizePx: number): string {
   const shades = ['#f2f2f5', '#efeff3', '#f4f4f7', '#f0f0f4', '#f4f4f7', '#eeeef2'];
+  const lightShades = ['#37373f', '#404048', '#303038', '#3c3c44', '#303038', '#44444c'];
   const facets = SERVER_GEM_FACETS.map((facet) => {
     const isCore = facet.i % 2 === 0;
     const color = isCore ? shades[facet.shadeIdx] : '#f8f8fb';
+    const lightColor = isCore ? lightShades[facet.shadeIdx] : '#24242a';
     const coreClass = isCore ? ' cds-waiting-gem-core' : '';
-    return `<polygon class="cds-gem-story-facet${coreClass}" points="${facet.points}" fill="${color}" stroke="#aaaab7" stroke-width="0.2" stroke-linejoin="round" style="--gi:${facet.i};--cds-waiting-face:${color};--cds-waiting-line:#aaaab7"/>`;
+    return `<polygon class="cds-gem-story-facet${coreClass}" points="${facet.points}" fill="${color}" stroke="#aaaab7" stroke-width="0.2" stroke-linejoin="round" style="--gi:${facet.i};--cds-waiting-face-dark:${color};--cds-waiting-face-light:${lightColor}"/>`;
   }).join('');
   return `<svg class="cds-gem-story cds-waiting-gem" width="${sizePx}" height="${sizePx}" viewBox="0 0 64 64" aria-hidden="true">${facets}</svg>`;
 }
