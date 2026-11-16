@@ -15,9 +15,9 @@
     "cds/cli/acceptance/cds.config.example.json": "0f0aca3f66243fd76f1003d3ae06f076db52650eda60c385491352d9cffa248c",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "cb0467b09b397c736b0b1b9f4d3aef7bd4d63ac2e82f5f77968ef2e9e4f67940",
+    "cds/cli/cdscli.py": "20adef3c7fda2125a22cd8c42b83ea356faacec00f1ce3442dc1ee320c4ec90b",
     "cds/reference/acceptance-reports.md": "f0467b25fe209ec5a5225c246406704782ae595631abc9221c50cb982e48002e",
-    "cds/reference/api.md": "0941f2a742bc1b4f42add9973fbfd1d559dd4d57acb74e5011dd23593019921b",
+    "cds/reference/api.md": "9984c6f896f672df35c43fae33ca3f89a1bfc8fd10f7e0ab2e88f2871e71339f",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
     "cds/reference/diagnose.md": "0b4d1c3957f560c095f3cbca5e43f277e3cc75f92b5573d6833e85a6ce248b78",
     "cds/reference/drop-in.md": "f4cde6d2f3705d3bea763ffc33f01dbafd48e04afdd52da4e29f3eccd98fcbb4",
@@ -26,7 +26,7 @@
     "cds/reference/scan.md": "caac675caeb87cfa06dd7767926d87a5ba657a9e4739067c889393c8b293b95d",
     "cds/reference/smoke.md": "5bf8b1642555d87ccca5525df7f6250c7848c5a64d1b5c2f5b07b562d8326d44",
     "cds/scripts/refresh_manifest.py": "22a4f7d70480a7bd35bc852ea7270fc85f4d12c404c0db49d9a003f009d21e5e",
-    "cds/SKILL.md": "d941f07d0c9dcd23bf9fae8dad9f3a68c1630f431db8a14d7306bbb83d170aba",
+    "cds/SKILL.md": "138fb08a2913db497cd0347644866800917e8e496f37ff5185515223f349e4c1",
     "cds/tests/test_cdscli_agent_identity.py": "706e9c146eab1fef080a79380cd8c03b2a5e0a90384ded4587754b77be293434",
     "cds/tests/test_cdscli_code_review.py": "9f4b73be9b267351d0588e96d61c90ebe0b9f5fb742739213d4633eee38b53dd",
     "cds/tests/test_cdscli_connect.py": "649a4a6081ad4399b68191447af31705bacb97c29a64b7fdaed62be630f9ab3a",
@@ -67,5 +67,5 @@
     "cds-release/SKILL.md": "17f4df0330e3b041a9c3d96a825ded21092df8b0e4a2b699930692965eabe2f7",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-16T14:43:53.693Z"
+  "generatedAt": "2026-11-16T19:23:33.418Z"
 }

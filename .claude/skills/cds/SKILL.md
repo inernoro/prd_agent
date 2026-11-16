@@ -177,6 +177,31 @@ $CLI report-folder list [--project <id>]
 - 同一连接内执行 SQL 事务；MySQL DDL 有隐式提交，不能承诺所有脚本自动回滚。MongoDB 事务还依赖 replica set，当前 UI/CLI 没有事务入口。
 - 当前网关只有内网地址时，明确报告局域网已验证、公网尚未验证；页面经 Cloudflare 看到的 IP 可能与原生工具的出口 IP 不同。
 
+## 结构化验收任务
+
+`acceptance` 命令族把清单、每轮任务、逐项结果与报告关联起来，不创建定时器，不触发发布。
+正式环境巡检默认 `production`，无需指定分支或冻结待发布版本；已观测版本仅作追溯。
+
+```bash
+$CLI acceptance templates --project <projectId>
+$CLI acceptance publish --project <projectId> --file <结构化清单.json>
+$CLI acceptance create --project <projectId> --template <templateId>
+$CLI acceptance tasks --project <projectId>
+$CLI acceptance claim <taskId> --agent Codex
+$CLI acceptance get <taskId>
+$CLI acceptance heartbeat <taskId>
+$CLI acceptance result <taskId> --case <caseId> --file <逐项结果.json>
+$CLI acceptance complete <taskId>
+$CLI acceptance archive-report <taskId>
+$CLI acceptance matrix --project <projectId> --template <templateId> --environment production
+```
+
+执行者必须按冻结清单走真实业务路径，再回填断言、实际结果、线上证据与清理回读。
+领取票据由 CLI 私密保存，禁止放入结果文件、命令参数或聊天；长任务按 30 秒心跳续租，离开时 `release`。
+同一 submissionId 重发幂等；第一次失败最多重试一次，重试通过仍为 flaky，不算稳定通过。
+`archive-report` 复用现有验收报告归档并绑定，不会把草稿或本地存储标为交付完成。
+返回 `pending-verify-open` 后必须再按验收技能验证线上深链；本命令不代替浏览器取证、通知或发布批准。
+
 ## 加一条功能监控（用户说「帮我增加 XX 的监控」时）
 
 存活监控问「通不通」，**功能监控问「返回的东西对不对」**：发一次真业务请求，

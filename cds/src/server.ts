@@ -59,10 +59,16 @@ import { CodeReviewService } from './services/code-review.js';
 import { codeReviewGithubToken, codeReviewRepositoryRoot } from './services/code-review-source.js';
 import { createCodeReviewInputs } from './services/code-review-inputs.js';
 import { createCodeReviewMail } from './services/code-review-mail.js';
+import { createAcceptanceTasksRouter } from './routes/acceptance-tasks.js';
+import { AcceptanceTaskService, startAcceptanceLeaseReaper } from './services/acceptance-tasks.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
 import { createNoticesRouter } from './routes/notices.js';
-import { NoticeLedgerService, startNoticeLedger } from './services/notice-ledger.js';
-import { resolveNoticeOutboundConfig } from './services/notice-outbound-map.js';
+import { NoticeLedgerService, startNoticeLedger, resolveCurrentNoticeOutbound } from './services/notice-ledger.js';
+import { mapNotifierConfigFromEnv } from './services/map-notifier.js';
+import { HostCapacitySamplingService } from './services/host-capacity-sampling.js';
+import { createHostCapacitySamplingRouter } from './routes/host-capacity-sampling.js';
+import { HostCapacityObservationService } from './services/host-capacity-observation.js';
+import { createHostCapacityObservationRouter } from './routes/host-capacity-observation.js';
 import { isSealingEnabled } from './infra/secret-seal.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
@@ -549,6 +555,7 @@ async function collectActiveHttpRequests(
 }
 
 export interface ServerDeps {
+  hostCapacityObservation?: HostCapacityObservationService;
   backupRetentionService?: import('./services/backup-retention.js').BackupRetentionService;
   ownedResourceLifecycle?: import('./services/owned-resource-task.js').OwnedResourceLifecycle;
   imageCacheGovernance?: import('./services/image-cache-governance.js').ImageCacheGovernance;
@@ -904,6 +911,16 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /cluster/identity/status': '读取身份同步',
     'PUT /cluster/identity/config': '配置集群身份',
     'GET /cluster/identity/login': '登录集群成员',
+    'GET /host-capacity/observation': '查看容量观测',
+    'GET /host-capacity/sampling': '查看容量采样',
+    'PUT /host-capacity/sampling': '配置容量采样',
+    'POST /host-capacity/sampling/run': '执行容量采样',
+    'GET /acceptance/health': '检查验收服务',
+    'GET /acceptance/templates': '列出测试清单',
+    'POST /acceptance/templates': '发布测试清单',
+    'GET /acceptance/tasks': '列出验收任务',
+    'POST /acceptance/tasks': '创建验收任务',
+    'GET /acceptance/matrix': '查看历史矩阵',
     'GET /janitor/backups': '预览备份回收',
     'GET /janitor/backups/state': '查询备份回收',
     'GET /janitor/backups/owners': '查询备份归属',
@@ -1257,6 +1274,16 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/acceptance\/templates\/[^/]+$/, '读取清单版本'],
+    [/^GET \/acceptance\/tasks\/[^/]+$/, '查看验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/claim$/, '领取验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/heartbeat$/, '续期任务领取'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/release$/, '释放验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/results\/[^/]+$/, '保存用例结果'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/complete$/, '结束验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/cancel$/, '取消验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/report$/, '生成验收报告'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/bind-report$/, '关联验收报告'],
     [/^POST \/janitor\/tasks\/data-cases\/[^/]+\/confirm$/, '登记数据处置'],
     [/^GET \/uptime\/incidents\/[^/]+$/, '查看故障通知上下文'],
     [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
@@ -1930,6 +1957,13 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
   const clusterIdentity = new ClusterIdentityService(deps.config.repoRoot, deps.stateService, deps.serverEventLogStore);
+  const acceptanceTaskService = new AcceptanceTaskService(deps.stateService);
+  const acceptanceLeaseReaper = startAcceptanceLeaseReaper(acceptanceTaskService);
+  // 服务启动即收敛，支持测试/宿主关闭时清理定时器；不另造分布式任务队列。
+  app.locals.acceptanceTaskService = acceptanceTaskService;
+  app.locals.stopAcceptanceLeaseReaper = acceptanceLeaseReaper.stop;
+  app.once('close', acceptanceLeaseReaper.stop);
+  deps.registerResourceShutdown?.(async () => acceptanceLeaseReaper.stop());
   const selfMaintenance = deps.selfMaintenanceRuntime ?? new SelfMaintenanceRuntime(deps.shell, deps.config.repoRoot, view => {
     deps.serverEventLogStore?.record({ category: 'system', severity: 'warn', source: 'self-maintenance',
       action: 'self-maintenance.stop-unconfirmed', message: 'CDS 维护写者正在停止或等待清理确认，后继维护请求仍被拒绝。',
@@ -2045,17 +2079,13 @@ export function createServer(deps: ServerDeps): express.Express {
   // 这段就是那根线：订阅总线 → 记进 .cds/notice-ledger.json → 可选外发到 MAP。
   // 专用通知 env 优先；没有时复用 CDS 系统设置里已经加密保存的 MAP 服务端接入，
   // 避免同一个 MAP 重复配两套 Token。两条都没有才如实记「未外发」。
-  let storedMapForwarding: { baseUrl: string; token: string } | undefined;
-  try {
-    storedMapForwarding = deps.stateService.getBugReportForwardingConfig();
-  } catch (err) {
-    console.warn(`[notice] CDS 系统设置中的 MAP Token 无法读取: ${(err as Error).message}`);
-    storedMapForwarding = undefined;
-  }
-  const noticeOutbound = resolveNoticeOutboundConfig(
-    process.env,
-    storedMapForwarding ?? resolveForwardConfig(process.env),
-  );
+  const getNoticeOutbound = () => resolveCurrentNoticeOutbound(process.env, () => (
+    deps.stateService.getBugReportForwardingConfig() ?? resolveForwardConfig(process.env)
+  ), () => {
+    const stored = deps.stateService.getAlarmNotify();
+    return stored ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username,
+      privateKeyPem: stored.privateKey, targetUsername: stored.targetUsername } : mapNotifierConfigFromEnv(process.env);
+  });
   const noticeLedger = new NoticeLedgerService({
     storePath: path.join(deps.config.repoRoot, '.cds', 'notice-ledger.json'),
     logger: { warn: (m) => console.warn(m) },
@@ -2064,10 +2094,30 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   startNoticeLedger({
     ledger: noticeLedger,
-    outbound: noticeOutbound,
+    outbound: null,
+    getOutbound: getNoticeOutbound,
     publish: (type, data) => { cdsEventsBus.publish(type, data); },
     logger: { warn: (m) => console.warn(m) },
   });
+  const hostCapacityObservation = deps.hostCapacityObservation ?? new HostCapacityObservationService({
+    reportPath: process.env.CDS_HOST_CAPACITY_REPORT_PATH,
+    expectedHost: process.env.CDS_HOST_CAPACITY_EXPECTED_HOST,
+    publish: (type, data) => { cdsEventsBus.publish(type, data); },
+  });
+  hostCapacityObservation.start();
+  const hostCapacitySampling = new HostCapacitySamplingService({
+    enabled: deps.stateService.getHostCapacitySamplingEnabled(),
+    external: Boolean(process.env.CDS_HOST_CAPACITY_REPORT_PATH || process.env.CDS_HOST_CAPACITY_EXPECTED_HOST),
+    stateDir: path.join(deps.config.repoRoot, '.cds', 'host-capacity'),
+    roots: { 'cds-worktrees': deps.config.worktreeBase,
+      ...(deps.config.reposBase ? { 'cds-repositories': deps.config.reposBase } : {}),
+      'cds-build-cache': deps.stateService.getCacheBase(),
+      'cds-skill-cache': path.join(deps.config.repoRoot, '.cds', 'skill-cache') },
+    observation: hostCapacityObservation,
+    persist: enabled => deps.stateService.updateHostCapacitySamplingEnabled(enabled),
+  });
+  hostCapacitySampling.start();
+  deps.registerResourceShutdown?.(async () => { hostCapacitySampling.stop(); hostCapacityObservation.stop(); });
   // 读写路由挂在下面全局认证网关之后（搜 createNoticesRouter），这里只做事件接线。
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
@@ -2153,6 +2203,7 @@ export function createServer(deps: ServerDeps): express.Express {
     //     调用时撞上 100kb 上限，容器拿到一个 HTML 的 413（栈里是 raw-body），
     //     错误文案读起来像模型出错，实际是转发层把自己的解析上限套在了别人的请求上。
     if (isDesignRuntimeModelProxyPath(req.path)) return next();
+    if (req.path === '/api/acceptance' || req.path.startsWith('/api/acceptance/')) return next();
     return globalJsonParser(req, res, next);
   });
 
@@ -2220,6 +2271,13 @@ export function createServer(deps: ServerDeps): express.Express {
       checks.state = { ok: false, detail: (err as Error).message };
       overallOk = false;
     }
+
+    const acceptanceHealth = acceptanceTaskService.health();
+    checks.acceptanceLeases = {
+      ok: acceptanceHealth.ok,
+      detail: acceptanceHealth.ok ? '单权威进程租约收敛正常' : '验收持久层或租约收敛未完成，请检查 /api/acceptance/health',
+    };
+    // 验收收敛是非核心后台状态；专属端点告警，不将整个控制面摘除。
 
     // Check 2: docker reachable (use a lightweight `docker version --format` call)
     try {
@@ -2336,7 +2394,7 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
-      degraded: pressure?.degraded ?? false,
+      degraded: Boolean(pressure?.degraded || !acceptanceHealth.ok),
       checks,
       pressure,
       timestamp: new Date().toISOString(),
@@ -5151,6 +5209,7 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use('/api', createCodeReviewsRouter({ state: deps.stateService, service: reviews }));
   void reviews.start().catch((error: Error) => console.error('[code-review] recovery failed:', error.message));
+  app.use('/api/acceptance', createAcceptanceTasksRouter({ service: acceptanceTaskService }));
 
   // 快捷提 bug（Ctrl+B）：转发凭据只在服务端读取，前端只调本端点。
   // 数据目录与验收报告同级（cache 的父目录），未配置转发时退化为本地留存。
@@ -5176,14 +5235,14 @@ export function createServer(deps: ServerDeps): express.Express {
   // 服务端站内信账本读写。挂在全局认证网关之后，与 bug-reports 同款；账本本身与
   // 事件订阅在上面（搜 startNoticeLedger）。外发未配置时如实回 configured:false，
   // 前端面板顶部据此显示「仅记录在本地，未外发」——绝不暗示已经通知过谁。
+  app.use('/api', createHostCapacityObservationRouter(hostCapacityObservation));
+  app.use('/api', createHostCapacitySamplingRouter(hostCapacitySampling));
   app.use('/api', createNoticesRouter({
     ledger: noticeLedger,
-    getOutboundStatus: () => (noticeOutbound
-      ? { configured: true }
-      : {
-        configured: false,
-        reason: '未连接 MAP，通知仅保存在 CDS',
-      }),
+    getOutboundStatus: () => {
+      try { return getNoticeOutbound() ? { configured: true } : { configured: false, reason: '未连接 MAP，通知仅保存在 CDS' }; }
+      catch { return { configured: false, reason: 'MAP 通知配置读取失败，请检查服务端接入配置' }; }
+    },
   }));
 
   app.use('/api', createDeploymentRunsRouter({
@@ -5678,6 +5737,9 @@ export function installSpaFallback(
     // 自己是预览实例时往 index.html 注入 window.__CDS_PREVIEW_INSTANCE__=true，
     // web 端据此关闭 /_cds 直通（见 cds/web/src/lib/api.ts shouldPreferCdsPassthrough）。
     // 生产实例走原 sendFile 路径，零改动。
+    // A normal independent CDS hosted behind another CDS also owns its API.
+    // Routing is explicit and separate from preview security/storage behavior.
+    const dashboardSameOriginApi = process.env.CDS_DASHBOARD_API_MODE === 'same-origin';
     let previewInstanceIndexCache: { filePath: string; mtimeMs: number; html: string } | null = null;
     const resolveReactIndex = (): string | null => {
       if (fs.existsSync(reactIndex)) return reactIndex;
@@ -5694,7 +5756,7 @@ export function installSpaFallback(
         res.status(503).type('text/plain').send('CDS web release is switching; retry shortly.');
         return;
       }
-      if (!isPreviewInstance()) {
+      if (!isPreviewInstance() && !dashboardSameOriginApi) {
         res.sendFile(selectedIndex);
         return;
       }
@@ -5710,7 +5772,10 @@ export function installSpaFallback(
           mtimeMs,
           html: raw.replace(
             '<head>',
-            '<head><script>window.__CDS_PREVIEW_INSTANCE__=true</script>',
+            '<head><script>' + [
+              isPreviewInstance() ? 'window.__CDS_PREVIEW_INSTANCE__=true' : '',
+              dashboardSameOriginApi ? 'window.__CDS_SAME_ORIGIN_API__=true' : '',
+            ].filter(Boolean).join(';') + '</script>',
           ),
         };
       }

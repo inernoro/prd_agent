@@ -17,7 +17,7 @@ export function sourceHoldReason(value: unknown): SourceHoldReason | undefined {
 
 /** Read-only proof shared by preview and the existing owned removal worker. */
 export async function inspectDeploymentSource(dir: string, identity: WorktreeDirectoryIdentity,
-  estimateSize = false, signal?: AbortSignal): Promise<{ reason?: SourceHoldReason; allocatedBytes?: number; common?: string }> {
+  estimateSize = false, signal?: AbortSignal): Promise<{ reason?: SourceHoldReason; allocatedBytes?: number; common?: string; trackedFilesMissing?: boolean }> {
   for (const name of ['.cds-data', '.cds-run-data']) {
     try { await fs.lstat(path.join(dir, name)); return { reason: 'persistent-data' }; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return { reason: 'git-query-failed' }; }
@@ -29,8 +29,11 @@ export async function inspectDeploymentSource(dir: string, identity: WorktreeDir
         env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } })).stdout;
     if (await fs.realpath((await git('rev-parse', '--show-toplevel')).trim()) !== identity.entryPath)
       return { reason: 'identity-changed' };
-    if ((await git('status', '--porcelain', '--untracked-files=normal', '--ignored=matching')).trim())
-      return { reason: 'modified-or-unknown-files' };
+    const status = await git('status', '--porcelain', '--untracked-files=normal', '--ignored=matching');
+    if (status.trim()) return { reason: 'modified-or-unknown-files',
+      // The preview keeps its existing hold reason. The owned worker must treat
+      // tracked loss (including interrupted native deletion) as an unresolved failure.
+      ...(status.split('\n').some(line => line[0] === 'D' || line[1] === 'D') ? { trackedFilesMissing: true } : {}) };
     const common = await fs.realpath(path.resolve(dir, (await git('rev-parse', '--git-common-dir')).trim()));
     let allocatedBytes: number | undefined;
     if (estimateSize) {
