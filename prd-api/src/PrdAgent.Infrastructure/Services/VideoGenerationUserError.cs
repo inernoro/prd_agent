@@ -15,8 +15,8 @@ public static partial class VideoGenerationUserError
     internal static string FromGateway(GatewayRawResponse response)
     {
         var diagnostic = response.ErrorMessage ?? ExtractErrorMessage(response.Content);
-        if (GatewayQuotaAlertPolicy.IsQuotaFailure(response.ErrorCode, diagnostic))
-            return GatewayQuotaAlertPolicy.UserReadableQuotaMessage;
+        if (GatewayBillingFailure.Classify(response.StatusCode, response.Content ?? diagnostic, response.ErrorCode) is { } billing)
+            return billing.UserMessage;
 
         return FromDiagnostic(diagnostic, response.StatusCode);
     }
@@ -24,8 +24,8 @@ public static partial class VideoGenerationUserError
     public static string FromDiagnostic(string? diagnostic, int? statusCode = null)
     {
         var text = diagnostic ?? string.Empty;
-        if (GatewayQuotaAlertPolicy.IsQuotaFailure(null, text))
-            return GatewayQuotaAlertPolicy.UserReadableQuotaMessage;
+        if (GatewayBillingFailure.Classify(statusCode, text) is { } billing)
+            return billing.UserMessage;
 
         var duration = UnsupportedDurationRegex().Match(text);
         if (duration.Success)
@@ -51,6 +51,8 @@ public static partial class VideoGenerationUserError
     /// </summary>
     public static string ForPersistence(string? errorCode, string? diagnostic)
     {
+        if (GatewayBillingFailure.FromCode(errorCode) is { } billing)
+            return billing.UserMessage;
         var normalizedCode = (errorCode ?? string.Empty).Trim().ToUpperInvariant();
         return normalizedCode switch
         {

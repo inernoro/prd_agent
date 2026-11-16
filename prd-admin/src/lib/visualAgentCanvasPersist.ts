@@ -15,6 +15,7 @@
  * 2026-08-10 合并为一份：页面改为 import 本文件，测试与生产从此是同一段代码。
  */
 
+import { toUserReadableErrorMessage } from './userReadableError';
 import type { LayerContentKind } from './layerContentAnalysis';
 import { CANVAS_GENERATOR_LABEL } from './canvasElementLabels';
 
@@ -39,6 +40,7 @@ export type PersistedCanvasElementV1 =
       hidden?: boolean;
       /** 占位状态：running 表示生成中，后端会回填 */
       status?: 'running' | 'error';
+      errorMessage?: string;
       /** 图片引用 ID，用于消息中的 @imgN 引用，持久化保存 */
       refId?: number;
       /** 关联的生图任务 ID，用于刷新页面后同步状态 */
@@ -228,6 +230,15 @@ function isLayerContentKind(value: unknown): value is LayerContentKind {
   return typeof value === 'string' && (LAYER_CONTENT_KINDS as readonly string[]).includes(value);
 }
 
+function safePersistedError(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  return toUserReadableErrorMessage(value.length <= 2000 ? value : null, {
+    code: 'IMAGE_GENERATION_FAILED',
+    fallbackMessage: '图片暂不可用',
+    recoveryMessage: '请重试；若持续出现，请联系管理员',
+  });
+}
+
 export function canvasToPersistedV1(items: CanvasImageItem[]): {
   state: PersistedCanvasStateV1;
   skippedLocalOnlyImages: number;
@@ -276,6 +287,7 @@ export function canvasToPersistedV1(items: CanvasImageItem[]): {
         naturalH: it.naturalH,
         // 保存占位状态，以便后端回填时能找到目标元素
         status: isPlaceholder ? (it.status as 'running' | 'error') : undefined,
+        errorMessage: it.status === 'error' ? safePersistedError(it.errorMessage) : undefined,
         // 持久化 refId，用于消息中的 @imgN 引用
         refId: typeof it.refId === 'number' && it.refId > 0 ? it.refId : undefined,
         // 持久化 runId，用于刷新页面后同步状态
@@ -405,6 +417,7 @@ export function persistedV1ToCanvas(
         src,
         // 恢复占位状态：running 表示后端仍在生成中
         status: isPlaceholder ? el.status! : 'done',
+        errorMessage: el.status === 'error' ? safePersistedError(el.errorMessage) : undefined,
         kind: 'image',
         syncStatus: src.startsWith('/api/visual-agent/image-master/assets/file/') || /^https?:\/\//i.test(src) ? 'synced' : 'pending',
         syncError: null,
