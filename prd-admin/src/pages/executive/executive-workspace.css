@@ -89,3 +89,94 @@
 @media(max-width:760px){.executive-dashboard [data-workspace="overview"]>.ws-metrics .ws-metric{grid-template-columns:minmax(0,1fr) max-content;gap:3px;padding:8px 10px}.executive-dashboard [data-workspace="overview"]>.ws-metrics .ws-metric>span{font-size:10px}.executive-dashboard [data-workspace="overview"]>.ws-metrics .ws-metric strong{font-size:17px}.scene-image-card>img,.scene-image-card>.scene-image-fallback{height:135px}}
 
 .scene-preview-title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:min(780px,calc(92vw - 88px));white-space:normal;overflow-wrap:anywhere;line-height:1.6}
+
+/* The shell remains the floor; bounded surfaces provide the depth. */
+.executive-dashboard {
+  --exec-section-surface: color-mix(in srgb, var(--panel-solid) 78%, transparent);
+  --exec-surface-edge: var(--border-subtle);
+  --exec-surface-shadow: var(--shadow-card-sm);
+}
+.executive-dashboard .exec-page-header {
+  background: color-mix(in srgb, var(--panel-solid) 48%, transparent);
+  border-radius: 9px;
+  box-shadow: inset 0 -1px var(--exec-line), var(--shadow-card-sm);
+}
+.executive-dashboard .map-workspace .ws-panel,
+.executive-dashboard .scene-work .home-task-queue {
+  background: var(--exec-section-surface);
+  border: 1px solid var(--exec-surface-edge);
+  box-shadow: var(--exec-surface-shadow);
+}
+.executive-dashboard .ws-panel-head {
+  background: color-mix(in srgb, var(--bg-sunken) 22%, transparent);
+}
+.executive-dashboard .ws-side > .ws-panel {
+  background: var(--panel-solid);
+}
+.executive-dashboard .scene-image-card,
+.executive-dashboard .scene-document {
+  background: var(--panel-solid);
+  border-color: var(--exec-surface-edge);
+  box-shadow: var(--exec-surface-shadow);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.executive-dashboard .ws-metric {
+  box-shadow: var(--exec-surface-shadow);
+  border: 1px solid var(--border-secondary);
+}
+.executive-dashboard [data-workspace="overview"] > .ws-metrics {
+  background: color-mix(in srgb, var(--panel-solid) 62%, transparent);
+  box-shadow: var(--exec-surface-shadow);
+}
+.executive-dashboard [data-workspace="overview"] > .ws-metrics .ws-metric {
+  border: 0;
+  box-shadow: none;
+}
+.executive-dashboard [data-workspace="overview"] > .ws-metrics .ws-metric + .ws-metric {
+  border-inline-start: 1px solid var(--border-secondary);
+}
+.executive-dashboard .ws-table tbody tr[aria-selected="true"] {
+  box-shadow: inset 2px 0 var(--exec-accent);
+}
+.executive-dashboard .exec-group,
+.executive-dashboard .exec-detail-card,
+.executive-dashboard .exec-callers {
+  box-shadow: var(--exec-surface-shadow);
+}
+.executive-dashboard .scene-image-card:focus-visible,
+.executive-dashboard .scene-document:focus-visible {
+  outline: 2px solid var(--exec-accent);
+  outline-offset: 2px;
+  box-shadow: var(--shadow-card-hover);
+}
+@media (hover: hover) and (pointer: fine) {
+  .executive-dashboard .scene-image-card:hover,
+  .executive-dashboard .scene-document:hover {
+    border-color: var(--exec-accent);
+    box-shadow: var(--shadow-card-hover);
+  }
+}
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .executive-dashboard .scene-image-card,
+  .executive-dashboard .scene-document {
+    transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  }
+  .executive-dashboard .scene-image-card:hover,
+  .executive-dashboard .scene-document:hover {
+    transform: translateY(-1px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .executive-dashboard .scene-image-card,
+  .executive-dashboard .scene-document {
+    transition: none;
+  }
+}
+@media (max-width: 760px) {
+  .executive-dashboard [data-workspace="overview"] > .ws-metrics .ws-metric:nth-child(odd) {
+    border-inline-start: 0;
+  }
+  .executive-dashboard [data-workspace="overview"] > .ws-metrics .ws-metric:nth-child(n+3) {
+    border-top: 1px solid var(--border-secondary);
+  }
+}
