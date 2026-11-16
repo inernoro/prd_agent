@@ -2291,6 +2291,19 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   setHostCapacitySamplingEnabled(enabled: boolean): void {
     this.state.hostCapacitySamplingEnabled = enabled; this.save();
   }
+  async updateHostCapacitySamplingEnabled(enabled: boolean): Promise<void> {
+    const previous = this.state.hostCapacitySamplingEnabled;
+    try { this.setHostCapacitySamplingEnabled(enabled); await this.flush(); }
+    catch (error) {
+      if (previous === undefined) delete this.state.hostCapacitySamplingEnabled;
+      else this.state.hostCapacitySamplingEnabled = previous;
+      // Restore the live snapshot and best-effort compensate an unknown ACK.
+      // A later unrelated save must never commit the rejected candidate.
+      try { this.save(); await this.flush(); } catch {}
+      throw error;
+    }
+  }
+
 
   getJanitorEnabledOverride(): boolean | undefined {
     return this.state.janitorEnabledOverride;

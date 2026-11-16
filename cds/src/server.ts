@@ -2050,7 +2050,7 @@ export function createServer(deps: ServerDeps): express.Express {
       'cds-build-cache': deps.stateService.getCacheBase(),
       'cds-skill-cache': path.join(deps.config.repoRoot, '.cds', 'skill-cache') },
     observation: hostCapacityObservation,
-    persist: async enabled => { deps.stateService.setHostCapacitySamplingEnabled(enabled); await deps.stateService.flush(); },
+    persist: enabled => deps.stateService.updateHostCapacitySamplingEnabled(enabled),
   });
   hostCapacitySampling.start();
   deps.registerResourceShutdown?.(async () => { hostCapacitySampling.stop(); hostCapacityObservation.stop(); });
