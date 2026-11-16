@@ -1,6 +1,6 @@
 import './executive-operations.css';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   compact,
   PersonAvatar,
@@ -37,6 +37,7 @@ export function ExecutiveOverviewWorkspace({
   agents?: ExecutiveAgentStat[];
 }) {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [view, setView] = useState<'scene' | 'distribution'>('scene');
   const [field, setField] = useState<'messages' | 'tokens'>('messages');
   const [date, setDate] = useState('');
@@ -120,11 +121,15 @@ export function ExecutiveOverviewWorkspace({
                         }}
                         data-tone={index % 3}
                         title={`${agent.name} · ${compact(agent.calls)} 条调用记录`}
-                        onClick={() =>
-                          navigate(
-                            `/executive?tab=agents&agent=${encodeURIComponent(agent.appKey)}`,
-                          )
-                        }
+                        onClick={() => {
+                          const next = new URLSearchParams(params);
+                          next.set('tab', 'agents');
+                          next.set('agent', agent.appKey);
+                          navigate({
+                            pathname: '/executive',
+                            search: next.toString(),
+                          });
+                        }}
                       >
                         <strong>{agent.name}</strong>
                         <b>{compact(agent.calls)}</b>

@@ -1,4 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import type { ToolboxItem } from '@/services';
 import '@/components/workspace/workspace.css';
@@ -11,10 +13,24 @@ export function TaskDiscovery({
   items: ToolboxItem[];
   compact?: boolean;
 }) {
+  const navigate = useNavigate();
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const track = useToolboxStore((s) => s.trackRecentlyUsed);
   const activeTag = useToolboxStore((s) => s.activeTagFilter);
   const setTag = useToolboxStore((s) => s.setActiveTagFilter);
   const recent = useToolboxStore((s) => s.recentlyUsedIds);
   const select = useToolboxStore((s) => s.selectItem);
+  function openRecent(item: ToolboxItem) {
+    if (item.agentKey === 'prd-agent') {
+      setDownloadOpen(true);
+      return;
+    }
+    track(item.id);
+    if (item.routePath) {
+      if (item.agentKey === 'cds-agent') window.location.assign(item.routePath);
+      else navigate(item.routePath);
+    } else select(item);
+  }
   const tags = useMemo(() => {
     const counts = new Map<string, number>();
     items.forEach((item) =>
@@ -47,43 +63,53 @@ export function TaskDiscovery({
       </select>
     );
   return (
-    <section
-      className="map-workspace task-discovery"
-      aria-label="按任务发现工具"
-    >
-      <div className="task-discovery-tags">
-        <strong>按任务发现</strong>
-        <div className="ws-tabs">
-          <button
-            type="button"
-            aria-pressed={!activeTag}
-            onClick={() => setTag(null)}
-          >
-            全部任务
-          </button>
-          {tags.map(([tag, count]) => (
+    <>
+      <section
+        className="map-workspace task-discovery"
+        aria-label="按任务发现工具"
+      >
+        <div className="task-discovery-tags">
+          <strong>按任务发现</strong>
+          <div className="ws-tabs">
             <button
-              key={tag}
               type="button"
-              aria-pressed={tag === activeTag}
-              onClick={() => setTag(tag === activeTag ? null : tag)}
+              aria-pressed={!activeTag}
+              onClick={() => setTag(null)}
             >
-              {tag}
-              <small>{count}</small>
+              全部任务
             </button>
-          ))}
+            {tags.map(([tag, count]) => (
+              <button
+                key={tag}
+                type="button"
+                aria-pressed={tag === activeTag}
+                onClick={() => setTag(tag === activeTag ? null : tag)}
+              >
+                {tag}
+                <small>{count}</small>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
-      {recentItems.length > 0 && (
-        <div className="task-discovery-recent">
-          <span>最近使用</span>
-          {recentItems.map((item) => (
-            <button type="button" key={item.id} onClick={() => select(item)}>
-              {item.name}
-            </button>
-          ))}
-        </div>
-      )}
-    </section>
+        {recentItems.length > 0 && (
+          <div className="task-discovery-recent">
+            <span>最近使用</span>
+            {recentItems.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                onClick={() => openRecent(item)}
+              >
+                {item.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+      <DesktopDownloadDialog
+        open={downloadOpen}
+        onOpenChange={setDownloadOpen}
+      />
+    </>
   );
 }

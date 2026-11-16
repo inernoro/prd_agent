@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ExecutiveModelStat } from '@/services/contracts/executive';
 const clipboard = vi.hoisted(() => vi.fn());
@@ -164,4 +164,50 @@ it('复制缺价清单排除空名称，失败反馈不能误报成功', async (
   expect(clipboard).toHaveBeenCalledWith('need-price');
   expect(container.textContent).toContain('复制失败');
   expect(container.textContent).not.toContain('已复制');
+});
+
+it('从调用分布下钻Agent保留时间窗口和其他查询条件', async () => {
+  function Location() {
+    const location = useLocation();
+    return <output>{location.search}</output>;
+  }
+  const agents = [
+    {
+      appKey: 'visual&api',
+      name: '视觉创作',
+      calls: 3,
+      apiCalls: 1,
+      llmCalls: 2,
+      users: 1,
+      tokens: 100,
+      avgDurationMs: 500,
+    },
+  ];
+  await act(async () =>
+    root.render(
+      <MemoryRouter
+        initialEntries={['/executive?tab=overview&days=7&other=keep']}
+      >
+        <ExecutiveOverviewWorkspace agents={agents} />
+        <Location />
+      </MemoryRouter>,
+    ),
+  );
+  await act(async () =>
+    [...container.querySelectorAll('button')]
+      .find((button) => button.textContent === '使用分布')!
+      .click(),
+  );
+  await act(async () =>
+    (
+      container.querySelector('.scene-treemap button') as HTMLButtonElement
+    ).click(),
+  );
+  const params = new URLSearchParams(
+    container.querySelector('output')!.textContent!,
+  );
+  expect(params.get('days')).toBe('7');
+  expect(params.get('other')).toBe('keep');
+  expect(params.get('tab')).toBe('agents');
+  expect(params.get('agent')).toBe('visual&api');
 });
