@@ -21,6 +21,50 @@ public sealed class WritingPublicationOverviewTests
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
+    [Fact]
+    public async Task CreatingWritingCountsTheEntryOnceWhileSavingKeepsTheCount()
+    {
+        await using var fixture = await Fixture.Create();
+        var before = DateTime.UtcNow.AddDays(-1);
+        await fixture.Db.DocumentStores.UpdateOneAsync(s => s.Id == "store", Builders<DocumentStore>.Update
+            .Set(s => s.DocumentCount, 3).Set(s => s.UpdatedAt, before));
+        var controller = fixture.Controller("owner");
+        var created = Data(await controller.CreateWritingDocument("store", new WritingCreateRequest { TemplateId = "prd" }));
+        var entryId = created.GetProperty("entryId").GetString()!;
+        var store = await fixture.Db.DocumentStores.Find(s => s.Id == "store").SingleAsync();
+        Assert.Equal(4, store.DocumentCount);
+        Assert.True(store.UpdatedAt > before);
+        Assert.Equal(4L, await fixture.Db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == "store"));
+        var revision = created.GetProperty("state").GetProperty("revision").GetInt64();
+        Assert.IsType<OkObjectResult>(await controller.SaveWritingDocument(entryId,
+            new WritingSaveRequest { Revision = revision, Title = "计数回归草稿" }));
+        Assert.Equal(4, (await fixture.Db.DocumentStores.Find(s => s.Id == "store").SingleAsync()).DocumentCount);
+    }
+
+    [Fact]
+    public async Task ConcurrentWritingCreationDoesNotLoseCountIncrements()
+    {
+        await using var fixture = await Fixture.Create();
+        await fixture.Db.DocumentStores.UpdateOneAsync(s => s.Id == "store", Builders<DocumentStore>.Update.Set(s => s.DocumentCount, 3));
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => fixture.Controller("owner")
+            .CreateWritingDocument("store", new WritingCreateRequest { TemplateId = "prd" })));
+        Assert.All(results, result => Assert.IsType<OkObjectResult>(result));
+        Assert.Equal(11, (await fixture.Db.DocumentStores.Find(s => s.Id == "store").SingleAsync()).DocumentCount);
+        Assert.Equal(11L, await fixture.Db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == "store"));
+    }
+
+    [Theory]
+    [InlineData("owner", "missing-template")]
+    [InlineData("reader", "prd")]
+    public async Task RejectedWritingCreationDoesNotChangeCount(string user, string template)
+    {
+        await using var fixture = await Fixture.Create();
+        await fixture.Db.DocumentStores.UpdateOneAsync(s => s.Id == "store", Builders<DocumentStore>.Update.Set(s => s.DocumentCount, 3));
+        Assert.IsNotType<OkObjectResult>(await fixture.Controller(user).CreateWritingDocument("store", new WritingCreateRequest { TemplateId = template }));
+        Assert.Equal(3, (await fixture.Db.DocumentStores.Find(s => s.Id == "store").SingleAsync()).DocumentCount);
+        Assert.Equal(3L, await fixture.Db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == "store"));
+    }
+
     [Theory]
     [InlineData("owner", true)]
     [InlineData("reader", false)]
@@ -92,16 +136,8 @@ public sealed class WritingPublicationOverviewTests
         fixture.Documents.Verify(d => d.GetByIdAsync(It.IsAny<string>()), Times.Never);
     }
 
-    // Like MVC query binding, an unknown overview query is ignored by the old action.
-    // This permits a meaningful old-body assertion failure before the optional parameter exists.
-    private static async Task<IActionResult> Read(DocumentStoreController controller, bool overview, int? version = null)
-    {
-        var method = typeof(DocumentStoreController).GetMethod(nameof(DocumentStoreController.ReadWritingPublication))!;
-        var args = method.GetParameters().Select(parameter => parameter.Name switch {
-            "entryId" => (object)"writing", "version" => version, "overview" => overview,
-            _ => throw new InvalidOperationException("Unexpected query contract") }).ToArray();
-        return await (Task<IActionResult>)method.Invoke(controller, args)!;
-    }
+    private static Task<IActionResult> Read(DocumentStoreController controller, bool overview, int? version = null)
+        => controller.ReadWritingPublication("writing", version, overview);
 
     private static JsonElement Data(IActionResult result) => JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(result).Value, Json).GetProperty("data");
 
