@@ -22,6 +22,15 @@ for name in prdagent llm_gateway admin; do
   (cd "$root" && nice -n 19 ionice -c 3 sha256sum "$name.archive.gz" > "$name.archive.gz.sha256")
   date -u +%FT%TZ > "$root/$name.completed"
 done
+# Capture after all hot-log dumps: every cold pointer in them predates this
+# immutable archive-directory snapshot, including cross-database pointers.
+name=log-archive-index
+date -u +%FT%TZ > "$root/$name.started"
+timeout 10m docker exec prdagent-mongodb nice -n 19 ionice -c 3 mongodump --numParallelCollections=1 --db prdagent --collection log_archive_batches --archive --gzip > "$root/$name.archive.gz.partial" 2> "$root/$name.dump.log"
+nice -n 19 ionice -c 3 gzip -t "$root/$name.archive.gz.partial"
+mv "$root/$name.archive.gz.partial" "$root/$name.archive.gz"
+(cd "$root" && nice -n 19 ionice -c 3 sha256sum "$name.archive.gz" > "$name.archive.gz.sha256")
+date -u +%FT%TZ > "$root/$name.completed"
 docker exec prdagent-mongodb mongosh --quiet --eval 'const names=["prdagent","llm_gateway","admin"];const out={};for(const name of names){const d=db.getSiblingDB(name);out[name]=d.getCollectionInfos().filter(c=>c.type==="collection").map(c=>({name:c.name,indexes:d.getCollection(c.name).getIndexes()}));}print(EJSON.stringify(out));' > "$root/indexes.json"
 printf '%s\n' completed > "$root/status"
 trap - EXIT

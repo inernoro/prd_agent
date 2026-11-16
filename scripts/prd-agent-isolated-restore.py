@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Restore a completed off-host backup to a fresh loopback-only local Mongo process."""
-import argparse,hashlib,json,os,re,resource,signal,socket,subprocess,time
+import argparse,base64,fcntl,hashlib,json,os,re,resource,signal,socket,subprocess,time
 from pathlib import Path
 
 def digest(p):
@@ -11,6 +11,10 @@ def digest(p):
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--backup',required=True);p.add_argument('--work',required=True);a=p.parse_args()
+ # Serialize manual and scheduled drills independently of the backup destination.
+ lock_root=Path.home()/'.cache'/'prd-agent-backup';lock_root.mkdir(parents=True,exist_ok=True,mode=0o700)
+ restore_lock=(lock_root/'isolated-restore.lock').open('a');os.chmod(restore_lock.name,0o600)
+ fcntl.flock(restore_lock,fcntl.LOCK_EX)
  # launchd defaults to only 256 descriptors; a real schema opens many index files.
  soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
  if soft!=resource.RLIM_INFINITY and soft<65536:
@@ -75,6 +79,25 @@ def main():
     if index_mismatches:raise RuntimeError('Restored index definitions differ from source snapshot')
    result['restored'].append({'database':name,'collections':actual,'dumpCollections':len(expected),'countMismatches':mismatches,'missing':missing,'indexSnapshotCompared':schemas is not None,'indexMismatches':index_mismatches})
    (work/'result.json').write_text(json.dumps(result,indent=2)+'\n')
+  supplement=manifest.get('archiveMetadataSupplement')
+  if supplement:
+   name='log-archive-index.archive.gz'
+   if supplement.get('file')!=name or supplement.get('database')!='prdagent' or supplement.get('collection')!='log_archive_batches' or digest(backup/name)!=supplement['sha256']:raise RuntimeError('Archive directory supplement is invalid')
+   with (work/'archive-directory.restore.log').open('wb') as stream:
+    subprocess.run(['mongorestore','--host','127.0.0.1','--port',str(port),'--gzip','--archive='+str(backup/name),'--nsInclude=prdagent.log_archive_batches','--drop','--objcheck','--stopOnError'],stdout=stream,stderr=stream,check=True,timeout=600)
+   matches=re.findall(r'done dumping prdagent\.log_archive_batches \((\d+) documents?\)',(backup/'log-archive-index.dump.log').read_text())
+   actual=int(query('print(db.getSiblingDB("prdagent").log_archive_batches.countDocuments({}))'))
+   if not matches or actual!=int(matches[-1]):raise RuntimeError('Supplement document count differs from source dump')
+   result['archiveMetadataSupplement']={'count':actual,'sha256':supplement['sha256'],'appliedAfterAllDatabaseRestores':True}
+  references=json.loads(query('const batches=db.getSiblingDB("prdagent").log_archive_batches;const out={sources:[],missing:0,keyIds:[]};for(const [database,collection,source] of [["prdagent","apirequestlogs","api"],["prdagent","llmrequestlogs","legacy-llm"],["llm_gateway","llmrequestlogs","llm"],["llm_gateway","llmgw_request_executions","execution"]]){const ids=db.getSiblingDB(database).getCollection(collection).aggregate([{$match:{ColdArchiveId:{$exists:true}}},{$group:{_id:"$ColdArchiveId",n:{$sum:1}}}]).toArray();let pointers=0;for(const x of ids){pointers+=x.n;const b=batches.findOne({_id:x._id});if(!b||b.Source!==source||!b.StorageKey||!b.CipherSha256||!b.PlainSha256||!b.KeyId)out.missing++;else if(!out.keyIds.includes(b.KeyId))out.keyIds.push(b.KeyId);}out.sources.push({source,pointers,batches:ids.length});}print(JSON.stringify(out));'))
+  if references['missing']:raise RuntimeError('Restored cold pointers have no complete archive directory entry')
+  if references['keyIds']:
+   snapshot=json.loads((backup/'api-environment.snapshot.json').read_text())
+   environment=dict(value.split('=',1) for value in snapshot if '=' in value)
+   key=base64.b64decode(environment.get('LogArchive__EncryptionKey',''),validate=True)
+   if len(key)!=32 or references['keyIds']!=[hashlib.sha256(key).hexdigest()[:16]]:raise RuntimeError('Restored archive metadata requires an unavailable encryption key')
+   references['offsiteDecryptionKeyAvailable']=True
+  result['coldArchiveReferences']=references
   result['representativeReads']=json.loads(query('const out={};for(const [name,collections] of Object.entries({prdagent:["users","workflows","documents"],llm_gateway:["llmgw_logical_models","llmgw_route_rules"]})){const d=db.getSiblingDB(name);for(const c of collections){const row=d.getCollection(c).findOne({});out[name+"."+c]={readable:true,hasRecord:row!==null};}}print(JSON.stringify(out))'))
   result['status']='passed'
  except Exception as e:result['status']='failed';result['errorType']=type(e).__name__;raise
