@@ -16,7 +16,8 @@ public interface IModelLeaderboardFetcher
 public sealed class HuggingFaceLeaderboardFetcher(
     HttpClient http,
     Func<HuggingFaceLeaderboardFetcher.ResponseEvidence, Task>? audit = null,
-    IModelLeaderboardFetcher? fallback = null) : IModelLeaderboardFetcher
+    IModelLeaderboardFetcher? fallback = null,
+    Func<TimeSpan, CancellationToken, Task>? delay = null) : IModelLeaderboardFetcher
 {
     public const string Dataset = "lmarena-ai/leaderboard-dataset";
     public const string DatasetUrl = "https://huggingface.co/datasets/" + Dataset;
@@ -35,9 +36,15 @@ public sealed class HuggingFaceLeaderboardFetcher(
 
     public sealed record ResponseEvidence(string Url, DateTime StartedAt, DateTime EndedAt,
         int? StatusCode, string? ContentType, long Bytes, string? Sha256, string Outcome,
-        string? ErrorType, string Summary, string AuditId);
+        string? ErrorType, string Summary, string AuditId, double? RetryAfterSeconds = null, int Attempt = 1);
 
     public sealed class AuditException(Exception inner) : Exception("榜单响应审计未能保存，本次不发布新快照。", inner) { }
+
+    private sealed class RateLimitedException(TimeSpan wait) : HttpRequestException(
+        "官方数据集限流，本次按冷却时间重试。", null, System.Net.HttpStatusCode.TooManyRequests)
+    {
+        public TimeSpan Wait { get; } = wait;
+    }
 
     private sealed class ValidationException(string message, string diagnostic) : InvalidOperationException(message)
     {
@@ -179,6 +186,20 @@ public sealed class HuggingFaceLeaderboardFetcher(
     private async Task<(List<JsonElement> Rows, int Total)> ReadPageAsync(
         string config, int offset, int? expectedTotal, CaptureContext context, CancellationToken ct)
     {
+        try { return await ReadPageOnceAsync(config, offset, expectedTotal, context, 1, ct); }
+        catch (RateLimitedException ex)
+        {
+            // 实际全榜同步在 CloudFront 收到 429；无 Retry-After 时冷却一个五分钟窗口。
+            // 只重试一次，重试仍失败则走原有失败/备用源逻辑，不无限占用同步。
+            if (delay is not null) await delay(ex.Wait, ct);
+            else await Task.Delay(ex.Wait, ct);
+            return await ReadPageOnceAsync(config, offset, expectedTotal, context, 2, ct);
+        }
+    }
+
+    private async Task<(List<JsonElement> Rows, int Total)> ReadPageOnceAsync(
+        string config, int offset, int? expectedTotal, CaptureContext context, int attempt, CancellationToken ct)
+    {
         var url = BuildUrl(config, offset);
         var started = DateTime.UtcNow;
         HttpResponseMessage? response = null;
@@ -186,6 +207,7 @@ public sealed class HuggingFaceLeaderboardFetcher(
         string outcome = "failed", summary = "未收到响应。";
         string? errorType = null;
         string? failure = null;
+        double? retryAfterSeconds = null;
         try
         {
             response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -200,6 +222,18 @@ public sealed class HuggingFaceLeaderboardFetcher(
                 buffer.Write(chunk, 0, read);
             }
             summary = Summarize(buffer.ToArray());
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                var requested = response.Headers.RetryAfter?.Delta
+                    ?? (response.Headers.RetryAfter?.Date - DateTimeOffset.UtcNow)
+                    ?? TimeSpan.FromMinutes(5);
+                retryAfterSeconds = requested.TotalSeconds;
+                if (requested > TimeSpan.FromMinutes(5))
+                    throw new HttpRequestException("官方冷却时间超过本次重试预算，保留旧快照。", null, response.StatusCode);
+                var wait = requested > TimeSpan.Zero ? requested : TimeSpan.FromMinutes(5);
+                retryAfterSeconds = wait.TotalSeconds;
+                throw new RateLimitedException(wait);
+            }
             response.EnsureSuccessStatusCode();
             using var document = JsonDocument.Parse(buffer.ToArray());
             var root = document.RootElement;
@@ -238,7 +272,7 @@ public sealed class HuggingFaceLeaderboardFetcher(
                     response?.Content.Headers.ContentType?.MediaType, buffer.Length,
                     buffer.Length == 0 ? null : Convert.ToHexString(SHA256.HashData(buffer.ToArray())),
                     outcome, errorType, failure is null ? summary : JsonSerializer.Serialize(new { response = summary, localFailure = failure }),
-                    Guid.NewGuid().ToString("N"));
+                    Guid.NewGuid().ToString("N"), retryAfterSeconds, attempt);
                 context.Responses[evidence.AuditId] = evidence;
                 await EmitAsync(evidence);
             }

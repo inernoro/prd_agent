@@ -249,6 +249,49 @@ public class HuggingFaceLeaderboardFetcherTests
     }
 
     [Fact]
+    public async Task 限流先保存失败证据_冷却后仅重试一次()
+    {
+        var calls = 0;
+        var waits = new List<TimeSpan>();
+        var evidence = new List<HuggingFaceLeaderboardFetcher.ResponseEvidence>();
+        var client = new HttpClient(new Handler(uri => ++calls == 1
+            ? Json(new JsonObject { ["error"] = "rate limited" }, HttpStatusCode.TooManyRequests)
+            : Json(Fixture()[Query(uri, "config")]!)));
+        var result = await new HuggingFaceLeaderboardFetcher(client,
+            e => { evidence.Add(e); return Task.CompletedTask; },
+            delay: (wait, _) => { waits.Add(wait); return Task.CompletedTask; }).FetchAsync("agent", default);
+        Assert.Equal(5, result.Entries.Count);
+        Assert.Equal(TimeSpan.FromMinutes(5), Assert.Single(waits));
+        var failed = Assert.Single(evidence.Where(e => e.StatusCode == 429));
+        Assert.Equal("failed", failed.Outcome);
+        Assert.Equal(300, failed.RetryAfterSeconds);
+        Assert.Equal(6, evidence.Count(e => e.Outcome == "success"));
+    }
+
+    [Theory]
+    [InlineData(45)]
+    [InlineData(600)]
+    public async Task 限流遵守RetryAfter_超出等待预算不提前重试(int seconds)
+    {
+        var calls = 0;
+        var waits = new List<TimeSpan>();
+        var fallback = new Fallback();
+        var client = new HttpClient(new Handler(_ =>
+        {
+            calls++;
+            var response = Json(new JsonObject(), HttpStatusCode.TooManyRequests);
+            response.Headers.RetryAfter = new(TimeSpan.FromSeconds(seconds));
+            return response;
+        }));
+        await new HuggingFaceLeaderboardFetcher(client, fallback: fallback,
+            delay: (wait, _) => { waits.Add(wait); return Task.CompletedTask; }).FetchAsync("agent", default);
+        Assert.Equal(seconds > 300 ? 1 : 2, calls);
+        if (seconds > 300) Assert.Empty(waits);
+        else Assert.Equal(TimeSpan.FromSeconds(seconds), Assert.Single(waits));
+        Assert.Equal(1, fallback.Calls);
+    }
+
+    [Fact]
     public async Task 官方源网络失败时继续保留既有备用源恢复能力()
     {
         var fallback = new Fallback();
